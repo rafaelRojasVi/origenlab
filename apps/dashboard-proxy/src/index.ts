@@ -1,12 +1,14 @@
 import {
+  marketingCommandMaxBytes,
+  isAllowedMarketingCommandPostPath,
   isAllowedPostPath,
   isAllowedPostUploadPath,
   isAllowedUpstreamPath,
   stripApiPrefix,
 } from "./allowlist";
 import { filterAuthSetCookies, isAllowedAuthRedirect, isAuthPath } from "./auth";
-import { applyCorsHeaders, stripUpstreamCorsHeaders } from "./cors";
-import { API_AUTH_HEADER, buildUpstreamHeaders, buildUpstreamUrl, type ProxyEnv } from "./proxy";
+import { applyCorsHeaders, isAllowedOrigin, stripUpstreamCorsHeaders } from "./cors";
+import { API_AUTH_HEADER, IDEMPOTENCY_KEY_HEADER, buildUpstreamHeaders, buildUpstreamUrl, type ProxyEnv } from "./proxy";
 
 export type { ProxyEnv } from "./proxy";
 export {
@@ -82,6 +84,37 @@ function authRedirectResponse(upstreamResponse: Response, location: string): Res
   return new Response(null, { status: upstreamResponse.status, headers });
 }
 
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/;
+
+/**
+ * The CSRF and replay guard for the marketing commands, checked before anything is forwarded.
+ * The session cookie is SameSite=Lax and HttpOnly; these checks do not rely on that alone:
+ * a cross-site form or script cannot send an allowed `Origin`, a JSON `Content-Type` without a
+ * preflight this Worker only answers for allowed origins, or a custom `Idempotency-Key`.
+ */
+export function marketingCommandRefusal(request: Request): { status: number; code: string } | null {
+  if (!isAllowedOrigin(request.headers.get("Origin"))) {
+    return { status: 403, code: "origin_not_allowed" };
+  }
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (site !== null && site !== "same-origin" && site !== "same-site") {
+    return { status: 403, code: "cross_site_request" };
+  }
+  const contentType = (request.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+  if (contentType !== "application/json") {
+    return { status: 415, code: "unsupported_media_type" };
+  }
+  if (!IDEMPOTENCY_KEY_RE.test(request.headers.get(IDEMPOTENCY_KEY_HEADER) || "")) {
+    return { status: 400, code: "idempotency_key_required" };
+  }
+  const length = Number(request.headers.get("Content-Length") || "0");
+  const upstreamPath = stripApiPrefix(new URL(request.url).pathname) ?? "";
+  if (!Number.isFinite(length) || length > marketingCommandMaxBytes(upstreamPath)) {
+    return { status: 413, code: "payload_too_large" };
+  }
+  return null;
+}
+
 const ALLOWED_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -107,6 +140,12 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     if (upstreamPath === null || !isAllowedPostPath(upstreamPath)) {
       return jsonError(request, 405, "method_not_allowed");
     }
+    if (isAllowedMarketingCommandPostPath(upstreamPath)) {
+      const refusal = marketingCommandRefusal(request);
+      if (refusal) {
+        return jsonError(request, refusal.status, refusal.code);
+      }
+    }
   } else if (MUTATING_METHODS.has(method)) {
     return jsonError(request, 405, "method_not_allowed");
   } else if (!ALLOWED_METHODS.has(method)) {
@@ -131,15 +170,24 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   // is non-null (POST: validated by isAllowedPostPath; GET/HEAD: the
   // explicit null check above).
   const upstreamUrl = buildUpstreamUrl(upstreamBase, upstreamPath as string, url.search);
+  // Sanctioned POST commands may carry a body. Buffered rather than
+  // streamed: bodies are bounded by browser/upstream API contracts, and
+  // buffering keeps forwarding deterministic and testable without
+  // relying on streaming-request-body support.
+  const body = method === "POST" ? await request.arrayBuffer() : undefined;
+  if (
+    body !== undefined &&
+    isAllowedMarketingCommandPostPath(upstreamPath as string) &&
+    body.byteLength > marketingCommandMaxBytes(upstreamPath as string)
+  ) {
+    // A body larger than its declared Content-Length, or one sent without it.
+    return jsonError(request, 413, "payload_too_large");
+  }
   const upstreamRequest = new Request(upstreamUrl, {
     method,
     headers: buildUpstreamHeaders(env, request.headers, upstreamPath as string),
     redirect: "manual",
-    // Sanctioned POST commands may carry a body. Buffered rather than
-    // streamed: bodies are bounded by browser/upstream API contracts, and
-    // buffering keeps forwarding deterministic and testable without
-    // relying on streaming-request-body support.
-    body: method === "POST" ? await request.arrayBuffer() : undefined,
+    body,
   });
 
   const upstreamResponse = await fetch(upstreamRequest);

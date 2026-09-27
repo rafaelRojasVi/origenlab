@@ -18,7 +18,6 @@ from origenlab_email_pipeline.outbound_v2 import (
     CampaignPolicy,
     ContactControlIndex,
     RecipientCandidate,
-    RecontactOverride,
     evaluate_recipient_eligibility,
     normalize_address,
 )
@@ -254,48 +253,3 @@ def test_noise_rules_can_be_skipped_wholesale() -> None:
 def test_already_in_audience_is_reported_like_any_other_reason() -> None:
     verdict = _evaluate(already_in_audience=True)
     assert verdict.reasons == (REASON_ALREADY_IN_AUDIENCE,)
-
-
-# ── recontact override ──────────────────────────────────────────────────────────────────
-
-
-def test_override_clears_only_the_recontact_family() -> None:
-    controls = ContactControlIndex(
-        prior_contact_addresses=frozenset({"lab@uni.example"}),
-        replied_addresses=frozenset({"lab@uni.example"}),
-        cooldown_until={"lab@uni.example": NOW + timedelta(days=10)},
-    )
-    override = RecontactOverride(operator_id="op-1", reason="cliente pidió seguimiento")
-    verdict = _evaluate(
-        candidate=_candidate("lab@uni.example"), controls=controls, override=override
-    )
-    assert verdict.eligible is True
-    assert verdict.overridden_reasons == (
-        REASON_PRIOR_CONTACT,
-        REASON_PRIOR_REPLY,
-        REASON_COOLDOWN,
-    )
-    assert verdict.override is override
-
-
-def test_override_never_clears_a_block_or_a_policy_rule() -> None:
-    controls = ContactControlIndex(
-        blocked_addresses=frozenset({"lab@uni.example"}),
-        prior_contact_addresses=frozenset({"lab@uni.example"}),
-        manual_status={"lab@uni.example": "hold"},
-    )
-    verdict = _evaluate(
-        candidate=_candidate("lab@uni.example"),
-        controls=controls,
-        override=RecontactOverride(operator_id="op-1", reason="insistir"),
-    )
-    assert verdict.eligible is False
-    assert verdict.reasons == (REASON_MANUAL_HOLD, REASON_BLOCK)
-    assert verdict.overridden_reasons == (REASON_PRIOR_CONTACT,)
-
-
-def test_an_override_that_clears_nothing_is_not_recorded() -> None:
-    verdict = _evaluate(override=RecontactOverride(operator_id="op-1", reason="por si acaso"))
-    assert verdict.eligible is True
-    assert verdict.override is None
-    assert verdict.overridden_reasons == ()

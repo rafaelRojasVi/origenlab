@@ -22,6 +22,13 @@ Four properties the implementation guarantees, and the tests pin:
 This function decides *audience membership only*. It never reads ``outbound.send_control``:
 the kill switches are a send-time predicate (Slice 5), not an audience fact, and a frozen
 audience is a ceiling rather than a permission to send.
+
+**No recontact override here.** The W12 decision (WORKFLOWS.md §W12) is taken inside the CRM
+command ``freeze-campaign-audience`` (``apps/api`` ``origenlab_api.v2.audience_freeze``), which
+waives ``prior_contact`` only and seals the override triple in the recipient snapshot. A
+``RecontactOverride`` type lived here with no caller outside its own tests, and contradicted it:
+it also cleared ``prior_reply`` and ``cooldown``. It was retired; ``test_campaign_safety.py``
+refuses its return.
 """
 
 from __future__ import annotations
@@ -37,7 +44,6 @@ from origenlab_email_pipeline.marketing_contact_noise import (
 )
 from origenlab_email_pipeline.marketing_supplier_domains import is_supplier_email_domain
 from origenlab_email_pipeline.outbound_v2.reasons import (
-    OVERRIDABLE_REASONS,
     REASON_ALREADY_IN_AUDIENCE,
     REASON_BLOCK,
     REASON_BLOCK_DOMAIN,
@@ -119,7 +125,7 @@ class RecipientCandidate:
 
 @dataclass(frozen=True)
 class ContactControlIndex:
-    """``outbound.contact_control`` and the manual sidecar, indexed once per freeze.
+    """``outbound.contact_control`` and the manual sidecar, indexed once per preview.
 
     Built once for a whole audience so evaluation stays pure and O(1) per candidate; never
     queried row by row.
@@ -153,18 +159,6 @@ class CampaignPolicy:
 
 
 @dataclass(frozen=True)
-class RecontactOverride:
-    """An operator's explicit decision to contact someone again (WORKFLOWS.md §W12).
-
-    Clears only :data:`OVERRIDABLE_REASONS`; the triple is written to
-    ``campaign_recipient.recontact_override_*`` and is immutable from then on.
-    """
-
-    operator_id: str
-    reason: str
-
-
-@dataclass(frozen=True)
 class EligibilityVerdict:
     """A complete, explainable verdict for one candidate at one instant."""
 
@@ -173,9 +167,6 @@ class EligibilityVerdict:
     #: Every rule that still excludes this candidate, in the fixed evaluation order.
     #: Empty if and only if ``eligible``.
     reasons: tuple[str, ...]
-    #: Reasons an override cleared. Recorded so the snapshot still shows what was waived.
-    overridden_reasons: tuple[str, ...] = ()
-    override: RecontactOverride | None = None
 
 
 def evaluate_recipient_eligibility(
@@ -184,7 +175,6 @@ def evaluate_recipient_eligibility(
     controls: ContactControlIndex,
     policy: CampaignPolicy,
     now: datetime,
-    override: RecontactOverride | None = None,
     already_in_audience: bool = False,
 ) -> EligibilityVerdict:
     """Evaluate every rule for ``candidate`` and report every reason it fails.
@@ -195,7 +185,6 @@ def evaluate_recipient_eligibility(
         policy: the campaign's eligibility knobs.
         now: the evaluation instant. An argument, never a clock read, so a verdict is
             reproducible from its inputs alone.
-        override: an operator recontact override, when one exists for this recipient.
         already_in_audience: set by :func:`build_audience_preview` when another address of
             the same person has already taken the campaign's one slot for them.
 
@@ -258,19 +247,8 @@ def evaluate_recipient_eligibility(
     if already_in_audience:
         found.add(REASON_ALREADY_IN_AUDIENCE)
 
-    overridden: tuple[str, ...] = ()
-    if override is not None:
-        overridden = tuple(r for r in _EVALUATION_ORDER if r in found & OVERRIDABLE_REASONS)
-        found -= OVERRIDABLE_REASONS
-
     reasons = tuple(r for r in _EVALUATION_ORDER if r in found)
-    return EligibilityVerdict(
-        eligible=not reasons,
-        evaluated_at=now,
-        reasons=reasons,
-        overridden_reasons=overridden,
-        override=override if overridden else None,
-    )
+    return EligibilityVerdict(eligible=not reasons, evaluated_at=now, reasons=reasons)
 
 
 def _domain_or_parent_blocked(domain: str, blocked: frozenset[str]) -> bool:

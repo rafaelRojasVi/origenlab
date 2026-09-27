@@ -5,10 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from origenlab_email_pipeline.outbound_v2.reasons import (
-    EXCLUSION_VOCABULARY,
-    OVERRIDABLE_REASONS,
-)
+from origenlab_email_pipeline.outbound_v2.reasons import EXCLUSION_VOCABULARY
 
 MIGRATION = (
     Path(__file__).resolve().parents[4]
@@ -32,7 +29,3 @@ def test_migration_exists() -> None:
 def test_application_vocabulary_equals_the_database_vocabulary() -> None:
     """A reason the CHECK would reject must never reach a freeze plan."""
     assert _vocabulary_from_migration() == EXCLUSION_VOCABULARY
-
-
-def test_overridable_reasons_are_part_of_the_vocabulary() -> None:
-    assert OVERRIDABLE_REASONS < EXCLUSION_VOCABULARY

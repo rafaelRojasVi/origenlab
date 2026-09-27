@@ -90,6 +90,20 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     from origenlab_api.v2.routes import router as v2_router
 
     dsn = settings.require_v2_database_url()
+    session_secret = _secret(settings.auth_session_secret)
+    if not (session_secret or "").strip() and settings.production_mode():
+        # Whatever the identity adapter, production needs one stable address-ref key shared
+        # by every worker; a random per-process key is a development convenience only.
+        raise ValueError(
+            "ORIGENLAB_AUTH_SESSION_SECRET is required when ORIGENLAB_ENV=production and "
+            "ORIGENLAB_V2_DATABASE_URL is set"
+        )
+    if (session_secret or "").strip():
+        from origenlab_api.v2.marketing_audience import configure_address_ref_key
+
+        # Pins the key of the opaque address refs viewers join reads by; without the secret
+        # each process keeps its own random key (refs then only join within one process).
+        configure_address_ref_key(session_secret)
     repository = V2Repository(
         psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
@@ -160,6 +174,63 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     if google is not None:
         app.include_router(google_auth_router)
     _mount_v2_command_boundary(app, settings, dsn)
+    _mount_campaign_drafts(app, settings, dsn)
+    _mount_audience_freeze(app, settings, dsn)
+    _mount_campaign_planning(app, settings, dsn)
+
+
+def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str) -> None:
+    """Mount the audience-freeze command only behind its own switch; W12 rides on it."""
+    app.state.audience_freeze_enabled = settings.v2_audience_freeze_configured()
+    # The preview and the command read the same flag, so they plan under the same policy.
+    app.state.recontact_review_enabled = settings.v2_recontact_review_configured()
+    if not app.state.audience_freeze_enabled:
+        return
+
+    import psycopg
+
+    from origenlab_api.v2.audience_freeze import V2AudienceFreezeRepository
+    from origenlab_api.v2.audience_freeze_routes import audience_freeze_router
+
+    app.state.audience_freeze_repository = V2AudienceFreezeRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        recontact_review_enabled=app.state.recontact_review_enabled,
+    )
+    app.include_router(audience_freeze_router)
+
+
+def _mount_campaign_planning(app: FastAPI, settings: Settings, dsn: str) -> None:
+    """Mount the planning command only behind its own switch. It schedules nothing."""
+    app.state.campaign_planning_enabled = settings.v2_campaign_planning_configured()
+    if not app.state.campaign_planning_enabled:
+        return
+
+    import psycopg
+
+    from origenlab_api.v2.campaign_planning import V2CampaignPlanningRepository
+    from origenlab_api.v2.campaign_planning_routes import campaign_planning_router
+
+    app.state.campaign_planning_repository = V2CampaignPlanningRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(campaign_planning_router)
+
+
+def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str) -> None:
+    """Mount the two campaign-draft commands only behind their own switch."""
+    app.state.campaign_drafts_enabled = settings.v2_campaign_drafts_configured()
+    if not app.state.campaign_drafts_enabled:
+        return
+
+    import psycopg
+
+    from origenlab_api.v2.campaign_draft_routes import campaign_draft_router
+    from origenlab_api.v2.campaign_drafts import V2CampaignDraftRepository
+
+    app.state.campaign_draft_repository = V2CampaignDraftRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(campaign_draft_router)
 
 
 def _secret(value: SecretStr | None) -> str | None:

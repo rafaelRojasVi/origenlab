@@ -30,260 +30,61 @@ describe("dashboard read-only policy", () => {
     expect(entries.length).toBeGreaterThan(5);
   });
 
-  // Dashboard mutation authority is intentionally split across exactly three
-  // narrow modules:
-  //
-  // 1. institutionIntel/adapter.ts:
-  //    two explicit annex-bundle POST actions (preview/import).
-  //
-  // 2. commercialOperationsClient.ts:
-  //    one shared POST transport used only by the five explicit CRM command
-  //    shapes admitted by the production Worker.
-  //
-  // 3. customerQuoteClient.ts (CRM-Q1 + CRM-Q2 + CRM-Q2B):
-  //    eight explicit quote POST commands (create quote, retry Drive
-  //    workspace provisioning, submit-for-review, request-adjustments,
-  //    approve, confirm-send, adopt-drive-folder, close) admitted by the
-  //    production Worker -- the four revision-transition commands share
-  //    one literal `method: "POST"` fetch call site (transitionCustomerQuote),
-  //    so only 5 literal POST occurrences appear in the source text (the
-  //    shared transition helper, create, retry-drive-workspace,
-  //    adopt-drive-folder, and close -- close carries an Idempotency-Key
-  //    like create/adopt, so it is its own call site, not routed through
-  //    the shared transition helper).
-  //
-  // 4. authClient.ts:
-  //    exactly one POST, to `/auth/logout`, which clears the dashboard session cookie
-  //    upstream and writes no commercial or CRM state.
-  //
+  // The dashboard records no commercial decision. Two modules may issue a mutating request:
+  //  - authClient.ts's POST to `/auth/logout`, which clears the session cookie upstream;
+  //  - marketingApi.ts's POST to exactly the four campaign commands: the two *draft* commands,
+  //    which write email copy to a draft `outbound.campaign` row, the audience *freeze*, which
+  //    writes an immutable recipient snapshot, and *planning*, which notes an intended send day
+  //    on an unsent campaign. None approves, schedules or sends anything.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
-
-  const ANNEX_MUTATION_FILE =
-    "../api/institutionIntel/adapter.ts";
-
-  const COMMERCIAL_MUTATION_FILE =
-    "../api/commercialOperationsClient.ts";
-
-  const CUSTOMER_QUOTE_MUTATION_FILE =
-    "../api/customerQuoteClient.ts";
-
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
+  const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
+  const CAMPAIGN_DRAFT_PATHS = [
+    "/v2/commands/create-campaign-draft",
+    "/v2/commands/save-campaign-draft",
+    "/v2/commands/freeze-campaign-audience",
+    "/v2/commands/set-campaign-planning",
+  ];
 
-  const ANNEX_MUTATION_ROUTES = [
-    "`/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/annex-bundle/preview`",
-    "`/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/annex-bundle/import`",
-  ] as const;
-
-  it("allows only annex and commercial-operations POST mutation modules", () => {
+  it("allows only the logout POST and the campaign-command POST", () => {
     const hits: string[] = [];
-
     for (const [path, text] of entries) {
-      const hasMutation =
-        MUTATION_METHOD.test(text) ||
-        FORBIDDEN_FETCH.test(text);
-
-      if (!hasMutation) {
-        continue;
-      }
-
-      if (
-        path !== ANNEX_MUTATION_FILE &&
-        path !== COMMERCIAL_MUTATION_FILE &&
-        path !== CUSTOMER_QUOTE_MUTATION_FILE &&
-        path !== AUTH_LOGOUT_FILE
-      ) {
-        hits.push(
-          `${path} (unsanctioned mutation module)`,
-        );
-        continue;
-      }
-
-      const methods = [
-        ...text.matchAll(
-          /method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi,
-        ),
-      ].map((match) =>
-        match[1].toUpperCase(),
-      );
-
-      if (path === ANNEX_MUTATION_FILE) {
-        if (
-          methods.length !==
-            ANNEX_MUTATION_ROUTES.length ||
-          methods.some(
-            (method) => method !== "POST",
-          )
-        ) {
-          hits.push(
-            `${path} (expected exactly ${ANNEX_MUTATION_ROUTES.length} POST mutations, found ${methods.join(", ") || "none"})`,
-          );
-        }
-
-        for (
-          const route of ANNEX_MUTATION_ROUTES
-        ) {
-          const occurrences =
-            text.split(route).length - 1;
-
-          if (occurrences !== 1) {
-            hits.push(
-              `${path} (expected sanctioned route exactly once: ${route}; found ${occurrences})`,
-            );
-          }
-        }
-
-        continue;
-      }
-
-      if (path === AUTH_LOGOUT_FILE) {
+      if (!MUTATION_METHOD.test(text) && !FORBIDDEN_FETCH.test(text)) continue;
+      if (path === CAMPAIGN_DRAFT_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
         if (methods.length !== 1 || methods[0] !== "POST") {
-          hits.push(
-            `${path} (expected exactly one POST, the logout, found ${methods.join(", ") || "none"})`,
-          );
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
         }
-        if (!text.includes('export const AUTH_LOGOUT_PATH = "/auth/logout";')) {
-          hits.push(`${path} (logout POST must target /auth/logout)`);
-        }
-        if (/X-OriginLab-Operator-Email/i.test(text)) {
-          hits.push(`${path} (browser must not inject trusted operator identity)`);
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...CAMPAIGN_DRAFT_PATHS].sort())) {
+          hits.push(`${path} (may target only ${CAMPAIGN_DRAFT_PATHS.join(" and ")}, found ${commandPaths.join(", ")})`);
         }
         continue;
       }
-
-      if (path === CUSTOMER_QUOTE_MUTATION_FILE) {
-        if (
-          methods.length !== 5 ||
-          methods.some(
-            (method) => method !== "POST",
-          )
-        ) {
-          hits.push(
-            `${path} (expected exactly 5 literal POST fetch call sites -- create, retry-drive-workspace, the shared revision-transition helper, adopt-drive-folder, and close -- found ${methods.join(", ") || "none"})`,
-          );
-        }
-
-        const requiredPathBuilders = [
-          "salesOpportunityQuotesPath",
-          "customerQuoteDriveWorkspacePath",
-          "customerQuoteSubmitForReviewPath",
-          "customerQuoteRequestAdjustmentsPath",
-          "customerQuoteApprovePath",
-          "customerQuoteConfirmSendPath",
-          "salesOpportunityAdoptDriveFolderPath",
-          "customerQuoteClosePath",
-        ];
-
-        for (const builder of requiredPathBuilders) {
-          if (!text.includes(builder)) {
-            hits.push(`${path} (missing command path builder: ${builder})`);
-          }
-        }
-
-        if (
-          /method:\s*["'](PUT|PATCH|DELETE)["']/i.test(
-            text,
-          )
-        ) {
-          hits.push(
-            `${path} (PUT/PATCH/DELETE remain forbidden)`,
-          );
-        }
-
-        if (
-          /X-OriginLab-Operator-Email/i.test(text) &&
-          !/never supplies X-OriginLab-Operator-Email/i.test(
-            text,
-          )
-        ) {
-          hits.push(
-            `${path} (browser must not inject trusted operator identity)`,
-          );
-        }
-
+      if (path !== AUTH_LOGOUT_FILE) {
+        hits.push(`${path} (unsanctioned mutation module)`);
         continue;
       }
-
-      if (
-        methods.length !== 1 ||
-        methods[0] !== "POST"
-      ) {
-        hits.push(
-          `${path} (expected one shared POST transport, found ${methods.join(", ") || "none"})`,
-        );
+      const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+      if (methods.length !== 1 || methods[0] !== "POST") {
+        hits.push(`${path} (expected exactly one POST, the logout, found ${methods.join(", ") || "none"})`);
       }
-
-      if (
-        !text.includes(
-          'operatorApiUrl("/operations/activities")',
-        )
-      ) {
-        hits.push(
-          `${path} (missing activities command route)`,
-        );
-      }
-
-      if (
-        !text.includes(
-          'operatorApiUrl("/operations/tasks")',
-        )
-      ) {
-        hits.push(
-          `${path} (missing tasks command route)`,
-        );
-      }
-
-      if (
-        !text.includes(
-          "commercialOpportunityOperatorStatePath",
-        )
-      ) {
-        hits.push(
-          `${path} (missing opportunity-state command path)`,
-        );
-      }
-
-      if (
-        !text.includes(
-          "commercialTaskTransitionPath",
-        )
-      ) {
-        hits.push(
-          `${path} (missing task-transition command path)`,
-        );
-      }
-
-      if (
-        !text.includes(
-          'action: "complete" | "cancel"',
-        )
-      ) {
-        hits.push(
-          `${path} (task transition actions are not narrowly typed)`,
-        );
-      }
-
-      if (
-        /method:\s*["'](PUT|PATCH|DELETE)["']/i.test(
-          text,
-        )
-      ) {
-        hits.push(
-          `${path} (PUT/PATCH/DELETE remain forbidden)`,
-        );
-      }
-
-      if (
-        /X-OriginLab-Operator-Email/i.test(text) &&
-        !/never supplies X-OriginLab-Operator-Email/i.test(
-          text,
-        )
-      ) {
-        hits.push(
-          `${path} (browser must not inject trusted operator identity)`,
-        );
+      if (!text.includes('export const AUTH_LOGOUT_PATH = "/auth/logout";')) {
+        hits.push(`${path} (logout POST must target /auth/logout)`);
       }
     }
+    expect(hits).toEqual([]);
+  });
 
+  it("names no V2 command outside the campaign client", () => {
+    const hits = entries
+      .filter(([path, text]) => path !== CAMPAIGN_DRAFT_FILE && /\/v2\/commands\//.test(text))
+      .map(([path]) => path);
+    expect(hits).toEqual([]);
+  });
+
+  it("never injects the trusted operator identity header from the browser", () => {
+    const hits = entries.filter(([, text]) => /X-OriginLab-Operator-Email/i.test(text)).map(([path]) => path);
     expect(hits).toEqual([]);
   });
 
@@ -324,6 +125,13 @@ describe("dashboard read-only policy", () => {
         hits.push(path);
       }
     }
+    expect(hits).toEqual([]);
+  });
+
+  it("has no send capability: no Gmail client, no send command, no Send button", () => {
+    const hits = entries
+      .filter(([, text]) => /gmail\.googleapis|googleapis\.com\/gmail|\/v2\/commands\/(?:send|approve|activate|dispatch)|>\s*Enviar(?:\s+campaña)?\s*</i.test(text))
+      .map(([path]) => path);
     expect(hits).toEqual([]);
   });
 });

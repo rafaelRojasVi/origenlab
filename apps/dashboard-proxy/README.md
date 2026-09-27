@@ -33,7 +33,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/*` (named paths only — see `src/allowlist.ts`) | V2 durable reads |
 | `/auth/google/login`, `/auth/google/callback`, `/auth/session` | Dashboard Google Workspace sign-in (see *Sign-in exceptions* below) |
 
-**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/workspace/*` and `/v2/cockpit/*` are not listed either. See `docs/OPERATIONS.md`.
+**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the six Marketing reads and the two CRM card reads below are not listed either. See `docs/OPERATIONS.md`.
 
 **POST** (the only human write path — trusted operator identity, `Idempotency-Key`, optimistic concurrency; each ID format is regex-constrained, no wildcard route):
 
@@ -46,8 +46,74 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/operations/sales-opportunities/sales_<32hex>/quotes`, `/operations/customer-quotes/quote_<32hex>/drive-workspace` | CRM-Q1 customer-quote create + Drive workspace retry |
 | `/operator/procurement/tenders/<code>/annex-bundle/[preview\|import]` | Explicit tender annex evidence upload |
 | `/auth/logout` | Clears the dashboard session cookie; writes no commercial state |
+| `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
+
+## CRM card reads
+
+Two exact GET paths (`src/allowlist.ts`), nothing under or beside them:
+
+| Method | Upstream path | Upstream behaviour |
+|---|---|---|
+| GET | `/v2/workspace/providers` | the six catalogue brands as the supplier directory, then the machine-detected candidates (hints only, never promoted) |
+| GET | `/v2/workspace/equipment-interests` | observed equipment interests per line, institution and destination; CRM people apart from address-only evidence |
+
+Same guarantees as every V2 read: the session cookie is the only cookie forwarded, a
+browser-sent operator header is dropped (the Cloudflare Access email replaces it), addresses are
+masked upstream for `viewer`, and masked destinations carry only an opaque keyed `address_ref`
+(an HMAC scoped to the API, never a plain hash of the address). Any other method is **405**;
+a neighbouring path is **403** `path_not_allowed`.
+
+## Marketing commands
+
+Exact paths only (`src/allowlist.ts`; UUIDs lower-case):
+
+| Method | Upstream path | Upstream behaviour |
+|---|---|---|
+| GET | `/v2/workspace/marketing` | campaigns (with planning, origin, real send batches), contact-control counts, `authoring.{drafts_enabled,freeze_enabled,planning_enabled}` |
+| GET | `/v2/workspace/marketing/taxonomy` | the six brands, six families, models and verified images |
+| GET | `/v2/workspace/marketing/audience` | people and institutions with evidenced interest; eligibility separate |
+| GET | `/v2/workspace/marketing/campaigns/<uuid>` | one campaign's content and freeze facts |
+| GET | `/v2/workspace/marketing/campaigns/<uuid>/freeze-preview` | the snapshot a freeze would write, every reason, what stops it; writes nothing |
+| GET | `/v2/workspace/marketing/campaigns/<uuid>/recipients` | a frozen campaign's recipient snapshot |
+| GET | `/v2/workspace/marketing/campaigns/<uuid>/archive` | the frozen (sent) content, only when its fingerprint recomputes; real send batches; «not archived» otherwise |
+| POST | `/v2/commands/create-campaign-draft` | new `draft` row; event `campaign.draft_created` |
+| POST | `/v2/commands/save-campaign-draft` | compare-and-set on `expected_version`; event `campaign.draft_content_saved` per change |
+| POST | `/v2/commands/freeze-campaign-audience` | `confirmed: true`, `expected_version`, `expected_preview_sha256`; write-once snapshot in `outbound.campaign` + `outbound.campaign_recipient`; event `campaign.audience_frozen`; refused `audience_changed` if the audience moved since the preview |
+| POST | `/v2/commands/set-campaign-planning` | `expected_planning_version`; set, change or clear an unsent campaign's internal planned day; events `campaign.planning_set` / `campaign.planning_cleared`; body limit 4 KB. Schedules nothing |
+
+**Roles.** Reads: any active operator; contact addresses are masked upstream for `viewer`
+(`contact_redaction.py`). Commands: an active `sales` or `admin` operator only, resolved
+upstream from the verified identity (the dashboard session, or the Cloudflare Access email
+this Worker rewrites into the operator header — a browser-sent operator header is always
+dropped). Nothing in a body names the actor.
+
+**Session and CSRF.** The session cookie is `__Host-origenlab_session` (HttpOnly, Secure,
+SameSite=Lax); only the two sign-in cookies ever reach upstream. For the four commands the
+Worker also refuses, before forwarding: a missing or unlisted `Origin` (403
+`origin_not_allowed`), `Sec-Fetch-Site: cross-site` (403 `cross_site_request`), any
+`Content-Type` other than `application/json` (415 — a cross-site form cannot send one without
+a preflight, which is answered only for listed origins), a body over 3.5 MB (4 KB for `set-campaign-planning`) declared or actual
+(413). CORS advertises `POST` and `Idempotency-Key` only on these and the V1 commercial
+command paths.
+
+**Idempotency.** `Idempotency-Key` is required and must match `^[A-Za-z0-9._:-]{8,128}$` (400
+`idempotency_key_required`); it is forwarded byte-for-byte. Upstream the key is one
+`platform.command_receipt` per operator: a replay returns the first answer with
+`replayed: true`, the same key with a different body is refused.
+
+**Audit.** Every command writes exactly one `crm.domain_event` per change in the same
+transaction as the change (`campaign.draft_created`, `campaign.draft_content_saved`,
+`campaign.audience_frozen`, with operator, receipt, versions and fingerprints). The freeze
+event records criteria, policy version, preview/content/audience fingerprints, counts, the
+review decisions and the send blockers.
+
+**Upstream switches.** The commands exist only where the API runs with
+`ORIGENLAB_V2_CAMPAIGN_DRAFTS_ENABLED` / `ORIGENLAB_V2_AUDIENCE_FREEZE_ENABLED`; elsewhere they
+are 404 upstream. **Sending is blocked**: no send, approve, activate or recontact-override
+command exists, and BAJA/unsubscribe processing is unsupported until an inbound-reply
+processor and a durable suppression ledger are proven.
 
 ## Response hardening
 

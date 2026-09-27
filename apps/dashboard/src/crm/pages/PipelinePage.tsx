@@ -4,11 +4,11 @@ import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import {
   BOARD_COLUMNS,
   ORIGIN_LABEL,
-  STAGE_LABEL,
-  STAGE_TONE,
   STATUS_LABEL,
   byLatestSent,
   matchesQuery,
+  stageBasis,
+  stageDisplay,
 } from "../stage";
 import {
   Badge,
@@ -26,6 +26,8 @@ import {
   WRITE_DISABLED_REASON,
   fmtDate,
   initials,
+  LocalDriveLink,
+  SuggestedTag,
 } from "../ui";
 import { useResource } from "../useResource";
 import { splitAddress } from "../address";
@@ -76,6 +78,7 @@ function Pipeline({
   const quotes = items.reduce((n, i) => n + i.quotes.length, 0);
   const revisions = items.reduce((n, i) => n + i.revision_count, 0);
   const withDrive = items.filter((i) => i.drive_folder).length;
+  const historical = items.filter((i) => stageBasis(i) === "historical_import").length;
   const open = items.find((i) => i.opportunity_id === openId) ?? null;
 
   if (items.length === 0) {
@@ -93,6 +96,14 @@ function Pipeline({
           { label: "Bloqueadas", value: counts.blocked, tone: counts.blocked ? "bad" : undefined },
         ]}
       />
+      {historical > 0 ? (
+        <p className="rounded-md border border-line bg-canvas-sunken/70 px-3 py-2 text-xs leading-5 text-ink-muted" data-testid="historical-stage-notice">
+          <strong className="font-semibold text-ink">{historical} de {items.length}</strong> oportunidades muestran «Cotización enviada ·
+          histórico»: la importación histórica fijó su etapa porque encontró la cotización enviada. Eso es un hecho del pasado, no el
+          estado comercial actual, que nadie ha verificado todavía. Los enlaces de Drive vienen del registro local del archivo, no de
+          una consulta en vivo.
+        </p>
+      ) : null}
       {!driveConfigured ? (
         <p className="rounded-md border border-line bg-canvas-sunken/70 px-3 py-2 text-xs text-ink-muted">
           Los registros del archivo de Drive no están cargados en este API: las tarjetas muestran el CRM sin enlaces de Drive.
@@ -189,6 +200,7 @@ export function OpportunityCard({
   const latest = card.latest_revision;
   const blocking = card.attention.find((a) => a.blocking);
   const status = STATUS_LABEL[card.status];
+  const stage = stageDisplay(card);
   // The quote of the latest revision leads; the others follow as "+N".
   const numbers = latest
     ? [latest.quote_number, ...card.quote_numbers.filter((n) => n !== latest.quote_number)]
@@ -206,8 +218,8 @@ export function OpportunityCard({
           {numbers.length > 1 ? <span className="font-normal text-ink-faint"> +{numbers.length - 1}</span> : null}
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
-          <Badge tone={STAGE_TONE[card.stage] ?? "neutral"} glyph={false}>
-            {STAGE_LABEL[card.stage] ?? card.stage}
+          <Badge tone={stage.tone} glyph={false} title={stage.title}>
+            {stage.label}
           </Badge>
           {card.status !== "ok" ? <Badge tone={status.tone}>{status.label}</Badge> : null}
         </span>
@@ -268,9 +280,10 @@ export function OpportunityCard({
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-good hover:underline"
-              aria-label={`Abrir carpeta de Drive de ${card.organization?.name ?? card.title}`}
+              aria-label={`Abrir carpeta de Drive de ${card.organization?.name ?? card.title} (enlace de registro local)`}
+              title="Enlace tomado del registro local del archivo de Drive; no se consultó Drive en vivo."
             >
-              <Dot ok /> Drive
+              <Dot ok /> Drive <span className="text-[9px] font-semibold uppercase text-ink-faint">local</span>
             </a>
           ) : (
             <span className="inline-flex items-center gap-1 font-medium text-warn">
@@ -303,8 +316,8 @@ export function OpportunityCard({
       ) : null}
 
       <div className="mt-auto flex items-center gap-2 border-t border-line/70 pt-1.5 text-[11px] leading-4 [margin-top:0.5rem]">
-        <p className="min-w-0 flex-1 truncate text-ink-muted" title={`${card.next_action.text} (sugerido)`}>
-          <span className="text-ink-faint">Siguiente · </span>
+        <p className="min-w-0 flex-1 truncate text-ink-muted" title={`${card.next_action.text} — sugerencia, no es una tarea del CRM`}>
+          <span className="text-ink-faint">Sugerencia · </span>
           {card.next_action.text}
         </p>
         <span
@@ -348,9 +361,9 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
       </p>
       <p className="mt-0.5 flex flex-wrap gap-x-3 text-[11px]">
         {rev.drive ? (
-          <ExternalLink href={rev.drive.file_url} label={`Abrir PDF r${rev.revision_no} en Drive`}>
+          <LocalDriveLink href={rev.drive.file_url} label={`Abrir PDF r${rev.revision_no} en Drive`}>
             PDF en Drive
-          </ExternalLink>
+          </LocalDriveLink>
         ) : (
           <span className="text-warn">PDF no archivado en Drive</span>
         )}
@@ -374,6 +387,8 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
 function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null; onClose: () => void }) {
   if (!card) return null;
   const status = STATUS_LABEL[card.status];
+  const stage = stageDisplay(card);
+  const historical = stageBasis(card) === "historical_import";
   return (
     <Drawer
       open
@@ -386,9 +401,14 @@ function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null
       }
     >
       <div className="flex flex-wrap items-center gap-1.5">
-        <Badge tone={STAGE_TONE[card.stage] ?? "neutral"} glyph={false}>
-          {STAGE_LABEL[card.stage] ?? card.stage}
+        <Badge tone={stage.tone} glyph={false} title={stage.title}>
+          {stage.label}
         </Badge>
+        {historical ? (
+          <Badge tone="warn" title="Ningún operador ha confirmado en el CRM el estado actual de este caso.">
+            Estado actual sin verificar
+          </Badge>
+        ) : null}
         <Badge tone={status.tone}>{status.label}</Badge>
         {card.organization?.confirmation === "machine_proposed" ? (
           <Badge tone="warn" title="La institución fue propuesta por máquina y no la ha confirmado un operador">
@@ -398,7 +418,7 @@ function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null
         <span className="text-[11px] text-ink-faint">Actualizada {fmtDate(card.updated_at)}</span>
       </div>
 
-      <Section title="Siguiente paso">
+      <Section title="Siguiente paso sugerido" aside={<SuggestedTag />}>
         <p className="text-[13px] text-ink">{card.next_action.text}</p>
         <p className="mt-0.5 text-[11px] text-ink-faint">Sugerido a partir del estado del caso — el CRM no tiene tareas registradas.</p>
       </Section>
@@ -450,9 +470,9 @@ function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null
         aside={
           card.drive_folder ? (
             <span className="text-xs">
-              <ExternalLink href={card.drive_folder.url} label="Abrir carpeta del caso en Drive">
+              <LocalDriveLink href={card.drive_folder.url} label="Abrir carpeta del caso en Drive">
                 Carpeta del caso
-              </ExternalLink>
+              </LocalDriveLink>
             </span>
           ) : null
         }

@@ -3,7 +3,7 @@
 Every code here appears in ``campaign_recipient_exclusion_reasons_vocabulary``
 (``supabase/migrations/20260908120000_slice0_outbound_campaign_content_criteria_exclusions.sql``).
 The two lists are kept identical by ``tests/outbound_v2/test_reasons.py``, which reads the
-migration — a code the database would reject must never reach a freeze plan.
+migration — a code the database would reject must never reach a preview.
 
 Seven codes are the original Slice 0 vocabulary; the rest are the reconciliation of
 ``candidate_export_gate`` and ``outbound_campaign_gate`` onto it.
@@ -57,10 +57,4 @@ EXCLUSION_VOCABULARY: frozenset[str] = frozenset(
         REASON_INVALID_ADDRESS,
         REASON_ALREADY_IN_AUDIENCE,
     }
-)
-
-#: Reasons a recontact override may clear (WORKFLOWS.md §W12). A block, a policy rule or a
-#: malformed address is never overridable — an override buys another contact, not a bypass.
-OVERRIDABLE_REASONS: frozenset[str] = frozenset(
-    {REASON_PRIOR_CONTACT, REASON_PRIOR_REPLY, REASON_COOLDOWN}
 )

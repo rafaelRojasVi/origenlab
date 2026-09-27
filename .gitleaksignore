@@ -34,3 +34,15 @@
 # present. Keep this suppression fingerprint-specific so unrelated findings
 # in this file or from the same generic-api-key rule continue to fail CI.
 fb0eb35c9af4bafe3eb94dfb4fb5e5fae9029b6c:apps/api/tests/test_drive_preflight.py:generic-api-key:4
+
+# CRM Marketing proxy tests (feat/crm-marketing-campaigns-v1): synthetic
+# Idempotency-Key header values (UUID-shaped fixtures such as
+# "9b1c7d2e-4f3a-..." and "plan-9b1c7d2e-...") flagged by generic-api-key.
+# They are request-dedup tokens in test requests, not credentials.
+# Fingerprint-specific: any other finding in this file must still fail.
+937ac5451d02ee252fda4e68626e303e480f4f8b:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1467
+937ac5451d02ee252fda4e68626e303e480f4f8b:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1531
+3f2a2539fa620c42c2e9939dac88f29a932859e5:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1596
+1c5ef20ba203ffb918f5b61966fe8471613995b9:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1558
+1c5ef20ba203ffb918f5b61966fe8471613995b9:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1584
+1c5ef20ba203ffb918f5b61966fe8471613995b9:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1595

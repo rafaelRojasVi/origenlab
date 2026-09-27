@@ -2,6 +2,7 @@
 
 import {
   isAllowedCommercialOperationsPostPath,
+  isAllowedMarketingCommandPostPath,
   isAllowedPostPath,
   stripApiPrefix,
 } from "./allowlist";
@@ -60,7 +61,8 @@ export function applyCorsHeaders(request: Request, headers: Headers): void {
 
   const commercialCommand =
     upstreamPath !== null &&
-    isAllowedCommercialOperationsPostPath(upstreamPath);
+    (isAllowedCommercialOperationsPostPath(upstreamPath) ||
+      isAllowedMarketingCommandPostPath(upstreamPath));
 
   headers.set(
     "Access-Control-Allow-Headers",

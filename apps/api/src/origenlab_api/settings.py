@@ -204,6 +204,36 @@ class Settings(BaseSettings):
     it off the command router is absent entirely and every /v2/commands/* path is a 404.
     """
     v2_commands_enabled: bool = False
+    """Mount POST /v2/commands/{create,save}-campaign-draft (writes outbound.campaign drafts).
+
+    Default **false** and separate from `v2_commands_enabled`: writing email copy and recording
+    commercial decisions are different permissions. Neither switch can freeze an audience,
+    approve or send a campaign.
+    """
+    v2_campaign_drafts_enabled: bool = False
+    """Mount POST /v2/commands/freeze-campaign-audience (WORKFLOWS.md §W4 step 2).
+
+    Default **false** and separate from the drafts switch: committing an immutable recipient
+    snapshot is a different decision from writing copy. A freeze approves and sends nothing;
+    no send command exists in this API.
+    """
+    v2_audience_freeze_enabled: bool = False
+    """W12 recontact review inside the audience freeze (WORKFLOWS.md §W12).
+
+    Default **false**, and effective only with the freeze switch on. Off, a permanent
+    `prior_contact` is an exclusion reason nothing can lift (policy `…v1`). On, a destination
+    whose only reason is `prior_contact` becomes review_required and a sales/admin operator may
+    approve recontact for it with a mandatory note, frozen with the snapshot (policy `…v2-w12`).
+    It never lifts a block, an unsubscribe, a supplier, an invalid destination, a duplicate or an
+    active cooldown, and it sends nothing.
+    """
+    v2_recontact_review_enabled: bool = False
+    """Mount POST /v2/commands/set-campaign-planning (internal planned send day of an unsent campaign).
+
+    Default **false** and separate from the drafts and freeze switches. Planning is calendar
+    metadata: it approves, freezes, schedules, enqueues and sends nothing, and nothing reads it.
+    """
+    v2_campaign_planning_enabled: bool = False
     """Local review only: a quote_crm_import dry-run directory (intent.json + intent.sha256).
 
     When set, GET /v2/cockpit/import-review compares that plan with the V2 database. The plan is
@@ -352,6 +382,18 @@ class Settings(BaseSettings):
         letting it record durable human decisions is a separate one.
         """
         return self.v2_configured() and bool(self.v2_commands_enabled)
+
+    def v2_campaign_drafts_configured(self) -> bool:
+        return self.v2_configured() and bool(self.v2_campaign_drafts_enabled)
+
+    def v2_campaign_planning_configured(self) -> bool:
+        return self.v2_configured() and bool(self.v2_campaign_planning_enabled)
+
+    def v2_audience_freeze_configured(self) -> bool:
+        return self.v2_configured() and bool(self.v2_audience_freeze_enabled)
+
+    def v2_recontact_review_configured(self) -> bool:
+        return self.v2_audience_freeze_configured() and bool(self.v2_recontact_review_enabled)
 
     def require_v2_database_url(self) -> str:
         url = (self.v2_database_url or "").strip()

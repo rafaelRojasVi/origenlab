@@ -1,6 +1,6 @@
 """The safety properties of the campaign package, pinned as tests rather than as prose.
 
-The three functions in ``outbound_v2`` prepare an audience. They must be structurally
+The two functions in ``outbound_v2`` prepare an audience. They must be structurally
 incapable of sending: no provider import, no send entry point, no embedded sender identity,
 no I/O at all. These tests assert that from the package's own source and surface, so a later
 edit that quietly adds a provider call fails here instead of at a mailbox.
@@ -22,22 +22,15 @@ import pytest
 from origenlab_email_pipeline import outbound_v2
 from origenlab_email_pipeline.outbound_v2 import (
     AudienceCriteria,
-    CampaignContent,
-    CampaignDraft,
     CampaignPolicy,
     ContactControlIndex,
-    FreezeRefused,
     RecipientCandidate,
-    RecontactOverride,
     build_audience_preview,
-    freeze_campaign,
 )
 from origenlab_email_pipeline.outbound_v2.reasons import REASON_BLOCK
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
 CRITERIA = AudienceCriteria(source_lane="lead_master")
-CONTENT = CampaignContent(subject="Equipamiento de laboratorio", body_text="Hola")
-DRAFT = CampaignDraft(campaign_id="camp-1", status="draft", version=3, max_sends=100)
 
 PACKAGE_DIR = pathlib.Path(outbound_v2.__file__).resolve().parent
 SOURCES = sorted(PACKAGE_DIR.glob("*.py"))
@@ -53,18 +46,6 @@ def _preview(candidates, controls=None, policy=None):
     )
 
 
-def _freeze(preview=None, campaign=DRAFT):
-    return freeze_campaign(
-        campaign=campaign,
-        preview=preview if preview is not None else _preview(
-            [RecipientCandidate(address_norm="a@uni.example")]
-        ),
-        content=CONTENT,
-        criteria=CRITERIA,
-        operator_id="op-1",
-        now=NOW,
-    )
-
 
 # ── no send path can exist here ─────────────────────────────────────────────────────────
 
@@ -72,6 +53,43 @@ def _freeze(preview=None, campaign=DRAFT):
 def test_the_package_has_sources_to_inspect() -> None:
     """Guards the three source-level tests below against silently matching nothing."""
     assert len(SOURCES) >= 5, SOURCES
+
+
+def test_the_package_holds_no_second_freeze() -> None:
+    """The CRM command ``freeze-campaign-audience`` (apps/api) is the one freeze.
+
+    A pure ``freeze_campaign`` lived here with no caller and contradicted it: no preheader in
+    the content fingerprint, and "editing a frozen campaign returns it to draft", which the
+    database refuses. It was deleted; neither a module nor an export may bring it back.
+    """
+    assert not (PACKAGE_DIR / "freeze.py").exists()
+    assert [n for n in outbound_v2.__all__ if "freeze" in n.lower() or "frozen" in n.lower()] == []
+
+
+def test_the_package_holds_no_second_recontact_override() -> None:
+    """W12 is decided inside ``freeze-campaign-audience`` (apps/api), which waives
+    ``prior_contact`` only and seals the override triple in the recipient snapshot.
+
+    A ``RecontactOverride`` type lived here with no caller outside its own tests and
+    contradicted it: it also cleared ``prior_reply`` and ``cooldown``. It was retired; neither
+    the type, the parameter nor the verdict fields may come back.
+    """
+    from origenlab_email_pipeline.outbound_v2 import audience, eligibility, reasons
+
+    assert [n for n in outbound_v2.__all__ if "overrid" in n.lower()] == []
+    for module in (eligibility, audience, reasons):
+        assert not [n for n in vars(module) if "overrid" in n.lower()], module.__name__
+    assert "override" not in inspect.signature(eligibility.evaluate_recipient_eligibility).parameters
+    assert "overrides" not in inspect.signature(audience.build_audience_preview).parameters
+    assert not [f.name for f in dataclasses.fields(eligibility.EligibilityVerdict) if "overrid" in f.name]
+    # A recipient with prior contact stays excluded: nothing in this package can waive it.
+    verdict = eligibility.evaluate_recipient_eligibility(
+        candidate=RecipientCandidate(address_norm="a@uni.example"),
+        controls=ContactControlIndex(prior_contact_addresses=frozenset({"a@uni.example"})),
+        policy=CampaignPolicy(max_sends=100, recontact_interval_days=180),
+        now=NOW,
+    )
+    assert verdict.eligible is False
 
 
 #: Anything that could perform a send, a provider call, a database write or a clock read.
@@ -135,8 +153,7 @@ def test_the_public_surface_exposes_no_send_or_dispatch_entry_point() -> None:
     offenders = [
         name
         for name in outbound_v2.__all__
-        # ``max_sends`` is a budget *ceiling* read from the campaign row, not a send verb.
-        if forbidden.search(name) and name not in {"RecipientInsert"}
+        if forbidden.search(name)
     ]
     assert offenders == [], offenders
 
@@ -152,9 +169,7 @@ def test_no_module_embeds_a_sender_identity_or_any_address_literal() -> None:
     assert offenders == [], offenders
 
 
-@pytest.mark.parametrize(
-    "cls", [CampaignContent, CampaignDraft, CampaignPolicy, AudienceCriteria]
-)
+@pytest.mark.parametrize("cls", [CampaignPolicy, AudienceCriteria])
 def test_no_campaign_dataclass_carries_a_sender_field(cls) -> None:
     """The sending mailbox is `outbound.campaign.mailbox_id`, chosen at send time, not here."""
     names = {f.name for f in dataclasses.fields(cls)}
@@ -164,117 +179,66 @@ def test_no_campaign_dataclass_carries_a_sender_field(cls) -> None:
 # ── preparation does not send, and does not write ───────────────────────────────────────
 
 
-def test_preparation_returns_intent_and_mutates_nothing() -> None:
-    """``freeze_campaign`` describes one transaction; it never performs it."""
-    before = dataclasses.replace(DRAFT)
-    plan = _freeze(campaign=DRAFT)
-    # The draft it was given is untouched — the caller's row is not advanced by planning it.
-    assert DRAFT == before
-    assert DRAFT.status == "draft"
-    # The plan is inert data: no method on it applies anything.
-    assert dataclasses.is_dataclass(plan)
-    appliers = [
-        name
-        for name, _ in inspect.getmembers(plan, callable)
-        if not name.startswith("_")
-    ]
+def _rows(preview):
+    return {r.candidate.address_norm.strip().lower(): r for r in preview.rows}
+
+
+def test_preparation_returns_inert_data() -> None:
+    """A preview describes an audience; no method on it applies anything."""
+    preview = _preview([RecipientCandidate(address_norm="a@uni.example")])
+    assert dataclasses.is_dataclass(preview)
+    appliers = [name for name, _ in inspect.getmembers(preview, callable) if not name.startswith("_")]
     assert appliers == [], appliers
 
 
-def test_a_freeze_plan_never_advances_a_campaign_past_audience_frozen() -> None:
-    """Approval and activation are separate commands; a freeze cannot reach them."""
-    assert _freeze().campaign_updates["status"] == "audience_frozen"
-
-
-def test_an_excluded_recipient_is_never_planned_as_sendable() -> None:
-    """The one structural guarantee: `excluded` and `snapshotted` are decided by the verdict."""
+def test_an_excluded_recipient_is_never_previewed_as_eligible() -> None:
+    """`excluded` and eligible are decided by the verdict, and every row is accounted for."""
     controls = ContactControlIndex(blocked_addresses=frozenset({"b@uni.example"}))
-    plan = _freeze(
-        preview=_preview(
-            [
-                RecipientCandidate(address_norm="a@uni.example"),
-                RecipientCandidate(address_norm="b@uni.example"),
-            ],
-            controls=controls,
-        )
-    )
-    rows = {r.address_norm: r for r in plan.recipient_rows}
-    assert rows["b@uni.example"].state == "excluded"
-    assert rows["b@uni.example"].exclusion_reasons == (REASON_BLOCK,)
-    assert plan.eligible_count == 1
-    # Every row is accounted for, so no recipient is silently dropped from the snapshot.
-    assert plan.eligible_count + plan.excluded_count == len(plan.recipient_rows)
-
-
-def test_an_override_cannot_make_a_suppressed_contact_sendable() -> None:
-    """An override buys another contact; it never overrules a block. Fail-closed end to end."""
-    controls = ContactControlIndex(blocked_addresses=frozenset({"a@uni.example"}))
-    preview = build_audience_preview(
-        candidates=[RecipientCandidate(address_norm="a@uni.example")],
-        criteria=CRITERIA,
+    preview = _preview(
+        [
+            RecipientCandidate(address_norm="a@uni.example"),
+            RecipientCandidate(address_norm="b@uni.example"),
+        ],
         controls=controls,
-        policy=CampaignPolicy(max_sends=100, recontact_interval_days=180),
-        now=NOW,
-        overrides={"a@uni.example": RecontactOverride(operator_id="op-1", reason="insistir")},
     )
-    plan = _freeze(preview=preview)
-    assert plan.eligible_count == 0
-    assert plan.recipient_rows[0].state == "excluded"
+    rows = _rows(preview)
+    assert not rows["b@uni.example"].verdict.eligible
+    assert rows["b@uni.example"].verdict.reasons == (REASON_BLOCK,)
+    assert preview.eligible_count == 1
+    assert preview.eligible_count + preview.excluded_count == len(preview.rows)
 
 
-# ── duplicate prevention and concurrency ────────────────────────────────────────────────
+# ── duplicate prevention ────────────────────────────────────────────────────────────────
 
 
-def test_one_row_per_address_so_no_recipient_can_be_planned_twice() -> None:
-    """`(campaign_id, address_norm)` is unique in the database; the plan never relies on that."""
-    plan = _freeze(
-        preview=_preview(
-            [
-                RecipientCandidate(address_norm="a@uni.example"),
-                RecipientCandidate(address_norm="A@Uni.Example"),
-                RecipientCandidate(address_norm="  a@uni.example  "),
-            ]
-        )
+def test_one_row_per_address_so_no_recipient_can_be_previewed_twice() -> None:
+    """`(campaign_id, address_norm)` is unique in the database; the preview never relies on that."""
+    preview = _preview(
+        [
+            RecipientCandidate(address_norm="a@uni.example"),
+            RecipientCandidate(address_norm="A@Uni.Example"),
+            RecipientCandidate(address_norm="  a@uni.example  "),
+        ]
     )
-    addresses = [r.address_norm for r in plan.recipient_rows]
-    assert addresses == ["a@uni.example"]
-    assert len(set(addresses)) == len(addresses)
+    assert len(preview.rows) == 1
+    assert preview.duplicate_addresses_dropped == 2
 
 
-def test_one_destination_per_person_survives_into_the_plan() -> None:
-    """Frequency is a property of a person, so a second address is excluded, not sent to."""
-    plan = _freeze(
-        preview=_preview(
-            [
-                RecipientCandidate(address_norm="a@uni.example", person_id="p-1"),
-                RecipientCandidate(address_norm="b@uni.example", person_id="p-1"),
-            ]
-        )
+def test_one_destination_per_person() -> None:
+    """Frequency is a property of a person, so a second address is excluded, not eligible."""
+    preview = _preview(
+        [
+            RecipientCandidate(address_norm="a@uni.example", person_id="p-1"),
+            RecipientCandidate(address_norm="b@uni.example", person_id="p-1"),
+        ]
     )
-    assert plan.eligible_count == 1
+    assert preview.eligible_count == 1
 
 
-def test_a_retry_of_the_freeze_is_refused_rather_than_duplicating_the_audience() -> None:
-    """Re-running a freeze that already succeeded cannot insert a second audience."""
-    frozen = dataclasses.replace(DRAFT, status="audience_frozen", version=4)
-    with pytest.raises(FreezeRefused, match="not 'draft'"):
-        _freeze(campaign=frozen)
-
-
-def test_two_concurrent_workers_plan_the_same_expected_version_so_one_loses() -> None:
-    """Optimistic concurrency is the transaction boundary: the second UPDATE matches no row."""
-    first = _freeze()
-    second = _freeze()
-    assert first.expected_version == second.expected_version == DRAFT.version
-    assert first.campaign_updates["version"] == DRAFT.version + 1
-    # Both plans are byte-identical, so whichever commits first is the only one that can.
-    assert first == second
-
-
-def test_the_plan_is_deterministic_for_identical_inputs() -> None:
-    """A replayed preparation produces the same snapshot, including the content fingerprint."""
+def test_the_preview_is_deterministic_for_identical_inputs() -> None:
+    """A replayed preparation produces the same verdicts and the same criteria fingerprint."""
     candidates = [
         RecipientCandidate(address_norm="a@uni.example", person_id="p-1"),
         RecipientCandidate(address_norm="noreply@uni.example"),
     ]
-    assert _freeze(preview=_preview(candidates)) == _freeze(preview=_preview(candidates))
+    assert _preview(candidates) == _preview(candidates)

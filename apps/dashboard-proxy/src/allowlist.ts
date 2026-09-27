@@ -84,6 +84,28 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // decision with its own review.
   /^\/v2\/cases$/,
   /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  // CRM Marketing reads (`apps/api` v2/crm_workspace_routes.py). Exact paths only: the
+  // campaign list, the equipment taxonomy, the interest audience, one campaign's content, the
+  // audience-freeze preview, a frozen campaign's recipient snapshot and its sent-HTML archive.
+  // Addresses in them are
+  // masked for a `viewer` upstream (contact_redaction.py). Nothing else under
+  // `/v2/workspace/*` is listed.
+  /^\/v2\/workspace\/marketing$/,
+  /^\/v2\/workspace\/marketing\/taxonomy$/,
+  /^\/v2\/workspace\/marketing\/audience$/,
+  /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/freeze-preview$/,
+  /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/recipients$/,
+  // The sent-HTML archive: a campaign's frozen content (only when its fingerprint recomputes)
+  // and its real send batches. A read; the dashboard renders the HTML sandboxed.
+  /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/archive$/,
+  // CRM card reads (`apps/api` v2/crm_workspace_routes.py): the supplier directory with its
+  // machine candidates, and the observed equipment interests per line, institution and
+  // destination. Two literal paths, GET-only upstream; addresses are masked for a `viewer`
+  // upstream and masked destinations join only by an opaque keyed `address_ref`. The rest of
+  // `/v2/workspace/*` (overview, pipeline, drive, review) stays unlisted.
+  /^\/v2\/workspace\/providers$/,
+  /^\/v2\/workspace\/equipment-interests$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to
   // these paths only.
@@ -155,6 +177,47 @@ export function isAllowedCommercialOperationsPostPath(
 }
 
 /**
+ * CRM Marketing commands: create and save a campaign draft, freeze a draft's audience into an
+ * immutable recipient snapshot, and set an unsent campaign's internal planned day. Four exact
+ * paths; none approves, schedules or sends anything, and no send, approve or activate command
+ * exists upstream to list.
+ *
+ * Upstream each requires an active `sales` or `admin` operator (resolved from the verified
+ * session or Cloudflare Access identity, never the body), an `Idempotency-Key`, and a
+ * compare-and-set `expected_version` (save, freeze); the freeze also requires `confirmed: true`
+ * and the preview fingerprint the operator was shown. Each mounts only behind its own API
+ * switch. Every request here must also pass `marketingCommandRefusal` in index.ts: an allowed
+ * `Origin`, no cross-site `Sec-Fetch-Site`, a JSON body within `marketingCommandMaxBytes(path)`,
+ * and a well-formed `Idempotency-Key` — the CSRF and replay guard for cookie sessions.
+ */
+export const MARKETING_COMMAND_POST_PATHS: readonly RegExp[] = [
+  /^\/v2\/commands\/create-campaign-draft$/,
+  /^\/v2\/commands\/save-campaign-draft$/,
+  /^\/v2\/commands\/freeze-campaign-audience$/,
+  /^\/v2\/commands\/set-campaign-planning$/,
+];
+
+/** Larger than the API's 512 kB HTML limit plus the freeze's 5,000 decisions of 500 characters. */
+export const MARKETING_COMMAND_MAX_BYTES = 3_500_000;
+
+/** A planning body is a UUID, a version, a date and a time: a few hundred bytes. */
+export const CAMPAIGN_PLANNING_MAX_BYTES = 4_096;
+
+const CAMPAIGN_PLANNING_PATH_RE = /^\/v2\/commands\/set-campaign-planning$/;
+
+/** The body limit for one marketing command path. */
+export function marketingCommandMaxBytes(pathname: string): number {
+  return CAMPAIGN_PLANNING_PATH_RE.test(pathname.split("?")[0])
+    ? CAMPAIGN_PLANNING_MAX_BYTES
+    : MARKETING_COMMAND_MAX_BYTES;
+}
+
+export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return MARKETING_COMMAND_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
+/**
  * Sign-out. Clears the session cookie upstream and writes nothing else; listed apart from
  * the commercial commands so it can never inherit their headers or be mistaken for one.
  */
@@ -168,6 +231,7 @@ export function isAllowedPostPath(pathname: string): boolean {
   return (
     isAllowedPostUploadPath(pathname) ||
     isAllowedCommercialOperationsPostPath(pathname) ||
+    isAllowedMarketingCommandPostPath(pathname) ||
     isAllowedAuthPostPath(pathname)
   );
 }

@@ -79,8 +79,6 @@ describe("allowlist", () => {
     for (const path of [
       "/v2/workspace/overview",
       "/v2/workspace/pipeline",
-      "/v2/workspace/providers",
-      "/v2/workspace/marketing",
       "/v2/workspace/drive",
       "/v2/workspace/review",
       "/v2/cockpit/kpis",
@@ -98,6 +96,70 @@ describe("allowlist", () => {
     ]) {
       expect(isAllowedUpstreamPath(path)).toBe(false);
       expect(isAllowedPostPath(path)).toBe(false);
+    }
+  });
+
+  it("forwards exactly the seven Marketing reads, GET only, and nothing near them", async () => {
+    const { isAllowedMarketingCommandPostPath } = await import("./allowlist");
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    for (const path of [
+      "/v2/workspace/marketing",
+      "/v2/workspace/marketing/taxonomy",
+      "/v2/workspace/marketing/audience",
+      `/v2/workspace/marketing/campaigns/${uuid}`,
+      `/v2/workspace/marketing/campaigns/${uuid}/freeze-preview`,
+      `/v2/workspace/marketing/campaigns/${uuid}/recipients`,
+      `/v2/workspace/marketing/campaigns/${uuid}/archive`,
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+    for (const path of [
+      "/v2/workspace/marketing/",
+      "/v2/workspace/marketing/campaigns",
+      "/v2/workspace/marketing/campaigns/not-a-uuid",
+      `/v2/workspace/marketing/campaigns/${uuid.toUpperCase()}`,
+      `/v2/workspace/marketing/campaigns/${uuid}/recipients/x`,
+      `/v2/workspace/marketing/campaigns/${uuid}/send`,
+      "/v2/workspace/marketing/audience/export",
+      `/v2/workspace/marketing/campaigns/${uuid}/archive/`,
+      `/v2/workspace/marketing/campaigns/${uuid}/archive/html`,
+      `/v2/workspace/marketing/campaigns/${uuid}/archive.html`,
+      "/v2/workspace/marketing/campaigns/archive",
+      "/v2/workspace/marketing/calendar",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+    expect(isAllowedMarketingCommandPostPath("/v2/commands/freeze-campaign-audience?x=1")).toBe(true);
+  });
+
+  it("forwards exactly the two CRM card reads, GET only, and nothing near them", () => {
+    for (const path of ["/v2/workspace/providers", "/v2/workspace/equipment-interests"]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(`${path}?x=1`), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+    for (const path of [
+      "/v2/workspace",
+      "/v2/workspace/",
+      "/v2/workspace/providers/",
+      "/v2/workspace/providers/directory",
+      "/v2/workspace/provider",
+      "/v2/workspace/providersx",
+      "/v2/workspace/Providers",
+      "/v2/workspace/equipment-interests/",
+      "/v2/workspace/equipment-interests/persons",
+      "/v2/workspace/equipment-interest",
+      "/v2/workspace/equipment_interests",
+      "/v2/workspace/equipment-interests.json",
+      "/v2/workspace/equipment-interests%2F..%2Fpipeline",
+      "/workspace/providers",
+      "/v2/providers",
+      "/v2/equipment-interests",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
     }
   });
 
@@ -1041,6 +1103,37 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/promote",
     ]) {
       expect(isAllowedPostPath(path)).toBe(false);
+    }
+  });
+
+  it("allows exactly the four Marketing commands as POST, and no send, approve, schedule or activate", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of [
+      "/v2/commands/create-campaign-draft",
+      "/v2/commands/save-campaign-draft",
+      "/v2/commands/freeze-campaign-audience",
+      "/v2/commands/set-campaign-planning",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false); // never GET-readable
+    }
+    for (const path of [
+      "/v2/commands/send-campaign",
+      "/v2/commands/approve-campaign",
+      "/v2/commands/activate-campaign",
+      "/v2/commands/dry-run-campaign",
+      "/v2/commands/grant-recontact-override",
+      "/v2/commands/freeze-campaign-audience/",
+      "/v2/commands/freeze-campaign-audience-and-send",
+      "/v2/commands/set-campaign-planning/",
+      "/v2/commands/set-campaign-planning-and-send",
+      "/v2/commands/schedule-campaign",
+      "/v2/commands/schedule-campaign-send",
+      "/v2/commands/enqueue-campaign",
+      "/v2/commands/clear-campaign-planning",
+      "/v2/commands/SET-CAMPAIGN-PLANNING",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
     }
   });
 

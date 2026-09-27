@@ -26,7 +26,7 @@ are in the request and the fourth is not — the operator comes from the verifie
 never from the body, so a caller cannot decide *as* somebody else.
 
 **The dashboard cannot reach these routes, deliberately.** `apps/dashboard-proxy` allows no
-POST under `/v2` and this change does not open it; every button in the operator workspace is
+case-command POST (only the three Marketing commands under `/v2`); every button in the operator workspace is
 still `disabled`. Building the boundary and letting a browser through it are two decisions,
 and only the first has been taken. A test in the Worker's suite names all eleven command
 paths and keeps the second one from happening by accident.

@@ -632,6 +632,37 @@ def test_production_refuses_the_dev_login_even_without_v2(monkeypatch) -> None:
         create_app()
 
 
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_production_refuses_a_missing_session_secret(monkeypatch, value) -> None:
+    _env(monkeypatch, base=PROD_BASE, production=True)
+    if value is None:
+        monkeypatch.delenv("ORIGENLAB_AUTH_SESSION_SECRET")
+    else:
+        monkeypatch.setenv("ORIGENLAB_AUTH_SESSION_SECRET", value)
+    with pytest.raises((ValueError, GoogleAuthMisconfigured), match="ORIGENLAB_AUTH_SESSION_SECRET"):
+        create_app()
+
+
+def test_production_refuses_a_missing_session_secret_under_jwks_too(monkeypatch) -> None:
+    # JWKS identity needs no cookie signer, but the address-ref key does: without the secret
+    # each worker would mint refs with its own random key and viewer joins would break.
+    _env(monkeypatch, base=PROD_BASE, production=True, google=False)
+    monkeypatch.setenv("ORIGENLAB_V2_JWKS_URL", "https://auth.example.test/.well-known/jwks.json")
+    monkeypatch.delenv("ORIGENLAB_AUTH_SESSION_SECRET")
+    with pytest.raises(ValueError, match="ORIGENLAB_AUTH_SESSION_SECRET"):
+        create_app()
+
+
+def test_outside_production_a_missing_session_secret_keeps_a_random_ref_key(monkeypatch) -> None:
+    from origenlab_api.v2 import marketing_audience
+
+    _env(monkeypatch, google=False, dev=True)
+    monkeypatch.delenv("ORIGENLAB_AUTH_SESSION_SECRET")
+    before = marketing_audience._address_ref_key
+    create_app()
+    assert marketing_audience._address_ref_key == before  # not pinned, still the random key
+
+
 def test_production_refuses_a_plain_http_public_url(monkeypatch) -> None:
     _env(monkeypatch, base=LOCAL_BASE, production=True)
     with pytest.raises(GoogleAuthMisconfigured, match="https"):

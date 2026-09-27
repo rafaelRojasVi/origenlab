@@ -1,8 +1,9 @@
 """Pure audience preview: evaluate a whole candidate set without writing anything.
 
 This is the "build audience" step of the campaign lifecycle. It runs while the campaign is
-still ``draft``, produces a per-row verdict for the operator to review, and is the input
-:func:`freeze_campaign` turns into rows. It touches no database and no clock.
+still ``draft`` and produces a per-row verdict for the operator to review. It touches no
+database and no clock, and freezes nothing — the CRM command ``freeze-campaign-audience``
+(``apps/api``) is the only freeze.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from origenlab_email_pipeline.outbound_v2.eligibility import (
     ContactControlIndex,
     EligibilityVerdict,
     RecipientCandidate,
-    RecontactOverride,
     evaluate_recipient_eligibility,
     normalize_address,
 )
@@ -56,7 +56,6 @@ def build_audience_preview(
     controls: ContactControlIndex,
     policy: CampaignPolicy,
     now: datetime,
-    overrides: Mapping[str, RecontactOverride] | None = None,
 ) -> AudiencePreview:
     """Evaluate every candidate and return the reviewable audience. Writes nothing.
 
@@ -75,17 +74,15 @@ def build_audience_preview(
     Args:
         candidates: the ranked candidate set.
         criteria: the criteria this preview was built from; its fingerprint travels with
-            the preview so a freeze can prove the two agree.
+            the preview so two previews can be compared.
         controls: contact controls and manual statuses.
         policy: the campaign's eligibility knobs, including ``max_sends``.
         now: the evaluation instant, passed through to every verdict.
-        overrides: address → operator recontact override, when any exist.
 
     Returns:
         An :class:`AudiencePreview`. ``exceeds_max_sends`` reports a budget overflow rather
         than silently truncating — trimming an audience is an operator decision.
     """
-    overrides = overrides or {}
     rows: list[PreviewRow] = []
     counts: dict[str, int] = {}
     seen_addresses: set[str] = set()
@@ -107,7 +104,6 @@ def build_audience_preview(
             controls=controls,
             policy=policy,
             now=now,
-            override=overrides.get(address) if address else None,
             already_in_audience=bool(person) and person in persons_taken,
         )
         if verdict.eligible:

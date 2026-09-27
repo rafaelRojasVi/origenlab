@@ -13,10 +13,12 @@ _ENV_EXAMPLE = _REPO_ROOT / "apps" / "email-pipeline" / ".env.example"
 _LEGACY_API_ROOT = _REPO_ROOT / "apps" / "email-pipeline" / "src" / "origenlab_api"
 _MIRROR_SMOKE = _REPO_ROOT / "apps" / "dashboard" / "scripts" / "mirror-smoke.mjs"
 _DASHBOARD_PKG = _REPO_ROOT / "apps" / "dashboard" / "package.json"
-_DASHBOARD_ACTIVE = (
-    _REPO_ROOT / "apps" / "dashboard" / "src" / "api" / "operatorClient.ts",
-    _REPO_ROOT / "apps" / "dashboard" / "src" / "api" / "mirrorCommercialClient.ts",
-    _REPO_ROOT / "apps" / "dashboard" / "src" / "pages" / "DashboardApp.tsx",
+_DASHBOARD_SRC = _REPO_ROOT / "apps" / "dashboard" / "src"
+# Entry points that must exist, so a rename cannot silently shrink the scan below to nothing.
+_DASHBOARD_ENTRY_POINTS = (
+    _DASHBOARD_SRC / "api" / "operatorClient.ts",
+    _DASHBOARD_SRC / "api" / "v2Client.ts",
+    _DASHBOARD_SRC / "pages" / "DashboardApp.tsx",
 )
 _COMMERCIAL_DEALS_MIRROR_LIST = "/mirror/commercial/deals"
 _FORBIDDEN_DASHBOARD_MIRROR_PATHS = (
@@ -66,7 +68,15 @@ def test_legacy_api_tree_removed_phase6() -> None:
 
 
 def test_active_dashboard_mirror_limited_to_commercial_deals_list() -> None:
-    for path in _DASHBOARD_ACTIVE:
+    for entry in _DASHBOARD_ENTRY_POINTS:
+        assert entry.is_file(), f"dashboard entry point missing: {entry}"
+    active = sorted(
+        path
+        for pattern in ("*.ts", "*.tsx")
+        for path in _DASHBOARD_SRC.rglob(pattern)
+        if ".test." not in path.name
+    )
+    for path in active:
         text = path.read_text(encoding="utf-8")
         for forbidden in _FORBIDDEN_DASHBOARD_MIRROR_PATHS:
             assert forbidden not in text, f"{path.name} must not reference {forbidden}"

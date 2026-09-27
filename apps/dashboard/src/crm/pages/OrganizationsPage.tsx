@@ -2,14 +2,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchV2Organizations } from "../../api/v2Client";
 import type { V2Organization, V2OrganizationFilter, V2OrganizationSegment } from "../../api/v2Types";
 import { fetchPipeline } from "../crmApi";
+import type { AudienceInterest } from "../marketing/marketingTypes";
+import {
+  EquipmentInterestsBlock,
+  EquipmentLineDrawer,
+  EquipmentLineStrip,
+  useEquipmentInterests,
+  type InterestData,
+} from "../interests/EquipmentInterests";
+import type { ResourceState } from "../useResource";
 import type { OpportunityCardData } from "../crmTypes";
 import type { CrmSection } from "../crmRoute";
-import { STAGE_LABEL } from "../stage";
+import { stageDisplay } from "../stage";
 import {
   Badge,
   Drawer,
   EmptyState,
-  ExternalLink,
+  LocalDriveLink,
   PageHeader,
   ResourceGate,
   SearchInput,
@@ -59,6 +68,13 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
     return m;
   }, [pipeline]);
   const [openId, setOpenId] = useState<string | null>(null);
+  const interests = useEquipmentInterests();
+  const [line, setLine] = useState<string | null>(null);
+  const interestsOf = (id: string) => (interests.kind === "ready" ? interests.data.byOrganization.get(id) : undefined);
+  const openLine = (familyId: string) => {
+    setOpenId(null);
+    setLine(familyId);
+  };
 
   return (
     <div className="space-y-3">
@@ -88,6 +104,7 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
         />
         <SearchInput value={q} onChange={setQ} label="Buscar organizaciones" placeholder="Nombre de la institución…" />
       </div>
+      <EquipmentLineStrip state={interests} onSelectLine={openLine} />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} cards />}>
         {(page) => {
           const open = page.items.find((o) => o.organization_id === openId) ?? null;
@@ -112,7 +129,16 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
               ) : (
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
                   {page.items.map((o, i) => (
-                    <OrgCard key={o.organization_id} org={o} index={i} cases={cardsByOrg.get(o.organization_id) ?? []} onOpen={setOpenId} />
+                    <OrgCard
+                      key={o.organization_id}
+                      org={o}
+                      index={i}
+                      cases={cardsByOrg.get(o.organization_id) ?? []}
+                      onOpen={setOpenId}
+                      interestState={interests}
+                      interests={interestsOf(o.organization_id)}
+                      onSelectLine={openLine}
+                    />
                   ))}
                 </div>
               )}
@@ -121,13 +147,28 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
                   Mostrando {page.items.length} de {fmtInt(page.total)} — afina la búsqueda para ver otras.
                 </p>
               ) : null}
-              <OrgDrawer org={open} cases={open ? cardsByOrg.get(open.organization_id) ?? [] : []} onClose={() => setOpenId(null)} navigate={navigate} />
+              <OrgDrawer
+                org={open}
+                cases={open ? cardsByOrg.get(open.organization_id) ?? [] : []}
+                onClose={() => setOpenId(null)}
+                navigate={navigate}
+                interestState={interests}
+                interests={open ? interestsOf(open.organization_id) : undefined}
+                onSelectLine={openLine}
+              />
             </>
           );
         }}
       </ResourceGate>
+      <EquipmentLineDrawer state={interests} familyId={line} onClose={() => setLine(null)} />
     </div>
   );
+}
+
+interface InterestProps {
+  interestState: ResourceState<InterestData>;
+  interests: AudienceInterest[] | undefined;
+  onSelectLine: (familyId: string) => void;
 }
 
 function OrgCard({
@@ -135,12 +176,15 @@ function OrgCard({
   index,
   cases,
   onOpen,
+  interestState,
+  interests,
+  onSelectLine,
 }: {
   org: V2Organization;
   index: number;
   cases: OpportunityCardData[];
   onOpen: (id: string) => void;
-}) {
+} & InterestProps) {
   const quotes = cases.reduce((n, c) => n + c.quotes.length, 0);
   const lastSent = cases.map((c) => c.latest_revision?.sent_at ?? "").sort().at(-1) || null;
   return (
@@ -191,6 +235,9 @@ function OrgCard({
           {org.contact_point_count > 0 ? `${org.contact_point_count} direcciones` : "Sin direcciones vinculadas"} ·{" "}
           {org.confirmed_people_count > 0 ? `${org.confirmed_people_count} personas` : "sin personas registradas"}
         </p>
+        <div className="mt-2 border-t border-line/70 pt-1.5">
+          <EquipmentInterestsBlock state={interestState} interests={interests} onSelectLine={onSelectLine} compact />
+        </div>
       </div>
     </article>
   );
@@ -201,12 +248,15 @@ function OrgDrawer({
   cases,
   onClose,
   navigate,
+  interestState,
+  interests,
+  onSelectLine,
 }: {
   org: V2Organization | null;
   cases: OpportunityCardData[];
   onClose: () => void;
   navigate: (s: CrmSection, id?: string) => void;
-}) {
+} & InterestProps) {
   if (!org) return null;
   const roles: [string, number][] = [
     ["Solicitante", org.cases_as_requesting_institution],
@@ -247,18 +297,21 @@ function OrgDrawer({
                   className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-canvas-sunken/50"
                 >
                   <span className="w-28 shrink-0 truncate text-xs font-semibold tabular-nums">{c.quote_numbers.join(", ") || "—"}</span>
-                  <span className="min-w-0 flex-1 truncate text-xs text-ink-muted">{STAGE_LABEL[c.stage] ?? c.stage}</span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-ink-muted">{stageDisplay(c).label}</span>
                   <span className="text-[11px] text-ink-faint">{fmtDate(c.latest_revision?.sent_at)}</span>
                 </button>
                 {c.drive_folder ? (
                   <p className="px-2.5 pb-2 text-[11px]">
-                    <ExternalLink href={c.drive_folder.url}>Carpeta en Drive</ExternalLink>
+                    <LocalDriveLink href={c.drive_folder.url}>Carpeta en Drive</LocalDriveLink>
                   </p>
                 ) : null}
               </li>
             ))}
           </ul>
         )}
+      </Section>
+      <Section title="Intereses observados">
+        <EquipmentInterestsBlock state={interestState} interests={interests} onSelectLine={onSelectLine} heading={false} />
       </Section>
       <Section title="Contacto">
         <p className="text-xs text-ink-muted">

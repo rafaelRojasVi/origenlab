@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
-
-/** The CRM workspace lives under `#/crm/<section>[/<id>]`, beside the V1 operator panel. */
+/** The CRM lives under `#/crm/<section>[/<id>]`; `shellRoute.ts` owns the hash listener. */
 export type CrmSection =
   | "resumen"
   | "oportunidades"
@@ -55,28 +53,4 @@ export function parseCrmHash(hash: string): CrmRoute {
 
 export function crmHash(section: CrmSection, id?: string | null): string {
   return `#/crm/${section}${id ? `/${id}` : ""}`;
-}
-
-export function useCrmRoute(): [CrmRoute, (section: CrmSection, id?: string | null) => void] {
-  const [route, setRoute] = useState<CrmRoute>(() => parseCrmHash(window.location.hash));
-  useEffect(() => {
-    const onHash = () => setRoute(parseCrmHash(window.location.hash));
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-  const navigate = useCallback((section: CrmSection, id?: string | null) => {
-    window.location.hash = crmHash(section, id);
-    window.scrollTo?.({ top: 0 });
-  }, []);
-  return [route, navigate];
-}
-
-export function useIsCrmHash(): boolean {
-  const [crm, setCrm] = useState(() => typeof window !== "undefined" && isCrmHash(window.location.hash));
-  useEffect(() => {
-    const onHash = () => setCrm(isCrmHash(window.location.hash));
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-  return crm;
 }

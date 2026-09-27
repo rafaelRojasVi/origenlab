@@ -1451,3 +1451,297 @@ describe("CRM-2 sales-opportunity lifecycle proxy", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("Marketing commands (draft create/save, audience freeze)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const FREEZE = "https://proxy.test/api/v2/commands/freeze-campaign-audience";
+  const good = (extra: Record<string, string> = {}, body = JSON.stringify({ confirmed: true })) =>
+    requestWithOrigin(FREEZE, {
+      method: "POST",
+      body,
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "9b1c7d2e-4f3a-4c1b-8e2d-1a2b3c4d5e6f",
+        "Sec-Fetch-Site": "same-site",
+        Cookie: "__Host-origenlab_session=s1; CF_Authorization=leak",
+        ...extra,
+      },
+    });
+
+  it("forwards a same-site JSON command with its key and only the session cookie", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(good(), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe("/v2/commands/freeze-campaign-audience");
+    expect(upstream.method).toBe("POST");
+    expect(upstream.headers.get("Idempotency-Key")).toBe("9b1c7d2e-4f3a-4c1b-8e2d-1a2b3c4d5e6f");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+    expect(await upstream.text()).toBe(JSON.stringify({ confirmed: true }));
+  });
+
+  it.each([
+    ["no Origin", good({}), { origin: "" }, 403, "origin_not_allowed"],
+    ["a foreign Origin", good({}), { origin: "https://evil.test" }, 403, "origin_not_allowed"],
+    ["a cross-site fetch", good({ "Sec-Fetch-Site": "cross-site" }), {}, 403, "cross_site_request"],
+    ["a form post", good({ "Content-Type": "application/x-www-form-urlencoded" }), {}, 415, "unsupported_media_type"],
+    ["text/plain", good({ "Content-Type": "text/plain" }), {}, 415, "unsupported_media_type"],
+    ["no key", good({ "Idempotency-Key": "" }), {}, 400, "idempotency_key_required"],
+    ["a malformed key", good({ "Idempotency-Key": "short" }), {}, 400, "idempotency_key_required"],
+    ["a declared oversize body", good({ "Content-Length": "9999999" }), {}, 413, "payload_too_large"],
+  ])("refuses %s before anything is forwarded", async (_label, base, over, status, code) => {
+    stubUpstreamFetch();
+    const headers = new Headers(base.headers);
+    if ((over as { origin?: string }).origin !== undefined) {
+      const origin = (over as { origin: string }).origin;
+      if (origin) headers.set("Origin", origin);
+      else headers.delete("Origin");
+    }
+    const req = new Request(base.url, { method: "POST", headers, body: JSON.stringify({ confirmed: true }) });
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: { code } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("refuses an actual body larger than the limit even when Content-Length understates it", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(good({}, "x".repeat(3_500_001)), TEST_ENV);
+    expect(res.status).toBe(413);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("advertises POST and Idempotency-Key on the preflight for allowed origins only", async () => {
+    const pre = await handleRequest(requestWithOrigin(FREEZE, { method: "OPTIONS" }), TEST_ENV);
+    expect(pre.headers.get("Access-Control-Allow-Methods")).toContain("POST");
+    expect(pre.headers.get("Access-Control-Allow-Headers")).toContain("Idempotency-Key");
+    const foreign = await handleRequest(requestWithOrigin(FREEZE, { method: "OPTIONS", origin: "https://evil.test" }), TEST_ENV);
+    expect(foreign.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
+  it("does not let the Marketing reads accept a write", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(
+      requestWithOrigin("https://proxy.test/api/v2/workspace/marketing", {
+        method: "POST",
+        body: "{}",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "9b1c7d2e-4f3a-4c1b" },
+      }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(405);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});
+
+describe("Campaign planning command and the sent-HTML archive read", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const PLAN = "https://proxy.test/api/v2/commands/set-campaign-planning";
+  const BODY = JSON.stringify({
+    campaign_id: "96301691-af05-41ea-82e3-05f5fae40837",
+    expected_planning_version: 0,
+    planned_for_date: "2027-03-14",
+    planned_for_time: "09:30",
+  });
+  const plan = (extra: Record<string, string> = {}, body = BODY, method = "POST") =>
+    requestWithOrigin(PLAN, {
+      method,
+      body: method === "GET" || method === "HEAD" ? undefined : body,
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "plan-9b1c7d2e-4f3a-4c1b-8e2d",
+        "Sec-Fetch-Site": "same-origin",
+        Cookie: "__Host-origenlab_session=s1; CF_Authorization=leak",
+        ...extra,
+      },
+    });
+
+  it("forwards a same-origin JSON planning command with its key and only the session cookie", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(plan(), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe("/v2/commands/set-campaign-planning");
+    expect(upstream.method).toBe("POST");
+    expect(upstream.headers.get("Idempotency-Key")).toBe("plan-9b1c7d2e-4f3a-4c1b-8e2d");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+    expect(await upstream.text()).toBe(BODY);
+  });
+
+  it.each([
+    [
+      "a foreign Origin",
+      requestWithOrigin(PLAN, {
+        method: "POST",
+        body: BODY,
+        origin: "https://evil.test",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "plan-9b1c7d2e-4f3a-4c1b-8e2d" },
+      }),
+      403,
+      "origin_not_allowed",
+    ],
+    [
+      "no Origin",
+      requestWithOrigin(PLAN, {
+        method: "POST",
+        body: BODY,
+        origin: "",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "plan-9b1c7d2e-4f3a-4c1b-8e2d" },
+      }),
+      403,
+      "origin_not_allowed",
+    ],
+    ["a cross-site fetch", plan({ "Sec-Fetch-Site": "cross-site" }), 403, "cross_site_request"],
+    ["a form post", plan({ "Content-Type": "application/x-www-form-urlencoded" }), 415, "unsupported_media_type"],
+    ["no key", plan({ "Idempotency-Key": "" }), 400, "idempotency_key_required"],
+    ["a declared body over 4 kB", plan({ "Content-Length": "4097" }), 413, "payload_too_large"],
+  ])("refuses %s before anything is forwarded", async (_label, req, status, code) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: { code } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("refuses a planning body over 4 kB even when Content-Length understates it", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(plan({}, JSON.stringify({ pad: "x".repeat(5_000) })), TEST_ENV);
+    expect(res.status).toBe(413);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it.each(["PATCH", "PUT", "DELETE"])("refuses %s on the planning path", async (method) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(plan({}, BODY, method), TEST_ENV);
+    expect(res.status).toBe(405);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("does not make the planning command GET-readable", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(plan({}, BODY, "GET"), TEST_ENV);
+    expect(res.status).toBe(403);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("keeps the 3.5 MB limit for the draft commands", async () => {
+    stubUpstreamFetch();
+    const req = requestWithOrigin("https://proxy.test/api/v2/commands/save-campaign-draft", {
+      method: "POST",
+      body: JSON.stringify({ body_html: "x".repeat(10_000) }),
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "draft-9b1c7d2e-4f3a" },
+    });
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(200);
+  });
+
+  it("forwards the archive read as GET and refuses a write to it", async () => {
+    stubUpstreamFetch();
+    const archive = "https://proxy.test/api/v2/workspace/marketing/campaigns/96301691-af05-41ea-82e3-05f5fae40837/archive";
+    const read = await handleRequest(requestWithOrigin(archive, { method: "GET" }), TEST_ENV);
+    expect(read.status).toBe(200);
+    const write = await handleRequest(
+      requestWithOrigin(archive, {
+        method: "POST",
+        body: "{}",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "archive-9b1c7d2e" },
+      }),
+      TEST_ENV,
+    );
+    expect(write.status).toBe(405);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CRM card reads (supplier directory, observed equipment interests)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const READS = ["/v2/workspace/providers", "/v2/workspace/equipment-interests"];
+
+  it.each(READS)("forwards GET %s with only the session cookie and no forged operator", async (path) => {
+    // What a viewer receives upstream: the address masked, an opaque ref to join by.
+    const masked = JSON.stringify({ persons: [{ address: "***@uni.invalid", address_ref: "0123456789abcdef01234567" }] });
+    stubUpstreamFetch(masked);
+    const res = await handleRequest(
+      requestWithOrigin(`https://proxy.test/api${path}`, {
+        headers: {
+          Cookie: "CF_Authorization=edge; __Host-origenlab_session=s1; other=1",
+          "X-OriginLab-Operator-Email": "admin@origenlab.cl",
+        },
+      }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe(path);
+    expect(upstream.method).toBe("GET");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+    // The browser cannot name the operator (and so cannot pick an unredacted role).
+    expect(upstream.headers.get("X-OriginLab-Operator-Email")).toBeNull();
+    // The upstream answer, masked for a viewer, is passed through untouched.
+    expect(await res.text()).toBe(masked);
+  });
+
+  it.each(READS)("replaces a forged operator header with the Cloudflare Access identity on %s", async (path) => {
+    stubUpstreamFetch();
+    await handleRequest(
+      requestWithOrigin(`https://proxy.test/api${path}`, {
+        headers: {
+          "X-OriginLab-Operator-Email": "admin@origenlab.cl",
+          "Cf-Access-Authenticated-User-Email": "Viewer@OrigenLab.cl",
+        },
+      }),
+      TEST_ENV,
+    );
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(upstream.headers.get("X-OriginLab-Operator-Email")).toBe("viewer@origenlab.cl");
+  });
+
+  it.each(
+    READS.flatMap((path) => ["POST", "PUT", "PATCH", "DELETE"].map((method) => [method, path] as const)),
+  )("refuses %s %s with 405 before anything is forwarded", async (method, path) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(
+      requestWithOrigin(`https://proxy.test/api${path}`, {
+        method,
+        body: "{}",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "9b1c7d2e-4f3a-4c1b-8e2d-1a2b3c4d5e6f",
+          Cookie: "__Host-origenlab_session=s1",
+        },
+      }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(405);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "/v2/workspace/overview",
+    "/v2/workspace/pipeline",
+    "/v2/workspace/drive",
+    "/v2/workspace/review",
+    "/v2/workspace/providers/directory",
+    "/v2/workspace/equipment-interests/persons",
+    "/v2/workspace/equipment-interest",
+    "/v2/workspace/providers/",
+  ])("refuses the neighbouring GET %s with 403", async (path) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(
+      requestWithOrigin(`https://proxy.test/api${path}`, { headers: { Cookie: "__Host-origenlab_session=s1" } }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: { code: "path_not_allowed" } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});

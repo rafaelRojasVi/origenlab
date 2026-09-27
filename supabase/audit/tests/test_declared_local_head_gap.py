@@ -42,8 +42,8 @@ def current_head_report():
         _check("a13", status="CORROBORATED", required=False),
         _check("a04", "FAIL", {"relation_count": 37},
                ["relations in scope: observed 37, expected 34"]),
-        _check("a05", "FAIL", {"function_count": 10, "security_definer_count": 0},
-               ["functions in scope: observed 10, expected 3"]),
+        _check("a05", "FAIL", {"function_count": 15, "security_definer_count": 0},
+               ["functions in scope: observed 15, expected 3"]),
         _check("a08", "FAIL", {"table_count": 36, "schema_count": 7}, [
             "tables: 3 entr(y|ies) are present here and not in the baseline: "
             + "; ".join(_table(t) for t in TABLES),
@@ -52,8 +52,8 @@ def current_head_report():
             "RLS policy count: observed 139, expected 127",
             "RLS policies: 12 entr(y|ies) are present here and not in the baseline: " + policies]),
         _check("a10", "FAIL",
-               {"foreign_key_count": 119, "covered_count": 119, "covered_unconditionally": 86},
-               ["foreign keys: observed 119, expected 102"]),
+               {"foreign_key_count": 120, "covered_count": 120, "covered_unconditionally": 87},
+               ["foreign keys: observed 120, expected 102"]),
     ]
     return {
         "run": {"mode": "local", "simulated": False, "hosted_contacted": False},
@@ -91,25 +91,26 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_historical_guard_is_a_declared_post_slice0_function(self):
         self.assertIn("crm.quote_revision_historical_guard", gap.POST_SLICE0_FUNCTIONS)
         self.assertEqual(3, gap.SLICE0_FUNCTION_COUNT)
-        self.assertEqual(10, gap.EXPECTED_FUNCTION_COUNT)
+        self.assertEqual(15, gap.EXPECTED_FUNCTION_COUNT)
 
     def test_the_historical_origin_foreign_key_is_declared(self):
-        self.assertEqual(1, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
-        self.assertEqual(119, gap.EXPECTED_FOREIGN_KEY_COUNT)
+        self.assertEqual(2, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
+        self.assertEqual(120, gap.EXPECTED_FOREIGN_KEY_COUNT)
+        self.assertEqual(87, gap.EXPECTED_COVERED_UNCONDITIONALLY)
 
     def test_the_previous_head_count_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 9
-        a05["findings"] = ["functions in scope: observed 9, expected 3"]
-        self.assert_refused(report, "a05.function_count: observed 9, expected 10")
+        a05["summary"]["function_count"] = 14
+        a05["findings"] = ["functions in scope: observed 14, expected 3"]
+        self.assert_refused(report, "a05.function_count: observed 14, expected 15")
 
-    def test_an_undeclared_eleventh_function_is_refused(self):
+    def test_an_undeclared_sixteenth_function_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 11
-        a05["findings"] = ["functions in scope: observed 11, expected 3"]
-        self.assert_refused(report, "a05.function_count: observed 11, expected 10")
+        a05["summary"]["function_count"] = 16
+        a05["findings"] = ["functions in scope: observed 16, expected 3"]
+        self.assert_refused(report, "a05.function_count: observed 16, expected 15")
 
     def test_a_security_definer_function_is_refused(self):
         report = current_head_report()
@@ -131,9 +132,9 @@ class DeclaredGapTest(unittest.TestCase):
     def test_an_undeclared_foreign_key_is_refused(self):
         report = current_head_report()
         a10 = check_of(report, "a10")
-        a10["summary"].update(foreign_key_count=120, covered_count=120)
-        a10["findings"] = ["foreign keys: observed 120, expected 102"]
-        self.assert_refused(report, "a10.foreign_key_count: observed 120, expected 119")
+        a10["summary"].update(foreign_key_count=121, covered_count=121)
+        a10["findings"] = ["foreign keys: observed 121, expected 102"]
+        self.assert_refused(report, "a10.foreign_key_count: observed 121, expected 120")
 
     def test_another_required_check_failing_is_refused(self):
         report = current_head_report()

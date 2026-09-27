@@ -1,7 +1,7 @@
 import { fetchOverview, fetchPipeline } from "../crmApi";
 import type { EntityCount, OpportunityCardData, WorkspaceOverview } from "../crmTypes";
 import type { CrmSection } from "../crmRoute";
-import { STAGE_LABEL, byLatestSent } from "../stage";
+import { STAGE_LABEL, byLatestSent, stageBasis } from "../stage";
 import { Badge, PageHeader, Panel, ProvenanceBadge, ResourceGate, Skeleton, fmtDate, fmtInt } from "../ui";
 import { useResource } from "../useResource";
 
@@ -32,7 +32,13 @@ export function OverviewPage({ navigate }: { navigate: (s: CrmSection, id?: stri
         subtitle="Qué contiene hoy el CRM, qué falta importar y dónde hace falta una decisión."
       />
       <ResourceGate state={overview} reload={reloadOverview} skeleton={<Skeleton rows={4} />}>
-        {(o) => <OverviewBody overview={o} navigate={navigate} />}
+        {(o) => (
+          <OverviewBody
+            overview={o}
+            navigate={navigate}
+            historical={pipeline.kind === "ready" ? pipeline.data.items.filter((c) => stageBasis(c) === "historical_import").length : null}
+          />
+        )}
       </ResourceGate>
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<Skeleton rows={4} />}>
         {(p) => <RecentAndBlocked items={p.items} navigate={navigate} />}
@@ -74,7 +80,15 @@ function Metric({
   );
 }
 
-function OverviewBody({ overview, navigate }: { overview: WorkspaceOverview; navigate: (s: CrmSection) => void }) {
+function OverviewBody({
+  overview,
+  navigate,
+  historical,
+}: {
+  overview: WorkspaceOverview;
+  navigate: (s: CrmSection) => void;
+  historical: number | null;
+}) {
   const byKey = Object.fromEntries(overview.entities.map((e) => [e.key, e])) as Record<string, EntityCount>;
   const confirmed = overview.organizations_by_confirmation.confirmed ?? 0;
   const drive = overview.drive_archive;
@@ -87,9 +101,13 @@ function OverviewBody({ overview, navigate }: { overview: WorkspaceOverview; nav
         <Metric
           label="Oportunidades"
           value={fmtInt(byKey.opportunities?.count ?? 0)}
-          hint={Object.entries(overview.opportunities_by_stage)
-            .map(([s, n]) => `${n} ${STAGE_LABEL[s]?.toLowerCase() ?? s}`)
-            .join(" · ")}
+          hint={
+            historical !== null && historical > 0
+              ? `${historical} con cotización enviada (histórico, estado actual sin verificar)`
+              : Object.entries(overview.opportunities_by_stage)
+                  .map(([s, n]) => `${n} ${STAGE_LABEL[s]?.toLowerCase() ?? s}`)
+                  .join(" · ")
+          }
           onClick={() => navigate("oportunidades")}
         />
         <Metric
@@ -149,7 +167,7 @@ function RecentAndBlocked({
   const blocked = items.filter((i) => i.status === "blocked");
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-      <Panel title="Últimas cotizaciones enviadas" bodyClassName="divide-y divide-line">
+      <Panel title="Últimas cotizaciones enviadas" note="Fechas de envío registradas; no indican el estado actual del negocio." bodyClassName="divide-y divide-line">
         {recent.map((c) => (
           <button
             key={c.opportunity_id}

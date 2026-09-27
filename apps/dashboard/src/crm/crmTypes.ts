@@ -1,3 +1,5 @@
+import type { AudienceInterest } from "./marketing/marketingTypes";
+
 /**
  * Types for `GET /v2/workspace/*` (apps/api `v2/crm_workspace.py`).
  *
@@ -93,6 +95,8 @@ export interface OpportunityCardData {
     name: string | null;
     address: string | null;
     others: number;
+    /** Fingerprint of the bare address; joins the card to its equipment interests when masked. */
+    address_ref?: string | null;
   } | null;
   quotes: QuoteCard[];
   quote_numbers: string[];
@@ -110,7 +114,20 @@ export interface PipelineResponse {
   drive_configured: boolean;
 }
 
+export interface SupplierDirectoryEntry {
+  brand_id: string;
+  name: string;
+  page_url: string | null;
+  family: { id: string; name: string; color: string | null };
+  model_count: number;
+  crm_organizations: { organization_id: string; name: string; confirmation: string | null; roles: string[]; cases: number }[];
+  /** Machine candidates whose domain or trade name names the brand. A hint, never a promotion. */
+  candidate_hints: { domain: string; trade_name: string | null; resolution: string }[];
+}
+
 export interface ProvidersResponse {
+  /** The six catalogue brands, curated by the website — not detected. Older APIs omit it. */
+  directory?: SupplierDirectoryEntry[];
   on_cases: { organization_id: string; name: string; confirmation: string; role: string; cases: number }[];
   candidates: { domain: string; trade_name: string | null; resolution: string; mentions: number }[];
 }
@@ -120,19 +137,52 @@ export interface CampaignSummary {
   name: string;
   status: string;
   subject: string | null;
+  preheader?: string | null;
+  /** Whether the stored campaign has HTML content. False means it was never imported. */
+  has_html?: boolean;
+  version?: number;
   approved_at: string | null;
   created_at: string | null;
+  updated_at?: string | null;
   first_sent_at: string | null;
   last_sent_at: string | null;
   recipients_by_state: Record<string, number>;
   send_attempts: { submission_state: string; delivery_state: string; count: number }[];
   replies_recorded: number;
+  /** Accepted attempts grouped by the day (America/Santiago) they were accepted on. */
+  send_batches?: SendBatch[];
+  /** Attempts with no acceptance date (rejected, never submitted). */
+  attempts_without_date?: number;
+  /** Internal planning only; schedules nothing. A Santiago calendar day. */
+  planned_for_date?: string | null;
+  /** The planned instant in UTC, when a time was chosen. */
+  planned_for_at?: string | null;
+  planning_version?: number;
+  audience_frozen_at?: string | null;
+  content_frozen_at?: string | null;
+  content_sha256?: string | null;
+  /** `imported_v1`: loaded from the V1 send ledger. `native_v2`: written in this CRM. */
+  origin?: "imported_v1" | "native_v2";
+  sender_address?: string | null;
+  sender_name?: string | null;
+  equipment_lines?: { family_id: string; source: "audience_criteria" | "name_or_subject"; matched_term: string | null }[];
+}
+
+export interface SendBatch {
+  day: string;
+  accepted: number;
+  first_accepted_at: string;
+  last_accepted_at: string;
 }
 
 export interface MarketingResponse {
   campaigns: CampaignSummary[];
   contact_controls: { kind: string; scope: string; count: number }[];
   replies_note: string;
+  /** Where campaigns (and drafts) are stored, as the API reports it. */
+  storage?: { table: string; database: string };
+  authoring?: { drafts_enabled: boolean; freeze_enabled?: boolean; recontact_review_enabled?: boolean; planning_enabled?: boolean };
+  time_zone?: string;
 }
 
 export interface DriveDocument extends DriveLinkRef {
@@ -193,4 +243,40 @@ export interface WorkQueueResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+/** One equipment line: a taxonomy family (one brand each), the same six Marketing filters on. */
+export interface EquipmentLine {
+  family_id: string;
+  name: string;
+  color: string | null;
+  brand_ids: string[];
+  crm_people: number;
+  address_only: number;
+  institutions: number;
+}
+
+export interface InterestPerson {
+  key: string;
+  address: string;
+  address_ref: string;
+  contact_point_id: string | null;
+  person_id: string | null;
+  display_name: string | null;
+  organization_ids: string[];
+  /** A person the CRM records, or only an address seen in historical evidence. */
+  link: "crm_person" | "address_only";
+  interests: AudienceInterest[];
+}
+
+export interface InterestInstitution {
+  organization_id: string;
+  name: string | null;
+  interests: AudienceInterest[];
+}
+
+export interface EquipmentInterestsResponse {
+  lines: EquipmentLine[];
+  persons: InterestPerson[];
+  institutions: InterestInstitution[];
 }

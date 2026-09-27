@@ -11,6 +11,7 @@ import type {
   DriveArchiveResponse,
   MarketingResponse,
   PipelineResponse,
+  EquipmentInterestsResponse,
   ProvidersResponse,
   ReviewResponse,
   WorkQueueResponse,
@@ -21,6 +22,7 @@ export const WORKSPACE_PATHS = {
   overview: "/v2/workspace/overview",
   pipeline: "/v2/workspace/pipeline",
   providers: "/v2/workspace/providers",
+  equipmentInterests: "/v2/workspace/equipment-interests",
   marketing: "/v2/workspace/marketing",
   drive: "/v2/workspace/drive",
   review: "/v2/workspace/review",
@@ -30,6 +32,8 @@ export const WORKSPACE_PATHS = {
 export const fetchOverview = () => fetchJsonGet<WorkspaceOverview>(operatorApiUrl(WORKSPACE_PATHS.overview));
 export const fetchPipeline = () => fetchJsonGet<PipelineResponse>(operatorApiUrl(WORKSPACE_PATHS.pipeline));
 export const fetchProviders = () => fetchJsonGet<ProvidersResponse>(operatorApiUrl(WORKSPACE_PATHS.providers));
+export const fetchEquipmentInterests = () =>
+  fetchJsonGet<EquipmentInterestsResponse>(operatorApiUrl(WORKSPACE_PATHS.equipmentInterests));
 export const fetchMarketing = () => fetchJsonGet<MarketingResponse>(operatorApiUrl(WORKSPACE_PATHS.marketing));
 export const fetchDriveArchive = () => fetchJsonGet<DriveArchiveResponse>(operatorApiUrl(WORKSPACE_PATHS.drive));
 export const fetchReview = () => fetchJsonGet<ReviewResponse>(operatorApiUrl(WORKSPACE_PATHS.review));
