@@ -84,6 +84,8 @@ describe("allowlist", () => {
       "/v2/workspace/marketing/taxonomy",
       "/v2/workspace/marketing/audience",
       `/v2/workspace/marketing/campaigns/${uuid}`,
+      `/v2/workspace/marketing/campaigns/${uuid}/freeze-preview`,
+      `/v2/workspace/marketing/campaigns/${uuid}/recipients`,
       "/v2/workspace/drive",
       "/v2/workspace/review",
       "/v2/cockpit/kpis",
@@ -1077,6 +1079,8 @@ describe("V2 durable read boundary allowlist", () => {
       // campaign drafts
       "/v2/commands/create-campaign-draft",
       "/v2/commands/save-campaign-draft",
+      // audience freeze
+      "/v2/commands/freeze-campaign-audience",
     ]) {
       expect(isAllowedPostPath(path)).toBe(false);
       expect(isAllowedUpstreamPath(path)).toBe(false);
