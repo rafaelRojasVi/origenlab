@@ -32,6 +32,7 @@ from origenlab_api.v2.google_oidc import (
     decode_id_token,
     pkce_challenge,
     validate_claims,
+    validate_public_base_url,
 )
 from origenlab_api.v2.identity import (
     ChainedIdentity,
@@ -607,6 +608,17 @@ def test_production_uses_host_prefixed_secure_cookies(monkeypatch) -> None:
     session = next(c for c in _set_cookies(response) if c.startswith("__Host-origenlab_session="))
     assert "Secure" in session and "HttpOnly" in session and "SameSite=lax" in session
     assert "Domain" not in session
+
+
+@pytest.mark.parametrize(
+    "base",
+    ["https://dashboard.origenlab.cl", "https://dashboard.origenlab.cl/", "https://dashboard.origenlab.cl/api/v1",
+     "https://dashboard.origenlab.cl/API"],
+)
+def test_production_base_url_must_be_the_proxy_api_prefix(base) -> None:
+    with pytest.raises(GoogleAuthMisconfigured, match="exactly /api"):
+        validate_public_base_url(base, production=True)
+    assert validate_public_base_url("https://dashboard.origenlab.cl/api/", production=True) == PROD_BASE
 
 
 def test_production_never_trusts_the_operator_email_header(monkeypatch) -> None:

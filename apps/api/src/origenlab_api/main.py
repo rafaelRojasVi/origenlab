@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI
 from pydantic import SecretStr
 
@@ -89,13 +91,21 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     from origenlab_api.v2.repository import V2Repository
     from origenlab_api.v2.routes import router as v2_router
 
-    dsn = settings.require_v2_database_url()
+    target = settings.v2_database_target()
+    dsn = target.dsn
+    # Every repository connects through this: a remote target binds verify-full TLS here.
+    connect = target.connect_factory(psycopg.connect)
+    if target.remote:
+        from origenlab_api.v2.remote_database import verify_runtime_connection
+
+        # Prove the role and the TLS from inside one session before serving anything.
+        verify_runtime_connection(target, psycopg.connect)
     repository = V2Repository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.state.v2_repository = repository
     app.state.cockpit_repository = CockpitRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     google = build_google_auth_config(
         enabled=settings.google_auth_enabled,
@@ -131,7 +141,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
 
     ledgers = [p.strip() for p in (settings.v2_drive_archive_ledgers or "").split(",") if p.strip()]
     app.state.crm_workspace = CrmWorkspaceRepository(
-        psycopg.connect,
+        connect,
         dsn,
         drive=load_drive_ledgers(ledgers),
         statement_timeout_ms=settings.v2_statement_timeout_ms,
@@ -144,7 +154,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         app.state.import_review = (
             load_plan(settings.v2_import_review_plan_dir),
             QuoteImportReviewRepository(
-                psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+                connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
             ),
             settings.v2_import_review_documents_root,
         )
@@ -159,7 +169,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     app.include_router(auth_router)
     if google is not None:
         app.include_router(google_auth_router)
-    _mount_v2_command_boundary(app, settings, dsn)
+    _mount_v2_command_boundary(app, settings, dsn, connect)
 
 
 def _secret(value: SecretStr | None) -> str | None:
@@ -185,7 +195,9 @@ def _refuse_unsafe_login_settings(settings: Settings) -> None:
         )
 
 
-def _mount_v2_command_boundary(app: FastAPI, settings: Settings, dsn: str) -> None:
+def _mount_v2_command_boundary(
+    app: FastAPI, settings: Settings, dsn: str, connect: Any
+) -> None:
     """Mount `POST /v2/commands/*` only when it has been switched on deliberately.
 
     Configuring a V2 database says "read this". It does not say "record durable human
@@ -197,21 +209,19 @@ def _mount_v2_command_boundary(app: FastAPI, settings: Settings, dsn: str) -> No
     if not settings.v2_commands_configured():
         return
 
-    import psycopg
-
     from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
     from origenlab_api.v2.case_command_routes import case_command_router
     from origenlab_api.v2.command_repository import V2CommandRepository
     from origenlab_api.v2.command_routes import command_router
 
     app.state.v2_command_repository = V2CommandRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     # The commercial-case commands run on the same database, as the same role, behind the
     # same switch. A second repository rather than a second connection pool: both are
     # `CommandTransaction`, and neither knows anything the other does not.
     app.state.v2_case_command_repository = V2CaseCommandRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(command_router)
     app.include_router(case_command_router)
