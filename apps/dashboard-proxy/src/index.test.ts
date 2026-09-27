@@ -1796,3 +1796,98 @@ describe("CRM card reads (supplier directory, observed equipment interests)", ()
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 });
+
+describe("Campaign safety block commands and read", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const BLOCK = "https://proxy.test/api/v2/commands/block-campaign";
+  const UNBLOCK = "https://proxy.test/api/v2/commands/unblock-campaign";
+  const BODY = JSON.stringify({
+    scope: "campaign",
+    campaign_id: "96301691-af05-41ea-82e3-05f5fae40837",
+    expected_block_version: 0,
+    reason: "Incidente en revisión",
+  });
+  const post = (url: string, extra: Record<string, string> = {}, body = BODY, method = "POST") =>
+    requestWithOrigin(url, {
+      method,
+      body: method === "GET" || method === "HEAD" ? undefined : body,
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "block-command-key-0001",
+        "Sec-Fetch-Site": "same-origin",
+        Cookie: "__Host-origenlab_session=s1; CF_Authorization=leak",
+        ...extra,
+      },
+    });
+
+  it.each([BLOCK, UNBLOCK])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(post(url), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe(new URL(url).pathname.replace(/^\/api/, ""));
+    expect(upstream.method).toBe("POST");
+    expect(upstream.headers.get("Idempotency-Key")).toBe("block-command-key-0001");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+  });
+
+  it.each([
+    [
+      "a foreign Origin",
+      requestWithOrigin(BLOCK, {
+        method: "POST",
+        body: BODY,
+        origin: "https://evil.test",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "block-command-key-0001" },
+      }),
+      403,
+      "origin_not_allowed",
+    ],
+    ["a cross-site fetch", post(UNBLOCK, { "Sec-Fetch-Site": "cross-site" }), 403, "cross_site_request"],
+    ["a form post", post(BLOCK, { "Content-Type": "application/x-www-form-urlencoded" }), 415, "unsupported_media_type"],
+    ["no key", post(BLOCK, { "Idempotency-Key": "" }), 400, "idempotency_key_required"],
+    ["a declared body over 16 kB", post(UNBLOCK, { "Content-Length": "16385" }), 413, "payload_too_large"],
+  ])("refuses %s before anything is forwarded", async (_label, req, status, code) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: { code } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("refuses a block body over 16 kB even when Content-Length understates it", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(post(BLOCK, {}, JSON.stringify({ reason: "x".repeat(20_000) })), TEST_ENV);
+    expect(res.status).toBe(413);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("does not make the block commands GET-readable", async () => {
+    stubUpstreamFetch();
+    for (const url of [BLOCK, UNBLOCK]) {
+      const res = await handleRequest(post(url, {}, BODY, "GET"), TEST_ENV);
+      expect(res.status).toBe(403);
+    }
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("forwards the block read as GET and refuses a write to it", async () => {
+    stubUpstreamFetch(JSON.stringify({ all_campaigns: { blocked: false }, legacy: [] }));
+    const path = "https://proxy.test/api/v2/workspace/marketing/campaign-blocks";
+    const read = await handleRequest(requestWithOrigin(path, { method: "GET" }), TEST_ENV);
+    expect(read.status).toBe(200);
+    const write = await handleRequest(
+      requestWithOrigin(path, {
+        method: "POST",
+        body: "{}",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "blocks-read-probe" },
+      }),
+      TEST_ENV,
+    );
+    expect(write.status).toBe(405);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+});

@@ -171,6 +171,8 @@ export interface CampaignSummary {
   attempt_totals?: AttemptTotals | null;
   replies?: RepliesState;
   subject_state?: ContentState;
+  /** Campaign safety blocks (WORKFLOWS.md §W13): whether anything refuses this campaign now. */
+  hold?: { held: boolean; refusals: { code: string; label: string }[] };
 }
 
 export type TotalKey = "audience" | "included" | "sent" | "excluded" | "blocked" | "unsent" | "rejected" | "bounced" | "responses";

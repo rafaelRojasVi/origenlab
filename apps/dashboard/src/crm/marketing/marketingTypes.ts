@@ -584,6 +584,68 @@ export interface AuditResponse {
   storage: { tables: string[]; database: string };
 }
 
+/** One `outbound.campaign_block` row. A viewer's copy has no reason and no operator (`redacted`). */
+export interface CampaignBlock {
+  block_id: string;
+  scope: "campaign" | "all_campaigns" | "legacy_campaign";
+  scope_label: string;
+  campaign_id: string | null;
+  legacy_campaign_key: string | null;
+  reason?: string;
+  reference: string | null;
+  placed_at: string;
+  placed_by_kind: "operator" | "migrator";
+  placed_by?: string | null;
+  lifted_at: string | null;
+  lifted_by?: string | null;
+  lift_reason?: string | null;
+  version: number;
+  active: boolean;
+  redacted?: boolean;
+}
+
+export interface HoldRefusal {
+  code: "all_campaigns_blocked" | "campaign_blocked" | "campaign_paused" | "campaign_unknown" | string;
+  label: string;
+}
+
+/** One campaign's hold, as every campaign read reports it. */
+export interface CampaignHold {
+  held: boolean;
+  refusals: HoldRefusal[];
+  block: CampaignBlock | null;
+  block_version: number;
+  all_campaigns?: { blocked: boolean; block: CampaignBlock | null; block_version: number };
+  effect?: string;
+  expires?: false;
+}
+
+/** `GET /v2/workspace/marketing/campaign-blocks`. */
+export interface CampaignHoldsResponse {
+  all_campaigns: { blocked: boolean; block: CampaignBlock | null; block_version: number };
+  legacy: CampaignBlock[];
+  active: CampaignBlock[];
+  recently_lifted: CampaignBlock[];
+  by_campaign: Record<string, CampaignHold>;
+  effect: string;
+  expires: false;
+  commands_enabled: boolean;
+  /** An admin on an API with the block commands enabled. */
+  may_decide: boolean;
+  storage?: { table: string; database: string };
+}
+
+export interface CampaignBlockResult {
+  block: CampaignBlock;
+  block_version: number | null;
+  campaign_refusals: string[];
+  effect: string;
+  expires: false;
+  enqueues: false;
+  sends: false;
+  replayed?: boolean;
+}
+
 export interface PlanningResult {
   campaign_id: string;
   status: string;
