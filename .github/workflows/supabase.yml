@@ -45,6 +45,12 @@ jobs:
         with:
           version: 2.116.0
 
+      # setup-cli pins CLI >=1.28 to GHCR. Clear that override so the CLI can
+      # use its native registry fallback chain: public ECR -> GHCR -> Docker Hub.
+      - name: Restore Supabase multi-registry fallback
+        shell: bash
+        run: echo 'SUPABASE_INTERNAL_IMAGE_REGISTRY=' >> "$GITHUB_ENV"
+
       - name: Verify toolchain and guardrails
         run: |
           set -euo pipefail
@@ -78,7 +84,39 @@ jobs:
         run: supabase/scripts/local_db_failure_tests.sh
 
       - name: Start local database
-        run: supabase start
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2 3 4; do
+            log="$(mktemp)"
+
+            if supabase start 2>&1 | tee "$log"; then
+              rm -f "$log"
+              exit 0
+            fi
+
+            # Retry only registry/image-pull failures. A real Supabase/database
+            # startup failure must still fail immediately rather than being hidden.
+            if ! grep -Eqi               'toomanyrequests|failed to pull docker image|error pulling image configuration|download failed'               "$log"; then
+              echo "::error::supabase start failed for a non-transient reason; refusing to retry"
+              rm -f "$log"
+              exit 1
+            fi
+
+            if [[ "$attempt" -eq 4 ]]; then
+              echo "::error::supabase start still failed after 4 transient registry attempts"
+              rm -f "$log"
+              exit 1
+            fi
+
+            delay=$((attempt * 20))
+            echo "::warning::transient container-registry failure on attempt $attempt; retrying in ${delay}s"
+
+            rm -f "$log"
+            supabase stop >/dev/null 2>&1 || true
+            sleep "$delay"
+          done
 
       - name: Prove deterministic migration replay
         run: supabase/scripts/replay_evidence.sh "$RUNNER_TEMP/supabase-replay"
@@ -101,8 +139,16 @@ jobs:
       - name: Prove the Slice 0 audit fails closed
         run: supabase/scripts/audit_failure_tests.sh
 
-      - name: Run the Slice 0 audit against the local stack
-        run: supabase/scripts/slice0_audit.sh --mode local
+      - name: Prove current head differs from frozen Slice 0 only as declared
+        run: |
+          set -euo pipefail
+
+          rc=0
+          supabase/scripts/slice0_audit.sh --mode local || rc=$?
+          test "$rc" -eq 1
+
+          python3 supabase/audit/assert_declared_local_head_gap.py \
+            supabase/.audit/reports/slice0-audit-local.json
 
       # The report is re-read from the bytes that would be published, in a separate process, and
       # the upload step below runs only if this one succeeds. A report that fails the credential

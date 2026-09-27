@@ -941,3 +941,137 @@ def test_a_rotated_key_is_picked_up_by_one_refetch(monkeypatch) -> None:
     assert _login_error(response) is None
     assert _session_cookie_set(response)
     assert len(fetches) == 2
+
+
+# ------------------------------------------------------- no internal detail reaches the client
+#
+# Every refusal answers with a constant: a `login_error` code from a closed set on the callback,
+# a fixed `detail` on `/auth/session`. Exception text — Google's answer, a key-set failure, the
+# operator's role or address, a table name — is logged and never returned.
+
+_LEAK = "INTERNAL-7f3a<script>"
+
+
+def _assert_nothing_leaks(response: Any, *secrets_: str) -> None:
+    exposed = response.headers.get("location", "") + response.text
+    for secret in (_LEAK, "platform.operator", "Traceback", *secrets_):
+        assert secret not in exposed, secret
+
+
+def test_session_absent_answers_the_constant_detail(monkeypatch) -> None:
+    from origenlab_api.v2 import auth_routes
+
+    h = _Harness(monkeypatch)
+    response = h.client.get("/auth/session")
+    assert response.status_code == 401
+    assert response.json()["detail"] == auth_routes.SESSION_ABSENT_DETAIL
+
+
+@pytest.mark.parametrize("change", ["disabled", "reassigned", "role"])
+def test_session_refusal_answers_a_constant_and_logs_the_reason(monkeypatch, caplog, change) -> None:
+    from origenlab_api.v2 import auth_routes
+
+    h = _Harness(monkeypatch)
+    h.sign_in()
+    h.repo.operators[EMAIL] = {
+        "disabled": _operator(status="disabled"),
+        "reassigned": _operator(operator_id="00000000-0000-4000-8000-0000000000bb"),
+        "role": _operator(role="auditor"),
+    }[change]
+    with caplog.at_level("INFO", logger=auth_routes.logger.name):
+        response = h.client.get("/auth/session")
+    assert response.status_code == 401
+    assert response.json()["detail"] == auth_routes.SESSION_REFUSED_DETAIL
+    _assert_nothing_leaks(response, "disabled", "auditor", "has changed", EMAIL)
+    assert "dashboard session refused" in caplog.text
+
+
+def test_a_failed_token_exchange_leaks_nothing(monkeypatch, caplog) -> None:
+    h = _Harness(monkeypatch)
+
+    def fail(**_: Any) -> dict[str, Any]:
+        raise google_oidc.TokenExchangeFailed(f"token endpoint answered 400 {_LEAK}")
+
+    h.app.state.v2_token_exchanger = fail
+    h.login()
+    with caplog.at_level("WARNING"):
+        response = h.callback(code="c", state=h.state)
+    assert _login_error(response) == "token_exchange_failed"
+    _assert_nothing_leaks(response)
+    assert _LEAK in caplog.text
+
+
+def test_an_unreachable_jwks_leaks_nothing(monkeypatch, caplog) -> None:
+    from origenlab_api.v2.google_jwks import JwksUnavailable
+
+    h = _Harness(monkeypatch)
+
+    def down() -> Any:
+        raise JwksUnavailable(f"URLError {_LEAK}")
+
+    h.app.state.v2_google_jwks = GoogleJwks(fetcher=down)
+    with caplog.at_level("WARNING"):
+        response = h.sign_in()
+    assert _login_error(response) == "signature_unverified"
+    _assert_nothing_leaks(response)
+    assert _LEAK in caplog.text
+
+
+def test_a_refused_signature_leaks_nothing(monkeypatch, caplog) -> None:
+    from origenlab_api.v2 import auth_routes
+    from origenlab_api.v2.google_jwks import SignatureRefused
+
+    def refuse(*_: Any) -> None:
+        raise SignatureRefused(f"kid not in the key set {_LEAK}")
+
+    monkeypatch.setattr(auth_routes, "verify_signature", refuse)
+    h = _Harness(monkeypatch)
+    with caplog.at_level("WARNING"):
+        response = h.sign_in()
+    assert _login_error(response) == "invalid_token"
+    _assert_nothing_leaks(response)
+    assert _LEAK in caplog.text
+
+
+def test_a_claims_code_outside_the_public_set_is_not_forwarded(monkeypatch, caplog) -> None:
+    from origenlab_api.v2 import auth_routes
+
+    def refuse(*_: Any, **__: Any) -> Any:
+        raise google_oidc.ClaimsRefused(f"weird{_LEAK}", f"reason {_LEAK}")
+
+    monkeypatch.setattr(auth_routes, "validate_claims", refuse)
+    h = _Harness(monkeypatch)
+    with caplog.at_level("WARNING"):
+        response = h.sign_in()
+    assert _login_error(response) == "sign_in_failed"
+    _assert_nothing_leaks(response, "weird")
+    assert _LEAK in caplog.text
+
+
+def test_an_unknown_operator_redirect_carries_no_address(monkeypatch) -> None:
+    h = _Harness(monkeypatch, repo=_Repo({}))
+    response = h.sign_in()
+    assert _login_error(response) == "unknown_operator"
+    _assert_nothing_leaks(response, EMAIL)
+
+
+def test_every_callback_refusal_code_is_public() -> None:
+    import ast
+    import inspect
+
+    from origenlab_api.v2 import auth_routes
+
+    tree = ast.parse(inspect.getsource(auth_routes))
+    literal_codes = {
+        call.args[1].value
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call) and getattr(call.func, "id", None) == "_refuse"
+        and isinstance(call.args[1], ast.Constant)
+    }
+    assert literal_codes and literal_codes <= auth_routes._PUBLIC_LOGIN_ERRORS
+    claims_codes = set()
+    for node in ast.walk(ast.parse(inspect.getsource(google_oidc))):
+        if (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "ClaimsRefused"
+                and isinstance(node.args[0], ast.Constant)):
+            claims_codes.add(node.args[0].value)
+    assert claims_codes <= auth_routes._PUBLIC_LOGIN_ERRORS

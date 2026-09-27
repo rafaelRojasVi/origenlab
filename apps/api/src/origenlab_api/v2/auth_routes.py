@@ -43,7 +43,12 @@ from origenlab_api.v2.google_oidc import (
     start_sign_in,
     validate_claims,
 )
-from origenlab_api.v2.identity import IdentityPort, IdentityRefused, OperatorLookup
+from origenlab_api.v2.identity import (
+    IdentityAbsent,
+    IdentityPort,
+    IdentityRefused,
+    OperatorLookup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +59,30 @@ google_auth_router = APIRouter(prefix="/auth/google", tags=["auth"])
 _DASHBOARD_ROLES = ("viewer", "sales", "admin")
 #: Longest `code` or `state` accepted. Google's codes are a few hundred characters.
 _MAX_PARAM_LENGTH = 2048
+
+#: Every `login_error` the callback may put in the dashboard URL. The client sees one of these
+#: codes and nothing else; why the sign-in failed — exception text, Google's answer, the
+#: address — goes to the server log only. A code outside this set is sent as `sign_in_failed`.
+_PUBLIC_LOGIN_ERRORS = frozenset({
+    "invalid_request",
+    "access_denied",
+    "google_error",
+    "invalid_state",
+    "token_exchange_failed",
+    "signature_unverified",
+    "invalid_token",
+    "email_unverified",
+    "wrong_domain",
+    "unknown_operator",
+    "operator_disabled",
+    "operator_not_permitted",
+    "sign_in_failed",
+})
+
+#: The only `detail` texts `/auth/session` returns on 401. `IdentityRefused` messages can name
+#: the operator's role or an internal table; they are logged, never returned.
+SESSION_ABSENT_DETAIL = "not signed in: sign in with Google Workspace"
+SESSION_REFUSED_DETAIL = "the session was refused: sign in again"
 
 
 def _google(request: Request) -> GoogleAuthConfig | None:
@@ -107,8 +136,12 @@ def google_login(request: Request) -> Response:
 
 
 def _refuse(config: GoogleAuthConfig, code: str, reason: str) -> Response:
+    """Redirect to the dashboard with a public error code. `reason` is for the log only."""
     logger.warning("dashboard sign-in refused: %s (%s)", code, reason)
-    response = RedirectResponse(f"{config.dashboard_url}?login_error={code}", status_code=303)
+    public_code = code if code in _PUBLIC_LOGIN_ERRORS else "sign_in_failed"
+    response = RedirectResponse(
+        f"{config.dashboard_url}?login_error={public_code}", status_code=303
+    )
     _clear_cookie(response, config, config.cookie_names.transaction)
     return response
 
@@ -234,10 +267,16 @@ def current_session(request: Request) -> JSONResponse:
         operator = port.resolve(dict(request.headers)).require_active().require_role(
             *_DASHBOARD_ROLES
         )
-    except IdentityRefused as exc:
+    except IdentityAbsent:
         return JSONResponse(
             status_code=401,
-            content={"authenticated": False, "detail": str(exc), **_login_options(config)},
+            content={"authenticated": False, "detail": SESSION_ABSENT_DETAIL, **_login_options(config)},
+        )
+    except IdentityRefused as exc:
+        logger.info("dashboard session refused: %s", exc)
+        return JSONResponse(
+            status_code=401,
+            content={"authenticated": False, "detail": SESSION_REFUSED_DETAIL, **_login_options(config)},
         )
     return JSONResponse(content={
         "authenticated": True,

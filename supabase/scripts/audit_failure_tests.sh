@@ -99,15 +99,22 @@ run_audit_env() { # $1 = log file; $2.. = NAME=VALUE pairs, then `--`, then audi
 
 psql_was_invoked() { [[ -s "$STATE/psql_calls" ]]; }
 
+declared_local_head_gap() {
+  python3 "$ROOT/supabase/audit/assert_declared_local_head_gap.py" "$1"
+}
+
 echo "== slice 0 audit: failure injection =="
 echo
 
-# --- control: the real local audit concludes LOCAL_PASS ------------------------------------------
+# --- control: current head is ahead of the deliberately frozen Slice 0 baseline ------------------
 log="$WORK/log_control"
 rc="$(run_audit "$log" --mode local --now "$FIXED_NOW" --out "$WORK/reports_control")"
-check "control: a real local audit exits 0" "$([[ $rc -eq 0 ]] && echo 0 || echo 1)" "rc=$rc"
-check "control: the verdict is LOCAL_PASS, not PASS" \
-  "$(grep -q 'verdict: LOCAL_PASS' "$log" && echo 0 || echo 1)" "no LOCAL_PASS line"
+control_report="$WORK/reports_control/slice0-audit-local.json"
+check "control: frozen Slice 0 baseline refuses current local head" \
+  "$([[ $rc -eq 1 ]] && echo 0 || echo 1)" "rc=$rc"
+check "control: the refusal is exactly the declared post-Slice-0 schema delta" \
+  "$(declared_local_head_gap "$control_report" >/dev/null && echo 0 || echo 1)" \
+  "unexpected local-head drift"
 check "control: no run-level PASS conclusion is printed" \
   "$(no_pass_conclusion "$log" && echo 0 || echo 1)" "PASS conclusion found"
 check "control: psql was invoked, so the run really connected" \
@@ -218,8 +225,9 @@ env PATH="$SHIM:$PATH" \
     SUPABASE_DB_URL="postgresql://x:y@db.abcdefghijklmnopqrst.supabase.co:5432/postgres" \
     SUPABASE_ACCESS_TOKEN="sbp_EXAMPLENOTAREALTOKEN000000000000000000" \
     "$AUDIT" --mode local --now "$FIXED_NOW" --out "$WORK/reports_E" >"$log" 2>&1 || rc=$?
-check "E: a hostile libpq and Supabase environment does not stop a correct local run" \
-  "$([[ $rc -eq 0 ]] && echo 0 || echo 1)" "rc=$rc"
+check "E: hostile libpq/Supabase state leaves only the declared local-head gap" \
+  "$([[ $rc -eq 1 ]] && declared_local_head_gap "$WORK/reports_E/slice0-audit-local.json" >/dev/null && echo 0 || echo 1)" \
+  "rc=$rc"
 check "E: the inherited environment is reported as ignored, never used as a fallback" \
   "$(grep -q 'ignoring inherited libpq/Supabase environment' "$log" && echo 0 || echo 1)" "no scrub notice"
 check "E: the audit still connected over loopback" \
@@ -641,7 +649,8 @@ PSQLRC_EOF
   # N2: the real audit, same HOME, plus every connection-routing and TLS variable set to something
   # hostile. 192.0.2.10 is RFC 5737 documentation space and is never reachable; if any of these
   # reached the child, the audit would fail to connect, or s01 would read back
-  # default_transaction_read_only=off and refuse to conclude LOCAL_PASS.
+  # default_transaction_read_only=off. The only accepted run-level failure is the
+  # exact, declared current-head versus frozen-Slice-0 schema delta.
   SERVICEFILE="$WORK/attacker_pg_service.conf"
   cat >"$SERVICEFILE" <<'SERVICE_EOF'
 [attacker]
@@ -671,8 +680,9 @@ SERVICE_EOF
     -- --mode local --now "$FIXED_NOW" --out "$WORK/reports_N")"
 
   after_rows="$(marker_rows)"
-  check "N2: the audit still concludes LOCAL_PASS under a hostile environment" \
-    "$([[ $rc -eq 0 ]] && grep -q 'verdict: LOCAL_PASS' "$log" && echo 0 || echo 1)" "rc=$rc"
+  check "N2: hostile environment leaves only the declared local-head gap" \
+    "$([[ $rc -eq 1 ]] && declared_local_head_gap "$WORK/reports_N/slice0-audit-local.json" >/dev/null && echo 0 || echo 1)" \
+    "rc=$rc"
   check "N2: the planted ~/.psqlrc created no marker — it never executed" \
     "$([[ "$after_rows" == "0" ]] && echo 0 || echo 1)" "rows=$after_rows"
   check "N2: the planted ~/.psqlrc ran no shell command either" \

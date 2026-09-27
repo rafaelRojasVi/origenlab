@@ -10,7 +10,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
-select plan(18);
+select plan(26);
 
 insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status) values
   ('40000000-0000-4000-8000-000000000001', '40000000-0000-4000-8000-0000000000f1', 'hq.admin@example.test', 'HQ Admin', 'admin', 'active');
@@ -72,6 +72,56 @@ select lives_ok($$ update crm.quote_revision set status = 'void' where id = '400
   'sent → void is the append-only rollback');
 select throws_ok($$ update crm.quote_revision set status = 'sent' where id = '40000000-0000-4000-8000-0000000000e1' $$,
   'P0001', null, 'a void revision is never revived');
+
+-- ── the guard function itself: a declared post-Slice-0 delta ────────────────────────────────
+--
+-- The frozen Slice 0 audit baseline counts three functions; this migration is the one that makes
+-- current head carry ten. The audit's declared-gap check (supabase/audit/
+-- assert_declared_local_head_gap.py) accepts that count only because these proofs pin what the
+-- tenth function is: invoker, pg_catalog-only search path, no EXECUTE for any Data-API-facing
+-- role, and bound to exactly one row trigger.
+
+select is(
+  (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'crm' and p.proname = 'quote_revision_historical_guard'
+      and p.pronargs = 0 and p.prorettype = 'trigger'::regtype),
+  1, 'crm.quote_revision_historical_guard() exists once, takes no argument and returns trigger');
+select is(
+  (select p.prosecdef from pg_proc p where p.oid = 'crm.quote_revision_historical_guard()'::regprocedure),
+  false, 'the historical-revision guard is SECURITY INVOKER');
+select is(
+  (select array_to_string(p.proconfig, '|') from pg_proc p where p.oid = 'crm.quote_revision_historical_guard()'::regprocedure),
+  'search_path=pg_catalog', 'the historical-revision guard pins search_path = pg_catalog and nothing else');
+select is(
+  (select pg_get_userbyid(p.proowner) from pg_proc p where p.oid = 'crm.quote_revision_historical_guard()'::regprocedure),
+  'origenlab_owner', 'the historical-revision guard is owned by origenlab_owner');
+select is(
+  (select count(*)::int
+     from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+    where p.oid = 'crm.quote_revision_historical_guard()'::regprocedure
+      and (a.grantee = 0 or a.grantee::regrole::text in ('anon', 'authenticated', 'service_role', 'authenticator'))),
+  0, 'PUBLIC, anon, authenticated, service_role and authenticator hold no EXECUTE grant on the guard');
+select is(
+  (select count(*)::int from unnest(array['anon', 'authenticated', 'service_role', 'authenticator']) r(rolname)
+    where has_function_privilege(r.rolname, 'crm.quote_revision_historical_guard()'::regprocedure, 'EXECUTE')),
+  0, 'no Data-API-facing role effectively holds EXECUTE on the guard');
+select results_eq(
+  $$ select c.oid::regclass::text collate "default", t.tgname::text collate "default",
+            t.tgenabled::text collate "default",
+            (t.tgtype & 1) <> 0,              -- ROW
+            (t.tgtype & 2) <> 0,              -- BEFORE
+            (t.tgtype & 4) <> 0,              -- INSERT
+            (t.tgtype & 8) <> 0,              -- DELETE
+            (t.tgtype & 16) <> 0,             -- UPDATE
+            (t.tgtype & 32) <> 0              -- TRUNCATE
+       from pg_trigger t join pg_class c on c.oid = t.tgrelid
+      where t.tgfoid = 'crm.quote_revision_historical_guard()'::regprocedure and not t.tgisinternal $$,
+  $$ values ('crm.quote_revision', 'quote_revision_historical_guard', 'O', true, true, false, true, true, false) $$,
+  'the guard fires from exactly one enabled BEFORE UPDATE OR DELETE row trigger on crm.quote_revision');
+select is(
+  (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')),
+  10, 'the application schemas hold ten functions: three Slice 0 helpers plus seven declared later');
 
 -- ── vocabulary ──────────────────────────────────────────────────────────────────────────────
 

@@ -656,3 +656,104 @@ def test_chain_view_has_no_write_path(chain_server) -> None:
     assert ledger.entries() == []
     status, body = _req(port, "GET", "/item/3001/cadena")
     assert "<form" not in body
+
+
+# --- redirects: only rebuilt, same-origin locations ------------------------------------------
+
+
+@pytest.mark.parametrize(("email_id", "expected"), [(0, "/item/0"), (1004, "/item/1004")])
+def test_item_location_is_rebuilt_from_the_integer(email_id, expected) -> None:
+    assert _load_script().item_location(email_id) == expected
+
+
+@pytest.mark.parametrize("bad", [
+    -1, 10**18, True, "1004", "1004\r\nSet-Cookie: x=1", 1004.0, None,
+])
+def test_item_location_refuses_anything_but_a_bounded_integer(bad) -> None:
+    with pytest.raises(ValueError):
+        _load_script().item_location(bad)
+
+
+def test_document_location_is_rebuilt_from_the_digest() -> None:
+    assert _load_script().document_location(SHA_A) == f"/documento/{SHA_A}"
+
+
+@pytest.mark.parametrize("bad", [
+    SHA_A + "\n",                      # `$` would have accepted this
+    SHA_A + "\r\nSet-Cookie: x=1",
+    SHA_A.upper(),
+    SHA_A[:-1],
+    SHA_A + "0",
+    "../" + SHA_A[3:],
+    "//evil.example/" + SHA_A[15:],
+    "https://evil.example/" + SHA_A[21:],
+    "",
+    None,
+])
+def test_document_location_refuses_anything_but_a_lowercase_digest(bad) -> None:
+    with pytest.raises(ValueError):
+        _load_script().document_location(bad)
+
+
+@pytest.mark.parametrize("location", [
+    "https://evil.example/",
+    "//evil.example/item/1",
+    "/\\evil.example",
+    "/item/1\r\nSet-Cookie: x=1",
+    "/item/1\nX: y",
+    "/item/../../etc/passwd",
+    "/item/./1",
+    "item/1",
+    "/item/1\x00",
+    "javascript:alert(1)",
+])
+def test_the_location_guard_refuses_external_split_and_traversal_targets(location) -> None:
+    with pytest.raises(ValueError):
+        _load_script()._local_location(location)
+
+
+def test_the_generic_redirect_is_gone() -> None:
+    source = _SCRIPT.read_text(encoding="utf-8")
+    assert "def _redirect" not in source
+    assert source.count('send_header("Location"') == 1
+
+
+def _raw(port: int, method: str, path: str, body: dict | None = None):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    headers = {"Host": f"127.0.0.1:{port}", "Origin": f"http://127.0.0.1:{port}"}
+    data = None
+    if body is not None:
+        data = urlencode(body)
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+    conn.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+    for name, value in headers.items():
+        conn.putheader(name, value)
+    if data is not None:
+        conn.putheader("Content-Length", str(len(data)))
+    conn.endheaders(data.encode() if data is not None else None)
+    resp = conn.getresponse()
+    resp.read()
+    return resp.status, resp.getheaders()
+
+
+def test_a_decision_redirects_to_the_rebuilt_item_path(server) -> None:
+    port, ledger = server
+    status, headers = _raw(port, "POST", "/item/1004/decide", _REJECT)
+    assert status == 303
+    assert [v for k, v in headers if k.lower() == "location"] == ["/item/1004"]
+    assert not [k for k, _ in headers if k.lower() == "set-cookie"]
+
+
+@pytest.mark.parametrize("path", [
+    "/item/1004%0d%0aSet-Cookie:%20x=1/decide",
+    "/item/1004%0aX:%20y/decide",
+    "/item/%2e%2e/decide",
+    "/item/1004/../1004/decide",
+    "//evil.example/item/1004/decide",
+])
+def test_a_hostile_decision_path_never_reaches_a_redirect(server, path) -> None:
+    port, ledger = server
+    status, headers = _raw(port, "POST", path, _REJECT)
+    assert status == 404
+    assert not [k for k, _ in headers if k.lower() in {"location", "set-cookie", "x"}]
+    assert ledger.entries() == []

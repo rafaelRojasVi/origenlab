@@ -91,8 +91,37 @@ DEFAULT_LEDGER = (
 )
 DEFAULT_IDENTITY_DIR = Path.home() / "data/origenlab-v2-migration/audits/quote-document-identity-20260924"
 IDENTITY_JSON = "quote_document_identity.json"
-_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+# \A…\Z, not ^…$: `$` also matches before a trailing newline, and these ids reach a header.
+_SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+_ITEM_ID_RE = re.compile(r"\A[0-9]{1,18}\Z")
 LOOPBACK = ("127.0.0.1", "localhost")
+
+
+def _local_location(location: str) -> str:
+    """Last line of defence for a Location header: one same-origin absolute path, nothing else."""
+    if (
+        not location.startswith("/")
+        or location.startswith("//")
+        or any(c in location for c in "\r\n\\\x00")
+        or ":" in location
+        or any(seg in {".", ".."} for seg in location.split("/"))
+    ):
+        raise ValueError("refusing to redirect outside this review tool")
+    return location
+
+
+def item_location(email_id: int) -> str:
+    """The Location of one review item. Rebuilt from the integer, never echoed from the request."""
+    if isinstance(email_id, bool) or not isinstance(email_id, int) or not 0 <= email_id < 10**18:
+        raise ValueError("an item id is a non-negative integer")
+    return _local_location("/item/%d" % email_id)
+
+
+def document_location(sha: str) -> str:
+    """The Location of one document. Rebuilt from the digest's value, never echoed from the request."""
+    if not isinstance(sha, str) or _SHA_RE.fullmatch(sha) is None:
+        raise ValueError("a document id is 64 lowercase hex digits")
+    return _local_location("/documento/%064x" % int(sha, 16))
 
 WARNING_LABELS = {
     "shared_cn": "El mismo CN aparece en otros correos (aviso: posible reenvío o revisión)",
@@ -1055,7 +1084,7 @@ def make_handler(
 
         def _item_id(self, path: str) -> int | None:
             parts = path.strip("/").split("/")
-            if len(parts) >= 2 and parts[0] == "item" and parts[1].isdigit():
+            if len(parts) >= 2 and parts[0] == "item" and _ITEM_ID_RE.fullmatch(parts[1]):
                 return int(parts[1])
             return None
 
@@ -1076,7 +1105,7 @@ def make_handler(
                 if url.path == "/documentos":
                     self._send(HTTPStatus.OK, render_documents_index(review, document_ledger, doc_states()))
                     return
-                if parts[0] == "documento" and len(parts) == 2 and _SHA_RE.match(parts[1]):
+                if parts[0] == "documento" and len(parts) == 2 and _SHA_RE.fullmatch(parts[1]):
                     try:
                         cand = review.candidate(parts[1])
                     except ReviewRefused as exc:
@@ -1084,7 +1113,7 @@ def make_handler(
                         return
                     self._send(HTTPStatus.OK, self._document_page(cand))
                     return
-            if parts[0] == "doc" and len(parts) in (2, 3) and _SHA_RE.match(parts[1]):
+            if parts[0] == "doc" and len(parts) in (2, 3) and _SHA_RE.fullmatch(parts[1]):
                 self._send_document(parts[1], as_text=len(parts) == 3 and parts[2] == "texto")
                 return
             email_id = self._item_id(url.path)
@@ -1157,7 +1186,7 @@ def make_handler(
             parts = url.path.strip("/").split("/")
             if (
                 review is not None and len(parts) == 3 and parts[0] == "documento"
-                and _SHA_RE.match(parts[1]) and parts[2] == "decide"
+                and _SHA_RE.fullmatch(parts[1]) and parts[2] == "decide"
             ):
                 self._decide_document(parts[1])
                 return
@@ -1197,15 +1226,17 @@ def make_handler(
                                 doc_status=email_doc_status(email_id)),
                 )
                 return
-            self._redirect(f"/item/{email_id}")
+            self._see_other(item_location(email_id))
 
         def _form(self) -> dict[str, str]:
             length = min(int(self.headers.get("Content-Length") or 0), 64 * 1024)
             return {k: v[0] for k, v in parse_qs(self.rfile.read(length).decode("utf-8")).items()}
 
-        def _redirect(self, location: str) -> None:
+        def _see_other(self, location: str) -> None:
+            # Only item_location() / document_location() build `location`; there is no generic
+            # redirect that forwards a caller-supplied target.
             self.send_response(HTTPStatus.SEE_OTHER)
-            self.send_header("Location", location)
+            self.send_header("Location", _local_location(location))
             self.send_header("Content-Length", "0")
             self.end_headers()
 
@@ -1236,7 +1267,7 @@ def make_handler(
                     return
                 self._send(HTTPStatus.UNPROCESSABLE_ENTITY, self._document_page(cand, str(exc)))
                 return
-            self._redirect(f"/documento/{sha}")
+            self._see_other(document_location(sha))
 
         def log_message(self, fmt: str, *args: Any) -> None:
             # Paths only: no bodies, so no addresses reach the terminal log.
