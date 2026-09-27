@@ -9,6 +9,12 @@
  * Relevance and permission are shown apart: each destination's evidence per canonical line
  * («Sin información» when there is none) never decides whether it may be written to, and every
  * exclusion reason is listed.
+ *
+ * W12 (when the API has it on, `preview.recontact_review.enabled`): a destination kept out only
+ * by a prior contact is listed with its last contact date, campaign or source and destination.
+ * An operator approves recontact or keeps it excluded, with a note, per row or for a reviewed
+ * selection — sent as one decision per recipient. Without a decision it stays excluded. The
+ * API recomputes and revalidates every decision at freeze; W12 never lifts anything else.
  */
 
 import { useMemo, useState } from "react";
@@ -24,6 +30,8 @@ import type {
   FreezeRow,
   FrozenSnapshot,
   InterestBasis,
+  PriorContact,
+  RecontactDecision,
   ReviewDecision,
   SendBlocker,
 } from "./marketingTypes";
@@ -131,6 +139,7 @@ function FreezeFlow({
   const [preview, setPreview] = useState<FreezePreview | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ReviewDecision>>({});
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [recontact, setRecontact] = useState<Record<string, RecontactDecision>>({});
   const [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,6 +156,7 @@ function FreezeFlow({
       setPreview(p);
       setDecisions({});
       setExcluded(new Set());
+      setRecontact({});
       setAcknowledged(false);
       setStep("review");
     } catch (err) {
@@ -156,19 +166,30 @@ function FreezeFlow({
     }
   };
 
-  const reviewRows = useMemo(() => (preview ? preview.rows.filter((r) => r.review_codes.length) : []), [preview]);
+  const approved = (key: string) => recontact[key]?.decision === "approve";
+  // An identity decision is needed only where it decides inclusion: a prior contact nobody
+  // approved stays excluded whatever its identity.
+  const reviewRows = useMemo(
+    () => (preview ? preview.rows.filter((r) => r.review_codes.length && (!r.recontact_review_required || approved(r.key))) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [preview, recontact],
+  );
+  const recontactRows = useMemo(() => (preview ? preview.rows.filter((r) => r.recontact_review_required) : []), [preview]);
   const undecided = reviewRows.filter((r) => !decisions[r.key] || decisions[r.key].note.trim().length < 3);
+  const recontactIncomplete = Object.values(recontact).filter((d) => d.note.trim().length < 3).length;
   const serverProblems = (preview?.problems ?? []).filter((p) => p.code !== "review_pending");
-  // Review rows are includable only once a person said so.
+  // Review rows are includable only once a person said so; a prior contact only once approved.
   const willInclude = preview
     ? preview.rows.filter(
         (r) =>
-          r.inclusion === "included" &&
+          (r.inclusion === "included" || (r.recontact_review_required && approved(r.key))) &&
           !excluded.has(r.key) &&
           (!r.review_codes.length || decisions[r.key]?.decision === "include"),
       ).length
     : 0;
-  const canConfirm = preview !== null && undecided.length === 0 && serverProblems.length === 0 && willInclude > 0;
+  const recontactApproved = recontactRows.filter((r) => approved(r.key)).length;
+  const canConfirm =
+    preview !== null && undecided.length === 0 && recontactIncomplete === 0 && serverProblems.length === 0 && willInclude > 0;
 
   const freeze = async () => {
     if (!preview) return;
@@ -182,6 +203,9 @@ function FreezeFlow({
         criteria,
         review_decisions: reviewRows.map((r) => ({ ...decisions[r.key], key: r.key, note: decisions[r.key].note.trim() })),
         excluded_keys: [...excluded],
+        recontact_decisions: recontactRows
+          .filter((r) => recontact[r.key])
+          .map((r) => ({ ...recontact[r.key], key: r.key, note: recontact[r.key].note.trim() })),
       });
       setResult(out);
       setStep("done");
@@ -286,6 +310,17 @@ function FreezeFlow({
             })
           }
           undecided={undecided.length}
+          recontactRows={recontactRows}
+          recontact={recontact}
+          setRecontact={(updates) => setRecontact((all) => ({ ...all, ...updates }))}
+          clearRecontact={(key) =>
+            setRecontact((all) => {
+              const next = { ...all };
+              delete next[key];
+              return next;
+            })
+          }
+          recontactIncomplete={recontactIncomplete}
           serverProblems={serverProblems}
           canConfirm={canConfirm}
           onBack={() => setStep("criteria")}
@@ -307,7 +342,20 @@ function FreezeFlow({
               <Fact k="Destinos excluidos (con motivo)" v={fmtInt(preview.counts.rows - willInclude)} />
               <Fact k="Mal formados (no se guardan)" v={fmtInt(preview.counts.malformed_not_stored)} />
               <Fact k="Decisiones de identidad" v={fmtInt(reviewRows.length)} />
+              {preview.recontact_review.enabled ? (
+                <>
+                  <Fact k="Revisión de recontacto (W12)" v={preview.recontact_review.policy_version ?? "—"} />
+                  <Fact k="Recontacto aprobado" v={fmtInt(recontactApproved)} />
+                  <Fact k="Contacto previo que sigue excluido" v={fmtInt(recontactRows.length - recontactApproved)} />
+                </>
+              ) : null}
             </dl>
+            {recontactApproved ? (
+              <p className="rounded-md border border-warn/40 bg-warn-bg px-2.5 py-1.5 text-warn" data-testid="recontact-summary">
+                {fmtInt(recontactApproved)} destino(s) con contacto previo quedan incluidos por una decisión W12 con nota. La decisión se
+                guarda con la instantánea y no se puede cambiar después.
+              </p>
+            ) : null}
             <p className="text-ink-muted">
               Al congelar se guarda una instantánea inmutable en <code>outbound.campaign_recipient</code>: cada destino con su decisión,
               todos sus motivos, su evidencia y fecha, la versión del contenido y la política. No se puede modificar; un cambio en el
@@ -415,6 +463,11 @@ function ReviewStep({
   excluded,
   toggleExcluded,
   undecided,
+  recontactRows,
+  recontact,
+  setRecontact,
+  clearRecontact,
+  recontactIncomplete,
   serverProblems,
   canConfirm,
   onBack,
@@ -427,6 +480,11 @@ function ReviewStep({
   excluded: Set<string>;
   toggleExcluded: (key: string) => void;
   undecided: number;
+  recontactRows: FreezeRow[];
+  recontact: Record<string, RecontactDecision>;
+  setRecontact: (updates: Record<string, RecontactDecision>) => void;
+  clearRecontact: (key: string) => void;
+  recontactIncomplete: number;
   serverProblems: { code: string; message: string }[];
   canConfirm: boolean;
   onBack: () => void;
@@ -434,7 +492,12 @@ function ReviewStep({
 }) {
   const [showAll, setShowAll] = useState(false);
   const included = preview.rows.filter((r) => r.inclusion === "included");
-  const excludedRows = preview.rows.filter((r) => r.inclusion === "excluded" && !r.review_codes.length);
+  const excludedRows = preview.rows.filter(
+    (r) => r.inclusion === "excluded" && !r.recontact_review_required && !reviewRows.some((x) => x.key === r.key),
+  );
+  const priorOnlyWithoutW12 = preview.recontact_review.enabled
+    ? 0
+    : preview.rows.filter((r) => r.reasons.length === 1 && r.reasons[0].code === "prior_contact").length;
   const shown = showAll ? included : included.slice(0, 50);
   const c = preview.counts;
   return (
@@ -468,6 +531,16 @@ function ReviewStep({
             </div>
           ))}
         </Panel>
+      ) : null}
+
+      {recontactRows.length ? (
+        <RecontactPanel rows={recontactRows} recontact={recontact} setRecontact={setRecontact} clearRecontact={clearRecontact} />
+      ) : null}
+      {priorOnlyWithoutW12 ? (
+        <p className="text-[11px] text-ink-muted" data-testid="recontact-disabled">
+          {fmtInt(priorOnlyWithoutW12)} destino(s) quedan excluidos sólo por contacto previo. La revisión de recontacto (W12) no está
+          habilitada en este entorno, así que siguen excluidos.
+        </p>
       ) : null}
 
       {reviewRows.length ? (
@@ -564,8 +637,169 @@ function ReviewStep({
           Continuar a la confirmación
         </button>
         {undecided ? <span className="text-[10px] text-ink-faint">Faltan {undecided} decisión(es) de identidad con nota.</span> : null}
+        {recontactIncomplete ? (
+          <span className="text-[10px] text-ink-faint">Faltan notas en {recontactIncomplete} decisión(es) de recontacto.</span>
+        ) : null}
       </div>
     </div>
+  );
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  wave1a_union: "Historial V1 (ola 1A)",
+  wave1a_rfc2047_addendum: "Historial V1 (ola 1A, anexo)",
+  wave1b_prior_contact: "Historial V1 (ola 1B)",
+  send_accepted: "Envío aceptado",
+  operator_command: "Registrado por un operador",
+};
+
+function lastContact(pc: PriorContact | null): string {
+  if (!pc) return "—";
+  const when = pc.last_contact_at ? fmtDate(pc.last_contact_at) : "fecha desconocida";
+  const where = pc.campaign_name ?? pc.sources.map((s) => SOURCE_LABEL[s.source] ?? s.source).join(" · ");
+  return where ? `${when} · ${where}` : when;
+}
+
+/**
+ * W12 — prior contacts an operator may approve for recontact in this campaign only. Each row
+ * shows last contact, campaign or source and destination; each decision needs a note. A bulk
+ * decision is applied only after the operator has looked at the exact list it covers, and is
+ * still stored as one decision per recipient.
+ */
+function RecontactPanel({
+  rows,
+  recontact,
+  setRecontact,
+  clearRecontact,
+}: {
+  rows: FreezeRow[];
+  recontact: Record<string, RecontactDecision>;
+  setRecontact: (updates: Record<string, RecontactDecision>) => void;
+  clearRecontact: (key: string) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDecision, setBulkDecision] = useState<RecontactDecision["decision"]>("approve");
+  const [bulkNote, setBulkNote] = useState("");
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewed, setReviewed] = useState(false);
+  const chosen = rows.filter((r) => selected.has(r.key));
+  const toggle = (key: string) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const applyBulk = () => {
+    const note = bulkNote.trim();
+    setRecontact(Object.fromEntries(chosen.map((r) => [r.key, { key: r.key, decision: bulkDecision, note, mode: "bulk" as const }])));
+    setSelected(new Set());
+    setReviewing(false);
+    setReviewed(false);
+  };
+  return (
+    <Panel
+      title="Contacto previo — revisión de recontacto (W12)"
+      note="sin decisión quedan excluidos; W12 no levanta bloqueos, bajas, proveedores, rebotes, duplicados ni períodos de espera"
+      bodyClassName="divide-y divide-line"
+    >
+      <div data-testid="recontact-panel" className="divide-y divide-line">
+        {rows.map((r) => {
+          const d = recontact[r.key];
+          const pc = r.prior_contact;
+          return (
+            <div key={r.key} className="space-y-1.5 px-3 py-2" data-testid="recontact-row">
+              <div className="flex flex-wrap items-center gap-2 text-[13px]">
+                <input type="checkbox" checked={selected.has(r.key)} onChange={() => toggle(r.key)} aria-label={`Seleccionar ${r.address}`} />
+                <span className="font-medium text-ink">{r.display_name ?? r.address}</span>
+                <span className="text-ink-muted">Destino: {pc?.destination ?? r.address}</span>
+                {r.organizations.map((o) => (
+                  <Badge key={o.organization_id} tone="neutral">
+                    {o.name ?? "Institución sin nombre"}
+                  </Badge>
+                ))}
+                {d ? (
+                  <Badge tone={d.decision === "approve" ? "warn" : "neutral"}>
+                    {d.decision === "approve" ? "Recontacto aprobado" : "Se mantiene excluido"}
+                    {d.mode === "bulk" ? " · selección" : ""}
+                  </Badge>
+                ) : (
+                  <Badge tone="neutral">Sin decisión: excluido</Badge>
+                )}
+              </div>
+              <p className="text-[11px] text-ink-muted" data-testid="recontact-last-contact">
+                Último contacto: {lastContact(pc)}
+              </p>
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                {(["approve", "keep_excluded"] as const).map((v) => (
+                  <label key={v} className="inline-flex items-center gap-1">
+                    <input type="radio" name={`w12-${r.key}`} checked={d?.decision === v}
+                      onChange={() => setRecontact({ [r.key]: { key: r.key, decision: v, note: d?.note ?? "", mode: "individual" } })} />
+                    {v === "approve" ? "Aprobar recontacto" : "Mantener excluido"}
+                  </label>
+                ))}
+                <input
+                  aria-label={`Nota de recontacto para ${r.address}`}
+                  className={`${inputCls} max-w-sm`}
+                  placeholder="Por qué (obligatorio)"
+                  value={d?.note ?? ""}
+                  disabled={!d}
+                  onChange={(e) => setRecontact({ [r.key]: { ...d!, note: e.target.value, mode: "individual" } })}
+                />
+                {d ? (
+                  <button type="button" className="text-[11px] text-ink-muted hover:underline" onClick={() => clearRecontact(r.key)}>
+                    Quitar decisión
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="space-y-2 px-3 py-2" data-testid="recontact-bulk">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-ink-muted">{fmtInt(chosen.length)} seleccionado(s)</span>
+          <select aria-label="Decisión para la selección" className={`${inputCls} w-48`} value={bulkDecision}
+            onChange={(e) => setBulkDecision(e.target.value as RecontactDecision["decision"])}>
+            <option value="approve">Aprobar recontacto</option>
+            <option value="keep_excluded">Mantener excluido</option>
+          </select>
+          <input aria-label="Nota para la selección" className={`${inputCls} max-w-sm`} placeholder="Por qué (obligatorio, se guarda en cada uno)"
+            value={bulkNote} onChange={(e) => setBulkNote(e.target.value)} />
+          <button type="button" className={btnSecondary} disabled={!chosen.length || bulkNote.trim().length < 3}
+            onClick={() => { setReviewing(true); setReviewed(false); }} data-testid="recontact-bulk-review">
+            Revisar selección…
+          </button>
+        </div>
+        {reviewing && chosen.length ? (
+          <div className="space-y-2 rounded-md border border-warn/40 bg-warn-bg px-3 py-2 text-xs text-ink" data-testid="recontact-bulk-confirm">
+            <p>
+              <b>{bulkDecision === "approve" ? "Aprobar recontacto" : "Mantener excluidos"}</b> para estos {fmtInt(chosen.length)} destino(s),
+              con la nota «{bulkNote.trim()}». Se guarda una decisión por destinatario.
+            </p>
+            <ul className="list-disc pl-5">
+              {chosen.map((r) => (
+                <li key={r.key}>
+                  {r.address} — último contacto: {lastContact(r.prior_contact)}
+                </li>
+              ))}
+            </ul>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} data-testid="recontact-bulk-ack" />
+              Revisé cada destino de esta lista.
+            </label>
+            <div className="flex gap-2">
+              <button type="button" className={btnSecondary} onClick={() => setReviewing(false)}>
+                Cancelar
+              </button>
+              <button type="button" className={btnPrimary} disabled={!reviewed} onClick={applyBulk} data-testid="recontact-bulk-apply">
+                Aplicar a {fmtInt(chosen.length)}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </Panel>
   );
 }
 
@@ -610,6 +844,12 @@ function FrozenSnapshotView({ campaign, onNewVersion }: { campaign: CampaignCont
                         {r.evidence_observed_at ? ` · ${fmtDate(r.evidence_observed_at)}` : ""}
                         {r.identity_review ? ` · revisado: ${r.identity_review.decision === "include" ? "incluir" : "excluir"}` : ""}
                       </span>
+                      {r.recontact_review ? (
+                        <span className="text-[11px] text-warn" data-testid="frozen-recontact">
+                          W12: {r.recontact_review.decision === "approve" ? "recontacto aprobado" : "se mantiene excluido"}
+                          {r.recontact_review.mode === "bulk" ? " (selección revisada)" : ""} — «{r.recontact_review.note}»
+                        </span>
+                      ) : null}
                     </div>
                   ))}
                 </div>

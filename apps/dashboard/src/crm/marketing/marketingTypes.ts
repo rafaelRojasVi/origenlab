@@ -221,6 +221,19 @@ export interface FreezeRow {
   inclusion: "included" | "excluded";
   reasons: CodeLabel[];
   note_labels: CodeLabel[];
+  /** W12: prior contact is the only reason this destination is out, and W12 is on. */
+  recontact_review_required: boolean;
+  /** Shown whenever prior_contact is a reason: what the reviewer must see before deciding. */
+  prior_contact: PriorContact | null;
+}
+
+export interface PriorContact {
+  destination: string;
+  /** Last accepted send; null for a historical V1 fact with no recorded date. */
+  last_contact_at: string | null;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  sources: { source: string; reason: string; recorded_at: string | null }[];
 }
 
 export interface SendBlocker {
@@ -251,6 +264,7 @@ export interface FreezePreview {
   rows: FreezeRow[];
   review_required: string[];
   review_pending: string[];
+  recontact_review: { enabled: boolean; policy_version: string | null; required: string[] };
   malformed_count: number;
   counts: {
     candidates: number;
@@ -259,6 +273,7 @@ export interface FreezePreview {
     excluded: number;
     malformed_not_stored: number;
     review_required: number;
+    recontact_review_required: number;
     excluded_by_reason: (CodeLabel & { count: number })[];
     included_by_line: { brand_id: string; line: string; brand: string; evidenced: number; sin_informacion: number }[];
   };
@@ -273,6 +288,24 @@ export interface ReviewDecision {
   note: string;
 }
 
+/** W12: one recipient's recontact decision; a bulk selection sends one per recipient. */
+export interface RecontactDecision {
+  key: string;
+  decision: "approve" | "keep_excluded";
+  note: string;
+  mode: "individual" | "bulk";
+}
+
+export interface RecontactSummary {
+  enabled: boolean;
+  policy_version: string | null;
+  review_required: number;
+  approved: number;
+  kept_excluded: number;
+  not_reviewed: number;
+  bulk: number;
+}
+
 export interface FreezeResult {
   campaign_id: string;
   status: "audience_frozen";
@@ -284,6 +317,7 @@ export interface FreezeResult {
   counts: { rows: number; included: number; excluded: number; malformed_not_stored: number };
   storage: { tables: string[]; database: string };
   send_blockers: SendBlocker[];
+  recontact_review?: RecontactSummary;
   replayed: boolean;
 }
 
@@ -300,6 +334,15 @@ export interface FrozenRecipient {
   interest_evidence: FreezeEvidence[];
   evidence_observed_at: string | null;
   identity_review: { codes: string[]; decision: string; note: string } | null;
+  recontact_review: {
+    decision: "approve" | "keep_excluded";
+    note: string;
+    mode: "individual" | "bulk";
+    operator_id: string;
+    policy_version: string;
+    prior_contact: PriorContact;
+  } | null;
+  recontact_override_at: string | null;
   campaign_version: number;
   content_sha256: string;
   policy_version: string;

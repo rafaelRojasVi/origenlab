@@ -303,7 +303,7 @@ function freezeRow(key: string, address: string, extra: Partial<FreezeRow> = {})
   return {
     key, address, display_name: null, organizations: [{ organization_id: "o1", name: "Universidad Ficticia" }], via: ["person_interest"],
     evidence: [], relevance: "evidenced", evidence_observed_at: "2026-03-12T10:00:00Z", review_codes: [], inclusion: "included",
-    reasons: [], note_labels: [],
+    reasons: [], note_labels: [], recontact_review_required: false, prior_contact: null,
     lines: LINES.map(([brand_id, brand, line]) => ({
       brand_id, brand, line, status: brand_id === "hielscher" ? "evidenced" : "sin_informacion",
       label: brand_id === "hielscher" ? "1 evidencia(s)" : "Sin información", bases: [], latest_observed_at: null,
@@ -327,8 +327,9 @@ const PREVIEW: FreezePreview = {
     freezeRow("cp:3", "baja@uni.test", { inclusion: "excluded", reasons: [{ code: "block", label: "Dirección bloqueada" }] }),
   ],
   review_required: ["addr:2"], review_pending: ["addr:2"], malformed_count: 0,
+  recontact_review: { enabled: false, policy_version: null, required: [] },
   counts: {
-    candidates: 3, rows: 3, included: 2, excluded: 1, malformed_not_stored: 0, review_required: 1,
+    candidates: 3, rows: 3, included: 2, excluded: 1, malformed_not_stored: 0, review_required: 1, recontact_review_required: 0,
     excluded_by_reason: [{ code: "block", label: "Dirección bloqueada", count: 1 }],
     included_by_line: LINES.map(([brand_id, brand, line]) => ({ brand_id, brand, line, evidenced: brand_id === "hielscher" ? 2 : 0, sin_informacion: brand_id === "hielscher" ? 0 : 2 })),
   },
@@ -336,7 +337,7 @@ const PREVIEW: FreezePreview = {
   send_blockers: BLOCKERS, freeze_enabled: true,
 };
 
-function stubFreezeApi({ freezeEnabled, frozen = false }: { freezeEnabled: boolean; frozen?: boolean }) {
+function stubFreezeApi({ freezeEnabled, frozen = false, preview = PREVIEW }: { freezeEnabled: boolean; frozen?: boolean; preview?: FreezePreview }) {
   posts = [];
   const content = frozen ? { ...DRAFT_CONTENT, status: "audience_frozen" } : DRAFT_CONTENT;
   vi.stubGlobal(
@@ -359,7 +360,7 @@ function stubFreezeApi({ freezeEnabled, frozen = false }: { freezeEnabled: boole
         return jsonResponse({ ...m, campaigns: [{ ...DRAFT, status: content.status }, ARCHIVED], authoring: { drafts_enabled: true, freeze_enabled: freezeEnabled } });
       }
       if (path.endsWith("/v2/workspace/marketing/taxonomy")) return jsonResponse(taxonomy);
-      if (path.endsWith("/freeze-preview")) return jsonResponse({ ...PREVIEW, freeze_enabled: freezeEnabled });
+      if (path.endsWith("/freeze-preview")) return jsonResponse({ ...preview, freeze_enabled: freezeEnabled });
       if (path.endsWith("/recipients"))
         return jsonResponse({
           campaign_id: DRAFT.campaign_id, name: DRAFT.name, status: "audience_frozen", version: 4, audience_frozen_at: "2026-09-27T13:00:00Z",
@@ -368,7 +369,8 @@ function stubFreezeApi({ freezeEnabled, frozen = false }: { freezeEnabled: boole
           recipients: frozen || posts.length
             ? [{ recipient_id: "r1", address: "ana@uni.test", organization_name: "Universidad Ficticia", display_name: null, frozen_at: "2026-09-27T13:00:00Z",
                  inclusion: "included", frozen_reasons: [], frozen_notes: [], relevance: "evidenced", interest_evidence: [{}],
-                 evidence_observed_at: "2026-03-12T10:00:00Z", identity_review: null, campaign_version: 4, content_sha256: "c".repeat(64),
+                 evidence_observed_at: "2026-03-12T10:00:00Z", identity_review: null, recontact_review: null, recontact_override_at: null,
+                 campaign_version: 4, content_sha256: "c".repeat(64),
                  policy_version: PREVIEW.policy_version, lifecycle_state: "snapshotted" }]
             : [],
         });
@@ -473,5 +475,128 @@ describe("audience freeze", () => {
     await waitFor(() => expect(screen.getByTestId("persistence")).toHaveAttribute("data-state", "memory"));
     expect(screen.getByLabelText("Nombre interno")).toHaveValue("Copia de Borrador IKA");
     expect(posts).toEqual([]);
+  });
+});
+
+const PRIOR = [{ code: "prior_contact", label: "Contacto previo registrado" }];
+
+const PREVIEW_W12: FreezePreview = {
+  ...PREVIEW,
+  policy_version: "marketing-audience/2026-09-27.v2-w12",
+  rows: [
+    ...PREVIEW.rows,
+    freezeRow("cp:4", "prev@uni.test", {
+      inclusion: "excluded", reasons: PRIOR, recontact_review_required: true,
+      prior_contact: { destination: "prev@uni.test", last_contact_at: "2025-11-03T14:00:00Z", campaign_id: "v1", campaign_name: "Campaña V1 noviembre",
+                       sources: [{ source: "send_accepted", reason: "envío aceptado", recorded_at: "2025-11-03" }] },
+    }),
+    freezeRow("cp:5", "viejo@uni.test", {
+      inclusion: "excluded", reasons: PRIOR, recontact_review_required: true,
+      prior_contact: { destination: "viejo@uni.test", last_contact_at: null, campaign_id: null, campaign_name: null,
+                       sources: [{ source: "wave1a_union", reason: "v1 prior contact", recorded_at: "2026-09-20" }] },
+    }),
+    freezeRow("addr:6", "sin-cp@uni.test", {
+      inclusion: "excluded", reasons: PRIOR, recontact_review_required: true, review_codes: ["no_contact_point"],
+      prior_contact: { destination: "sin-cp@uni.test", last_contact_at: null, campaign_id: null, campaign_name: null,
+                       sources: [{ source: "wave1b_prior_contact", reason: "v1 prior contact", recorded_at: "2026-09-20" }] },
+    }),
+  ],
+  review_required: ["addr:2", "addr:6"],
+  recontact_review: { enabled: true, policy_version: "recontact-review/2026-09-27.v1", required: ["cp:4", "cp:5", "addr:6"] },
+  counts: { ...PREVIEW.counts, rows: 6, excluded: 4, recontact_review_required: 3 },
+};
+
+describe("W12 recontact review", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("shows each prior contact, needs a note, applies a reviewed bulk decision per recipient, and freezes it", async () => {
+    stubFreezeApi({ freezeEnabled: true, preview: PREVIEW_W12 });
+    await openFreeze();
+    fireEvent.click(screen.getByTestId("freeze-review"));
+    await screen.findByTestId("freeze-preview");
+
+    const rows = screen.getAllByTestId("recontact-row");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent("Destino: prev@uni.test");
+    expect(within(rows[0]).getByTestId("recontact-last-contact")).toHaveTextContent("Campaña V1 noviembre");
+    expect(within(rows[0]).getByTestId("recontact-last-contact")).not.toHaveTextContent("fecha desconocida");
+    expect(within(rows[1]).getByTestId("recontact-last-contact")).toHaveTextContent("fecha desconocida · Historial V1 (ola 1A)");
+    for (const r of rows) expect(r).toHaveTextContent("Sin decisión: excluido");
+    // Prior contacts are not in the plain exclusion list: they have their own panel.
+    expect(screen.getAllByTestId("excluded-row")).toHaveLength(1);
+    // Only one identity needs a decision until sin-cp is approved.
+    expect(screen.getAllByTestId("review-row")).toHaveLength(1);
+    const nuevo = screen.getByTestId("review-row");
+    fireEvent.click(within(nuevo).getByLabelText("Incluir"));
+    fireEvent.change(within(nuevo).getByLabelText("Nota de revisión para nuevo@uni.test"), { target: { value: "Es la jefa de laboratorio" } });
+    const cont = screen.getByTestId("freeze-continue");
+    expect(cont).toBeEnabled(); // no W12 decision: prior contacts simply stay excluded
+
+    fireEvent.click(within(rows[0]).getByLabelText("Aprobar recontacto"));
+    expect(cont).toBeDisabled(); // a recontact decision needs a note
+    fireEvent.change(within(rows[0]).getByLabelText("Nota de recontacto para prev@uni.test"), { target: { value: "Pidió la ficha del UP200St" } });
+    expect(cont).toBeEnabled();
+
+    // Bulk: select two, write one note, look at the exact list, acknowledge, apply.
+    fireEvent.click(screen.getByLabelText("Seleccionar viejo@uni.test"));
+    fireEvent.click(screen.getByLabelText("Seleccionar sin-cp@uni.test"));
+    const reviewBulk = screen.getByTestId("recontact-bulk-review");
+    expect(reviewBulk).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Nota para la selección"), { target: { value: "Lote revisado: clientes 2024" } });
+    fireEvent.click(reviewBulk);
+    const list = screen.getByTestId("recontact-bulk-confirm");
+    expect(list).toHaveTextContent("viejo@uni.test");
+    expect(list).toHaveTextContent("sin-cp@uni.test");
+    expect(screen.getByTestId("recontact-bulk-apply")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("recontact-bulk-ack"));
+    fireEvent.click(screen.getByTestId("recontact-bulk-apply"));
+    expect(screen.getAllByTestId("recontact-row")[2]).toHaveTextContent("Recontacto aprobado · selección");
+
+    // Approving sin-cp makes its ambiguous identity matter.
+    expect(cont).toBeDisabled();
+    const reviews = screen.getAllByTestId("review-row");
+    expect(reviews).toHaveLength(2);
+    fireEvent.click(within(reviews[1]).getByLabelText("Incluir"));
+    fireEvent.change(within(reviews[1]).getByLabelText("Nota de revisión para sin-cp@uni.test"), { target: { value: "Es el mismo investigador" } });
+    expect(cont).toBeEnabled();
+    fireEvent.click(cont);
+
+    const confirm = await screen.findByTestId("freeze-confirmation");
+    expect(confirm).toHaveTextContent("marketing-audience/2026-09-27.v2-w12");
+    expect(confirm).toHaveTextContent("recontact-review/2026-09-27.v1");
+    expect(screen.getByTestId("recontact-summary")).toHaveTextContent("3 destino(s) con contacto previo");
+    fireEvent.click(screen.getByTestId("freeze-ack"));
+    fireEvent.click(screen.getByTestId("freeze-confirm"));
+    await screen.findByTestId("freeze-done");
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toMatchObject({
+      recontact_decisions: [
+        { key: "cp:4", decision: "approve", note: "Pidió la ficha del UP200St", mode: "individual" },
+        { key: "cp:5", decision: "approve", note: "Lote revisado: clientes 2024", mode: "bulk" },
+        { key: "addr:6", decision: "approve", note: "Lote revisado: clientes 2024", mode: "bulk" },
+      ],
+      review_decisions: [
+        { key: "addr:2", decision: "include", note: "Es la jefa de laboratorio" },
+        { key: "addr:6", decision: "include", note: "Es el mismo investigador" },
+      ],
+    });
+  });
+
+  it("without W12 a prior contact is excluded with no way to approve it", async () => {
+    const preview: FreezePreview = {
+      ...PREVIEW,
+      rows: [...PREVIEW.rows, freezeRow("cp:4", "prev@uni.test", { inclusion: "excluded", reasons: PRIOR })],
+    };
+    stubFreezeApi({ freezeEnabled: true, preview });
+    await openFreeze();
+    fireEvent.click(screen.getByTestId("freeze-review"));
+    await screen.findByTestId("freeze-preview");
+    expect(screen.queryByTestId("recontact-panel")).toBeNull();
+    expect(screen.getByTestId("recontact-disabled")).toHaveTextContent("no está habilitada");
+    expect(screen.queryByText("Aprobar recontacto")).toBeNull();
   });
 });

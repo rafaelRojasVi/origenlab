@@ -20,6 +20,7 @@ import type {
   FreezePreview,
   FreezeResult,
   FrozenSnapshot,
+  RecontactDecision,
   ReviewDecision,
 } from "./marketingTypes";
 
@@ -138,6 +139,7 @@ export function freezeCampaignAudience(
     criteria: FreezeCriteria;
     review_decisions: ReviewDecision[];
     excluded_keys: string[];
+    recontact_decisions: RecontactDecision[];
   },
   idempotencyKey: string = newIdempotencyKey(),
 ): Promise<FreezeResult> {
