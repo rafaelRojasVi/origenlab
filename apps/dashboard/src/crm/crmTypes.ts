@@ -166,6 +166,8 @@ export interface CampaignSummary {
   sender_address?: string | null;
   sender_name?: string | null;
   equipment_lines?: { family_id: string; source: "audience_criteria" | "name_or_subject"; matched_term: string | null }[];
+  /** Campaign safety blocks (WORKFLOWS.md §W13): whether anything refuses this campaign now. */
+  hold?: { held: boolean; refusals: { code: string; label: string }[] };
 }
 
 export interface SendBatch {
