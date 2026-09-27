@@ -40,7 +40,7 @@ built**, `STATUS.md` is the current measurement.
 |---|---|
 | V2 architecture decision | **Accepted** (2026-09-05), with binding amendments folded into these seven documents |
 | These seven documents | **Written** — Documentation Slice D0; amended by D0.2 (privileged-role semantics) and D0.3 (external CRM benchmark, [`ARCHITECTURE.md`](ARCHITECTURE.md) §13) |
-| V2 database, code, Supabase project | **Local foundation only** (Migration Slice 0, local portion, 2026-09-05): `supabase/roles.sql` and the migrations under `supabase/migrations/` create the four roles, the seven schemas and the 36 tables with constraints, grants, RLS and pgTAP proofs against a local PostgreSQL 17 container ([`OPERATIONS.md`](OPERATIONS.md) §4.1). **No hosted Supabase project, bucket, backup or advisor run exists**; no V2 code is deployed |
+| V2 database, code, Supabase project | **Local foundation only** (Migration Slice 0, local portion, 2026-09-05): `supabase/roles.sql` and the migrations under `supabase/migrations/` create the four roles, the seven schemas and the 37 tables with constraints, grants, RLS and pgTAP proofs against a local PostgreSQL 17 container ([`OPERATIONS.md`](OPERATIONS.md) §4.1). **No hosted Supabase project, bucket, backup or advisor run exists**; no V2 code is deployed |
 | V1 | **Running and authoritative** for every fact it owns today |
 | Legacy documentation tree | Present, **superseded but not deleted** — see [`MIGRATION.md`](MIGRATION.md) |
 
