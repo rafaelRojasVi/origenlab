@@ -282,7 +282,8 @@ reply as `evidence.source_record`, then either the permanent `contact_control` b
 `evidence.assertion` resolved to it, or, for a sender it cannot prove, an unresolved
 `unsubscribe_request` that holds the exact address for review; later, the review's confirmation
 resolving that request to its control, or an admin's dismissal of a pending one as a false
-positive (never of a confirmed request, and never touching a control); and exactly one
+positive (never of a confirmed request, and never touching a control), which a later confirmation
+may still override toward suppression; and exactly one
 `crm.domain_event` each time. No other
 code path writes any of those rows for an unsubscribe: runtime roles have no grant on
 `contact_control`, and a trigger refuses unsubscribe evidence written, or changed, outside it. It
