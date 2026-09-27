@@ -35,15 +35,17 @@ def _check(check_id, status="PASS", summary=None, findings=None, required=True):
 
 
 def current_head_report():
-    """The shape of a real local audit of current head (numbers from a 2026-09-26 run)."""
+    """The shape of a real local audit of current head (numbers from a 2026-09-27 W10 run)."""
     policies = "; ".join(_policy(t, n) for t in TABLES for n in range(4))
     checks = [_check(f"a{i:02d}") for i in (1, 2, 3, 6, 7, 11, 12)] + [
         _check("s01"),
         _check("a13", status="CORROBORATED", required=False),
         _check("a04", "FAIL", {"relation_count": 37},
                ["relations in scope: observed 37, expected 34"]),
-        _check("a05", "FAIL", {"function_count": 15, "security_definer_count": 0},
-               ["functions in scope: observed 15, expected 3"]),
+        _check("a05", "FAIL", {"function_count": 18, "security_definer_count": 1}, [
+            "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
+            "1 entr(y|ies) are present here and not in the baseline: " + gap.EXPECTED_SECURITY_DEFINER,
+            "functions in scope: observed 18, expected 3"]),
         _check("a08", "FAIL", {"table_count": 36, "schema_count": 7}, [
             "tables: 3 entr(y|ies) are present here and not in the baseline: "
             + "; ".join(_table(t) for t in TABLES),
@@ -91,7 +93,15 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_historical_guard_is_a_declared_post_slice0_function(self):
         self.assertIn("crm.quote_revision_historical_guard", gap.POST_SLICE0_FUNCTIONS)
         self.assertEqual(3, gap.SLICE0_FUNCTION_COUNT)
-        self.assertEqual(15, gap.EXPECTED_FUNCTION_COUNT)
+        self.assertEqual(18, gap.EXPECTED_FUNCTION_COUNT)
+
+    def test_the_w10_functions_are_declared(self):
+        for name in ("outbound.unsubscribe_permanent", "outbound.marketing_contact_refusals",
+                     "outbound.add_contact_control"):
+            self.assertIn(name, gap.POST_SLICE0_FUNCTIONS)
+        self.assertIn('"name":"add_contact_control"', gap.EXPECTED_SECURITY_DEFINER)
+        self.assertIn('"owner":"origenlab_owner"', gap.EXPECTED_SECURITY_DEFINER)
+        self.assertIn('"proconfig":"search_path=pg_catalog"', gap.EXPECTED_SECURITY_DEFINER)
 
     def test_the_historical_origin_foreign_key_is_declared(self):
         self.assertEqual(2, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
@@ -101,21 +111,31 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_previous_head_count_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 14
-        a05["findings"] = ["functions in scope: observed 14, expected 3"]
-        self.assert_refused(report, "a05.function_count: observed 14, expected 15")
+        a05["summary"]["function_count"] = 15
+        self.assert_refused(report, "a05.function_count: observed 15, expected 18")
 
-    def test_an_undeclared_sixteenth_function_is_refused(self):
+    def test_an_undeclared_nineteenth_function_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 16
-        a05["findings"] = ["functions in scope: observed 16, expected 3"]
-        self.assert_refused(report, "a05.function_count: observed 16, expected 15")
+        a05["summary"]["function_count"] = 19
+        self.assert_refused(report, "a05.function_count: observed 19, expected 18")
 
-    def test_a_security_definer_function_is_refused(self):
+    def test_a_second_security_definer_function_is_refused(self):
         report = current_head_report()
-        check_of(report, "a05")["summary"]["security_definer_count"] = 1
-        self.assert_refused(report, "a05.security_definer_count: observed 1, expected 0")
+        check_of(report, "a05")["summary"]["security_definer_count"] = 2
+        self.assert_refused(report, "a05.security_definer_count: observed 2, expected 1")
+
+    def test_a_different_security_definer_function_is_refused(self):
+        report = current_head_report()
+        a05 = check_of(report, "a05")
+        a05["findings"][0] = a05["findings"][0].replace('"owner":"origenlab_owner"', '"owner":"postgres"')
+        self.assert_refused(report, "a05 findings changed")
+
+    def test_the_security_definer_finding_is_required(self):
+        report = current_head_report()
+        a05 = check_of(report, "a05")
+        a05["findings"] = a05["findings"][1:]
+        self.assert_refused(report, "a05 findings changed")
 
     def test_a_forbidden_execute_grant_is_refused(self):
         report = current_head_report()

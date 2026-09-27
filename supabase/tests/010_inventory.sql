@@ -69,12 +69,13 @@ select is(
       and p.proowner <> 'origenlab_owner'::regrole),
   0, 'every application function is owned by origenlab_owner');
 
--- The closed SECURITY DEFINER list is empty in Slice 0; every function is INVOKER with a pinned path.
+-- The closed SECURITY DEFINER list (ARCHITECTURE.md §6.2) was empty in Slice 0; slice 5 builds its
+-- first entry, outbound.add_contact_control (W10 unsubscribe). Every other function is INVOKER.
 select is(
-  (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  (select array_agg(n.nspname || '.' || p.proname order by 1)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and p.prosecdef),
-  0, 'no SECURITY DEFINER function exists (the closed list is empty until Slice 5)');
+  '{outbound.add_contact_control}', 'the only SECURITY DEFINER function is the closed-list outbound.add_contact_control');
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
@@ -96,8 +97,11 @@ select set_eq(
         'outbound.campaign_freeze_facts_write_once',
         'outbound.campaign_recipient_snapshot_guard',
         'outbound.campaign_planning_guard',
-        'outbound.campaign_planning_absent_at_insert'],
-  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards and the two campaign-planning guards exist');
+        'outbound.campaign_planning_absent_at_insert',
+        'outbound.unsubscribe_permanent',
+        'outbound.add_contact_control',
+        'outbound.marketing_contact_refusals'],
+  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards and the three W10 unsubscribe functions exist');
 
 -- `public` holds nothing.
 select is(

@@ -37,9 +37,9 @@ end
 $$;
 
 select is(
-  (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  (select array_agg(n.nspname || '.' || p.proname order by 1)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform') and p.prosecdef),
-  0, 'before the fixture: no SECURITY DEFINER function exists');
+  '{outbound.add_contact_control}', 'before the fixture: the only SECURITY DEFINER function is the closed-list outbound.add_contact_control');
 
 -- Fixture (rolled back): two probes owned by origenlab_owner in a private schema, pinned
 -- search_path, EXECUTE revoked from PUBLIC/anon/authenticated/service_role and granted to the
