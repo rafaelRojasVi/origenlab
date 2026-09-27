@@ -9,7 +9,10 @@ Gmail sender library does not require a recipient CSV, so per the original
 design brief there is nothing to write. Explicit CSV/JSON export is a
 separate, operator-invoked concern — see the CLI's ``export`` subcommand.)
 
-Safety: re-checks hard eligibility (manual sidecar + canonical gate)
+Safety: refuses a campaign whose status is not ``active`` (``paused`` included)
+before the first recipient, dry-run or live, and re-reads that status immediately
+before every live Gmail call so a pause committed mid-batch stops the batch;
+re-checks hard eligibility (manual sidecar + canonical gate)
 immediately before each send; refuses to re-send if a prior attempt for the
 recipient was already ``accepted``. A live send is two-phase — see
 ``outbound_campaign_store.begin_live_attempt`` / ``finish_live_attempt``:
@@ -31,12 +34,14 @@ from origenlab_email_pipeline.gmail_send import build_gmail_message_with_inline_
 from origenlab_email_pipeline.manual_contact_status import load_manual_status_map
 from origenlab_email_pipeline.outbound_campaign_gate import evaluate_campaign_eligibility
 from origenlab_email_pipeline.outbound_campaign_store import (
+    REASON_CAMPAIGN_NOT_ACTIVE,
+    CampaignNotActiveError,
     begin_live_attempt,
     finish_live_attempt,
-    get_campaign,
     has_accepted_attempt,
     latest_attempt_status,
     record_attempt,
+    require_campaign_active,
 )
 
 REASON_ALREADY_SENT = "already_sent"
@@ -68,9 +73,8 @@ def send_campaign_batch(
 ) -> list[SendOutcome]:
     if live and not access_token:
         raise ValueError("access_token required for live sends")
-    campaign = get_campaign(conn, campaign_id)
-    if campaign is None:
-        raise ValueError(f"Unknown campaign: {campaign_id}")
+    # Raises CampaignNotActiveError for a paused, completed, archived or unknown campaign.
+    campaign = require_campaign_active(conn, campaign_id)
     sender_header = f"{campaign.sender_name} <{campaign.sender_email}>"
     manual_status = load_manual_status_map(conn)
     mode = "live" if live else "dry_run"
@@ -133,6 +137,17 @@ def send_campaign_batch(
                 result="accepted", gmail_message_id=None, error=None,
             ))
             continue
+
+        # A pause committed by anyone since the batch started stops it here, before the
+        # attempt row and before Gmail. Nothing is written for this recipient.
+        try:
+            require_campaign_active(conn, campaign_id)
+        except CampaignNotActiveError:
+            outcomes.append(SendOutcome(
+                recipient_id=recipient_id, email=email, mode="live",
+                result="skipped", gmail_message_id=None, error=REASON_CAMPAIGN_NOT_ACTIVE,
+            ))
+            break
 
         # Phase 1: durably record intent BEFORE calling Gmail, and commit it. If the
         # process dies anywhere after this commit, the row is left in_flight and the

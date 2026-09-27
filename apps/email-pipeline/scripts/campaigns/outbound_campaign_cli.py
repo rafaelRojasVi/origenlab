@@ -69,6 +69,7 @@ from origenlab_email_pipeline.outbound_campaign_research_queue import (
 from origenlab_email_pipeline.outbound_campaign_sender import send_campaign_batch
 from origenlab_email_pipeline.outbound_campaign_store import (
     CampaignAlreadyExistsError,
+    CampaignNotActiveError,
     CampaignNotFoundError,
     RECIPIENT_STATES,
     campaign_progress,
@@ -194,10 +195,14 @@ def _cmd_select(args: argparse.Namespace) -> int:
             conn, gmail_user=gmail_user, sent_folders=sent_folders,
         )
         manual_status = load_manual_status_map(conn)
-        result = reserve_next_batch(
-            conn, args.campaign_id, gate_ctx=gate_ctx, manual_status_by_email=manual_status,
-            n=args.n,
-        )
+        try:
+            result = reserve_next_batch(
+                conn, args.campaign_id, gate_ctx=gate_ctx, manual_status_by_email=manual_status,
+                n=args.n,
+            )
+        except CampaignNotActiveError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         conn.commit()
     finally:
         conn.close()
@@ -273,11 +278,15 @@ def _cmd_send(args: argparse.Namespace) -> int:
             access_token = creds.token
 
         batch_id = str(uuid.uuid4())
-        outcomes = send_campaign_batch(
-            conn, campaign_id=args.campaign_id, recipients=recipients, html=html,
-            html_dir=html_dir, live=bool(args.live), access_token=access_token,
-            gate_ctx=gate_ctx, batch_id=batch_id, stop_on_error=not args.no_stop_on_error,
-        )
+        try:
+            outcomes = send_campaign_batch(
+                conn, campaign_id=args.campaign_id, recipients=recipients, html=html,
+                html_dir=html_dir, live=bool(args.live), access_token=access_token,
+                gate_ctx=gate_ctx, batch_id=batch_id, stop_on_error=not args.no_stop_on_error,
+            )
+        except CampaignNotActiveError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     finally:
         conn.close()
     accepted = sum(1 for o in outcomes if o.result == "accepted")
