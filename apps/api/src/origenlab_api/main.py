@@ -161,6 +161,24 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         app.include_router(google_auth_router)
     _mount_v2_command_boundary(app, settings, dsn)
     _mount_campaign_drafts(app, settings, dsn)
+    _mount_audience_freeze(app, settings, dsn)
+
+
+def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str) -> None:
+    """Mount the audience-freeze command only behind its own switch."""
+    app.state.audience_freeze_enabled = settings.v2_audience_freeze_configured()
+    if not app.state.audience_freeze_enabled:
+        return
+
+    import psycopg
+
+    from origenlab_api.v2.audience_freeze import V2AudienceFreezeRepository
+    from origenlab_api.v2.audience_freeze_routes import audience_freeze_router
+
+    app.state.audience_freeze_repository = V2AudienceFreezeRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(audience_freeze_router)
 
 
 def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str) -> None:

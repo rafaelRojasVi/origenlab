@@ -14,8 +14,11 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import ValidationError
 
+from origenlab_api.v2.audience_freeze import SEND_BLOCKERS, FreezeCriteria
 from origenlab_api.v2.cockpit_routes import Operator
+from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.contact_redaction import ContactRedactingRoute
 from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 from origenlab_api.v2.equipment_taxonomy import load_taxonomy
@@ -55,7 +58,10 @@ def get_providers(_: Operator, repo: Repo) -> Any:
 def get_marketing(_: Operator, repo: Repo, request: Request) -> Any:
     body = repo.marketing()
     # Whether this API records drafts at all: the dashboard must never imply a save it cannot do.
-    body["authoring"] = {"drafts_enabled": bool(getattr(request.app.state, "campaign_drafts_enabled", False))}
+    body["authoring"] = {
+        "drafts_enabled": bool(getattr(request.app.state, "campaign_drafts_enabled", False)),
+        "freeze_enabled": bool(getattr(request.app.state, "audience_freeze_enabled", False)),
+    }
     return body
 
 
@@ -71,6 +77,50 @@ def get_marketing_campaign(campaign_id: UUID, _: Operator, repo: Repo) -> Any:
     if row is None:
         raise HTTPException(status_code=404, detail="no such campaign")
     return row
+
+
+@workspace_router.get("/marketing/campaigns/{campaign_id}/freeze-preview")
+def get_marketing_freeze_preview(
+    campaign_id: UUID,
+    _: Operator,
+    repo: Repo,
+    request: Request,
+    family_id: str | None = None,
+    brand_id: str | None = None,
+    model_id: str | None = None,
+    organization_id: UUID | None = None,
+    basis: Annotated[list[str] | None, Query()] = None,
+    recorded: Literal["crm", "evidence"] | None = None,
+    q: Annotated[str | None, Query(max_length=120)] = None,
+    scope: Literal["persons", "institutions", "both"] = "both",
+) -> Any:
+    """The snapshot `freeze-campaign-audience` would write now, and what would stop it.
+
+    A read: nothing is written. `preview_sha256` is what the confirmation screen sends back.
+    """
+    try:
+        criteria = FreezeCriteria(
+            family_id=family_id, brand_id=brand_id, model_id=model_id, organization_id=organization_id,
+            bases=tuple(basis or ()), recorded=recorded, q=q, scope=scope,
+        )
+        preview = repo.freeze_preview(str(campaign_id), criteria)
+    except (ValidationError, CommandRefused) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if preview is None:
+        raise HTTPException(status_code=404, detail="no such campaign")
+    preview.pop("body_text", None)
+    preview["freeze_enabled"] = bool(getattr(request.app.state, "audience_freeze_enabled", False))
+    return preview
+
+
+@workspace_router.get("/marketing/campaigns/{campaign_id}/recipients")
+def get_marketing_frozen_recipients(campaign_id: UUID, _: Operator, repo: Repo) -> Any:
+    """A frozen campaign's recipient snapshot. Empty for a draft."""
+    body = repo.frozen_recipients(str(campaign_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such campaign")
+    body["send_blockers"] = list(SEND_BLOCKERS)
+    return body
 
 
 @workspace_router.get("/marketing/audience")

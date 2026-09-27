@@ -310,6 +310,8 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/marketing/taxonomy",
         "/v2/workspace/marketing/audience",
         "/v2/workspace/marketing/campaigns/{campaign_id}",
+        "/v2/workspace/marketing/campaigns/{campaign_id}/freeze-preview",
+        "/v2/workspace/marketing/campaigns/{campaign_id}/recipients",
         "/v2/workspace/drive",
         "/v2/workspace/review",
     }
