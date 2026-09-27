@@ -329,3 +329,28 @@ def test_the_audience_read_finds_evidence_only_interest_and_excludes_as_it_shoul
     assert [r["code"] for r in people[f"ventas@fabricante-{tag}.test"]["eligibility"]["reasons"]] == ["supplier"]
     assert out["sending"]["eligible_unique_destinations"] == 1
     assert composed["coverage"]["crm_interest_rows"] == 0
+
+
+@needs_db
+def test_the_card_index_splits_crm_people_from_address_only_evidence(disposable_database, audience_world) -> None:
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+    from origenlab_api.v2.equipment_interests import interest_index
+    from origenlab_api.v2.marketing_audience import address_ref
+
+    w = audience_world
+    repo = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(disposable_database))
+    taxonomy = load_taxonomy()
+    idx = interest_index(taxonomy, compose(taxonomy, repo.marketing_audience_inputs()))
+
+    people = {p["address"]: p for p in idx["persons"]}
+    tag = w["tag"]
+    ana = people[f"ana-{tag}@uni.test"]
+    # A contact point with no person is still address-level: no CRM person is invented.
+    assert ana["link"] == "address_only" and ana["contact_point_id"] and ana["person_id"] is None
+    assert ana["address_ref"] == address_ref(f"ana-{tag}@uni.test")
+    assert people[f"baja-{tag}@uni.test"]["contact_point_id"] is None
+    [inst] = [i for i in idx["institutions"] if i["organization_id"] == w["uni"]]
+    assert {i["family_id"] for i in inst["interests"]} == {"sonicacion"}
+    assert [l["family_id"] for l in idx["lines"]] == [f["id"] for f in taxonomy.data["families"]]

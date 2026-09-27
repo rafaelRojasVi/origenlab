@@ -21,6 +21,7 @@ from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.contact_redaction import ContactRedactingRoute
 from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+from origenlab_api.v2.equipment_interests import interest_index, supplier_directory
 from origenlab_api.v2.equipment_taxonomy import load_taxonomy
 from origenlab_api.v2.marketing_audience import BASES, AudienceFilter, apply_filter, compose
 
@@ -51,7 +52,24 @@ def get_pipeline(_: Operator, repo: Repo) -> Any:
 
 @workspace_router.get("/providers")
 def get_providers(_: Operator, repo: Repo) -> Any:
-    return repo.providers()
+    """The six catalogue brands first (the curated directory), then the machine candidates.
+
+    A candidate is never promoted here: a brand name in its domain is shown as a hint only.
+    """
+    body = repo.providers()
+    body["directory"] = supplier_directory(load_taxonomy(), body["on_cases"], body["candidates"])
+    return body
+
+
+@workspace_router.get("/equipment-interests")
+def get_equipment_interests(_: Operator, repo: Repo) -> Any:
+    """Evidenced equipment interest per line, institution and destination, for the CRM cards.
+
+    The same derivation as the Marketing audience (`compose`), unfiltered and without the
+    sending-eligibility summary: this is who has shown interest in what, with source and date.
+    """
+    taxonomy = load_taxonomy()
+    return interest_index(taxonomy, compose(taxonomy, repo.marketing_audience_inputs()))
 
 
 @workspace_router.get("/marketing")

@@ -30,14 +30,10 @@ from origenlab_email_pipeline.outbound_v2.eligibility import (
     ContactControlIndex,
     EligibilityVerdict,
     RecipientCandidate,
-    RecontactOverride,
     evaluate_recipient_eligibility,
     normalize_address,
 )
-from origenlab_email_pipeline.outbound_v2.reasons import (
-    EXCLUSION_VOCABULARY,
-    OVERRIDABLE_REASONS,
-)
+from origenlab_email_pipeline.outbound_v2.reasons import EXCLUSION_VOCABULARY
 
 __all__ = [
     "ADDRESS_SHAPE_PATTERN",
@@ -48,10 +44,8 @@ __all__ = [
     "ContactControlIndex",
     "EXCLUSION_VOCABULARY",
     "EligibilityVerdict",
-    "OVERRIDABLE_REASONS",
     "PreviewRow",
     "RecipientCandidate",
-    "RecontactOverride",
     "build_audience_preview",
     "evaluate_recipient_eligibility",
     "normalize_address",

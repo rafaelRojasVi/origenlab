@@ -58,9 +58,3 @@ EXCLUSION_VOCABULARY: frozenset[str] = frozenset(
         REASON_ALREADY_IN_AUDIENCE,
     }
 )
-
-#: Reasons a recontact override may clear (WORKFLOWS.md §W12). A block, a policy rule or a
-#: malformed address is never overridable — an override buys another contact, not a bypass.
-OVERRIDABLE_REASONS: frozenset[str] = frozenset(
-    {REASON_PRIOR_CONTACT, REASON_PRIOR_REPLY, REASON_COOLDOWN}
-)

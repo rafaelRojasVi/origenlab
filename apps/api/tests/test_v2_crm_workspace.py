@@ -22,6 +22,7 @@ from origenlab_api.v2.crm_workspace import (
     load_drive_ledgers,
 )
 from origenlab_api.v2.crm_workspace_routes import workspace_router
+from origenlab_api.v2.marketing_audience import address_ref
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
@@ -203,6 +204,8 @@ def test_card_carries_quote_revision_gmail_and_drive(tmp_path: Path) -> None:
         "name": None,
         "address": "persona@ejemplo.invalid",
         "others": 1,
+        # Joins the card to its equipment interests when a viewer sees the address masked.
+        "address_ref": address_ref("persona@ejemplo.invalid"),
     }
     assert card["status"] == "ok"
     assert card["next_action"]["source"] == "suggested"
@@ -306,6 +309,7 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/overview",
         "/v2/workspace/pipeline",
         "/v2/workspace/providers",
+        "/v2/workspace/equipment-interests",
         "/v2/workspace/marketing",
         "/v2/workspace/marketing/taxonomy",
         "/v2/workspace/marketing/audience",

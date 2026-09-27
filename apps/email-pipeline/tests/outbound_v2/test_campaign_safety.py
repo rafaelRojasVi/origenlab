@@ -25,7 +25,6 @@ from origenlab_email_pipeline.outbound_v2 import (
     CampaignPolicy,
     ContactControlIndex,
     RecipientCandidate,
-    RecontactOverride,
     build_audience_preview,
 )
 from origenlab_email_pipeline.outbound_v2.reasons import REASON_BLOCK
@@ -65,6 +64,32 @@ def test_the_package_holds_no_second_freeze() -> None:
     """
     assert not (PACKAGE_DIR / "freeze.py").exists()
     assert [n for n in outbound_v2.__all__ if "freeze" in n.lower() or "frozen" in n.lower()] == []
+
+
+def test_the_package_holds_no_second_recontact_override() -> None:
+    """W12 is decided inside ``freeze-campaign-audience`` (apps/api), which waives
+    ``prior_contact`` only and seals the override triple in the recipient snapshot.
+
+    A ``RecontactOverride`` type lived here with no caller outside its own tests and
+    contradicted it: it also cleared ``prior_reply`` and ``cooldown``. It was retired; neither
+    the type, the parameter nor the verdict fields may come back.
+    """
+    from origenlab_email_pipeline.outbound_v2 import audience, eligibility, reasons
+
+    assert [n for n in outbound_v2.__all__ if "overrid" in n.lower()] == []
+    for module in (eligibility, audience, reasons):
+        assert not [n for n in vars(module) if "overrid" in n.lower()], module.__name__
+    assert "override" not in inspect.signature(eligibility.evaluate_recipient_eligibility).parameters
+    assert "overrides" not in inspect.signature(audience.build_audience_preview).parameters
+    assert not [f.name for f in dataclasses.fields(eligibility.EligibilityVerdict) if "overrid" in f.name]
+    # A recipient with prior contact stays excluded: nothing in this package can waive it.
+    verdict = eligibility.evaluate_recipient_eligibility(
+        candidate=RecipientCandidate(address_norm="a@uni.example"),
+        controls=ContactControlIndex(prior_contact_addresses=frozenset({"a@uni.example"})),
+        policy=CampaignPolicy(max_sends=100, recontact_interval_days=180),
+        now=NOW,
+    )
+    assert verdict.eligible is False
 
 
 #: Anything that could perform a send, a provider call, a database write or a clock read.
@@ -181,21 +206,6 @@ def test_an_excluded_recipient_is_never_previewed_as_eligible() -> None:
     assert rows["b@uni.example"].verdict.reasons == (REASON_BLOCK,)
     assert preview.eligible_count == 1
     assert preview.eligible_count + preview.excluded_count == len(preview.rows)
-
-
-def test_an_override_cannot_make_a_suppressed_contact_eligible() -> None:
-    """An override buys another contact; it never overrules a block. Fail-closed end to end."""
-    controls = ContactControlIndex(blocked_addresses=frozenset({"a@uni.example"}))
-    preview = build_audience_preview(
-        candidates=[RecipientCandidate(address_norm="a@uni.example")],
-        criteria=CRITERIA,
-        controls=controls,
-        policy=CampaignPolicy(max_sends=100, recontact_interval_days=180),
-        now=NOW,
-        overrides={"a@uni.example": RecontactOverride(operator_id="op-1", reason="insistir")},
-    )
-    assert preview.eligible_count == 0
-    assert not preview.rows[0].verdict.eligible
 
 
 # ── duplicate prevention ────────────────────────────────────────────────────────────────

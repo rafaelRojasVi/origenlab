@@ -1,3 +1,5 @@
+import type { AudienceInterest } from "./marketing/marketingTypes";
+
 /**
  * Types for `GET /v2/workspace/*` (apps/api `v2/crm_workspace.py`).
  *
@@ -93,6 +95,8 @@ export interface OpportunityCardData {
     name: string | null;
     address: string | null;
     others: number;
+    /** Fingerprint of the bare address; joins the card to its equipment interests when masked. */
+    address_ref?: string | null;
   } | null;
   quotes: QuoteCard[];
   quote_numbers: string[];
@@ -110,7 +114,20 @@ export interface PipelineResponse {
   drive_configured: boolean;
 }
 
+export interface SupplierDirectoryEntry {
+  brand_id: string;
+  name: string;
+  page_url: string | null;
+  family: { id: string; name: string; color: string | null };
+  model_count: number;
+  crm_organizations: { organization_id: string; name: string; confirmation: string | null; roles: string[]; cases: number }[];
+  /** Machine candidates whose domain or trade name names the brand. A hint, never a promotion. */
+  candidate_hints: { domain: string; trade_name: string | null; resolution: string }[];
+}
+
 export interface ProvidersResponse {
+  /** The six catalogue brands, curated by the website — not detected. Older APIs omit it. */
+  directory?: SupplierDirectoryEntry[];
   on_cases: { organization_id: string; name: string; confirmation: string; role: string; cases: number }[];
   candidates: { domain: string; trade_name: string | null; resolution: string; mentions: number }[];
 }
@@ -201,4 +218,40 @@ export interface WorkQueueResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+/** One equipment line: a taxonomy family (one brand each), the same six Marketing filters on. */
+export interface EquipmentLine {
+  family_id: string;
+  name: string;
+  color: string | null;
+  brand_ids: string[];
+  crm_people: number;
+  address_only: number;
+  institutions: number;
+}
+
+export interface InterestPerson {
+  key: string;
+  address: string;
+  address_ref: string;
+  contact_point_id: string | null;
+  person_id: string | null;
+  display_name: string | null;
+  organization_ids: string[];
+  /** A person the CRM records, or only an address seen in historical evidence. */
+  link: "crm_person" | "address_only";
+  interests: AudienceInterest[];
+}
+
+export interface InterestInstitution {
+  organization_id: string;
+  name: string | null;
+  interests: AudienceInterest[];
+}
+
+export interface EquipmentInterestsResponse {
+  lines: EquipmentLine[];
+  persons: InterestPerson[];
+  institutions: InterestInstitution[];
 }

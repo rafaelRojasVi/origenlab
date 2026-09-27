@@ -90,6 +90,13 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     from origenlab_api.v2.routes import router as v2_router
 
     dsn = settings.require_v2_database_url()
+    session_secret = _secret(settings.auth_session_secret)
+    if session_secret:
+        from origenlab_api.v2.marketing_audience import configure_address_ref_key
+
+        # Pins the key of the opaque address refs viewers join reads by; without the secret
+        # each process keeps its own random key (refs then only join within one process).
+        configure_address_ref_key(session_secret)
     repository = V2Repository(
         psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )

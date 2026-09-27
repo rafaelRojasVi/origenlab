@@ -80,6 +80,7 @@ describe("allowlist", () => {
       "/v2/workspace/overview",
       "/v2/workspace/pipeline",
       "/v2/workspace/providers",
+      "/v2/workspace/equipment-interests",
       "/v2/workspace/drive",
       "/v2/workspace/review",
       "/v2/cockpit/kpis",

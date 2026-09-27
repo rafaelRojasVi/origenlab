@@ -35,7 +35,9 @@ Bases, in the order they are decided for a case:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
+import secrets
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -88,11 +90,33 @@ def domain_of(address: str) -> str:
     return address.rpartition("@")[2]
 
 
+#: The key `address_ref` is computed under. A random per-process key until
+#: `configure_address_ref_key` pins one derived from the API's own secret, so refs stay stable
+#: across workers and restarts. Never an unkeyed digest: a plain (or truncated) SHA-256 of an
+#: address can be recomputed offline from a guessed address and used to correlate it.
+_address_ref_key: bytes = secrets.token_bytes(32)
+
+
+def configure_address_ref_key(secret: str) -> None:
+    """Derive the `address_ref` key from an API secret, domain-separated from its other uses."""
+    global _address_ref_key
+    _address_ref_key = hmac.new(secret.encode("utf-8"), b"origenlab-api/address-ref/v1", hashlib.sha256).digest()
+
+
+def address_ref(address: str) -> str:
+    """An opaque reference to one address that survives redaction: a keyed HMAC scoped to this
+    API, so two reads that each carry it can be joined by a `viewer`, who never sees the address
+    and cannot recompute the ref from a guessed one."""
+    normalized = address.strip().lower().encode("utf-8")
+    return hmac.new(_address_ref_key, normalized, hashlib.sha256).hexdigest()[:24]
+
+
 def destination_key(address: str, contact_point_id: str | None) -> str:
-    """A stable id for one destination that survives address redaction in the response."""
+    """A stable id for one destination that survives address redaction in the response: the CRM
+    contact point's UUID when there is one, otherwise the keyed `address_ref`."""
     if contact_point_id:
         return f"cp:{contact_point_id}"
-    return "addr:" + hashlib.sha256(address.encode("utf-8")).hexdigest()[:20]
+    return "addr:" + address_ref(address)
 
 
 def _iso(value: Any) -> str | None:
@@ -286,6 +310,7 @@ def compose(taxonomy: EquipmentTaxonomy, inputs: AudienceInputs) -> dict[str, An
             {
                 "key": key,
                 "address": address,
+                "address_ref": address_ref(address),
                 "contact_point_id": cp["id"] if cp else None,
                 "person_id": cp.get("person_id") if cp else None,
                 "display_name": cp.get("person_name") if cp else None,

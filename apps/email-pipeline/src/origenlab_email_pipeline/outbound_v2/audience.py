@@ -18,7 +18,6 @@ from origenlab_email_pipeline.outbound_v2.eligibility import (
     ContactControlIndex,
     EligibilityVerdict,
     RecipientCandidate,
-    RecontactOverride,
     evaluate_recipient_eligibility,
     normalize_address,
 )
@@ -57,7 +56,6 @@ def build_audience_preview(
     controls: ContactControlIndex,
     policy: CampaignPolicy,
     now: datetime,
-    overrides: Mapping[str, RecontactOverride] | None = None,
 ) -> AudiencePreview:
     """Evaluate every candidate and return the reviewable audience. Writes nothing.
 
@@ -80,13 +78,11 @@ def build_audience_preview(
         controls: contact controls and manual statuses.
         policy: the campaign's eligibility knobs, including ``max_sends``.
         now: the evaluation instant, passed through to every verdict.
-        overrides: address → operator recontact override, when any exist.
 
     Returns:
         An :class:`AudiencePreview`. ``exceeds_max_sends`` reports a budget overflow rather
         than silently truncating — trimming an audience is an operator decision.
     """
-    overrides = overrides or {}
     rows: list[PreviewRow] = []
     counts: dict[str, int] = {}
     seen_addresses: set[str] = set()
@@ -108,7 +104,6 @@ def build_audience_preview(
             controls=controls,
             policy=policy,
             now=now,
-            override=overrides.get(address) if address else None,
             already_in_audience=bool(person) and person in persons_taken,
         )
         if verdict.eligible:

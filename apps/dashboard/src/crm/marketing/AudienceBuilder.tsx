@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { crmHash } from "../crmRoute";
-import { Badge, Drawer, EmptyState, Panel, ResourceGate, SearchInput, Section, Segmented, Skeleton, StatLine, fmtDate, fmtInt, type Tone } from "../ui";
+import { Badge, Drawer, EmptyState, Panel, ResourceGate, SearchInput, Section, Segmented, Skeleton, StatLine, fmtInt, type Tone } from "../ui";
 import { useResource } from "../useResource";
+import { BASIS_TONE, EvidenceList, useInterestLabel } from "./interestEvidence";
 import { destinationsOf, recipientList, selectAllEligible, toggle, type SelectableDestination } from "./audienceSelection";
 import { fetchAudience } from "./marketingApi";
 import type {
@@ -15,13 +16,14 @@ import type {
   InterestBasis,
 } from "./marketingTypes";
 
-const BASIS_OPTIONS: { value: InterestBasis; label: string; tone: Tone }[] = [
-  { value: "purchased", label: "Compró", tone: "good" },
-  { value: "requested_quotation", label: "Pidió cotización", tone: "brand" },
-  { value: "requested_information", label: "Pidió información", tone: "info" },
-  { value: "inferred_relevance", label: "Relevancia inferida", tone: "neutral" },
-];
-const BASIS_TONE = Object.fromEntries(BASIS_OPTIONS.map((b) => [b.value, b.tone])) as Record<InterestBasis, Tone>;
+const BASIS_OPTIONS: { value: InterestBasis; label: string; tone: Tone }[] = (
+  [
+    ["purchased", "Compró"],
+    ["requested_quotation", "Pidió cotización"],
+    ["requested_information", "Pidió información"],
+    ["inferred_relevance", "Relevancia inferida"],
+  ] as const
+).map(([value, label]) => ({ value, label, tone: BASIS_TONE[value] }));
 
 type Recorded = "all" | "crm" | "evidence";
 type Open = { kind: "person"; row: AudiencePerson } | { kind: "institution"; row: AudienceInstitution } | null;
@@ -46,7 +48,7 @@ export function AudienceBuilder({ taxonomy }: { taxonomy: EquipmentTaxonomy }) {
 
   const brands = taxonomy.brands.filter((b) => !familyId || b.family_id === familyId);
   const models = taxonomy.models.filter((m) => (!brandId || m.brand_id === brandId) && (!familyId || m.family_id === familyId));
-  const label = useLabels(taxonomy);
+  const label = useInterestLabel(taxonomy);
 
   const selectCls = "h-7 rounded-md border border-line bg-canvas-raised px-2 text-xs text-ink focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600";
 
@@ -178,14 +180,6 @@ export function AudienceBuilder({ taxonomy }: { taxonomy: EquipmentTaxonomy }) {
       </ResourceGate>
     </div>
   );
-}
-
-function useLabels(t: EquipmentTaxonomy) {
-  return useMemo(() => {
-    const brands = new Map(t.brands.map((b) => [b.id, b.name]));
-    const models = new Map(t.models.map((m) => [m.id, m.name]));
-    return (i: AudienceInterest) => (i.model_id ? `${brands.get(i.brand_id)} ${models.get(i.model_id)}` : `${brands.get(i.brand_id)} (marca)`);
-  }, [t]);
 }
 
 function Coverage({ data, taxonomy }: { data: AudienceResponse; taxonomy: EquipmentTaxonomy }) {
@@ -352,34 +346,6 @@ function CandidateRow({
       </div>
       {select ? <EligibilityBadge e={select.eligibility} /> : null}
     </div>
-  );
-}
-
-function EvidenceList({ interests, label }: { interests: AudienceInterest[]; label: (i: AudienceInterest) => string }) {
-  return (
-    <ul className="divide-y divide-line rounded-md border border-line">
-      {interests.map((i, n) => (
-        <li key={n} className="space-y-0.5 px-3 py-2 text-xs">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-semibold text-ink">{label(i)}</span>
-            <Badge tone={BASIS_TONE[i.basis]} glyph={false}>{i.basis_label}</Badge>
-            <span className="ml-auto text-[11px] tabular-nums text-ink-muted">{i.date ? fmtDate(i.date) : "sin fecha"}</span>
-          </div>
-          <p className="text-[11px] text-ink-muted">
-            {i.source.label}
-            {i.recorded_in_crm ? (i.confirmation === "confirmed" ? " · confirmado por operador" : i.confirmation === "machine_proposed" ? " · propuesto por la máquina" : "") : " · no registrado como interés en el CRM"}
-          </p>
-          <p className="text-[11px] text-ink-faint">
-            Coincidencia «{i.matched_term}» en: {i.source.detail ?? i.source.case_title ?? "—"}
-          </p>
-          {i.source.opportunity_id ? (
-            <a className="text-[11px] font-medium text-brand-700 underline" href={crmHash("oportunidades", i.source.opportunity_id)}>
-              Ver caso{i.source.quote_numbers.length ? ` · ${i.source.quote_numbers.join(", ")}` : ""}
-            </a>
-          ) : null}
-        </li>
-      ))}
-    </ul>
   );
 }
 

@@ -9,7 +9,6 @@ from origenlab_email_pipeline.outbound_v2 import (
     CampaignPolicy,
     ContactControlIndex,
     RecipientCandidate,
-    RecontactOverride,
     build_audience_preview,
 )
 from origenlab_email_pipeline.outbound_v2.reasons import (
@@ -28,14 +27,13 @@ def _policy(**kwargs) -> CampaignPolicy:
     return CampaignPolicy(**base)
 
 
-def _preview(candidates, controls=None, policy=None, overrides=None):
+def _preview(candidates, controls=None, policy=None):
     return build_audience_preview(
         candidates=candidates,
         criteria=CRITERIA,
         controls=controls or ContactControlIndex(),
         policy=policy or _policy(),
         now=NOW,
-        overrides=overrides,
     )
 
 
@@ -124,19 +122,6 @@ def test_counts_by_reason_counts_a_row_once_per_reason() -> None:
     preview = _preview([RecipientCandidate(address_norm="noreply@uni.example")], controls=controls)
     assert preview.counts_by_reason == {REASON_BLOCK: 1, REASON_POLICY_NOISE_ADDRESS: 1}
     assert preview.excluded_count == 1
-
-
-def test_overrides_are_applied_by_address() -> None:
-    controls = ContactControlIndex(prior_contact_addresses=frozenset({"a@uni.example"}))
-    overrides = {"a@uni.example": RecontactOverride(operator_id="op-1", reason="pidió info")}
-    preview = _preview([RecipientCandidate(address_norm="a@uni.example")], controls=controls)
-    assert preview.eligible_count == 0
-    with_override = _preview(
-        [RecipientCandidate(address_norm="a@uni.example")],
-        controls=controls,
-        overrides=overrides,
-    )
-    assert with_override.eligible_count == 1
 
 
 def test_the_same_inputs_produce_the_same_preview() -> None:

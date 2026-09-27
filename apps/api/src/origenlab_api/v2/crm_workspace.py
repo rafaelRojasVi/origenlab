@@ -30,6 +30,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from origenlab_api.v2.marketing_audience import address_ref, addresses_in
+
 GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
 DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/{}"
 DRIVE_FILE_URL = "https://drive.google.com/file/d/{}/view"
@@ -389,7 +391,12 @@ def compose_pipeline(
         else:
             address, n = _first_address(latest.get("_recipients") if latest else None)
             if address:
-                contact = {"source": "gmail_recipient", "name": None, "address": address, "others": max(n - 1, 0)}
+                bare = addresses_in(address)
+                contact = {
+                    "source": "gmail_recipient", "name": None, "address": address, "others": max(n - 1, 0),
+                    # Joins this card to its equipment interests even when the address is masked.
+                    "address_ref": address_ref(bare[0]) if bare else None,
+                }
             attention.append("no_crm_contact")
 
         drive_folder = None

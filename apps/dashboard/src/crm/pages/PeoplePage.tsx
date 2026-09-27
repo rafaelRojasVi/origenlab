@@ -20,9 +20,19 @@ import { useResource } from "../useResource";
 import { splitAddress } from "../address";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { contactAddressesRedacted } from "../redaction";
+import {
+  EquipmentInterestsBlock,
+  EquipmentLineDrawer,
+  EquipmentLineStrip,
+  LineDots,
+  useEquipmentInterests,
+  type InterestData,
+} from "../interests/EquipmentInterests";
+import type { ResourceState } from "../useResource";
 
 interface Recipient {
   address: string;
+  addressRef: string | null;
   cases: OpportunityCardData[];
   lastSent: string | null;
 }
@@ -45,6 +55,8 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
   const persons = overview.kind === "ready" ? overview.data.entities.find((e) => e.key === "persons")?.count ?? 0 : null;
   const { session } = useAuthSession();
   const redacted = contactAddressesRedacted(session);
+  const interests = useEquipmentInterests();
+  const [line, setLine] = useState<string | null>(null);
 
   return (
     <div className="space-y-4">
@@ -76,8 +88,10 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
         }
       </ResourceGate>
 
+      <EquipmentLineStrip state={interests} onSelectLine={setLine} />
+
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<Skeleton rows={4} cards />}>
-        {(p) => <Recipients items={p.items} navigate={navigate} />}
+        {(p) => <Recipients items={p.items} navigate={navigate} interests={interests} onSelectLine={setLine} />}
       </ResourceGate>
 
       <Panel
@@ -110,6 +124,11 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
                       <Badge tone={c.confirmation === "confirmed" ? "good" : "neutral"} glyph={false}>
                         {c.confirmation === "confirmed" ? "Confirmada" : "Importada"}
                       </Badge>
+                      <LineDots
+                        state={interests}
+                        interests={interests.kind === "ready" ? interests.data.byContactPoint.get(c.contact_point_id)?.interests : undefined}
+                        onSelectLine={setLine}
+                      />
                       {c.address_control_count > 0 ? (
                         <Badge tone="warn" title="Tiene controles de envío (bloqueo o contacto previo)">
                           {c.address_control_count} control{c.address_control_count === 1 ? "" : "es"}
@@ -126,17 +145,28 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
           }
         </ResourceGate>
       </Panel>
+      <EquipmentLineDrawer state={interests} familyId={line} onClose={() => setLine(null)} />
     </div>
   );
 }
 
-function Recipients({ items, navigate }: { items: OpportunityCardData[]; navigate: (s: CrmSection, id?: string) => void }) {
+function Recipients({
+  items,
+  navigate,
+  interests,
+  onSelectLine,
+}: {
+  items: OpportunityCardData[];
+  navigate: (s: CrmSection, id?: string) => void;
+  interests: ResourceState<InterestData>;
+  onSelectLine: (familyId: string) => void;
+}) {
   const recipients = useMemo(() => {
     const map = new Map<string, Recipient>();
     for (const c of items) {
       if (c.contact?.source !== "gmail_recipient" || !c.contact.address) continue;
       const key = splitAddress(c.contact.address).email.toLowerCase();
-      const r = map.get(key) ?? { address: c.contact.address, cases: [], lastSent: null };
+      const r = map.get(key) ?? { address: c.contact.address, addressRef: c.contact.address_ref ?? null, cases: [], lastSent: null };
       r.cases.push(c);
       const sent = c.latest_revision?.sent_at ?? null;
       if (sent && (!r.lastSent || sent > r.lastSent)) r.lastSent = sent;
@@ -182,6 +212,18 @@ function Recipients({ items, navigate }: { items: OpportunityCardData[]; navigat
                 ))}
               </div>
               <p className="mt-2 border-t border-line/70 pt-1.5 text-[11px] text-ink-faint">Última cotización {fmtDate(r.lastSent)}</p>
+              <div className="mt-1.5 border-t border-line/70 pt-1.5">
+                <EquipmentInterestsBlock
+                  state={interests}
+                  interests={
+                    interests.kind === "ready" && r.addressRef
+                      ? interests.data.byAddressRef.get(r.addressRef)?.interests
+                      : undefined
+                  }
+                  onSelectLine={onSelectLine}
+                  compact
+                />
+              </div>
             </article>
           );
         })}
