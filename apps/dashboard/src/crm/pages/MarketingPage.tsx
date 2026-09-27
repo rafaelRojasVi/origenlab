@@ -1,20 +1,25 @@
+import { useCallback, useState } from "react";
 import { fetchMarketing } from "../crmApi";
 import type { CampaignSummary, MarketingResponse } from "../crmTypes";
+import { AudienceBuilder } from "../marketing/AudienceBuilder";
+import { CampaignEditor, type EditorSeed } from "../marketing/CampaignEditor";
+import { EmailFrame } from "../marketing/EmailFrame";
+import { fetchCampaign, fetchTaxonomy } from "../marketing/marketingApi";
+import type { CampaignContent, EquipmentTaxonomy } from "../marketing/marketingTypes";
 import {
   Badge,
-  DisabledAction,
   EmptyState,
   NotImportedState,
   PageHeader,
   Panel,
   ResourceGate,
+  Segmented,
   Skeleton,
   StatLine,
-  WRITE_DISABLED_REASON,
   fmtDate,
   fmtInt,
 } from "../ui";
-import { useResource } from "../useResource";
+import { useResource, type ResourceState } from "../useResource";
 
 const RECIPIENT_STATE: Record<string, { label: string; color: string }> = {
   sent: { label: "Enviado", color: "bg-brand-600" },
@@ -29,27 +34,121 @@ const CONTROL_LABEL: Record<string, string> = {
   "prior_contact:address": "Contacto previo registrado",
 };
 
-const STATUS_LABEL: Record<string, string> = { archived: "Archivada", draft: "Borrador", approved: "Aprobada", sending: "Enviando" };
+const STATUS_LABEL: Record<string, string> = { archived: "Archivada", draft: "Borrador", approved: "Aprobada", sending: "Enviando", cancelled: "Cancelada" };
+
+type Tab = "campanas" | "audiencias";
+type View = { kind: "list" } | { kind: "editor"; seed: EditorSeed; key: string };
 
 export function MarketingPage() {
   const [state, reload] = useResource(fetchMarketing);
+  const [taxonomyState] = useResource(fetchTaxonomy);
+  const [tab, setTab] = useState<Tab>("campanas");
+  const [view, setView] = useState<View>({ kind: "list" });
+  const [openError, setOpenError] = useState<string | null>(null);
+  const taxonomy = taxonomyState.kind === "ready" ? taxonomyState.data : null;
+  const draftsEnabled = state.kind === "ready" && Boolean(state.data.authoring?.drafts_enabled);
+
+  const openNew = () => setView({ kind: "editor", seed: { stored: null }, key: `new-${Date.now()}` });
+  const openStored = useCallback(async (id: string) => {
+    setOpenError(null);
+    try {
+      const content = await fetchCampaign(id);
+      setView({ kind: "editor", seed: { stored: content }, key: `${id}-${content.version}` });
+    } catch (err) {
+      setOpenError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+  const duplicate = (content: CampaignContent) =>
+    setView({ kind: "editor", seed: { stored: null, duplicateOf: content }, key: `dup-${content.campaign_id}-${Date.now()}` });
+
   return (
     <div className="space-y-4">
       <PageHeader
         title="Marketing"
-        subtitle="Campañas de correo registradas en el CRM: audiencia, envíos y controles de contacto. Sólo cifras registradas; nada estimado."
-        actions={<DisabledAction id="marketing-new-disabled" reason={WRITE_DISABLED_REASON}>Nueva campaña</DisabledAction>}
+        subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí."
+        actions={
+          tab === "campanas" && view.kind === "list" ? (
+            <button type="button" onClick={openNew} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black">
+              Nueva campaña
+            </button>
+          ) : null
+        }
       />
-      <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={3} cards />}>
-        {(data) => <Body data={data} />}
-      </ResourceGate>
+      <Segmented
+        label="Sección de marketing"
+        value={tab}
+        onChange={(t) => {
+          setTab(t);
+          setView({ kind: "list" });
+        }}
+        options={[
+          { value: "campanas", label: "Campañas" },
+          { value: "audiencias", label: "Audiencias por equipo" },
+        ]}
+      />
+      {openError ? (
+        <p role="alert" className="rounded-md border border-bad/30 bg-bad-bg px-3 py-2 text-xs text-bad">
+          No se pudo abrir la campaña: {openError}
+        </p>
+      ) : null}
+      {tab === "audiencias" ? (
+        taxonomy ? <AudienceBuilder taxonomy={taxonomy} /> : <TaxonomyGate state={taxonomyState} />
+      ) : view.kind === "editor" ? (
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={() => {
+              setView({ kind: "list" });
+              reload();
+            }}
+            className="text-xs font-medium text-brand-700 hover:underline"
+          >
+            ← Volver a campañas
+          </button>
+          <CampaignEditor key={view.key} seed={view.seed} taxonomy={taxonomy} draftsEnabled={draftsEnabled} onSaved={() => undefined} onDuplicate={duplicate} />
+        </div>
+      ) : (
+        <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={3} cards />}>
+          {(data) => <Body data={data} onOpen={(id) => void openStored(id)} />}
+        </ResourceGate>
+      )}
     </div>
   );
 }
 
-function Body({ data }: { data: MarketingResponse }) {
+function TaxonomyGate({ state }: { state: ResourceState<EquipmentTaxonomy> }) {
+  return (
+    <ResourceGate state={state} reload={() => window.location.reload()}>
+      {() => null}
+    </ResourceGate>
+  );
+}
+
+function Body({ data, onOpen }: { data: MarketingResponse; onOpen: (id: string) => void }) {
+  const drafts = data.authoring?.drafts_enabled;
+  const storage = data.storage;
+  const note = (
+    <p className="text-[11px] text-ink-faint" data-testid="campaign-storage-note">
+      Las campañas y borradores se guardan en <code>{storage?.table ?? "outbound.campaign"}</code>
+      {storage ? (
+        <>
+          {" "}
+          de la base <code>{storage.database}</code>
+        </>
+      ) : null}
+      .{" "}
+      {drafts
+        ? "El guardado de borradores está habilitado en este entorno."
+        : "El guardado de borradores no está habilitado en este entorno: un borrador nuevo existe sólo en la pestaña."}
+    </p>
+  );
   if (data.campaigns.length === 0) {
-    return <EmptyState title="Sin campañas">El CRM no tiene campañas registradas.</EmptyState>;
+    return (
+      <>
+        {note}
+        <EmptyState title="Sin campañas">El CRM no tiene campañas registradas.</EmptyState>
+      </>
+    );
   }
   const totalSent = data.campaigns.reduce((n, c) => n + (c.recipients_by_state.sent ?? 0), 0);
   const totalBounced = data.campaigns.reduce((n, c) => n + (c.recipients_by_state.bounced ?? 0), 0);
@@ -59,14 +158,16 @@ function Body({ data }: { data: MarketingResponse }) {
       <StatLine
         items={[
           { label: "Campañas", value: data.campaigns.length },
+          { label: "Borradores", value: data.campaigns.filter((c) => c.status === "draft").length },
           { label: "Destinatarios enviados", value: fmtInt(totalSent) },
           { label: "Rebotes registrados", value: fmtInt(totalBounced), tone: totalBounced ? "warn" : undefined },
           { label: "Respuestas", value: replies === 0 ? "no importadas" : fmtInt(replies) },
         ]}
       />
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+      {note}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
         {data.campaigns.map((c) => (
-          <CampaignCard key={c.campaign_id} c={c} />
+          <CampaignCard key={c.campaign_id} c={c} onOpen={() => onOpen(c.campaign_id)} />
         ))}
       </div>
       {replies === 0 ? <NotImportedState title="Respuestas a campañas">{data.replies_note}</NotImportedState> : null}
@@ -86,43 +187,93 @@ function Body({ data }: { data: MarketingResponse }) {
   );
 }
 
-function CampaignCard({ c }: { c: CampaignSummary }) {
+/** A thumbnail of the stored HTML when there is some; otherwise it says it was never imported. */
+function Thumbnail({ c }: { c: CampaignSummary }) {
+  const [state] = useResource(
+    () => (c.has_html ? fetchCampaign(c.campaign_id) : Promise.resolve(null)),
+    [c.campaign_id, c.has_html, c.version],
+  );
+  if (!c.has_html) {
+    return (
+      <div
+        className="flex h-[150px] items-center justify-center rounded-md border border-dashed border-line-strong bg-canvas-sunken text-xs text-ink-muted"
+        data-testid="thumb-not-imported"
+      >
+        Contenido no importado
+      </div>
+    );
+  }
+  if (state.kind !== "ready" || !state.data?.body_html) {
+    return <div className="crm-skeleton h-[150px] rounded-md" aria-label="Cargando miniatura" />;
+  }
+  return (
+    <div className="flex h-[150px] justify-center overflow-hidden rounded-md border border-line bg-canvas-sunken" data-testid="thumb">
+      <EmailFrame html={state.data.body_html} width={600} height={600} scale={0.25} title={`Miniatura de ${c.name}`} />
+    </div>
+  );
+}
+
+function CampaignCard({ c, onOpen }: { c: CampaignSummary; onOpen: () => void }) {
   const states = Object.entries(c.recipients_by_state).sort((a, b) => b[1] - a[1]);
   const total = states.reduce((n, [, v]) => n + v, 0);
   const attempts = c.send_attempts.reduce((n, a) => n + a.count, 0);
   const rejected = c.send_attempts.filter((a) => a.submission_state === "rejected").reduce((n, a) => n + a.count, 0);
   return (
-    <article className="flex flex-col rounded-lg border border-line bg-canvas-raised p-3.5">
-      <div className="flex items-start gap-2">
+    <article className="flex flex-col rounded-lg border border-line bg-canvas-raised p-3.5" data-testid="campaign-card">
+      <Thumbnail c={c} />
+      <div className="mt-3 flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[13px] font-semibold text-ink" title={c.name}>
-            {c.name}
+            <button type="button" onClick={onOpen} className="max-w-full truncate text-left hover:underline">
+              {c.name}
+            </button>
           </h3>
           <p className="truncate text-xs text-ink-muted" title={c.subject ?? undefined}>
             {c.subject ?? "Sin asunto registrado"}
           </p>
+          {c.preheader ? <p className="truncate text-[11px] text-ink-faint">{c.preheader}</p> : null}
         </div>
-        <Badge glyph={false}>{STATUS_LABEL[c.status] ?? c.status}</Badge>
+        <Badge glyph={false} tone={c.status === "draft" ? "info" : "neutral"}>
+          {STATUS_LABEL[c.status] ?? c.status}
+        </Badge>
       </div>
-      <p className="mt-3 text-2xl font-semibold tabular-nums tracking-tight text-ink">{fmtInt(total)}</p>
-      <p className="text-[11px] text-ink-faint">destinatarios en la audiencia</p>
-      <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-canvas-sunken" role="img" aria-label={states.map(([s, n]) => `${RECIPIENT_STATE[s]?.label ?? s}: ${n}`).join(", ")}>
-        {states.map(([s, n]) => (
-          <span key={s} className={RECIPIENT_STATE[s]?.color ?? "bg-ink-faint"} style={{ width: `${(n / Math.max(total, 1)) * 100}%` }} />
-        ))}
-      </div>
-      <dl className="mt-2 space-y-1 text-xs">
-        {states.map(([s, n]) => (
-          <div key={s} className="flex items-center gap-2">
-            <span aria-hidden="true" className={`h-2 w-2 rounded-full ${RECIPIENT_STATE[s]?.color ?? "bg-ink-faint"}`} />
-            <dt className="flex-1 text-ink-muted">{RECIPIENT_STATE[s]?.label ?? s}</dt>
-            <dd className="font-semibold tabular-nums text-ink">{fmtInt(n)}</dd>
+      {total > 0 ? (
+        <>
+          <p className="mt-3 text-2xl font-semibold tabular-nums tracking-tight text-ink">{fmtInt(total)}</p>
+          <p className="text-[11px] text-ink-faint">destinatarios en la audiencia</p>
+          <div
+            className="mt-2 flex h-2 overflow-hidden rounded-full bg-canvas-sunken"
+            role="img"
+            aria-label={states.map(([s, n]) => `${RECIPIENT_STATE[s]?.label ?? s}: ${n}`).join(", ")}
+          >
+            {states.map(([s, n]) => (
+              <span key={s} className={RECIPIENT_STATE[s]?.color ?? "bg-ink-faint"} style={{ width: `${(n / Math.max(total, 1)) * 100}%` }} />
+            ))}
           </div>
-        ))}
-      </dl>
-      <div className="mt-auto border-t border-line/70 pt-2 text-[11px] text-ink-faint [margin-top:0.75rem]">
-        {fmtInt(attempts)} intentos de envío{rejected ? ` · ${rejected} rechazados` : ""} · {fmtDate(c.first_sent_at)}
-        {c.last_sent_at && c.last_sent_at.slice(0, 10) !== c.first_sent_at?.slice(0, 10) ? ` – ${fmtDate(c.last_sent_at)}` : ""}
+          <dl className="mt-2 space-y-1 text-xs">
+            {states.map(([s, n]) => (
+              <div key={s} className="flex items-center gap-2">
+                <span aria-hidden="true" className={`h-2 w-2 rounded-full ${RECIPIENT_STATE[s]?.color ?? "bg-ink-faint"}`} />
+                <dt className="flex-1 text-ink-muted">{RECIPIENT_STATE[s]?.label ?? s}</dt>
+                <dd className="font-semibold tabular-nums text-ink">{fmtInt(n)}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      ) : (
+        <p className="mt-3 text-[11px] text-ink-faint">Sin audiencia registrada.</p>
+      )}
+      <div className="mt-auto flex items-center gap-2 border-t border-line/70 pt-2 text-[11px] text-ink-faint [margin-top:0.75rem]">
+        <span className="min-w-0 flex-1 truncate">
+          {c.status === "draft"
+            ? `Borrador v${c.version ?? 1} · actualizado ${fmtDate(c.updated_at ?? c.created_at)}`
+            : `${fmtInt(attempts)} intentos de envío${rejected ? ` · ${rejected} rechazados` : ""} · ${fmtDate(c.first_sent_at)}${
+                c.last_sent_at && c.last_sent_at.slice(0, 10) !== c.first_sent_at?.slice(0, 10) ? ` – ${fmtDate(c.last_sent_at)}` : ""
+              }`}
+        </span>
+        <button type="button" onClick={onOpen} className="shrink-0 font-medium text-brand-700 hover:underline">
+          {c.status === "draft" ? "Editar" : "Abrir"}
+        </button>
       </div>
     </article>
   );

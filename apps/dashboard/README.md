@@ -1,13 +1,14 @@
 # OrigenLab — Dashboard (React)
 
 The operator CRM. One shell, one navigation, one Google Workspace sign-in, over the V2
-durable core. It talks only to **`apps/api`**, and only through GET:
+durable core. It talks only to **`apps/api`**, and — apart from sign-out and campaign drafts — only through GET:
 
 | Route | Use |
 |-------|-----|
 | `GET /auth/session` · `GET /auth/google/login` · `POST /auth/logout` | Sign-in state, Google Workspace login, sign-out |
 | `GET /v2/workspace/*` | Every CRM section (Resumen, Oportunidades, Organizaciones, Personas, Proveedores, Archivo Drive, Marketing, Revisión) |
 | `GET /v2/contacts` · `GET /v2/organizations` | Personas and Organizaciones search |
+| `POST /v2/commands/create-campaign-draft` · `POST /v2/commands/save-campaign-draft` | Marketing: create and save a campaign **draft** — the only writes besides logout; mounted only with `ORIGENLAB_V2_CAMPAIGN_DRAFTS_ENABLED`, refused by the production proxy |
 
 The browser does not open a database, CSV files, or `apps/email-pipeline` modules. In
 production every request passes the `apps/dashboard-proxy` method+path allowlist. Canonical
@@ -36,6 +37,23 @@ App.tsx → pages/DashboardApp.tsx → components/auth/AuthGate.tsx (one Google 
 - **Honest labels.** An imported case still in `quoting` shows «Cotización enviada ·
   histórico»; next steps are marked *sugerencia*; Drive links carry «registro local» because
   they come from an archive ledger, not a live Drive read.
+
+### Marketing
+
+- **Campañas.** Each card shows a thumbnail of the stored HTML, or «Contenido no importado» when
+  the campaign has none. Opening one shows subject, preheader, HTML and a desktop/mobile
+  preview. Previews are sanitized (`crm/marketing/emailPreview.ts`), rendered under a CSP that
+  allows images only from `https://origenlab.cl`, inside `<iframe sandbox="">`: no script runs
+  and no remote image or tracking pixel is requested.
+- **Drafts say where they live.** The editor always shows one of: *sin guardar* (only in this
+  tab), *guardado* (table, database and version), *cambios sin guardar*, or *sólo lectura*.
+  Save is disabled when the API reports drafts are not enabled. Templates
+  (`crm/marketing/emailTemplates.ts`) use only the website catalogue's verified images.
+- **Audiencias por equipo.** Filter by family, brand, model, institution, basis and whether the
+  interest is recorded in the CRM or only in evidence. Every interest shows its basis, source
+  and date; no evidence reads «Sin información». Eligibility is separate: suppliers,
+  suppressed and invalid destinations cannot be selected, and the recipient list is
+  deduplicated by address (`crm/marketing/audienceSelection.ts`). The selection is not saved.
 
 The earlier operator panel (Today, Ventas, Cotizaciones, Catálogo, Licitaciones, the V2
 consoles) was removed on 2026-09-26; git history holds it. The V1 API routes it read are

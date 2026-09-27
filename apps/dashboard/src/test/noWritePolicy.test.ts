@@ -30,15 +30,30 @@ describe("dashboard read-only policy", () => {
     expect(entries.length).toBeGreaterThan(5);
   });
 
-  // The dashboard writes nothing. The one mutating request is authClient.ts's POST to
-  // `/auth/logout`, which clears the session cookie upstream and writes no commercial or CRM
-  // state. No other dashboard source file may issue POST/PUT/PATCH/DELETE.
+  // The dashboard records no commercial decision. Two modules may issue a mutating request:
+  //  - authClient.ts's POST to `/auth/logout`, which clears the session cookie upstream;
+  //  - marketingApi.ts's POST to exactly the two campaign-*draft* commands, which write email
+  //    copy to a draft `outbound.campaign` row and can freeze, approve or send nothing.
+  // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
+  const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
+  const CAMPAIGN_DRAFT_PATHS = ["/v2/commands/create-campaign-draft", "/v2/commands/save-campaign-draft"];
 
-  it("allows only the logout POST", () => {
+  it("allows only the logout POST and the campaign-draft POST", () => {
     const hits: string[] = [];
     for (const [path, text] of entries) {
       if (!MUTATION_METHOD.test(text) && !FORBIDDEN_FETCH.test(text)) continue;
+      if (path === CAMPAIGN_DRAFT_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...CAMPAIGN_DRAFT_PATHS].sort())) {
+          hits.push(`${path} (may target only ${CAMPAIGN_DRAFT_PATHS.join(" and ")}, found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
       if (path !== AUTH_LOGOUT_FILE) {
         hits.push(`${path} (unsanctioned mutation module)`);
         continue;
@@ -51,6 +66,13 @@ describe("dashboard read-only policy", () => {
         hits.push(`${path} (logout POST must target /auth/logout)`);
       }
     }
+    expect(hits).toEqual([]);
+  });
+
+  it("names no V2 command outside the campaign-draft client", () => {
+    const hits = entries
+      .filter(([path, text]) => path !== CAMPAIGN_DRAFT_FILE && /\/v2\/commands\//.test(text))
+      .map(([path]) => path);
     expect(hits).toEqual([]);
   });
 

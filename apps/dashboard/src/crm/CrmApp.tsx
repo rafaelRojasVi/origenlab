@@ -109,7 +109,7 @@ function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean })
         <span aria-hidden="true" className="h-4 w-px bg-line-strong" />
         <span className="text-[13px] text-ink-muted">Panel comercial</span>
         <span className="hidden rounded-full border border-line bg-canvas-sunken px-2 py-px text-[11px] font-medium text-ink-muted sm:inline" data-testid="crm-read-only-chip">
-          Sólo lectura · datos locales
+          Sin envíos · datos locales
         </span>
         {contactAddressesRedacted(session) ? (
           <span
@@ -217,7 +217,8 @@ function SideNav({
         </div>
       ))}
       <p className="mt-6 px-2 text-[10px] leading-4 text-ink-faint">
-        Todas las acciones de escritura están desactivadas hasta su aprobación.
+        La única escritura es guardar borradores de campaña, donde el entorno lo habilita. Todo lo demás es
+        de lectura, y nada se envía.
       </p>
     </nav>
   );

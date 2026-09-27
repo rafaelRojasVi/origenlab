@@ -120,8 +120,13 @@ export interface CampaignSummary {
   name: string;
   status: string;
   subject: string | null;
+  preheader?: string | null;
+  /** Whether the stored campaign has HTML content. False means it was never imported. */
+  has_html?: boolean;
+  version?: number;
   approved_at: string | null;
   created_at: string | null;
+  updated_at?: string | null;
   first_sent_at: string | null;
   last_sent_at: string | null;
   recipients_by_state: Record<string, number>;
@@ -133,6 +138,9 @@ export interface MarketingResponse {
   campaigns: CampaignSummary[];
   contact_controls: { kind: string; scope: string; count: number }[];
   replies_note: string;
+  /** Where campaigns (and drafts) are stored, as the API reports it. */
+  storage?: { table: string; database: string };
+  authoring?: { drafts_enabled: boolean };
 }
 
 export interface DriveDocument extends DriveLinkRef {
