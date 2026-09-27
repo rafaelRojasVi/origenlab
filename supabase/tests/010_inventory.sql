@@ -92,8 +92,10 @@ select set_eq(
         'crm.opportunity_evidence_link_immutable',
         'crm.opportunity_stage_guard',
         'crm.quote_revision_historical_guard',
-        'outbound.campaign_content_draft_only'],
-  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard and the campaign-content guard exist');
+        'outbound.campaign_content_draft_only',
+        'outbound.campaign_freeze_facts_write_once',
+        'outbound.campaign_recipient_snapshot_guard'],
+  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard and the two audience-freeze guards exist');
 
 -- `public` holds nothing.
 select is(
