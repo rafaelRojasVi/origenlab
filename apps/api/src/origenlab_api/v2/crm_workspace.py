@@ -30,6 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from origenlab_api.v2.audience_freeze import SEND_TIME_REFUSAL_LABEL
 from origenlab_api.v2.marketing_audience import address_ref, addresses_in
 
 GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
@@ -954,7 +955,8 @@ class CrmWorkspaceRepository:
                        r.relevance, r.interest_evidence, r.evidence_observed_at::text,
                        r.identity_review, r.recontact_review, r.recontact_override_at::text,
                        r.campaign_version, r.content_sha256, r.policy_version,
-                       r.state as lifecycle_state
+                       r.state as lifecycle_state,
+                       outbound.marketing_contact_refusals(r.id) as send_time_refusals
                   from outbound.campaign_recipient r
                   left join crm.organization org on org.id = r.organization_id
                   left join crm.person pe on pe.id = r.person_id
@@ -966,10 +968,92 @@ class CrmWorkspaceRepository:
             recipients = self._rows(cur)
             cur.execute("select current_database()")
             database = cur.fetchone()[0]
+        for r in recipients:
+            r["send_time_refusals"] = [
+                {"code": c, "label": SEND_TIME_REFUSAL_LABEL.get(c, c)} for c in (r["send_time_refusals"] or [])
+            ]
+            # Frozen as included, refused now: the snapshot predates a «BAJA» or another control.
+            r["suppressed_since_freeze"] = r["inclusion"] == "included" and bool(r["send_time_refusals"])
         return {
             **campaigns[0],
             "recipients": recipients,
+            "suppressed_since_freeze": sum(1 for r in recipients if r["suppressed_since_freeze"]),
+            "unsubscribed_since_freeze": sum(
+                1 for r in recipients
+                if r["suppressed_since_freeze"] and any(x["code"] == "unsubscribe" for x in r["send_time_refusals"])
+            ),
             "storage": {"table": "outbound.campaign_recipient", "database": database},
+        }
+
+    # -- W10 suppressions
+
+    def suppressions(self, limit: int = 200) -> dict[str, Any]:
+        """Marketing unsubscribes and what they refuse today. Read-only; never a message body.
+
+        An unsubscribe is an address block whose reason is `unsubscribe`, or any block a «BAJA»
+        was linked to. Frozen recipients are counted against the live send-time contract
+        (`outbound.marketing_contact_refusals`), so a snapshot that predates a «BAJA» shows up
+        here as refused.
+        """
+        with self._read() as cur:
+            cur.execute(
+                """
+                with unsub as (
+                  select c.id, c.value_norm, c.purpose, c.reason, c.source, c.created_at
+                    from outbound.contact_control c
+                   where c.scope = 'address' and c.kind = 'block'
+                     and (c.reason = 'unsubscribe' or exists (
+                           select 1 from evidence.assertion a
+                            where a.kind = 'unsubscribe_request' and a.resolved_kind = 'contact_control'
+                              and a.resolved_id = c.id))
+                )
+                select u.id::text as contact_control_id, u.value_norm as address, u.purpose, u.reason, u.source,
+                       u.created_at::text as recorded_at,
+                       (select count(*) from evidence.assertion a
+                         where a.kind = 'unsubscribe_request' and a.resolved_id = u.id)::int as baja_messages,
+                       (select max((a.value->>'observed_at')::timestamptz)::text from evidence.assertion a
+                         where a.kind = 'unsubscribe_request' and a.resolved_id = u.id) as last_observed_at
+                  from unsub u
+                 order by u.created_at desc, u.value_norm
+                """
+            )
+            entries = self._rows(cur)
+            cur.execute(
+                """
+                select c.id::text as campaign_id, c.name, c.status,
+                       count(*) filter (where 'unsubscribe' = any(outbound.marketing_contact_refusals(r.id)))::int
+                         as unsubscribed_since_freeze,
+                       count(*) filter (where cardinality(outbound.marketing_contact_refusals(r.id)) > 0)::int
+                         as refused_since_freeze,
+                       count(*)::int as included_at_freeze
+                  from outbound.campaign_recipient r
+                  join outbound.campaign c on c.id = r.campaign_id
+                 where r.frozen_at is not null and r.frozen_inclusion = 'included'
+                 group by c.id, c.name, c.status
+                 order by c.name
+                """
+            )
+            frozen = self._rows(cur)
+            cur.execute(
+                """
+                select kind, purpose, count(*)::int from outbound.contact_control
+                 where kind = 'block' group by 1, 2 order by 1, 2
+                """
+            )
+            blocks = [{"kind": k, "purpose": p, "count": n} for k, p, n in cur.fetchall()]
+            cur.execute("select current_database()")
+            database = cur.fetchone()[0]
+        return {
+            "summary": {
+                "unsubscribed_addresses": len(entries),
+                "baja_messages": sum(e["baja_messages"] for e in entries),
+                "last_recorded_at": entries[0]["recorded_at"] if entries else None,
+            },
+            "entries": entries[:limit],
+            "truncated": len(entries) > limit,
+            "frozen_campaigns": frozen,
+            "blocks_by_purpose": blocks,
+            "storage": {"table": "outbound.contact_control", "database": database},
         }
 
     # -- marketing audience
@@ -1145,16 +1229,25 @@ def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
         """
     )
     facts.contact_points = {r["address"]: r for r in _rows(cur)}
+    # An address block is an unsubscribe when its reason says so or when a «BAJA» was linked to
+    # it (W10): the same rule as outbound.marketing_contact_refusals, the send-time contract.
     cur.execute(
         """
-        select scope, value_norm, kind from outbound.contact_control
-         where kind = 'prior_contact'
-            or (kind = 'block' and purpose in ('all', 'marketing'))
-            or (kind = 'cooldown' and until_at > now())
+        select c.scope, c.value_norm, c.kind,
+               c.kind = 'block' and c.scope = 'address' and (c.reason = 'unsubscribe' or exists (
+                 select 1 from evidence.assertion a
+                  where a.kind = 'unsubscribe_request' and a.resolved_kind = 'contact_control'
+                    and a.resolved_id = c.id)) as unsubscribe
+          from outbound.contact_control c
+         where c.kind = 'prior_contact'
+            or (c.kind = 'block' and c.purpose in ('all', 'marketing'))
+            or (c.kind = 'cooldown' and c.until_at > now())
         """
     )
-    for scope, value, kind in cur.fetchall():
-        if kind == "block":
+    for scope, value, kind, unsubscribe in cur.fetchall():
+        if kind == "block" and unsubscribe:
+            facts.unsubscribed_addresses.add(value)
+        elif kind == "block":
             (facts.blocked_addresses if scope == "address" else facts.blocked_domains).add(value)
         elif kind == "cooldown":
             facts.cooldown_addresses.add(value)

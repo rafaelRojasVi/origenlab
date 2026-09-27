@@ -234,6 +234,15 @@ class Settings(BaseSettings):
     metadata: it approves, freezes, schedules, enqueues and sends nothing, and nothing reads it.
     """
     v2_campaign_planning_enabled: bool = False
+    """Mount POST /v2/commands/apply-unsubscribe-replies (WORKFLOWS.md §W10 step 3).
+
+    Default **false**. On, a sales/admin operator may apply a previewed batch of already-fetched
+    «BAJA» replies (same records, same `input_sha256`, an Idempotency-Key): each clear standalone
+    BAJA becomes a permanent marketing suppression through `outbound.add_contact_control`. The
+    preview route (`POST /v2/unsubscribe/preview`) is a read and exists without this switch. No
+    switch here reads Gmail, changes a mailbox or sends anything.
+    """
+    v2_unsubscribe_apply_enabled: bool = False
     """Local review only: a quote_crm_import dry-run directory (intent.json + intent.sha256).
 
     When set, GET /v2/cockpit/import-review compares that plan with the V2 database. The plan is
@@ -388,6 +397,9 @@ class Settings(BaseSettings):
 
     def v2_campaign_planning_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_planning_enabled)
+
+    def v2_unsubscribe_apply_configured(self) -> bool:
+        return self.v2_configured() and bool(self.v2_unsubscribe_apply_enabled)
 
     def v2_audience_freeze_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_audience_freeze_enabled)

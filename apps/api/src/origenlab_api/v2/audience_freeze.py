@@ -104,6 +104,8 @@ SIN_INFORMACION = "Sin información"
 _ELIGIBILITY_REASON = {
     "invalid_address": "invalid_address",
     "blocked_address": "block",
+    # An unsubscribe is a marketing block (WORKFLOWS.md §1.6); the note says which kind.
+    "unsubscribed": "block",
     "blocked_domain": "block_domain",
     "cooldown": "cooldown",
     "supplier": "policy_supplier",
@@ -132,6 +134,7 @@ NOTE_LABEL = {
     "recontact_approved": "Recontacto aprobado (W12)",
     "recontact_kept_excluded": "Contacto previo: se mantiene excluido (W12)",
     "recontact_not_reviewed": "Contacto previo sin decisión de recontacto",
+    "unsubscribed": "Solicitó la BAJA (supresión permanente; nada la levanta)",
 }
 REVIEW_CODES = ("no_contact_point", "multiple_institutions", "institution_mismatch")
 
@@ -139,10 +142,11 @@ REVIEW_CODES = ("no_contact_point", "multiple_institutions", "institution_mismat
 #: command; each one is a missing capability, not a setting.
 SEND_BLOCKERS: tuple[dict[str, str], ...] = (
     {
-        "code": "unsubscribe_processing_unsupported",
-        "label": "BAJA / desuscripción no soportada",
-        "detail": "No existe un procesador de respuestas entrantes ni un registro durable de supresiones "
-                  "probado. Ningún correo que ofrezca «responda BAJA» puede enviarse hasta que ambos existan.",
+        "code": "unsubscribe_sync_not_automatic",
+        "label": "BAJA sin sincronización automática",
+        "detail": "Una BAJA se registra como supresión permanente sólo cuando un operador aplica un lote de "
+                  "respuestas ya descargadas (W10). Las respuestas de Gmail no se sincronizan automáticamente "
+                  "todavía, así que ningún correo que ofrezca «responda BAJA» puede enviarse.",
     },
     {
         "code": "no_send_path",
@@ -155,6 +159,18 @@ SEND_BLOCKERS: tuple[dict[str, str], ...] = (
         "detail": "La prueba en seco y la aprobación (WORKFLOWS.md §W4, pasos 4–5) no están construidas.",
     },
 )
+
+#: `outbound.marketing_contact_refusals` codes — the live send-time contract (WORKFLOWS.md §2
+#: clauses 4-6), evaluated against today's contact controls, never the frozen snapshot.
+SEND_TIME_REFUSAL_LABEL = {
+    "unsubscribe": "Solicitó la BAJA",
+    "block": "Dirección bloqueada",
+    "block_domain": "Dominio bloqueado",
+    "cooldown": "En período de espera",
+    "prior_contact": "Contacto previo sin aprobación W12",
+    "not_snapshotted": "Excluido al congelar",
+    "recipient_unknown": "Destinatario desconocido",
+}
 
 #: The database's address shape (20260908120200): a destination that fails it cannot be a row.
 _DB_ADDRESS = re.compile(r'^[^@\s<>,;"]+@[^@\s<>,;"]+\.[^@\s<>,;"]+$')
@@ -448,6 +464,8 @@ def plan_freeze(
             notes |= {n["code"] for n in elig["notes"] if n["code"] != "prior_contact"}
             if any(r["code"] == "possible_supplier_unreviewed" for r in elig["reasons"]):
                 notes.add("possible_supplier_unreviewed")
+            if any(r["code"] == "unsubscribed" for r in elig["reasons"]):
+                notes.add("unsubscribed")
         if address in facts.prior_contact_addresses:
             reasons.add("prior_contact")
         if not _WELL_FORMED.match(address):

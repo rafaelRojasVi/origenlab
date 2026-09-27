@@ -1,0 +1,175 @@
+"""W10 unsubscribe — preview and apply a batch of already-fetched «BAJA» replies.
+
+Two operations, deliberately separate:
+
+* **Preview** (:meth:`V2UnsubscribeRepository.preview`) — a read-only transaction. It reads the
+  facts the plan needs (which senders OrigenLab knows, which are already under a marketing
+  block, which messages are already recorded) and answers :func:`plan_batch` with the batch's
+  ``input_sha256``. It writes nothing, not even a receipt.
+* **Apply** (``apply-unsubscribe-replies``) — the same `CommandTransaction` as every V2 command:
+  one transaction, one receipt per ``Idempotency-Key``. It recomputes the fingerprint and refuses
+  a batch that differs from the one previewed (``input_hash_mismatch``), refuses a batch with any
+  malformed record, and then calls ``outbound.add_contact_control`` once per applicable record.
+  That function — the closed-list privileged writer (docs/ARCHITECTURE.md §6.2) — records the
+  reply as evidence, the permanent marketing suppression (or links the evidence to the one that
+  exists) and exactly one ``crm.domain_event``. This module writes no table itself except the
+  receipt.
+
+Both run as ``origenlab_api`` and read or write nothing in Gmail: there is no mail client here.
+The apply route exists only with ``ORIGENLAB_V2_UNSUBSCRIBE_APPLY_ENABLED`` on.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Annotated, Any, Callable
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from origenlab_api.v2.command_core import CommandTransaction, json_payload
+from origenlab_api.v2.commands import CommandRefused
+from origenlab_api.v2.identity import OperatorIdentity
+from origenlab_api.v2.unsubscribe_replies import (
+    APPLIED_OUTCOMES,
+    APPLY_UNSUBSCRIBE_REPLIES,
+    MAX_RECORDS,
+    ReplyFacts,
+    batch_addresses_and_keys,
+    input_sha256,
+    plan_batch,
+)
+
+_SHA256 = r"^[0-9a-f]{64}$"
+
+
+class PreviewUnsubscribeBody(BaseModel):
+    """Already-fetched reply records. Each is validated on its own so a bad one is named, not fatal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    records: Annotated[list[Any], Field(min_length=1, max_length=MAX_RECORDS)]
+
+
+class ApplyUnsubscribeBody(PreviewUnsubscribeBody):
+    """The records previewed, and the fingerprint the preview answered for them."""
+
+    expected_input_sha256: Annotated[str, Field(pattern=_SHA256)]
+    #: The preview's `plan_sha256`: the outcomes the operator confirmed.
+    expected_plan_sha256: Annotated[str, Field(pattern=_SHA256)]
+
+
+def public_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in plan.items() if not k.startswith("_")}
+
+
+class V2UnsubscribeRepository(CommandTransaction):
+    """Preview (read-only) and apply (one command) for staged «BAJA» replies."""
+
+    def __init__(self, *args: Any, clock: Callable[[], datetime] | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    # ------------------------------------------------------------------ facts
+
+    def _facts(self, cur: Any, records: list[Any]) -> ReplyFacts:
+        now = self._clock()
+        addresses, keys = batch_addresses_and_keys(records, now)
+        facts = ReplyFacts(now=now)
+        cur.execute(
+            """
+            select a.addr
+              from unnest(%s::text[]) as a(addr)
+             where exists (select 1 from outbound.contact_control c
+                            where c.scope = 'address' and c.value_norm = a.addr)
+                or exists (select 1 from outbound.campaign_recipient r where r.address_norm = a.addr)
+                or exists (select 1 from crm.contact_point p where p.kind = 'email' and p.value_norm = a.addr)
+            """,
+            (addresses,),
+        )
+        facts.known_addresses = {r[0] for r in cur.fetchall()}
+        cur.execute(
+            """
+            select value_norm, reason from outbound.contact_control
+             where scope = 'address' and kind = 'block' and purpose = 'marketing' and value_norm = any(%s::text[])
+            """,
+            (addresses,),
+        )
+        facts.marketing_blocked = {r[0]: r[1] for r in cur.fetchall()}
+        cur.execute("select dedupe_key from evidence.source_record where dedupe_key = any(%s::text[])", (keys,))
+        facts.recorded_keys = {r[0] for r in cur.fetchall()}
+        cur.execute("select address_norm from comms.mailbox")
+        facts.own_addresses = {r[0] for r in cur.fetchall() if r[0]}
+        return facts
+
+    # ------------------------------------------------------------------ preview
+
+    def preview(self, records: list[Any]) -> dict[str, Any]:
+        """The plan, from a read-only transaction. Writes nothing."""
+        with self._connect(self._dsn, autocommit=False) as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
+                cur.execute("set transaction read only")
+                try:
+                    plan = plan_batch(records, self._facts(cur, records))
+                finally:
+                    conn.rollback()
+        return public_plan(plan)
+
+    # ------------------------------------------------------------------ apply
+
+    def _apply(self, cur: Any, operator: OperatorIdentity, f: dict[str, Any], receipt_id: str) -> dict[str, Any]:
+        records = f["records"]
+        batch = input_sha256(records)
+        if batch != f["expected_input_sha256"]:
+            raise CommandRefused(
+                409, "input_hash_mismatch",
+                "these records are not the batch that was previewed (input_sha256 differs); preview again",
+            )
+        plan = plan_batch(records, self._facts(cur, records))
+        if plan["blocked"]:
+            raise CommandRefused(
+                422, "malformed_records",
+                f"{plan['counts']['malformed']} record(s) are malformed; nothing was applied",
+            )
+        if plan["plan_sha256"] != f["expected_plan_sha256"]:
+            raise CommandRefused(
+                409, "plan_changed",
+                "the outcome of these records changed since the preview (plan_sha256 differs); preview again",
+            )
+        results: list[dict[str, Any]] = []
+        for row, parsed in zip(plan["rows"], plan["_parsed"], strict=True):
+            applied: dict[str, Any] | None = None
+            if row["outcome"] in APPLIED_OUTCOMES:
+                cur.execute(
+                    "select outbound.add_contact_control('block', 'marketing', %s, 'unsubscribe', %s, %s, %s::jsonb)",
+                    (parsed.address, operator.operator_id, receipt_id, json_payload(parsed.evidence(batch))),
+                )
+                applied = cur.fetchone()[0]
+            results.append({
+                "index": row["index"],
+                "planned": row["outcome"],
+                "applied": (applied or {}).get("outcome"),
+                "address": row.get("address"),
+                "contact_control_id": (applied or {}).get("contact_control_id"),
+                "verdict": row.get("verdict"),
+            })
+        tally = {"added": 0, "evidence_linked": 0, "already_recorded": 0}
+        for r in results:
+            if r["applied"] in tally:
+                tally[r["applied"]] += 1
+        return {
+            "command": APPLY_UNSUBSCRIBE_REPLIES,
+            "input_sha256": batch,
+            "plan_sha256": plan["plan_sha256"],
+            "grammar_version": plan["grammar_version"],
+            "records": plan["records"],
+            "planned": plan["counts"],
+            "applied": tally,
+            "not_applied": sum(1 for r in results if r["applied"] is None),
+            "rows": results,
+            "suppression": {"kind": "block", "purpose": "marketing", "reason": "unsubscribe", "permanent": True},
+            "sends_email": False,
+            "reads_mailbox": False,
+        }
+
+    _HANDLERS = {APPLY_UNSUBSCRIBE_REPLIES: _apply}

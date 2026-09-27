@@ -60,6 +60,7 @@ SOURCE_LABEL = {
 
 #: Reasons an address may not receive a campaign. Order is display order.
 EXCLUSION_LABEL = {
+    "unsubscribed": "Solicitó la BAJA (supresión de marketing permanente)",
     "invalid_address": "Destino no válido",
     "blocked_address": "Dirección bloqueada",
     "blocked_domain": "Dominio bloqueado",
@@ -157,6 +158,10 @@ class CaseFacts:
 class EligibilityFacts:
     """Everything that can exclude an address, looked up once for the whole candidate set."""
 
+    #: Addresses under a marketing unsubscribe (W10): an unsubscribe block, or any block an
+    #: unsubscribe request was linked to. Kept apart from `blocked_addresses` so the reason shown
+    #: is the true one; both exclude, and nothing — relevance, selection or W12 — lifts either.
+    unsubscribed_addresses: set[str] = field(default_factory=set)
     blocked_addresses: set[str] = field(default_factory=set)
     blocked_domains: set[str] = field(default_factory=set)
     cooldown_addresses: set[str] = field(default_factory=set)
@@ -176,6 +181,8 @@ def eligibility(address: str, facts: EligibilityFacts, organization_id: str | No
     domain = domain_of(address)
     cp = facts.contact_points.get(address)
     reasons: list[str] = []
+    if address in facts.unsubscribed_addresses:
+        reasons.append("unsubscribed")
     if not _ADDRESS.match(address) or address in facts.invalid_addresses:
         reasons.append("invalid_address")
     if address in facts.blocked_addresses:
