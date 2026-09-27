@@ -10,6 +10,8 @@ import { PeoplePage } from "./pages/PeoplePage";
 import { AuthSessionContext } from "../context/AuthSessionContext";
 import { byLatestSent, matchesQuery } from "./stage";
 import { classifyError } from "./useResource";
+import { DashboardApp } from "../pages/DashboardApp";
+import { stubSignedInAuthSession } from "../test/mockAuthSession";
 
 // Every value below is invented; the repository is public.
 const SHA = "a".repeat(64);
@@ -181,7 +183,7 @@ describe("PipelinePage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Otra Institución/ }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Institución sin confirmar")).toBeInTheDocument();
-    expect(within(dialog).getByLabelText("Abrir PDF r1 en Drive")).toHaveAttribute("href", "https://drive.google.com/file/d/f1/view");
+    expect(within(dialog).getByLabelText("Abrir PDF r1 en Drive (enlace de registro local)")).toHaveAttribute("href", "https://drive.google.com/file/d/f1/view");
     for (const name of ["Avanzar etapa", "Registrar seguimiento", "Nueva revisión"]) {
       expect(within(dialog).getByRole("button", { name })).toBeDisabled();
     }
@@ -315,6 +317,48 @@ describe("PeoplePage", () => {
     );
     expect(await screen.findByLabelText("Buscar direcciones")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Dirección o dominio…")).toBeInTheDocument();
+  });
+});
+
+describe("dashboard shell", () => {
+  const CASE = "11111111-1111-4111-8111-111111111111";
+
+  function signedInAt(hash: string) {
+    window.location.hash = hash;
+    respond({ "/v2/workspace/pipeline": { items: [withLatest(card())], total: 1, drive_configured: true } });
+    stubSignedInAuthSession();
+    render(<DashboardApp />);
+  }
+
+  afterEach(() => {
+    window.location.hash = "";
+  });
+
+  it("navigates only the eight CRM sections and marks the current one", async () => {
+    signedInAt(`#/crm/oportunidades`);
+    const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "#/crm/resumen", "#/crm/oportunidades", "#/crm/organizaciones", "#/crm/personas",
+      "#/crm/proveedores", "#/crm/drive", "#/crm/marketing", "#/crm/revision",
+    ]);
+    expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual([
+      "Oportunidades",
+    ]);
+  });
+
+  it("opens the case an old ?opportunity= bookmark selected", async () => {
+    signedInAt(`#/ventas?opportunity=${CASE}`);
+    await waitFor(() => expect(window.location.hash).toBe(`#/crm/oportunidades/${CASE}`));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("opens the list, not a guess, when the bookmarked case is not in the CRM", async () => {
+    const other = "22222222-2222-4222-8222-222222222222";
+    signedInAt(`#/casos?id=${other}`);
+    await waitFor(() => expect(window.location.hash).toBe(`#/crm/oportunidades/${other}`));
+    expect(await screen.findByTestId(`opportunity-card-${CASE}`)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
 

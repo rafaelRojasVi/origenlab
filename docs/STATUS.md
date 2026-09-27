@@ -1532,6 +1532,22 @@ durable opportunities, tasks and quotes have never been migrated. Both are recor
 no message is attached to a quote, a person or an opportunity, and `crm.*` is unchanged by
 them.
 
+### 2.7.27 One dashboard: the CRM is the shell, 2026-09-26 — built locally, not deployed
+
+- **One shell, one sign-in, CRM only.** `crm/CrmApp.tsx` is the only frame and its eight
+  sections (Resumen, Oportunidades, Organizaciones, Personas, Proveedores, Archivo Drive,
+  Marketing, Revisión) are the whole navigation. `#/`, an empty hash and unknown hashes open
+  `#/crm/resumen`; earlier-panel hashes redirect to the matching CRM section, or Resumen
+  (`crm/shellRoute.ts`); a bookmark that selected a case (`?opportunity=<uuid>`, `?id=<uuid>`)
+  opens it in Oportunidades when it exists. The earlier panel's pages ("Panel anterior (V1)" and "Consolas V2"),
+  its V1 data context and its write helpers are **deleted** from the dashboard; the backend
+  routes, databases and jobs they read are untouched. The dashboard's only non-GET request is
+  `POST /auth/logout`.
+- **Honest labels.** An open imported case in `quoting` shows «Cotización enviada ·
+  histórico» and «Estado actual sin verificar»; next steps are marked *sugerencia*; every
+  Drive link carries «registro local» (it comes from an archive ledger, not a live Drive read).
+- **Not changed:** the proxy (see the separate proxy branch), the API routes, any database.
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

@@ -12,27 +12,15 @@ const operatorClientSource = import.meta.glob("../api/operatorClient.ts", {
   eager: true,
 })["../api/operatorClient.ts"] as string;
 
-const mirrorCommercialClientSource = import.meta.glob("../api/mirrorCommercialClient.ts", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-})["../api/mirrorCommercialClient.ts"] as string;
-
 const dashboardAppSource = import.meta.glob("../pages/DashboardApp.tsx", {
   query: "?raw",
   import: "default",
   eager: true,
 })["../pages/DashboardApp.tsx"] as string;
 
-const dashboardDataContextSource = import.meta.glob("../context/DashboardDataContext.tsx", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-})["../context/DashboardDataContext.tsx"] as string;
-
 const commercialMountedSources = Object.entries(
   import.meta.glob(
-    "../{pages/DashboardApp,pages/TodaySummaryPage,context/DashboardDataContext,lib/warmCaseDetailStrategy.ts,api/mirrorCommercialClient,api/commercialDealsParse,components/commercial,components/operator,components/layout}/**/*.{ts,tsx}",
+    "../{pages,crm,components}/**/*.{ts,tsx}",
     {
       query: "?raw",
       import: "default",
@@ -42,12 +30,6 @@ const commercialMountedSources = Object.entries(
 )
   .filter(([path]) => !path.includes(".test."))
   .map(([, src]) => src as string);
-
-const mailtoSource = import.meta.glob("../components/commercial/MailtoEmailLink.tsx", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-})["../components/commercial/MailtoEmailLink.tsx"] as string;
 
 const viteConfigSource = import.meta.glob("../../vite.config.ts", {
   query: "?raw",
@@ -62,7 +44,7 @@ const viteEnvSource = import.meta.glob("../vite-env.d.ts", {
 })["../vite-env.d.ts"] as string;
 
 const activeApiClientSources = Object.entries(
-  import.meta.glob("../api/{operatorClient,commercialOperationsClient,mirrorCommercialClient,mirrorCatalogClient,mirrorLeadIntelClient,mirrorAuditClient}.ts", {
+  import.meta.glob("../{api/operatorClient,api/authClient,crm/crmApi}.ts", {
     query: "?raw",
     import: "default",
     eager: true,
@@ -70,11 +52,11 @@ const activeApiClientSources = Object.entries(
 ).map(([, src]) => src as string);
 
 // A client genuinely delegates credentialed JSON GET to operatorClient's shared
-// fetchJsonGet only if it both imports that specific named export from "./operatorClient"
+// fetchJsonGet only if it both imports that specific named export from operatorClient
 // AND actually invokes it -- a bare token match (unused import, comment, unrelated text)
 // is not proof of delegation.
 const IMPORTS_SHARED_FETCH_JSON_GET =
-  /import\s*{[^}]*\bfetchJsonGet\b[^}]*}\s*from\s*["']\.\/operatorClient["']/;
+  /import\s*{[^}]*\bfetchJsonGet\b[^}]*}\s*from\s*["']\.\.?\/(?:api\/)?operatorClient["']/;
 const CALLS_SHARED_FETCH_JSON_GET = /\bfetchJsonGet(<[^>]*>)?\(/;
 
 function delegatesToSharedFetchJsonGet(source: string): boolean {
@@ -138,7 +120,7 @@ describe("Dashboard-2 safety (mounted Today)", () => {
   });
 
   it("active runtime does not import legacy dashboard paths", () => {
-    const activeSources = [appSource, dashboardAppSource, dashboardDataContextSource, operatorClientSource].join(
+    const activeSources = [appSource, dashboardAppSource, operatorClientSource].join(
       "\n",
     );
     expect(activeSources).not.toMatch(/\/legacy\//);
@@ -173,28 +155,6 @@ describe("Dashboard-2 safety (mounted Today)", () => {
     );
   });
 
-  it("Dashboard data layer does not call legacy api/client", () => {
-    const dataLayer = [dashboardAppSource, dashboardDataContextSource].join("\n");
-    expect(dataLayer).not.toMatch(/from\s+["'][^"']*api\/client["']/);
-    expect(dataLayer).not.toMatch(/api\/client/);
-    expect(dataLayer).toMatch(/fetchWarmCases/);
-    expect(dataLayer).toMatch(/fetchCommercialDealsMirror/);
-    expect(dataLayer).not.toMatch(/\/mirror\/commercial\/purchase-events/);
-    expect(dataLayer).not.toMatch(/fetchPurchase/);
-    expect(dashboardAppSource).toMatch(/ContactProfilePanel|ContactsPage/);
-    expect(commercialMountedSources.join("\n")).toMatch(/Perfil de contacto · solo lectura/);
-  });
-
-  it("mirrorCommercialClient uses only GET /mirror/commercial/deals", () => {
-    expect(mirrorCommercialClientSource).toContain("/mirror/commercial/deals");
-    expect(mirrorCommercialClientSource).not.toMatch(/\/mirror\/commercial\/purchase-events/);
-    expect(mirrorCommercialClientSource).not.toMatch(/operatorApiUrl\([^)]*purchase/);
-    // Credentialed GET is delegated to operatorClient's shared fetchJsonGet (see
-    // "active API clients send credentials include" below), not implemented inline here.
-    expect(delegatesToSharedFetchJsonGet(mirrorCommercialClientSource)).toBe(true);
-    expect(mirrorCommercialClientSource).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/i);
-  });
-
   it("operatorClient uses GET fetch only", () => {
     expect(operatorClientSource).toMatch(/method:\s*["']GET["']/);
     expect(operatorClientSource).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/i);
@@ -214,32 +174,10 @@ describe("Dashboard-2 safety (mounted Today)", () => {
     expect(operatorClientSource).toContain("parseWarmCasesResponse");
   });
 
-  it("case detail drawer does not expose gmail urls or send actions", () => {
-    const drawerSource = import.meta.glob("../components/commercial/CaseDetailDrawer.tsx", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    })["../components/commercial/CaseDetailDrawer.tsx"] as string;
-    expect(drawerSource).not.toMatch(/gmail_url|mailto:|window\.open/);
-    expect(drawerSource).toMatch(/Caso tibio · solo lectura/);
-    expect(drawerSource).not.toMatch(/method:\s*["']POST/i);
-  });
-
-  it("warm cases table does not mount mailto composer links", () => {
-    const warmTableSource = import.meta.glob("../components/commercial/WarmCasesTable.tsx", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    })["../components/commercial/WarmCasesTable.tsx"] as string;
-    expect(warmTableSource).not.toContain("MailtoEmailLink");
-    expect(warmTableSource).toContain("CopyTextButton");
-    expect(warmTableSource).toContain("ContactEmailButton");
-  });
-
-  it("mailto helper is email-only", () => {
-    expect(mailtoSource).toContain("buildMailtoHref");
-    expect(mailtoSource).toMatch(/mailto:\$\{trimmed\}/);
-    expect(mailtoSource).not.toMatch(/subject=|body=/i);
+  it("DashboardApp mounts only the CRM shell behind the sign-in gate", () => {
+    expect(dashboardAppSource).toContain("AuthGate");
+    expect(dashboardAppSource).toContain("CrmApp");
+    expect(dashboardAppSource).not.toMatch(/LegacyFrame|renderLegacy|DashboardDataProvider/);
   });
 
   it("pre-v1 legacy dashboard tree has been removed", () => {
@@ -261,24 +199,8 @@ describe("Dashboard-2 safety (mounted Today)", () => {
     expect(viteConfigSource).not.toMatch(/["']\/commercial["']/);
   });
 
-  it("CommercialDealsTable has no drill-down or outbound action hooks", () => {
-    const tableSource = import.meta.glob("../components/commercial/CommercialDealsTable.tsx", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    })["../components/commercial/CommercialDealsTable.tsx"] as string;
-    expect(tableSource).not.toMatch(/<a\s|href=|mailto:|gmail|fetchCommercialDeal|deal_key|purchase-events/);
-    expect(tableSource).not.toMatch(/onContactSelect|ContactProfilePanel|fetchContactProfile/);
-    expect(tableSource).not.toMatch(/onClick|MailtoEmailLink|ContactEmailButton|window\.open/);
-  });
-
   it("commercial deals UI does not reference purchase-events mirror", () => {
-    const blob = [
-      dashboardAppSource,
-      dashboardDataContextSource,
-      mirrorCommercialClientSource,
-      commercialMountedSources.join("\n"),
-    ].join("\n");
+    const blob = [dashboardAppSource, commercialMountedSources.join("\n")].join("\n");
     expect(blob).not.toMatch(/\/mirror\/commercial\/purchase-events/);
     expect(blob).not.toMatch(/fetchPurchase|purchase-events["']/);
   });

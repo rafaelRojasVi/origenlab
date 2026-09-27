@@ -7,6 +7,7 @@ import {
   DisabledAction,
   EmptyState,
   ExternalLink,
+  LocalDriveLink,
   PageHeader,
   Panel,
   ResourceGate,
@@ -226,7 +227,7 @@ function NotImported({ review }: { review: ReviewResponse }) {
                 {d.original_filename ?? d.document_sha256.slice(0, 16)}
               </span>
               <Badge tone={st?.tone ?? "neutral"}>{st?.label ?? "Sin estado en el registro"}</Badge>
-              <ExternalLink href={d.file_url}>PDF</ExternalLink>
+              <LocalDriveLink href={d.file_url}>PDF</LocalDriveLink>
               {d.gmail_url ? <ExternalLink href={d.gmail_url}>Gmail</ExternalLink> : null}
             </div>
           );

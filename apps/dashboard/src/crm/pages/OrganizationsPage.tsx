@@ -4,12 +4,12 @@ import type { V2Organization, V2OrganizationFilter, V2OrganizationSegment } from
 import { fetchPipeline } from "../crmApi";
 import type { OpportunityCardData } from "../crmTypes";
 import type { CrmSection } from "../crmRoute";
-import { STAGE_LABEL } from "../stage";
+import { stageDisplay } from "../stage";
 import {
   Badge,
   Drawer,
   EmptyState,
-  ExternalLink,
+  LocalDriveLink,
   PageHeader,
   ResourceGate,
   SearchInput,
@@ -247,12 +247,12 @@ function OrgDrawer({
                   className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-canvas-sunken/50"
                 >
                   <span className="w-28 shrink-0 truncate text-xs font-semibold tabular-nums">{c.quote_numbers.join(", ") || "—"}</span>
-                  <span className="min-w-0 flex-1 truncate text-xs text-ink-muted">{STAGE_LABEL[c.stage] ?? c.stage}</span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-ink-muted">{stageDisplay(c).label}</span>
                   <span className="text-[11px] text-ink-faint">{fmtDate(c.latest_revision?.sent_at)}</span>
                 </button>
                 {c.drive_folder ? (
                   <p className="px-2.5 pb-2 text-[11px]">
-                    <ExternalLink href={c.drive_folder.url}>Carpeta en Drive</ExternalLink>
+                    <LocalDriveLink href={c.drive_folder.url}>Carpeta en Drive</LocalDriveLink>
                   </p>
                 ) : null}
               </li>

@@ -6,6 +6,7 @@ import {
   Badge,
   EmptyState,
   ExternalLink,
+  LocalDriveLink,
   NotImportedState,
   PageHeader,
   ResourceGate,
@@ -30,7 +31,7 @@ export function DrivePage({ navigate }: { navigate: (s: CrmSection, id?: string)
     <div className="space-y-3">
       <PageHeader
         title="Archivo Drive"
-        subtitle="Carpetas de caso en Drive › Cotizaciones › Casos, y si cada PDF ya está en el CRM. Sólo lectura: el panel no llama a Drive."
+        subtitle="Carpetas de caso en Drive › Cotizaciones › Casos, y si cada PDF ya está en el CRM. Sólo lectura: el panel no llama a Drive; cada enlace sale del registro local de la carga y lleva la marca «registro local»."
       />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={8} />}>
         {(data) =>
@@ -147,9 +148,9 @@ function FolderRow({ folder, navigate }: { folder: DriveFolder; navigate: (s: Cr
         )}
         {folder.folder_url ? (
           <span className="text-xs">
-            <ExternalLink href={folder.folder_url} label={`Abrir carpeta ${folder.quote_numbers[0] ?? ""} en Drive`}>
+            <LocalDriveLink href={folder.folder_url} label={`Abrir carpeta ${folder.quote_numbers[0] ?? ""} en Drive`}>
               Abrir en Drive
-            </ExternalLink>
+            </LocalDriveLink>
           </span>
         ) : null}
       </div>
@@ -175,7 +176,7 @@ function FolderRow({ folder, navigate }: { folder: DriveFolder; navigate: (s: Cr
               ) : (
                 <Badge tone="warn">{LEDGER_STATUS_LABEL[d.ledger_crm_status ?? ""] ?? "No importado"}</Badge>
               )}
-              <ExternalLink href={d.file_url}>PDF</ExternalLink>
+              <LocalDriveLink href={d.file_url}>PDF</LocalDriveLink>
               {d.gmail_url ? <ExternalLink href={d.gmail_url}>Gmail</ExternalLink> : null}
             </li>
           ))}
