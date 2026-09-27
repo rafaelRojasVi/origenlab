@@ -6,6 +6,8 @@
   ``ORIGENLAB_V2_UNSUBSCRIBE_APPLY_ENABLED=true``. Needs an ``Idempotency-Key`` and the
   ``expected_input_sha256`` and ``expected_plan_sha256`` the preview answered; a batch or an
   outcome that changed since is refused.
+* ``POST /v2/commands/resolve-unsubscribe-review`` — mounted with the apply command, same
+  switch. Confirms one request held for review as a permanent suppression; idempotent.
 
 Both require an active ``sales`` or ``admin`` operator from the verified identity (a viewer is
 403, an unknown caller 401): the batch carries message bodies and sender addresses. Neither is
@@ -26,9 +28,10 @@ from origenlab_api.v2.commands import CommandRefused, request_digest, require_id
 from origenlab_api.v2.unsubscribe_commands import (
     ApplyUnsubscribeBody,
     PreviewUnsubscribeBody,
+    ResolveUnsubscribeReviewBody,
     V2UnsubscribeRepository,
 )
-from origenlab_api.v2.unsubscribe_replies import APPLY_UNSUBSCRIBE_REPLIES
+from origenlab_api.v2.unsubscribe_replies import APPLY_UNSUBSCRIBE_REPLIES, RESOLVE_UNSUBSCRIBE_REVIEW
 
 unsubscribe_preview_router = APIRouter(prefix="/v2/unsubscribe", tags=["v2-unsubscribe"])
 unsubscribe_apply_router = APIRouter(prefix="/v2/commands", tags=["v2-commands"])
@@ -86,6 +89,29 @@ def apply_unsubscribe_replies(
             fields=body.model_dump(mode="json"),
             idempotency_key=key,
             digest=request_digest(APPLY_UNSUBSCRIBE_REPLIES, body),
+        )
+    except CommandRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
+    except psycopg.Error as exc:
+        raise _database_failure(exc) from exc
+
+
+@unsubscribe_apply_router.post("/resolve-unsubscribe-review")
+def resolve_unsubscribe_review(
+    body: ResolveUnsubscribeReviewBody,
+    operator: Deciding,
+    repo: V2UnsubscribeRepository = Depends(get_unsubscribe_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Confirm one «BAJA» held for review as a permanent marketing suppression."""
+    try:
+        key = require_idempotency_key(idempotency_key)
+        return repo.execute(
+            command_name=RESOLVE_UNSUBSCRIBE_REVIEW,
+            operator=operator,
+            fields=body.model_dump(mode="json"),
+            idempotency_key=key,
+            digest=request_digest(RESOLVE_UNSUBSCRIBE_REVIEW, body),
         )
     except CommandRefused as exc:
         raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc

@@ -106,6 +106,7 @@ _ELIGIBILITY_REASON = {
     "blocked_address": "block",
     # An unsubscribe is a marketing block (WORKFLOWS.md §1.6); the note says which kind.
     "unsubscribed": "block",
+    "unsubscribe_pending_review": "block",
     "blocked_domain": "block_domain",
     "cooldown": "cooldown",
     "supplier": "policy_supplier",
@@ -135,6 +136,7 @@ NOTE_LABEL = {
     "recontact_kept_excluded": "Contacto previo: se mantiene excluido (W12)",
     "recontact_not_reviewed": "Contacto previo sin decisión de recontacto",
     "unsubscribed": "Solicitó la BAJA (supresión permanente; nada la levanta)",
+    "unsubscribe_pending_review": "BAJA en revisión: remitente no comprobado, bloqueado hasta revisarla",
 }
 REVIEW_CODES = ("no_contact_point", "multiple_institutions", "institution_mismatch")
 
@@ -164,6 +166,7 @@ SEND_BLOCKERS: tuple[dict[str, str], ...] = (
 #: clauses 4-6), evaluated against today's contact controls, never the frozen snapshot.
 SEND_TIME_REFUSAL_LABEL = {
     "unsubscribe": "Solicitó la BAJA",
+    "unsubscribe_pending_review": "BAJA en revisión (bloqueada)",
     "block": "Dirección bloqueada",
     "block_domain": "Dominio bloqueado",
     "cooldown": "En período de espera",
@@ -464,8 +467,8 @@ def plan_freeze(
             notes |= {n["code"] for n in elig["notes"] if n["code"] != "prior_contact"}
             if any(r["code"] == "possible_supplier_unreviewed" for r in elig["reasons"]):
                 notes.add("possible_supplier_unreviewed")
-            if any(r["code"] == "unsubscribed" for r in elig["reasons"]):
-                notes.add("unsubscribed")
+            notes |= {r["code"] for r in elig["reasons"]
+                      if r["code"] in ("unsubscribed", "unsubscribe_pending_review")}
         if address in facts.prior_contact_addresses:
             reasons.add("prior_contact")
         if not _WELL_FORMED.match(address):

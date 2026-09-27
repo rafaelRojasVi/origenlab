@@ -1023,6 +1023,8 @@ class CrmWorkspaceRepository:
                 select c.id::text as campaign_id, c.name, c.status,
                        count(*) filter (where 'unsubscribe' = any(outbound.marketing_contact_refusals(r.id)))::int
                          as unsubscribed_since_freeze,
+                       count(*) filter (where 'unsubscribe_pending_review' = any(outbound.marketing_contact_refusals(r.id)))::int
+                         as pending_review_since_freeze,
                        count(*) filter (where cardinality(outbound.marketing_contact_refusals(r.id)) > 0)::int
                          as refused_since_freeze,
                        count(*)::int as included_at_freeze
@@ -1034,6 +1036,22 @@ class CrmWorkspaceRepository:
                 """
             )
             frozen = self._rows(cur)
+            # «BAJA» replies held for review: unresolved requests. Each holds its exact address
+            # out of every audience, freeze and send until an operator confirms it.
+            cur.execute(
+                """
+                select a.id::text as assertion_id, a.value_norm as address,
+                       a.value->>'review_reason' as review_reason,
+                       a.value->>'grammar_version' as grammar_version,
+                       a.value->>'policy_version' as policy_version,
+                       (a.value->>'observed_at')::timestamptz::text as observed_at,
+                       a.created_at::text as recorded_at
+                  from evidence.assertion a
+                 where a.kind = 'unsubscribe_request' and a.resolution = 'unresolved'
+                 order by a.created_at desc, a.value_norm
+                """
+            )
+            pending = self._rows(cur)
             cur.execute(
                 """
                 select kind, purpose, count(*)::int from outbound.contact_control
@@ -1048,7 +1066,9 @@ class CrmWorkspaceRepository:
                 "unsubscribed_addresses": len(entries),
                 "baja_messages": sum(e["baja_messages"] for e in entries),
                 "last_recorded_at": entries[0]["recorded_at"] if entries else None,
+                "pending_reviews": len(pending),
             },
+            "pending_reviews": pending[:limit],
             "entries": entries[:limit],
             "truncated": len(entries) > limit,
             "frozen_campaigns": frozen,
@@ -1253,6 +1273,14 @@ def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
             facts.cooldown_addresses.add(value)
         else:
             facts.prior_contact_addresses.add(value)
+    # A «BAJA» held for review (W10): the same exact-address hold as the send-time contract.
+    cur.execute(
+        """
+        select distinct value_norm from evidence.assertion
+         where kind = 'unsubscribe_request' and resolution = 'unresolved'
+        """
+    )
+    facts.unsubscribe_pending_addresses = {r[0] for r in cur.fetchall()}
     # W12: what a recontact reviewer is shown — the recorded sources of each prior contact, the
     # last accepted send (date and campaign), or, for an imported V1 recipient with no attempt,
     # its campaign without a date. Nothing is inferred: an unknown date stays unknown.

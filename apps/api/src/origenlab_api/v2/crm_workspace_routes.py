@@ -26,7 +26,12 @@ from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 from origenlab_api.v2.equipment_interests import interest_index, supplier_directory
 from origenlab_api.v2.equipment_taxonomy import load_taxonomy
 from origenlab_api.v2.marketing_audience import BASES, AudienceFilter, apply_filter, compose
-from origenlab_api.v2.unsubscribe_replies import BAJA_GRAMMAR_VERSION
+from origenlab_api.v2.unsubscribe_replies import (
+    ACCEPTED_FORMS,
+    BAJA_GRAMMAR_VERSION,
+    REVIEW_REASON_LABEL,
+    UNSUBSCRIBE_POLICY_VERSION,
+)
 
 workspace_router = APIRouter(prefix="/v2/workspace", tags=["workspace"], route_class=ContactRedactingRoute)
 
@@ -186,10 +191,19 @@ def get_marketing_suppressions(_: Operator, repo: Repo, request: Request) -> Any
     body["gmail_sync"] = {"automatic": False, "label": GMAIL_SYNC_NOTICE}
     body["grammar"] = {
         "version": BAJA_GRAMMAR_VERSION,
-        "accepted": ["BAJA", "BAJA."],
-        "rule": "Sólo una respuesta cuyo texto propio es exactamente «BAJA» (mayúsculas o minúsculas, "
-                "con o sin un punto final). Cualquier otra redacción queda para revisión humana.",
+        "accepted": list(ACCEPTED_FORMS),
+        "rule": "Sólo una respuesta cuyo texto propio es exactamente «BAJA» o «REMOVER» (la palabra de las "
+                "plantillas V1), en mayúsculas o minúsculas, con o sin un punto final. Cualquier otra "
+                "redacción queda para revisión humana.",
     }
+    body["sender_policy"] = {
+        "version": UNSUBSCRIBE_POLICY_VERSION,
+        "rule": "Se suprime una dirección ya conocida, o la del destinatario exacto del correo enviado al que "
+                "responde. Si no se puede comprobar, la BAJA queda en revisión y esa dirección exacta queda "
+                "bloqueada para marketing hasta confirmarla. Nunca se crea una persona, contacto ni institución.",
+    }
+    for p in body.get("pending_reviews", []):
+        p["review_reason_label"] = REVIEW_REASON_LABEL.get(p.get("review_reason") or "", p.get("review_reason"))
     body["apply_enabled"] = bool(getattr(request.app.state, "unsubscribe_apply_enabled", False))
     body["permanent"] = True
     body["resubscribe_supported"] = False

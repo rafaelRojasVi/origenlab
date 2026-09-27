@@ -11,6 +11,10 @@ the real `origenlab_api` login; replay and re-application are idempotent; a chan
 malformed record, an unknown or unauthorised operator and a database refusal write nothing; the
 audience preview and the freeze exclude the address and W12 cannot lift it; a recipient frozen
 before its «BAJA» is refused by the send-time contract and shown as such, masked for a viewer.
+A historical recipient proven by outbound lineage is suppressed without any identity being
+created; a mismatched sender or missing lineage is held for review (durable, deduplicated,
+blocking preview, freeze and send) and resolved once, idempotently; the function refuses a
+forged basis, operator or receipt; and a fault at its last write leaves nothing behind.
 Every value is fictitious.
 """
 
@@ -35,6 +39,8 @@ from origenlab_api.v2.marketing_audience import AudienceInputs, CaseFacts, Eligi
 from origenlab_api.v2.unsubscribe_replies import (
     APPLY_UNSUBSCRIBE_REPLIES,
     BAJA_GRAMMAR_VERSION,
+    RESOLVE_UNSUBSCRIBE_REVIEW,
+    UNSUBSCRIBE_POLICY_VERSION,
     ReplyFacts,
     classify_reply,
     input_sha256,
@@ -107,7 +113,21 @@ REFUSED = [
      "baja_not_standalone"),
     ("B A J A", "no_baja"),
     ("Bája", "no_baja"),
-    ("REMOVER", "no_baja"),
+    ("REMOVER!", "remover_not_standalone"),
+    ("REMOVER..", "remover_not_standalone"),
+    ("REMOVER,", "remover_not_standalone"),
+    ('"REMOVER"', "remover_not_standalone"),
+    ("«REMOVER»", "remover_not_standalone"),
+    ("REMOVER REMOVER", "remover_not_standalone"),
+    ("REMOVER por favor", "remover_not_standalone"),
+    ("Favor remover mi correo", "remover_not_standalone"),
+    ("remover de la lista", "remover_not_standalone"),
+    ("REMOVER\n\nEnviado desde mi iPhone", "remover_not_standalone"),
+    ("REMOVERME", "remover_not_standalone"),
+    ("REMOVER BAJA", "baja_not_standalone"),
+    ("R E M O V E R", "no_baja"),
+    ("REMOVE", "no_baja"),
+    ("Remóver", "no_baja"),
     ("Gracias, me interesa el UP200St", "no_baja"),
     ("> Si no desea recibir más correos, responda BAJA", "empty_reply"),  # only the quoted footer
     ("", "empty_reply"),
@@ -123,6 +143,23 @@ def test_a_clear_standalone_baja_is_accepted(body) -> None:
     assert verdict.accepted is True and verdict.code == "standalone_baja", repr(body)
 
 
+#: The legacy V1 word, under exactly the same normalization: every accepted BAJA shape with
+#: «REMOVER» in its place is accepted, and classified as such.
+ACCEPTED_REMOVER = [b.replace("BAJA", "REMOVER").replace("baja", "remover").replace("Baja", "Remover")
+                    .replace("bAjA", "rEmOvEr").replace("ＢＡＪＡ", "ＲＥＭＯＶＥＲ") for b in ACCEPTED]
+
+
+@pytest.mark.parametrize("body", ACCEPTED_REMOVER)
+def test_a_clear_standalone_remover_is_accepted_under_the_same_normalization(body) -> None:
+    verdict = classify_reply(body)
+    assert verdict.accepted is True and verdict.code == "standalone_remover", repr(body)
+
+
+def test_the_grammar_version_names_the_remover_extension() -> None:
+    assert BAJA_GRAMMAR_VERSION == "baja-reply/2026-09-27.v2"
+    assert classify_reply("REMOVER").label == "Instrucción REMOVER clara (plantillas V1)"
+
+
 @pytest.mark.parametrize(("body", "code"), REFUSED)
 def test_anything_else_is_refused_with_its_reason(body, code) -> None:
     verdict = classify_reply(body)
@@ -135,6 +172,10 @@ def test_punctuation_rule_is_exactly_one_optional_full_stop() -> None:
         assert not classify_reply(f"BAJA{mark}").accepted, mark
     assert not classify_reply(".BAJA").accepted
     assert classify_reply("BAJA. ").accepted  # trailing whitespace is trimmed first
+    assert classify_reply("REMOVER.").accepted and classify_reply("remover.").accepted
+    for mark in "!?,;:…-_'\"*":
+        assert not classify_reply(f"REMOVER{mark}").accepted, mark
+    assert not classify_reply(".REMOVER").accepted
 
 
 def test_own_mail_is_matched_by_whole_address_or_the_origenlab_domain_only() -> None:
@@ -195,14 +236,14 @@ def _facts(**kw) -> ReplyFacts:
     return ReplyFacts(now=NOW, **{"known_addresses": {"ana@uni.test", "bea@uni.test", "wave@uni.test"}, **kw})
 
 
-def test_the_plan_names_one_outcome_per_record_and_applies_only_clear_known_bajas() -> None:
+def test_the_plan_names_one_outcome_per_record_and_applies_only_clear_bajas() -> None:
     repeat_mid = "<repeat@mail.uni.test>"
     records = [
         _record(),                                                    # 0 suppress
         _record(body="baja."),                                        # 1 same address again → evidence
         _record(sender="wave@uni.test"),                              # 2 already marketing-blocked → evidence
         _record(sender="bea@uni.test", mid=repeat_mid),               # 3 already recorded
-        _record(sender="nadie@desconocido.test"),                     # 4 unknown sender
+        _record(sender="nadie@desconocido.test"),                     # 4 unknown sender, no lineage
         _record(sender="ventas@origenlab.cl"),                        # 5 our own mailbox
         _record(body="Dar de baja por favor"),                        # 6 not a clear BAJA
     ]
@@ -210,8 +251,12 @@ def test_the_plan_names_one_outcome_per_record_and_applies_only_clear_known_baja
                    recorded_keys={f"gmail_unsubscribe:{parse_record(records[3], NOW)[0].message_id_sha256}"})
     plan = plan_batch(records, facts)
     assert [r["outcome"] for r in plan["rows"]] == [
-        "suppress", "evidence_only", "evidence_only", "already_recorded", "unknown_sender", "own_mailbox", "not_baja"]
-    assert plan["applicable"] == 3 and plan["blocked"] is False
+        "suppress", "evidence_only", "evidence_only", "already_recorded", "pending_review", "own_mailbox", "not_baja"]
+    assert plan["applicable"] == 4 and plan["blocked"] is False
+    assert [r["basis"] for r in plan["rows"]] == [
+        "known_address", "known_address", "known_address", None, "pending_review", None, None]
+    assert plan["rows"][4]["review_reason"] == "lineage_missing"
+    assert plan["policy_version"] == UNSUBSCRIBE_POLICY_VERSION
     # The plan fingerprint moves with any outcome, not only with the records.
     other = plan_batch(records, _facts(recorded_keys=facts.recorded_keys))
     assert other["input_sha256"] == plan["input_sha256"] and other["plan_sha256"] != plan["plan_sha256"]
@@ -219,6 +264,57 @@ def test_the_plan_names_one_outcome_per_record_and_applies_only_clear_known_baja
     assert plan["rows"][6]["verdict"]["code"] == "baja_not_standalone"
     public = json.dumps({k: v for k, v in plan.items() if not k.startswith("_")}, ensure_ascii=False)
     assert "Dar de baja" not in public and "body_text" not in public and "Re: Sonicadores" not in public
+
+
+OUTBOUND = "<campana-7@mail.origenlab.test>"
+
+
+def test_an_unknown_sender_proven_by_outbound_lineage_is_suppressed_and_anything_less_is_held() -> None:
+    facts = _facts(outbound_recipients={"campana-7@mail.origenlab.test": {"zoe@lab.test", "cc@lab.test"}})
+    records = [
+        _record(sender="Zoe <Zoe@Lab.Test>", in_reply_to=OUTBOUND),            # 0 exact recipient
+        _record(sender="cc@lab.test", in_reply_to=" " + OUTBOUND.upper()),     # 1 a cc recipient, id normalized
+        _record(sender="otra@lab.test", in_reply_to=OUTBOUND),                 # 2 replied, but was not sent it
+        _record(sender="zoe@lab.test.evil", in_reply_to=OUTBOUND),             # 3 lookalike: not equal
+        _record(sender="nadie@lab.test", in_reply_to="<nunca-enviado@x.test>"),  # 4 names no recorded message
+        _record(sender="nadie2@lab.test"),                                     # 5 no In-Reply-To at all
+        _record(sender="zoe@lab.test", in_reply_to="sin-arroba"),              # 6 malformed id: no lineage
+        _record(sender="Zoe <zoe@lab.test>", body="REMOVER", in_reply_to=OUTBOUND),  # 7 same address again
+    ]
+    plan = plan_batch(records, facts)
+    rows = plan["rows"]
+    assert [r["outcome"] for r in rows] == [
+        "suppress", "suppress", "pending_review", "pending_review", "pending_review", "pending_review",
+        "pending_review", "evidence_only"]
+    assert [r["basis"] for r in rows[:2]] == ["outbound_lineage", "outbound_lineage"]
+    assert [r["review_reason"] for r in rows[2:7]] == [
+        "recipient_mismatch", "recipient_mismatch", "lineage_missing", "lineage_missing", "lineage_missing"]
+    assert rows[7]["verdict"]["code"] == "standalone_remover" and rows[7]["basis"] == "outbound_lineage"
+    assert plan["counts"]["pending_review"] == 5 and plan["applicable"] == 8
+    # A pending review is part of what the operator confirms: the plan fingerprint moves with it.
+    known = plan_batch(records, _facts(known_addresses={"otra@lab.test"},
+                                       outbound_recipients=facts.outbound_recipients))
+    assert known["rows"][2]["outcome"] == "suppress" and known["plan_sha256"] != plan["plan_sha256"]
+
+
+def test_a_message_held_for_review_is_already_pending_and_a_known_sender_needs_no_lineage() -> None:
+    held = _record(sender="nadie@lab.test", mid="<held@x.test>")
+    key = f"gmail_unsubscribe:{parse_record(held, NOW)[0].message_id_sha256}"
+    plan = plan_batch([held, _record(sender="ana@uni.test", in_reply_to="<otro@x.test>")],
+                      _facts(recorded_keys={key}, pending_keys={key}))
+    assert [r["outcome"] for r in plan["rows"]] == ["already_pending", "suppress"]
+    assert plan["rows"][1]["basis"] == "known_address"
+
+
+def test_the_evidence_carries_the_basis_the_versions_and_the_reason() -> None:
+    parsed, _ = parse_record(_record(sender="nadie@lab.test", in_reply_to=OUTBOUND), NOW)
+    assert parsed.in_reply_to_norm == "campana-7@mail.origenlab.test"
+    ev = parsed.evidence("a" * 64, basis="pending_review", review_reason="lineage_missing")
+    assert ev["basis"] == "pending_review" and ev["review_reason"] == "lineage_missing"
+    assert ev["policy_version"] == ev["payload"]["policy_version"] == UNSUBSCRIBE_POLICY_VERSION
+    assert ev["grammar_version"] == ev["payload"]["grammar_version"] == BAJA_GRAMMAR_VERSION
+    assert ev["payload"]["in_reply_to"] == OUTBOUND
+    assert "review_reason" not in parsed.evidence("a" * 64)
 
 
 def test_one_malformed_record_blocks_the_whole_batch() -> None:
@@ -298,6 +394,20 @@ def test_the_freeze_records_an_unsubscribe_as_a_block_with_its_note_and_w12_cann
     assert {r["address"]: r for r in lifted["rows"]}["prior@uni.test"]["inclusion"] == "excluded"
 
 
+def test_a_baja_held_for_review_blocks_its_exact_address_in_preview_and_freeze() -> None:
+    facts = EligibilityFacts(unsubscribe_pending_addresses={"baja@uni.test"})
+    out = eligibility("baja@uni.test", facts, "uni")
+    assert out["eligible"] is False and [r["code"] for r in out["reasons"]] == ["unsubscribe_pending_review"]
+    # Exact address only: a neighbour on the same domain is untouched.
+    assert eligibility("ana@uni.test", facts, "uni")["eligible"] is True
+    world = _world(unsubscribe_pending_addresses={"baja@uni.test"})
+    rows = {r["address"]: r for r in
+            plan_freeze(load_taxonomy(), world, CAMPAIGN, FreezeCriteria(brand_id="hielscher"))["rows"]}
+    assert rows["baja@uni.test"]["inclusion"] == "excluded" and rows["baja@uni.test"]["frozen_reasons"] == ["block"]
+    assert "unsubscribe_pending_review" in rows["baja@uni.test"]["frozen_notes"]
+    assert rows["ana@uni.test"]["inclusion"] == "included"
+
+
 # --------------------------------------------------------------------------- routes
 
 
@@ -343,6 +453,9 @@ def _client(repo, role="sales", *, apply=True) -> TestClient:
 
 
 PREVIEW, APPLY = "/v2/unsubscribe/preview", "/v2/commands/apply-unsubscribe-replies"
+RESOLVE = "/v2/commands/resolve-unsubscribe-review"
+RESOLVE_BODY = {"assertion_id": "00000000-0000-4000-8000-00000000abcd", "expected_address": "nadie@lab.test",
+                "note": "Revisado: el remitente pidió la baja"}
 APPLY_BODY = {"records": [_record()], "expected_input_sha256": "a" * 64, "expected_plan_sha256": "b" * 64}
 
 
@@ -352,6 +465,7 @@ def test_only_sales_and_admin_reach_preview_or_apply(role, status) -> None:
     client = _client(repo, role)
     assert client.post(PREVIEW, json={"records": [_record()]}).status_code == status
     assert client.post(APPLY, json=APPLY_BODY, headers={"Idempotency-Key": "k-1"}).status_code == status
+    assert client.post(RESOLVE, json=RESOLVE_BODY, headers={"Idempotency-Key": "k-2"}).status_code == status
     assert repo.calls == []
 
 
@@ -362,6 +476,19 @@ def test_sales_and_admin_preview_and_apply(role) -> None:
     assert client.post(PREVIEW, json={"records": [_record()]}).status_code == 200
     r = client.post(APPLY, json=APPLY_BODY, headers={"Idempotency-Key": "k-1"})
     assert r.status_code == 200 and repo.calls[-1]["command_name"] == APPLY_UNSUBSCRIBE_REPLIES
+    r = client.post(RESOLVE, json=RESOLVE_BODY, headers={"Idempotency-Key": "k-2"})
+    assert r.status_code == 200 and repo.calls[-1]["command_name"] == RESOLVE_UNSUBSCRIBE_REVIEW
+
+
+def test_resolve_needs_a_key_a_request_id_the_address_and_a_note() -> None:
+    repo = _FakeRepo()
+    client = _client(repo)
+    assert client.post(RESOLVE, json=RESOLVE_BODY).status_code == 400
+    for bad in ({**RESOLVE_BODY, "assertion_id": "x"}, {**RESOLVE_BODY, "note": ""},
+                {**RESOLVE_BODY, "note": "x" * 501}, {k: v for k, v in RESOLVE_BODY.items() if k != "expected_address"},
+                {**RESOLVE_BODY, "decision": "dismiss"}):
+        assert client.post(RESOLVE, json=bad, headers={"Idempotency-Key": "k-1"}).status_code == 422
+    assert repo.calls == []
 
 
 def test_apply_needs_a_key_and_a_well_formed_expected_hash() -> None:
@@ -401,17 +528,18 @@ def test_the_apply_route_exists_only_behind_its_switch_and_preview_always() -> N
                {"v2_database_url": loopback, "v2_audience_freeze_enabled": True},
                {"v2_unsubscribe_apply_enabled": True}):
         enabled, routes = paths(**kw)
-        assert enabled is False and APPLY not in routes and PREVIEW in routes
+        assert enabled is False and APPLY not in routes and RESOLVE not in routes and PREVIEW in routes
     enabled, routes = paths(v2_database_url=loopback, v2_unsubscribe_apply_enabled=True)
-    assert enabled is True and {APPLY, PREVIEW} <= routes
+    assert enabled is True and {APPLY, RESOLVE, PREVIEW} <= routes
     assert Settings(_env_file=None).v2_unsubscribe_apply_enabled is False
 
 
-def test_the_w10_routers_expose_exactly_two_posts() -> None:
+def test_the_w10_routers_expose_exactly_three_posts() -> None:
     from origenlab_api.v2.unsubscribe_routes import unsubscribe_apply_router, unsubscribe_preview_router
 
     assert [(r.path, set(r.methods)) for r in unsubscribe_preview_router.routes] == [(PREVIEW, {"POST"})]
-    assert [(r.path, set(r.methods)) for r in unsubscribe_apply_router.routes] == [(APPLY, {"POST"})]
+    assert [(r.path, set(r.methods)) for r in unsubscribe_apply_router.routes] == [
+        (APPLY, {"POST"}), (RESOLVE, {"POST"})]
 
 
 # --------------------------------------------------------------------------- no Gmail, no network, no send
@@ -479,7 +607,19 @@ def world(disposable_database):
                         "values (gen_random_uuid(), %s, %s, %s, 'active') returning id::text",
                         (f"w10-{key}-{tag}@example.test", f"W10 {key}", role))
             s[key] = cur.fetchone()[0]
-        cur.execute("insert into comms.mailbox (address_norm) values (%s)", (f"ventas-{tag}@example.invalid",))
+        cur.execute("insert into comms.mailbox (address_norm) values (%s) returning id::text", (f"ventas-{tag}@example.invalid",))
+        mailbox = cur.fetchone()[0]
+        # A recorded outbound message (a historical campaign mail): sent to hist-… and cc-…, never
+        # to anyone else. Neither address is a person, a contact point or a control here.
+        s["outbound_mid"] = f"<campana-{tag}@mail.origenlab.test>"
+        cur.execute("insert into comms.message (mailbox_id, provider_message_id, rfc822_message_id_norm, direction, internal_date) "
+                    "values (%s, %s, %s, 'outbound', '2026-03-01T10:00:00+00:00') returning id::text",
+                    (mailbox, f"gm-{tag}", f"campana-{tag}@mail.origenlab.test"))
+        s["outbound_message"] = cur.fetchone()[0]
+        for role, who in (("from", "ventas"), ("to", "hist"), ("cc", "cc")):
+            domain = "example.invalid" if who == "ventas" else "lab.test"
+            cur.execute("insert into comms.message_participant (message_id, role, address_norm) values (%s, %s, %s)",
+                        (s["outbound_message"], role, f"{who}-{tag}@{domain}"))
         cur.execute("insert into crm.organization (kind, name, confirmation) values ('institution', %s, 'confirmed') "
                     "returning id::text", (f"Universidad Ficticia {tag}",))
         s["uni"] = cur.fetchone()[0]
@@ -541,7 +681,8 @@ def _apply(dsn, operator, records, *, expected=None, plan=None, key=None):
 
 
 TABLES = ("outbound.contact_control", "evidence.source_record", "evidence.assertion", "crm.domain_event",
-          "platform.command_receipt", "outbound.send_attempt", "outbound.campaign_recipient", "comms.message")
+          "platform.command_receipt", "outbound.send_attempt", "outbound.campaign_recipient", "comms.message",
+          "crm.person", "crm.contact_point", "crm.organization")
 
 
 def _counts(dsn) -> dict[str, int]:
@@ -573,18 +714,20 @@ def test_preview_writes_nothing_and_apply_records_a_permanent_suppression(dispos
     preview = _repo(disposable_database).preview(records)
     assert _counts(disposable_database) == before
     assert [r["outcome"] for r in preview["rows"]] == [
-        "suppress", "evidence_only", "evidence_only", "unknown_sender", "not_baja", "own_mailbox"]
+        "suppress", "evidence_only", "evidence_only", "pending_review", "not_baja", "own_mailbox"]
     assert "_parsed" not in preview and "Por favor dar de baja" not in json.dumps(preview, ensure_ascii=False)
 
     out = _apply(disposable_database, world["operator"], records, expected=preview["input_sha256"],
                  plan=preview["plan_sha256"])
-    assert out["applied"] == {"added": 1, "evidence_linked": 2, "already_recorded": 0} and out["not_applied"] == 3
+    assert out["applied"] == {"added": 1, "evidence_linked": 2, "pending_review": 1, "already_recorded": 0,
+                              "already_pending": 0} and out["not_applied"] == 2
     after = _counts(disposable_database)
     assert after["outbound.contact_control"] == before["outbound.contact_control"] + 1
-    assert after["evidence.source_record"] == before["evidence.source_record"] + 3
-    assert after["evidence.assertion"] == before["evidence.assertion"] + 3
-    assert after["crm.domain_event"] == before["crm.domain_event"] + 3
-    for t in ("outbound.send_attempt", "outbound.campaign_recipient", "comms.message"):
+    assert after["evidence.source_record"] == before["evidence.source_record"] + 4
+    assert after["evidence.assertion"] == before["evidence.assertion"] + 4
+    assert after["crm.domain_event"] == before["crm.domain_event"] + 4
+    for t in ("outbound.send_attempt", "outbound.campaign_recipient", "comms.message",
+              "crm.person", "crm.contact_point", "crm.organization"):
         assert after[t] == before[t], t
 
     with psycopg.connect(runtime_dsn(disposable_database), autocommit=True) as conn:
@@ -638,7 +781,8 @@ def test_apply_is_idempotent_and_a_changed_or_malformed_batch_writes_nothing(dis
     replay = _apply(disposable_database, world["operator"], records, plan=shown, key=key)
     assert replay["replayed"] is True and replay["command_receipt_id"] == first["command_receipt_id"]
     again = _apply(disposable_database, world["operator"], records)  # a new key, the same message
-    assert again["applied"] == {"added": 0, "evidence_linked": 0, "already_recorded": 0}
+    assert again["applied"] == {"added": 0, "evidence_linked": 0, "pending_review": 0, "already_recorded": 0,
+                                "already_pending": 0}
     assert again["rows"][0]["planned"] == "already_recorded"
     after = _counts(disposable_database)
     assert {t: after[t] - before[t] for t in TABLES} == {**{t: 0 for t in TABLES}, "platform.command_receipt": 1}
@@ -651,7 +795,7 @@ def test_apply_is_idempotent_and_a_changed_or_malformed_batch_writes_nothing(dis
     # A sender that becomes known between preview and apply changes the plan: refused.
     stranger = [_rec(world, "stranger", mid=f"<stranger-{tag}@mail.uni.test>")]
     shown = _repo(disposable_database).preview(stranger)
-    assert shown["rows"][0]["outcome"] == "unknown_sender"
+    assert shown["rows"][0]["outcome"] == "pending_review"
     with psycopg.connect(disposable_database, autocommit=True) as conn:
         conn.execute("set role origenlab_owner")
         conn.execute("insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) "
@@ -786,6 +930,382 @@ def test_suppression_wins_over_w12_the_freeze_and_a_snapshot_that_predates_it(di
     assert "body_text" not in json.dumps(sup) and "BAJA" not in json.dumps(sup)
 
 
+def _db_rows(dsn, sql, args=()):
+    import psycopg
+
+    with psycopg.connect(runtime_dsn(dsn), autocommit=True) as conn:
+        return conn.execute(sql, args).fetchall()
+
+
+def _delta(before, after) -> dict[str, int]:
+    return {t: after[t] - before[t] for t in TABLES if after[t] != before[t]}
+
+
+@needs_db
+def test_a_historical_recipient_proven_by_lineage_is_suppressed_without_creating_an_identity(
+        disposable_database, world) -> None:
+    tag = world["tag"]
+    hist = f"hist-{tag}@lab.test"
+    records = [_record(body="REMOVER", sender=f"Hist <{hist.upper()}>", mid=f"<hist-1-{tag}@lab.test>",
+                       in_reply_to=world["outbound_mid"])]
+    preview = _repo(disposable_database).preview(records)
+    assert [(r["outcome"], r["basis"], r["verdict"]["code"]) for r in preview["rows"]] == [
+        ("suppress", "outbound_lineage", "standalone_remover")]
+    before = _counts(disposable_database)
+    out = _apply(disposable_database, world["operator"], records, plan=preview["plan_sha256"])
+    assert out["applied"]["added"] == 1 and out["rows"][0]["basis"] == "outbound_lineage"
+    # The control, its evidence and one event — and no person, contact point or organization.
+    assert _delta(before, _counts(disposable_database)) == {
+        "outbound.contact_control": 1, "evidence.source_record": 1, "evidence.assertion": 1,
+        "crm.domain_event": 1, "platform.command_receipt": 1}
+    [(reason, source, value, payload, event)] = _db_rows(disposable_database, """
+        select c.reason, c.source, a.value, s.payload, e.payload
+          from outbound.contact_control c
+          join evidence.assertion a on a.resolved_id = c.id and a.kind = 'unsubscribe_request'
+          join evidence.source_record s on s.id = a.source_record_id
+          join crm.domain_event e on e.aggregate_kind = 'contact_control' and e.aggregate_id = c.id
+         where c.value_norm = %s and c.kind = 'block'""", (hist,))
+    assert (reason, source) == ("unsubscribe", "unsubscribe_handler")
+    assert value["basis"] == event["basis"] == "outbound_lineage"
+    assert value["lineage_message_id"] == event["lineage_message_id"] == world["outbound_message"]
+    assert value["grammar_version"] == payload["grammar_version"] == event["grammar_version"] == BAJA_GRAMMAR_VERSION
+    assert value["policy_version"] == payload["policy_version"] == event["policy_version"] == UNSUBSCRIBE_POLICY_VERSION
+    assert payload["verdict"] == "standalone_remover" and payload["body_text"] == "REMOVER"
+
+
+def _draft_and_freeze(world, dsn, name):
+    """A new Hielscher draft frozen with every review item included — what an operator would do."""
+    import psycopg
+
+    from origenlab_api.v2.audience_freeze import (
+        FREEZE_CAMPAIGN_AUDIENCE,
+        FreezeAudienceBody,
+        ReviewDecision,
+        V2AudienceFreezeRepository,
+        freeze_fields,
+    )
+    from origenlab_api.v2.campaign_drafts import (
+        CREATE_CAMPAIGN_DRAFT,
+        CreateCampaignDraftBody,
+        V2CampaignDraftRepository,
+        validated_draft,
+    )
+    from origenlab_api.v2.commands import request_digest
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    body = CreateCampaignDraftBody(name=name, subject="Sonicadores Hielscher", preheader="UP200St",
+                                   body_html="<p>Conozca el UP200St. Responda BAJA</p>", max_sends=50,
+                                   recontact_interval_days=90)
+    cid = V2CampaignDraftRepository(psycopg.connect, dsn).execute(
+        command_name=CREATE_CAMPAIGN_DRAFT, operator=world["operator"], fields=validated_draft(CREATE_CAMPAIGN_DRAFT, body),
+        idempotency_key=uuid.uuid4().hex, digest=request_digest(CREATE_CAMPAIGN_DRAFT, body))["campaign_id"]
+    workspace = CrmWorkspaceRepository(psycopg.connect, dsn)
+    preview = workspace.freeze_preview(cid, FreezeCriteria(brand_id="hielscher"), recontact_review=True)
+
+    def freeze():
+        f = FreezeAudienceBody(campaign_id=cid, expected_version=1, expected_preview_sha256=preview["preview_sha256"],
+                               criteria=FreezeCriteria(brand_id="hielscher"), recontact_decisions=[], confirmed=True,
+                               review_decisions=[ReviewDecision(key=k, decision="include", note="revisado")
+                                                 for k in preview["review_pending"]])
+        return V2AudienceFreezeRepository(psycopg.connect, dsn, recontact_review_enabled=True).execute(
+            command_name=FREEZE_CAMPAIGN_AUDIENCE, operator=world["operator"], fields=freeze_fields(f),
+            idempotency_key=uuid.uuid4().hex, digest=request_digest(FREEZE_CAMPAIGN_AUDIENCE, f))
+
+    return cid, workspace, preview, freeze
+
+
+@needs_db
+def test_unproven_senders_are_held_for_review_and_the_hold_blocks_preview_freeze_and_send(
+        disposable_database, world) -> None:
+    import psycopg
+
+    tag = world["tag"]
+    dsn = runtime_dsn(disposable_database)
+    solo, other, lost = f"solo-{tag}@uni.test", f"otra-{tag}@lab.test", f"perdida-{tag}@lab.test"
+
+    # solo-… is in the quotation evidence (an audience candidate) but nowhere else: not a contact
+    # point, not a control, not a campaign recipient. (A frozen recipient would be known, and its
+    # «BAJA» suppressed outright.)
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    with psycopg.connect(disposable_database, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
+        conn.execute("update evidence.source_record set payload = jsonb_set(payload, '{recipients}', "
+                     "to_jsonb(payload->>'recipients' || ', ' || %s::text)) where dedupe_key = %s",
+                     (f"{solo}, fresh-{tag}@uni.test", f"w10:{tag}"))  # fresh-…: someone left to freeze
+    workspace = CrmWorkspaceRepository(psycopg.connect, dsn)
+    assert any(solo in r["recipients"] for r in workspace.marketing_audience_inputs().quotation_evidence)
+    records = [
+        _record(sender=solo, mid=f"<solo-1-{tag}@uni.test>"),                                  # no In-Reply-To
+        _record(sender=other, mid=f"<otra-1-{tag}@lab.test>", in_reply_to=world["outbound_mid"]),  # not a recipient
+        _record(sender=lost, mid=f"<perdida-1-{tag}@lab.test>", in_reply_to="<nunca@x.test>"),  # unknown message
+    ]
+    shown = _repo(disposable_database).preview(records)
+    assert [(r["outcome"], r["review_reason"]) for r in shown["rows"]] == [
+        ("pending_review", "lineage_missing"), ("pending_review", "recipient_mismatch"),
+        ("pending_review", "lineage_missing")]
+    before = _counts(disposable_database)
+    out = _apply(disposable_database, world["operator"], records, plan=shown["plan_sha256"])
+    assert out["applied"]["pending_review"] == 3 and out["applied"]["added"] == 0
+    # Evidence, an unresolved request and one event each; no control and no identity at all.
+    assert _delta(before, _counts(disposable_database)) == {
+        "evidence.source_record": 3, "evidence.assertion": 3, "crm.domain_event": 3, "platform.command_receipt": 1}
+    held = _db_rows(disposable_database, """
+        select a.value_norm, a.resolution, a.value->>'review_reason', a.value->>'grammar_version',
+               a.value->>'policy_version', s.review_status, e.event_type
+          from evidence.assertion a
+          join evidence.source_record s on s.id = a.source_record_id
+          join crm.domain_event e on e.aggregate_kind = 'assertion' and e.aggregate_id = a.id
+         where a.kind = 'unsubscribe_request' and a.value_norm = any(%s) order by a.value_norm""", ([solo, other, lost],))
+    assert held == [
+        (other, "unresolved", "recipient_mismatch", BAJA_GRAMMAR_VERSION, UNSUBSCRIBE_POLICY_VERSION, "pending",
+         "assertion.unsubscribe_review_opened"),
+        (lost, "unresolved", "lineage_missing", BAJA_GRAMMAR_VERSION, UNSUBSCRIBE_POLICY_VERSION, "pending",
+         "assertion.unsubscribe_review_opened"),
+        (solo, "unresolved", "lineage_missing", BAJA_GRAMMAR_VERSION, UNSUBSCRIBE_POLICY_VERSION, "pending",
+         "assertion.unsubscribe_review_opened")]
+
+    # The same message again is the same review item: nothing new but the receipt.
+    before = _counts(disposable_database)
+    again = _apply(disposable_database, world["operator"], records[:1])
+    assert again["rows"][0]["planned"] == "already_pending" and again["applied"]["already_pending"] == 0
+    assert _delta(before, _counts(disposable_database)) == {"platform.command_receipt": 1}
+    # Even called directly, the function answers the existing item and writes nothing.
+    parsed, _ = parse_record(records[0], datetime.now(timezone.utc))
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        receipt = conn.execute("insert into platform.command_receipt (operator_id, idempotency_key, command_name, request_digest, status) "
+                               "values (%s, %s, %s, %s, 'in_progress') returning id::text",
+                               (world["op"], uuid.uuid4().hex, APPLY_UNSUBSCRIBE_REPLIES, "0" * 64)).fetchone()[0]
+        dup = conn.execute("select outbound.add_contact_control('block', 'marketing', %s, 'unsubscribe', %s, %s, %s::jsonb)",
+                           (solo, world["op"], receipt,
+                            json.dumps(parsed.evidence("e" * 64, basis="pending_review", review_reason="lineage_missing")))
+                           ).fetchone()[0]
+    assert dup["outcome"] == "already_pending"
+    assert _delta(before, _counts(disposable_database)) == {"platform.command_receipt": 2}
+    # A second, different message from a held address is its own item; the hold is per address.
+    _apply(disposable_database, world["operator"], [_record(sender=solo, mid=f"<solo-2-{tag}@uni.test>")])
+    assert _db_rows(disposable_database, "select count(*) from evidence.assertion where kind = 'unsubscribe_request' "
+                                         "and resolution = 'unresolved' and value_norm = %s", (solo,)) == [(2,)]
+
+    # The hold: out of the audience preview, excluded by the freeze with its note, and refused by
+    # the send-time contract for the row the freeze wrote.
+    assert {solo, other, lost} <= workspace.marketing_audience_inputs().eligibility.unsubscribe_pending_addresses
+    cid, _, preview, freeze = _draft_and_freeze(world, dsn, f"W10 hold {tag}")
+    row = {r["address"]: r for r in preview["rows"]}[solo]
+    assert row["inclusion"] == "excluded" and row["frozen_reasons"] == ["block"]
+    assert "unsubscribe_pending_review" in row["frozen_notes"]
+    freeze()
+    frozen = {r["address"]: r for r in workspace.frozen_recipients(cid)["recipients"]}
+    assert frozen[solo]["inclusion"] == "excluded" and "unsubscribe_pending_review" in frozen[solo]["frozen_notes"]
+    assert [x["code"] for x in frozen[solo]["send_time_refusals"]] == ["not_snapshotted", "unsubscribe_pending_review"]
+    sup = workspace.suppressions()
+    assert {solo, other, lost} <= {p["address"] for p in sup["pending_reviews"]}
+    assert sup["summary"]["pending_reviews"] >= 4
+    assert "body_text" not in json.dumps(sup)
+
+
+def _resolve(dsn, operator, assertion_id, address, note="Revisado: pidió la baja", key=None):
+    from origenlab_api.v2.commands import request_digest
+    from origenlab_api.v2.unsubscribe_commands import ResolveUnsubscribeReviewBody
+
+    body = ResolveUnsubscribeReviewBody(assertion_id=assertion_id, expected_address=address, note=note)
+    return _repo(dsn).execute(command_name=RESOLVE_UNSUBSCRIBE_REVIEW, operator=operator,
+                              fields=body.model_dump(mode="json"), idempotency_key=key or uuid.uuid4().hex,
+                              digest=request_digest(RESOLVE_UNSUBSCRIBE_REVIEW, body))
+
+
+@needs_db
+def test_a_held_review_is_resolved_once_into_a_permanent_suppression_and_idempotently(
+        disposable_database, world) -> None:
+    import psycopg
+
+    from origenlab_api.v2.commands import CommandRefused
+
+    tag = world["tag"]
+    dsn = runtime_dsn(disposable_database)
+    other = f"otra-{tag}@lab.test"
+    [(aid,)] = _db_rows(disposable_database, "select id::text from evidence.assertion where kind = 'unsubscribe_request' "
+                                             "and value_norm = %s and resolution = 'unresolved'", (other,))
+    with pytest.raises(CommandRefused) as err:
+        _resolve(disposable_database, world["operator"], aid, f"otra-persona-{tag}@lab.test")
+    assert err.value.code == "review_address_mismatch"
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):  # a viewer, even past the route
+        _resolve(disposable_database, world["viewer_identity"], aid, other)
+
+    before = _counts(disposable_database)
+    out = _resolve(disposable_database, world["operator"], aid, other)
+    assert (out["was"], out["outcome"]) == ("unresolved", "added")
+    assert _delta(before, _counts(disposable_database)) == {
+        "outbound.contact_control": 1, "crm.domain_event": 1, "platform.command_receipt": 1}
+    [(resolution, resolved_id, review_status, reason, event_type, event)] = _db_rows(disposable_database, """
+        select a.resolution, a.resolved_id::text, s.review_status, c.reason, e.event_type, e.payload
+          from evidence.assertion a
+          join evidence.source_record s on s.id = a.source_record_id
+          join outbound.contact_control c on c.id = a.resolved_id
+          join crm.domain_event e on e.aggregate_kind = 'contact_control' and e.aggregate_id = c.id
+         where a.id = %s""", (aid,))
+    assert (resolution, resolved_id, review_status, reason) == ("promoted", out["contact_control_id"], "promoted", "unsubscribe")
+    assert event_type == "contact_control.added" and event["basis"] == "review_confirmed"
+    assert event["review_note"] == "Revisado: pidió la baja" and event["assertion_id"] == aid
+    assert event["grammar_version"] == BAJA_GRAMMAR_VERSION and event["policy_version"] == UNSUBSCRIBE_POLICY_VERSION
+
+    # Confirming again — a new key, the same request — changes nothing but the receipt.
+    before = _counts(disposable_database)
+    again = _resolve(disposable_database, world["operator"], aid, other)
+    assert (again["was"], again["outcome"], again["contact_control_id"]) == (
+        "promoted", "already_resolved", out["contact_control_id"])
+    assert _delta(before, _counts(disposable_database)) == {"platform.command_receipt": 1}
+    # The hold became the permanent suppression; nothing lifts either, not even the owner.
+    with psycopg.connect(disposable_database, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
+        for sql in ("update evidence.assertion set resolution = 'rejected', resolved_kind = null, resolved_id = null "
+                    "where id = %s",
+                    "update evidence.assertion set resolved_id = gen_random_uuid() where id = %s",
+                    "update evidence.source_record set review_status = 'rejected' "
+                    "where id = (select source_record_id from evidence.assertion where id = %s)"):
+            with pytest.raises(psycopg.errors.RaiseException):
+                conn.execute(sql, (aid,))
+    workspace_audience = __import__("origenlab_api.v2.crm_workspace", fromlist=["x"]).CrmWorkspaceRepository(
+        psycopg.connect, dsn).marketing_audience_inputs().eligibility
+    assert other in workspace_audience.unsubscribed_addresses
+    assert other not in workspace_audience.unsubscribe_pending_addresses
+    # Now known, the address's next «BAJA» is suppressed outright: no new review item.
+    later = _apply(disposable_database, world["operator"], [_record(sender=other, mid=f"<otra-2-{tag}@lab.test>")])
+    assert later["rows"][0]["planned"] == "evidence_only" and later["applied"]["evidence_linked"] == 1
+    # Two items held for one address: the first confirmation creates the control, the second
+    # links to it.
+    solo = f"solo-{tag}@uni.test"
+    items = [r[0] for r in _db_rows(disposable_database, "select id::text from evidence.assertion where kind = 'unsubscribe_request' "
+                                                         "and value_norm = %s and resolution = 'unresolved' order by created_at",
+                                    (solo,))]
+    assert len(items) == 2
+    first = _resolve(disposable_database, world["operator"], items[0], solo)
+    second = _resolve(disposable_database, world["operator"], items[1], solo)
+    assert (first["outcome"], second["outcome"]) == ("added", "evidence_linked")
+    assert second["contact_control_id"] == first["contact_control_id"]
+
+
+@needs_db
+def test_the_privileged_writer_refuses_forged_bases_operators_and_receipts(disposable_database, world) -> None:
+    import psycopg
+
+    tag = world["tag"]
+    dsn = runtime_dsn(disposable_database)
+    call = "select outbound.add_contact_control('block', 'marketing', %s, 'unsubscribe', %s, %s, %s::jsonb)"
+    stranger = _record(sender=f"forja-{tag}@lab.test", mid=f"<forja-{tag}@lab.test>", in_reply_to=world["outbound_mid"])
+    parsed, _ = parse_record(stranger, datetime.now(timezone.utc))
+    held_address = f"perdida-{tag}@lab.test"
+    [(held_request,)] = _db_rows(disposable_database, "select id::text from evidence.assertion where kind = 'unsubscribe_request' "
+                                                      "and value_norm = %s and resolution = 'unresolved'", (held_address,))
+    before = _counts(disposable_database)
+    with psycopg.connect(disposable_database, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
+        disabled = conn.execute("insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                                "values (gen_random_uuid(), %s, 'W10 disabled', 'sales', 'disabled') returning id::text",
+                                (f"w10-disabled-{tag}@example.test",)).fetchone()[0]
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        def receipt(operator, command=APPLY_UNSUBSCRIBE_REPLIES):
+            return conn.execute(
+                "insert into platform.command_receipt (operator_id, idempotency_key, command_name, request_digest, status) "
+                "values (%s, %s, %s, %s, 'in_progress') returning id::text",
+                (operator, uuid.uuid4().hex, command, "0" * 64)).fetchone()[0]
+
+        mine = receipt(world["op"])
+        # A basis the database cannot prove is refused, not trusted.
+        for ev in (parsed.evidence("e" * 64, basis="known_address"),            # not known here
+                   parsed.evidence("e" * 64, basis="outbound_lineage"),         # replied, but was not a recipient
+                   parsed.evidence("e" * 64, basis="pending_review"),           # a hold without its reason
+                   parsed.evidence("e" * 64, basis="pending_review", review_reason="porque_si"),
+                   parsed.evidence("e" * 64, basis="dismissed"),                # no such basis: nothing lifts a hold
+                   {**parsed.evidence("e" * 64, basis="pending_review", review_reason="lineage_missing"),
+                    "policy_version": "otra/2026.v9"},                          # versions disagree with the payload
+                   {**parsed.evidence("e" * 64, basis="pending_review", review_reason="lineage_missing"),
+                    "policy_version": None}):
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                conn.execute(call, (parsed.address, world["op"], mine, json.dumps(ev)))
+        lineage_forged = parsed.evidence("e" * 64, basis="outbound_lineage")
+        lineage_forged["payload"]["from_address"] = f"hist-{tag}@lab.test"  # claims to be the recipient
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            conn.execute(call, (parsed.address, world["op"], mine, json.dumps(lineage_forged)))
+
+        held = parsed.evidence("e" * 64, basis="pending_review", review_reason="recipient_mismatch")
+        confirm = {"basis": "review_confirmed", "assertion_id": held_request, "note": "revisado",
+                   "policy_version": UNSUBSCRIBE_POLICY_VERSION}
+        forged_receipts = (
+            (world["op"], str(uuid.uuid4()), held),                                  # no such receipt
+            (world["viewer"], mine, held),                                           # another operator's open receipt
+            (world["op"], receipt(world["viewer"]), held),                           # … even one they opened
+            (world["op"], receipt(world["op"], RESOLVE_UNSUBSCRIBE_REVIEW), held),   # another command's receipt
+            (world["op"], mine, confirm),                                            # a reply receipt cannot confirm
+            (disabled, mine, held),                                                  # a disabled operator
+            (str(uuid.uuid4()), mine, held),                                         # an operator that does not exist
+        )
+        for operator, rid, ev in forged_receipts:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                conn.execute(call, (parsed.address, operator, rid, json.dumps(ev)))
+        done = receipt(world["op"])
+        conn.execute("update platform.command_receipt set status = 'completed', response_status = 200, "
+                     "response_body = '{}'::jsonb, completed_at = now() where id = %s", (done,))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):  # a completed receipt is closed
+            conn.execute(call, (parsed.address, world["op"], done, json.dumps(held)))
+        # A confirmation must name the held request's own address.
+        resolve_receipt = receipt(world["op"], RESOLVE_UNSUBSCRIBE_REVIEW)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            conn.execute(call, (parsed.address, world["op"], resolve_receipt, json.dumps(confirm)))
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            conn.execute(call, (held_address, world["op"], resolve_receipt, json.dumps({**confirm, "note": "  "})))
+        # No direct write reaches the tables the function owns: no grant for the first two, and
+        # the api's column grant on assertion resolutions stops at the permanence guard.
+        for sql in ("insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) "
+                    "values ('address', 'x@lab.test', 'block', 'marketing', 'unsubscribe', 'unsubscribe_handler')",
+                    "insert into evidence.source_record (kind, dedupe_key, payload) "
+                    "values ('gmail_message', 'gmail_unsubscribe:' || repeat('9', 64), '{}')"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                conn.execute(sql)
+        with pytest.raises(psycopg.errors.RaiseException):
+            conn.execute("update evidence.assertion set resolution = 'promoted', resolved_kind = 'contact_control', "
+                         "resolved_id = gen_random_uuid(), resolved_at = now() where id = %s", (held_request,))
+    after = _counts(disposable_database)
+    assert _delta(before, after) == {"platform.command_receipt": 5}
+
+
+@needs_db
+def test_evidence_control_and_event_commit_together_or_not_at_all(disposable_database, world) -> None:
+    import psycopg
+
+    tag = world["tag"]
+    known = _record(sender=f"Late <late-{tag}@uni.test>", mid=f"<atomic-known-{tag}@uni.test>")
+    unknown = _record(sender=f"atomic-{tag}@lab.test", mid=f"<atomic-held-{tag}@lab.test>")
+    shas = [parse_record(r, NOW)[0].message_id_sha256 for r in (known, unknown)]
+    # A fault injected at the very last write of the function: the domain event.
+    with psycopg.connect(disposable_database, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
+        conn.execute("create function platform.__w10_fail_event() returns trigger language plpgsql as $f$ "
+                     "begin if new.payload->>'message_id_sha256' = any(tg_argv) then "
+                     "raise exception 'injected event failure'; end if; return new; end $f$")
+        conn.execute(f"create trigger __w10_fail_event before insert on crm.domain_event for each row "
+                     f"execute function platform.__w10_fail_event('{shas[0]}', '{shas[1]}')")
+    try:
+        for record in (known, unknown):
+            before = _counts(disposable_database)
+            with pytest.raises(psycopg.errors.RaiseException):
+                _apply(disposable_database, world["operator"], [record])
+            assert _counts(disposable_database) == before
+            assert _db_rows(disposable_database, "select count(*) from evidence.source_record where dedupe_key = %s",
+                            (f"gmail_unsubscribe:{parse_record(record, NOW)[0].message_id_sha256}",)) == [(0,)]
+    finally:
+        with psycopg.connect(disposable_database, autocommit=True) as conn:
+            conn.execute("set role origenlab_owner")
+            conn.execute("drop trigger __w10_fail_event on crm.domain_event")
+            conn.execute("drop function platform.__w10_fail_event()")
+    # Without the fault the same records land whole: evidence, control or hold, and the event.
+    before = _counts(disposable_database)
+    out = _apply(disposable_database, world["operator"], [known, unknown])
+    assert out["applied"]["evidence_linked"] + out["applied"]["added"] == 1 and out["applied"]["pending_review"] == 1
+    delta = _delta(before, _counts(disposable_database))
+    assert delta["evidence.source_record"] == delta["evidence.assertion"] == delta["crm.domain_event"] == 2
+
+
 @needs_db
 def test_the_suppression_read_is_masked_for_a_viewer_and_says_gmail_is_not_synchronized(disposable_database, world) -> None:
     import psycopg
@@ -809,5 +1329,12 @@ def test_the_suppression_read_is_masked_for_a_viewer_and_says_gmail_is_not_synch
     body = viewer.json()
     assert body["gmail_sync"]["automatic"] is False and "no se sincronizan automáticamente" in body["gmail_sync"]["label"]
     assert body["resubscribe_supported"] is False and body["apply_enabled"] is False
+    assert body["grammar"]["accepted"] == ["BAJA", "BAJA.", "REMOVER", "REMOVER."]
+    assert body["grammar"]["version"] == BAJA_GRAMMAR_VERSION
+    assert body["sender_policy"]["version"] == UNSUBSCRIBE_POLICY_VERSION
+    held = [p for p in body["pending_reviews"] if p["review_reason"] == "lineage_missing"]
+    assert held and all(p["address"].startswith("***@") for p in body["pending_reviews"])
+    assert f"perdida-{tag}@lab.test" not in text and held[0]["review_reason_label"].startswith("La respuesta no remite")
     sales = client("sales").get("/v2/workspace/marketing/suppressions")
     assert f"ana-{tag}@uni.test" in sales.text
+    assert f"perdida-{tag}@lab.test" in {p["address"] for p in sales.json()["pending_reviews"]}
