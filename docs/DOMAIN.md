@@ -735,17 +735,17 @@ list is decided, these rows are reclassified by the migration that introduces it
 | 13 | A case at `lead` has had no activity for eleven months | it is still `lead`. The dashboard shows *sin actividad hace 334 días*, computed at read time. Closing it is `abandon_opportunity(case, reason)` by an operator; without that act no row changes and no event exists (§3.4) |
 | 14 | A distributor that supplies OrigenLab asks to buy a unit for its own laboratory | the distributor's `supplier` relationship is untouched. `set_requesting_institution` is refused until the operator supplies a justification; with it, one `opportunity_organization(distributor, role=requesting_institution, confirmation=confirmed, confirmed_by=O)` carries `supplier_exception_reason`, and the triple can never be rewritten. The case card shows *proveedor registrado* **and** *solicitante — excepción justificada*. No marketing permission and no `prospect` relationship follow |
 
-## 7. Table inventory — the reviewed 36-table foundation
+## 7. Table inventory — the reviewed 37-table foundation
 
-Seven private schemas. **36 application tables** — 33 reviewed after the
-external CRM benchmark, and the three of §7.1 — the current reviewed
-foundation
+Seven private schemas. **37 application tables** — 33 reviewed after the
+external CRM benchmark, the three of §7.1 and the one of §7.2 — the current
+reviewed foundation
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §13), not a permanent budget: a table
 is added only when a relational invariant proves it necessary, removed when
 nothing needs it, and every change is recorded here. Numbers are stable
 identifiers, so the two D0.3 additions are appended as 31 and 32, and the
-Slice 0 / M10c reply table as 33 and the commercial case as 34–36, rather
-than renumbered into their schema blocks.
+Slice 0 / M10c reply table as 33, the commercial case as 34–36 and the
+campaign safety block as 37, rather than renumbered into their schema blocks.
 Supabase-managed `auth`, `storage`, `pgmq` and migration-metadata tables are
 outside this count and outside this inventory.
 
@@ -806,6 +806,26 @@ decided through it.
 
 Counts by schema: `crm` 19, `comms` 4, `outbound` 6, `evidence` 2,
 `catalog` 2, `procurement` 1, `platform` 2 — **36**.
+
+### 7.2 The campaign safety block — built 2026-09-27
+
+One table, in `outbound`, numbered 37 (`20260927234500_slice5_campaign_block`).
+A pause needed its own relation: `outbound.campaign.status = 'paused'` had no
+command and nothing enforced it, a status can be moved by the (unbuilt) status
+machine, and a pause must carry who decided it and why, survive every status
+change and be lifted only by an explicit, evented decision.
+`supabase/tests/010_inventory.sql`, `supabase/scripts/verify_chain.sh` and
+`supabase/scripts/replay_evidence.sh` assert **37** and `outbound` **7**.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 37 | `outbound.campaign_block` | an admin's safety block on one campaign, on every campaign, or on a V1 campaign known only by its key — the pause every campaign boundary is refused by ([`WORKFLOWS.md`](WORKFLOWS.md) §W13) | closed `scope` with a matching target shape; mandatory reason; at most one active block per target; placed only by an active admin (or a migration, as the owner) and lifted only by an active admin with a reason (trigger `campaign_block_guard`, checked against `platform.operator`); placement write-once, lift exactly once (`version` 1 → 2), immutable afterwards, never deleted; **no expiry column**; while active, `outbound.campaign_hold_guard` refuses freeze, approval, activation, dry-run/approval events, reservation and marketing attempt creation or dispatch, and `outbound.marketing_contact_refusals` reports it; placing or lifting one writes no other table |
+
+Counts by schema: `crm` 19, `comms` 4, `outbound` 7, `evidence` 2,
+`catalog` 2, `procurement` 1, `platform` 2 — **37**. The migration seeds one
+row: the September wave-2 incident hold (`legacy_campaign`
+`septiembre18-2026-wave2`, reference `incident_hold_september_2026`), active,
+placed by the migration.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

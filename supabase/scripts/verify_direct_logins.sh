@@ -154,6 +154,11 @@ expect origenlab_api "$PW_API" "api: cannot DELETE crm.domain_event" 42501 "dele
 expect origenlab_api "$PW_API" "api: records the operator verdict on outbound.campaign_reply ($PROBE)" ok "update outbound.campaign_reply set operator_class = 'not_a_reply' where false"
 expect origenlab_api "$PW_API" "api: cannot rewrite the classifier proposal on outbound.campaign_reply ($PROBE)" 42501 "update outbound.campaign_reply set proposed_class = 'auto_reply' where false"
 expect origenlab_api "$PW_API" "api: cannot DELETE outbound.campaign_reply" 42501 "delete from outbound.campaign_reply where false"
+# outbound.campaign_block (#37): the API records a lift through a column grant and can never
+# rewrite a placement or delete a block; the guard trigger then proves the operator is an admin.
+expect origenlab_api "$PW_API" "api: records a lift on outbound.campaign_block ($PROBE)" ok "update outbound.campaign_block set lift_reason = 'x' where false"
+expect origenlab_api "$PW_API" "api: cannot rewrite a campaign block's placement ($PROBE)" 42501 "update outbound.campaign_block set reason = 'x' where false"
+expect origenlab_api "$PW_API" "api: cannot DELETE outbound.campaign_block" 42501 "delete from outbound.campaign_block where false"
 
 echo "== direct logins: origenlab_worker =="
 expect origenlab_worker "$PW_WORKER" "worker: connects as itself" "ok:origenlab_worker|origenlab_worker" "select session_user || '|' || current_user"
@@ -169,6 +174,9 @@ expect origenlab_worker "$PW_WORKER" "worker: cannot write quote_revision.pdf_sh
 expect origenlab_worker "$PW_WORKER" "worker: proposes an outbound.campaign_reply ($PROBE)" ok "insert into outbound.campaign_reply (campaign_id, campaign_recipient_id, message_id, received_at, proposed_class, proposed_by) select gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), now(), 'human_reply', 'ingest_classifier' where false"
 expect origenlab_worker "$PW_WORKER" "worker: cannot record an operator verdict on outbound.campaign_reply ($PROBE)" 42501 "update outbound.campaign_reply set operator_class = 'human_reply' where false"
 expect origenlab_worker "$PW_WORKER" "worker: cannot DELETE outbound.campaign_reply" 42501 "delete from outbound.campaign_reply where false"
+# The worker reads campaign blocks (a future send path must see them) and never writes one.
+expect origenlab_worker "$PW_WORKER" "worker: reads outbound.campaign_block" ok "select count(*) from outbound.campaign_block"
+expect origenlab_worker "$PW_WORKER" "worker: cannot write outbound.campaign_block ($PROBE)" 42501 "insert into outbound.campaign_block (scope, reason, placed_by_kind) select 'all_campaigns', 'x', 'migrator' where false"
 
 echo "== real rows: grant + policy admit a genuine write, and the row is rolled back =="
 expect origenlab_api "$PW_API" "api: really inserts a crm.organization row inside a transaction, then rolls it back" \

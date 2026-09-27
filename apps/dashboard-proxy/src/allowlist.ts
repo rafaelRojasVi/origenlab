@@ -107,6 +107,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // (`POST /v2/commands/dismiss-unsubscribe-review`) are deliberately NOT listed: they carry
   // message bodies or decide a suppression, and stay operator tooling on the API.
   /^\/v2\/workspace\/marketing\/suppressions$/,
+  // Campaign safety blocks (WORKFLOWS.md §W13): every active block and each target's version.
+  // Reasons and operators are withheld from a viewer upstream.
+  /^\/v2\/workspace\/marketing\/campaign-blocks$/,
   // CRM card reads (`apps/api` v2/crm_workspace_routes.py): the supplier directory with its
   // machine candidates, and the observed equipment interests per line, institution and
   // destination. Two literal paths, GET-only upstream; addresses are masked for a `viewer`
@@ -186,9 +189,10 @@ export function isAllowedCommercialOperationsPostPath(
 
 /**
  * CRM Marketing commands: create and save a campaign draft, freeze a draft's audience into an
- * immutable recipient snapshot, and set an unsent campaign's internal planned day. Four exact
- * paths; none approves, schedules or sends anything, and no send, approve or activate command
- * exists upstream to list.
+ * immutable recipient snapshot, set an unsent campaign's internal planned day, and place or lift
+ * a campaign safety block (admin only upstream). Six exact paths; none approves, schedules or
+ * sends anything — a block only refuses — and no send, approve or activate command exists
+ * upstream to list.
  *
  * Upstream each requires an active `sales` or `admin` operator (resolved from the verified
  * session or Cloudflare Access identity, never the body), an `Idempotency-Key`, and a
@@ -203,6 +207,8 @@ export const MARKETING_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/save-campaign-draft$/,
   /^\/v2\/commands\/freeze-campaign-audience$/,
   /^\/v2\/commands\/set-campaign-planning$/,
+  /^\/v2\/commands\/block-campaign$/,
+  /^\/v2\/commands\/unblock-campaign$/,
 ];
 
 /** Larger than the API's 512 kB HTML limit plus the freeze's 5,000 decisions of 500 characters. */
@@ -213,11 +219,17 @@ export const CAMPAIGN_PLANNING_MAX_BYTES = 4_096;
 
 const CAMPAIGN_PLANNING_PATH_RE = /^\/v2\/commands\/set-campaign-planning$/;
 
+/** A block body is a scope, a UUID, a version and a reason of at most 2,000 characters. */
+export const CAMPAIGN_BLOCK_MAX_BYTES = 16_384;
+
+const CAMPAIGN_BLOCK_PATH_RE = /^\/v2\/commands\/(?:block|unblock)-campaign$/;
+
 /** The body limit for one marketing command path. */
 export function marketingCommandMaxBytes(pathname: string): number {
-  return CAMPAIGN_PLANNING_PATH_RE.test(pathname.split("?")[0])
-    ? CAMPAIGN_PLANNING_MAX_BYTES
-    : MARKETING_COMMAND_MAX_BYTES;
+  const pathOnly = pathname.split("?")[0];
+  if (CAMPAIGN_PLANNING_PATH_RE.test(pathOnly)) return CAMPAIGN_PLANNING_MAX_BYTES;
+  if (CAMPAIGN_BLOCK_PATH_RE.test(pathOnly)) return CAMPAIGN_BLOCK_MAX_BYTES;
+  return MARKETING_COMMAND_MAX_BYTES;
 }
 
 export function isAllowedMarketingCommandPostPath(pathname: string): boolean {

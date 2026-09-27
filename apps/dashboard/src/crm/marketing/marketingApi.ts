@@ -1,13 +1,14 @@
 /**
- * Marketing client: GET reads over `/v2/workspace/marketing/*`, and the only four writes the
+ * Marketing client: GET reads over `/v2/workspace/marketing/*`, and the only six writes the
  * dashboard makes besides logout — creating and saving a campaign **draft**, freezing a draft's
- * audience into an immutable recipient snapshot, and setting an unsent campaign's internal
- * planned day.
+ * audience into an immutable recipient snapshot, setting an unsent campaign's internal planned
+ * day, and (admin only) placing or lifting a campaign safety **block**.
  *
  * The POSTs target exactly `CAMPAIGN_COMMAND_PATHS` (pinned by `src/test/noWritePolicy.test.ts`).
  * None approves, schedules or sends anything: the API has no such command, and there is no Send
- * button. The Worker forwards exactly these four POSTs; each still mounts upstream only behind its own
- * API switch, and a switched-off command is reported as "not enabled here".
+ * button. A block only stops things. The Worker forwards exactly these six POSTs; each still
+ * mounts upstream only behind its own API switch, and a switched-off command is reported as
+ * "not enabled here".
  */
 
 import { OperatorApiError, fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";
@@ -15,7 +16,9 @@ import type {
   AudienceQuery,
   AudienceResponse,
   CampaignArchive,
+  CampaignBlockResult,
   CampaignContent,
+  CampaignHoldsResponse,
   DraftSaveResult,
   EquipmentTaxonomy,
   FreezeCriteria,
@@ -36,6 +39,7 @@ export const MARKETING_PATHS = {
   recipients: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/recipients`,
   archive: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/archive`,
   suppressions: "/v2/workspace/marketing/suppressions",
+  campaignBlocks: "/v2/workspace/marketing/campaign-blocks",
 } as const;
 
 export const CAMPAIGN_COMMAND_PATHS = {
@@ -43,12 +47,17 @@ export const CAMPAIGN_COMMAND_PATHS = {
   save: "/v2/commands/save-campaign-draft",
   freeze: "/v2/commands/freeze-campaign-audience",
   plan: "/v2/commands/set-campaign-planning",
+  block: "/v2/commands/block-campaign",
+  unblock: "/v2/commands/unblock-campaign",
 } as const;
 
 export const fetchTaxonomy = () => fetchJsonGet<EquipmentTaxonomy>(operatorApiUrl(MARKETING_PATHS.taxonomy));
 export const fetchCampaign = (id: string) => fetchJsonGet<CampaignContent>(operatorApiUrl(MARKETING_PATHS.campaign(id)));
 /** W10 suppression status — a read. There is no unsubscribe command in the dashboard. */
 export const fetchSuppressions = () => fetchJsonGet<SuppressionsResponse>(operatorApiUrl(MARKETING_PATHS.suppressions));
+/** Campaign safety blocks — a read, shown to every role (a viewer's copy carries no reason). */
+export const fetchCampaignBlocks = () =>
+  fetchJsonGet<CampaignHoldsResponse>(operatorApiUrl(MARKETING_PATHS.campaignBlocks));
 export const fetchCampaignArchive = (id: string) =>
   fetchJsonGet<CampaignArchive>(operatorApiUrl(MARKETING_PATHS.archive(id)));
 
@@ -177,6 +186,25 @@ export function setCampaignPlanning(
   idempotencyKey: string = newIdempotencyKey(),
 ): Promise<PlanningResult> {
   return postCommand<PlanningResult>(CAMPAIGN_COMMAND_PATHS.plan, body, idempotencyKey);
+}
+
+/**
+ * Admin only: block one campaign, or every campaign. It refuses freezing, approving and sending
+ * while it stands; it enqueues, sends and rewrites nothing, and it never expires.
+ */
+export function blockCampaign(
+  body: { scope: "campaign" | "all_campaigns"; campaign_id: string | null; expected_block_version: number; reason: string },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<CampaignBlockResult> {
+  return postCommand<CampaignBlockResult>(CAMPAIGN_COMMAND_PATHS.block, body, idempotencyKey);
+}
+
+/** Admin only: lift one active block, with its own reason. Lifting starts nothing. */
+export function unblockCampaign(
+  body: { block_id: string; expected_version: number; reason: string },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<CampaignBlockResult> {
+  return postCommand<CampaignBlockResult>(CAMPAIGN_COMMAND_PATHS.unblock, body, idempotencyKey);
 }
 
 export { newIdempotencyKey };

@@ -4,6 +4,7 @@ import type { CampaignSummary } from "../crmTypes";
 import { Badge, Panel, ResourceGate, Segmented, Skeleton, fmtInt } from "../ui";
 import { useResource } from "../useResource";
 import { PLANNING_LABEL, fmtLongDay, relativeDay, santiagoTime, todayInSantiago } from "./calendar";
+import { CampaignHoldPanel } from "./CampaignHolds";
 import { EmailFrame } from "./EmailFrame";
 import { fetchCampaignArchive, newIdempotencyKey, refusalOf, setCampaignPlanning } from "./marketingApi";
 import type { CampaignArchive } from "./marketingTypes";
@@ -107,6 +108,7 @@ export function CampaignDetail({
               <SentHtml archive={a} />
               <div className="space-y-3">
                 <SendRecord archive={a} />
+                <CampaignHoldPanel campaignId={a.campaign_id} onChanged={onPlanned} />
                 {a.status === "draft" || a.status === "audience_frozen" ? (
                   <PlanningEditor summary={summary} planningEnabled={planningEnabled} onSaved={onPlanned} />
                 ) : null}

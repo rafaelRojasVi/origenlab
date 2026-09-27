@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from origenlab_api.v2.audience_freeze import (
@@ -52,3 +53,10 @@ def freeze_campaign_audience(
         )
     except CommandRefused as exc:
         raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
+    except psycopg.errors.RaiseException as exc:
+        # A database guard refused the write after the command's own checks passed — a campaign
+        # block placed in between (outbound.campaign_hold_guard), for one. Nothing was written.
+        raise HTTPException(status_code=409, detail={
+            "code": "refused_by_database",
+            "message": "the database refused the freeze; nothing was written — reload the campaign",
+        }) from exc

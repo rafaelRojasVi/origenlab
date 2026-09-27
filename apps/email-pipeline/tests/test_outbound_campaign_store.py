@@ -313,3 +313,34 @@ def test_crash_window_leaves_attempt_in_flight_when_finish_never_runs(conn: sqli
     # No finish_live_attempt call -- represents the crash.
     assert latest_attempt_status(conn, "hielscher-sonicators-2026", rid)[0] == "in_flight"
     assert has_accepted_attempt(conn, "hielscher-sonicators-2026", rid) is None
+
+
+# --- Campaign pause -----------------------------------------------------------------------
+
+@pytest.mark.parametrize("status", ["paused", "completed", "archived"])
+def test_a_campaign_that_is_not_active_reserves_and_blocks_nobody(conn: sqlite3.Connection, status: str) -> None:
+    from origenlab_email_pipeline.outbound_campaign_store import CampaignNotActiveError
+
+    _make_hielscher(conn)
+    for em in ("a@x.cl", "carolinalobo@pharmaisa.cl"):
+        upsert_recipient_candidate(conn, campaign_id="hielscher-sonicators-2026", email=em, source_kind="manual")
+    conn.execute("UPDATE outbound_campaign SET status = ? WHERE campaign_id = 'hielscher-sonicators-2026'", (status,))
+    before = conn.execute("SELECT id, state, block_reason, updated_at FROM outbound_campaign_recipient ORDER BY id").fetchall()
+    with pytest.raises(CampaignNotActiveError) as err:
+        reserve_next_batch(
+            conn, "hielscher-sonicators-2026", gate_ctx=_permissive_ctx(), n=10,
+            manual_status_by_email={"carolinalobo@pharmaisa.cl": "inactive"},
+        )
+    assert err.value.status == status
+    after = conn.execute("SELECT id, state, block_reason, updated_at FROM outbound_campaign_recipient ORDER BY id").fetchall()
+    assert after == before
+
+
+def test_an_unknown_campaign_is_never_treated_as_active(conn: sqlite3.Connection) -> None:
+    from origenlab_email_pipeline.outbound_campaign_store import CampaignNotActiveError, require_campaign_active
+
+    with pytest.raises(CampaignNotActiveError) as err:
+        require_campaign_active(conn, "no-such-campaign")
+    assert err.value.status is None
+    _make_hielscher(conn)
+    assert require_campaign_active(conn, "hielscher-sonicators-2026").status == "active"
