@@ -65,10 +65,16 @@ const REASON_LABEL: Record<string, string> = {
 };
 
 const UNSUBSCRIBE_BLOCKER: SendBlocker = {
-  code: "unsubscribe_processing_unsupported",
-  label: "BAJA / desuscripción no soportada",
+  code: "unsubscribe_sync_not_automatic",
+  label: "BAJA sin sincronización automática",
   detail:
-    "No existe un procesador de respuestas entrantes ni un registro durable de supresiones probado. Ningún correo que ofrezca «responda BAJA» puede enviarse hasta que ambos existan.",
+    "Una BAJA se registra como supresión permanente sólo cuando un operador aplica un lote de respuestas ya descargadas. Las respuestas de Gmail no se sincronizan automáticamente todavía, así que ningún correo que ofrezca «responda BAJA» puede enviarse.",
+};
+
+const NOTE_LABEL: Record<string, string> = {
+  unsubscribed: "Solicitó la BAJA",
+  unsubscribe_pending_review: "BAJA en revisión (bloqueada)",
+  recontact_approved: "Recontacto aprobado (W12)",
 };
 
 const btn = "h-7 rounded-md px-3 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40";
@@ -363,14 +369,15 @@ function FreezeFlow({
             </p>
             {preview.content.promises_baja ? (
               <p className="rounded-md border border-bad/40 bg-bad-bg px-2.5 py-1.5 text-bad" data-testid="baja-in-content">
-                El contenido ofrece «BAJA». Esa promesa no puede cumplirse hoy: no hay procesamiento de BAJA.
+                El contenido ofrece «BAJA». Hoy una BAJA sólo se registra cuando un operador aplica respuestas ya descargadas: Gmail no
+                se sincroniza automáticamente, así que la promesa no puede cumplirse en un envío.
               </p>
             ) : null}
             <label className="flex items-start gap-2">
               <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} data-testid="freeze-ack" />
               <span>
                 Entiendo que congelar <b>no envía nada</b>, que la audiencia congelada <b>no se puede modificar</b> y que el envío sigue
-                bloqueado mientras no exista procesamiento de BAJA.
+                bloqueado mientras las respuestas BAJA no se sincronicen automáticamente.
               </span>
             </label>
           </div>
@@ -831,7 +838,13 @@ function FrozenSnapshotView({ campaign, onNewVersion }: { campaign: CampaignCont
                   <Fact k="Huella de la audiencia" v={short(snap.audience_sha256)} />
                   <Fact k="Incluidos" v={fmtInt(snap.recipients.filter((r) => r.inclusion === "included").length)} />
                   <Fact k="Excluidos" v={fmtInt(snap.recipients.filter((r) => r.inclusion === "excluded").length)} />
+                  <Fact k="Rechazados hoy (incluidos al congelar)" v={fmtInt(snap.suppressed_since_freeze ?? 0)} />
+                  <Fact k="BAJA posterior al congelamiento" v={fmtInt(snap.unsubscribed_since_freeze ?? 0)} />
                 </dl>
+                <p className="text-[11px] text-ink-muted">
+                  La instantánea no cambia. Lo que decide un envío futuro son los controles de hoy: una BAJA registrada después de congelar
+                  deja al destino fuera aunque figure incluido.
+                </p>
                 <div className="divide-y divide-line rounded-md border border-line">
                   {snap.recipients.map((r) => (
                     <div key={r.recipient_id} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-[13px]" data-testid="frozen-row">
@@ -839,11 +852,20 @@ function FrozenSnapshotView({ campaign, onNewVersion }: { campaign: CampaignCont
                       <span className="text-ink">{r.address}</span>
                       {r.organization_name ? <span className="text-ink-muted">{r.organization_name}</span> : null}
                       <span className="text-[11px] text-ink-muted">
-                        {r.frozen_reasons.map((x) => REASON_LABEL[x] ?? x).join(" · ")}
+                        {[...r.frozen_reasons.map((x) => REASON_LABEL[x] ?? x), ...r.frozen_notes.filter((n) => n in NOTE_LABEL && n !== "recontact_approved").map((n) => NOTE_LABEL[n])].join(" · ")}
                         {r.relevance === "sin_informacion" ? " Sin información" : ` ${r.interest_evidence.length} evidencia(s)`}
                         {r.evidence_observed_at ? ` · ${fmtDate(r.evidence_observed_at)}` : ""}
                         {r.identity_review ? ` · revisado: ${r.identity_review.decision === "include" ? "incluir" : "excluir"}` : ""}
                       </span>
+                      {r.suppressed_since_freeze ? (
+                        <Badge tone="bad" title={(r.send_time_refusals ?? []).map((x) => x.label).join(", ")}>
+                          <span data-testid="refused-since-freeze">
+                            {(r.send_time_refusals ?? []).some((x) => x.code === "unsubscribe")
+                              ? "BAJA posterior al congelamiento"
+                              : `Rechazado hoy: ${(r.send_time_refusals ?? []).map((x) => x.label).join(" · ")}`}
+                          </span>
+                        </Badge>
+                      ) : null}
                       {r.recontact_review ? (
                         <span className="text-[11px] text-warn" data-testid="frozen-recontact">
                           W12: {r.recontact_review.decision === "approve" ? "recontacto aprobado" : "se mantiene excluido"}

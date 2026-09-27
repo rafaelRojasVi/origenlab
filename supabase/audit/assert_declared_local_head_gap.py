@@ -31,8 +31,9 @@ EXPECTED_EXTRA_TABLES = {
 # here; which functions they are, and that each is SECURITY INVOKER with
 # search_path = pg_catalog and no EXECUTE for a Data-API-facing role, is pinned
 # by pgTAP (supabase/tests/010_inventory.sql, 063_commercial_case_commands.sql,
-# 064_historical_quotation_import.sql and 065-068 for the slice-5 campaign
-# triggers). This file refuses any count other than 3 + len(these).
+# 064_historical_quotation_import.sql, 065-068 for the slice-5 campaign
+# triggers and 069 for W10). This file refuses any count other than 3 + len(these).
+# The one exception to SECURITY INVOKER is EXPECTED_SECURITY_DEFINER below.
 SLICE0_FUNCTION_COUNT = 3
 
 POST_SLICE0_FUNCTIONS = {
@@ -56,7 +57,23 @@ POST_SLICE0_FUNCTIONS = {
     # 20260927220000_slice5_campaign_planning.sql
     "outbound.campaign_planning_guard",
     "outbound.campaign_planning_absent_at_insert",
+    # 20260927230000_slice5_w10_unsubscribe.sql — the permanence trigger guard,
+    # the send-time contract (both INVOKER) and the closed-list writer below.
+    "outbound.unsubscribe_permanent",
+    "outbound.marketing_contact_refusals",
+    "outbound.add_contact_control",
 }
+
+# The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
+# first entry, from 20260927230000_slice5_w10_unsubscribe.sql. a05 must report
+# exactly this one entry beyond the (empty) Slice 0 baseline, with this owner,
+# signature and pinned search_path — anything else is refused.
+EXPECTED_SECURITY_DEFINER = (
+    '{"arguments":"p_kind text, p_purpose text, p_address text, p_reason text, '
+    'p_operator_id uuid, p_command_receipt_id uuid, p_evidence jsonb",'
+    '"name":"add_contact_control","owner":"origenlab_owner",'
+    '"proconfig":"search_path=pg_catalog","schema":"outbound"}'
+)
 
 EXPECTED_FUNCTION_COUNT = SLICE0_FUNCTION_COUNT + len(POST_SLICE0_FUNCTIONS)
 
@@ -93,7 +110,7 @@ EXPECTED_SUMMARIES = {
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
-        "security_definer_count": 0,
+        "security_definer_count": 1,
     },
     "a08": {
         "table_count": 36,
@@ -211,27 +228,32 @@ def main() -> int:
         if f'"table":"{table}"' not in a09_text:
             refuse(f"a09 does not name expected table {table}")
 
-    # The other blockers are census changes only. An exact single finding is
+    # The other blockers are census changes only. An exact finding list is
     # what keeps this strict: a forbidden EXECUTE grant, an effective EXECUTE
-    # for a Data-API-facing role or a SECURITY DEFINER function would each add
-    # an a05 finding, and an uncovered foreign key an a10 finding.
-    expected_single_findings = {
-        "a04": "relations in scope: observed 37, expected 34",
-        "a05": (
+    # for a Data-API-facing role or a SECURITY DEFINER function other than the
+    # reviewed one would each add or change an a05 finding, and an uncovered
+    # foreign key an a10 finding.
+    expected_findings = {
+        "a04": ["relations in scope: observed 37, expected 34"],
+        "a05": [
+            "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
+            "1 entr(y|ies) are present here and not in the baseline: "
+            + EXPECTED_SECURITY_DEFINER,
             f"functions in scope: observed {EXPECTED_FUNCTION_COUNT}, "
-            f"expected {SLICE0_FUNCTION_COUNT}"
-        ),
-        "a10": f"foreign keys: observed {EXPECTED_FOREIGN_KEY_COUNT}, expected 102",
+            f"expected {SLICE0_FUNCTION_COUNT}",
+        ],
+        "a10": [f"foreign keys: observed {EXPECTED_FOREIGN_KEY_COUNT}, expected 102"],
     }
 
-    for check_id, expected in expected_single_findings.items():
+    for check_id, expected in expected_findings.items():
         findings = checks[check_id].get("findings") or []
-        if findings != [expected]:
+        if findings != expected:
             refuse(f"{check_id} findings changed: {findings!r}")
 
     print(
         "ok: current local head differs from frozen Slice 0 only by the "
-        "reviewed commercial-case, historical-quotation and slice-5 campaign schema delta"
+        "reviewed commercial-case, historical-quotation, slice-5 campaign and W10 "
+        "unsubscribe schema delta"
     )
     return 0
 

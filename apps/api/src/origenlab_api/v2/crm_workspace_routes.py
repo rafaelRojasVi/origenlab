@@ -26,6 +26,12 @@ from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 from origenlab_api.v2.equipment_interests import interest_index, supplier_directory
 from origenlab_api.v2.equipment_taxonomy import load_taxonomy
 from origenlab_api.v2.marketing_audience import BASES, AudienceFilter, apply_filter, compose
+from origenlab_api.v2.unsubscribe_replies import (
+    ACCEPTED_FORMS,
+    BAJA_GRAMMAR_VERSION,
+    REVIEW_REASON_LABEL,
+    UNSUBSCRIBE_POLICY_VERSION,
+)
 
 workspace_router = APIRouter(prefix="/v2/workspace", tags=["workspace"], route_class=ContactRedactingRoute)
 
@@ -87,6 +93,7 @@ def get_marketing(_: Operator, repo: Repo, request: Request) -> Any:
         "freeze_enabled": bool(getattr(request.app.state, "audience_freeze_enabled", False)),
         "recontact_review_enabled": bool(getattr(request.app.state, "recontact_review_enabled", False)),
         "planning_enabled": bool(getattr(request.app.state, "campaign_planning_enabled", False)),
+        "unsubscribe_apply_enabled": bool(getattr(request.app.state, "unsubscribe_apply_enabled", False)),
     }
     body["time_zone"] = PLANNING_TIME_ZONE
     return body
@@ -163,6 +170,43 @@ def get_marketing_frozen_recipients(campaign_id: UUID, _: Operator, repo: Repo) 
     if body is None:
         raise HTTPException(status_code=404, detail="no such campaign")
     body["send_blockers"] = list(SEND_BLOCKERS)
+    return body
+
+
+#: Shown wherever the suppression state is: nothing reads a mailbox on its own.
+GMAIL_SYNC_NOTICE = (
+    "Las respuestas de Gmail no se sincronizan automáticamente todavía. Una BAJA queda registrada "
+    "sólo cuando un operador aplica un lote de respuestas ya descargadas."
+)
+
+
+@workspace_router.get("/marketing/suppressions")
+def get_marketing_suppressions(_: Operator, repo: Repo, request: Request) -> Any:
+    """Marketing unsubscribes (W10), read-only: which addresses, since when, and what they refuse.
+
+    Addresses are masked for a viewer by the route class. No message body, subject or header is
+    ever part of this answer; the evidence stays in the database.
+    """
+    body = repo.suppressions()
+    body["gmail_sync"] = {"automatic": False, "label": GMAIL_SYNC_NOTICE}
+    body["grammar"] = {
+        "version": BAJA_GRAMMAR_VERSION,
+        "accepted": list(ACCEPTED_FORMS),
+        "rule": "Sólo una respuesta cuyo texto propio es exactamente «BAJA» o «REMOVER» (la palabra de las "
+                "plantillas V1), en mayúsculas o minúsculas, con o sin un punto final. Cualquier otra "
+                "redacción queda para revisión humana.",
+    }
+    body["sender_policy"] = {
+        "version": UNSUBSCRIBE_POLICY_VERSION,
+        "rule": "Se suprime una dirección ya conocida, o la del destinatario exacto del correo enviado al que "
+                "responde. Si no se puede comprobar, la BAJA queda en revisión y esa dirección exacta queda "
+                "bloqueada para marketing hasta confirmarla. Nunca se crea una persona, contacto ni institución.",
+    }
+    for p in body.get("pending_reviews", []):
+        p["review_reason_label"] = REVIEW_REASON_LABEL.get(p.get("review_reason") or "", p.get("review_reason"))
+    body["apply_enabled"] = bool(getattr(request.app.state, "unsubscribe_apply_enabled", False))
+    body["permanent"] = True
+    body["resubscribe_supported"] = False
     return body
 
 

@@ -226,9 +226,9 @@ def test_what_stops_a_freeze_is_listed_not_guessed() -> None:
 
 def test_the_send_blockers_name_the_missing_unsubscribe_processor() -> None:
     plan = plan_freeze(load_taxonomy(), _world(), {**CAMPAIGN, "body_html": "<p>Responda BAJA</p>"}, HIELSCHER)
-    assert plan["send_blockers"][0]["code"] == "unsubscribe_processing_unsupported"
+    assert plan["send_blockers"][0]["code"] == "unsubscribe_sync_not_automatic"
     assert plan["content"]["promises_baja"] is True
-    assert {b["code"] for b in SEND_BLOCKERS} == {"unsubscribe_processing_unsupported", "no_send_path", "approval_not_built"}
+    assert {b["code"] for b in SEND_BLOCKERS} == {"unsubscribe_sync_not_automatic", "no_send_path", "approval_not_built"}
 
 
 # --------------------------------------------------------------------------- W12 recontact review
@@ -628,7 +628,7 @@ def test_a_freeze_writes_one_immutable_snapshot_and_one_event(disposable_databas
     out = _freeze(disposable_database, world, cid, preview, decisions=_decide_all(preview))
     assert out["status"] == "audience_frozen" and out["version"] == 2
     assert out["policy_version"] == "marketing-audience/2026-09-27.v1"
-    assert out["send_blockers"][0]["code"] == "unsubscribe_processing_unsupported"
+    assert out["send_blockers"][0]["code"] == "unsubscribe_sync_not_automatic"
 
     with _connect(disposable_database) as conn:
         rows = {r[0]: r[1:] for r in conn.execute(

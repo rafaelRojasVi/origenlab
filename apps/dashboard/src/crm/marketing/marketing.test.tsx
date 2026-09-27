@@ -323,7 +323,7 @@ function freezeRow(key: string, address: string, extra: Partial<FreezeRow> = {})
 }
 
 const BLOCKERS = [
-  { code: "unsubscribe_processing_unsupported", label: "BAJA / desuscripción no soportada", detail: "No existe un procesador de respuestas entrantes." },
+  { code: "unsubscribe_sync_not_automatic", label: "BAJA sin sincronización automática", detail: "Las respuestas de Gmail no se sincronizan automáticamente todavía." },
   { code: "no_send_path", label: "Sin ruta de envío", detail: "Sin cliente de Gmail." },
 ];
 
@@ -381,8 +381,10 @@ function stubFreezeApi({ freezeEnabled, frozen = false, preview = PREVIEW }: { f
                  inclusion: "included", frozen_reasons: [], frozen_notes: [], relevance: "evidenced", interest_evidence: [{}],
                  evidence_observed_at: "2026-03-12T10:00:00Z", identity_review: null, recontact_review: null, recontact_override_at: null,
                  campaign_version: 4, content_sha256: "c".repeat(64),
-                 policy_version: PREVIEW.policy_version, lifecycle_state: "snapshotted" }]
+                 policy_version: PREVIEW.policy_version, lifecycle_state: "snapshotted",
+                 send_time_refusals: [{ code: "unsubscribe", label: "Solicitó la BAJA" }], suppressed_since_freeze: true }]
             : [],
+          suppressed_since_freeze: 1, unsubscribed_since_freeze: 1,
         });
       if (path.endsWith(`/campaigns/${DRAFT.campaign_id}`)) return jsonResponse(content);
       return jsonResponse({ detail: "not found" }, 404);
@@ -408,7 +410,7 @@ describe("audience freeze", () => {
   it("shows the BAJA blocker, requires a reviewed identity, and freezes only from the final confirmation", async () => {
     stubFreezeApi({ freezeEnabled: true });
     await openFreeze();
-    expect(screen.getByTestId("baja-blocker")).toHaveTextContent("BAJA / desuscripción no soportada");
+    expect(screen.getByTestId("baja-blocker")).toHaveTextContent("BAJA sin sincronización automática");
     fireEvent.change(screen.getByLabelText("Línea"), { target: { value: "hielscher" } });
     fireEvent.click(screen.getByTestId("freeze-review"));
     await screen.findByTestId("freeze-preview");
@@ -480,6 +482,9 @@ describe("audience freeze", () => {
     await screen.findByTestId("frozen-snapshot");
     expect(screen.getByTestId("baja-blocker")).toBeInTheDocument();
     expect(await screen.findAllByTestId("frozen-row")).toHaveLength(1);
+    // Frozen as included, but a «BAJA» arrived afterwards: the live contract refuses it.
+    expect(screen.getByTestId("refused-since-freeze")).toHaveTextContent("BAJA posterior al congelamiento");
+    expect(screen.getByTestId("frozen-snapshot")).toHaveTextContent("BAJA posterior al congelamiento1");
     expect(screen.queryByTestId("freeze-review")).toBeNull();
     fireEvent.click(screen.getByTestId("new-version"));
     await waitFor(() => expect(screen.getByTestId("persistence")).toHaveAttribute("data-state", "memory"));
@@ -608,5 +613,79 @@ describe("W12 recontact review", () => {
     expect(screen.queryByTestId("recontact-panel")).toBeNull();
     expect(screen.getByTestId("recontact-disabled")).toHaveTextContent("no está habilitada");
     expect(screen.queryByText("Aprobar recontacto")).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── W10 unsubscribe status
+
+const SUPPRESSIONS = {
+  summary: { unsubscribed_addresses: 2, baja_messages: 3, last_recorded_at: "2026-09-27T12:00:00Z", pending_reviews: 1 },
+  pending_reviews: [
+    { assertion_id: "a1", address: "***@lab.test", review_reason: "recipient_mismatch",
+      review_reason_label: "El remitente no es el destinatario del correo enviado al que responde",
+      grammar_version: "baja-reply/2026-09-27.v2", policy_version: "unsubscribe-sender/2026-09-27.v2",
+      observed_at: "2026-09-26T18:20:00Z", recorded_at: "2026-09-27T12:05:00Z" },
+  ],
+  entries: [
+    { contact_control_id: "cc1", address: "***@uni.test", purpose: "marketing", reason: "unsubscribe", source: "unsubscribe_handler",
+      recorded_at: "2026-09-27T12:00:00Z", baja_messages: 2, last_observed_at: "2026-09-26T18:04:05Z" },
+    { contact_control_id: "cc2", address: "***@lab.test", purpose: "marketing", reason: "suppression list", source: "wave1a_suppression",
+      recorded_at: "2026-09-05T12:00:00Z", baja_messages: 1, last_observed_at: "2026-09-26T18:10:00Z" },
+  ],
+  truncated: false,
+  frozen_campaigns: [{ campaign_id: DRAFT.campaign_id, name: "Borrador IKA", status: "audience_frozen", unsubscribed_since_freeze: 1,
+    pending_review_since_freeze: 0, refused_since_freeze: 1, included_at_freeze: 12 }],
+  blocks_by_purpose: [{ kind: "block", purpose: "marketing", count: 2 }],
+  gmail_sync: { automatic: false, label: "Las respuestas de Gmail no se sincronizan automáticamente todavía. Una BAJA queda registrada sólo cuando un operador aplica un lote de respuestas ya descargadas." },
+  grammar: { version: "baja-reply/2026-09-27.v2", accepted: ["BAJA", "BAJA.", "REMOVER", "REMOVER."],
+    rule: "Sólo una respuesta cuyo texto propio es exactamente «BAJA» o «REMOVER»." },
+  sender_policy: { version: "unsubscribe-sender/2026-09-27.v2", rule: "Si no se puede comprobar, la BAJA queda en revisión." },
+  apply_enabled: false, permanent: true, resubscribe_supported: false,
+  storage: { table: "outbound.contact_control", database: "origenlab_test_abcd1234" },
+};
+
+describe("Bajas (W10)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the suppression state read-only, masked as served, and says Gmail is not synchronized", async () => {
+    const calls: { path: string; method: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
+        calls.push({ path: url.pathname, method: init?.method ?? "GET" });
+        if (url.pathname.endsWith("/v2/workspace/marketing")) return jsonResponse(marketing(true));
+        if (url.pathname.endsWith("/v2/workspace/marketing/taxonomy")) return jsonResponse(taxonomy);
+        if (url.pathname.endsWith("/v2/workspace/marketing/suppressions")) return jsonResponse(SUPPRESSIONS);
+        return jsonResponse({ detail: "not found" }, 404);
+      }),
+    );
+    render(<MarketingPage />);
+    await screen.findAllByTestId("campaign-card");
+    fireEvent.click(screen.getByRole("button", { name: "Bajas" }));
+    const panel = await screen.findByTestId("suppression-status");
+    expect(screen.getByTestId("gmail-sync-notice")).toHaveTextContent("no se sincronizan automáticamente");
+    expect(screen.getByTestId("gmail-sync-notice")).toHaveTextContent("no existe la re-suscripción");
+    const rows = screen.getAllByTestId("suppression-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("***@uni.test");
+    expect(rows[1]).toHaveTextContent("bloqueo previo: suppression list");
+    expect(screen.getByTestId("frozen-vs-baja")).toHaveTextContent("1 con BAJA posterior");
+    expect(screen.getByTestId("baja-grammar")).toHaveTextContent("«BAJA», «BAJA.», «REMOVER», «REMOVER.»");
+    expect(screen.getByTestId("baja-grammar")).toHaveTextContent("unsubscribe-sender/2026-09-27.v2");
+    // A held «BAJA» is shown, masked as served, with why it could not be proven — and no action.
+    const held = screen.getAllByTestId("pending-review-row");
+    expect(held).toHaveLength(1);
+    expect(held[0]).toHaveTextContent("***@lab.test");
+    expect(held[0]).toHaveTextContent("no es el destinatario");
+    expect(within(screen.getByTestId("pending-reviews")).queryAllByRole("button")).toHaveLength(0);
+    // No action of any kind: no button inside the panel, no Send anywhere, no write.
+    expect(within(panel).queryAllByRole("button")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /enviar|aplicar|sincronizar|suscrib|confirmar|descartar/i })).toBeNull();
+    expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+    expect(panel.textContent).not.toMatch(/[a-z0-9]+@(uni|lab)\.test/);
   });
 });

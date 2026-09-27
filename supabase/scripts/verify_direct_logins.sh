@@ -229,8 +229,118 @@ set role origenlab_owner;
 drop function outbound.__probe_login_identity();
 reset role;
 SQL
-remaining="$(ol_psql -q -A -t -c "select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname in ('crm','comms','outbound','evidence','catalog','procurement','platform') and p.prosecdef")"
-[[ "$remaining" == "0" ]] && report PASS "no SECURITY DEFINER function remains after the probe" || report FAIL "no SECURITY DEFINER function remains after the probe" "count $remaining"
+probe_left="$(ol_psql -q -A -t -c "select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'outbound' and p.proname = '__probe_login_identity'")"
+[[ "$probe_left" == "0" ]] && report PASS "the temporary SECURITY DEFINER probe is gone after the run" \
+  || report FAIL "the temporary SECURITY DEFINER probe is gone after the run" "count $probe_left"
+
+# The closed SECURITY DEFINER list (docs/ARCHITECTURE.md §6.2), as a catalogue fact. After the
+# probe is dropped exactly one application definer may exist — outbound.add_contact_control — with
+# exactly this owner, pinned search_path and ACL; anything else is a failure, including a second
+# definer. Each row is "PASS|name|detail" or "FAIL|name|detail". Extending the closed list means
+# editing this query in the same PR as the migration that adds the function.
+DEFINER_SIG='outbound.add_contact_control(text, text, text, text, uuid, uuid, jsonb)'
+DEFINER_REGPROC='outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)'
+read -r -d '' CLOSED_LIST_SQL <<SQL || true
+with definers as (
+  select n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')' as sig
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname in ('crm','comms','outbound','evidence','catalog','procurement','platform') and p.prosecdef
+), f as (
+  select p.* from pg_proc p where p.oid = to_regprocedure('$DEFINER_REGPROC')
+), checks(name, ok, detail) as (
+  select 'the SECURITY DEFINER set is exactly {$DEFINER_SIG}',
+         coalesce((select array_agg(sig order by sig) from definers), '{}') = array['$DEFINER_SIG'],
+         coalesce((select string_agg(sig, '; ' order by sig) from definers), 'none')
+  union all
+  select 'add_contact_control exists and is SECURITY DEFINER',
+         coalesce((select prosecdef from f), false), coalesce((select prosecdef::text from f), 'missing')
+  union all
+  select 'add_contact_control is owned by origenlab_owner',
+         coalesce((select proowner = 'origenlab_owner'::regrole from f), false),
+         coalesce((select proowner::regrole::text from f), 'missing')
+  union all
+  select 'add_contact_control pins search_path = pg_catalog and nothing else',
+         coalesce((select proconfig = array['search_path=pg_catalog'] from f), false),
+         coalesce((select coalesce(proconfig::text, 'null') from f), 'missing')
+  union all
+  select 'add_contact_control ACL is exactly {origenlab_owner=X/origenlab_owner,origenlab_api=X/origenlab_owner}',
+         coalesce((select proacl::text = '{origenlab_owner=X/origenlab_owner,origenlab_api=X/origenlab_owner}' from f), false),
+         coalesce((select coalesce(proacl::text, 'null (PUBLIC default)') from f), 'missing')
+  union all
+  select 'PUBLIC holds no EXECUTE on add_contact_control',
+         coalesce((select proacl is not null and not exists (select 1 from aclexplode(proacl) a where a.grantee = 0) from f), false),
+         coalesce((select coalesce(proacl::text, 'null (PUBLIC default)') from f), 'missing')
+  union all
+  select 'anon, authenticated, service_role, origenlab_worker and origenlab_migrator cannot EXECUTE add_contact_control',
+         coalesce((select not bool_or(has_function_privilege(r, f.oid, 'EXECUTE'))
+                     from f, unnest(array['anon','authenticated','service_role','origenlab_worker','origenlab_migrator']) r), false),
+         coalesce((select string_agg(r, ',') from f, unnest(array['anon','authenticated','service_role','origenlab_worker','origenlab_migrator']) r
+                    where has_function_privilege(r, f.oid, 'EXECUTE')), 'none')
+  union all
+  select 'origenlab_api is the only grantee of EXECUTE on add_contact_control',
+         coalesce((select array_agg(distinct a.grantee::regrole::text) from f, aclexplode(f.proacl) a
+                    where a.privilege_type = 'EXECUTE' and a.grantee <> f.proowner) = array['origenlab_api'], false),
+         coalesce((select string_agg(distinct case a.grantee when 0 then 'PUBLIC' else a.grantee::regrole::text end, ',')
+                     from f, aclexplode(f.proacl) a where a.privilege_type = 'EXECUTE' and a.grantee <> f.proowner), 'none')
+)
+select case when ok then 'PASS' else 'FAIL' end || '|' || name || '|' || detail from checks;
+SQL
+
+# check_closed_list [PREFIX_SQL] -> prints the rows; PREFIX_SQL runs first in the same transaction,
+# which is always rolled back.
+check_closed_list() {
+  ol_psql -q -A -t -f - <<<"begin;
+${1:-}
+$CLOSED_LIST_SQL
+rollback;"
+}
+
+closed="$(check_closed_list)"
+while IFS='|' read -r status name detail; do
+  [[ -n "$status" ]] || continue
+  if [[ "$status" == PASS ]]; then report PASS "$name"; else report FAIL "$name" "$detail"; fi
+done <<<"$closed"
+
+# The same grants, proven by connecting: the worker is refused before the body runs; the API
+# reaches the body, whose own argument check refuses the call (22023) — so EXECUTE is granted.
+expect origenlab_worker "$PW_WORKER" "worker: refused EXECUTE on outbound.add_contact_control" 42501 \
+  "select outbound.add_contact_control('revoke', 'all', 'x@lab.test', 'x', gen_random_uuid(), gen_random_uuid(), '{}'::jsonb)"
+expect origenlab_api "$PW_API" "api: may EXECUTE outbound.add_contact_control (the body refuses an unimplemented kind)" 22023 \
+  "select outbound.add_contact_control('revoke', 'all', 'x@lab.test', 'x', gen_random_uuid(), gen_random_uuid(), '{}'::jsonb)"
+
+# Failure injection: every deviation below, applied inside a rolled-back transaction, must turn the
+# closed-list check red. A check that stays green on any of them proves nothing.
+echo "== the closed-list check fails on every injected deviation (each rolled back) =="
+inject() { # NAME SQL
+  local out
+  out="$(check_closed_list "$2" 2>&1)" || { report FAIL "injected: $1" "injection did not run: $(ol_sanitize <<<"$out" | tail -n 1)"; return; }
+  if grep -q '^FAIL|' <<<"$out"; then
+    report PASS "injected: $1 -> refused ($(grep '^FAIL|' <<<"$out" | cut -d'|' -f2 | head -n 1))"
+  else
+    report FAIL "injected: $1" "the closed-list check stayed green"
+  fi
+}
+inject "a second SECURITY DEFINER function" \
+  "set role origenlab_owner; create function outbound.__probe_second_definer() returns int language sql security definer set search_path = pg_catalog as 'select 1'; revoke all on function outbound.__probe_second_definer() from public; reset role;"
+inject "add_contact_control owned by another role" \
+  "grant origenlab_api to origenlab_owner with set true, inherit false; set role origenlab_owner; grant create on schema outbound to origenlab_api; alter function $DEFINER_REGPROC owner to origenlab_api; reset role;"
+inject "add_contact_control with search_path widened" \
+  "set role origenlab_owner; alter function $DEFINER_REGPROC set search_path = pg_catalog, public; reset role;"
+inject "add_contact_control with its search_path pin removed" \
+  "set role origenlab_owner; alter function $DEFINER_REGPROC reset search_path; reset role;"
+inject "add_contact_control executable by PUBLIC" \
+  "set role origenlab_owner; grant execute on function $DEFINER_REGPROC to public; reset role;"
+inject "add_contact_control executable by origenlab_worker" \
+  "set role origenlab_owner; grant execute on function $DEFINER_REGPROC to origenlab_worker; reset role;"
+inject "add_contact_control executable by service_role" \
+  "set role origenlab_owner; grant execute on function $DEFINER_REGPROC to service_role; reset role;"
+inject "add_contact_control no longer SECURITY DEFINER" \
+  "set role origenlab_owner; alter function $DEFINER_REGPROC security invoker; reset role;"
+inject "add_contact_control EXECUTE revoked from origenlab_api" \
+  "set role origenlab_owner; revoke execute on function $DEFINER_REGPROC from origenlab_api; reset role;"
+closed_after="$(check_closed_list)"
+[[ "$closed_after" == "$closed" ]] && report PASS "every injection rolled back: the closed-list check reads exactly as before" \
+  || report FAIL "every injection rolled back: the closed-list check reads exactly as before" "the catalogue changed"
 
 echo "== no permanent fixture was left behind =="
 leftover="$(ol_psql -q -A -t -c "select (select count(*) from crm.organization) + (select count(*) from comms.mailbox)")"

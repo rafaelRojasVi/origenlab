@@ -271,8 +271,29 @@ worker-written quote columns. Nothing else qualifies, and the list is closed:
 | `outbound.resolve_ambiguous(attempt_id, verdict, reason)` | the resolution fields of one `send_attempt` | `origenlab_api` |
 | `outbound.authorize_retry(attempt_id, reason)` | one new `send_attempt` | `origenlab_api` |
 | `outbound.set_send_control(flag, value, reason)` | `send_control` | `origenlab_api` |
-| `outbound.add_contact_control(kind, purpose, normalized_address, reason, …)` | `contact_control` | `origenlab_api` (admin block and revoke) **and** `origenlab_worker` (hard bounce, complaint, unsubscribe) |
+| `outbound.add_contact_control(kind, purpose, normalized_address, reason, …)` | `contact_control`; for an unsubscribe the whole transaction — its evidence (`evidence.source_record`, `evidence.assertion`, including a request held for review and its later resolution) | `origenlab_api` (admin block and revoke; the «BAJA» reply command) **and** `origenlab_worker` (hard bounce, complaint, unsubscribe) |
 | `crm.record_quote_pdf(revision_id, pdf_sha256, sent_evidence_ids)` | only `quote_revision.pdf_sha256` and the sent-evidence ids | `origenlab_worker` |
+
+**Built so far (2026-09-27): only `outbound.add_contact_control`, and only for
+`(block, marketing, unsubscribe)`** — the «BAJA» reply command of
+[`WORKFLOWS.md`](WORKFLOWS.md) §W10. **This function owns the complete unsubscribe transaction,
+including its immutable evidence**: in one call — one statement, so all or nothing — it writes the
+reply as `evidence.source_record`, then either the permanent `contact_control` block with an
+`evidence.assertion` resolved to it, or, for a sender it cannot prove, an unresolved
+`unsubscribe_request` that holds the exact address for review; later, the review's confirmation
+resolving that request to its control, or an admin's dismissal of a pending one as a false
+positive (never of a confirmed request, and never touching a control), which a later confirmation
+may still override toward suppression; and exactly one
+`crm.domain_event` each time. No other
+code path writes any of those rows for an unsubscribe: runtime roles have no grant on
+`contact_control`, and a trigger refuses unsubscribe evidence written, or changed, outside it. It
+proves the basis it is given (a known address, or outbound lineage to exactly this recipient)
+rather than trusting the caller, and takes the operator and the open command receipt of the
+right command as arguments and checks both. It is owned by `origenlab_owner`, pins
+`search_path = pg_catalog`, schema-qualifies every relation and contains no dynamic SQL (pgTAP
+pins all four); `EXECUTE` is revoked from `PUBLIC`, `anon`, `authenticated` and `service_role`
+and granted to `origenlab_api` only — the worker's grant arrives with the worker. Every other
+kind, purpose and reason is refused until its own slice.
 
 Each writes exactly one `crm.domain_event`. Every one of them satisfies all of
 the following, and a proposed definer function that misses any line is

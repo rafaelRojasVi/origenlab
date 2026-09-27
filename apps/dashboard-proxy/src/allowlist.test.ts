@@ -99,7 +99,7 @@ describe("allowlist", () => {
     }
   });
 
-  it("forwards exactly the seven Marketing reads, GET only, and nothing near them", async () => {
+  it("forwards exactly the eight Marketing reads, GET only, and nothing near them", async () => {
     const { isAllowedMarketingCommandPostPath } = await import("./allowlist");
     const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
     for (const path of [
@@ -110,6 +110,7 @@ describe("allowlist", () => {
       `/v2/workspace/marketing/campaigns/${uuid}/freeze-preview`,
       `/v2/workspace/marketing/campaigns/${uuid}/recipients`,
       `/v2/workspace/marketing/campaigns/${uuid}/archive`,
+      "/v2/workspace/marketing/suppressions",
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(false);
@@ -127,6 +128,11 @@ describe("allowlist", () => {
       `/v2/workspace/marketing/campaigns/${uuid}/archive.html`,
       "/v2/workspace/marketing/campaigns/archive",
       "/v2/workspace/marketing/calendar",
+      "/v2/workspace/marketing/suppressions/",
+      "/v2/workspace/marketing/suppressions/export",
+      "/v2/workspace/marketing/unsubscribe",
+      "/v2/unsubscribe/preview",
+      "/v2/unsubscribe",
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
       expect(isAllowedPostPath(path), path).toBe(false);
@@ -1132,8 +1138,17 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/enqueue-campaign",
       "/v2/commands/clear-campaign-planning",
       "/v2/commands/SET-CAMPAIGN-PLANNING",
+      // W10: the unsubscribe preview and apply are API-only operator tooling, never the browser's.
+      "/v2/commands/apply-unsubscribe-replies",
+      "/v2/commands/resolve-unsubscribe-review",
+      "/v2/commands/dismiss-unsubscribe-review",
+      "/v2/unsubscribe/preview",
+      "/v2/commands/resubscribe",
+      "/v2/commands/revoke-block",
+      "/v2/commands/sync-gmail-replies",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
     }
   });
 

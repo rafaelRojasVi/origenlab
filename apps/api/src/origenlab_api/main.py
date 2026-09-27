@@ -177,6 +177,23 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     _mount_campaign_drafts(app, settings, dsn)
     _mount_audience_freeze(app, settings, dsn)
     _mount_campaign_planning(app, settings, dsn)
+    _mount_unsubscribe(app, settings, dsn)
+
+
+def _mount_unsubscribe(app: FastAPI, settings: Settings, dsn: str) -> None:
+    """W10: the preview is a read and always mounted with V2; the apply command has its own switch."""
+    import psycopg
+
+    from origenlab_api.v2.unsubscribe_commands import V2UnsubscribeRepository
+    from origenlab_api.v2.unsubscribe_routes import unsubscribe_apply_router, unsubscribe_preview_router
+
+    app.state.unsubscribe_apply_enabled = settings.v2_unsubscribe_apply_configured()
+    app.state.unsubscribe_repository = V2UnsubscribeRepository(
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(unsubscribe_preview_router)
+    if app.state.unsubscribe_apply_enabled:
+        app.include_router(unsubscribe_apply_router)
 
 
 def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str) -> None:
