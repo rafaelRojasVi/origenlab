@@ -15,12 +15,14 @@ from parity_routes import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _LEGACY_API_ROOT = _REPO_ROOT / "apps" / "email-pipeline" / "src" / "origenlab_api"
-_DASHBOARD_ACTIVE_SOURCES = (
-    _REPO_ROOT / "apps" / "dashboard" / "src" / "api" / "operatorClient.ts",
-    _REPO_ROOT / "apps" / "dashboard" / "src" / "api" / "mirrorCommercialClient.ts",
-    _REPO_ROOT / "apps" / "dashboard" / "src" / "pages" / "DashboardApp.tsx",
-    _REPO_ROOT / "apps" / "dashboard" / "src" / "App.tsx",
-    _REPO_ROOT / "apps" / "dashboard" / "vite.config.ts",
+_DASHBOARD_ROOT = _REPO_ROOT / "apps" / "dashboard"
+# Entry points that must exist, so a rename cannot silently shrink the scan below to nothing.
+_DASHBOARD_ENTRY_POINTS = (
+    _DASHBOARD_ROOT / "src" / "api" / "operatorClient.ts",
+    _DASHBOARD_ROOT / "src" / "api" / "v2Client.ts",
+    _DASHBOARD_ROOT / "src" / "pages" / "DashboardApp.tsx",
+    _DASHBOARD_ROOT / "src" / "App.tsx",
+    _DASHBOARD_ROOT / "vite.config.ts",
 )
 _COMMERCIAL_DEALS_MIRROR_LIST = "/mirror/commercial/deals"
 _FORBIDDEN_DASHBOARD_MIRROR_PATHS = (
@@ -79,9 +81,22 @@ def test_operator_today_routes_remain_in_openapi() -> None:
     assert missing == [], f"operator Today paths missing: {missing}"
 
 
+def _dashboard_active_sources() -> list[Path]:
+    """Every shipped dashboard source file (tests excluded) plus the dev-server config."""
+    for entry in _DASHBOARD_ENTRY_POINTS:
+        assert entry.is_file(), f"dashboard entry point missing: {entry}"
+    sources = sorted(
+        path
+        for pattern in ("*.ts", "*.tsx")
+        for path in (_DASHBOARD_ROOT / "src").rglob(pattern)
+        if ".test." not in path.name
+    )
+    return [*sources, _DASHBOARD_ROOT / "vite.config.ts"]
+
+
 def test_active_dashboard_mirror_limited_to_commercial_deals_list() -> None:
-    """Today may call GET /mirror/commercial/deals only — not purchase-events or other mirror routes."""
-    for path in _DASHBOARD_ACTIVE_SOURCES:
+    """The dashboard may reach GET /mirror/commercial/deals at most — never purchase-events or other mirror routes."""
+    for path in _dashboard_active_sources():
         text = path.read_text(encoding="utf-8")
         for forbidden in _FORBIDDEN_DASHBOARD_MIRROR_PATHS:
             assert forbidden not in text, f"{path.name} must not reference {forbidden}"
