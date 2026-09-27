@@ -144,3 +144,11 @@ The `smoke*` and `freeze:*` scripts exercise the **V1 API** (`/health`, `/operat
 `/cases/warm`, `/contacts/{email}`, `/mirror/*`) on :8001, not the CRM; see
 [docs/V1_FREEZE_OPERATOR_HANDOFF.md](docs/V1_FREEZE_OPERATOR_HANDOFF.md) and
 [docs/BACKEND_MATRIX_VALIDATION.md](docs/BACKEND_MATRIX_VALIDATION.md).
+
+The V1 Gmail → mirror refresh chain still runs on the API side even though this shell no
+longer displays the mirror: email-pipeline RUNBOOK anchor
+[`m-eprun-dashboard-gmail-to-react`](../email-pipeline/docs/RUNBOOK.md#m-eprun-dashboard-gmail-to-react)
+— ingest, then `sync_dashboard_postgres_mirror.py`, then check freshness with
+`GET /mirror/meta/dashboard-sync` and `GET /mirror/classification/summary` on :8001. A
+«Failed to fetch» in `npm run dev` almost always means `VITE_ORIGENLAB_API_BASE_URL` is set
+and bypasses the Vite proxy; unset it and restart.
