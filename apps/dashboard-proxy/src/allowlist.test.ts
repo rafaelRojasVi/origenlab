@@ -99,7 +99,7 @@ describe("allowlist", () => {
     }
   });
 
-  it("forwards exactly the eight Marketing reads, GET only, and nothing near them", async () => {
+  it("forwards exactly the eleven Marketing reads, GET only, and nothing near them", async () => {
     const { isAllowedMarketingCommandPostPath } = await import("./allowlist");
     const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
     for (const path of [
@@ -110,6 +110,9 @@ describe("allowlist", () => {
       `/v2/workspace/marketing/campaigns/${uuid}/freeze-preview`,
       `/v2/workspace/marketing/campaigns/${uuid}/recipients`,
       `/v2/workspace/marketing/campaigns/${uuid}/archive`,
+      `/v2/workspace/marketing/campaigns/${uuid}/history/recipients`,
+      `/v2/workspace/marketing/campaigns/${uuid}/history/replies`,
+      `/v2/workspace/marketing/campaigns/${uuid}/history/audit`,
       "/v2/workspace/marketing/suppressions",
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(true);
@@ -126,6 +129,12 @@ describe("allowlist", () => {
       `/v2/workspace/marketing/campaigns/${uuid}/archive/`,
       `/v2/workspace/marketing/campaigns/${uuid}/archive/html`,
       `/v2/workspace/marketing/campaigns/${uuid}/archive.html`,
+      `/v2/workspace/marketing/campaigns/${uuid}/history`,
+      `/v2/workspace/marketing/campaigns/${uuid}/history/`,
+      `/v2/workspace/marketing/campaigns/${uuid}/history/recipients/export`,
+      `/v2/workspace/marketing/campaigns/${uuid}/history/replies/sync`,
+      `/v2/workspace/marketing/campaigns/${uuid}/history/gmail`,
+      `/v2/workspace/marketing/campaigns/${uuid.toUpperCase()}/history/audit`,
       "/v2/workspace/marketing/campaigns/archive",
       "/v2/workspace/marketing/calendar",
       "/v2/workspace/marketing/suppressions/",
