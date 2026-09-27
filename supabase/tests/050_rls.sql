@@ -144,6 +144,10 @@ insert into expected_policies values
     ('outbound', 'campaign_reply', 'origenlab_api', 'UPDATE'),
     ('outbound', 'campaign_reply', 'origenlab_worker', 'SELECT'),
     ('outbound', 'campaign_reply', 'origenlab_worker', 'INSERT'),
+    ('outbound', 'campaign_block', 'origenlab_api', 'SELECT'),
+    ('outbound', 'campaign_block', 'origenlab_api', 'INSERT'),
+    ('outbound', 'campaign_block', 'origenlab_api', 'UPDATE'),
+    ('outbound', 'campaign_block', 'origenlab_worker', 'SELECT'),
     ('evidence', 'source_record', 'origenlab_api', 'SELECT'),
     ('evidence', 'source_record', 'origenlab_api', 'UPDATE'),
     ('evidence', 'source_record', 'origenlab_worker', 'SELECT'),
@@ -175,7 +179,7 @@ insert into expected_policies values
     ('platform', 'command_receipt', 'origenlab_api', 'UPDATE'),
     ('platform', 'command_receipt', 'origenlab_worker', 'SELECT');
 
-select is((select count(*)::int from expected_policies), 139, 'the matrix implies 139 policies');
+select is((select count(*)::int from expected_policies), 143, 'the matrix implies 143 policies');
 
 -- Posture.
 select is(

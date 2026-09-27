@@ -84,6 +84,8 @@ insert into expected values
     ('outbound', 'contact_control', 'origenlab_worker', 'S', null, 'S'),
     ('outbound', 'campaign_reply', 'origenlab_api', 'SI', array['operator_class', 'classified_by_operator_id', 'classified_at'], 'SIU'),
     ('outbound', 'campaign_reply', 'origenlab_worker', 'SI', null, 'SI'),
+    ('outbound', 'campaign_block', 'origenlab_api', 'SI', array['lifted_at', 'lifted_by_operator_id', 'lift_reason', 'version'], 'SIU'),
+    ('outbound', 'campaign_block', 'origenlab_worker', 'S', null, 'S'),
     ('evidence', 'source_record', 'origenlab_api', 'S', array['review_status', 'is_quarantined', 'quarantine_reason', 'quarantined_at', 'updated_at'], 'SU'),
     ('evidence', 'source_record', 'origenlab_worker', 'SIU', null, 'SIU'),
     ('evidence', 'assertion', 'origenlab_api', 'S', array['resolution', 'resolved_kind', 'resolved_id', 'resolved_at', 'resolved_by_operator_id', 'ambiguity_note', 'updated_at'], 'SU'),
@@ -99,7 +101,7 @@ insert into expected values
     ('platform', 'command_receipt', 'origenlab_api', 'SIU', null, 'SIU'),
     ('platform', 'command_receipt', 'origenlab_worker', 'S', null, 'S');
 
-select is((select count(*)::int from expected), 72, 'the matrix covers all 36 tables for both runtime roles');
+select is((select count(*)::int from expected), 74, 'the matrix covers all 37 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(
