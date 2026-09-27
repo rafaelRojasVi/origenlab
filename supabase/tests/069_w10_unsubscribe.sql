@@ -11,15 +11,17 @@
 --     or deleted, and its evidence is immutable;
 --   * `outbound.marketing_contact_refusals` reads the live controls, so a recipient frozen before
 --     a «BAJA» is refused, and a W12 approval never lifts it;
---   * a «BAJA» held for review (an unresolved unsubscribe_request) refuses its exact address, is
---     resolved at most once and only to a control, and is never dismissed;
+--   * a «BAJA» held for review (an unresolved unsubscribe_request) refuses its exact address and is
+--     decided at most once: resolved to a control, or dismissed (rejected, with a decision time and
+--     operator, every other field unchanged). A dismissed hold stops refusing; a confirmed request
+--     is never dismissed, and every permanent unsubscribe still refuses whatever any review says;
 --   * the writer's body is static SQL over schema-qualified relations only.
 --
 -- SQLSTATEs: 23514 check, P0001 trigger guard, 42501 privilege / login assertion.
 begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
-select plan(72);
+select plan(89);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -179,9 +181,12 @@ select throws_ok($$ insert into evidence.assertion (source_record_id, kind, valu
 select lives_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
   values ('assertion', '69000000-0000-4000-8000-000000000500', 1, 'assertion.unsubscribe_review_opened', 1, '{}', 'operator', '69000000-0000-4000-8000-000000000001') $$,
   'assertion.unsubscribe_review_opened is an event type');
-select throws_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
+select lives_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
   values ('assertion', '69000000-0000-4000-8000-000000000500', 2, 'assertion.unsubscribe_review_dismissed', 1, '{}', 'operator', '69000000-0000-4000-8000-000000000001') $$,
-  '23514', null, 'dismissing a held «BAJA» has no event type');
+  'assertion.unsubscribe_review_dismissed is an event type');
+select throws_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
+  values ('contact_control', '69000000-0000-4000-8000-000000000400', 3, 'contact_control.dismissed', 1, '{}', 'operator', '69000000-0000-4000-8000-000000000001') $$,
+  '23514', null, 'dismissing a contact control has no event type');
 
 -- ── permanence ───────────────────────────────────────────────────────────────────────────────
 select throws_ok($$ delete from outbound.contact_control where id = '69000000-0000-4000-8000-000000000400' $$,
@@ -215,7 +220,7 @@ insert into evidence.assertion (id, source_record_id, kind, value_norm, value) v
   ('69000000-0000-4000-8000-000000000503', '69000000-0000-4000-8000-000000000303', 'unsubscribe_request', 'held@lab.example',
    '{"basis": "pending_review", "review_reason": "lineage_missing"}');
 select throws_ok($$ update evidence.assertion set resolution = 'rejected' where id = '69000000-0000-4000-8000-000000000503' $$,
-  'P0001', null, 'a held «BAJA» is never dismissed');
+  'P0001', null, 'a held «BAJA» is never dismissed without a decision time and operator');
 select throws_ok($$ update evidence.assertion set value_norm = 'other@lab.example' where id = '69000000-0000-4000-8000-000000000503' $$,
   'P0001', null, 'a held «BAJA» never moves to another address');
 select throws_ok($$ update evidence.assertion set resolution = 'promoted', resolved_kind = 'contact_control', resolved_id = '69000000-0000-4000-8000-000000000400',
@@ -334,6 +339,69 @@ select throws_ok($$ update evidence.assertion set resolved_id = '69000000-0000-4
   'P0001', null, 'a resolved request is never re-pointed');
 select throws_ok($$ update evidence.source_record set review_status = 'pending' where id = '69000000-0000-4000-8000-000000000304' $$,
   'P0001', null, 'promoted evidence never returns to pending');
+
+-- ── a dismissed false positive (as add_contact_control does it, as the owner) ───────────────
+select pg_temp.ins('69000000-0000-4000-8000-00000000060d', 'dismissed@lab.example', 'included', '{}', '{}', null, null);
+select pg_temp.ins('69000000-0000-4000-8000-00000000060e', 'both@lab.example', 'included', '{}', '{}', null, null);
+select pg_temp.ins('69000000-0000-4000-8000-00000000060f', 'twice@lab.example', 'included', '{}', '{}', null, null);
+insert into evidence.source_record (id, kind, dedupe_key, payload, payload_sha256, review_status) values
+  ('69000000-0000-4000-8000-000000000305', 'gmail_message', 'gmail_unsubscribe:' || repeat('7', 64), '{"body_text": "BAJA"}', repeat('d', 64), 'pending'),
+  ('69000000-0000-4000-8000-000000000306', 'gmail_message', 'gmail_unsubscribe:' || repeat('6', 64), '{"body_text": "BAJA"}', repeat('d', 64), 'pending'),
+  ('69000000-0000-4000-8000-000000000307', 'gmail_message', 'gmail_unsubscribe:' || repeat('5', 64), '{"body_text": "BAJA"}', repeat('d', 64), 'pending'),
+  ('69000000-0000-4000-8000-000000000308', 'gmail_message', 'gmail_unsubscribe:' || repeat('4', 64), '{"body_text": "BAJA"}', repeat('d', 64), 'pending');
+insert into evidence.assertion (id, source_record_id, kind, value_norm, value) values
+  ('69000000-0000-4000-8000-000000000505', '69000000-0000-4000-8000-000000000305', 'unsubscribe_request', 'dismissed@lab.example',
+   '{"basis": "pending_review", "review_reason": "lineage_missing"}'),
+  ('69000000-0000-4000-8000-000000000506', '69000000-0000-4000-8000-000000000306', 'unsubscribe_request', 'both@lab.example',
+   '{"basis": "pending_review", "review_reason": "recipient_mismatch"}'),
+  ('69000000-0000-4000-8000-000000000507', '69000000-0000-4000-8000-000000000307', 'unsubscribe_request', 'twice@lab.example',
+   '{"basis": "pending_review", "review_reason": "lineage_missing"}'),
+  ('69000000-0000-4000-8000-000000000508', '69000000-0000-4000-8000-000000000308', 'unsubscribe_request', 'twice@lab.example',
+   '{"basis": "pending_review", "review_reason": "lineage_missing"}');
+insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source, created_by_operator_id, origin_source_record_id) values
+  ('address', 'both@lab.example', 'block', 'marketing', 'unsubscribe', 'unsubscribe_handler', '69000000-0000-4000-8000-000000000001', '69000000-0000-4000-8000-000000000310');
+select is(outbound.marketing_contact_refusals('69000000-0000-4000-8000-00000000060d'), array['unsubscribe_pending_review'],
+  'before its dismissal the hold refuses');
+select throws_ok($$ update evidence.assertion set resolution = 'rejected', resolved_at = now(), resolved_by_operator_id = '69000000-0000-4000-8000-000000000001',
+  value = '{}' where id = '69000000-0000-4000-8000-000000000505' $$,
+  'P0001', null, 'a dismissal never rewrites the request it dismisses');
+select throws_ok($$ update evidence.assertion set resolution = 'rejected', resolved_at = now(), resolved_by_operator_id = '69000000-0000-4000-8000-000000000001'
+  where id = '69000000-0000-4000-8000-000000000500' $$,
+  'P0001', null, 'a confirmed unsubscribe request is never dismissed, even with a decision time and operator');
+reset role;
+select ok(left(pg_temp.run_as('origenlab_api', $$update evidence.assertion set resolution = 'rejected', resolved_at = now(),
+  resolved_by_operator_id = '69000000-0000-4000-8000-000000000001' where id = '69000000-0000-4000-8000-000000000505'$$), 5) in ('P0001', '42501'),
+  'the api cannot dismiss a held «BAJA» outside the privileged writer');
+set role origenlab_owner;
+select lives_ok($$ update evidence.assertion set resolution = 'rejected', resolved_at = now(), resolved_by_operator_id = '69000000-0000-4000-8000-000000000001'
+  where id in ('69000000-0000-4000-8000-000000000505', '69000000-0000-4000-8000-000000000506', '69000000-0000-4000-8000-000000000507') $$,
+  'the owner dismisses a pending hold: rejected, with a decision time and operator');
+select lives_ok($$ update evidence.source_record set review_status = 'reviewed'
+  where id in ('69000000-0000-4000-8000-000000000305', '69000000-0000-4000-8000-000000000306', '69000000-0000-4000-8000-000000000307') $$,
+  '— and marks its evidence reviewed');
+select is((select value::text || '|' || value_norm || '|' || source_record_id::text from evidence.assertion where id = '69000000-0000-4000-8000-000000000505'),
+  '{"basis": "pending_review", "review_reason": "lineage_missing"}|dismissed@lab.example|69000000-0000-4000-8000-000000000305',
+  'the dismissed request keeps what it was: its value, address and evidence');
+select is(outbound.marketing_contact_refusals('69000000-0000-4000-8000-00000000060d'), '{}'::text[],
+  'a legitimately dismissed hold no longer refuses at send time');
+select is(outbound.marketing_contact_refusals('69000000-0000-4000-8000-00000000060e'), array['unsubscribe'],
+  'a dismissed hold never lifts a permanent unsubscribe on the same address');
+select is(outbound.marketing_contact_refusals('69000000-0000-4000-8000-00000000060f'), array['unsubscribe_pending_review'],
+  'dismissing one hold leaves another pending hold on the same address refusing');
+select throws_ok($$ update evidence.assertion set resolution = 'unresolved', resolved_at = null, resolved_by_operator_id = null
+  where id = '69000000-0000-4000-8000-000000000505' $$,
+  'P0001', null, 'a dismissal is never undone');
+select throws_ok($$ update evidence.assertion set resolution = 'promoted', resolved_kind = 'contact_control', resolved_id = '69000000-0000-4000-8000-000000000400',
+  resolved_at = now() where id = '69000000-0000-4000-8000-000000000505' $$,
+  'P0001', null, 'a dismissed request is never re-decided');
+select throws_ok($$ update evidence.assertion set resolved_at = now() - interval '1 day' where id = '69000000-0000-4000-8000-000000000505' $$,
+  'P0001', null, 'a dismissal decision is immutable');
+select throws_ok($$ delete from evidence.assertion where id = '69000000-0000-4000-8000-000000000505' $$,
+  'P0001', null, 'a dismissed request is never deleted');
+select throws_ok($$ update evidence.source_record set review_status = 'pending' where id = '69000000-0000-4000-8000-000000000305' $$,
+  'P0001', null, 'reviewed evidence never returns to pending');
+select throws_ok($$ delete from evidence.source_record where id = '69000000-0000-4000-8000-000000000305' $$,
+  'P0001', null, 'the reply evidence of a dismissed hold is never deleted');
 reset role;
 select is(pg_temp.query_as('origenlab_api', $$select outbound.marketing_contact_refusals('69000000-0000-4000-8000-000000000601')::text$$),
   '{unsubscribe}', 'the api role evaluates the contract under its own grants');
