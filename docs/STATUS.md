@@ -1532,6 +1532,17 @@ durable opportunities, tasks and quotes have never been migrated. Both are recor
 no message is attached to a quote, a person or an opportunity, and `crm.*` is unchanged by
 them.
 
+### 2.7.28 Dashboard proxy lists the seven CRM workspace reads, 2026-09-26 — not deployed
+
+`apps/dashboard-proxy/src/allowlist.ts` lists `GET /v2/workspace/{overview,pipeline,providers,
+marketing,drive,review}` and `GET /v2/cockpit/work-queue` by exact path; every other method
+answers 405, every neighbouring path 403, and only the dashboard session cookie goes upstream.
+The API enforces the session (401) and the viewer mask; `apps/api/tests/test_v2_proxied_workspace_reads.py`
+pins both for exactly these seven paths under production settings (Google sign-in on, header login
+off): 401 without a session, with a forged cookie, or with only the Cloudflare Access operator
+header; a viewer gets masked addresses; an admin does not. Every other `/v2/cockpit/*` path and all
+of `/v2/commands/*` stay refused. Proxy suite 213, that API file 28. **Not deployed.**
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
