@@ -381,21 +381,36 @@ export interface SuppressionEntry {
   last_observed_at: string | null;
 }
 
+/** A «BAJA» from a sender that could not be proven: held for review, blocking its exact address. */
+export interface PendingUnsubscribeReview {
+  assertion_id: string;
+  address: string;
+  review_reason: "lineage_missing" | "recipient_mismatch" | string;
+  review_reason_label: string;
+  grammar_version: string | null;
+  policy_version: string | null;
+  observed_at: string | null;
+  recorded_at: string;
+}
+
 export interface SuppressionsResponse {
-  summary: { unsubscribed_addresses: number; baja_messages: number; last_recorded_at: string | null };
+  summary: { unsubscribed_addresses: number; baja_messages: number; last_recorded_at: string | null; pending_reviews?: number };
   entries: SuppressionEntry[];
+  pending_reviews?: PendingUnsubscribeReview[];
   truncated: boolean;
   frozen_campaigns: {
     campaign_id: string;
     name: string;
     status: string;
     unsubscribed_since_freeze: number;
+    pending_review_since_freeze?: number;
     refused_since_freeze: number;
     included_at_freeze: number;
   }[];
   blocks_by_purpose: { kind: string; purpose: string; count: number }[];
   gmail_sync: { automatic: boolean; label: string };
   grammar: { version: string; accepted: string[]; rule: string };
+  sender_policy?: { version: string; rule: string };
   apply_enabled: boolean;
   permanent: boolean;
   resubscribe_supported: boolean;

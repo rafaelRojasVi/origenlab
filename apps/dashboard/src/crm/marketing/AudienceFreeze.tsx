@@ -73,6 +73,7 @@ const UNSUBSCRIBE_BLOCKER: SendBlocker = {
 
 const NOTE_LABEL: Record<string, string> = {
   unsubscribed: "Solicitó la BAJA",
+  unsubscribe_pending_review: "BAJA en revisión (bloqueada)",
   recontact_approved: "Recontacto aprobado (W12)",
 };
 

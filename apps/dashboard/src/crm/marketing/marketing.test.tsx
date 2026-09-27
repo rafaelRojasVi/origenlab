@@ -619,7 +619,13 @@ describe("W12 recontact review", () => {
 // ─────────────────────────────────────────────────────────────── W10 unsubscribe status
 
 const SUPPRESSIONS = {
-  summary: { unsubscribed_addresses: 2, baja_messages: 3, last_recorded_at: "2026-09-27T12:00:00Z" },
+  summary: { unsubscribed_addresses: 2, baja_messages: 3, last_recorded_at: "2026-09-27T12:00:00Z", pending_reviews: 1 },
+  pending_reviews: [
+    { assertion_id: "a1", address: "***@lab.test", review_reason: "recipient_mismatch",
+      review_reason_label: "El remitente no es el destinatario del correo enviado al que responde",
+      grammar_version: "baja-reply/2026-09-27.v2", policy_version: "unsubscribe-sender/2026-09-27.v2",
+      observed_at: "2026-09-26T18:20:00Z", recorded_at: "2026-09-27T12:05:00Z" },
+  ],
   entries: [
     { contact_control_id: "cc1", address: "***@uni.test", purpose: "marketing", reason: "unsubscribe", source: "unsubscribe_handler",
       recorded_at: "2026-09-27T12:00:00Z", baja_messages: 2, last_observed_at: "2026-09-26T18:04:05Z" },
@@ -628,10 +634,12 @@ const SUPPRESSIONS = {
   ],
   truncated: false,
   frozen_campaigns: [{ campaign_id: DRAFT.campaign_id, name: "Borrador IKA", status: "audience_frozen", unsubscribed_since_freeze: 1,
-    refused_since_freeze: 1, included_at_freeze: 12 }],
+    pending_review_since_freeze: 0, refused_since_freeze: 1, included_at_freeze: 12 }],
   blocks_by_purpose: [{ kind: "block", purpose: "marketing", count: 2 }],
   gmail_sync: { automatic: false, label: "Las respuestas de Gmail no se sincronizan automáticamente todavía. Una BAJA queda registrada sólo cuando un operador aplica un lote de respuestas ya descargadas." },
-  grammar: { version: "baja-reply/2026-09-27.v1", accepted: ["BAJA", "BAJA."], rule: "Sólo una respuesta cuyo texto propio es exactamente «BAJA»." },
+  grammar: { version: "baja-reply/2026-09-27.v2", accepted: ["BAJA", "BAJA.", "REMOVER", "REMOVER."],
+    rule: "Sólo una respuesta cuyo texto propio es exactamente «BAJA» o «REMOVER»." },
+  sender_policy: { version: "unsubscribe-sender/2026-09-27.v2", rule: "Si no se puede comprobar, la BAJA queda en revisión." },
   apply_enabled: false, permanent: true, resubscribe_supported: false,
   storage: { table: "outbound.contact_control", database: "origenlab_test_abcd1234" },
 };
@@ -666,10 +674,17 @@ describe("Bajas (W10)", () => {
     expect(rows[0]).toHaveTextContent("***@uni.test");
     expect(rows[1]).toHaveTextContent("bloqueo previo: suppression list");
     expect(screen.getByTestId("frozen-vs-baja")).toHaveTextContent("1 con BAJA posterior");
-    expect(screen.getByTestId("baja-grammar")).toHaveTextContent("«BAJA», «BAJA.»");
+    expect(screen.getByTestId("baja-grammar")).toHaveTextContent("«BAJA», «BAJA.», «REMOVER», «REMOVER.»");
+    expect(screen.getByTestId("baja-grammar")).toHaveTextContent("unsubscribe-sender/2026-09-27.v2");
+    // A held «BAJA» is shown, masked as served, with why it could not be proven — and no action.
+    const held = screen.getAllByTestId("pending-review-row");
+    expect(held).toHaveLength(1);
+    expect(held[0]).toHaveTextContent("***@lab.test");
+    expect(held[0]).toHaveTextContent("no es el destinatario");
+    expect(within(screen.getByTestId("pending-reviews")).queryAllByRole("button")).toHaveLength(0);
     // No action of any kind: no button inside the panel, no Send anywhere, no write.
     expect(within(panel).queryAllByRole("button")).toHaveLength(0);
-    expect(screen.queryByRole("button", { name: /enviar|aplicar|sincronizar|suscrib/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /enviar|aplicar|sincronizar|suscrib|confirmar|descartar/i })).toBeNull();
     expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
     expect(panel.textContent).not.toMatch(/[a-z0-9]+@(uni|lab)\.test/);
   });
