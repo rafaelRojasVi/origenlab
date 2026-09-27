@@ -19,7 +19,7 @@ the runbooks ([`OPERATIONS.md`](OPERATIONS.md)).
 Everything here is **[V2 DECISION]**, and **[PLANNED]** except where marked
 **(impl)**. **The local schema foundation exists**: `supabase/roles.sql` and the
 migrations under `supabase/migrations/` create the four roles, the seven schemas
-and the 36 tables with their grants and RLS against a local PostgreSQL 17
+and the 37 tables with their grants and RLS against a local PostgreSQL 17
 container, proven by `supabase/tests/` and enforced in CI
 ([`OPERATIONS.md`](OPERATIONS.md) §4.1). **No hosted Supabase project, bucket,
 backup or advisor run exists**, and no application code reads or writes these
@@ -34,7 +34,7 @@ flowchart TB
   WEB["apps/web — Astro<br/>public marketing site"]
   API["apps/api — FastAPI<br/>the only business command boundary"]
   WORKER["apps/worker — Python<br/>Gmail · MIME · PDF · ChileCompra · LLM"]
-  PG[("Supabase PostgreSQL 17<br/>7 private schemas · 36 tables")]
+  PG[("Supabase PostgreSQL 17<br/>7 private schemas · 37 tables")]
   ST[("Private Storage<br/>eml · attachments · PDFs")]
   AUTH["Supabase Auth<br/>ES256 JWT + JWKS"]
   GMAIL["Gmail API<br/>one production mailbox"]
@@ -208,7 +208,7 @@ as ordinary arguments.
 
 How the database-side mechanisms interact — precisely:
 
-1. **RLS is `ENABLE`d on all 36 tables** and is **not** `FORCE`d. Because the
+1. **RLS is `ENABLE`d on all 37 tables** and is **not** `FORCE`d. Because the
    application tables are deliberately not `FORCE ROW LEVEL SECURITY`, the
    object owner (`origenlab_owner`) crosses RLS by virtue of owning them. That
    ownership exemption is what makes migrations workable and what gives layer

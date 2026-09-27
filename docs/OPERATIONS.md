@@ -1531,7 +1531,7 @@ Drill procedure:
 
 1. Restore the database to a scratch project at a chosen point in time.
 2. Restore the bucket backup into that project's Storage.
-3. Verify: the 36 tables exist; row counts are plausible; a sample quotation
+3. Verify: the 37 tables exist; row counts are plausible; a sample quotation
    revision's `pdf_sha256` matches the restored object byte-for-byte and its
    party snapshot is intact; the domain event stream is contiguous.
 4. Confirm **both send flags are false** in the restored copy.
