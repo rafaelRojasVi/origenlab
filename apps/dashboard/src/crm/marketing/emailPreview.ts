@@ -13,8 +13,9 @@
  * 3. **`<iframe sandbox="">`** in `EmailFrame`: unique origin, no scripts, no forms, no popups,
  *    no top-level navigation; `referrerpolicy="no-referrer"`.
  *
- * Links are kept visible but inert (`href="#"`, the target in `title`), so a click in the
- * preview does not load a third-party page into the frame.
+ * Links are kept visible but inert (`href="#"`, the target in `title`; `target`, `ping` and
+ * `download` removed), so a click in the preview neither loads a third-party page into the frame
+ * nor navigates the dashboard.
  */
 
 export const PREVIEW_IMAGE_ORIGIN = "https://origenlab.cl";
@@ -94,6 +95,12 @@ export function buildPreviewDocument(source: string | null | undefined): Preview
       if (name.startsWith("on")) {
         el.removeAttribute(attr.name);
         removed.add("on…=");
+        continue;
+      }
+      // A link may not aim at another browsing context or ping a tracker on click.
+      if (name === "target" || name === "formtarget" || name === "ping" || name === "download") {
+        el.removeAttribute(attr.name);
+        removed.add(`${name}=`);
         continue;
       }
       if (name === "style") {

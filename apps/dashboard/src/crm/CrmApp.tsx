@@ -217,8 +217,8 @@ function SideNav({
         </div>
       ))}
       <p className="mt-6 px-2 text-[10px] leading-4 text-ink-faint">
-        La única escritura es guardar borradores de campaña, donde el entorno lo habilita. Todo lo demás es
-        de lectura, y nada se envía.
+        Las únicas escrituras son de Marketing — borradores, congelar una audiencia y la planificación
+        interna — donde el entorno las habilita. Todo lo demás es de lectura, y nada se envía.
       </p>
     </nav>
   );

@@ -362,3 +362,43 @@ export interface FrozenSnapshot {
   storage: { table: string; database: string };
   send_blockers: SendBlocker[];
 }
+
+/** `GET /v2/workspace/marketing/campaigns/{id}/archive` — what was (or will be) sent, as stored. */
+export interface CampaignArchive {
+  campaign_id: string;
+  name: string;
+  status: string;
+  subject: string | null;
+  preheader: string | null;
+  version: number;
+  content_sha256: string | null;
+  content_frozen_at: string | null;
+  audience_frozen_at: string | null;
+  audience_sha256: string | null;
+  audience_policy_version: string | null;
+  created_at: string | null;
+  origin: "imported_v1" | "native_v2";
+  sender_address: string | null;
+  sender_name: string | null;
+  /** Present only when the content is frozen and its fingerprint recomputes. */
+  html: string | null;
+  html_state: "archived_verified" | "not_archived" | "not_frozen" | "no_html" | "fingerprint_mismatch";
+  recipients_by_state: Record<string, number>;
+  send_attempts: { submission_state: string; delivery_state: string; count: number }[];
+  send_batches: { day: string; accepted: number; first_accepted_at: string; last_accepted_at: string }[];
+  metrics: { opens: number | null; clicks: number | null; note: string };
+  storage: { table: string; database: string };
+}
+
+export interface PlanningResult {
+  campaign_id: string;
+  status: string;
+  planning_version: number;
+  planned_for_date: string | null;
+  planned_for_at: string | null;
+  time_zone: string;
+  changed: boolean;
+  schedules_send: false;
+  label: string;
+  replayed?: boolean;
+}

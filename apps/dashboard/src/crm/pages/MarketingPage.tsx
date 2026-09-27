@@ -3,7 +3,11 @@ import { fetchMarketing } from "../crmApi";
 import type { CampaignSummary, MarketingResponse } from "../crmTypes";
 import { AudienceBuilder } from "../marketing/AudienceBuilder";
 import { AudienceFreeze } from "../marketing/AudienceFreeze";
+import { CampaignCalendar } from "../marketing/CampaignCalendar";
+import { CampaignDetail } from "../marketing/CampaignDetail";
 import { CampaignEditor, type EditorSeed } from "../marketing/CampaignEditor";
+import { MarketingOverview } from "../marketing/MarketingOverview";
+import { PLANNING_LABEL, fmtShortDay, relativeDay, santiagoTime, todayInSantiago } from "../marketing/calendar";
 import { EmailFrame } from "../marketing/EmailFrame";
 import { fetchCampaign, fetchTaxonomy } from "../marketing/marketingApi";
 import type { CampaignContent, EquipmentTaxonomy } from "../marketing/marketingTypes";
@@ -41,14 +45,17 @@ const STATUS_LABEL: Record<string, string> = {
   audience_frozen: "Audiencia congelada",
   approved: "Aprobada",
   sending: "Enviando",
+  active: "Enviando",
+  completed: "Completada",
   cancelled: "Cancelada",
 };
 
-type Tab = "campanas" | "audiencias";
+type Tab = "campanas" | "calendario" | "audiencias";
 type View =
   | { kind: "list" }
   | { kind: "editor"; seed: EditorSeed; key: string }
-  | { kind: "freeze"; campaign: CampaignContent; key: string };
+  | { kind: "freeze"; campaign: CampaignContent; key: string }
+  | { kind: "detail"; campaignId: string };
 
 export function MarketingPage() {
   const [state, reload] = useResource(fetchMarketing);
@@ -59,6 +66,10 @@ export function MarketingPage() {
   const taxonomy = taxonomyState.kind === "ready" ? taxonomyState.data : null;
   const draftsEnabled = state.kind === "ready" && Boolean(state.data.authoring?.drafts_enabled);
   const freezeEnabled = state.kind === "ready" && Boolean(state.data.authoring?.freeze_enabled);
+  const planningEnabled = state.kind === "ready" && Boolean(state.data.authoring?.planning_enabled);
+  const openDetail = (id: string) => setView({ kind: "detail", campaignId: id });
+  const detailSummary =
+    view.kind === "detail" && state.kind === "ready" ? state.data.campaigns.find((c) => c.campaign_id === view.campaignId) ?? null : null;
 
   const openNew = () => setView({ kind: "editor", seed: { stored: null }, key: `new-${Date.now()}` });
   const openStored = useCallback(async (id: string) => {
@@ -88,13 +99,16 @@ export function MarketingPage() {
         title="Marketing"
         subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí: el envío está bloqueado mientras no exista procesamiento de BAJA."
         actions={
-          tab === "campanas" && view.kind === "list" ? (
+          tab !== "audiencias" && view.kind === "list" ? (
             <button type="button" onClick={openNew} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black">
               Nueva campaña
             </button>
           ) : null
         }
       />
+      {state.kind === "ready" && view.kind === "list" && tab !== "audiencias" ? (
+        <MarketingOverview campaigns={state.data.campaigns} onOpen={openDetail} />
+      ) : null}
       <Segmented
         label="Sección de marketing"
         value={tab}
@@ -104,6 +118,7 @@ export function MarketingPage() {
         }}
         options={[
           { value: "campanas", label: "Campañas" },
+          { value: "calendario", label: "Calendario" },
           { value: "audiencias", label: "Audiencias por equipo" },
         ]}
       />
@@ -114,6 +129,28 @@ export function MarketingPage() {
       ) : null}
       {tab === "audiencias" ? (
         taxonomy ? <AudienceBuilder taxonomy={taxonomy} /> : <TaxonomyGate state={taxonomyState} />
+      ) : view.kind === "detail" ? (
+        detailSummary ? (
+          <CampaignDetail
+            key={view.campaignId}
+            summary={detailSummary}
+            planningEnabled={planningEnabled}
+            onBack={() => {
+              setView({ kind: "list" });
+              reload();
+            }}
+            onEdit={(id) => void openStored(id)}
+            onPlanned={() => reload()}
+          />
+        ) : (
+          <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={3} />}>
+            {() => <EmptyState title="Campaña no encontrada">La campaña ya no figura en el CRM.</EmptyState>}
+          </ResourceGate>
+        )
+      ) : tab === "calendario" && view.kind === "list" ? (
+        <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} />}>
+          {(data) => <CampaignCalendar campaigns={data.campaigns} taxonomy={taxonomy} onOpen={openDetail} />}
+        </ResourceGate>
       ) : view.kind === "freeze" ? (
         <div className="space-y-3">
           <button
@@ -155,7 +192,7 @@ export function MarketingPage() {
         </div>
       ) : (
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={3} cards />}>
-          {(data) => <Body data={data} onOpen={(id) => void openStored(id)} />}
+          {(data) => <Body data={data} onOpen={(id) => void openStored(id)} onHistory={openDetail} />}
         </ResourceGate>
       )}
     </div>
@@ -170,7 +207,7 @@ function TaxonomyGate({ state }: { state: ResourceState<EquipmentTaxonomy> }) {
   );
 }
 
-function Body({ data, onOpen }: { data: MarketingResponse; onOpen: (id: string) => void }) {
+function Body({ data, onOpen, onHistory }: { data: MarketingResponse; onOpen: (id: string) => void; onHistory: (id: string) => void }) {
   const drafts = data.authoring?.drafts_enabled;
   const storage = data.storage;
   const note = (
@@ -213,7 +250,7 @@ function Body({ data, onOpen }: { data: MarketingResponse; onOpen: (id: string) 
       {note}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
         {data.campaigns.map((c) => (
-          <CampaignCard key={c.campaign_id} c={c} onOpen={() => onOpen(c.campaign_id)} />
+          <CampaignCard key={c.campaign_id} c={c} onOpen={() => onOpen(c.campaign_id)} onHistory={() => onHistory(c.campaign_id)} />
         ))}
       </div>
       {replies === 0 ? <NotImportedState title="Respuestas a campañas">{data.replies_note}</NotImportedState> : null}
@@ -259,7 +296,7 @@ function Thumbnail({ c }: { c: CampaignSummary }) {
   );
 }
 
-function CampaignCard({ c, onOpen }: { c: CampaignSummary; onOpen: () => void }) {
+function CampaignCard({ c, onOpen, onHistory }: { c: CampaignSummary; onOpen: () => void; onHistory: () => void }) {
   const states = Object.entries(c.recipients_by_state).sort((a, b) => b[1] - a[1]);
   const total = states.reduce((n, [, v]) => n + v, 0);
   const attempts = c.send_attempts.reduce((n, a) => n + a.count, 0);
@@ -279,10 +316,23 @@ function CampaignCard({ c, onOpen }: { c: CampaignSummary; onOpen: () => void })
           </p>
           {c.preheader ? <p className="truncate text-[11px] text-ink-faint">{c.preheader}</p> : null}
         </div>
-        <Badge glyph={false} tone={c.status === "draft" ? "info" : "neutral"}>
-          {STATUS_LABEL[c.status] ?? c.status}
-        </Badge>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <Badge glyph={false} tone={c.status === "draft" ? "info" : "neutral"}>
+            {STATUS_LABEL[c.status] ?? c.status}
+          </Badge>
+          {c.origin === "imported_v1" ? (
+            <Badge tone="warn" title="Cargada desde el registro de envíos de V1">
+              Histórica V1
+            </Badge>
+          ) : null}
+        </div>
       </div>
+      {c.planned_for_date && (c.status === "draft" || c.status === "audience_frozen") ? (
+        <p className="mt-2 rounded-md border border-dashed border-warn/60 px-2 py-1 text-[11px] text-warn" title={PLANNING_LABEL} data-testid="card-planned">
+          Planificada: {fmtShortDay(c.planned_for_date)}
+          {c.planned_for_at ? ` · ${santiagoTime(c.planned_for_at)}` : ""} · {relativeDay(c.planned_for_date, todayInSantiago())}
+        </p>
+      ) : null}
       {total > 0 ? (
         <>
           <p className="mt-3 text-2xl font-semibold tabular-nums tracking-tight text-ink">{fmtInt(total)}</p>
@@ -317,6 +367,9 @@ function CampaignCard({ c, onOpen }: { c: CampaignSummary; onOpen: () => void })
                 c.last_sent_at && c.last_sent_at.slice(0, 10) !== c.first_sent_at?.slice(0, 10) ? ` – ${fmtDate(c.last_sent_at)}` : ""
               }`}
         </span>
+        <button type="button" onClick={onHistory} className="shrink-0 font-medium text-brand-700 hover:underline" data-testid="open-history">
+          Historial
+        </button>
         <button type="button" onClick={onOpen} className="shrink-0 font-medium text-brand-700 hover:underline">
           {c.status === "draft" ? "Editar" : "Abrir"}
         </button>

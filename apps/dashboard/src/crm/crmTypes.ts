@@ -149,6 +149,30 @@ export interface CampaignSummary {
   recipients_by_state: Record<string, number>;
   send_attempts: { submission_state: string; delivery_state: string; count: number }[];
   replies_recorded: number;
+  /** Accepted attempts grouped by the day (America/Santiago) they were accepted on. */
+  send_batches?: SendBatch[];
+  /** Attempts with no acceptance date (rejected, never submitted). */
+  attempts_without_date?: number;
+  /** Internal planning only; schedules nothing. A Santiago calendar day. */
+  planned_for_date?: string | null;
+  /** The planned instant in UTC, when a time was chosen. */
+  planned_for_at?: string | null;
+  planning_version?: number;
+  audience_frozen_at?: string | null;
+  content_frozen_at?: string | null;
+  content_sha256?: string | null;
+  /** `imported_v1`: loaded from the V1 send ledger. `native_v2`: written in this CRM. */
+  origin?: "imported_v1" | "native_v2";
+  sender_address?: string | null;
+  sender_name?: string | null;
+  equipment_lines?: { family_id: string; source: "audience_criteria" | "name_or_subject"; matched_term: string | null }[];
+}
+
+export interface SendBatch {
+  day: string;
+  accepted: number;
+  first_accepted_at: string;
+  last_accepted_at: string;
 }
 
 export interface MarketingResponse {
@@ -157,7 +181,8 @@ export interface MarketingResponse {
   replies_note: string;
   /** Where campaigns (and drafts) are stored, as the API reports it. */
   storage?: { table: string; database: string };
-  authoring?: { drafts_enabled: boolean; freeze_enabled?: boolean };
+  authoring?: { drafts_enabled: boolean; freeze_enabled?: boolean; recontact_review_enabled?: boolean; planning_enabled?: boolean };
+  time_zone?: string;
 }
 
 export interface DriveDocument extends DriveLinkRef {

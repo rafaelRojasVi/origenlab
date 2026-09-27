@@ -1,11 +1,12 @@
 /**
- * Marketing client: GET reads over `/v2/workspace/marketing/*`, and the only three writes the
- * dashboard makes besides logout — creating and saving a campaign **draft**, and freezing a
- * draft's audience into an immutable recipient snapshot.
+ * Marketing client: GET reads over `/v2/workspace/marketing/*`, and the only four writes the
+ * dashboard makes besides logout — creating and saving a campaign **draft**, freezing a draft's
+ * audience into an immutable recipient snapshot, and setting an unsent campaign's internal
+ * planned day.
  *
  * The POSTs target exactly `CAMPAIGN_COMMAND_PATHS` (pinned by `src/test/noWritePolicy.test.ts`).
- * None approves or sends anything: the API has no such command, and there is no Send button.
- * The Worker forwards exactly these three POSTs; each still mounts upstream only behind its own
+ * None approves, schedules or sends anything: the API has no such command, and there is no Send
+ * button. The Worker forwards exactly these four POSTs; each still mounts upstream only behind its own
  * API switch, and a switched-off command is reported as "not enabled here".
  */
 
@@ -13,6 +14,7 @@ import { OperatorApiError, fetchJsonGet, operatorApiUrl } from "../../api/operat
 import type {
   AudienceQuery,
   AudienceResponse,
+  CampaignArchive,
   CampaignContent,
   DraftSaveResult,
   EquipmentTaxonomy,
@@ -20,6 +22,7 @@ import type {
   FreezePreview,
   FreezeResult,
   FrozenSnapshot,
+  PlanningResult,
   RecontactDecision,
   ReviewDecision,
 } from "./marketingTypes";
@@ -30,16 +33,20 @@ export const MARKETING_PATHS = {
   campaign: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}`,
   freezePreview: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/freeze-preview`,
   recipients: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/recipients`,
+  archive: (id: string) => `/v2/workspace/marketing/campaigns/${encodeURIComponent(id)}/archive`,
 } as const;
 
 export const CAMPAIGN_COMMAND_PATHS = {
   create: "/v2/commands/create-campaign-draft",
   save: "/v2/commands/save-campaign-draft",
   freeze: "/v2/commands/freeze-campaign-audience",
+  plan: "/v2/commands/set-campaign-planning",
 } as const;
 
 export const fetchTaxonomy = () => fetchJsonGet<EquipmentTaxonomy>(operatorApiUrl(MARKETING_PATHS.taxonomy));
 export const fetchCampaign = (id: string) => fetchJsonGet<CampaignContent>(operatorApiUrl(MARKETING_PATHS.campaign(id)));
+export const fetchCampaignArchive = (id: string) =>
+  fetchJsonGet<CampaignArchive>(operatorApiUrl(MARKETING_PATHS.archive(id)));
 
 export function fetchAudience(query: AudienceQuery): Promise<AudienceResponse> {
   const params: Record<string, string | string[] | undefined> = {
@@ -156,6 +163,19 @@ export function freezeCampaignAudience(
   };
   return postCommand<FreezeResult>(CAMPAIGN_COMMAND_PATHS.freeze, { ...body, criteria, confirmed: true }, idempotencyKey);
 }
+
+/**
+ * Set, change or clear an unsent campaign's internal planned day (and optional time, both in
+ * America/Santiago). Planning metadata only: it approves, freezes, schedules and sends nothing.
+ */
+export function setCampaignPlanning(
+  body: { campaign_id: string; expected_planning_version: number; planned_for_date: string | null; planned_for_time: string | null },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<PlanningResult> {
+  return postCommand<PlanningResult>(CAMPAIGN_COMMAND_PATHS.plan, body, idempotencyKey);
+}
+
+export { newIdempotencyKey };
 
 /** The API's refusal `{detail: {code, message}}`, when the error carries one. */
 export function refusalOf(err: unknown): { code: string; message: string } | null {
