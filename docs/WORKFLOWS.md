@@ -214,6 +214,13 @@ whose "applies to" column covers the attempt's purpose — never a subset of it.
 
 **Three enforcement points, one predicate:**
 
+**Clauses 4-6 as built (2026-09-27).** `outbound.marketing_contact_refusals(campaign_recipient_id)`
+is a read-only `SECURITY INVOKER` function returning the refusals of clauses 4 (applicable address
+block, split into `unsubscribe` and `block`, and a block on the domain or a parent domain), 5
+(`prior_contact` without the recipient's W12 override) and 6 (active `cooldown`), plus
+`not_snapshotted` / `recipient_unknown`, against the live controls. An empty array means those
+clauses hold; it is not `dispatch_allowed`, which still needs clauses 1-3 and 7.
+
 The two SQL steps are `SECURITY DEFINER` functions on the closed list in
 [`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2: `EXECUTE` belongs to
 `origenlab_worker` alone and is the primary authorization boundary, the worker
@@ -457,7 +464,9 @@ than one institution, or whose contact point names another institution is frozen
 after an operator decides include or exclude with a note (`identity_review`; exclude is
 `manual_hold`). Relevance is recorded apart — `evidenced` with each basis, source and date,
 or `sin_informacion` — and never decides eligibility. Steps 3–12 remain unbuilt, and
-sending stays blocked until unsubscribe processing exists (W10 **[OPEN]**). Step 3 is built
+sending stays blocked: «BAJA» replies are recorded only when an operator applies a fetched batch
+(§W10), Gmail replies are not synchronized automatically, and any future send must call
+`outbound.marketing_contact_refusals`, which a frozen snapshot never overrides. Step 3 is built
 as part of step 2 (§W12).
 
 **An accepted send records prior contact permanently and additionally creates
@@ -497,7 +506,8 @@ proposal entirely with `not_a_reply`). It is **never** the writer of
 effect of ingestion — and an ambiguous reply stays in the table with its proposal
 unconfirmed rather than being resolved or dropped. The `unsubscribe_request` and
 `complaint` classes are *proposals only*: the contact control they imply is written by
-§W10 step 3, whose unsubscribe mechanism remains **[OPEN]**.
+§W10 step 3 — for an unsubscribe, the «BAJA» reply command built there, which applies its own
+grammar and never trusts a classifier's proposal.
 
 ### W7 — ChileCompra notice → review → opportunity
 
@@ -572,8 +582,41 @@ An unsubscribe is a marketing refusal, so it is recorded with
 `purpose = marketing` and leaves transactional quotations reachable; a bounce
 or a complaint says the channel itself is bad, so it is `purpose = all`.
 
-**[OPEN]** unsubscribe mechanism; recommended default is a `List-Unsubscribe`
-mailto plus a one-click endpoint on FastAPI.
+**Step 3 for an unsubscribe, as built (2026-09-27).** The mechanism is the one the campaign
+footer offers: the recipient **replies «BAJA»**. A batch of replies the mail pipeline has already
+fetched is previewed (`POST /v2/unsubscribe/preview`, a read) and then applied
+(`POST /v2/commands/apply-unsubscribe-replies`, sales/admin, `Idempotency-Key`, the preview's
+`input_sha256` and `plan_sha256` — a changed batch or outcome is refused — behind `ORIGENLAB_V2_UNSUBSCRIBE_APPLY_ENABLED`, default off). Nothing reads,
+labels or answers a mailbox; synchronizing Gmail replies automatically is **not built**.
+
+- **Grammar** (`baja-reply/2026-09-27.v1`, body only, never the subject): the reply's own text —
+  cut before quoted history (`>`, «El … escribió:», «On … wrote:», «-----Mensaje original-----»,
+  an Outlook rule or `De:`/`From:` header) or a `--` signature — trimmed, NFKC-normalized and
+  case-folded must be exactly `baja` or `baja.`. Anything else (`BAJA!`, «dar de baja», «BAJA por
+  favor», a name or «Enviado desde mi iPhone» after it, an unrecognized attribution) is **not** an
+  instruction and is left for a human; it writes nothing.
+- **Who**: the sender must be exactly one well-formed address that OrigenLab already knows (a
+  contact control, a campaign recipient or a CRM email contact point), not an OrigenLab mailbox.
+  Any malformed record refuses the whole batch.
+- **What is written**, by `outbound.add_contact_control` ([`ARCHITECTURE.md`](ARCHITECTURE.md)
+  §6.2) and nothing else: the reply as received (`evidence.source_record`, kind `gmail_message`,
+  key `gmail_unsubscribe:<sha256 of the Message-ID>`, body and its hash); the
+  `contact_control(block, purpose = marketing, reason = unsubscribe, source =
+  unsubscribe_handler)`; an `evidence.assertion` (`unsubscribe_request`) resolving the message to
+  that control; one `contact_control.added` event. A later «BAJA» from an already suppressed
+  address — or one already under another marketing block — adds its evidence, links it
+  (`contact_control.evidence_linked`) and changes nothing else. The same message twice is one fact.
+- **Permanence**: an unsubscribe block, and any block a «BAJA» was linked to, is never updated
+  or deleted, and its evidence is immutable (trigger `outbound.unsubscribe_permanent`). Step 5's
+  `revoke_block` does not reach it; **re-subscribing does not exist**.
+- **Enforcement**: the audience preview and the freeze exclude the address (`block` with the
+  note `unsubscribed`); W12 cannot lift it. A snapshot is never permission:
+  `outbound.marketing_contact_refusals(recipient)` evaluates §2 clauses 4-6 against today's
+  controls, so a recipient frozen before its «BAJA» is refused. It is the contract every future
+  send step must call; no send path exists yet.
+
+**[OPEN]** automatic Gmail reply synchronization, and a `List-Unsubscribe` header with a one-click
+endpoint on FastAPI for when a send path exists.
 
 ### W11 — Tasks and follow-ups
 

@@ -271,8 +271,15 @@ worker-written quote columns. Nothing else qualifies, and the list is closed:
 | `outbound.resolve_ambiguous(attempt_id, verdict, reason)` | the resolution fields of one `send_attempt` | `origenlab_api` |
 | `outbound.authorize_retry(attempt_id, reason)` | one new `send_attempt` | `origenlab_api` |
 | `outbound.set_send_control(flag, value, reason)` | `send_control` | `origenlab_api` |
-| `outbound.add_contact_control(kind, purpose, normalized_address, reason, …)` | `contact_control` | `origenlab_api` (admin block and revoke) **and** `origenlab_worker` (hard bounce, complaint, unsubscribe) |
+| `outbound.add_contact_control(kind, purpose, normalized_address, reason, …)` | `contact_control`; for an unsubscribe also its evidence (`evidence.source_record`, `evidence.assertion`) | `origenlab_api` (admin block and revoke; the «BAJA» reply command) **and** `origenlab_worker` (hard bounce, complaint, unsubscribe) |
 | `crm.record_quote_pdf(revision_id, pdf_sha256, sent_evidence_ids)` | only `quote_revision.pdf_sha256` and the sent-evidence ids | `origenlab_worker` |
+
+**Built so far (2026-09-27): only `outbound.add_contact_control`, and only for
+`(block, marketing, unsubscribe)`** — the «BAJA» reply command of
+[`WORKFLOWS.md`](WORKFLOWS.md) §W10. It takes the operator and the open command receipt as
+arguments and checks both, so the unsubscribe evidence it writes stays unreachable to every
+runtime role directly. `EXECUTE` is granted to `origenlab_api` only; the worker's grant arrives
+with the worker. Every other kind, purpose and reason is refused until its own slice.
 
 Each writes exactly one `crm.domain_event`. Every one of them satisfies all of
 the following, and a proposed definer function that misses any line is
