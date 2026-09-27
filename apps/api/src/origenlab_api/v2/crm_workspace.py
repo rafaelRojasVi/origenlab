@@ -31,6 +31,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from origenlab_api.v2.audience_freeze import SEND_TIME_REFUSAL_LABEL
+from origenlab_api.v2.campaign_history import (
+    RecipientQuery,
+    immutability_enforced,
+    read_all_totals,
+    read_audit,
+    read_recipients,
+    read_replies,
+    read_totals,
+    replies_state,
+)
 from origenlab_api.v2.marketing_audience import address_ref, addresses_in
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
 
@@ -799,6 +809,10 @@ class CrmWorkspaceRepository:
                 attempts[cid].append({"submission_state": sub, "delivery_state": dele, "count": int(n)})
             cur.execute("select campaign_id::text, count(*) from outbound.campaign_reply group by 1")
             replies = {r[0]: int(r[1]) for r in cur.fetchall()}
+            cur.execute(_BAJA_LINEAGE_BY_CAMPAIGN_SQL)
+            baja_lineage = {r[0]: int(r[1]) for r in cur.fetchall()}
+            # The card totals: the same predicates the recipient list filters by.
+            totals = read_all_totals(cur)
             cur.execute("select kind, scope, count(*) from outbound.contact_control group by 1, 2 order by 1, 2")
             controls = [{"kind": r[0], "scope": r[1], "count": int(r[2])} for r in cur.fetchall()]
             cur.execute("select current_database()")
@@ -809,6 +823,11 @@ class CrmWorkspaceRepository:
             c["replies_recorded"] = replies.get(c["campaign_id"], 0)
             c["send_batches"] = batches.get(c["campaign_id"], [])
             c["attempts_without_date"] = undated.get(c["campaign_id"], 0)
+            t = totals.get(c["campaign_id"])
+            c["totals"] = t["totals"] if t else None
+            c["attempt_totals"] = t["attempts"] if t else None
+            c["replies"] = replies_state(replies.get(c["campaign_id"], 0), baja_lineage.get(c["campaign_id"], 0))
+            c["subject_state"] = _subject_state(c)
         return {
             "campaigns": campaigns,
             "contact_controls": controls,
@@ -890,6 +909,12 @@ class CrmWorkspaceRepository:
             )
             batches = [{"day": d, "accepted": int(n), "first_accepted_at": a, "last_accepted_at": b}
                        for d, n, a, b in cur.fetchall()]
+            history = read_totals(cur, campaign_id)
+            enforced = immutability_enforced(cur)
+            cur.execute("select count(*) from outbound.campaign_reply where campaign_id = %s", (campaign_id,))
+            reply_count = int(cur.fetchone()[0])
+            cur.execute(_BAJA_LINEAGE_BY_CAMPAIGN_SQL.replace("group by", "and s.campaign_id = %s group by"), (campaign_id,))
+            lineage_rows = cur.fetchall()
         c = rows[0]
         body_text, body_html = c.pop("body_text"), c.pop("body_html")
         if c["content_frozen_at"] is None:
@@ -908,9 +933,54 @@ class CrmWorkspaceRepository:
             "recipients_by_state": recipients,
             "send_attempts": attempts,
             "send_batches": batches,
+            "totals": history["totals"],
+            "attempt_totals": history["attempts"],
+            "replies": replies_state(reply_count, int(lineage_rows[0][1]) if lineage_rows else 0),
+            "subject_state": _subject_state(c),
+            "preheader_state": "recorded" if c["preheader"] else ("not_imported" if c["origin"] == "imported_v1" else "not_set"),
+            "immutable": c["status"] == "archived",
+            "immutable_enforced_by_database": enforced,
             "metrics": {"opens": None, "clicks": None, "note": "Aperturas y clics no se registran en el CRM."},
             "storage": {"table": "outbound.campaign", "database": c.pop("database")},
         }
+
+    # -- campaign history (detail tabs)
+
+    def campaign_recipients(self, campaign_id: str, query: RecipientQuery, role: str | None) -> dict[str, Any] | None:
+        """One page of a campaign's recorded recipients under one total's predicate."""
+        with self._read() as cur:
+            cur.execute("select name, status from outbound.campaign where id = %s", (campaign_id,))
+            found = cur.fetchone()
+            if found is None:
+                return None
+            body = read_recipients(cur, campaign_id, query, role)
+            body["totals"] = read_totals(cur, campaign_id)["totals"]
+            inputs = read_marketing_audience_inputs(cur) if body["rows"] else None
+            cur.execute("select current_database()")
+            database = cur.fetchone()[0]
+        body["interests_available"] = inputs is not None
+        if inputs is not None:
+            _attach_interests(body["rows"], inputs)
+        return {
+            "campaign_id": campaign_id, "name": found[0], "status": found[1], **body,
+            "storage": {"table": "outbound.campaign_recipient", "database": database},
+        }
+
+    def campaign_replies(self, campaign_id: str, role: str | None) -> dict[str, Any] | None:
+        with self._read() as cur:
+            cur.execute("select name, status from outbound.campaign where id = %s", (campaign_id,))
+            found = cur.fetchone()
+            if found is None:
+                return None
+            body = read_replies(cur, campaign_id, role)
+            cur.execute("select current_database()")
+            database = cur.fetchone()[0]
+        return {"campaign_id": campaign_id, "name": found[0], "status": found[1], **body,
+                "storage": {"table": "outbound.campaign_reply", "database": database}}
+
+    def campaign_audit(self, campaign_id: str) -> dict[str, Any] | None:
+        with self._read() as cur:
+            return read_audit(cur, campaign_id)
 
     # -- audience freeze (reads)
 
@@ -1151,6 +1221,41 @@ class CrmWorkspaceRepository:
             "ambiguous_organizations": ambiguous_orgs,
             "drive_configured": self.drive_configured,
         }
+
+
+#: «BAJA» requests per campaign whose In-Reply-To proved a message that campaign sent.
+_BAJA_LINEAGE_BY_CAMPAIGN_SQL = """
+select s.campaign_id::text, count(*)
+  from evidence.assertion a
+  join comms.message m on m.id = case when a.value ? 'lineage_message_id' then (a.value->>'lineage_message_id')::uuid end
+  join outbound.send_attempt s on s.id = m.send_attempt_id
+ where a.kind = 'unsubscribe_request' and s.campaign_id is not null
+ group by 1
+"""
+
+
+def _subject_state(c: Mapping[str, Any]) -> str:
+    """`recorded`, or why there is no subject: V1 history never imported it, or a draft has none yet."""
+    if c.get("subject"):
+        return "recorded"
+    return "not_imported" if c.get("origin") == "imported_v1" else "not_set"
+
+
+def _attach_interests(rows: list[dict[str, Any]], inputs: "AudienceInputs") -> None:
+    """The recorded equipment-interest evidence of each recipient on the page, by exact address.
+
+    The same derivation as the Marketing audience (`compose`); a recipient with none gets an empty
+    list, which the dashboard shows as «Sin interés registrado», never as a low interest.
+    """
+    from origenlab_api.v2.equipment_taxonomy import load_taxonomy
+    from origenlab_api.v2.marketing_audience import compose
+
+    composed = compose(load_taxonomy(), inputs)
+    by_address: dict[str, list[dict[str, Any]]] = {}
+    for p in composed.get("persons", []):
+        by_address.setdefault(p["address"], []).extend(p.get("interests") or [])
+    for r in rows:
+        r["interests"] = by_address.get(r["address"], [])
 
 
 def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
