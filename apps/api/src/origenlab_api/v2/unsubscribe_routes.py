@@ -7,7 +7,8 @@
   ``expected_input_sha256`` and ``expected_plan_sha256`` the preview answered; a batch or an
   outcome that changed since is refused.
 * ``POST /v2/commands/resolve-unsubscribe-review`` — mounted with the apply command, same
-  switch. Confirms one request held for review as a permanent suppression; idempotent.
+  switch. Confirms one request held for review (or one an admin dismissed) as a permanent
+  suppression; idempotent.
 * ``POST /v2/commands/dismiss-unsubscribe-review`` — mounted with the apply command, same
   switch. **Admin only** (sales is 403). Dismisses one *pending* hold as a false positive,
   quoting its ``review_sha256`` and an explanation; a confirmed unsubscribe is never dismissed.

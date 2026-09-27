@@ -19,13 +19,16 @@ Four operations, deliberately separate:
   except the receipt.
 * **Resolve** (``resolve-unsubscribe-review``) — an operator confirms one held request: the same
   function creates or links the permanent suppression and resolves the request to it.
-  Confirming again answers ``already_resolved`` and writes nothing but the receipt.
+  Confirming again answers ``already_resolved`` and writes nothing but the receipt. A request an
+  admin dismissed can still be confirmed (``was: rejected``): a mistaken dismissal is corrected
+  toward suppression, and the dismissal's own event stays.
 * **Dismiss** (``dismiss-unsubscribe-review``) — an *admin* rules one held request a false
   positive. It quotes the request's ``review_sha256`` (served by the suppressions read) and a
   non-blank explanation; the same function rejects the request, marks its evidence reviewed and
   records one ``assertion.unsubscribe_review_dismissed`` event with the explanation. Only a
   pending hold can be dismissed: a confirmed request, a request already decided or a stale
-  ``review_sha256`` is refused, and no contact control is ever touched. The reply evidence and
+  ``review_sha256`` is refused, and no contact control is ever touched. Never the reverse of the
+  above: a confirmed request is never dismissed. The reply evidence and
   the request stay. Replaying the same ``Idempotency-Key`` returns the stored answer.
 
 All run as ``origenlab_api`` and read or write nothing in Gmail: there is no mail client here.
@@ -77,7 +80,7 @@ class ApplyUnsubscribeBody(PreviewUnsubscribeBody):
 
 
 class ResolveUnsubscribeReviewBody(BaseModel):
-    """Confirm one held request (an unresolved `unsubscribe_request`) as a permanent suppression."""
+    """Confirm one held request (unresolved, or one an admin dismissed) as a permanent suppression."""
 
     model_config = ConfigDict(extra="forbid")
 

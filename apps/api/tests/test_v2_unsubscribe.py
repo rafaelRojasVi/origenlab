@@ -1327,7 +1327,7 @@ def _pending(dsn) -> dict[str, list[dict[str, Any]]]:
 
 
 @needs_db
-def test_an_admin_dismisses_a_pending_false_positive_once_and_nothing_else(disposable_database, world) -> None:
+def test_an_admin_dismisses_a_pending_false_positive_once_and_it_can_still_be_confirmed(disposable_database, world) -> None:
     import psycopg
 
     from origenlab_api.v2.commands import CommandRefused
@@ -1389,12 +1389,10 @@ def test_an_admin_dismisses_a_pending_false_positive_once_and_nothing_else(dispo
     assert again["replayed"] is True and {k: v for k, v in again.items() if k != "replayed"} == {
         k: v for k, v in dismissed.items() if k != "replayed"}
     assert _counts(disposable_database) == before
-    # A new key finds it decided; confirming it now is refused by the database too.
+    # A new key finds it decided: it cannot be dismissed twice.
     with pytest.raises(CommandRefused) as err:
         _dismiss(disposable_database, world["admin_identity"], aid, false_pos, version)
     assert err.value.code == "review_not_pending"
-    with pytest.raises(psycopg.errors.RaiseException, match="not pending"):
-        _resolve(disposable_database, world["operator"], aid, false_pos)
     assert _counts(disposable_database) == before
 
     # The hold no longer holds; the other one still does.
@@ -1403,6 +1401,30 @@ def test_an_admin_dismisses_a_pending_false_positive_once_and_nothing_else(dispo
     facts = CrmWorkspaceRepository(psycopg.connect, dsn).marketing_audience_inputs().eligibility
     assert false_pos not in facts.unsubscribe_pending_addresses and keeps in facts.unsubscribe_pending_addresses
     assert false_pos not in facts.unsubscribed_addresses
+
+    # The dismissal was a mistake: the same request is confirmed afterwards (toward suppression
+    # only). The dismissal's own event stays; the confirmation says it overrides it.
+    confirmed = _resolve(disposable_database, world["operator"], aid, false_pos, note="Revisado otra vez: sí pidió la baja")
+    assert (confirmed["was"], confirmed["outcome"]) == ("rejected", "added")
+    assert _delta(before, _counts(disposable_database)) == {
+        "outbound.contact_control": 1, "crm.domain_event": 1, "platform.command_receipt": 1}
+    [(resolution, resolved_id, review_status)] = _db_rows(disposable_database, """
+        select a.resolution, a.resolved_id::text, s.review_status
+          from evidence.assertion a join evidence.source_record s on s.id = a.source_record_id where a.id = %s""", (aid,))
+    assert (resolution, resolved_id, review_status) == ("promoted", confirmed["contact_control_id"], "promoted")
+    [(override,)] = _db_rows(disposable_database, "select payload from crm.domain_event where aggregate_kind = 'contact_control' "
+                                                  "and aggregate_id = %s", (confirmed["contact_control_id"],))
+    assert (override["resolution_from"], override["overrides_dismissal"], override["basis"]) == (
+        "rejected", True, "review_confirmed")
+    assert [r[0] for r in _db_rows(disposable_database, "select event_type from crm.domain_event where aggregate_kind = 'assertion' "
+                                                        "and aggregate_id = %s order by seq", (aid,))] == [
+        "assertion.unsubscribe_review_opened", "assertion.unsubscribe_review_dismissed"]
+    facts = CrmWorkspaceRepository(psycopg.connect, dsn).marketing_audience_inputs().eligibility
+    assert false_pos in facts.unsubscribed_addresses
+    # Never the reverse: once confirmed, it cannot be dismissed again.
+    with pytest.raises(CommandRefused) as err:
+        _dismiss(disposable_database, world["admin_identity"], aid, false_pos, version)
+    assert err.value.code == "review_already_confirmed"
 
 
 @needs_db
