@@ -12,8 +12,13 @@
 --   1. outbound.campaign: a row whose status is `archived` is never updated or deleted. A row is
 --      born `archived` only by the historical importer, which runs as the owner.
 --   2. outbound.campaign_recipient and outbound.send_attempt: a row of an archived campaign is
---      never updated or deleted, and a new one is added only by the importer (the owner) — the
---      importer inserts the campaign first and then its audience and attempts.
+--      never deleted, and a new one is added only by the importer (the owner) — the importer
+--      inserts the campaign first and then its audience and attempts. An attempt is never
+--      updated. A recipient is updated only in its CRM identity links (contact_point_id,
+--      person_id, organization_id, and updated_at with them): who an address turned out to be is
+--      CRM truth that keeps improving (v2_promote.marketing links historical recipients to
+--      canonical channels), while what was recorded about the send — the address, the state,
+--      the exclusion reasons, the attempt count, the override — never changes.
 --
 -- What it deliberately leaves open: outbound.campaign_reply stays insertable, because a reply to
 -- a historical campaign that arrives (or is synchronized) later is new evidence about it, not an
@@ -50,6 +55,11 @@ begin
   if v_campaign_id is not null then
     select c.status into v_status from outbound.campaign c where c.id = v_campaign_id;
     if v_status = 'archived' then
+      if tg_op = 'UPDATE' and tg_table_name = 'campaign_recipient'
+         and (to_jsonb(new) - array['contact_point_id', 'person_id', 'organization_id', 'updated_at'])
+           = (to_jsonb(old) - array['contact_point_id', 'person_id', 'organization_id', 'updated_at']) then
+        return new;  -- identity linkage only; the recorded send is untouched
+      end if;
       if tg_op <> 'INSERT' then
         raise exception '% of archived campaign % is immutable', tg_table_name, v_campaign_id
           using errcode = 'P0001';
@@ -66,7 +76,7 @@ end;
 $$;
 
 comment on function outbound.archived_campaign_immutable() is
-  'Refuses any UPDATE or DELETE of an archived campaign, its recipients and its send attempts, and any INSERT into one unless the historical importer (origenlab_owner) is writing it. Replies stay insertable. SECURITY INVOKER.';
+  'Refuses any UPDATE or DELETE of an archived campaign and its send attempts, any DELETE of its recipients and any UPDATE of a recipient beyond its CRM identity links (contact_point_id, person_id, organization_id), and any INSERT into one unless the historical importer (origenlab_owner) is writing it. Replies stay insertable. SECURITY INVOKER.';
 
 create trigger campaign_archived_immutable
   before insert or update or delete on outbound.campaign

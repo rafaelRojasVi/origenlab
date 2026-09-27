@@ -9,7 +9,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
-select plan(24);
+select plan(27);
 
 create function pg_temp.run_as(p_role text, p_sql text) returns text
 language plpgsql as $$
@@ -94,6 +94,18 @@ select is((select state from outbound.campaign_recipient where id = '72000000-00
   'sent', 'its recipient is exactly as imported');
 select is((select submission_state || '/' || delivery_state from outbound.send_attempt where id = '72000000-0000-4000-8000-000000000400'),
   'accepted/pending', 'its attempt is exactly as imported');
+
+-- ── who an address turned out to be is CRM truth; the recorded send is not ─────────────────
+set role origenlab_owner;
+insert into crm.contact_point (id, kind, value_norm, value_display, usage, confirmation) values
+  ('72000000-0000-4000-8000-000000000600', 'email', 'a@lab.example', 'a@lab.example', 'unattributed', 'machine_proposed');
+reset role;
+select is(pg_temp.run_as('origenlab_owner', $$update outbound.campaign_recipient set contact_point_id = '72000000-0000-4000-8000-000000000600', updated_at = now()
+  where id = '72000000-0000-4000-8000-000000000300'$$), 'ok', 'a historical recipient is linked to its CRM contact point (v2_promote.marketing)');
+select is(pg_temp.run_as('origenlab_owner', $$update outbound.campaign_recipient set contact_point_id = null, state = 'replied'
+  where id = '72000000-0000-4000-8000-000000000300'$$), 'P0001', 'a link change that also rewrites the outcome is refused whole');
+select is(pg_temp.run_as('origenlab_owner', $$update outbound.campaign_recipient set address_norm = 'otra@lab.example'
+  where id = '72000000-0000-4000-8000-000000000300'$$), 'P0001', 'the recorded address never changes');
 
 -- ── a later reply is new evidence, not an edit ────────────────────────────────────────────────
 set role origenlab_owner;

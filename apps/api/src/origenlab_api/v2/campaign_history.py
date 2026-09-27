@@ -652,8 +652,9 @@ def read_audit(cur: Any, campaign_id: str) -> dict[str, Any] | None:
         "immutable_enforced_by_database": enforced,
         "immutable_note": (
             None if not archived else
-            "Campaña archivada: la base de datos rechaza editarla, reabrirla, ampliarla o borrarla, a ella, "
-            "a sus destinatarios y a sus intentos de envío." if enforced else
+            "Campaña archivada: la base de datos rechaza editarla, reabrirla, ampliarla o borrarla, y cambiar "
+            "lo registrado de sus destinatarios o intentos de envío. Sólo puede vincularse un destinatario a su "
+            "persona o institución del CRM." if enforced else
             "Campaña archivada: el CRM no ofrece ninguna acción sobre ella, pero esta base de datos aún no tiene "
             "la protección que rechaza editarla (migración 20260928090000 sin aplicar)."
         ),
