@@ -137,6 +137,8 @@ class EligibilityFacts:
     blocked_domains: set[str] = field(default_factory=set)
     cooldown_addresses: set[str] = field(default_factory=set)
     prior_contact_addresses: set[str] = field(default_factory=set)
+    #: W12 display facts per prior-contact address: sources, last contact, campaign.
+    prior_contact_details: dict[str, dict[str, Any]] = field(default_factory=dict)
     invalid_addresses: set[str] = field(default_factory=set)
     supplier_domains: set[str] = field(default_factory=set)
     supplier_organization_ids: set[str] = field(default_factory=set)

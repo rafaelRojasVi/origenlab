@@ -26,7 +26,11 @@ from origenlab_api.v2.audience_freeze import (
     FREEZE_CAMPAIGN_AUDIENCE,
     SEND_BLOCKERS,
     FreezeAudienceBody,
+    AUDIENCE_POLICY_VERSION,
+    AUDIENCE_POLICY_VERSION_W12,
+    RECONTACT_POLICY_VERSION,
     FreezeCriteria,
+    RecontactDecision,
     ReviewDecision,
     content_sha256,
     freeze_fields,
@@ -227,6 +231,149 @@ def test_the_send_blockers_name_the_missing_unsubscribe_processor() -> None:
     assert {b["code"] for b in SEND_BLOCKERS} == {"unsubscribe_processing_unsupported", "no_send_path", "approval_not_built"}
 
 
+# --------------------------------------------------------------------------- W12 recontact review
+
+
+def _anon_ok(plan) -> dict:
+    """Settle the one ambiguous identity every _world() carries, so W12 is what the test sees."""
+    key = _rows(plan)["anon@uni.test"]["key"]
+    return {key: ReviewDecision(key=key, decision="exclude", note="no aplica")}
+
+
+def _w12(world=None, *, recontact=None, decisions=None, excluded=frozenset(), enabled=True):
+    taxonomy, world = load_taxonomy(), world or _world()
+    base = plan_freeze(taxonomy, world, CAMPAIGN, HIELSCHER, recontact_review=enabled)
+    return plan_freeze(taxonomy, world, CAMPAIGN, HIELSCHER, recontact_review=enabled,
+                       decisions=decisions if decisions is not None else _anon_ok(base),
+                       excluded_keys=excluded, recontact_decisions=recontact or {})
+
+
+def _rd(plan, address, decision="approve", note="El cliente pidió la ficha nueva", mode="individual"):
+    key = _rows(plan)[address]["key"]
+    return {key: RecontactDecision(key=key, decision=decision, note=note, mode=mode)}
+
+
+def test_w12_off_prior_contact_stays_excluded_and_no_decision_can_lift_it() -> None:
+    plan = _w12(enabled=False)
+    prior = _rows(plan)["prior@uni.test"]
+    assert plan["policy_version"] == AUDIENCE_POLICY_VERSION
+    assert prior["frozen_reasons"] == ["prior_contact"] and prior["recontact_review_required"] is False
+    assert plan["recontact_review"] == {"enabled": False, "policy_version": None, "required": []}
+    lifted = _w12(enabled=False, recontact=_rd(plan, "prior@uni.test"))
+    assert _rows(lifted)["prior@uni.test"]["inclusion"] == "excluded"
+    assert _rows(lifted)["prior@uni.test"]["recontact_review"] is None
+    assert "recontact_review_disabled" in [p["code"] for p in lifted["problems"]]
+
+
+def test_w12_on_prior_contact_is_review_required_with_what_the_operator_must_see() -> None:
+    world = _world(prior_contact_details={"prior@uni.test": {
+        "sources": [{"source": "wave1a_union", "reason": "v1 prior contact: wave1a_contacted_union", "recorded_at": "2026-09-20"}],
+        "last_contact_at": "2025-11-03T14:00:00+00:00", "campaign_id": "cmp-v1", "campaign_name": "Campaña V1 noviembre"}})
+    plan = _w12(world)
+    prior = _rows(plan)["prior@uni.test"]
+    assert plan["policy_version"] == AUDIENCE_POLICY_VERSION_W12
+    assert plan["recontact_review"]["required"] == [prior["key"]] and plan["counts"]["recontact_review_required"] == 1
+    assert prior["prior_contact"] == {"destination": "prior@uni.test", "last_contact_at": "2025-11-03T14:00:00+00:00",
+                                      "campaign_id": "cmp-v1", "campaign_name": "Campaña V1 noviembre",
+                                      "sources": world.eligibility.prior_contact_details["prior@uni.test"]["sources"]}
+    # Without a decision it stays excluded, and the missing decision does not block the freeze.
+    assert prior["inclusion"] == "excluded" and prior["frozen_reasons"] == ["prior_contact"]
+    assert "recontact_not_reviewed" in prior["frozen_notes"] and prior["recontact_review"] is None
+    assert plan["problems"] == [] and plan["counts"]["recontact_not_reviewed"] == 1
+    # A prior contact with no recorded date shows it as unknown, never a guess.
+    assert _rows(_w12())["prior@uni.test"]["prior_contact"]["last_contact_at"] is None
+
+
+def test_an_approval_lifts_prior_contact_and_records_one_audited_decision() -> None:
+    base = _w12()
+    approved = _w12(recontact=_rd(base, "prior@uni.test"))
+    row = _rows(approved)["prior@uni.test"]
+    assert row["inclusion"] == "included" and row["frozen_reasons"] == []
+    assert "recontact_approved" in row["frozen_notes"] and "recontact_not_reviewed" not in row["frozen_notes"]
+    assert row["recontact_review"] == {"decision": "approve", "note": "El cliente pidió la ficha nueva", "mode": "individual",
+                                       "policy_version": RECONTACT_POLICY_VERSION, "prior_contact": row["prior_contact"]}
+    assert approved["counts"]["recontact_approved"] == 1 and approved["problems"] == []
+    # The decision is what the operator adds: the fingerprint of what they were shown does not move.
+    assert approved["preview_sha256"] == base["preview_sha256"]
+
+    kept = _rows(_w12(recontact=_rd(base, "prior@uni.test", "keep_excluded", "Ya dijo que no")))["prior@uni.test"]
+    assert kept["inclusion"] == "excluded" and kept["frozen_reasons"] == ["prior_contact"]
+    assert "recontact_kept_excluded" in kept["frozen_notes"] and kept["recontact_review"]["decision"] == "keep_excluded"
+
+
+def test_w12_never_lifts_a_block_a_supplier_a_bounce_a_duplicate_or_a_cooldown() -> None:
+    # Every one of these also has a prior contact; each keeps the reason W12 may not touch.
+    world = _world(prior_contact_addresses={"prior@uni.test", "bounced@uni.test", "cool@uni.test", "blocked@uni.test",
+                                            "dom@bloqueado.test", "sup@proveedor.test", "cand@candidato.test", "bea@uni.test"})
+    base = _w12(world)
+    rows = _rows(base)
+    untouchable = {"bounced@uni.test": "invalid_address", "cool@uni.test": "cooldown", "blocked@uni.test": "block",
+                   "dom@bloqueado.test": "block_domain", "sup@proveedor.test": "policy_supplier",
+                   "cand@candidato.test": "manual_hold", "bea@uni.test": "already_in_audience"}
+    for address, reason in untouchable.items():
+        assert rows[address]["recontact_review_required"] is False, address
+        plan = _w12(world, recontact=_rd(base, address))
+        row = _rows(plan)[address]
+        assert row["inclusion"] == "excluded" and reason in row["frozen_reasons"], address
+        assert row["recontact_review"] is None and "recontact_approved" not in row["frozen_notes"], address
+        assert "recontact_not_eligible" in [p["code"] for p in plan["problems"]], address
+    assert base["recontact_review"]["required"] == [rows["prior@uni.test"]["key"]]
+
+
+def test_a_second_address_of_the_same_person_is_never_reviewable() -> None:
+    # ana is a prior contact, bea (same person) is clean: bea takes the person's slot.
+    base = _w12(_world(prior_contact_addresses={"ana@uni.test"}))
+    ana, bea = _rows(base)["ana@uni.test"], _rows(base)["bea@uni.test"]
+    assert bea["inclusion"] == "included"
+    assert set(ana["frozen_reasons"]) == {"prior_contact", "already_in_audience"} and ana["recontact_review_required"] is False
+
+
+def test_an_approved_destination_with_an_ambiguous_identity_still_needs_a_person() -> None:
+    world = _world(prior_contact_addresses={"prior@uni.test", "anon@uni.test"})
+    base = _w12(world, decisions={})
+    anon = _rows(base)["anon@uni.test"]
+    assert anon["recontact_review_required"] is True and anon["review_codes"] == ["no_contact_point"]
+    assert base["review_pending"] == []  # not approved: excluded whatever its identity
+    approved = _w12(world, decisions={}, recontact=_rd(base, "anon@uni.test"))
+    assert approved["review_pending"] == [anon["key"]] and "review_pending" in [p["code"] for p in approved["problems"]]
+    held = _w12(world, recontact=_rd(base, "anon@uni.test"),
+                decisions={anon["key"]: ReviewDecision(key=anon["key"], decision="exclude", note="no es la persona")})
+    row = _rows(held)["anon@uni.test"]
+    assert row["frozen_reasons"] == ["manual_hold"] and "recontact_approved" in row["frozen_notes"]
+
+
+def test_a_bulk_decision_is_persisted_as_one_decision_per_recipient() -> None:
+    world = _world(prior_contact_addresses={"prior@uni.test", "ana@uni.test", "bea@uni.test"})
+    base = _w12(world)
+    reviewable = [r["address"] for r in base["rows"] if r["recontact_review_required"]]
+    assert reviewable == ["ana@uni.test", "prior@uni.test"]  # bea is ana's second address
+    bulk = {}
+    for address in reviewable:
+        bulk |= _rd(base, address, note="Lote revisado: clientes 2024 con equipo en garantía", mode="bulk")
+    plan = _w12(world, recontact=bulk)
+    for address in reviewable:
+        review = _rows(plan)[address]["recontact_review"]
+        assert review["mode"] == "bulk" and review["prior_contact"]["destination"] == address
+    assert plan["counts"]["recontact_approved"] == 2 and plan["counts"]["included"] == 2
+
+
+def test_with_w12_on_the_fingerprint_covers_what_the_reviewer_was_shown() -> None:
+    off, on = _w12(enabled=False), _w12()
+    assert off["preview_sha256"] != on["preview_sha256"]  # the policy version differs
+    later = _w12(_world(prior_contact_details={"prior@uni.test": {"sources": [], "last_contact_at": "2026-09-01T00:00:00+00:00"}}))
+    assert later["preview_sha256"] != on["preview_sha256"]
+
+
+def test_the_recontact_decision_is_closed_and_needs_a_note() -> None:
+    RecontactDecision(key="cp:1", decision="approve", note="motivo")
+    for bad in ({"key": "cp:1", "decision": "approve", "note": ""}, {"key": "cp:1", "decision": "approve", "note": "  a "},
+                {"key": "cp:1", "decision": "approve"}, {"key": "cp:1", "decision": "override_block", "note": "motivo"},
+                {"key": "cp:1", "decision": "approve", "note": "motivo", "mode": "auto"},
+                {"key": "cp:1", "decision": "approve", "note": "motivo", "lift": ["block"]}):
+        with pytest.raises(ValidationError):
+            RecontactDecision(**bad)
+
+
 # --------------------------------------------------------------------------- request and routes
 
 
@@ -311,6 +458,23 @@ def test_the_freeze_router_exposes_one_post_and_mounts_only_behind_its_switch() 
         assert enabled is False and PATH not in routes
     enabled, routes = paths(v2_database_url=LOOPBACK, v2_audience_freeze_enabled=True)
     assert enabled is True and PATH in routes
+
+
+def test_w12_rides_on_the_freeze_switch_and_defaults_off() -> None:
+    from fastapi import FastAPI
+
+    from origenlab_api import main
+    from origenlab_api.settings import Settings
+
+    def state(**kw):
+        app = FastAPI()
+        main._mount_audience_freeze(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db")
+        repo = getattr(app.state, "audience_freeze_repository", None)
+        return app.state.recontact_review_enabled, repo and repo._recontact_review
+
+    assert state(v2_database_url=LOOPBACK, v2_audience_freeze_enabled=True) == (False, False)
+    assert state(v2_database_url=LOOPBACK, v2_recontact_review_enabled=True) == (False, None)
+    assert state(v2_database_url=LOOPBACK, v2_audience_freeze_enabled=True, v2_recontact_review_enabled=True) == (True, True)
 
 
 def test_no_send_capability_exists_anywhere_in_the_api() -> None:
@@ -560,3 +724,94 @@ def test_a_changed_audience_is_refused_and_a_changed_draft_is_a_new_freeze(dispo
         n1 = conn.execute("select count(*) from outbound.campaign_recipient where campaign_id = %s", (cid,)).fetchone()[0]
     assert statuses == {cid: "audience_frozen", cid2: "audience_frozen"}
     assert n1 == first["counts"]["rows"]  # the first snapshot did not move
+
+
+def _freeze_w12(dsn, w, cid, preview, *, recontact=(), decisions=(), enabled=True, key=None):
+    import psycopg
+
+    from origenlab_api.v2.audience_freeze import V2AudienceFreezeRepository
+
+    body = FreezeAudienceBody(campaign_id=cid, expected_version=1, expected_preview_sha256=preview["preview_sha256"],
+                              criteria=HIELSCHER, review_decisions=list(decisions),
+                              recontact_decisions=list(recontact), confirmed=True)
+    return V2AudienceFreezeRepository(psycopg.connect, runtime_dsn(dsn), recontact_review_enabled=enabled).execute(
+        command_name=FREEZE_CAMPAIGN_AUDIENCE, operator=w["operator"], fields=freeze_fields(body),
+        idempotency_key=key or uuid.uuid4().hex, digest=request_digest(FREEZE_CAMPAIGN_AUDIENCE, body))
+
+
+@needs_db
+def test_w12_is_recomputed_at_freeze_and_frozen_with_the_snapshot(disposable_database, world) -> None:
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    tag = world["tag"]
+    prev, baja = f"prev-{tag}@uni.test", f"baja-{tag}@uni.test"
+    with psycopg.connect(disposable_database, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
+        # An archived V1 campaign that reached prev (no attempt, so no date), and a prior contact on
+        # the blocked address, which W12 must never lift.
+        v1 = conn.execute("insert into outbound.campaign (name, mailbox_id, max_sends, recontact_interval_days, status) "
+                          "select %s, id, 10, 90, 'archived' from comms.mailbox where address_norm = %s returning id::text",
+                          (f"Campaña V1 {tag}", f"ventas-{tag}@example.invalid")).fetchone()[0]
+        conn.execute("insert into outbound.campaign_recipient (campaign_id, address_norm, state) values (%s, %s, 'sent')", (v1, prev))
+        conn.execute("insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) "
+                     "values ('address', %s, 'prior_contact', 'marketing', 'contacto histórico', 'operator_command')", (baja,))
+    repo = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(disposable_database))
+    cid = _draft(disposable_database, world, f"W12 {tag}")["campaign_id"]
+    preview = repo.freeze_preview(cid, HIELSCHER, recontact_review=True)
+    rows = _rows(preview)
+    assert preview["policy_version"] == AUDIENCE_POLICY_VERSION_W12
+    assert rows[prev]["recontact_review_required"] is True and rows[baja]["recontact_review_required"] is False
+    shown = rows[prev]["prior_contact"]
+    assert shown["destination"] == prev and shown["campaign_name"] == f"Campaña V1 {tag}" and shown["last_contact_at"] is None
+    assert [s["source"] for s in shown["sources"]] == ["operator_command"]
+    decisions = _decide_all(preview)
+    approve = RecontactDecision(key=rows[prev]["key"], decision="approve", note="Pidió la ficha del UP200St", mode="bulk")
+
+    # Revalidated in the command: W12 off refuses, a block is never lifted, a preview taken under
+    # the other policy is refused — and none of it writes anything.
+    for kwargs, code in (({"enabled": False}, "recontact_review_disabled"),
+                         ({"recontact": [approve, RecontactDecision(key=rows[baja]["key"], decision="approve", note="insistir")]},
+                          "recontact_not_eligible")):
+        with pytest.raises(CommandRefused) as err:
+            _freeze_w12(disposable_database, world, cid, preview, decisions=decisions,
+                        recontact=kwargs.pop("recontact", [approve]), **kwargs)
+        assert err.value.code == code
+    v1_preview = repo.freeze_preview(cid, HIELSCHER, recontact_review=False)
+    with pytest.raises(CommandRefused) as err:
+        _freeze_w12(disposable_database, world, cid, v1_preview, decisions=_decide_all(v1_preview))
+    assert err.value.code == "audience_changed"
+    assert _count(disposable_database, f"outbound.campaign_recipient where campaign_id = '{cid}'") == 0
+
+    out = _freeze_w12(disposable_database, world, cid, preview, decisions=decisions, recontact=[approve])
+    assert out["policy_version"] == AUDIENCE_POLICY_VERSION_W12
+    assert out["recontact_review"]["approved"] == 1 and out["recontact_review"]["bulk"] == 1
+    with _connect(disposable_database) as conn:
+        r = conn.execute("select frozen_inclusion, frozen_reasons, frozen_notes, recontact_review, recontact_override_by_operator_id::text, "
+                         "recontact_override_reason, recontact_override_at is not null, policy_version, id::text "
+                         "from outbound.campaign_recipient where campaign_id = %s and address_norm = %s", (cid, prev)).fetchone()
+        b = conn.execute("select frozen_reasons, recontact_review, recontact_override_at from outbound.campaign_recipient "
+                         "where campaign_id = %s and address_norm = %s", (cid, baja)).fetchone()
+        events = conn.execute("select event_type, payload from crm.domain_event where aggregate_kind = 'campaign' "
+                              "and aggregate_id = %s order by seq", (cid,)).fetchall()
+        policy = conn.execute("select audience_policy_version from outbound.campaign where id = %s", (cid,)).fetchone()[0]
+    assert r[:3] == ("included", [], ["recontact_approved"])
+    assert r[3]["decision"] == "approve" and r[3]["mode"] == "bulk" and r[3]["operator_id"] == world["op"]
+    assert r[3]["policy_version"] == RECONTACT_POLICY_VERSION and r[3]["prior_contact"]["campaign_name"] == f"Campaña V1 {tag}"
+    assert r[4:7] == (world["op"], "Pidió la ficha del UP200St", True) and r[7] == policy == AUDIENCE_POLICY_VERSION_W12
+    assert set(b[0]) == {"block", "prior_contact"} and b[1] is None and b[2] is None
+    assert [e[0] for e in events] == ["campaign.draft_created", "campaign.audience_frozen", "campaign.override_granted"]
+    assert events[1][1]["recontact_review"]["approved"] == 1
+    assert events[2][1]["recipient_id"] == r[8] and events[2][1]["lifted"] == ["prior_contact"]
+
+    # Sealed: no rewrite, no withdrawal, no grant after the freeze — by any writer.
+    with _connect(disposable_database) as conn:
+        for sql in ("update outbound.campaign_recipient set recontact_review = '{}'::jsonb where campaign_id = %s and address_norm = '" + prev + "'",
+                    "update outbound.campaign_recipient set recontact_override_by_operator_id = null, recontact_override_reason = null, "
+                    "recontact_override_at = null where campaign_id = %s and address_norm = '" + prev + "'"):
+            with pytest.raises(psycopg.errors.RaiseException):
+                conn.execute(sql, (cid,))
+    snap = repo.frozen_recipients(cid)
+    by = {x["address"]: x for x in snap["recipients"]}
+    assert by[prev]["recontact_review"]["decision"] == "approve" and by[prev]["recontact_override_at"]

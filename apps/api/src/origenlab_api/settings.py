@@ -218,6 +218,16 @@ class Settings(BaseSettings):
     no send command exists in this API.
     """
     v2_audience_freeze_enabled: bool = False
+    """W12 recontact review inside the audience freeze (WORKFLOWS.md §W12).
+
+    Default **false**, and effective only with the freeze switch on. Off, a permanent
+    `prior_contact` is an exclusion reason nothing can lift (policy `…v1`). On, a destination
+    whose only reason is `prior_contact` becomes review_required and a sales/admin operator may
+    approve recontact for it with a mandatory note, frozen with the snapshot (policy `…v2-w12`).
+    It never lifts a block, an unsubscribe, a supplier, an invalid destination, a duplicate or an
+    active cooldown, and it sends nothing.
+    """
+    v2_recontact_review_enabled: bool = False
     """Local review only: a quote_crm_import dry-run directory (intent.json + intent.sha256).
 
     When set, GET /v2/cockpit/import-review compares that plan with the V2 database. The plan is
@@ -372,6 +382,9 @@ class Settings(BaseSettings):
 
     def v2_audience_freeze_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_audience_freeze_enabled)
+
+    def v2_recontact_review_configured(self) -> bool:
+        return self.v2_audience_freeze_configured() and bool(self.v2_recontact_review_enabled)
 
     def require_v2_database_url(self) -> str:
         url = (self.v2_database_url or "").strip()

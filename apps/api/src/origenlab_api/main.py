@@ -165,8 +165,10 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
 
 
 def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str) -> None:
-    """Mount the audience-freeze command only behind its own switch."""
+    """Mount the audience-freeze command only behind its own switch; W12 rides on it."""
     app.state.audience_freeze_enabled = settings.v2_audience_freeze_configured()
+    # The preview and the command read the same flag, so they plan under the same policy.
+    app.state.recontact_review_enabled = settings.v2_recontact_review_configured()
     if not app.state.audience_freeze_enabled:
         return
 
@@ -176,7 +178,8 @@ def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str) -> None:
     from origenlab_api.v2.audience_freeze_routes import audience_freeze_router
 
     app.state.audience_freeze_repository = V2AudienceFreezeRepository(
-        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        psycopg.connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        recontact_review_enabled=app.state.recontact_review_enabled,
     )
     app.include_router(audience_freeze_router)
 

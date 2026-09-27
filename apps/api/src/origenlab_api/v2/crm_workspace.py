@@ -796,7 +796,7 @@ class CrmWorkspaceRepository:
 
     # -- audience freeze (reads)
 
-    def freeze_preview(self, campaign_id: str, criteria: Any) -> dict[str, Any] | None:
+    def freeze_preview(self, campaign_id: str, criteria: Any, *, recontact_review: bool = False) -> dict[str, Any] | None:
         """What `freeze-campaign-audience` would write now, from one read-only snapshot."""
         from origenlab_api.v2.audience_freeze import plan_freeze
         from origenlab_api.v2.equipment_taxonomy import load_taxonomy
@@ -813,7 +813,7 @@ class CrmWorkspaceRepository:
             if not rows:
                 return None
             inputs = read_marketing_audience_inputs(cur)
-        return plan_freeze(load_taxonomy(), inputs, rows[0], criteria)
+        return plan_freeze(load_taxonomy(), inputs, rows[0], criteria, recontact_review=recontact_review)
 
     def frozen_recipients(self, campaign_id: str) -> dict[str, Any] | None:
         """A frozen campaign's recipient snapshot, exactly as stored."""
@@ -836,7 +836,8 @@ class CrmWorkspaceRepository:
                        org.name as organization_name, pe.display_name,
                        r.frozen_at::text, r.frozen_inclusion as inclusion, r.frozen_reasons, r.frozen_notes,
                        r.relevance, r.interest_evidence, r.evidence_observed_at::text,
-                       r.identity_review, r.campaign_version, r.content_sha256, r.policy_version,
+                       r.identity_review, r.recontact_review, r.recontact_override_at::text,
+                       r.campaign_version, r.content_sha256, r.policy_version,
                        r.state as lifecycle_state
                   from outbound.campaign_recipient r
                   left join crm.organization org on org.id = r.organization_id
@@ -1043,6 +1044,43 @@ def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
             facts.cooldown_addresses.add(value)
         else:
             facts.prior_contact_addresses.add(value)
+    # W12: what a recontact reviewer is shown — the recorded sources of each prior contact, the
+    # last accepted send (date and campaign), or, for an imported V1 recipient with no attempt,
+    # its campaign without a date. Nothing is inferred: an unknown date stays unknown.
+    cur.execute(
+        """
+        select value_norm, source, reason, created_at::text
+          from outbound.contact_control
+         where kind = 'prior_contact' and scope = 'address'
+         order by value_norm, created_at, source
+        """
+    )
+    for value, source, reason, recorded_at in cur.fetchall():
+        facts.prior_contact_details.setdefault(value, {"sources": []})["sources"].append(
+            {"source": source, "reason": reason, "recorded_at": recorded_at})
+    cur.execute(
+        """
+        select distinct on (r.address_norm) r.address_norm, c.id::text, c.name
+          from outbound.campaign_recipient r join outbound.campaign c on c.id = r.campaign_id
+         where r.state in ('sent', 'bounced', 'replied', 'unsubscribed')
+         order by r.address_norm, r.updated_at desc, c.id
+        """
+    )
+    for value, campaign_id, campaign_name in cur.fetchall():
+        if value in facts.prior_contact_details:
+            facts.prior_contact_details[value].update(campaign_id=campaign_id, campaign_name=campaign_name)
+    cur.execute(
+        """
+        select distinct on (a.address_norm) a.address_norm, a.accepted_at::text, c.id::text, c.name
+          from outbound.send_attempt a left join outbound.campaign c on c.id = a.campaign_id
+         where a.submission_state = 'accepted'
+         order by a.address_norm, a.accepted_at desc, a.id
+        """
+    )
+    for value, accepted_at, campaign_id, campaign_name in cur.fetchall():
+        if value in facts.prior_contact_details:
+            facts.prior_contact_details[value].update(
+                last_contact_at=accepted_at, campaign_id=campaign_id, campaign_name=campaign_name)
     cur.execute(
         """
         select address_norm from outbound.send_attempt

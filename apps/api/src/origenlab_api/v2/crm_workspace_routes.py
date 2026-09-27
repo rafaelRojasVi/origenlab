@@ -61,6 +61,7 @@ def get_marketing(_: Operator, repo: Repo, request: Request) -> Any:
     body["authoring"] = {
         "drafts_enabled": bool(getattr(request.app.state, "campaign_drafts_enabled", False)),
         "freeze_enabled": bool(getattr(request.app.state, "audience_freeze_enabled", False)),
+        "recontact_review_enabled": bool(getattr(request.app.state, "recontact_review_enabled", False)),
     }
     return body
 
@@ -103,7 +104,10 @@ def get_marketing_freeze_preview(
             family_id=family_id, brand_id=brand_id, model_id=model_id, organization_id=organization_id,
             bases=tuple(basis or ()), recorded=recorded, q=q, scope=scope,
         )
-        preview = repo.freeze_preview(str(campaign_id), criteria)
+        preview = repo.freeze_preview(
+            str(campaign_id), criteria,
+            recontact_review=bool(getattr(request.app.state, "recontact_review_enabled", False)),
+        )
     except (ValidationError, CommandRefused) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if preview is None:

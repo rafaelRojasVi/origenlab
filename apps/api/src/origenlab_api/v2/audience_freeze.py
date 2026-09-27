@@ -28,6 +28,21 @@ Relevance and permission are separate, as in :mod:`marketing_audience`:
 than one institution, or whose contact point names a different institution from the one it was
 reached through is not frozen until an operator decides include or exclude for it, with a note.
 The decision is recorded on the row.
+
+**W12 — recontact review** (WORKFLOWS.md §W12), behind its own switch
+(``ORIGENLAB_V2_RECONTACT_REVIEW_ENABLED``, default off). Off, a permanent ``prior_contact`` is
+an exclusion reason and nothing can lift it (policy ``…v1``). On (policy ``…v2-w12``), a
+destination whose *only* reason is ``prior_contact`` is ``recontact_review_required``: the
+preview shows its last contact date, campaign or source and destination, and a sales/admin
+operator may approve recontact for it, or keep it excluded, with a mandatory note — one row at
+a time or as a reviewed bulk selection, always persisted as one decision per recipient. The
+command recomputes the audience and revalidates every decision in its own transaction. An
+approval lifts ``prior_contact`` and nothing else: never a block or an unsubscribe, a supplier,
+a malformed or bounced destination, a second address of the same person or an active cooldown
+— a destination carrying any of those is not reviewable and a decision on it is refused.
+Without a valid decision ``prior_contact`` stays an exclusion reason. The decision and the W12
+policy version are written with the snapshot and sealed by the database
+(``20260927200000_slice5_w12_recontact_review.sql``).
 """
 
 from __future__ import annotations
@@ -62,7 +77,15 @@ FREEZE_CAMPAIGN_AUDIENCE = "freeze-campaign-audience"
 #: The eligibility rules this module implements. Stored on the campaign and on every row;
 #: change it whenever a rule below changes, so a snapshot always says what produced it.
 AUDIENCE_POLICY_VERSION = "marketing-audience/2026-09-27.v1"
+#: The same rules with W12 on: prior contact is review_required, lifted only by an approval.
+AUDIENCE_POLICY_VERSION_W12 = "marketing-audience/2026-09-27.v2-w12"
+#: The recontact-review rules, written inside every W12 decision.
+RECONTACT_POLICY_VERSION = "recontact-review/2026-09-27.v1"
 AUDIENCE_CRITERIA_VERSION = 1
+
+
+def audience_policy_version(recontact_review: bool) -> str:
+    return AUDIENCE_POLICY_VERSION_W12 if recontact_review else AUDIENCE_POLICY_VERSION
 
 #: The six lines OrigenLab sells. The taxonomy must carry each brand on its family
 #: (tests/test_v2_audience_freeze.py); a missing interest in a line is «Sin información».
@@ -106,6 +129,9 @@ NOTE_LABEL = {
     "possible_supplier_unreviewed": "Posible proveedor sin revisar",
     "operator_excluded": "Excluido por el operador",
     "malformed_address": "Dirección mal formada",
+    "recontact_approved": "Recontacto aprobado (W12)",
+    "recontact_kept_excluded": "Contacto previo: se mantiene excluido (W12)",
+    "recontact_not_reviewed": "Contacto previo sin decisión de recontacto",
 }
 REVIEW_CODES = ("no_contact_point", "multiple_institutions", "institution_mismatch")
 
@@ -253,6 +279,18 @@ class ReviewDecision(BaseModel):
     note: Annotated[str, Field(min_length=3, max_length=500)]
 
 
+class RecontactDecision(BaseModel):
+    """W12: one recipient's recontact decision. A bulk selection is sent as one of these per
+    recipient, each marked ``bulk`` and each with the note the operator wrote for the batch."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    key: Annotated[str, Field(min_length=3, max_length=80)]
+    decision: Literal["approve", "keep_excluded"]
+    note: Annotated[str, Field(min_length=3, max_length=500)]
+    mode: Literal["individual", "bulk"] = "individual"
+
+
 class FreezeAudienceBody(BaseModel):
     """What the confirmation screen sends. Every field is something the operator saw."""
 
@@ -265,6 +303,7 @@ class FreezeAudienceBody(BaseModel):
     review_decisions: Annotated[list[ReviewDecision], Field(max_length=MAX_REVIEW_DECISIONS)] = []
     excluded_keys: Annotated[list[Annotated[str, Field(min_length=3, max_length=80)]],
                              Field(max_length=MAX_REVIEW_DECISIONS)] = []
+    recontact_decisions: Annotated[list[RecontactDecision], Field(max_length=MAX_REVIEW_DECISIONS)] = []
     #: The final confirmation. There is no default and no other value.
     confirmed: Literal[True]
 
@@ -354,6 +393,21 @@ def _lines(evidence: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _prior_contact(address: str, facts: Any) -> dict[str, Any]:
+    """What the operator is shown about a prior contact: last contact, campaign or source, destination.
+
+    A historical fact loaded from V1 often has no date; it is shown as unknown, never guessed.
+    """
+    d = facts.prior_contact_details.get(address) or {}
+    return {
+        "destination": address,
+        "last_contact_at": d.get("last_contact_at"),
+        "campaign_id": d.get("campaign_id"),
+        "campaign_name": d.get("campaign_name"),
+        "sources": d.get("sources", []),
+    }
+
+
 def plan_freeze(
     taxonomy: EquipmentTaxonomy,
     inputs: AudienceInputs,
@@ -362,15 +416,20 @@ def plan_freeze(
     *,
     decisions: Mapping[str, ReviewDecision] | None = None,
     excluded_keys: frozenset[str] = frozenset(),
+    recontact_decisions: Mapping[str, RecontactDecision] | None = None,
+    recontact_review: bool = False,
 ) -> dict[str, Any]:
     """The snapshot a freeze would write, and everything that would stop it.
 
     Without `decisions` this is the preview: `review_required` lists the destinations still
     awaiting an operator. `preview_sha256` never depends on decisions or exclusions — those are
-    what the operator adds on top of what they were shown.
+    what the operator adds on top of what they were shown. `recontact_review` is the W12
+    switch; with it off, any recontact decision is a problem, never silently dropped.
     """
     criteria.check(taxonomy)
     decisions = decisions or {}
+    recontact_decisions = recontact_decisions or {}
+    policy_version = audience_policy_version(recontact_review)
     composed = compose(taxonomy, inputs)
     filtered = apply_filter(composed, criteria.audience_filter())
     candidates = _collect(filtered, inputs, criteria.scope)
@@ -396,6 +455,8 @@ def plan_freeze(
             notes.add("malformed_address")
         if "invalid_address" in reasons:
             reasons = {"invalid_address"}  # the one terminal reason (WORKFLOWS.md §1.4)
+        # W12: reviewable only when prior contact is the one thing keeping it out.
+        w12_candidate = recontact_review and reasons == {"prior_contact"}
         cp = c.contact_point
         review_codes = []
         if cp is None:
@@ -421,8 +482,10 @@ def plan_freeze(
             "evidence_observed_at": max((e["observed_at"] or "" for e in evidence), default="") or None,
             "base_reasons": sorted(reasons),
             "notes": sorted(notes),
-            # Only a destination that would otherwise be included needs a person to decide.
-            "review_codes": review_codes if not reasons else [],
+            # Only a destination that could be included needs a person to decide.
+            "review_codes": review_codes if not reasons or w12_candidate else [],
+            "recontact_review_required": w12_candidate,
+            "prior_contact": (_prior_contact(address, facts) if "prior_contact" in reasons else None),
         })
 
     # A second address of a person already in the audience (the per-person dedup rule).
@@ -438,26 +501,50 @@ def plan_freeze(
             if r is not keep:
                 r["base_reasons"] = sorted(set(r["base_reasons"]) | {"already_in_audience"})
                 r["review_codes"] = []
+                r["recontact_review_required"] = False  # W12 never lifts a duplicate
 
     preview_sha256 = _sha256({
         "campaign_id": campaign["id"], "campaign_version": campaign["version"],
-        "policy_version": AUDIENCE_POLICY_VERSION, "criteria": criteria.canonical(),
+        "policy_version": policy_version, "criteria": criteria.canonical(),
         "rows": [{k: r[k] for k in ("key", "address", "base_reasons", "notes", "review_codes")}
-                 | {"evidence": [_evidence_key(e) for e in r["evidence"]]} for r in rows],
+                 | {"evidence": [_evidence_key(e) for e in r["evidence"]]}
+                 # With W12 on, what the operator is shown about a prior contact is part of what
+                 # they confirmed: a new send or a new source moves the fingerprint.
+                 | ({"recontact": [r["recontact_review_required"], r["prior_contact"]]} if recontact_review else {})
+                 for r in rows],
         "malformed": malformed,
     })
 
     known_keys = {r["key"] for r in rows}
-    unknown = sorted((set(decisions) | set(excluded_keys)) - known_keys)
+    unknown = sorted((set(decisions) | set(excluded_keys) | set(recontact_decisions)) - known_keys)
     pending = []
+    not_reviewable = []
     for r in rows:
         reasons = set(r["base_reasons"])
         notes = set(r["notes"])
         review = None
+        recontact = None
+        rd = recontact_decisions.get(r["key"])
+        if rd is not None and recontact_review:
+            if not r["recontact_review_required"]:
+                not_reviewable.append(r["key"])
+            else:
+                recontact = {"decision": rd.decision, "note": rd.note, "mode": rd.mode,
+                             "policy_version": RECONTACT_POLICY_VERSION, "prior_contact": r["prior_contact"]}
+                if rd.decision == "approve":
+                    reasons.discard("prior_contact")
+                    notes.add("recontact_approved")
+                else:
+                    notes.add("recontact_kept_excluded")
+        elif r["recontact_review_required"]:
+            notes.add("recontact_not_reviewed")
         if r["review_codes"]:
             d = decisions.get(r["key"])
             if d is None:
-                pending.append(r["key"])
+                # Pending only where the identity decides inclusion: a prior contact nobody
+                # approved stays excluded whatever its identity.
+                if not reasons:
+                    pending.append(r["key"])
             else:
                 review = {"codes": r["review_codes"], "decision": d.decision, "note": d.note}
                 notes.add(f"identity_reviewed_{d.decision}")
@@ -470,6 +557,7 @@ def plan_freeze(
         r["frozen_notes"] = sorted(notes)
         r["inclusion"] = "excluded" if reasons else "included"
         r["identity_review"] = review
+        r["recontact_review"] = recontact
         r["reasons"] = [{"code": x, "label": REASON_LABEL[x]} for x in r["frozen_reasons"]]
         r["note_labels"] = [{"code": x, "label": NOTE_LABEL[x]} for x in r["frozen_notes"]]
 
@@ -502,6 +590,15 @@ def plan_freeze(
     if pending:
         problems.append({"code": "review_pending",
                          "message": f"{len(pending)} destino(s) con identidad ambigua esperan una decisión"})
+    if recontact_decisions and not recontact_review:
+        problems.append({"code": "recontact_review_disabled",
+                         "message": "la revisión de recontacto (W12) no está habilitada en esta API; "
+                                    "un contacto previo sigue excluido"})
+    if not_reviewable:
+        problems.append({"code": "recontact_not_eligible",
+                         "message": f"{len(not_reviewable)} decisión(es) de recontacto sobre destinos que no la admiten: "
+                                    "W12 sólo levanta un contacto previo, nunca un bloqueo, una baja, un proveedor, "
+                                    "un destino inválido, un duplicado o un período de espera"})
     if unknown:
         problems.append({"code": "unknown_keys",
                          "message": f"{len(unknown)} decisión(es) o exclusión(es) no corresponden a esta audiencia"})
@@ -511,9 +608,10 @@ def plan_freeze(
         problems.append({"code": "exceeds_max_sends",
                          "message": f"{len(included)} incluidos superan el límite de {campaign['max_sends']} envíos"})
 
+    recontact_rows = [r for r in rows if r["recontact_review_required"]]
     return {
         "campaign_id": campaign["id"],
-        "policy_version": AUDIENCE_POLICY_VERSION,
+        "policy_version": policy_version,
         "criteria": criteria.canonical(),
         "preview_sha256": preview_sha256,
         "content": content,
@@ -521,6 +619,11 @@ def plan_freeze(
         "rows": rows,
         "review_required": [r["key"] for r in rows if r["review_codes"]],
         "review_pending": pending,
+        "recontact_review": {
+            "enabled": recontact_review,
+            "policy_version": RECONTACT_POLICY_VERSION if recontact_review else None,
+            "required": [r["key"] for r in recontact_rows],
+        },
         "malformed_count": len(malformed),
         "counts": {
             "candidates": len(rows) + len(malformed),
@@ -529,6 +632,11 @@ def plan_freeze(
             "excluded": len(rows) - len(included),
             "malformed_not_stored": len(malformed),
             "review_required": sum(1 for r in rows if r["review_codes"]),
+            "recontact_review_required": len(recontact_rows),
+            "recontact_approved": sum(1 for r in recontact_rows if (r["recontact_review"] or {}).get("decision") == "approve"),
+            "recontact_kept_excluded": sum(1 for r in recontact_rows
+                                           if (r["recontact_review"] or {}).get("decision") == "keep_excluded"),
+            "recontact_not_reviewed": sum(1 for r in recontact_rows if r["recontact_review"] is None),
             "excluded_by_reason": [{"code": c, "label": REASON_LABEL[c], "count": n} for c, n in sorted(by_reason.items())],
             "included_by_line": [
                 {"brand_id": ln["brand_id"], "line": ln["line"], "brand": ln["brand"],
@@ -556,6 +664,7 @@ def _snapshot_row(r: Mapping[str, Any]) -> dict[str, Any]:
         "interest_evidence": r["evidence"],
         "evidence_observed_at": r["evidence_observed_at"],
         "identity_review": r["identity_review"],
+        "recontact_review": r["recontact_review"],
     }
 
 
@@ -565,6 +674,12 @@ def _snapshot_row(r: Mapping[str, Any]) -> dict[str, Any]:
 class V2AudienceFreezeRepository(CommandTransaction):
     """`freeze-campaign-audience`. Writes `outbound.campaign`, `outbound.campaign_recipient`
     and the audit stream, in one repeatable-read transaction."""
+
+    def __init__(self, *args: Any, recontact_review_enabled: bool = False, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        #: W12 — the same switch the preview reads; a mismatch moves the policy version and
+        #: therefore the fingerprint, so a preview taken under the other setting is refused.
+        self._recontact_review = recontact_review_enabled
 
     @contextmanager
     def _write(self) -> Iterator[Any]:
@@ -611,9 +726,18 @@ class V2AudienceFreezeRepository(CommandTransaction):
         decisions = {d["key"]: ReviewDecision(**d) for d in f["review_decisions"]}
         if len(decisions) != len(f["review_decisions"]):
             raise CommandRefused(422, "duplicate_decision", "one decision per destination")
+        recontact = {d["key"]: RecontactDecision(**d) for d in f.get("recontact_decisions", [])}
+        if len(recontact) != len(f.get("recontact_decisions", [])):
+            raise CommandRefused(422, "duplicate_decision", "one recontact decision per destination")
+        if recontact and not self._recontact_review:
+            raise CommandRefused(409, "recontact_review_disabled",
+                                 "recontact review (W12) is not enabled on this API; prior contact stays excluded")
+        # Recomputed from this transaction's own snapshot: every decision is revalidated
+        # against current blocks, cooldowns, suppliers, bounces and duplicates.
         plan = plan_freeze(
             load_taxonomy(), read_marketing_audience_inputs(cur), campaign, criteria,
             decisions=decisions, excluded_keys=frozenset(f["excluded_keys"]),
+            recontact_decisions=recontact, recontact_review=self._recontact_review,
         )
         if plan["preview_sha256"] != f["expected_preview_sha256"]:
             raise CommandRefused(
@@ -628,14 +752,17 @@ class V2AudienceFreezeRepository(CommandTransaction):
         snapshot = [_snapshot_row(r) for r in plan["rows"]]
         audience_sha256 = _sha256(snapshot)
         content = plan["content"]
+        policy_version = plan["policy_version"]
         criteria_doc = {
             **plan["criteria"],
-            "policy_version": AUDIENCE_POLICY_VERSION,
+            "policy_version": policy_version,
             "preview_sha256": plan["preview_sha256"],
             "counts": plan["counts"],
             "review_decisions": len(decisions),
             "operator_excluded": len(f["excluded_keys"]),
             "content_sha256_form": "subject\\0preheader\\0body_text\\0body_html",
+            "recontact_review": {**plan["recontact_review"], "required": len(plan["recontact_review"]["required"]),
+                                 "decisions": len(recontact)},
         }
         cur.execute(
             """
@@ -648,7 +775,7 @@ class V2AudienceFreezeRepository(CommandTransaction):
             returning version, now()::text as frozen_at
             """,
             (plan["body_text"], content["content_sha256"], json.dumps(criteria_doc, ensure_ascii=False),
-             AUDIENCE_CRITERIA_VERSION, AUDIENCE_POLICY_VERSION, audience_sha256,
+             AUDIENCE_CRITERIA_VERSION, policy_version, audience_sha256,
              campaign["id"], campaign["version"]),
         )
         row = self._row(cur)
@@ -660,9 +787,11 @@ class V2AudienceFreezeRepository(CommandTransaction):
                 (campaign_id, address_norm, contact_point_id, person_id, organization_id,
                  state, exclusion_reasons,
                  frozen_at, frozen_inclusion, frozen_reasons, frozen_notes, relevance,
-                 interest_evidence, evidence_observed_at, identity_review,
+                 interest_evidence, evidence_observed_at, identity_review, recontact_review,
+                 recontact_override_by_operator_id, recontact_override_reason, recontact_override_at,
                  campaign_version, content_sha256, policy_version)
-            values (%s, %s, %s, %s, %s, %s, %s, now(), %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s, %s, now(), %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb,
+                    %s, %s, case when %s then now() end, %s, %s, %s)
             """,
             [
                 (campaign["id"], s["address_norm"], s["contact_point_id"], s["person_id"], s["organization_id"],
@@ -671,7 +800,10 @@ class V2AudienceFreezeRepository(CommandTransaction):
                  json.dumps(s["interest_evidence"], ensure_ascii=False), s["evidence_observed_at"],
                  json.dumps(s["identity_review"] and {**s["identity_review"], "operator_id": operator.operator_id},
                             ensure_ascii=False) if s["identity_review"] else None,
-                 frozen_version, content["content_sha256"], AUDIENCE_POLICY_VERSION)
+                 json.dumps({**s["recontact_review"], "operator_id": operator.operator_id}, ensure_ascii=False)
+                 if s["recontact_review"] else None,
+                 *_override_triple(s, operator),
+                 frozen_version, content["content_sha256"], policy_version)
                 for s in snapshot
             ],
         )
@@ -680,6 +812,15 @@ class V2AudienceFreezeRepository(CommandTransaction):
             (campaign["id"],),
         )
         counts = plan["counts"]
+        recontact_summary = {
+            "enabled": self._recontact_review,
+            "policy_version": plan["recontact_review"]["policy_version"],
+            "review_required": counts["recontact_review_required"],
+            "approved": counts["recontact_approved"],
+            "kept_excluded": counts["recontact_kept_excluded"],
+            "not_reviewed": counts["recontact_not_reviewed"],
+            "bulk": sum(1 for d in recontact.values() if d.mode == "bulk"),
+        }
         self._append_event(
             cur,
             aggregate_kind="campaign",
@@ -688,7 +829,7 @@ class V2AudienceFreezeRepository(CommandTransaction):
             payload={
                 "from_version": campaign["version"],
                 "to_version": frozen_version,
-                "policy_version": AUDIENCE_POLICY_VERSION,
+                "policy_version": policy_version,
                 "criteria": plan["criteria"],
                 "preview_sha256": plan["preview_sha256"],
                 "content_sha256": content["content_sha256"],
@@ -698,26 +839,67 @@ class V2AudienceFreezeRepository(CommandTransaction):
                 "review_decisions": {"include": sum(1 for d in decisions.values() if d.decision == "include"),
                                      "exclude": sum(1 for d in decisions.values() if d.decision == "exclude")},
                 "operator_excluded": len(f["excluded_keys"]),
+                "recontact_review": recontact_summary,
                 "send_blockers": [b["code"] for b in SEND_BLOCKERS],
             },
             operator=operator,
             receipt_id=receipt_id,
         )
+        # W12: one audit event per approved recipient, bulk or not (WORKFLOWS.md §W12 step 1).
+        cur.execute(
+            """
+            select id::text as recipient_id, recontact_review
+              from outbound.campaign_recipient
+             where campaign_id = %s and recontact_override_at is not null
+             order by address_norm
+            """,
+            (campaign["id"],),
+        )
+        for recipient_id, review in cur.fetchall():
+            self._append_event(
+                cur,
+                aggregate_kind="campaign",
+                aggregate_id=campaign["id"],
+                event_type="campaign.override_granted",
+                payload={
+                    "recipient_id": recipient_id,
+                    "decision": "approve",
+                    "mode": review["mode"],
+                    "note": review["note"],
+                    "recontact_policy_version": review["policy_version"],
+                    "audience_policy_version": policy_version,
+                    "lifted": ["prior_contact"],
+                    "prior_contact": {k: review["prior_contact"].get(k)
+                                      for k in ("last_contact_at", "campaign_id", "campaign_name", "sources")},
+                    "campaign_version": frozen_version,
+                },
+                operator=operator,
+                receipt_id=receipt_id,
+            )
         cur.execute("select current_database()")
         return {
             "campaign_id": campaign["id"],
             "status": "audience_frozen",
             "version": frozen_version,
             "frozen_at": row["frozen_at"],
-            "policy_version": AUDIENCE_POLICY_VERSION,
+            "policy_version": policy_version,
             "content_sha256": content["content_sha256"],
             "audience_sha256": audience_sha256,
             "counts": {k: counts[k] for k in ("rows", "included", "excluded", "malformed_not_stored")},
+            "recontact_review": recontact_summary,
             "storage": {"tables": ["outbound.campaign", "outbound.campaign_recipient"], "database": cur.fetchone()[0]},
             "send_blockers": list(SEND_BLOCKERS),
         }
 
     _HANDLERS = {FREEZE_CAMPAIGN_AUDIENCE: _freeze}
+
+
+def _override_triple(s: Mapping[str, Any], operator: OperatorIdentity) -> tuple[Any, Any, bool]:
+    """The W12 override triple for one snapshot row: set exactly when the decision is approve."""
+    review = s["recontact_review"]
+    if review and review["decision"] == "approve":
+        return operator.operator_id, review["note"], True
+    return None, None, False
 
 
 def freeze_fields(body: FreezeAudienceBody) -> dict[str, Any]:
