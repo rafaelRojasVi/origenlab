@@ -10,13 +10,16 @@
 --   * an unsubscribe block, and any block an unsubscribe request is linked to, is never updated
 --     or deleted, and its evidence is immutable;
 --   * `outbound.marketing_contact_refusals` reads the live controls, so a recipient frozen before
---     a «BAJA» is refused, and a W12 approval never lifts it.
+--     a «BAJA» is refused, and a W12 approval never lifts it;
+--   * a «BAJA» held for review (an unresolved unsubscribe_request) refuses its exact address, is
+--     resolved at most once and only to a control, and is never dismissed;
+--   * the writer's body is static SQL over schema-qualified relations only.
 --
 -- SQLSTATEs: 23514 check, P0001 trigger guard, 42501 privilege / login assertion.
 begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
-select plan(52);
+select plan(72);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -68,6 +71,24 @@ select is(
   (select count(*)::int from pg_proc p, aclexplode(p.proacl) a
     where p.oid = 'outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)'::regprocedure and a.grantee = 0),
   0, 'PUBLIC holds no EXECUTE on add_contact_control');
+select is(
+  (select array_agg(distinct a.grantee::regrole::text order by a.grantee::regrole::text) from pg_proc p, aclexplode(p.proacl) a
+    where p.oid = 'outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)'::regprocedure
+      and a.privilege_type = 'EXECUTE' and a.grantee <> p.proowner),
+  array['origenlab_api'], 'EXECUTE on add_contact_control is granted to origenlab_api and to no one else');
+-- ARCHITECTURE.md §6.2 points 4-5: static SQL only, and every relation schema-qualified. With
+-- search_path pinned to pg_catalog an unqualified relation would not resolve at all; this pins
+-- the source so one is never added.
+select ok(
+  (select prosrc !~* '\mexecute\M' and prosrc !~* '\mformat\s*\(' and prosrc !~* 'quote_(ident|literal|nullable)'
+     from pg_proc where oid = 'outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)'::regprocedure),
+  'add_contact_control contains no dynamic SQL');
+select is(
+  (select array_agg(distinct m[2] order by m[2]) from pg_proc p,
+          regexp_matches(p.prosrc, '\m(from|join|into|update)\s+([a-z_]+)(\s|\.|$)', 'gi') m
+    where p.oid = 'outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)'::regprocedure
+      and m[3] <> '.' and m[2] !~ '^[vp]_'),  -- v_ locals (select … into v_x) and p_ arguments (is distinct from p_x)
+  null, 'every relation add_contact_control reads or writes is schema-qualified');
 
 -- ── catalogue: the send-time contract and the guard ──────────────────────────────────────────
 select is((select prosecdef from pg_proc where oid = 'outbound.marketing_contact_refusals(uuid)'::regprocedure),
@@ -155,6 +176,12 @@ select throws_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, 
   '23514', null, 're-subscribing has no event type');
 select throws_ok($$ insert into evidence.assertion (source_record_id, kind, value_norm) values ('69000000-0000-4000-8000-000000000302', 'unsubscribe_reply', 'x@lab.example') $$,
   '23514', null, 'the assertion vocabulary stays closed');
+select lives_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
+  values ('assertion', '69000000-0000-4000-8000-000000000500', 1, 'assertion.unsubscribe_review_opened', 1, '{}', 'operator', '69000000-0000-4000-8000-000000000001') $$,
+  'assertion.unsubscribe_review_opened is an event type');
+select throws_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
+  values ('assertion', '69000000-0000-4000-8000-000000000500', 2, 'assertion.unsubscribe_review_dismissed', 1, '{}', 'operator', '69000000-0000-4000-8000-000000000001') $$,
+  '23514', null, 'dismissing a held «BAJA» has no event type');
 
 -- ── permanence ───────────────────────────────────────────────────────────────────────────────
 select throws_ok($$ delete from outbound.contact_control where id = '69000000-0000-4000-8000-000000000400' $$,
@@ -179,6 +206,30 @@ select throws_ok($$ update evidence.assertion set resolution = 'rejected', resol
   'P0001', null, 'an unsubscribe request is never un-resolved');
 select throws_ok($$ delete from evidence.assertion where id = '69000000-0000-4000-8000-000000000500' $$,
   'P0001', null, 'an unsubscribe request is never deleted');
+
+-- A «BAJA» held for review: its record pending, its request unresolved. Written here as the owner
+-- (the role add_contact_control runs as), exactly as the function writes it.
+insert into evidence.source_record (id, kind, dedupe_key, payload, payload_sha256, review_status) values
+  ('69000000-0000-4000-8000-000000000303', 'gmail_message', 'gmail_unsubscribe:' || repeat('9', 64), '{"body_text": "REMOVER"}', repeat('d', 64), 'pending');
+insert into evidence.assertion (id, source_record_id, kind, value_norm, value) values
+  ('69000000-0000-4000-8000-000000000503', '69000000-0000-4000-8000-000000000303', 'unsubscribe_request', 'held@lab.example',
+   '{"basis": "pending_review", "review_reason": "lineage_missing"}');
+select throws_ok($$ update evidence.assertion set resolution = 'rejected' where id = '69000000-0000-4000-8000-000000000503' $$,
+  'P0001', null, 'a held «BAJA» is never dismissed');
+select throws_ok($$ update evidence.assertion set value_norm = 'other@lab.example' where id = '69000000-0000-4000-8000-000000000503' $$,
+  'P0001', null, 'a held «BAJA» never moves to another address');
+select throws_ok($$ update evidence.assertion set resolution = 'promoted', resolved_kind = 'contact_control', resolved_id = '69000000-0000-4000-8000-000000000400',
+  resolved_at = now(), value = '{}' where id = '69000000-0000-4000-8000-000000000503' $$,
+  'P0001', null, 'resolving a held «BAJA» changes its resolution and nothing else');
+select throws_ok($$ update evidence.source_record set review_status = 'rejected' where id = '69000000-0000-4000-8000-000000000303' $$,
+  'P0001', null, 'held evidence is never rejected');
+reset role;
+select is(left(pg_temp.run_as('origenlab_api', $$update evidence.assertion set resolution = 'promoted', resolved_kind = 'contact_control',
+  resolved_id = '69000000-0000-4000-8000-000000000400', resolved_at = now() where id = '69000000-0000-4000-8000-000000000503'$$), 5), 'P0001',
+  'the api''s column grant on assertion resolutions cannot resolve a held «BAJA» outside the privileged writer');
+select is(left(pg_temp.run_as('origenlab_api', $$update evidence.source_record set review_status = 'promoted' where id = '69000000-0000-4000-8000-000000000303'$$), 5), 'P0001',
+  'nor promote its evidence');
+set role origenlab_owner;
 reset role;
 select is(left(pg_temp.run_as('origenlab_api', $$update evidence.source_record set review_status = 'rejected' where id = '69000000-0000-4000-8000-000000000300'$$), 5), 'P0001',
   'the api''s column grant on review_status does not reach unsubscribe evidence');
@@ -216,6 +267,10 @@ select pg_temp.ins('69000000-0000-4000-8000-000000000607', 'prior@lab.example', 
 select pg_temp.ins('69000000-0000-4000-8000-000000000608', 'bounced@lab.example', 'included', '{}', '{}', null, null);
 select lives_ok($$ select pg_temp.ins('69000000-0000-4000-8000-000000000609', 'baja@lab.example', 'excluded', '{block}', '{unsubscribed}', null, null) $$,
   'a freeze records an unsubscribe as the block reason with the unsubscribed note');
+select lives_ok($$ select pg_temp.ins('69000000-0000-4000-8000-00000000060a', 'held@lab.example', 'excluded', '{block}', '{unsubscribe_pending_review}', null, null) $$,
+  'a freeze records a «BAJA» held for review as a block with the unsubscribe_pending_review note');
+select pg_temp.ins('69000000-0000-4000-8000-00000000060b', 'held-late@lab.example', 'included', '{}', '{}', null, null);
+select pg_temp.ins('69000000-0000-4000-8000-00000000060c', 'neighbour@lab.example', 'included', '{}', '{}', null, null);
 
 -- After the freeze: late@ answers «BAJA»; recontact@ (W12-approved) answers «BAJA» too; the rest
 -- get the other controls.
@@ -253,6 +308,32 @@ select is(outbound.marketing_contact_refusals('69000000-0000-4000-8000-000000000
   'an excluded recipient is refused twice over');
 select is(outbound.marketing_contact_refusals('69000000-0000-4000-8000-0000000006ff'), array['recipient_unknown'],
   'an unknown recipient is refused, never passed');
+select is(outbound.marketing_contact_refusals('69000000-0000-4000-8000-00000000060a'), array['not_snapshotted', 'unsubscribe_pending_review'],
+  'a recipient held for review is refused at send time');
+insert into evidence.source_record (id, kind, dedupe_key, payload, payload_sha256, review_status) values
+  ('69000000-0000-4000-8000-000000000304', 'gmail_message', 'gmail_unsubscribe:' || repeat('8', 64), '{"body_text": "BAJA"}', repeat('d', 64), 'pending');
+insert into evidence.assertion (id, source_record_id, kind, value_norm, value) values
+  ('69000000-0000-4000-8000-000000000504', '69000000-0000-4000-8000-000000000304', 'unsubscribe_request', 'held-late@lab.example',
+   '{"basis": "pending_review", "review_reason": "recipient_mismatch"}');
+select is(outbound.marketing_contact_refusals('69000000-0000-4000-8000-00000000060b'), array['unsubscribe_pending_review'],
+  'a hold recorded after the freeze refuses a recipient frozen as included');
+select is(outbound.marketing_contact_refusals('69000000-0000-4000-8000-00000000060c'), '{}'::text[],
+  'the hold is on the exact address only: a neighbour on the same domain passes');
+-- Confirmed (as add_contact_control does it, as the owner): the hold becomes the permanent unsubscribe.
+insert into outbound.contact_control (id, scope, value_norm, kind, purpose, reason, source, created_by_operator_id, origin_source_record_id) values
+  ('69000000-0000-4000-8000-000000000404', 'address', 'held-late@lab.example', 'block', 'marketing', 'unsubscribe', 'unsubscribe_handler',
+   '69000000-0000-4000-8000-000000000001', '69000000-0000-4000-8000-000000000304');
+select lives_ok($$ update evidence.assertion set resolution = 'promoted', resolved_kind = 'contact_control', resolved_id = '69000000-0000-4000-8000-000000000404',
+  resolved_at = now(), resolved_by_operator_id = '69000000-0000-4000-8000-000000000001' where id = '69000000-0000-4000-8000-000000000504' $$,
+  'the owner resolves a held «BAJA» to its control, once');
+select lives_ok($$ update evidence.source_record set review_status = 'promoted' where id = '69000000-0000-4000-8000-000000000304' $$,
+  '— and promotes its evidence');
+select is(outbound.marketing_contact_refusals('69000000-0000-4000-8000-00000000060b'), array['unsubscribe'],
+  'once confirmed, the hold reads as the permanent unsubscribe');
+select throws_ok($$ update evidence.assertion set resolved_id = '69000000-0000-4000-8000-000000000400' where id = '69000000-0000-4000-8000-000000000504' $$,
+  'P0001', null, 'a resolved request is never re-pointed');
+select throws_ok($$ update evidence.source_record set review_status = 'pending' where id = '69000000-0000-4000-8000-000000000304' $$,
+  'P0001', null, 'promoted evidence never returns to pending');
 reset role;
 select is(pg_temp.query_as('origenlab_api', $$select outbound.marketing_contact_refusals('69000000-0000-4000-8000-000000000601')::text$$),
   '{unsubscribe}', 'the api role evaluates the contract under its own grants');
