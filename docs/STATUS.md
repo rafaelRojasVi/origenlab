@@ -1548,6 +1548,22 @@ them.
   Drive link carries «registro local» (it comes from an archive ledger, not a live Drive read).
 - **Not changed:** the proxy (see the separate proxy branch), the API routes, any database.
 
+### 2.7.29 Campaign drafts and equipment-interest audiences, 2026-09-27 — built locally, not deployed
+
+Numbered after the hosting branch's 2.7.28, which is not merged here.
+
+| | |
+|---|---|
+| Migration | `20260927120000_slice5_campaign_draft_authoring.sql`: `outbound.campaign.preheader` (≤ 255, non-blank); trigger `outbound.campaign_content_draft_only` (subject, preheader and bodies change only while `draft`); events `campaign.draft_created`, `campaign.draft_content_saved`. No table added (inventory stays 36); audience criteria stay frozen-or-absent; no grant, policy or send flag changes |
+| Write path | `POST /v2/commands/{create,save}-campaign-draft` — sales/admin, `Idempotency-Key`, compare-and-set on `version`, one event per change; HTML with a script, frame, form, inline handler, meta refresh, `<base>` or script URL is refused, not cleaned. Mounted only with `ORIGENLAB_V2_CAMPAIGN_DRAFTS_ENABLED=true` (separate from `ORIGENLAB_V2_COMMANDS_ENABLED`; default off). The proxy allows no POST under `/v2`, and its suite now pins both paths as refused |
+| Reads | `GET /v2/workspace/marketing/{taxonomy,audience,campaigns/{id}}`; `/marketing` now reports `preheader`, `has_html`, `version`, the storage table and database, and whether drafts are enabled |
+| Taxonomy | `apps/api/src/origenlab_api/v2/equipment_taxonomy.json`, generated from `apps/web/src/data` by `apps/api/scripts/export_equipment_taxonomy.mjs` (drift-checked in pytest): 6 brands, 6 families, 24 models, every image VERIFIED on the site and served from origenlab.cl |
+| Audience | relevance and sending eligibility are separate fields; no score. Interests come from `crm.opportunity_interest`, the quotation Gmail message a historical revision was recorded from, and case titles; bases `purchased` / `requested_quotation` / `requested_information` / `inferred_relevance`, each with source and date. Person-level (recipient/participant) and institution-level (requesting institution) kept apart. Exclusions: invalid destination, address/domain block, active cooldown, supplier/manufacturer, unreviewed `supplier_candidate` domain; deduplicated by address |
+| Dashboard | Marketing: campaign cards with sandboxed thumbnails (or «Contenido no importado»), draft editor (subject, preheader, HTML, four OrigenLab templates, desktop/mobile preview under a CSP that loads images only from origenlab.cl), a persistence banner that always says whether the draft is only in the tab or saved (table, database, version), and «Audiencias por equipo». The audience selection is not persisted — the schema records an audience only at freeze, which is unbuilt |
+| Clean-room reading (read-only, 2026-09-27) | `crm.opportunity_interest`, `crm.person`, `crm.opportunity_participant`, `crm.quote_line`, `catalog.product` are **0**. Brand mentions exist only in quotation evidence: Hielscher 23 records → 15 cases / 13 institutions; Löser 6 → 3 / 3; IKA 5 → 3 / 3; Adam Equipment 4 → 2 / 2; Ortoalresa and SERVA none. The 3 campaigns carry no HTML (all «Contenido no importado») |
+| Evidence | pgTAP 572 across 15 files on a disposable PostgreSQL 17 (new `065_campaign_draft_authoring.sql`, 16) — all pass except `100_hosted_role_bootstrap` #22, which fails only because that test cluster gave `origenlab_api` a password. `apps/api/scripts/validate.sh`: 2185 passed. The drafts, audience, taxonomy and workspace modules with disposable-database DSNs: 74 passed. The whole suite with those DSNs shows 17 failures (`test_v2_read_boundary.py`, `test_v2_crm_connections_read.py`) that are identical on the unmodified base. Dashboard 186, proxy 165. Browser preview run against a seeded fictitious disposable database: draft created, v1 row and `campaign.draft_created` event recorded, zero recipients |
+| Not done | no real CRM write, no campaign sent or frozen, nothing deployed; drafts not enabled in any running API |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
