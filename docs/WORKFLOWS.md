@@ -429,7 +429,7 @@ is ([`DATA.md`](DATA.md) §1.1); a new key or a changed meaning is a new
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|
 | 1 | operator · `create_campaign` | — | `draft` with budget and policy | event | — |
-| 2 | operator · `freeze_audience` | `draft` | recipients inserted `snapshotted` or `excluded` with a reason; campaign `audience_frozen` | recipient rows, event | — |
+| 2 | operator · `freeze_audience` (`freeze-campaign-audience`) | `draft`; the preview fingerprint the operator confirmed still matches; every ambiguous identity has an operator decision with a note | recipients inserted `snapshotted` or `excluded` with every reason; campaign `audience_frozen`; content, criteria, policy version and audience fingerprint written once | recipient snapshot rows, `campaign.audience_frozen` | audience changed since the preview → refused; a frozen campaign is never re-frozen — a changed draft or audience is a new campaign |
 | 3 | operator · `grant_recontact_override` | `audience_frozen` | override triple set on named recipients (W12) | event | any later state → refused |
 | 4 | operator · `dry_run` | `audience_frozen` | none — evaluates the predicate and renders | one report artifact in Storage, one event | — |
 | 5 | approver · `approve_campaign` | a dry-run event exists | `approved`; override count and budget recorded | event | no dry run → refused |
@@ -443,6 +443,19 @@ is ([`DATA.md`](DATA.md) §1.1); a new key or a changed meaning is a new
 
 **A reply never creates or advances an opportunity on its own.** Step 12 is
 always an operator decision.
+
+**Step 2 as built (2026-09-27).** The snapshot is write-once. `frozen_inclusion`,
+`frozen_reasons` and `frozen_notes` are the freeze decision; `state` and
+`exclusion_reasons` start equal to them and are the live lifecycle columns steps 7–11
+would move. At freeze, `prior_contact` is an exclusion reason (W12's override is unbuilt),
+an unreviewed supplier candidate is `manual_hold`, a second address of a person already in
+the audience is `already_in_audience`, and a destination that cannot satisfy the address
+shape is counted, never stored. A destination with no CRM contact point, linked to more
+than one institution, or whose contact point names another institution is frozen only
+after an operator decides include or exclude with a note (`identity_review`; exclude is
+`manual_hold`). Relevance is recorded apart — `evidenced` with each basis, source and date,
+or `sin_informacion` — and never decides eligibility. Steps 3–12 remain unbuilt, and
+sending stays blocked until unsubscribe processing exists (W10 **[OPEN]**).
 
 **An accepted send records prior contact permanently and additionally creates
 a dated cooldown.** The cooldown expires; the prior-contact fact does not.
