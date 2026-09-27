@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WarmCasesResponse } from "../api/commercialTypes";
 import type { TodayPanelData } from "../api/operatorTypes";
 import { DashboardApp } from "./DashboardApp";
+import { stubSignedInAuthSession } from "../test/mockAuthSession";
 
 const panelSqlite: TodayPanelData = {
   health: {
@@ -134,12 +135,14 @@ describe("DashboardApp (legacy TodayPage tests)", () => {
     vi.stubEnv("MODE", "development");
     vi.stubEnv("VITE_ORIGENLAB_API_BASE_URL", "");
     window.location.hash = "#/";
+    stubSignedInAuthSession();
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
     window.location.hash = "";
+    vi.unstubAllGlobals();
   });
 
   function mockAllOk() {

@@ -25,6 +25,8 @@ const VALID_SECTIONS = new Set<string>([
   "crm-v2",
   "revision",
   "casos",
+  "importacion",
+  "archivo",
   "system",
 ]);
 

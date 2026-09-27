@@ -146,6 +146,11 @@ export function listedCase(over: Partial<V2CommercialCase> = {}): V2CommercialCa
     organization_count: 0,
     interest_count: 0,
     evidence_count: 1,
+    participants: null,
+    interest_labels: null,
+    quote_count: null,
+    latest_quote_status: null,
+    last_activity_at: null,
     ...over,
   };
 }

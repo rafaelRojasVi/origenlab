@@ -80,6 +80,15 @@ the var is not `VITE_`-prefixed, Vite never exposes it to client code via
 real personal email as a default anywhere — always pass it via your own
 shell environment.
 
+For the V2 pages (`/v2/*`) the API honours this header **only** when it runs with
+`ORIGENLAB_DEV_LOGIN_ENABLED=true` against a loopback database; the setting is off by
+default and refused in production. The alternative is Google Workspace sign-in
+([`apps/api/docs/PRODUCTION_AUTH.md`](../api/docs/PRODUCTION_AUTH.md#google-workspace-login-dashboard-v2-boundary)):
+the dashboard then opens on a login screen, `vite.config.ts` proxies `/auth` to the API,
+and the page must be opened at exactly `http://localhost:5173`. Where the API has no
+sign-in surface (`/auth/session` answers 404, or the Worker answers `path_not_allowed`)
+the dashboard behaves as it always did.
+
 **`VITE_ORIGENLAB_API_BASE_URL` must stay unset** while relying on this
 mechanism. When it's set, client code builds absolute request URLs straight
 to that API host instead of relative paths, so the browser bypasses Vite's

@@ -15,7 +15,8 @@
 import type { CaseSummary } from "../../lib/commercialCase";
 import type { V2CommercialCase, V2Quote } from "../../api/v2Types";
 import { caseStageLabel } from "../../lib/commercialCase";
-import { formatDate } from "../../lib/crm360";
+import { formatDate, sourceKindLabel } from "../../lib/crm360";
+import { caseQuoteLine, groupParticipants } from "../../lib/crmConnections";
 import { V2Chip } from "./V2Chip";
 
 function Line({ label, children }: { label: string; children: React.ReactNode }) {
@@ -60,6 +61,34 @@ export function V2CaseSummaryCard({
   const requestingId =
     summary?.requesting?.organization_id ?? row.requesting_organization_id ?? null;
 
+  /*
+    Parts come from the list row when the route carried them (`/v2/cases`), else from the
+    case's card. Neither known means neither is shown — the card never asserts an absence
+    it did not measure.
+  */
+  const groups = row.participants ? groupParticipants(row.participants) : null;
+  const namesFor = (role: string): string[] | null =>
+    groups
+      ? (groups.find((group) => group.role === role)?.organizations.map((org) => org.name) ?? [])
+      : summary
+        ? role === "supplier"
+          ? summary.suppliers
+          : summary.manufacturers
+        : null;
+  const suppliers = namesFor("supplier");
+  const manufacturers = namesFor("manufacturer");
+  const otherGroups = groups
+    ? groups.filter(
+        (group) =>
+          group.role !== "requesting_institution" &&
+          group.role !== "supplier" &&
+          group.role !== "manufacturer",
+      )
+    : null;
+  const interests =
+    summary && summary.interests.length > 0 ? summary.interests : (row.interest_labels ?? summary?.interests ?? null);
+  const durableQuoteLine = caseQuoteLine(row.quote_count, row.latest_quote_status);
+
   return (
     <article
       className="space-y-3 rounded-xl border border-slate-200 bg-[var(--color-card)] p-4"
@@ -100,31 +129,43 @@ export function V2CaseSummaryCard({
           )}
         </Line>
 
-        {summary ? (
+        {interests !== null || suppliers !== null ? (
           <>
             <Line label="Busca">
-              {summary.interests.length > 0 ? (
-                summary.interests.join(" · ")
+              {interests && interests.length > 0 ? (
+                interests.join(" · ")
               ) : (
                 <Unknown>Todavía no se registra qué busca</Unknown>
               )}
             </Line>
 
             <Line label="Proveedor">
-              {summary.suppliers.length > 0 ? (
-                summary.suppliers.join(" · ")
+              {suppliers && suppliers.length > 0 ? (
+                suppliers.join(" · ")
               ) : (
-                <Unknown>Sin proveedor en el caso</Unknown>
+                <Unknown>Sin proveedor registrado todavía</Unknown>
               )}
             </Line>
 
             <Line label="Fabricante">
-              {summary.manufacturers.length > 0 ? (
-                summary.manufacturers.join(" · ")
+              {manufacturers && manufacturers.length > 0 ? (
+                manufacturers.join(" · ")
               ) : (
-                <Unknown>Sin fabricante en el caso</Unknown>
+                <Unknown>Sin fabricante registrado todavía</Unknown>
               )}
             </Line>
+
+            {otherGroups && otherGroups.length > 0 ? (
+              <Line label="Otros papeles">
+                <span className="flex flex-wrap gap-1" data-testid="case-summary-other-roles">
+                  {otherGroups.map((group) => (
+                    <V2Chip key={group.role} tone={group.role === "mentioned" ? "neutral" : "ok"}>
+                      {group.label}: {group.organizations.map((org) => org.name).join(", ")}
+                    </V2Chip>
+                  ))}
+                </span>
+              </Line>
+            ) : null}
           </>
         ) : (
           /*
@@ -143,8 +184,24 @@ export function V2CaseSummaryCard({
           </Line>
         )}
 
+        <Line label="Origen">
+          {row.origin_source_kind ? (
+            <>
+              {sourceKindLabel(row.origin_source_kind)}
+              <span className="text-[var(--color-muted)]">
+                {" "}
+                · {row.evidence_count === 1 ? "1 documento vinculado" : `${row.evidence_count} documentos vinculados`}
+              </span>
+            </>
+          ) : (
+            <Unknown>Origen no registrado todavía</Unknown>
+          )}
+        </Line>
+
         <Line label="Cotización">
-          {quotes.length > 0 ? (
+          {quotes.length === 0 && durableQuoteLine ? (
+            row.quote_count ? durableQuoteLine : <Unknown>{durableQuoteLine}</Unknown>
+          ) : quotes.length > 0 ? (
             quotes
               .map(
                 (quote) =>
@@ -152,12 +209,17 @@ export function V2CaseSummaryCard({
               )
               .join(" · ")
           ) : (
-            <Unknown>Sin cotización</Unknown>
+            <Unknown>Sin cotización registrada todavía</Unknown>
           )}
         </Line>
 
         <Line label="Últ. act.">
-          {summary?.lastActivityAt ? (
+          {row.last_activity_at ? (
+            <>
+              {formatDate(row.last_activity_at)}
+              <span className="text-[var(--color-muted)]"> · actividad registrada</span>
+            </>
+          ) : summary?.lastActivityAt ? (
             <>
               {formatDate(summary.lastActivityAt)}
               {summary.lastActivityLabel ? (

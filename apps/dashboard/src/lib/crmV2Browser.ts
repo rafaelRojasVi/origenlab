@@ -51,6 +51,19 @@ export const CRM_V2_TABS: readonly CrmV2TabDefinition[] = [
   },
 ];
 
+/**
+ * What the search box says it can find. The API scopes a search by role: for a role that may
+ * not see contact addresses (`contact_redaction.py`) `/v2/contacts` compares only person and
+ * organization names and `/v2/evidence` skips every address kind — so the box must not
+ * promise a search by address it would silently not perform, nor confirm that addresses exist
+ * to be searched.
+ */
+export function searchPlaceholder(tab: CrmV2Tab, addressesRedacted: boolean): string {
+  if (tab === "organizations") return "nombre";
+  if (!addressesRedacted) return "dirección o valor";
+  return tab === "contacts" ? "nombre de persona o institución" : "valor observado (sin direcciones)";
+}
+
 const USAGE_LABELS: Record<V2ContactUsage, string> = {
   personal: "Personal",
   work: "Laboral",

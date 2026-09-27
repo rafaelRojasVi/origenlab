@@ -341,6 +341,43 @@ describe("handleRequest", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "/api/contacts/a%40b.co",
+    "/api/contacts/anything?limit=5",
+    "/api/mirror/commercial/deals",
+    "/api/mirror/leads/prospects?limit=20",
+    "/api/mirror/catalog/products",
+  ])("V1 path %s answers 403 path_not_allowed and never reaches upstream", async (path) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl${path}`, {
+        method: "GET",
+        headers: { Cookie: "origenlab_session=abc" },
+      }),
+      TEST_ENV,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: { code: "path_not_allowed" } });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("V1 paths stay refused for POST as well", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    for (const path of ["/api/contacts/a%40b.co", "/api/mirror/commercial/deals"]) {
+      const response = await handleRequest(
+        requestWithOrigin(`https://dashboard.origenlab.cl${path}`, { method: "POST" }),
+        TEST_ENV,
+      );
+      expect(response.status).toBe(405);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("missing upstream configuration returns JSON error without fetching", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

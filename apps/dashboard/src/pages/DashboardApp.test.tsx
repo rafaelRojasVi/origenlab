@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WarmCasesResponse } from "../api/commercialTypes";
 import type { TodayPanelData } from "../api/operatorTypes";
 import { DashboardApp } from "./DashboardApp";
+import { stubSignedInAuthSession } from "../test/mockAuthSession";
 
 const panelSqlite: TodayPanelData = {
   health: {
@@ -262,12 +263,14 @@ describe("DashboardApp shell (Phase 7B.1)", () => {
     vi.stubEnv("VITE_ORIGENLAB_API_BASE_URL", "");
     window.location.hash = "#/";
     mockAllOk();
+    stubSignedInAuthSession();
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
     window.location.hash = "";
+    vi.unstubAllGlobals();
   });
 
   it("sidebar renders exactly the Cotizaciones-first primary IA, in order, with no legacy sections", async () => {

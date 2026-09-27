@@ -4,6 +4,7 @@ import {
   isAllowedUpstreamPath,
   stripApiPrefix,
 } from "./allowlist";
+import { filterAuthSetCookies, isAllowedAuthRedirect, isAuthPath } from "./auth";
 import { applyCorsHeaders, stripUpstreamCorsHeaders } from "./cors";
 import { API_AUTH_HEADER, buildUpstreamHeaders, buildUpstreamUrl, type ProxyEnv } from "./proxy";
 
@@ -60,6 +61,27 @@ function blockedRedirectResponse(
   );
 }
 
+/**
+ * A sign-in redirect, rebuilt rather than copied: the Location that was checked, the two
+ * sign-in cookies and nothing else from upstream, and never cacheable.
+ */
+function authRedirectResponse(upstreamResponse: Response, location: string): Response {
+  const headers = new Headers({
+    Location: location,
+    "Cache-Control": CACHE_CONTROL_NO_STORE,
+    "Referrer-Policy": "no-referrer",
+  });
+  for (const cookie of filterAuthSetCookies(upstreamResponse.headers)) {
+    headers.append("Set-Cookie", cookie);
+  }
+  const requestId = upstreamResponse.headers.get("X-Request-ID");
+  if (requestId) {
+    headers.set("X-Request-ID", requestId);
+  }
+  applyProxyDiagnosticHeaders(headers, upstreamResponse.status);
+  return new Response(null, { status: upstreamResponse.status, headers });
+}
+
 const ALLOWED_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -111,7 +133,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   const upstreamUrl = buildUpstreamUrl(upstreamBase, upstreamPath as string, url.search);
   const upstreamRequest = new Request(upstreamUrl, {
     method,
-    headers: buildUpstreamHeaders(env, request.headers),
+    headers: buildUpstreamHeaders(env, request.headers, upstreamPath as string),
     redirect: "manual",
     // Sanctioned POST commands may carry a body. Buffered rather than
     // streamed: bodies are bounded by browser/upstream API contracts, and
@@ -123,6 +145,13 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   const upstreamResponse = await fetch(upstreamRequest);
 
   if (upstreamResponse.status >= 300 && upstreamResponse.status < 400) {
+    const location = upstreamResponse.headers.get("Location");
+    if (
+      method === "GET" &&
+      isAllowedAuthRedirect(upstreamPath as string, location, url.origin)
+    ) {
+      return authRedirectResponse(upstreamResponse, location as string);
+    }
     return blockedRedirectResponse(request, method, upstreamResponse.status);
   }
 
@@ -130,6 +159,11 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   responseHeaders.delete(API_AUTH_HEADER);
   responseHeaders.delete("Set-Cookie");
   responseHeaders.delete("Set-Cookie2");
+  if (isAuthPath(upstreamPath as string)) {
+    for (const cookie of filterAuthSetCookies(upstreamResponse.headers)) {
+      responseHeaders.append("Set-Cookie", cookie);
+    }
+  }
   stripUpstreamCorsHeaders(responseHeaders);
 
   const requestId = upstreamResponse.headers.get("X-Request-ID");

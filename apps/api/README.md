@@ -98,6 +98,13 @@ curl -sS -H "X-OriginLab-API-Key: ${TOKEN}" http://127.0.0.1:8001/operator/statu
 
 Use placeholder tokens locally only; never commit production secrets. Full checklist: [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md).
 
+**Dashboard sign-in (V2).** `/auth/google/login`, `/auth/google/callback`, `/auth/session` and
+`POST /auth/logout` sign an operator in with Google Workspace (`openid email profile` only) and
+map the address to `platform.operator`. With `ORIGENLAB_V2_DATABASE_URL` set, either
+`ORIGENLAB_GOOGLE_AUTH_ENABLED` or `ORIGENLAB_DEV_LOGIN_ENABLED` must be on, or the API refuses
+to start. Setup, Google Cloud Console steps and every variable:
+[docs/PRODUCTION_AUTH.md → Google Workspace login](docs/PRODUCTION_AUTH.md#google-workspace-login-dashboard-v2-boundary).
+
 ### FastAPI Cloud
 
 | Setting | Notes |

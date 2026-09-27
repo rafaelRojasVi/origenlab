@@ -46,6 +46,8 @@ export type DashboardSection =
   | "crm-v2"
   | "revision"
   | "casos"
+  | "importacion"
+  | "archivo"
   | "system";
 
 export type DashboardNavIconName =
@@ -174,6 +176,22 @@ export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
     iconName: "deals",
   },
   {
+    id: "importacion",
+    label: "Importación de cotizaciones",
+    shortLabel: "Importación",
+    description:
+      "Un plan de importación de cotizaciones frente a la base donde se ensayó: listas, en espera y retenidas",
+    iconName: "quotes",
+  },
+  {
+    id: "archivo",
+    label: "Archivo de casos",
+    shortLabel: "Archivo",
+    description:
+      "Cada caso con todas sus cotizaciones y revisiones: estado CRM aparte del archivo en Drive, motivos pendientes, Drive y Gmail",
+    iconName: "quotes",
+  },
+  {
     id: "system",
     label: "Sistema",
     shortLabel: "Sistema",
@@ -251,6 +269,8 @@ export const V2_READ_ONLY_SECTIONS: ReadonlySet<DashboardSection> = new Set([
   "casos",
   "crm-v2",
   "revision",
+  "importacion",
+  "archivo",
 ]);
 
 export function isV2ReadOnlySection(section: DashboardSection): boolean {

@@ -187,6 +187,167 @@ Production still requires `ORIGENLAB_API_AUTH_TOKEN` on private routes regardles
 
 ---
 
+## Google Workspace login (dashboard, V2 boundary)
+
+Operators sign in to the dashboard with their Google Workspace account (for example
+`contacto@origenlab.cl`). Only verified accounts that are **members of the `origenlab.cl`
+Workspace** and that have an **active `platform.operator` row** get a session.
+
+**Status.** Built and tested; usable **locally** against a loopback V2 database. **Not
+deployable to production yet**: it maps the signed-in address to `platform.operator`, which
+lives only in the V2 database, and `ORIGENLAB_V2_DATABASE_URL` accepts a loopback DSN only
+while the hosted phase is frozen ([`docs/STATUS.md`](../../../docs/STATUS.md) §2.8). The
+production values below are the ones the deployment configuration already fixes
+(`render.yaml`, `apps/dashboard-proxy/wrangler.toml`), recorded so nothing has to be
+re-derived at activation.
+
+**Relation to [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) §5.** That section names
+Supabase Auth (ES256 JWT, JWKS) as the V2 operator identity, and it is unchanged. This login
+is a separate adapter behind the same `IdentityPort` (`origenlab_api/v2/identity.py`), and
+`ORIGENLAB_V2_JWKS_URL` still wins whenever it is set. Whether it stands in until slice 1 or
+replaces Supabase Auth for the dashboard is an owner decision this document does not make.
+
+### Flow
+
+```text
+browser ──GET /auth/google/login──▶ API: new state, nonce, PKCE verifier
+                                     → signed HttpOnly sign-in cookie (10 min)
+        ◀──302 accounts.google.com (scope=openid email profile, S256 challenge, hd=origenlab.cl)
+browser ──account picker / 2FA at Google──▶
+        ──GET /auth/google/callback?code&state──▶ API:
+            1. state == cookie state (constant-time)       else login_error=invalid_state
+            2. code → token endpoint (server-to-server, client secret + PKCE verifier)
+            3. ID token claims: iss, aud, azp, exp, iat, nonce, sub
+            4. email_verified is true                       else email_unverified
+            5. email ends exactly in @origenlab.cl AND hd == origenlab.cl   else wrong_domain
+            6. platform.operator by normalized email        else unknown_operator
+            7. status active                                else operator_disabled
+            → signed HttpOnly session cookie (8 h), 303 to the dashboard root
+browser ──GET /v2/*, /auth/session (cookie)──▶ API re-reads platform.operator every request
+```
+
+| Route | Method | Mounted when |
+|---|---|---|
+| `/auth/google/login` | GET | `ORIGENLAB_GOOGLE_AUTH_ENABLED=true` |
+| `/auth/google/callback` | GET | `ORIGENLAB_GOOGLE_AUTH_ENABLED=true` |
+| `/auth/session` | GET — 200 with the operator, 401 with sign-in options | the V2 boundary is mounted |
+| `/auth/logout` | POST — clears the session cookie | the V2 boundary is mounted |
+
+**What it guarantees, and what it does not:**
+
+- **Scopes are `openid email profile` only.** No Gmail, Drive, Calendar or other Google API
+  access; no refresh token (`access_type` stays `online`); the access token is discarded.
+- **`hd` is enforced on the claims, not trusted as a UI hint.** A consumer Google account
+  registered with an `@origenlab.cl` address has a verified email but no `hd`, and is refused.
+- **The ID token signature is not verified locally** — by design, per OpenID Connect Core
+  §3.1.3.7: the token comes straight from Google's token endpoint over TLS in exchange for
+  the client secret and the PKCE verifier, never through the browser. Every claim is still
+  checked. See the module docstring in `origenlab_api/v2/google_oidc.py`.
+- **No operator is ever created by signing in.** Unknown addresses are refused.
+- **Nothing is written to the database.** The callback reads `platform.operator` through the
+  read-only repository; no `/v2` route became writable.
+- **Sessions are stateless signed cookies.** Logout clears the cookie in that browser but
+  cannot revoke a copy taken earlier; the 8-hour lifetime bounds that. Disabling the operator
+  (`status = 'disabled'`) ends every session on its next request.
+- **The operator-email header is never trusted by the V2 boundary in production.** The header
+  login (`ORIGENLAB_DEV_LOGIN_ENABLED`) is refused at startup when `ORIGENLAB_ENV=production`.
+  The V1 `/operations/*` commands are unchanged: they still take the operator from the header
+  the Worker rebuilds from Cloudflare Access.
+
+### Google Cloud Console setup
+
+Do this signed in as an `origenlab.cl` Workspace administrator (or a user allowed to create
+projects in the `origenlab.cl` organization). Console section names are those of the
+**Google Auth Platform** pages (formerly "OAuth consent screen").
+
+1. **Project.** In [console.cloud.google.com](https://console.cloud.google.com), select or
+   create a project **inside the `origenlab.cl` organization** — an *Internal* app is only
+   possible for a project owned by the Workspace organization. No API needs enabling: sign-in
+   uses only the OpenID Connect endpoints.
+2. **Google Auth Platform → Branding.** App name `OrigenLab Dashboard`; user support email
+   `contacto@origenlab.cl`; authorized domain `origenlab.cl`; developer contact
+   `contacto@origenlab.cl`.
+3. **Google Auth Platform → Audience.** User type **Internal**. Only accounts in the
+   `origenlab.cl` Workspace can then complete consent at all, no Google verification review is
+   needed, and there is no test-user list to maintain. (The API enforces the domain on its own
+   regardless — Internal is the second lock, not the only one.)
+4. **Google Auth Platform → Data Access.** Add only the three non-sensitive scopes `openid`,
+   `.../auth/userinfo.email`, `.../auth/userinfo.profile`. **Do not add any Gmail, Drive,
+   Calendar or other scope.** The dashboard's sign-in client must never be the same OAuth
+   client as the Drive quote workspace or any Gmail tooling.
+5. **Google Auth Platform → Clients → Create client**, application type **Web application**.
+   Create **two clients**, so the production secret never sits on a laptop:
+
+   | | Production — `OrigenLab Dashboard (production)` | Local — `OrigenLab Dashboard (local)` |
+   |---|---|---|
+   | Authorized JavaScript origins | `https://dashboard.origenlab.cl` | `http://localhost:5173` |
+   | Authorized redirect URIs | `https://dashboard.origenlab.cl/api/auth/google/callback` | `http://localhost:5173/auth/google/callback` |
+
+   The redirect URI must equal `ORIGENLAB_AUTH_PUBLIC_BASE_URL` + `/auth/google/callback`
+   byte for byte. Production goes through the dashboard's own origin because the browser
+   reaches the API only via the Worker on `dashboard.origenlab.cl/api*`
+   (`apps/dashboard-proxy/wrangler.toml`), and the session cookie must be set on the
+   dashboard host. The JavaScript origins are not used by this server-side flow; listing them
+   is harmless and keeps the client's intent readable.
+6. Copy each client's **Client ID** and **Client secret** straight into the secret store for
+   that environment. Never into Git, `.env.example`, a ticket or a chat.
+
+### Environment variables
+
+| Variable | Required | Local value | Production value |
+|---|---|---|---|
+| `ORIGENLAB_GOOGLE_AUTH_ENABLED` | yes, to turn it on | `true` | `true` |
+| `ORIGENLAB_GOOGLE_CLIENT_ID` | when enabled | local client's ID | production client's ID |
+| `ORIGENLAB_GOOGLE_CLIENT_SECRET` | when enabled — **secret** | local client's secret | production client's secret |
+| `ORIGENLAB_GOOGLE_WORKSPACE_DOMAIN` | no — default `origenlab.cl` | `origenlab.cl` | `origenlab.cl` |
+| `ORIGENLAB_AUTH_PUBLIC_BASE_URL` | when enabled | `http://localhost:5173` | `https://dashboard.origenlab.cl/api` |
+| `ORIGENLAB_AUTH_SESSION_SECRET` | when enabled — **secret**, ≥ 32 chars | own random value | own random value |
+| `ORIGENLAB_AUTH_SESSION_TTL_SECONDS` | no — default `28800` (8 h) | | |
+| `ORIGENLAB_DEV_LOGIN_ENABLED` | no — default `false` | `true` only for the header login | **never** (startup refuses it) |
+| `ORIGENLAB_V2_DATABASE_URL` | yes — the operator lookup needs it | loopback DSN from `api-login` | blocked: loopback only today |
+
+Generate a session secret with
+`python -c 'import secrets; print(secrets.token_urlsafe(48))'`. Rotating it signs every
+operator out. The API refuses to start on a missing client ID or secret, a secret shorter than
+32 characters, an `http://` base URL anywhere but loopback, an `http://` base URL at all in
+production, a consumer domain such as `gmail.com`, or Google login without a V2 database.
+
+With `ORIGENLAB_V2_DATABASE_URL` set, **either** Google login **or** the development header
+login must be switched on; with neither, the API refuses to start rather than serving a `/v2`
+that refuses every request. The dashboard itself needs no new variable.
+
+### Local setup
+
+1. Build the clean room with your real address as its operator — sign-in never creates one:
+   `OL_CLEAN_OPERATOR_EMAIL=contacto@origenlab.cl supabase/scripts/cleanroom_db.sh build --force`,
+   then `supabase/scripts/cleanroom_db.sh api-login` for the DSN file.
+2. Append the Google variables (local column above) to that DSN file, which is outside Git.
+3. Start the API from `apps/api` with that file's variables exported, on `127.0.0.1:8001`.
+4. Start the dashboard with `npm run dev` in `apps/dashboard`, and open
+   **`http://localhost:5173`** — exactly that origin, not `127.0.0.1:5173`. The session cookie
+   belongs to the host the browser used, and it must be the host of the redirect URI.
+5. Choose **Iniciar sesión con Google**. The dashboard shows the address and a
+   **Cerrar sesión** button in the header once signed in.
+
+The header login still exists for work that does not need Google: set
+`ORIGENLAB_DEV_LOGIN_ENABLED=true` on the API and `ORIGENLAB_DEV_OPERATOR_EMAIL` on the Vite
+process (`apps/dashboard/README.md`). With both logins on, a Google session wins, and an
+invalid or expired session is refused — it is never rescued by the header.
+
+### Production activation (not yet possible)
+
+1. The hosted V2 project is adopted and `ORIGENLAB_V2_DATABASE_URL` accepts it (blocked).
+2. Every operator who should sign in has an `active` `platform.operator` row.
+3. Set the production column above as Render secrets on `origenlab-api`.
+4. Deploy `apps/dashboard-proxy`: it already lists `/auth/*` and passes exactly the two
+   `__Host-` cookies and the two checked redirects (`apps/dashboard-proxy/src/auth.ts`).
+   Cloudflare Access can stay in front of `dashboard.origenlab.cl`; the Worker never forwards
+   Access's `CF_Authorization` cookie upstream.
+5. Deploy the dashboard. Until step 4 the dashboard treats the Worker's `path_not_allowed` on
+   `/auth/session` as "no sign-in here" and behaves exactly as before.
+
+---
+
 ## Related docs
 
 - [API response contract](API_RESPONSE_CONTRACT.md)

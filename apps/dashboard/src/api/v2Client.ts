@@ -22,8 +22,10 @@ import {
   parseV2TasksPage,
 } from "./v2Parse";
 import type {
+  V2CaseQuoteState,
   V2Contact,
   V2ContactCard,
+  V2ContactIdentity,
   V2CommercialCase,
   V2CommercialCaseCard,
   V2EvidenceItem,
@@ -31,7 +33,9 @@ import type {
   V2OrganizationCard,
   V2OrganizationCase,
   V2Opportunity,
-  V2Organization,
+  V2OrganizationFilter,
+  V2OrganizationSegment,
+  V2OrganizationsPage,
   V2Page,
   V2Quote,
   V2ReviewSummary,
@@ -75,24 +79,54 @@ export function v2CaseCardPath(opportunityId: string): string {
 
 const DEFAULT_LIMIT = 50;
 
+/**
+ * Contact points, recorded identities first.
+ *
+ * `q` matches the address, the recorded person's name or the recorded institution's name;
+ * `identity` filters on the channel's own foreign keys, never on its address.
+ */
 export function fetchV2Contacts(
-  params: { q?: string; limit?: number; offset?: number } = {},
+  params: {
+    q?: string;
+    identity?: V2ContactIdentity;
+    withCases?: boolean;
+    limit?: number;
+    offset?: number;
+  } = {},
 ): Promise<V2Page<V2Contact>> {
   return fetchJsonGet<unknown>(
     operatorApiUrl(V2_CONTACTS_PATH, {
       q: params.q,
+      identity: params.identity,
+      with_cases: params.withCases ? "true" : undefined,
       limit: params.limit ?? DEFAULT_LIMIT,
       offset: params.offset ?? 0,
     }),
   ).then(parseV2ContactsPage);
 }
 
+/**
+ * Organizations, most connected first. Every `has` filter must hold; `activeWithinDays`
+ * keeps organizations whose latest case activity is inside the window, and `segment` one
+ * commercial side. The page carries `facets`, one count per segment.
+ */
 export function fetchV2Organizations(
-  params: { q?: string; limit?: number; offset?: number } = {},
-): Promise<V2Page<V2Organization>> {
+  params: {
+    q?: string;
+    has?: readonly V2OrganizationFilter[];
+    activeWithinDays?: number;
+    /** One commercial side; omitted means every organization. */
+    segment?: V2OrganizationSegment;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<V2OrganizationsPage> {
   return fetchJsonGet<unknown>(
     operatorApiUrl(V2_ORGANIZATIONS_PATH, {
       q: params.q,
+      has: params.has && params.has.length > 0 ? params.has : undefined,
+      active_within_days: params.activeWithinDays,
+      segment: params.segment,
       limit: params.limit ?? DEFAULT_LIMIT,
       offset: params.offset ?? 0,
     }),
@@ -235,12 +269,27 @@ export function fetchV2EvidenceRecords(
  * nothing here sends it.
  */
 export function fetchV2Cases(
-  params: { stage?: string; openOnly?: boolean; limit?: number; offset?: number } = {},
+  params: {
+    stage?: string | readonly string[];
+    openOnly?: boolean;
+    organizationId?: string;
+    organizationQ?: string;
+    interestQ?: string;
+    quoteState?: V2CaseQuoteState;
+    activeWithinDays?: number;
+    limit?: number;
+    offset?: number;
+  } = {},
 ): Promise<V2Page<V2CommercialCase>> {
   return fetchJsonGet<unknown>(
     operatorApiUrl(V2_CASES_PATH, {
       stage: params.stage,
       open_only: params.openOnly ? "true" : undefined,
+      organization_id: params.organizationId,
+      organization_q: params.organizationQ || undefined,
+      interest_q: params.interestQ || undefined,
+      quote_state: params.quoteState,
+      active_within_days: params.activeWithinDays,
       limit: params.limit ?? DEFAULT_LIMIT,
       offset: params.offset ?? 0,
     }),

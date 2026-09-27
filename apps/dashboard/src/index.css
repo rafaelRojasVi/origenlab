@@ -14,6 +14,78 @@
   --color-card: #ffffff;
   --color-muted: #64748b;
   --color-border: #e2e8f0;
+
+  /* CRM workspace (#/crm/*): warm neutrals, one teal accent, status colours that always
+     travel with text. Every status text colour reaches WCAG AA on its own -bg. */
+  --color-canvas: #fafaf9;
+  --color-canvas-raised: #ffffff;
+  --color-canvas-sunken: #f5f5f4;
+  --color-line: #e7e5e4;
+  --color-line-strong: #d6d3d1;
+  --color-ink: #1c1917;
+  --color-ink-muted: #57534e;
+  --color-ink-faint: #78716c;
+  --color-good: #15803d;
+  --color-good-bg: #f0fdf4;
+  --color-warn: #735a09;
+  --color-warn-bg: #faf3cd;
+  --color-bad: #b91c1c;
+  --color-bad-bg: #fef2f2;
+  --color-info: #1d4ed8;
+  --color-info-bg: #eff6ff;
+}
+
+@keyframes crm-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes crm-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.crm-drawer-in {
+  animation: crm-drawer-in 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.crm-card-in {
+  animation: crm-card-in 220ms ease-out both;
+}
+
+@keyframes crm-shimmer {
+  0% {
+    background-position: -200px 0;
+  }
+  100% {
+    background-position: 200px 0;
+  }
+}
+
+.crm-skeleton {
+  background: linear-gradient(90deg, #f5f5f4 0px, #ebe9e7 80px, #f5f5f4 160px);
+  background-size: 400px 100%;
+  animation: crm-shimmer 1.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-drawer-in,
+  .crm-card-in,
+  .crm-skeleton {
+    animation: none;
+  }
 }
 
 body {

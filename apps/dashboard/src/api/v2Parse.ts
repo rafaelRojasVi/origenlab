@@ -20,7 +20,14 @@ import type {
   V2CaseStageMachine,
   V2CommercialCase,
   V2CommercialCaseCard,
+  V2CardConnections,
   V2CardMarketing,
+  V2CaseParticipant,
+  V2ConnectedActivity,
+  V2ConnectedCase,
+  V2ConnectedCaseEvidence,
+  V2ConnectedInterest,
+  V2ConnectedQuote,
   V2Contact,
   V2ContactCard,
   V2ContactCardSibling,
@@ -40,6 +47,8 @@ import type {
   V2Confirmation,
   V2Opportunity,
   V2Organization,
+  V2OrganizationFacets,
+  V2OrganizationsPage,
   V2OrganizationCase,
   V2OrganizationCaseRole,
   V2Page,
@@ -112,6 +121,8 @@ export function parseV2Contact(value: unknown): V2Contact {
     organization_id: optionalStr(row.organization_id),
     organization_name: optionalStr(row.organization_name),
     created_at: optionalStr(row.created_at),
+    case_count: int(row.case_count),
+    address_control_count: int(row.address_control_count),
   };
 }
 
@@ -124,7 +135,37 @@ export function parseV2Organization(value: unknown): V2Organization {
     confirmation: confirmation(row.confirmation),
     parent_organization_id: optionalStr(row.parent_organization_id),
     contact_point_count: int(row.contact_point_count),
+    confirmed_people_count: int(row.confirmed_people_count),
+    case_count: int(row.case_count),
+    open_case_count: int(row.open_case_count),
+    interest_count: int(row.interest_count),
+    quote_count: int(row.quote_count),
+    activity_count: int(row.activity_count),
+    last_activity_at: optionalStr(row.last_activity_at),
+    cases_as_requesting_institution: int(row.cases_as_requesting_institution),
+    cases_as_end_user_institution: int(row.cases_as_end_user_institution),
+    cases_as_purchasing_agent: int(row.cases_as_purchasing_agent),
+    cases_as_funder: int(row.cases_as_funder),
+    cases_as_supplier: int(row.cases_as_supplier),
+    cases_as_manufacturer: int(row.cases_as_manufacturer),
+    cases_as_mentioned: int(row.cases_as_mentioned),
+    relationship_roles: Array.isArray(row.relationship_roles)
+      ? row.relationship_roles.map((role) => str(role)).filter((role) => role !== "")
+      : [],
     created_at: optionalStr(row.created_at),
+  };
+}
+
+function parseOrganizationFacets(value: unknown): V2OrganizationFacets | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const row = asRecord(value);
+  return {
+    all: int(row.all),
+    customers: int(row.customers),
+    suppliers: int(row.suppliers),
+    others: int(row.others),
   };
 }
 
@@ -181,8 +222,10 @@ export function parseV2ReviewSummary(value: unknown): V2ReviewSummary {
 
 export const parseV2ContactsPage = (value: unknown): V2Page<V2Contact> =>
   parsePage(value, parseV2Contact);
-export const parseV2OrganizationsPage = (value: unknown): V2Page<V2Organization> =>
-  parsePage(value, parseV2Organization);
+export const parseV2OrganizationsPage = (value: unknown): V2OrganizationsPage => ({
+  ...parsePage(value, parseV2Organization),
+  facets: parseOrganizationFacets(asRecord(value).facets),
+});
 export const parseV2OpportunitiesPage = (value: unknown): V2Page<V2Opportunity> =>
   parsePage(value, parseV2Opportunity);
 export const parseV2TasksPage = (value: unknown): V2Page<V2Task> =>
@@ -277,6 +320,8 @@ function parseAffiliation(value: unknown): V2Affiliation {
 function parseMarketing(value: unknown): V2CardMarketing {
   const row = asRecord(value);
   return {
+    contact_point_id: optionalStr(row.contact_point_id),
+    address: optionalStr(row.address),
     campaign_name: str(row.campaign_name),
     campaign_status: str(row.campaign_status),
     recipient_state: str(row.recipient_state),
@@ -288,6 +333,7 @@ function parseMarketing(value: unknown): V2CardMarketing {
 function parseAddressControl(value: unknown): V2AddressControl {
   const row = asRecord(value);
   return {
+    value_norm: optionalStr(row.value_norm),
     control_kind: str(row.control_kind),
     purpose: str(row.purpose),
     scope: str(row.scope),
@@ -299,9 +345,114 @@ function parseAddressControl(value: unknown): V2AddressControl {
   };
 }
 
+function parseConnectedCase(value: unknown): V2ConnectedCase {
+  const row = asRecord(value);
+  return {
+    opportunity_id: str(row.opportunity_id),
+    title: str(row.title),
+    stage: caseStage(row.stage),
+    closed_at: optionalStr(row.closed_at),
+    close_reason: optionalStr(row.close_reason),
+    created_at: optionalStr(row.created_at),
+    updated_at: optionalStr(row.updated_at),
+    requesting_organization_id: optionalStr(row.requesting_organization_id),
+    requesting_organization_name: optionalStr(row.requesting_organization_name),
+    roles: list(row.roles).map(str).filter((role) => role.length > 0),
+  };
+}
+
+function parseConnectedInterest(value: unknown): V2ConnectedInterest {
+  const row = asRecord(value);
+  return {
+    opportunity_interest_id: str(row.opportunity_interest_id),
+    opportunity_id: str(row.opportunity_id),
+    opportunity_title: str(row.opportunity_title),
+    product_id: optionalStr(row.product_id),
+    product_model_number: optionalStr(row.product_model_number),
+    product_name: optionalStr(row.product_name),
+    manufacturer_organization_id: optionalStr(row.manufacturer_organization_id),
+    manufacturer_organization_name: optionalStr(row.manufacturer_organization_name),
+    model_text: optionalStr(row.model_text),
+    description: optionalStr(row.description),
+    quantity: optionalNumber(row.quantity),
+    quantity_unit: optionalStr(row.quantity_unit),
+    confirmation: confirmation(row.confirmation),
+    created_at: optionalStr(row.created_at),
+  };
+}
+
+function parseConnectedQuote(value: unknown): V2ConnectedQuote {
+  const row = asRecord(value);
+  return {
+    quote_id: str(row.quote_id),
+    quote_number: optionalStr(row.quote_number),
+    opportunity_id: str(row.opportunity_id),
+    opportunity_title: str(row.opportunity_title),
+    latest_revision_no: optionalNumber(row.latest_revision_no),
+    latest_status: optionalStr(row.latest_status),
+    quote_currency: optionalStr(row.quote_currency),
+    grand_total: optionalNumber(row.grand_total),
+    valid_until: optionalStr(row.valid_until),
+    sent_at: optionalStr(row.sent_at),
+    revision_count: int(row.revision_count),
+    updated_at: optionalStr(row.updated_at),
+  };
+}
+
+function parseConnectedActivity(value: unknown): V2ConnectedActivity {
+  const row = asRecord(value);
+  return {
+    activity_id: str(row.activity_id),
+    opportunity_id: str(row.opportunity_id),
+    opportunity_title: str(row.opportunity_title),
+    kind: str(row.kind),
+    occurred_at: optionalStr(row.occurred_at),
+    summary: optionalStr(row.summary),
+    recorded_by_display_name: optionalStr(row.recorded_by_display_name),
+  };
+}
+
+function parseConnectedCaseEvidence(value: unknown): V2ConnectedCaseEvidence {
+  const row = asRecord(value);
+  return {
+    opportunity_evidence_id: str(row.opportunity_evidence_id),
+    opportunity_id: str(row.opportunity_id),
+    relation: caseRelation(row.relation),
+    subject_kind: caseSubjectKind(row.subject_kind),
+    subject_id: str(row.subject_id),
+    source_kind: optionalStr(row.source_kind),
+    source_uri: optionalStr(row.source_uri),
+    linked_at: optionalStr(row.linked_at),
+  };
+}
+
+/** The case connections both cards carry, spread flat on the payload by the API. */
+function parseCardConnections(row: Record<string, unknown>): V2CardConnections {
+  const summary = asRecord(row.connection_summary);
+  return {
+    cases: list(row.cases).map(parseConnectedCase),
+    interests: list(row.interests).map(parseConnectedInterest),
+    quotes: list(row.quotes).map(parseConnectedQuote),
+    activities: list(row.activities).map(parseConnectedActivity),
+    case_evidence: list(row.case_evidence).map(parseConnectedCaseEvidence),
+    connection_summary: {
+      cases: int(summary.cases),
+      open_cases: int(summary.open_cases),
+      interests: int(summary.interests),
+      quotes: int(summary.quotes),
+      activities: int(summary.activities),
+      case_evidence: int(summary.case_evidence),
+      last_activity_at: optionalStr(summary.last_activity_at),
+      confirmed_people:
+        typeof summary.confirmed_people === "number" ? int(summary.confirmed_people) : null,
+    },
+  };
+}
+
 export function parseV2ContactCard(value: unknown): V2ContactCard {
   const row = asRecord(value);
   return {
+    ...parseCardConnections(row),
     contact_point_id: str(row.contact_point_id),
     channel_kind: str(row.channel_kind),
     address: str(row.address),
@@ -385,6 +536,7 @@ function parseOrgChild(value: unknown): V2OrganizationCardChild {
 export function parseV2OrganizationCard(value: unknown): V2OrganizationCard {
   const row = asRecord(value);
   return {
+    ...parseCardConnections(row),
     organization_id: str(row.organization_id),
     name: str(row.name),
     legal_name: optionalStr(row.legal_name),
@@ -407,6 +559,9 @@ export function parseV2OrganizationCard(value: unknown): V2OrganizationCard {
     relationships: list(row.relationships).map(parseOrgRelationship),
     child_organizations: list(row.child_organizations).map(parseOrgChild),
     evidence: list(row.evidence).map(parseCardEvidence),
+    address_controls: list(row.address_controls).map(parseAddressControl),
+    domain_controls: list(row.domain_controls).map(parseAddressControl),
+    marketing: list(row.marketing).map(parseMarketing),
     counts: counts(row.counts),
   };
 }
@@ -627,6 +782,26 @@ export function parseV2CommercialCase(value: unknown): V2CommercialCase {
     organization_count: int(row.organization_count),
     interest_count: int(row.interest_count),
     evidence_count: int(row.evidence_count),
+    // Absent (not empty) on routes that do not carry them: null, never a claimed zero.
+    participants: Array.isArray(row.participants)
+      ? row.participants.map(parseCaseParticipant)
+      : null,
+    interest_labels: Array.isArray(row.interest_labels)
+      ? row.interest_labels.map(str).filter((label) => label.length > 0)
+      : null,
+    quote_count: typeof row.quote_count === "number" ? int(row.quote_count) : null,
+    latest_quote_status: optionalStr(row.latest_quote_status),
+    last_activity_at: optionalStr(row.last_activity_at),
+  };
+}
+
+function parseCaseParticipant(value: unknown): V2CaseParticipant {
+  const row = asRecord(value);
+  return {
+    organization_id: str(row.organization_id),
+    name: str(row.name),
+    role: caseRole(row.role),
+    confirmation: confirmation(row.confirmation),
   };
 }
 

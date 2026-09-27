@@ -52,6 +52,10 @@ describe("dashboard read-only policy", () => {
   //    like create/adopt, so it is its own call site, not routed through
   //    the shared transition helper).
   //
+  // 4. authClient.ts:
+  //    exactly one POST, to `/auth/logout`, which clears the dashboard session cookie
+  //    upstream and writes no commercial or CRM state.
+  //
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
 
   const ANNEX_MUTATION_FILE =
@@ -62,6 +66,8 @@ describe("dashboard read-only policy", () => {
 
   const CUSTOMER_QUOTE_MUTATION_FILE =
     "../api/customerQuoteClient.ts";
+
+  const AUTH_LOGOUT_FILE = "../api/authClient.ts";
 
   const ANNEX_MUTATION_ROUTES = [
     "`/operator/procurement/tenders/${encodeURIComponent(tenderCode)}/annex-bundle/preview`",
@@ -83,7 +89,8 @@ describe("dashboard read-only policy", () => {
       if (
         path !== ANNEX_MUTATION_FILE &&
         path !== COMMERCIAL_MUTATION_FILE &&
-        path !== CUSTOMER_QUOTE_MUTATION_FILE
+        path !== CUSTOMER_QUOTE_MUTATION_FILE &&
+        path !== AUTH_LOGOUT_FILE
       ) {
         hits.push(
           `${path} (unsanctioned mutation module)`,
@@ -125,6 +132,21 @@ describe("dashboard read-only policy", () => {
           }
         }
 
+        continue;
+      }
+
+      if (path === AUTH_LOGOUT_FILE) {
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(
+            `${path} (expected exactly one POST, the logout, found ${methods.join(", ") || "none"})`,
+          );
+        }
+        if (!text.includes('export const AUTH_LOGOUT_PATH = "/auth/logout";')) {
+          hits.push(`${path} (logout POST must target /auth/logout)`);
+        }
+        if (/X-OriginLab-Operator-Email/i.test(text)) {
+          hits.push(`${path} (browser must not inject trusted operator identity)`);
+        }
         continue;
       }
 

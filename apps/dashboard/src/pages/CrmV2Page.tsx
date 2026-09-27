@@ -42,10 +42,13 @@ import {
   confirmationLabel,
   pageFooter,
   resolutionLabel,
+  searchPlaceholder,
   sourceKindLabel,
   usageLabel,
   type CrmV2Tab,
 } from "../lib/crmV2Browser";
+import { contactAddressesRedacted } from "../crm/redaction";
+import { useAuthSession } from "../context/AuthSessionContext";
 import { formatMirrorLoadError } from "../lib/humanizeApiError";
 import { openV2Detail } from "../lib/v2DeepLink";
 
@@ -89,6 +92,8 @@ export function CrmV2Page() {
   const [loading, setLoading] = useState(false);
 
   const definition = CRM_V2_TABS.find((entry) => entry.id === tab)!;
+  const { session } = useAuthSession();
+  const addressesRedacted = contactAddressesRedacted(session);
   const definitionLabel = definition.label;
 
   const load = useCallback(async () => {
@@ -180,7 +185,7 @@ export function CrmV2Page() {
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={tab === "organizations" ? "nombre" : "dirección o valor"}
+              placeholder={searchPlaceholder(tab, addressesRedacted)}
               className="mt-1 w-64 rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900"
             />
           </label>
