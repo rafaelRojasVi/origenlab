@@ -702,6 +702,48 @@ Rules that hold for every later migration:
   managed; a new one appearing in the catalogue fails `supabase/tests/020_roles.sql` and is a
   question for the provider, not something to repair by migration.
 
+#### Starting the stack in CI
+
+CI does not call `supabase start` directly. `.github/workflows/supabase.yml` starts the stack
+with `supabase/scripts/start_local_db.sh`, which absorbs one transient registry failure and
+nothing else:
+
+- **At most two attempts** — the first, and one retry.
+- **The retry is taken only when the last five lines of the failed attempt contain
+  `failed to pull docker image from all registries`** — the CLI's final verdict after it has
+  exhausted every registry. Registry noise earlier in the log (`toomanyrequests`,
+  `Retrying after`, `download failed`) does not count: the CLI prints it while recovering on its
+  own, and a later migration, health-check or startup failure must not be mistaken for a
+  transient one. Any other failure exits non-zero at once, so a genuine failure can never be
+  retried into a green run.
+- **Before the retry it runs `supabase stop --no-backup`**, then waits
+  `OL_START_RETRY_DELAY` seconds (default 20). This is the one sanctioned use of
+  `--no-backup`, and it is sanctioned only there: the runner is ephemeral and the stack never
+  came up, so there is no data volume worth keeping and a half-created one must not leak into
+  the second attempt. Locally the rule above stands.
+
+`supabase/scripts/start_local_db_retry_tests.sh` proves that contract. It runs the real script
+against a fake `supabase` CLI placed first on `PATH`, needs no Docker and no network, and runs in
+CI before the real start. Each of its seven scenarios asserts the exit code, the exact sequence
+of CLI calls and the diagnostic:
+
+| # | Scenario | Expected |
+|---|---|---|
+| 1 | success on the first attempt | exit 0; one `start` |
+| 2 | image-pull failure, then success | exit 0; `start`, `stop --no-backup`, `start` |
+| 3 | genuine failure on the first attempt | non-zero; one `start`, no retry |
+| 4 | image-pull failure, then a genuine failure | non-zero; `start`, `stop --no-backup`, `start` |
+| 5 | image-pull failure on both attempts | non-zero; exactly two `start`s, never a third |
+| 6 | pull noise earlier in the log, then a genuine failure | non-zero; one `start`, no retry |
+| 7 | genuine failure, where a retry would have succeeded | non-zero; one `start`, no retry |
+
+An attempt a scenario does not script succeeds loudly, so an unwanted retry shows up as a false
+pass rather than hiding.
+
+```bash
+supabase/scripts/start_local_db_retry_tests.sh   # 7 scenarios, connects to nothing
+```
+
 <a id="m-ops-slice0-audit"></a>
 ### 4.2 The Slice 0 audit (implemented — read-only, local and hosted)
 
