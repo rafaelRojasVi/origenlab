@@ -430,7 +430,7 @@ is ([`DATA.md`](DATA.md) §1.1); a new key or a changed meaning is a new
 |---|---|---|---|---|---|
 | 1 | operator · `create_campaign` | — | `draft` with budget and policy | event | — |
 | 2 | operator · `freeze_audience` (`freeze-campaign-audience`) | `draft`; the preview fingerprint the operator confirmed still matches; every ambiguous identity has an operator decision with a note | recipients inserted `snapshotted` or `excluded` with every reason; campaign `audience_frozen`; content, criteria, policy version and audience fingerprint written once | recipient snapshot rows, `campaign.audience_frozen` | audience changed since the preview → refused; a frozen campaign is never re-frozen — a changed draft or audience is a new campaign |
-| 3 | operator · `grant_recontact_override` | `audience_frozen` | override triple set on named recipients (W12) | event | any later state → refused |
+| 3 | operator · recontact decision (W12), taken **inside step 2** (`recontact_decisions` on `freeze-campaign-audience`) | `draft`; the W12 switch on; `prior_contact` is the recipient's only reason | `recontact_review` and, on approval, the override triple written with the snapshot row | `campaign.override_granted` per approved recipient | W12 off, any other reason, or any state after `draft` → refused |
 | 4 | operator · `dry_run` | `audience_frozen` | none — evaluates the predicate and renders | one report artifact in Storage, one event | — |
 | 5 | approver · `approve_campaign` | a dry-run event exists | `approved`; override count and budget recorded | event | no dry run → refused |
 | 6 | admin · `activate_campaign` | `approved`; `marketing_enabled` true | `active` | event | flag false → refused |
@@ -447,7 +447,8 @@ always an operator decision.
 **Step 2 as built (2026-09-27).** The snapshot is write-once. `frozen_inclusion`,
 `frozen_reasons` and `frozen_notes` are the freeze decision; `state` and
 `exclusion_reasons` start equal to them and are the live lifecycle columns steps 7–11
-would move. At freeze, `prior_contact` is an exclusion reason (W12's override is unbuilt),
+would move. At freeze, `prior_contact` is an exclusion reason unless a W12 approval taken on
+the same screen lifts it (§W12),
 an unreviewed supplier candidate is `manual_hold`, a second address of a person already in
 the audience is `already_in_audience`, and a destination that cannot satisfy the address
 shape is counted, never stored. A destination with no CRM contact point, linked to more
@@ -455,7 +456,8 @@ than one institution, or whose contact point names another institution is frozen
 after an operator decides include or exclude with a note (`identity_review`; exclude is
 `manual_hold`). Relevance is recorded apart — `evidenced` with each basis, source and date,
 or `sin_informacion` — and never decides eligibility. Steps 3–12 remain unbuilt, and
-sending stays blocked until unsubscribe processing exists (W10 **[OPEN]**).
+sending stays blocked until unsubscribe processing exists (W10 **[OPEN]**). Step 3 is built
+as part of step 2 (§W12).
 
 **An accepted send records prior contact permanently and additionally creates
 a dated cooldown.** The cooldown expires; the prior-contact fact does not.
@@ -588,13 +590,25 @@ The **only** way to contact one of the permanent prior-contact addresses.
 
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|
-| 1 | operator · `grant_recontact_override(campaign, recipients, reason)` | campaign is **`audience_frozen`**; each named recipient has a `prior_contact` and **no** `block` and **no** active `cooldown` | `recontact_override_by`, `recontact_override_reason`, `recontact_override_at` set together on the recipient row | event | any other campaign state → refused |
-| 2 | — | — | a trigger rejects **every later change** to the override triple | — | — |
+| 1 | sales/admin operator · a recontact decision per recipient (`approve` or `keep_excluded`, mandatory note), taken on the freeze confirmation and sent with `freeze-campaign-audience` | campaign is **`draft`**; W12 switch on (`ORIGENLAB_V2_RECONTACT_REVIEW_ENABLED`); recomputed inside the freeze transaction: the recipient's **only** reason is `prior_contact` | the snapshot row is written with `recontact_review` (decision, note, operator, mode, W12 policy version, the prior-contact facts shown); on `approve`, `prior_contact` is lifted and `recontact_override_by`, `recontact_override_reason`, `recontact_override_at` are set together | `campaign.override_granted` per approved recipient; the W12 summary in `campaign.audience_frozen` | W12 off, a recipient with any other reason, a stale preview or any state after `draft` → refused, nothing written |
+| 2 | — | — | the snapshot guard rejects **every later change** to `recontact_review` and the override triple: no grant, rewrite or withdrawal after the freeze | — | — |
 | 3 | approver · `approve_campaign` | — | override count recorded in the approval event | event | — |
 
-The override lifts `prior_contact` **for that campaign only**. It **cannot**
-lift a `block` or an active `cooldown` — those are never campaign-overridable.
-There is no override table; the columns on `campaign_recipient` are the record.
+**Reviewable** means `prior_contact` is the destination's only reason. A reviewer is shown the
+last contact date (the last accepted send; unknown for a historical V1 fact, never guessed),
+the campaign or source, and the destination. **Without a valid decision `prior_contact` stays
+an exclusion reason**, and an undecided prior contact never blocks the freeze. A **bulk**
+decision is applied only to a selection the operator has reviewed, and is still persisted as
+one decision per recipient (`mode = bulk`, the same note on each). An approved destination
+whose identity is ambiguous still needs its identity decision.
+
+The override lifts `prior_contact` **for that campaign only**. It **cannot** lift a `block`
+(unsubscribe or suppression included), a domain block, a supplier or manufacturer exclusion,
+a malformed or bounced destination, a second address of a person already in the audience, or
+an active `cooldown` — those are never campaign-overridable, and the database refuses an
+approval on a row carrying any of them. There is no override table; the columns on
+`campaign_recipient` are the record, frozen with the snapshot under the policy version
+`marketing-audience/2026-09-27.v2-w12` (decision rules `recontact-review/2026-09-27.v1`).
 
 ## 4. Cross-cutting failure behaviour
 
