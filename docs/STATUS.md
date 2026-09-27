@@ -1546,6 +1546,13 @@ them.
 - **Honest labels.** An open imported case in `quoting` shows «Cotización enviada ·
   histórico» and «Estado actual sin verificar»; next steps are marked *sugerencia*; every
   Drive link carries «registro local» (it comes from an archive ledger, not a live Drive read).
+- **Operator roster tool** `apps/api/scripts/operator_roster.py`: approves named
+  `@origenlab.cl` accounts as `platform.operator` rows from a roster file outside the repo.
+  Plan is read-only and prints the exact `--confirm-changes <N>` its own pending count needs;
+  apply refuses any other count; operators missing from the roster are left alone. Tests (19)
+  write only to a disposable `origenlab_test_<hex>` database. **Not run against any real database.**
+  `origenlab_clean` already holds two active admin rows — a development placeholder and one
+  `@origenlab.cl` account — and none of the three requested individual accounts.
 - **Not changed:** the proxy (see the separate proxy branch), the API routes, any database.
 
 ### 2.7.29 Campaign drafts and equipment-interest audiences, 2026-09-27 — built locally, not deployed
