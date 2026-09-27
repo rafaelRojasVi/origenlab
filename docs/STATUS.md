@@ -1559,10 +1559,10 @@ them.
 
 | | |
 |---|---|
-| What | `apps/api` can open a remote V2 database, **only** with `ORIGENLAB_V2_DATABASE_REMOTE=true` plus an exact expected host and a CA file (`v2/remote_database.py`, `apps/api/docs/PRODUCTION_AUTH.md` → *Remote V2 database*). `sslmode=verify-full` always; login must be `origenlab_api`; a startup probe refuses any other session role, any elevated attribute and membership in owner/migrator/`postgres` |
+| What | `apps/api` can open a remote V2 database, **only** with `ORIGENLAB_V2_DATABASE_REMOTE=true` plus an exact expected host and a CA file (`v2/remote_database.py`, `apps/api/docs/PRODUCTION_AUTH.md` → *Remote V2 database*). `sslmode=verify-full` always; login must be `origenlab_api`; port 6543 (Supavisor transaction mode) refused by name; a startup probe refuses any other session role, any elevated attribute, and membership in owner/migrator/`postgres` or in any role holding an elevated attribute |
 | Unchanged | loopback-only is still the default; the development header login and the import/rehearsal tools stay loopback-only |
 | OAuth | production `ORIGENLAB_AUTH_PUBLIC_BASE_URL` must be exactly `https://<dashboard>/api`; callback `https://dashboard.origenlab.cl/api/auth/google/callback` |
-| Evidence | `test_v2_remote_database.py` 38 passed, 4 of them against a disposable PostgreSQL 17 serving a throwaway-CA certificate (right CA passes; wrong CA and wrong host name refused by libpq; superuser session refused by the probe) |
+| Evidence | `test_v2_remote_database.py` 40 passed, 5 of them against a disposable PostgreSQL 17 serving a throwaway-CA certificate (right CA passes; wrong CA and wrong host name refused by libpq; superuser session and membership in an unnamed BYPASSRLS role refused by the probe). **Ordinary PostgreSQL only — never run against a hosted pooler** |
 | Not done | no remote database chosen or provisioned, no credential set, nothing deployed |
 
 ### 2.7.29 Campaign drafts and equipment-interest audiences, 2026-09-27 — built locally, not deployed

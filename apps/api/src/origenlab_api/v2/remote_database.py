@@ -17,8 +17,8 @@ settings or redirect the host), must name the database, and must log in as `orig
 the unprivileged runtime role — or its pooler spelling `origenlab_api.<project-ref>`. At
 startup one connection then proves from the inside what the text only claims: the session is
 `origenlab_api` on the named database, holds no superuser, BYPASSRLS, CREATEROLE, CREATEDB or
-REPLICATION attribute, is not a member of the owner, migrator or `postgres` roles, and the
-client connection is TLS with `verify-full`.
+REPLICATION attribute, is not a member of the owner, migrator or `postgres` roles or of any
+role holding one of those attributes, and the client connection is TLS with `verify-full`.
 
 What this does **not** relax: the development header login still needs a loopback database
 (`identity.LocalDevIdentity`), and the import, rehearsal and production-import tooling keeps
@@ -42,6 +42,9 @@ _RUNTIME_LOGIN = re.compile(r"^origenlab_api(\.[a-z0-9]{1,63})?$")
 _HOST_NAME = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 #: Roles whose membership would let the runtime login act as more than itself.
 PRIVILEGED_ROLES = ("origenlab_owner", "origenlab_migrator", "postgres")
+#: Supavisor's transaction-mode port. Refused by name, as the Slice 0 audit route refuses it:
+#: the reviewed pooler route is session mode (docs/ARCHITECTURE.md, docs/OPERATIONS.md §4.2).
+TRANSACTION_POOLER_PORT = 6543
 #: A hosted project may keep V2 in its `postgres` database, so only the templates are refused.
 _REFUSED_DATABASES = {"template0", "template1"}
 
@@ -113,9 +116,14 @@ def validate_remote_target(url: str, *, expected_host: str | None, ca_file: str 
             "ORIGENLAB_V2_DATABASE_URL does not name ORIGENLAB_V2_DATABASE_EXPECTED_HOST"
         )
     try:
-        parts.port
+        port = parts.port
     except ValueError:
         raise RemoteTargetRefused("ORIGENLAB_V2_DATABASE_URL has an invalid port") from None
+    if port == TRANSACTION_POOLER_PORT:
+        raise RemoteTargetRefused(
+            "ORIGENLAB_V2_DATABASE_URL names port 6543, Supavisor transaction mode; the reviewed "
+            "route is the session pooler or the direct connection on 5432 (docs/OPERATIONS.md §4.2)"
+        )
 
     login = unquote(parts.username or "")
     if not _RUNTIME_LOGIN.match(login):
@@ -167,9 +175,15 @@ select current_user::text,
        current_database()::text,
        r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.rolreplication,
        array(
-         select p.rolname::text from unnest(%s::text[]) as p(rolname)
-         where to_regrole(p.rolname) is not null
-           and pg_has_role(current_user, to_regrole(p.rolname), 'MEMBER')
+         -- Named roles, and any role holding an elevated attribute: a hosted project carries
+         -- roles this list cannot name (service_role has BYPASSRLS), and membership in one is
+         -- a SET ROLE away from acting as it.
+         select m.rolname::text from pg_roles m
+         where m.oid <> r.oid
+           and pg_has_role(current_user, m.oid, 'MEMBER')
+           and (m.rolname = any(%s::text[]) or m.rolsuper or m.rolbypassrls
+                or m.rolcreaterole or m.rolcreatedb or m.rolreplication)
+         order by 1
        )
 from pg_roles r where r.rolname = current_user
 """

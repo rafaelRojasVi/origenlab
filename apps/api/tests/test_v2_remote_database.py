@@ -56,6 +56,7 @@ def test_a_complete_remote_target_binds_verify_full(ca) -> None:
         (f"{DSN}?sslmode=disable", "no query string"),
         (f"{DSN}?host=elsewhere.test", "no query string"),
         (f"{DSN}#x", "no fragment"),
+        (f"postgresql://origenlab_api.abcdefghij:pw@{HOST}:6543/postgres", "transaction mode"),
         (f"postgresql://origenlab_api:pw@{HOST},other.test/origenlab", "exactly one host"),
         ("postgresql://origenlab_api:pw@203.0.113.7:5432/origenlab", "host name, not an IP"),
         ("postgresql://origenlab_api:pw@127.0.0.1:5432/origenlab", "host name, not an IP"),
@@ -76,7 +77,7 @@ def test_an_unsafe_remote_dsn_is_refused(dsn, reason, ca) -> None:
 
 
 def test_the_pooler_spelling_of_the_runtime_role_is_accepted(ca) -> None:
-    dsn = f"postgresql://origenlab_api.abcdefghijklmnopqrst:pw@{HOST}:6543/postgres"
+    dsn = f"postgresql://origenlab_api.abcdefghijklmnopqrst:pw@{HOST}:5432/postgres"
     assert validate_remote_target(dsn, expected_host=HOST, ca_file=ca).database == "postgres"
 
 
@@ -289,6 +290,29 @@ def test_a_superuser_session_over_verified_tls_is_refused_by_the_probe() -> None
     )
     with pytest.raises(RemoteTargetRefused, match="not the runtime role"):
         verify_runtime_connection(target, _tls_connect(_TLS["HOSTADDR"]))
+
+
+@needs_tls
+def test_membership_in_an_unnamed_bypassrls_role_is_refused_by_the_probe() -> None:
+    # A hosted project carries roles the probe cannot name (service_role holds BYPASSRLS). The
+    # probe must refuse membership in any role with an elevated attribute, not only the list.
+    import uuid
+
+    role = f"origenlab_probe_bypass_{uuid.uuid4().hex[:8]}"
+    admin = _tls_connect(_TLS["HOSTADDR"])
+    with admin(_TLS["SUPERUSER_DSN"], sslmode="verify-full", sslrootcert=_TLS["CA"],
+               autocommit=True) as conn:
+        conn.execute(f"create role {role} nologin bypassrls")
+        conn.execute(f"grant {role} to origenlab_api with inherit false, set true")
+    try:
+        with pytest.raises(RemoteTargetRefused, match=f"member of {role}"):
+            verify_runtime_connection(
+                _tls_target(_TLS["DSN"], _TLS["CA"]), _tls_connect(_TLS["HOSTADDR"])
+            )
+    finally:
+        with admin(_TLS["SUPERUSER_DSN"], sslmode="verify-full", sslrootcert=_TLS["CA"],
+                   autocommit=True) as conn:
+            conn.execute(f"drop role {role}")
 
 
 # ------------------------------------------------------------------ startup wiring
