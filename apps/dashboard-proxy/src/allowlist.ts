@@ -99,6 +99,12 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // The sent-HTML archive: a campaign's frozen content (only when its fingerprint recomputes)
   // and its real send batches. A read; the dashboard renders the HTML sandboxed.
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/archive$/,
+  // W10 suppression status: which addresses asked for «BAJA», since when, and how many frozen
+  // recipients it refuses today. A read, masked for a `viewer` upstream, never a message body.
+  // The unsubscribe preview (`POST /v2/unsubscribe/preview`) and apply
+  // (`POST /v2/commands/apply-unsubscribe-replies`) are deliberately NOT listed: they carry
+  // message bodies and stay operator tooling on the API, not a browser action.
+  /^\/v2\/workspace\/marketing\/suppressions$/,
   // CRM card reads (`apps/api` v2/crm_workspace_routes.py): the supplier directory with its
   // machine candidates, and the observed equipment interests per line, institution and
   // destination. Two literal paths, GET-only upstream; addresses are masked for a `viewer`

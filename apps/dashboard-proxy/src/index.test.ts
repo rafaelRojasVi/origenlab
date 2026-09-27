@@ -1659,6 +1659,52 @@ describe("Campaign planning command and the sent-HTML archive read", () => {
   });
 });
 
+describe("W10 suppression status", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("forwards the suppression read as GET with the masked body untouched, and refuses a write to it", async () => {
+    const masked = JSON.stringify({ entries: [{ address: "***@uni.invalid", reason: "unsubscribe" }] });
+    stubUpstreamFetch(masked);
+    const path = "https://proxy.test/api/v2/workspace/marketing/suppressions";
+    const read = await handleRequest(requestWithOrigin(path, { method: "GET" }), TEST_ENV);
+    expect(read.status).toBe(200);
+    expect(await read.text()).toBe(masked);
+    const write = await handleRequest(
+      requestWithOrigin(path, {
+        method: "POST",
+        body: "{}",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "suppression-read-probe" },
+      }),
+      TEST_ENV,
+    );
+    expect(write.status).toBe(405);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["/v2/commands/apply-unsubscribe-replies", "/v2/unsubscribe/preview"])(
+    "never forwards the unsubscribe tooling %s, whatever the method",
+    async (path) => {
+      stubUpstreamFetch();
+      for (const method of ["GET", "POST"]) {
+        const res = await handleRequest(
+          requestWithOrigin(`https://proxy.test/api${path}`, {
+            method,
+            ...(method === "POST"
+              ? { body: JSON.stringify({ records: [], expected_input_sha256: "0".repeat(64) }),
+                  headers: { "Content-Type": "application/json", "Idempotency-Key": "unsubscribe-tooling-probe" } }
+              : {}),
+          }),
+          TEST_ENV,
+        );
+        expect([403, 405]).toContain(res.status);
+      }
+      expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("CRM card reads (supplier directory, observed equipment interests)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
