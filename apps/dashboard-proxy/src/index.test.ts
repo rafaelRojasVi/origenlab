@@ -1683,7 +1683,7 @@ describe("W10 suppression status", () => {
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["/v2/commands/apply-unsubscribe-replies", "/v2/unsubscribe/preview"])(
+  it.each(["/v2/commands/apply-unsubscribe-replies", "/v2/commands/resolve-unsubscribe-review", "/v2/unsubscribe/preview"])(
     "never forwards the unsubscribe tooling %s, whatever the method",
     async (path) => {
       stubUpstreamFetch();
