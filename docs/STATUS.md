@@ -1669,6 +1669,17 @@ them.
 | Browser check, 2026-09-27 | admin at 1280 and 390 on the dashboard → API → `origenlab_clean`: 4 archived campaigns, 4,488 recipients, every total equals its filtered list, `septiembre18-2026` 1,007 excluded / 0 attempts, no actions, no overflow. Viewer on a disposable copy (dropped afterwards): 0 unmasked of 4,488; 80 address probes returned 0 rows. Dashboard 272 + build, proxy 219, API 2,385 in process |
 | Not done | nothing pushed to `main` or deployed; PR #601 (campaign pause/blocks) is not merged into this branch |
 
+### 2.7.37 Dashboard proxy lists the rest of the CRM workspace reads, 2026-09-28 — not deployed
+
+`apps/dashboard-proxy/src/allowlist.ts` adds `GET /v2/workspace/{overview,pipeline,drive,review}` and
+`GET /v2/cockpit/work-queue` by exact path (`providers` and `marketing` were already listed), so all seven CRM reads are proxied; every other method
+answers 405, every neighbouring path 403, and only the dashboard session cookie goes upstream.
+The API enforces the session (401) and the viewer mask; `apps/api/tests/test_v2_proxied_workspace_reads.py`
+pins both for exactly these seven paths under production settings (Google sign-in on, header login
+off): 401 without a session, with a forged cookie, or with only the Cloudflare Access operator
+header; a viewer gets masked addresses; an admin does not. Every other `/v2/cockpit/*` path and all
+of `/v2/commands/*` stay refused. Built 2026-09-26 (37ae5132) and rebased onto `main` 2026-09-28. **Not deployed.**
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

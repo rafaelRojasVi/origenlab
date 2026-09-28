@@ -246,12 +246,16 @@ the only browser surface for CRM, contacts and evidence.
   the V1 routes are migrated behind the V2 role model (resolved operator, `viewer` masking).
   Re-listing a prefix without one of the two reopens the unmasked read and is refused in
   review; `src/allowlist.test.ts` and `src/index.test.ts` pin both prefixes as refused.
-- **Not exposed either:** `/v2/cockpit/*` and the rest of `/v2/workspace/*` are built and
-  redacting in `apps/api` but are not in the allowlist; exposing them is a separate decision,
-  and the proxy suite pins every one of their paths as refused. The exceptions are listed by
-  exact path, GET only: the six Marketing reads under `/v2/workspace/marketing*`, and the two
-  CRM card reads `/v2/workspace/providers` and `/v2/workspace/equipment-interests`
-  (`apps/dashboard-proxy/README.md`).
+- **CRM workspace reads, by name:** `GET /v2/workspace/{overview,pipeline,providers,drive,review}`,
+  `GET /v2/workspace/equipment-interests`, the Marketing reads under `/v2/workspace/marketing*`
+  and `GET /v2/cockpit/work-queue` are listed, exactly — the reads the dashboard's CRM
+  (`#/crm/*`) needs (`apps/dashboard-proxy/README.md`). Upstream they require the dashboard
+  session (401 without one) and mask contact addresses for `viewer`; the Worker forwards only
+  the session cookie and refuses every other method (405). `src/v2WorkspaceReads.test.ts` pins it.
+- **Still not exposed:** every other `/v2/cockpit/*` path — the other cockpit reads, the
+  quotation PDF, `case-archive` and `import-review`. Each is a separate decision; the proxy
+  suite pins their paths as refused. `/v2/commands/*` is listed only for the named Marketing
+  and case commands, POST only.
 
 ## 3. Deployment
 

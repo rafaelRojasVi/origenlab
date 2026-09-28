@@ -71,18 +71,36 @@ describe("allowlist", () => {
     expect(isAllowedPostPath(path)).toBe(false);
   });
 
-  it("keeps the unexposed V2 workspace and cockpit reads refused", () => {
-    // Built upstream, GET-only and redacting, but not yet a browser surface: exposing either
-    // prefix is a separate decision. Each path is refused for every method.
-    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
-    const sha = "a".repeat(64);
+  it("allows exactly the seven CRM workspace reads, GET only", () => {
     for (const path of [
       "/v2/workspace/overview",
       "/v2/workspace/pipeline",
       "/v2/workspace/drive",
       "/v2/workspace/review",
-      "/v2/cockpit/kpis",
       "/v2/cockpit/work-queue",
+    ]) {
+      expect(isAllowedUpstreamPath(path)).toBe(true);
+      expect(isAllowedPostPath(path)).toBe(false);
+    }
+    expect(isAllowedUpstreamPath("/v2/cockpit/work-queue?limit=200")).toBe(true);
+  });
+
+  it("keeps every other workspace and cockpit path refused", () => {
+    // Built upstream, GET-only and redacting, but not a browser surface: each of these is
+    // a separate decision. Neighbours of the seven allowed paths are refused too.
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    const sha = "a".repeat(64);
+    for (const path of [
+      "/v2/workspace",
+      "/v2/workspace/",
+      "/v2/workspace/overview/",
+      "/v2/workspace/pipeline/extra",
+      `/v2/workspace/pipeline/${uuid}`,
+      "/v2/workspace/other",
+      "/v2/cockpit",
+      "/v2/cockpit/work-queue/",
+      "/v2/cockpit/work-queue/1",
+      "/v2/cockpit/kpis",
       "/v2/cockpit/opportunities",
       `/v2/cockpit/opportunities/${uuid}`,
       `/v2/cockpit/opportunities/${uuid}/timeline`,
@@ -93,9 +111,10 @@ describe("allowlist", () => {
       "/v2/cockpit/case-archive",
       "/v2/cockpit/import-review",
       `/v2/cockpit/import-review/documents/${sha}`,
+      "/v2/commands/set-case-organization-role",
     ]) {
-      expect(isAllowedUpstreamPath(path)).toBe(false);
-      expect(isAllowedPostPath(path)).toBe(false);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
     }
   });
 

@@ -1847,10 +1847,6 @@ describe("CRM card reads (supplier directory, observed equipment interests)", ()
   });
 
   it.each([
-    "/v2/workspace/overview",
-    "/v2/workspace/pipeline",
-    "/v2/workspace/drive",
-    "/v2/workspace/review",
     "/v2/workspace/providers/directory",
     "/v2/workspace/equipment-interests/persons",
     "/v2/workspace/equipment-interest",

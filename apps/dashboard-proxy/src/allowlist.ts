@@ -117,10 +117,20 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // CRM card reads (`apps/api` v2/crm_workspace_routes.py): the supplier directory with its
   // machine candidates, and the observed equipment interests per line, institution and
   // destination. Two literal paths, GET-only upstream; addresses are masked for a `viewer`
-  // upstream and masked destinations join only by an opaque keyed `address_ref`. The rest of
-  // `/v2/workspace/*` (overview, pipeline, drive, review) stays unlisted.
+  // upstream and masked destinations join only by an opaque keyed `address_ref`.
   /^\/v2\/workspace\/providers$/,
   /^\/v2\/workspace\/equipment-interests$/,
+  // The rest of the CRM workspace (dashboard `#/crm/*`): four literal read paths and the one
+  // cockpit read the CRM's review screen uses. Upstream each is GET-only, resolves the operator
+  // from the dashboard session cookie (401 without one), and masks every email and phone for a
+  // `viewer` (`ContactRedactingRoute`). Named one by one -- not `/v2/workspace/.+` or
+  // `/v2/cockpit/.+` -- so the other cockpit reads, the quotation PDF route and the
+  // case-archive/import-review consoles stay refused until they are reviewed on their own.
+  /^\/v2\/workspace\/overview$/,
+  /^\/v2\/workspace\/pipeline$/,
+  /^\/v2\/workspace\/drive$/,
+  /^\/v2\/workspace\/review$/,
+  /^\/v2\/cockpit\/work-queue$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to
   // these paths only.
