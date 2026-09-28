@@ -281,7 +281,7 @@ describe("MarketingPage", () => {
 
   it("an existing draft opens with its stored version, and a duplicate is unsaved", async () => {
     stubApi(true);
-    render(<MarketingPage />);
+    renderAs("sales");
     const cards = await screen.findAllByTestId("campaign-card");
     fireEvent.click(within(cards[0]).getByRole("button", { name: "Editar" }));
     const banner = await screen.findByTestId("persistence");
@@ -438,7 +438,7 @@ function stubFreezeApi({ freezeEnabled, frozen = false, preview = PREVIEW }: { f
 }
 
 async function openFreeze() {
-  render(<MarketingPage />);
+  renderAs("sales");
   const cards = await screen.findAllByTestId("campaign-card");
   fireEvent.click(within(cards[0]).getByRole("button", { name: "Editar" }));
   await screen.findByTestId("persistence");
@@ -519,7 +519,7 @@ describe("audience freeze", () => {
 
   it("a frozen campaign shows its snapshot read-only and a new version is a new unsaved draft", async () => {
     stubFreezeApi({ freezeEnabled: true, frozen: true });
-    render(<MarketingPage />);
+    renderAs("admin");
     const cards = await screen.findAllByTestId("campaign-card");
     fireEvent.click(within(cards[0]).getByRole("button", { name: "Abrir" }));
     expect(await screen.findByTestId("persistence")).toHaveAttribute("data-state", "read_only");

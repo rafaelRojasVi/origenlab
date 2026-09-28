@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Segmented, fmtDate } from "../ui";
+import { AuthorOnlyNotice } from "./AuthorOnlyNotice";
+import { useMayAuthorCampaigns } from "./authoring";
 import { EmailFrame } from "./EmailFrame";
 import { TEMPLATES, renderTemplate, type TemplateId } from "./emailTemplates";
 import { createCampaignDraft, refusalOf, saveCampaignDraft, type DraftFields } from "./marketingApi";
@@ -91,7 +93,13 @@ export function PersistenceBanner({ p, draftsEnabled }: { p: Persistence; drafts
   );
 }
 
-export function CampaignEditor({
+/** Every control in the editor writes or leads to a write, so a reader gets none of it. */
+export function CampaignEditor(props: Parameters<typeof CampaignEditorForm>[0]) {
+  const mayAuthor = useMayAuthorCampaigns();
+  return mayAuthor ? <CampaignEditorForm {...props} /> : <AuthorOnlyNotice />;
+}
+
+function CampaignEditorForm({
   seed,
   taxonomy,
   draftsEnabled,

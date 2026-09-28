@@ -1,5 +1,4 @@
 import { useMemo, useRef, useState } from "react";
-import { useAuthSession } from "../../context/AuthSessionContext";
 import type { CampaignSummary, TotalKey } from "../crmTypes";
 import { Badge, Panel, ResourceGate, Segmented, Skeleton, fmtInt } from "../ui";
 import { useResource } from "../useResource";
@@ -9,6 +8,7 @@ import { CampaignRecipients } from "./CampaignRecipients";
 import { CampaignReplies } from "./CampaignReplies";
 import { FILTER_TOTALS, NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, neverSent, repliesUnknown } from "./campaignTotals";
 import { EmailFrame } from "./EmailFrame";
+import { useMayAuthorCampaigns } from "./authoring";
 import { fetchCampaignArchive, newIdempotencyKey, refusalOf, setCampaignPlanning } from "./marketingApi";
 import type { CampaignArchive, EquipmentTaxonomy } from "./marketingTypes";
 
@@ -58,7 +58,9 @@ type PreviewMode = "desktop" | "mobile" | "raw";
 /**
  * One campaign: Resumen, HTML, Destinatarios, Respuestas and Auditoría, all read from PostgreSQL.
  * A historical (archived) campaign offers no edit, reopen, resend or planning action; its figures
- * are the recorded ones and every total opens the rows behind it.
+ * are the recorded ones and every total opens the rows behind it. A reader (viewer, unknown role,
+ * no confirmed session) gets every tab and no write: no «Editar borrador», «Abrir campaña» or
+ * planning form.
  */
 export function CampaignDetail({
   summary,
@@ -86,6 +88,7 @@ export function CampaignDetail({
     setTotal(k);
     setTab(k === "responses" && repliesUnknown(summary.replies, summary.totals) ? "respuestas" : "destinatarios");
   };
+  const mayAuthor = useMayAuthorCampaigns();
   const editable = summary.status === "draft" || summary.status === "audience_frozen";
   return (
     <div className="space-y-3" data-testid="campaign-detail">
@@ -120,7 +123,7 @@ export function CampaignDetail({
             ) : null}
           </div>
         </div>
-        {editable ? (
+        {editable && mayAuthor ? (
           <button
             type="button"
             onClick={() => onEdit(summary.campaign_id)}
@@ -375,8 +378,6 @@ function SendRecord({ archive: a }: { archive: CampaignArchive }) {
   );
 }
 
-const PLANNERS = new Set(["sales", "admin"]);
-
 function PlanningEditor({
   summary,
   planningEnabled,
@@ -386,8 +387,7 @@ function PlanningEditor({
   planningEnabled: boolean;
   onSaved: () => void;
 }) {
-  const { session } = useAuthSession();
-  const role = session.kind === "signed_in" ? session.operator.role : null;
+  const mayAuthor = useMayAuthorCampaigns();
   const today = todayInSantiago();
   const storedTime = summary.planned_for_at ? santiagoTime(summary.planned_for_at) : "";
   const [day, setDay] = useState(summary.planned_for_date ?? "");
@@ -399,7 +399,7 @@ function PlanningEditor({
   // One key per intended change: a double click or a retry of the same change replays.
   const key = useRef<{ for: string; key: string } | null>(null);
 
-  const canEdit = planningEnabled && role !== null && PLANNERS.has(role);
+  const canEdit = planningEnabled && mayAuthor;
   const dirty = day !== saved.day || time !== saved.time;
 
   const submit = async (nextDay: string, nextTime: string) => {

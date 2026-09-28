@@ -1,10 +1,9 @@
 import { useCallback, useState } from "react";
-import type { AuthSessionState } from "../../api/authClient";
-import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchMarketing } from "../crmApi";
 import type { CampaignSummary, MarketingResponse, TotalKey } from "../crmTypes";
 import { AudienceBuilder } from "../marketing/AudienceBuilder";
 import { AudienceFreeze } from "../marketing/AudienceFreeze";
+import { useMayAuthorCampaigns } from "../marketing/authoring";
 import { CampaignCalendar } from "../marketing/CampaignCalendar";
 import { CampaignDetail, type DetailTab } from "../marketing/CampaignDetail";
 import { CampaignEditor, type EditorSeed } from "../marketing/CampaignEditor";
@@ -54,17 +53,6 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "Cancelada",
 };
 
-/**
- * Which roles are offered «Nueva campaña». The API refuses the draft commands to any other role
- * (`Deciding` in `campaign_draft_routes.py`); hiding the button only spares a viewer an editor
- * whose save would be refused. Fails closed: no confirmed session, no button.
- */
-export const ROLES_THAT_AUTHOR_CAMPAIGNS: ReadonlySet<string> = new Set(["sales", "admin"]);
-
-export function mayAuthorCampaigns(session: AuthSessionState): boolean {
-  return session.kind === "signed_in" && ROLES_THAT_AUTHOR_CAMPAIGNS.has(session.operator.role);
-}
-
 type Tab = "campanas" | "calendario" | "audiencias" | "bajas";
 type View =
   | { kind: "list" }
@@ -73,8 +61,9 @@ type View =
   | { kind: "detail"; campaignId: string; tab?: DetailTab; total?: TotalKey };
 
 export function MarketingPage() {
-  const { session } = useAuthSession();
-  const mayAuthor = mayAuthorCampaigns(session);
+  // The editor and the freeze screen are write surfaces: a reader never reaches them, and a
+  // campaign it opens always lands on the read-only detail (Resumen, HTML, Destinatarios, ...).
+  const mayAuthor = useMayAuthorCampaigns();
   const [state, reload] = useResource(fetchMarketing);
   const [taxonomyState] = useResource(fetchTaxonomy);
   const [tab, setTab] = useState<Tab>("campanas");
@@ -88,8 +77,14 @@ export function MarketingPage() {
   const detailSummary =
     view.kind === "detail" && state.kind === "ready" ? state.data.campaigns.find((c) => c.campaign_id === view.campaignId) ?? null : null;
 
-  const openNew = () => setView({ kind: "editor", seed: { stored: null }, key: `new-${Date.now()}` });
+  const openNew = () => {
+    if (mayAuthor) setView({ kind: "editor", seed: { stored: null }, key: `new-${Date.now()}` });
+  };
   const openStored = useCallback(async (id: string) => {
+    if (!mayAuthor) {
+      setView({ kind: "detail", campaignId: id });
+      return;
+    }
     setOpenError(null);
     try {
       const content = await fetchCampaign(id);
@@ -97,8 +92,9 @@ export function MarketingPage() {
     } catch (err) {
       setOpenError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [mayAuthor]);
   const openFreeze = useCallback(async (id: string) => {
+    if (!mayAuthor) return;
     setOpenError(null);
     try {
       const content = await fetchCampaign(id);
@@ -106,9 +102,10 @@ export function MarketingPage() {
     } catch (err) {
       setOpenError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
-  const duplicate = (content: CampaignContent) =>
-    setView({ kind: "editor", seed: { stored: null, duplicateOf: content }, key: `dup-${content.campaign_id}-${Date.now()}` });
+  }, [mayAuthor]);
+  const duplicate = (content: CampaignContent) => {
+    if (mayAuthor) setView({ kind: "editor", seed: { stored: null, duplicateOf: content }, key: `dup-${content.campaign_id}-${Date.now()}` });
+  };
 
   return (
     <div className="space-y-4">
@@ -174,7 +171,7 @@ export function MarketingPage() {
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} />}>
           {(data) => <CampaignCalendar campaigns={data.campaigns} taxonomy={taxonomy} onOpen={(id) => openDetail(id)} />}
         </ResourceGate>
-      ) : view.kind === "freeze" ? (
+      ) : view.kind === "freeze" && mayAuthor ? (
         <div className="space-y-3">
           <button
             type="button"
@@ -199,7 +196,7 @@ export function MarketingPage() {
             <TaxonomyGate state={taxonomyState} />
           )}
         </div>
-      ) : view.kind === "editor" ? (
+      ) : view.kind === "editor" && mayAuthor ? (
         <div className="space-y-3">
           <button
             type="button"
@@ -215,7 +212,7 @@ export function MarketingPage() {
         </div>
       ) : (
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={3} cards />}>
-          {(data) => <Body data={data} onOpen={(id) => void openStored(id)} onHistory={openDetail} />}
+          {(data) => <Body data={data} mayAuthor={mayAuthor} onOpen={(id) => void openStored(id)} onHistory={openDetail} />}
         </ResourceGate>
       )}
     </div>
@@ -232,10 +229,12 @@ function TaxonomyGate({ state }: { state: ResourceState<EquipmentTaxonomy> }) {
 
 function Body({
   data,
+  mayAuthor,
   onOpen,
   onHistory,
 }: {
   data: MarketingResponse;
+  mayAuthor: boolean;
   onOpen: (id: string) => void;
   onHistory: (id: string, tab?: DetailTab, total?: TotalKey) => void;
 }) {
@@ -293,7 +292,10 @@ function Body({
           <CampaignCard
             key={c.campaign_id}
             c={c}
-            onOpen={() => (c.status === "draft" || c.status === "audience_frozen" ? onOpen(c.campaign_id) : onHistory(c.campaign_id))}
+            mayAuthor={mayAuthor}
+            onOpen={() =>
+              mayAuthor && (c.status === "draft" || c.status === "audience_frozen") ? onOpen(c.campaign_id) : onHistory(c.campaign_id)
+            }
             onHistory={(tab, total) => onHistory(c.campaign_id, tab, total)}
           />
         ))}
@@ -343,10 +345,12 @@ function Thumbnail({ c }: { c: CampaignSummary }) {
 
 function CampaignCard({
   c,
+  mayAuthor,
   onOpen,
   onHistory,
 }: {
   c: CampaignSummary;
+  mayAuthor: boolean;
   onOpen: () => void;
   onHistory: (tab?: DetailTab, total?: TotalKey) => void;
 }) {
@@ -450,7 +454,7 @@ function CampaignCard({
         <button type="button" onClick={() => onHistory()} className="shrink-0 font-medium text-brand-700 hover:underline" data-testid="open-history">
           Historial
         </button>
-        {c.status === "draft" || c.status === "audience_frozen" ? (
+        {mayAuthor && (c.status === "draft" || c.status === "audience_frozen") ? (
           <button type="button" onClick={onOpen} className="shrink-0 font-medium text-brand-700 hover:underline">
             {c.status === "draft" ? "Editar" : "Abrir"}
           </button>
