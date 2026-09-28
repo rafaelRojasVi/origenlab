@@ -32,7 +32,7 @@ EXPECTED_EXTRA_TABLES = {
 # search_path = pg_catalog and no EXECUTE for a Data-API-facing role, is pinned
 # by pgTAP (supabase/tests/010_inventory.sql, 063_commercial_case_commands.sql,
 # 064_historical_quotation_import.sql, 065-068 for the slice-5 campaign
-# triggers and 069 for W10). This file refuses any count other than 3 + len(these).
+# triggers, 069 for W10 and 072 for the archived-campaign guard). This file refuses any count other than 3 + len(these).
 # The one exception to SECURITY INVOKER is EXPECTED_SECURITY_DEFINER below.
 SLICE0_FUNCTION_COUNT = 3
 
@@ -62,6 +62,9 @@ POST_SLICE0_FUNCTIONS = {
     "outbound.unsubscribe_permanent",
     "outbound.marketing_contact_refusals",
     "outbound.add_contact_control",
+    # 20260928090000_slice5_archived_campaign_immutable.sql — the INVOKER trigger
+    # function that keeps an archived campaign, its audience and attempts as imported.
+    "outbound.archived_campaign_immutable",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its

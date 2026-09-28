@@ -166,6 +166,37 @@ export interface CampaignSummary {
   sender_address?: string | null;
   sender_name?: string | null;
   equipment_lines?: { family_id: string; source: "audience_criteria" | "name_or_subject"; matched_term: string | null }[];
+  /** Recipient totals, one predicate each — the same the recipient list filters by. */
+  totals?: CampaignTotals | null;
+  attempt_totals?: AttemptTotals | null;
+  replies?: RepliesState;
+  subject_state?: ContentState;
+}
+
+export type TotalKey = "audience" | "included" | "sent" | "excluded" | "blocked" | "unsent" | "rejected" | "bounced" | "responses";
+export type CampaignTotals = Record<TotalKey, number>;
+export type ContentState = "recorded" | "not_imported" | "not_set";
+
+/** Send attempts — not recipients. `accepted` is Gmail's acceptance, not a delivery. */
+export interface AttemptTotals {
+  attempts: number;
+  accepted: number;
+  rejected: number;
+  other: number;
+  delivery_confirmed: number;
+  delivery_pending: number;
+  delivery_bounced: number;
+  rejected_undated: number;
+  with_provider_id: number;
+  first_accepted_at: string | null;
+  last_accepted_at: string | null;
+}
+
+/** `not_synced`: nothing was ever stored, so there is no count to show — never a zero. */
+export interface RepliesState {
+  state: "not_synced" | "partial";
+  label: string;
+  count: number | null;
 }
 
 export interface SendBatch {

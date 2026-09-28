@@ -57,8 +57,13 @@ PHONE_VALUE_FIELDS: frozenset[str] = frozenset(
 #: `root@localhost` and `a@srv-01` are contact addresses too, and a mask that misses them leaks
 #: the local part. It does need a letter, so `a@1` is not mistaken for one. A bare `@handle`
 #: has no local part and is left alone.
+#:
+#: The local part is every character up to the `@` that is not whitespace or a delimiter around
+#: an address (`<>()[],;:"`), Unicode letters and apostrophes included: real recorded addresses carry
+#: `ñ`, and a local part matched only from after it (the old ASCII class) left everything before
+#: the `ñ` readable.
 _EMAIL_RE = re.compile(
-    r"[A-Za-z0-9._%+\-]+@(?=[A-Za-z0-9.\-]*[A-Za-z])[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*"
+    r"[^\s@<>()\[\],;:\"]+@(?=[A-Za-z0-9.\-]*[A-Za-z])[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*"
 )
 
 

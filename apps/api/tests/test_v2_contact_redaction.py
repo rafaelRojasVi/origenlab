@@ -76,6 +76,21 @@ def test_an_address_at_a_bare_host_is_masked_too() -> None:
     }
 
 
+def test_a_non_ascii_or_apostrophe_local_part_is_masked_whole() -> None:
+    # Recorded campaign addresses carry `ñ`. The first mask matched a local part only from after
+    # the last non-ASCII character, so everything before the `ñ` stayed readable to a viewer.
+    payload = {
+        "address": "maría.peña@lab.example",
+        "other": "o'brien@lab.example",
+        "display": '"Peña" <núñez@lab.example>',
+    }
+    assert redact_contact_addresses(payload) == {
+        "address": "***@lab.example",
+        "other": "***@lab.example",
+        "display": '"Peña" <***@lab.example>',
+    }
+
+
 def test_a_bare_handle_is_not_an_address() -> None:
     # `@origenlab` has no local part: a social handle or a mention, not a mailbox.
     payload = {"note": "ver @origenlab en redes", "sql": "select * from t where a @> b"}

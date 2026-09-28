@@ -106,14 +106,14 @@ function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean })
           </span>
           <span className="text-[13px] font-semibold tracking-tight text-ink">OrigenLab</span>
         </a>
-        <span aria-hidden="true" className="h-4 w-px bg-line-strong" />
-        <span className="text-[13px] text-ink-muted">Panel comercial</span>
+        <span aria-hidden="true" className="hidden h-4 w-px bg-line-strong sm:inline" />
+        <span className="hidden text-[13px] text-ink-muted sm:inline">Panel comercial</span>
         <span className="hidden rounded-full border border-line bg-canvas-sunken px-2 py-px text-[11px] font-medium text-ink-muted sm:inline" data-testid="crm-read-only-chip">
           Sin envíos · datos locales
         </span>
         {contactAddressesRedacted(session) ? (
           <span
-            className="rounded-full border border-warn/30 bg-warn-bg px-2 py-px text-[11px] font-medium text-warn"
+            className="min-w-0 truncate rounded-full border border-warn/30 bg-warn-bg px-2 py-px text-[11px] font-medium text-warn"
             title="La API enmascara toda dirección de correo y teléfono para este rol; lo que ves como ***@dominio no es un dato faltante."
             data-testid="crm-redaction-chip"
           >
@@ -137,7 +137,7 @@ function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean })
                 {ROLE_LABEL[session.operator.role] ?? session.operator.role}
               </span>
               {session.method === "dev_header" ? (
-                <span className="rounded-full bg-warn-bg px-1.5 text-[10px] font-semibold text-warn">desarrollo</span>
+                <span className="hidden rounded-full bg-warn-bg px-1.5 text-[10px] font-semibold text-warn sm:inline">desarrollo</span>
               ) : (
                 <>
                   <button
