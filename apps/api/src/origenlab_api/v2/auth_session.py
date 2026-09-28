@@ -14,6 +14,15 @@ be replayed as a session cookie, even though both are signed with the same key.
 Only the standard library is used. The payload is not encrypted: it carries the operator's
 address and ids, which the operator already knows, and nothing that grants anything without
 the tag.
+
+**Two session shapes share the one session cookie.** An *operator session* (no `k` field — the
+original shape, still what an operator with their own Google account gets) names an operator
+by address. A *principal session* (`k = "principal"`) names a shared Google sign-in
+(`platform.auth_principal`) and, once a profile is chosen, the operator selected through it,
+together with the operator's, the profile's and the principal's `version` at selection time and
+the Google authentication time. Choosing or clearing a profile re-issues the cookie with the
+same authentication time and the same expiry, so switching profile never extends a sign-in.
+The shape is decided by a signed field, so neither can be passed off as the other.
 """
 
 from __future__ import annotations
@@ -24,7 +33,7 @@ import hashlib
 import hmac
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -44,6 +53,51 @@ _TRANSACTION_PURPOSE = b"origenlab.dashboard.signin.v1"
 
 class CookieRefused(Exception):
     """The cookie is absent, malformed, forged or expired."""
+
+
+PRINCIPAL_SESSION_KIND = "principal"
+#: How a principal session was established: Google sign-in, or the local development shortcut
+#: (`profile_routes.py`), which production refuses to honour whatever the signature says.
+PRINCIPAL_METHODS = ("google", "dev")
+
+
+@dataclass(frozen=True)
+class ProfileSelection:
+    """The operator chosen through a principal, and the versions it was chosen at."""
+
+    operator_id: str
+    operator_version: int
+    profile_version: int
+    selected_at: int
+
+
+@dataclass(frozen=True)
+class PrincipalSession:
+    """A shared Google sign-in, with or without a selected profile."""
+
+    principal_id: str
+    email: str
+    subject: str
+    principal_version: int
+    auth_time: int
+    exp: int
+    profile: ProfileSelection | None = None
+    method: str = "google"
+
+    def with_profile(self, profile: ProfileSelection | None) -> "PrincipalSession":
+        return replace(self, profile=profile)
+
+
+def _positive_int(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise CookieRefused("malformed")
+    return value
+
+
+def _text(value: Any) -> str:
+    if not isinstance(value, str) or not value or len(value) > 320:
+        raise CookieRefused("malformed")
+    return value
 
 
 @dataclass(frozen=True)
@@ -147,12 +201,68 @@ class CookieSigner:
         })
 
     def load_session(self, value: str | None, *, now: float | None = None) -> dict[str, str]:
+        """An operator session, or refuse. A principal session is not one."""
         payload = self._load(_SESSION_PURPOSE, value, now=time.time() if now is None else now)
+        if "k" in payload:
+            raise CookieRefused("not an operator session")
         email = payload.get("email")
         operator_id = payload.get("operator_id")
         if not isinstance(email, str) or not email or not isinstance(operator_id, str):
             raise CookieRefused("malformed")
         return {"email": email, "operator_id": operator_id}
+
+    def dump_principal_session(self, session: PrincipalSession) -> str:
+        payload: dict[str, Any] = {
+            "k": PRINCIPAL_SESSION_KIND,
+            "pid": session.principal_id,
+            "email": session.email,
+            "sub": session.subject,
+            "pv": session.principal_version,
+            "at": session.auth_time,
+            "exp": session.exp,
+            "m": session.method,
+        }
+        if session.profile is not None:
+            payload.update({
+                "op": session.profile.operator_id,
+                "opv": session.profile.operator_version,
+                "prv": session.profile.profile_version,
+                "sel": session.profile.selected_at,
+            })
+        return self._dump(_SESSION_PURPOSE, payload)
+
+    def load_any_session(
+        self, value: str | None, *, now: float | None = None
+    ) -> dict[str, str] | PrincipalSession:
+        """An operator session (as :meth:`load_session`) or a :class:`PrincipalSession`."""
+        at = time.time() if now is None else now
+        payload = self._load(_SESSION_PURPOSE, value, now=at)
+        kind = payload.get("k")
+        if kind is None:
+            return self.load_session(value, now=at)
+        if kind != PRINCIPAL_SESSION_KIND:
+            raise CookieRefused("malformed")
+        method = payload.get("m")
+        if method not in PRINCIPAL_METHODS:
+            raise CookieRefused("malformed")
+        profile = None
+        if any(key in payload for key in ("op", "opv", "prv", "sel")):
+            profile = ProfileSelection(
+                operator_id=_text(payload.get("op")),
+                operator_version=_positive_int(payload.get("opv")),
+                profile_version=_positive_int(payload.get("prv")),
+                selected_at=_positive_int(payload.get("sel")),
+            )
+        return PrincipalSession(
+            principal_id=_text(payload.get("pid")),
+            email=_text(payload.get("email")),
+            subject=_text(payload.get("sub")),
+            principal_version=_positive_int(payload.get("pv")),
+            auth_time=_positive_int(payload.get("at")),
+            exp=_positive_int(payload.get("exp")),
+            profile=profile,
+            method=method,
+        )
 
 
 def read_cookie(headers: dict[str, str], name: str) -> str | None:

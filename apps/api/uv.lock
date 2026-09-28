@@ -1029,7 +1029,7 @@ postgres = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cryptography", specifier = ">=43" },
+    { name = "cryptography", specifier = ">=44" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115" },
     { name = "google-auth", marker = "extra == 'drive'", specifier = ">=2" },
     { name = "google-auth-oauthlib", marker = "extra == 'drive-bootstrap'", specifier = ">=1" },

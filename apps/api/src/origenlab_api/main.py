@@ -132,6 +132,8 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         production=settings.production_mode(),
     )
     app.state.v2_google_auth = google
+    profile_login = _build_profile_login(settings, google, connect, dsn)
+    app.state.v2_profile_login = profile_login
     if google is not None:
         from origenlab_api.v2.google_jwks import GoogleJwks
 
@@ -147,6 +149,9 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         google=google,
         dev_login_enabled=settings.dev_login_enabled,
         production=settings.production_mode(),
+        profiles=profile_login.profiles if profile_login is not None else None,
+        session_signer=profile_login.signer if profile_login is not None else None,
+        session_cookie_name=profile_login.cookie_names.session if profile_login is not None else None,
     )
     app.include_router(v2_router)
     app.include_router(cockpit_router)
@@ -183,6 +188,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     app.include_router(auth_router)
     if google is not None:
         app.include_router(google_auth_router)
+    _mount_profile_login(app, settings, profile_login, dsn)
     _mount_v2_command_boundary(app, settings, dsn, connect)
     _mount_campaign_drafts(app, settings, dsn, connect)
     _mount_audience_freeze(app, settings, dsn, connect)
@@ -272,6 +278,80 @@ def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str, connect: 
     app.include_router(campaign_draft_router)
 
 
+def _build_profile_login(settings: Settings, google: Any, connect: Any, dsn: str) -> Any:
+    """The shared-sign-in profile configuration, or None when the switch is off.
+
+    Fails the process — never a request — when the switch is on and anything it needs is
+    missing or weak: the pepper (`profile_pin.validate_pepper`, the same rule in and out of
+    production), the session secret, or a way to obtain a principal session at all (Google
+    sign-in, or the local development shortcut).
+    """
+    if not settings.profile_login_enabled:
+        if settings.dev_profile_principal_email:
+            raise ValueError(
+                "ORIGENLAB_DEV_PROFILE_PRINCIPAL_EMAIL needs ORIGENLAB_PROFILE_LOGIN_ENABLED=true"
+            )
+        return None
+
+    from origenlab_api.v2.auth_session import CookieNames, CookieSigner
+    from origenlab_api.v2.profile_auth import ProfileAuthRepository
+    from origenlab_api.v2.profile_pin import PinHasher, validate_pepper
+    from origenlab_api.v2.profile_routes import ProfileLoginConfig, is_reserved_dev_address
+
+    session_secret = _secret(settings.auth_session_secret)
+    pepper = validate_pepper(_secret(settings.profile_pin_pepper), session_secret=session_secret)
+    if not (session_secret or "").strip():
+        raise ValueError("ORIGENLAB_PROFILE_LOGIN_ENABLED requires ORIGENLAB_AUTH_SESSION_SECRET")
+    dev_email = (settings.dev_profile_principal_email or "").strip().lower() or None
+    if dev_email is not None:
+        if settings.production_mode():
+            raise ValueError("ORIGENLAB_DEV_PROFILE_PRINCIPAL_EMAIL is refused when ORIGENLAB_ENV=production")
+        if not settings.dev_login_enabled:
+            raise ValueError("ORIGENLAB_DEV_PROFILE_PRINCIPAL_EMAIL needs ORIGENLAB_DEV_LOGIN_ENABLED=true")
+        if not is_reserved_dev_address(dev_email):
+            raise ValueError(
+                "ORIGENLAB_DEV_PROFILE_PRINCIPAL_EMAIL must be an invented address under a reserved "
+                "test domain (.test, .invalid, .example, .localhost, example.com/org/net)"
+            )
+    if google is None and dev_email is None:
+        raise ValueError(
+            "ORIGENLAB_PROFILE_LOGIN_ENABLED needs a way to sign in: ORIGENLAB_GOOGLE_AUTH_ENABLED, "
+            "or, for local development only, ORIGENLAB_DEV_PROFILE_PRINCIPAL_EMAIL"
+        )
+    secure = google.secure_cookies if google is not None else False
+    return ProfileLoginConfig(
+        profiles=ProfileAuthRepository(connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms),
+        hasher=PinHasher(pepper),
+        signer=google.signer if google is not None else CookieSigner(session_secret or ""),
+        cookie_names=google.cookie_names if google is not None else CookieNames.for_secure(secure),
+        secure_cookies=secure,
+        session_ttl_seconds=settings.auth_session_ttl_seconds,
+        production=settings.production_mode(),
+        dev_principal_email=dev_email,
+    )
+
+
+def _mount_profile_login(app: FastAPI, settings: Settings, profile_login: Any, dsn: str) -> None:
+    """Mount the profile routes when the switch is on; the dev shortcut only locally."""
+    app.state.v2_dev_profile_login = False
+    if profile_login is None:
+        return
+    from origenlab_api.v2.identity import is_loopback_dsn
+    from origenlab_api.v2.profile_routes import dev_profile_router, profile_router
+
+    app.include_router(profile_router)
+    if profile_login.dev_principal_email is not None:
+        # Checked again here, on the database this process will actually read: the shortcut
+        # never exists against anything but a literal loopback address, and never in production.
+        if settings.production_mode() or not is_loopback_dsn(dsn):
+            raise ValueError(
+                "the local profile sign-in shortcut refuses to load: production, or a database "
+                "that is not on a literal loopback address"
+            )
+        app.include_router(dev_profile_router)
+        app.state.v2_dev_profile_login = True
+
+
 def _secret(value: SecretStr | None) -> str | None:
     return value.get_secret_value() if value is not None else None
 
@@ -288,6 +368,13 @@ def _refuse_unsafe_login_settings(settings: Settings) -> None:
         raise ValueError(
             "ORIGENLAB_DEV_LOGIN_ENABLED is refused when ORIGENLAB_ENV=production"
         )
+    if settings.profile_login_enabled and not settings.v2_configured():
+        raise ValueError(
+            "ORIGENLAB_PROFILE_LOGIN_ENABLED requires ORIGENLAB_V2_DATABASE_URL: profiles and "
+            "their PINs live in the V2 database"
+        )
+    if settings.production_mode() and settings.dev_profile_principal_email:
+        raise ValueError("ORIGENLAB_DEV_PROFILE_PRINCIPAL_EMAIL is refused when ORIGENLAB_ENV=production")
     if settings.google_auth_enabled and not settings.v2_configured():
         raise ValueError(
             "ORIGENLAB_GOOGLE_AUTH_ENABLED requires ORIGENLAB_V2_DATABASE_URL: the signed-in "

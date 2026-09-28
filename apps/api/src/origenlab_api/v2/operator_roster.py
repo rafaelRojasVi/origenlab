@@ -120,8 +120,10 @@ def load_roster(path: Path, *, workspace_domain: str, repo_root: Path) -> tuple[
 
 
 def _existing(cur: Any) -> dict[str, dict[str, Any]]:
+    # Shared-profile operators have no address; they belong to `profile_roster.py`.
     cur.execute(
-        "select id::text, email_norm, display_name, role, status, version from platform.operator"
+        "select id::text, email_norm, display_name, role, status, version from platform.operator "
+        "where sign_in_kind = 'google_account'"
     )
     cols = ("id", "email_norm", "display_name", "role", "status", "version")
     return {row[1]: dict(zip(cols, row)) for row in cur.fetchall()}
