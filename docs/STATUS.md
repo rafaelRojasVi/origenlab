@@ -27,7 +27,7 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-26**, against the merge base with `origin/main` (`e884c3a9`) plus this branch, measured from the
+Last verified: **2026-09-28**, against `origin/main` (`ee0bf5c5`) plus this branch (§2.7.38; earlier sections as last measured 2026-09-26), measured from the
 local PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are measurements taken by the
 Slice 0 audit itself on 2026-09-21, over the reviewed Supavisor session route inside a server-
 confirmed read-only transaction, together with authenticated control-plane reads; the earlier
@@ -51,7 +51,7 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 |---|---|---|
 | 0 — local foundation | **DONE** | `supabase/roles.sql` + 19 migrations → 4 roles, 7 schemas, 33 tables, grants, RLS. Head has since moved past slice 0: 31 migrations, 37 tables, 143 policies (§2.1, §2.7.35). Proven by `supabase/tests/` and `supabase/scripts/`, enforced by `.github/workflows/supabase.yml` on every push touching `supabase/**` |
 | 0 — hosted gates | **BLOCKED — on attestation items only; the audit itself has now succeeded** | **The hosted Slice 0 audit completed against `origenlab-v2` on 2026-09-21** over the Supavisor session-mode route, and every SQL proof passed. `supabase/hosted_roles.sql` was applied under its atomic contract the same day and the four absent migrations were reconciled, so the project now carries all 19 (§2.5). Checks 1–9 of [`MIGRATION.md`](MIGRATION.md) §5.2 are therefore proven **against the hosted project**, not merely locally. **Checks 10–11 remain unproven**, and with them the eight attestation items `t01`–`t07` and `d01`: the project is on the Free plan with no backup entitlement, so no restore drill can be evidenced, and its Data API is running rather than off. Those are plan-and-configuration decisions for the owner. The project is **reconciled but still not adopted** — no committed file names it and no application code reads it. See §2.5 |
-| 1 — Auth / `platform.*` | NOT STARTED | |
+| 1 — Auth / `platform.*` | **PARTIAL — built locally** | Shared Workspace sign-in with PIN-verified operator profiles: three `platform` tables, API, proxy and dashboard (§2.7.38). Not applied to any real database, not deployed. Supabase Auth itself not started |
 | 2 — CRM identity + V1 row migration | NOT STARTED | |
 | 3 — Quotes, lines, FX, snapshot, PDF | **SCHEMA ONLY** | The three commercial-case tables — `crm.opportunity_organization`, `crm.opportunity_interest`, `crm.opportunity_evidence` — were built locally on 2026-09-22 and are **empty** (§2.7.16). No command, no quote work, nothing wired |
 | 4 — Evidence, comms, shadow Gmail, catalog, notices | NOT STARTED | |
@@ -1679,6 +1679,17 @@ pins both for exactly these seven paths under production settings (Google sign-i
 off): 401 without a session, with a forged cookie, or with only the Cloudflare Access operator
 header; a viewer gets masked addresses; an admin does not. Every other `/v2/cockpit/*` path and all
 of `/v2/commands/*` stay refused. Built 2026-09-26 (37ae5132) and rebased onto `main` 2026-09-28. **Not deployed.**
+
+### 2.7.38 Shared Workspace login with operator profiles, 2026-09-28 — built locally, not applied, not deployed
+
+| | |
+|---|---|
+| Model | One Google identity (**principal**, `platform.auth_principal` #38) → per-person **operator** (`platform.operator`, new `sign_in_kind = 'shared_profile'`, **no email address**) chosen through **`platform.operator_profile`** (#39) with a server-verified PIN (Argon2id PHC, pepper as Argon2's secret input); **`platform.auth_event`** (#40) append-only audit. `google_account` operators unchanged. Migration `20260928180000_slice1_shared_workspace_operator_profiles.sql`; no seed |
+| Schema counts | tables 37 → **40** (`platform` 2 → 5), policies 143 → **149**, functions 22 → **25** (three INVOKER version triggers), foreign keys 123 → **128** (95 unconditionally covered); still one SECURITY DEFINER. Gap checker, pgTAP 010/040/050/063/064/080/090, `verify_chain.sh`, `replay_evidence.sh` and the evidence-tool fixture moved in the same change |
+| API | principal session → `profile_required` on every `/v2` read, workspace and command route; `GET /auth/profiles`, `POST /auth/profile/select`, `POST /auth/profile/clear`; logout audited. Throttle in the database (5 → profile lock, 10 → principal lock, 15 min doubling to 24 h). Session binds principal/subject/versions/auth time; re-checked per request. Off unless `ORIGENLAB_PROFILE_LOGIN_ENABLED`; startup refuses a missing/weak pepper. Local-only `POST /auth/dev/principal-session` (loopback, non-production, reserved test domain). `scripts/profile_roster.py` provisions as the owner |
+| Proxy / dashboard | Worker allows exactly those three routes with an Origin / `Sec-Fetch-Site` / JSON / 1 KiB guard (logout gains the Origin guard); never `/auth/dev/*`. Dashboard: «¿Quién está usando el CRM?» selector, PIN dialog, one generic error, header profile + role, «Cambiar perfil», «Cerrar sesión»; any 401 re-checks the session |
+| Evidence | on a throwaway `supabase/postgres:17.6.1.165` cluster: pgTAP **883 across 22 files** pass (new `073_shared_workspace_profiles.sql`, 54) — `100` #22 fails only because that cluster gives `origenlab_api` a password; audit unit tests 326. API **2,589** passed in process; **2,815** passed with the disposable database (incl. `test_v2_profile_login.py` 33 DB-backed, `test_v2_profile_security.py` 88). Dashboard 298 + build; proxy 312 + typecheck. gitleaks (v8.28.0 over the branch patch): no leaks. Independent review of the auth boundary: no critical or high findings; the two low ones (an `assert`-guarded f-string, and a success resetting the principal-wide backoff) fixed. Browser check with invented profiles at 320–1440 px: no horizontal overflow; sales refused 403 on an admin command, admin allowed. `slice0_audit.sh --mode local` needs this worktree's own CLI stack — CI only |
+| Not done | not applied to `origenlab_clean` or any hosted database; no real principal, profile or PIN provisioned; switch off everywhere; nothing pushed or deployed |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 

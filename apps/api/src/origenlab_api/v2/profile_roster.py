@@ -40,7 +40,7 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 from origenlab_api.v2.operator_roster import mask_email, refuse_path_inside
 from origenlab_api.v2.profile_pin import PinHasher, PinPolicyRefused, validate_new_pin
@@ -66,7 +66,7 @@ class PrincipalEntry:
 
 @dataclass(frozen=True)
 class ProfileEntry:
-    key: str
+    slug: str
     display_name: str
     role: str
     status: str
@@ -137,12 +137,12 @@ def parse_roster(raw: Any, *, workspace_domain: str) -> Roster:
         if unknown:
             # A "pin" field is refused by name: PINs never live in the roster.
             raise ProfileRosterRefused(f"{where}: unknown field(s) {sorted(unknown)}")
-        key = item.get("key")
-        if not isinstance(key, str) or not _KEY.match(key):
+        slug = item.get("key")
+        if not isinstance(slug, str) or not _KEY.match(slug):
             raise ProfileRosterRefused(f"{where}: key must be a lowercase slug (a-z, 0-9, _ or -)")
-        if key in seen:
-            raise ProfileRosterRefused(f"{where}: key {key!r} appears twice")
-        seen.add(key)
+        if slug in seen:
+            raise ProfileRosterRefused(f"{where}: key {slug!r} appears twice")
+        seen.add(slug)
         name = str(item.get("display_name") or "").strip()
         if not name or len(name) > 80:
             raise ProfileRosterRefused(f"{where}: display_name is required (at most 80 characters)")
@@ -155,7 +155,7 @@ def parse_roster(raw: Any, *, workspace_domain: str) -> Roster:
         order = item.get("sort_order", i + 1)
         if isinstance(order, bool) or not isinstance(order, int) or not 0 <= order <= 1000:
             raise ProfileRosterRefused(f"{where}: sort_order must be an integer from 0 to 1000")
-        profiles.append(ProfileEntry(key, name, str(role), str(pstatus), order))
+        profiles.append(ProfileEntry(slug, name, str(role), str(pstatus), order))
     return Roster(principal, tuple(profiles))
 
 
@@ -208,13 +208,14 @@ def load_pin_file(path: Path, *, repo_root: Path) -> dict[str, str]:
 
 def check_pins(pins: Mapping[str, Any]) -> dict[str, str]:
     out: dict[str, str] = {}
-    for key, pin in pins.items():
-        if not isinstance(key, str) or not _KEY.match(key):
+    for slug, pin in pins.items():
+        if not isinstance(slug, str) or not _KEY.match(slug):
             raise ProfileRosterRefused("the PIN file names a key that is not a profile key")
         try:
-            out[key] = validate_new_pin(pin if isinstance(pin, str) else "")
+            out[slug] = validate_new_pin(pin if isinstance(pin, str) else "")
         except PinPolicyRefused as exc:
-            raise ProfileRosterRefused(f"PIN for {key!r} refused: {exc}") from None
+            rule = exc.args[0] if exc.args else "policy"
+            raise ProfileRosterRefused(f"PIN for profile {slug!r} refused: {rule}") from None
     return out
 
 
@@ -243,8 +244,8 @@ def _read_state(cur: Any, roster: Roster) -> tuple[str, dict[str, Any] | None, d
             """,
             (principal["id"],),
         )
-        for key, oid, name, role, ostatus, pstatus, order in cur.fetchall():
-            profiles[key] = {"operator_id": oid, "display_name": name, "role": role,
+        for slug, oid, name, role, ostatus, pstatus, order in cur.fetchall():
+            profiles[slug] = {"operator_id": oid, "display_name": name, "role": role,
                              "operator_status": ostatus, "profile_status": pstatus,
                              "sort_order": order}
             total += 1
@@ -259,7 +260,7 @@ def compute_plan(
     principal_row: dict[str, Any] | None,
     profile_rows: dict[str, dict[str, Any]],
 ) -> Plan:
-    unknown = set(pins) - {p.key for p in roster.profiles}
+    unknown = set(pins) - {p.slug for p in roster.profiles}
     if unknown:
         raise ProfileRosterRefused(f"PINs were given for keys the roster does not name: {sorted(unknown)}")
     changes: list[Change] = []
@@ -275,11 +276,11 @@ def compute_plan(
         else:
             unchanged.append("principal")
     for entry in roster.profiles:
-        subject = f"profile {entry.key}"
-        row = profile_rows.get(entry.key)
+        subject = f"profile {entry.slug}"
+        row = profile_rows.get(entry.slug)
         if row is None:
-            if entry.key not in pins:
-                raise ProfileRosterRefused(f"profile {entry.key!r} is new and needs a PIN")
+            if entry.slug not in pins:
+                raise ProfileRosterRefused(f"profile {entry.slug!r} is new and needs a PIN")
             changes.append(Change(subject, "insert", ("display_name", "role", "status", "sort_order", "pin")))
             continue
         fields = tuple(f for f, new in (
@@ -289,11 +290,11 @@ def compute_plan(
             or (f == "status" and row["profile_status"] != new))
         if fields:
             changes.append(Change(subject, "update", fields))
-        if entry.key in pins:
+        if entry.slug in pins:
             changes.append(Change(subject, "set_pin"))
-        if not fields and entry.key not in pins:
+        if not fields and entry.slug not in pins:
             unchanged.append(subject)
-    named = {p.key for p in roster.profiles}
+    named = {p.slug for p in roster.profiles}
     return Plan(database, pe.email_norm, tuple(changes), tuple(unchanged),
                 left_alone=len(set(profile_rows) - named))
 
@@ -352,8 +353,8 @@ def apply(
                 (pe.status, pe.provider_subject, principal_id, pe.status, pe.provider_subject),
             )
         for entry in roster.profiles:
-            row = profiles.get(entry.key)
-            pin = pins.get(entry.key)
+            row = profiles.get(entry.slug)
+            pin = pins.get(entry.slug)
             pin_hash = hasher.hash(pin) if pin is not None else None
             if row is None:
                 cur.execute(
@@ -366,7 +367,7 @@ def apply(
                     "insert into platform.operator_profile "
                     "(operator_id, principal_id, profile_key, pin_hash, status, sort_order) "
                     "values (%s::uuid, %s::uuid, %s, %s, %s, %s)",
-                    (operator_id, principal_id, entry.key, pin_hash, entry.status, entry.sort_order),
+                    (operator_id, principal_id, entry.slug, pin_hash, entry.status, entry.sort_order),
                 )
                 continue
             cur.execute(
@@ -404,8 +405,3 @@ def describe(result: Plan) -> list[str]:
     )
     lines.append(f"profiles of this principal not in the roster (left unchanged): {result.left_alone}")
     return lines
-
-
-def keys_needing_pins(roster: Roster, existing: Iterable[str]) -> list[str]:
-    have = set(existing)
-    return [p.key for p in roster.profiles if p.key not in have]

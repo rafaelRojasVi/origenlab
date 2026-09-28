@@ -166,11 +166,10 @@ def list_profiles(request: Request) -> JSONResponse:
     found = principal_from_request(request, config)
     if found is None:
         return _json(401, {"detail": PRINCIPAL_REQUIRED})
-    session, principal = found
+    _, principal = found
     cards = config.profiles.list_profiles(principal.principal_id)
     return _json(200, {
         "principal": {"email": principal.email_norm},
-        "selected_profile_id": session.profile.operator_id if session.profile else None,
         "profiles": [card.public() for card in cards],
     })
 

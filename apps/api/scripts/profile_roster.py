@@ -39,16 +39,16 @@ from origenlab_api.v2.profile_roster import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _prompt_pins(keys: list[str]) -> dict[str, str]:
+def _prompt_pins(slugs: list[str]) -> dict[str, str]:
     if not sys.stdin.isatty():
         raise ProfileRosterRefused("--prompt-pin needs an interactive terminal; use --pin-file instead")
     pins: dict[str, str] = {}
-    for key in keys:
-        first = getpass.getpass(f"PIN for {key}: ")
-        second = getpass.getpass(f"PIN for {key} (again): ")
+    for slug in slugs:
+        first = getpass.getpass(f"PIN for {slug}: ")
+        second = getpass.getpass(f"PIN for {slug} (again): ")
         if first != second:
-            raise ProfileRosterRefused(f"the two PINs entered for {key!r} differ")
-        pins[key] = first
+            raise ProfileRosterRefused(f"the two PINs entered for {slug!r} differ")
+        pins[slug] = first
     return check_pins(pins)
 
 

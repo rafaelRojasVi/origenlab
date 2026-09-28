@@ -21,8 +21,9 @@ Policy (documented for operators in `apps/api/docs/PRODUCTION_AUTH.md`):
 * A failure older than :data:`FAILURE_WINDOW` no longer counts; a lockout older than
   :data:`LOCKOUT_MEMORY` no longer doubles the next one.
 * An attempt while locked is refused **without counting**, and without checking the PIN.
-* A success resets the selected profile's counters and the principal's counters. It never
-  resets another profile's, so knowing one PIN never helps guess another.
+* A success resets the selected profile's counters and the principal's failure count,
+  but keeps the principal's lockout history. It never resets another profile's, so
+  knowing one PIN never helps guess another.
 
 Every outcome — success, refusal, lockout — writes one `platform.auth_event`. None of them
 carries the PIN; the refusal reason is a closed vocabulary the table enforces.
@@ -148,6 +149,7 @@ class _Throttle:
 
 
 _CLEARED = _Throttle(0, 0, None, None)
+_THROTTLE_TARGETS = frozenset({("auth_principal", "id"), ("operator_profile", "operator_id")})
 
 
 class ProfileAuthRepository:
@@ -319,7 +321,11 @@ class ProfileAuthRepository:
                 verified = False
 
             if verified and candidate is not None and candidate.is_usable:
-                self._write_throttle(cur, "auth_principal", "id", pid, _CLEARED)
+                # The principal's failure count restarts, but its lockout history is kept (it
+                # still decays after LOCKOUT_MEMORY): knowing one PIN must not reset the
+                # principal-wide backoff while another profile is being guessed.
+                self._write_throttle(cur, "auth_principal", "id", pid, _Throttle(
+                    0, principal_throttle.lockout_count, None, principal_throttle.last_failed_at))
                 self._write_throttle(cur, "operator_profile", "operator_id", candidate.operator_id,
                                      _CLEARED)
                 self._event(cur, "profile.selected", pid, principal_email,
@@ -397,8 +403,10 @@ class ProfileAuthRepository:
 
     @staticmethod
     def _write_throttle(cur: Any, table: str, key: str, key_value: str, t: _Throttle) -> None:
-        # `table` and `key` are two fixed pairs chosen above, never caller input.
-        assert (table, key) in {("auth_principal", "id"), ("operator_profile", "operator_id")}
+        # `table` and `key` are two fixed pairs chosen above, never caller input; an explicit
+        # check (not an `assert`, which `python -O` strips) keeps it that way.
+        if (table, key) not in _THROTTLE_TARGETS:
+            raise ValueError("unexpected throttle target")
         cur.execute(
             f"update platform.{table} set failed_attempts = %s, lockout_count = %s, "
             f"locked_until = %s, last_failed_at = %s where {key} = %s::uuid",
