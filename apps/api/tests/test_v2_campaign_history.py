@@ -80,6 +80,25 @@ def test_the_address_is_masked_in_the_read_itself() -> None:
     assert shown_address(None, "viewer") is None
 
 
+def test_interests_join_on_the_stored_address_not_the_masked_one(monkeypatch) -> None:
+    from origenlab_api.v2 import crm_workspace, equipment_taxonomy, marketing_audience
+
+    interest = {"category": "balanzas", "basis": "cotización"}
+    monkeypatch.setattr(equipment_taxonomy, "load_taxonomy", lambda: None)
+    monkeypatch.setattr(
+        marketing_audience, "compose",
+        lambda _taxonomy, _inputs: {"persons": [{"address": "maría.peña@lab.example", "interests": [interest]}]},
+    )
+    rows = [
+        {"recipient_id": "r1", "address": shown_address("maría.peña@lab.example", "viewer")},
+        {"recipient_id": "r2", "address": "***@lab.example"},
+    ]
+    crm_workspace._attach_interests(rows, {"r1": "maría.peña@lab.example", "r2": "otra@lab.example"}, None)
+    assert rows[0]["interests"] == [interest]  # a viewer sees the masked address and the real interest
+    assert rows[1]["interests"] == []
+    assert rows[0]["address"] == "***@lab.example"  # the join never unmasks the row
+
+
 def test_one_outcome_per_recipient() -> None:
     base = {"state": "sent", "bounced_attempts": 0, "accepted": 1, "rejected": 0}
     assert outcome(base) == "sent"

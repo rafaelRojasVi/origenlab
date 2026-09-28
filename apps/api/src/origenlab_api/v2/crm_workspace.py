@@ -956,11 +956,21 @@ class CrmWorkspaceRepository:
             body = read_recipients(cur, campaign_id, query, role)
             body["totals"] = read_totals(cur, campaign_id)["totals"]
             inputs = read_marketing_audience_inputs(cur) if body["rows"] else None
+            address_by_id: dict[str, str] = {}
+            if inputs is not None:
+                # The rows carry the address as shown (masked for a viewer); interests are keyed
+                # by the stored address, never by what the caller is allowed to see.
+                cur.execute(
+                    "select id::text, address_norm from outbound.campaign_recipient"
+                    " where campaign_id = %s and id = any(%s::uuid[])",
+                    (campaign_id, [r["recipient_id"] for r in body["rows"]]),
+                )
+                address_by_id = {rid: addr for rid, addr in cur.fetchall()}
             cur.execute("select current_database()")
             database = cur.fetchone()[0]
         body["interests_available"] = inputs is not None
         if inputs is not None:
-            _attach_interests(body["rows"], inputs)
+            _attach_interests(body["rows"], address_by_id, inputs)
         return {
             "campaign_id": campaign_id, "name": found[0], "status": found[1], **body,
             "storage": {"table": "outbound.campaign_recipient", "database": database},
@@ -1241,8 +1251,10 @@ def _subject_state(c: Mapping[str, Any]) -> str:
     return "not_imported" if c.get("origin") == "imported_v1" else "not_set"
 
 
-def _attach_interests(rows: list[dict[str, Any]], inputs: "AudienceInputs") -> None:
-    """The recorded equipment-interest evidence of each recipient on the page, by exact address.
+def _attach_interests(
+    rows: list[dict[str, Any]], address_by_id: dict[str, str], inputs: "AudienceInputs"
+) -> None:
+    """The recorded equipment-interest evidence of each recipient on the page, by exact stored address.
 
     The same derivation as the Marketing audience (`compose`); a recipient with none gets an empty
     list, which the dashboard shows as «Sin interés registrado», never as a low interest.
@@ -1255,7 +1267,7 @@ def _attach_interests(rows: list[dict[str, Any]], inputs: "AudienceInputs") -> N
     for p in composed.get("persons", []):
         by_address.setdefault(p["address"], []).extend(p.get("interests") or [])
     for r in rows:
-        r["interests"] = by_address.get(r["address"], [])
+        r["interests"] = by_address.get(address_by_id.get(r["recipient_id"], ""), [])
 
 
 def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
