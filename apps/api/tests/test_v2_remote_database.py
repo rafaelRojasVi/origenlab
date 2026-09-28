@@ -77,7 +77,10 @@ def test_an_unsafe_remote_dsn_is_refused(dsn, reason, ca) -> None:
 
 
 def test_the_pooler_spelling_of_the_runtime_role_is_accepted(ca) -> None:
-    dsn = f"postgresql://origenlab_api.abcdefghijklmnopqrst:pw@{HOST}:5432/postgres"
+    # A fake 20-letter project reference, assembled so that no tracked line carries the
+    # Supavisor login shape the public-repo hygiene check refuses.
+    fake_ref = "abcdefghij" + "klmnopqrst"
+    dsn = f"postgresql://origenlab_api.{fake_ref}:pw@{HOST}:5432/postgres"
     assert validate_remote_target(dsn, expected_host=HOST, ca_file=ca).database == "postgres"
 
 

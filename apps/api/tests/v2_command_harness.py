@@ -101,9 +101,31 @@ def build_disposable_database():
                     cur.execute(path.read_text(encoding="utf-8"))
         yield dsn
     finally:
-        with psycopg.connect(_TEST_DSN, autocommit=True) as conn, conn.cursor() as cur:
+        drop_disposable_database(name)
+
+
+def drop_disposable_database(name: str) -> None:
+    """End the test's own sessions on `name`, then drop it.
+
+    Only client backends are terminated: an autovacuum worker belongs to the bootstrap
+    superuser, which the maintenance role may not signal, and `drop database` cancels it
+    by itself. A background process still leaving gets a few short retries.
+    """
+    import time
+
+    import psycopg
+
+    with psycopg.connect(_TEST_DSN, autocommit=True) as conn, conn.cursor() as cur:
+        for attempt in range(10):
             cur.execute(
-                "select pg_terminate_backend(pid) from pg_stat_activity where datname = %s",
+                "select pg_terminate_backend(pid) from pg_stat_activity"
+                " where datname = %s and backend_type = 'client backend' and pid <> pg_backend_pid()",
                 (name,),
             )
-            cur.execute(f"drop database if exists {name}")
+            try:
+                cur.execute(f"drop database if exists {name}")
+                return
+            except psycopg.errors.ObjectInUse:
+                if attempt == 9:
+                    raise
+                time.sleep(0.5)
