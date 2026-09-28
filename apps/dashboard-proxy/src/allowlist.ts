@@ -137,6 +137,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/auth\/google\/login$/,
   /^\/auth\/google\/callback$/,
   /^\/auth\/session$/,
+  // The profile screen behind a shared Workspace sign-in (`apps/api` v2/profile_routes.py): the
+  // signed-in principal's usable profiles. GET-only; the session cookie resolves the principal
+  // upstream and nothing in the request can name another one.
+  /^\/auth\/profiles$/,
 ];
 
 /**
@@ -264,13 +268,33 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
 }
 
 /**
- * Sign-out. Clears the session cookie upstream and writes nothing else; listed apart from
+ * Sign-out. Clears the session cookie upstream (and records the logout); listed apart from
  * the commercial commands so it can never inherit their headers or be mistaken for one.
  */
 export const AUTH_LOGOUT_POST_PATH_RE = /^\/auth\/logout$/;
 
+/**
+ * Profile selection behind a shared Workspace sign-in: choose a profile with its PIN, or
+ * return to the profile screen. Upstream the API verifies the PIN and binds the operator into
+ * the session; the browser names only a profile id and a PIN. Two exact paths -- never
+ * `/auth/profile/.+`, and never the local-only `/auth/dev/*` shortcut.
+ */
+export const AUTH_PROFILE_POST_PATHS: readonly RegExp[] = [
+  /^\/auth\/profile\/select$/,
+  /^\/auth\/profile\/clear$/,
+];
+
+/** A profile body is a UUID and a PIN: well under a kilobyte. */
+export const AUTH_PROFILE_MAX_BYTES = 1_024;
+
+export function isAllowedAuthProfilePostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return AUTH_PROFILE_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
 export function isAllowedAuthPostPath(pathname: string): boolean {
-  return AUTH_LOGOUT_POST_PATH_RE.test(pathname.split("?")[0]);
+  const pathOnly = pathname.split("?")[0];
+  return AUTH_LOGOUT_POST_PATH_RE.test(pathOnly) || isAllowedAuthProfilePostPath(pathOnly);
 }
 
 export function isAllowedPostPath(pathname: string): boolean {

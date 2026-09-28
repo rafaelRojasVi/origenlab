@@ -189,7 +189,7 @@ describe("sign-in route allowlist", () => {
       ],
     });
     const response = await handleRequest(
-      new Request(`${DASHBOARD}/api/auth/logout`, { method: "POST" }),
+      new Request(`${DASHBOARD}/api/auth/logout`, { method: "POST", headers: { Origin: DASHBOARD } }),
       TEST_ENV,
     );
     expect(response.status).toBe(200);
