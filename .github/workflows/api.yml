@@ -9,11 +9,15 @@ on:
     paths:
       - "apps/api/**"
       - "apps/email-pipeline/**"
+      - "supabase/migrations/**"
+      - "supabase/roles.sql"
       - ".github/workflows/api.yml"
   pull_request:
     paths:
       - "apps/api/**"
       - "apps/email-pipeline/**"
+      - "supabase/migrations/**"
+      - "supabase/roles.sql"
       - ".github/workflows/api.yml"
 
 jobs:
@@ -37,3 +41,53 @@ jobs:
           sudo install -m 0755 "/tmp/${RG_DIR}/rg" /usr/local/bin/rg
           rg --version
       - run: ./scripts/validate.sh
+
+  # The V2 database-backed tests (commands, reads, redaction, campaign history) skip without a
+  # database. Here they run against a throwaway cluster: supabase/roles.sql applied as the
+  # non-superuser `postgres`, the real `origenlab_api` login, and a disposable origenlab_test_<hex>
+  # database per module. The job fails if any of them skips, so a broken setup cannot pass green.
+  db-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install ripgrep
+        run: |
+          set -euo pipefail
+          RG_VERSION=14.1.1
+          RG_DIR="ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl"
+          curl --fail --location             --retry 5             --retry-all-errors             --connect-timeout 10             --max-time 60             "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_DIR}.tar.gz"             -o /tmp/ripgrep.tar.gz
+          tar -xzf /tmp/ripgrep.tar.gz -C /tmp
+          sudo install -m 0755 "/tmp/${RG_DIR}/rg" /usr/local/bin/rg
+          rg --version
+      - name: Start a disposable PostgreSQL cluster
+        run: |
+          set -euo pipefail
+          # Not captured: the script's stdout carries the ::add-mask:: commands for the passwords.
+          scripts/disposable_test_cluster.sh up "$RUNNER_TEMP/v2-test-db.env"
+          grep '^OL_TEST_CLUSTER=' "$RUNNER_TEMP/v2-test-db.env" >> "$GITHUB_ENV"
+      - name: API tests with the V2 database
+        run: |
+          set -euo pipefail
+          set -a; . "$RUNNER_TEMP/v2-test-db.env"; set +a
+          uv sync --group dev --frozen
+          ORIGENLAB_API_BACKEND=sqlite \
+          ORIGENLAB_POSTGRES_URL= \
+          ALEMBIC_DATABASE_URL= \
+          uv run --frozen pytest tests -q -rs | tee "$RUNNER_TEMP/pytest.out"
+      - name: No V2 database test skipped
+        run: |
+          set -euo pipefail
+          if grep -E '^SKIPPED .*ORIGENLAB_V2_(API_)?TEST_DSN' "$RUNNER_TEMP/pytest.out"; then
+            echo "::error::V2 database-backed tests skipped: the cluster was not reachable"
+            exit 1
+          fi
+      - name: Remove the cluster
+        if: always()
+        run: |
+          if [ -n "${OL_TEST_CLUSTER:-}" ]; then scripts/disposable_test_cluster.sh down "$OL_TEST_CLUSTER"; fi
