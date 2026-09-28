@@ -652,8 +652,12 @@ labels or answers a mailbox; synchronizing Gmail replies automatically is **not 
   a request already decided, another address's request or a stale `review_sha256` is refused;
   replaying the same key returns the stored answer. Only the dismissed hold stops refusing: a
   permanent unsubscribe for the same address, or another pending hold, still refuses. Nothing
-  dismisses, weakens, updates or deletes a contact control. Not in the dashboard proxy; the
-  Bajas page stays read-only.
+  dismisses, weakens, updates or deletes a contact control.
+- **Where**: the dashboard's Bajas page offers **Confirmar BAJA** (sales/admin) and **Descartar
+  (falso positivo)** (admin) on each held review, only when the API mounts these commands; the
+  proxy forwards exactly these two POSTs under the marketing-command guard (allowed `Origin`, no
+  cross-site fetch, JSON within 8 KB, `Idempotency-Key`). Applying reply batches and the preview
+  stay API-only.
 - **Permanence**: an unsubscribe block, and any block a «BAJA» was linked to, is never updated
   or deleted, and its evidence is immutable (trigger `outbound.unsubscribe_permanent`) — the one
   change ever made to it is the review deciding a held request (confirmed, or dismissed and

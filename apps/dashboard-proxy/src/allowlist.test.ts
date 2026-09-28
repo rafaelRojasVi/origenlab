@@ -1125,13 +1125,15 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("allows exactly the six Marketing commands as POST, and no send, approve, schedule or activate", async () => {
+  it("allows exactly the eight Marketing commands as POST, and no send, approve, schedule or activate", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of [
       "/v2/commands/create-campaign-draft",
       "/v2/commands/save-campaign-draft",
       "/v2/commands/freeze-campaign-audience",
       "/v2/commands/set-campaign-planning",
+      "/v2/commands/resolve-unsubscribe-review",
+      "/v2/commands/dismiss-unsubscribe-review",
       "/v2/commands/block-campaign",
       "/v2/commands/unblock-campaign",
     ]) {
@@ -1162,9 +1164,10 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/BLOCK-CAMPAIGN",
       // W10: the unsubscribe preview and apply are API-only operator tooling, never the browser's.
       "/v2/commands/apply-unsubscribe-replies",
-      "/v2/commands/resolve-unsubscribe-review",
-      "/v2/commands/dismiss-unsubscribe-review",
       "/v2/unsubscribe/preview",
+      "/v2/commands/resolve-unsubscribe-review/",
+      "/v2/commands/dismiss-unsubscribe-review-all",
+      "/v2/commands/lift-unsubscribe",
       "/v2/commands/resubscribe",
       "/v2/commands/revoke-block",
       "/v2/commands/sync-gmail-replies",

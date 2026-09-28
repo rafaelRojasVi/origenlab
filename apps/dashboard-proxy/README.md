@@ -33,7 +33,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/*` (named paths only — see `src/allowlist.ts`) | V2 durable reads |
 | `/auth/google/login`, `/auth/google/callback`, `/auth/session` | Dashboard Google Workspace sign-in (see *Sign-in exceptions* below) |
 
-**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the eight Marketing reads and the two CRM card reads below are not listed either. The W10 unsubscribe tooling (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`, `POST /v2/commands/resolve-unsubscribe-review`, `POST /v2/commands/dismiss-unsubscribe-review`) is API-only and never listed. See `docs/OPERATIONS.md`.
+**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the eight Marketing reads and the two CRM card reads below are not listed either. The W10 unsubscribe tooling that carries message bodies (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`) is API-only and never listed. See `docs/OPERATIONS.md`.
 
 **POST** (the only human write path — trusted operator identity, `Idempotency-Key`, optimistic concurrency; each ID format is regex-constrained, no wildcard route):
 
@@ -46,7 +46,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/operations/sales-opportunities/sales_<32hex>/quotes`, `/operations/customer-quotes/quote_<32hex>/drive-workspace` | CRM-Q1 customer-quote create + Drive workspace retry |
 | `/operator/procurement/tenders/<code>/annex-bundle/[preview\|import]` | Explicit tender annex evidence upload |
 | `/auth/logout` | Clears the dashboard session cookie; writes no commercial state |
-| `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning,block-campaign,unblock-campaign}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends; a block only refuses |
+| `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning,resolve-unsubscribe-review,dismiss-unsubscribe-review,block-campaign,unblock-campaign}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends; a block only refuses |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
@@ -87,17 +87,19 @@ Exact paths only (`src/allowlist.ts`; UUIDs lower-case):
 | POST | `/v2/commands/save-campaign-draft` | compare-and-set on `expected_version`; event `campaign.draft_content_saved` per change |
 | POST | `/v2/commands/freeze-campaign-audience` | `confirmed: true`, `expected_version`, `expected_preview_sha256`; write-once snapshot in `outbound.campaign` + `outbound.campaign_recipient`; event `campaign.audience_frozen`; refused `audience_changed` if the audience moved since the preview |
 | POST | `/v2/commands/set-campaign-planning` | `expected_planning_version`; set, change or clear an unsent campaign's internal planned day; events `campaign.planning_set` / `campaign.planning_cleared`; body limit 4 KB. Schedules nothing |
+| POST | `/v2/commands/resolve-unsubscribe-review` | confirm one «BAJA» held for review (or one an admin dismissed) as the permanent unsubscribe; a note; body limit 8 KB |
+| POST | `/v2/commands/dismiss-unsubscribe-review` | **admin only**: dismiss one *pending* hold as a false positive; `expected_review_sha256` and an explanation; never a confirmed unsubscribe; body limit 8 KB |
 | POST | `/v2/commands/block-campaign` | **admin only** upstream; `scope` (`campaign` / `all_campaigns`), `expected_block_version`, mandatory `reason`; one `outbound.campaign_block` row; event `campaign_block.placed`; body limit 16 KB. Refuses freeze, approval, dry run, reservation and dispatch while active; sends, enqueues and rewrites nothing; never expires |
 | POST | `/v2/commands/unblock-campaign` | **admin only** upstream; `block_id`, `expected_version`, mandatory `reason`; event `campaign_block.lifted`; body limit 16 KB. Lifting starts nothing |
 
 **Roles.** Reads: any active operator; contact addresses are masked upstream for `viewer`
-(`contact_redaction.py`). Commands: an active `sales` or `admin` operator only (`admin` alone for the two block commands), resolved
+(`contact_redaction.py`). Commands: an active `sales` or `admin` operator only (`admin` alone to dismiss a «BAJA» review and for the two block commands), resolved
 upstream from the verified identity (the dashboard session, or the Cloudflare Access email
 this Worker rewrites into the operator header — a browser-sent operator header is always
 dropped). Nothing in a body names the actor.
 
 **Session and CSRF.** The session cookie is `__Host-origenlab_session` (HttpOnly, Secure,
-SameSite=Lax); only the two sign-in cookies ever reach upstream. For the six commands the
+SameSite=Lax); only the two sign-in cookies ever reach upstream. For the eight commands the
 Worker also refuses, before forwarding: a missing or unlisted `Origin` (403
 `origin_not_allowed`), `Sec-Fetch-Site: cross-site` (403 `cross_site_request`), any
 `Content-Type` other than `application/json` (415 — a cross-site form cannot send one without

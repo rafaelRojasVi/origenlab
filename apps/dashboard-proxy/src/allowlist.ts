@@ -106,11 +106,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/history\/(recipients|replies|audit)$/,
   // W10 suppression status: which addresses asked for «BAJA», since when, and how many frozen
   // recipients it refuses today. A read, masked for a `viewer` upstream, never a message body.
-  // The unsubscribe preview (`POST /v2/unsubscribe/preview`), apply
-  // (`POST /v2/commands/apply-unsubscribe-replies`), review confirmation
-  // (`POST /v2/commands/resolve-unsubscribe-review`) and review dismissal
-  // (`POST /v2/commands/dismiss-unsubscribe-review`) are deliberately NOT listed: they carry
-  // message bodies or decide a suppression, and stay operator tooling on the API.
+  // The unsubscribe preview (`POST /v2/unsubscribe/preview`) and apply
+  // (`POST /v2/commands/apply-unsubscribe-replies`) are deliberately NOT listed anywhere: they
+  // carry message bodies and stay operator tooling on the API. The two review decisions are
+  // POST-only marketing commands (MARKETING_COMMAND_POST_PATHS), never GET-readable.
   /^\/v2\/workspace\/marketing\/suppressions$/,
   // Campaign safety blocks (WORKFLOWS.md §W13): every active block and each target's version.
   // Reasons and operators are withheld from a viewer upstream.
@@ -212,6 +211,12 @@ export const MARKETING_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/save-campaign-draft$/,
   /^\/v2\/commands\/freeze-campaign-audience$/,
   /^\/v2\/commands\/set-campaign-planning$/,
+  // W10 review of a «BAJA» held for review. Upstream: confirm needs an active sales/admin
+  // operator, dismiss an active admin plus the review's review_sha256; both a note or
+  // explanation, and the database re-checks every one of those. Neither lifts a confirmed
+  // unsubscribe; nothing here applies replies or reads a mailbox.
+  /^\/v2\/commands\/resolve-unsubscribe-review$/,
+  /^\/v2\/commands\/dismiss-unsubscribe-review$/,
   /^\/v2\/commands\/block-campaign$/,
   /^\/v2\/commands\/unblock-campaign$/,
 ];
@@ -224,6 +229,11 @@ export const CAMPAIGN_PLANNING_MAX_BYTES = 4_096;
 
 const CAMPAIGN_PLANNING_PATH_RE = /^\/v2\/commands\/set-campaign-planning$/;
 
+/** A review decision is a UUID, an address, a hash and at most 1,000 characters of text. */
+export const UNSUBSCRIBE_REVIEW_MAX_BYTES = 8_192;
+
+const UNSUBSCRIBE_REVIEW_PATH_RE = /^\/v2\/commands\/(resolve|dismiss)-unsubscribe-review$/;
+
 /** A block body is a scope, a UUID, a version and a reason of at most 2,000 characters. */
 export const CAMPAIGN_BLOCK_MAX_BYTES = 16_384;
 
@@ -233,6 +243,7 @@ const CAMPAIGN_BLOCK_PATH_RE = /^\/v2\/commands\/(?:block|unblock)-campaign$/;
 export function marketingCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
   if (CAMPAIGN_PLANNING_PATH_RE.test(pathOnly)) return CAMPAIGN_PLANNING_MAX_BYTES;
+  if (UNSUBSCRIBE_REVIEW_PATH_RE.test(pathOnly)) return UNSUBSCRIBE_REVIEW_MAX_BYTES;
   if (CAMPAIGN_BLOCK_PATH_RE.test(pathOnly)) return CAMPAIGN_BLOCK_MAX_BYTES;
   return MARKETING_COMMAND_MAX_BYTES;
 }
