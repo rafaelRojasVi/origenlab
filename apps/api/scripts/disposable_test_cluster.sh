@@ -28,17 +28,29 @@ die() { echo "FAIL: $*" >&2; exit 1; }
 secret() { openssl rand -hex 24; }
 
 # The public registry rate-limits anonymous pulls ("toomanyrequests"), and CI's other jobs pull
-# from it at the same moment: retry with backoff before calling the run a failure.
+# from it at the same moment. Retry it, then fall back to the same image on Docker Hub, pinned by
+# the digest both registries serve, and tag it locally under $IMAGE.
+IMAGE_DIGEST="${ORIGENLAB_TEST_PG_DIGEST:-sha256:28f0e16a019e648089fc1a6d333549a55548f6019c15ae4bd7cd58b989027518}"
+MIRROR="docker.io/supabase/postgres@$IMAGE_DIGEST"
+
 pull_image() {
   docker image inspect "$IMAGE" >/dev/null 2>&1 && return 0
   local attempt delay=15
-  for attempt in 1 2 3 4 5; do
+  for attempt in 1 2 3; do
     docker pull -q "$IMAGE" >/dev/null && return 0
-    [[ $attempt -lt 5 ]] || break
+    [[ $attempt -lt 3 ]] || break
     echo "pull of $IMAGE failed (attempt $attempt); retrying in ${delay}s" >&2
     sleep "$delay"; delay=$((delay * 2))
   done
-  die "could not pull $IMAGE"
+  echo "falling back to $MIRROR" >&2
+  for attempt in 1 2 3; do
+    if docker pull -q "$MIRROR" >/dev/null; then
+      docker tag "$MIRROR" "$IMAGE"
+      return 0
+    fi
+    sleep 15
+  done
+  die "could not pull $IMAGE or $MIRROR"
 }
 
 up() {
