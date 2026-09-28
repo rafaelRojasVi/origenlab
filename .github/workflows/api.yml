@@ -59,8 +59,9 @@ jobs:
       - name: Start a disposable PostgreSQL cluster
         run: |
           set -euo pipefail
-          name="$(scripts/disposable_test_cluster.sh up "$RUNNER_TEMP/v2-test-db.env")"
-          echo "OL_TEST_CLUSTER=$name" >> "$GITHUB_ENV"
+          # Not captured: the script's stdout carries the ::add-mask:: commands for the passwords.
+          scripts/disposable_test_cluster.sh up "$RUNNER_TEMP/v2-test-db.env"
+          grep '^OL_TEST_CLUSTER=' "$RUNNER_TEMP/v2-test-db.env" >> "$GITHUB_ENV"
       - name: API tests with the V2 database
         run: |
           set -euo pipefail

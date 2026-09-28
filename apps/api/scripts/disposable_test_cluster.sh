@@ -13,7 +13,7 @@
 # Passwords are never printed; in GitHub Actions they are masked.
 #
 # Usage:
-#   apps/api/scripts/disposable_test_cluster.sh up <env-file>   # prints the container name
+#   apps/api/scripts/disposable_test_cluster.sh up <env-file>   # prints the container name, also OL_TEST_CLUSTER in <env-file>
 #   apps/api/scripts/disposable_test_cluster.sh down <container>
 #
 #   set -a; . <env-file>; set +a; ./scripts/validate.sh
@@ -33,6 +33,8 @@ up() {
   name="origenlab_apitest_$(openssl rand -hex 4)"
   pg_pw="$(secret)"
   api_pw="$(secret)"
+  # Workflow commands are read from the step's own output, so a caller must never capture this
+  # script's stdout in Actions; the container name is also written to the env file.
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
     echo "::add-mask::$pg_pw"
     echo "::add-mask::$api_pw"
@@ -76,6 +78,7 @@ SQL
   cat > "$env_file" <<ENV
 ORIGENLAB_V2_TEST_DSN=postgresql://postgres:$pg_pw@127.0.0.1:$port/postgres
 ORIGENLAB_V2_API_TEST_DSN=postgresql://origenlab_api:$api_pw@127.0.0.1:$port/postgres
+OL_TEST_CLUSTER=$name
 ENV
   trap - ERR
   echo "$name"
