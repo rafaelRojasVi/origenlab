@@ -1343,9 +1343,18 @@ def clean_db() -> Any:
         # postgres login; a fixture clears them the same way the importer writes them.
         cur.execute("set role origenlab_owner")
         # Child-first, so no foreign key into evidence.source_record survives the clear.
+        # An archived campaign is immutable by trigger (20260928090000) — again exactly what
+        # production needs, and again a disposable fixture steps around it to start empty.
+        guards = (("send_attempt", "send_attempt_archived_immutable"),
+                  ("campaign_recipient", "campaign_recipient_archived_immutable"),
+                  ("campaign", "campaign_archived_immutable"))
+        for table, trigger in guards:
+            cur.execute(f"alter table outbound.{table} disable trigger {trigger}")
         cur.execute("delete from outbound.send_attempt")
         cur.execute("delete from outbound.campaign_recipient")
         cur.execute("delete from outbound.campaign")
+        for table, trigger in guards:
+            cur.execute(f"alter table outbound.{table} enable trigger {trigger}")
         cur.execute("delete from comms.mailbox")
         cur.execute("delete from evidence.assertion")
         # prior_contact is permanent by trigger — that guard is exactly what production
@@ -1362,6 +1371,31 @@ def clean_db() -> Any:
         cur.execute("delete from evidence.source_record")
     yield conn
     conn.close()
+
+
+@pytest.fixture
+def archive_guard_off(clean_db: Any) -> Any:
+    """For a test that simulates tampering with imported history.
+
+    Since 20260928090000 the database itself refuses to edit or delete an archived campaign's
+    rows, so drift can no longer happen through SQL. The importer's own field-by-field refusal
+    stays as defense in depth, and these tests still prove it — with the guard switched off for
+    the one test and always switched back on.
+    """
+    guards = (("send_attempt", "send_attempt_archived_immutable"),
+              ("campaign_recipient", "campaign_recipient_archived_immutable"),
+              ("campaign", "campaign_archived_immutable"))
+    with clean_db.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        for table, trigger in guards:
+            cur.execute(f"alter table outbound.{table} disable trigger {trigger}")
+    try:
+        yield clean_db
+    finally:
+        with clean_db.cursor() as cur:
+            cur.execute("set role origenlab_owner")
+            for table, trigger in guards:
+                cur.execute(f"alter table outbound.{table} enable trigger {trigger}")
 
 
 @requires_db
@@ -1609,7 +1643,9 @@ def test_an_unrelated_campaign_with_the_same_name_is_neither_reused_nor_changed(
 
 
 @requires_db
-def test_a_campaign_whose_stored_fields_drifted_is_refused_not_reused(clean_db: Any) -> None:
+def test_a_campaign_whose_stored_fields_drifted_is_refused_not_reused(
+    clean_db: Any, archive_guard_off: Any
+) -> None:
     """An imported campaign that no longer matches the plan is not this plan's campaign."""
     from origenlab_email_pipeline.migration.v2_import.apply import ApplyRefused, apply_plan
 
@@ -1631,7 +1667,7 @@ def test_a_campaign_whose_stored_fields_drifted_is_refused_not_reused(clean_db: 
 
 @requires_db
 def test_an_unrelated_attempt_on_the_recipient_does_not_hide_imported_history(
-    clean_db: Any,
+    clean_db: Any, archive_guard_off: Any
 ) -> None:
     """Regression: counting every attempt under a recipient silently dropped history.
 
@@ -1703,7 +1739,9 @@ def test_an_unrelated_attempt_on_the_recipient_does_not_hide_imported_history(
 
 
 @requires_db
-def test_a_partly_present_imported_ledger_is_completed_not_doubled(clean_db: Any) -> None:
+def test_a_partly_present_imported_ledger_is_completed_not_doubled(
+    clean_db: Any, archive_guard_off: Any
+) -> None:
     """A run interrupted after one of two attempts must write the missing one only."""
     from origenlab_email_pipeline.migration.v2_import.apply import apply_plan
 
@@ -1743,7 +1781,9 @@ def test_a_partly_present_imported_ledger_is_completed_not_doubled(clean_db: Any
 
 
 @requires_db
-def test_an_imported_attempt_that_does_not_match_the_plan_is_refused(clean_db: Any) -> None:
+def test_an_imported_attempt_that_does_not_match_the_plan_is_refused(
+    clean_db: Any, archive_guard_off: Any
+) -> None:
     """An attempt under this origin that the plan does not contain stops the run.
 
     The import completes a ledger; it never reconciles one by removing a row. So a stored
@@ -1781,7 +1821,9 @@ def test_an_imported_attempt_that_does_not_match_the_plan_is_refused(clean_db: A
 
 
 @requires_db
-def test_a_recipient_whose_state_drifted_never_receives_an_attempt(clean_db: Any) -> None:
+def test_a_recipient_whose_state_drifted_never_receives_an_attempt(
+    clean_db: Any, archive_guard_off: Any
+) -> None:
     """An audience row that disagrees with the plan is refused before any child row."""
     from origenlab_email_pipeline.migration.v2_import.apply import ApplyRefused, apply_plan
 

@@ -629,16 +629,20 @@ def test_contact_search_reaches_recorded_names_and_never_a_shared_domain(repo, w
     # that merely sits on its domain.
     assert ids(q=f"Universidad Ficticia {world['tag']}") == {world["cp_ana"], world["cp_desk"]}
     assert ids(q="ana ficticia") == {world["cp_ana"]}
-    assert ids(q=world["domain"]) == {world["cp_ana"], world["cp_desk"], world["cp_decoy"]}
+    # The default is the viewer's scope: names only, so an address is never found by searching it.
+    assert ids(q=world["domain"]) == set()
 
-    assert ids(q=world["domain"], identity="person") == {world["cp_ana"]}
-    assert ids(q=world["domain"], identity="organization_mailbox") == {world["cp_desk"]}
-    assert ids(q=world["domain"], identity="unattributed") == {world["cp_decoy"]}
-    assert ids(q=world["domain"], with_cases=True) == {world["cp_ana"], world["cp_decoy"]}
+    # A role that sees addresses (sales, admin) reaches them.
+    by_address = {"q": world["domain"], "search_addresses": True}
+    assert ids(**by_address) == {world["cp_ana"], world["cp_desk"], world["cp_decoy"]}
+    assert ids(**by_address, identity="person") == {world["cp_ana"]}
+    assert ids(**by_address, identity="organization_mailbox") == {world["cp_desk"]}
+    assert ids(**by_address, identity="unattributed") == {world["cp_decoy"]}
+    assert ids(**by_address, with_cases=True) == {world["cp_ana"], world["cp_decoy"]}
 
 
 def test_contact_rows_carry_participation_and_control_counts(repo, world) -> None:
-    page = repo.contacts(q=world["domain"], limit=50, offset=0)
+    page = repo.contacts(q=world["domain"], limit=50, offset=0, search_addresses=True)
     rows = {row["contact_point_id"]: row for row in page.items}
     assert rows[world["cp_ana"]]["case_count"] == 2  # the channel's row and its person's
     assert rows[world["cp_desk"]]["case_count"] == 0

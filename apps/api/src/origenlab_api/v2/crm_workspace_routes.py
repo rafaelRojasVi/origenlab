@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from origenlab_api.v2.audience_freeze import SEND_BLOCKERS, FreezeCriteria
 from origenlab_api.v2.campaign_calendar import campaign_lines
+from origenlab_api.v2.campaign_history import TOTALS, RecipientQuery
 from origenlab_api.v2.campaign_planning import PLANNING_TIME_ZONE
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.commands import CommandRefused
@@ -170,6 +171,48 @@ def get_marketing_frozen_recipients(campaign_id: UUID, _: Operator, repo: Repo) 
     if body is None:
         raise HTTPException(status_code=404, detail="no such campaign")
     body["send_blockers"] = list(SEND_BLOCKERS)
+    return body
+
+
+@workspace_router.get("/marketing/campaigns/{campaign_id}/history/recipients")
+def get_marketing_campaign_recipients(
+    campaign_id: UUID,
+    operator: Operator,
+    repo: Repo,
+    total: Literal[tuple(TOTALS)] = "audience",  # type: ignore[valid-type]
+    reason: Annotated[str | None, Query(max_length=40)] = None,
+    identity: Literal["crm_person", "historical_address"] | None = None,
+    q: Annotated[str | None, Query(max_length=120)] = None,
+    page: Annotated[int, Query(ge=1, le=10_000)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=RecipientQuery.MAX_PAGE_SIZE)] = 50,
+) -> Any:
+    """One page of a campaign's recorded recipients, filtered by the same predicate as the total
+    the operator clicked. A `viewer` searches names only; the address is masked in the answer."""
+    try:
+        query = RecipientQuery(total=total, reason=reason, identity=identity, q=q, page=page, page_size=page_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    body = repo.campaign_recipients(str(campaign_id), query, operator.role)
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such campaign")
+    return body
+
+
+@workspace_router.get("/marketing/campaigns/{campaign_id}/history/replies")
+def get_marketing_campaign_replies(campaign_id: UUID, operator: Operator, repo: Repo) -> Any:
+    """Replies and «BAJA» stored with lineage to this campaign. Gmail is never called."""
+    body = repo.campaign_replies(str(campaign_id), operator.role)
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such campaign")
+    return body
+
+
+@workspace_router.get("/marketing/campaigns/{campaign_id}/history/audit")
+def get_marketing_campaign_audit(campaign_id: UUID, _: Operator, repo: Repo) -> Any:
+    """The campaign's recorded history: its row, its origin, its domain events. A read."""
+    body = repo.campaign_audit(str(campaign_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such campaign")
     return body
 
 

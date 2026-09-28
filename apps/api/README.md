@@ -438,6 +438,17 @@ Prints per-endpoint `status`, `first_ms`, warm `min_ms` / `avg_ms` / `max_ms`, a
 
 GitHub Actions workflow: [`.github/workflows/api.yml`](../../.github/workflows/api.yml) runs `./scripts/validate.sh` for `apps/api` changes and `apps/email-pipeline` dependency changes.
 
+**V2 database-backed tests.** The V2 command, read, redaction and campaign-history tests skip unless `ORIGENLAB_V2_TEST_DSN` (a maintenance login) and `ORIGENLAB_V2_API_TEST_DSN` (the `origenlab_api` login) are set. [`scripts/disposable_test_cluster.sh`](scripts/disposable_test_cluster.sh) starts a throwaway `supabase/postgres` container with `supabase/roles.sql` applied as `postgres`, random per-container passwords and the migrated schema, and writes both DSNs to an env file:
+
+```bash
+name="$(scripts/disposable_test_cluster.sh up /tmp/v2-test-db.env)"
+set -a; . /tmp/v2-test-db.env; set +a
+ORIGENLAB_API_BACKEND=sqlite uv run --frozen pytest tests -q
+scripts/disposable_test_cluster.sh down "$name"
+```
+
+CI runs the same thing as the `db-test` job in `api.yml` (also on `supabase/migrations/**` and `supabase/roles.sql` changes), and fails if any V2 database test skips. Never point either DSN at `origenlab_dev` or `origenlab_clean`; the suite refuses both.
+
 ### Render (native runtime)
 
 | Setting | Value |

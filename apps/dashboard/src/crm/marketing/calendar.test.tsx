@@ -279,13 +279,26 @@ function withRole(role: string | null, node: ReactNode) {
   return <AuthSessionContext.Provider value={{ session, signOut: async () => undefined }}>{node}</AuthSessionContext.Provider>;
 }
 
-function renderDetail(a: CampaignArchive, summary: CampaignSummary, role: string | null = "sales", planningEnabled = true) {
+function renderDetail(
+  a: CampaignArchive,
+  summary: CampaignSummary,
+  role: string | null = "sales",
+  planningEnabled = true,
+  tab: "resumen" | "html" = "resumen",
+) {
   stubArchive(a);
   const onPlanned = vi.fn();
   render(
     withRole(
       role,
-      <CampaignDetail summary={summary} planningEnabled={planningEnabled} onBack={() => undefined} onEdit={() => undefined} onPlanned={onPlanned} />,
+      <CampaignDetail
+        summary={summary}
+        planningEnabled={planningEnabled}
+        initialTab={tab}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onPlanned={onPlanned}
+      />,
     ),
   );
   return { onPlanned };
@@ -293,7 +306,7 @@ function renderDetail(a: CampaignArchive, summary: CampaignSummary, role: string
 
 describe("sent HTML archive", () => {
   it("renders the frozen HTML sandboxed, sanitized, without trackers, remote images or live links", async () => {
-    renderDetail(archive(), FROZEN);
+    renderDetail(archive(), FROZEN, "sales", true, "html");
     const frame = await screen.findByTestId("email-frame");
     expect(frame.getAttribute("sandbox")).toBe("");
     expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
@@ -317,13 +330,13 @@ describe("sent HTML archive", () => {
   });
 
   it("offers desktop, mobile and a read-only raw view that never becomes markup", async () => {
-    renderDetail(archive(), FROZEN);
+    renderDetail(archive(), FROZEN, "sales", true, "html");
     await screen.findByTestId("preview-desktop");
     expect(screen.getByTestId("email-frame")).toHaveStyle({ width: "640px" });
     fireEvent.click(screen.getByRole("button", { name: "Móvil" }));
     expect(screen.getByTestId("preview-mobile")).toBeInTheDocument();
     expect(screen.getByTestId("email-frame")).toHaveStyle({ width: "375px" });
-    fireEvent.click(screen.getByRole("button", { name: "HTML" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Vista del correo" })).getByRole("button", { name: "HTML" }));
     const raw = screen.getByTestId("raw-html");
     expect(raw.tagName).toBe("PRE");
     expect(raw.textContent).toContain("<script>alert(1)</script>");
@@ -354,11 +367,10 @@ describe("sent HTML archive", () => {
       }),
       IMPORTED,
     );
-    const note = await screen.findByTestId("html-unavailable");
-    expect(note).toHaveTextContent("HTML enviado no archivado");
-    expect(screen.queryByTestId("email-frame")).toBeNull();
+    const dates = await screen.findByTestId("send-dates");
     expect(screen.getByText("Histórica importada (V1)")).toBeInTheDocument();
-    const dates = screen.getByTestId("send-dates");
+    expect(screen.getByText("Cerrada · solo lectura")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Editar|Reabrir|Reenviar|Planificar/ })).toBeNull();
     expect(dates).toHaveTextContent("Lote 1:");
     expect(dates).toHaveTextContent("19:03–22:30 · 20 aceptados");
     expect(dates).toHaveTextContent("Lote 2:");
@@ -367,10 +379,20 @@ describe("sent HTML archive", () => {
     expect(record).toHaveTextContent("Huella del contenidoNo disponible");
     expect(record).toHaveTextContent("92 · 90 aceptados · 2 rechazados");
     expect(screen.queryByTestId("planning-label")).toBeNull(); // a sent campaign is not planned
+    fireEvent.click(screen.getByRole("button", { name: "HTML" }));
+    const note = await screen.findByTestId("html-unavailable");
+    expect(note).toHaveTextContent("HTML enviado no archivado");
+    expect(screen.queryByTestId("email-frame")).toBeNull();
   });
 
   it("a draft never shows its editable HTML as sent", async () => {
-    renderDetail(archive({ campaign_id: DRAFT.campaign_id, status: "draft", html: null, html_state: "not_frozen", content_sha256: null }), DRAFT);
+    renderDetail(
+      archive({ campaign_id: DRAFT.campaign_id, status: "draft", html: null, html_state: "not_frozen", content_sha256: null }),
+      DRAFT,
+      "sales",
+      true,
+      "html",
+    );
     expect(await screen.findByTestId("html-unavailable")).toHaveAttribute("data-state", "not_frozen");
     expect(screen.queryByTestId("email-frame")).toBeNull();
   });
@@ -456,6 +478,7 @@ describe("MarketingPage calendar flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Calendario" }));
     const grid = await screen.findByTestId("calendar-grid");
     fireEvent.click(within(grid.querySelector('[data-day="2026-09-16"]') as HTMLElement).getByTestId("calendar-event"));
+    fireEvent.click(await screen.findByRole("button", { name: "HTML" }));
     expect(await screen.findByTestId("html-unavailable")).toHaveTextContent("HTML enviado no archivado");
     expect(screen.getByTestId("campaign-detail")).toHaveTextContent("Histórica importada (V1)");
   });

@@ -99,6 +99,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // The sent-HTML archive: a campaign's frozen content (only when its fingerprint recomputes)
   // and its real send batches. A read; the dashboard renders the HTML sandboxed.
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/archive$/,
+  // One campaign's recorded history, for its detail tabs: a page of recipients filtered by the
+  // same predicate as the total clicked (a `viewer` searches names only and reads masked
+  // addresses), the replies and «BAJA» stored with lineage, and its audit trail. Reads only;
+  // Gmail is never called.
+  /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/history\/(recipients|replies|audit)$/,
   // W10 suppression status: which addresses asked for «BAJA», since when, and how many frozen
   // recipients it refuses today. A read, masked for a `viewer` upstream, never a message body.
   // The unsubscribe preview (`POST /v2/unsubscribe/preview`) and apply

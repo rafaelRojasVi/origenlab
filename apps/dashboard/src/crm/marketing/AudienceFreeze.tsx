@@ -20,6 +20,8 @@
 import { useMemo, useState } from "react";
 import { Badge, EmptyState, Panel, ResourceGate, Segmented, Skeleton, StatLine, fmtDate, fmtInt } from "../ui";
 import { useResource } from "../useResource";
+import { AuthorOnlyNotice } from "./AuthorOnlyNotice";
+import { useMayAuthorCampaigns } from "./authoring";
 import { fetchFreezePreview, fetchFrozenRecipients, freezeCampaignAudience, refusalOf } from "./marketingApi";
 import type {
   CampaignContent,
@@ -119,6 +121,9 @@ export function AudienceFreeze({
   onFrozen: (result: FreezeResult) => void;
   onNewVersion: (content: CampaignContent) => void;
 }) {
+  // Freezing, «Nueva versión» and the recontact decisions are all writes: a reader gets none.
+  const mayAuthor = useMayAuthorCampaigns();
+  if (!mayAuthor) return <AuthorOnlyNotice />;
   if (campaign.status !== "draft") {
     return <FrozenSnapshotView campaign={campaign} onNewVersion={onNewVersion} />;
   }

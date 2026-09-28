@@ -1,15 +1,17 @@
 import { useCallback, useState } from "react";
 import { fetchMarketing } from "../crmApi";
-import type { CampaignSummary, MarketingResponse } from "../crmTypes";
+import type { CampaignSummary, MarketingResponse, TotalKey } from "../crmTypes";
 import { AudienceBuilder } from "../marketing/AudienceBuilder";
 import { AudienceFreeze } from "../marketing/AudienceFreeze";
+import { useMayAuthorCampaigns } from "../marketing/authoring";
 import { CampaignCalendar } from "../marketing/CampaignCalendar";
-import { CampaignDetail } from "../marketing/CampaignDetail";
+import { CampaignDetail, type DetailTab } from "../marketing/CampaignDetail";
 import { CampaignEditor, type EditorSeed } from "../marketing/CampaignEditor";
 import { MarketingOverview } from "../marketing/MarketingOverview";
 import { SuppressionStatus } from "../marketing/SuppressionStatus";
 import { PLANNING_LABEL, fmtShortDay, relativeDay, santiagoTime, todayInSantiago } from "../marketing/calendar";
 import { EmailFrame } from "../marketing/EmailFrame";
+import { NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, cardTotals, neverSent } from "../marketing/campaignTotals";
 import { fetchCampaign, fetchTaxonomy } from "../marketing/marketingApi";
 import type { CampaignContent, EquipmentTaxonomy } from "../marketing/marketingTypes";
 import {
@@ -56,9 +58,12 @@ type View =
   | { kind: "list" }
   | { kind: "editor"; seed: EditorSeed; key: string }
   | { kind: "freeze"; campaign: CampaignContent; key: string }
-  | { kind: "detail"; campaignId: string };
+  | { kind: "detail"; campaignId: string; tab?: DetailTab; total?: TotalKey };
 
 export function MarketingPage() {
+  // The editor and the freeze screen are write surfaces: a reader never reaches them, and a
+  // campaign it opens always lands on the read-only detail (Resumen, HTML, Destinatarios, ...).
+  const mayAuthor = useMayAuthorCampaigns();
   const [state, reload] = useResource(fetchMarketing);
   const [taxonomyState] = useResource(fetchTaxonomy);
   const [tab, setTab] = useState<Tab>("campanas");
@@ -68,12 +73,18 @@ export function MarketingPage() {
   const draftsEnabled = state.kind === "ready" && Boolean(state.data.authoring?.drafts_enabled);
   const freezeEnabled = state.kind === "ready" && Boolean(state.data.authoring?.freeze_enabled);
   const planningEnabled = state.kind === "ready" && Boolean(state.data.authoring?.planning_enabled);
-  const openDetail = (id: string) => setView({ kind: "detail", campaignId: id });
+  const openDetail = (id: string, tab?: DetailTab, total?: TotalKey) => setView({ kind: "detail", campaignId: id, tab, total });
   const detailSummary =
     view.kind === "detail" && state.kind === "ready" ? state.data.campaigns.find((c) => c.campaign_id === view.campaignId) ?? null : null;
 
-  const openNew = () => setView({ kind: "editor", seed: { stored: null }, key: `new-${Date.now()}` });
+  const openNew = () => {
+    if (mayAuthor) setView({ kind: "editor", seed: { stored: null }, key: `new-${Date.now()}` });
+  };
   const openStored = useCallback(async (id: string) => {
+    if (!mayAuthor) {
+      setView({ kind: "detail", campaignId: id });
+      return;
+    }
     setOpenError(null);
     try {
       const content = await fetchCampaign(id);
@@ -81,8 +92,9 @@ export function MarketingPage() {
     } catch (err) {
       setOpenError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [mayAuthor]);
   const openFreeze = useCallback(async (id: string) => {
+    if (!mayAuthor) return;
     setOpenError(null);
     try {
       const content = await fetchCampaign(id);
@@ -90,9 +102,10 @@ export function MarketingPage() {
     } catch (err) {
       setOpenError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
-  const duplicate = (content: CampaignContent) =>
-    setView({ kind: "editor", seed: { stored: null, duplicateOf: content }, key: `dup-${content.campaign_id}-${Date.now()}` });
+  }, [mayAuthor]);
+  const duplicate = (content: CampaignContent) => {
+    if (mayAuthor) setView({ kind: "editor", seed: { stored: null, duplicateOf: content }, key: `dup-${content.campaign_id}-${Date.now()}` });
+  };
 
   return (
     <div className="space-y-4">
@@ -100,7 +113,7 @@ export function MarketingPage() {
         title="Marketing"
         subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí: el envío está bloqueado mientras las respuestas BAJA no se sincronicen automáticamente desde Gmail."
         actions={
-          tab !== "audiencias" && tab !== "bajas" && view.kind === "list" ? (
+          mayAuthor && tab !== "audiencias" && tab !== "bajas" && view.kind === "list" ? (
             <button type="button" onClick={openNew} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black">
               Nueva campaña
             </button>
@@ -108,7 +121,7 @@ export function MarketingPage() {
         }
       />
       {state.kind === "ready" && view.kind === "list" && tab !== "audiencias" && tab !== "bajas" ? (
-        <MarketingOverview campaigns={state.data.campaigns} onOpen={openDetail} />
+        <MarketingOverview campaigns={state.data.campaigns} onOpen={(id) => openDetail(id)} />
       ) : null}
       <Segmented
         label="Sección de marketing"
@@ -136,9 +149,12 @@ export function MarketingPage() {
       ) : view.kind === "detail" ? (
         detailSummary ? (
           <CampaignDetail
-            key={view.campaignId}
+            key={`${view.campaignId}:${view.tab ?? ""}:${view.total ?? ""}`}
             summary={detailSummary}
             planningEnabled={planningEnabled}
+            taxonomy={taxonomy}
+            initialTab={view.tab}
+            initialTotal={view.total}
             onBack={() => {
               setView({ kind: "list" });
               reload();
@@ -153,9 +169,9 @@ export function MarketingPage() {
         )
       ) : tab === "calendario" && view.kind === "list" ? (
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} />}>
-          {(data) => <CampaignCalendar campaigns={data.campaigns} taxonomy={taxonomy} onOpen={openDetail} />}
+          {(data) => <CampaignCalendar campaigns={data.campaigns} taxonomy={taxonomy} onOpen={(id) => openDetail(id)} />}
         </ResourceGate>
-      ) : view.kind === "freeze" ? (
+      ) : view.kind === "freeze" && mayAuthor ? (
         <div className="space-y-3">
           <button
             type="button"
@@ -180,7 +196,7 @@ export function MarketingPage() {
             <TaxonomyGate state={taxonomyState} />
           )}
         </div>
-      ) : view.kind === "editor" ? (
+      ) : view.kind === "editor" && mayAuthor ? (
         <div className="space-y-3">
           <button
             type="button"
@@ -196,7 +212,7 @@ export function MarketingPage() {
         </div>
       ) : (
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={3} cards />}>
-          {(data) => <Body data={data} onOpen={(id) => void openStored(id)} onHistory={openDetail} />}
+          {(data) => <Body data={data} mayAuthor={mayAuthor} onOpen={(id) => void openStored(id)} onHistory={openDetail} />}
         </ResourceGate>
       )}
     </div>
@@ -211,10 +227,27 @@ function TaxonomyGate({ state }: { state: ResourceState<EquipmentTaxonomy> }) {
   );
 }
 
-function Body({ data, onOpen, onHistory }: { data: MarketingResponse; onOpen: (id: string) => void; onHistory: (id: string) => void }) {
+function Body({
+  data,
+  mayAuthor,
+  onOpen,
+  onHistory,
+}: {
+  data: MarketingResponse;
+  mayAuthor: boolean;
+  onOpen: (id: string) => void;
+  onHistory: (id: string, tab?: DetailTab, total?: TotalKey) => void;
+}) {
   const drafts = data.authoring?.drafts_enabled;
   const storage = data.storage;
+  const fixture = storage ? /^origenlab_test_/.test(storage.database) : false;
   const note = (
+    <>
+    {fixture ? (
+      <p role="alert" className="rounded-md border border-bad/40 bg-bad-bg px-3 py-2 text-xs font-medium text-bad" data-testid="fixture-warning">
+        Base de pruebas <code>{storage?.database}</code>: estas campañas son datos inventados de desarrollo, no historia real.
+      </p>
+    ) : null}
     <p className="text-[11px] text-ink-faint" data-testid="campaign-storage-note">
       Las campañas y borradores se guardan en <code>{storage?.table ?? "outbound.campaign"}</code>
       {storage ? (
@@ -228,6 +261,7 @@ function Body({ data, onOpen, onHistory }: { data: MarketingResponse; onOpen: (i
         ? "El guardado de borradores está habilitado en este entorno."
         : "El guardado de borradores no está habilitado en este entorno: un borrador nuevo existe sólo en la pestaña."}
     </p>
+    </>
   );
   if (data.campaigns.length === 0) {
     return (
@@ -240,21 +274,30 @@ function Body({ data, onOpen, onHistory }: { data: MarketingResponse; onOpen: (i
   const totalSent = data.campaigns.reduce((n, c) => n + (c.recipients_by_state.sent ?? 0), 0);
   const totalBounced = data.campaigns.reduce((n, c) => n + (c.recipients_by_state.bounced ?? 0), 0);
   const replies = data.campaigns.reduce((n, c) => n + c.replies_recorded, 0);
+  const sentRecipients = data.campaigns.reduce((n, c) => n + (c.totals?.sent ?? 0), 0);
   return (
     <>
       <StatLine
         items={[
           { label: "Campañas", value: data.campaigns.length },
           { label: "Borradores", value: data.campaigns.filter((c) => c.status === "draft").length },
-          { label: "Destinatarios enviados", value: fmtInt(totalSent) },
+          { label: "Destinatarios enviados", value: fmtInt(sentRecipients || totalSent), title: "Destinatarios con un envío aceptado por Gmail" },
           { label: "Rebotes registrados", value: fmtInt(totalBounced), tone: totalBounced ? "warn" : undefined },
-          { label: "Respuestas", value: replies === 0 ? "no importadas" : fmtInt(replies) },
+          { label: "Respuestas", value: replies === 0 ? "no sincronizadas desde Gmail" : fmtInt(replies) },
         ]}
       />
       {note}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
         {data.campaigns.map((c) => (
-          <CampaignCard key={c.campaign_id} c={c} onOpen={() => onOpen(c.campaign_id)} onHistory={() => onHistory(c.campaign_id)} />
+          <CampaignCard
+            key={c.campaign_id}
+            c={c}
+            mayAuthor={mayAuthor}
+            onOpen={() =>
+              mayAuthor && (c.status === "draft" || c.status === "audience_frozen") ? onOpen(c.campaign_id) : onHistory(c.campaign_id)
+            }
+            onHistory={(tab, total) => onHistory(c.campaign_id, tab, total)}
+          />
         ))}
       </div>
       {replies === 0 ? <NotImportedState title="Respuestas a campañas">{data.replies_note}</NotImportedState> : null}
@@ -286,7 +329,7 @@ function Thumbnail({ c }: { c: CampaignSummary }) {
         className="flex h-[150px] items-center justify-center rounded-md border border-dashed border-line-strong bg-canvas-sunken text-xs text-ink-muted"
         data-testid="thumb-not-imported"
       >
-        Contenido no importado
+        HTML enviado no archivado
       </div>
     );
   }
@@ -300,7 +343,18 @@ function Thumbnail({ c }: { c: CampaignSummary }) {
   );
 }
 
-function CampaignCard({ c, onOpen, onHistory }: { c: CampaignSummary; onOpen: () => void; onHistory: () => void }) {
+function CampaignCard({
+  c,
+  mayAuthor,
+  onOpen,
+  onHistory,
+}: {
+  c: CampaignSummary;
+  mayAuthor: boolean;
+  onOpen: () => void;
+  onHistory: (tab?: DetailTab, total?: TotalKey) => void;
+}) {
+  const clickable = cardTotals(c);
   const states = Object.entries(c.recipients_by_state).sort((a, b) => b[1] - a[1]);
   const total = states.reduce((n, [, v]) => n + v, 0);
   const attempts = c.send_attempts.reduce((n, a) => n + a.count, 0);
@@ -329,6 +383,11 @@ function CampaignCard({ c, onOpen, onHistory }: { c: CampaignSummary; onOpen: ()
               Histórica V1
             </Badge>
           ) : null}
+          {neverSent(c) ? (
+            <span data-testid="never-sent">
+              <Badge tone="neutral" title="Archivada sin ningún intento de envío registrado.">{NEVER_SENT_LABEL}</Badge>
+            </span>
+          ) : null}
         </div>
       </div>
       {c.planned_for_date && (c.status === "draft" || c.status === "audience_frozen") ? (
@@ -350,15 +409,36 @@ function CampaignCard({ c, onOpen, onHistory }: { c: CampaignSummary; onOpen: ()
               <span key={s} className={RECIPIENT_STATE[s]?.color ?? "bg-ink-faint"} style={{ width: `${(n / Math.max(total, 1)) * 100}%` }} />
             ))}
           </div>
-          <dl className="mt-2 space-y-1 text-xs">
-            {states.map(([s, n]) => (
-              <div key={s} className="flex items-center gap-2">
-                <span aria-hidden="true" className={`h-2 w-2 rounded-full ${RECIPIENT_STATE[s]?.color ?? "bg-ink-faint"}`} />
-                <dt className="flex-1 text-ink-muted">{RECIPIENT_STATE[s]?.label ?? s}</dt>
-                <dd className="font-semibold tabular-nums text-ink">{fmtInt(n)}</dd>
-              </div>
-            ))}
-          </dl>
+          {clickable.length ? (
+            <dl className="mt-2 grid grid-cols-3 gap-1.5 text-xs" data-testid="card-totals">
+              {clickable.map(({ key, value }) => (
+                <div key={key} className="min-w-0">
+                  <button
+                    type="button"
+                    title={TOTAL_HINT[key]}
+                    onClick={() => onHistory(key === "responses" && value === null ? "respuestas" : "destinatarios", key)}
+                    className="block w-full rounded-md border border-line/70 px-2 py-1 text-left hover:border-line-strong hover:bg-canvas-sunken/60"
+                    data-testid={`card-total-${key}`}
+                  >
+                    <dt className="truncate text-[10px] text-ink-faint">{TOTAL_LABEL[key]}</dt>
+                    <dd className="truncate font-semibold tabular-nums text-ink">
+                      {value === null ? <span className="text-[11px] font-medium text-ink-faint">No sincronizadas</span> : fmtInt(value)}
+                    </dd>
+                  </button>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <dl className="mt-2 space-y-1 text-xs">
+              {states.map(([s, n]) => (
+                <div key={s} className="flex items-center gap-2">
+                  <span aria-hidden="true" className={`h-2 w-2 rounded-full ${RECIPIENT_STATE[s]?.color ?? "bg-ink-faint"}`} />
+                  <dt className="flex-1 text-ink-muted">{RECIPIENT_STATE[s]?.label ?? s}</dt>
+                  <dd className="font-semibold tabular-nums text-ink">{fmtInt(n)}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
         </>
       ) : (
         <p className="mt-3 text-[11px] text-ink-faint">Sin audiencia registrada.</p>
@@ -371,12 +451,14 @@ function CampaignCard({ c, onOpen, onHistory }: { c: CampaignSummary; onOpen: ()
                 c.last_sent_at && c.last_sent_at.slice(0, 10) !== c.first_sent_at?.slice(0, 10) ? ` – ${fmtDate(c.last_sent_at)}` : ""
               }`}
         </span>
-        <button type="button" onClick={onHistory} className="shrink-0 font-medium text-brand-700 hover:underline" data-testid="open-history">
+        <button type="button" onClick={() => onHistory()} className="shrink-0 font-medium text-brand-700 hover:underline" data-testid="open-history">
           Historial
         </button>
-        <button type="button" onClick={onOpen} className="shrink-0 font-medium text-brand-700 hover:underline">
-          {c.status === "draft" ? "Editar" : "Abrir"}
-        </button>
+        {mayAuthor && (c.status === "draft" || c.status === "audience_frozen") ? (
+          <button type="button" onClick={onOpen} className="shrink-0 font-medium text-brand-700 hover:underline">
+            {c.status === "draft" ? "Editar" : "Abrir"}
+          </button>
+        ) : null}
       </div>
     </article>
   );

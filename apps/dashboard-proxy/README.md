@@ -78,6 +78,9 @@ Exact paths only (`src/allowlist.ts`; UUIDs lower-case):
 | GET | `/v2/workspace/marketing/campaigns/<uuid>/freeze-preview` | the snapshot a freeze would write, every reason, what stops it; writes nothing |
 | GET | `/v2/workspace/marketing/campaigns/<uuid>/recipients` | a frozen campaign's recipient snapshot |
 | GET | `/v2/workspace/marketing/campaigns/<uuid>/archive` | the frozen (sent) content, only when its fingerprint recomputes; real send batches; «not archived» otherwise |
+| GET | `/v2/workspace/marketing/campaigns/<uuid>/history/recipients` | one page of the recorded recipients under the same predicate as the card total clicked (`total`, `reason`, `identity`, `q`, `page`, `page_size` ≤ 100); a `viewer` searches names only and reads masked addresses |
+| GET | `/v2/workspace/marketing/campaigns/<uuid>/history/replies` | replies and «BAJA» stored with lineage, «BAJA» held for review, counts by address; «Respuestas no sincronizadas desde Gmail» when none is stored; Gmail never called |
+| GET | `/v2/workspace/marketing/campaigns/<uuid>/history/audit` | the campaign row, its import provenance, its domain events, whether the database enforces archived immutability |
 | GET | `/v2/workspace/marketing/suppressions` | W10 «BAJA» suppressions and the «BAJA» replies held for review (addresses masked for `viewer`, never a message body), frozen recipients refused by them today, and «Gmail replies are not synchronized automatically» |
 | POST | `/v2/commands/create-campaign-draft` | new `draft` row; event `campaign.draft_created` |
 | POST | `/v2/commands/save-campaign-draft` | compare-and-set on `expected_version`; event `campaign.draft_content_saved` per change |
