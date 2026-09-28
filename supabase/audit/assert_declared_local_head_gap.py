@@ -5,7 +5,8 @@ The Slice 0 audit baseline intentionally describes the frozen hosted foundation:
 33 tables / 127 policies / 102 FKs.
 
 Current repository head is later and intentionally carries the commercial-case
-schema and the historical-quotation import. Therefore a local audit of current
+schema, the historical-quotation import, the slice-5 campaign schema, W10 and
+the campaign safety blocks (outbound.campaign_block). Therefore a local audit of current
 head must conclude LOCAL_FAIL — but only for the exact reviewed post-Slice-0
 additions.
 
@@ -25,6 +26,8 @@ EXPECTED_EXTRA_TABLES = {
     "opportunity_organization",
     "opportunity_interest",
     "opportunity_evidence",
+    # 20260928100000_slice5_campaign_block.sql — DOMAIN.md §7 #37.
+    "campaign_block",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -32,7 +35,7 @@ EXPECTED_EXTRA_TABLES = {
 # search_path = pg_catalog and no EXECUTE for a Data-API-facing role, is pinned
 # by pgTAP (supabase/tests/010_inventory.sql, 063_commercial_case_commands.sql,
 # 064_historical_quotation_import.sql, 065-068 for the slice-5 campaign
-# triggers, 069 for W10 and 072 for the archived-campaign guard). This file refuses any count other than 3 + len(these).
+# triggers, 069 for W10, 071 for the campaign blocks and 072 for the archived-campaign guard). This file refuses any count other than 3 + len(these).
 # The one exception to SECURITY INVOKER is EXPECTED_SECURITY_DEFINER below.
 SLICE0_FUNCTION_COUNT = 3
 
@@ -62,6 +65,11 @@ POST_SLICE0_FUNCTIONS = {
     "outbound.unsubscribe_permanent",
     "outbound.marketing_contact_refusals",
     "outbound.add_contact_control",
+    # 20260928100000_slice5_campaign_block.sql — the block's lifecycle guard,
+    # the campaign-level refusals and their enforcement trigger (all INVOKER).
+    "outbound.campaign_block_guard",
+    "outbound.campaign_hold_refusals",
+    "outbound.campaign_hold_guard",
     # 20260928090000_slice5_archived_campaign_immutable.sql — the INVOKER trigger
     # function that keeps an archived campaign, its audience and attempts as imported.
     "outbound.archived_campaign_immutable",
@@ -92,6 +100,12 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     # index campaign_recipient_frozen_against_campaign_idx on the same columns.
     "outbound.campaign_recipient.(campaign_id, content_sha256, policy_version)"
     " -> outbound.campaign.(id, content_sha256, audience_policy_version)",
+    # 20260928100000_slice5_campaign_block.sql, each covered by its own plain
+    # index (campaign_block_campaign_idx, campaign_block_placed_by_operator_idx,
+    # campaign_block_lifted_by_operator_idx).
+    "outbound.campaign_block.campaign_id -> outbound.campaign.id",
+    "outbound.campaign_block.placed_by_operator_id -> platform.operator.id",
+    "outbound.campaign_block.lifted_by_operator_id -> platform.operator.id",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -99,9 +113,10 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 )
 
 # Foreign keys covered by a non-partial index. The historical-origin key is
-# covered only by a partial index; the slice-5 freeze key by a plain one.
+# covered only by a partial index; the slice-5 freeze key and the three
+# campaign-block keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 1
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 4
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -109,18 +124,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 37,
+        "relation_count": 38,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": 1,
     },
     "a08": {
-        "table_count": 36,
+        "table_count": 37,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 139,
+        "policy_count": 143,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -199,7 +214,8 @@ def main() -> int:
                     f"expected {expected!r}"
                 )
 
-    # The inventory delta must be precisely the three commercial-case tables.
+    # The inventory delta must be precisely the three commercial-case tables and
+    # outbound.campaign_block.
     a08_findings = checks["a08"].get("findings") or []
     if len(a08_findings) != 2:
         refuse(f"a08 has unexpected findings: {a08_findings!r}")
@@ -212,10 +228,11 @@ def main() -> int:
         if f'"table":"{table}"' not in a08_text:
             refuse(f"a08 does not name expected table {table}")
 
-    if "3 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly three extra tables")
+    if "4 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly four extra tables")
 
-    # The 12 policy additions must belong to those same three reviewed tables.
+    # The 16 policy additions must belong to those same four reviewed tables:
+    # four each (api select/insert/update, worker select).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 2:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -224,8 +241,8 @@ def main() -> int:
     if "baseline are absent here" in a09_text:
         refuse("a09 reports a baseline policy missing from current head")
 
-    if "12 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly twelve extra policies")
+    if "16 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly sixteen extra policies")
 
     for table in EXPECTED_EXTRA_TABLES:
         if f'"table":"{table}"' not in a09_text:
@@ -237,7 +254,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 37, expected 34"],
+        "a04": ["relations in scope: observed 38, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             "1 entr(y|ies) are present here and not in the baseline: "
@@ -255,8 +272,8 @@ def main() -> int:
 
     print(
         "ok: current local head differs from frozen Slice 0 only by the "
-        "reviewed commercial-case, historical-quotation, slice-5 campaign and W10 "
-        "unsubscribe schema delta"
+        "reviewed commercial-case, historical-quotation, slice-5 campaign, W10 "
+        "unsubscribe and campaign-block schema delta"
     )
     return 0
 

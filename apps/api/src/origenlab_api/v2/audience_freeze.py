@@ -173,6 +173,11 @@ SEND_TIME_REFUSAL_LABEL = {
     "prior_contact": "Contacto previo sin aprobación W12",
     "not_snapshotted": "Excluido al congelar",
     "recipient_unknown": "Destinatario desconocido",
+    # WORKFLOWS.md §2 clause 2 / §W13: campaign-level holds (outbound.campaign_hold_refusals).
+    "all_campaigns_blocked": "Todas las campañas están bloqueadas",
+    "campaign_blocked": "Campaña bloqueada",
+    "campaign_paused": "Campaña en pausa",
+    "campaign_unknown": "Campaña desconocida",
 }
 
 #: The database's address shape (20260908120200): a destination that fails it cannot be a row.
@@ -601,6 +606,13 @@ def plan_freeze(
         "promises_baja": bool(re.search(r"\bbaja\b", (campaign.get("body_html") or "").lower())),
     }
     problems: list[dict[str, str]] = []
+    # A campaign safety block (WORKFLOWS.md §W13) refuses the freeze first; the database refuses it
+    # again (outbound.campaign_hold_guard). Never part of preview_sha256: a block is not audience.
+    hold_refusals = [c for c in campaign.get("hold_refusals") or [] if c not in ("campaign_paused", "campaign_unknown")]
+    if hold_refusals:
+        problems.append({"code": "campaign_held",
+                         "message": "la campaña está bloqueada (" + ", ".join(hold_refusals) + "); un administrador "
+                                    "debe levantar el bloqueo antes de congelar la audiencia"})
     if campaign["status"] != "draft":
         problems.append({"code": "campaign_not_draft",
                          "message": f"la campaña está en '{campaign['status']}'; sólo un borrador se congela"})
@@ -667,6 +679,7 @@ def plan_freeze(
             ],
         },
         "problems": problems,
+        "hold_refusals": hold_refusals,
         "send_blockers": list(SEND_BLOCKERS),
     }
 
@@ -743,6 +756,8 @@ class V2AudienceFreezeRepository(CommandTransaction):
                 f"the draft is at version {campaign['version']}, not {f['expected_version']}; "
                 "it changed after the preview — review the audience again",
             )
+        cur.execute("select outbound.campaign_hold_refusals(%s)", (campaign["id"],))
+        campaign["hold_refusals"] = list(cur.fetchone()[0])
         criteria = FreezeCriteria(**f["criteria"])
         decisions = {d["key"]: ReviewDecision(**d) for d in f["review_decisions"]}
         if len(decisions) != len(f["review_decisions"]):

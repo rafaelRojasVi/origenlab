@@ -91,6 +91,13 @@ warning, never stored as a state.
 `draft → audience_frozen → approved → active ⇄ paused → completed →
 archived`; any non-terminal → `cancelled`.
 
+**A campaign block is not a status** (§W13, 2026-09-27). The status machine is still unbuilt, so
+`paused` has no command that sets it; what stops a campaign today is an active
+`outbound.campaign_block` — a separate, append-only fact with its own author and reason that no
+status change can lift. A `paused` status, once something sets it, is enforced alongside it:
+`outbound.campaign_hold_refusals` reports `campaign_paused` and every reservation and dispatch
+refuses it.
+
 ### 1.4 Campaign recipient state
 
 `snapshotted → {excluded, reserved}`;
@@ -198,7 +205,7 @@ only when **every clause applicable to that purpose** holds.
 | # | Clause | Applies to |
 |---|---|---|
 | 1 | `send_control` has the flag for this purpose set (`marketing_enabled` or `transactional_enabled`) | both |
-| 2 | The campaign is `active` and approved | marketing only |
+| 2 | The campaign is `active` and approved, is not `paused`, and no active campaign block (§W13) covers it | marketing only |
 | 3 | The mailbox is the production sender and is authorized | both |
 | 4 | No **applicable** `block` — `purpose = all`, or equal to the attempt's purpose — exists on the address **or** its domain | both |
 | 5 | No `prior_contact` exists, **or** the recipient carries an approved recontact override | marketing only |
@@ -221,6 +228,12 @@ review on that exact address (§W10), and a block on the domain or a parent doma
 (`prior_contact` without the recipient's W12 override) and 6 (active `cooldown`), plus
 `not_snapshotted` / `recipient_unknown`, against the live controls. An empty array means those
 clauses hold; it is not `dispatch_allowed`, which still needs clauses 1-3 and 7.
+
+**Clause 2's hold half as built (2026-09-27).** `outbound.campaign_hold_refusals(campaign_id)` returns
+`all_campaigns_blocked`, `campaign_blocked` (an active `outbound.campaign_block`) and `campaign_paused`,
+and `outbound.marketing_contact_refusals` appends them, so the one send-time contract refuses every
+recipient of a held campaign. The database also enforces them by trigger (§W13): whatever code a
+future send path is, it cannot reserve, create or dispatch a marketing attempt for a held campaign.
 
 The two SQL steps are `SECURITY DEFINER` functions on the closed list in
 [`ARCHITECTURE.md`](ARCHITECTURE.md) §6.2: `EXECUTE` belongs to
@@ -468,7 +481,10 @@ or `sin_informacion` — and never decides eligibility. Steps 3–12 remain unbu
 sending stays blocked: «BAJA» replies are recorded only when an operator applies a fetched batch
 (§W10), Gmail replies are not synchronized automatically, and any future send must call
 `outbound.marketing_contact_refusals`, which a frozen snapshot never overrides. Step 3 is built
-as part of step 2 (§W12).
+as part of step 2 (§W12). **Every step from 2 on is refused while a campaign block covers the
+campaign** (§W13): the freeze preview lists `campaign_held` first, the freeze command refuses it,
+and the database refuses the freeze write, a dry-run or approval event, activation, reservation and
+dispatch on its own.
 
 **An accepted send records prior contact permanently and additionally creates
 a dated cooldown.** The cooldown expires; the prior-contact fact does not.
@@ -706,6 +722,44 @@ disagree, this section wins:
 | `20260920190000_slice0_wave1b_…_archived_recontact_interval` | "`outbound_v2.eligibility` reads" `recontact_interval_days` | it never did: `CampaignPolicy` carries the field unread, and cooldown arrives precomputed as `cooldown_until`. The cooldown the freeze enforces is an active `outbound.contact_control` row of kind `cooldown` (read by the API freeze, never lifted by W12); `recontact_interval_days` is only stored and selected with the campaign — no code derives a cooldown from it yet |
 | `20260908120200_slice0_outbound_address_shape_…` | `ADDRESS_SHAPE_PATTERN` lives in `outbound_v2/eligibility.py` | still true — unaffected by the retirement |
 
+### W13 — Campaign safety block (pause)
+
+An admin stops one campaign, or every campaign, and later — as a separate decision — lets it go
+again. Built 2026-09-27 (`20260928100000_slice5_campaign_block`); the commands mount only with
+`ORIGENLAB_V2_CAMPAIGN_BLOCKS_ENABLED` (default off). Enforcement and the read are not behind the
+switch.
+
+| Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
+|---|---|---|---|---|---|
+| 1 | **admin** · `block-campaign` (`scope` = `campaign` with its id, or `all_campaigns`), mandatory reason, `Idempotency-Key` | active admin (the route refuses sales and viewers; `outbound.campaign_block_guard` refuses the row again unless the named operator is an active admin); `expected_block_version` equals the target's (blocks + lifts so far); no active block on the target | one active `outbound.campaign_block` row. **Nothing else**: no status, recipient, snapshot, attempt, contact control or send flag moves; nothing is enqueued or sent; Gmail is not touched | `campaign_block.placed` (scope, target, reason, from/to block version) | stale version → `stale_block_version`; already blocked → `already_blocked`; unknown campaign → 404; not an admin → 403 `role_may_not_block` — each with nothing written |
+| 2 | — while active | — | the database refuses, by trigger (`outbound.campaign_hold_guard`): setting `audience_frozen_at` or moving to `audience_frozen`, `approved` or `active`, setting `approved_at`, recording `campaign.dry_run_recorded` / `campaign.approved` / `campaign.audience_frozen`, reserving a recipient, creating a marketing send attempt, moving one to `dispatching`. `outbound.marketing_contact_refusals` reports it. Drafting, planning, pausing and cancelling stay possible | — | the refused write, whatever issued it |
+| 3 | **admin** · `unblock-campaign` (`block_id`, `expected_version` = 1), mandatory reason, `Idempotency-Key` | the block is active and at that version | `lifted_at` (the database clock), `lifted_by`, `lift_reason`, `version = 2`; the row is immutable from then on. Lifting **starts nothing** — it only stops refusing | `campaign_block.lifted` | lifted already → `block_already_lifted`; stale → `stale_version`; not an admin → 403 |
+
+**Never silently expires.** The table has no expiry column; a block is lifted by step 3 or not at
+all, and is never deleted (trigger). A placement is write-once. Only an operator lifts; a
+migration may place a block (as the owner, `placed_by_kind = migrator`) but never lifts one.
+
+**The September wave-2 incident hold is one.** The migration places an active `legacy_campaign`
+block on V1 campaign `septiembre18-2026-wave2` (reference `incident_hold_september_2026`): the hold
+of 2026-09-21, when 279 remaining candidates were contained in the V1 ledger by blocking recipients
+one by one because no pause existed. It names the campaign by its V1 key, because no V2 campaign
+row carries that key (the import loads V1 campaigns as `archived`), and it carries no address. It
+has no `campaign_block.placed` event — a migration writes no audit row (the zero-business-row
+foundation check) — so the row records its own provenance; lifting it is step 3 like any other,
+with its event.
+
+**Viewer** sees whether something is held, its scope and since when; **sales** also sees the
+reason and who decided; only **admin** decides. The dashboard shows a banner for every
+non-campaign hold (the September hold included) and a panel on each campaign; the proxy forwards
+exactly `GET /v2/workspace/marketing/campaign-blocks` and the two POSTs.
+
+**The V1 ledger.** `outbound_campaign.status` in the V1 SQLite ledger always carried `paused` and
+nothing read it. `reserve_next_batch` and `send_campaign_batch` (`apps/email-pipeline`) now refuse
+any campaign whose status is not `active` before reading a recipient, dry-run or live, and the
+sender re-reads the status before every live Gmail call so a pause committed mid-batch stops the
+batch. The September campaign is still `active` in that ledger, contained by its blocked
+recipients: setting it to `paused` is a real-data write for the owner to authorize.
+
 ## 4. Cross-cutting failure behaviour
 
 | Situation | Behaviour |
@@ -716,3 +770,4 @@ disagree, this section wins:
 | Worker crash mid-transaction | the transaction rolls back; no partial state |
 | Worker crash after the provider call began | the attempt becomes `ambiguous` (W9) — never silently retried |
 | Kill switch flipped during a run | reservations stop immediately; in-flight attempts complete or become `ambiguous`; nothing new is dispatched |
+| Campaign block placed during a run (§W13) | the next reservation, attempt creation or dispatch of that campaign is refused by the database; an attempt already `dispatching` still records its outcome (§2.1) |

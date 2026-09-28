@@ -7,6 +7,7 @@ import { useMayAuthorCampaigns } from "../marketing/authoring";
 import { CampaignCalendar } from "../marketing/CampaignCalendar";
 import { CampaignDetail, type DetailTab } from "../marketing/CampaignDetail";
 import { CampaignEditor, type EditorSeed } from "../marketing/CampaignEditor";
+import { HoldsBanner } from "../marketing/CampaignHolds";
 import { MarketingOverview } from "../marketing/MarketingOverview";
 import { SuppressionStatus } from "../marketing/SuppressionStatus";
 import { PLANNING_LABEL, fmtShortDay, relativeDay, santiagoTime, todayInSantiago } from "../marketing/calendar";
@@ -123,6 +124,7 @@ export function MarketingPage() {
       {state.kind === "ready" && view.kind === "list" && tab !== "audiencias" && tab !== "bajas" ? (
         <MarketingOverview campaigns={state.data.campaigns} onOpen={(id) => openDetail(id)} />
       ) : null}
+      {view.kind === "list" ? <HoldsBanner onChanged={() => reload()} /> : null}
       <Segmented
         label="Sección de marketing"
         value={tab}
@@ -387,6 +389,11 @@ function CampaignCard({
             <span data-testid="never-sent">
               <Badge tone="neutral" title="Archivada sin ningún intento de envío registrado.">{NEVER_SENT_LABEL}</Badge>
             </span>
+          ) : null}
+          {c.hold?.held ? (
+            <Badge tone="bad" title={c.hold.refusals.map((r) => r.label).join(" · ")}>
+              Bloqueada
+            </Badge>
           ) : null}
         </div>
       </div>

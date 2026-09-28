@@ -7,6 +7,7 @@ import { CampaignAudit } from "./CampaignAudit";
 import { CampaignRecipients } from "./CampaignRecipients";
 import { CampaignReplies } from "./CampaignReplies";
 import { FILTER_TOTALS, NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, neverSent, repliesUnknown } from "./campaignTotals";
+import { CampaignHoldPanel } from "./CampaignHolds";
 import { EmailFrame } from "./EmailFrame";
 import { useMayAuthorCampaigns } from "./authoring";
 import { fetchCampaignArchive, newIdempotencyKey, refusalOf, setCampaignPlanning } from "./marketingApi";
@@ -172,6 +173,7 @@ export function CampaignDetail({
                 </div>
                 <div className="min-w-0 space-y-3">
                   <SendRecord archive={a} />
+                  <CampaignHoldPanel campaignId={a.campaign_id} onChanged={onPlanned} />
                   {editable ? <PlanningEditor summary={summary} planningEnabled={planningEnabled} onSaved={onPlanned} /> : null}
                 </div>
               </div>

@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from origenlab_api.v2.audience_freeze import SEND_BLOCKERS, FreezeCriteria
+from origenlab_api.v2.campaign_blocks import redact_for_viewer
 from origenlab_api.v2.campaign_calendar import campaign_lines
 from origenlab_api.v2.campaign_history import TOTALS, RecipientQuery
 from origenlab_api.v2.campaign_planning import PLANNING_TIME_ZONE
@@ -82,7 +83,7 @@ def get_equipment_interests(_: Operator, repo: Repo) -> Any:
 
 
 @workspace_router.get("/marketing")
-def get_marketing(_: Operator, repo: Repo, request: Request) -> Any:
+def get_marketing(operator: Operator, repo: Repo, request: Request) -> Any:
     body = repo.marketing()
     taxonomy = load_taxonomy()
     for c in body["campaigns"]:
@@ -95,8 +96,38 @@ def get_marketing(_: Operator, repo: Repo, request: Request) -> Any:
         "recontact_review_enabled": bool(getattr(request.app.state, "recontact_review_enabled", False)),
         "planning_enabled": bool(getattr(request.app.state, "campaign_planning_enabled", False)),
         "unsubscribe_apply_enabled": bool(getattr(request.app.state, "unsubscribe_apply_enabled", False)),
+        "campaign_blocks_enabled": bool(getattr(request.app.state, "campaign_blocks_enabled", False)),
     }
     body["time_zone"] = PLANNING_TIME_ZONE
+    return _holds_for(operator, body)
+
+
+def _holds_for(operator: Any, body: dict[str, Any]) -> dict[str, Any]:
+    """A viewer sees whether a campaign is held and since when, never the reason or who decided."""
+    if getattr(operator, "role", None) != "viewer":
+        return body
+    if "holds" in body:
+        body["holds"] = redact_for_viewer(body["holds"])
+    for c in body.get("campaigns", []):
+        if "hold" in c:
+            c["hold"] = redact_for_viewer(c["hold"])
+    if "hold" in body:
+        body["hold"] = redact_for_viewer(body["hold"])
+    return body
+
+
+@workspace_router.get("/marketing/campaign-blocks")
+def get_marketing_campaign_blocks(operator: Operator, repo: Repo, request: Request) -> Any:
+    """Every active campaign safety block, the latest lifted ones and each target's version.
+
+    A read. Always mounted with the workspace: a block is shown whether or not the block
+    commands are enabled. A viewer sees status only (no reason, no operator).
+    """
+    body = repo.campaign_blocks()
+    body["commands_enabled"] = bool(getattr(request.app.state, "campaign_blocks_enabled", False))
+    body["may_decide"] = getattr(operator, "role", None) == "admin" and body["commands_enabled"]
+    if getattr(operator, "role", None) == "viewer":
+        return redact_for_viewer(body)
     return body
 
 
@@ -107,11 +138,11 @@ def get_marketing_taxonomy(_: Operator) -> Any:
 
 
 @workspace_router.get("/marketing/campaigns/{campaign_id}")
-def get_marketing_campaign(campaign_id: UUID, _: Operator, repo: Repo) -> Any:
+def get_marketing_campaign(campaign_id: UUID, operator: Operator, repo: Repo) -> Any:
     row = repo.campaign(str(campaign_id))
     if row is None:
         raise HTTPException(status_code=404, detail="no such campaign")
-    return row
+    return _holds_for(operator, row)
 
 
 @workspace_router.get("/marketing/campaigns/{campaign_id}/archive")
@@ -255,7 +286,7 @@ def get_marketing_suppressions(_: Operator, repo: Repo, request: Request) -> Any
 
 @workspace_router.get("/marketing/audience")
 def get_marketing_audience(
-    _: Operator,
+    operator: Operator,
     repo: Repo,
     family_id: str | None = None,
     brand_id: str | None = None,
@@ -286,7 +317,13 @@ def get_marketing_audience(
         organization_id=str(organization_id) if organization_id else None,
         bases=bases, recorded=recorded, q=q,
     )
-    return {**apply_filter(composed, flt), "coverage": composed["coverage"]}
+    holds = repo.campaign_blocks()
+    # A preview is not a freeze, but an operator building an audience while every campaign is
+    # blocked must see it here, not first at the freeze.
+    campaign_holds = {"all_campaigns": holds["all_campaigns"], "legacy": holds["legacy"], "effect": holds["effect"]}
+    if getattr(operator, "role", None) == "viewer":
+        campaign_holds = redact_for_viewer(campaign_holds)
+    return {**apply_filter(composed, flt), "coverage": composed["coverage"], "campaign_holds": campaign_holds}
 
 
 @workspace_router.get("/drive")

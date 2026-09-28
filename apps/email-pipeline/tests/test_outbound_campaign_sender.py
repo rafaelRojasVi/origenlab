@@ -300,3 +300,52 @@ def test_live_requires_access_token(conn: sqlite3.Connection, html_file: Path) -
             html=html_file.read_text(), html_dir=html_file.parent, live=True, access_token=None,
             gate_ctx=_permissive_ctx(), batch_id="b1",
         )
+
+
+# --------------------------------------------------------------------------- campaign pause
+
+
+@pytest.mark.parametrize("status", ["paused", "completed", "archived"])
+@pytest.mark.parametrize("live", [False, True])
+def test_a_campaign_that_is_not_active_sends_nothing_dry_run_or_live(conn, html_file, status, live) -> None:
+    from origenlab_email_pipeline.outbound_campaign_store import CampaignNotActiveError
+
+    rid = _reserve(conn, "pausa@universidad.cl")
+    conn.execute("UPDATE outbound_campaign SET status = ? WHERE campaign_id = 'hielscher-sonicators-2026'", (status,))
+    conn.commit()
+    with patch("origenlab_email_pipeline.outbound_campaign_sender.gmail_api_send_message") as gmail:
+        with pytest.raises(CampaignNotActiveError):
+            send_campaign_batch(
+                conn, campaign_id="hielscher-sonicators-2026", recipients=[(rid, "pausa@universidad.cl")],
+                html=html_file.read_text(encoding="utf-8"), html_dir=html_file.parent, live=live,
+                access_token="token" if live else None, gate_ctx=_permissive_ctx(), batch_id="b-paused",
+            )
+    gmail.assert_not_called()
+    assert conn.execute("SELECT COUNT(*) FROM outbound_send_attempt").fetchone()[0] == 0
+    assert conn.execute("SELECT state FROM outbound_campaign_recipient WHERE id = ?", (rid,)).fetchone()[0] == "reserved"
+
+
+def test_a_pause_committed_mid_batch_stops_before_the_next_gmail_call(conn, html_file) -> None:
+    from origenlab_email_pipeline.outbound_campaign_store import REASON_CAMPAIGN_NOT_ACTIVE
+
+    first = _reserve(conn, "uno@universidad.cl")
+    second = _reserve(conn, "dos@universidad.cl")
+
+    def gmail_then_pause(**_kw):
+        # Another operator pauses the campaign while the first message is in flight.
+        conn.execute("UPDATE outbound_campaign SET status = 'paused' WHERE campaign_id = 'hielscher-sonicators-2026'")
+        conn.commit()
+        return {"id": "gmail-1"}
+
+    with patch("origenlab_email_pipeline.outbound_campaign_sender.gmail_api_send_message",
+               side_effect=gmail_then_pause) as gmail:
+        outcomes = send_campaign_batch(
+            conn, campaign_id="hielscher-sonicators-2026",
+            recipients=[(first, "uno@universidad.cl"), (second, "dos@universidad.cl")],
+            html=html_file.read_text(encoding="utf-8"), html_dir=html_file.parent, live=True,
+            access_token="token", gate_ctx=_permissive_ctx(), batch_id="b-mid", stop_on_error=False,
+        )
+    assert gmail.call_count == 1
+    assert [(o.recipient_id, o.result, o.error) for o in outcomes] == [
+        (first, "accepted", None), (second, "skipped", REASON_CAMPAIGN_NOT_ACTIVE)]
+    assert conn.execute("SELECT COUNT(*) FROM outbound_send_attempt WHERE recipient_id = ?", (second,)).fetchone()[0] == 0

@@ -99,7 +99,7 @@ describe("allowlist", () => {
     }
   });
 
-  it("forwards exactly the eleven Marketing reads, GET only, and nothing near them", async () => {
+  it("forwards exactly the twelve Marketing reads, GET only, and nothing near them", async () => {
     const { isAllowedMarketingCommandPostPath } = await import("./allowlist");
     const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
     for (const path of [
@@ -114,6 +114,7 @@ describe("allowlist", () => {
       `/v2/workspace/marketing/campaigns/${uuid}/history/replies`,
       `/v2/workspace/marketing/campaigns/${uuid}/history/audit`,
       "/v2/workspace/marketing/suppressions",
+      "/v2/workspace/marketing/campaign-blocks",
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(false);
@@ -139,6 +140,9 @@ describe("allowlist", () => {
       "/v2/workspace/marketing/calendar",
       "/v2/workspace/marketing/suppressions/",
       "/v2/workspace/marketing/suppressions/export",
+      "/v2/workspace/marketing/campaign-blocks/",
+      "/v2/workspace/marketing/campaign-blocks/export",
+      `/v2/workspace/marketing/campaign-blocks/${uuid}`,
       "/v2/workspace/marketing/unsubscribe",
       "/v2/unsubscribe/preview",
       "/v2/unsubscribe",
@@ -1121,7 +1125,7 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("allows exactly the six Marketing commands as POST, and no send, approve, schedule or activate", async () => {
+  it("allows exactly the eight Marketing commands as POST, and no send, approve, schedule or activate", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of [
       "/v2/commands/create-campaign-draft",
@@ -1130,6 +1134,8 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/set-campaign-planning",
       "/v2/commands/resolve-unsubscribe-review",
       "/v2/commands/dismiss-unsubscribe-review",
+      "/v2/commands/block-campaign",
+      "/v2/commands/unblock-campaign",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(true);
       expect(isAllowedUpstreamPath(path), path).toBe(false); // never GET-readable
@@ -1149,6 +1155,13 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/enqueue-campaign",
       "/v2/commands/clear-campaign-planning",
       "/v2/commands/SET-CAMPAIGN-PLANNING",
+      // Campaign blocks: exactly the two commands; nothing that resumes, expires or sends.
+      "/v2/commands/block-campaign/",
+      "/v2/commands/unblock-campaign-and-send",
+      "/v2/commands/resume-campaign",
+      "/v2/commands/pause-campaign",
+      "/v2/commands/expire-campaign-block",
+      "/v2/commands/BLOCK-CAMPAIGN",
       // W10: the unsubscribe preview and apply are API-only operator tooling, never the browser's.
       "/v2/commands/apply-unsubscribe-replies",
       "/v2/unsubscribe/preview",

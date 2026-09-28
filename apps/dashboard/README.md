@@ -11,6 +11,7 @@ durable core. It talks only to **`apps/api`**, and — apart from sign-out and t
 | `POST /v2/commands/create-campaign-draft` · `POST /v2/commands/save-campaign-draft` | Marketing: create and save a campaign **draft**; mounted only with `ORIGENLAB_V2_CAMPAIGN_DRAFTS_ENABLED`, refused by the production proxy |
 | `POST /v2/commands/freeze-campaign-audience` | Marketing: freeze a draft's audience into an immutable recipient snapshot, sent only from the final confirmation screen; mounted only with `ORIGENLAB_V2_AUDIENCE_FREEZE_ENABLED`, refused by the production proxy. Sends nothing |
 | `POST /v2/commands/set-campaign-planning` | Marketing: set, change or clear an unsent campaign's internal planned day («Planificación interna · no programa el envío»); sales/admin; mounted only with `ORIGENLAB_V2_CAMPAIGN_PLANNING_ENABLED`. Schedules and sends nothing |
+| `POST /v2/commands/block-campaign` · `POST /v2/commands/unblock-campaign` | Marketing: place or lift a campaign safety block (one campaign or every campaign), each with a mandatory reason and its own confirmation; **admin only**; mounted only with `ORIGENLAB_V2_CAMPAIGN_BLOCKS_ENABLED`. A block only refuses; lifting starts nothing |
 
 Marketing «Bajas» (`GET /v2/workspace/marketing/suppressions`) shows which addresses answered «BAJA» (or the legacy «REMOVER»), since when, which «BAJA» replies from an unproven sender are held for review — each blocking its exact address — and which frozen recipients that refuses today. It states that Gmail replies are not synchronized automatically. Its only actions are on held reviews, and only when the API mounts them (`ORIGENLAB_V2_UNSUBSCRIBE_APPLY_ENABLED`): **Confirmar BAJA** (sales/admin, a note; permanent) and **Descartar (falso positivo)** (admin only, an explanation, quoting the review's `review_sha256`). The dashboard has no apply, re-subscribe, Gmail or Send action.
 
@@ -78,6 +79,13 @@ App.tsx → pages/DashboardApp.tsx → components/auth/AuthGate.tsx (one Google 
   same sandbox and sanitizer; «HTML enviado no archivado» when the record has none. The planning
   panel («Planificación interna · no programa el envío») is editable by sales/admin only, where
   `authoring.planning_enabled` says the API mounts the command.
+- **Bloqueos de seguridad** (`crm/marketing/CampaignHolds.tsx`, `GET …/marketing/campaign-blocks`).
+  A banner on the Marketing section shows every hold that is not about one campaign — a block on
+  every campaign, and V1 holds such as the September wave-2 incident hold — and each campaign's
+  history has a «Bloqueo de seguridad» panel; cards of a held campaign read «Bloqueada». A viewer
+  sees status only (no reason, no operator); sales also sees why; only an admin, where the API
+  reports `may_decide`, blocks or lifts, with a mandatory reason and a confirmation that says the
+  decision sends and rewrites nothing and never expires.
 
 The earlier operator panel (Today, Ventas, Cotizaciones, Catálogo, Licitaciones, the V2
 consoles) was removed on 2026-09-26; git history holds it. The V1 API routes it read are
