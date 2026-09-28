@@ -34,6 +34,11 @@ from origenlab_api.v2.equipment_taxonomy import load_taxonomy
 from origenlab_api.v2.identity import LocalDevIdentity, OperatorIdentity, OperatorLookup
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
 
+
+def _never_connects(*_args, **_kwargs):
+    raise AssertionError("mounting a router must not open a database connection")
+
+
 LOOPBACK = "postgresql://origenlab_api:pw@127.0.0.1:54332/origenlab_dev"
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "origenlab_api"
 
@@ -142,7 +147,7 @@ def test_planning_mounts_only_behind_its_own_switch() -> None:
 
     def paths(**kw):
         app = FastAPI()
-        main._mount_campaign_planning(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db")
+        main._mount_campaign_planning(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db", _never_connects)
         return app.state.campaign_planning_enabled, set(app.openapi()["paths"])
 
     for kw in ({}, {"v2_database_url": LOOPBACK}, {"v2_database_url": LOOPBACK, "v2_campaign_drafts_enabled": True},

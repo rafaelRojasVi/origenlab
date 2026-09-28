@@ -30,6 +30,11 @@ from origenlab_api.v2.commands import CommandRefused, request_digest
 from origenlab_api.v2.identity import LocalDevIdentity, OperatorIdentity, OperatorLookup
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
 
+
+def _never_connects(*_args, **_kwargs):
+    raise AssertionError("mounting a router must not open a database connection")
+
+
 LOOPBACK = "postgresql://origenlab_api:pw@127.0.0.1:54332/origenlab_dev"
 DRAFT = {"name": "Sonicadores", "max_sends": 50, "recontact_interval_days": 90}
 
@@ -151,7 +156,7 @@ def test_drafts_mount_only_behind_their_own_switch(monkeypatch) -> None:
 
     def paths(**kw):
         app = FastAPI()
-        main._mount_campaign_drafts(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db")
+        main._mount_campaign_drafts(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db", _never_connects)
         return app.state.campaign_drafts_enabled, set(app.openapi()["paths"])
 
     enabled, routes = paths(v2_database_url=LOOPBACK)

@@ -43,6 +43,11 @@ from origenlab_api.v2.identity import LocalDevIdentity, OperatorIdentity, Operat
 from origenlab_api.v2.marketing_audience import AudienceInputs, CaseFacts, EligibilityFacts
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
 
+
+def _never_connects(*_args, **_kwargs):
+    raise AssertionError("mounting a router must not open a database connection")
+
+
 T = datetime(2026, 3, 10, tzinfo=timezone.utc)
 LOOPBACK = "postgresql://origenlab_api:pw@127.0.0.1:54332/origenlab_dev"
 CAMPAIGN = {"id": "c-1", "status": "draft", "version": 3, "name": "Sonicadores", "subject": "Sonicadores Hielscher",
@@ -449,7 +454,7 @@ def test_the_freeze_router_exposes_one_post_and_mounts_only_behind_its_switch() 
 
     def paths(**kw):
         app = FastAPI()
-        main._mount_audience_freeze(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db")
+        main._mount_audience_freeze(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db", _never_connects)
         return app.state.audience_freeze_enabled, set(app.openapi()["paths"])
 
     for kw in ({"v2_database_url": LOOPBACK}, {"v2_database_url": LOOPBACK, "v2_commands_enabled": True},
@@ -468,7 +473,7 @@ def test_w12_rides_on_the_freeze_switch_and_defaults_off() -> None:
 
     def state(**kw):
         app = FastAPI()
-        main._mount_audience_freeze(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db")
+        main._mount_audience_freeze(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db", _never_connects)
         repo = getattr(app.state, "audience_freeze_repository", None)
         return app.state.recontact_review_enabled, repo and repo._recontact_review
 

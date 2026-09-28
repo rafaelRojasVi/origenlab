@@ -45,6 +45,8 @@ GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_ISSUERS = frozenset({"https://accounts.google.com", "accounts.google.com"})
 SCOPES = "openid email profile"
 CALLBACK_PATH = "/auth/google/callback"
+#: The dashboard proxy's path prefix; production callbacks are `<origin>/api/auth/google/callback`.
+PRODUCTION_BASE_PATH = "/api"
 
 #: Seconds of clock skew tolerated on `exp` and `iat`.
 CLOCK_SKEW_SECONDS = 60
@@ -129,6 +131,15 @@ def validate_public_base_url(raw: str | None, *, production: bool) -> str:
         )
     if not parts.hostname:
         raise GoogleAuthMisconfigured("ORIGENLAB_AUTH_PUBLIC_BASE_URL names no host")
+    if production and parts.path != PRODUCTION_BASE_PATH:
+        # The browser reaches the API only through the Worker route `dashboard.origenlab.cl/api*`
+        # (apps/dashboard-proxy/wrangler.toml), which strips `/api` before forwarding. A base
+        # without it registers a callback the Worker never sees; one with more would be a path
+        # the upstream does not serve.
+        raise GoogleAuthMisconfigured(
+            "ORIGENLAB_AUTH_PUBLIC_BASE_URL must end in exactly /api when ORIGENLAB_ENV=production "
+            "(e.g. https://dashboard.origenlab.cl/api), matching the dashboard proxy route"
+        )
     if parts.scheme == "http":
         if production:
             raise GoogleAuthMisconfigured(

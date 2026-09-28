@@ -281,7 +281,7 @@ projects in the `origenlab.cl` organization). Console section names are those of
    | | Production — `OrigenLab Dashboard (production)` | Local — `OrigenLab Dashboard (local)` |
    |---|---|---|
    | Authorized JavaScript origins | `https://dashboard.origenlab.cl` | `http://localhost:5173` |
-   | Authorized redirect URIs | `https://dashboard.origenlab.cl/api/auth/google/callback` | `http://localhost:5173/auth/google/callback` |
+   | Authorized redirect URIs | `https://dashboard.origenlab.cl/api/auth/google/callback` | `http://localhost:5173/auth/google/callback`, plus one per other local port actually used (below) |
 
    The redirect URI must equal `ORIGENLAB_AUTH_PUBLIC_BASE_URL` + `/auth/google/callback`
    byte for byte. Production goes through the dashboard's own origin because the browser
@@ -304,13 +304,86 @@ projects in the `origenlab.cl` organization). Console section names are those of
 | `ORIGENLAB_AUTH_SESSION_SECRET` | when enabled, and always in production with V2 — **secret**, ≥ 32 chars (it also keys `address_ref`) | own random value (unset: a random per-process ref key) | own random value — startup refuses it missing |
 | `ORIGENLAB_AUTH_SESSION_TTL_SECONDS` | no — default `28800` (8 h) | | |
 | `ORIGENLAB_DEV_LOGIN_ENABLED` | no — default `false` | `true` only for the header login | **never** (startup refuses it) |
-| `ORIGENLAB_V2_DATABASE_URL` | yes — the operator lookup needs it | loopback DSN from `api-login` | blocked: loopback only today |
+| `ORIGENLAB_V2_DATABASE_URL` | yes — the operator lookup needs it — **secret** | loopback DSN from `api-login` | `postgresql://origenlab_api:…@<host>:<port>/<db>` — no query string |
+| `ORIGENLAB_V2_DATABASE_REMOTE` | no — default `false` (loopback only) | unset | `true` |
+| `ORIGENLAB_V2_DATABASE_EXPECTED_HOST` | when remote | unset | the exact host name in the DSN |
+| `ORIGENLAB_V2_DATABASE_SSLROOTCERT` | when remote | unset | absolute path of the provider's CA PEM (Render secret file, `/etc/secrets/…`) |
 
 Generate a session secret with
 `python -c 'import secrets; print(secrets.token_urlsafe(48))'`. Rotating it signs every
 operator out. The API refuses to start on a missing client ID or secret, a secret shorter than
 32 characters, an `http://` base URL anywhere but loopback, an `http://` base URL at all in
-production, a consumer domain such as `gmail.com`, or Google login without a V2 database.
+production, a production base URL whose path is not exactly `/api`, a consumer domain such as
+`gmail.com`, or Google login without a V2 database.
+
+**The exact URLs.** The Worker route is `dashboard.origenlab.cl/api*` and it strips `/api`
+before forwarding to `https://api.origenlab.cl` (`apps/dashboard-proxy/src/allowlist.ts`,
+`stripApiPrefix`). So:
+
+| | Production | Local (Vite proxies `/auth` with no prefix) |
+|---|---|---|
+| `ORIGENLAB_AUTH_PUBLIC_BASE_URL` | `https://dashboard.origenlab.cl/api` | `http://localhost:5173` |
+| Redirect URI registered in Google | `https://dashboard.origenlab.cl/api/auth/google/callback` | `http://localhost:5173/auth/google/callback` |
+| Path the API receives | `/auth/google/callback` | `/auth/google/callback` |
+| Where the browser lands after sign-in | `https://dashboard.origenlab.cl/` | `http://localhost:5173/` |
+
+**Which local callback each setup supports.** The callback is not a property of the dashboard
+code: it is whatever origin the browser uses, plus `/auth/google/callback`, and it works only
+when three things agree — the Vite process proxies `/auth` to the API that will receive it,
+that API's `ORIGENLAB_AUTH_PUBLIC_BASE_URL` is that origin, and the URI is registered on the
+local Google client. `apps/dashboard/vite.config.ts` pins `server.port: 5173` with
+`strictPort` and proxies `/auth` (and `/v2`) with no prefix; it has no `preview` block, so
+`vite preview` inherits the same proxy (Vite 8 `preview.proxy ?? server.proxy`) on its own
+default port.
+
+| Setup | How it is started | `ORIGENLAB_AUTH_PUBLIC_BASE_URL` on the API it proxies to | Redirect URI to register |
+|---|---|---|---|
+| Documented default | `npm run dev` → `:5173`, proxy to `:8001` | `http://localhost:5173` | `http://localhost:5173/auth/google/callback` |
+| Current local preview (clean room) | `ORIGENLAB_DEV_API_TARGET=http://127.0.0.1:8051 npx vite --port 5251 --strictPort` — the dev server on another port, not `vite preview` | `http://localhost:5251` on the `:8051` API | `http://localhost:5251/auth/google/callback` |
+| Built bundle | `npm run build && npm run preview` → `:4173` | `http://localhost:4173` | `http://localhost:4173/auth/google/callback` |
+
+The `:5173` callback does **not** serve the `:5251` preview: Google would send the browser to
+`:5173`, which is a different Vite process proxying to a different API (or nothing). Browser
+cookies are scoped to the host, not the port, and local (`http://`) cookies carry no `__Host-`
+prefix, so two local dashboards on `localhost` share one cookie jar; a session from one API is
+refused by the other (different session secret), and signing in on one signs the other out.
+Run one sign-in setup at a time.
+
+### Remote V2 database
+
+Off by default: `ORIGENLAB_V2_DATABASE_URL` must be a literal loopback address unless
+`ORIGENLAB_V2_DATABASE_REMOTE=true` (`src/origenlab_api/v2/remote_database.py`). Remote, the API
+refuses to start unless the DSN names exactly `ORIGENLAB_V2_DATABASE_EXPECTED_HOST` (a DNS name),
+carries no query string or fragment, does not name port 6543 (Supavisor transaction mode, refused
+by name as the Slice 0 audit route refuses it — the reviewed route is the session pooler or the
+direct connection, both on 5432; `docs/OPERATIONS.md` §4.2), logs in as `origenlab_api` (or the
+pooler spelling `origenlab_api.<project-ref>`), and `ORIGENLAB_V2_DATABASE_SSLROOTCERT` is a readable CA PEM with
+no private key. Every connection then uses `sslmode=verify-full` with that CA, passed as keyword
+arguments so neither the DSN nor a `PGSSLMODE` in the environment can weaken it. Before serving,
+one read-only session must prove it is `origenlab_api` on the named database, holds no
+SUPERUSER/BYPASSRLS/CREATEROLE/CREATEDB/REPLICATION, and is not a member of `origenlab_owner`,
+`origenlab_migrator`, `postgres`, or any role holding one of those attributes (a hosted project
+has roles the list cannot name — `service_role` holds BYPASSRLS). The development header login
+still refuses a remote database, and the import/rehearsal tools keep their own loopback-only
+guards.
+
+**Transaction behaviour.** Every repository opens one connection per unit of work, and every
+setting it makes is transaction-local (`set transaction read only`, `set local
+statement_timeout`, `set constraints all immediate`); nothing relies on session state, advisory
+locks, `LISTEN` or temporary tables. Session mode is still the selected route because it is the
+one reviewed end to end, and because psycopg's automatic server-side prepared statements are
+not a guaranteed fit for a transaction pooler.
+
+**What is proven where.** Against an ordinary PostgreSQL 17 (a throwaway container with a
+throwaway CA — the `ORIGENLAB_V2_TLS_TEST_*` tests): verify-full refuses a wrong CA and a wrong
+host name, the probe accepts the plain runtime role, refuses a superuser session, and refuses
+membership in an unnamed BYPASSRLS role. **Not proven by anything in this repository: the API
+path against a real hosted pooler** — that the pooler login `origenlab_api.<ref>` reaches
+`current_user = origenlab_api`, that verify-full passes against the pooler's certificate with the
+CA the provider actually uses (the Slice 0 audit's first hosted run stopped exactly there), that
+`origenlab_api` on the hosted project passes the membership probe, and that nothing between the
+pooler and the database is covered by this TLS check at all — verify-full authenticates the
+client-to-pooler hop only.
 
 With `ORIGENLAB_V2_DATABASE_URL` set, **either** Google login **or** the development header
 login must be switched on; with neither, the API refuses to start rather than serving a `/v2`
@@ -336,8 +409,12 @@ invalid or expired session is refused — it is never rescued by the header.
 
 ### Production activation (not yet possible)
 
-1. The hosted V2 project is adopted and `ORIGENLAB_V2_DATABASE_URL` accepts it (blocked).
-2. Every operator who should sign in has an `active` `platform.operator` row.
+1. A remote V2 database is chosen and adopted (an owner decision), `origenlab_api` has a
+   password there, and the remote variables above are set (code ready, not exercised against
+   any real host).
+2. Every operator who should sign in has an `active` `platform.operator` row — via
+   `scripts/operator_roster.py`: review the plan, then `--apply --confirm-changes <N>` with the
+   N that plan printed.
 3. Set the production column above as Render secrets on `origenlab-api`.
 4. Deploy `apps/dashboard-proxy`: it already lists `/auth/*` and passes exactly the two
    `__Host-` cookies and the two checked redirects (`apps/dashboard-proxy/src/auth.ts`).
