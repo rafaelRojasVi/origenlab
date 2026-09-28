@@ -14,9 +14,9 @@
   quoting its ``review_sha256`` and an explanation; a confirmed unsubscribe is never dismissed.
 
 The others require an active ``sales`` or ``admin`` operator from the verified identity (a viewer
-is 403, an unknown caller 401): the batch carries message bodies and sender addresses. None is in
-the ``apps/dashboard-proxy`` allowlist — the dashboard shows the suppression state read-only and
-has no action here. Any database failure answers without detail and writes nothing: the
+is 403, an unknown caller 401): the batch carries message bodies and sender addresses. The preview
+and apply are not in the ``apps/dashboard-proxy`` allowlist; the two review decisions are, as
+guarded POST-only marketing commands, for the Bajas page's confirm and dismiss actions. Any database failure answers without detail and writes nothing: the
 transaction is rolled back before the answer leaves.
 """
 
