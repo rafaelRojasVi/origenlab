@@ -51,6 +51,11 @@ from origenlab_api.v2.unsubscribe_replies import (
 )
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
 
+
+def _never_connects(*_args, **_kwargs):
+    raise AssertionError("mounting a router must not open a database connection")
+
+
 NOW = datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc)
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "origenlab_api"
 W10_MODULES = ("v2/unsubscribe_replies.py", "v2/unsubscribe_commands.py", "v2/unsubscribe_routes.py")
@@ -550,7 +555,7 @@ def test_the_apply_route_exists_only_behind_its_switch_and_preview_always() -> N
 
     def paths(**kw):
         app = FastAPI()
-        main._mount_unsubscribe(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db")
+        main._mount_unsubscribe(app, Settings(_env_file=None, **kw), "postgresql://x@127.0.0.1/db", _never_connects)
         return app.state.unsubscribe_apply_enabled, set(app.openapi()["paths"])
 
     for kw in ({"v2_database_url": loopback}, {"v2_database_url": loopback, "v2_commands_enabled": True},
@@ -610,7 +615,7 @@ def test_no_send_or_gmail_route_exists_in_the_api() -> None:
 
     app = FastAPI()
     main._mount_unsubscribe(app, Settings(_env_file=None, v2_database_url="postgresql://x@127.0.0.1/db",
-                                          v2_unsubscribe_apply_enabled=True), "postgresql://x@127.0.0.1/db")
+                                          v2_unsubscribe_apply_enabled=True), "postgresql://x@127.0.0.1/db", _never_connects)
     for path in app.openapi()["paths"]:
         assert not any(w in path for w in ("send", "gmail", "sync", "label", "mailbox", "resubscribe")), path
 

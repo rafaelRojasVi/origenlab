@@ -345,6 +345,32 @@ def test_startup_probes_a_remote_target_and_binds_tls_for_every_repository(ca, m
     connect = app.state.v2_repository._connect
     assert connect.keywords["sslmode"] == "verify-full" and connect.keywords["sslrootcert"] == ca
 
+    # Every command family mounted since the remote target landed connects the same way: with
+    # all switches on, no repository on app.state may hold a bare psycopg.connect.
+    everything = settings.model_copy(update={
+        "v2_commands_enabled": True,
+        "v2_campaign_drafts_enabled": True,
+        "v2_audience_freeze_enabled": True,
+        "v2_recontact_review_enabled": True,
+        "v2_campaign_planning_enabled": True,
+        "v2_campaign_blocks_enabled": True,
+        "v2_unsubscribe_apply_enabled": True,
+    })
+    full = FastAPI()
+    main._mount_v2_read_boundary(full, everything)
+    repositories = {
+        name: value for name, value in full.state._state.items()
+        if name.endswith("_repository")
+    }
+    for name in ("campaign_draft_repository", "audience_freeze_repository",
+                 "campaign_planning_repository", "campaign_block_repository",
+                 "unsubscribe_repository"):
+        assert name in repositories, name
+    for name, repository in repositories.items():
+        bound = getattr(repository, "_connect", None)
+        assert bound is not psycopg.connect, f"{name} bypasses the verified TLS target"
+        assert getattr(bound, "keywords", {}).get("sslmode") == "verify-full", name
+
     def refuse(t, c):
         raise RemoteTargetRefused("the runtime role holds SUPERUSER")
 
