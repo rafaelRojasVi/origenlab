@@ -4,6 +4,8 @@ import type { AuthSessionState } from "../api/authClient";
 export interface AuthSessionContextValue {
   session: AuthSessionState;
   signOut: () => Promise<void>;
+  /** Back to the profile screen of a shared sign-in; Google stays signed in. */
+  switchProfile?: () => Promise<void>;
 }
 
 /**
@@ -13,6 +15,7 @@ export interface AuthSessionContextValue {
 const DEFAULT_VALUE: AuthSessionContextValue = {
   session: { kind: "loading" },
   signOut: async () => undefined,
+  switchProfile: async () => undefined,
 };
 
 export const AuthSessionContext = createContext<AuthSessionContextValue>(DEFAULT_VALUE);

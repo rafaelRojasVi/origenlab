@@ -136,13 +136,13 @@ function OverviewBody({
         bodyClassName="divide-y divide-line"
       >
         {overview.entities.map((e) => (
-          <div key={e.key} className="grid grid-cols-[1fr_auto] items-start gap-x-3 gap-y-0.5 px-3 py-2 sm:grid-cols-[14rem_6rem_9rem_1fr]">
+          <div key={e.key} className="grid grid-cols-[1fr_auto] items-start gap-x-3 gap-y-0.5 px-3 py-2 sm:grid-cols-[14rem_6rem_9rem_minmax(0,1fr)]">
             <p className="text-[13px] font-medium text-ink">{ENTITY_LABEL[e.key] ?? e.key}</p>
             <p className="text-right text-[13px] font-semibold tabular-nums text-ink sm:text-left">{fmtInt(e.count)}</p>
             <div>
               <ProvenanceBadge provenance={e.provenance} />
             </div>
-            <p className="col-span-2 text-[11px] leading-4 text-ink-muted sm:col-span-1">
+            <p className="col-span-2 min-w-0 break-words text-[11px] leading-4 text-ink-muted sm:col-span-1">
               {e.note}
               {e.key === "organizations" ? ` ${fmtInt(confirmed)} confirmadas por un operador.` : ""}
               {e.key === "contact_points"

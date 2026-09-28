@@ -59,6 +59,8 @@ describe("parseAuthSessionResponse", () => {
         displayName: "Contacto",
         role: "admin",
       },
+      profile: null,
+      canSwitchProfile: false,
     });
   });
 
