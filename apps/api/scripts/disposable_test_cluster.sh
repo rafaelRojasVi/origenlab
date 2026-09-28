@@ -27,6 +27,20 @@ die() { echo "FAIL: $*" >&2; exit 1; }
 
 secret() { openssl rand -hex 24; }
 
+# The public registry rate-limits anonymous pulls ("toomanyrequests"), and CI's other jobs pull
+# from it at the same moment: retry with backoff before calling the run a failure.
+pull_image() {
+  docker image inspect "$IMAGE" >/dev/null 2>&1 && return 0
+  local attempt delay=15
+  for attempt in 1 2 3 4 5; do
+    docker pull -q "$IMAGE" >/dev/null && return 0
+    [[ $attempt -lt 5 ]] || break
+    echo "pull of $IMAGE failed (attempt $attempt); retrying in ${delay}s" >&2
+    sleep "$delay"; delay=$((delay * 2))
+  done
+  die "could not pull $IMAGE"
+}
+
 up() {
   local env_file="$1" name pg_pw api_pw port
   [[ -n "$env_file" ]] || die "usage: up <env-file>"
@@ -39,6 +53,8 @@ up() {
     echo "::add-mask::$pg_pw"
     echo "::add-mask::$api_pw"
   fi
+
+  pull_image
 
   trap 'docker rm -f "$name" >/dev/null 2>&1 || true' ERR
   docker run -d --name "$name" --publish 127.0.0.1::5432 \
