@@ -721,7 +721,7 @@ disagree, this section wins:
 ### W13 — Campaign safety block (pause)
 
 An admin stops one campaign, or every campaign, and later — as a separate decision — lets it go
-again. Built 2026-09-27 (`20260927234500_slice5_campaign_block`); the commands mount only with
+again. Built 2026-09-27 (`20260928100000_slice5_campaign_block`); the commands mount only with
 `ORIGENLAB_V2_CAMPAIGN_BLOCKS_ENABLED` (default off). Enforcement and the read are not behind the
 switch.
 

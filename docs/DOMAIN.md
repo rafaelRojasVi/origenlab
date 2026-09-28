@@ -809,7 +809,7 @@ Counts by schema: `crm` 19, `comms` 4, `outbound` 6, `evidence` 2,
 
 ### 7.2 The campaign safety block — built 2026-09-27
 
-One table, in `outbound`, numbered 37 (`20260927234500_slice5_campaign_block`).
+One table, in `outbound`, numbered 37 (`20260928100000_slice5_campaign_block`).
 A pause needed its own relation: `outbound.campaign.status = 'paused'` had no
 command and nothing enforced it, a status can be moved by the (unbuilt) status
 machine, and a pause must carry who decided it and why, survive every status

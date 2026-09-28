@@ -26,7 +26,7 @@ EXPECTED_EXTRA_TABLES = {
     "opportunity_organization",
     "opportunity_interest",
     "opportunity_evidence",
-    # 20260927234500_slice5_campaign_block.sql — DOMAIN.md §7 #37.
+    # 20260928100000_slice5_campaign_block.sql — DOMAIN.md §7 #37.
     "campaign_block",
 }
 
@@ -65,7 +65,7 @@ POST_SLICE0_FUNCTIONS = {
     "outbound.unsubscribe_permanent",
     "outbound.marketing_contact_refusals",
     "outbound.add_contact_control",
-    # 20260927234500_slice5_campaign_block.sql — the block's lifecycle guard,
+    # 20260928100000_slice5_campaign_block.sql — the block's lifecycle guard,
     # the campaign-level refusals and their enforcement trigger (all INVOKER).
     "outbound.campaign_block_guard",
     "outbound.campaign_hold_refusals",
@@ -100,7 +100,7 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     # index campaign_recipient_frozen_against_campaign_idx on the same columns.
     "outbound.campaign_recipient.(campaign_id, content_sha256, policy_version)"
     " -> outbound.campaign.(id, content_sha256, audience_policy_version)",
-    # 20260927234500_slice5_campaign_block.sql, each covered by its own plain
+    # 20260928100000_slice5_campaign_block.sql, each covered by its own plain
     # index (campaign_block_campaign_idx, campaign_block_placed_by_operator_idx,
     # campaign_block_lifted_by_operator_idx).
     "outbound.campaign_block.campaign_id -> outbound.campaign.id",

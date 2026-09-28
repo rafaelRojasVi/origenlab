@@ -1,6 +1,6 @@
 -- Slice 5 — campaign safety blocks, proven in the database.
 --
--- Companion to `20260927234500_slice5_campaign_block.sql`: the seeded September wave-2 incident
+-- Companion to `20260928100000_slice5_campaign_block.sql`: the seeded September wave-2 incident
 -- hold, the block row's shape and lifecycle (admin-only, write-once, lifted exactly once, never
 -- deleted, never expiring), the runtime roles' reach, the campaign-level refusals, and their
 -- enforcement on every write that moves a campaign towards a send — while nothing a block touches
