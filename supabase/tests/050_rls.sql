@@ -177,9 +177,17 @@ insert into expected_policies values
     ('platform', 'command_receipt', 'origenlab_api', 'SELECT'),
     ('platform', 'command_receipt', 'origenlab_api', 'INSERT'),
     ('platform', 'command_receipt', 'origenlab_api', 'UPDATE'),
-    ('platform', 'command_receipt', 'origenlab_worker', 'SELECT');
+    ('platform', 'command_receipt', 'origenlab_worker', 'SELECT'),
+    -- Shared Workspace sign-in (#38–#40): the API reads, updates only the throttle columns (column
+    -- grant) and appends audit events; the worker has no policy on any of them.
+    ('platform', 'auth_principal', 'origenlab_api', 'SELECT'),
+    ('platform', 'auth_principal', 'origenlab_api', 'UPDATE'),
+    ('platform', 'operator_profile', 'origenlab_api', 'SELECT'),
+    ('platform', 'operator_profile', 'origenlab_api', 'UPDATE'),
+    ('platform', 'auth_event', 'origenlab_api', 'SELECT'),
+    ('platform', 'auth_event', 'origenlab_api', 'INSERT');
 
-select is((select count(*)::int from expected_policies), 143, 'the matrix implies 143 policies');
+select is((select count(*)::int from expected_policies), 149, 'the matrix implies 149 policies');
 
 -- Posture.
 select is(
