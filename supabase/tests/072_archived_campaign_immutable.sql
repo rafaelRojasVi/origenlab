@@ -11,6 +11,8 @@ create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 select plan(27);
 
+grant origenlab_api to session_user with set true, inherit false;
+
 create function pg_temp.run_as(p_role text, p_sql text) returns text
 language plpgsql as $$
 begin
