@@ -96,7 +96,8 @@ insert into expected values
     ('catalog', 'supplier_product', 'origenlab_worker', 'SI', null, 'SI'),
     ('procurement', 'notice', 'origenlab_api', 'S', array['promoted_opportunity_id', 'updated_at'], 'SU'),
     ('procurement', 'notice', 'origenlab_worker', 'SIU', null, 'SIU'),
-    ('platform', 'operator', 'origenlab_api', 'SIU', null, 'SIU'),
+    -- 20260928192000: the runtime API role reads operators and never writes one.
+    ('platform', 'operator', 'origenlab_api', 'S', null, 'S'),
     ('platform', 'operator', 'origenlab_worker', 'S', null, 'S'),
     ('platform', 'command_receipt', 'origenlab_api', 'SIU', null, 'SIU'),
     ('platform', 'command_receipt', 'origenlab_worker', 'S', null, 'S'),

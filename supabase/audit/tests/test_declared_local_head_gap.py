@@ -33,6 +33,15 @@ def _policy(table, n):
                       separators=(",", ":"), sort_keys=True)
 
 
+def _removed(policy, command):
+    return json.dumps({"command": command, "permissive": "PERMISSIVE", "policy": policy,
+                       "roles": "{origenlab_api}", "schema": "platform", "table": "operator",
+                       "using": "true", "with_check": "true"}, separators=(",", ":"), sort_keys=True)
+
+
+REMOVED = "; ".join([_removed("origenlab_api_insert", "INSERT"), _removed("origenlab_api_update", "UPDATE")])
+
+
 def _check(check_id, status="PASS", summary=None, findings=None, required=True):
     return {"id": check_id, "required": required, "status": status,
             "summary": summary or {}, "findings": findings or []}
@@ -57,8 +66,9 @@ def current_head_report():
             "tables: 8 entr(y|ies) are present here and not in the baseline: "
             + "; ".join(_table(t) for t in TABLES + SIGN_IN_TABLES + (SESSION_TABLE,)),
             "table count: observed 41, expected 33"]),
-        _check("a09", "FAIL", {"policy_count": 152}, [
-            "RLS policy count: observed 152, expected 127",
+        _check("a09", "FAIL", {"policy_count": 150}, [
+            "RLS policy count: observed 150, expected 127",
+            "RLS policies: 2 entr(y|ies) in the baseline are absent here: " + REMOVED,
             "RLS policies: 25 entr(y|ies) are present here and not in the baseline: " + policies]),
         _check("a10", "FAIL",
                {"foreign_key_count": 130, "covered_count": 130, "covered_unconditionally": 97},
@@ -131,22 +141,41 @@ class DeclaredGapTest(unittest.TestCase):
     def test_a09_policies_on_an_unreviewed_table_are_refused(self):
         report = current_head_report()
         a09 = check_of(report, "a09")
-        a09["findings"][1] = a09["findings"][1].replace('"table":"auth_event"', '"table":"other_table"', 1)
+        a09["findings"][2] = a09["findings"][2].replace('"table":"auth_event"', '"table":"other_table"', 1)
         self.assert_refused(report, "a09 names policies on unreviewed tables: ['other_table']")
 
     def test_a_truncated_a09_list_need_not_name_every_table(self):
         report = current_head_report()
         a09 = check_of(report, "a09")
-        head, _, entries = a09["findings"][1].partition(": ")
-        a09["findings"][1] = head + ": " + "; ".join(entries.split("; ")[:12]) + " ..."
+        head, _, entries = a09["findings"][2].partition(": ")
+        a09["findings"][2] = head + ": " + "; ".join(entries.split("; ")[:12]) + " ..."
         self.assertEqual(0, self.run_gap(report))
 
     def test_an_untruncated_a09_list_must_name_every_table(self):
         report = current_head_report()
         a09 = check_of(report, "a09")
-        a09["findings"][1] = "; ".join(e for e in a09["findings"][1].split("; ")
+        a09["findings"][2] = "; ".join(e for e in a09["findings"][2].split("; ")
                                        if '"table":"auth_session"' not in e)
         self.assert_refused(report, "a09 does not name expected table auth_session")
+
+    def test_only_the_two_revoked_operator_policies_may_be_absent(self):
+        report = current_head_report()
+        a09 = check_of(report, "a09")
+        a09["findings"][1] = a09["findings"][1].replace('"table":"operator"', '"table":"organization"', 1)
+        self.assert_refused(report, "a09 reports unreviewed absent policies")
+
+    def test_a_third_absent_policy_is_refused(self):
+        report = current_head_report()
+        a09 = check_of(report, "a09")
+        a09["findings"][1] = (a09["findings"][1].replace("2 entr(y|ies)", "3 entr(y|ies)")
+                              + "; " + _removed("origenlab_api_select", "SELECT"))
+        self.assert_refused(report, "a09 does not report exactly the two reviewed absent policies")
+
+    def test_the_revoked_policies_must_really_be_absent(self):
+        report = current_head_report()
+        a09 = check_of(report, "a09")
+        del a09["findings"][1]
+        self.assert_refused(report, "a09 has unexpected findings")
 
     def test_a_head_without_the_session_table_is_refused(self):
         report = current_head_report()

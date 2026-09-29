@@ -12,6 +12,10 @@ platform.auth_event, platform.auth_session). Therefore a local audit of current
 head must conclude LOCAL_FAIL — but only for the exact reviewed post-Slice-0
 additions.
 
+It also carries one reviewed *removal*: 20260928192000 revoked the runtime API
+role's INSERT and UPDATE on platform.operator, so the baseline's two policies
+that served them are absent — exactly those two, and nothing else.
+
 This checker does not regenerate, weaken or modify the baseline.
 """
 
@@ -107,6 +111,14 @@ EXPECTED_SECURITY_DEFINER = (
 
 EXPECTED_FUNCTION_COUNT = SLICE0_FUNCTION_COUNT + len(POST_SLICE0_FUNCTIONS)
 
+# Baseline policies deliberately removed, as (schema, table, policy, command, roles).
+# 20260928192000_slice1_runtime_operator_write_revoked.sql: the runtime role reads
+# operators and never writes one.
+EXPECTED_ABSENT_POLICIES = {
+    ("platform", "operator", "origenlab_api_insert", "INSERT", "{origenlab_api}"),
+    ("platform", "operator", "origenlab_api_update", "UPDATE", "{origenlab_api}"),
+}
+
 # Foreign keys added after the commercial-case tables. The count and its index
 # coverage are reviewed by supabase/tests/090_foreign_key_indexes.sql.
 COMMERCIAL_CASE_FOREIGN_KEY_COUNT = 118
@@ -168,7 +180,7 @@ EXPECTED_SUMMARIES = {
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 152,
+        "policy_count": 150,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -269,13 +281,26 @@ def main() -> int:
     # two each for the first three sign-in tables (api select plus update or
     # insert) and three for auth_session (api select, insert, update).
     a09_findings = checks["a09"].get("findings") or []
-    if len(a09_findings) != 2:
+    if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
 
-    a09_text = "\n".join(a09_findings)
-    if "baseline are absent here" in a09_text:
-        refuse("a09 reports a baseline policy missing from current head")
+    absent = [f for f in a09_findings if "in the baseline are absent here" in f]
+    if len(absent) != 1 or "2 entr(y|ies) in the baseline are absent here: " not in absent[0]:
+        refuse("a09 does not report exactly the two reviewed absent policies")
+    try:
+        removed = {
+            (e["schema"], e["table"], e["policy"], e["command"], e["roles"])
+            for e in map(json.loads, absent[0].split(" are absent here: ", 1)[1].split("; "))
+        }
+    except (ValueError, KeyError, TypeError):
+        refuse(f"a09's absent policies do not parse: {absent[0]!r}")
+    if removed != EXPECTED_ABSENT_POLICIES:
+        refuse(f"a09 reports unreviewed absent policies: {sorted(removed)!r}")
 
+    extra = [f for f in a09_findings if "present here and not in the baseline" in f]
+    if len(extra) != 1:
+        refuse("a09 does not report the extra policies")
+    a09_text = extra[0]
     if "25 entr(y|ies) are present here and not in the baseline" not in a09_text:
         refuse("a09 does not report exactly twenty-five extra policies")
 
@@ -315,7 +340,8 @@ def main() -> int:
     print(
         "ok: current local head differs from frozen Slice 0 only by the "
         "reviewed commercial-case, historical-quotation, slice-5 campaign, W10 "
-        "unsubscribe, campaign-block and shared-sign-in schema delta"
+        "unsubscribe, campaign-block and shared-sign-in schema delta, less the "
+        "revoked runtime writes on platform.operator"
     )
     return 0
 

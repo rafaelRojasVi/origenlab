@@ -94,7 +94,7 @@ def test_the_confirmation_count_comes_from_the_plan_not_a_fixed_number() -> None
     }
     result = compute_plan(entries, existing)
     assert [c.action for c in result.changes] == ["unchanged", "update", "insert"]
-    assert "to apply this plan: --apply --confirm-changes 2" in describe(result)
+    assert "to apply this plan: --apply --confirm-changes 2 --confirm-database <database>" in describe(result)
     settled = compute_plan(entries[:1], existing)
     assert "nothing to apply" in describe(settled)
 
@@ -112,17 +112,21 @@ def test_plan_reads_only_and_apply_creates_exactly_the_named_operators(db) -> No
     import psycopg
 
     entries = parse_roster(people(), workspace_domain=DOMAIN)
-    with psycopg.connect(runtime_dsn(db)) as conn:
+    database = db.rsplit("/", 1)[1]
+    with psycopg.connect(db) as conn:  # the migrator login; the tool assumes the owner itself
         before = operator_count(conn)
         first = plan(conn, entries)
         assert [c.action for c in first.changes] == ["insert"] * 3
+        assert first.database == database
         assert operator_count(conn) == before  # the plan wrote nothing
 
         with pytest.raises(RosterRefused, match="not the 2"):
-            apply(conn, entries, expected_changes=2)
+            apply(conn, entries, expected_changes=2, expected_database=database)
+        with pytest.raises(RosterRefused, match="not the 'origenlab_clean'"):
+            apply(conn, entries, expected_changes=3, expected_database="origenlab_clean")
         assert operator_count(conn) == before  # a mismatched confirmation writes nothing
 
-        apply(conn, entries, expected_changes=3)
+        apply(conn, entries, expected_changes=3, expected_database=database)
         with conn.cursor() as cur:
             cur.execute(
                 "select email_norm, role, status from platform.operator where email_norm like %s order by 1",
@@ -150,14 +154,17 @@ def test_a_role_change_updates_one_row_and_leaves_everyone_else_alone(db) -> Non
         {"email": f"lead@{OTHER}", "display_name": "Lead", "role": "admin"},
         {"email": f"seller@{OTHER}", "display_name": "Seller", "role": "sales"},
     ]
-    with psycopg.connect(runtime_dsn(db)) as conn:
-        apply(conn, parse_roster(team, workspace_domain=OTHER), expected_changes=2)
+    database = db.rsplit("/", 1)[1]
+    with psycopg.connect(db) as conn:
+        apply(conn, parse_roster(team, workspace_domain=OTHER), expected_changes=2, expected_database=database)
         with conn.cursor() as cur:
+            cur.execute("set role origenlab_owner")
             cur.execute(
                 "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
                 "values (gen_random_uuid(), %s, 'Outside Roster', 'viewer', 'active')",
                 (f"outsider@{OTHER}",),
             )
+            cur.execute("reset role")
         conn.commit()
 
         team[1]["role"] = "viewer"
@@ -168,7 +175,7 @@ def test_a_role_change_updates_one_row_and_leaves_everyone_else_alone(db) -> Non
             ("update", ("status",)),
             ("update", ("role",)),
         ]
-        applied = apply(conn, entries, expected_changes=2)
+        applied = apply(conn, entries, expected_changes=2, expected_database=database)
         assert applied.left_alone >= 1
         with conn.cursor() as cur:
             cur.execute(
@@ -181,6 +188,32 @@ def test_a_role_change_updates_one_row_and_leaves_everyone_else_alone(db) -> Non
                 (f"outsider@{OTHER}", "viewer", "active", 1),  # never touched
                 (f"seller@{OTHER}", "viewer", "active", 2),
             ]
+
+
+@needs_db
+def test_the_runtime_role_can_neither_run_the_roster_nor_write_an_operator(db) -> None:
+    import psycopg
+
+    entries = parse_roster(people(), workspace_domain=DOMAIN)
+    with psycopg.connect(runtime_dsn(db)) as conn:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            plan(conn, entries)
+    database = db.rsplit("/", 1)[1]
+    with psycopg.connect(runtime_dsn(db)) as conn:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            apply(conn, entries, expected_changes=3, expected_database=database)
+    for sql in (
+        "update platform.operator set role = 'admin'",
+        "update platform.operator set status = 'active'",
+        "update platform.operator set sign_in_kind = 'google_account'",
+        "update platform.operator set display_name = display_name",
+        "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+        f"values (gen_random_uuid(), 'nuevo.admin@{DOMAIN}', 'Nuevo', 'admin', 'active')",
+    ):
+        with psycopg.connect(runtime_dsn(db)) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute(sql)
+    with psycopg.connect(runtime_dsn(db)) as conn:
+        assert conn.execute("select count(*) from platform.operator").fetchone()[0] >= 0, "reads still work"
 
 
 def operator_count(conn) -> int:

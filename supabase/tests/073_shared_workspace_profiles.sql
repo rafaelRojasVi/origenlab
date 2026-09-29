@@ -28,7 +28,7 @@ end
 $$;
 
 set role origenlab_owner;
-select plan(61);
+select plan(67);
 
 -- A valid Argon2id PHC string of an invented PIN (the value is irrelevant here; only its shape is).
 create temp table phc (n int, v text);
@@ -202,6 +202,19 @@ select is(left(pg_temp.run_as('origenlab_api', $$update platform.auth_principal 
   'api may not pin or re-pin a Google account: only the migrator roster tool does');
 select is(left(pg_temp.run_as('origenlab_api', $$update platform.auth_principal set provider_subject = null, provider_issuer = null$$), 5), '42501',
   'api may not unpin a Google account');
+-- 20260928192000: the runtime role changes no operator — not its role, status or sign-in kind,
+-- and it creates none (zero-row statements still exercise the privilege check).
+select is(left(pg_temp.run_as('origenlab_api', $$update platform.operator set role = 'admin' where id = '73000000-0000-4000-8000-000000000012'$$), 5), '42501',
+  'api may not raise an operator''s role');
+select is(left(pg_temp.run_as('origenlab_api', $$update platform.operator set status = 'active' where false$$), 5), '42501',
+  'api may not enable or disable an operator');
+select is(left(pg_temp.run_as('origenlab_api', $$update platform.operator set sign_in_kind = 'google_account' where false$$), 5), '42501',
+  'api may not change an operator''s sign-in kind');
+select is(left(pg_temp.run_as('origenlab_api', $$update platform.operator set display_name = display_name where false$$), 5), '42501',
+  'api may not update any operator column');
+select is(left(pg_temp.run_as('origenlab_api', $$insert into platform.operator (auth_user_id, email_norm, display_name, role, status) select gen_random_uuid(), 'nuevo@example.test', 'Nuevo', 'admin', 'active' where false$$), 5), '42501',
+  'api may not create an operator');
+select is(pg_temp.run_as('origenlab_api', 'select 1 from platform.operator limit 1'), 'ok', 'api still reads operators');
 select is(pg_temp.run_as('origenlab_api', $$insert into platform.auth_event (event_type, principal_id, principal_email_norm) values ('profile.cleared', '73000000-0000-4000-8000-000000000001', 'compartida@example.test')$$), 'ok',
   'api appends audit events');
 select is(left(pg_temp.run_as('origenlab_worker', 'select 1 from platform.operator_profile limit 1'), 5), '42501',

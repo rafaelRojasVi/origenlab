@@ -781,7 +781,7 @@ outside this count and outside this inventory.
 | 26 | `catalog.product` | manufacturer model | `(manufacturer_organization_id, model_number)` unique |
 | 27 | `catalog.supplier_product` | supplier price observation | append-only; `(supplier_organization_id, product_id, as_of)` |
 | 28 | `procurement.notice` | ChileCompra notice head and history | `codigo_externo` unique; `disappeared_at` for withdrawal |
-| 29 | `platform.operator` | auth user → role and status | auth uid unique; `role ∈ {admin, sales, viewer}` |
+| 29 | `platform.operator` | auth user → role and status | auth uid unique; `role ∈ {admin, sales, viewer}`; the runtime API role only reads it — created and changed by the migrator roster tools (`20260928192000`) |
 | 30 | `platform.command_receipt` | command idempotency | `(operator_id, idempotency_key)`; digest mismatch → 409 |
 | 31 | `crm.address` | one structured postal location of one organization | typed `organization_id` NOT NULL; structured fields canonical; supersession chain; never edited or deleted; no billing / delivery / default flag |
 | 32 | `crm.opportunity_participant` | human roles on one opportunity | person and/or contact point; closed `role`; one current primary per role; no overlap for the same subject and role; person ↔ contact point validated |

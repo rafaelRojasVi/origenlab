@@ -119,7 +119,13 @@ table.
 
 1. Supabase Auth issues **ES256 (asymmetric) JWTs**. Sign-ups are disabled;
    operators are invited by an admin command that also inserts
-   `platform.operator`.
+   `platform.operator`. That command is not built, and **the runtime API role
+   holds no INSERT or UPDATE on `platform.operator`**
+   (`20260928192000_slice1_runtime_operator_write_revoked`): until a reviewed
+   command path exists, operators and profiles are created and changed only by
+   the migrator roster tools (`apps/api/scripts/operator_roster.py`,
+   `profile_roster.py`), so nothing reachable through the API can raise a role
+   or re-enable an operator.
 2. The dashboard holds only the **publishable key**, and uses it only for sign
    in, refresh and MFA.
 3. FastAPI verifies signature, `iss`, `aud` and `exp` against the project's

@@ -171,8 +171,6 @@ insert into expected_policies values
     ('procurement', 'notice', 'origenlab_worker', 'INSERT'),
     ('procurement', 'notice', 'origenlab_worker', 'UPDATE'),
     ('platform', 'operator', 'origenlab_api', 'SELECT'),
-    ('platform', 'operator', 'origenlab_api', 'INSERT'),
-    ('platform', 'operator', 'origenlab_api', 'UPDATE'),
     ('platform', 'operator', 'origenlab_worker', 'SELECT'),
     ('platform', 'command_receipt', 'origenlab_api', 'SELECT'),
     ('platform', 'command_receipt', 'origenlab_api', 'INSERT'),
@@ -191,7 +189,7 @@ insert into expected_policies values
     ('platform', 'auth_session', 'origenlab_api', 'INSERT'),
     ('platform', 'auth_session', 'origenlab_api', 'UPDATE');
 
-select is((select count(*)::int from expected_policies), 152, 'the matrix implies 152 policies');
+select is((select count(*)::int from expected_policies), 150, 'the matrix implies 150 policies');
 
 -- Posture.
 select is(

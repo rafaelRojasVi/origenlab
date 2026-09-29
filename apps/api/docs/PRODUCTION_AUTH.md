@@ -413,8 +413,10 @@ invalid or expired session is refused — it is never rescued by the header.
    password there, and the remote variables above are set (code ready, not exercised against
    any real host).
 2. Every operator who should sign in has an `active` `platform.operator` row — via
-   `scripts/operator_roster.py`: review the plan, then `--apply --confirm-changes <N>` with the
-   N that plan printed.
+   `scripts/operator_roster.py`, run as the migrator (`ORIGENLAB_V2_PROVISIONING_DATABASE_URL`,
+   a login that may `SET ROLE origenlab_owner`): review the plan, then `--apply
+   --confirm-changes <N> --confirm-database <name>` with what that plan printed. The runtime
+   API role cannot write `platform.operator` at all.
 3. Set the production column above as Render secrets on `origenlab-api`.
 4. Deploy `apps/dashboard-proxy`: it already lists `/auth/*` and passes exactly the two
    `__Host-` cookies and the two checked redirects (`apps/dashboard-proxy/src/auth.ts`).
@@ -537,9 +539,11 @@ Google sign-in (unchanged up to the claims check)
   cross-site `Sec-Fetch-Site`, and the two profile POSTs without `application/json` or above
   1 KiB. The API independently requires `application/json` on both and refuses
   `Sec-Fetch-Site: cross-site`.
-- **Least privilege.** `origenlab_api` reads the four tables, updates only the four throttle
-  columns, appends audit events, and inserts and revokes session rows (it can never extend,
-  reopen or delete one). It cannot create a principal or profile, relink one or
+- **Least privilege.** `origenlab_api` only reads `platform.operator`: it cannot create an
+  operator or change a role, status or sign-in kind (INSERT and UPDATE revoked by
+  `20260928192000`; no route ever used them). It reads the four sign-in tables, updates only
+  the four throttle columns, appends audit events, and inserts and revokes session rows (it
+  can never extend, reopen or delete one). It cannot create a principal or profile, relink one or
   write a PIN hash. `origenlab_worker` has no access to them at all.
 
 ### Environment variables
@@ -633,7 +637,7 @@ Same DSN rule as provisioning (`ORIGENLAB_V2_PROVISIONING_DATABASE_URL`, a login
 ### Production procedure (future; not performed)
 
 1. Prerequisites of *Production activation* above (remote V2 database adopted, Google client).
-2. Apply the `20260928180000`–`20260928191000` slice-1 sign-in migrations with the normal
+2. Apply the `20260928180000`–`20260928192000` slice-1 sign-in migrations with the normal
    migration procedure (`docs/OPERATIONS.md`). They seed nothing.
 3. Generate the pepper; store it as a Render secret `ORIGENLAB_PROFILE_PIN_PEPPER` (distinct
    from the session secret). Do not set it anywhere else.
