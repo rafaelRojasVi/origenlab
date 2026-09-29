@@ -435,6 +435,7 @@ separate facts (`docs/ARCHITECTURE.md` §5.1, `docs/DOMAIN.md` §7.3):
 | **Operator** | `platform.operator`, `sign_in_kind = 'shared_profile'` | the person who acts: display name, role (`admin` / `sales` / `viewer`), status. **Has no email address** — no invented or duplicate mailbox is created per person |
 | **Profile** | `platform.operator_profile` | links one operator to one principal, with that person's PIN as an Argon2id hash |
 | **Audit** | `platform.auth_event` | append-only: profile selected / refused / locked / cleared, logout |
+| **Session** | `platform.auth_session` | one row per shared-sign-in session: a keyed hash of the cookie's identifier, the principal, the selected operator, expiry, revocation |
 
 Individual Google accounts keep working unchanged: an operator with `sign_in_kind =
 'google_account'` still signs in with their own address and never sees the profile screen.
@@ -451,7 +452,9 @@ Google sign-in (unchanged up to the claims check)
         │yes: exactly one principal is both; its pinned issuer + sub match the token's
         │     (production: a principal with no pinned account is refused); principal active
         ▼
-  signed session { principal id, address, Google issuer + sub, principal version, auth time }
+  session row recorded (keyed hash of a random identifier, expiry = cookie expiry)
+  signed session { session identifier, principal id, address, Google issuer + sub,
+                   principal version, auth time }
   state = profile_required  — every /v2 read, workspace and command route answers 401
                               "profile_required"; the dashboard shows the profile screen
         │
@@ -460,14 +463,19 @@ Google sign-in (unchanged up to the claims check)
         │  API: lock principal row, lock profile row (FOR UPDATE), check throttle,
         │       one Argon2id verification (decoy if unknown/locked), audit event
         ▼
-  session re-issued with { operator id, operator version, profile version, selection time },
-  same auth time and same expiry — switching never extends a sign-in
+  old session row revoked (profile_selected); successor row + cookie with a new identifier and
+  { operator id, operator version, profile version, selection time }, same auth time and the
+  same expiry — switching never extends a sign-in
         │
-  every request: principal + profile + operator re-read in one statement; any version,
-  status, role or link mismatch → 401 profile_required (principal change → signed out)
+  every request: principal + session row + profile + operator re-read in one statement;
+  session row revoked / expired / missing → signed out; any version, status, role or link
+  mismatch → 401 profile_required (principal change → signed out)
         │
-  POST /auth/profile/clear   → back to profile_required ("Cambiar perfil"; Google stays)
-  POST /auth/logout          → whole session cleared ("Cerrar sesión"); audited
+  POST /auth/profile/clear   → row revoked (profile_cleared), successor without a profile, same
+                               expiry: back to profile_required ("Cambiar perfil"; Google stays)
+  POST /auth/logout          → row revoked (logout) and audited, then the cookie is cleared
+                               ("Cerrar sesión"); 503 logout_not_recorded if the revocation
+                               could not be written
 ```
 
 ### Security properties
@@ -510,19 +518,28 @@ Google sign-in (unchanged up to the claims check)
   serialize and none is lost. An admin can clear a lock early with an owner update of the
   four throttle columns.
 - **Session binding and revocation.** The cookie is HMAC-signed (unchanged key), HttpOnly,
-  SameSite=Lax, and `Secure` + `__Host-` over HTTPS. Database triggers bump
+  SameSite=Lax, and `Secure` + `__Host-` over HTTPS. It names a `platform.auth_session` row
+  by a random 256-bit identifier; the table stores only HMAC-SHA256(session secret, identifier),
+  so a database copy yields no usable cookie. Every request requires that row to exist, belong
+  to the principal, carry the operator the cookie names, and be neither revoked nor expired by
+  the database clock. **Logout revokes the row before clearing the cookie**, so a copied cookie
+  fails on its next request on every API instance. "Cambiar perfil" and every selection revoke
+  the current row and insert its successor with the **same `expires_at`** (a trigger forbids
+  ever extending one, and makes revocation final). Database triggers also bump
   `operator.version` on any role / status / address change, `operator_profile.version` on any
   PIN / link / key / status change, and `auth_principal.version` on any address / issuer /
   subject / status change — whoever writes the row. The per-request compare therefore ends every
   affected session on its next request, including a Karla-promoted-to-admin session (it must
-  be re-selected with the PIN). Throttle updates bump nothing. As before, a stateless cookie
-  copied before logout stays valid until one of those changes or its expiry (8 h).
+  be re-selected with the PIN). Throttle updates bump nothing. Sessions of an individual's own
+  Google account (no profile) are unchanged: still stateless, so a copy of one taken before
+  logout stays valid until the operator changes or it expires (8 h).
 - **CSRF.** The Worker refuses every sign-in POST without an allowed `Origin` or with a
   cross-site `Sec-Fetch-Site`, and the two profile POSTs without `application/json` or above
   1 KiB. The API independently requires `application/json` on both and refuses
   `Sec-Fetch-Site: cross-site`.
-- **Least privilege.** `origenlab_api` reads the three tables, updates only the four throttle
-  columns and appends audit events. It cannot create a principal or profile, relink one or
+- **Least privilege.** `origenlab_api` reads the four tables, updates only the four throttle
+  columns, appends audit events, and inserts and revokes session rows (it can never extend,
+  reopen or delete one). It cannot create a principal or profile, relink one or
   write a PIN hash. `origenlab_worker` has no access to them at all.
 
 ### Environment variables
@@ -584,6 +601,20 @@ To disable a person, set their `"status": "disabled"` and apply (their session e
 next request). Profiles the roster omits are reported and left untouched. Delete the PIN file
 after applying.
 
+### Session maintenance (`scripts/profile_auth_admin.py`)
+
+Ended session rows grant nothing, but the runtime role cannot delete them. The migrator prunes
+rows that expired more than a day ago (`--older-than-days`, at least 1), plan first:
+
+```bash
+uv run python scripts/profile_auth_admin.py prune-sessions
+uv run python scripts/profile_auth_admin.py prune-sessions --apply \
+    --confirm-changes <N> --confirm-database <name> --confirm-cutoff <timestamp the plan printed>
+```
+
+Same DSN rule as provisioning (`ORIGENLAB_V2_PROVISIONING_DATABASE_URL`, a login that may
+`SET ROLE origenlab_owner`). It is never a route.
+
 ### Local setup with an invented profile
 
 1. A disposable or local loopback database with the migrations applied.
@@ -602,7 +633,7 @@ after applying.
 ### Production procedure (future; not performed)
 
 1. Prerequisites of *Production activation* above (remote V2 database adopted, Google client).
-2. Apply the `20260928180000`–`20260928190000` slice-1 sign-in migrations with the normal
+2. Apply the `20260928180000`–`20260928191000` slice-1 sign-in migrations with the normal
    migration procedure (`docs/OPERATIONS.md`). They seed nothing.
 3. Generate the pepper; store it as a Render secret `ORIGENLAB_PROFILE_PIN_PEPPER` (distinct
    from the session secret). Do not set it anywhere else.

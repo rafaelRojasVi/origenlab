@@ -185,9 +185,13 @@ insert into expected_policies values
     ('platform', 'operator_profile', 'origenlab_api', 'SELECT'),
     ('platform', 'operator_profile', 'origenlab_api', 'UPDATE'),
     ('platform', 'auth_event', 'origenlab_api', 'SELECT'),
-    ('platform', 'auth_event', 'origenlab_api', 'INSERT');
+    ('platform', 'auth_event', 'origenlab_api', 'INSERT'),
+    -- Revocable profile sessions (#41): read, insert a live row, revoke (column grant); no delete.
+    ('platform', 'auth_session', 'origenlab_api', 'SELECT'),
+    ('platform', 'auth_session', 'origenlab_api', 'INSERT'),
+    ('platform', 'auth_session', 'origenlab_api', 'UPDATE');
 
-select is((select count(*)::int from expected_policies), 149, 'the matrix implies 149 policies');
+select is((select count(*)::int from expected_policies), 152, 'the matrix implies 152 policies');
 
 -- Posture.
 select is(

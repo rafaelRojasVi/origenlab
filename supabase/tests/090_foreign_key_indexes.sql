@@ -113,11 +113,11 @@ select is(
 -- (d) The census. A foreign key added without updating this count fails here even when it is
 --     covered, so new relations are reviewed rather than absorbed silently.
 select is(
-  (select count(*)::int from ol_fk), 128,
-  'the seven application schemas declare 128 foreign keys');
+  (select count(*)::int from ol_fk), 130,
+  'the seven application schemas declare 130 foreign keys');
 select is(
-  (select count(*)::int from ol_fk_coverage where coverage = 'full'), 95,
-  '95 foreign keys are covered by an unconditional index');
+  (select count(*)::int from ol_fk_coverage where coverage = 'full'), 97,
+  '97 foreign keys are covered by an unconditional index');
 select is(
   (select count(*)::int from ol_fk_coverage where coverage = 'implied-partial'), 33,
   '33 foreign keys are covered by a partial index whose predicate the lookup implies');

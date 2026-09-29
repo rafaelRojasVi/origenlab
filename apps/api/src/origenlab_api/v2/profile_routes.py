@@ -7,8 +7,8 @@
 | Route | Does |
 |---|---|
 | `GET /auth/profiles` | the usable profiles of the signed-in principal: id, display name, a role label. Nothing of any other principal, no status, no PIN metadata |
-| `POST /auth/profile/select` | `{"profile_id", "pin"}`: the API checks the PIN (`profile_auth.py`) and, on success, re-issues the session with that operator bound into it. Selecting while a profile is selected is a switch |
-| `POST /auth/profile/clear` | back to the profile screen: the session keeps the Google sign-in and loses the operator. Google is never signed out |
+| `POST /auth/profile/select` | `{"profile_id", "pin"}`: the API checks the PIN (`profile_auth.py`) and, on success, revokes the current session row and re-issues the session — new identifier, same expiry — with that operator bound into it. Selecting while a profile is selected is a switch |
+| `POST /auth/profile/clear` | back to the profile screen: the current session row is revoked and its successor keeps the Google sign-in, loses the operator, and keeps the same expiry. Google is never signed out |
 | `POST /auth/dev/principal-session` | **local development only** — see :func:`dev_principal_session` |
 
 **What the browser can and cannot influence.** It names a profile id and a PIN, nothing else.
@@ -52,6 +52,7 @@ from origenlab_api.v2.auth_session import (
     CookieSigner,
     PrincipalSession,
     ProfileSelection,
+    new_session_id,
     read_cookie,
 )
 from origenlab_api.v2.identity import IdentityRefused, check_principal_session
@@ -141,7 +142,9 @@ def principal_from_request(
     if not isinstance(session, PrincipalSession):
         return None
     try:
-        principal, _ = check_principal_session(config.profiles, session, production=config.production)
+        principal, _ = check_principal_session(
+            config.profiles, session, token_hash=config.signer.session_token_hash(session.sid),
+            production=config.production)
     except IdentityRefused as exc:
         logger.info("principal session refused: %s", exc)
         return None
@@ -193,6 +196,7 @@ async def select_profile(request: Request) -> JSONResponse:
     session, principal = found
 
     now = time.time()
+    new_sid = new_session_id()
     outcome = await run_in_threadpool(
         config.profiles.select_profile,
         principal_id=principal.principal_id,
@@ -201,6 +205,8 @@ async def select_profile(request: Request) -> JSONResponse:
         requested_operator_id=body["profile_id"],
         pin=body["pin"],
         hasher=config.hasher,
+        token_hash=config.signer.session_token_hash(session.sid),
+        new_token_hash=config.signer.session_token_hash(new_sid),
         previous_operator_id=session.profile.operator_id if session.profile else None,
     )
     del body  # the PIN goes no further than the repository
@@ -211,12 +217,12 @@ async def select_profile(request: Request) -> JSONResponse:
         return _json(401, {"detail": SELECTION_FAILED})
 
     selected = outcome.selected
-    new_session = session.with_profile(ProfileSelection(
+    new_session = session.rotated(ProfileSelection(
         operator_id=selected.operator_id,
         operator_version=selected.operator_version,
         profile_version=selected.profile_version,
         selected_at=int(now),
-    ))
+    ), new_sid)
     response = _json(200, {
         "authenticated": True,
         "state": "signed_in",
@@ -243,15 +249,19 @@ async def clear_profile(request: Request) -> JSONResponse:
     if found is None:
         return _json(401, {"detail": PRINCIPAL_REQUIRED})
     session, principal = found
-    previous = session.profile.operator_id if session.profile else None
-    await run_in_threadpool(
-        config.profiles.record_event, "profile.cleared",
+    new_sid = new_session_id()
+    cleared = await run_in_threadpool(
+        config.profiles.clear_profile,
         principal_id=principal.principal_id, principal_email=principal.email_norm,
-        previous_operator_id=previous,
+        token_hash=config.signer.session_token_hash(session.sid),
+        new_token_hash=config.signer.session_token_hash(new_sid),
+        previous_operator_id=session.profile.operator_id if session.profile else None,
     )
+    if not cleared:
+        return _json(401, {"detail": PRINCIPAL_REQUIRED})
     response = _json(200, {"authenticated": False, "state": "profile_required",
                            "detail": "profile_required"})
-    set_session_cookie(response, config, session.with_profile(None), now=time.time())
+    set_session_cookie(response, config, session.rotated(None, new_sid), now=time.time())
     return response
 
 
@@ -278,12 +288,15 @@ def dev_principal_session(request: Request) -> JSONResponse:
     if principal is None or not principal.is_active:
         return _json(401, {"detail": PRINCIPAL_REQUIRED})
     now = time.time()
+    sid = new_session_id()
     session = PrincipalSession(
         principal_id=principal.principal_id, email=principal.email_norm, subject="dev-local",
         issuer="dev-local",
         principal_version=principal.version, auth_time=int(now),
-        exp=int(now) + config.session_ttl_seconds, method="dev",
+        exp=int(now) + config.session_ttl_seconds, method="dev", sid=sid,
     )
+    config.profiles.open_session(principal_id=principal.principal_id,
+                                 token_hash=config.signer.session_token_hash(sid), expires_at=session.exp)
     response = _json(200, {"authenticated": False, "state": "profile_required",
                            "detail": "profile_required"})
     set_session_cookie(response, config, session, now=now)

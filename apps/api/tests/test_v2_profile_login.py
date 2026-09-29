@@ -19,6 +19,9 @@ stand-ins, as in `test_v2_google_auth.py`):
 * Admin profiles can run an admin command and it is attributed to them; the sales profile is
   refused; switching or clearing removes the previous privileges at once.
 * A role, PIN, status or principal change ends the sessions it should, on the next request.
+* Sessions are revocable rows: a cookie copied to another API instance fails right after logout,
+  "Cambiar perfil" and a switch revoke the old selection, rotation never extends the expiry, the
+  database's expiry is enforced, only a keyed hash is stored, and the migrator prunes.
 * Tampered or cross-principal cookies are refused; no header selects an operator.
 * No PIN appears in a response, a log record or any auth table.
 * Provisioning plans first, reads PINs only from a protected file or a hidden prompt, applies
@@ -521,9 +524,11 @@ def test_switching_profile_removes_the_previous_privileges_at_once(monkeypatch, 
     event = _sql(db, "select event_type, previous_operator_id::text from platform.auth_event "
                      "order by occurred_at desc limit 1")[0]
     assert event == ("profile.cleared", ids["carla"])
-    # A copy of the earlier admin cookie still resolves only to what it was: it is not a way
-    # to "switch back" into admin without a PIN, but it also was never revoked by the switch.
-    assert admin_cookie != api.session_cookie()
+    # The admin selection was revoked by the switch: a copy of that cookie is signed out.
+    other = api.new_client()
+    other.cookies.set(api.cookie, admin_cookie)
+    assert other.get("/auth/session").json()["state"] == "signed_out"
+    assert _block_all(other).status_code == 401
 
 
 # --------------------------------------------------------------------- invalidation
@@ -595,7 +600,8 @@ def test_a_forged_cookie_naming_another_principals_profile_is_refused(monkeypatc
     # versions: the per-request join is on both ids and every version.
     for selection in (ProfileSelection(ids["franco"], 1, 1, 1), ProfileSelection(ids["ana"], 99, 1, 1)):
         api.client.cookies.set(api.cookie, signer.dump_principal_session(session.with_profile(selection)))
-        assert _refusal(api.client.get("/v2/contacts")) == "profile_required"
+        assert api.client.get("/v2/contacts").status_code == 401
+        assert api.client.get("/auth/session").json()["authenticated"] is False
         assert _block_all(api.client).status_code == 401
 
 
@@ -644,6 +650,178 @@ def test_logout_ends_the_whole_session_and_is_audited(monkeypatch, db, ids) -> N
     event = _sql(db, "select event_type, principal_email_norm, operator_id::text from platform.auth_event "
                      "order by occurred_at desc limit 1")[0]
     assert event == ("session.logout", SHARED, ids["carla"])
+
+
+# ------------------------------------------------------------------ revocable sessions
+
+
+def _session_row(db: str, api: Api, cookie: str | None = None) -> tuple[Any, ...]:
+    signer = api.app.state.v2_profile_login.signer
+    sid = signer.load_any_session(cookie or api.session_cookie()).sid
+    rows = _sql(db, "select operator_id::text, revoked_reason, expires_at, extract(epoch from expires_at)::bigint "
+                    "from platform.auth_session where token_hash = %s", (signer.session_token_hash(sid),))
+    assert len(rows) == 1
+    return rows[0]
+
+
+def _copy_to(api: Api, cookie: str) -> TestClient:
+    client = api.new_client()
+    client.cookies.set(api.cookie, cookie)
+    return client
+
+
+def test_a_copied_cookie_fails_on_another_instance_right_after_logout(monkeypatch, db, ids) -> None:
+    first = _selected(monkeypatch, db, ids, "carla")
+    second = Api(monkeypatch, db)  # its own app, settings and connections
+    copy = _copy_to(second, first.session_cookie())
+    assert copy.get("/v2/contacts").status_code == 200, "the copy works while the session is live"
+    assert first.client.post("/auth/logout").status_code == 200
+    assert _session_row(db, first, copy.cookies.get(second.cookie))[1] == "logout"
+    assert copy.get("/auth/session").json()["state"] == "signed_out"
+    assert copy.get("/v2/contacts").status_code == 401
+    assert copy.get("/auth/profiles").status_code == 401
+    assert second.select("carla", PINS["carla"], ids, client=copy).status_code == 401
+    assert copy.post("/auth/profile/clear", json={}).status_code == 401
+
+
+def test_cambiar_perfil_revokes_the_selected_profile_everywhere(monkeypatch, db, ids) -> None:
+    first = _selected(monkeypatch, db, ids, "ana")
+    admin_cookie = first.session_cookie()
+    second = Api(monkeypatch, db)
+    copy = _copy_to(second, admin_cookie)
+    assert first.client.post("/auth/profile/clear", json={}).status_code == 200
+    assert _session_row(db, first, admin_cookie)[1] == "profile_cleared"
+    assert copy.get("/auth/session").json()["state"] == "signed_out"
+    assert _block_all(copy).status_code == 401, "the admin selection does not survive in a copy"
+    fresh = _copy_to(second, first.session_cookie())
+    assert fresh.get("/auth/session").json()["state"] == "profile_required", "the successor lives on"
+
+
+def test_rotation_never_extends_the_sign_in(monkeypatch, db, ids) -> None:
+    api = Api(monkeypatch, db)
+    api.google()
+    signer = api.app.state.v2_profile_login.signer
+    cookies = [api.session_cookie()]
+    assert api.select("ana", PINS["ana"], ids).status_code == 200
+    cookies.append(api.session_cookie())
+    assert api.select("carla", PINS["carla"], ids).status_code == 200, "a direct switch"
+    cookies.append(api.session_cookie())
+    assert api.client.post("/auth/profile/clear", json={}).status_code == 200
+    cookies.append(api.session_cookie())
+    sessions = [signer.load_any_session(c) for c in cookies]
+    rows = [_session_row(db, api, c) for c in cookies]
+    assert len({s.sid for s in sessions}) == 4, "every step has a new identifier"
+    assert {s.exp for s in sessions} == {sessions[0].exp}, "the cookie's expiry never moves"
+    assert {r[3] for r in rows} == {sessions[0].exp}, "nor does the row's"
+    assert [r[:2] for r in rows] == [(None, "profile_selected"), (ids["ana"], "profile_selected"),
+                                     (ids["carla"], "profile_cleared"), (None, None)]
+
+
+def test_the_database_expiry_holds_whatever_the_cookie_says(monkeypatch, db, ids) -> None:
+    api = _selected(monkeypatch, db, ids, "carla")
+    signer = api.app.state.v2_profile_login.signer
+    sid = signer.load_any_session(api.session_cookie()).sid
+    # The owner may shorten a session, never extend it (trigger); the cookie still says 8 h.
+    _sql(db, "update platform.auth_session set expires_at = issued_at + interval '1 millisecond' "
+             "where token_hash = %s", (signer.session_token_hash(sid),))
+    assert api.client.get("/auth/session").json()["state"] == "signed_out"
+    assert api.client.get("/v2/contacts").status_code == 401
+
+
+def test_only_a_keyed_hash_of_the_session_identifier_is_stored(monkeypatch, db, ids) -> None:
+    import hashlib
+    import hmac
+
+    api = _selected(monkeypatch, db, ids, "bruno")
+    sid = api.app.state.v2_profile_login.signer.load_any_session(api.session_cookie()).sid
+    dumped = "\n".join(r[0] for r in _sql(db, "select row_to_json(t)::text from platform.auth_session t"))
+    assert sid not in dumped and api.session_cookie() not in dumped
+    stored = {bytes(h) for (h,) in _sql(db, "select token_hash from platform.auth_session")}
+    assert hashlib.sha256(sid.encode()).digest() not in stored, "not an unkeyed hash either"
+    keyed = hmac.new(SESSION_SECRET.encode(), b"origenlab.dashboard.session-id.v1." + sid.encode(),
+                     hashlib.sha256).digest()
+    assert keyed in stored
+
+
+def test_a_session_without_its_row_is_refused(monkeypatch, db, ids) -> None:
+    api = _selected(monkeypatch, db, ids, "carla")
+    signer = api.app.state.v2_profile_login.signer
+    session = signer.load_any_session(api.session_cookie())
+    # Correctly signed, but naming an identifier that was never recorded.
+    api.client.cookies.set(api.cookie, signer.dump_principal_session(session.rotated(session.profile, "x" * 43)))
+    assert api.client.get("/auth/session").json()["state"] == "signed_out"
+
+
+def test_a_failed_revocation_is_reported_not_claimed(monkeypatch, db, ids) -> None:
+    api = _selected(monkeypatch, db, ids, "carla")
+    cookie = api.session_cookie()
+
+    def broken(**_: Any) -> None:
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(api.app.state.v2_profile_login.profiles, "revoke_session", broken)
+    response = api.client.post("/auth/logout")
+    assert (response.status_code, response.json()["detail"]) == (503, "logout_not_recorded")
+    assert any("Max-Age=0" in c or "max-age=0" in c.lower() for c in response.headers.get_list("set-cookie"))
+    assert _session_row(db, api, cookie)[1] is None, "nothing pretends the row was revoked"
+
+
+def test_the_runtime_role_can_neither_extend_nor_reopen_nor_delete_a_session(monkeypatch, db, ids) -> None:
+    import psycopg
+
+    _selected(monkeypatch, db, ids, "ana")
+    for sql, error in (("update platform.auth_session set expires_at = expires_at + interval '1 day'",
+                        psycopg.errors.InsufficientPrivilege),
+                       ("update platform.auth_session set operator_id = null", psycopg.errors.InsufficientPrivilege),
+                       ("delete from platform.auth_session", psycopg.errors.InsufficientPrivilege)):
+        with psycopg.connect(runtime_dsn(db)) as conn, pytest.raises(error):
+            conn.execute(sql)
+    with psycopg.connect(runtime_dsn(db)) as conn, pytest.raises(psycopg.errors.RaiseException):
+        conn.execute("update platform.auth_session set revoked_at = null, revoked_reason = null "
+                     "where revoked_at is not null")
+
+
+def _run_admin(monkeypatch, argv: list[str], *, dsn: str) -> tuple[int, str, str]:
+    import importlib.util
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    spec = importlib.util.spec_from_file_location("profile_auth_admin_script",
+                                                  API_DIR / "scripts" / "profile_auth_admin.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    monkeypatch.setenv("ORIGENLAB_V2_PROVISIONING_DATABASE_URL", dsn)
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        code = module.main(argv)
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_the_migrator_prunes_ended_sessions_only_as_planned(monkeypatch, db, ids) -> None:
+    live = _selected(monkeypatch, db, ids, "ana")
+    _sql(db, "insert into platform.auth_session (token_hash, principal_id, issued_at, expires_at) "
+             "values (%s, %s, now() - interval '3 days', now() - interval '2 days')",
+         (secrets.token_bytes(32), ids["shared"]))
+    code, out, err = _run_admin(monkeypatch, ["prune-sessions"], dsn=db)
+    assert code == 0, err
+    assert "PLAN (read-only" in out
+    pending = int(next(line for line in out.splitlines() if line.startswith("pending changes:")).split(":")[1])
+    assert pending >= 1
+    cutoff = out.split("--confirm-cutoff ")[1].split()[0]
+    database = db.rsplit("/", 1)[1]
+    for bad in (["--confirm-changes", str(pending + 1), "--confirm-database", database, "--confirm-cutoff", cutoff],
+                ["--confirm-changes", str(pending), "--confirm-database", "origenlab_clean", "--confirm-cutoff", cutoff],
+                ["--confirm-changes", str(pending), "--confirm-database", database]):
+        code, _, err = _run_admin(monkeypatch, ["prune-sessions", "--apply", *bad], dsn=db)
+        assert code == 2 and "refused" in err
+    code, out, err = _run_admin(monkeypatch, ["prune-sessions", "--apply", "--confirm-changes", str(pending),
+                                              "--confirm-database", database, "--confirm-cutoff", cutoff], dsn=db)
+    assert code == 0 and "APPLIED" in out, err
+    assert _sql(db, "select count(*) from platform.auth_session where expires_at < now() - interval '1 day'")[0][0] == 0
+    assert live.client.get("/v2/contacts").status_code == 200, "a live session is never pruned"
+    code, _, err = _run_admin(monkeypatch, ["prune-sessions"], dsn=runtime_dsn(db))
+    assert code == 2 and "SQLSTATE 42501" in err, "the runtime role cannot run it"
 
 
 # ------------------------------------------------------------------ no PIN anywhere

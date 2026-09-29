@@ -121,7 +121,7 @@ select results_eq(
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')),
-  25, 'the application schemas hold twenty-five functions: three Slice 0 helpers plus twenty-two declared later (065''s campaign-content guard, 066''s two audience-freeze guards, 068''s two campaign-planning guards, 069''s three W10 unsubscribe functions, the three campaign-block functions, 072''s archived-campaign guard and 073''s three sign-in version guards among them)');
+  26, 'the application schemas hold twenty-six functions: three Slice 0 helpers plus twenty-three declared later (065''s campaign-content guard, 066''s two audience-freeze guards, 068''s two campaign-planning guards, 069''s three W10 unsubscribe functions, the three campaign-block functions, 072''s archived-campaign guard, 073''s three sign-in version guards and 074''s session guard among them)');
 
 -- ── vocabulary ──────────────────────────────────────────────────────────────────────────────
 

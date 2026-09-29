@@ -156,9 +156,13 @@ operator identity are separate facts** ([`DOMAIN.md`](DOMAIN.md) §7.3):
    error.
 3. The signed session binds the principal, its Google issuer and subject, the selected
    operator, the operator's, profile's and principal's `version` and the
-   Google authentication time. Every request re-reads all three rows; a role,
-   PIN, link or status change bumps a `version` by trigger and ends the
-   session.
+   Google authentication time, and names its own `platform.auth_session` row
+   (the database holds only a keyed hash of the cookie's identifier). Every
+   request re-reads the rows; a role, PIN, link or status change bumps a
+   `version` by trigger and ends the session, and a revoked or expired row
+   ends it outright. Logout revokes the row before the cookie is cleared, so a
+   copied cookie fails at once on every instance; selecting or clearing a
+   profile rotates the row without extending its expiry.
 4. Authorization is unchanged: the selected operator's role, re-read per
    request, is what every route and command checks and records.
 

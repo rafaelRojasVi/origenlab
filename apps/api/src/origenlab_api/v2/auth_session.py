@@ -1,12 +1,17 @@
 """Signed cookies for dashboard sign-in — the sign-in transaction and the session.
 
-Both are stateless: a JSON payload, base64url-encoded, followed by an HMAC-SHA256 tag over
-it. Nothing is stored server-side, so there is no session table to add to the V2 schema and
-nothing to migrate. What that costs is stated rather than hidden: logout clears the cookie in
-the browser but cannot revoke a copy taken before it. Two things bound that — the session
-lifetime (`ORIGENLAB_AUTH_SESSION_TTL_SECONDS`, eight hours by default), and the fact that
-every request re-reads `platform.operator`, so disabling an operator ends every session they
-hold on the next request.
+Both are a JSON payload, base64url-encoded, followed by an HMAC-SHA256 tag over it.
+
+An **operator session** (an individual's own Google account) is stateless: nothing is stored
+server-side, and what that costs is stated rather than hidden — logout clears the cookie in the
+browser but cannot revoke a copy taken before it. The session lifetime
+(`ORIGENLAB_AUTH_SESSION_TTL_SECONDS`, eight hours by default) bounds that, and every request
+re-reads `platform.operator`, so disabling an operator ends every session they hold.
+
+A **principal session** (a shared sign-in, below) is **revocable**: it names a
+`platform.auth_session` row by a random identifier (`sid`), and the API serves it only while that
+row is live. The database holds :meth:`CookieSigner.session_token_hash` of the identifier, never
+the identifier, so a database reader cannot build a cookie from it.
 
 Each cookie kind signs under its own purpose label. A transaction cookie can therefore never
 be replayed as a session cookie, even though both are signed with the same key.
@@ -22,7 +27,8 @@ by address. A *principal session* (`k = "principal"`) names a shared Google sign
 together with the operator's, the profile's and the principal's `version` at selection time,
 the Google authentication time, and the account it was signed in as (issuer and subject). Choosing or clearing a profile re-issues the cookie with the
 same authentication time and the same expiry, so switching profile never extends a sign-in.
-The shape is decided by a signed field, so neither can be passed off as the other.
+The shape is decided by a signed field, so neither can be passed off as the other. Every
+re-issue also carries a **new** `sid`: the previous row is revoked as its successor is inserted.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import secrets
 import time
 from dataclasses import dataclass, replace
 from typing import Any
@@ -49,6 +56,12 @@ TRANSACTION_TTL_SECONDS = 10 * 60
 
 _SESSION_PURPOSE = b"origenlab.dashboard.session.v1"
 _TRANSACTION_PURPOSE = b"origenlab.dashboard.signin.v1"
+_SESSION_ID_PURPOSE = b"origenlab.dashboard.session-id.v1"
+
+
+def new_session_id() -> str:
+    """A fresh random session identifier (256 bits) for one `platform.auth_session` row."""
+    return secrets.token_urlsafe(32)
 
 
 class CookieRefused(Exception):
@@ -85,6 +98,13 @@ class PrincipalSession:
     method: str = "google"
     #: The verified ID token's issuer (canonical form); with `subject`, the Google account.
     issuer: str = "https://accounts.google.com"
+    #: The random identifier of this session's `platform.auth_session` row. Required: a cookie
+    #: without one is refused, so a session can never exist that logout could not revoke.
+    sid: str = ""
+
+    def rotated(self, profile: ProfileSelection | None, sid: str) -> "PrincipalSession":
+        """The successor session: another profile (or none) and a new identifier, same expiry."""
+        return replace(self, profile=profile, sid=sid)
 
     def with_profile(self, profile: ProfileSelection | None) -> "PrincipalSession":
         return replace(self, profile=profile)
@@ -141,6 +161,11 @@ class CookieSigner:
                 "print(secrets.token_urlsafe(48))'`)"
             )
         self._key = secret.encode("utf-8")
+
+    def session_token_hash(self, sid: str) -> bytes:
+        """What `platform.auth_session.token_hash` holds for `sid`: a keyed HMAC, never `sid`."""
+        return hmac.new(self._key, _SESSION_ID_PURPOSE + b"." + sid.encode("utf-8"),
+                        hashlib.sha256).digest()
 
     def _tag(self, purpose: bytes, body: str) -> str:
         return _b64encode(hmac.new(self._key, purpose + b"." + body.encode("ascii"),
@@ -224,6 +249,7 @@ class CookieSigner:
             "at": session.auth_time,
             "exp": session.exp,
             "m": session.method,
+            "sid": session.sid,
         }
         if session.profile is not None:
             payload.update({
@@ -266,6 +292,7 @@ class CookieSigner:
             exp=_positive_int(payload.get("exp")),
             profile=profile,
             method=method,
+            sid=_text(payload.get("sid")),
         )
 
 

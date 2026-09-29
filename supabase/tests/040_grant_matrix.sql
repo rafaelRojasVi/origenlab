@@ -105,9 +105,11 @@ insert into expected values
     ('platform', 'operator_profile', 'origenlab_api', 'S', array['failed_attempts', 'lockout_count', 'locked_until', 'last_failed_at'], 'SU'),
     ('platform', 'operator_profile', 'origenlab_worker', '', null, ''),
     ('platform', 'auth_event', 'origenlab_api', 'SI', null, 'SI'),
-    ('platform', 'auth_event', 'origenlab_worker', '', null, '');
+    ('platform', 'auth_event', 'origenlab_worker', '', null, ''),
+    ('platform', 'auth_session', 'origenlab_api', 'SI', array['revoked_at', 'revoked_reason'], 'SIU'),
+    ('platform', 'auth_session', 'origenlab_worker', '', null, '');
 
-select is((select count(*)::int from expected), 80, 'the matrix covers all 40 tables for both runtime roles');
+select is((select count(*)::int from expected), 82, 'the matrix covers all 41 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

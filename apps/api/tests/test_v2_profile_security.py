@@ -39,6 +39,7 @@ from origenlab_api.v2.profile_auth import (
     LOCK_MAX,
     PrincipalRecord,
     ProfileBinding,
+    SessionState,
     _Throttle,
     lock_duration,
 )
@@ -201,7 +202,7 @@ def test_old_failures_stop_counting() -> None:
 def _principal_session(**over: Any) -> PrincipalSession:
     now = int(time.time())
     base = dict(principal_id=PRINCIPAL_ID, email="compartida@origenlab.cl", subject="1098",
-                principal_version=1, auth_time=now, exp=now + 3600, method="google")
+                principal_version=1, auth_time=now, exp=now + 3600, method="google", sid="sid-" + "a" * 40)
     base.update(over)
     return PrincipalSession(**base)
 
@@ -233,7 +234,7 @@ def _tamper(value: str, **changes: Any) -> str:
 @pytest.mark.parametrize("changes", [{"op": "00000000-0000-4000-8000-0000000000ad"}, {"opv": 99},
                                      {"pid": "00000000-0000-4000-8000-000000000bad"}, {"m": "google"},
                                      {"exp": 4102444800}, {"sub": "another-subject"},
-                                     {"iss": "accounts.google.com"}])
+                                     {"iss": "accounts.google.com"}, {"sid": "another-session-id"}])
 def test_a_tampered_principal_session_is_refused(changes) -> None:
     signer = CookieSigner(SECRET)
     value = signer.dump_principal_session(
@@ -255,19 +256,27 @@ def test_an_unknown_session_method_is_refused() -> None:
 
 
 class _Profiles:
-    """Stands in for ProfileAuthRepository.binding()."""
+    """Stands in for ProfileAuthRepository.binding().
 
-    def __init__(self, principal: PrincipalRecord | None, binding: ProfileBinding | None) -> None:
-        self.principal, self.binding_row = principal, binding
-        self.calls: list[tuple[str, str | None]] = []
+    The session row is live and names whatever operator the cookie names, unless `session`
+    says otherwise; `session=None` is a row that does not exist.
+    """
 
-    def binding(self, principal_id: str, operator_id: str | None):
-        self.calls.append((principal_id, operator_id))
+    _AS_SIGNED = object()
+
+    def __init__(self, principal: PrincipalRecord | None, binding: ProfileBinding | None,
+                 session: Any = _AS_SIGNED) -> None:
+        self.principal, self.binding_row, self.session = principal, binding, session
+        self.calls: list[tuple[str, str | None, bytes | None]] = []
+
+    def binding(self, principal_id: str, operator_id: str | None, token_hash: bytes | None = None):
+        self.calls.append((principal_id, operator_id, token_hash))
         if self.principal is None or self.principal.principal_id != principal_id:
-            return None, None
+            return None, None, None
+        row = SessionState(True, operator_id) if self.session is self._AS_SIGNED else self.session
         if self.binding_row is None or self.binding_row.operator_id != operator_id:
-            return self.principal, None
-        return self.principal, self.binding_row
+            return self.principal, None, row
+        return self.principal, self.binding_row, row
 
 
 GOOGLE = "https://accounts.google.com"
@@ -323,6 +332,41 @@ def test_a_changed_principal_ends_every_session_outright(principal) -> None:
     with pytest.raises(IdentityRefused) as caught:
         _resolve(_Profiles(principal, CARLA_BINDING), session)
     assert not isinstance(caught.value, ProfileRequired)
+
+
+@pytest.mark.parametrize("row", [
+    None,                                  # no such session row: never recorded, or pruned
+    SessionState(False, CARLA),            # revoked (logout, switch) or expired by the database
+    SessionState(True, None),              # the row was rotated to another selection
+    SessionState(True, "00000000-0000-4000-8000-00000000beef"),
+])
+def test_a_session_whose_row_is_not_live_is_refused_outright(row) -> None:
+    session = _principal_session().with_profile(ProfileSelection(CARLA, 2, 3, 1))
+    with pytest.raises(IdentityRefused, match="session has ended") as caught:
+        _resolve(_Profiles(PRINCIPAL, CARLA_BINDING, row), session)
+    assert not isinstance(caught.value, ProfileRequired)
+
+
+def test_the_session_row_is_looked_up_by_a_keyed_hash_never_by_the_identifier() -> None:
+    profiles = _Profiles(PRINCIPAL, CARLA_BINDING)
+    session = _principal_session().with_profile(ProfileSelection(CARLA, 2, 3, 1))
+    _resolve(profiles, session)
+    (_, _, token_hash), = profiles.calls
+    assert token_hash == CookieSigner(SECRET).session_token_hash(session.sid)
+    assert len(token_hash) == 32 and session.sid.encode() not in token_hash
+    assert CookieSigner(SECRET + "x").session_token_hash(session.sid) != token_hash, "keyed"
+
+
+def test_rotation_keeps_the_expiry_and_changes_the_identifier() -> None:
+    bare = _principal_session()
+    chosen = bare.rotated(ProfileSelection(CARLA, 2, 3, 1), "sid-" + "b" * 40)
+    assert (chosen.exp, chosen.auth_time) == (bare.exp, bare.auth_time) and chosen.sid != bare.sid
+
+
+def test_a_cookie_without_a_session_identifier_is_refused() -> None:
+    signer = CookieSigner(SECRET)
+    with pytest.raises(CookieRefused):
+        signer.load_any_session(signer.dump_principal_session(_principal_session(sid="")))
 
 
 @pytest.mark.parametrize("session", [

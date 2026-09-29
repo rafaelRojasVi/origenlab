@@ -102,6 +102,14 @@ class ProfileBinding:
 
 
 @dataclass(frozen=True)
+class SessionState:
+    """The `platform.auth_session` row behind a principal session, as the database has it now."""
+
+    live: bool
+    operator_id: str | None
+
+
+@dataclass(frozen=True)
 class ProfileCard:
     operator_id: str
     display_name: str
@@ -228,39 +236,138 @@ class ProfileAuthRepository:
             return [PrincipalRecord(*row) for row in cur.fetchall()]
 
     def binding(
-        self, principal_id: str, operator_id: str | None
-    ) -> tuple[PrincipalRecord | None, ProfileBinding | None]:
-        """The principal, and the profile of it named by `operator_id` if there is one.
+        self, principal_id: str, operator_id: str | None, token_hash: bytes | None = None
+    ) -> tuple[PrincipalRecord | None, ProfileBinding | None, SessionState | None]:
+        """The principal, the profile of it named by `operator_id`, and the session row.
 
-        One statement, so the three rows are read at one instant. A profile of another
-        principal is simply not found: the join is on both ids.
+        One statement, so the four rows are read at one instant, against the database clock. A
+        profile of another principal is simply not found (the join is on both ids), and so is
+        a session row of another principal.
         """
         pid = parse_uuid(principal_id)
         if pid is None:
-            return None, None
+            return None, None, None
         oid = parse_uuid(operator_id) if operator_id is not None else None
         with self._read() as cur:
             cur.execute(
                 """
                 select a.id::text, a.email_norm, a.provider_subject, a.status, a.version,
                        a.provider_issuer,
+                       s.id is not null, coalesce(s.revoked_at is null and s.expires_at > now(), false),
+                       s.operator_id::text,
                        p.operator_id::text, o.display_name, o.role, o.status, o.version,
                        p.status, p.version
                   from platform.auth_principal a
                   left join platform.operator_profile p
                     on p.principal_id = a.id and p.operator_id = %s::uuid
                   left join platform.operator o on o.id = p.operator_id
+                  left join platform.auth_session s
+                    on s.token_hash = %s and s.principal_id = a.id
                  where a.id = %s::uuid
                 """,
-                (oid, pid),
+                (oid, token_hash, pid),
             )
             row = cur.fetchone()
         if row is None:
-            return None, None
+            return None, None, None
         principal = PrincipalRecord(*row[:6])
-        if row[6] is None:
-            return principal, None
-        return principal, ProfileBinding(*row[6:])
+        session = SessionState(live=bool(row[7]), operator_id=row[8]) if row[6] else None
+        if row[9] is None:
+            return principal, None, session
+        return principal, ProfileBinding(*row[9:]), session
+
+    # ------------------------------------------------------------------ sessions
+
+    def open_session(self, *, principal_id: str, token_hash: bytes, expires_at: int) -> None:
+        """Record a new principal session (no profile yet), expiring at `expires_at` (epoch)."""
+        pid = parse_uuid(principal_id)
+        if pid is None:
+            raise ValueError("not a principal id")
+        with self._write() as cur:
+            cur.execute(
+                "insert into platform.auth_session (token_hash, principal_id, expires_at) "
+                "values (%s, %s::uuid, to_timestamp(%s))",
+                (token_hash, pid, int(expires_at)),
+            )
+
+    def clear_profile(
+        self,
+        *,
+        principal_id: str,
+        principal_email: str,
+        token_hash: bytes,
+        new_token_hash: bytes,
+        previous_operator_id: str | None,
+    ) -> bool:
+        """«Cambiar perfil»: revoke this session and open its profile-less successor.
+
+        The successor keeps the revoked row's `expires_at`, so the sign-in is never extended.
+        False — nothing written — when the session is not live or no longer the one the cookie
+        describes (revoked meanwhile, or rotated by another tab).
+        """
+        pid = parse_uuid(principal_id)
+        if pid is None:
+            return False
+        with self._write() as cur:
+            if not self._lock_live_session(cur, token_hash, pid, parse_uuid(previous_operator_id)):
+                return False
+            self._rotate(cur, token_hash, new_token_hash, pid, None, "profile_cleared")
+            self._event(cur, "profile.cleared", pid, principal_email,
+                        previous_operator_id=parse_uuid(previous_operator_id))
+            return True
+
+    def revoke_session(
+        self,
+        *,
+        token_hash: bytes,
+        principal_id: str,
+        principal_email: str,
+        operator_id: str | None,
+    ) -> None:
+        """Logout: revoke this exact session row and record it, in one transaction.
+
+        Raises on any database failure, so the caller can say the revocation did not happen.
+        A row already revoked or expired is left as it is; the logout is still recorded.
+        """
+        pid = parse_uuid(principal_id)
+        with self._write() as cur:
+            cur.execute(
+                "update platform.auth_session set revoked_at = now(), revoked_reason = 'logout' "
+                "where token_hash = %s and principal_id = %s::uuid and revoked_at is null",
+                (token_hash, pid),
+            )
+            self._event(cur, "session.logout", pid, principal_email,
+                        operator_id=parse_uuid(operator_id))
+
+    @staticmethod
+    def _lock_live_session(cur: Any, token_hash: bytes, principal_id: str,
+                           operator_id: str | None) -> bool:
+        cur.execute(
+            """
+            select operator_id::text, revoked_at is null and expires_at > now()
+              from platform.auth_session
+             where token_hash = %s and principal_id = %s::uuid
+               for update
+            """,
+            (token_hash, principal_id),
+        )
+        row = cur.fetchone()
+        return row is not None and bool(row[1]) and row[0] == operator_id
+
+    @staticmethod
+    def _rotate(cur: Any, token_hash: bytes, new_token_hash: bytes, principal_id: str,
+                operator_id: str | None, reason: str) -> None:
+        cur.execute(
+            "update platform.auth_session set revoked_at = now(), revoked_reason = %s "
+            "where token_hash = %s returning expires_at",
+            (reason, token_hash),
+        )
+        (expires_at,) = cur.fetchone()
+        cur.execute(
+            "insert into platform.auth_session (token_hash, principal_id, operator_id, expires_at) "
+            "values (%s, %s::uuid, %s::uuid, %s)",
+            (new_token_hash, principal_id, operator_id, expires_at),
+        )
 
     def list_profiles(self, principal_id: str) -> list[ProfileCard]:
         """The usable profiles of one principal, in card order. Nothing of any other."""
@@ -293,9 +400,16 @@ class ProfileAuthRepository:
         requested_operator_id: Any,
         pin: Any,
         hasher: PinHasher,
+        token_hash: bytes,
+        new_token_hash: bytes,
         previous_operator_id: str | None = None,
     ) -> SelectionOutcome:
         """Check one PIN for one profile of one principal, under the shared throttle.
+
+        The session row the request came with is locked too (principal → session → profile,
+        always in that order) and must be live and still describe what the cookie says. On
+        success it is revoked and its successor — carrying the selected operator and the same
+        `expires_at` — is inserted with `new_token_hash`, in the same transaction.
 
         Exactly one Argon2 verification happens on every path that reaches the principal row,
         real or decoy, so the time taken says nothing about why an attempt failed.
@@ -315,7 +429,9 @@ class ProfileAuthRepository:
             )
             prow = cur.fetchone()
             if (prow is None or prow[1] != "active" or prow[2] != principal_version
-                    or prow[0] != principal_email):
+                    or prow[0] != principal_email
+                    or not self._lock_live_session(cur, token_hash, pid,
+                                                   parse_uuid(previous_operator_id))):
                 hasher.dummy_verify()
                 return SelectionOutcome(None, None, principal_valid=False)
             now: datetime = prow[7]
@@ -361,6 +477,8 @@ class ProfileAuthRepository:
                     0, principal_throttle.lockout_count, None, principal_throttle.last_failed_at))
                 self._write_throttle(cur, "operator_profile", "operator_id", candidate.operator_id,
                                      _CLEARED)
+                self._rotate(cur, token_hash, new_token_hash, pid, candidate.operator_id,
+                             "profile_selected")
                 self._event(cur, "profile.selected", pid, principal_email,
                             operator_id=candidate.operator_id,
                             previous_operator_id=parse_uuid(previous_operator_id))

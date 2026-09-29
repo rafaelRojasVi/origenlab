@@ -8,7 +8,7 @@ Current repository head is later and intentionally carries the commercial-case
 schema, the historical-quotation import, the slice-5 campaign schema, W10 and
 the campaign safety blocks (outbound.campaign_block) and the shared Workspace
 sign-in tables (platform.auth_principal, platform.operator_profile,
-platform.auth_event). Therefore a local audit of current
+platform.auth_event, platform.auth_session). Therefore a local audit of current
 head must conclude LOCAL_FAIL — but only for the exact reviewed post-Slice-0
 additions.
 
@@ -18,6 +18,7 @@ This checker does not regenerate, weaken or modify the baseline.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -34,6 +35,8 @@ EXPECTED_EXTRA_TABLES = {
     "auth_principal",
     "operator_profile",
     "auth_event",
+    # 20260928191000_slice1_revocable_profile_sessions.sql — DOMAIN.md §7 #41.
+    "auth_session",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -85,6 +88,10 @@ POST_SLICE0_FUNCTIONS = {
     "platform.operator_security_version",
     "platform.auth_principal_security_version",
     "platform.operator_profile_security_version",
+    # 20260928191000_slice1_revocable_profile_sessions.sql — the INVOKER trigger
+    # function that keeps a session's identity fixed, never extends it and makes a
+    # revocation final (pgTAP: 074_revocable_profile_sessions.sql).
+    "platform.auth_session_guard",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
@@ -128,6 +135,10 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     "platform.auth_event.principal_id -> platform.auth_principal.id",
     "platform.auth_event.operator_id -> platform.operator.id",
     "platform.auth_event.previous_operator_id -> platform.operator.id",
+    # 20260928191000_slice1_revocable_profile_sessions.sql, each covered by a
+    # plain index (auth_session_principal_idx, auth_session_operator_idx).
+    "platform.auth_session.principal_id -> platform.auth_principal.id",
+    "platform.auth_session.operator_id -> platform.operator_profile.operator_id",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -136,9 +147,9 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 
 # Foreign keys covered by a non-partial index. The historical-origin key is
 # covered only by a partial index; the slice-5 freeze key, the three
-# campaign-block keys and the five sign-in keys by plain ones.
+# campaign-block keys and the seven sign-in keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 9
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 11
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -146,18 +157,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 41,
+        "relation_count": 42,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": 1,
     },
     "a08": {
-        "table_count": 40,
+        "table_count": 41,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 149,
+        "policy_count": 152,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -237,7 +248,7 @@ def main() -> int:
                 )
 
     # The inventory delta must be precisely the three commercial-case tables,
-    # outbound.campaign_block and the three sign-in tables.
+    # outbound.campaign_block and the four sign-in tables.
     a08_findings = checks["a08"].get("findings") or []
     if len(a08_findings) != 2:
         refuse(f"a08 has unexpected findings: {a08_findings!r}")
@@ -250,12 +261,13 @@ def main() -> int:
         if f'"table":"{table}"' not in a08_text:
             refuse(f"a08 does not name expected table {table}")
 
-    if "7 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly seven extra tables")
+    if "8 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly eight extra tables")
 
-    # The 22 policy additions must belong to those same seven reviewed tables:
+    # The 25 policy additions must belong to those same eight reviewed tables:
     # four each for the first four (api select/insert/update, worker select),
-    # two each for the three sign-in tables (api select plus update or insert).
+    # two each for the first three sign-in tables (api select plus update or
+    # insert) and three for auth_session (api select, insert, update).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 2:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -264,11 +276,18 @@ def main() -> int:
     if "baseline are absent here" in a09_text:
         refuse("a09 reports a baseline policy missing from current head")
 
-    if "22 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly twenty-two extra policies")
+    if "25 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly twenty-five extra policies")
 
-    for table in EXPECTED_EXTRA_TABLES:
-        if f'"table":"{table}"' not in a09_text:
+    # The audit lists at most twelve entries and then "...", so a long delta cannot name every
+    # table. What it does name must all be reviewed tables; only an untruncated list must
+    # name each of them. The exact count above bounds what the truncation hides.
+    named = set(re.findall(r'"table":"([a-z_]+)"', a09_text))
+    unexpected = sorted(named - EXPECTED_EXTRA_TABLES)
+    if unexpected:
+        refuse(f"a09 names policies on unreviewed tables: {unexpected!r}")
+    if not a09_text.rstrip().endswith("..."):
+        for table in sorted(EXPECTED_EXTRA_TABLES - named):
             refuse(f"a09 does not name expected table {table}")
 
     # The other blockers are census changes only. An exact finding list is
@@ -277,7 +296,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 41, expected 34"],
+        "a04": ["relations in scope: observed 42, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             "1 entr(y|ies) are present here and not in the baseline: "

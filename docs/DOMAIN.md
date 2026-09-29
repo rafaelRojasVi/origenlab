@@ -831,8 +831,10 @@ placed by the migration.
 
 ### 7.3 Shared Workspace sign-in with operator profiles — built 2026-09-28
 
-Three tables, all in `platform`, numbered 38–40
-(`20260928180000_slice1_shared_workspace_operator_profiles`). One Google
+Four tables, all in `platform`, numbered 38–41
+(`20260928180000_slice1_shared_workspace_operator_profiles`, then
+`20260928190000_slice1_principal_pinned_google_subject` and
+`20260928191000_slice1_revocable_profile_sessions`). One Google
 Workspace account is used by several people, so **the Google identity and the
 person acting are two facts in two relations**: signing in with Google proves
 the account (a *principal*) and grants nothing; the person is the
@@ -854,6 +856,7 @@ never also be an operator's address (both directions are refused by trigger).
 | 38 | `platform.auth_principal` | an external sign-in identity (one Google account) and its principal-wide PIN throttle | `(provider, email_norm)` unique; the pinned Google account — `provider_issuer` (canonical `https://accounts.google.com`) and `provider_subject`, set together or not at all, `(provider, provider_subject)` unique — required by the API in production and set only by the migrator roster tool; never an operator's address; `version` bumps on any address, issuer, subject or status change |
 | 39 | `platform.operator_profile` | a `shared_profile` operator selectable from one principal, its PIN and its per-profile throttle | the composite key `(operator_id, 'shared_profile')` → `platform.operator (id, sign_in_kind)` admits no other kind; `(principal_id, profile_key)` unique; `pin_hash` must be an Argon2id PHC string, so a plaintext PIN cannot be stored; `version` bumps on any PIN, link, key or status change, never on a throttle update |
 | 40 | `platform.auth_event` | the append-only authentication audit: profile selected, refused, locked, cleared, logout | closed `event_type` and closed `refusal_reason` (no free text, so no PIN can be recorded); principal id and address recorded as a pair; append-only (`platform.reject_mutation`) |
+| 41 | `platform.auth_session` | one shared-sign-in session (a principal, and the profile selected through it), so logout and «Cambiar perfil» can revoke it | `token_hash` is a 32-byte keyed HMAC of the cookie's random identifier — never the identifier; lifetime at most seven days; `operator_id` → `platform.operator_profile`; a request is served only while its row is neither revoked nor expired (database clock); selecting or clearing a profile revokes the row and inserts its successor with the same `expires_at`; identity, principal, operator and issue time immutable, `expires_at` only ever moves earlier, a revocation (closed reason: `logout`, `profile_selected`, `profile_cleared`) is final (trigger `auth_session_guard`); the runtime role never deletes — the migrator prunes |
 
 `platform.operator`'s own `version` now also bumps on any role, status or
 address change **whoever writes the row**. A signed session carries the
@@ -865,11 +868,19 @@ or a PIN hash — provisioning runs as the owner through
 `apps/api/scripts/profile_roster.py`. The worker has no privilege on any of
 them. No names, principals, profiles or hashes are seeded by the migration.
 `supabase/tests/010_inventory.sql`, `supabase/scripts/verify_chain.sh` and
-`supabase/scripts/replay_evidence.sh` assert **40** and `platform` **5**;
-`supabase/tests/073_shared_workspace_profiles.sql` proves the invariants.
+`supabase/scripts/replay_evidence.sh` assert **41** and `platform` **6**;
+`supabase/tests/073_shared_workspace_profiles.sql` and
+`074_revocable_profile_sessions.sql` prove the invariants.
+
+`platform.auth_session` (#41) makes a shared-sign-in session revocable. The
+runtime role reads and inserts rows and may set only `revoked_at` /
+`revoked_reason`; it deletes nothing (no runtime role holds `DELETE`
+anywhere), so ended rows are pruned by the migrator
+(`apps/api/scripts/profile_auth_admin.py prune-sessions`). Sessions of an
+individual's own Google account stay stateless and are not recorded.
 
 Counts by schema: `crm` 19, `comms` 4, `outbound` 7, `evidence` 2,
-`catalog` 2, `procurement` 1, `platform` 5 — **40**.
+`catalog` 2, `procurement` 1, `platform` 6 — **41**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

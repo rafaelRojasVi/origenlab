@@ -5,19 +5,21 @@
 | `GET /auth/google/login` | Google sign-in is on | sets the sign-in cookie (state, nonce, PKCE verifier) and redirects to Google |
 | `GET /auth/google/callback` | Google sign-in is on | checks state, exchanges the code, verifies the ID token's RS256 signature against Google's JWKS, checks the claims, maps the address to `platform.operator`, sets the session cookie |
 | `GET /auth/session` | the V2 boundary is mounted | who the current request resolves to, through the same identity port every `/v2` read uses |
-| `POST /auth/logout` | the V2 boundary is mounted | clears the session cookie |
+| `POST /auth/logout` | the V2 boundary is mounted | revokes a shared sign-in's session row, then clears the session cookie |
 
-**The callback writes nothing to the database.** It reads `platform.operator` through the
-read-only repository and nothing else; it never creates an operator, because operators are
+**For an individual operator the callback writes nothing to the database.** It reads
+`platform.operator` through the read-only repository and nothing else; it never creates an operator, because operators are
 created by an admin command (`docs/ARCHITECTURE.md` §5), not by signing in. An address with no
 row is refused, and so is a row that is not `active`.
 
 **A shared Workspace account** (`docs/ARCHITECTURE.md` §5.1). When profile sign-in is on and
 the verified address is a `platform.auth_principal`, the callback does not look for an operator
-at all: it issues a *principal session* with no operator in it, and the dashboard shows the
+at all: it records a `platform.auth_session` row (the only write it makes) and issues a
+*principal session* with no operator in it, and the dashboard shows the
 profile screen (`profile_routes.py`). Every other route refuses that session with
 `profile_required` until a profile is selected with its PIN. Logout writes one
-`platform.auth_event` when profile sign-in is on.
+`platform.auth_event` when profile sign-in is on, and revokes a shared sign-in's session row
+before the cookie is cleared (`logout`).
 
 The callback always answers with a redirect to the dashboard — to its root on success, and to
 `?login_error=<code>` otherwise. The code is one of a fixed set chosen here; nothing from the
@@ -38,6 +40,7 @@ from origenlab_api.v2.auth_session import (
     TRANSACTION_TTL_SECONDS,
     CookieRefused,
     PrincipalSession,
+    new_session_id,
     read_cookie,
 )
 from origenlab_api.v2.google_jwks import (
@@ -294,6 +297,7 @@ def _principal_signed_in(config: GoogleAuthConfig, profile_login: Any, candidate
         return _refuse(config, "operator_disabled", f"principal {principal.principal_id} is {principal.status}")
     from origenlab_api.v2.profile_routes import set_session_cookie
 
+    sid = new_session_id()
     session = PrincipalSession(
         principal_id=principal.principal_id,
         email=principal.email_norm,
@@ -303,7 +307,14 @@ def _principal_signed_in(config: GoogleAuthConfig, profile_login: Any, candidate
         auth_time=int(now),
         exp=int(now) + config.session_ttl_seconds,
         method="google",
+        sid=sid,
     )
+    try:
+        profile_login.profiles.open_session(principal_id=principal.principal_id,
+                                            token_hash=profile_login.signer.session_token_hash(sid),
+                                            expires_at=session.exp)
+    except Exception as exc:  # no row, no session: a cookie logout could not revoke is never issued
+        return _refuse(config, "sign_in_failed", f"session not recorded: {exc.__class__.__name__}")
     response = RedirectResponse(config.dashboard_url, status_code=303)
     _clear_cookie(response, config, config.cookie_names.transaction)
     set_session_cookie(response, profile_login, session, now=now)
@@ -380,16 +391,24 @@ def current_session(request: Request) -> JSONResponse:
 
 @auth_router.post("/logout")
 def logout(request: Request) -> JSONResponse:
-    """Clear the session cookie. Idempotent; answers 200 whether or not one was set.
+    """Revoke the session, then clear the cookie. Idempotent.
 
-    Stateless sessions cannot be revoked server-side (`auth_session.py`); this ends the
-    session in this browser. Disabling the operator ends it everywhere.
+    A **principal session** (a shared sign-in) is revoked in the database first — its own
+    `platform.auth_session` row, found by the keyed hash of its identifier — so a copy of the
+    cookie taken before this fails on its next request, on any API instance. If that revocation
+    cannot be written the answer is 503 `logout_not_recorded` (the cookie is still cleared in
+    this browser), never a 200 that would claim the session ended everywhere.
+
+    An **operator session** (an individual's own Google account) stays stateless
+    (`auth_session.py`): this ends it in this browser, and disabling the operator ends it
+    everywhere. Its logout is audited on a best-effort basis when profile sign-in is on.
     """
-    response = JSONResponse(content={"authenticated": False})
     config = _google(request)
     profile_login = getattr(request.app.state, "v2_profile_login", None)
-    if profile_login is not None:
-        _audit_logout(request, profile_login)
+    revoked = _revoke_session(request, profile_login) if profile_login is not None else True
+    response = (JSONResponse(content={"authenticated": False}) if revoked
+                else JSONResponse(status_code=503,
+                                  content={"authenticated": False, "detail": "logout_not_recorded"}))
     cookies = config if config is not None else profile_login
     if cookies is not None:
         _clear_cookie(response, cookies, cookies.cookie_names.session)
@@ -397,25 +416,34 @@ def logout(request: Request) -> JSONResponse:
     return response
 
 
-def _audit_logout(request: Request, profile_login: Any) -> None:
-    """Record a logout of a signed session. Never blocks the logout itself."""
+def _revoke_session(request: Request, profile_login: Any) -> bool:
+    """Revoke (principal session) or audit (operator session) the signed session, if any.
+
+    False only when a principal session's revocation could not be written.
+    """
     value = read_cookie(dict(request.headers), profile_login.cookie_names.session)
     if value is None:
-        return
+        return True
     try:
         session = profile_login.signer.load_any_session(value)
     except CookieRefused:
-        return
-    try:
-        if isinstance(session, PrincipalSession):
-            profile_login.profiles.record_event(
-                "session.logout", principal_id=session.principal_id, principal_email=session.email,
+        return True
+    if isinstance(session, PrincipalSession):
+        try:
+            profile_login.profiles.revoke_session(
+                token_hash=profile_login.signer.session_token_hash(session.sid),
+                principal_id=session.principal_id, principal_email=session.email,
                 operator_id=session.profile.operator_id if session.profile else None,
             )
-        else:
-            profile_login.profiles.record_event(
-                "session.logout", principal_id=None, principal_email=None,
-                operator_id=session["operator_id"],
-            )
-    except Exception as exc:  # the audit must not keep anyone signed in
+        except Exception as exc:
+            logger.error("logout: session revocation not recorded: %s", exc.__class__.__name__)
+            return False
+        return True
+    try:
+        profile_login.profiles.record_event(
+            "session.logout", principal_id=None, principal_email=None,
+            operator_id=session["operator_id"],
+        )
+    except Exception as exc:  # the audit of a stateless session must not keep anyone signed in
         logger.warning("logout audit event not recorded: %s", exc.__class__.__name__)
+    return True

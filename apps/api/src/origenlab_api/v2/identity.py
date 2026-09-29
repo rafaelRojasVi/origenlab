@@ -208,10 +208,12 @@ class GoogleSessionIdentity(IdentityPort):
 
     A **principal session** (a shared Google sign-in, `docs/ARCHITECTURE.md` §5.1) is resolved
     only when profile sign-in is on (`profiles` is given). Every request re-reads the principal,
-    the selected profile and its operator in one statement and requires, all at once: the
-    principal active, at the version and address signed into the session, and the Google
-    account (issuer + subject) pinned on it — required in production; the profile linked to *that* principal, active, at its signed version;
-    the operator active, a dashboard role, at its signed version. A role, PIN, link or status
+    the session row, the selected profile and its operator in one statement and requires, all
+    at once: the principal active, at the version and address signed into the session, and the
+    Google account (issuer + subject) pinned on it — required in production; the session's own
+    `platform.auth_session` row live (not logged out, rotated or expired); the profile linked
+    to *that* principal, active, at its signed version; the operator active, a dashboard role,
+    at its signed version. A role, PIN, link or status
     change moves a version (by trigger), so the session stops resolving on the next request.
     Without a selected profile — or with one that no longer holds — the answer is
     :class:`ProfileRequired`, never an operator.
@@ -257,7 +259,8 @@ class GoogleSessionIdentity(IdentityPort):
         if self._profiles is None:
             raise IdentityRefused("profile sign-in is not enabled here: sign in again")
         principal, binding = check_principal_session(
-            self._profiles, session, production=self._production)
+            self._profiles, session, token_hash=self._signer.session_token_hash(session.sid),
+            production=self._production)
         selection = session.profile
         if selection is None:
             raise ProfileRequired(principal, session)
@@ -278,7 +281,8 @@ class GoogleSessionIdentity(IdentityPort):
 
 
 def check_principal_session(
-    profiles: "ProfileAuthRepository", session: PrincipalSession, *, production: bool
+    profiles: "ProfileAuthRepository", session: PrincipalSession, *, token_hash: bytes,
+    production: bool,
 ) -> tuple["PrincipalRecord", object]:
     """Re-read the principal behind `session` (and its selected profile) and check it, or refuse.
 
@@ -287,19 +291,24 @@ def check_principal_session(
     issuer and subject — and **in production a principal with no pinned account is refused
     outright**: an address alone never identifies a shared sign-in there, because a deleted and
     recreated account keeps the address and changes the subject. A development session is
-    refused in production whatever its signature says. Returns the principal and the selected
-    profile's current binding (or None).
+    refused in production whatever its signature says.
+
+    The session's own `platform.auth_session` row (found by `token_hash`, the keyed hash of the
+    cookie's identifier) must exist, be neither revoked nor expired by the database clock, and
+    carry the operator the cookie names: a logged-out, rotated or expired session is refused
+    outright, whatever its signature and its own expiry say. Returns the principal and the
+    selected profile's current binding (or None).
     """
     if production and session.method != "google":
         raise IdentityRefused("a development sign-in is never honoured in production")
-    principal, binding = profiles.binding(
-        session.principal_id,
-        session.profile.operator_id if session.profile is not None else None,
-    )
+    selected = session.profile.operator_id if session.profile is not None else None
+    principal, binding, row = profiles.binding(session.principal_id, selected, token_hash)
     if (principal is None or not principal.is_active
             or principal.version != session.principal_version
             or principal.email_norm != session.email):
         raise IdentityRefused("the shared sign-in is no longer valid: sign in again")
+    if row is None or not row.live or row.operator_id != selected:
+        raise IdentityRefused("the session has ended (signed out, switched or expired): sign in again")
     if session.method == "google":
         if principal.has_pinned_account:
             if not principal.is_account(session.issuer, session.subject):
