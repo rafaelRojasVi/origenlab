@@ -606,3 +606,27 @@ def test_an_operator_id_header_never_selects_anyone(monkeypatch) -> None:
                "X-OriginLab-Operator-Id": CARLA, "X-OriginLab-Profile-Id": CARLA}
     assert client.get("/auth/session", headers=headers).status_code == 401
     assert client.get("/v2/contacts", headers=headers).status_code == 401
+
+
+# ------------------------------------------------------------- no trust on first use
+
+
+def test_only_the_migrator_roster_module_writes_the_pinned_google_account() -> None:
+    """No runtime module writes `provider_subject` / `provider_issuer`: pinning is never a
+    sign-in side effect (apps/api/docs/PRODUCTION_AUTH.md, "Obtaining the shared account's
+    Google subject"). The database refuses it too (pgTAP 073); this keeps the code honest."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src" / "origenlab_api"
+    write = re.compile(r"(insert\s+into|update)\s+platform\.auth_principal\b", re.IGNORECASE)
+    writers = sorted(p.relative_to(root).as_posix() for p in root.rglob("*.py")
+                     if write.search(p.read_text(encoding="utf-8")))
+    # Both are migrator tools run under `set role origenlab_owner`; no route imports them.
+    assert writers == ["v2/profile_auth_admin.py", "v2/profile_roster.py"], writers
+    assert "provider_" not in (root / "v2" / "profile_auth_admin.py").read_text(encoding="utf-8"), \
+        "clear-lockout resets the throttle only; the roster tool alone pins an account"
+    for runtime in ("v2/auth_routes.py", "v2/profile_routes.py", "v2/profile_auth.py", "v2/identity.py",
+                    "v2/auth_session_store.py", "main.py"):
+        text = (root / runtime).read_text(encoding="utf-8")
+        assert not re.search(r"^\s*(from|import)\s+\S*(profile_roster|profile_auth_admin)", text, re.MULTILINE), runtime

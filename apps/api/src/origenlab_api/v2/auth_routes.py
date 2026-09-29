@@ -304,8 +304,10 @@ def _principal_signed_in(config: GoogleAuthConfig, profile_login: Any, candidate
                            f"principal {principal.principal_id}: the Google account is not the pinned "
                            "one (same address, different subject: a recreated account?)")
     elif profile_login.production:
-        # The observed subject is logged so the owner can pin it with profile_roster.py — only
-        # after confirming this sign-in was their own (apps/api/docs/PRODUCTION_AUTH.md).
+        # Nothing is pinned here, ever: the runtime role cannot write the pin. The observed
+        # subject is logged only so the owner can compare it with the account's Admin SDK
+        # Directory `id`, which is what profile_roster.py pins (apps/api/docs/PRODUCTION_AUTH.md,
+        # "Obtaining the shared account's Google subject").
         return _refuse(config, "operator_not_permitted",
                        f"principal {principal.principal_id} has no pinned Google account; production "
                        f"refuses it until one is pinned (observed subject {account.subject})")

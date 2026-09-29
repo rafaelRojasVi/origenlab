@@ -16,7 +16,9 @@ The roster is a JSON file **outside the repository** (the repository is public):
 * The principal address must belong to the workspace domain. It must not be an operator's
   own address (the database refuses that too).
 * `provider_subject` is the Google account's stable subject (the ID token's `sub`; the Admin
-  SDK's user `id`). **Production refuses a principal without one**, and refuses a token whose
+  SDK's user `id`, read with the read-only directory scope before the roster is applied —
+  `apps/api/docs/PRODUCTION_AUTH.md`, "Obtaining the shared account's Google subject"; never
+  taken from a sign-in log alone). **Production refuses a principal without one**, and refuses a token whose
   subject differs from it even for the same address — a deleted and recreated account keeps
   the address and gets a new subject. It is stored with the canonical Google issuer. Omitting
   it leaves a pinned subject unchanged; this tool never unpins one. Changing it is a re-pin,

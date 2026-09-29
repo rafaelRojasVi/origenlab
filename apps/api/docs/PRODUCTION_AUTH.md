@@ -497,9 +497,11 @@ Google sign-in (unchanged up to the claims check)
   every request re-checks the pair signed into the session against the row. A Google account
   deleted and recreated under the same address has a new `sub` and is refused (sign-in and
   every existing session). **In production a principal with no pinned account cannot sign in
-  at all** — the callback refuses it and logs the observed `sub` for the owner. Only the
-  migrator roster tool can pin, re-pin or unpin (the runtime role has no column grant); a
-  re-pin moves the principal's version and so ends every session of the old account.
+  at all** — the callback refuses it and logs the observed `sub`, for comparison with the
+  directory `id` only; nothing is ever pinned on first use. Only the migrator roster tool can
+  pin or re-pin (the runtime role has no column grant; the tool never unpins), from the Admin
+  SDK Directory `id` read with a read-only scope; a re-pin moves the principal's version and so
+  ends every session of the old account.
 - **The server selects the operator.** The browser sends a profile id and a PIN; the operator,
   its role and the principal come from the database and the signed cookie. No header, cookie
   field or body field can name an operator (`X-OriginLab-Operator-Email` stays refused in
@@ -619,13 +621,57 @@ uv run python scripts/profile_roster.py --roster … --pin-file … \
     --apply --confirm-changes <N> --confirm-database <database name the plan printed>
 ```
 
-`provider_subject` is the shared account's stable Google subject: the Admin SDK Directory
-user `id`, or the `sub` a production callback logs when it refuses the still-unpinned
-principal (`observed subject …`). **Pin a logged subject only after confirming the refused
-sign-in was your own** (same time, same person) — a subject from someone else's sign-in would
-pin their account. Omitting `provider_subject` leaves a pinned one unchanged (the tool never
+`provider_subject` is the shared account's stable Google subject, obtained and verified as in
+*Obtaining the shared account's Google subject* below — read from the Admin SDK Directory, not
+taken from a sign-in. Omitting `provider_subject` leaves a pinned one unchanged (the tool never
 unpins); a different value is shown as a `re-pin` in the plan. A plan whose principal would
 stay unpinned ends with a `WARNING` line: production refuses that principal.
+
+### Obtaining the shared account's Google subject (read-only, before the roster is applied)
+
+**Pinning stays a migrator decision, never a sign-in side effect.** Nothing pins an account on
+first use: the runtime role holds no grant on `provider_subject` / `provider_issuer`, the API
+never writes them, and a production sign-in to an unpinned principal is refused outright. The
+subject is read beforehand from the Google Workspace directory, by an administrator, with a
+read-only scope, and checked before `profile_roster.py --apply`.
+
+For a Google Workspace user, the ID token's `sub` is the Admin SDK Directory API user `id`
+(a decimal string). Read it without creating any client, service account, key or delegation:
+
+1. As a Workspace **administrator** of `origenlab.cl`, open the Directory API reference page for
+   `users.get` (`developers.google.com/admin-sdk/directory/reference/rest/v1/users/get`) and use
+   its **Try this method** panel (the Google APIs Explorer).
+2. `userKey` = the shared address exactly as it will appear in the roster. `fields` =
+   `id,primaryEmail,suspended,archived,creationTime,isEnrolledIn2Sv`. Under *Credentials* keep
+   **Google OAuth 2.0** only and select **only** the read-only scope
+   `https://www.googleapis.com/auth/admin.directory.user.readonly` — clear every other scope the
+   panel proposes. This call can read one user record and change nothing.
+3. Execute, and read the answer on screen. Check, before copying anything:
+   - `primaryEmail` equals the roster's `principal.email`, character for character (lowercase);
+     an alias resolving to another primary address is the wrong account;
+   - `suspended` and `archived` are `false`;
+   - `creationTime` is when the shared account was actually created. A recent date on a
+     long-lived mailbox means it was deleted and recreated — the new `id` is then correct, but
+     confirm with the Workspace owner that the recreation was theirs before pinning it;
+   - `id` is digits only (the roster refuses anything outside `[A-Za-z0-9._-]`).
+4. Copy **only** `id` into the roster file, which lives outside the repository (`~/data/…`).
+   Never paste it into a commit, an issue or a chat: the repository is public, and an account
+   id joined to its address is identifying.
+5. `uv run python scripts/profile_roster.py --roster … --pin-file …` (plan, read-only). The
+   plan must show `provider_subject` on the principal (`insert`, or `re-pin` only when a re-pin
+   is intended) and no `WARNING` line. Then apply with the exact count and database name.
+
+**Optional cross-check, never the source.** After the roster is applied, a production sign-in
+by the Workspace owner either succeeds (the pin is right) or is refused and logged with the
+token's `observed subject …`. A logged subject is never pinned by itself: it can come from
+anyone who reached the callback with that address, so it is only compared with the directory
+`id`. If the two differ, stop — pin neither, and find out why (a recreated account, a wrong
+address, a sign-in that was not the owner's).
+
+**Never printed, pasted or stored:** the APIs Explorer access token (it stays in that browser
+tab; do not copy it into a shell, a `curl` command or a file), any refresh token, the session
+secret, the PIN pepper, and any PIN. The Directory call needs none of them from this
+repository, and `profile_roster.py` never prints a PIN, a hash or the pepper.
 
 To disable a person, set their `"status": "disabled"` and apply (their session ends on the
 next request). Profiles the roster omits are reported and left untouched. Delete the PIN file
@@ -681,12 +727,14 @@ Same DSN rule as provisioning (`ORIGENLAB_V2_PROVISIONING_DATABASE_URL`, a login
 ### Production procedure (future; not performed)
 
 1. Prerequisites of *Production activation* above (remote V2 database adopted, Google client).
-2. Apply the `20260928180000`–`20260928193000` slice-1 sign-in migrations with the normal
+2. Apply the `20260928180000`–`20260928195000` slice-1 sign-in migrations with the normal
    migration procedure (`docs/OPERATIONS.md`). They seed nothing.
 3. Generate the pepper; store it as a Render secret `ORIGENLAB_PROFILE_PIN_PEPPER` (distinct
    from the session secret). Do not set it anywhere else.
-4. Obtain the shared account's Google `sub` (Admin SDK user `id`) and put it in the roster as
-   `provider_subject`. Without it the plan warns and production refuses the principal.
+4. Obtain and verify the shared account's Google `sub` — its Admin SDK Directory user `id`, read
+   with the read-only scope — exactly as in *Obtaining the shared account's Google subject*,
+   and put it in the roster as `provider_subject`. Without it the plan warns and production
+   refuses the principal. Never pin a subject taken only from a sign-in log.
 5. Each person chooses a PIN and enters it themselves at the hidden prompt of
    `profile_roster.py` run by the administrator, or the administrator writes a `0600` PIN file
    on an encrypted local disk, applies, and deletes it. Plan, review, apply with the exact
