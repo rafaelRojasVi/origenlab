@@ -52,7 +52,7 @@ def _check(check_id, status="PASS", summary=None, findings=None, required=True):
 
 def current_head_report():
     """The shape of a real local audit of current head (a 2026-09-27 campaign-block run, moved by
-    the 2026-09-28 sign-in tables: +4 tables, +7 functions, +7 policies, +7 foreign keys, and the
+    the 2026-09-28 sign-in tables: +4 tables, +7 functions, +7 policies, +8 foreign keys, and the
     second SECURITY DEFINER function, platform.record_pin_attempt)."""
     policies = "; ".join([_policy(t, n) for t in TABLES for n in range(4)]
                          + [_policy(t, n) for t in SIGN_IN_TABLES for n in range(SIGN_IN_POLICY_COUNTS[t])]
@@ -75,8 +75,8 @@ def current_head_report():
             "RLS policies: 2 entr(y|ies) in the baseline are absent here: " + REMOVED,
             "RLS policies: 23 entr(y|ies) are present here and not in the baseline: " + policies]),
         _check("a10", "FAIL",
-               {"foreign_key_count": 130, "covered_count": 130, "covered_unconditionally": 97},
-               ["foreign keys: observed 130, expected 102"]),
+               {"foreign_key_count": 131, "covered_count": 131, "covered_unconditionally": 98},
+               ["foreign keys: observed 131, expected 102"]),
     ]
     return {
         "run": {"mode": "local", "simulated": False, "hosted_contacted": False},
@@ -234,9 +234,11 @@ class DeclaredGapTest(unittest.TestCase):
         self.assert_refused(report, "a09.policy_count: observed 150, expected 148")
 
     def test_the_historical_origin_foreign_key_is_declared(self):
-        self.assertEqual(12, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
-        self.assertEqual(130, gap.EXPECTED_FOREIGN_KEY_COUNT)
-        self.assertEqual(97, gap.EXPECTED_COVERED_UNCONDITIONALLY)
+        self.assertEqual(13, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
+        self.assertEqual(131, gap.EXPECTED_FOREIGN_KEY_COUNT)
+        self.assertEqual(98, gap.EXPECTED_COVERED_UNCONDITIONALLY)
+        self.assertIn("platform.auth_session.(account_operator_id, sign_in_kind)"
+                      " -> platform.operator.(id, sign_in_kind)", gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS)
 
     def test_the_previous_head_count_is_refused(self):
         report = current_head_report()
@@ -282,9 +284,9 @@ class DeclaredGapTest(unittest.TestCase):
     def test_an_undeclared_foreign_key_is_refused(self):
         report = current_head_report()
         a10 = check_of(report, "a10")
-        a10["summary"].update(foreign_key_count=131, covered_count=131)
-        a10["findings"] = ["foreign keys: observed 131, expected 102"]
-        self.assert_refused(report, "a10.foreign_key_count: observed 131, expected 130")
+        a10["summary"].update(foreign_key_count=132, covered_count=132)
+        a10["findings"] = ["foreign keys: observed 132, expected 102"]
+        self.assert_refused(report, "a10.foreign_key_count: observed 132, expected 131")
 
     def test_another_required_check_failing_is_refused(self):
         report = current_head_report()

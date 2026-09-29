@@ -40,6 +40,7 @@ import logging
 import os
 import secrets
 import stat
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -813,6 +814,97 @@ def test_an_individual_google_operator_still_signs_in_directly(monkeypatch, db, 
     assert me["auth_method"] == "google_session" and me["operator"]["email"] == INDIVIDUAL
     assert me["can_switch_profile"] is False
     assert api.client.get("/auth/profiles").status_code == 401
+
+
+def _individual_row(db: str, api: Api, cookie: str | None = None) -> tuple[Any, ...]:
+    signer = api.app.state.v2_google_auth.signer
+    sid = signer.load_any_session(cookie or api.session_cookie()).sid
+    rows = _sql(db, "select sign_in_kind, principal_id, operator_id, account_operator_id::text, revoked_reason, "
+                    "extract(epoch from expires_at)::bigint from platform.auth_session where token_hash = %s",
+                (signer.session_token_hash(sid),))
+    assert len(rows) == 1
+    return rows[0]
+
+
+def _cookie_exp(api: Api) -> int:
+    import base64
+
+    body = api.session_cookie().partition(".")[0]
+    return json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))["exp"]
+
+
+def _individual_id(db: str) -> str:
+    return _sql(db, "select id::text from platform.operator where email_norm = %s", (INDIVIDUAL,))[0][0]
+
+
+def test_an_individual_session_is_a_revocable_row_too(monkeypatch, db, ids) -> None:
+    api = Api(monkeypatch, db)
+    api.google(INDIVIDUAL)
+    kind, principal, profile, account, revoked, expires = _individual_row(db, api)
+    assert (kind, principal, profile, account, revoked) == ("google_account", None, None, _individual_id(db), None)
+    session = api.app.state.v2_google_auth.signer.load_session(api.session_cookie())
+    assert session.operator_id == _individual_id(db)
+    assert abs(expires - _cookie_exp(api)) <= 1, "the row expires with the cookie"
+    dumped = "\n".join(r[0] for r in _sql(db, "select row_to_json(t)::text from platform.auth_session t"))
+    assert session.sid not in dumped, "only the keyed hash of the identifier is stored"
+
+
+@pytest.mark.parametrize("production", [False, True])
+def test_a_copied_individual_cookie_fails_on_another_instance_right_after_logout(monkeypatch, db, ids,
+                                                                                 production) -> None:
+    first = Api(monkeypatch, db, production=production)
+    first.google(INDIVIDUAL)
+    cookie = first.session_cookie()
+    second = Api(monkeypatch, db, production=production)
+    copy = _copy_to(second, cookie)
+    assert copy.get("/v2/contacts").status_code == 200, "the copy works while the session is live"
+    assert first.client.post("/auth/logout").status_code == 200
+    assert _individual_row(db, first, cookie)[4] == "logout"
+    assert copy.get("/auth/session").json()["state"] == "signed_out"
+    assert copy.get("/v2/contacts").status_code == 401
+    assert _block_all(copy).status_code == 401
+    event = _sql(db, "select event_type, principal_id, operator_id::text from platform.auth_event "
+                     "order by occurred_at desc limit 1")[0]
+    assert event == ("session.logout", None, _individual_id(db))
+
+
+def test_disabling_an_individual_operator_or_changing_its_role_ends_its_session(monkeypatch, db, ids) -> None:
+    oid = _individual_id(db)
+    try:
+        for change in ("role = 'sales'", "status = 'disabled'"):
+            api = Api(monkeypatch, db)
+            api.google(INDIVIDUAL)
+            assert api.client.get("/v2/contacts").status_code == 200
+            _sql(db, f"update platform.operator set {change} where id = %s", (oid,))
+            assert api.client.get("/auth/session").json()["state"] == "signed_out", change
+            assert api.client.get("/v2/contacts").status_code == 401, change
+            _sql(db, "update platform.operator set role = 'admin', status = 'active' where id = %s", (oid,))
+    finally:
+        _sql(db, "update platform.operator set role = 'admin', status = 'active' where id = %s", (oid,))
+
+
+def test_an_individual_session_without_its_row_or_past_its_database_expiry_is_refused(monkeypatch, db, ids) -> None:
+    api = Api(monkeypatch, db)
+    api.google(INDIVIDUAL)
+    signer = api.app.state.v2_google_auth.signer
+    session = signer.load_session(api.session_cookie())
+    _sql(db, "update platform.auth_session set expires_at = issued_at + interval '1 millisecond' "
+             "where token_hash = %s", (signer.session_token_hash(session.sid),))
+    assert api.client.get("/auth/session").json()["state"] == "signed_out"
+    forged = signer.dump_session(email_norm=INDIVIDUAL, operator_id=session.operator_id, google_sub="s",
+                                 operator_version=session.operator_version, sid="y" * 43, ttl=600,
+                                 now=time.time())
+    api.client.cookies.set(api.cookie, forged)
+    assert api.client.get("/auth/session").json()["state"] == "signed_out", "correctly signed, never recorded"
+
+
+def test_an_individual_session_names_only_a_google_account_operator(db, ids) -> None:
+    import psycopg
+
+    with psycopg.connect(runtime_dsn(db)) as conn, pytest.raises(psycopg.errors.ForeignKeyViolation):
+        conn.execute("insert into platform.auth_session (token_hash, sign_in_kind, account_operator_id, expires_at) "
+                     "values (%s, 'google_account', %s::uuid, now() + interval '1 hour')",
+                     (b"\x01" * 32, ids["ana"]))
 
 
 # ---------------------------------------------------------------------------- logout

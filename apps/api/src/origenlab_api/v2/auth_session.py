@@ -2,16 +2,12 @@
 
 Both are a JSON payload, base64url-encoded, followed by an HMAC-SHA256 tag over it.
 
-An **operator session** (an individual's own Google account) is stateless: nothing is stored
-server-side, and what that costs is stated rather than hidden — logout clears the cookie in the
-browser but cannot revoke a copy taken before it. The session lifetime
-(`ORIGENLAB_AUTH_SESSION_TTL_SECONDS`, eight hours by default) bounds that, and every request
-re-reads `platform.operator`, so disabling an operator ends every session they hold.
-
-A **principal session** (a shared sign-in, below) is **revocable**: it names a
-`platform.auth_session` row by a random identifier (`sid`), and the API serves it only while that
-row is live. The database holds :meth:`CookieSigner.session_token_hash` of the identifier, never
-the identifier, so a database reader cannot build a cookie from it.
+**Every session is revocable** (`20260928195000`). Both shapes below name a
+`platform.auth_session` row by a random identifier (`sid`), and the API serves a session only
+while that row is live — not revoked by logout, not rotated, not expired by the database clock.
+The database holds :meth:`CookieSigner.session_token_hash` of the identifier, never the
+identifier, so a database reader cannot build a cookie from it. A cookie without a `sid` is
+refused, so no session can exist that logout could not revoke.
 
 Each cookie kind signs under its own purpose label. A transaction cookie can therefore never
 be replayed as a session cookie, even though both are signed with the same key.
@@ -22,7 +18,8 @@ the tag.
 
 **Two session shapes share the one session cookie.** An *operator session* (no `k` field — the
 original shape, still what an operator with their own Google account gets) names an operator
-by address. A *principal session* (`k = "principal"`) names a shared Google sign-in
+by address and id, with the operator's `version` at sign-in (`ov`): a role, status or address
+change bumps it by trigger, so the session ends on the next request. A *principal session* (`k = "principal"`) names a shared Google sign-in
 (`platform.auth_principal`) and, once a profile is chosen, the operator selected through it,
 together with the operator's, the profile's and the principal's `version` at selection time,
 the Google authentication time, and the account it was signed in as (issuer and subject). Choosing or clearing a profile re-issues the cookie with the
@@ -108,6 +105,17 @@ class PrincipalSession:
 
     def with_profile(self, profile: ProfileSelection | None) -> "PrincipalSession":
         return replace(self, profile=profile)
+
+
+@dataclass(frozen=True)
+class OperatorSession:
+    """An operator's own Google sign-in: who, at which operator version, and its session row."""
+
+    email: str
+    operator_id: str
+    operator_version: int
+    #: The random identifier of this session's `platform.auth_session` row. Required.
+    sid: str
 
 
 def _positive_int(value: Any) -> int:
@@ -217,17 +225,20 @@ class CookieSigner:
     # -------------------------------------------------------------------- session
 
     def dump_session(
-        self, *, email_norm: str, operator_id: str, google_sub: str, ttl: int, now: float
+        self, *, email_norm: str, operator_id: str, google_sub: str, operator_version: int,
+        sid: str, ttl: int, now: float
     ) -> str:
         return self._dump(_SESSION_PURPOSE, {
             "email": email_norm,
             "operator_id": operator_id,
             "sub": google_sub,
+            "ov": int(operator_version),
+            "sid": sid,
             "iat": int(now),
             "exp": int(now) + int(ttl),
         })
 
-    def load_session(self, value: str | None, *, now: float | None = None) -> dict[str, str]:
+    def load_session(self, value: str | None, *, now: float | None = None) -> OperatorSession:
         """An operator session, or refuse. A principal session is not one."""
         payload = self._load(_SESSION_PURPOSE, value, now=time.time() if now is None else now)
         if "k" in payload:
@@ -236,7 +247,9 @@ class CookieSigner:
         operator_id = payload.get("operator_id")
         if not isinstance(email, str) or not email or not isinstance(operator_id, str):
             raise CookieRefused("malformed")
-        return {"email": email, "operator_id": operator_id}
+        return OperatorSession(email=email, operator_id=operator_id,
+                               operator_version=_positive_int(payload.get("ov")),
+                               sid=_text(payload.get("sid")))
 
     def dump_principal_session(self, session: PrincipalSession) -> str:
         payload: dict[str, Any] = {
@@ -262,7 +275,7 @@ class CookieSigner:
 
     def load_any_session(
         self, value: str | None, *, now: float | None = None
-    ) -> dict[str, str] | PrincipalSession:
+    ) -> OperatorSession | PrincipalSession:
         """An operator session (as :meth:`load_session`) or a :class:`PrincipalSession`."""
         at = time.time() if now is None else now
         payload = self._load(_SESSION_PURPOSE, value, now=at)

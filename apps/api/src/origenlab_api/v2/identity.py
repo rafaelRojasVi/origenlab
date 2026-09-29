@@ -43,6 +43,7 @@ from origenlab_api.v2.auth_session import (
 )
 
 if TYPE_CHECKING:
+    from origenlab_api.v2.auth_session_store import AuthSessionStore
     from origenlab_api.v2.google_oidc import GoogleAuthConfig
     from origenlab_api.v2.profile_auth import PrincipalRecord, ProfileAuthRepository
 
@@ -99,6 +100,9 @@ class OperatorIdentity:
     auth_method: str = "unknown"
     #: For a profile selected through a shared sign-in: the principal it was selected through.
     principal_id: str | None = None
+    #: `platform.operator.version` as read, when the reader selected it (bumped by trigger on
+    #: every role, status or address change).
+    version: int | None = None
 
     @property
     def is_active(self) -> bool:
@@ -202,9 +206,12 @@ class GoogleSessionIdentity(IdentityPort):
 
     The cookie is only ever minted by the Google callback, after the ID token's claims were
     checked and the address was found in `platform.operator` (`auth_routes.py`). It is not
-    trusted as a standing grant: every request re-reads the operator row, so a disabled
-    operator is refused on the next request, and a row whose id no longer matches the one the
-    session was issued for — an address reassigned to someone else — is refused too.
+    trusted as a standing grant: every request re-reads the session's own `platform.auth_session`
+    row joined to its operator, in one statement (`auth_session_store.py`), and requires the row
+    live — not logged out, not expired by the database clock — and the operator to be the one,
+    at the address and at the `version` signed into the cookie, and active. So logout ends the
+    session everywhere, a copied cookie included; a disabled operator, a role change or an
+    address change (each bumps `version` by trigger) ends it on the next request.
 
     A **principal session** (a shared Google sign-in, `docs/ARCHITECTURE.md` §5.1) is resolved
     only when profile sign-in is on (`profiles` is given). Every request re-reads the principal,
@@ -226,12 +233,14 @@ class GoogleSessionIdentity(IdentityPort):
         lookup: "OperatorLookup",
         *,
         profiles: "ProfileAuthRepository | None" = None,
+        sessions: "AuthSessionStore | None" = None,
         production: bool = False,
     ) -> None:
         self._signer = signer
         self._cookie_name = cookie_name
         self._lookup = lookup
         self._profiles = profiles
+        self._sessions = sessions
         self._production = production
 
     def resolve(self, headers: dict[str, str]) -> OperatorIdentity:
@@ -246,13 +255,18 @@ class GoogleSessionIdentity(IdentityPort):
             ) from exc
         if isinstance(session, PrincipalSession):
             return self._resolve_principal(session)
-        operator = self._lookup.by_email(session["email"])
-        if operator is None:
-            raise IdentityRefused("no platform.operator row matches the signed-in address")
-        if operator.operator_id != session["operator_id"]:
+        if self._sessions is None:
+            raise IdentityRefused("no session store is configured: sign in again")
+        row = self._sessions.operator_session(self._signer.session_token_hash(session.sid))
+        if row is None or not row.live:
+            raise IdentityRefused("the session has ended (signed out or expired): sign in again")
+        operator = row.operator
+        if operator.operator_id != session.operator_id or operator.email_norm != session.email:
             raise IdentityRefused(
                 "the operator row for the signed-in address has changed: sign in again"
             )
+        if operator.version != session.operator_version:
+            raise IdentityRefused("the operator changed (role, status or address): sign in again")
         return replace(operator, auth_method="google_session").require_active()
 
     def _resolve_principal(self, session: PrincipalSession) -> OperatorIdentity:
@@ -381,6 +395,7 @@ def build_identity_port(
     dev_login_enabled: bool = False,
     production: bool = False,
     profiles: "ProfileAuthRepository | None" = None,
+    sessions: "AuthSessionStore | None" = None,
     session_signer: CookieSigner | None = None,
     session_cookie_name: str | None = None,
 ) -> IdentityPort:
@@ -403,13 +418,14 @@ def build_identity_port(
     if google is not None:
         adapters.append(GoogleSessionIdentity(
             google.signer, google.cookie_names.session, lookup,
-            profiles=profiles, production=production,
+            profiles=profiles, sessions=sessions, production=production,
         ))
     elif profiles is not None and dev_login_enabled and session_signer and session_cookie_name:
         # Local development without Google: the session cookie is minted by the local-only
         # profile shortcut (`profile_routes.py`), and resolved exactly as a Google one would be.
         adapters.append(GoogleSessionIdentity(
-            session_signer, session_cookie_name, lookup, profiles=profiles, production=production,
+            session_signer, session_cookie_name, lookup, profiles=profiles, sessions=sessions,
+            production=production,
         ))
     if dev_login_enabled:
         adapters.append(LocalDevIdentity(database_url, lookup, production=production))

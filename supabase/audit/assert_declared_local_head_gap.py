@@ -165,6 +165,10 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     # plain index (auth_session_principal_idx, auth_session_operator_idx).
     "platform.auth_session.principal_id -> platform.auth_principal.id",
     "platform.auth_session.operator_id -> platform.operator_profile.operator_id",
+    # 20260928195000_slice1_unified_auth_sessions.sql, covered by the plain index
+    # auth_session_account_operator_idx on the same two columns.
+    "platform.auth_session.(account_operator_id, sign_in_kind)"
+    " -> platform.operator.(id, sign_in_kind)",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -173,9 +177,9 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 
 # Foreign keys covered by a non-partial index. The historical-origin key is
 # covered only by a partial index; the slice-5 freeze key, the three
-# campaign-block keys and the seven sign-in keys by plain ones.
+# campaign-block keys and the eight sign-in keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 11
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 12
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY

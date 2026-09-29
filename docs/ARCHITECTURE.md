@@ -180,7 +180,10 @@ confirmed count, under the migrator login's explicit `SET ROLE
 origenlab_owner` — the identity that runs data-fixing migrations (§6). The
 runtime API role cannot write a principal, a profile link or a PIN hash. An
 operator with its own Google account (`sign_in_kind = 'google_account'`) keeps
-signing in directly, beside the shared principal.
+signing in directly, beside the shared principal — and its session is a
+`platform.auth_session` row too (`20260928195000`), binding the operator's
+`version`, required on every request and revoked by logout exactly like a
+shared one: no sign-in mode leaves a session that logout cannot end.
 
 <a id="m-arch-roles"></a>
 ## 6. Database roles, grants and RLS

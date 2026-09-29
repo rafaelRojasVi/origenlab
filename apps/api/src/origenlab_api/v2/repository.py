@@ -87,7 +87,7 @@ class V2Repository(OperatorLookup):
     def by_email(self, email_norm: str) -> OperatorIdentity | None:
         with self._read() as cur:
             cur.execute(
-                "select id::text, email_norm, display_name, role, status "
+                "select id::text, email_norm, display_name, role, status, version "
                 "from platform.operator where email_norm = %s",
                 (email_norm,),
             )
@@ -100,6 +100,7 @@ class V2Repository(OperatorLookup):
             display_name=row[2],
             role=row[3],
             status=row[4],
+            version=row[5],
         )
 
     # ------------------------------------------------------------------ contacts

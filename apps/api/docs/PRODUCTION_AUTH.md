@@ -244,11 +244,16 @@ browser ──GET /v2/*, /auth/session (cookie)──▶ API re-reads platform.o
   the client secret and the PKCE verifier, never through the browser. Every claim is still
   checked. See the module docstring in `origenlab_api/v2/google_oidc.py`.
 - **No operator is ever created by signing in.** Unknown addresses are refused.
-- **Nothing is written to the database.** The callback reads `platform.operator` through the
-  read-only repository; no `/v2` route became writable.
-- **Sessions are stateless signed cookies.** Logout clears the cookie in that browser but
-  cannot revoke a copy taken earlier; the 8-hour lifetime bounds that. Disabling the operator
-  (`status = 'disabled'`) ends every session on its next request.
+- **The only write is the session row.** The callback reads `platform.operator` through the
+  read-only repository and records one `platform.auth_session` row
+  (`sign_in_kind = 'google_account'`, `20260928195000`); no `/v2` route became writable. No
+  row, no cookie.
+- **Sessions are revocable rows.** The signed cookie names its row by a random identifier (the
+  database holds only a keyed hash of it) and binds the operator's `version`. Every request
+  re-reads the row joined to the operator: a revoked, expired or missing row, or a changed
+  operator `version` (any role, status or address change, by trigger), ends the session. Logout
+  revokes the row before the cookie is cleared, so a copy taken earlier fails on its next
+  request, on every API instance.
 - **The operator-email header is never trusted by the V2 boundary in production.** The header
   login (`ORIGENLAB_DEV_LOGIN_ENABLED`) is refused at startup when `ORIGENLAB_ENV=production`.
   The V1 `/operations/*` commands are unchanged: they still take the operator from the header
@@ -545,8 +550,8 @@ Google sign-in (unchanged up to the claims check)
   subject / status change — whoever writes the row. The per-request compare therefore ends every
   affected session on its next request, including a Karla-promoted-to-admin session (it must
   be re-selected with the PIN). Throttle updates bump nothing. Sessions of an individual's own
-  Google account (no profile) are unchanged: still stateless, so a copy of one taken before
-  logout stays valid until the operator changes or it expires (8 h).
+  Google account (no profile) are rows in the same table (`sign_in_kind = 'google_account'`,
+  `20260928195000`), required on every request and revoked by logout the same way.
 - **CSRF.** The Worker refuses every sign-in POST without an allowed `Origin` or with a
   cross-site `Sec-Fetch-Site`, and the two profile POSTs without `application/json` or above
   1 KiB. The API independently requires `application/json` on both and refuses

@@ -134,6 +134,14 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     app.state.v2_google_auth = google
     profile_login = _build_profile_login(settings, google, connect, dsn)
     app.state.v2_profile_login = profile_login
+    # Every Google session — an operator's own account or a shared principal — is a revocable
+    # platform.auth_session row (20260928195000); an operator's lives here.
+    auth_sessions = None
+    if google is not None:
+        from origenlab_api.v2.auth_session_store import AuthSessionStore
+
+        auth_sessions = AuthSessionStore(connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms)
+    app.state.v2_auth_sessions = auth_sessions
     if google is not None:
         from origenlab_api.v2.google_jwks import GoogleJwks
 
@@ -150,6 +158,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         dev_login_enabled=settings.dev_login_enabled,
         production=settings.production_mode(),
         profiles=profile_login.profiles if profile_login is not None else None,
+        sessions=auth_sessions,
         session_signer=profile_login.signer if profile_login is not None else None,
         session_cookie_name=profile_login.cookie_names.session if profile_login is not None else None,
     )
