@@ -695,6 +695,34 @@ def test_a_copied_cookie_stops_working_after_logout(monkeypatch) -> None:
     assert other.get("/v2/contacts").status_code == 401
 
 
+_TIMING_HEADERS = ("server-timing", "x-process-time-ms")
+
+
+def _untimed(response: Any) -> bool:
+    return not any(name in response.headers for name in _TIMING_HEADERS)
+
+
+def test_no_sign_in_response_carries_a_timing_header(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    assert _untimed(h.client.get("/auth/session")), "signed out"
+    assert _untimed(h.login()), "login redirect"
+    assert _untimed(h.callback(code="authcode", state="wrong")), "refused callback"
+    ok = h.sign_in()
+    assert _login_error(ok) is None and _untimed(ok), "successful callback"
+    assert _untimed(h.client.get("/auth/session")), "session verification"
+    h.claims_override = {"email": "nadie@origenlab.cl"}
+    h.login()
+    assert _untimed(h.callback(code="authcode", state=h.state)), "unknown operator"
+    assert _untimed(h.client.post("/auth/logout")), "logout"
+    assert _untimed(h.client.post("/auth/logout")), "logout without a session"
+    h.sessions.fail_revoke = True
+    h.sign_in()
+    assert _untimed(h.client.post("/auth/logout")), "failed logout"
+    # The control: everything else is still timed.
+    health = h.client.get("/health")
+    assert all(name in health.headers for name in _TIMING_HEADERS)
+
+
 def test_logout_without_a_session_is_harmless(monkeypatch) -> None:
     h = _Harness(monkeypatch)
     assert h.client.post("/auth/logout").status_code == 200

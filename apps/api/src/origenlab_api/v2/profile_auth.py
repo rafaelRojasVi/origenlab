@@ -44,7 +44,7 @@ spends one Argon2 derivation — against the requested profile's own hash when t
 its parameters), against the decoy otherwise — which removes the dominant difference. The
 database work still differs by outcome: an unknown profile id locks one row, a known one two; a
 locked attempt writes no counters; a failure that starts a lock writes a second audit row; a
-success rotates the session. No `/auth/*` response carries a timing header (`main.py`), but
+success rotates the session. No `/auth/*` response carries a timing header (`response_timing.py`), but
 wall-clock time is observable anyway. So a lock, or whether a profile id exists, may be told
 apart by timing. Neither reveals a PIN, and a lock bounds the guessing that matters.
 """

@@ -515,9 +515,11 @@ Google sign-in (unchanged up to the claims check)
   locked or the PIN is malformed (the submitted PIN is never checked then); or against a decoy
   for an unknown profile — so the dominant cost does not depend on the reason. The database
   work does: a locked attempt writes no counters, an unknown profile id locks one row instead
-  of two, a failure that starts a lock writes a second audit event, and every response carries
-  `Server-Timing` / `X-Process-Time-Ms`. A caller may therefore tell by timing that a profile
-  is locked, or that an id is not a profile. Neither reveals a PIN; the lock is what bounds
+  of two, a failure that starts a lock writes a second audit event. No `/auth/*` response —
+  success, refusal, lockout, unknown profile, session check, callback, clear or logout — carries
+  `Server-Timing` or `X-Process-Time-Ms` (the API omits them and the Worker drops them), but the
+  wall-clock time of a request stays observable. A caller may therefore tell by timing that a
+  profile is locked, or that an id is not a profile. Neither reveals a PIN; the lock is what bounds
   guessing.
 - **Throttle and lockout (persistent, shared by every worker):**
 

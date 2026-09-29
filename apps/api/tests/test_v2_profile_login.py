@@ -483,6 +483,31 @@ def test_the_principal_locks_after_too_many_failures_across_profiles(monkeypatch
                 (ids["shared"],))[0][0] is True
 
 
+def test_no_profile_route_answer_carries_a_timing_header(monkeypatch, db, ids) -> None:
+    """Success, refusal, lockout and an unknown profile look alike in their headers too."""
+    timing = ("server-timing", "x-process-time-ms")
+    api = Api(monkeypatch, db)
+    seen: dict[str, Any] = {"callback": api.google()}
+    seen["profiles"] = api.client.get("/auth/profiles")
+    seen["session: profile required"] = api.client.get("/auth/session")
+    seen["unknown profile"] = api.select("00000000-0000-4000-8000-00000000abcd", "111119", ids)
+    seen["wrong pin"] = api.select("carla", "111119", ids)
+    seen["malformed pin"] = api.select("carla", "12", ids)
+    for _ in range(PROFILE_MAX_FAILURES):
+        api.select("bruno", "111119", ids)
+    seen["lockout"] = api.select("bruno", PINS["bruno"], ids)
+    assert seen["lockout"].json() == REFUSED
+    seen["success"] = api.select("ana", PINS["ana"], ids)
+    assert seen["success"].status_code == 200
+    seen["session: signed in"] = api.client.get("/auth/session")
+    seen["clear"] = api.client.post("/auth/profile/clear", json={})
+    seen["logout"] = api.client.post("/auth/logout")
+    seen["logout again"] = api.client.post("/auth/logout")
+    for name, response in seen.items():
+        assert not any(h in response.headers for h in timing), name
+    assert all(h in api.client.get("/v2/contacts").headers for h in timing), "other routes stay timed"
+
+
 # ------------------------------------------------- the throttle function (20260928194000)
 
 

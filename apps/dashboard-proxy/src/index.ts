@@ -87,6 +87,9 @@ function authRedirectResponse(upstreamResponse: Response, location: string): Res
   return new Response(null, { status: upstreamResponse.status, headers });
 }
 
+/** Response headers that publish server processing time; never forwarded on `/auth/*`. */
+export const AUTH_TIMING_HEADERS = ["Server-Timing", "X-Process-Time-Ms"] as const;
+
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/;
 
 /**
@@ -256,6 +259,11 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   if (isAuthPath(upstreamPath as string)) {
     for (const cookie of filterAuthSetCookies(upstreamResponse.headers)) {
       responseHeaders.append("Set-Cookie", cookie);
+    }
+    // Sign-in answers carry no timing: how long a PIN check, a session lookup or a logout took
+    // is not published. The API already omits these; this holds whatever the upstream sends.
+    for (const name of AUTH_TIMING_HEADERS) {
+      responseHeaders.delete(name);
     }
   }
   stripUpstreamCorsHeaders(responseHeaders);

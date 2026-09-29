@@ -190,3 +190,33 @@ describe("profile selection through the Worker", () => {
     expect(response.status).toBe(502);
   });
 });
+
+describe("sign-in answers carry no timing", () => {
+  const TIMED: [string, string][] = [
+    ["Server-Timing", "app;dur=412.07"],
+    ["X-Process-Time-Ms", "412.07"],
+    ["Content-Type", "application/json"],
+  ];
+
+  for (const [name, request] of [
+    ["profile select (refused)", () => post(SELECT, GOOD)],
+    ["profile clear", () => post(CLEAR, GOOD, "{}")],
+    ["logout", () => post(`${DASHBOARD}/api/auth/logout`, { Origin: DASHBOARD }, null)],
+    ["session", () => new Request(`${DASHBOARD}/api/auth/session`)],
+    ["profiles", () => new Request(`${DASHBOARD}/api/auth/profiles`)],
+  ] as [string, () => Request][]) {
+    it(`drops upstream timing headers on ${name}`, async () => {
+      stubUpstream({ status: name.includes("refused") ? 401 : 200, headers: TIMED, body: "{}" });
+      const response = await handleRequest(request(), TEST_ENV);
+      expect(response.headers.get("Server-Timing"), name).toBeNull();
+      expect(response.headers.get("X-Process-Time-Ms"), name).toBeNull();
+      expect(response.headers.get("Content-Type"), name).toBe("application/json");
+    });
+  }
+
+  it("leaves them on a non-sign-in route", async () => {
+    stubUpstream({ status: 200, headers: TIMED, body: "{}" });
+    const response = await handleRequest(new Request(`${DASHBOARD}/api/health`), TEST_ENV);
+    expect(response.headers.get("Server-Timing")).toBe("app;dur=412.07");
+  });
+});
