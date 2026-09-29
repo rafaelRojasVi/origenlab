@@ -176,12 +176,11 @@ insert into expected_policies values
     ('platform', 'command_receipt', 'origenlab_api', 'INSERT'),
     ('platform', 'command_receipt', 'origenlab_api', 'UPDATE'),
     ('platform', 'command_receipt', 'origenlab_worker', 'SELECT'),
-    -- Shared Workspace sign-in (#38–#40): the API reads, updates only the throttle columns (column
-    -- grant) and appends audit events; the worker has no policy on any of them.
+    -- Shared Workspace sign-in (#38–#40): the API reads and appends audit events; it writes the
+    -- throttle only through platform.record_pin_attempt (20260928194000), so it holds no UPDATE
+    -- policy. The worker has no policy on any of them.
     ('platform', 'auth_principal', 'origenlab_api', 'SELECT'),
-    ('platform', 'auth_principal', 'origenlab_api', 'UPDATE'),
     ('platform', 'operator_profile', 'origenlab_api', 'SELECT'),
-    ('platform', 'operator_profile', 'origenlab_api', 'UPDATE'),
     ('platform', 'auth_event', 'origenlab_api', 'SELECT'),
     ('platform', 'auth_event', 'origenlab_api', 'INSERT'),
     -- Revocable profile sessions (#41): read, insert a live row, revoke (column grant); no delete.
@@ -189,7 +188,7 @@ insert into expected_policies values
     ('platform', 'auth_session', 'origenlab_api', 'INSERT'),
     ('platform', 'auth_session', 'origenlab_api', 'UPDATE');
 
-select is((select count(*)::int from expected_policies), 150, 'the matrix implies 150 policies');
+select is((select count(*)::int from expected_policies), 148, 'the matrix implies 148 policies');
 
 -- Posture.
 select is(

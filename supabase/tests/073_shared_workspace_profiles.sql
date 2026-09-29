@@ -182,10 +182,11 @@ select throws_ok($$ insert into platform.auth_event (event_type, principal_id) v
 
 -- ── 7. runtime roles ──────────────────────────────────────────────────────────────────────────
 select is(pg_temp.run_as('origenlab_api', 'select 1 from platform.operator_profile limit 1'), 'ok', 'api reads profiles');
-select is(pg_temp.run_as('origenlab_api', 'select 1 from platform.operator_profile for update'), 'ok',
-  'api may lock a profile row (the throttle serializes attempts across workers)');
-select is(pg_temp.run_as('origenlab_api', 'update platform.operator_profile set failed_attempts = failed_attempts + 1, locked_until = now()'), 'ok',
-  'api may update the throttle columns');
+-- 20260928194000: the throttle is written only by platform.record_pin_attempt (pgTAP 075).
+select is(left(pg_temp.run_as('origenlab_api', 'select 1 from platform.operator_profile for update'), 5), '42501',
+  'api may not lock a profile row itself: record_pin_attempt takes the lock');
+select is(left(pg_temp.run_as('origenlab_api', 'update platform.operator_profile set failed_attempts = 0, locked_until = null'), 5), '42501',
+  'api may not write a profile throttle column');
 select is(left(pg_temp.run_as('origenlab_api', $$update platform.operator_profile set pin_hash = pin_hash$$), 5), '42501',
   'api may not write a PIN hash');
 select is(left(pg_temp.run_as('origenlab_api', $$update platform.operator_profile set status = 'active'$$), 5), '42501',

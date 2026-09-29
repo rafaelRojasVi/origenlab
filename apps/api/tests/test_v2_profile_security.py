@@ -40,7 +40,6 @@ from origenlab_api.v2.profile_auth import (
     PrincipalRecord,
     ProfileBinding,
     SessionState,
-    _Throttle,
     lock_duration,
 )
 from origenlab_api.v2.profile_pin import (
@@ -201,19 +200,6 @@ def test_lock_durations_double_and_cap() -> None:
     assert lock_duration(1) == 2 * LOCK_BASE
     assert lock_duration(3) == 8 * LOCK_BASE
     assert lock_duration(40) == LOCK_MAX
-
-
-def test_old_failures_stop_counting() -> None:
-    from datetime import datetime, timedelta, timezone
-
-    now = datetime(2026, 9, 28, 12, tzinfo=timezone.utc)
-    stale = _Throttle(4, 2, None, now - timedelta(days=2))
-    after, locked = stale.after_failure(now, 5)
-    assert (after.failed_attempts, after.lockout_count, locked) == (1, 0, False)
-    fresh = _Throttle(4, 1, None, now - timedelta(minutes=1))
-    after, locked = fresh.after_failure(now, 5)
-    assert locked and after.failed_attempts == 0 and after.lockout_count == 2
-    assert after.locked_until == now + 2 * LOCK_BASE
 
 
 # ------------------------------------------------------------------------ session cookies

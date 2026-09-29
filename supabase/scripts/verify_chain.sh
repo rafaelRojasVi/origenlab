@@ -39,9 +39,9 @@ export OL_REPO_ROOT
 EXPECT_SCHEMAS=7
 EXPECT_TABLES=41
 EXPECT_TABLES_BY_SCHEMA="catalog=2,comms=4,crm=19,evidence=2,outbound=7,platform=6,procurement=1"
-EXPECT_POLICIES=150
+EXPECT_POLICIES=148
 EXPECT_ROLES=4
-EXPECT_SECURITY_DEFINER=1  # outbound.add_contact_control, the closed list (ARCHITECTURE.md §6.2) since W10
+EXPECT_SECURITY_DEFINER=2  # outbound.add_contact_control (W10) and platform.record_pin_attempt (slice 1), the closed list (ARCHITECTURE.md §6.2)
 
 OL_SCHEMAS_SQL="'crm','comms','outbound','evidence','catalog','procurement','platform'"
 

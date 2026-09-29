@@ -73,12 +73,13 @@ select is(
   0, 'every application function is owned by origenlab_owner');
 
 -- The closed SECURITY DEFINER list (ARCHITECTURE.md §6.2) was empty in Slice 0; slice 5 builds its
--- first entry, outbound.add_contact_control (W10 unsubscribe). Every other function is INVOKER.
+-- first entry, outbound.add_contact_control (W10 unsubscribe); slice 1 its second,
+-- platform.record_pin_attempt (the PIN throttle, 20260928194000). Every other function is INVOKER.
 select is(
   (select array_agg(n.nspname || '.' || p.proname order by 1)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and p.prosecdef),
-  '{outbound.add_contact_control}', 'the only SECURITY DEFINER function is the closed-list outbound.add_contact_control');
+  '{outbound.add_contact_control,platform.record_pin_attempt}', 'the only SECURITY DEFINER functions are the closed-list outbound.add_contact_control and platform.record_pin_attempt');
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
@@ -112,8 +113,8 @@ select set_eq(
         'platform.auth_principal_security_version',
         'platform.operator_profile_security_version',
         'platform.auth_session_guard',
-        'platform.auth_event_actor_guard'],
-  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the three W10 unsubscribe functions, the three campaign-block functions, the archived-campaign guard, the three sign-in version guards, the session guard and the audit-actor guard exist');
+        'platform.auth_event_actor_guard', 'platform.record_pin_attempt'],
+  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the three W10 unsubscribe functions, the three campaign-block functions, the archived-campaign guard, the three sign-in version guards, the session guard, the audit-actor guard and the PIN-throttle definer exist');
 
 -- `public` holds nothing.
 select is(

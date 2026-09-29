@@ -159,7 +159,9 @@ operator identity are separate facts** ([`DOMAIN.md`](DOMAIN.md) §7.3):
    (`ORIGENLAB_PROFILE_PIN_PEPPER`, separate from the session secret) — and
    selects the `platform.operator`. Failures are throttled and locked out in
    the database, shared by every worker; every refusal is the same public
-   error.
+   error. The throttle is written only by `platform.record_pin_attempt`
+   ([§6.2](#m-arch-definer)): the API names the outcome, the database
+   computes the counters, the lock and its duration.
 3. The signed session binds the principal, its Google issuer and subject, the selected
    operator, the operator's, profile's and principal's `version` and the
    Google authentication time, and names its own `platform.auth_session` row
@@ -317,8 +319,23 @@ worker-written quote columns. Nothing else qualifies, and the list is closed:
 | `outbound.set_send_control(flag, value, reason)` | `send_control` | `origenlab_api` |
 | `outbound.add_contact_control(kind, purpose, normalized_address, reason, …)` | `contact_control`; for an unsubscribe the whole transaction — its evidence (`evidence.source_record`, `evidence.assertion`, including a request held for review and its later resolution) | `origenlab_api` (admin block and revoke; the «BAJA» reply command) **and** `origenlab_worker` (hard bounce, complaint, unsubscribe) |
 | `crm.record_quote_pdf(revision_id, pdf_sha256, sent_evidence_ids)` | only `quote_revision.pdf_sha256` and the sent-evidence ids | `origenlab_worker` |
+| `platform.record_pin_attempt(operation, principal_id, operator_id)` | only the four PIN-throttle columns of one `auth_principal` row and of one of its `operator_profile` rows | `origenlab_api` |
 
-**Built so far (2026-09-27): only `outbound.add_contact_control`, and only for
+**`platform.record_pin_attempt` (slice 1, 2026-09-28)** is the only runtime writer of the
+PIN throttle (§5.1); the runtime role holds no `UPDATE` on either table, so it
+can neither reset a counter nor lift a lock, nor take the row lock itself. The caller chooses
+one of three closed operations — `begin_attempt` (lock the principal row, then the profile row
+when it belongs to that principal, and report whether either is locked; the locks serialize
+concurrent attempts until the transaction ends), `record_failure`, `record_success` — and
+supplies no counter, deadline or timestamp: the function computes them from the locked rows and
+the database clock. A failure while locked counts nothing; a success while locked is refused. It
+asserts `session_user = 'origenlab_api'`, pins `search_path = pg_catalog`, qualifies every
+relation and has no dynamic SQL (`supabase/tests/075_pin_throttle_definer.sql`,
+`supabase/scripts/verify_direct_logins.sh`, `apps/api/tests/test_v2_profile_login.py`).
+Authentication is not a commercial aggregate: it writes no `crm.domain_event`; the API appends
+the matching `platform.auth_event` rows in the same transaction.
+
+**Built before it (2026-09-27): only `outbound.add_contact_control`, and only for
 `(block, marketing, unsubscribe)`** — the «BAJA» reply command of
 [`WORKFLOWS.md`](WORKFLOWS.md) §W10. **This function owns the complete unsubscribe transaction,
 including its immutable evidence**: in one call — one statement, so all or nothing — it writes the

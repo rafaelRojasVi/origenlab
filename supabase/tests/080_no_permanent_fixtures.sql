@@ -7,7 +7,7 @@ select plan(7);
 select is(
   (select array_agg(n.nspname || '.' || p.proname order by 1)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform') and p.prosecdef),
-  '{outbound.add_contact_control}', 'no SECURITY DEFINER function remains beyond the closed list built so far (outbound.add_contact_control)');
+  '{outbound.add_contact_control,platform.record_pin_attempt}', 'no SECURITY DEFINER function remains beyond the closed list built so far (outbound.add_contact_control, platform.record_pin_attempt)');
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform') and p.proname like '\_\_%'),
@@ -23,7 +23,7 @@ select is(
 select is(
   (select count(*)::int from pg_policies
     where schemaname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')),
-  150, 'the policy set is intact (150)');
+  148, 'the policy set is intact (148)');
 select is(
   (select count(*)::int from pg_auth_members am
     where am.roleid in ('origenlab_api'::regrole, 'origenlab_worker'::regrole, 'origenlab_migrator'::regrole)

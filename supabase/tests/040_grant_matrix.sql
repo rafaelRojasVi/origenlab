@@ -101,9 +101,10 @@ insert into expected values
     ('platform', 'operator', 'origenlab_worker', 'S', null, 'S'),
     ('platform', 'command_receipt', 'origenlab_api', 'SIU', null, 'SIU'),
     ('platform', 'command_receipt', 'origenlab_worker', 'S', null, 'S'),
-    ('platform', 'auth_principal', 'origenlab_api', 'S', array['failed_attempts', 'lockout_count', 'locked_until', 'last_failed_at'], 'SU'),
+    -- 20260928194000: no throttle column is writable; platform.record_pin_attempt is the writer.
+    ('platform', 'auth_principal', 'origenlab_api', 'S', null, 'S'),
     ('platform', 'auth_principal', 'origenlab_worker', '', null, ''),
-    ('platform', 'operator_profile', 'origenlab_api', 'S', array['failed_attempts', 'lockout_count', 'locked_until', 'last_failed_at'], 'SU'),
+    ('platform', 'operator_profile', 'origenlab_api', 'S', null, 'S'),
     ('platform', 'operator_profile', 'origenlab_worker', '', null, ''),
     ('platform', 'auth_event', 'origenlab_api', 'SI', null, 'SI'),
     ('platform', 'auth_event', 'origenlab_worker', '', null, ''),

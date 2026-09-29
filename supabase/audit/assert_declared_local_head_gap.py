@@ -99,18 +99,29 @@ POST_SLICE0_FUNCTIONS = {
     # 20260928193000_slice1_lockout_clear_audit.sql — the INVOKER trigger function
     # that refuses a lockout.cleared audit event from the runtime role (pgTAP 073).
     "platform.auth_event_actor_guard",
+    # 20260928194000_slice1_pin_throttle_definer.sql — the closed-list definer
+    # below, the only runtime writer of the PIN throttle (pgTAP 075).
+    "platform.record_pin_attempt",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
-# first entry, from 20260927230000_slice5_w10_unsubscribe.sql. a05 must report
-# exactly this one entry beyond the (empty) Slice 0 baseline, with this owner,
-# signature and pinned search_path — anything else is refused.
-EXPECTED_SECURITY_DEFINER = (
+# first entry, from 20260927230000_slice5_w10_unsubscribe.sql, and its second,
+# from 20260928194000_slice1_pin_throttle_definer.sql. a05 must report exactly
+# these entries beyond the (empty) Slice 0 baseline, with this owner, signature
+# and pinned search_path — anything else is refused. Sorted as the audit sorts.
+EXPECTED_SECURITY_DEFINERS = (
     '{"arguments":"p_kind text, p_purpose text, p_address text, p_reason text, '
     'p_operator_id uuid, p_command_receipt_id uuid, p_evidence jsonb",'
     '"name":"add_contact_control","owner":"origenlab_owner",'
-    '"proconfig":"search_path=pg_catalog","schema":"outbound"}'
+    '"proconfig":"search_path=pg_catalog","schema":"outbound"}',
+    # The audit renders the whole argument list, OUT parameters included.
+    '{"arguments":"p_operation text, p_principal_id uuid, p_operator_id uuid, '
+    'OUT principal_locked boolean, OUT profile_locked boolean, '
+    'OUT principal_lock_started boolean, OUT profile_lock_started boolean",'
+    '"name":"record_pin_attempt","owner":"origenlab_owner",'
+    '"proconfig":"search_path=pg_catalog","schema":"platform"}',
 )
+EXPECTED_SECURITY_DEFINER = "; ".join(EXPECTED_SECURITY_DEFINERS)
 
 EXPECTED_FUNCTION_COUNT = SLICE0_FUNCTION_COUNT + len(POST_SLICE0_FUNCTIONS)
 
@@ -176,14 +187,14 @@ EXPECTED_SUMMARIES = {
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
-        "security_definer_count": 1,
+        "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
         "table_count": 41,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 150,
+        "policy_count": 148,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -279,10 +290,12 @@ def main() -> int:
     if "8 entr(y|ies) are present here and not in the baseline" not in a08_text:
         refuse("a08 does not report exactly eight extra tables")
 
-    # The 25 policy additions must belong to those same eight reviewed tables:
+    # The 23 policy additions must belong to those same eight reviewed tables:
     # four each for the first four (api select/insert/update, worker select),
-    # two each for the first three sign-in tables (api select plus update or
-    # insert) and three for auth_session (api select, insert, update).
+    # one each for auth_principal and operator_profile (api select: their
+    # throttle is written by platform.record_pin_attempt, 20260928194000), two
+    # for auth_event (api select, insert) and three for auth_session (api
+    # select, insert, update).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -304,8 +317,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "25 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly twenty-five extra policies")
+    if "23 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly twenty-three extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -327,7 +340,7 @@ def main() -> int:
         "a04": ["relations in scope: observed 42, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
-            "1 entr(y|ies) are present here and not in the baseline: "
+            f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "
             + EXPECTED_SECURITY_DEFINER,
             f"functions in scope: observed {EXPECTED_FUNCTION_COUNT}, "
             f"expected {SLICE0_FUNCTION_COUNT}",

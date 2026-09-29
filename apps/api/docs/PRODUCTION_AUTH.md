@@ -462,8 +462,9 @@ Google sign-in (unchanged up to the claims check)
         │
   GET  /auth/profiles        → the principal's usable profiles: id, display name, role label
   POST /auth/profile/select  {profile_id, pin}
-        │  API: lock principal row, lock profile row (FOR UPDATE), check throttle,
-        │       one Argon2id verification (decoy if unknown/locked), audit event
+        │  API: record_pin_attempt('begin_attempt') locks principal row, then profile row,
+        │       and reports the lock; one Argon2id verification (decoy if unknown/locked);
+        │       record_pin_attempt('record_failure' | 'record_success'); audit event
         ▼
   old session row revoked (profile_selected); successor row + cookie with a new identifier and
   { operator id, operator version, profile version, selection time }, same auth time and the
@@ -552,8 +553,12 @@ Google sign-in (unchanged up to the claims check)
   `Sec-Fetch-Site: cross-site`.
 - **Least privilege.** `origenlab_api` only reads `platform.operator`: it cannot create an
   operator or change a role, status or sign-in kind (INSERT and UPDATE revoked by
-  `20260928192000`; no route ever used them). It reads the four sign-in tables, updates only
-  the four throttle columns, appends audit events, and inserts and revokes session rows (it
+  `20260928192000`; no route ever used them). It reads the four sign-in tables, appends audit
+  events, writes the PIN throttle only through `platform.record_pin_attempt` (`20260928194000`:
+  a SECURITY DEFINER function that takes a closed operation — `begin_attempt`,
+  `record_failure`, `record_success` — and computes every counter, lock and timestamp itself;
+  the role holds no UPDATE on either throttle table, so it can neither reset a counter nor lift a
+  lock), and inserts and revokes session rows (it
   can never extend, reopen or delete one). It cannot create a principal or profile, relink one or
   write a PIN hash. `origenlab_worker` has no access to them at all.
 

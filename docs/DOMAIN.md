@@ -862,9 +862,11 @@ never also be an operator's address (both directions are refused by trigger).
 address change **whoever writes the row**. A signed session carries the
 operator's, the profile's and the principal's `version` and is re-checked on
 every request, so a role, PIN or status change ends every session it affects.
-The runtime API role reads all three tables, updates only their throttle
-columns and appends audit events; it cannot write a principal, a profile link
-or a PIN hash — provisioning runs as the owner through
+The runtime API role reads all three tables and appends audit events; it
+writes the throttle columns only through the SECURITY DEFINER
+`platform.record_pin_attempt` (`20260928194000`, ARCHITECTURE.md §6.2), which
+computes the counters and the lock itself, and it cannot write a principal, a
+profile link or a PIN hash — provisioning runs as the owner through
 `apps/api/scripts/profile_roster.py`. The worker has no privilege on any of
 them. No names, principals, profiles or hashes are seeded by the migration.
 `supabase/tests/010_inventory.sql`, `supabase/scripts/verify_chain.sh` and
