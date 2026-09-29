@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Migrator-only maintenance of shared sign-in. See `origenlab_api.v2.profile_auth_admin`.
 
+    # clear a PIN lockout early: a profile's, and/or the whole principal's (plan, then apply)
+    uv run python scripts/profile_auth_admin.py clear-lockout --principal-email <shared address> \\
+        --profile <key> [--profile <key> …] [--principal]
+    uv run python scripts/profile_auth_admin.py clear-lockout … \\
+        --apply --confirm-changes <N> --confirm-database <name>
+
     # prune session rows that expired more than a day ago (plan, then apply the reviewed plan)
     uv run python scripts/profile_auth_admin.py prune-sessions
     uv run python scripts/profile_auth_admin.py prune-sessions \\
@@ -19,9 +25,12 @@ import sys
 
 from origenlab_api.v2.profile_auth_admin import (
     AuthAdminRefused,
+    apply_clear_lockout,
     apply_prune,
+    describe_lockout,
     describe_prune,
     parse_cutoff,
+    plan_clear_lockout,
     plan_prune,
 )
 
@@ -30,6 +39,13 @@ def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--dsn-env", default="ORIGENLAB_V2_PROVISIONING_DATABASE_URL")
     sub = p.add_subparsers(dest="command", required=True)
+    clear = sub.add_parser("clear-lockout", help="clear a profile's or the principal's PIN lockout early")
+    clear.add_argument("--principal-email", required=True)
+    clear.add_argument("--profile", action="append", default=[], metavar="KEY")
+    clear.add_argument("--principal", action="store_true", help="also clear the principal-wide throttle")
+    clear.add_argument("--apply", action="store_true")
+    clear.add_argument("--confirm-changes", type=int)
+    clear.add_argument("--confirm-database")
     prune = sub.add_parser("prune-sessions", help="delete session rows that expired more than N days ago")
     prune.add_argument("--older-than-days", type=int, default=1)
     prune.add_argument("--apply", action="store_true")
@@ -40,6 +56,18 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _run(conn, args) -> list[str]:
+    if args.command == "clear-lockout":
+        request = dict(principal_email=args.principal_email, profile_keys=args.profile,
+                       include_principal=args.principal)
+        if args.apply:
+            if args.confirm_changes is None or not args.confirm_database:
+                raise AuthAdminRefused("--apply needs --confirm-changes and --confirm-database "
+                                       "from a reviewed plan")
+            result = apply_clear_lockout(conn, **request, expected_changes=args.confirm_changes,
+                                         expected_database=args.confirm_database)
+        else:
+            result = plan_clear_lockout(conn, **request)
+        return describe_lockout(result)
     if args.command == "prune-sessions":
         if args.apply:
             if args.confirm_changes is None or not args.confirm_database or not args.confirm_cutoff:

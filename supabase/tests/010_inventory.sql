@@ -111,8 +111,9 @@ select set_eq(
         'platform.operator_security_version',
         'platform.auth_principal_security_version',
         'platform.operator_profile_security_version',
-        'platform.auth_session_guard'],
-  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the three W10 unsubscribe functions, the three campaign-block functions, the archived-campaign guard, the three sign-in version guards and the session guard exist');
+        'platform.auth_session_guard',
+        'platform.auth_event_actor_guard'],
+  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the three W10 unsubscribe functions, the three campaign-block functions, the archived-campaign guard, the three sign-in version guards, the session guard and the audit-actor guard exist');
 
 -- `public` holds nothing.
 select is(

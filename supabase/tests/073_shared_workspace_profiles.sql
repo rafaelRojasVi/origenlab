@@ -28,7 +28,7 @@ end
 $$;
 
 set role origenlab_owner;
-select plan(67);
+select plan(71);
 
 -- A valid Argon2id PHC string of an invented PIN (the value is irrelevant here; only its shape is).
 create temp table phc (n int, v text);
@@ -217,6 +217,17 @@ select is(left(pg_temp.run_as('origenlab_api', $$insert into platform.operator (
 select is(pg_temp.run_as('origenlab_api', 'select 1 from platform.operator limit 1'), 'ok', 'api still reads operators');
 select is(pg_temp.run_as('origenlab_api', $$insert into platform.auth_event (event_type, principal_id, principal_email_norm) values ('profile.cleared', '73000000-0000-4000-8000-000000000001', 'compartida@example.test')$$), 'ok',
   'api appends audit events');
+-- 20260928193000: an early lockout clear is recorded only by the migrator (as the owner).
+set role origenlab_owner;
+select lives_ok($$ insert into platform.auth_event (event_type, principal_id, principal_email_norm, operator_id)
+  values ('lockout.cleared', '73000000-0000-4000-8000-000000000001', 'compartida@example.test', '73000000-0000-4000-8000-000000000012') $$,
+  'the owner records a cleared lockout');
+select throws_ok($$ insert into platform.auth_event (event_type) values ('lockout.cleared') $$,
+  '23514', null, 'a cleared lockout names its principal');
+select is(left(pg_temp.run_as('origenlab_api', $$insert into platform.auth_event (event_type, principal_id, principal_email_norm) values ('lockout.cleared', '73000000-0000-4000-8000-000000000001', 'compartida@example.test')$$), 5), '42501',
+  'api may not record a cleared lockout: it cannot forge an administrator''s decision');
+select is(pg_temp.run_as('origenlab_api', $$insert into platform.auth_event (event_type, principal_id, principal_email_norm) values ('profile.locked', '73000000-0000-4000-8000-000000000001', 'compartida@example.test')$$), 'ok',
+  'api still records the events of the sign-in path');
 select is(left(pg_temp.run_as('origenlab_worker', 'select 1 from platform.operator_profile limit 1'), 5), '42501',
   'the worker cannot read a PIN hash');
 select is(left(pg_temp.run_as('origenlab_worker', 'select 1 from platform.auth_event limit 1'), 5), '42501',

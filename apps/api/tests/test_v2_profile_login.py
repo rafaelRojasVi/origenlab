@@ -22,6 +22,8 @@ stand-ins, as in `test_v2_google_auth.py`):
 * Sessions are revocable rows: a cookie copied to another API instance fails right after logout,
   "Cambiar perfil" and a switch revoke the old selection, rotation never extends the expiry, the
   database's expiry is enforced, only a keyed hash is stored, and the migrator prunes.
+* A lockout is cleared early only by the migrator tool — plan, exact count and database, one
+  `lockout.cleared` audit event per target — never by the runtime role or a route.
 * Tampered or cross-principal cookies are refused; no header selects an operator.
 * No PIN appears in a response, a log record or any auth table.
 * Provisioning plans first, reads PINs only from a protected file or a hidden prompt, applies
@@ -822,6 +824,92 @@ def test_the_migrator_prunes_ended_sessions_only_as_planned(monkeypatch, db, ids
     assert live.client.get("/v2/contacts").status_code == 200, "a live session is never pruned"
     code, _, err = _run_admin(monkeypatch, ["prune-sessions"], dsn=runtime_dsn(db))
     assert code == 2 and "SQLSTATE 42501" in err, "the runtime role cannot run it"
+
+
+# --------------------------------------------------------------- clearing a lockout
+
+
+def _clear(monkeypatch, db: str, *extra: str) -> tuple[int, str, str]:
+    return _run_admin(monkeypatch, ["clear-lockout", "--principal-email", SHARED, *extra], dsn=db)
+
+
+def _pending(out: str) -> int:
+    return int(next(line for line in out.splitlines() if line.startswith("pending changes:")).split(":")[1])
+
+
+def test_the_migrator_clears_a_profile_lockout_only_as_planned(monkeypatch, db, ids) -> None:
+    using = _selected(monkeypatch, db, ids, "ana")
+    api = Api(monkeypatch, db)
+    api.google()
+    for _ in range(PROFILE_MAX_FAILURES):
+        api.select("carla", "111119", ids)
+    assert api.select("carla", PINS["carla"], ids).json() == REFUSED, "locked"
+    versions = _sql(db, "select version from platform.operator_profile where operator_id = %s", (ids["carla"],))
+
+    code, out, err = _clear(monkeypatch, db, "--profile", "carla")
+    assert code == 0, err
+    assert "PLAN (read-only" in out and "LOCKED until" in out and "c***@origenlab.cl" in out
+    assert _pending(out) == 1
+    assert _profile_throttle(db, ids["carla"])[2] is True, "the plan wrote nothing"
+    database = db.rsplit("/", 1)[1]
+    for bad in (["--confirm-changes", "2", "--confirm-database", database],
+                ["--confirm-changes", "1", "--confirm-database", "origenlab_clean"],
+                ["--confirm-changes", "1"]):
+        code, _, err = _clear(monkeypatch, db, "--profile", "carla", "--apply", *bad)
+        assert code == 2 and "refused" in err
+    assert _profile_throttle(db, ids["carla"])[2] is True, "a refused apply wrote nothing"
+
+    code, out, err = _clear(monkeypatch, db, "--profile", "carla", "--apply",
+                            "--confirm-changes", "1", "--confirm-database", database)
+    assert code == 0 and "APPLIED" in out, err
+    assert _profile_throttle(db, ids["carla"]) == (0, 0, False)
+    event = _sql(db, "select event_type, principal_id::text, principal_email_norm, operator_id::text "
+                     "from platform.auth_event where event_type = 'lockout.cleared' order by occurred_at desc limit 1")
+    assert event == [("lockout.cleared", ids["shared"], SHARED, ids["carla"])]
+    assert api.select("carla", PINS["carla"], ids).status_code == 200
+    assert _sql(db, "select version from platform.operator_profile where operator_id = %s",
+                (ids["carla"],)) == versions, "clearing signs nobody out"
+    assert using.client.get("/v2/contacts").status_code == 200
+    code, out, _ = _clear(monkeypatch, db, "--profile", "carla")
+    assert code == 0 and "nothing to apply" in out
+
+
+def test_the_migrator_clears_the_principal_wide_lockout(monkeypatch, db, ids) -> None:
+    api = Api(monkeypatch, db)
+    api.google()
+    for i in range(PRINCIPAL_MAX_FAILURES):
+        api.select(f"00000000-0000-4000-8000-{i:012d}", "111119", ids)
+    assert api.select("ana", PINS["ana"], ids).json() == REFUSED
+    code, out, err = _clear(monkeypatch, db, "--principal")
+    assert code == 0 and _pending(out) == 1, err
+    code, out, err = _clear(monkeypatch, db, "--principal", "--apply", "--confirm-changes", "1",
+                            "--confirm-database", db.rsplit("/", 1)[1])
+    assert code == 0, err
+    assert api.select("ana", PINS["ana"], ids).status_code == 200
+    assert _sql(db, "select operator_id from platform.auth_event where event_type = 'lockout.cleared' "
+                    "order by occurred_at desc limit 1") == [(None,)], "the principal-wide throttle"
+
+
+@pytest.mark.parametrize("argv, reason", [
+    ([], "name what to clear"),
+    (["--profile", "nadie"], "no profile 'nadie'"),
+    (["--profile", "Carla Admin"], "not profile keys"),
+])
+def test_clearing_refuses_an_unclear_target(monkeypatch, db, ids, argv, reason) -> None:
+    code, _, err = _clear(monkeypatch, db, *argv)
+    assert code == 2 and reason in err
+
+
+def test_the_runtime_role_can_neither_clear_a_lockout_nor_record_one(monkeypatch, db, ids) -> None:
+    import psycopg
+
+    code, _, err = _clear(monkeypatch, runtime_dsn(db), "--profile", "carla")
+    assert code == 2 and "SQLSTATE 42501" in err
+    with psycopg.connect(runtime_dsn(db)) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute("insert into platform.auth_event (event_type, principal_id, principal_email_norm) "
+                      "values ('lockout.cleared', %s, %s)", (ids["shared"], SHARED))
+    with psycopg.connect(runtime_dsn(db)) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute("update platform.operator_profile set lockout_count = 0, status = 'active'")
 
 
 # ------------------------------------------------------------------ no PIN anywhere

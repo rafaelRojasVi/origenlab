@@ -58,10 +58,10 @@ def current_head_report():
         _check("a13", status="CORROBORATED", required=False),
         _check("a04", "FAIL", {"relation_count": 42},
                ["relations in scope: observed 42, expected 34"]),
-        _check("a05", "FAIL", {"function_count": 26, "security_definer_count": 1}, [
+        _check("a05", "FAIL", {"function_count": 27, "security_definer_count": 1}, [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             "1 entr(y|ies) are present here and not in the baseline: " + gap.EXPECTED_SECURITY_DEFINER,
-            "functions in scope: observed 26, expected 3"]),
+            "functions in scope: observed 27, expected 3"]),
         _check("a08", "FAIL", {"table_count": 41, "schema_count": 7}, [
             "tables: 8 entr(y|ies) are present here and not in the baseline: "
             + "; ".join(_table(t) for t in TABLES + SIGN_IN_TABLES + (SESSION_TABLE,)),
@@ -110,7 +110,7 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_historical_guard_is_a_declared_post_slice0_function(self):
         self.assertIn("crm.quote_revision_historical_guard", gap.POST_SLICE0_FUNCTIONS)
         self.assertEqual(3, gap.SLICE0_FUNCTION_COUNT)
-        self.assertEqual(26, gap.EXPECTED_FUNCTION_COUNT)
+        self.assertEqual(27, gap.EXPECTED_FUNCTION_COUNT)
 
     def test_the_campaign_block_schema_is_declared(self):
         self.assertIn("campaign_block", gap.EXPECTED_EXTRA_TABLES)
@@ -134,6 +134,7 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_session_table_is_declared(self):
         self.assertIn(SESSION_TABLE, gap.EXPECTED_EXTRA_TABLES)
         self.assertIn("platform.auth_session_guard", gap.POST_SLICE0_FUNCTIONS)
+        self.assertIn("platform.auth_event_actor_guard", gap.POST_SLICE0_FUNCTIONS)
         for fk in ("platform.auth_session.principal_id -> platform.auth_principal.id",
                    "platform.auth_session.operator_id -> platform.operator_profile.operator_id"):
             self.assertIn(fk, gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS)
@@ -211,14 +212,14 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_previous_head_count_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 25
-        self.assert_refused(report, "a05.function_count: observed 25, expected 26")
+        a05["summary"]["function_count"] = 26
+        self.assert_refused(report, "a05.function_count: observed 26, expected 27")
 
-    def test_an_undeclared_twenty_seventh_function_is_refused(self):
+    def test_an_undeclared_twenty_eighth_function_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 27
-        self.assert_refused(report, "a05.function_count: observed 27, expected 26")
+        a05["summary"]["function_count"] = 28
+        self.assert_refused(report, "a05.function_count: observed 28, expected 27")
 
     def test_a_second_security_definer_function_is_refused(self):
         report = current_head_report()

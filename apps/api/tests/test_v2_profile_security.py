@@ -533,6 +533,14 @@ def test_the_auth_surface_is_exactly_google_session_logout_and_the_three_profile
     }
 
 
+def test_no_route_clears_a_lockout_prunes_sessions_or_administers_profiles(monkeypatch) -> None:
+    _env(monkeypatch)
+    app = create_app()
+    paths = [getattr(route, "path", "") for route in app.routes]
+    for word in ("lock", "prune", "roster", "unlock", "throttle", "auth_admin", "provision"):
+        assert not [p for p in paths if word in p.lower()], word
+
+
 def test_profile_routes_are_absent_when_the_switch_is_off(monkeypatch) -> None:
     _env(monkeypatch, profiles=False, pepper=None)
     app = create_app()

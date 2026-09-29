@@ -436,7 +436,7 @@ separate facts (`docs/ARCHITECTURE.md` §5.1, `docs/DOMAIN.md` §7.3):
 | **Principal** | `platform.auth_principal` | the Google account: its address **and** its stable issuer + `sub` (required in production). Grants nothing by itself |
 | **Operator** | `platform.operator`, `sign_in_kind = 'shared_profile'` | the person who acts: display name, role (`admin` / `sales` / `viewer`), status. **Has no email address** — no invented or duplicate mailbox is created per person |
 | **Profile** | `platform.operator_profile` | links one operator to one principal, with that person's PIN as an Argon2id hash |
-| **Audit** | `platform.auth_event` | append-only: profile selected / refused / locked / cleared, logout |
+| **Audit** | `platform.auth_event` | append-only: profile selected / refused / locked / cleared, logout, and a migrator's early lockout clear |
 | **Session** | `platform.auth_session` | one row per shared-sign-in session: a keyed hash of the cookie's identifier, the principal, the selected operator, expiry, revocation |
 
 Individual Google accounts keep working unchanged: an operator with `sign_in_kind =
@@ -517,8 +517,9 @@ Google sign-in (unchanged up to the claims check)
 
   Counters live on the principal and profile rows; both are taken `FOR UPDATE` in principal →
   profile order before the PIN is checked, so concurrent attempts across API instances
-  serialize and none is lost. An admin can clear a lock early with an owner update of the
-  four throttle columns.
+  serialize and none is lost. A lock is cleared early only with the migrator tool
+  (`profile_auth_admin.py clear-lockout`, below), which records a `lockout.cleared` audit event
+  the runtime role cannot write; it is never a dashboard or API action.
 - **Session binding and revocation.** The cookie is HMAC-signed (unchanged key), HttpOnly,
   SameSite=Lax, and `Secure` + `__Host-` over HTTPS. It names a `platform.auth_session` row
   by a random 256-bit identifier; the table stores only HMAC-SHA256(session secret, identifier),
@@ -605,10 +606,28 @@ To disable a person, set their `"status": "disabled"` and apply (their session e
 next request). Profiles the roster omits are reported and left untouched. Delete the PIN file
 after applying.
 
-### Session maintenance (`scripts/profile_auth_admin.py`)
+### Migrator maintenance (`scripts/profile_auth_admin.py`)
 
-Ended session rows grant nothing, but the runtime role cannot delete them. The migrator prunes
-rows that expired more than a day ago (`--older-than-days`, at least 1), plan first:
+Two operations, both as the migrator and both plan-first; neither is ever a route.
+
+**Clearing a lockout early.** A lock expires by itself (15 min, doubling). To lift one sooner —
+a person locked out who has proven who they are — name the principal and what to clear: one or
+more profiles (`--profile <key>`) and/or the principal-wide throttle (`--principal`):
+
+```bash
+uv run python scripts/profile_auth_admin.py clear-lockout --principal-email <shared address> --profile <key>
+uv run python scripts/profile_auth_admin.py clear-lockout --principal-email <shared address> --profile <key> \
+    --apply --confirm-changes <N> --confirm-database <name>
+```
+
+The plan shows each target's state (`LOCKED until …`, failures, lockouts) and the exact count.
+Applying resets that target's four throttle columns and appends one `platform.auth_event`
+`lockout.cleared` (principal, and the profile's operator when a profile was cleared) per target
+— an event a trigger refuses from the runtime role. It moves no version (nobody is signed out)
+and never touches a PIN; a forgotten PIN is re-provisioned with `profile_roster.py`.
+
+**Pruning sessions.** Ended session rows grant nothing, but the runtime role cannot delete them.
+The migrator prunes rows that expired more than a day ago (`--older-than-days`, at least 1):
 
 ```bash
 uv run python scripts/profile_auth_admin.py prune-sessions
@@ -637,7 +656,7 @@ Same DSN rule as provisioning (`ORIGENLAB_V2_PROVISIONING_DATABASE_URL`, a login
 ### Production procedure (future; not performed)
 
 1. Prerequisites of *Production activation* above (remote V2 database adopted, Google client).
-2. Apply the `20260928180000`–`20260928192000` slice-1 sign-in migrations with the normal
+2. Apply the `20260928180000`–`20260928193000` slice-1 sign-in migrations with the normal
    migration procedure (`docs/OPERATIONS.md`). They seed nothing.
 3. Generate the pepper; store it as a Render secret `ORIGENLAB_PROFILE_PIN_PEPPER` (distinct
    from the session secret). Do not set it anywhere else.

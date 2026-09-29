@@ -96,6 +96,9 @@ POST_SLICE0_FUNCTIONS = {
     # function that keeps a session's identity fixed, never extends it and makes a
     # revocation final (pgTAP: 074_revocable_profile_sessions.sql).
     "platform.auth_session_guard",
+    # 20260928193000_slice1_lockout_clear_audit.sql — the INVOKER trigger function
+    # that refuses a lockout.cleared audit event from the runtime role (pgTAP 073).
+    "platform.auth_event_actor_guard",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
