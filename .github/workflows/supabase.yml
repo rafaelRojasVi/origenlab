@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3
         with:
           version: 2.116.0
 
@@ -135,7 +135,7 @@ jobs:
           supabase/scripts/slice0_audit.sh --verify-report supabase/.audit/reports/slice0-audit-local.md
 
       - name: Upload the sanitised Slice 0 audit report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: slice0-audit-local-report
           path: |
