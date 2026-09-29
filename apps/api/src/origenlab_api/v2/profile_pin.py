@@ -125,7 +125,7 @@ class PinHasher:
         self._secret = pepper.encode("utf-8")
         self._parameters = parameters
         # A hash of nothing in particular, verified against when there is no real hash to check,
-        # so an unknown or locked profile costs the same time as a wrong PIN.
+        # so an unknown profile still spends one Argon2 derivation, as a wrong PIN does.
         self._decoy = self.hash(base64.b32encode(os.urandom(10)).decode())
 
     def __repr__(self) -> str:  # never show the pepper
@@ -150,7 +150,9 @@ class PinHasher:
         """True only when `encoded` is a sound Argon2id hash of `pin` under this pepper.
 
         Always performs one Argon2 derivation — against the decoy when `encoded` is absent or
-        unusable — so the answer takes the same time whatever the reason it is no.
+        unusable — so the dominant cost of a "no" does not depend on why. That is not a
+        constant-time guarantee: the decoy uses this hasher's parameters, and a stored hash may
+        carry others.
         """
         target = encoded if encoded and _PHC_RE.match(encoded) else None
         if not isinstance(pin, str) or len(pin) > MAX_SUBMITTED_PIN_LENGTH:
@@ -170,6 +172,11 @@ class PinHasher:
         actual = self._derive(pin, salt, m=m, t=t, p=p, length=len(expected))
         return target is not None and hmac.compare_digest(actual, expected)
 
-    def dummy_verify(self) -> None:
-        """Spend one verification's time and learn nothing (unknown or locked profile)."""
-        self.verify("", None)
+    def dummy_verify(self, encoded: str | None = None) -> None:
+        """Spend one Argon2 derivation and learn nothing; never looks at a submitted PIN.
+
+        With `encoded` (a locked profile's own hash, or one a malformed PIN was sent for), the
+        derivation runs at that hash's parameters on an empty input, which no policy-conforming
+        PIN can equal, so the cost matches a real check of that profile. Without it, the decoy.
+        """
+        self.verify("", encoded)

@@ -20,7 +20,9 @@ Policy (documented for operators in `apps/api/docs/PRODUCTION_AUTH.md`):
 * A lock lasts :data:`LOCK_BASE` × 2^(earlier lockouts), capped at :data:`LOCK_MAX`.
 * A failure older than :data:`FAILURE_WINDOW` no longer counts; a lockout older than
   :data:`LOCKOUT_MEMORY` no longer doubles the next one.
-* An attempt while locked is refused **without counting**, and without checking the PIN.
+* An attempt while locked is refused **without counting**, and the submitted PIN is never
+  checked; one Argon2 derivation is still spent, on an empty input against the profile's own
+  hash (:meth:`PinHasher.dummy_verify`).
 * A success resets the selected profile's counters and the principal's failure count,
   but keeps the principal's lockout history. It never resets another profile's, so
   knowing one PIN never helps guess another.
@@ -28,9 +30,17 @@ Policy (documented for operators in `apps/api/docs/PRODUCTION_AUTH.md`):
 Every outcome — success, refusal, lockout — writes one `platform.auth_event`. None of them
 carries the PIN; the refusal reason is a closed vocabulary the table enforces.
 
-The public answer to every refusal is the same (`profile_routes.py`): a caller cannot tell an
-unknown profile from a wrong PIN, a disabled profile or a lock, and the time taken is one Argon2
-verification in every case (`PinHasher.dummy_verify`).
+The public answer to every refusal is the same (`profile_routes.py`): status, body and cookies
+do not tell an unknown profile from a wrong PIN, a disabled profile or a lock.
+
+**The time taken is not claimed to be the same.** Every path that reaches the principal row
+spends one Argon2 derivation — against the requested profile's own hash when there is one (so at
+its parameters), against the decoy otherwise — which removes the dominant difference. The
+database work still differs by outcome: an unknown profile id locks one row, a known one two; a
+locked attempt writes no counters; a failure that starts a lock writes a second audit row; a
+success rotates the session. And every response carries `Server-Timing`. So a lock, or whether a
+profile id exists, may be told apart by timing. Neither reveals a PIN, and a lock bounds the
+guessing that matters.
 """
 
 from __future__ import annotations
@@ -411,8 +421,10 @@ class ProfileAuthRepository:
         success it is revoked and its successor — carrying the selected operator and the same
         `expires_at` — is inserted with `new_token_hash`, in the same transaction.
 
-        Exactly one Argon2 verification happens on every path that reaches the principal row,
-        real or decoy, so the time taken says nothing about why an attempt failed.
+        Exactly one Argon2 derivation happens on every path that reaches the principal row — the
+        real check, or a dummy against the profile's own hash or the decoy — so the dominant
+        cost does not depend on why an attempt failed. The rest of the work does (module
+        docstring): this is not a constant-time claim.
         """
         pid = parse_uuid(principal_id)
         if pid is None:
@@ -466,7 +478,9 @@ class ProfileAuthRepository:
             if candidate is not None and not locked and well_formed:
                 verified = hasher.verify(pin, pin_hash)
             else:
-                hasher.dummy_verify()
+                # Locked, malformed or unknown: the submitted PIN is never checked. The cost is
+                # still spent — at the profile's own parameters when there is a profile.
+                hasher.dummy_verify(pin_hash)
                 verified = False
 
             if verified and candidate is not None and candidate.is_usable:

@@ -173,6 +173,26 @@ def test_a_refusal_costs_one_verification_like_a_wrong_pin(hasher) -> None:
     assert 0.5 < decoy / wrong < 2.0
 
 
+def test_a_dummy_verification_runs_at_the_given_hashs_parameters_and_never_matches(hasher) -> None:
+    stronger = PinHasher(PEPPER, Argon2Parameters(memory_kib=FLOOR.memory_kib * 2, iterations=3, lanes=1))
+    encoded = stronger.hash(PIN)
+    seen: list[tuple[int, int]] = []
+    real = hasher._derive  # noqa: SLF001 - observing the one expensive call
+
+    def spy(pin, salt, *, m, t, p, length):
+        seen.append((m, t))
+        assert pin == "", "a dummy verification never derives from a submitted PIN"
+        return real(pin, salt, m=m, t=t, p=p, length=length)
+
+    hasher._derive = spy  # type: ignore[method-assign]
+    try:
+        assert hasher.dummy_verify(encoded) is None
+        assert hasher.dummy_verify() is None
+    finally:
+        del hasher._derive
+    assert seen == [(FLOOR.memory_kib * 2, 3), (FLOOR.memory_kib, FLOOR.iterations)]
+
+
 # ------------------------------------------------------------------------------ throttle
 
 

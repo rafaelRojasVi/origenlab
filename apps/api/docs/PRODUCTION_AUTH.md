@@ -502,7 +502,17 @@ Google sign-in (unchanged up to the claims check)
   validation error cannot echo it.
 - **One public refusal.** Unknown profile, another principal's profile, wrong PIN, malformed
   PIN, disabled profile or operator, and a lock all answer `401 {"detail":
-  "profile_selection_failed"}` after the same work. The reason is recorded in the audit only.
+  "profile_selection_failed"}` — the same status, body and (absent) cookie. The reason is
+  recorded in the audit only.
+- **Timing is not constant, and is not claimed to be.** One Argon2id derivation is spent on
+  every refusal — the real check; on an empty input against the profile's own hash when it is
+  locked or the PIN is malformed (the submitted PIN is never checked then); or against a decoy
+  for an unknown profile — so the dominant cost does not depend on the reason. The database
+  work does: a locked attempt writes no counters, an unknown profile id locks one row instead
+  of two, a failure that starts a lock writes a second audit event, and every response carries
+  `Server-Timing` / `X-Process-Time-Ms`. A caller may therefore tell by timing that a profile
+  is locked, or that an id is not a profile. Neither reveals a PIN; the lock is what bounds
+  guessing.
 - **Throttle and lockout (persistent, shared by every worker):**
 
   | Rule | Value |
@@ -512,7 +522,7 @@ Google sign-in (unchanged up to the claims check)
   | Lock duration | 15 min, doubling with each lockout remembered, capped at 24 h |
   | A failure stops counting after | 1 h without another failure |
   | A lockout stops doubling the next after | 24 h without a failure |
-  | Attempt while locked | refused, **not counted**, PIN not checked |
+  | Attempt while locked | refused, **not counted**; the submitted PIN is never checked (an Argon2 derivation of an empty input against the profile's hash is still spent) |
   | Success | resets the selected profile's counters and the principal's failure count; keeps the principal's lockout history (so one known PIN cannot reset the principal-wide backoff); never touches another profile's |
 
   Counters live on the principal and profile rows; both are taken `FOR UPDATE` in principal →

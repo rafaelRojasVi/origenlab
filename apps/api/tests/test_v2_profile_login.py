@@ -390,8 +390,14 @@ def test_a_lock_is_the_same_answer_too(monkeypatch, db, ids) -> None:
     api.google()
     for _ in range(PROFILE_MAX_FAILURES):
         assert api.select("bruno", "111119", ids).json() == REFUSED
+    hasher = api.app.state.v2_profile_login.hasher
+    calls: list[tuple[str, str | None]] = []
+    real_verify = hasher.verify
+    monkeypatch.setattr(hasher, "verify", lambda pin, encoded: calls.append((pin, encoded)) or real_verify(pin, encoded))
     locked = api.select("bruno", PINS["bruno"], ids)
     assert (locked.status_code, locked.json()) == (401, REFUSED)
+    stored = _sql(db, "select pin_hash from platform.operator_profile where operator_id = %s", (ids["bruno"],))[0][0]
+    assert calls == [("", stored)], "while locked the submitted PIN is never checked; the cost is still spent"
     assert api.select("ana", PINS["ana"], ids).status_code == 200, "a lock on one profile is not a lock on another"
 
 

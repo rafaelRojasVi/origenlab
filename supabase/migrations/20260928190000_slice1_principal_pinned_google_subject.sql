@@ -3,7 +3,7 @@
 -- docs/ARCHITECTURE.md §5.1; docs/DOMAIN.md §7.3 (#38); apps/api/docs/PRODUCTION_AUTH.md.
 --
 -- An address is not an identity: a Google account that is deleted and created again under the
--- same address (`contacto@…`) is a different account with a different stable subject (`sub`).
+-- same address (the shared mailbox) is a different account with a different stable subject (`sub`).
 -- `20260928180000` made the subject an optional pin. This migration makes it a pair — the
 -- verified ID token's issuer and subject — and the API now requires it in production: a principal
 -- with no pinned subject cannot sign in there at all, and one whose pinned subject differs from

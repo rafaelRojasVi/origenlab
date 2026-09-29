@@ -19,9 +19,10 @@ change to become another operator or to raise a role — the only operator a ses
 one whose PIN was verified here, at the versions signed with it.
 
 **One public refusal.** Unknown profile, another principal's profile, wrong PIN, malformed PIN,
-disabled profile or operator, lockout: all answer 401 `profile_selection_failed`, after the same
-work (`PinHasher.dummy_verify`). The reason is recorded in `platform.auth_event` and nowhere a
-caller can see it.
+disabled profile or operator, lockout: all answer 401 `profile_selection_failed` with the same
+body and no cookie. The reason is recorded in `platform.auth_event` and nowhere a caller can see
+it. The *time* is not guaranteed equal — one Argon2 derivation is spent on every path, but the
+database work differs by outcome (`profile_auth.py`).
 
 **No PIN leaves this module.** The body is parsed by hand — never by a Pydantic model, whose
 422 would echo the input back — and the PIN is handed to the repository and dropped. It is
