@@ -328,7 +328,7 @@ worker-written quote columns. Nothing else qualifies, and the list is closed:
 | `outbound.add_contact_control(kind, purpose, normalized_address, reason, …)` | `contact_control`; for an unsubscribe the whole transaction — its evidence (`evidence.source_record`, `evidence.assertion`, including a request held for review and its later resolution) | `origenlab_api` (admin block and revoke; the «BAJA» reply command) **and** `origenlab_worker` (hard bounce, complaint, unsubscribe) |
 | `crm.record_quote_pdf(revision_id, pdf_sha256, sent_evidence_ids)` | only `quote_revision.pdf_sha256` and the sent-evidence ids | `origenlab_worker` |
 | `platform.begin_pin_attempt(principal_id, operator_id)` | only the one-use attempt record (`pin_attempt_*`) of one `auth_principal` row | `origenlab_api` |
-| `platform.finish_pin_attempt(attempt_id, principal_id, operator_id, previous_operator_id, candidate_proof)` | the four PIN-throttle columns of that `auth_principal` row and of one of its `operator_profile` rows, the attempt record, and exactly one `auth_event` | `origenlab_api` |
+| `platform.finish_pin_attempt(attempt_id, principal_id, operator_id, candidate_proof)` | the four PIN-throttle columns of that `auth_principal` row and of one of its `operator_profile` rows, the attempt record, and exactly one `auth_event` | `origenlab_api` |
 
 **The PIN attempt (slice 1, 2026-09-29, `20260929100000`)** replaced
 `platform.record_pin_attempt`, whose `record_success` took the caller's word that a PIN was
@@ -345,8 +345,9 @@ PIN outcome event (`auth_event_actor_guard`). An attempt is two calls in one tra
   returns the stored verifier.
 * `finish_pin_attempt` accepts only the attempt begun in the same transaction, for the same
   principal and profile, once. The caller supplies a proof — HMAC-SHA256 of its Argon2id output
-  over the attempt, the pair and the nonce — and no verdict, counter, deadline, timestamp or
-  event type. The function recomputes the proof from the stored verifier, compares SHA-256
+  over the attempt, the pair and the nonce — and no verdict, counter, deadline, timestamp,
+  event type or audit context: `profile.selected` records no previous profile, because nothing
+  in the database can verify which one the caller's session held. The function recomputes the proof from the stored verifier, compares SHA-256
   digests, and itself writes the throttle transition and exactly one `platform.auth_event`
   (`profile.selected`, `profile.selection_refused`, `profile.locked`, `principal.locked`) in the
   same statement. A missing or malformed proof is a counted failure; while locked nothing counts.

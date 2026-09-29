@@ -224,7 +224,7 @@ class DeclaredGapTest(unittest.TestCase):
                       'OUT lanes integer, OUT salt text, OUT hash_length integer, OUT nonce bytea"', begin)
         self.assertIn('"name":"finish_pin_attempt"', finish)
         self.assertIn('"arguments":"p_attempt_id uuid, p_principal_id uuid, p_operator_id uuid, '
-                      'p_previous_operator_id uuid, p_candidate_proof bytea, OUT selected boolean, '
+                      'p_candidate_proof bytea, OUT selected boolean, '
                       'OUT reason text"', finish)
         for entry in (begin, finish):
             self.assertIn('"schema":"platform"', entry)

@@ -70,11 +70,11 @@ def _begin(conn: psycopg.Connection, principal: str, operator: str | None) -> Pi
 
 
 def _finish(conn: psycopg.Connection, challenge: PinChallenge | str, principal: str, operator: str | None,
-            proof: bytes | None, previous: str | None = None) -> tuple[bool, str | None]:
+            proof: bytes | None) -> tuple[bool, str | None]:
     attempt = challenge.attempt_id if isinstance(challenge, PinChallenge) else challenge
     return conn.execute(
-        "select selected, reason from platform.finish_pin_attempt(%s::uuid, %s::uuid, %s::uuid, %s::uuid, %s)",
-        (attempt, principal, operator, previous, proof)).fetchone()
+        "select selected, reason from platform.finish_pin_attempt(%s::uuid, %s::uuid, %s::uuid, %s)",
+        (attempt, principal, operator, proof)).fetchone()
 
 
 def _proof(pin: str, challenge: PinChallenge, principal: str, operator: str | None,
@@ -229,13 +229,26 @@ def test_a_wrong_principal_or_profile_pairing_is_refused(db, ids) -> None:
             with pytest.raises(psycopg.errors.NoDataFound):
                 _finish(conn, challenge, finish_principal, finish_operator,
                         _proof(PINS["ana"], challenge, principal, ana))
-    # A previous operator that is not a profile of this principal cannot be written into the audit.
+    assert _throttle(db, ana) == (0, 0, False)
+
+
+def test_a_selection_records_no_caller_supplied_previous_profile(db, ids) -> None:
+    # Nothing inside the database can verify which profile the caller's session held, so the
+    # protected event carries none — and not even the owner may write one into it.
+    principal, ana = ids["shared"], ids["ana"]
     with _api(db) as conn:
         challenge = _begin(conn, principal, ana)
-        with pytest.raises(psycopg.errors.InvalidParameterValue):
-            _finish(conn, challenge, principal, ana, _proof(PINS["ana"], challenge, principal, ana),
-                    previous=ids["franco"])
-    assert _throttle(db, ana) == (0, 0, False)
+        assert _finish(conn, challenge, principal, ana,
+                       _proof(PINS["ana"], challenge, principal, ana)) == (True, None)
+    assert _sql(db, "select previous_operator_id from platform.auth_event "
+                    "where event_type = 'profile.selected' order by occurred_at desc limit 1")[0][0] is None
+    with _owner(db) as conn, pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute("set role origenlab_owner")
+        conn.execute("insert into platform.auth_event (event_type, principal_id, principal_email_norm, "
+                     "operator_id, previous_operator_id) "
+                     "select 'profile.selected', principal_id, email_norm, %s::uuid, %s::uuid "
+                     "from platform.operator_profile p join platform.auth_principal a on a.id = p.principal_id "
+                     "where p.operator_id = %s::uuid", (ana, ids["bruno"], ana))
 
 
 def test_another_principals_profile_is_a_decoy_even_with_its_right_pin(db, ids) -> None:
@@ -344,6 +357,7 @@ def test_no_proof_succeeds_without_the_pin_and_the_pepper(db, ids) -> None:
             c, principal_id=principal, operator_id=ana), hashlib.sha256).digest(),
         "proof bound to another profile": lambda c: _proof(PINS["ana"], c, principal, ids["bruno"]),
     }
+    started = _sql(db, "select clock_timestamp()")[0][0]
     for label, forge in forgeries.items():
         _clean_throttle_now(db)
         with _api(db) as conn:
@@ -351,7 +365,7 @@ def test_no_proof_succeeds_without_the_pin_and_the_pepper(db, ids) -> None:
             assert _finish(conn, challenge, principal, ana, forge(challenge)) == (False, "pin_mismatch"), label
             conn.commit()
     assert _sql(db, "select count(*) from platform.auth_event where event_type = 'profile.selected' "
-                    "and operator_id = %s and occurred_at > now() - interval '1 minute'", (ana,))[0][0] == 0
+                    "and operator_id = %s and occurred_at >= %s", (ana, started))[0][0] == 0
 
 
 def _clean_throttle_now(db: str) -> None:
@@ -554,7 +568,7 @@ def test_success_wrong_malformed_and_locked(db, ids) -> None:
 def test_only_the_runtime_login_may_run_either_function(db, ids) -> None:
     with _owner(db) as conn, conn.cursor() as cur:
         for fn in ("platform.begin_pin_attempt(uuid,uuid)",
-                   "platform.finish_pin_attempt(uuid,uuid,uuid,uuid,bytea)"):
+                   "platform.finish_pin_attempt(uuid,uuid,uuid,bytea)"):
             cur.execute("select coalesce(array_agg(a.grantee::regrole::text order by 1) "
                         "filter (where a.grantee <> p.proowner), '{}') "
                         "from pg_proc p, aclexplode(p.proacl) a where p.oid = %s::regprocedure", (fn,))

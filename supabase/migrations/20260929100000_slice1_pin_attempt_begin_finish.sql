@@ -21,9 +21,8 @@
 --      the two ids, at the profile's own parameters when it exists and at those of the
 --      principal's first profile otherwise — so the API spends the same Argon2id cost and the
 --      HTTP answer cannot tell the cases apart. It never returns the stored verifier.
---   2. `platform.finish_pin_attempt(attempt_id, principal_id, operator_id, previous_operator_id,
---      candidate_proof)` must run in the **same transaction** as its begin (the transaction id is
---      compared) and consumes the attempt, so it runs once. The caller derives
+--   2. `platform.finish_pin_attempt(attempt_id, principal_id, operator_id, candidate_proof)` must
+--      run in the **same transaction** as its begin (the transaction id is compared) and consumes the attempt, so it runs once. The caller derives
 --      `K = Argon2id(PIN, salt, pepper)` and sends `HMAC-SHA256(K, "origenlab.pin-proof.v1" ‖
 --      attempt_id ‖ principal_id ‖ operator_id ‖ nonce)`; the function recomputes it from the
 --      stored verifier and compares SHA-256 digests of the two, never the raw values. It then
@@ -45,7 +44,11 @@
 -- API's trust boundary (apps/api/docs/PRODUCTION_AUTH.md); this migration closes the SQL-only
 -- attacker — an injection, a leaked runtime password, a bug — who holds neither.
 --
--- Audit. The four PIN outcome events are recorded **only** by `finish_pin_attempt`:
+-- Audit. The four PIN outcome events are recorded **only** by `finish_pin_attempt`, and carry only
+-- what the function itself read from locked rows: `profile.selected` records no
+-- `previous_operator_id`, because nothing inside the database can verify which profile the
+-- caller's session held — a value taken from the caller would be audit context the attacker this
+-- migration closes out could choose. The subject-shape check pins it NULL.
 -- `auth_event_actor_guard` now refuses them, like `lockout.cleared`, from any role that is not a
 -- member of `origenlab_owner`, so a direct INSERT by the runtime role cannot forge a selection, a
 -- refusal or a lockout. The runtime role keeps its INSERT for `profile.cleared` and
@@ -122,6 +125,7 @@ alter table platform.auth_event
   add constraint auth_event_subject_shape check (
     case event_type
       when 'profile.selected' then principal_id is not null and operator_id is not null
+                                   and previous_operator_id is null
       when 'profile.selection_refused' then principal_id is not null
       when 'profile.locked' then principal_id is not null and operator_id is not null
       when 'principal.locked' then principal_id is not null
@@ -304,7 +308,6 @@ create function platform.finish_pin_attempt(
   p_attempt_id uuid,
   p_principal_id uuid,
   p_operator_id uuid,
-  p_previous_operator_id uuid,
   p_candidate_proof bytea,
   out selected boolean,
   out reason text
@@ -363,12 +366,6 @@ begin
      or v_attempt_xact is distinct from pg_catalog.pg_current_xact_id()
      or v_attempt_operator is distinct from p_operator_id then
     raise exception 'platform.finish_pin_attempt: no such attempt in this transaction' using errcode = 'P0002';
-  end if;
-  if p_previous_operator_id is not null and not exists (
-       select 1 from platform.operator_profile q
-        where q.operator_id = p_previous_operator_id and q.principal_id = p_principal_id) then
-    raise exception 'platform.finish_pin_attempt: the previous operator is not a profile of this principal'
-      using errcode = '22023';
   end if;
 
   -- Consumed: whatever follows, this attempt cannot finish twice.
@@ -439,8 +436,8 @@ begin
        set failed_attempts = 0, lockout_count = 0, locked_until = null, last_failed_at = null
      where operator_id = p_operator_id;
     insert into platform.auth_event
-      (occurred_at, event_type, principal_id, principal_email_norm, operator_id, previous_operator_id)
-    values (v_now, 'profile.selected', p_principal_id, v_email, p_operator_id, p_previous_operator_id);
+      (occurred_at, event_type, principal_id, principal_email_norm, operator_id)
+    values (v_now, 'profile.selected', p_principal_id, v_email, p_operator_id);
     return;
   end if;
 
@@ -497,11 +494,11 @@ begin
 end
 $$;
 
-comment on function platform.finish_pin_attempt(uuid, uuid, uuid, uuid, bytea) is
+comment on function platform.finish_pin_attempt(uuid, uuid, uuid, bytea) is
   'ARCHITECTURE.md §6.2 closed list — finishes the PIN attempt begun in this transaction: consumes it, verifies the caller''s proof (HMAC-SHA256 of the Argon2id output over the attempt, the pair and the nonce) against the stored verifier by SHA-256 digest, computes the verdict, counters, lock and timestamps itself, and writes the throttle transition and exactly one platform.auth_event atomically. A missing or malformed proof is a counted failure. session_user must be origenlab_api. SECURITY DEFINER, search_path = pg_catalog, no dynamic SQL.';
 
-revoke all on function platform.finish_pin_attempt(uuid, uuid, uuid, uuid, bytea)
+revoke all on function platform.finish_pin_attempt(uuid, uuid, uuid, bytea)
   from public, anon, authenticated, service_role, origenlab_worker, origenlab_migrator;
-grant execute on function platform.finish_pin_attempt(uuid, uuid, uuid, uuid, bytea) to origenlab_api;
+grant execute on function platform.finish_pin_attempt(uuid, uuid, uuid, bytea) to origenlab_api;
 
 reset role;

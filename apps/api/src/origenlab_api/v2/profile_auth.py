@@ -469,7 +469,7 @@ class ProfileAuthRepository:
             # Locked or malformed: the submitted PIN is never used; the cost is still spent.
             proof = hasher.attempt_proof(pin if well_formed and not challenge.refused else None,
                                          challenge, principal_id=pid, operator_id=oid)
-            selected, reason = self._finish(cur, challenge, pid, oid, previous, proof)
+            selected, reason = self._finish(cur, challenge, pid, oid, proof)
             del proof
             if not selected:
                 return SelectionOutcome(None, reason)
@@ -492,11 +492,10 @@ class ProfileAuthRepository:
 
     @staticmethod
     def _finish(cur: Any, challenge: PinChallenge, principal_id: str, operator_id: str | None,
-                previous_operator_id: str | None, proof: bytes | None) -> tuple[bool, str | None]:
+                proof: bytes | None) -> tuple[bool, str | None]:
         cur.execute(
-            "select selected, reason from platform.finish_pin_attempt(%s::uuid, %s::uuid, %s::uuid, "
-            "%s::uuid, %s)",
-            (challenge.attempt_id, principal_id, operator_id, previous_operator_id, proof),
+            "select selected, reason from platform.finish_pin_attempt(%s::uuid, %s::uuid, %s::uuid, %s)",
+            (challenge.attempt_id, principal_id, operator_id, proof),
         )
         selected, reason = cur.fetchone()
         return bool(selected), reason

@@ -251,11 +251,11 @@ probe_left="$(ol_psql -q -A -t -c "select count(*) from pg_proc p join pg_namesp
 DEFINER_SIGS=(
   'outbound.add_contact_control(text, text, text, text, uuid, uuid, jsonb)'
   'platform.begin_pin_attempt(uuid, uuid)'
-  'platform.finish_pin_attempt(uuid, uuid, uuid, uuid, bytea)'
+  'platform.finish_pin_attempt(uuid, uuid, uuid, bytea)'
 )
 DEFINER_REGPROC='outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)'
 BEGIN_REGPROC='platform.begin_pin_attempt(uuid,uuid)'
-FINISH_REGPROC='platform.finish_pin_attempt(uuid,uuid,uuid,uuid,bytea)'
+FINISH_REGPROC='platform.finish_pin_attempt(uuid,uuid,uuid,bytea)'
 
 # definer_checks SHORT REGPROC -> the per-function union-all rows for one closed-list definer.
 definer_checks() {
@@ -339,14 +339,14 @@ expect origenlab_api "$PW_API" "api: may EXECUTE outbound.add_contact_control (t
 # writes no throttle column, takes no throttle row lock itself, cannot read the stored verifier and
 # cannot insert a PIN outcome event. The attempts themselves are apps/api/tests/test_v2_pin_attempt_boundary.py.
 for fn_call in "platform.begin_pin_attempt(gen_random_uuid(), null)" \
-               "platform.finish_pin_attempt(gen_random_uuid(), gen_random_uuid(), null, null, null)"; do
+               "platform.finish_pin_attempt(gen_random_uuid(), gen_random_uuid(), null, null)"; do
   expect origenlab_worker "$PW_WORKER" "worker: refused EXECUTE on ${fn_call%%(*}" 42501 "select * from $fn_call"
   expect origenlab_migrator "$PW_MIGRATOR" "migrator: refused EXECUTE on ${fn_call%%(*}" 42501 "select * from $fn_call"
 done
 expect origenlab_api "$PW_API" "api: begin_pin_attempt refuses an unknown principal rather than inventing one" P0002 \
   "select * from platform.begin_pin_attempt(gen_random_uuid(), null)"
 expect origenlab_api "$PW_API" "api: finish_pin_attempt refuses an attempt that was never begun" P0002 \
-  "select * from platform.finish_pin_attempt(gen_random_uuid(), gen_random_uuid(), null, null, '\\x00'::bytea)"
+  "select * from platform.finish_pin_attempt(gen_random_uuid(), gen_random_uuid(), null, '\\x00'::bytea)"
 expect origenlab_api "$PW_API" "api: the caller-declared success is gone (record_pin_attempt does not exist)" 42883 \
   "select * from platform.record_pin_attempt('record_success', gen_random_uuid(), null)"
 expect origenlab_api "$PW_API" "api: refused SELECT * on operator_profile (it would include the stored verifier)" 42501 \

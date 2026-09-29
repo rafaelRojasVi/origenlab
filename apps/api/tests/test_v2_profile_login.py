@@ -579,7 +579,7 @@ def test_switching_profile_removes_the_previous_privileges_at_once(monkeypatch, 
     assert _block_all(api.client).status_code == 403
     switched = _sql(db, "select operator_id::text, previous_operator_id::text from platform.auth_event "
                         "where event_type = 'profile.selected' order by occurred_at desc limit 1")[0]
-    assert switched == (ids["carla"], ids["ana"])
+    assert switched == (ids["carla"], None), "the protected event takes no caller-supplied context"
     cleared = api.client.post("/auth/profile/clear", json={})
     assert cleared.status_code == 200
     assert _refusal(api.client.get("/v2/contacts")) == "profile_required"

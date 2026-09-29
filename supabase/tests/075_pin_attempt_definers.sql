@@ -42,7 +42,7 @@ select plan(50);
 create temp table definer (fn regprocedure);
 insert into definer values
   ('platform.begin_pin_attempt(uuid,uuid)'::regprocedure),
-  ('platform.finish_pin_attempt(uuid,uuid,uuid,uuid,bytea)'::regprocedure);
+  ('platform.finish_pin_attempt(uuid,uuid,uuid,bytea)'::regprocedure);
 
 insert into platform.auth_principal (id, email_norm) values
   ('75000000-0000-4000-8000-000000000001', 'limite@example.test');
@@ -64,9 +64,9 @@ select is(
 select is((select pg_get_function_arguments('platform.begin_pin_attempt(uuid,uuid)'::regprocedure)),
   'p_principal_id uuid, p_operator_id uuid, OUT attempt_id uuid, OUT refused boolean, OUT memory_kib integer, OUT iterations integer, OUT lanes integer, OUT salt text, OUT hash_length integer, OUT nonce bytea',
   'begin takes a principal and a profile, and returns the refusal, public Argon2id parameters, salt and a one-use attempt — never a verifier');
-select is((select pg_get_function_arguments('platform.finish_pin_attempt(uuid,uuid,uuid,uuid,bytea)'::regprocedure)),
-  'p_attempt_id uuid, p_principal_id uuid, p_operator_id uuid, p_previous_operator_id uuid, p_candidate_proof bytea, OUT selected boolean, OUT reason text',
-  'finish takes the attempt, the pair, the previous profile and a proof — no verdict, counter, lock or timestamp');
+select is((select pg_get_function_arguments('platform.finish_pin_attempt(uuid,uuid,uuid,bytea)'::regprocedure)),
+  'p_attempt_id uuid, p_principal_id uuid, p_operator_id uuid, p_candidate_proof bytea, OUT selected boolean, OUT reason text',
+  'finish takes the attempt, the pair and a proof — no previous profile, verdict, counter, lock or timestamp');
 select is((select count(*)::int from definer d join pg_proc p on p.oid = d.fn where p.prosecdef), 2,
   'both are SECURITY DEFINER (the closed list, ARCHITECTURE.md §6.2)');
 select is((select count(*)::int from definer d join pg_proc p on p.oid = d.fn where p.proowner::regrole::text = 'origenlab_owner'), 2,
@@ -122,13 +122,13 @@ select is(left(pg_temp.run_as('origenlab_api',
   $$select * from platform.begin_pin_attempt('75000000-0000-4000-8000-000000000001', null)$$), 5), '42501',
   'under set role origenlab_api begin refuses: session_user is not the runtime login');
 select is(left(pg_temp.run_as('origenlab_api',
-  $$select * from platform.finish_pin_attempt(gen_random_uuid(), '75000000-0000-4000-8000-000000000001', null, null, null)$$), 5), '42501',
+  $$select * from platform.finish_pin_attempt(gen_random_uuid(), '75000000-0000-4000-8000-000000000001', null, null)$$), 5), '42501',
   'under set role origenlab_api finish refuses too');
 select is(left(pg_temp.run_as('origenlab_worker',
   $$select * from platform.begin_pin_attempt('75000000-0000-4000-8000-000000000001', null)$$), 5), '42501',
   'the worker is refused EXECUTE on begin');
 select is(left(pg_temp.run_as('origenlab_worker',
-  $$select * from platform.finish_pin_attempt(gen_random_uuid(), '75000000-0000-4000-8000-000000000001', null, null, null)$$), 5), '42501',
+  $$select * from platform.finish_pin_attempt(gen_random_uuid(), '75000000-0000-4000-8000-000000000001', null, null)$$), 5), '42501',
   'the worker is refused EXECUTE on finish');
 
 -- ── 5. the direct write surface is gone ────────────────────────────────────────────────────────

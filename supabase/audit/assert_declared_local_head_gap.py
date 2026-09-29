@@ -117,7 +117,7 @@ EXPECTED_SECURITY_DEFINERS = (
     # The audit sorts the entries as JSON text, so by their argument lists first.
     # It renders the whole argument list, OUT parameters included.
     '{"arguments":"p_attempt_id uuid, p_principal_id uuid, p_operator_id uuid, '
-    'p_previous_operator_id uuid, p_candidate_proof bytea, OUT selected boolean, '
+    'p_candidate_proof bytea, OUT selected boolean, '
     'OUT reason text",'
     '"name":"finish_pin_attempt","owner":"origenlab_owner",'
     '"proconfig":"search_path=pg_catalog","schema":"platform"}',
