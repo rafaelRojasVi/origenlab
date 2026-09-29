@@ -154,14 +154,19 @@ operator identity are separate facts** ([`DOMAIN.md`](DOMAIN.md) §7.3):
    refused; production refuses a principal with no pinned account. The session
    is then `profile_required`, and every CRM, workspace and command route
    refuses it.
-2. The person picks their profile and enters their PIN. **The API, never the
-   browser, verifies it** — Argon2id keyed with a server-side pepper
-   (`ORIGENLAB_PROFILE_PIN_PEPPER`, separate from the session secret) — and
-   selects the `platform.operator`. Failures are throttled and locked out in
-   the database, shared by every worker; every refusal is the same public
-   error. The throttle is written only by `platform.record_pin_attempt`
-   ([§6.2](#m-arch-definer)): the API names the outcome, the database
-   computes the counters, the lock and its duration.
+2. The person picks their profile and enters their PIN. **The browser never
+   verifies it, and neither does the API alone**: the API derives Argon2id
+   keyed with a server-side pepper (`ORIGENLAB_PROFILE_PIN_PEPPER`, separate
+   from the session secret) at the parameters and salt the database hands out
+   for one attempt, and sends only an HMAC of that output bound to the
+   attempt's one-use nonce. The database compares it with the stored verifier
+   — which the runtime role cannot read — and decides. Both steps are SECURITY
+   DEFINER functions on the closed list ([§6.2](#m-arch-definer)):
+   `platform.begin_pin_attempt` and `platform.finish_pin_attempt`, in one
+   transaction; the second computes the verdict, the counters, the lock and
+   its duration and writes exactly one audit event, so no SQL the runtime role
+   can send declares a success, resets a throttle or skips the audit. Every
+   refusal is the same public error.
 3. The signed session binds the principal, its Google issuer and subject, the selected
    operator, the operator's, profile's and principal's `version` and the
    Google authentication time, and names its own `platform.auth_session` row
@@ -322,21 +327,40 @@ worker-written quote columns. Nothing else qualifies, and the list is closed:
 | `outbound.set_send_control(flag, value, reason)` | `send_control` | `origenlab_api` |
 | `outbound.add_contact_control(kind, purpose, normalized_address, reason, …)` | `contact_control`; for an unsubscribe the whole transaction — its evidence (`evidence.source_record`, `evidence.assertion`, including a request held for review and its later resolution) | `origenlab_api` (admin block and revoke; the «BAJA» reply command) **and** `origenlab_worker` (hard bounce, complaint, unsubscribe) |
 | `crm.record_quote_pdf(revision_id, pdf_sha256, sent_evidence_ids)` | only `quote_revision.pdf_sha256` and the sent-evidence ids | `origenlab_worker` |
-| `platform.record_pin_attempt(operation, principal_id, operator_id)` | only the four PIN-throttle columns of one `auth_principal` row and of one of its `operator_profile` rows | `origenlab_api` |
+| `platform.begin_pin_attempt(principal_id, operator_id)` | only the one-use attempt record (`pin_attempt_*`) of one `auth_principal` row | `origenlab_api` |
+| `platform.finish_pin_attempt(attempt_id, principal_id, operator_id, previous_operator_id, candidate_proof)` | the four PIN-throttle columns of that `auth_principal` row and of one of its `operator_profile` rows, the attempt record, and exactly one `auth_event` | `origenlab_api` |
 
-**`platform.record_pin_attempt` (slice 1, 2026-09-28)** is the only runtime writer of the
-PIN throttle (§5.1); the runtime role holds no `UPDATE` on either table, so it
-can neither reset a counter nor lift a lock, nor take the row lock itself. The caller chooses
-one of three closed operations — `begin_attempt` (lock the principal row, then the profile row
-when it belongs to that principal, and report whether either is locked; the locks serialize
-concurrent attempts until the transaction ends), `record_failure`, `record_success` — and
-supplies no counter, deadline or timestamp: the function computes them from the locked rows and
-the database clock. A failure while locked counts nothing; a success while locked is refused. It
-asserts `session_user = 'origenlab_api'`, pins `search_path = pg_catalog`, qualifies every
-relation and has no dynamic SQL (`supabase/tests/075_pin_throttle_definer.sql`,
-`supabase/scripts/verify_direct_logins.sh`, `apps/api/tests/test_v2_profile_login.py`).
-Authentication is not a commercial aggregate: it writes no `crm.domain_event`; the API appends
-the matching `platform.auth_event` rows in the same transaction.
+**The PIN attempt (slice 1, 2026-09-29, `20260929100000`)** replaced
+`platform.record_pin_attempt`, whose `record_success` took the caller's word that a PIN was
+right: the runtime login could clear both failure counters with no PIN and no audit row. The
+runtime role now holds no `UPDATE` on either throttle table, cannot read
+`operator_profile.pin_hash` (column-level `SELECT` on every other column), and cannot insert a
+PIN outcome event (`auth_event_actor_guard`). An attempt is two calls in one transaction:
+
+* `begin_pin_attempt` locks the principal row, then the profile row when it belongs to that
+  principal (the locks serialize concurrent attempts until the transaction ends), records a
+  random attempt id and 32-byte nonce with the current transaction id on the principal, and
+  returns whether a lock refuses the attempt, the public Argon2id parameters and salt — a decoy
+  salt at the same cost for an unknown, foreign or unusable profile — and the attempt. It never
+  returns the stored verifier.
+* `finish_pin_attempt` accepts only the attempt begun in the same transaction, for the same
+  principal and profile, once. The caller supplies a proof — HMAC-SHA256 of its Argon2id output
+  over the attempt, the pair and the nonce — and no verdict, counter, deadline, timestamp or
+  event type. The function recomputes the proof from the stored verifier, compares SHA-256
+  digests, and itself writes the throttle transition and exactly one `platform.auth_event`
+  (`profile.selected`, `profile.selection_refused`, `profile.locked`, `principal.locked`) in the
+  same statement. A missing or malformed proof is a counted failure; while locked nothing counts.
+
+The nonce makes a captured proof worth one ended attempt; Argon2id with the pepper stays the only
+way to produce one. **This protects against a SQL-only attacker** (an injection, a leaked
+runtime password, a bug) **and not against a compromised API host**, which holds the pepper and
+could derive proofs for guesses and roll failures back uncommitted — the pepper and the session
+secret are inside the API's trust boundary. Both functions assert
+`session_user = 'origenlab_api'`, pin `search_path = pg_catalog`, qualify every object and have
+no dynamic SQL; `platform.hmac_sha256` is an INVOKER helper no runtime role may execute
+(`supabase/tests/075_pin_attempt_definers.sql`, `supabase/scripts/verify_direct_logins.sh`,
+`apps/api/tests/test_v2_pin_attempt_boundary.py`). Authentication is not a commercial aggregate:
+neither writes a `crm.domain_event`.
 
 **Built before it (2026-09-27): only `outbound.add_contact_control`, and only for
 `(block, marketing, unsubscribe)`** — the «BAJA» reply command of

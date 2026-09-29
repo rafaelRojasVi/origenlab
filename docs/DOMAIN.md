@@ -853,20 +853,24 @@ never also be an operator's address (both directions are refused by trigger).
 
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|
-| 38 | `platform.auth_principal` | an external sign-in identity (one Google account) and its principal-wide PIN throttle | `(provider, email_norm)` unique; the pinned Google account — `provider_issuer` (canonical `https://accounts.google.com`) and `provider_subject`, set together or not at all, `(provider, provider_subject)` unique — required by the API in production and set only by the migrator roster tool; never an operator's address; `version` bumps on any address, issuer, subject or status change |
-| 39 | `platform.operator_profile` | a `shared_profile` operator selectable from one principal, its PIN and its per-profile throttle | the composite key `(operator_id, 'shared_profile')` → `platform.operator (id, sign_in_kind)` admits no other kind; `(principal_id, profile_key)` unique; `pin_hash` must be an Argon2id PHC string, so a plaintext PIN cannot be stored; `version` bumps on any PIN, link, key or status change, never on a throttle update |
-| 40 | `platform.auth_event` | the append-only authentication audit: profile selected, refused, locked, cleared, logout, and a migrator's early lockout clear (`lockout.cleared`) | closed `event_type` and closed `refusal_reason` (no free text, so no PIN can be recorded); principal id and address recorded as a pair; append-only (`platform.reject_mutation`); `lockout.cleared` accepted only from a member of `origenlab_owner` — the migrator tool — never from the runtime role (trigger `auth_event_actor_guard`, `20260928193000`) |
+| 38 | `platform.auth_principal` | an external sign-in identity (one Google account), its principal-wide PIN throttle and the one PIN attempt in flight through it | `(provider, email_norm)` unique; the pinned Google account — `provider_issuer` (canonical `https://accounts.google.com`) and `provider_subject`, set together or not at all, `(provider, provider_subject)` unique — required by the API in production and set only by the migrator roster tool; never an operator's address; `version` bumps on any address, issuer, subject or status change; the attempt record (`pin_attempt_id`, `_xact`, `_operator_id`, 32-byte `_nonce`) is all set or all null, written only by the two PIN-attempt functions, and never bumps `version` |
+| 39 | `platform.operator_profile` | a `shared_profile` operator selectable from one principal, its PIN and its per-profile throttle | the composite key `(operator_id, 'shared_profile')` → `platform.operator (id, sign_in_kind)` admits no other kind; `(principal_id, profile_key)` unique; `pin_hash` must be an Argon2id PHC string, so a plaintext PIN cannot be stored, and is the one column the runtime role cannot read (`20260929100000`); `version` bumps on any PIN, link, key or status change, never on a throttle update |
+| 40 | `platform.auth_event` | the append-only authentication audit: profile selected, refused, a profile or a whole principal locked, cleared, logout, and a migrator's early lockout clear (`lockout.cleared`) | closed `event_type` and closed `refusal_reason` (no free text, so no PIN can be recorded), the reason carried by every refusal and by the failure that started a lock; principal id and address recorded as a pair; append-only (`platform.reject_mutation`); the four PIN outcomes (`profile.selected`, `profile.selection_refused`, `profile.locked`, `principal.locked`) are written only by `platform.finish_pin_attempt`, exactly one per attempt, and `lockout.cleared` only by the migrator tool — each accepted only from a member of `origenlab_owner`, never from the runtime role (trigger `auth_event_actor_guard`, `20260928193000`, `20260929100000`) |
 | 41 | `platform.auth_session` | one dashboard session — a shared sign-in (a principal, and the profile selected through it) or an operator's own Google account — so logout and «Cambiar perfil» can revoke it | `token_hash` is a 32-byte keyed HMAC of the cookie's random identifier — never the identifier; lifetime at most seven days; `sign_in_kind` `shared_profile` (principal required, `operator_id` → `platform.operator_profile`) or `google_account` (no principal, no profile, `(account_operator_id, sign_in_kind)` → `platform.operator (id, sign_in_kind)`); a request is served only while its row is neither revoked nor expired (database clock); selecting or clearing a profile revokes the row and inserts its successor with the same `expires_at`; identity, kind, principal, operators and issue time immutable, `expires_at` only ever moves earlier, a revocation (closed reason: `logout`, `profile_selected`, `profile_cleared`) is final (trigger `auth_session_guard`); the runtime role never deletes — the migrator prunes |
 
 `platform.operator`'s own `version` now also bumps on any role, status or
 address change **whoever writes the row**. A signed session carries the
 operator's, the profile's and the principal's `version` and is re-checked on
 every request, so a role, PIN or status change ends every session it affects.
-The runtime API role reads all three tables and appends audit events; it
-writes the throttle columns only through the SECURITY DEFINER
-`platform.record_pin_attempt` (`20260928194000`, ARCHITECTURE.md §6.2), which
-computes the counters and the lock itself, and it cannot write a principal, a
-profile link or a PIN hash — provisioning runs as the owner through
+The runtime API role reads all three tables — `operator_profile` column by
+column, never `pin_hash` — and appends the `profile.cleared` and
+`session.logout` audit events. A PIN is decided only by the SECURITY DEFINER
+pair `platform.begin_pin_attempt` / `platform.finish_pin_attempt`
+(`20260929100000`, ARCHITECTURE.md §6.2), which compare a proof bound to a
+one-use attempt with the stored verifier and themselves write the verdict,
+the counters, the lock and the one audit event; the runtime role cannot
+declare a success, write a throttle column, or write a principal, a profile
+link or a PIN hash — provisioning runs as the owner through
 `apps/api/scripts/profile_roster.py`. The worker has no privilege on any of
 them. No names, principals, profiles or hashes are seeded by the migration.
 `supabase/tests/010_inventory.sql`, `supabase/scripts/verify_chain.sh` and

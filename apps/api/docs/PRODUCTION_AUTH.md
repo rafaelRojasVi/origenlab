@@ -467,9 +467,14 @@ Google sign-in (unchanged up to the claims check)
         │
   GET  /auth/profiles        → the principal's usable profiles: id, display name, role label
   POST /auth/profile/select  {profile_id, pin}
-        │  API: record_pin_attempt('begin_attempt') locks principal row, then profile row,
-        │       and reports the lock; one Argon2id verification (decoy if unknown/locked);
-        │       record_pin_attempt('record_failure' | 'record_success'); audit event
+        │  one transaction:
+        │  DB:  begin_pin_attempt locks principal row, then profile row; returns the lock,
+        │       Argon2id parameters + salt (decoy if unknown/foreign/unusable) and a one-use
+        │       attempt id + nonce — never the stored hash
+        │  API: one Argon2id derivation under the pepper (empty input if locked/malformed);
+        │       proof = HMAC-SHA256(output, attempt ‖ principal ‖ profile ‖ nonce)
+        │  DB:  finish_pin_attempt compares digests with the stored verifier, writes the
+        │       verdict, counters, lock and exactly one audit event
         ▼
   old session row revoked (profile_selected); successor row + cookie with a new identifier and
   { operator id, operator version, profile version, selection time }, same auth time and the
@@ -511,16 +516,39 @@ Google sign-in (unchanged up to the claims check)
   column refuses anything that is not an Argon2id PHC string. A PIN is never stored, returned,
   logged, put in an exception or an audit row; the select body is parsed by hand so a
   validation error cannot echo it.
+- **The database decides the PIN, not the API process** (`20260929100000`). The runtime role
+  cannot read `operator_profile.pin_hash` (the table-level `SELECT` is revoked and every other
+  column granted by name, because a column revoke would not override it). A selection is one
+  transaction: `platform.begin_pin_attempt` returns the attempt's Argon2id parameters and salt
+  and a one-use attempt id and 32-byte nonce; the API derives Argon2id(PIN, salt, pepper) and
+  sends only HMAC-SHA256 of that output over the attempt, the principal, the profile and the
+  nonce; `platform.finish_pin_attempt` recomputes it from the stored verifier, compares SHA-256
+  digests of the two, and itself writes the verdict, the counters, the lock and exactly one
+  audit event. It accepts only the attempt begun in the same transaction for the same pair, once.
+  The caller supplies no verdict, counter, timestamp, lock duration or event type, so a SQL-only
+  attacker — an injection, a leaked runtime password, a bug — cannot declare a success, reset a
+  throttle, skip the audit, or replay a captured proof (it names an attempt that has ended). The
+  raw Argon2id output never leaves the API process, and no proof is stored or logged.
+- **The API host is inside the trust boundary, and this design does not protect against its
+  compromise.** Whoever holds the pepper can derive a proof for any guess and roll a failed
+  attempt back instead of committing it, so the throttle bounds only callers who commit; whoever
+  holds the session secret can mint a cookie for a session row they insert (the runtime role may
+  insert `platform.auth_session` rows — that is how sign-in works) and act as any operator. A
+  SQL-only attacker without that secret cannot: a row names a cookie only through
+  HMAC-SHA256(session secret, identifier), and the cookie itself is HMAC-signed
+  (`test_v2_pin_attempt_boundary.py` proves an inserted row authenticates nothing). Keep the
+  pepper and the session secret in the secret store, distinct, and rotate both if the host is
+  suspected.
 - **One public refusal.** Unknown profile, another principal's profile, wrong PIN, malformed
   PIN, disabled profile or operator, and a lock all answer `401 {"detail":
   "profile_selection_failed"}` — the same status, body and (absent) cookie. The reason is
   recorded in the audit only.
 - **Timing is not constant, and is not claimed to be.** One Argon2id derivation is spent on
-  every refusal — the real check; on an empty input against the profile's own hash when it is
-  locked or the PIN is malformed (the submitted PIN is never checked then); or against a decoy
-  for an unknown profile — so the dominant cost does not depend on the reason. The database
-  work does: a locked attempt writes no counters, an unknown profile id locks one row instead
-  of two, a failure that starts a lock writes a second audit event. No `/auth/*` response —
+  every refusal — on the submitted PIN; on an empty input when the attempt is locked or the PIN
+  is malformed (the submitted PIN is never used then); at the profile's own parameters, or the
+  principal's first profile's for an unknown, foreign or unusable one (decoy salt) — so the
+  dominant cost does not depend on the reason. The database work does: a locked attempt writes
+  no counters, an unknown profile id locks one row instead of two. No `/auth/*` response —
   success, refusal, lockout, unknown profile, session check, callback, clear or logout — carries
   `Server-Timing` or `X-Process-Time-Ms` (the API omits them and the Worker drops them), but the
   wall-clock time of a request stays observable. A caller may therefore tell by timing that a
@@ -535,12 +563,14 @@ Google sign-in (unchanged up to the claims check)
   | Lock duration | 15 min, doubling with each lockout remembered, capped at 24 h |
   | A failure stops counting after | 1 h without another failure |
   | A lockout stops doubling the next after | 24 h without a failure |
-  | Attempt while locked | refused, **not counted**; the submitted PIN is never checked (an Argon2 derivation of an empty input against the profile's hash is still spent) |
+  | Attempt while locked | refused, **not counted**; the submitted PIN is never used (an Argon2 derivation of an empty input at the profile's parameters is still spent) |
+  | Malformed PIN | a **counted** failure (`malformed_pin`), like a wrong one |
+  | Audit | exactly one event per attempt: `profile.selected`, `profile.selection_refused`, or — for the failure that starts a lock — `profile.locked` / `principal.locked`, carrying the refusal reason; written only by `platform.finish_pin_attempt`, never insertable by the runtime role |
   | Success | resets the selected profile's counters and the principal's failure count; keeps the principal's lockout history (so one known PIN cannot reset the principal-wide backoff); never touches another profile's |
 
-  Counters live on the principal and profile rows; both are taken `FOR UPDATE` in principal →
-  profile order before the PIN is checked, so concurrent attempts across API instances
-  serialize and none is lost. A lock is cleared early only with the migrator tool
+  Counters live on the principal and profile rows; `begin_pin_attempt` takes both `FOR UPDATE`
+  in principal → profile order before the PIN is derived, and they stay held until the attempt's
+  transaction ends, so concurrent attempts across API instances serialize and none is lost. A lock is cleared early only with the migrator tool
   (`profile_auth_admin.py clear-lockout`, below), which records a `lockout.cleared` audit event
   the runtime role cannot write; it is never a dashboard or API action.
 - **Session binding and revocation.** The cookie is HMAC-signed (unchanged key), HttpOnly,
@@ -565,12 +595,11 @@ Google sign-in (unchanged up to the claims check)
   `Sec-Fetch-Site: cross-site`.
 - **Least privilege.** `origenlab_api` only reads `platform.operator`: it cannot create an
   operator or change a role, status or sign-in kind (INSERT and UPDATE revoked by
-  `20260928192000`; no route ever used them). It reads the four sign-in tables, appends audit
-  events, writes the PIN throttle only through `platform.record_pin_attempt` (`20260928194000`:
-  a SECURITY DEFINER function that takes a closed operation — `begin_attempt`,
-  `record_failure`, `record_success` — and computes every counter, lock and timestamp itself;
-  the role holds no UPDATE on either throttle table, so it can neither reset a counter nor lift a
-  lock), and inserts and revokes session rows (it
+  `20260928192000`; no route ever used them). It reads the four sign-in tables — every column
+  but `operator_profile.pin_hash` — appends the `profile.cleared` and `session.logout` audit
+  events, reaches the PIN throttle only through `platform.begin_pin_attempt` /
+  `platform.finish_pin_attempt` (`20260929100000`, above; it holds no UPDATE on either throttle
+  table and cannot insert a PIN outcome event), and inserts and revokes session rows (it
   can never extend, reopen or delete one). It cannot create a principal or profile, relink one or
   write a PIN hash. `origenlab_worker` has no access to them at all.
 
