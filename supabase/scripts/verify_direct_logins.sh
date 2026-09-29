@@ -243,16 +243,19 @@ probe_left="$(ol_psql -q -A -t -c "select count(*) from pg_proc p join pg_namesp
 
 # The closed SECURITY DEFINER list (docs/ARCHITECTURE.md §6.2), as a catalogue fact. After the
 # probe is dropped exactly the application definers below may exist — outbound.add_contact_control
-# (W10) and platform.record_pin_attempt (the PIN throttle, slice 1) — each with exactly this owner,
-# pinned search_path and ACL; anything else is a failure, including a third definer. Each row is
+# (W10), platform.begin_pin_attempt and platform.finish_pin_attempt (the PIN attempt, slice 1,
+# 20260929100000) — each with exactly this owner, pinned search_path and ACL; anything else is a
+# failure, including a fourth definer or the removed platform.record_pin_attempt. Each row is
 # "PASS|name|detail" or "FAIL|name|detail". Extending the closed list means editing this list in
 # the same PR as the migration that adds the function.
 DEFINER_SIGS=(
   'outbound.add_contact_control(text, text, text, text, uuid, uuid, jsonb)'
-  'platform.record_pin_attempt(text, uuid, uuid)'
+  'platform.begin_pin_attempt(uuid, uuid)'
+  'platform.finish_pin_attempt(uuid, uuid, uuid, uuid, bytea)'
 )
 DEFINER_REGPROC='outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)'
-THROTTLE_REGPROC='platform.record_pin_attempt(text,uuid,uuid)'
+BEGIN_REGPROC='platform.begin_pin_attempt(uuid,uuid)'
+FINISH_REGPROC='platform.finish_pin_attempt(uuid,uuid,uuid,uuid,bytea)'
 
 # definer_checks SHORT REGPROC -> the per-function union-all rows for one closed-list definer.
 definer_checks() {
@@ -304,7 +307,8 @@ CLOSED_LIST_SQL="with definers as (
          coalesce((select array_agg(sig order by sig) from definers), '{}') = $EXPECTED_DEFINER_ARRAY,
          coalesce((select string_agg(sig, '; ' order by sig) from definers), 'none')
 $(definer_checks add_contact_control "$DEFINER_REGPROC")
-$(definer_checks record_pin_attempt "$THROTTLE_REGPROC")
+$(definer_checks begin_pin_attempt "$BEGIN_REGPROC")
+$(definer_checks finish_pin_attempt "$FINISH_REGPROC")
 )
 select case when ok then 'PASS' else 'FAIL' end || '|' || name || '|' || detail from checks;"
 
@@ -330,16 +334,29 @@ expect origenlab_worker "$PW_WORKER" "worker: refused EXECUTE on outbound.add_co
 expect origenlab_api "$PW_API" "api: may EXECUTE outbound.add_contact_control (the body refuses an unimplemented kind)" 22023 \
   "select outbound.add_contact_control('revoke', 'all', 'x@lab.test', 'x', gen_random_uuid(), gen_random_uuid(), '{}'::jsonb)"
 
-# platform.record_pin_attempt: only the API login reaches the body, and the body takes only a
-# closed operation; the API login writes no throttle column and takes no throttle row lock itself.
-expect origenlab_worker "$PW_WORKER" "worker: refused EXECUTE on platform.record_pin_attempt" 42501 \
-  "select * from platform.record_pin_attempt('begin_attempt', gen_random_uuid(), null)"
-expect origenlab_migrator "$PW_MIGRATOR" "migrator: refused EXECUTE on platform.record_pin_attempt" 42501 \
-  "select * from platform.record_pin_attempt('begin_attempt', gen_random_uuid(), null)"
-expect origenlab_api "$PW_API" "api: may EXECUTE platform.record_pin_attempt (the body refuses an operation outside the closed list)" 22023 \
-  "select * from platform.record_pin_attempt('reset', gen_random_uuid(), null)"
-expect origenlab_api "$PW_API" "api: record_pin_attempt refuses an unknown principal rather than inventing one" P0002 \
-  "select * from platform.record_pin_attempt('begin_attempt', gen_random_uuid(), null)"
+# The PIN attempt (20260929100000): only the API login reaches either body. The API login cannot
+# declare a success any more (record_pin_attempt is gone), cannot finish an attempt it never began,
+# writes no throttle column, takes no throttle row lock itself, cannot read the stored verifier and
+# cannot insert a PIN outcome event. The attempts themselves are apps/api/tests/test_v2_pin_attempt_boundary.py.
+for fn_call in "platform.begin_pin_attempt(gen_random_uuid(), null)" \
+               "platform.finish_pin_attempt(gen_random_uuid(), gen_random_uuid(), null, null, null)"; do
+  expect origenlab_worker "$PW_WORKER" "worker: refused EXECUTE on ${fn_call%%(*}" 42501 "select * from $fn_call"
+  expect origenlab_migrator "$PW_MIGRATOR" "migrator: refused EXECUTE on ${fn_call%%(*}" 42501 "select * from $fn_call"
+done
+expect origenlab_api "$PW_API" "api: begin_pin_attempt refuses an unknown principal rather than inventing one" P0002 \
+  "select * from platform.begin_pin_attempt(gen_random_uuid(), null)"
+expect origenlab_api "$PW_API" "api: finish_pin_attempt refuses an attempt that was never begun" P0002 \
+  "select * from platform.finish_pin_attempt(gen_random_uuid(), gen_random_uuid(), null, null, '\\x00'::bytea)"
+expect origenlab_api "$PW_API" "api: the caller-declared success is gone (record_pin_attempt does not exist)" 42883 \
+  "select * from platform.record_pin_attempt('record_success', gen_random_uuid(), null)"
+expect origenlab_api "$PW_API" "api: refused SELECT * on operator_profile (it would include the stored verifier)" 42501 \
+  "select * from platform.operator_profile where false"
+expect origenlab_api "$PW_API" "api: refused SELECT of operator_profile.pin_hash" 42501 \
+  "select pin_hash from platform.operator_profile where false"
+expect origenlab_api "$PW_API" "api: reads every other operator_profile column" ok \
+  "select operator_id, principal_id, profile_key, status, version, locked_until from platform.operator_profile where false"
+expect origenlab_api "$PW_API" "api: refused a forged PIN outcome event" 42501 \
+  "insert into platform.auth_event (event_type, principal_id, principal_email_norm, refusal_reason) values ('principal.locked', gen_random_uuid(), 'x@example.test', 'pin_mismatch')"
 expect origenlab_api "$PW_API" "api: refused a direct write of a principal's throttle column" 42501 \
   "update platform.auth_principal set failed_attempts = 0 where false"
 expect origenlab_api "$PW_API" "api: refused a direct write of a profile's lock deadline" 42501 \
@@ -377,18 +394,32 @@ inject "add_contact_control no longer SECURITY DEFINER" \
   "set role origenlab_owner; alter function $DEFINER_REGPROC security invoker; reset role;"
 inject "add_contact_control EXECUTE revoked from origenlab_api" \
   "set role origenlab_owner; revoke execute on function $DEFINER_REGPROC from origenlab_api; reset role;"
-inject "record_pin_attempt executable by PUBLIC" \
-  "set role origenlab_owner; grant execute on function $THROTTLE_REGPROC to public; reset role;"
-inject "record_pin_attempt executable by origenlab_migrator" \
-  "set role origenlab_owner; grant execute on function $THROTTLE_REGPROC to origenlab_migrator; reset role;"
-inject "record_pin_attempt with search_path widened" \
-  "set role origenlab_owner; alter function $THROTTLE_REGPROC set search_path = pg_catalog, public; reset role;"
-inject "record_pin_attempt no longer SECURITY DEFINER" \
-  "set role origenlab_owner; alter function $THROTTLE_REGPROC security invoker; reset role;"
-inject "record_pin_attempt EXECUTE revoked from origenlab_api" \
-  "set role origenlab_owner; revoke execute on function $THROTTLE_REGPROC from origenlab_api; reset role;"
-inject "record_pin_attempt dropped" \
-  "set role origenlab_owner; drop function $THROTTLE_REGPROC; reset role;"
+inject "begin_pin_attempt executable by PUBLIC" \
+  "set role origenlab_owner; grant execute on function $BEGIN_REGPROC to public; reset role;"
+inject "begin_pin_attempt executable by origenlab_migrator" \
+  "set role origenlab_owner; grant execute on function $BEGIN_REGPROC to origenlab_migrator; reset role;"
+inject "begin_pin_attempt with search_path widened" \
+  "set role origenlab_owner; alter function $BEGIN_REGPROC set search_path = pg_catalog, public; reset role;"
+inject "begin_pin_attempt no longer SECURITY DEFINER" \
+  "set role origenlab_owner; alter function $BEGIN_REGPROC security invoker; reset role;"
+inject "begin_pin_attempt EXECUTE revoked from origenlab_api" \
+  "set role origenlab_owner; revoke execute on function $BEGIN_REGPROC from origenlab_api; reset role;"
+inject "begin_pin_attempt dropped" \
+  "set role origenlab_owner; drop function $BEGIN_REGPROC; reset role;"
+inject "finish_pin_attempt executable by PUBLIC" \
+  "set role origenlab_owner; grant execute on function $FINISH_REGPROC to public; reset role;"
+inject "finish_pin_attempt executable by origenlab_migrator" \
+  "set role origenlab_owner; grant execute on function $FINISH_REGPROC to origenlab_migrator; reset role;"
+inject "finish_pin_attempt with search_path widened" \
+  "set role origenlab_owner; alter function $FINISH_REGPROC set search_path = pg_catalog, public; reset role;"
+inject "finish_pin_attempt no longer SECURITY DEFINER" \
+  "set role origenlab_owner; alter function $FINISH_REGPROC security invoker; reset role;"
+inject "finish_pin_attempt EXECUTE revoked from origenlab_api" \
+  "set role origenlab_owner; revoke execute on function $FINISH_REGPROC from origenlab_api; reset role;"
+inject "finish_pin_attempt dropped" \
+  "set role origenlab_owner; drop function $FINISH_REGPROC; reset role;"
+inject "the caller-declared record_pin_attempt restored" \
+  "set role origenlab_owner; create function platform.record_pin_attempt(text, uuid, uuid) returns void language sql security definer set search_path = pg_catalog as 'select'; revoke all on function platform.record_pin_attempt(text, uuid, uuid) from public; grant execute on function platform.record_pin_attempt(text, uuid, uuid) to origenlab_api; reset role;"
 closed_after="$(check_closed_list)"
 [[ "$closed_after" == "$closed" ]] && report PASS "every injection rolled back: the closed-list check reads exactly as before" \
   || report FAIL "every injection rolled back: the closed-list check reads exactly as before" "the catalogue changed"

@@ -176,9 +176,10 @@ insert into expected_policies values
     ('platform', 'command_receipt', 'origenlab_api', 'INSERT'),
     ('platform', 'command_receipt', 'origenlab_api', 'UPDATE'),
     ('platform', 'command_receipt', 'origenlab_worker', 'SELECT'),
-    -- Shared Workspace sign-in (#38–#40): the API reads and appends audit events; it writes the
-    -- throttle only through platform.record_pin_attempt (20260928194000), so it holds no UPDATE
-    -- policy. The worker has no policy on any of them.
+    -- Shared Workspace sign-in (#38–#40): the API reads (operator_profile column by column, never
+    -- pin_hash) and appends the non-PIN audit events; the throttle and the PIN outcome events are
+    -- written only by platform.finish_pin_attempt (20260929100000), so it holds no UPDATE policy.
+    -- The worker has no policy on any of them.
     ('platform', 'auth_principal', 'origenlab_api', 'SELECT'),
     ('platform', 'operator_profile', 'origenlab_api', 'SELECT'),
     ('platform', 'auth_event', 'origenlab_api', 'SELECT'),

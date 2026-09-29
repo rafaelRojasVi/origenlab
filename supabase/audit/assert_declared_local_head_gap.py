@@ -99,26 +99,36 @@ POST_SLICE0_FUNCTIONS = {
     # 20260928193000_slice1_lockout_clear_audit.sql — the INVOKER trigger function
     # that refuses a lockout.cleared audit event from the runtime role (pgTAP 073).
     "platform.auth_event_actor_guard",
-    # 20260928194000_slice1_pin_throttle_definer.sql — the closed-list definer
-    # below, the only runtime writer of the PIN throttle (pgTAP 075).
-    "platform.record_pin_attempt",
+    # 20260929100000_slice1_pin_attempt_begin_finish.sql — the two closed-list
+    # definers below, which replaced 20260928194000's platform.record_pin_attempt
+    # (dropped), and the INVOKER HMAC-SHA256 helper finish uses (pgTAP 075).
+    "platform.hmac_sha256",
+    "platform.begin_pin_attempt",
+    "platform.finish_pin_attempt",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
-# first entry, from 20260927230000_slice5_w10_unsubscribe.sql, and its second,
-# from 20260928194000_slice1_pin_throttle_definer.sql. a05 must report exactly
+# first entry, from 20260927230000_slice5_w10_unsubscribe.sql, and its second and
+# third, from 20260929100000_slice1_pin_attempt_begin_finish.sql (which dropped
+# 20260928194000's platform.record_pin_attempt). a05 must report exactly
 # these entries beyond the (empty) Slice 0 baseline, with this owner, signature
-# and pinned search_path — anything else is refused. Sorted as the audit sorts.
+# and pinned search_path — anything else is refused.
 EXPECTED_SECURITY_DEFINERS = (
+    # The audit sorts the entries as JSON text, so by their argument lists first.
+    # It renders the whole argument list, OUT parameters included.
+    '{"arguments":"p_attempt_id uuid, p_principal_id uuid, p_operator_id uuid, '
+    'p_previous_operator_id uuid, p_candidate_proof bytea, OUT selected boolean, '
+    'OUT reason text",'
+    '"name":"finish_pin_attempt","owner":"origenlab_owner",'
+    '"proconfig":"search_path=pg_catalog","schema":"platform"}',
     '{"arguments":"p_kind text, p_purpose text, p_address text, p_reason text, '
     'p_operator_id uuid, p_command_receipt_id uuid, p_evidence jsonb",'
     '"name":"add_contact_control","owner":"origenlab_owner",'
     '"proconfig":"search_path=pg_catalog","schema":"outbound"}',
-    # The audit renders the whole argument list, OUT parameters included.
-    '{"arguments":"p_operation text, p_principal_id uuid, p_operator_id uuid, '
-    'OUT principal_locked boolean, OUT profile_locked boolean, '
-    'OUT principal_lock_started boolean, OUT profile_lock_started boolean",'
-    '"name":"record_pin_attempt","owner":"origenlab_owner",'
+    '{"arguments":"p_principal_id uuid, p_operator_id uuid, OUT attempt_id uuid, '
+    'OUT refused boolean, OUT memory_kib integer, OUT iterations integer, '
+    'OUT lanes integer, OUT salt text, OUT hash_length integer, OUT nonce bytea",'
+    '"name":"begin_pin_attempt","owner":"origenlab_owner",'
     '"proconfig":"search_path=pg_catalog","schema":"platform"}',
 )
 EXPECTED_SECURITY_DEFINER = "; ".join(EXPECTED_SECURITY_DEFINERS)
@@ -297,7 +307,7 @@ def main() -> int:
     # The 23 policy additions must belong to those same eight reviewed tables:
     # four each for the first four (api select/insert/update, worker select),
     # one each for auth_principal and operator_profile (api select: their
-    # throttle is written by platform.record_pin_attempt, 20260928194000), two
+    # throttle is written by platform.finish_pin_attempt, 20260929100000), two
     # for auth_event (api select, insert) and three for auth_session (api
     # select, insert, update).
     a09_findings = checks["a09"].get("findings") or []

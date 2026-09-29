@@ -392,13 +392,18 @@ def test_a_lock_is_the_same_answer_too(monkeypatch, db, ids) -> None:
     for _ in range(PROFILE_MAX_FAILURES):
         assert api.select("bruno", "111119", ids).json() == REFUSED
     hasher = api.app.state.v2_profile_login.hasher
-    calls: list[tuple[str, str | None]] = []
-    real_verify = hasher.verify
-    monkeypatch.setattr(hasher, "verify", lambda pin, encoded: calls.append((pin, encoded)) or real_verify(pin, encoded))
+    calls: list[tuple[str | None, bool, int]] = []
+    derivations: list[str] = []
+    real_proof, real_derive = hasher.attempt_proof, hasher._derive
+    monkeypatch.setattr(hasher, "attempt_proof", lambda pin, challenge, **kw: calls.append(
+        (pin, challenge.refused, challenge.memory_kib)) or real_proof(pin, challenge, **kw))
+    monkeypatch.setattr(hasher, "_derive", lambda pin, *a, **kw: derivations.append(pin) or real_derive(pin, *a, **kw))
     locked = api.select("bruno", PINS["bruno"], ids)
     assert (locked.status_code, locked.json()) == (401, REFUSED)
     stored = _sql(db, "select pin_hash from platform.operator_profile where operator_id = %s", (ids["bruno"],))[0][0]
-    assert calls == [("", stored)], "while locked the submitted PIN is never checked; the cost is still spent"
+    assert calls == [(None, True, int(stored.split("$")[3].split(",")[0][2:]))], \
+        "while locked the submitted PIN is never used; the cost is spent at the profile's own parameters"
+    assert derivations == [""], "exactly one derivation, on an empty input"
     assert api.select("ana", PINS["ana"], ids).status_code == 200, "a lock on one profile is not a lock on another"
 
 
@@ -508,20 +513,9 @@ def test_no_profile_route_answer_carries_a_timing_header(monkeypatch, db, ids) -
     assert all(h in api.client.get("/v2/contacts").headers for h in timing), "other routes stay timed"
 
 
-# ------------------------------------------------- the throttle function (20260928194000)
-
-
-def _throttle_call(db: str, operation: Any, principal_id: str | None, operator_id: str | None,
-                   *, conn: Any = None) -> tuple[bool, bool, bool, bool]:
-    """One `platform.record_pin_attempt` call as the real `origenlab_api` login, committed."""
-    import psycopg
-
-    sql = ("select principal_locked, profile_locked, principal_lock_started, profile_lock_started "
-           "from platform.record_pin_attempt(%s, %s::uuid, %s::uuid)")
-    if conn is not None:
-        return conn.execute(sql, (operation, principal_id, operator_id)).fetchone()
-    with psycopg.connect(runtime_dsn(db)) as own:
-        return own.execute(sql, (operation, principal_id, operator_id)).fetchone()
+# -------------------------------------------- no direct throttle write (see the boundary suite)
+# The begin/finish attempt functions (20260929100000) and every attack on them run as the real
+# origenlab_api login in test_v2_pin_attempt_boundary.py.
 
 
 @pytest.mark.parametrize("table, column, value", [
@@ -542,139 +536,6 @@ def test_the_runtime_role_cannot_lock_a_throttle_row_itself(db, ids, table) -> N
 
     with psycopg.connect(runtime_dsn(db)) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
         conn.execute(f"select 1 from platform.{table} for update")
-
-
-@pytest.mark.parametrize("operation", ["reset", "clear", "set_counters", "", None, "RECORD_FAILURE"])
-def test_the_throttle_function_takes_only_a_closed_operation(db, ids, operation) -> None:
-    import psycopg
-
-    with pytest.raises((psycopg.errors.InvalidParameterValue, psycopg.errors.NullValueNotAllowed)):
-        _throttle_call(db, operation, ids["shared"], ids["ana"])
-
-
-def test_the_throttle_function_accepts_no_counter_or_timestamp() -> None:
-    """Its signature is (operation, principal, profile) and three OUT flags — nothing else."""
-    sql = (Path(__file__).resolve().parents[3] / "supabase" / "migrations"
-           / "20260928194000_slice1_pin_throttle_definer.sql").read_text()
-    head = sql[sql.index("create function platform.record_pin_attempt("):sql.index("language plpgsql")]
-    inputs = [line.strip().rstrip(",") for line in head.splitlines()[1:]
-              if line.strip().startswith("p_")]
-    assert inputs == ["p_operation text", "p_principal_id uuid", "p_operator_id uuid"]
-    assert "execute " not in sql.lower().split("as $$", 1)[1].split("$$;", 1)[0], "no dynamic SQL"
-
-
-def test_the_throttle_function_refuses_every_other_login(db, ids) -> None:
-    import psycopg
-
-    fn = "platform.record_pin_attempt(text,uuid,uuid)"
-    with _owner(db) as conn, conn.cursor() as cur:
-        cur.execute(
-            "select array_agg(r order by r) from unnest(array['origenlab_worker', 'origenlab_migrator', "
-            "'origenlab_owner', 'anon', 'authenticated', 'service_role']) r "
-            "where has_function_privilege(r, %s, 'EXECUTE') and r <> 'origenlab_owner'", (fn,))
-        assert cur.fetchone()[0] is None, "EXECUTE is origenlab_api's alone"
-        cur.execute("select coalesce(array_agg(a.grantee::regrole::text order by 1) "
-                    "filter (where a.grantee <> p.proowner), '{}') "
-                    "from pg_proc p, aclexplode(p.proacl) a where p.oid = %s::regprocedure", (fn,))
-        assert cur.fetchone()[0] == ["origenlab_api"], "no PUBLIC grant, no other grantee"
-        # The maintenance login under `set role origenlab_api` holds EXECUTE through the role, but
-        # session_user is not origenlab_api: the body refuses (ARCHITECTURE.md §6.2 item 7).
-        cur.execute("grant origenlab_api to session_user with set true, inherit false")
-        cur.execute("set role origenlab_api")
-        with pytest.raises(psycopg.errors.InsufficientPrivilege, match="refused for login"):
-            cur.execute(f"select * from platform.record_pin_attempt('begin_attempt', %s::uuid, null)",
-                        (ids["shared"],))
-        conn.rollback()
-
-
-def test_the_throttle_function_computes_the_documented_policy(db, ids) -> None:
-    from datetime import timedelta
-
-    from origenlab_api.v2.profile_auth import LOCK_BASE, LOCK_MAX, lock_duration
-
-    carla = ids["carla"]
-    # A failure older than FAILURE_WINDOW no longer counts; a lockout older than LOCKOUT_MEMORY
-    # no longer doubles.
-    _sql(db, "update platform.operator_profile set failed_attempts = 4, lockout_count = 2, "
-             "last_failed_at = now() - interval '2 days' where operator_id = %s", (carla,))
-    assert _throttle_call(db, "record_failure", ids["shared"], carla) == (False, False, False, False)
-    assert _profile_throttle(db, carla) == (1, 0, False)
-    # Within the window the fifth failure locks, for LOCK_BASE × 2^(earlier lockouts).
-    _sql(db, "update platform.operator_profile set failed_attempts = 4, lockout_count = 1, "
-             "last_failed_at = now() - interval '1 minute' where operator_id = %s", (carla,))
-    assert _throttle_call(db, "record_failure", ids["shared"], carla) == (False, False, False, True)
-    assert _profile_throttle(db, carla) == (0, 2, True)
-    lasted = _sql(db, "select locked_until - last_failed_at from platform.operator_profile "
-                      "where operator_id = %s", (carla,))[0][0]
-    assert lasted == lock_duration(1) == 2 * LOCK_BASE
-    # A failure while locked counts nothing and does not extend the lock.
-    before = _sql(db, "select locked_until, failed_attempts, lockout_count from platform.operator_profile "
-                      "where operator_id = %s", (carla,))[0]
-    assert _throttle_call(db, "record_failure", ids["shared"], carla) == (False, True, False, False)
-    assert _sql(db, "select locked_until, failed_attempts, lockout_count from platform.operator_profile "
-                    "where operator_id = %s", (carla,))[0] == before
-    # The cap.
-    _sql(db, "update platform.operator_profile set failed_attempts = 4, lockout_count = 40, "
-             "locked_until = null, last_failed_at = now() - interval '1 minute' where operator_id = %s", (carla,))
-    _throttle_call(db, "record_failure", ids["shared"], carla)
-    assert _sql(db, "select locked_until - last_failed_at from platform.operator_profile "
-                    "where operator_id = %s", (carla,))[0][0] == LOCK_MAX == timedelta(hours=24)
-
-
-def test_a_success_is_refused_while_locked_and_needs_a_profile_of_the_principal(db, ids) -> None:
-    import psycopg
-
-    _sql(db, "update platform.operator_profile set locked_until = now() + interval '5 minutes' "
-             "where operator_id = %s", (ids["ana"],))
-    with pytest.raises(psycopg.errors.LockNotAvailable):
-        _throttle_call(db, "record_success", ids["shared"], ids["ana"])
-    assert _profile_throttle(db, ids["ana"])[2] is True, "claiming success lifts no lock"
-    _sql(db, "update platform.auth_principal set locked_until = now() + interval '5 minutes' "
-             "where id = %s", (ids["shared"],))
-    with pytest.raises(psycopg.errors.LockNotAvailable):
-        _throttle_call(db, "record_success", ids["shared"], ids["bruno"])
-    with pytest.raises(psycopg.errors.NoDataFound):
-        _throttle_call(db, "record_success", ids["shared"], ids["franco"])  # another principal's
-
-
-def test_another_principals_profile_is_counted_as_unknown(db, ids) -> None:
-    before = _profile_throttle(db, ids["franco"])
-    assert _throttle_call(db, "record_failure", ids["shared"], ids["franco"]) == (False, False, False, False)
-    assert _profile_throttle(db, ids["franco"]) == before
-    assert _sql(db, "select failed_attempts from platform.auth_principal where id = %s",
-                (ids["shared"],))[0][0] == 1
-
-
-def test_begin_attempt_holds_the_rows_until_the_attempt_ends(db, ids) -> None:
-    """Serialization across workers: a second attempt waits for the first to commit."""
-    import psycopg
-
-    first = psycopg.connect(runtime_dsn(db))
-    second = psycopg.connect(runtime_dsn(db))
-    try:
-        _throttle_call(db, "begin_attempt", ids["shared"], ids["carla"], conn=first)  # open transaction
-        second.execute("set lock_timeout = '300ms'")
-        with pytest.raises(psycopg.errors.LockNotAvailable):
-            _throttle_call(db, "begin_attempt", ids["shared"], ids["bruno"], conn=second)
-        second.rollback()
-        _throttle_call(db, "record_failure", ids["shared"], ids["carla"], conn=first)
-        first.commit()
-        second.execute("set lock_timeout = '300ms'")
-        assert _throttle_call(db, "begin_attempt", ids["shared"], ids["bruno"], conn=second)[:2] == (False, False)
-        second.rollback()
-    finally:
-        first.close()
-        second.close()
-    assert _profile_throttle(db, ids["carla"]) == (1, 0, False)
-
-
-def test_concurrent_failures_through_the_function_are_all_counted(db, ids) -> None:
-    attempts = PRINCIPAL_MAX_FAILURES - 1
-    with concurrent.futures.ThreadPoolExecutor(max_workers=attempts) as pool:
-        list(pool.map(lambda _: _throttle_call(db, "record_failure", ids["shared"], None), range(attempts)))
-    assert _sql(db, "select failed_attempts, coalesce(locked_until > now(), false) from platform.auth_principal "
-                    "where id = %s", (ids["shared"],))[0] == (attempts, False)
-    assert _throttle_call(db, "record_failure", ids["shared"], None)[2] is True, "the tenth starts the lock"
 
 
 # ------------------------------------------------------------------ roles and switching

@@ -13,18 +13,27 @@ A profile PIN proves which person is using a shared Google Workspace sign-in
   session secret: a leak of one must not be a leak of the other.
 * **The database throttle** (`profile_auth.py`), which bounds online guessing.
 
+At sign-in the API never sees the stored hash (`20260929100000`): the database hands out the
+public parameters and salt of one attempt, and :meth:`PinHasher.attempt_proof` derives the
+Argon2id output under the pepper and binds it to that attempt with HMAC-SHA256
+(:func:`attempt_message`). The database recomputes the same value from the stored verifier and
+decides. The raw Argon2id output never leaves this process.
+
 A PIN is never logged, returned, stored or put in an exception message. :class:`PinHasher`
 takes it as an argument and keeps nothing; errors name the rule that failed, never the value.
+The same holds for the derived output and the proof.
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import hmac
 import os
 import re
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
@@ -105,6 +114,37 @@ def validate_new_pin(pin: str) -> str:
     return pin
 
 
+#: Domain label of the attempt proof; `platform.finish_pin_attempt` hashes the same bytes.
+PROOF_LABEL = b"origenlab.pin-proof.v1"
+#: The proof is one HMAC-SHA256 output.
+PROOF_LENGTH = 32
+
+
+@dataclass(frozen=True)
+class PinChallenge:
+    """What `platform.begin_pin_attempt` returned: public parameters and a one-use attempt.
+
+    Nothing here is secret — the salt and parameters are the public half of a PHC string (or a
+    decoy's), and the nonce is only one-use — but none of it is shown or logged either.
+    """
+
+    attempt_id: str
+    refused: bool
+    memory_kib: int
+    iterations: int
+    lanes: int
+    salt: str
+    hash_length: int
+    nonce: bytes = field(repr=False)
+
+
+def attempt_message(challenge: PinChallenge, *, principal_id: str, operator_id: str | None) -> bytes:
+    """The bytes the proof authenticates: label, attempt, principal, profile (or zeros), nonce."""
+    operator = uuid.UUID(operator_id).bytes if operator_id is not None else bytes(16)
+    return (PROOF_LABEL + uuid.UUID(challenge.attempt_id).bytes + uuid.UUID(principal_id).bytes
+            + operator + challenge.nonce)
+
+
 def _b64(raw: bytes) -> str:
     return base64.b64encode(raw).rstrip(b"=").decode("ascii")
 
@@ -171,6 +211,35 @@ class PinHasher:
             return False
         actual = self._derive(pin, salt, m=m, t=t, p=p, length=len(expected))
         return target is not None and hmac.compare_digest(actual, expected)
+
+    def attempt_proof(
+        self, pin: str | None, challenge: PinChallenge, *, principal_id: str, operator_id: str | None
+    ) -> bytes | None:
+        """Spend one Argon2id derivation at the challenge's parameters; return the attempt proof.
+
+        `pin` is None when there is nothing to check — a malformed PIN, or a refused (locked)
+        attempt, whose submitted PIN is never used. The cost is spent anyway, on an empty input,
+        and the answer is None: the database counts it as a failed attempt (`malformed_pin`)
+        unless a lock refuses it first. Parameters below :data:`FLOOR` (or absurdly high), or an
+        unreadable salt, verify nothing: the decoy is derived instead and the proof is random.
+        """
+        try:
+            salt = _unb64(challenge.salt)
+        except (binascii.Error, ValueError):
+            salt = b""
+        m, t, p, length = (challenge.memory_kib, challenge.iterations, challenge.lanes,
+                           challenge.hash_length)
+        if (len(salt) < 8 or m < FLOOR.memory_kib or t < FLOOR.iterations or p < 1
+                or m > 1024 * 1024 or t > 64 or p > 64 or not 16 <= length <= 64):
+            self.dummy_verify()
+            return os.urandom(PROOF_LENGTH)
+        if pin is not None and (not isinstance(pin, str) or len(pin) > MAX_SUBMITTED_PIN_LENGTH):
+            pin = None
+        derived = self._derive(pin or "", salt, m=m, t=t, p=p, length=length)
+        if pin is None:
+            return None
+        return hmac.new(derived, attempt_message(challenge, principal_id=principal_id,
+                                                 operator_id=operator_id), hashlib.sha256).digest()
 
     def dummy_verify(self, encoded: str | None = None) -> None:
         """Spend one Argon2 derivation and learn nothing; never looks at a submitted PIN.

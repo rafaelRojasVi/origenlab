@@ -58,8 +58,9 @@ select col_default_is('platform', 'operator', 'sign_in_kind', 'google_account'::
 select is(
   (select count(*)::int from information_schema.columns
     where table_schema = 'platform' and table_name in ('auth_principal', 'operator_profile', 'auth_event')
-      and column_name ~ 'pin' and column_name not in ('pin_hash', 'pin_set_at')),
-  0, 'no column but the hash and its timestamp is about a PIN');
+      and column_name ~ 'pin' and column_name not in ('pin_hash', 'pin_set_at')
+      and column_name !~ '^pin_attempt_(id|xact|operator_id|nonce)$'),
+  0, 'no column but the hash, its timestamp and the attempt bookkeeping (20260929100000: id, transaction, profile, nonce — never a PIN) is about a PIN');
 select hasnt_column('platform', 'auth_event', 'pin_hash', 'the audit has no column that could hold a PIN or its hash');
 
 -- ── 2. operator sign-in kind ──────────────────────────────────────────────────────────────────
@@ -182,9 +183,9 @@ select throws_ok($$ insert into platform.auth_event (event_type, principal_id) v
 
 -- ── 7. runtime roles ──────────────────────────────────────────────────────────────────────────
 select is(pg_temp.run_as('origenlab_api', 'select 1 from platform.operator_profile limit 1'), 'ok', 'api reads profiles');
--- 20260928194000: the throttle is written only by platform.record_pin_attempt (pgTAP 075).
+-- 20260929100000: the throttle is written only by platform.finish_pin_attempt (pgTAP 075).
 select is(left(pg_temp.run_as('origenlab_api', 'select 1 from platform.operator_profile for update'), 5), '42501',
-  'api may not lock a profile row itself: record_pin_attempt takes the lock');
+  'api may not lock a profile row itself: begin_pin_attempt takes the lock');
 select is(left(pg_temp.run_as('origenlab_api', 'update platform.operator_profile set failed_attempts = 0, locked_until = null'), 5), '42501',
   'api may not write a profile throttle column');
 select is(left(pg_temp.run_as('origenlab_api', $$update platform.operator_profile set pin_hash = pin_hash$$), 5), '42501',
@@ -227,8 +228,8 @@ select throws_ok($$ insert into platform.auth_event (event_type) values ('lockou
   '23514', null, 'a cleared lockout names its principal');
 select is(left(pg_temp.run_as('origenlab_api', $$insert into platform.auth_event (event_type, principal_id, principal_email_norm) values ('lockout.cleared', '73000000-0000-4000-8000-000000000001', 'compartida@example.test')$$), 5), '42501',
   'api may not record a cleared lockout: it cannot forge an administrator''s decision');
-select is(pg_temp.run_as('origenlab_api', $$insert into platform.auth_event (event_type, principal_id, principal_email_norm) values ('profile.locked', '73000000-0000-4000-8000-000000000001', 'compartida@example.test')$$), 'ok',
-  'api still records the events of the sign-in path');
+select is(left(pg_temp.run_as('origenlab_api', $$insert into platform.auth_event (event_type, principal_id, principal_email_norm, operator_id, refusal_reason) values ('profile.locked', '73000000-0000-4000-8000-000000000001', 'compartida@example.test', '73000000-0000-4000-8000-000000000011', 'pin_mismatch')$$), 5), '42501',
+  'api may not record a lockout: PIN outcomes are written only by platform.finish_pin_attempt');
 select is(left(pg_temp.run_as('origenlab_worker', 'select 1 from platform.operator_profile limit 1'), 5), '42501',
   'the worker cannot read a PIN hash');
 select is(left(pg_temp.run_as('origenlab_worker', 'select 1 from platform.auth_event limit 1'), 5), '42501',

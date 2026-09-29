@@ -4,18 +4,26 @@
 as a *principal* (`platform.auth_principal`); the person using it is the `platform.operator`
 they select through a profile (`platform.operator_profile`) with their own PIN. Everything the
 database does for that lives here, as the `origenlab_api` runtime role, which can read the three
-tables and append audit events — never write a PIN hash, and never write a throttle column.
+tables (every column but the stored PIN verifier) and append the audit events that are not PIN
+outcomes — never write a PIN hash, a throttle column or a PIN outcome event.
 
-**The throttle is the database's, not the process's**, so every API worker shares it — and it
-is written only by `platform.record_pin_attempt` (`20260928194000`), a SECURITY DEFINER function
-on the closed list of `docs/ARCHITECTURE.md` §6.2. This module names *what happened*
-(`begin_attempt`, `record_failure`, `record_success`) and nothing else: the counters, the lock
-deadline and the timestamps are computed inside the function, from the rows it has locked and
-the database clock. Before a PIN is checked, `begin_attempt` takes the principal row and the
-requested profile row `for update` — in that order, always, so two attempts cannot deadlock —
-and reports whether either is locked; the locks are held until this transaction ends. Two
-concurrent attempts through two workers therefore serialize, and neither can read a lock state
-the other is about to change.
+**The PIN is decided by the database, not the process** (`20260929100000`), so every API worker
+shares one throttle and no SQL the runtime role can send is able to declare a success. An
+attempt is two calls in one transaction, both SECURITY DEFINER functions on the closed list of
+`docs/ARCHITECTURE.md` §6.2:
+
+1. `platform.begin_pin_attempt` takes the principal row and the requested profile row
+   `for update` — in that order, always, so two attempts cannot deadlock — and returns a
+   :class:`~origenlab_api.v2.profile_pin.PinChallenge`: whether a lock refuses the attempt,
+   the Argon2id parameters and salt to derive with (a decoy for an unknown, foreign or unusable
+   profile), and a one-use attempt id and nonce. The locks are held until the transaction ends,
+   so concurrent attempts through different workers serialize.
+2. The API derives Argon2id(PIN, salt, pepper) and sends only an HMAC of it over the attempt
+   (:meth:`~origenlab_api.v2.profile_pin.PinHasher.attempt_proof`).
+3. `platform.finish_pin_attempt` compares that proof with the one it computes from the stored
+   verifier, and itself writes the verdict, the counters, the lock and its duration, and exactly
+   one `platform.auth_event` — all in the same statement. It returns only the verdict and the
+   (internal) reason.
 
 Policy (computed by the function; documented for operators in `apps/api/docs/PRODUCTION_AUTH.md`,
 and mirrored by the constants below, which the database tests hold it to):
@@ -27,25 +35,27 @@ and mirrored by the constants below, which the database tests hold it to):
 * A failure older than :data:`FAILURE_WINDOW` no longer counts; a lockout older than
   :data:`LOCKOUT_MEMORY` no longer doubles the next one.
 * An attempt while locked is refused **without counting**, and the submitted PIN is never
-  checked; one Argon2 derivation is still spent, on an empty input against the profile's own
-  hash (:meth:`PinHasher.dummy_verify`).
+  used; one Argon2 derivation is still spent, on an empty input at the profile's own
+  parameters.
+* A malformed PIN is a counted failure (`malformed_pin`), never a free probe.
 * A success resets the selected profile's counters and the principal's failure count,
   but keeps the principal's lockout history. It never resets another profile's, so
-  knowing one PIN never helps guess another. The function refuses a success while locked.
+  knowing one PIN never helps guess another.
 
-Every outcome — success, refusal, lockout — writes one `platform.auth_event`. None of them
-carries the PIN; the refusal reason is a closed vocabulary the table enforces.
+Every attempt that reaches `finish_pin_attempt` writes exactly one `platform.auth_event`:
+`profile.selected`, `profile.selection_refused`, `profile.locked` or `principal.locked`. None
+of them carries the PIN or the proof; the refusal reason is a closed vocabulary the table
+enforces.
 
 The public answer to every refusal is the same (`profile_routes.py`): status, body and cookies
 do not tell an unknown profile from a wrong PIN, a disabled profile or a lock.
 
 **The time taken is not claimed to be the same.** Every path that reaches the principal row
-spends one Argon2 derivation — against the requested profile's own hash when there is one (so at
-its parameters), against the decoy otherwise — which removes the dominant difference. The
+spends one Argon2 derivation — at the requested profile's own parameters when there is one, at
+the principal's first profile's otherwise — which removes the dominant difference. The
 database work still differs by outcome: an unknown profile id locks one row, a known one two; a
-locked attempt writes no counters; a failure that starts a lock writes a second audit row; a
-success rotates the session. No `/auth/*` response carries a timing header (`response_timing.py`), but
-wall-clock time is observable anyway. So a lock, or whether a profile id exists, may be told
+locked attempt writes no counters; a success rotates the session. No `/auth/*` response carries a
+timing header (`response_timing.py`), but wall-clock time is observable anyway. So a lock, or whether a profile id exists, may be told
 apart by timing. Neither reveals a PIN, and a lock bounds the guessing that matters.
 """
 
@@ -57,7 +67,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Iterator
 
-from origenlab_api.v2.profile_pin import NEW_PIN_RE, PinHasher
+from origenlab_api.v2.profile_pin import NEW_PIN_RE, PinChallenge, PinHasher
 
 #: Roles that may use the dashboard at all (`docs/OPERATIONS.md` §2).
 DASHBOARD_ROLES = ("viewer", "sales", "admin")
@@ -159,26 +169,8 @@ def parse_uuid(value: Any) -> str | None:
 
 
 def lock_duration(earlier_lockouts: int) -> timedelta:
-    """The lock `platform.record_pin_attempt` imposes after `earlier_lockouts` remembered ones."""
+    """The lock `platform.finish_pin_attempt` imposes after `earlier_lockouts` remembered ones."""
     return min(LOCK_BASE * (2 ** min(earlier_lockouts, 16)), LOCK_MAX)
-
-
-#: The closed operations of `platform.record_pin_attempt`.
-THROTTLE_OPERATIONS = ("begin_attempt", "record_failure", "record_success")
-
-
-@dataclass(frozen=True)
-class ThrottleState:
-    """What `platform.record_pin_attempt` reports: each row's lock as found, and any lock it started."""
-
-    principal_locked: bool
-    profile_locked: bool
-    principal_lock_started: bool
-    profile_lock_started: bool
-
-    @property
-    def locked(self) -> bool:
-        return self.principal_locked or self.profile_locked
 
 
 _PRINCIPAL_COLUMNS = "id::text, email_norm, provider_subject, status, version, provider_issuer"
@@ -418,30 +410,31 @@ class ProfileAuthRepository:
     ) -> SelectionOutcome:
         """Check one PIN for one profile of one principal, under the shared throttle.
 
-        `platform.record_pin_attempt('begin_attempt', …)` locks the principal row and, when the
-        id names a profile of that principal, the profile row, before anything else is read;
-        then the session row the request came with is locked too (principal → profile →
-        session, always in that order) and must be live and still describe what the cookie
-        says. On success the function records it, and the session row is revoked and its
-        successor — carrying the selected operator and the same `expires_at` — is inserted with
-        `new_token_hash`, in the same transaction.
+        `platform.begin_pin_attempt` locks the principal row and, when the id names a profile of
+        that principal, the profile row, before anything else is read; then the session row the
+        request came with is locked too (principal → profile → session, always in that order)
+        and must be live and still describe what the cookie says — otherwise the transaction is
+        rolled back and nothing is counted. `platform.finish_pin_attempt` decides and records
+        the attempt. On success the session row is revoked and its successor — carrying the
+        selected operator and the same `expires_at` — is inserted with `new_token_hash`, in the
+        same transaction.
 
-        Exactly one Argon2 derivation happens on every path that reaches the principal row — the
-        real check, or a dummy against the profile's own hash or the decoy — so the dominant
-        cost does not depend on why an attempt failed. The rest of the work does (module
-        docstring): this is not a constant-time claim.
+        Exactly one Argon2 derivation happens on every path that reaches the principal row, so
+        the dominant cost does not depend on why an attempt failed. The rest of the work does
+        (module docstring): this is not a constant-time claim.
         """
         pid = parse_uuid(principal_id)
         if pid is None:
             hasher.dummy_verify()
             return SelectionOutcome(None, None, principal_valid=False)
         oid = parse_uuid(requested_operator_id)
+        previous = parse_uuid(previous_operator_id)
         with self._write() as cur:
             cur.execute("select 1 from platform.auth_principal where id = %s::uuid", (pid,))
             if cur.fetchone() is None:
                 hasher.dummy_verify()
                 return SelectionOutcome(None, None, principal_valid=False)
-            throttle = self._throttle(cur, "begin_attempt", pid, oid)
+            challenge = self._begin(cur, pid, oid)
             # The function holds the principal row (and the profile row) now, so what is read
             # below cannot change before this transaction ends.
             cur.execute(
@@ -451,18 +444,17 @@ class ProfileAuthRepository:
             prow = cur.fetchone()
             if (prow is None or prow[1] != "active" or prow[2] != principal_version
                     or prow[0] != principal_email
-                    or not self._lock_live_session(cur, token_hash, pid,
-                                                   parse_uuid(previous_operator_id))):
+                    or not self._lock_live_session(cur, token_hash, pid, previous)):
                 hasher.dummy_verify()
+                cur.connection.rollback()  # the attempt is abandoned unfinished: nothing counted
                 return SelectionOutcome(None, None, principal_valid=False)
 
             candidate: ProfileBinding | None = None
-            pin_hash: str | None = None
             if oid is not None:
                 cur.execute(
                     """
                     select p.operator_id::text, o.display_name, o.role, o.status, o.version,
-                           p.status, p.version, p.pin_hash
+                           p.status, p.version
                       from platform.operator_profile p
                       join platform.operator o on o.id = p.operator_id
                      where p.operator_id = %s::uuid and p.principal_id = %s::uuid
@@ -471,52 +463,43 @@ class ProfileAuthRepository:
                 )
                 row = cur.fetchone()
                 if row is not None:
-                    candidate = ProfileBinding(*row[:7])
-                    pin_hash = row[7]
+                    candidate = ProfileBinding(*row)
 
-            locked = throttle.locked
             well_formed = isinstance(pin, str) and bool(NEW_PIN_RE.match(pin))
-            if candidate is not None and not locked and well_formed:
-                verified = hasher.verify(pin, pin_hash)
-            else:
-                # Locked, malformed or unknown: the submitted PIN is never checked. The cost is
-                # still spent — at the profile's own parameters when there is a profile.
-                hasher.dummy_verify(pin_hash)
-                verified = False
+            # Locked or malformed: the submitted PIN is never used; the cost is still spent.
+            proof = hasher.attempt_proof(pin if well_formed and not challenge.refused else None,
+                                         challenge, principal_id=pid, operator_id=oid)
+            selected, reason = self._finish(cur, challenge, pid, oid, previous, proof)
+            del proof
+            if not selected:
+                return SelectionOutcome(None, reason)
+            if candidate is None:  # the database selected a profile this read did not find
+                raise RuntimeError("profile selection disagrees with the profile read")
+            self._rotate(cur, token_hash, new_token_hash, pid, candidate.operator_id,
+                         "profile_selected")
+            return SelectionOutcome(candidate, None)
 
-            if verified and candidate is not None and candidate.is_usable:
-                # The principal's failure count restarts, but its lockout history is kept (it
-                # still decays after LOCKOUT_MEMORY): knowing one PIN must not reset the
-                # principal-wide backoff while another profile is being guessed.
-                self._throttle(cur, "record_success", pid, candidate.operator_id)
-                self._rotate(cur, token_hash, new_token_hash, pid, candidate.operator_id,
-                             "profile_selected")
-                self._event(cur, "profile.selected", pid, principal_email,
-                            operator_id=candidate.operator_id,
-                            previous_operator_id=parse_uuid(previous_operator_id))
-                return SelectionOutcome(candidate, None)
+    @staticmethod
+    def _begin(cur: Any, principal_id: str, operator_id: str | None) -> PinChallenge:
+        cur.execute(
+            "select attempt_id::text, refused, memory_kib, iterations, lanes, salt, hash_length, nonce "
+            "from platform.begin_pin_attempt(%s::uuid, %s::uuid)",
+            (principal_id, operator_id),
+        )
+        row = cur.fetchone()
+        return PinChallenge(row[0], bool(row[1]), int(row[2]), int(row[3]), int(row[4]),
+                            str(row[5]), int(row[6]), bytes(row[7]))
 
-            if locked:
-                reason = "locked"
-            elif candidate is None:
-                reason = "unknown_profile"
-            elif not well_formed:
-                reason = "malformed_pin"
-            elif not verified:
-                reason = "pin_mismatch"
-            else:
-                reason = "profile_inactive"
-            operator_ref = candidate.operator_id if candidate is not None else None
-            self._event(cur, "profile.selection_refused", pid, principal_email,
-                        operator_id=operator_ref, refusal_reason=reason)
-            if not locked:
-                after = self._throttle(cur, "record_failure", pid, operator_ref)
-                if after.principal_lock_started:
-                    self._event(cur, "profile.locked", pid, principal_email)
-                if after.profile_lock_started:
-                    self._event(cur, "profile.locked", pid, principal_email,
-                                operator_id=operator_ref)
-            return SelectionOutcome(None, reason)
+    @staticmethod
+    def _finish(cur: Any, challenge: PinChallenge, principal_id: str, operator_id: str | None,
+                previous_operator_id: str | None, proof: bytes | None) -> tuple[bool, str | None]:
+        cur.execute(
+            "select selected, reason from platform.finish_pin_attempt(%s::uuid, %s::uuid, %s::uuid, "
+            "%s::uuid, %s)",
+            (challenge.attempt_id, principal_id, operator_id, previous_operator_id, proof),
+        )
+        selected, reason = cur.fetchone()
+        return bool(selected), reason
 
     # ------------------------------------------------------------------ audit
 
@@ -556,16 +539,3 @@ class ProfileAuthRepository:
             (event_type, principal_id, principal_email if principal_id else None, operator_id,
              previous_operator_id, refusal_reason),
         )
-
-    @staticmethod
-    def _throttle(cur: Any, operation: str, principal_id: str,
-                  operator_id: str | None) -> ThrottleState:
-        """One closed throttle transition, computed and written by the database."""
-        if operation not in THROTTLE_OPERATIONS:
-            raise ValueError("unexpected throttle operation")
-        cur.execute(
-            "select principal_locked, profile_locked, principal_lock_started, profile_lock_started "
-            "from platform.record_pin_attempt(%s, %s::uuid, %s::uuid)",
-            (operation, principal_id, operator_id),
-        )
-        return ThrottleState(*(bool(v) for v in cur.fetchone()))
