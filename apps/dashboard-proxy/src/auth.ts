@@ -30,6 +30,9 @@ export const AUTH_LOGIN_PATH = "/auth/google/login";
 export const AUTH_CALLBACK_PATH = "/auth/google/callback";
 export const AUTH_SESSION_PATH = "/auth/session";
 export const AUTH_LOGOUT_PATH = "/auth/logout";
+export const AUTH_PROFILES_PATH = "/auth/profiles";
+export const AUTH_PROFILE_SELECT_PATH = "/auth/profile/select";
+export const AUTH_PROFILE_CLEAR_PATH = "/auth/profile/clear";
 
 const GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const LOGIN_ERROR_RE = /^[a-z_]{1,40}$/;
@@ -45,7 +48,10 @@ export function isAuthPath(pathname: string): boolean {
     path === AUTH_LOGIN_PATH ||
     path === AUTH_CALLBACK_PATH ||
     path === AUTH_SESSION_PATH ||
-    path === AUTH_LOGOUT_PATH
+    path === AUTH_LOGOUT_PATH ||
+    path === AUTH_PROFILES_PATH ||
+    path === AUTH_PROFILE_SELECT_PATH ||
+    path === AUTH_PROFILE_CLEAR_PATH
   );
 }
 

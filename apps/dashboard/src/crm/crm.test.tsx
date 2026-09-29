@@ -258,7 +258,7 @@ describe("PeoplePage", () => {
             method: "google_session",
             operator: { operatorId: "op-1", email: "lectora@ejemplo.invalid", displayName: "Lectora", role: "viewer" },
           },
-          signOut: async () => undefined,
+          signOut: async () => true,
         }}
       >
         <PeoplePage navigate={() => undefined} />
@@ -283,7 +283,7 @@ describe("PeoplePage", () => {
             method: "google_session",
             operator: { operatorId: "op-1", email: "lectora@ejemplo.invalid", displayName: "Lectora", role: "viewer" },
           },
-          signOut: async () => undefined,
+          signOut: async () => true,
         }}
       >
         <PeoplePage navigate={() => undefined} />
@@ -309,7 +309,7 @@ describe("PeoplePage", () => {
             method: "google_session",
             operator: { operatorId: "op-2", email: "ventas@ejemplo.invalid", displayName: "Ventas", role: "sales" },
           },
-          signOut: async () => undefined,
+          signOut: async () => true,
         }}
       >
         <PeoplePage navigate={() => undefined} />

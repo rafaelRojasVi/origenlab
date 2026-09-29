@@ -35,10 +35,17 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
-from origenlab_api.v2.auth_session import CookieRefused, CookieSigner, read_cookie
+from origenlab_api.v2.auth_session import (
+    CookieRefused,
+    CookieSigner,
+    PrincipalSession,
+    read_cookie,
+)
 
 if TYPE_CHECKING:
+    from origenlab_api.v2.auth_session_store import AuthSessionStore
     from origenlab_api.v2.google_oidc import GoogleAuthConfig
+    from origenlab_api.v2.profile_auth import PrincipalRecord, ProfileAuthRepository
 
 
 class IdentityRefused(Exception):
@@ -54,6 +61,27 @@ class IdentityAbsent(IdentityRefused):
     """
 
 
+#: The one public `detail` of a request refused because no profile has been selected yet.
+PROFILE_REQUIRED = "profile_required"
+
+
+class ProfileRequired(IdentityRefused):
+    """A valid shared Google sign-in that has no (still valid) profile selected.
+
+    Its message is exactly :data:`PROFILE_REQUIRED`, which every route returns as its 401
+    detail, so the dashboard knows to show the profile screen and nothing else. It is a
+    refusal, not an absence: a chain never falls through it to another adapter.
+    """
+
+    def __init__(self, principal: "PrincipalRecord", session: PrincipalSession, *,
+                 stale: bool = False) -> None:
+        super().__init__(PROFILE_REQUIRED)
+        self.principal = principal
+        self.session = session
+        #: True when a profile was selected but no longer holds (role, PIN, status changed).
+        self.stale = stale
+
+
 class IdentityMisconfigured(Exception):
     """The adapter cannot be constructed at all. Raised at startup, never per request."""
 
@@ -67,8 +95,14 @@ class OperatorIdentity:
     display_name: str
     role: str
     status: str
-    #: Which adapter resolved this operator: `google_session`, `dev_header`, or `unknown`.
+    #: Which adapter resolved this operator: `google_session`, `google_profile`, `dev_profile`,
+    #: `dev_header`, or `unknown`.
     auth_method: str = "unknown"
+    #: For a profile selected through a shared sign-in: the principal it was selected through.
+    principal_id: str | None = None
+    #: `platform.operator.version` as read, when the reader selected it (bumped by trigger on
+    #: every role, status or address change).
+    version: int | None = None
 
     @property
     def is_active(self) -> bool:
@@ -172,34 +206,130 @@ class GoogleSessionIdentity(IdentityPort):
 
     The cookie is only ever minted by the Google callback, after the ID token's claims were
     checked and the address was found in `platform.operator` (`auth_routes.py`). It is not
-    trusted as a standing grant: every request re-reads the operator row, so a disabled
-    operator is refused on the next request, and a row whose id no longer matches the one the
-    session was issued for — an address reassigned to someone else — is refused too.
+    trusted as a standing grant: every request re-reads the session's own `platform.auth_session`
+    row joined to its operator, in one statement (`auth_session_store.py`), and requires the row
+    live — not logged out, not expired by the database clock — and the operator to be the one,
+    at the address and at the `version` signed into the cookie, and active. So logout ends the
+    session everywhere, a copied cookie included; a disabled operator, a role change or an
+    address change (each bumps `version` by trigger) ends it on the next request.
+
+    A **principal session** (a shared Google sign-in, `docs/ARCHITECTURE.md` §5.1) is resolved
+    only when profile sign-in is on (`profiles` is given). Every request re-reads the principal,
+    the session row, the selected profile and its operator in one statement and requires, all
+    at once: the principal active, at the version and address signed into the session, and the
+    Google account (issuer + subject) pinned on it — required in production; the session's own
+    `platform.auth_session` row live (not logged out, rotated or expired); the profile linked
+    to *that* principal, active, at its signed version; the operator active, a dashboard role,
+    at its signed version. A role, PIN, link or status
+    change moves a version (by trigger), so the session stops resolving on the next request.
+    Without a selected profile — or with one that no longer holds — the answer is
+    :class:`ProfileRequired`, never an operator.
     """
 
-    def __init__(self, signer: CookieSigner, cookie_name: str, lookup: "OperatorLookup") -> None:
+    def __init__(
+        self,
+        signer: CookieSigner,
+        cookie_name: str,
+        lookup: "OperatorLookup",
+        *,
+        profiles: "ProfileAuthRepository | None" = None,
+        sessions: "AuthSessionStore | None" = None,
+        production: bool = False,
+    ) -> None:
         self._signer = signer
         self._cookie_name = cookie_name
         self._lookup = lookup
+        self._profiles = profiles
+        self._sessions = sessions
+        self._production = production
 
     def resolve(self, headers: dict[str, str]) -> OperatorIdentity:
         value = read_cookie(headers, self._cookie_name)
         if value is None:
             raise IdentityAbsent("no dashboard session: sign in with Google Workspace")
         try:
-            session = self._signer.load_session(value)
+            session = self._signer.load_any_session(value)
         except CookieRefused as exc:
             raise IdentityRefused(
                 "the dashboard session is invalid or expired: sign in again"
             ) from exc
-        operator = self._lookup.by_email(session["email"])
-        if operator is None:
-            raise IdentityRefused("no platform.operator row matches the signed-in address")
-        if operator.operator_id != session["operator_id"]:
+        if isinstance(session, PrincipalSession):
+            return self._resolve_principal(session)
+        if self._sessions is None:
+            raise IdentityRefused("no session store is configured: sign in again")
+        row = self._sessions.operator_session(self._signer.session_token_hash(session.sid))
+        if row is None or not row.live:
+            raise IdentityRefused("the session has ended (signed out or expired): sign in again")
+        operator = row.operator
+        if operator.operator_id != session.operator_id or operator.email_norm != session.email:
             raise IdentityRefused(
                 "the operator row for the signed-in address has changed: sign in again"
             )
+        if operator.version != session.operator_version:
+            raise IdentityRefused("the operator changed (role, status or address): sign in again")
         return replace(operator, auth_method="google_session").require_active()
+
+    def _resolve_principal(self, session: PrincipalSession) -> OperatorIdentity:
+        if self._profiles is None:
+            raise IdentityRefused("profile sign-in is not enabled here: sign in again")
+        principal, binding = check_principal_session(
+            self._profiles, session, token_hash=self._signer.session_token_hash(session.sid),
+            production=self._production)
+        selection = session.profile
+        if selection is None:
+            raise ProfileRequired(principal, session)
+        if (binding is None or not binding.is_usable
+                or binding.operator_id != selection.operator_id
+                or binding.operator_version != selection.operator_version
+                or binding.profile_version != selection.profile_version):
+            raise ProfileRequired(principal, session, stale=True)
+        return OperatorIdentity(
+            operator_id=binding.operator_id,
+            email_norm=principal.email_norm,
+            display_name=binding.display_name,
+            role=binding.role,
+            status="active",
+            auth_method="google_profile" if session.method == "google" else "dev_profile",
+            principal_id=principal.principal_id,
+        )
+
+
+def check_principal_session(
+    profiles: "ProfileAuthRepository", session: PrincipalSession, *, token_hash: bytes,
+    production: bool,
+) -> tuple["PrincipalRecord", object]:
+    """Re-read the principal behind `session` (and its selected profile) and check it, or refuse.
+
+    The principal must exist, be active, and match the version and address the session was
+    signed with. A Google session must also match the Google account pinned on the row — its
+    issuer and subject — and **in production a principal with no pinned account is refused
+    outright**: an address alone never identifies a shared sign-in there, because a deleted and
+    recreated account keeps the address and changes the subject. A development session is
+    refused in production whatever its signature says.
+
+    The session's own `platform.auth_session` row (found by `token_hash`, the keyed hash of the
+    cookie's identifier) must exist, be neither revoked nor expired by the database clock, and
+    carry the operator the cookie names: a logged-out, rotated or expired session is refused
+    outright, whatever its signature and its own expiry say. Returns the principal and the
+    selected profile's current binding (or None).
+    """
+    if production and session.method != "google":
+        raise IdentityRefused("a development sign-in is never honoured in production")
+    selected = session.profile.operator_id if session.profile is not None else None
+    principal, binding, row = profiles.binding(session.principal_id, selected, token_hash)
+    if (principal is None or not principal.is_active
+            or principal.version != session.principal_version
+            or principal.email_norm != session.email):
+        raise IdentityRefused("the shared sign-in is no longer valid: sign in again")
+    if row is None or not row.live or row.operator_id != selected:
+        raise IdentityRefused("the session has ended (signed out, switched or expired): sign in again")
+    if session.method == "google":
+        if principal.has_pinned_account:
+            if not principal.is_account(session.issuer, session.subject):
+                raise IdentityRefused("the shared sign-in is not the pinned Google account: sign in again")
+        elif production:
+            raise IdentityRefused("the shared sign-in has no pinned Google account: production refuses it")
+    return principal, binding
 
 
 class ChainedIdentity(IdentityPort):
@@ -264,6 +394,10 @@ def build_identity_port(
     google: "GoogleAuthConfig | None" = None,
     dev_login_enabled: bool = False,
     production: bool = False,
+    profiles: "ProfileAuthRepository | None" = None,
+    sessions: "AuthSessionStore | None" = None,
+    session_signer: CookieSigner | None = None,
+    session_cookie_name: str | None = None,
 ) -> IdentityPort:
     """Choose the adapter.
 
@@ -282,7 +416,17 @@ def build_identity_port(
         )
     adapters: list[IdentityPort] = []
     if google is not None:
-        adapters.append(GoogleSessionIdentity(google.signer, google.cookie_names.session, lookup))
+        adapters.append(GoogleSessionIdentity(
+            google.signer, google.cookie_names.session, lookup,
+            profiles=profiles, sessions=sessions, production=production,
+        ))
+    elif profiles is not None and dev_login_enabled and session_signer and session_cookie_name:
+        # Local development without Google: the session cookie is minted by the local-only
+        # profile shortcut (`profile_routes.py`), and resolved exactly as a Google one would be.
+        adapters.append(GoogleSessionIdentity(
+            session_signer, session_cookie_name, lookup, profiles=profiles, sessions=sessions,
+            production=production,
+        ))
     if dev_login_enabled:
         adapters.append(LocalDevIdentity(database_url, lookup, production=production))
     if not adapters:

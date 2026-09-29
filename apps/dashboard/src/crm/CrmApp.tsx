@@ -85,8 +85,8 @@ function Section({
   }
 }
 
-function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean }) {
-  const { session, signOut } = useAuthSession();
+export function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean }) {
+  const { session, signOut, switchProfile } = useAuthSession();
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-canvas-raised/95 backdrop-blur-sm">
       <div className="mx-auto flex h-12 max-w-[1600px] items-center gap-3 px-4 sm:px-6">
@@ -96,19 +96,19 @@ function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean })
           aria-expanded={menuOpen}
           aria-controls="crm-sidenav"
           aria-label="Menú"
-          className="-ml-1 h-8 w-8 rounded-md text-ink-muted hover:bg-canvas-sunken lg:hidden"
+          className="-ml-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken lg:hidden"
         >
           ☰
         </button>
-        <a href="#/crm/resumen" className="flex items-center gap-2">
+        <a href="#/crm/resumen" className="flex shrink-0 items-center gap-2" aria-label="OrigenLab">
           <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-md bg-brand-600 text-[11px] font-bold text-white">
             O
           </span>
-          <span className="text-[13px] font-semibold tracking-tight text-ink">OrigenLab</span>
+          <span className="hidden text-[13px] font-semibold tracking-tight text-ink sm:inline">OrigenLab</span>
         </a>
-        <span aria-hidden="true" className="hidden h-4 w-px bg-line-strong sm:inline" />
-        <span className="hidden text-[13px] text-ink-muted sm:inline">Panel comercial</span>
-        <span className="hidden rounded-full border border-line bg-canvas-sunken px-2 py-px text-[11px] font-medium text-ink-muted sm:inline" data-testid="crm-read-only-chip">
+        <span aria-hidden="true" className="hidden h-4 w-px bg-line-strong lg:inline" />
+        <span className="hidden text-[13px] text-ink-muted lg:inline">Panel comercial</span>
+        <span className="hidden shrink-0 rounded-full border border-line bg-canvas-sunken px-2 py-px text-[11px] font-medium text-ink-muted xl:inline" data-testid="crm-read-only-chip">
           Sin envíos · datos locales
         </span>
         {contactAddressesRedacted(session) ? (
@@ -120,23 +120,53 @@ function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean })
             {REDACTION_NOTICE}
           </span>
         ) : null}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex min-w-0 items-center gap-2">
           {session.kind === "signed_in" ? (
             <span
-              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-canvas-raised py-0.5 pl-1 pr-1 text-xs text-ink-muted"
-              title={`${session.operator.displayName} · ${session.operator.role}`}
+              className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-canvas-raised py-0.5 pl-1 pr-1 text-xs text-ink-muted"
+              title={`${session.operator.displayName} · ${session.profile?.roleLabel || ROLE_LABEL[session.operator.role] || session.operator.role}`}
               data-testid="crm-operator-chip"
             >
               <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center rounded-full bg-canvas-sunken text-[10px] font-semibold text-ink">
                 {(session.operator.displayName || session.operator.email).slice(0, 1).toUpperCase()}
               </span>
-              <span className="hidden max-w-[14rem] truncate sm:inline" data-testid="crm-operator-name">
+              <span
+                className={`${session.canSwitchProfile ? "max-w-[5.5rem]" : "hidden"} truncate font-medium text-ink sm:inline sm:max-w-[14rem]`}
+                data-testid="crm-operator-name"
+              >
                 {session.operator.displayName || session.operator.email}
               </span>
-              <span className="hidden rounded-full bg-canvas-sunken px-1.5 text-[10px] font-semibold text-ink-muted md:inline" data-testid="crm-operator-role">
-                {ROLE_LABEL[session.operator.role] ?? session.operator.role}
+              <span className="hidden rounded-full bg-canvas-sunken px-1.5 text-[10px] font-semibold text-ink-muted sm:inline" data-testid="crm-operator-role">
+                {session.profile?.roleLabel || (ROLE_LABEL[session.operator.role] ?? session.operator.role)}
               </span>
-              {session.method === "dev_header" ? (
+              {session.canSwitchProfile ? (
+                <>
+                  {session.method === "dev_profile" ? (
+                    <span className="hidden rounded-full bg-warn-bg px-1.5 text-[10px] font-semibold text-warn sm:inline">desarrollo</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void switchProfile?.()}
+                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink"
+                    title="Vuelve a la pantalla de perfiles. La sesión de Google sigue abierta."
+                    aria-label="Cambiar perfil"
+                    data-testid="crm-switch-profile"
+                  >
+                    <span className="sm:hidden">Perfil</span>
+                    <span className="hidden sm:inline">Cambiar perfil</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void signOut()}
+                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink"
+                    aria-label="Cerrar sesión"
+                    data-testid="crm-sign-out"
+                  >
+                    <span className="sm:hidden">Salir</span>
+                    <span className="hidden sm:inline">Cerrar sesión</span>
+                  </button>
+                </>
+              ) : session.method === "dev_header" ? (
                 <span className="hidden rounded-full bg-warn-bg px-1.5 text-[10px] font-semibold text-warn sm:inline">desarrollo</span>
               ) : (
                 <>
@@ -152,10 +182,10 @@ function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean })
                   <button
                     type="button"
                     onClick={() => void signOut()}
-                    className="rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink"
+                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink"
                     data-testid="crm-sign-out"
                   >
-                    Salir
+                    Cerrar sesión
                   </button>
                 </>
               )}
@@ -167,15 +197,17 @@ function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean })
   );
 }
 
-const ROLE_LABEL: Record<string, string> = { admin: "Admin", sales: "Ventas", viewer: "Lectura" };
+const ROLE_LABEL: Record<string, string> = { admin: "Administración", sales: "Ventas", viewer: "Lectura" };
 
 /**
  * Account switching goes through Google, never through a user picker: close this session,
  * then start a new sign-in, which asks Google for its account chooser (`prompt=select_account`).
  */
-async function switchAccount(signOut: () => Promise<void>): Promise<void> {
-  await signOut();
-  window.location.assign(googleLoginUrl());
+async function switchAccount(signOut: () => Promise<boolean>): Promise<void> {
+  // Only a confirmed logout moves on to Google; a failed one stays here, signed in, and says so.
+  if (await signOut()) {
+    window.location.assign(googleLoginUrl());
+  }
 }
 
 function SideNav({

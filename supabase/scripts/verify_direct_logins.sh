@@ -242,57 +242,75 @@ probe_left="$(ol_psql -q -A -t -c "select count(*) from pg_proc p join pg_namesp
   || report FAIL "the temporary SECURITY DEFINER probe is gone after the run" "count $probe_left"
 
 # The closed SECURITY DEFINER list (docs/ARCHITECTURE.md §6.2), as a catalogue fact. After the
-# probe is dropped exactly one application definer may exist — outbound.add_contact_control — with
-# exactly this owner, pinned search_path and ACL; anything else is a failure, including a second
-# definer. Each row is "PASS|name|detail" or "FAIL|name|detail". Extending the closed list means
-# editing this query in the same PR as the migration that adds the function.
-DEFINER_SIG='outbound.add_contact_control(text, text, text, text, uuid, uuid, jsonb)'
+# probe is dropped exactly the application definers below may exist — outbound.add_contact_control
+# (W10), platform.begin_pin_attempt and platform.finish_pin_attempt (the PIN attempt, slice 1,
+# 20260929100000) — each with exactly this owner, pinned search_path and ACL; anything else is a
+# failure, including a fourth definer or the removed platform.record_pin_attempt. Each row is
+# "PASS|name|detail" or "FAIL|name|detail". Extending the closed list means editing this list in
+# the same PR as the migration that adds the function.
+DEFINER_SIGS=(
+  'outbound.add_contact_control(text, text, text, text, uuid, uuid, jsonb)'
+  'platform.begin_pin_attempt(uuid, uuid)'
+  'platform.finish_pin_attempt(uuid, uuid, uuid, bytea)'
+)
 DEFINER_REGPROC='outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)'
-read -r -d '' CLOSED_LIST_SQL <<SQL || true
-with definers as (
+BEGIN_REGPROC='platform.begin_pin_attempt(uuid,uuid)'
+FINISH_REGPROC='platform.finish_pin_attempt(uuid,uuid,uuid,bytea)'
+
+# definer_checks SHORT REGPROC -> the per-function union-all rows for one closed-list definer.
+definer_checks() {
+  local short="$1" regproc="$2"
+  cat <<SQL
+  union all
+  select '$short exists and is SECURITY DEFINER',
+         coalesce((select prosecdef from pg_proc where oid = to_regprocedure('$regproc')), false),
+         coalesce((select prosecdef::text from pg_proc where oid = to_regprocedure('$regproc')), 'missing')
+  union all
+  select '$short is owned by origenlab_owner',
+         coalesce((select proowner = 'origenlab_owner'::regrole from pg_proc where oid = to_regprocedure('$regproc')), false),
+         coalesce((select proowner::regrole::text from pg_proc where oid = to_regprocedure('$regproc')), 'missing')
+  union all
+  select '$short pins search_path = pg_catalog and nothing else',
+         coalesce((select proconfig = array['search_path=pg_catalog'] from pg_proc where oid = to_regprocedure('$regproc')), false),
+         coalesce((select coalesce(proconfig::text, 'null') from pg_proc where oid = to_regprocedure('$regproc')), 'missing')
+  union all
+  select '$short ACL is exactly {origenlab_owner=X/origenlab_owner,origenlab_api=X/origenlab_owner}',
+         coalesce((select proacl::text = '{origenlab_owner=X/origenlab_owner,origenlab_api=X/origenlab_owner}' from pg_proc where oid = to_regprocedure('$regproc')), false),
+         coalesce((select coalesce(proacl::text, 'null (PUBLIC default)') from pg_proc where oid = to_regprocedure('$regproc')), 'missing')
+  union all
+  select 'PUBLIC holds no EXECUTE on $short',
+         coalesce((select proacl is not null and not exists (select 1 from aclexplode(proacl) a where a.grantee = 0) from pg_proc where oid = to_regprocedure('$regproc')), false),
+         coalesce((select coalesce(proacl::text, 'null (PUBLIC default)') from pg_proc where oid = to_regprocedure('$regproc')), 'missing')
+  union all
+  select 'anon, authenticated, service_role, origenlab_worker and origenlab_migrator cannot EXECUTE $short',
+         coalesce((select not bool_or(has_function_privilege(r, to_regprocedure('$regproc'), 'EXECUTE'))
+                     from unnest(array['anon','authenticated','service_role','origenlab_worker','origenlab_migrator']) r
+                    where to_regprocedure('$regproc') is not null), false),
+         coalesce((select string_agg(r, ',') from unnest(array['anon','authenticated','service_role','origenlab_worker','origenlab_migrator']) r
+                    where to_regprocedure('$regproc') is not null and has_function_privilege(r, to_regprocedure('$regproc'), 'EXECUTE')), 'none')
+  union all
+  select 'origenlab_api is the only grantee of EXECUTE on $short',
+         coalesce((select array_agg(distinct a.grantee::regrole::text) from pg_proc f, aclexplode(f.proacl) a
+                    where f.oid = to_regprocedure('$regproc') and a.privilege_type = 'EXECUTE' and a.grantee <> f.proowner) = array['origenlab_api'], false),
+         coalesce((select string_agg(distinct case a.grantee when 0 then 'PUBLIC' else a.grantee::regrole::text end, ',')
+                     from pg_proc f, aclexplode(f.proacl) a where f.oid = to_regprocedure('$regproc') and a.privilege_type = 'EXECUTE' and a.grantee <> f.proowner), 'none')
+SQL
+}
+
+EXPECTED_DEFINER_ARRAY="array[$(printf "'%s'," "${DEFINER_SIGS[@]}" | sed 's/,$//')]"
+CLOSED_LIST_SQL="with definers as (
   select n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')' as sig
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname in ('crm','comms','outbound','evidence','catalog','procurement','platform') and p.prosecdef
-), f as (
-  select p.* from pg_proc p where p.oid = to_regprocedure('$DEFINER_REGPROC')
 ), checks(name, ok, detail) as (
-  select 'the SECURITY DEFINER set is exactly {$DEFINER_SIG}',
-         coalesce((select array_agg(sig order by sig) from definers), '{}') = array['$DEFINER_SIG'],
+  select 'the SECURITY DEFINER set is exactly {$(IFS=';'; echo "${DEFINER_SIGS[*]}")}',
+         coalesce((select array_agg(sig order by sig) from definers), '{}') = $EXPECTED_DEFINER_ARRAY,
          coalesce((select string_agg(sig, '; ' order by sig) from definers), 'none')
-  union all
-  select 'add_contact_control exists and is SECURITY DEFINER',
-         coalesce((select prosecdef from f), false), coalesce((select prosecdef::text from f), 'missing')
-  union all
-  select 'add_contact_control is owned by origenlab_owner',
-         coalesce((select proowner = 'origenlab_owner'::regrole from f), false),
-         coalesce((select proowner::regrole::text from f), 'missing')
-  union all
-  select 'add_contact_control pins search_path = pg_catalog and nothing else',
-         coalesce((select proconfig = array['search_path=pg_catalog'] from f), false),
-         coalesce((select coalesce(proconfig::text, 'null') from f), 'missing')
-  union all
-  select 'add_contact_control ACL is exactly {origenlab_owner=X/origenlab_owner,origenlab_api=X/origenlab_owner}',
-         coalesce((select proacl::text = '{origenlab_owner=X/origenlab_owner,origenlab_api=X/origenlab_owner}' from f), false),
-         coalesce((select coalesce(proacl::text, 'null (PUBLIC default)') from f), 'missing')
-  union all
-  select 'PUBLIC holds no EXECUTE on add_contact_control',
-         coalesce((select proacl is not null and not exists (select 1 from aclexplode(proacl) a where a.grantee = 0) from f), false),
-         coalesce((select coalesce(proacl::text, 'null (PUBLIC default)') from f), 'missing')
-  union all
-  select 'anon, authenticated, service_role, origenlab_worker and origenlab_migrator cannot EXECUTE add_contact_control',
-         coalesce((select not bool_or(has_function_privilege(r, f.oid, 'EXECUTE'))
-                     from f, unnest(array['anon','authenticated','service_role','origenlab_worker','origenlab_migrator']) r), false),
-         coalesce((select string_agg(r, ',') from f, unnest(array['anon','authenticated','service_role','origenlab_worker','origenlab_migrator']) r
-                    where has_function_privilege(r, f.oid, 'EXECUTE')), 'none')
-  union all
-  select 'origenlab_api is the only grantee of EXECUTE on add_contact_control',
-         coalesce((select array_agg(distinct a.grantee::regrole::text) from f, aclexplode(f.proacl) a
-                    where a.privilege_type = 'EXECUTE' and a.grantee <> f.proowner) = array['origenlab_api'], false),
-         coalesce((select string_agg(distinct case a.grantee when 0 then 'PUBLIC' else a.grantee::regrole::text end, ',')
-                     from f, aclexplode(f.proacl) a where a.privilege_type = 'EXECUTE' and a.grantee <> f.proowner), 'none')
+$(definer_checks add_contact_control "$DEFINER_REGPROC")
+$(definer_checks begin_pin_attempt "$BEGIN_REGPROC")
+$(definer_checks finish_pin_attempt "$FINISH_REGPROC")
 )
-select case when ok then 'PASS' else 'FAIL' end || '|' || name || '|' || detail from checks;
-SQL
+select case when ok then 'PASS' else 'FAIL' end || '|' || name || '|' || detail from checks;"
 
 # check_closed_list [PREFIX_SQL] -> prints the rows; PREFIX_SQL runs first in the same transaction,
 # which is always rolled back.
@@ -315,6 +333,36 @@ expect origenlab_worker "$PW_WORKER" "worker: refused EXECUTE on outbound.add_co
   "select outbound.add_contact_control('revoke', 'all', 'x@lab.test', 'x', gen_random_uuid(), gen_random_uuid(), '{}'::jsonb)"
 expect origenlab_api "$PW_API" "api: may EXECUTE outbound.add_contact_control (the body refuses an unimplemented kind)" 22023 \
   "select outbound.add_contact_control('revoke', 'all', 'x@lab.test', 'x', gen_random_uuid(), gen_random_uuid(), '{}'::jsonb)"
+
+# The PIN attempt (20260929100000): only the API login reaches either body. The API login cannot
+# declare a success any more (record_pin_attempt is gone), cannot finish an attempt it never began,
+# writes no throttle column, takes no throttle row lock itself, cannot read the stored verifier and
+# cannot insert a PIN outcome event. The attempts themselves are apps/api/tests/test_v2_pin_attempt_boundary.py.
+for fn_call in "platform.begin_pin_attempt(gen_random_uuid(), null)" \
+               "platform.finish_pin_attempt(gen_random_uuid(), gen_random_uuid(), null, null)"; do
+  expect origenlab_worker "$PW_WORKER" "worker: refused EXECUTE on ${fn_call%%(*}" 42501 "select * from $fn_call"
+  expect origenlab_migrator "$PW_MIGRATOR" "migrator: refused EXECUTE on ${fn_call%%(*}" 42501 "select * from $fn_call"
+done
+expect origenlab_api "$PW_API" "api: begin_pin_attempt refuses an unknown principal rather than inventing one" P0002 \
+  "select * from platform.begin_pin_attempt(gen_random_uuid(), null)"
+expect origenlab_api "$PW_API" "api: finish_pin_attempt refuses an attempt that was never begun" P0002 \
+  "select * from platform.finish_pin_attempt(gen_random_uuid(), gen_random_uuid(), null, '\\x00'::bytea)"
+expect origenlab_api "$PW_API" "api: the caller-declared success is gone (record_pin_attempt does not exist)" 42883 \
+  "select * from platform.record_pin_attempt('record_success', gen_random_uuid(), null)"
+expect origenlab_api "$PW_API" "api: refused SELECT * on operator_profile (it would include the stored verifier)" 42501 \
+  "select * from platform.operator_profile where false"
+expect origenlab_api "$PW_API" "api: refused SELECT of operator_profile.pin_hash" 42501 \
+  "select pin_hash from platform.operator_profile where false"
+expect origenlab_api "$PW_API" "api: reads every other operator_profile column" ok \
+  "select operator_id, principal_id, profile_key, status, version, locked_until from platform.operator_profile where false"
+expect origenlab_api "$PW_API" "api: refused a forged PIN outcome event" 42501 \
+  "insert into platform.auth_event (event_type, principal_id, principal_email_norm, refusal_reason) values ('principal.locked', gen_random_uuid(), 'x@example.test', 'pin_mismatch')"
+expect origenlab_api "$PW_API" "api: refused a direct write of a principal's throttle column" 42501 \
+  "update platform.auth_principal set failed_attempts = 0 where false"
+expect origenlab_api "$PW_API" "api: refused a direct write of a profile's lock deadline" 42501 \
+  "update platform.operator_profile set locked_until = null where false"
+expect origenlab_api "$PW_API" "api: refused a throttle row lock of its own" 42501 \
+  "select 1 from platform.auth_principal for update"
 
 # Failure injection: every deviation below, applied inside a rolled-back transaction, must turn the
 # closed-list check red. A check that stays green on any of them proves nothing.
@@ -346,6 +394,32 @@ inject "add_contact_control no longer SECURITY DEFINER" \
   "set role origenlab_owner; alter function $DEFINER_REGPROC security invoker; reset role;"
 inject "add_contact_control EXECUTE revoked from origenlab_api" \
   "set role origenlab_owner; revoke execute on function $DEFINER_REGPROC from origenlab_api; reset role;"
+inject "begin_pin_attempt executable by PUBLIC" \
+  "set role origenlab_owner; grant execute on function $BEGIN_REGPROC to public; reset role;"
+inject "begin_pin_attempt executable by origenlab_migrator" \
+  "set role origenlab_owner; grant execute on function $BEGIN_REGPROC to origenlab_migrator; reset role;"
+inject "begin_pin_attempt with search_path widened" \
+  "set role origenlab_owner; alter function $BEGIN_REGPROC set search_path = pg_catalog, public; reset role;"
+inject "begin_pin_attempt no longer SECURITY DEFINER" \
+  "set role origenlab_owner; alter function $BEGIN_REGPROC security invoker; reset role;"
+inject "begin_pin_attempt EXECUTE revoked from origenlab_api" \
+  "set role origenlab_owner; revoke execute on function $BEGIN_REGPROC from origenlab_api; reset role;"
+inject "begin_pin_attempt dropped" \
+  "set role origenlab_owner; drop function $BEGIN_REGPROC; reset role;"
+inject "finish_pin_attempt executable by PUBLIC" \
+  "set role origenlab_owner; grant execute on function $FINISH_REGPROC to public; reset role;"
+inject "finish_pin_attempt executable by origenlab_migrator" \
+  "set role origenlab_owner; grant execute on function $FINISH_REGPROC to origenlab_migrator; reset role;"
+inject "finish_pin_attempt with search_path widened" \
+  "set role origenlab_owner; alter function $FINISH_REGPROC set search_path = pg_catalog, public; reset role;"
+inject "finish_pin_attempt no longer SECURITY DEFINER" \
+  "set role origenlab_owner; alter function $FINISH_REGPROC security invoker; reset role;"
+inject "finish_pin_attempt EXECUTE revoked from origenlab_api" \
+  "set role origenlab_owner; revoke execute on function $FINISH_REGPROC from origenlab_api; reset role;"
+inject "finish_pin_attempt dropped" \
+  "set role origenlab_owner; drop function $FINISH_REGPROC; reset role;"
+inject "the caller-declared record_pin_attempt restored" \
+  "set role origenlab_owner; create function platform.record_pin_attempt(text, uuid, uuid) returns void language sql security definer set search_path = pg_catalog as 'select'; revoke all on function platform.record_pin_attempt(text, uuid, uuid) from public; grant execute on function platform.record_pin_attempt(text, uuid, uuid) to origenlab_api; reset role;"
 closed_after="$(check_closed_list)"
 [[ "$closed_after" == "$closed" ]] && report PASS "every injection rolled back: the closed-list check reads exactly as before" \
   || report FAIL "every injection rolled back: the closed-list check reads exactly as before" "the catalogue changed"

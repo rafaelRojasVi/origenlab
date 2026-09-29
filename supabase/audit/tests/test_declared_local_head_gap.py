@@ -17,6 +17,13 @@ from pathlib import Path
 import assert_declared_local_head_gap as gap
 
 TABLES = ("opportunity_evidence", "opportunity_interest", "opportunity_organization", "campaign_block")
+#: The shared Workspace sign-in tables carry fewer policies than four: auth_principal and
+#: operator_profile one each (api select; their throttle is written by the definer
+#: platform.finish_pin_attempt), auth_event two (api select, insert).
+SIGN_IN_TABLES = ("auth_principal", "operator_profile", "auth_event")
+SIGN_IN_POLICY_COUNTS = {"auth_principal": 1, "operator_profile": 1, "auth_event": 2}
+#: ...and the session table three (api select, insert, update).
+SESSION_TABLE = "auth_session"
 
 
 def _table(name):
@@ -29,33 +36,48 @@ def _policy(table, n):
                       separators=(",", ":"), sort_keys=True)
 
 
+def _removed(policy, command):
+    return json.dumps({"command": command, "permissive": "PERMISSIVE", "policy": policy,
+                       "roles": "{origenlab_api}", "schema": "platform", "table": "operator",
+                       "using": "true", "with_check": "true"}, separators=(",", ":"), sort_keys=True)
+
+
+REMOVED = "; ".join([_removed("origenlab_api_insert", "INSERT"), _removed("origenlab_api_update", "UPDATE")])
+
+
 def _check(check_id, status="PASS", summary=None, findings=None, required=True):
     return {"id": check_id, "required": required, "status": status,
             "summary": summary or {}, "findings": findings or []}
 
 
 def current_head_report():
-    """The shape of a real local audit of current head (numbers from a 2026-09-27 campaign-block run)."""
-    policies = "; ".join(_policy(t, n) for t in TABLES for n in range(4))
+    """The shape of a real local audit of current head (a 2026-09-27 campaign-block run, moved by
+    the 2026-09-28 sign-in tables: +4 tables, +7 functions, +7 policies, +8 foreign keys, and the
+    2026-09-29 PIN attempt: platform.record_pin_attempt replaced by the definers
+    platform.begin_pin_attempt and platform.finish_pin_attempt and the helper platform.hmac_sha256)."""
+    policies = "; ".join([_policy(t, n) for t in TABLES for n in range(4)]
+                         + [_policy(t, n) for t in SIGN_IN_TABLES for n in range(SIGN_IN_POLICY_COUNTS[t])]
+                         + [_policy(SESSION_TABLE, n) for n in range(3)])
     checks = [_check(f"a{i:02d}") for i in (1, 2, 3, 6, 7, 11, 12)] + [
         _check("s01"),
         _check("a13", status="CORROBORATED", required=False),
-        _check("a04", "FAIL", {"relation_count": 38},
-               ["relations in scope: observed 38, expected 34"]),
-        _check("a05", "FAIL", {"function_count": 22, "security_definer_count": 1}, [
+        _check("a04", "FAIL", {"relation_count": 42},
+               ["relations in scope: observed 42, expected 34"]),
+        _check("a05", "FAIL", {"function_count": 30, "security_definer_count": 3}, [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
-            "1 entr(y|ies) are present here and not in the baseline: " + gap.EXPECTED_SECURITY_DEFINER,
-            "functions in scope: observed 22, expected 3"]),
-        _check("a08", "FAIL", {"table_count": 37, "schema_count": 7}, [
-            "tables: 4 entr(y|ies) are present here and not in the baseline: "
-            + "; ".join(_table(t) for t in TABLES),
-            "table count: observed 37, expected 33"]),
-        _check("a09", "FAIL", {"policy_count": 143}, [
-            "RLS policy count: observed 143, expected 127",
-            "RLS policies: 16 entr(y|ies) are present here and not in the baseline: " + policies]),
+            "3 entr(y|ies) are present here and not in the baseline: " + gap.EXPECTED_SECURITY_DEFINER,
+            "functions in scope: observed 30, expected 3"]),
+        _check("a08", "FAIL", {"table_count": 41, "schema_count": 7}, [
+            "tables: 8 entr(y|ies) are present here and not in the baseline: "
+            + "; ".join(_table(t) for t in TABLES + SIGN_IN_TABLES + (SESSION_TABLE,)),
+            "table count: observed 41, expected 33"]),
+        _check("a09", "FAIL", {"policy_count": 148}, [
+            "RLS policy count: observed 148, expected 127",
+            "RLS policies: 2 entr(y|ies) in the baseline are absent here: " + REMOVED,
+            "RLS policies: 23 entr(y|ies) are present here and not in the baseline: " + policies]),
         _check("a10", "FAIL",
-               {"foreign_key_count": 123, "covered_count": 123, "covered_unconditionally": 90},
-               ["foreign keys: observed 123, expected 102"]),
+               {"foreign_key_count": 131, "covered_count": 131, "covered_unconditionally": 98},
+               ["foreign keys: observed 131, expected 102"]),
     ]
     return {
         "run": {"mode": "local", "simulated": False, "hosted_contacted": False},
@@ -93,7 +115,7 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_historical_guard_is_a_declared_post_slice0_function(self):
         self.assertIn("crm.quote_revision_historical_guard", gap.POST_SLICE0_FUNCTIONS)
         self.assertEqual(3, gap.SLICE0_FUNCTION_COUNT)
-        self.assertEqual(22, gap.EXPECTED_FUNCTION_COUNT)
+        self.assertEqual(30, gap.EXPECTED_FUNCTION_COUNT)
 
     def test_the_campaign_block_schema_is_declared(self):
         self.assertIn("campaign_block", gap.EXPECTED_EXTRA_TABLES)
@@ -104,6 +126,74 @@ class DeclaredGapTest(unittest.TestCase):
                    "outbound.campaign_block.placed_by_operator_id -> platform.operator.id",
                    "outbound.campaign_block.lifted_by_operator_id -> platform.operator.id"):
             self.assertIn(fk, gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS)
+
+    def test_the_sign_in_schema_is_declared(self):
+        for table in SIGN_IN_TABLES:
+            self.assertIn(table, gap.EXPECTED_EXTRA_TABLES)
+        for name in ("platform.operator_security_version", "platform.auth_principal_security_version",
+                     "platform.operator_profile_security_version"):
+            self.assertIn(name, gap.POST_SLICE0_FUNCTIONS)
+        self.assertIn("platform.operator_profile.principal_id -> platform.auth_principal.id",
+                      gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS)
+
+    def test_the_session_table_is_declared(self):
+        self.assertIn(SESSION_TABLE, gap.EXPECTED_EXTRA_TABLES)
+        self.assertIn("platform.auth_session_guard", gap.POST_SLICE0_FUNCTIONS)
+        self.assertIn("platform.auth_event_actor_guard", gap.POST_SLICE0_FUNCTIONS)
+        for fk in ("platform.auth_session.principal_id -> platform.auth_principal.id",
+                   "platform.auth_session.operator_id -> platform.operator_profile.operator_id"):
+            self.assertIn(fk, gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS)
+
+    def test_a09_policies_on_an_unreviewed_table_are_refused(self):
+        report = current_head_report()
+        a09 = check_of(report, "a09")
+        a09["findings"][2] = a09["findings"][2].replace('"table":"auth_event"', '"table":"other_table"', 1)
+        self.assert_refused(report, "a09 names policies on unreviewed tables: ['other_table']")
+
+    def test_a_truncated_a09_list_need_not_name_every_table(self):
+        report = current_head_report()
+        a09 = check_of(report, "a09")
+        head, _, entries = a09["findings"][2].partition(": ")
+        a09["findings"][2] = head + ": " + "; ".join(entries.split("; ")[:12]) + " ..."
+        self.assertEqual(0, self.run_gap(report))
+
+    def test_an_untruncated_a09_list_must_name_every_table(self):
+        report = current_head_report()
+        a09 = check_of(report, "a09")
+        a09["findings"][2] = "; ".join(e for e in a09["findings"][2].split("; ")
+                                       if '"table":"auth_session"' not in e)
+        self.assert_refused(report, "a09 does not name expected table auth_session")
+
+    def test_only_the_two_revoked_operator_policies_may_be_absent(self):
+        report = current_head_report()
+        a09 = check_of(report, "a09")
+        a09["findings"][1] = a09["findings"][1].replace('"table":"operator"', '"table":"organization"', 1)
+        self.assert_refused(report, "a09 reports unreviewed absent policies")
+
+    def test_a_third_absent_policy_is_refused(self):
+        report = current_head_report()
+        a09 = check_of(report, "a09")
+        a09["findings"][1] = (a09["findings"][1].replace("2 entr(y|ies)", "3 entr(y|ies)")
+                              + "; " + _removed("origenlab_api_select", "SELECT"))
+        self.assert_refused(report, "a09 does not report exactly the two reviewed absent policies")
+
+    def test_the_revoked_policies_must_really_be_absent(self):
+        report = current_head_report()
+        a09 = check_of(report, "a09")
+        del a09["findings"][1]
+        self.assert_refused(report, "a09 has unexpected findings")
+
+    def test_a_head_without_the_session_table_is_refused(self):
+        report = current_head_report()
+        a08 = check_of(report, "a08")
+        a08["findings"][0] = a08["findings"][0].replace('"table":"auth_session"', '"table":"other_table"')
+        self.assert_refused(report, "a08 does not name expected table auth_session")
+
+    def test_a_head_without_a_sign_in_table_is_refused(self):
+        report = current_head_report()
+        a08 = check_of(report, "a08")
+        a08["findings"][0] = a08["findings"][0].replace('"table":"operator_profile"', '"table":"other_table"')
+        self.assert_refused(report, "a08 does not name expected table operator_profile")
 
     def test_a_head_without_the_campaign_block_table_is_refused(self):
         report = current_head_report()
@@ -119,27 +209,71 @@ class DeclaredGapTest(unittest.TestCase):
         self.assertIn('"owner":"origenlab_owner"', gap.EXPECTED_SECURITY_DEFINER)
         self.assertIn('"proconfig":"search_path=pg_catalog"', gap.EXPECTED_SECURITY_DEFINER)
 
+    def test_the_pin_attempt_definers_are_declared(self):
+        self.assertNotIn("platform.record_pin_attempt", gap.POST_SLICE0_FUNCTIONS)
+        for name in ("platform.begin_pin_attempt", "platform.finish_pin_attempt", "platform.hmac_sha256"):
+            self.assertIn(name, gap.POST_SLICE0_FUNCTIONS)
+        self.assertEqual(3, len(gap.EXPECTED_SECURITY_DEFINERS))
+        self.assertEqual(sorted(gap.EXPECTED_SECURITY_DEFINERS), list(gap.EXPECTED_SECURITY_DEFINERS),
+                         "in the order the audit renders them: sorted as JSON text")
+        begin = next(e for e in gap.EXPECTED_SECURITY_DEFINERS if '"name":"begin_pin_attempt"' in e)
+        finish = next(e for e in gap.EXPECTED_SECURITY_DEFINERS if '"name":"finish_pin_attempt"' in e)
+        self.assertIn('"name":"begin_pin_attempt"', begin)
+        self.assertIn('"arguments":"p_principal_id uuid, p_operator_id uuid, OUT attempt_id uuid, '
+                      'OUT refused boolean, OUT memory_kib integer, OUT iterations integer, '
+                      'OUT lanes integer, OUT salt text, OUT hash_length integer, OUT nonce bytea"', begin)
+        self.assertIn('"name":"finish_pin_attempt"', finish)
+        self.assertIn('"arguments":"p_attempt_id uuid, p_principal_id uuid, p_operator_id uuid, '
+                      'p_candidate_proof bytea, OUT selected boolean, '
+                      'OUT reason text"', finish)
+        for entry in (begin, finish):
+            self.assertIn('"schema":"platform"', entry)
+            self.assertIn('"owner":"origenlab_owner"', entry)
+            self.assertIn('"proconfig":"search_path=pg_catalog"', entry)
+        self.assertNotIn("record_pin_attempt", gap.EXPECTED_SECURITY_DEFINER)
+
+    def test_a_head_without_a_pin_attempt_definer_is_refused(self):
+        report = current_head_report()
+        a05 = check_of(report, "a05")
+        a05["summary"]["security_definer_count"] = 2
+        self.assert_refused(report, "a05.security_definer_count: observed 2, expected 3")
+
+    def test_a_head_that_still_has_the_caller_declared_success_is_refused(self):
+        report = current_head_report()
+        a05 = check_of(report, "a05")
+        a05["findings"][0] = a05["findings"][0].replace('"name":"finish_pin_attempt"', '"name":"record_pin_attempt"')
+        self.assert_refused(report, "a05 findings changed")
+
+    def test_the_throttle_update_policies_must_really_be_gone(self):
+        report = current_head_report()
+        a09 = check_of(report, "a09")
+        a09["findings"][2] = a09["findings"][2].replace("23 entr(y|ies)", "25 entr(y|ies)")
+        a09["summary"]["policy_count"] = 150
+        self.assert_refused(report, "a09.policy_count: observed 150, expected 148")
+
     def test_the_historical_origin_foreign_key_is_declared(self):
-        self.assertEqual(5, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
-        self.assertEqual(123, gap.EXPECTED_FOREIGN_KEY_COUNT)
-        self.assertEqual(90, gap.EXPECTED_COVERED_UNCONDITIONALLY)
+        self.assertEqual(13, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
+        self.assertEqual(131, gap.EXPECTED_FOREIGN_KEY_COUNT)
+        self.assertEqual(98, gap.EXPECTED_COVERED_UNCONDITIONALLY)
+        self.assertIn("platform.auth_session.(account_operator_id, sign_in_kind)"
+                      " -> platform.operator.(id, sign_in_kind)", gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS)
 
     def test_the_previous_head_count_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 18
-        self.assert_refused(report, "a05.function_count: observed 18, expected 22")
+        a05["summary"]["function_count"] = 28
+        self.assert_refused(report, "a05.function_count: observed 28, expected 30")
 
-    def test_an_undeclared_twenty_third_function_is_refused(self):
+    def test_an_undeclared_thirty_first_function_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 23
-        self.assert_refused(report, "a05.function_count: observed 23, expected 22")
+        a05["summary"]["function_count"] = 31
+        self.assert_refused(report, "a05.function_count: observed 31, expected 30")
 
-    def test_a_second_security_definer_function_is_refused(self):
+    def test_a_fourth_security_definer_function_is_refused(self):
         report = current_head_report()
-        check_of(report, "a05")["summary"]["security_definer_count"] = 2
-        self.assert_refused(report, "a05.security_definer_count: observed 2, expected 1")
+        check_of(report, "a05")["summary"]["security_definer_count"] = 4
+        self.assert_refused(report, "a05.security_definer_count: observed 4, expected 3")
 
     def test_a_different_security_definer_function_is_refused(self):
         report = current_head_report()
@@ -168,9 +302,9 @@ class DeclaredGapTest(unittest.TestCase):
     def test_an_undeclared_foreign_key_is_refused(self):
         report = current_head_report()
         a10 = check_of(report, "a10")
-        a10["summary"].update(foreign_key_count=124, covered_count=124)
-        a10["findings"] = ["foreign keys: observed 124, expected 102"]
-        self.assert_refused(report, "a10.foreign_key_count: observed 124, expected 123")
+        a10["summary"].update(foreign_key_count=132, covered_count=132)
+        a10["findings"] = ["foreign keys: observed 132, expected 102"]
+        self.assert_refused(report, "a10.foreign_key_count: observed 132, expected 131")
 
     def test_another_required_check_failing_is_refused(self):
         report = current_head_report()

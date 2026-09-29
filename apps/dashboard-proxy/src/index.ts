@@ -1,4 +1,7 @@
 import {
+  AUTH_PROFILE_MAX_BYTES,
+  isAllowedAuthPostPath,
+  isAllowedAuthProfilePostPath,
   marketingCommandMaxBytes,
   isAllowedMarketingCommandPostPath,
   isAllowedPostPath,
@@ -84,6 +87,9 @@ function authRedirectResponse(upstreamResponse: Response, location: string): Res
   return new Response(null, { status: upstreamResponse.status, headers });
 }
 
+/** Response headers that publish server processing time; never forwarded on `/auth/*`. */
+export const AUTH_TIMING_HEADERS = ["Server-Timing", "X-Process-Time-Ms"] as const;
+
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/;
 
 /**
@@ -115,6 +121,36 @@ export function marketingCommandRefusal(request: Request): { status: number; cod
   return null;
 }
 
+/**
+ * The CSRF guard for the sign-in POSTs (logout, profile select, profile clear), checked before
+ * anything is forwarded. A cross-site page can neither send an allowed `Origin` nor a cross-site
+ * `Sec-Fetch-Site` past this, so it cannot sign someone out, switch their profile, or drive PIN
+ * guesses through their session. The two profile routes also require a JSON body (which no
+ * cross-site form can send, and no cross-site script can send without a preflight this Worker
+ * only answers for allowed origins) of at most `AUTH_PROFILE_MAX_BYTES`.
+ */
+export function authCommandRefusal(request: Request): { status: number; code: string } | null {
+  if (!isAllowedOrigin(request.headers.get("Origin"))) {
+    return { status: 403, code: "origin_not_allowed" };
+  }
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (site !== null && site !== "same-origin" && site !== "same-site") {
+    return { status: 403, code: "cross_site_request" };
+  }
+  const upstreamPath = stripApiPrefix(new URL(request.url).pathname) ?? "";
+  if (isAllowedAuthProfilePostPath(upstreamPath)) {
+    const contentType = (request.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+    if (contentType !== "application/json") {
+      return { status: 415, code: "unsupported_media_type" };
+    }
+    const length = Number(request.headers.get("Content-Length") || "0");
+    if (!Number.isFinite(length) || length > AUTH_PROFILE_MAX_BYTES) {
+      return { status: 413, code: "payload_too_large" };
+    }
+  }
+  return null;
+}
+
 const ALLOWED_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -142,6 +178,12 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     }
     if (isAllowedMarketingCommandPostPath(upstreamPath)) {
       const refusal = marketingCommandRefusal(request);
+      if (refusal) {
+        return jsonError(request, refusal.status, refusal.code);
+      }
+    }
+    if (isAllowedAuthPostPath(upstreamPath)) {
+      const refusal = authCommandRefusal(request);
       if (refusal) {
         return jsonError(request, refusal.status, refusal.code);
       }
@@ -183,6 +225,13 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     // A body larger than its declared Content-Length, or one sent without it.
     return jsonError(request, 413, "payload_too_large");
   }
+  if (
+    body !== undefined &&
+    isAllowedAuthProfilePostPath(upstreamPath as string) &&
+    body.byteLength > AUTH_PROFILE_MAX_BYTES
+  ) {
+    return jsonError(request, 413, "payload_too_large");
+  }
   const upstreamRequest = new Request(upstreamUrl, {
     method,
     headers: buildUpstreamHeaders(env, request.headers, upstreamPath as string),
@@ -210,6 +259,11 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   if (isAuthPath(upstreamPath as string)) {
     for (const cookie of filterAuthSetCookies(upstreamResponse.headers)) {
       responseHeaders.append("Set-Cookie", cookie);
+    }
+    // Sign-in answers carry no timing: how long a PIN check, a session lookup or a logout took
+    // is not published. The API already omits these; this holds whatever the upstream sends.
+    for (const name of AUTH_TIMING_HEADERS) {
+      responseHeaders.delete(name);
     }
   }
   stripUpstreamCorsHeaders(responseHeaders);

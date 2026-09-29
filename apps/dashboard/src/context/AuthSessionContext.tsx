@@ -3,7 +3,13 @@ import type { AuthSessionState } from "../api/authClient";
 
 export interface AuthSessionContextValue {
   session: AuthSessionState;
-  signOut: () => Promise<void>;
+  /**
+   * End the session. Resolves true once the server confirmed the revocation; false when it
+   * could not, in which case the session stays signed in and a message says so.
+   */
+  signOut: () => Promise<boolean>;
+  /** Back to the profile screen of a shared sign-in; Google stays signed in. */
+  switchProfile?: () => Promise<void>;
 }
 
 /**
@@ -12,7 +18,8 @@ export interface AuthSessionContextValue {
  */
 const DEFAULT_VALUE: AuthSessionContextValue = {
   session: { kind: "loading" },
-  signOut: async () => undefined,
+  signOut: async () => false,
+  switchProfile: async () => undefined,
 };
 
 export const AuthSessionContext = createContext<AuthSessionContextValue>(DEFAULT_VALUE);

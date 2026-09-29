@@ -22,7 +22,7 @@
 # `origenlab_test_<8 hex>`. --json prints the measured report to stdout; without it a human
 # summary goes to stderr. Exit status is non-zero on any mismatch.
 #
-# Expectations: docs/DOMAIN.md §7 and §7.1 (the 37-table inventory), docs/STATUS.md §2.1 (measured),
+# Expectations: docs/DOMAIN.md §7, §7.1–§7.3 (the 41-table inventory), docs/STATUS.md §2.1 (measured),
 # docs/MIGRATION.md §5.2 (the privilege proofs). Procedure: docs/OPERATIONS.md §4.1.
 
 set -euo pipefail
@@ -37,11 +37,11 @@ export OL_REPO_ROOT
 # file with them. They are deliberately not derived from the database — a check that measures
 # its own expectation proves nothing.
 EXPECT_SCHEMAS=7
-EXPECT_TABLES=37
-EXPECT_TABLES_BY_SCHEMA="catalog=2,comms=4,crm=19,evidence=2,outbound=7,platform=2,procurement=1"
-EXPECT_POLICIES=143
+EXPECT_TABLES=41
+EXPECT_TABLES_BY_SCHEMA="catalog=2,comms=4,crm=19,evidence=2,outbound=7,platform=6,procurement=1"
+EXPECT_POLICIES=148
 EXPECT_ROLES=4
-EXPECT_SECURITY_DEFINER=1  # outbound.add_contact_control, the closed list (ARCHITECTURE.md §6.2) since W10
+EXPECT_SECURITY_DEFINER=3  # outbound.add_contact_control (W10), platform.begin_pin_attempt and platform.finish_pin_attempt (slice 1), the closed list (ARCHITECTURE.md §6.2)
 
 OL_SCHEMAS_SQL="'crm','comms','outbound','evidence','catalog','procurement','platform'"
 

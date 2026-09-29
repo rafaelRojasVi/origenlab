@@ -1,7 +1,8 @@
 """Google Workspace dashboard sign-in: the protocol checks, the cookies, and the boundary.
 
 Nothing here talks to Google or to a database. The token endpoint is replaced through the
-`app.state.v2_token_exchanger` seam and `platform.operator` through a stub lookup, so what is
+`app.state.v2_token_exchanger` seam, `platform.operator` through a stub lookup and
+`platform.auth_session` through a stub session store, so what is
 under test is exactly the part this repository owns: which callbacks are refused, what the
 cookies carry, and which identities the V2 boundary will and will not accept.
 """
@@ -53,9 +54,9 @@ EMAIL = "contacto@origenlab.cl"
 
 
 def _operator(status: str = "active", role: str = "admin", operator_id: str = OPERATOR_ID,
-              email: str = EMAIL) -> OperatorIdentity:
+              email: str = EMAIL, version: int = 1) -> OperatorIdentity:
     return OperatorIdentity(operator_id=operator_id, email_norm=email,
-                            display_name="Contacto", role=role, status=status)
+                            display_name="Contacto", role=role, status=status, version=version)
 
 
 class _Repo:
@@ -72,6 +73,44 @@ class _Repo:
     def contacts(self, **kwargs: Any) -> Page:
         self.calls.append("contacts")
         return Page(items=[], total=0, limit=kwargs["limit"], offset=kwargs["offset"])
+
+
+class _Sessions:
+    """Stands in for AuthSessionStore: `platform.auth_session` rows of `google_account` sessions.
+
+    `operator_session` joins on the operator's id, exactly as the real statement does, so an
+    operator row that is gone (or reassigned under another id) leaves the session unresolved.
+    """
+
+    def __init__(self, repo: _Repo) -> None:
+        self.repo = repo
+        self.rows: dict[bytes, dict[str, Any]] = {}
+        self.fail_revoke = False
+        self.logouts: list[str] = []
+
+    def open_operator_session(self, *, operator_id: str, token_hash: bytes, expires_at: int) -> None:
+        assert token_hash not in self.rows and len(token_hash) == 32
+        self.rows[token_hash] = {"operator_id": operator_id, "expires_at": expires_at, "revoked": False}
+
+    def operator_session(self, token_hash: bytes) -> Any:
+        from origenlab_api.v2.auth_session_store import OperatorSessionRow
+
+        row = self.rows.get(token_hash)
+        if row is None:
+            return None
+        operator = next((o for o in self.repo.operators.values() if o.operator_id == row["operator_id"]), None)
+        if operator is None:
+            return None
+        return OperatorSessionRow(live=not row["revoked"] and row["expires_at"] > time.time(),
+                                  operator=operator)
+
+    def revoke_operator_session(self, *, token_hash: bytes, operator_id: str) -> None:
+        if self.fail_revoke:
+            raise RuntimeError("database unavailable")
+        row = self.rows.get(token_hash)
+        if row is not None and row["operator_id"] == operator_id:
+            row["revoked"] = True
+        self.logouts.append(operator_id)
 
 
 #: The test stand-in for Google's signing key. Generated once per test session.
@@ -159,10 +198,14 @@ class _Harness:
         self.app = create_app()
         self.repo = repo or _Repo()
         self.app.state.v2_repository = self.repo
-        # The identity port captured the real repository at startup; rebuild it on the stub.
+        self.sessions = _Sessions(self.repo)
+        if self.app.state.v2_auth_sessions is not None:
+            self.app.state.v2_auth_sessions = self.sessions
+        # The identity port captured the real repository at startup; rebuild it on the stubs.
         config = self.app.state.v2_google_auth
         self.app.state.v2_identity = build_identity_port(
             jwks_url=None, database_url=LOOPBACK, lookup=self.repo, google=config,
+            sessions=self.app.state.v2_auth_sessions,
             dev_login_enabled=env.get("dev", False), production=env.get("production", False),
         )
         self.config = config
@@ -405,7 +448,8 @@ def test_a_session_cookie_cannot_stand_in_for_a_signin_cookie(monkeypatch) -> No
     h = _Harness(monkeypatch)
     h.login()
     session = h.config.signer.dump_session(email_norm=EMAIL, operator_id=OPERATOR_ID,
-                                           google_sub="s", ttl=600, now=time.time())
+                                           google_sub="s", operator_version=1, sid="s" * 43,
+                                           ttl=600, now=time.time())
     h.client.cookies.set("origenlab_signin", session)
     assert _login_error(h.callback(code="authcode", state=h.state)) == "invalid_state"
 
@@ -523,6 +567,60 @@ def test_a_session_for_a_reassigned_address_is_refused(monkeypatch) -> None:
     assert h.client.get("/auth/session").status_code == 401
 
 
+@pytest.mark.parametrize("change", [
+    {"role": "sales", "version": 2},
+    {"role": "viewer", "version": 2},
+    {"version": 2},
+])
+def test_an_operator_version_change_ends_the_session_at_once(monkeypatch, change) -> None:
+    h = _Harness(monkeypatch)
+    h.sign_in()
+    assert h.client.get("/auth/session").json()["operator"]["role"] == "admin"
+    h.repo.operators[EMAIL] = _operator(**change)
+    assert h.client.get("/auth/session").status_code == 401
+    assert h.client.get("/v2/contacts").status_code == 401
+
+
+def test_the_callback_records_one_session_row_holding_only_a_keyed_hash(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    h.sign_in()
+    assert len(h.sessions.rows) == 1
+    (token_hash, row), = h.sessions.rows.items()
+    cookie = h.client.cookies.get("origenlab_session")
+    sid = h.config.signer.load_session(cookie).sid
+    assert token_hash == h.config.signer.session_token_hash(sid) and sid.encode() not in token_hash
+    assert row["operator_id"] == OPERATOR_ID
+
+
+def test_no_row_no_cookie(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+
+    def refuse(**_: Any) -> None:
+        raise RuntimeError("database unavailable")
+
+    h.sessions.open_operator_session = refuse  # type: ignore[method-assign]
+    response = h.sign_in()
+    assert _login_error(response) == "sign_in_failed"
+    assert not _session_cookie_set(response)
+
+
+def test_a_session_whose_row_is_missing_is_refused(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    h.sign_in()
+    h.sessions.rows.clear()
+    assert h.client.get("/auth/session").status_code == 401
+
+
+def test_a_session_cookie_without_a_row_identifier_is_refused(monkeypatch) -> None:
+    """The stateless shape from before 20260928195000 names no row: it is never honoured."""
+    h = _Harness(monkeypatch)
+    now = int(time.time())
+    legacy = h.config.signer._dump(b"origenlab.dashboard.session.v1", {
+        "email": EMAIL, "operator_id": OPERATOR_ID, "sub": "s", "iat": now, "exp": now + 600})
+    h.client.cookies.set("origenlab_session", legacy)
+    assert h.client.get("/auth/session").status_code == 401
+
+
 def test_an_unknown_role_is_refused(monkeypatch) -> None:
     h = _Harness(monkeypatch, repo=_Repo({EMAIL: _operator(role="auditor")}))
     assert _login_error(h.sign_in()) == "operator_not_permitted"
@@ -556,7 +654,8 @@ def test_a_tampered_session_cookie_is_refused(monkeypatch) -> None:
 def test_an_expired_session_is_refused(monkeypatch) -> None:
     h = _Harness(monkeypatch)
     stale = h.config.signer.dump_session(email_norm=EMAIL, operator_id=OPERATOR_ID,
-                                         google_sub="s", ttl=600, now=time.time() - 3600)
+                                         google_sub="s", operator_version=1, sid="s" * 43,
+                                         ttl=600, now=time.time() - 3600)
     h.client.cookies.set("origenlab_session", stale)
     assert h.client.get("/auth/session").status_code == 401
 
@@ -581,6 +680,65 @@ def test_logout_clears_the_session(monkeypatch) -> None:
     assert "Max-Age=0" in cleared
     assert h.client.get("/auth/session").status_code == 401
     assert h.client.get("/v2/contacts").status_code == 401
+
+
+def test_a_copied_cookie_stops_working_after_logout(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    h.sign_in()
+    copied = h.client.cookies.get("origenlab_session")
+    other = TestClient(h.app, base_url="http://testserver")
+    other.cookies.set("origenlab_session", copied)
+    assert other.get("/auth/session").status_code == 200
+    assert h.client.post("/auth/logout").status_code == 200
+    assert h.sessions.logouts == [OPERATOR_ID]
+    assert other.get("/auth/session").status_code == 401
+    assert other.get("/v2/contacts").status_code == 401
+
+
+_TIMING_HEADERS = ("server-timing", "x-process-time-ms")
+
+
+def _untimed(response: Any) -> bool:
+    return not any(name in response.headers for name in _TIMING_HEADERS)
+
+
+def test_no_sign_in_response_carries_a_timing_header(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    assert _untimed(h.client.get("/auth/session")), "signed out"
+    assert _untimed(h.login()), "login redirect"
+    assert _untimed(h.callback(code="authcode", state="wrong")), "refused callback"
+    ok = h.sign_in()
+    assert _login_error(ok) is None and _untimed(ok), "successful callback"
+    assert _untimed(h.client.get("/auth/session")), "session verification"
+    h.claims_override = {"email": "nadie@origenlab.cl"}
+    h.login()
+    assert _untimed(h.callback(code="authcode", state=h.state)), "unknown operator"
+    assert _untimed(h.client.post("/auth/logout")), "logout"
+    assert _untimed(h.client.post("/auth/logout")), "logout without a session"
+    h.sessions.fail_revoke = True
+    h.sign_in()
+    assert _untimed(h.client.post("/auth/logout")), "failed logout"
+    # The control: everything else is still timed.
+    health = h.client.get("/health")
+    assert all(name in health.headers for name in _TIMING_HEADERS)
+
+
+def test_a_failed_logout_keeps_the_cookie_and_a_retry_succeeds(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    h.sign_in()
+    cookie = h.client.cookies.get("origenlab_session")
+    h.sessions.fail_revoke = True
+    failed = h.client.post("/auth/logout")
+    assert (failed.status_code, failed.json()) == (503, {"detail": "logout_not_recorded"})
+    assert _set_cookies(failed) == [], "neither cookie is cleared"
+    assert h.client.get("/auth/session").status_code == 200, "still signed in, as the dashboard will say"
+    h.sessions.fail_revoke = False
+    retry = h.client.post("/auth/logout")
+    assert retry.status_code == 200
+    assert any(c.startswith("origenlab_session=") and "Max-Age=0" in c for c in _set_cookies(retry))
+    other = TestClient(h.app, base_url="http://testserver")
+    other.cookies.set("origenlab_session", cookie)
+    assert other.get("/auth/session").status_code == 401
 
 
 def test_logout_without_a_session_is_harmless(monkeypatch) -> None:
@@ -862,9 +1020,11 @@ def test_cookie_kinds_are_not_interchangeable() -> None:
     signer = CookieSigner("k" * 48)
     now = time.time()
     session = signer.dump_session(email_norm=EMAIL, operator_id=OPERATOR_ID, google_sub="s",
-                                  ttl=600, now=now)
+                                  operator_version=3, sid="s" * 43, ttl=600, now=now)
     tx = signer.dump_transaction(state="s", nonce="n", verifier="v", now=now)
-    assert signer.load_session(session, now=now)["email"] == EMAIL
+    loaded = signer.load_session(session, now=now)
+    assert (loaded.email, loaded.operator_id, loaded.operator_version, loaded.sid) == (
+        EMAIL, OPERATOR_ID, 3, "s" * 43)
     with pytest.raises(CookieRefused):
         signer.load_transaction(session, now=now)
     with pytest.raises(CookieRefused):

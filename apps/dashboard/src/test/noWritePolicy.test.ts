@@ -31,7 +31,10 @@ describe("dashboard read-only policy", () => {
   });
 
   // The dashboard records no commercial decision. Two modules may issue a mutating request:
-  //  - authClient.ts's POST to `/auth/logout`, which clears the session cookie upstream;
+  //  - authClient.ts's one POST site, to exactly four sign-in paths: `/auth/logout` (clears the
+  //    session), `/auth/profile/select` and `/auth/profile/clear` (choose or leave an operator
+  //    profile behind a shared Workspace sign-in; the API verifies the PIN), and the API's
+  //    local-only `/auth/dev/principal-session`. None writes commercial state;
   //  - marketingApi.ts's POST to exactly eight marketing commands: the two *draft* commands,
   //    which write email copy to a draft `outbound.campaign` row, the audience *freeze*, which
   //    writes an immutable recipient snapshot, *planning*, which notes an intended send day on
@@ -78,6 +81,24 @@ describe("dashboard read-only policy", () => {
       }
       if (!text.includes('export const AUTH_LOGOUT_PATH = "/auth/logout";')) {
         hits.push(`${path} (logout POST must target /auth/logout)`);
+      }
+      const authPaths = [...text.matchAll(/export const AUTH_[A-Z_]+_PATH = "(\/auth\/[^"]*)";/g)].map((m) => m[1]).sort();
+      const expectedAuthPaths = [
+        "/auth/dev/principal-session",
+        "/auth/google/login",
+        "/auth/logout",
+        "/auth/profile/clear",
+        "/auth/profile/select",
+        "/auth/profiles",
+        "/auth/session",
+      ];
+      if (JSON.stringify(authPaths) !== JSON.stringify(expectedAuthPaths)) {
+        hits.push(`${path} (sign-in paths changed: ${authPaths.join(", ")})`);
+      }
+      const postList = /const AUTH_POST_PATHS = \[([^\]]*)\]/.exec(text)?.[1] ?? "";
+      const postNames = [...postList.matchAll(/AUTH_[A-Z_]+_PATH/g)].map((m) => m[0]).sort();
+      if (JSON.stringify(postNames) !== JSON.stringify(["AUTH_DEV_PRINCIPAL_PATH", "AUTH_LOGOUT_PATH", "AUTH_PROFILE_CLEAR_PATH", "AUTH_PROFILE_SELECT_PATH"])) {
+        hits.push(`${path} (may POST only to logout, profile select/clear and the dev shortcut, found ${postNames.join(", ")})`);
       }
     }
     expect(hits).toEqual([]);

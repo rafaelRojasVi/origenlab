@@ -735,17 +735,19 @@ list is decided, these rows are reclassified by the migration that introduces it
 | 13 | A case at `lead` has had no activity for eleven months | it is still `lead`. The dashboard shows *sin actividad hace 334 días*, computed at read time. Closing it is `abandon_opportunity(case, reason)` by an operator; without that act no row changes and no event exists (§3.4) |
 | 14 | A distributor that supplies OrigenLab asks to buy a unit for its own laboratory | the distributor's `supplier` relationship is untouched. `set_requesting_institution` is refused until the operator supplies a justification; with it, one `opportunity_organization(distributor, role=requesting_institution, confirmation=confirmed, confirmed_by=O)` carries `supplier_exception_reason`, and the triple can never be rewritten. The case card shows *proveedor registrado* **and** *solicitante — excepción justificada*. No marketing permission and no `prospect` relationship follow |
 
-## 7. Table inventory — the reviewed 37-table foundation
+## 7. Table inventory — the reviewed 41-table foundation
 
-Seven private schemas. **37 application tables** — 33 reviewed after the
-external CRM benchmark, the three of §7.1 and the one of §7.2 — the current
+Seven private schemas. **41 application tables** — 33 reviewed after the
+external CRM benchmark, the three of §7.1, the one of §7.2 and the four of
+§7.3 — the current
 reviewed foundation
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §13), not a permanent budget: a table
 is added only when a relational invariant proves it necessary, removed when
 nothing needs it, and every change is recorded here. Numbers are stable
 identifiers, so the two D0.3 additions are appended as 31 and 32, and the
 Slice 0 / M10c reply table as 33, the commercial case as 34–36 and the
-campaign safety block as 37, rather than renumbered into their schema blocks.
+campaign safety block as 37 and the shared sign-in tables as 38–41, rather
+than renumbered into their schema blocks.
 Supabase-managed `auth`, `storage`, `pgmq` and migration-metadata tables are
 outside this count and outside this inventory.
 
@@ -779,7 +781,7 @@ outside this count and outside this inventory.
 | 26 | `catalog.product` | manufacturer model | `(manufacturer_organization_id, model_number)` unique |
 | 27 | `catalog.supplier_product` | supplier price observation | append-only; `(supplier_organization_id, product_id, as_of)` |
 | 28 | `procurement.notice` | ChileCompra notice head and history | `codigo_externo` unique; `disappeared_at` for withdrawal |
-| 29 | `platform.operator` | auth user → role and status | auth uid unique; `role ∈ {admin, sales, viewer}` |
+| 29 | `platform.operator` | auth user → role and status | auth uid unique; `role ∈ {admin, sales, viewer}`; the runtime API role only reads it — created and changed by the migrator roster tools (`20260928192000`) |
 | 30 | `platform.command_receipt` | command idempotency | `(operator_id, idempotency_key)`; digest mismatch → 409 |
 | 31 | `crm.address` | one structured postal location of one organization | typed `organization_id` NOT NULL; structured fields canonical; supersession chain; never edited or deleted; no billing / delivery / default flag |
 | 32 | `crm.opportunity_participant` | human roles on one opportunity | person and/or contact point; closed `role`; one current primary per role; no overlap for the same subject and role; person ↔ contact point validated |
@@ -826,6 +828,67 @@ Counts by schema: `crm` 19, `comms` 4, `outbound` 7, `evidence` 2,
 row: the September wave-2 incident hold (`legacy_campaign`
 `septiembre18-2026-wave2`, reference `incident_hold_september_2026`), active,
 placed by the migration.
+
+### 7.3 Shared Workspace sign-in with operator profiles — built 2026-09-28
+
+Four tables, all in `platform`, numbered 38–41
+(`20260928180000_slice1_shared_workspace_operator_profiles`, then
+`20260928190000_slice1_principal_pinned_google_subject` and
+`20260928191000_slice1_revocable_profile_sessions`). One Google
+Workspace account is used by several people, so **the Google identity and the
+person acting are two facts in two relations**: signing in with Google proves
+the account (a *principal*) and grants nothing; the person is the
+`platform.operator` chosen on a profile screen and proven by their own PIN,
+which the API verifies. The operator is still the only thing any command
+authorizes or attributes to (`crm.domain_event.actor_operator_id`,
+`platform.command_receipt.operator_id`), so nothing downstream changes.
+
+`platform.operator` (#29) gains `sign_in_kind`: `google_account` (today's
+operator, reached by signing in with its own address, which is still
+required) or `shared_profile` (reached only through a profile, **with no
+address at all** — no invented or duplicate mailbox represents a person). The
+kind never changes in place, so individual Google accounts can be added later
+beside the shared one without touching a profile. A principal's address can
+never also be an operator's address (both directions are refused by trigger).
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 38 | `platform.auth_principal` | an external sign-in identity (one Google account), its principal-wide PIN throttle and the one PIN attempt in flight through it | `(provider, email_norm)` unique; the pinned Google account — `provider_issuer` (canonical `https://accounts.google.com`) and `provider_subject`, set together or not at all, `(provider, provider_subject)` unique — required by the API in production and set only by the migrator roster tool; never an operator's address; `version` bumps on any address, issuer, subject or status change; the attempt record (`pin_attempt_id`, `_xact`, `_operator_id`, 32-byte `_nonce`) is all set or all null, written only by the two PIN-attempt functions, and never bumps `version` |
+| 39 | `platform.operator_profile` | a `shared_profile` operator selectable from one principal, its PIN and its per-profile throttle | the composite key `(operator_id, 'shared_profile')` → `platform.operator (id, sign_in_kind)` admits no other kind; `(principal_id, profile_key)` unique; `pin_hash` must be an Argon2id PHC string, so a plaintext PIN cannot be stored, and is the one column the runtime role cannot read (`20260929100000`); `version` bumps on any PIN, link, key or status change, never on a throttle update |
+| 40 | `platform.auth_event` | the append-only authentication audit: profile selected, refused, a profile or a whole principal locked, cleared, logout, and a migrator's early lockout clear (`lockout.cleared`) | closed `event_type` and closed `refusal_reason` (no free text, so no PIN can be recorded), the reason carried by every refusal and by the failure that started a lock; principal id and address recorded as a pair; append-only (`platform.reject_mutation`); the four PIN outcomes (`profile.selected`, `profile.selection_refused`, `profile.locked`, `principal.locked`) are written only by `platform.finish_pin_attempt`, exactly one per attempt, and `lockout.cleared` only by the migrator tool — each accepted only from a member of `origenlab_owner`, never from the runtime role (trigger `auth_event_actor_guard`, `20260928193000`, `20260929100000`) |
+| 41 | `platform.auth_session` | one dashboard session — a shared sign-in (a principal, and the profile selected through it) or an operator's own Google account — so logout and «Cambiar perfil» can revoke it | `token_hash` is a 32-byte keyed HMAC of the cookie's random identifier — never the identifier; lifetime at most seven days; `sign_in_kind` `shared_profile` (principal required, `operator_id` → `platform.operator_profile`) or `google_account` (no principal, no profile, `(account_operator_id, sign_in_kind)` → `platform.operator (id, sign_in_kind)`); a request is served only while its row is neither revoked nor expired (database clock); selecting or clearing a profile revokes the row and inserts its successor with the same `expires_at`; identity, kind, principal, operators and issue time immutable, `expires_at` only ever moves earlier, a revocation (closed reason: `logout`, `profile_selected`, `profile_cleared`) is final (trigger `auth_session_guard`); the runtime role never deletes — the migrator prunes |
+
+`platform.operator`'s own `version` now also bumps on any role, status or
+address change **whoever writes the row**. A signed session carries the
+operator's, the profile's and the principal's `version` and is re-checked on
+every request, so a role, PIN or status change ends every session it affects.
+The runtime API role reads all three tables — `operator_profile` column by
+column, never `pin_hash` — and appends the `profile.cleared` and
+`session.logout` audit events. A PIN is decided only by the SECURITY DEFINER
+pair `platform.begin_pin_attempt` / `platform.finish_pin_attempt`
+(`20260929100000`, ARCHITECTURE.md §6.2), which compare a proof bound to a
+one-use attempt with the stored verifier and themselves write the verdict,
+the counters, the lock and the one audit event; the runtime role cannot
+declare a success, write a throttle column, or write a principal, a profile
+link or a PIN hash — provisioning runs as the owner through
+`apps/api/scripts/profile_roster.py`. The worker has no privilege on any of
+them. No names, principals, profiles or hashes are seeded by the migration.
+`supabase/tests/010_inventory.sql`, `supabase/scripts/verify_chain.sh` and
+`supabase/scripts/replay_evidence.sh` assert **41** and `platform` **6**;
+`supabase/tests/073_shared_workspace_profiles.sql` and
+`074_revocable_profile_sessions.sql` prove the invariants.
+
+`platform.auth_session` (#41) makes every dashboard session revocable: a
+shared sign-in's (`sign_in_kind = 'shared_profile'`) and, since
+`20260928195000`, an operator's own Google account's
+(`sign_in_kind = 'google_account'`, naming the operator in
+`account_operator_id`). The runtime role reads and inserts rows and may set
+only `revoked_at` / `revoked_reason`; it deletes nothing (no runtime role holds
+`DELETE` anywhere), so ended rows are pruned by the migrator
+(`apps/api/scripts/profile_auth_admin.py prune-sessions`).
+
+Counts by schema: `crm` 19, `comms` 4, `outbound` 7, `evidence` 2,
+`catalog` 2, `procurement` 1, `platform` 6 — **41**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

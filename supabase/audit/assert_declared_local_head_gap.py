@@ -6,9 +6,15 @@ The Slice 0 audit baseline intentionally describes the frozen hosted foundation:
 
 Current repository head is later and intentionally carries the commercial-case
 schema, the historical-quotation import, the slice-5 campaign schema, W10 and
-the campaign safety blocks (outbound.campaign_block). Therefore a local audit of current
+the campaign safety blocks (outbound.campaign_block) and the shared Workspace
+sign-in tables (platform.auth_principal, platform.operator_profile,
+platform.auth_event, platform.auth_session). Therefore a local audit of current
 head must conclude LOCAL_FAIL — but only for the exact reviewed post-Slice-0
 additions.
+
+It also carries one reviewed *removal*: 20260928192000 revoked the runtime API
+role's INSERT and UPDATE on platform.operator, so the baseline's two policies
+that served them are absent — exactly those two, and nothing else.
 
 This checker does not regenerate, weaken or modify the baseline.
 """
@@ -16,6 +22,7 @@ This checker does not regenerate, weaken or modify the baseline.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -28,6 +35,12 @@ EXPECTED_EXTRA_TABLES = {
     "opportunity_evidence",
     # 20260928100000_slice5_campaign_block.sql — DOMAIN.md §7 #37.
     "campaign_block",
+    # 20260928180000_slice1_shared_workspace_operator_profiles.sql — DOMAIN.md §7 #38–#40.
+    "auth_principal",
+    "operator_profile",
+    "auth_event",
+    # 20260928191000_slice1_revocable_profile_sessions.sql — DOMAIN.md §7 #41.
+    "auth_session",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -73,20 +86,62 @@ POST_SLICE0_FUNCTIONS = {
     # 20260928090000_slice5_archived_campaign_immutable.sql — the INVOKER trigger
     # function that keeps an archived campaign, its audience and attempts as imported.
     "outbound.archived_campaign_immutable",
+    # 20260928180000_slice1_shared_workspace_operator_profiles.sql — the three
+    # INVOKER trigger functions that bump a row's version on every
+    # security-relevant change (pgTAP: 073_shared_workspace_profiles.sql).
+    "platform.operator_security_version",
+    "platform.auth_principal_security_version",
+    "platform.operator_profile_security_version",
+    # 20260928191000_slice1_revocable_profile_sessions.sql — the INVOKER trigger
+    # function that keeps a session's identity fixed, never extends it and makes a
+    # revocation final (pgTAP: 074_revocable_profile_sessions.sql).
+    "platform.auth_session_guard",
+    # 20260928193000_slice1_lockout_clear_audit.sql — the INVOKER trigger function
+    # that refuses a lockout.cleared audit event from the runtime role (pgTAP 073).
+    "platform.auth_event_actor_guard",
+    # 20260929100000_slice1_pin_attempt_begin_finish.sql — the two closed-list
+    # definers below, which replaced 20260928194000's platform.record_pin_attempt
+    # (dropped), and the INVOKER HMAC-SHA256 helper finish uses (pgTAP 075).
+    "platform.hmac_sha256",
+    "platform.begin_pin_attempt",
+    "platform.finish_pin_attempt",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
-# first entry, from 20260927230000_slice5_w10_unsubscribe.sql. a05 must report
-# exactly this one entry beyond the (empty) Slice 0 baseline, with this owner,
-# signature and pinned search_path — anything else is refused.
-EXPECTED_SECURITY_DEFINER = (
+# first entry, from 20260927230000_slice5_w10_unsubscribe.sql, and its second and
+# third, from 20260929100000_slice1_pin_attempt_begin_finish.sql (which dropped
+# 20260928194000's platform.record_pin_attempt). a05 must report exactly
+# these entries beyond the (empty) Slice 0 baseline, with this owner, signature
+# and pinned search_path — anything else is refused.
+EXPECTED_SECURITY_DEFINERS = (
+    # The audit sorts the entries as JSON text, so by their argument lists first.
+    # It renders the whole argument list, OUT parameters included.
+    '{"arguments":"p_attempt_id uuid, p_principal_id uuid, p_operator_id uuid, '
+    'p_candidate_proof bytea, OUT selected boolean, '
+    'OUT reason text",'
+    '"name":"finish_pin_attempt","owner":"origenlab_owner",'
+    '"proconfig":"search_path=pg_catalog","schema":"platform"}',
     '{"arguments":"p_kind text, p_purpose text, p_address text, p_reason text, '
     'p_operator_id uuid, p_command_receipt_id uuid, p_evidence jsonb",'
     '"name":"add_contact_control","owner":"origenlab_owner",'
-    '"proconfig":"search_path=pg_catalog","schema":"outbound"}'
+    '"proconfig":"search_path=pg_catalog","schema":"outbound"}',
+    '{"arguments":"p_principal_id uuid, p_operator_id uuid, OUT attempt_id uuid, '
+    'OUT refused boolean, OUT memory_kib integer, OUT iterations integer, '
+    'OUT lanes integer, OUT salt text, OUT hash_length integer, OUT nonce bytea",'
+    '"name":"begin_pin_attempt","owner":"origenlab_owner",'
+    '"proconfig":"search_path=pg_catalog","schema":"platform"}',
 )
+EXPECTED_SECURITY_DEFINER = "; ".join(EXPECTED_SECURITY_DEFINERS)
 
 EXPECTED_FUNCTION_COUNT = SLICE0_FUNCTION_COUNT + len(POST_SLICE0_FUNCTIONS)
+
+# Baseline policies deliberately removed, as (schema, table, policy, command, roles).
+# 20260928192000_slice1_runtime_operator_write_revoked.sql: the runtime role reads
+# operators and never writes one.
+EXPECTED_ABSENT_POLICIES = {
+    ("platform", "operator", "origenlab_api_insert", "INSERT", "{origenlab_api}"),
+    ("platform", "operator", "origenlab_api_update", "UPDATE", "{origenlab_api}"),
+}
 
 # Foreign keys added after the commercial-case tables. The count and its index
 # coverage are reviewed by supabase/tests/090_foreign_key_indexes.sql.
@@ -106,6 +161,24 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     "outbound.campaign_block.campaign_id -> outbound.campaign.id",
     "outbound.campaign_block.placed_by_operator_id -> platform.operator.id",
     "outbound.campaign_block.lifted_by_operator_id -> platform.operator.id",
+    # 20260928180000_slice1_shared_workspace_operator_profiles.sql, each covered
+    # by a plain index: the composite key by operator_profile_operator_kind_key,
+    # principal_id by operator_profile_principal_key_key, and the three audit
+    # keys by auth_event_{principal,operator,previous_operator}_idx.
+    "platform.operator_profile.(operator_id, operator_sign_in_kind)"
+    " -> platform.operator.(id, sign_in_kind)",
+    "platform.operator_profile.principal_id -> platform.auth_principal.id",
+    "platform.auth_event.principal_id -> platform.auth_principal.id",
+    "platform.auth_event.operator_id -> platform.operator.id",
+    "platform.auth_event.previous_operator_id -> platform.operator.id",
+    # 20260928191000_slice1_revocable_profile_sessions.sql, each covered by a
+    # plain index (auth_session_principal_idx, auth_session_operator_idx).
+    "platform.auth_session.principal_id -> platform.auth_principal.id",
+    "platform.auth_session.operator_id -> platform.operator_profile.operator_id",
+    # 20260928195000_slice1_unified_auth_sessions.sql, covered by the plain index
+    # auth_session_account_operator_idx on the same two columns.
+    "platform.auth_session.(account_operator_id, sign_in_kind)"
+    " -> platform.operator.(id, sign_in_kind)",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -113,10 +186,10 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 )
 
 # Foreign keys covered by a non-partial index. The historical-origin key is
-# covered only by a partial index; the slice-5 freeze key and the three
-# campaign-block keys by plain ones.
+# covered only by a partial index; the slice-5 freeze key, the three
+# campaign-block keys and the eight sign-in keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 4
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 12
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -124,18 +197,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 38,
+        "relation_count": 42,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
-        "security_definer_count": 1,
+        "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 37,
+        "table_count": 41,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 143,
+        "policy_count": 148,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -214,8 +287,8 @@ def main() -> int:
                     f"expected {expected!r}"
                 )
 
-    # The inventory delta must be precisely the three commercial-case tables and
-    # outbound.campaign_block.
+    # The inventory delta must be precisely the three commercial-case tables,
+    # outbound.campaign_block and the four sign-in tables.
     a08_findings = checks["a08"].get("findings") or []
     if len(a08_findings) != 2:
         refuse(f"a08 has unexpected findings: {a08_findings!r}")
@@ -228,24 +301,48 @@ def main() -> int:
         if f'"table":"{table}"' not in a08_text:
             refuse(f"a08 does not name expected table {table}")
 
-    if "4 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly four extra tables")
+    if "8 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly eight extra tables")
 
-    # The 16 policy additions must belong to those same four reviewed tables:
-    # four each (api select/insert/update, worker select).
+    # The 23 policy additions must belong to those same eight reviewed tables:
+    # four each for the first four (api select/insert/update, worker select),
+    # one each for auth_principal and operator_profile (api select: their
+    # throttle is written by platform.finish_pin_attempt, 20260929100000), two
+    # for auth_event (api select, insert) and three for auth_session (api
+    # select, insert, update).
     a09_findings = checks["a09"].get("findings") or []
-    if len(a09_findings) != 2:
+    if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
 
-    a09_text = "\n".join(a09_findings)
-    if "baseline are absent here" in a09_text:
-        refuse("a09 reports a baseline policy missing from current head")
+    absent = [f for f in a09_findings if "in the baseline are absent here" in f]
+    if len(absent) != 1 or "2 entr(y|ies) in the baseline are absent here: " not in absent[0]:
+        refuse("a09 does not report exactly the two reviewed absent policies")
+    try:
+        removed = {
+            (e["schema"], e["table"], e["policy"], e["command"], e["roles"])
+            for e in map(json.loads, absent[0].split(" are absent here: ", 1)[1].split("; "))
+        }
+    except (ValueError, KeyError, TypeError):
+        refuse(f"a09's absent policies do not parse: {absent[0]!r}")
+    if removed != EXPECTED_ABSENT_POLICIES:
+        refuse(f"a09 reports unreviewed absent policies: {sorted(removed)!r}")
 
-    if "16 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly sixteen extra policies")
+    extra = [f for f in a09_findings if "present here and not in the baseline" in f]
+    if len(extra) != 1:
+        refuse("a09 does not report the extra policies")
+    a09_text = extra[0]
+    if "23 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly twenty-three extra policies")
 
-    for table in EXPECTED_EXTRA_TABLES:
-        if f'"table":"{table}"' not in a09_text:
+    # The audit lists at most twelve entries and then "...", so a long delta cannot name every
+    # table. What it does name must all be reviewed tables; only an untruncated list must
+    # name each of them. The exact count above bounds what the truncation hides.
+    named = set(re.findall(r'"table":"([a-z_]+)"', a09_text))
+    unexpected = sorted(named - EXPECTED_EXTRA_TABLES)
+    if unexpected:
+        refuse(f"a09 names policies on unreviewed tables: {unexpected!r}")
+    if not a09_text.rstrip().endswith("..."):
+        for table in sorted(EXPECTED_EXTRA_TABLES - named):
             refuse(f"a09 does not name expected table {table}")
 
     # The other blockers are census changes only. An exact finding list is
@@ -254,10 +351,10 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 38, expected 34"],
+        "a04": ["relations in scope: observed 42, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
-            "1 entr(y|ies) are present here and not in the baseline: "
+            f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "
             + EXPECTED_SECURITY_DEFINER,
             f"functions in scope: observed {EXPECTED_FUNCTION_COUNT}, "
             f"expected {SLICE0_FUNCTION_COUNT}",
@@ -273,7 +370,8 @@ def main() -> int:
     print(
         "ok: current local head differs from frozen Slice 0 only by the "
         "reviewed commercial-case, historical-quotation, slice-5 campaign, W10 "
-        "unsubscribe and campaign-block schema delta"
+        "unsubscribe, campaign-block and shared-sign-in schema delta, less the "
+        "revoked runtime writes on platform.operator"
     )
     return 0
 

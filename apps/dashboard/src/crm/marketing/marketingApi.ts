@@ -11,7 +11,7 @@
  * "not enabled here".
  */
 
-import { OperatorApiError, fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";
+import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
 import type {
   AudienceQuery,
   AudienceResponse,
@@ -141,6 +141,7 @@ async function postCommand<T>(path: string, body: unknown, idempotencyKey: strin
     body: JSON.stringify(body),
   });
   if (!res.ok) {
+    notifyIfSessionRefused(res.status);
     const text = await res.text().catch(() => "");
     throw new OperatorApiError(text || res.statusText || `HTTP ${res.status}`, res.status);
   }

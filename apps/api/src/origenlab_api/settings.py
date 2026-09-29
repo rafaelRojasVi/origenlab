@@ -316,6 +316,23 @@ class Settings(BaseSettings):
     enables still refuses any non-loopback database. Never set it in a deployed environment.
     """
     dev_login_enabled: bool = False
+    """Shared Workspace sign-in with operator profiles (docs/ARCHITECTURE.md §5.1).
+
+    When true, a Google sign-in whose address is a `platform.auth_principal` gets a principal
+    session and must then select a profile with its PIN; GET /auth/profiles and POST
+    /auth/profile/{select,clear} are mounted. Requires ORIGENLAB_V2_DATABASE_URL, the session
+    secret and a strong ORIGENLAB_PROFILE_PIN_PEPPER — the process refuses to start otherwise.
+    """
+    profile_login_enabled: bool = False
+    """Argon2id secret input for profile PINs: at least 32 characters, never the session secret.
+
+    Secret store only. Changing it invalidates every provisioned PIN (re-provision them).
+    """
+    profile_pin_pepper: SecretStr | None = None
+    """Local development only: the invented principal (reserved test domain) that
+    POST /auth/dev/principal-session signs in as. Needs ORIGENLAB_DEV_LOGIN_ENABLED and a
+    loopback database; refused in production."""
+    dev_profile_principal_email: str | None = None
     """Comma-separated browser origins for dashboard static site (no wildcards)."""
     api_cors_origins: str | None = None
     """Comma-separated Host header values allowed in production (e.g. api.origenlab.cl)."""

@@ -21,8 +21,8 @@ mkdir -p "$OUT"
 SCHEMAS="crm,comms,outbound,evidence,catalog,procurement,platform"
 
 # The application invariants this evidence must reproduce (docs/DOMAIN.md §7, ARCHITECTURE.md §6.1).
-EXPECT_TABLES=37
-EXPECT_POLICIES=143
+EXPECT_TABLES=41
+EXPECT_POLICIES=148
 EXPECT_SCHEMAS=7
 EXPECT_ROLES=4
 

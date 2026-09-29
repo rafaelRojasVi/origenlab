@@ -39,7 +39,7 @@ $$;
 select is(
   (select array_agg(n.nspname || '.' || p.proname order by 1)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform') and p.prosecdef),
-  '{outbound.add_contact_control}', 'before the fixture: the only SECURITY DEFINER function is the closed-list outbound.add_contact_control');
+  '{outbound.add_contact_control,platform.begin_pin_attempt,platform.finish_pin_attempt}', 'before the fixture: the only SECURITY DEFINER functions are the closed-list outbound.add_contact_control, platform.begin_pin_attempt and platform.finish_pin_attempt');
 
 -- Fixture (rolled back): two probes owned by origenlab_owner in a private schema, pinned
 -- search_path, EXECUTE revoked from PUBLIC/anon/authenticated/service_role and granted to the

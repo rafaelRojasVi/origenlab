@@ -124,6 +124,20 @@ export class OperatorApiError extends Error {
   }
 }
 
+/**
+ * Fired on `window` whenever the API refuses a request with 401: the session ended, or the
+ * selected operator profile changed (role, PIN, status) and the API now answers
+ * `profile_required`. `AuthGate` re-checks the session on it, so the screen follows the API at
+ * once instead of showing a data error.
+ */
+export const SESSION_REFUSED_EVENT = "origenlab:session-refused";
+
+export function notifyIfSessionRefused(status: number): void {
+  if (status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SESSION_REFUSED_EVENT));
+  }
+}
+
 export async function fetchJsonGet<T>(url: string): Promise<T> {
   const res = await fetch(url, {
     method: "GET",
@@ -131,6 +145,7 @@ export async function fetchJsonGet<T>(url: string): Promise<T> {
     headers: { Accept: "application/json" },
   });
   if (!res.ok) {
+    notifyIfSessionRefused(res.status);
     const text = await res.text().catch(() => "");
     throw new OperatorApiError(text || res.statusText || `HTTP ${res.status}`, res.status);
   }

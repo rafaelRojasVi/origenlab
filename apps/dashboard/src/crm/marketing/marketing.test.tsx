@@ -212,7 +212,7 @@ function renderAs(role: string | null) {
           method: "google_session",
           operator: { operatorId: "op-1", email: "operador@ejemplo.invalid", displayName: "Operador", role },
         },
-        signOut: async () => undefined,
+        signOut: async () => true,
       }}
     >
       {page}
@@ -774,7 +774,7 @@ describe("Bajas (W10)", () => {
       : { kind: "signed_in" as const, method: "dev_header",
           operator: { operatorId: "o1", email: "op@example.invalid", displayName: "Op", role } };
     render(
-      <AuthSessionContext.Provider value={{ session, signOut: async () => undefined }}>
+      <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
         <MarketingPage />
       </AuthSessionContext.Provider>,
     );

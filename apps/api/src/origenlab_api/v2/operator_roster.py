@@ -15,6 +15,12 @@ changes those rows for real people:
   slip extra changes through.
 * Rows not in the roster are reported and left alone: this never disables or deletes anyone.
 * Output masks every address (`r***@origenlab.cl`), so a plan can be pasted into a review.
+
+**It runs as the migrator, never as the runtime role.** Both `plan` and `apply` `set local role
+origenlab_owner`, and `apply` also refuses unless the caller names the database the plan printed.
+The runtime API role holds no INSERT or UPDATE on `platform.operator`
+(`20260928192000_slice1_runtime_operator_write_revoked.sql`): nothing reachable through the API
+can create an operator or change its role, status or sign-in kind.
 """
 
 from __future__ import annotations
@@ -55,6 +61,7 @@ class Change:
 class Plan:
     changes: tuple[Change, ...]
     left_alone: int
+    database: str = ""
 
     @property
     def pending(self) -> tuple[Change, ...]:
@@ -120,14 +127,17 @@ def load_roster(path: Path, *, workspace_domain: str, repo_root: Path) -> tuple[
 
 
 def _existing(cur: Any) -> dict[str, dict[str, Any]]:
+    # Shared-profile operators have no address; they belong to `profile_roster.py`.
     cur.execute(
-        "select id::text, email_norm, display_name, role, status, version from platform.operator"
+        "select id::text, email_norm, display_name, role, status, version from platform.operator "
+        "where sign_in_kind = 'google_account'"
     )
     cols = ("id", "email_norm", "display_name", "role", "status", "version")
     return {row[1]: dict(zip(cols, row)) for row in cur.fetchall()}
 
 
-def compute_plan(entries: Iterable[RosterEntry], existing: dict[str, dict[str, Any]]) -> Plan:
+def compute_plan(entries: Iterable[RosterEntry], existing: dict[str, dict[str, Any]],
+                 database: str = "") -> Plan:
     changes: list[Change] = []
     named: set[str] = set()
     for e in entries:
@@ -140,21 +150,36 @@ def compute_plan(entries: Iterable[RosterEntry], existing: dict[str, dict[str, A
             f for f in ("display_name", "role", "status") if row[f] != getattr(e, f)
         )
         changes.append(Change("update" if fields else "unchanged", e, row["id"], fields))
-    return Plan(tuple(changes), left_alone=len(set(existing) - named))
+    return Plan(tuple(changes), left_alone=len(set(existing) - named), database=database)
 
 
 def plan(conn: Any, entries: Iterable[RosterEntry]) -> Plan:
     """Read-only: compare the roster with `platform.operator`."""
     with conn.transaction(), conn.cursor() as cur:
         cur.execute("set transaction read only")
-        return compute_plan(entries, _existing(cur))
+        return compute_plan(entries, _existing(cur), _as_owner(cur))
 
 
-def apply(conn: Any, entries: Iterable[RosterEntry], *, expected_changes: int) -> Plan:
-    """Apply the plan in one transaction; refuse if it no longer has `expected_changes`."""
+def _as_owner(cur: Any) -> str:
+    # Fails with SQLSTATE 42501 for any login that may not assume the owner — the runtime
+    # role included — before a row is read or written.
+    cur.execute("set local role origenlab_owner")
+    cur.execute("select current_database()")
+    return cur.fetchone()[0]
+
+
+def apply(
+    conn: Any, entries: Iterable[RosterEntry], *, expected_changes: int, expected_database: str
+) -> Plan:
+    """Apply the plan in one transaction as the owner; refuse unless it is the reviewed one."""
     entries = tuple(entries)
     with conn.transaction(), conn.cursor() as cur:
-        result = compute_plan(entries, _existing(cur))
+        database = _as_owner(cur)
+        if database != expected_database:
+            raise RosterRefused(
+                f"connected to database {database!r}, not the {expected_database!r} you confirmed"
+            )
+        result = compute_plan(entries, _existing(cur), database)
         if len(result.pending) != expected_changes:
             raise RosterRefused(
                 f"the plan has {len(result.pending)} change(s), not the {expected_changes} "
@@ -178,7 +203,7 @@ def apply(conn: Any, entries: Iterable[RosterEntry], *, expected_changes: int) -
 
 
 def describe(result: Plan) -> list[str]:
-    lines = []
+    lines = [f"database: {result.database}"] if result.database else []
     for c in result.changes:
         what = c.action if c.action != "update" else f"update {', '.join(c.fields)}"
         lines.append(
@@ -188,6 +213,7 @@ def describe(result: Plan) -> list[str]:
     lines.append(f"pending changes: {len(result.pending)}")
     lines.append(
         f"to apply this plan: --apply --confirm-changes {len(result.pending)}"
+        f" --confirm-database {result.database or '<database>'}"
         if result.pending
         else "nothing to apply"
     )

@@ -15,6 +15,7 @@ No database and no network: the operator lookup and the two read repositories ar
 
 from __future__ import annotations
 
+import secrets
 import time
 from typing import Any
 
@@ -48,6 +49,24 @@ class _Operators:
         return _operator(role=self.role, email=email_norm)
 
 
+class _Sessions:
+    """Stands in for AuthSessionStore: every session `_session` mints has a live row."""
+
+    def __init__(self, operators: _Operators) -> None:
+        self.operators = operators
+        self.rows: dict[bytes, str] = {}
+
+    def operator_session(self, token_hash: bytes):
+        from origenlab_api.v2.auth_session_store import OperatorSessionRow
+
+        email = self.rows.get(token_hash)
+        return None if email is None else OperatorSessionRow(live=True, operator=self.operators.by_email(email))
+
+
+#: The session stub of each app's Google config (a frozen dataclass), by identity.
+_STORES: dict[int, _Sessions] = {}
+
+
 class _Workspace:
     def _body(self) -> dict[str, Any]:
         return {"items": [{"contact": ADDRESS, "phone": PHONE}]}
@@ -76,9 +95,11 @@ def _client(monkeypatch: pytest.MonkeyPatch, role: str) -> tuple[TestClient, Any
     _env(monkeypatch, base="https://dashboard.origenlab.cl/api", production=True)
     app = create_app()
     config = app.state.v2_google_auth
+    operators = _Operators(role)
+    _STORES[id(config)] = _Sessions(operators)
     app.state.v2_identity = build_identity_port(
-        jwks_url=None, database_url=LOOPBACK, lookup=_Operators(role), google=config,
-        dev_login_enabled=False, production=True,
+        jwks_url=None, database_url=LOOPBACK, lookup=operators, google=config,
+        sessions=_STORES[id(config)], dev_login_enabled=False, production=True,
     )
     app.state.crm_workspace = _Workspace()
     app.state.cockpit_repository = _Cockpit()
@@ -86,8 +107,11 @@ def _client(monkeypatch: pytest.MonkeyPatch, role: str) -> tuple[TestClient, Any
 
 
 def _session(config: Any, email: str = "someone@origenlab.cl") -> dict[str, str]:
+    sid = secrets.token_urlsafe(32)
+    _STORES[id(config)].rows[config.signer.session_token_hash(sid)] = email
     value = config.signer.dump_session(email_norm=email, operator_id=OPERATOR_ID,
-                                       google_sub="s", ttl=600, now=time.time())
+                                       google_sub="s", operator_version=1, sid=sid, ttl=600,
+                                       now=time.time())
     return {config.cookie_names.session: value}
 
 

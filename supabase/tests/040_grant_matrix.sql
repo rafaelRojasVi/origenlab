@@ -4,7 +4,7 @@
 -- probes as each runtime role.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(44);
+select plan(47);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -96,12 +96,23 @@ insert into expected values
     ('catalog', 'supplier_product', 'origenlab_worker', 'SI', null, 'SI'),
     ('procurement', 'notice', 'origenlab_api', 'S', array['promoted_opportunity_id', 'updated_at'], 'SU'),
     ('procurement', 'notice', 'origenlab_worker', 'SIU', null, 'SIU'),
-    ('platform', 'operator', 'origenlab_api', 'SIU', null, 'SIU'),
+    -- 20260928192000: the runtime API role reads operators and never writes one.
+    ('platform', 'operator', 'origenlab_api', 'S', null, 'S'),
     ('platform', 'operator', 'origenlab_worker', 'S', null, 'S'),
     ('platform', 'command_receipt', 'origenlab_api', 'SIU', null, 'SIU'),
-    ('platform', 'command_receipt', 'origenlab_worker', 'S', null, 'S');
+    ('platform', 'command_receipt', 'origenlab_worker', 'S', null, 'S'),
+    -- 20260929100000: no throttle column is writable (platform.finish_pin_attempt is the writer),
+    -- and operator_profile is readable column by column, never pin_hash (see below).
+    ('platform', 'auth_principal', 'origenlab_api', 'S', null, 'S'),
+    ('platform', 'auth_principal', 'origenlab_worker', '', null, ''),
+    ('platform', 'operator_profile', 'origenlab_api', '', null, 'S'),
+    ('platform', 'operator_profile', 'origenlab_worker', '', null, ''),
+    ('platform', 'auth_event', 'origenlab_api', 'SI', null, 'SI'),
+    ('platform', 'auth_event', 'origenlab_worker', '', null, ''),
+    ('platform', 'auth_session', 'origenlab_api', 'SI', array['revoked_at', 'revoked_reason'], 'SIU'),
+    ('platform', 'auth_session', 'origenlab_worker', '', null, '');
 
-select is((select count(*)::int from expected), 74, 'the matrix covers all 37 tables for both runtime roles');
+select is((select count(*)::int from expected), 82, 'the matrix covers all 41 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(
@@ -165,6 +176,21 @@ select is(
     where e.update_columns is null and position('U' in e.all_verbs) = 0
       and has_any_column_privilege(e.role_name, format('%I.%I', e.schema_name, e.table_name), 'UPDATE')),
   0, 'roles without UPDATE in the matrix hold no column-level UPDATE either');
+
+-- Column-level SELECT: the stored PIN verifier is the one column the runtime role cannot read.
+-- A column REVOKE would not override a table-level SELECT, which is why the table grant is gone.
+select is(
+  (select count(*)::int from information_schema.columns c
+    where c.table_schema = 'platform' and c.table_name = 'operator_profile' and c.column_name <> 'pin_hash'
+      and not has_column_privilege('origenlab_api', 'platform.operator_profile', c.column_name::text, 'SELECT')),
+  0, 'origenlab_api reads every operator_profile column but pin_hash');
+select is(has_column_privilege('origenlab_api', 'platform.operator_profile', 'pin_hash', 'SELECT'), false,
+  'origenlab_api cannot read operator_profile.pin_hash, the stored PIN verifier');
+select is(
+  (select count(*)::int from expected e
+    where position('S' in e.all_verbs) > 0 and position('S' in e.table_verbs) = 0
+      and (e.schema_name, e.table_name, e.role_name) <> ('platform', 'operator_profile', 'origenlab_api')),
+  0, 'operator_profile is the only table a runtime role reads column by column');
 
 -- Function privileges: the CHECK helper for the only role that inserts domain events; nothing else.
 select is(has_function_privilege('origenlab_api', 'crm.domain_event_is_valid(text, text, smallint, jsonb)', 'EXECUTE'), true,

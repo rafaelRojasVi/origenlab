@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
+  clearProfile,
+  devPrincipalSignIn,
   fetchAuthSession,
   googleLoginUrl,
   loginErrorMessage,
+  LOGOUT_FAILED_MESSAGE,
   logout,
   readLoginError,
   type AuthSessionState,
 } from "../../api/authClient";
+import { SESSION_REFUSED_EVENT } from "../../api/operatorClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
+import { ProfileSelector } from "./ProfileSelector";
 
 function loginErrorFromUrl(): string | null {
   return typeof window === "undefined" ? null : readLoginError(window.location.search);
@@ -17,10 +22,14 @@ function loginErrorFromUrl(): string | null {
  * Decide, before any dashboard data is requested, whether this browser may see the
  * dashboard. Only a confirmed signed-in session renders it; every other answer — 401, 403,
  * 404, 5xx, a malformed body, a network failure — fails closed.
+ *
+ * A shared Workspace sign-in without a selected profile (`profile_required`) renders the
+ * profile screen and nothing else: no dashboard component mounts, so no CRM data is asked for.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSessionState>({ kind: "loading" });
   const [loginError] = useState<string | null>(loginErrorFromUrl);
+  const [logoutFailed, setLogoutFailed] = useState(false);
 
   useEffect(() => {
     // Drop `?login_error=` from the address bar so a reload does not repeat the message.
@@ -39,9 +48,56 @@ export function AuthGate({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  // A 401 from any CRM request means the session or the selected profile no longer holds
+  // (signed out elsewhere, role/PIN/status changed). Re-ask the API rather than show stale data.
+  const signedIn = session.kind === "signed_in";
+  useEffect(() => {
+    if (!signedIn || typeof window === "undefined") return undefined;
+    const onRefused = () => void refresh();
+    window.addEventListener(SESSION_REFUSED_EVENT, onRefused);
+    return () => window.removeEventListener(SESSION_REFUSED_EVENT, onRefused);
+  }, [signedIn, refresh]);
+
+  // "Cerrar sesión". Nothing on this side changes until the server confirms it revoked the
+  // session: on a failure the dashboard (or the profile screen) stays exactly as it was, the
+  // cookie is still in place, and a message asks to try again. Only after a confirmed
+  // revocation is the in-memory session dropped (the dashboard keeps no other browser state).
   const signOut = useCallback(async () => {
+    const revoked = await logout();
+    if (!revoked) {
+      setLogoutFailed(true);
+      return false;
+    }
+    setLogoutFailed(false);
+    await refresh();
+    return true;
+  }, [refresh]);
+
+  const logoutAlert = logoutFailed ? (
+    <div className="fixed inset-x-0 top-2 z-50 flex justify-center px-4" data-testid="logout-failed">
+      <p
+        role="alert"
+        className="flex max-w-lg items-center gap-3 rounded-md border border-bad/30 bg-bad-bg px-3 py-2 text-[13px] text-bad shadow-sm"
+      >
+        <span>{LOGOUT_FAILED_MESSAGE}</span>
+        <button
+          type="button"
+          onClick={() => setLogoutFailed(false)}
+          className="shrink-0 rounded px-1.5 text-[12px] font-medium hover:bg-bad/10"
+          aria-label="Cerrar aviso"
+        >
+          ✕
+        </button>
+      </p>
+    </div>
+  ) : null;
+
+  // "Cambiar perfil": back to the profile screen. The Google sign-in stays; only the selected
+  // profile is dropped, and the dashboard unmounts before anything else is requested.
+  const switchProfile = useCallback(async () => {
+    setSession({ kind: "loading" });
     try {
-      await logout();
+      await clearProfile();
     } finally {
       await refresh();
     }
@@ -58,7 +114,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
   if (session.kind === "signed_out") {
-    return <LoginScreen session={session} loginError={loginError} />;
+    return <LoginScreen session={session} loginError={loginError} onDevSignIn={refresh} />;
+  }
+  if (session.kind === "profile_required") {
+    return (
+      <>
+      {logoutAlert}
+      <ProfileSelector
+        principalEmail={session.principalEmail}
+        profileExpired={session.profileExpired}
+        onSelected={refresh}
+        onSignedOut={refresh}
+        onSignOut={signOut}
+      />
+      </>
+    );
   }
   if (session.kind !== "signed_in") {
     return (
@@ -79,16 +149,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
   return (
-    <AuthSessionContext.Provider value={{ session, signOut }}>{children}</AuthSessionContext.Provider>
+    <AuthSessionContext.Provider value={{ session, signOut, switchProfile }}>
+      {logoutAlert}
+      {children}
+    </AuthSessionContext.Provider>
   );
 }
 
 function LoginScreen({
   session,
   loginError,
+  onDevSignIn,
 }: {
   session: Extract<AuthSessionState, { kind: "signed_out" }>;
   loginError: string | null;
+  onDevSignIn: () => Promise<void>;
 }) {
   useEffect(() => {
     document.title = "Iniciar sesión · OrigenLab";
@@ -147,6 +222,16 @@ function LoginScreen({
               </p>
             )}
           </div>
+          {session.devProfileLoginEnabled ? (
+            <button
+              type="button"
+              onClick={() => void devPrincipalSignIn().finally(() => void onDevSignIn())}
+              className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-dashed border-warn/50 bg-warn-bg px-4 text-[13px] font-medium text-warn hover:bg-warn-bg/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+              data-testid="dev-profile-login-button"
+            >
+              Entrar con la cuenta de prueba local
+            </button>
+          ) : null}
           <p className="mt-4 text-[11px] leading-4 text-ink-faint">
             Sólo se solicita tu nombre y correo. El panel no accede a Gmail, Drive ni Calendar.
           </p>

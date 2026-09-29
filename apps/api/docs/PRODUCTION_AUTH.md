@@ -244,11 +244,16 @@ browser ──GET /v2/*, /auth/session (cookie)──▶ API re-reads platform.o
   the client secret and the PKCE verifier, never through the browser. Every claim is still
   checked. See the module docstring in `origenlab_api/v2/google_oidc.py`.
 - **No operator is ever created by signing in.** Unknown addresses are refused.
-- **Nothing is written to the database.** The callback reads `platform.operator` through the
-  read-only repository; no `/v2` route became writable.
-- **Sessions are stateless signed cookies.** Logout clears the cookie in that browser but
-  cannot revoke a copy taken earlier; the 8-hour lifetime bounds that. Disabling the operator
-  (`status = 'disabled'`) ends every session on its next request.
+- **The only write is the session row.** The callback reads `platform.operator` through the
+  read-only repository and records one `platform.auth_session` row
+  (`sign_in_kind = 'google_account'`, `20260928195000`); no `/v2` route became writable. No
+  row, no cookie.
+- **Sessions are revocable rows.** The signed cookie names its row by a random identifier (the
+  database holds only a keyed hash of it) and binds the operator's `version`. Every request
+  re-reads the row joined to the operator: a revoked, expired or missing row, or a changed
+  operator `version` (any role, status or address change, by trigger), ends the session. Logout
+  revokes the row before the cookie is cleared, so a copy taken earlier fails on its next
+  request, on every API instance.
 - **The operator-email header is never trusted by the V2 boundary in production.** The header
   login (`ORIGENLAB_DEV_LOGIN_ENABLED`) is refused at startup when `ORIGENLAB_ENV=production`.
   The V1 `/operations/*` commands are unchanged: they still take the operator from the header
@@ -413,8 +418,10 @@ invalid or expired session is refused — it is never rescued by the header.
    password there, and the remote variables above are set (code ready, not exercised against
    any real host).
 2. Every operator who should sign in has an `active` `platform.operator` row — via
-   `scripts/operator_roster.py`: review the plan, then `--apply --confirm-changes <N>` with the
-   N that plan printed.
+   `scripts/operator_roster.py`, run as the migrator (`ORIGENLAB_V2_PROVISIONING_DATABASE_URL`,
+   a login that may `SET ROLE origenlab_owner`): review the plan, then `--apply
+   --confirm-changes <N> --confirm-database <name>` with what that plan printed. The runtime
+   API role cannot write `platform.operator` at all.
 3. Set the production column above as Render secrets on `origenlab-api`.
 4. Deploy `apps/dashboard-proxy`: it already lists `/auth/*` and passes exactly the two
    `__Host-` cookies and the two checked redirects (`apps/dashboard-proxy/src/auth.ts`).
@@ -422,6 +429,352 @@ invalid or expired session is refused — it is never rescued by the header.
    Access's `CF_Authorization` cookie upstream.
 5. Deploy the dashboard. Until step 4 the dashboard treats the Worker's `path_not_allowed` on
    `/auth/session` as "no sign-in here" and behaves exactly as before.
+
+## Shared Workspace login with operator profiles
+
+One Google Workspace account (the shared company mailbox) is used by several people. Google
+proves the **account**; it cannot say which **person** is at the keyboard. So the two are
+separate facts (`docs/ARCHITECTURE.md` §5.1, `docs/DOMAIN.md` §7.3):
+
+| Concept | Where | What it is |
+|---|---|---|
+| **Principal** | `platform.auth_principal` | the Google account: its address **and** its stable issuer + `sub` (required in production). Grants nothing by itself |
+| **Operator** | `platform.operator`, `sign_in_kind = 'shared_profile'` | the person who acts: display name, role (`admin` / `sales` / `viewer`), status. **Has no email address** — no invented or duplicate mailbox is created per person |
+| **Profile** | `platform.operator_profile` | links one operator to one principal, with that person's PIN as an Argon2id hash |
+| **Audit** | `platform.auth_event` | append-only: profile selected / refused / locked / cleared, logout, and a migrator's early lockout clear |
+| **Session** | `platform.auth_session` | one row per shared-sign-in session: a keyed hash of the cookie's identifier, the principal, the selected operator, expiry, revocation |
+
+Individual Google accounts keep working unchanged: an operator with `sign_in_kind =
+'google_account'` still signs in with their own address and never sees the profile screen.
+The two can coexist; a principal's address can never also be an operator's address.
+
+**Status.** Built and tested against disposable databases; **not applied to any real database
+and not deployed.** Off unless `ORIGENLAB_PROFILE_LOGIN_ENABLED=true`.
+
+### Flow
+
+```text
+Google sign-in (unchanged up to the claims check)
+  └─ address or account (issuer + sub) is a platform.auth_principal? ──no──▶ operator by email (unchanged)
+        │yes: exactly one principal is both; its pinned issuer + sub match the token's
+        │     (production: a principal with no pinned account is refused); principal active
+        ▼
+  session row recorded (keyed hash of a random identifier, expiry = cookie expiry)
+  signed session { session identifier, principal id, address, Google issuer + sub,
+                   principal version, auth time }
+  state = profile_required  — every /v2 read, workspace and command route answers 401
+                              "profile_required"; the dashboard shows the profile screen
+        │
+  GET  /auth/profiles        → the principal's usable profiles: id, display name, role label
+  POST /auth/profile/select  {profile_id, pin}
+        │  one transaction:
+        │  DB:  begin_pin_attempt locks principal row, then profile row; returns the lock,
+        │       Argon2id parameters + salt (decoy if unknown/foreign/unusable) and a one-use
+        │       attempt id + nonce — never the stored hash
+        │  API: one Argon2id derivation under the pepper (empty input if locked/malformed);
+        │       proof = HMAC-SHA256(output, attempt ‖ principal ‖ profile ‖ nonce)
+        │  DB:  finish_pin_attempt compares digests with the stored verifier, writes the
+        │       verdict, counters, lock and exactly one audit event
+        ▼
+  old session row revoked (profile_selected); successor row + cookie with a new identifier and
+  { operator id, operator version, profile version, selection time }, same auth time and the
+  same expiry — switching never extends a sign-in
+        │
+  every request: principal + session row + profile + operator re-read in one statement;
+  session row revoked / expired / missing → signed out; any version, status, role or link
+  mismatch → 401 profile_required (principal change → signed out)
+        │
+  POST /auth/profile/clear   → row revoked (profile_cleared), successor without a profile, same
+                               expiry: back to profile_required ("Cambiar perfil"; Google stays)
+  POST /auth/logout          → row revoked (logout) and audited, then the cookie is cleared
+                               ("Cerrar sesión"); 503 logout_not_recorded if the revocation
+                               could not be written — and then NO cookie is cleared: the
+                               session is still live, the dashboard stays signed in and shows
+                               "No se pudo cerrar la sesión de forma segura. Intenta
+                               nuevamente."; a retry that succeeds revokes the same row
+```
+
+### Security properties
+
+- **The Google account, not the address.** A principal is pinned to the verified ID token's
+  issuer (stored in its canonical `https://accounts.google.com` spelling) and `sub`. The
+  callback admits a token only as the one principal that is both its address and that account;
+  every request re-checks the pair signed into the session against the row. A Google account
+  deleted and recreated under the same address has a new `sub` and is refused (sign-in and
+  every existing session). **In production a principal with no pinned account cannot sign in
+  at all** — the callback refuses it and logs the observed `sub`, for comparison with the
+  directory `id` only; nothing is ever pinned on first use. Only the migrator roster tool can
+  pin or re-pin (the runtime role has no column grant; the tool never unpins), from the Admin
+  SDK Directory `id` read with a read-only scope; a re-pin moves the principal's version and so
+  ends every session of the old account.
+- **The server selects the operator.** The browser sends a profile id and a PIN; the operator,
+  its role and the principal come from the database and the signed cookie. No header, cookie
+  field or body field can name an operator (`X-OriginLab-Operator-Email` stays refused in
+  production). A profile of another principal is simply not found.
+- **PIN storage.** Argon2id (RFC 9106: 64 MiB, t=3, p=4) from `cryptography` ≥ 44 — no new
+  dependency — with a per-hash salt and the pepper passed as Argon2's secret input. The
+  column refuses anything that is not an Argon2id PHC string. A PIN is never stored, returned,
+  logged, put in an exception or an audit row; the select body is parsed by hand so a
+  validation error cannot echo it.
+- **The database decides the PIN, not the API process** (`20260929100000`). The runtime role
+  cannot read `operator_profile.pin_hash` (the table-level `SELECT` is revoked and every other
+  column granted by name, because a column revoke would not override it). A selection is one
+  transaction: `platform.begin_pin_attempt` returns the attempt's Argon2id parameters and salt
+  and a one-use attempt id and 32-byte nonce; the API derives Argon2id(PIN, salt, pepper) and
+  sends only HMAC-SHA256 of that output over the attempt, the principal, the profile and the
+  nonce; `platform.finish_pin_attempt` recomputes it from the stored verifier, compares SHA-256
+  digests of the two, and itself writes the verdict, the counters, the lock and exactly one
+  audit event. It accepts only the attempt begun in the same transaction for the same pair, once.
+  The caller supplies no verdict, counter, timestamp, lock duration or event type, so a SQL-only
+  attacker — an injection, a leaked runtime password, a bug — cannot declare a success, reset a
+  throttle, skip the audit, or replay a captured proof (it names an attempt that has ended). The
+  raw Argon2id output never leaves the API process, and no proof is stored or logged.
+- **The API host is inside the trust boundary, and this design does not protect against its
+  compromise.** Whoever holds the pepper can derive a proof for any guess and roll a failed
+  attempt back instead of committing it, so the throttle bounds only callers who commit; whoever
+  holds the session secret can mint a cookie for a session row they insert (the runtime role may
+  insert `platform.auth_session` rows — that is how sign-in works) and act as any operator. A
+  SQL-only attacker without that secret cannot: a row names a cookie only through
+  HMAC-SHA256(session secret, identifier), and the cookie itself is HMAC-signed
+  (`test_v2_pin_attempt_boundary.py` proves an inserted row authenticates nothing). Keep the
+  pepper and the session secret in the secret store, distinct, and rotate both if the host is
+  suspected.
+- **One public refusal.** Unknown profile, another principal's profile, wrong PIN, malformed
+  PIN, disabled profile or operator, and a lock all answer `401 {"detail":
+  "profile_selection_failed"}` — the same status, body and (absent) cookie. The reason is
+  recorded in the audit only.
+- **Timing is not constant, and is not claimed to be.** One Argon2id derivation is spent on
+  every refusal — on the submitted PIN; on an empty input when the attempt is locked or the PIN
+  is malformed (the submitted PIN is never used then); at the profile's own parameters, or the
+  principal's first profile's for an unknown, foreign or unusable one (decoy salt) — so the
+  dominant cost does not depend on the reason. The database work does: a locked attempt writes
+  no counters, an unknown profile id locks one row instead of two. No `/auth/*` response —
+  success, refusal, lockout, unknown profile, session check, callback, clear or logout — carries
+  `Server-Timing` or `X-Process-Time-Ms` (the API omits them and the Worker drops them), but the
+  wall-clock time of a request stays observable. A caller may therefore tell by timing that a
+  profile is locked, or that an id is not a profile. Neither reveals a PIN; the lock is what bounds
+  guessing.
+- **Throttle and lockout (persistent, shared by every worker):**
+
+  | Rule | Value |
+  |---|---|
+  | Consecutive failures that lock one profile | 5 |
+  | Consecutive failures that lock the whole principal (all profiles, unknown ids included) | 10 |
+  | Lock duration | 15 min, doubling with each lockout remembered, capped at 24 h |
+  | A failure stops counting after | 1 h without another failure |
+  | A lockout stops doubling the next after | 24 h without a failure |
+  | Attempt while locked | refused, **not counted**; the submitted PIN is never used (an Argon2 derivation of an empty input at the profile's parameters is still spent) |
+  | Malformed PIN | a **counted** failure (`malformed_pin`), like a wrong one |
+  | Audit | exactly one event per attempt: `profile.selected`, `profile.selection_refused`, or — for the failure that starts a lock — `profile.locked` / `principal.locked`, carrying the refusal reason; written only by `platform.finish_pin_attempt`, never insertable by the runtime role |
+  | Success | resets the selected profile's counters and the principal's failure count; keeps the principal's lockout history (so one known PIN cannot reset the principal-wide backoff); never touches another profile's |
+
+  Counters live on the principal and profile rows; `begin_pin_attempt` takes both `FOR UPDATE`
+  in principal → profile order before the PIN is derived, and they stay held until the attempt's
+  transaction ends, so concurrent attempts across API instances serialize and none is lost. A lock is cleared early only with the migrator tool
+  (`profile_auth_admin.py clear-lockout`, below), which records a `lockout.cleared` audit event
+  the runtime role cannot write; it is never a dashboard or API action.
+- **Session binding and revocation.** The cookie is HMAC-signed (unchanged key), HttpOnly,
+  SameSite=Lax, and `Secure` + `__Host-` over HTTPS. It names a `platform.auth_session` row
+  by a random 256-bit identifier; the table stores only HMAC-SHA256(session secret, identifier),
+  so a database copy yields no usable cookie. Every request requires that row to exist, belong
+  to the principal, carry the operator the cookie names, and be neither revoked nor expired by
+  the database clock. **Logout revokes the row before clearing the cookie**, so a copied cookie
+  fails on its next request on every API instance. "Cambiar perfil" and every selection revoke
+  the current row and insert its successor with the **same `expires_at`** (a trigger forbids
+  ever extending one, and makes revocation final). Database triggers also bump
+  `operator.version` on any role / status / address change, `operator_profile.version` on any
+  PIN / link / key / status change, and `auth_principal.version` on any address / issuer /
+  subject / status change — whoever writes the row. The per-request compare therefore ends every
+  affected session on its next request, including a Karla-promoted-to-admin session (it must
+  be re-selected with the PIN). Throttle updates bump nothing. Sessions of an individual's own
+  Google account (no profile) are rows in the same table (`sign_in_kind = 'google_account'`,
+  `20260928195000`), required on every request and revoked by logout the same way.
+- **CSRF.** The Worker refuses every sign-in POST without an allowed `Origin` or with a
+  cross-site `Sec-Fetch-Site`, and the two profile POSTs without `application/json` or above
+  1 KiB. The API independently requires `application/json` on both and refuses
+  `Sec-Fetch-Site: cross-site`.
+- **Least privilege.** `origenlab_api` only reads `platform.operator`: it cannot create an
+  operator or change a role, status or sign-in kind (INSERT and UPDATE revoked by
+  `20260928192000`; no route ever used them). It reads the four sign-in tables — every column
+  but `operator_profile.pin_hash` — appends the `profile.cleared` and `session.logout` audit
+  events, reaches the PIN throttle only through `platform.begin_pin_attempt` /
+  `platform.finish_pin_attempt` (`20260929100000`, above; it holds no UPDATE on either throttle
+  table and cannot insert a PIN outcome event), and inserts and revokes session rows (it
+  can never extend, reopen or delete one). It cannot create a principal or profile, relink one or
+  write a PIN hash. `origenlab_worker` has no access to them at all.
+
+### Environment variables
+
+| Variable | Required | Local value | Production value |
+|---|---|---|---|
+| `ORIGENLAB_PROFILE_LOGIN_ENABLED` | to turn it on | `true` | `true` when activated |
+| `ORIGENLAB_PROFILE_PIN_PEPPER` | when enabled — **secret**, ≥ 32 chars, ≥ 12 distinct, never equal to the session secret | own random value | own random value in the secret store |
+| `ORIGENLAB_DEV_PROFILE_PRINCIPAL_EMAIL` | no — local only | an invented address under `.test` / `.invalid` / `example.com` | **never** (startup refuses it) |
+
+The API refuses to start when profile login is on and the pepper is missing, short,
+low-variety or equal to `ORIGENLAB_AUTH_SESSION_SECRET`; without `ORIGENLAB_V2_DATABASE_URL`
+or the session secret; or with no way to sign in (Google off and no local shortcut).
+Generate the pepper with `python -c 'import secrets; print(secrets.token_urlsafe(48))'`.
+**Changing the pepper invalidates every PIN** — re-provision all of them in the same change.
+
+### Provisioning (`scripts/profile_roster.py`)
+
+The roster is JSON **outside the repository**:
+
+```json
+{
+  "principal": {"email": "<shared address>@origenlab.cl", "provider_subject": "<Google sub>"},
+  "profiles": [
+    {"key": "<slug>", "display_name": "<Nombre>", "role": "admin", "sort_order": 1},
+    {"key": "<slug>", "display_name": "<Nombre>", "role": "sales", "sort_order": 3}
+  ]
+}
+```
+
+PINs (6–12 digits; no repeated digit, no ascending/descending run) are **never** in the roster
+and never on the command line: `--prompt-pin <key>` asks for each twice on a hidden terminal
+prompt, or `--pin-file` reads `{"<key>": "<PIN>"}` from a file outside the repository that is
+mode `0600` and owned by the caller. A new profile needs a PIN; an existing one gets a new
+PIN only when one is given. The plan masks addresses and never prints a PIN or hash.
+
+The DSN comes from `ORIGENLAB_V2_PROVISIONING_DATABASE_URL` (another name with `--dsn-env`):
+a login that may `SET ROLE origenlab_owner` — the migrator — because the runtime role cannot
+write these rows. The pepper comes from `ORIGENLAB_PROFILE_PIN_PEPPER` and must be the
+API's.
+
+```bash
+# plan: read-only, prints the target database and the exact change count
+uv run python scripts/profile_roster.py --roster ~/data/<dir>/profiles.json --pin-file ~/data/<dir>/pins.json
+# apply exactly the reviewed plan
+uv run python scripts/profile_roster.py --roster … --pin-file … \
+    --apply --confirm-changes <N> --confirm-database <database name the plan printed>
+```
+
+`provider_subject` is the shared account's stable Google subject, obtained and verified as in
+*Obtaining the shared account's Google subject* below — read from the Admin SDK Directory, not
+taken from a sign-in. Omitting `provider_subject` leaves a pinned one unchanged (the tool never
+unpins); a different value is shown as a `re-pin` in the plan. A plan whose principal would
+stay unpinned ends with a `WARNING` line: production refuses that principal.
+
+### Obtaining the shared account's Google subject (read-only, before the roster is applied)
+
+**Pinning stays a migrator decision, never a sign-in side effect.** Nothing pins an account on
+first use: the runtime role holds no grant on `provider_subject` / `provider_issuer`, the API
+never writes them, and a production sign-in to an unpinned principal is refused outright. The
+subject is read beforehand from the Google Workspace directory, by an administrator, with a
+read-only scope, and checked before `profile_roster.py --apply`.
+
+For a Google Workspace user, the ID token's `sub` is the Admin SDK Directory API user `id`
+(a decimal string). Read it without creating any client, service account, key or delegation:
+
+1. As a Workspace **administrator** of `origenlab.cl`, open the Directory API reference page for
+   `users.get` (`developers.google.com/admin-sdk/directory/reference/rest/v1/users/get`) and use
+   its **Try this method** panel (the Google APIs Explorer).
+2. `userKey` = the shared address exactly as it will appear in the roster. `fields` =
+   `id,primaryEmail,suspended,archived,creationTime,isEnrolledIn2Sv`. Under *Credentials* keep
+   **Google OAuth 2.0** only and select **only** the read-only scope
+   `https://www.googleapis.com/auth/admin.directory.user.readonly` — clear every other scope the
+   panel proposes. This call can read one user record and change nothing.
+3. Execute, and read the answer on screen. Check, before copying anything:
+   - `primaryEmail` equals the roster's `principal.email`, character for character (lowercase);
+     an alias resolving to another primary address is the wrong account;
+   - `suspended` and `archived` are `false`;
+   - `creationTime` is when the shared account was actually created. A recent date on a
+     long-lived mailbox means it was deleted and recreated — the new `id` is then correct, but
+     confirm with the Workspace owner that the recreation was theirs before pinning it;
+   - `id` is digits only (the roster refuses anything outside `[A-Za-z0-9._-]`).
+4. Copy **only** `id` into the roster file, which lives outside the repository (`~/data/…`).
+   Never paste it into a commit, an issue or a chat: the repository is public, and an account
+   id joined to its address is identifying.
+5. `uv run python scripts/profile_roster.py --roster … --pin-file …` (plan, read-only). The
+   plan must show `provider_subject` on the principal (`insert`, or `re-pin` only when a re-pin
+   is intended) and no `WARNING` line. Then apply with the exact count and database name.
+
+**Optional cross-check, never the source.** After the roster is applied, a production sign-in
+by the Workspace owner either succeeds (the pin is right) or is refused and logged with the
+token's `observed subject …`. A logged subject is never pinned by itself: it can come from
+anyone who reached the callback with that address, so it is only compared with the directory
+`id`. If the two differ, stop — pin neither, and find out why (a recreated account, a wrong
+address, a sign-in that was not the owner's).
+
+**Never printed, pasted or stored:** the APIs Explorer access token (it stays in that browser
+tab; do not copy it into a shell, a `curl` command or a file), any refresh token, the session
+secret, the PIN pepper, and any PIN. The Directory call needs none of them from this
+repository, and `profile_roster.py` never prints a PIN, a hash or the pepper.
+
+To disable a person, set their `"status": "disabled"` and apply (their session ends on the
+next request). Profiles the roster omits are reported and left untouched. Delete the PIN file
+after applying.
+
+### Migrator maintenance (`scripts/profile_auth_admin.py`)
+
+Two operations, both as the migrator and both plan-first; neither is ever a route.
+
+**Clearing a lockout early.** A lock expires by itself (15 min, doubling). To lift one sooner —
+a person locked out who has proven who they are — name the principal and what to clear: one or
+more profiles (`--profile <key>`) and/or the principal-wide throttle (`--principal`):
+
+```bash
+uv run python scripts/profile_auth_admin.py clear-lockout --principal-email <shared address> --profile <key>
+uv run python scripts/profile_auth_admin.py clear-lockout --principal-email <shared address> --profile <key> \
+    --apply --confirm-changes <N> --confirm-database <name>
+```
+
+The plan shows each target's state (`LOCKED until …`, failures, lockouts) and the exact count.
+Applying resets that target's four throttle columns and appends one `platform.auth_event`
+`lockout.cleared` (principal, and the profile's operator when a profile was cleared) per target
+— an event a trigger refuses from the runtime role. It moves no version (nobody is signed out)
+and never touches a PIN; a forgotten PIN is re-provisioned with `profile_roster.py`.
+
+**Pruning sessions.** Ended session rows grant nothing, but the runtime role cannot delete them.
+The migrator prunes rows that expired more than a day ago (`--older-than-days`, at least 1):
+
+```bash
+uv run python scripts/profile_auth_admin.py prune-sessions
+uv run python scripts/profile_auth_admin.py prune-sessions --apply \
+    --confirm-changes <N> --confirm-database <name> --confirm-cutoff <timestamp the plan printed>
+```
+
+Same DSN rule as provisioning (`ORIGENLAB_V2_PROVISIONING_DATABASE_URL`, a login that may
+`SET ROLE origenlab_owner`). It is never a route.
+
+### Local setup with an invented profile
+
+1. A disposable or local loopback database with the migrations applied.
+2. Provision an **invented** principal and profiles with invented PINs, e.g. principal
+   `perfiles@origenlab.test` (roster `--domain origenlab.test`).
+3. Start the API with `ORIGENLAB_PROFILE_LOGIN_ENABLED=true`, a pepper,
+   `ORIGENLAB_AUTH_SESSION_SECRET`, `ORIGENLAB_DEV_LOGIN_ENABLED=true` and
+   `ORIGENLAB_DEV_PROFILE_PRINCIPAL_EMAIL=perfiles@origenlab.test` (Google may stay off).
+   The shortcut `POST /auth/dev/principal-session` mounts only then — never in production,
+   never on a non-loopback database, never for an address outside a reserved test domain —
+   and its sessions are marked `dev`, which a production API refuses to honour. The Worker
+   never forwards it.
+4. The login screen shows **Entrar con la cuenta de prueba local**; the profile screen and the
+   PIN check are then exactly the production ones.
+
+### Production procedure (future; not performed)
+
+1. Prerequisites of *Production activation* above (remote V2 database adopted, Google client).
+2. Apply the `20260928180000`–`20260928195000` slice-1 sign-in migrations with the normal
+   migration procedure (`docs/OPERATIONS.md`). They seed nothing.
+3. Generate the pepper; store it as a Render secret `ORIGENLAB_PROFILE_PIN_PEPPER` (distinct
+   from the session secret). Do not set it anywhere else.
+4. Obtain and verify the shared account's Google `sub` — its Admin SDK Directory user `id`, read
+   with the read-only scope — exactly as in *Obtaining the shared account's Google subject*,
+   and put it in the roster as `provider_subject`. Without it the plan warns and production
+   refuses the principal. Never pin a subject taken only from a sign-in log.
+5. Each person chooses a PIN and enters it themselves at the hidden prompt of
+   `profile_roster.py` run by the administrator, or the administrator writes a `0600` PIN file
+   on an encrypted local disk, applies, and deletes it. Plan, review, apply with the exact
+   count and database name — as the migrator login, never the runtime login.
+6. Set `ORIGENLAB_PROFILE_LOGIN_ENABLED=true` on `origenlab-api`; deploy the Worker (it lists
+   `/auth/profiles` and `/auth/profile/{select,clear}`), then the dashboard.
+7. Verify: sign in with the shared account → profile screen; each person selects with their
+   PIN; the sales profile gets 403 on an admin command; `platform.auth_event` records it.
+8. **Rollback:** set `ORIGENLAB_PROFILE_LOGIN_ENABLED=false` (the shared address then has no
+   operator and is refused at sign-in; individual operators are unaffected). The tables can
+   stay; they grant nothing while the switch is off.
 
 ---
 

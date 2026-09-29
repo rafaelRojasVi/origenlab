@@ -1,4 +1,4 @@
--- Slice 0/2 — inventory proofs: seven schemas, exactly the reviewed 37 tables, ownership, RLS
+-- Slice 0/2 — inventory proofs: seven schemas, exactly the reviewed 41 tables, ownership, RLS
 -- posture, no SECURITY DEFINER function, pinned search_path, `public` empty, forbidden columns
 -- absent, send flags false. docs/DOMAIN.md §7; docs/ARCHITECTURE.md §3, §6.1, §6.2.
 begin;
@@ -19,7 +19,7 @@ select is(
       and nspowner = 'origenlab_owner'::regrole),
   7, 'all seven application schemas are owned by origenlab_owner');
 
--- Exactly the reviewed 37 application tables (DOMAIN.md §7, §7.1).
+-- Exactly the reviewed 41 application tables (DOMAIN.md §7, §7.1, §7.2, §7.3).
 select set_eq(
   $$ select n.nspname || '.' || c.relname
        from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -38,9 +38,11 @@ select set_eq(
     'platform.operator', 'platform.command_receipt',
     'crm.address', 'crm.opportunity_participant',
     'crm.opportunity_organization', 'crm.opportunity_interest', 'crm.opportunity_evidence',
-    'outbound.campaign_block'
+    'outbound.campaign_block',
+    'platform.auth_principal', 'platform.operator_profile', 'platform.auth_event',
+    'platform.auth_session'
   ],
-  'exactly the reviewed 37 application tables exist');
+  'exactly the reviewed 41 application tables exist');
 
 select results_eq(
   $$ select n.nspname::text collate "default", count(*)::int
@@ -48,8 +50,8 @@ select results_eq(
       where c.relkind = 'r'
         and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       group by 1 order by 1 $$,
-  $$ values ('catalog', 2), ('comms', 4), ('crm', 19), ('evidence', 2), ('outbound', 7), ('platform', 2), ('procurement', 1) $$,
-  'counts by schema: crm 19, comms 4, outbound 7, evidence 2, catalog 2, procurement 1, platform 2');
+  $$ values ('catalog', 2), ('comms', 4), ('crm', 19), ('evidence', 2), ('outbound', 7), ('platform', 6), ('procurement', 1) $$,
+  'counts by schema: crm 19, comms 4, outbound 7, evidence 2, catalog 2, procurement 1, platform 6');
 
 -- No views, materialized views, partitions or foreign tables in Slice 0.
 select is(
@@ -71,12 +73,14 @@ select is(
   0, 'every application function is owned by origenlab_owner');
 
 -- The closed SECURITY DEFINER list (ARCHITECTURE.md §6.2) was empty in Slice 0; slice 5 builds its
--- first entry, outbound.add_contact_control (W10 unsubscribe). Every other function is INVOKER.
+-- first entry, outbound.add_contact_control (W10 unsubscribe); slice 1 its second and third,
+-- platform.begin_pin_attempt and platform.finish_pin_attempt (the PIN attempt, 20260929100000,
+-- which replaced 20260928194000's platform.record_pin_attempt). Every other function is INVOKER.
 select is(
   (select array_agg(n.nspname || '.' || p.proname order by 1)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and p.prosecdef),
-  '{outbound.add_contact_control}', 'the only SECURITY DEFINER function is the closed-list outbound.add_contact_control');
+  '{outbound.add_contact_control,platform.begin_pin_attempt,platform.finish_pin_attempt}', 'the only SECURITY DEFINER functions are the closed-list outbound.add_contact_control, platform.begin_pin_attempt and platform.finish_pin_attempt');
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
@@ -105,8 +109,14 @@ select set_eq(
         'outbound.archived_campaign_immutable',
         'outbound.campaign_block_guard',
         'outbound.campaign_hold_refusals',
-        'outbound.campaign_hold_guard'],
-  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the three W10 unsubscribe functions, the three campaign-block functions and the archived-campaign guard exist');
+        'outbound.campaign_hold_guard',
+        'platform.operator_security_version',
+        'platform.auth_principal_security_version',
+        'platform.operator_profile_security_version',
+        'platform.auth_session_guard',
+        'platform.auth_event_actor_guard', 'platform.hmac_sha256',
+        'platform.begin_pin_attempt', 'platform.finish_pin_attempt'],
+  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the three W10 unsubscribe functions, the three campaign-block functions, the archived-campaign guard, the three sign-in version guards, the session guard, the audit-actor guard, the HMAC helper and the two PIN-attempt definers exist');
 
 -- `public` holds nothing.
 select is(
@@ -128,13 +138,13 @@ select hasnt_column('crm', 'external_identifier', 'entity_id', 'external_identif
 select hasnt_column('crm', 'address', 'parent_type', 'address is bound by a typed FK, not a parent_type/parent_id pair');
 select col_not_null('crm', 'address', 'organization_id', 'address.organization_id is NOT NULL');
 
--- RLS enabled on all 37 tables and never forced (the owner crosses it by ownership).
+-- RLS enabled on all 41 tables and never forced (the owner crosses it by ownership).
 select is(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and c.relrowsecurity),
-  37, 'RLS is enabled on all 37 tables');
+  41, 'RLS is enabled on all 41 tables');
 select is(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r'
@@ -154,7 +164,7 @@ select is(
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and obj_description(c.oid, 'pg_class') like 'DOMAIN.md §7 #%'),
-  37, 'every table is commented with its DOMAIN.md §7 inventory number');
+  41, 'every table is commented with its DOMAIN.md §7 inventory number');
 
 select * from finish();
 rollback;

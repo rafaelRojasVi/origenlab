@@ -119,7 +119,13 @@ table.
 
 1. Supabase Auth issues **ES256 (asymmetric) JWTs**. Sign-ups are disabled;
    operators are invited by an admin command that also inserts
-   `platform.operator`.
+   `platform.operator`. That command is not built, and **the runtime API role
+   holds no INSERT or UPDATE on `platform.operator`**
+   (`20260928192000_slice1_runtime_operator_write_revoked`): until a reviewed
+   command path exists, operators and profiles are created and changed only by
+   the migrator roster tools (`apps/api/scripts/operator_roster.py`,
+   `profile_roster.py`), so nothing reachable through the API can raise a role
+   or re-enable an operator.
 2. The dashboard holds only the **publishable key**, and uses it only for sign
    in, refresh and MFA.
 3. FastAPI verifies signature, `iss`, `aud` and `exp` against the project's
@@ -135,6 +141,54 @@ table.
 **No custom access-token hook is required for V2.** Hook claims are computed
 at issuance and go stale until the next refresh; reading `platform.operator`
 live is correct and simpler.
+
+### 5.1 Shared Workspace sign-in with operator profiles — built 2026-09-28
+
+The interim Google Workspace login (`apps/api/docs/PRODUCTION_AUTH.md`) also
+serves one shared account used by several people. **Google identity and
+operator identity are separate facts** ([`DOMAIN.md`](DOMAIN.md) §7.3):
+
+1. Google proves a **principal** (`platform.auth_principal`) — the Google
+   account itself, matched on the verified token's issuer and `sub` as well as
+   its address, so a deleted and recreated account under the same address is
+   refused; production refuses a principal with no pinned account. The session
+   is then `profile_required`, and every CRM, workspace and command route
+   refuses it.
+2. The person picks their profile and enters their PIN. **The browser never
+   verifies it, and neither does the API alone**: the API derives Argon2id
+   keyed with a server-side pepper (`ORIGENLAB_PROFILE_PIN_PEPPER`, separate
+   from the session secret) at the parameters and salt the database hands out
+   for one attempt, and sends only an HMAC of that output bound to the
+   attempt's one-use nonce. The database compares it with the stored verifier
+   — which the runtime role cannot read — and decides. Both steps are SECURITY
+   DEFINER functions on the closed list ([§6.2](#m-arch-definer)):
+   `platform.begin_pin_attempt` and `platform.finish_pin_attempt`, in one
+   transaction; the second computes the verdict, the counters, the lock and
+   its duration and writes exactly one audit event, so no SQL the runtime role
+   can send declares a success, resets a throttle or skips the audit. Every
+   refusal is the same public error.
+3. The signed session binds the principal, its Google issuer and subject, the selected
+   operator, the operator's, profile's and principal's `version` and the
+   Google authentication time, and names its own `platform.auth_session` row
+   (the database holds only a keyed hash of the cookie's identifier). Every
+   request re-reads the rows; a role, PIN, link or status change bumps a
+   `version` by trigger and ends the session, and a revoked or expired row
+   ends it outright. Logout revokes the row before the cookie is cleared, so a
+   copied cookie fails at once on every instance; selecting or clearing a
+   profile rotates the row without extending its expiry.
+4. Authorization is unchanged: the selected operator's role, re-read per
+   request, is what every route and command checks and records.
+
+Profiles are **provisioned, never self-served**:
+`apps/api/scripts/profile_roster.py` plans first and applies an exact
+confirmed count, under the migrator login's explicit `SET ROLE
+origenlab_owner` — the identity that runs data-fixing migrations (§6). The
+runtime API role cannot write a principal, a profile link or a PIN hash. An
+operator with its own Google account (`sign_in_kind = 'google_account'`) keeps
+signing in directly, beside the shared principal — and its session is a
+`platform.auth_session` row too (`20260928195000`), binding the operator's
+`version`, required on every request and revoked by logout exactly like a
+shared one: no sign-in mode leaves a session that logout cannot end.
 
 <a id="m-arch-roles"></a>
 ## 6. Database roles, grants and RLS
@@ -273,8 +327,43 @@ worker-written quote columns. Nothing else qualifies, and the list is closed:
 | `outbound.set_send_control(flag, value, reason)` | `send_control` | `origenlab_api` |
 | `outbound.add_contact_control(kind, purpose, normalized_address, reason, …)` | `contact_control`; for an unsubscribe the whole transaction — its evidence (`evidence.source_record`, `evidence.assertion`, including a request held for review and its later resolution) | `origenlab_api` (admin block and revoke; the «BAJA» reply command) **and** `origenlab_worker` (hard bounce, complaint, unsubscribe) |
 | `crm.record_quote_pdf(revision_id, pdf_sha256, sent_evidence_ids)` | only `quote_revision.pdf_sha256` and the sent-evidence ids | `origenlab_worker` |
+| `platform.begin_pin_attempt(principal_id, operator_id)` | only the one-use attempt record (`pin_attempt_*`) of one `auth_principal` row | `origenlab_api` |
+| `platform.finish_pin_attempt(attempt_id, principal_id, operator_id, candidate_proof)` | the four PIN-throttle columns of that `auth_principal` row and of one of its `operator_profile` rows, the attempt record, and exactly one `auth_event` | `origenlab_api` |
 
-**Built so far (2026-09-27): only `outbound.add_contact_control`, and only for
+**The PIN attempt (slice 1, 2026-09-29, `20260929100000`)** replaced
+`platform.record_pin_attempt`, whose `record_success` took the caller's word that a PIN was
+right: the runtime login could clear both failure counters with no PIN and no audit row. The
+runtime role now holds no `UPDATE` on either throttle table, cannot read
+`operator_profile.pin_hash` (column-level `SELECT` on every other column), and cannot insert a
+PIN outcome event (`auth_event_actor_guard`). An attempt is two calls in one transaction:
+
+* `begin_pin_attempt` locks the principal row, then the profile row when it belongs to that
+  principal (the locks serialize concurrent attempts until the transaction ends), records a
+  random attempt id and 32-byte nonce with the current transaction id on the principal, and
+  returns whether a lock refuses the attempt, the public Argon2id parameters and salt — a decoy
+  salt at the same cost for an unknown, foreign or unusable profile — and the attempt. It never
+  returns the stored verifier.
+* `finish_pin_attempt` accepts only the attempt begun in the same transaction, for the same
+  principal and profile, once. The caller supplies a proof — HMAC-SHA256 of its Argon2id output
+  over the attempt, the pair and the nonce — and no verdict, counter, deadline, timestamp,
+  event type or audit context: `profile.selected` records no previous profile, because nothing
+  in the database can verify which one the caller's session held. The function recomputes the proof from the stored verifier, compares SHA-256
+  digests, and itself writes the throttle transition and exactly one `platform.auth_event`
+  (`profile.selected`, `profile.selection_refused`, `profile.locked`, `principal.locked`) in the
+  same statement. A missing or malformed proof is a counted failure; while locked nothing counts.
+
+The nonce makes a captured proof worth one ended attempt; Argon2id with the pepper stays the only
+way to produce one. **This protects against a SQL-only attacker** (an injection, a leaked
+runtime password, a bug) **and not against a compromised API host**, which holds the pepper and
+could derive proofs for guesses and roll failures back uncommitted — the pepper and the session
+secret are inside the API's trust boundary. Both functions assert
+`session_user = 'origenlab_api'`, pin `search_path = pg_catalog`, qualify every object and have
+no dynamic SQL; `platform.hmac_sha256` is an INVOKER helper no runtime role may execute
+(`supabase/tests/075_pin_attempt_definers.sql`, `supabase/scripts/verify_direct_logins.sh`,
+`apps/api/tests/test_v2_pin_attempt_boundary.py`). Authentication is not a commercial aggregate:
+neither writes a `crm.domain_event`.
+
+**Built before it (2026-09-27): only `outbound.add_contact_control`, and only for
 `(block, marketing, unsubscribe)`** — the «BAJA» reply command of
 [`WORKFLOWS.md`](WORKFLOWS.md) §W10. **This function owns the complete unsubscribe transaction,
 including its immutable evidence**: in one call — one statement, so all or nothing — it writes the

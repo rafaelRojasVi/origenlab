@@ -43,6 +43,8 @@ GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 #: Google issues both forms (https://developers.google.com/identity/openid-connect/openid-connect#validatinganidtoken).
 GOOGLE_ISSUERS = frozenset({"https://accounts.google.com", "accounts.google.com"})
+#: The one spelling stored and compared: Google issues under both forms of one issuer.
+GOOGLE_CANONICAL_ISSUER = "https://accounts.google.com"
 SCOPES = "openid email profile"
 CALLBACK_PATH = "/auth/google/callback"
 #: The dashboard proxy's path prefix; production callbacks are `<origin>/api/auth/google/callback`.
@@ -280,6 +282,8 @@ def decode_id_token(id_token: Any) -> dict[str, Any]:
 class VerifiedGoogleAccount:
     email_norm: str
     subject: str
+    #: Always :data:`GOOGLE_CANONICAL_ISSUER`; with `subject`, the account's stable identity.
+    issuer: str = GOOGLE_CANONICAL_ISSUER
 
 
 def validate_claims(
@@ -328,7 +332,7 @@ def validate_claims(
     if claims.get("hd") != workspace_domain:
         raise ClaimsRefused("wrong_domain", "account is not a member of the Workspace domain")
 
-    return VerifiedGoogleAccount(email_norm=email, subject=subject)
+    return VerifiedGoogleAccount(email_norm=email, subject=subject, issuer=GOOGLE_CANONICAL_ISSUER)
 
 
 #: Test seam: the routes read the exchanger from app state, defaulting to the real one.

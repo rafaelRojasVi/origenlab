@@ -113,7 +113,7 @@ function sessionFor(role: string | null): AuthSessionState {
 }
 
 function withRole(role: string | null, node: ReactNode) {
-  return <AuthSessionContext.Provider value={{ session: sessionFor(role), signOut: async () => undefined }}>{node}</AuthSessionContext.Provider>;
+  return <AuthSessionContext.Provider value={{ session: sessionFor(role), signOut: async () => true }}>{node}</AuthSessionContext.Provider>;
 }
 
 /** Any label a write affordance carries in Marketing. None may be on screen for a reader. */
