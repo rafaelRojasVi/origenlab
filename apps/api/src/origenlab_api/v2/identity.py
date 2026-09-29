@@ -209,8 +209,8 @@ class GoogleSessionIdentity(IdentityPort):
     A **principal session** (a shared Google sign-in, `docs/ARCHITECTURE.md` §5.1) is resolved
     only when profile sign-in is on (`profiles` is given). Every request re-reads the principal,
     the selected profile and its operator in one statement and requires, all at once: the
-    principal active, at the version and address signed into the session (and its pinned
-    subject, if any); the profile linked to *that* principal, active, at its signed version;
+    principal active, at the version and address signed into the session, and the Google
+    account (issuer + subject) pinned on it — required in production; the profile linked to *that* principal, active, at its signed version;
     the operator active, a dashboard role, at its signed version. A role, PIN, link or status
     change moves a version (by trigger), so the session stops resolving on the next request.
     Without a selected profile — or with one that no longer holds — the answer is
@@ -283,9 +283,12 @@ def check_principal_session(
     """Re-read the principal behind `session` (and its selected profile) and check it, or refuse.
 
     The principal must exist, be active, and match the version and address the session was
-    signed with — and, when a subject is pinned on the row, the Google subject too. A
-    development session is refused in production whatever its signature says. Returns the
-    principal and the selected profile's current binding (or None).
+    signed with. A Google session must also match the Google account pinned on the row — its
+    issuer and subject — and **in production a principal with no pinned account is refused
+    outright**: an address alone never identifies a shared sign-in there, because a deleted and
+    recreated account keeps the address and changes the subject. A development session is
+    refused in production whatever its signature says. Returns the principal and the selected
+    profile's current binding (or None).
     """
     if production and session.method != "google":
         raise IdentityRefused("a development sign-in is never honoured in production")
@@ -295,11 +298,14 @@ def check_principal_session(
     )
     if (principal is None or not principal.is_active
             or principal.version != session.principal_version
-            or principal.email_norm != session.email
-            or (principal.provider_subject is not None
-                and session.method == "google"
-                and principal.provider_subject != session.subject)):
+            or principal.email_norm != session.email):
         raise IdentityRefused("the shared sign-in is no longer valid: sign in again")
+    if session.method == "google":
+        if principal.has_pinned_account:
+            if not principal.is_account(session.issuer, session.subject):
+                raise IdentityRefused("the shared sign-in is not the pinned Google account: sign in again")
+        elif production:
+            raise IdentityRefused("the shared sign-in has no pinned Google account: production refuses it")
     return principal, binding
 
 

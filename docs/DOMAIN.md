@@ -851,7 +851,7 @@ never also be an operator's address (both directions are refused by trigger).
 
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|
-| 38 | `platform.auth_principal` | an external sign-in identity (one Google account) and its principal-wide PIN throttle | `(provider, email_norm)` unique; optional pinned provider subject, unique; never an operator's address; `version` bumps on any address, subject or status change |
+| 38 | `platform.auth_principal` | an external sign-in identity (one Google account) and its principal-wide PIN throttle | `(provider, email_norm)` unique; the pinned Google account — `provider_issuer` (canonical `https://accounts.google.com`) and `provider_subject`, set together or not at all, `(provider, provider_subject)` unique — required by the API in production and set only by the migrator roster tool; never an operator's address; `version` bumps on any address, issuer, subject or status change |
 | 39 | `platform.operator_profile` | a `shared_profile` operator selectable from one principal, its PIN and its per-profile throttle | the composite key `(operator_id, 'shared_profile')` → `platform.operator (id, sign_in_kind)` admits no other kind; `(principal_id, profile_key)` unique; `pin_hash` must be an Argon2id PHC string, so a plaintext PIN cannot be stored; `version` bumps on any PIN, link, key or status change, never on a throttle update |
 | 40 | `platform.auth_event` | the append-only authentication audit: profile selected, refused, locked, cleared, logout | closed `event_type` and closed `refusal_reason` (no free text, so no PIN can be recorded); principal id and address recorded as a pair; append-only (`platform.reject_mutation`) |
 

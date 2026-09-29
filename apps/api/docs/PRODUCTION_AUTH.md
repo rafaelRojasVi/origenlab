@@ -431,7 +431,7 @@ separate facts (`docs/ARCHITECTURE.md` §5.1, `docs/DOMAIN.md` §7.3):
 
 | Concept | Where | What it is |
 |---|---|---|
-| **Principal** | `platform.auth_principal` | the Google identity (the shared address, optionally its Google `sub`). Grants nothing by itself |
+| **Principal** | `platform.auth_principal` | the Google account: its address **and** its stable issuer + `sub` (required in production). Grants nothing by itself |
 | **Operator** | `platform.operator`, `sign_in_kind = 'shared_profile'` | the person who acts: display name, role (`admin` / `sales` / `viewer`), status. **Has no email address** — no invented or duplicate mailbox is created per person |
 | **Profile** | `platform.operator_profile` | links one operator to one principal, with that person's PIN as an Argon2id hash |
 | **Audit** | `platform.auth_event` | append-only: profile selected / refused / locked / cleared, logout |
@@ -447,10 +447,11 @@ and not deployed.** Off unless `ORIGENLAB_PROFILE_LOGIN_ENABLED=true`.
 
 ```text
 Google sign-in (unchanged up to the claims check)
-  └─ address is a platform.auth_principal? ──no──▶ operator by email (unchanged)
-        │yes: principal active; pinned subject (if any) matches
+  └─ address or account (issuer + sub) is a platform.auth_principal? ──no──▶ operator by email (unchanged)
+        │yes: exactly one principal is both; its pinned issuer + sub match the token's
+        │     (production: a principal with no pinned account is refused); principal active
         ▼
-  signed session { principal id, address, Google sub, principal version, auth time }
+  signed session { principal id, address, Google issuer + sub, principal version, auth time }
   state = profile_required  — every /v2 read, workspace and command route answers 401
                               "profile_required"; the dashboard shows the profile screen
         │
@@ -471,6 +472,15 @@ Google sign-in (unchanged up to the claims check)
 
 ### Security properties
 
+- **The Google account, not the address.** A principal is pinned to the verified ID token's
+  issuer (stored in its canonical `https://accounts.google.com` spelling) and `sub`. The
+  callback admits a token only as the one principal that is both its address and that account;
+  every request re-checks the pair signed into the session against the row. A Google account
+  deleted and recreated under the same address has a new `sub` and is refused (sign-in and
+  every existing session). **In production a principal with no pinned account cannot sign in
+  at all** — the callback refuses it and logs the observed `sub` for the owner. Only the
+  migrator roster tool can pin, re-pin or unpin (the runtime role has no column grant); a
+  re-pin moves the principal's version and so ends every session of the old account.
 - **The server selects the operator.** The browser sends a profile id and a PIN; the operator,
   its role and the principal come from the database and the signed cookie. No header, cookie
   field or body field can name an operator (`X-OriginLab-Operator-Email` stays refused in
@@ -502,8 +512,8 @@ Google sign-in (unchanged up to the claims check)
 - **Session binding and revocation.** The cookie is HMAC-signed (unchanged key), HttpOnly,
   SameSite=Lax, and `Secure` + `__Host-` over HTTPS. Database triggers bump
   `operator.version` on any role / status / address change, `operator_profile.version` on any
-  PIN / link / key / status change, and `auth_principal.version` on any address / subject /
-  status change — whoever writes the row. The per-request compare therefore ends every
+  PIN / link / key / status change, and `auth_principal.version` on any address / issuer /
+  subject / status change — whoever writes the row. The per-request compare therefore ends every
   affected session on its next request, including a Karla-promoted-to-admin session (it must
   be re-selected with the PIN). Throttle updates bump nothing. As before, a stateless cookie
   copied before logout stays valid until one of those changes or its expiry (8 h).
@@ -535,7 +545,7 @@ The roster is JSON **outside the repository**:
 
 ```json
 {
-  "principal": {"email": "<shared address>@origenlab.cl"},
+  "principal": {"email": "<shared address>@origenlab.cl", "provider_subject": "<Google sub>"},
   "profiles": [
     {"key": "<slug>", "display_name": "<Nombre>", "role": "admin", "sort_order": 1},
     {"key": "<slug>", "display_name": "<Nombre>", "role": "sales", "sort_order": 3}
@@ -562,6 +572,14 @@ uv run python scripts/profile_roster.py --roster … --pin-file … \
     --apply --confirm-changes <N> --confirm-database <database name the plan printed>
 ```
 
+`provider_subject` is the shared account's stable Google subject: the Admin SDK Directory
+user `id`, or the `sub` a production callback logs when it refuses the still-unpinned
+principal (`observed subject …`). **Pin a logged subject only after confirming the refused
+sign-in was your own** (same time, same person) — a subject from someone else's sign-in would
+pin their account. Omitting `provider_subject` leaves a pinned one unchanged (the tool never
+unpins); a different value is shown as a `re-pin` in the plan. A plan whose principal would
+stay unpinned ends with a `WARNING` line: production refuses that principal.
+
 To disable a person, set their `"status": "disabled"` and apply (their session ends on the
 next request). Profiles the roster omits are reported and left untouched. Delete the PIN file
 after applying.
@@ -584,19 +602,21 @@ after applying.
 ### Production procedure (future; not performed)
 
 1. Prerequisites of *Production activation* above (remote V2 database adopted, Google client).
-2. Apply migration `20260928180000_slice1_shared_workspace_operator_profiles.sql` with the
-   normal migration procedure (`docs/OPERATIONS.md`). It seeds nothing.
+2. Apply the `20260928180000`–`20260928190000` slice-1 sign-in migrations with the normal
+   migration procedure (`docs/OPERATIONS.md`). They seed nothing.
 3. Generate the pepper; store it as a Render secret `ORIGENLAB_PROFILE_PIN_PEPPER` (distinct
    from the session secret). Do not set it anywhere else.
-4. Each person chooses a PIN and enters it themselves at the hidden prompt of
+4. Obtain the shared account's Google `sub` (Admin SDK user `id`) and put it in the roster as
+   `provider_subject`. Without it the plan warns and production refuses the principal.
+5. Each person chooses a PIN and enters it themselves at the hidden prompt of
    `profile_roster.py` run by the administrator, or the administrator writes a `0600` PIN file
    on an encrypted local disk, applies, and deletes it. Plan, review, apply with the exact
    count and database name — as the migrator login, never the runtime login.
-5. Set `ORIGENLAB_PROFILE_LOGIN_ENABLED=true` on `origenlab-api`; deploy the Worker (it lists
+6. Set `ORIGENLAB_PROFILE_LOGIN_ENABLED=true` on `origenlab-api`; deploy the Worker (it lists
    `/auth/profiles` and `/auth/profile/{select,clear}`), then the dashboard.
-6. Verify: sign in with the shared account → profile screen; each person selects with their
+7. Verify: sign in with the shared account → profile screen; each person selects with their
    PIN; the sales profile gets 403 on an admin command; `platform.auth_event` records it.
-7. **Rollback:** set `ORIGENLAB_PROFILE_LOGIN_ENABLED=false` (the shared address then has no
+8. **Rollback:** set `ORIGENLAB_PROFILE_LOGIN_ENABLED=false` (the shared address then has no
    operator and is refused at sign-in; individual operators are unaffected). The tables can
    stay; they grant nothing while the switch is off.
 

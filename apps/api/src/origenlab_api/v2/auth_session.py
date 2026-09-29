@@ -19,8 +19,8 @@ the tag.
 original shape, still what an operator with their own Google account gets) names an operator
 by address. A *principal session* (`k = "principal"`) names a shared Google sign-in
 (`platform.auth_principal`) and, once a profile is chosen, the operator selected through it,
-together with the operator's, the profile's and the principal's `version` at selection time and
-the Google authentication time. Choosing or clearing a profile re-issues the cookie with the
+together with the operator's, the profile's and the principal's `version` at selection time,
+the Google authentication time, and the account it was signed in as (issuer and subject). Choosing or clearing a profile re-issues the cookie with the
 same authentication time and the same expiry, so switching profile never extends a sign-in.
 The shape is decided by a signed field, so neither can be passed off as the other.
 """
@@ -83,6 +83,8 @@ class PrincipalSession:
     exp: int
     profile: ProfileSelection | None = None
     method: str = "google"
+    #: The verified ID token's issuer (canonical form); with `subject`, the Google account.
+    issuer: str = "https://accounts.google.com"
 
     def with_profile(self, profile: ProfileSelection | None) -> "PrincipalSession":
         return replace(self, profile=profile)
@@ -217,6 +219,7 @@ class CookieSigner:
             "pid": session.principal_id,
             "email": session.email,
             "sub": session.subject,
+            "iss": session.issuer,
             "pv": session.principal_version,
             "at": session.auth_time,
             "exp": session.exp,
@@ -257,6 +260,7 @@ class CookieSigner:
             principal_id=_text(payload.get("pid")),
             email=_text(payload.get("email")),
             subject=_text(payload.get("sub")),
+            issuer=_text(payload.get("iss")),
             principal_version=_positive_int(payload.get("pv")),
             auth_time=_positive_int(payload.get("at")),
             exp=_positive_int(payload.get("exp")),

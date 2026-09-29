@@ -280,6 +280,7 @@ def dev_principal_session(request: Request) -> JSONResponse:
     now = time.time()
     session = PrincipalSession(
         principal_id=principal.principal_id, email=principal.email_norm, subject="dev-local",
+        issuer="dev-local",
         principal_version=principal.version, auth_time=int(now),
         exp=int(now) + config.session_ttl_seconds, method="dev",
     )

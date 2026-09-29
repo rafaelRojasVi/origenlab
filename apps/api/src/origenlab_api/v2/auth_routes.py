@@ -233,9 +233,10 @@ def google_callback(request: Request) -> Response:
 
     profile_login = getattr(request.app.state, "v2_profile_login", None)
     if profile_login is not None:
-        principal = profile_login.profiles.principal_by_email(account.email_norm)
-        if principal is not None:
-            return _principal_signed_in(config, profile_login, principal, account.subject, now)
+        candidates = profile_login.profiles.principals_for_google(
+            account.email_norm, account.issuer, account.subject)
+        if candidates:
+            return _principal_signed_in(config, profile_login, candidates, account, now)
 
     lookup: OperatorLookup = request.app.state.v2_repository
     operator = lookup.by_email(account.email_norm)
@@ -265,20 +266,39 @@ def google_callback(request: Request) -> Response:
     return response
 
 
-def _principal_signed_in(config: GoogleAuthConfig, profile_login: Any, principal: Any,
-                         subject: str, now: float) -> Response:
-    """A shared Workspace account: a principal session, and the profile screen next."""
+def _principal_signed_in(config: GoogleAuthConfig, profile_login: Any, candidates: list[Any],
+                         account: Any, now: float) -> Response:
+    """A shared Workspace account: a principal session, and the profile screen next.
+
+    The token is admitted only as the one principal that is both its address and its Google
+    account (issuer + subject). The address alone never suffices where an account is pinned —
+    a deleted and recreated account keeps the address and gets a new subject — and in
+    production an unpinned principal is refused: the address is all it could be matched on.
+    """
+    principal = candidates[0]
+    if len(candidates) != 1 or principal.email_norm != account.email_norm:
+        return _refuse(config, "operator_not_permitted",
+                       "the token's address and Google account belong to different principals")
+    if principal.has_pinned_account:
+        if not principal.is_account(account.issuer, account.subject):
+            return _refuse(config, "operator_not_permitted",
+                           f"principal {principal.principal_id}: the Google account is not the pinned "
+                           "one (same address, different subject: a recreated account?)")
+    elif profile_login.production:
+        # The observed subject is logged so the owner can pin it with profile_roster.py — only
+        # after confirming this sign-in was their own (apps/api/docs/PRODUCTION_AUTH.md).
+        return _refuse(config, "operator_not_permitted",
+                       f"principal {principal.principal_id} has no pinned Google account; production "
+                       f"refuses it until one is pinned (observed subject {account.subject})")
     if not principal.is_active:
         return _refuse(config, "operator_disabled", f"principal {principal.principal_id} is {principal.status}")
-    if principal.provider_subject is not None and principal.provider_subject != subject:
-        return _refuse(config, "operator_not_permitted",
-                       f"principal {principal.principal_id}: Google subject does not match the pinned one")
     from origenlab_api.v2.profile_routes import set_session_cookie
 
     session = PrincipalSession(
         principal_id=principal.principal_id,
         email=principal.email_norm,
-        subject=subject,
+        subject=account.subject,
+        issuer=account.issuer,
         principal_version=principal.version,
         auth_time=int(now),
         exp=int(now) + config.session_ttl_seconds,

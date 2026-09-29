@@ -66,10 +66,21 @@ class PrincipalRecord:
     provider_subject: str | None
     status: str
     version: int
+    provider_issuer: str | None = None
 
     @property
     def is_active(self) -> bool:
         return self.status == "active"
+
+    @property
+    def has_pinned_account(self) -> bool:
+        """True when the row names the Google account itself (issuer + subject), not only an address."""
+        return self.provider_subject is not None and self.provider_issuer is not None
+
+    def is_account(self, issuer: str, subject: str) -> bool:
+        """True only when the row is pinned to exactly this issuer and subject."""
+        return (self.has_pinned_account and self.provider_issuer == issuer
+                and self.provider_subject == subject)
 
 
 @dataclass(frozen=True)
@@ -149,6 +160,7 @@ class _Throttle:
 
 
 _CLEARED = _Throttle(0, 0, None, None)
+_PRINCIPAL_COLUMNS = "id::text, email_norm, provider_subject, status, version, provider_issuer"
 _THROTTLE_TARGETS = frozenset({("auth_principal", "id"), ("operator_profile", "operator_id")})
 
 
@@ -186,14 +198,34 @@ class ProfileAuthRepository:
     # ------------------------------------------------------------------ reads
 
     def principal_by_email(self, email_norm: str) -> PrincipalRecord | None:
+        """By address alone — the local development shortcut only. Google sign-in uses
+        :meth:`principals_for_google`, which also matches the account's issuer and subject."""
         with self._read() as cur:
             cur.execute(
-                "select id::text, email_norm, provider_subject, status, version "
+                f"select {_PRINCIPAL_COLUMNS} "
                 "from platform.auth_principal where provider = 'google' and email_norm = %s",
                 (email_norm,),
             )
             row = cur.fetchone()
         return PrincipalRecord(*row) if row else None
+
+    def principals_for_google(self, email_norm: str, issuer: str, subject: str) -> list[PrincipalRecord]:
+        """Every principal the verified token could mean: by its address, or by its account.
+
+        The caller admits the token only when this is exactly one row that is both — the
+        address *and* the pinned issuer and subject. A row that matches one and not the other
+        (a recreated account under the same address; a renamed account) is a refusal, never a
+        fall-through to the individual-operator path.
+        """
+        with self._read() as cur:
+            cur.execute(
+                f"select {_PRINCIPAL_COLUMNS} from platform.auth_principal "
+                "where provider = 'google' "
+                "  and (email_norm = %s or (provider_issuer = %s and provider_subject = %s)) "
+                "order by id",
+                (email_norm, issuer, subject),
+            )
+            return [PrincipalRecord(*row) for row in cur.fetchall()]
 
     def binding(
         self, principal_id: str, operator_id: str | None
@@ -211,6 +243,7 @@ class ProfileAuthRepository:
             cur.execute(
                 """
                 select a.id::text, a.email_norm, a.provider_subject, a.status, a.version,
+                       a.provider_issuer,
                        p.operator_id::text, o.display_name, o.role, o.status, o.version,
                        p.status, p.version
                   from platform.auth_principal a
@@ -224,10 +257,10 @@ class ProfileAuthRepository:
             row = cur.fetchone()
         if row is None:
             return None, None
-        principal = PrincipalRecord(*row[:5])
-        if row[5] is None:
+        principal = PrincipalRecord(*row[:6])
+        if row[6] is None:
             return principal, None
-        return principal, ProfileBinding(*row[5:])
+        return principal, ProfileBinding(*row[6:])
 
     def list_profiles(self, principal_id: str) -> list[ProfileCard]:
         """The usable profiles of one principal, in card order. Nothing of any other."""

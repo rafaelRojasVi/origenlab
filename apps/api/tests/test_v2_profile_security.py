@@ -232,7 +232,8 @@ def _tamper(value: str, **changes: Any) -> str:
 
 @pytest.mark.parametrize("changes", [{"op": "00000000-0000-4000-8000-0000000000ad"}, {"opv": 99},
                                      {"pid": "00000000-0000-4000-8000-000000000bad"}, {"m": "google"},
-                                     {"exp": 4102444800}])
+                                     {"exp": 4102444800}, {"sub": "another-subject"},
+                                     {"iss": "accounts.google.com"}])
 def test_a_tampered_principal_session_is_refused(changes) -> None:
     signer = CookieSigner(SECRET)
     value = signer.dump_principal_session(
@@ -269,7 +270,9 @@ class _Profiles:
         return self.principal, self.binding_row
 
 
-PRINCIPAL = PrincipalRecord(PRINCIPAL_ID, "compartida@origenlab.cl", None, "active", 1)
+GOOGLE = "https://accounts.google.com"
+PRINCIPAL = PrincipalRecord(PRINCIPAL_ID, "compartida@origenlab.cl", "1098", "active", 1, GOOGLE)
+UNPINNED = replace(PRINCIPAL, provider_subject=None, provider_issuer=None)
 CARLA_BINDING = ProfileBinding(CARLA, "Carla", "sales", "active", 2, "active", 3)
 
 
@@ -320,6 +323,36 @@ def test_a_changed_principal_ends_every_session_outright(principal) -> None:
     with pytest.raises(IdentityRefused) as caught:
         _resolve(_Profiles(principal, CARLA_BINDING), session)
     assert not isinstance(caught.value, ProfileRequired)
+
+
+@pytest.mark.parametrize("session", [
+    _principal_session(subject="1099"),                   # same address, recreated account
+    _principal_session(issuer="https://evil.example"),    # same subject, another issuer
+])
+def test_a_session_of_another_google_account_is_refused_outright(session) -> None:
+    with pytest.raises(IdentityRefused) as caught:
+        _resolve(_Profiles(PRINCIPAL, CARLA_BINDING), session.with_profile(ProfileSelection(CARLA, 2, 3, 1)))
+    assert not isinstance(caught.value, ProfileRequired)
+
+
+def test_production_refuses_a_principal_with_no_pinned_google_account() -> None:
+    session = _principal_session().with_profile(ProfileSelection(CARLA, 2, 3, 1))
+    assert _resolve(_Profiles(UNPINNED, CARLA_BINDING), session).operator_id == CARLA, "local only"
+    with pytest.raises(IdentityRefused, match="no pinned Google account"):
+        _resolve(_Profiles(UNPINNED, CARLA_BINDING), session, production=True)
+    assert _resolve(_Profiles(PRINCIPAL, CARLA_BINDING), session, production=True).operator_id == CARLA
+
+
+@pytest.mark.parametrize("iss", ["https://accounts.google.com", "accounts.google.com"])
+def test_both_google_issuer_spellings_verify_as_the_one_canonical_issuer(iss) -> None:
+    from origenlab_api.v2.google_oidc import GOOGLE_CANONICAL_ISSUER, validate_claims
+
+    now = int(time.time())
+    account = validate_claims(
+        {"iss": iss, "aud": "cid", "exp": now + 60, "iat": now, "nonce": "n", "sub": "1098",
+         "email_verified": True, "email": "compartida@origenlab.cl", "hd": "origenlab.cl"},
+        client_id="cid", nonce="n", workspace_domain="origenlab.cl", now=now)
+    assert (account.issuer, account.subject) == (GOOGLE_CANONICAL_ISSUER, "1098")
 
 
 def test_production_never_honours_a_development_session() -> None:

@@ -28,7 +28,7 @@ end
 $$;
 
 set role origenlab_owner;
-select plan(54);
+select plan(61);
 
 -- A valid Argon2id PHC string of an invented PIN (the value is irrelevant here; only its shape is).
 create temp table phc (n int, v text);
@@ -137,14 +137,26 @@ select throws_ok($$ update platform.operator_profile set version = 1 where opera
 update platform.auth_principal set status = 'disabled' where id = '73000000-0000-4000-8000-000000000002';
 select is((select version from platform.auth_principal where id = '73000000-0000-4000-8000-000000000002'), 2,
   'disabling a principal bumps its version');
-update platform.auth_principal set provider_subject = '1098765' where id = '73000000-0000-4000-8000-000000000002';
+update platform.auth_principal set provider_subject = '1098765', provider_issuer = 'https://accounts.google.com'
+  where id = '73000000-0000-4000-8000-000000000002';
 select is((select version from platform.auth_principal where id = '73000000-0000-4000-8000-000000000002'), 3,
-  'pinning the provider subject bumps the principal version');
+  'pinning the Google account (issuer + subject) bumps the principal version');
 update platform.auth_principal set failed_attempts = 9, locked_until = now() + interval '1 minute' where id = '73000000-0000-4000-8000-000000000002';
 select is((select version from platform.auth_principal where id = '73000000-0000-4000-8000-000000000002'), 3,
   'a principal throttle update bumps nothing');
 select throws_ok($$ update platform.auth_principal set provider = 'microsoft' where id = '73000000-0000-4000-8000-000000000002' $$,
   'P0001', null, 'the provider of a principal never changes');
+update platform.auth_principal set provider_subject = '1098766' where id = '73000000-0000-4000-8000-000000000002';
+select is((select version from platform.auth_principal where id = '73000000-0000-4000-8000-000000000002'), 4,
+  're-pinning another subject (a recreated account) bumps the version: every session of the old one ends');
+select throws_ok($$ update platform.auth_principal set provider_issuer = null where id = '73000000-0000-4000-8000-000000000002' $$,
+  '23514', null, 'a subject is never pinned without its issuer');
+select throws_ok($$ insert into platform.auth_principal (email_norm, provider_issuer) values ('solo.emisor@example.test', 'https://accounts.google.com') $$,
+  '23514', null, 'an issuer is never recorded without a subject');
+select throws_ok($$ update platform.auth_principal set provider_issuer = 'accounts.google.com' where id = '73000000-0000-4000-8000-000000000002' $$,
+  '23514', null, 'the issuer is stored in its one canonical spelling');
+select throws_ok($$ insert into platform.auth_principal (email_norm, provider_issuer, provider_subject) values ('mismo.sujeto@example.test', 'https://accounts.google.com', '1098766') $$,
+  '23505', null, 'one Google account is at most one principal');
 
 -- ── 5. a principal is never an operator ───────────────────────────────────────────────────────
 select throws_ok($$ insert into platform.operator (auth_user_id, email_norm, display_name, role, status) values (gen_random_uuid(), 'compartida@example.test', 'Suplantación', 'admin', 'active') $$,
@@ -186,6 +198,10 @@ select is(left(pg_temp.run_as('origenlab_api', $$insert into platform.auth_princ
   'api may not create a principal');
 select is(left(pg_temp.run_as('origenlab_api', $$update platform.auth_principal set status = 'active'$$), 5), '42501',
   'api may not enable or disable a principal');
+select is(left(pg_temp.run_as('origenlab_api', $$update platform.auth_principal set provider_subject = 'sub-atacante', provider_issuer = 'https://accounts.google.com'$$), 5), '42501',
+  'api may not pin or re-pin a Google account: only the migrator roster tool does');
+select is(left(pg_temp.run_as('origenlab_api', $$update platform.auth_principal set provider_subject = null, provider_issuer = null$$), 5), '42501',
+  'api may not unpin a Google account');
 select is(pg_temp.run_as('origenlab_api', $$insert into platform.auth_event (event_type, principal_id, principal_email_norm) values ('profile.cleared', '73000000-0000-4000-8000-000000000001', 'compartida@example.test')$$), 'ok',
   'api appends audit events');
 select is(left(pg_temp.run_as('origenlab_worker', 'select 1 from platform.operator_profile limit 1'), 5), '42501',

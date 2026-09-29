@@ -15,6 +15,12 @@ The roster is a JSON file **outside the repository** (the repository is public):
 
 * The principal address must belong to the workspace domain. It must not be an operator's
   own address (the database refuses that too).
+* `provider_subject` is the Google account's stable subject (the ID token's `sub`; the Admin
+  SDK's user `id`). **Production refuses a principal without one**, and refuses a token whose
+  subject differs from it even for the same address — a deleted and recreated account keeps
+  the address and gets a new subject. It is stored with the canonical Google issuer. Omitting
+  it leaves a pinned subject unchanged; this tool never unpins one. Changing it is a re-pin,
+  shown as such in the plan, and ends every session of the principal (its version moves).
 * A profile is identified by its `key` within the principal. `status` (default `active`)
   applies to the profile and its operator together.
 * PINs are **never** in the roster and never on the command line. They come from a hidden
@@ -42,6 +48,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from origenlab_api.v2.google_oidc import GOOGLE_CANONICAL_ISSUER
 from origenlab_api.v2.operator_roster import mask_email, refuse_path_inside
 from origenlab_api.v2.profile_pin import PinHasher, PinPolicyRefused, validate_new_pin
 
@@ -93,6 +100,8 @@ class Plan:
     changes: tuple[Change, ...]
     unchanged: tuple[str, ...]
     left_alone: int
+    #: True when, after this plan, the principal still has no pinned Google account.
+    unpinned: bool = False
 
     @property
     def pending(self) -> int:
@@ -226,12 +235,13 @@ def _read_state(cur: Any, roster: Roster) -> tuple[str, dict[str, Any] | None, d
     cur.execute("select current_database()")
     database = cur.fetchone()[0]
     cur.execute(
-        "select id::text, status, provider_subject from platform.auth_principal "
+        "select id::text, status, provider_subject, provider_issuer from platform.auth_principal "
         "where provider = 'google' and email_norm = %s",
         (roster.principal.email_norm,),
     )
     row = cur.fetchone()
-    principal = {"id": row[0], "status": row[1], "provider_subject": row[2]} if row else None
+    principal = ({"id": row[0], "status": row[1], "provider_subject": row[2], "provider_issuer": row[3]}
+                 if row else None)
     profiles: dict[str, dict[str, Any]] = {}
     total = 0
     if principal is not None:
@@ -267,14 +277,21 @@ def compute_plan(
     unchanged: list[str] = []
     pe = roster.principal
     if principal_row is None:
-        changes.append(Change("principal", "insert", ("email", "status", "provider_subject")))
+        changes.append(Change("principal", "insert", ("email", "status", "provider_subject")
+                              if pe.provider_subject is not None else ("email", "status")))
+        unpinned = pe.provider_subject is None
     else:
-        fields = tuple(f for f, new in (("status", pe.status), ("provider_subject", pe.provider_subject))
-                       if principal_row[f] != new)
+        fields: tuple[str, ...] = ("status",) if principal_row["status"] != pe.status else ()
+        if pe.provider_subject is not None and (
+                principal_row["provider_subject"] != pe.provider_subject
+                or principal_row["provider_issuer"] != GOOGLE_CANONICAL_ISSUER):
+            fields += ("provider_subject (re-pin)" if principal_row["provider_subject"] is not None
+                       else "provider_subject",)
         if fields:
             changes.append(Change("principal", "update", fields))
         else:
             unchanged.append("principal")
+        unpinned = pe.provider_subject is None and principal_row["provider_subject"] is None
     for entry in roster.profiles:
         subject = f"profile {entry.slug}"
         row = profile_rows.get(entry.slug)
@@ -296,7 +313,7 @@ def compute_plan(
             unchanged.append(subject)
     named = {p.slug for p in roster.profiles}
     return Plan(database, pe.email_norm, tuple(changes), tuple(unchanged),
-                left_alone=len(set(profile_rows) - named))
+                left_alone=len(set(profile_rows) - named), unpinned=unpinned)
 
 
 def plan(conn: Any, roster: Roster, pins: Mapping[str, str]) -> Plan:
@@ -337,20 +354,25 @@ def apply(
                 "confirmed; re-run the plan and review it again"
             )
         pe = roster.principal
+        issuer = GOOGLE_CANONICAL_ISSUER if pe.provider_subject is not None else None
         if principal is None:
             cur.execute(
-                "insert into platform.auth_principal (email_norm, status, provider_subject) "
-                "values (%s, %s, %s) returning id::text",
-                (pe.email_norm, pe.status, pe.provider_subject),
+                "insert into platform.auth_principal (email_norm, status, provider_subject, provider_issuer) "
+                "values (%s, %s, %s, %s) returning id::text",
+                (pe.email_norm, pe.status, pe.provider_subject, issuer),
             )
             principal_id = cur.fetchone()[0]
         else:
             principal_id = principal["id"]
+            # An omitted subject keeps the pinned one: coalesce, never null.
             cur.execute(
-                "update platform.auth_principal set status = %s, provider_subject = %s, "
-                "updated_at = now() where id = %s::uuid and (status, provider_subject) "
-                "is distinct from (%s::text, %s::text)",
-                (pe.status, pe.provider_subject, principal_id, pe.status, pe.provider_subject),
+                "update platform.auth_principal set status = %s, "
+                "provider_subject = coalesce(%s::text, provider_subject), "
+                "provider_issuer = coalesce(%s::text, provider_issuer), updated_at = now() "
+                "where id = %s::uuid and (status, provider_subject, provider_issuer) is distinct from "
+                "(%s::text, coalesce(%s::text, provider_subject), coalesce(%s::text, provider_issuer))",
+                (pe.status, pe.provider_subject, issuer, principal_id,
+                 pe.status, pe.provider_subject, issuer),
             )
         for entry in roster.profiles:
             row = profiles.get(entry.slug)
@@ -404,4 +426,7 @@ def describe(result: Plan) -> list[str]:
         if result.pending else "nothing to apply"
     )
     lines.append(f"profiles of this principal not in the roster (left unchanged): {result.left_alone}")
+    if result.unpinned:
+        lines.append("WARNING: no pinned Google account (provider_subject): production refuses this "
+                     "principal's sign-in until one is pinned")
     return lines

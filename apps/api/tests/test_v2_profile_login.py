@@ -9,6 +9,8 @@ What is proven, through the real app (Google's token endpoint and signing keys a
 stand-ins, as in `test_v2_google_auth.py`):
 
 * Google → principal session → `profile_required` on every CRM, workspace and command route.
+* The principal is the Google account (issuer + subject), not its address: a recreated account
+  under the same address is refused, and production refuses a principal with no pinned account.
 * `/auth/profiles` lists only the principal's usable profiles; the right PIN selects one.
 * Wrong PIN, unknown id, another principal's profile, disabled profile, malformed PIN and a
   lock all answer byte-for-byte the same.
@@ -41,6 +43,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from origenlab_api.main import create_app
+from origenlab_api.settings import get_settings
 from origenlab_api.v2.auth_session import ProfileSelection
 from origenlab_api.v2.profile_auth import PRINCIPAL_MAX_FAILURES, PROFILE_MAX_FAILURES
 from origenlab_api.v2.profile_pin import FLOOR, PinHasher
@@ -63,8 +66,16 @@ REFUSED = {"detail": "profile_selection_failed"}
 API_DIR = Path(__file__).resolve().parents[1]
 
 
-def _roster(email: str, profiles: list[dict[str, Any]]):
-    return parse_roster({"principal": {"email": email}, "profiles": profiles}, workspace_domain="origenlab.cl")
+def _sub(email: str) -> str:
+    """The invented Google subject the stand-in token endpoint issues for an address."""
+    return f"sub-{email.split('@')[0]}"
+
+
+def _roster(email: str, profiles: list[dict[str, Any]], *, pinned: bool = True):
+    principal: dict[str, Any] = {"email": email}
+    if pinned:
+        principal["provider_subject"] = _sub(email)
+    return parse_roster({"principal": principal, "profiles": profiles}, workspace_domain="origenlab.cl")
 
 
 SHARED_ROSTER = _roster(SHARED, [
@@ -153,6 +164,7 @@ class Api:
             monkeypatch.delenv(name, raising=False)
         for name, value in env.items():
             monkeypatch.setenv(name, value)
+        get_settings.cache_clear()  # one test may build a local and a production instance
         self.app = create_app()
         self.app.state.v2_token_exchanger = self._exchange
         self.app.state.v2_google_jwks = _google_jwks()
@@ -161,13 +173,15 @@ class Api:
         self.headers = {"X-OriginLab-API-Key": "proxy-token-for-tests"} if production else {}
         self.client = self.new_client()
         self._email = SHARED
+        #: When set, the stand-in token names this subject instead of the address's own.
+        self.subject: str | None = None
 
     def new_client(self) -> TestClient:
         return TestClient(self.app, base_url="https://testserver" if self.production else "http://testserver",
                           headers=self.headers)
 
     def _exchange(self, *, code: str, verifier: str, config: Any) -> dict[str, Any]:
-        claims = _claims(self._nonce, email=self._email, sub=f"sub-{self._email.split('@')[0]}")
+        claims = _claims(self._nonce, email=self._email, sub=self.subject or _sub(self._email))
         return {"id_token": _jwt(claims), "access_token": "discarded"}
 
     def google(self, email: str = SHARED, client: TestClient | None = None) -> Any:
@@ -266,6 +280,79 @@ def test_production_cookies_are_host_prefixed_secure_httponly_and_lax(monkeypatc
         assert attribute in cookie
     assert "Domain" not in cookie
     assert api.client.get("/auth/session").json()["operator"]["role"] == "admin"
+
+
+# ------------------------------------------------- the Google account, not the address
+
+
+def _login_error(response: Any) -> str | None:
+    return parse_qs(urlsplit(response.headers["location"]).query).get("login_error", [None])[0]
+
+
+@pytest.mark.parametrize("production", [False, True])
+def test_a_recreated_account_under_the_same_address_is_refused(monkeypatch, db, ids, production) -> None:
+    api = Api(monkeypatch, db, production=production)
+    api.subject = "sub-recreated-account"
+    response = api.google()
+    assert _login_error(response) == "operator_not_permitted"
+    assert not any(c.split("=")[0].endswith("origenlab_session") and "Max-Age=0" not in c
+                   for c in response.headers.get_list("set-cookie")), "no session is issued"
+    assert api.client.get("/auth/profiles").status_code == 401
+
+
+def test_an_account_pinned_to_one_principal_never_signs_in_under_another_address(monkeypatch, db, ids) -> None:
+    api = Api(monkeypatch, db)
+    api.subject = _sub(SHARED)  # the shared account's subject, presenting the individual's address
+    assert _login_error(api.google(INDIVIDUAL)) == "operator_not_permitted"
+    assert api.client.get("/auth/session").json()["state"] == "signed_out"
+
+
+def test_production_refuses_a_principal_with_no_pinned_account(monkeypatch, db, ids, caplog) -> None:
+    unpinned = "sin.cuenta@origenlab.cl"
+    _provision(db, _roster(unpinned, [{"key": "hugo", "display_name": "Hugo", "role": "viewer"}], pinned=False),
+               {"hugo": "730418"})
+    local = Api(monkeypatch, db)
+    assert _login_error(local.google(unpinned)) is None, "local development may leave it unpinned"
+    local_cookie = local.session_cookie()
+    caplog.set_level(logging.WARNING)
+    production = Api(monkeypatch, db, production=True)
+    assert _login_error(production.google(unpinned)) == "operator_not_permitted"
+    assert "no pinned Google account" in caplog.text
+    # A session minted while unpinned is refused in production on its next request, too.
+    production.client.cookies.set(production.cookie, local_cookie)
+    assert production.client.get("/auth/profiles").status_code == 401
+    # Pinning it through the roster tool is what lets production in.
+    _provision(db, _roster(unpinned, [{"key": "hugo", "display_name": "Hugo", "role": "viewer"}]), {})
+    assert _login_error(Api(monkeypatch, db, production=True).google(unpinned)) is None
+
+
+def test_a_re_pin_ends_every_session_of_the_principal(monkeypatch, db, ids) -> None:
+    api = _selected(monkeypatch, db, ids, "carla")
+    moved = _roster(SHARED, [{"key": "carla", "display_name": "Carla", "role": "sales", "sort_order": 3}])
+    moved = type(moved)(type(moved.principal)(SHARED, "active", "sub-replacement-account"), moved.profiles)
+    _provision(db, moved, {})
+    try:
+        assert api.client.get("/auth/session").json()["state"] == "signed_out"
+        assert _login_error(Api(monkeypatch, db).google()) == "operator_not_permitted", "the old account is out"
+    finally:
+        _provision(db, SHARED_ROSTER, {})
+    assert _login_error(Api(monkeypatch, db).google()) is None
+
+
+def test_omitting_the_subject_in_the_roster_never_unpins_it(monkeypatch, db, ids) -> None:
+    _provision(db, _roster(SHARED, [{"key": "ana", "display_name": "Ana", "role": "admin", "sort_order": 1}],
+                           pinned=False), {})
+    assert _sql(db, "select provider_issuer, provider_subject from platform.auth_principal where id = %s",
+                (ids["shared"],))[0] == ("https://accounts.google.com", _sub(SHARED))
+
+
+def test_the_runtime_role_cannot_pin_or_unpin_an_account(monkeypatch, db, ids) -> None:
+    import psycopg
+
+    for sql in ("update platform.auth_principal set provider_subject = 'sub-attacker'",
+                "update platform.auth_principal set provider_subject = null, provider_issuer = null"):
+        with psycopg.connect(runtime_dsn(db)) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute(sql)
 
 
 # ------------------------------------------------------------------ one public refusal

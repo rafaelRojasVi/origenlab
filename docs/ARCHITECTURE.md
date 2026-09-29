@@ -142,16 +142,19 @@ The interim Google Workspace login (`apps/api/docs/PRODUCTION_AUTH.md`) also
 serves one shared account used by several people. **Google identity and
 operator identity are separate facts** ([`DOMAIN.md`](DOMAIN.md) §7.3):
 
-1. Google proves a **principal** (`platform.auth_principal`); the session is
-   then `profile_required`, and every CRM, workspace and command route refuses
-   it.
+1. Google proves a **principal** (`platform.auth_principal`) — the Google
+   account itself, matched on the verified token's issuer and `sub` as well as
+   its address, so a deleted and recreated account under the same address is
+   refused; production refuses a principal with no pinned account. The session
+   is then `profile_required`, and every CRM, workspace and command route
+   refuses it.
 2. The person picks their profile and enters their PIN. **The API, never the
    browser, verifies it** — Argon2id keyed with a server-side pepper
    (`ORIGENLAB_PROFILE_PIN_PEPPER`, separate from the session secret) — and
    selects the `platform.operator`. Failures are throttled and locked out in
    the database, shared by every worker; every refusal is the same public
    error.
-3. The signed session binds the principal, its Google subject, the selected
+3. The signed session binds the principal, its Google issuer and subject, the selected
    operator, the operator's, profile's and principal's `version` and the
    Google authentication time. Every request re-reads all three rows; a role,
    PIN, link or status change bumps a `version` by trigger and ends the
