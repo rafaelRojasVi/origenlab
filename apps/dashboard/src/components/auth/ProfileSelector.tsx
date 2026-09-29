@@ -50,7 +50,7 @@ export function ProfileSelector({
   /** The Google sign-in itself is no longer valid. */
   onSignedOut: () => void | Promise<void>;
   /** "Cerrar sesión": end the whole application session. */
-  onSignOut: () => void | Promise<void>;
+  onSignOut: () => unknown;
 }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [chosen, setChosen] = useState<{ card: ProfileCard; tone: string } | null>(null);

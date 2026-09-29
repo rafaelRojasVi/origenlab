@@ -1046,18 +1046,43 @@ def test_a_session_without_its_row_is_refused(monkeypatch, db, ids) -> None:
     assert api.client.get("/auth/session").json()["state"] == "signed_out"
 
 
-def test_a_failed_revocation_is_reported_not_claimed(monkeypatch, db, ids) -> None:
-    api = _selected(monkeypatch, db, ids, "carla")
+def _sets_or_clears_a_cookie(response: Any) -> bool:
+    return bool(response.headers.get_list("set-cookie"))
+
+
+@pytest.mark.parametrize("kind", ["shared", "individual"])
+def test_a_failed_revocation_is_reported_not_claimed_and_a_retry_succeeds(monkeypatch, db, ids, kind) -> None:
+    if kind == "shared":
+        api = _selected(monkeypatch, db, ids, "carla")
+        target, method, row = api.app.state.v2_profile_login.profiles, "revoke_session", _session_row
+        revoked_at = 1
+    else:
+        api = Api(monkeypatch, db)
+        api.google(INDIVIDUAL)
+        target, method, row = api.app.state.v2_auth_sessions, "revoke_operator_session", _individual_row
+        revoked_at = 4
     cookie = api.session_cookie()
+    copy = _copy_to(Api(monkeypatch, db), cookie)
+    real = getattr(target, method)
 
     def broken(**_: Any) -> None:
         raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr(api.app.state.v2_profile_login.profiles, "revoke_session", broken)
+    monkeypatch.setattr(target, method, broken)
     response = api.client.post("/auth/logout")
-    assert (response.status_code, response.json()["detail"]) == (503, "logout_not_recorded")
-    assert any("Max-Age=0" in c or "max-age=0" in c.lower() for c in response.headers.get_list("set-cookie"))
-    assert _session_row(db, api, cookie)[1] is None, "nothing pretends the row was revoked"
+    assert (response.status_code, response.json()) == (503, {"detail": "logout_not_recorded"})
+    assert not _sets_or_clears_a_cookie(response), "the cookie is left in place: the session is still live"
+    assert row(db, api, cookie)[revoked_at] is None, "nothing pretends the row was revoked"
+    assert api.session_cookie() == cookie
+    assert api.client.get("/auth/session").json()["state"] == "signed_in", "this browser stays signed in"
+    assert copy.get("/auth/session").json()["state"] == "signed_in", "and so, honestly, does a copy"
+
+    monkeypatch.setattr(target, method, real)
+    retry = api.client.post("/auth/logout")
+    assert (retry.status_code, retry.json()) == (200, {"authenticated": False})
+    assert any("max-age=0" in c.lower() for c in retry.headers.get_list("set-cookie"))
+    assert row(db, api, cookie)[revoked_at] == "logout"
+    assert copy.get("/auth/session").json()["state"] == "signed_out", "the retry ends the copy too"
 
 
 def test_the_runtime_role_can_neither_extend_nor_reopen_nor_delete_a_session(monkeypatch, db, ids) -> None:

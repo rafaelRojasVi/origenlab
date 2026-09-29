@@ -86,7 +86,7 @@ const AUDIT: AuditResponse = {
 
 function withRole(role: string, node: ReactNode) {
   const session = { kind: "signed_in", method: "google", operator: { email: "op@example.test", displayName: "Op", role, operatorId: "o1" } } as never;
-  return <AuthSessionContext.Provider value={{ session, signOut: async () => undefined }}>{node}</AuthSessionContext.Provider>;
+  return <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>{node}</AuthSessionContext.Provider>;
 }
 
 function stub({

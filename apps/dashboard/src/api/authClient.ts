@@ -186,9 +186,23 @@ async function postAuth(path: AuthPostPath, body: Record<string, string> | null)
   });
 }
 
-export async function logout(): Promise<void> {
-  await postAuth(AUTH_LOGOUT_PATH, null);
+/**
+ * End the session on the server. True only when the API confirmed it revoked the session (a
+ * 2xx). A 503 `logout_not_recorded`, any other status or a network failure is false: the
+ * session may still be live everywhere, the API left the cookie in place, and the caller must
+ * keep showing the signed-in dashboard rather than pretend the person is signed out.
+ */
+export async function logout(): Promise<boolean> {
+  try {
+    const res = await postAuth(AUTH_LOGOUT_PATH, null);
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
+
+/** Shown, and nothing else changes, when the server could not revoke the session. */
+export const LOGOUT_FAILED_MESSAGE = "No se pudo cerrar la sesión de forma segura. Intenta nuevamente.";
 
 export interface ProfileCard {
   id: string;

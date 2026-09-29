@@ -723,6 +723,24 @@ def test_no_sign_in_response_carries_a_timing_header(monkeypatch) -> None:
     assert all(name in health.headers for name in _TIMING_HEADERS)
 
 
+def test_a_failed_logout_keeps_the_cookie_and_a_retry_succeeds(monkeypatch) -> None:
+    h = _Harness(monkeypatch)
+    h.sign_in()
+    cookie = h.client.cookies.get("origenlab_session")
+    h.sessions.fail_revoke = True
+    failed = h.client.post("/auth/logout")
+    assert (failed.status_code, failed.json()) == (503, {"detail": "logout_not_recorded"})
+    assert _set_cookies(failed) == [], "neither cookie is cleared"
+    assert h.client.get("/auth/session").status_code == 200, "still signed in, as the dashboard will say"
+    h.sessions.fail_revoke = False
+    retry = h.client.post("/auth/logout")
+    assert retry.status_code == 200
+    assert any(c.startswith("origenlab_session=") and "Max-Age=0" in c for c in _set_cookies(retry))
+    other = TestClient(h.app, base_url="http://testserver")
+    other.cookies.set("origenlab_session", cookie)
+    assert other.get("/auth/session").status_code == 401
+
+
 def test_logout_without_a_session_is_harmless(monkeypatch) -> None:
     h = _Harness(monkeypatch)
     assert h.client.post("/auth/logout").status_code == 200

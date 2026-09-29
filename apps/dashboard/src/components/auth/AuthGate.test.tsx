@@ -208,6 +208,32 @@ describe("AuthGate", () => {
     expect(screen.queryByTestId("dashboard")).toBeNull();
   });
 
+  it.each([
+    ["a 503 logout_not_recorded", () => Promise.resolve(jsonResponse(503, { detail: "logout_not_recorded" }))],
+    ["a network failure", () => Promise.reject(new TypeError("Failed to fetch"))],
+  ])("stays signed in and says so after %s, and a retry signs out", async (_name, failure) => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, SIGNED_IN))
+      .mockImplementationOnce(failure)
+      .mockResolvedValueOnce(jsonResponse(200, { authenticated: false }))
+      .mockResolvedValueOnce(jsonResponse(401, SIGNED_OUT));
+    render(
+      <AuthGate>
+        <Probe />
+      </AuthGate>,
+    );
+    fireEvent.click(await screen.findByText("salir"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo cerrar la sesión de forma segura. Intenta nuevamente.",
+    );
+    expect(screen.getByTestId("dashboard")).toHaveTextContent("signed_in");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByText("salir"));
+    await waitFor(() => expect(screen.getByTestId("google-login-button")).toBeInTheDocument());
+    expect(screen.queryByTestId("logout-failed")).toBeNull();
+    expect(String(fetchMock.mock.calls[2][0])).toMatch(/\/auth\/logout$/);
+  });
+
   it("signs out with a POST to /auth/logout and returns to the login screen", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, SIGNED_IN))

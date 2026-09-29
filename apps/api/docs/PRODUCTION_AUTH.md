@@ -483,7 +483,10 @@ Google sign-in (unchanged up to the claims check)
                                expiry: back to profile_required ("Cambiar perfil"; Google stays)
   POST /auth/logout          → row revoked (logout) and audited, then the cookie is cleared
                                ("Cerrar sesión"); 503 logout_not_recorded if the revocation
-                               could not be written
+                               could not be written — and then NO cookie is cleared: the
+                               session is still live, the dashboard stays signed in and shows
+                               "No se pudo cerrar la sesión de forma segura. Intenta
+                               nuevamente."; a retry that succeeds revokes the same row
 ```
 
 ### Security properties

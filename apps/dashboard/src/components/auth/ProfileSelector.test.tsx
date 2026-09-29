@@ -271,6 +271,66 @@ describe("the profile screen", () => {
     expect(await screen.findByTestId("login-screen")).toBeInTheDocument();
   });
 
+  it("a failed logout on the profile screen keeps it, says so, and a retry signs out", async () => {
+    let logoutCalls = 0;
+    let signedOut = false;
+    route({
+      "GET /auth/session": () =>
+        signedOut ? json(401, { authenticated: false, google_login_enabled: true }) : json(401, PROFILE_REQUIRED),
+      "GET /auth/profiles": () => json(200, PROFILES),
+      "POST /auth/logout": () => {
+        logoutCalls += 1;
+        if (logoutCalls === 1) return json(503, { detail: "logout_not_recorded" });
+        signedOut = true;
+        return json(200, { authenticated: false });
+      },
+    });
+    render(
+      <AuthGate>
+        <Probe />
+      </AuthGate>,
+    );
+    fireEvent.click(await screen.findByTestId("profile-sign-out"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo cerrar la sesión de forma segura. Intenta nuevamente.",
+    );
+    expect(screen.getAllByTestId("profile-card")).toHaveLength(3);
+    expect(screen.queryByTestId("login-screen")).toBeNull();
+    fireEvent.click(screen.getByTestId("profile-sign-out"));
+    expect(await screen.findByTestId("login-screen")).toBeInTheDocument();
+    expect(screen.queryByTestId("logout-failed")).toBeNull();
+    expect(logoutCalls).toBe(2);
+  });
+
+  it("a failed logout with a profile selected keeps the dashboard, and a retry signs out", async () => {
+    let logoutCalls = 0;
+    let signedOut = false;
+    route({
+      "GET /auth/session": () =>
+        signedOut ? json(401, { authenticated: false, google_login_enabled: true }) : json(200, SIGNED_IN_AS_CARLA),
+      "POST /auth/logout": () => {
+        logoutCalls += 1;
+        if (logoutCalls === 1) return json(503, { detail: "logout_not_recorded" });
+        signedOut = true;
+        return json(200, { authenticated: false });
+      },
+    });
+    render(
+      <AuthGate>
+        <Probe />
+      </AuthGate>,
+    );
+    fireEvent.click(await screen.findByText("salir"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo cerrar la sesión de forma segura. Intenta nuevamente.",
+    );
+    expect(screen.getByTestId("dashboard")).toHaveTextContent("Carla|Ventas");
+    expect(calls().filter((c) => c === "GET /auth/session")).toHaveLength(1);
+    fireEvent.click(screen.getByText("salir"));
+    expect(await screen.findByTestId("login-screen")).toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard")).toBeNull();
+  });
+
   it("says so when the account has no profiles, and shows no cards", async () => {
     route({
       "GET /auth/session": () => json(401, PROFILE_REQUIRED),
@@ -313,11 +373,11 @@ describe("the profile screen", () => {
 });
 
 describe("the CRM header of a profile session", () => {
-  async function renderTopBar(session: ReturnType<typeof parseAuthSessionResponse>) {
+  async function renderTopBar(session: ReturnType<typeof parseAuthSessionResponse>, signOutResult = true) {
     const { TopBar } = await import("../../crm/CrmApp");
     const { AuthSessionContext } = await import("../../context/AuthSessionContext");
     const switchProfile = vi.fn(async () => undefined);
-    const signOut = vi.fn(async () => undefined);
+    const signOut = vi.fn(async () => signOutResult);
     render(
       <AuthSessionContext.Provider value={{ session, signOut, switchProfile }}>
         <TopBar onMenu={() => undefined} menuOpen={false} />
@@ -338,6 +398,20 @@ describe("the CRM header of a profile session", () => {
     expect(signOut).toHaveBeenCalledTimes(1);
     // A shared account never offers "Cambiar cuenta": that would sign Google out.
     expect(screen.queryByTestId("crm-switch-account")).toBeNull();
+  });
+
+  it("Cambiar cuenta goes to Google only after a confirmed logout", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    const individual = parseAuthSessionResponse(200, {
+      authenticated: true,
+      auth_method: "google_session",
+      operator: { operator_id: "00000000-0000-4000-8000-0000000000aa", email: "persona@example.test", display_name: "Persona", role: "admin" },
+    });
+    const { signOut } = await renderTopBar(individual, false);
+    fireEvent.click(screen.getByTestId("crm-switch-account"));
+    await waitFor(() => expect(signOut).toHaveBeenCalledTimes(1));
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("an individual Google operator keeps Cambiar cuenta and gets no profile switch", async () => {

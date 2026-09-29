@@ -103,6 +103,8 @@ _PUBLIC_LOGIN_ERRORS = frozenset({
 #: the operator's role or an internal table; they are logged, never returned.
 SESSION_ABSENT_DETAIL = "not signed in: sign in with Google Workspace"
 SESSION_REFUSED_DETAIL = "the session was refused: sign in again"
+#: The `detail` of a logout whose revocation could not be written (503); the session stays live.
+LOGOUT_NOT_RECORDED = "logout_not_recorded"
 
 
 def _google(request: Request) -> GoogleAuthConfig | None:
@@ -410,9 +412,12 @@ def logout(request: Request) -> JSONResponse:
     Either kind of session — an operator's own Google account or a shared sign-in — is revoked
     in the database first: its own `platform.auth_session` row, found by the keyed hash of its
     identifier, together with one `session.logout` audit event, in one transaction. A copy of
-    the cookie taken before this therefore fails on its next request, on any API instance. If
-    that revocation cannot be written the answer is 503 `logout_not_recorded`, never a 200 that
-    would claim the session ended everywhere.
+    the cookie taken before this therefore fails on its next request, on any API instance.
+
+    If that revocation cannot be written the answer is 503 `logout_not_recorded` **and the
+    cookie is left as it is**: the session is still live in the database, so clearing it here
+    would only hide a session that every copy can still use. The browser stays signed in and
+    says so, and the person can simply try again — a retry that succeeds revokes the same row.
 
     No cookie, or one that is not a valid session (forged, expired, an old stateless shape),
     has nothing to revoke: the answer is 200 and the cookies are cleared.
@@ -421,9 +426,11 @@ def logout(request: Request) -> JSONResponse:
     profile_login = getattr(request.app.state, "v2_profile_login", None)
     cookies = config if config is not None else profile_login
     revoked = _revoke_session(request, cookies, profile_login) if cookies is not None else True
-    response = (JSONResponse(content={"authenticated": False}) if revoked
-                else JSONResponse(status_code=503,
-                                  content={"authenticated": False, "detail": "logout_not_recorded"}))
+    if not revoked:
+        # Nothing is cleared: not the session cookie, not the sign-in cookie.
+        return JSONResponse(status_code=503, content={"detail": LOGOUT_NOT_RECORDED},
+                            headers={"Cache-Control": "no-store"})
+    response = JSONResponse(content={"authenticated": False})
     if cookies is not None:
         _clear_cookie(response, cookies, cookies.cookie_names.session)
         _clear_cookie(response, cookies, cookies.cookie_names.transaction)

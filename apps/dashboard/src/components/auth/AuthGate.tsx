@@ -5,6 +5,7 @@ import {
   fetchAuthSession,
   googleLoginUrl,
   loginErrorMessage,
+  LOGOUT_FAILED_MESSAGE,
   logout,
   readLoginError,
   type AuthSessionState,
@@ -28,6 +29,7 @@ function loginErrorFromUrl(): string | null {
 export function AuthGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSessionState>({ kind: "loading" });
   const [loginError] = useState<string | null>(loginErrorFromUrl);
+  const [logoutFailed, setLogoutFailed] = useState(false);
 
   useEffect(() => {
     // Drop `?login_error=` from the address bar so a reload does not repeat the message.
@@ -56,13 +58,39 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(SESSION_REFUSED_EVENT, onRefused);
   }, [signedIn, refresh]);
 
+  // "Cerrar sesión". Nothing on this side changes until the server confirms it revoked the
+  // session: on a failure the dashboard (or the profile screen) stays exactly as it was, the
+  // cookie is still in place, and a message asks to try again. Only after a confirmed
+  // revocation is the in-memory session dropped (the dashboard keeps no other browser state).
   const signOut = useCallback(async () => {
-    try {
-      await logout();
-    } finally {
-      await refresh();
+    const revoked = await logout();
+    if (!revoked) {
+      setLogoutFailed(true);
+      return false;
     }
+    setLogoutFailed(false);
+    await refresh();
+    return true;
   }, [refresh]);
+
+  const logoutAlert = logoutFailed ? (
+    <div className="fixed inset-x-0 top-2 z-50 flex justify-center px-4" data-testid="logout-failed">
+      <p
+        role="alert"
+        className="flex max-w-lg items-center gap-3 rounded-md border border-bad/30 bg-bad-bg px-3 py-2 text-[13px] text-bad shadow-sm"
+      >
+        <span>{LOGOUT_FAILED_MESSAGE}</span>
+        <button
+          type="button"
+          onClick={() => setLogoutFailed(false)}
+          className="shrink-0 rounded px-1.5 text-[12px] font-medium hover:bg-bad/10"
+          aria-label="Cerrar aviso"
+        >
+          ✕
+        </button>
+      </p>
+    </div>
+  ) : null;
 
   // "Cambiar perfil": back to the profile screen. The Google sign-in stays; only the selected
   // profile is dropped, and the dashboard unmounts before anything else is requested.
@@ -90,6 +118,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
   if (session.kind === "profile_required") {
     return (
+      <>
+      {logoutAlert}
       <ProfileSelector
         principalEmail={session.principalEmail}
         profileExpired={session.profileExpired}
@@ -97,6 +127,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         onSignedOut={refresh}
         onSignOut={signOut}
       />
+      </>
     );
   }
   if (session.kind !== "signed_in") {
@@ -118,7 +149,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
   return (
-    <AuthSessionContext.Provider value={{ session, signOut, switchProfile }}>{children}</AuthSessionContext.Provider>
+    <AuthSessionContext.Provider value={{ session, signOut, switchProfile }}>
+      {logoutAlert}
+      {children}
+    </AuthSessionContext.Provider>
   );
 }
 

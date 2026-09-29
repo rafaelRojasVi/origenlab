@@ -203,9 +203,11 @@ const ROLE_LABEL: Record<string, string> = { admin: "Administración", sales: "V
  * Account switching goes through Google, never through a user picker: close this session,
  * then start a new sign-in, which asks Google for its account chooser (`prompt=select_account`).
  */
-async function switchAccount(signOut: () => Promise<void>): Promise<void> {
-  await signOut();
-  window.location.assign(googleLoginUrl());
+async function switchAccount(signOut: () => Promise<boolean>): Promise<void> {
+  // Only a confirmed logout moves on to Google; a failed one stays here, signed in, and says so.
+  if (await signOut()) {
+    window.location.assign(googleLoginUrl());
+  }
 }
 
 function SideNav({
