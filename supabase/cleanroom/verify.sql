@@ -1,4 +1,8 @@
--- OrigenLab V2 — what a clean-room database must contain.
+-- OrigenLab V2 — what a FRESHLY BUILT clean-room database must contain.
+--
+-- This is the fresh-rebuild contract: exact counts, true immediately after `build` and only
+-- then. The contract for a clean room that has since carried operator decisions is
+-- data_bearing.sql, which counts no business row.
 --
 -- Emits one `key|value` line per probe and nothing else. The expected values live in
 -- supabase/cleanroom/expected_counts.json, with a reason attached to each; the comparison is
@@ -78,6 +82,13 @@ union all select 'outbound.send_control.marketing_enabled', count(*)::text
   from outbound.send_control where marketing_enabled
 union all select 'outbound.send_control.transactional_enabled', count(*)::text
   from outbound.send_control where transactional_enabled
+union all select 'outbound.campaign_block.active', count(*)::text
+  from outbound.campaign_block where lifted_at is null
+
+union all select 'platform.auth_principal', count(*)::text from platform.auth_principal
+union all select 'platform.operator_profile', count(*)::text from platform.operator_profile
+union all select 'platform.auth_session', count(*)::text from platform.auth_session
+union all select 'platform.auth_event', count(*)::text from platform.auth_event
 
 union all select 'catalog.product', count(*)::text from catalog.product
 union all select 'catalog.supplier_product', count(*)::text from catalog.supplier_product

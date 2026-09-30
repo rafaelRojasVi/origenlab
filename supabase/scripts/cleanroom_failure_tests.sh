@@ -220,8 +220,8 @@ echo "== P-T: the expected-state comparison is exact in both directions =="
 emit() { python3 supabase/cleanroom/emit_expected_for_tests.py "$@"; }
 check() { emit "$@" | python3 supabase/cleanroom/compare.py; }
 
-expect_success "P: the declared baseline passes against itself" \
-  "41 probes, all exact" \
+expect_success "P: the declared fresh-rebuild baseline passes against itself" \
+  "(fresh-rebuild) PASSED — 46 probes, all exact" \
   check
 
 expect_refusal "Q: a probe declared but never measured fails" \
@@ -262,6 +262,14 @@ expect_refusal "X: sixteen command-driven domain events are caught" \
 expect_refusal "Y: a send flag left on is caught" \
   "outbound.send_control.marketing_enabled: expected 0, measured 1" \
   check outbound.send_control.marketing_enabled=1
+
+echo ""
+echo "== Z: the data-bearing contract and the fixture-drift proofs =="
+echo "   (supabase/scripts/cleanroom_verify_tests.sh — the no-database part is run here too)"
+
+expect_success "Z: cleanroom_verify_tests.sh --static passes" \
+  "0 failed" \
+  supabase/scripts/cleanroom_verify_tests.sh --static
 
 echo ""
 echo "─────────────────────────────────────────────"

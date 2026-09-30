@@ -35,7 +35,8 @@
 #
 # Usage:
 #   supabase/scripts/cleanroom_db.sh build [--force]   # rebuild from migrations + historical load
-#   supabase/scripts/cleanroom_db.sh verify            # read-only; compare against the baseline
+#   supabase/scripts/cleanroom_db.sh verify            # read-only; the data-bearing contract
+#   supabase/scripts/cleanroom_db.sh verify --fresh-rebuild   # read-only; the exact fresh baseline
 #   supabase/scripts/cleanroom_db.sh status
 #   supabase/scripts/cleanroom_db.sh api-login         # local-only DSN for origenlab_api
 #   supabase/scripts/cleanroom_db.sh drop --force
@@ -48,6 +49,8 @@ OL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 export OL_REPO_ROOT
 # shellcheck source=lib/local_target.sh
 . "$OL_REPO_ROOT/supabase/scripts/lib/local_target.sh"
+# shellcheck source=lib/cleanroom_verify.sh
+. "$OL_REPO_ROOT/supabase/scripts/lib/cleanroom_verify.sh"
 
 OL_PRIVATE_ROOT="${OL_LOCAL_PRIVATE_ROOT:-$HOME/data/origenlab-v2-local}"
 OL_MIGRATION_ROOT="${OL_MIGRATION_ROOT:-$HOME/data/origenlab-v2-migration}"
@@ -59,7 +62,6 @@ OL_MIGRATION_ROOT="${OL_MIGRATION_ROOT:-$HOME/data/origenlab-v2-migration}"
 # so a stray file cannot slip in unnoticed either. The files themselves stay outside Git.
 OL_EVIDENCE_MANIFEST_DIR="$OL_PRIVATE_ROOT/evidence"
 OL_PIPELINE_DIR="$OL_REPO_ROOT/apps/email-pipeline"
-OL_CLEANROOM_DIR="$OL_REPO_ROOT/supabase/cleanroom"
 
 # The operator seeded into a fresh build. One row, so the API command boundary can resolve an
 # identity at all; `auth_user_id` belongs to no auth system, because Supabase Auth is slice 1.
@@ -113,8 +115,10 @@ cleanroom_preflight() {
   command -v python3 >/dev/null 2>&1 || die "python3 not found"
 
   [[ -d "$OL_REPO_ROOT/supabase/migrations" ]] || die "supabase/migrations/ not found"
-  [[ -f "$OL_CLEANROOM_DIR/verify.sql" ]] || die "supabase/cleanroom/verify.sql not found"
-  [[ -f "$OL_CLEANROOM_DIR/expected_counts.json" ]] || die "supabase/cleanroom/expected_counts.json not found"
+  local f
+  for f in verify.sql expected_counts.json data_bearing.sql expected_data_bearing.json; do
+    [[ -f "$OL_CLEANROOM_DIR/$f" ]] || die "supabase/cleanroom/$f not found"
+  done
 
   [[ -d "$OL_MIGRATION_ROOT" ]] \
     || die "the Wave 1A/1B migration root $OL_MIGRATION_ROOT does not exist. It is outside Git by design; the clean room can only be built on a machine that holds it."
@@ -244,8 +248,9 @@ cmd_build() {
       || die "staging refused or failed on $(basename "$manifest"); $OL_CLEAN_DBNAME is partially loaded and must be rebuilt, not patched"
   done
 
-  step "VERIFYING"
-  cleanroom_verify
+  step "VERIFYING — the fresh-rebuild baseline, then the data-bearing contract"
+  cleanroom_verify_fresh
+  cleanroom_verify_data_bearing
 }
 
 # The manifests to replay, sorted by name, into the caller's array. Sorted rather than
@@ -276,18 +281,41 @@ SQL
 
 # --- verify -----------------------------------------------------------------------------------
 
-# Read-only. verify.sql runs inside `begin read only`, so this can be run at any time against a
-# database in any state without being able to change it.
-cleanroom_verify() {
-  ol_psql_clean -q -f "$OL_CLEANROOM_DIR/verify.sql" \
-    | python3 "$OL_CLEANROOM_DIR/compare.py" "$OL_CLEANROOM_DIR/expected_counts.json" \
-    || die "the clean-room database does not match its declared expected state"
+# Two contracts, both read-only — each SQL file runs inside `begin read only`, so either can be
+# run at any time against a database in any state without being able to change it. The
+# functions live in supabase/scripts/lib/cleanroom_verify.sh, shared with the regression tests.
+#
+#   verify                  the DATA-BEARING contract: the ledger equals supabase/migrations/,
+#                           the inventory, the grant and sign-in privilege boundaries, the send
+#                           flags, no fixture residue. Counts no business row, so it holds for a
+#                           clean room that has carried operator decisions — which this one has
+#                           since 2026-09-24.
+#   verify --fresh-rebuild  the FRESH-REBUILD contract: exact counts, true immediately after
+#                           `build` and only then. `build` runs it last.
+cleanroom_verify_fresh() {
+  ol_verify_fresh_rebuild ol_psql_clean \
+    || die "the clean-room database does not match the declared fresh-rebuild baseline (supabase/cleanroom/expected_counts.json). That is expected once operator decisions have been recorded in it; \`verify\` without a flag checks the contract that holds then."
+}
+
+cleanroom_verify_data_bearing() {
+  ol_verify_data_bearing ol_psql_clean \
+    || die "the clean-room database violates the data-bearing contract (supabase/cleanroom/expected_data_bearing.json)"
 }
 
 cmd_verify() {
-  cleanroom_preflight
+  local mode="data-bearing" arg
+  for arg in "$@"; do
+    case "$arg" in
+      --fresh-rebuild) mode="fresh-rebuild" ;;
+      --data-bearing)  mode="data-bearing" ;;
+      *) die "verify: unknown option '$arg' (accepted: --fresh-rebuild, --data-bearing)" ;;
+    esac
+  done
   ol_require_cleanroom_database "$OL_REPO_ROOT" || die "clean-room guard refused"
-  cleanroom_verify
+  case "$mode" in
+    fresh-rebuild) cleanroom_verify_fresh ;;
+    data-bearing)  cleanroom_verify_data_bearing ;;
+  esac
 }
 
 # --- status -----------------------------------------------------------------------------------

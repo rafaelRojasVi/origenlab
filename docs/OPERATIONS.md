@@ -605,19 +605,28 @@ anything else, and it **discards the development database's DSN**, so inside a c
 script `ol_psql_dev` cannot connect at all. `build --force` prints the exact name on its own
 line immediately before the `DROP`.
 
-**Verify it.** Read-only, safe at any time — `verify.sql` runs inside `begin read only`.
+**Verify it.** Read-only, safe at any time — both probe files run inside `begin read only`.
+There are **two contracts**, because a clean room stops being fresh the moment an operator
+decides something in it, and `origenlab_clean` has carried decisions since 2026-09-24:
 
 ```bash
-supabase/scripts/cleanroom_db.sh verify
+supabase/scripts/cleanroom_db.sh verify                   # the data-bearing contract (default)
+supabase/scripts/cleanroom_db.sh verify --fresh-rebuild   # the exact fresh baseline; `build` runs it last
 supabase/scripts/cleanroom_db.sh status
 ```
 
-`verify` emits one probe per line and compares it against `supabase/cleanroom/expected_counts.json`,
-which carries a reason for every number. The comparison is **exact in both directions**: a
-probe declared and not measured fails, and a probe measured and not declared fails, so the SQL
-and the baseline cannot drift apart in silence. 41 probes, including the breakdown that a
-total alone would hide — 31 `gmail_message` + 4 `migration_manifest` = 35 source records, all
-three asserted — and the four residue probes that name what went wrong on 2026-09-22.
+| Contract | Files | Asserts | True when |
+|---|---|---|---|
+| **data-bearing** (`verify`) | `supabase/cleanroom/data_bearing.sql` → `expected_data_bearing.json` | the ledger equals the files in `supabase/migrations/` (a missing or phantom version is **named**); the 7 schemas, 41 tables, 148 policies, 4 roles and their attributes; the PUBLIC/anon/authenticated/service_role boundary; the closed SECURITY DEFINER list and its shape; the sign-in privilege boundary (`pin_hash` unreadable, no runtime write on `platform.operator` or the throttle columns, sessions revocable and nothing else, audit append-only); send flags off; no pytest residue. **Counts no business row** | always — a fresh build, and one carrying 44 opportunities, both pass; 41 probes |
+| **fresh-rebuild** (`verify --fresh-rebuild`) | `supabase/cleanroom/verify.sql` → `expected_counts.json` | exact row counts of the historical load and of what the chain seeds (one campaign block, empty sign-in tables), one operator, zero commands | immediately after `build`, and only then; 46 probes |
+
+Both comparisons are **exact in both directions**: a probe declared and not measured fails, and
+a probe measured and not declared fails, so the SQL and its expectation cannot drift apart in
+silence. Neither file may be re-declared to today's business counts: a count that moves with a
+human decision is not a contract, and `cleanroom_verify_tests.sh` S2 refuses a business count
+in the data-bearing file. What the fresh file *must* follow is the chain — S1 fails CI the
+moment a migration lands without `migrations.count` / `migrations.head` moving with it, which
+is the check that was missing when the fixture sat at 25 of 40 migrations.
 
 **Point the API at it.**
 
@@ -646,9 +655,23 @@ rewritten or a name-swap goes wrong, which is what this is for.
 **Tests.**
 
 ```bash
-supabase/scripts/cleanroom_failure_tests.sh        # 29 refusal scenarios, connects to nothing
+supabase/scripts/cleanroom_failure_tests.sh        # 30 refusal scenarios, connects to nothing
+supabase/scripts/cleanroom_verify_tests.sh         # the two contracts: static + chain + restored copy
 cd apps/api && uv run pytest tests/test_v2_target_boundary.py tests/test_protected_databases.py
 ```
+
+`cleanroom_verify_tests.sh` has three parts. `--static` opens no database (CI runs it before
+the stack starts). `--chain` mints a disposable database carrying the full chain and no rows,
+proves the data-bearing contract passes on it and the fresh one still fails, then injects seven
+faults one clone at a time — a deleted ledger row, a phantom one, `EXECUTE` on
+`begin_pin_attempt` revoked, `SELECT (pin_hash)` granted, `UPDATE` on `platform.operator`
+granted, RLS off on `auth_session`, a definer's `search_path` unpinned — and proves each fails
+closed **by probe name** (CI runs this against its own stack with `--cluster cli`). `--restored`
+runs only from the working tree that started the development container: it dumps
+`origenlab_clean` with the container's own `pg_dump` (read-only) into a scratch
+`origenlab_test_<8 hex>` in the same container, proves the data-bearing contract passes on the
+copy and the fresh one fails on it, and proves `origenlab_clean`'s ledger and write counters are
+identical before and after. Every scratch is dropped on exit; nothing opens `origenlab_dev`.
 
 **Throwing it away** is routine, because rebuilding is the recovery procedure — there is no
 checkpoint, no restore and nothing to lose:
