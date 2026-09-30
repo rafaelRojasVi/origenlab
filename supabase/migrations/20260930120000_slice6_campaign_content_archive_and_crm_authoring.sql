@@ -17,7 +17,9 @@
 -- points, open and close affiliations and commercial classifications, link a real supplier to the
 -- six curated product lines, decide machine-proposed supplier candidates, and annotate. Nothing is
 -- ever physically deleted: a person, institution or contact point is `archived`/`inactive`, a
--- domain or identifier is soft-removed, a note is revised by a new row and archived, never edited.
+-- domain or identifier is soft-removed (and a soft-removed domain can be restored on the same
+-- institution — re-adding it revives the row, never a duplicate), a note is revised by a new row
+-- and archived, never edited.
 --
 -- What it deliberately does not do: no campaign, recipient or attempt row changes; no SECURITY
 -- DEFINER; no grant widens beyond the new tables and the lifecycle columns; no event is written by
@@ -491,7 +493,7 @@ alter table crm.domain_event add constraint domain_event_type_check check (event
   'organization.created', 'organization.confirmed', 'organization.merged',
   'organization.updated', 'organization.archived', 'organization.restored',
   'organization.identifier_added', 'organization.identifier_removed',
-  'organization.domain_added', 'organization.domain_removed',
+  'organization.domain_added', 'organization.domain_removed', 'organization.domain_restored',
   'organization.product_line_linked', 'organization.product_line_unlinked',
   'person.created', 'person.confirmed', 'person.merged',
   'person.updated', 'person.archived', 'person.restored',

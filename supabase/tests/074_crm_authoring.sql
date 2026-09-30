@@ -5,7 +5,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
-select plan(77);
+select plan(82);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -264,6 +264,9 @@ select lives_ok($$insert into crm.domain_event (aggregate_kind, aggregate_id, se
   values ('organization', '74000000-0000-4000-8000-000000000100', 7, 'organization.domain_removed', 1, '{}'::jsonb, 'migrator')$$,
   'organization.domain_removed is accepted');
 select lives_ok($$insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind)
+  values ('organization', '74000000-0000-4000-8000-000000000100', 10, 'organization.domain_restored', 1, '{}'::jsonb, 'migrator')$$,
+  'organization.domain_restored is accepted');
+select lives_ok($$insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind)
   values ('organization', '74000000-0000-4000-8000-000000000100', 8, 'organization.product_line_linked', 1, '{}'::jsonb, 'migrator')$$,
   'organization.product_line_linked is accepted');
 select lives_ok($$insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind)
@@ -298,6 +301,33 @@ select is(pg_temp.run_as('origenlab_owner', $$insert into crm.organization_domai
   values ('74000000-0000-4000-8000-000000000401', '74000000-0000-4000-8000-000000000110',
     'acme.test', 'exclusive')$$),
   'ok', 'a different org can claim exclusive ownership after the first was soft-removed');
+
+-- ── B7. restore = clear the removal triple on the SAME row ───────────────────────────────
+-- Restoring Acme's exclusive claim while Acme Successor holds the live exclusive claim must be
+-- refused by the partial unique index; once the successor's claim is soft-removed, the original
+-- row comes back to life — no second (organization, domain) row is ever created.
+select is(pg_temp.run_as('origenlab_owner', $$update crm.organization_domain
+  set removed_at = null, removed_by_operator_id = null, remove_reason = null
+  where id = '74000000-0000-4000-8000-000000000400'$$),
+  '23505', 'restoring an exclusive claim while another org holds it live is refused (23505)');
+set role origenlab_owner;
+update crm.organization_domain
+  set removed_at = now(), removed_by_operator_id = '74000000-0000-4000-8000-000000000001',
+      remove_reason = 'successor claim withdrawn'
+  where id = '74000000-0000-4000-8000-000000000401';
+reset role;
+select is(pg_temp.run_as('origenlab_owner', $$update crm.organization_domain
+  set removed_at = null, removed_by_operator_id = null, remove_reason = null
+  where id = '74000000-0000-4000-8000-000000000400'$$),
+  'ok', 'clearing the whole removal triple restores the row once no live exclusive claim competes');
+select is(
+  (select count(*)::int from crm.organization_domain
+    where organization_id = '74000000-0000-4000-8000-000000000100' and domain_norm = 'acme.test'),
+  1, 'the restored domain is the same row: still exactly one (organization, domain) row');
+select is(pg_temp.run_as('origenlab_owner', $$insert into crm.organization_domain
+  (organization_id, domain_norm, scope)
+  values ('74000000-0000-4000-8000-000000000100', 'acme.test', 'shared')$$),
+  '23505', 're-inserting the same domain on the same organization is refused: restore, do not duplicate (23505)');
 
 select * from finish();
 rollback;
