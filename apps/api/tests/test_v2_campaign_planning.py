@@ -494,7 +494,7 @@ def test_an_imported_campaign_without_html_says_so_and_keeps_its_real_batches(di
                    "values ('marketing', %s, %s, %s, %s, 'accepted', 'pending', %s)",
                    (cid, rid, world["mailbox"], addr, at))
     archive = _workspace(disposable_database).campaign_archive(cid)
-    assert archive["html_state"] == "not_archived" and archive["html"] is None and archive["subject"] is None
+    assert archive["html_state"] == "not_recovered" and archive["html"] is None and archive["subject"] is None
     assert archive["origin"] == "imported_v1"
     assert [(b["day"], b["accepted"]) for b in archive["send_batches"]] == [("2026-09-15", 2), ("2026-09-16", 1)]
     listed = next(c for c in _workspace(disposable_database).marketing()["campaigns"] if c["campaign_id"] == cid)
