@@ -187,9 +187,24 @@ insert into expected_policies values
     -- Revocable profile sessions (#41): read, insert a live row, revoke (column grant); no delete.
     ('platform', 'auth_session', 'origenlab_api', 'SELECT'),
     ('platform', 'auth_session', 'origenlab_api', 'INSERT'),
-    ('platform', 'auth_session', 'origenlab_api', 'UPDATE');
+    ('platform', 'auth_session', 'origenlab_api', 'UPDATE'),
+    -- 20260930120000: campaign-content archive — owner-only INSERT; api and worker read.
+    ('outbound', 'campaign_content', 'origenlab_api', 'SELECT'),
+    ('outbound', 'campaign_content', 'origenlab_worker', 'SELECT'),
+    ('outbound', 'campaign_content_message', 'origenlab_api', 'SELECT'),
+    ('outbound', 'campaign_content_message', 'origenlab_worker', 'SELECT'),
+    -- crm.note: api inserts, archives (UPDATE), and reads; worker reads.
+    ('crm', 'note', 'origenlab_api', 'SELECT'),
+    ('crm', 'note', 'origenlab_api', 'INSERT'),
+    ('crm', 'note', 'origenlab_api', 'UPDATE'),
+    ('crm', 'note', 'origenlab_worker', 'SELECT'),
+    -- crm.organization_product_line: api inserts, closes (UPDATE), and reads; worker reads.
+    ('crm', 'organization_product_line', 'origenlab_api', 'SELECT'),
+    ('crm', 'organization_product_line', 'origenlab_api', 'INSERT'),
+    ('crm', 'organization_product_line', 'origenlab_api', 'UPDATE'),
+    ('crm', 'organization_product_line', 'origenlab_worker', 'SELECT');
 
-select is((select count(*)::int from expected_policies), 148, 'the matrix implies 148 policies');
+select is((select count(*)::int from expected_policies), 160, 'the matrix implies 160 policies');
 
 -- Posture.
 select is(

@@ -93,6 +93,11 @@ union all select 'platform.auth_event', count(*)::text from platform.auth_event
 union all select 'catalog.product', count(*)::text from catalog.product
 union all select 'catalog.supplier_product', count(*)::text from catalog.supplier_product
 union all select 'procurement.notice', count(*)::text from procurement.notice
+
+union all select 'outbound.campaign_content', count(*)::text from outbound.campaign_content
+union all select 'outbound.campaign_content_message', count(*)::text from outbound.campaign_content_message
+union all select 'crm.note', count(*)::text from crm.note
+union all select 'crm.organization_product_line', count(*)::text from crm.organization_product_line
 ;
 
 commit;

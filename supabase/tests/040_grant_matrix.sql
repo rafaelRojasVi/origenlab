@@ -110,9 +110,20 @@ insert into expected values
     ('platform', 'auth_event', 'origenlab_api', 'SI', null, 'SI'),
     ('platform', 'auth_event', 'origenlab_worker', '', null, ''),
     ('platform', 'auth_session', 'origenlab_api', 'SI', array['revoked_at', 'revoked_reason'], 'SIU'),
-    ('platform', 'auth_session', 'origenlab_worker', '', null, '');
+    ('platform', 'auth_session', 'origenlab_worker', '', null, ''),
+    -- 20260930120000: archive guard (owner-only INSERT) — api gets SELECT only; worker the same.
+    ('outbound', 'campaign_content', 'origenlab_api', 'S', null, 'S'),
+    ('outbound', 'campaign_content', 'origenlab_worker', 'S', null, 'S'),
+    ('outbound', 'campaign_content_message', 'origenlab_api', 'S', null, 'S'),
+    ('outbound', 'campaign_content_message', 'origenlab_worker', 'S', null, 'S'),
+    -- crm.note: api may INSERT and soft-archive (column-level UPDATE); worker reads only.
+    ('crm', 'note', 'origenlab_api', 'SI', array['status', 'archived_at', 'archived_by_operator_id', 'archive_reason', 'version'], 'SIU'),
+    ('crm', 'note', 'origenlab_worker', 'S', null, 'S'),
+    -- crm.organization_product_line: api may INSERT and close (column-level UPDATE); worker reads.
+    ('crm', 'organization_product_line', 'origenlab_api', 'SI', array['valid_to', 'unlinked_by_operator_id', 'note', 'updated_at'], 'SIU'),
+    ('crm', 'organization_product_line', 'origenlab_worker', 'S', null, 'S');
 
-select is((select count(*)::int from expected), 82, 'the matrix covers all 41 tables for both runtime roles');
+select is((select count(*)::int from expected), 90, 'the matrix covers all 45 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(
