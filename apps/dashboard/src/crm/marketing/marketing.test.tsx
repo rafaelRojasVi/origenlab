@@ -6,7 +6,7 @@ import taxonomyJson from "../../../../api/src/origenlab_api/v2/equipment_taxonom
 import { MarketingPage } from "../pages/MarketingPage";
 import type { MarketingResponse } from "../crmTypes";
 import { destinationsOf, recipientList, selectAllEligible, toggle } from "./audienceSelection";
-import { PREVIEW_CSP, buildPreviewDocument } from "./emailPreview";
+import { PREVIEW_CSP, PREVIEW_IMAGE_ORIGINS, buildPreviewDocument } from "./emailPreview";
 import { TEMPLATES, imageUrlsIn, renderTemplate } from "./emailTemplates";
 import { CAMPAIGN_COMMAND_PATHS, UNSUBSCRIBE_REVIEW_PATHS } from "./marketingApi";
 import type { AudiencePerson, AudienceResponse, CampaignContent, EquipmentTaxonomy, FreezePreview, FreezeRow } from "./marketingTypes";
@@ -62,6 +62,53 @@ describe("buildPreviewDocument", () => {
     expect(a.getAttribute("title")).toBe("https://origenlab.cl/marcas/ika/");
     expect(b.getAttribute("href")).toBe("#");
     expect(b.getAttribute("title")).toBeNull();
+  });
+
+  it("loads images from the apex and the www host of origenlab.cl, over https only", () => {
+    const out = buildPreviewDocument(
+      '<img id="apex" src="https://origenlab.cl/products/ika/t-25-digital.png">' +
+        '<img id="www" src="https://www.origenlab.cl/email/hielscher-hero.png">' +
+        '<img id="www-srcset" srcset="https://www.origenlab.cl/a.png 1x, https://origenlab.cl/a@2x.png 2x">' +
+        '<div id="css" style="background:url(https://www.origenlab.cl/bg.png)">x</div>',
+    );
+    const doc = new DOMParser().parseFromString(out.html, "text/html");
+    expect(doc.getElementById("apex")?.getAttribute("src")).toBe("https://origenlab.cl/products/ika/t-25-digital.png");
+    expect(doc.getElementById("www")?.getAttribute("src")).toBe("https://www.origenlab.cl/email/hielscher-hero.png");
+    expect(doc.getElementById("www-srcset")?.getAttribute("srcset")).toBe("https://www.origenlab.cl/a.png 1x, https://origenlab.cl/a@2x.png 2x");
+    expect(doc.getElementById("css")?.getAttribute("style")).toContain("https://www.origenlab.cl/bg.png");
+    expect(out.blockedImages).toEqual([]);
+    expect(PREVIEW_IMAGE_ORIGINS).toEqual(["https://origenlab.cl", "https://www.origenlab.cl"]);
+    expect(PREVIEW_CSP).toContain("img-src https://origenlab.cl https://www.origenlab.cl data:;");
+    expect(PREVIEW_CSP).not.toMatch(/img-src[^;]*http:/);
+  });
+
+  it.each([
+    ["http (not https)", "http://origenlab.cl/a.png"],
+    ["http on www", "http://www.origenlab.cl/a.png"],
+    ["suffix trick", "https://origenlab.cl.attacker.test/a.png"],
+    ["suffix trick on www", "https://www.origenlab.cl.attacker.test/a.png"],
+    ["prefix trick", "https://evil-origenlab.cl/a.png"],
+    ["other subdomain", "https://cdn.origenlab.cl/a.png"],
+    ["credentials in the URL", "https://user:pw@origenlab.cl/a.png"],
+    ["username only", "https://origenlab.cl@attacker.test/a.png"],
+    ["explicit port", "https://origenlab.cl:8443/a.png"],
+    ["ftp scheme", "ftp://origenlab.cl/a.png"],
+    ["file scheme", "file:///etc/hostname"],
+    ["javascript scheme", "javascript:alert(1)"],
+    ["data: text/html", "data:text/html,<script>alert(1)</script>"],
+    ["data: svg (scriptable)", "data:image/svg+xml,<svg onload=alert(1)>"],
+    ["blob scheme", "blob:https://origenlab.cl/1234"],
+    ["protocol-relative", "//origenlab.cl/a.png"],
+    ["another host", "https://upload.wikimedia.org/x.png"],
+    ["image proxy", "https://wsrv.nl/?url=origenlab.cl/a.png"],
+  ])("rejects an image URL that is not exactly the apex or www origin over https: %s", (_label, url) => {
+    const out = buildPreviewDocument(`<img id="i" src="${url.replace(/"/g, "&quot;")}"><div style="background:url('${url}')">x</div>`);
+    const doc = new DOMParser().parseFromString(out.html, "text/html");
+    const src = doc.getElementById("i")?.getAttribute("src") ?? "";
+    expect(src.startsWith("data:image/svg+xml"), `src kept: ${src}`).toBe(true);
+    expect(doc.querySelector("div")?.getAttribute("style")).not.toContain("attacker");
+    expect(doc.querySelector("div")?.getAttribute("style")).toContain("none");
+    expect(out.blockedImages.length).toBeGreaterThan(0);
   });
 
   it("treats every data: link as a script URL, not only data:text/html", () => {
