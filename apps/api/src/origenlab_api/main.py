@@ -274,7 +274,7 @@ def _mount_campaign_blocks(app: FastAPI, settings: Settings, dsn: str, connect: 
 
 
 def _mount_crm_authoring(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
-    """Mount the 27 CRM authoring commands only behind their own switch.
+    """Mount the 28 CRM authoring commands only behind their own switch.
 
     Both a DSN and ``ORIGENLAB_V2_CRM_AUTHORING_ENABLED`` are required: reading the CRM and
     writing freeform people/organizations into it are separate permissions.  Off, every

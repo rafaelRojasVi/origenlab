@@ -1043,3 +1043,211 @@ def test_each_successful_command_writes_exactly_one_receipt(disposable_database,
         "display_name": f"ReceiptPerson {tag}", "note": "receipt",
     }, key=key)
     assert _receipt_count(disposable_database, key) == 1
+
+
+# ───────────────────────────────────────────────── domain restore (same row, never a duplicate) ──
+
+
+def _domain_row(dsn, domain_id):
+    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select organization_id::text, domain_norm, scope, removed_at, removed_by_operator_id,"
+            " remove_reason from crm.organization_domain where id = %s::uuid",
+            (domain_id,),
+        )
+        row = cur.fetchone()
+    return None if row is None else dict(
+        zip(("organization_id", "domain_norm", "scope", "removed_at", "removed_by", "remove_reason"), row)
+    )
+
+
+def _domain_rows_for(dsn, org_id, domain_norm):
+    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select count(*) from crm.organization_domain where organization_id = %s::uuid and domain_norm = %s",
+            (org_id, domain_norm),
+        )
+        return cur.fetchone()[0]
+
+
+def _last_event_payload(dsn, aggregate_kind, aggregate_id, event_type):
+    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select payload from crm.domain_event where aggregate_kind = %s and aggregate_id = %s::uuid"
+            " and event_type = %s order by seq desc limit 1",
+            (aggregate_kind, aggregate_id, event_type),
+        )
+        row = cur.fetchone()
+        return None if row is None else row[0]
+
+
+def _org_with_domain(dsn, world, *, scope="shared"):
+    tag = world["tag"]
+    suffix = uuid.uuid4().hex[:6]
+    created = _run(dsn, world["sales"], "register-organization", {
+        "name": f"RestoreOrg {tag} {suffix}", "kind": "supplier", "note": "domain restore fixture",
+    })
+    org_id = created["organization_id"]
+    domain = f"restore-{suffix}.example.test"
+    added = _run(dsn, world["sales"], "add-organization-domain", {
+        "organization_id": org_id, "expected_version": created["version"],
+        "domain": domain, "scope": scope, "note": "add",
+    })
+    assert added["restored"] is False
+    removed = _run(dsn, world["sales"], "remove-organization-domain", {
+        "organization_id": org_id, "expected_version": added["version"],
+        "domain_id": added["domain_id"], "note": "removed for the test",
+    })
+    return org_id, domain, added["domain_id"], removed["version"]
+
+
+@needs_db
+def test_readding_a_removed_domain_restores_the_same_row(disposable_database, world):
+    org_id, domain, domain_id, ver = _org_with_domain(disposable_database, world)
+    assert _domain_row(disposable_database, domain_id)["removed_at"] is not None
+
+    # Different casing and surrounding whitespace normalize to the same domain_norm.
+    readded = _run(disposable_database, world["sales"], "add-organization-domain", {
+        "organization_id": org_id, "expected_version": ver,
+        "domain": f"  {domain.upper()} ", "note": "it is theirs again",
+    })
+    assert readded["ok"] is True
+    assert readded["restored"] is True
+    assert readded["domain_id"] == domain_id, "the existing row is restored, not a new one"
+    assert readded["version"] == ver + 1
+
+    row = _domain_row(disposable_database, domain_id)
+    assert row["removed_at"] is None and row["removed_by"] is None and row["remove_reason"] is None
+    assert _domain_rows_for(disposable_database, org_id, domain) == 1
+
+    events = _event_types(disposable_database, "organization", org_id)
+    assert events.count("organization.domain_added") == 1
+    assert events.count("organization.domain_removed") == 1
+    assert events.count("organization.domain_restored") == 1
+    payload = _last_event_payload(disposable_database, "organization", org_id, "organization.domain_restored")
+    assert payload["domain_id"] == domain_id
+    assert payload["domain_norm"] == domain
+    assert payload["reason"] == "it is theirs again"
+
+
+@needs_db
+def test_adding_a_domain_already_present_is_refused_not_duplicated(disposable_database, world):
+    org_id, domain, domain_id, ver = _org_with_domain(disposable_database, world)
+    restored = _run(disposable_database, world["sales"], "restore-organization-domain", {
+        "organization_id": org_id, "expected_version": ver, "domain_id": domain_id, "note": "back",
+    })
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "add-organization-domain", {
+            "organization_id": org_id, "expected_version": restored["version"],
+            "domain": domain, "note": "again",
+        })
+    assert exc.value.status_code == 409
+    assert exc.value.code == "domain_already_present"
+    assert _domain_rows_for(disposable_database, org_id, domain) == 1
+
+
+@needs_db
+def test_restore_organization_domain_command(disposable_database, world):
+    org_id, domain, domain_id, ver = _org_with_domain(disposable_database, world)
+
+    # Stale version: refused before anything changes.
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "restore-organization-domain", {
+            "organization_id": org_id, "expected_version": ver - 1, "domain_id": domain_id, "note": "x",
+        })
+    assert exc.value.code == "stale_version"
+    assert _domain_row(disposable_database, domain_id)["removed_at"] is not None
+
+    key = f"restore-domain-{uuid.uuid4().hex[:8]}"
+    fields = {"organization_id": org_id, "expected_version": ver, "domain_id": domain_id, "note": "restored by test"}
+    first = _run(disposable_database, world["sales"], "restore-organization-domain", fields, key=key)
+    assert first["ok"] is True and first["restored"] is True
+    assert first["domain_id"] == domain_id and first["version"] == ver + 1
+    row = _domain_row(disposable_database, domain_id)
+    assert row["removed_at"] is None and row["organization_id"] == org_id
+    payload = _last_event_payload(disposable_database, "organization", org_id, "organization.domain_restored")
+    assert payload["reason"] == "restored by test" and payload["scope"] == "shared"
+
+    # Same key, same body: replayed, no second event.
+    second = _run(disposable_database, world["sales"], "restore-organization-domain", fields, key=key)
+    assert second["replayed"] is True and second["domain_id"] == domain_id
+    assert _event_types(disposable_database, "organization", org_id).count("organization.domain_restored") == 1
+
+    # Restoring a live domain is refused.
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "restore-organization-domain", {
+            "organization_id": org_id, "expected_version": first["version"], "domain_id": domain_id, "note": "x",
+        })
+    assert exc.value.status_code == 409 and exc.value.code == "domain_not_removed"
+
+    # Unknown row: 404.
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "restore-organization-domain", {
+            "organization_id": org_id, "expected_version": first["version"],
+            "domain_id": str(uuid.uuid4()), "note": "x",
+        })
+    assert exc.value.status_code == 404 and exc.value.code == "domain_not_found"
+
+
+@needs_db
+def test_restore_never_moves_a_domain_to_another_organization(disposable_database, world):
+    org_a, domain, domain_id, _ = _org_with_domain(disposable_database, world)
+    other = _run(disposable_database, world["sales"], "register-organization", {
+        "name": f"Other Org {uuid.uuid4().hex[:6]}", "kind": "customer", "note": "other",
+    })
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "restore-organization-domain", {
+            "organization_id": other["organization_id"], "expected_version": other["version"],
+            "domain_id": domain_id, "note": "trying to take it",
+        })
+    assert exc.value.status_code == 409
+    assert exc.value.code == "domain_of_other_organization"
+    row = _domain_row(disposable_database, domain_id)
+    assert row["organization_id"] == org_a, "the row still belongs to its organization"
+    assert row["removed_at"] is not None, "and it is still removed"
+    assert "organization.domain_restored" not in _event_types(disposable_database, "organization", other["organization_id"])
+    assert _domain_rows_for(disposable_database, other["organization_id"], domain) == 0
+
+
+@needs_db
+def test_exclusive_claim_is_refused_by_name_while_another_organization_holds_it(disposable_database, world):
+    org_a, domain, domain_id_a, ver_a = _org_with_domain(disposable_database, world, scope="exclusive")
+    org_b = _run(disposable_database, world["sales"], "register-organization", {
+        "name": f"Claimant {uuid.uuid4().hex[:6]}", "kind": "supplier", "note": "b",
+    })
+    # A's claim is soft-removed, so B may claim the domain exclusively.
+    added_b = _run(disposable_database, world["sales"], "add-organization-domain", {
+        "organization_id": org_b["organization_id"], "expected_version": org_b["version"],
+        "domain": domain, "scope": "exclusive", "note": "b claims",
+    })
+    assert added_b["restored"] is False
+
+    # A cannot restore its exclusive claim while B's is live — a named refusal, not a 500.
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "restore-organization-domain", {
+            "organization_id": org_a, "expected_version": ver_a, "domain_id": domain_id_a, "note": "back",
+        })
+    assert exc.value.status_code == 409 and exc.value.code == "exclusive_domain_taken"
+    assert _domain_row(disposable_database, domain_id_a)["removed_at"] is not None
+
+    # A may come back as a shared claim, on its own row.
+    restored = _run(disposable_database, world["sales"], "restore-organization-domain", {
+        "organization_id": org_a, "expected_version": ver_a, "domain_id": domain_id_a,
+        "scope": "shared", "note": "shared now",
+    })
+    assert restored["restored"] is True and restored["domain_id"] == domain_id_a
+    row = _domain_row(disposable_database, domain_id_a)
+    assert row["scope"] == "shared" and row["removed_at"] is None
+    payload = _last_event_payload(disposable_database, "organization", org_a, "organization.domain_restored")
+    assert payload["previous_scope"] == "exclusive" and payload["scope"] == "shared"
+
+    # And a third organization adding the same exclusive claim is refused by name too.
+    org_c = _run(disposable_database, world["sales"], "register-organization", {
+        "name": f"Third {uuid.uuid4().hex[:6]}", "kind": "supplier", "note": "c",
+    })
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "add-organization-domain", {
+            "organization_id": org_c["organization_id"], "expected_version": org_c["version"],
+            "domain": domain, "scope": "exclusive", "note": "c claims",
+        })
+    assert exc.value.code == "exclusive_domain_taken"

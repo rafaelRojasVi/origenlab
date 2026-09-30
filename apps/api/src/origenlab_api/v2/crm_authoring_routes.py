@@ -1,7 +1,7 @@
 """CRM freeform authoring command boundary — `POST /v2/commands/<crm-command>`.
 
 Mounted only when `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true` **and** a V2 DSN is set
-(default off).  All 27 routes require:
+(default off).  All 28 routes require:
 - An active operator with role `sales` or `admin` (viewer → 403 `role_may_not_decide`).
 - An `Idempotency-Key` header (absent → 400).
 - A JSON body whose shape is enforced by Pydantic with `extra="forbid"`.
@@ -236,6 +236,15 @@ class RemoveOrganizationDomainBody(_Base):
     organization_id: str
     expected_version: int
     domain_id: str
+
+
+class RestoreOrganizationDomainBody(_Base):
+    """Bring a soft-removed domain back on the organization it already belongs to."""
+
+    organization_id: str
+    expected_version: int
+    domain_id: str
+    scope: Annotated[str | None, Field(default=None, pattern="^(exclusive|shared)$")] = None
 
 
 class AddOrganizationClassificationBody(_Base):
@@ -535,6 +544,18 @@ def remove_organization_domain(
     idempotency_key: IdempotencyKey = None,
 ) -> dict[str, Any]:
     return _run(command_name="remove-organization-domain", body=body,
+                fields=body.model_dump(), repo=repo,
+                operator=operator, idempotency_key=idempotency_key)
+
+
+@crm_authoring_router.post("/restore-organization-domain")
+def restore_organization_domain(
+    body: RestoreOrganizationDomainBody,
+    operator: Deciding,
+    repo: CrmAuthoringRepo,
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    return _run(command_name="restore-organization-domain", body=body,
                 fields=body.model_dump(), repo=repo,
                 operator=operator, idempotency_key=idempotency_key)
 

@@ -2,7 +2,7 @@
 
 Covers: body validation, role checks (viewer 403 incl. forged header escalation attempt),
 admin-only gates, missing Idempotency-Key (400), replay (replayed=true, no second handler call),
-product-line closed list, no `delete from` in the module source, all 27 route shapes present,
+product-line closed list, no `delete from` in the module source, all 28 route shapes present,
 switch off-by-default, mount test, and per-command shape validation.
 
 **No database, no network.**  Every handler call goes to a _FakeRepo that captures its args.
@@ -59,7 +59,7 @@ ADMIN_ROUTES = {
     "/v2/commands/restore-organization",
 }
 
-ALL_27_ROUTES = {
+ALL_28_ROUTES = {
     "/v2/commands/create-person",
     "/v2/commands/update-person",
     "/v2/commands/archive-person",
@@ -78,6 +78,7 @@ ALL_27_ROUTES = {
     "/v2/commands/remove-organization-identifier",
     "/v2/commands/add-organization-domain",
     "/v2/commands/remove-organization-domain",
+    "/v2/commands/restore-organization-domain",
     "/v2/commands/add-organization-classification",
     "/v2/commands/remove-organization-classification",
     "/v2/commands/link-organization-product-line",
@@ -264,11 +265,11 @@ def test_archive_person_forbids_extra() -> None:
         ArchivePersonBody(person_id=str(uuid.uuid4()), expected_version=1, note="r", extra="bad")
 
 
-# ──────────────────────────────────────────────────────────────────── 27 routes ──
+# ──────────────────────────────────────────────────────────────────── 28 routes ──
 
-def test_the_router_exposes_exactly_27_posts() -> None:
+def test_the_router_exposes_exactly_28_posts() -> None:
     routes = set(r.path for r in crm_authoring_router.routes)
-    assert routes == ALL_27_ROUTES
+    assert routes == ALL_28_ROUTES
     # All are POST
     for r in crm_authoring_router.routes:
         assert tuple(sorted(r.methods)) == ("POST",), f"{r.path} has non-POST methods"
@@ -276,7 +277,7 @@ def test_the_router_exposes_exactly_27_posts() -> None:
 
 # ──────────────────────────────────────────────────────── viewer 403 on every route ──
 
-@pytest.mark.parametrize("path", sorted(ALL_27_ROUTES))
+@pytest.mark.parametrize("path", sorted(ALL_28_ROUTES))
 def test_viewer_403_on_all_routes(path) -> None:
     """A viewer (any role that is not sales/admin) gets 403 on every command route."""
     _, client = _client(role="viewer")
@@ -333,6 +334,8 @@ def _minimal_body(path: str) -> dict:
     if path == "/v2/commands/add-organization-domain":
         return {"organization_id": oid, "expected_version": 1, "domain": "example.test", "note": note}
     if path == "/v2/commands/remove-organization-domain":
+        return {"organization_id": oid, "expected_version": 1, "domain_id": pid, "note": note}
+    if path == "/v2/commands/restore-organization-domain":
         return {"organization_id": oid, "expected_version": 1, "domain_id": pid, "note": note}
     if path == "/v2/commands/add-organization-classification":
         return {"organization_id": oid, "expected_version": 1, "role": "supplier", "note": note}
@@ -398,7 +401,7 @@ def test_sales_refused_on_admin_only_routes(path) -> None:
     assert r.json()["detail"]["code"] == "role_may_not_archive"
 
 
-@pytest.mark.parametrize("path", sorted(ALL_27_ROUTES - ADMIN_ROUTES))
+@pytest.mark.parametrize("path", sorted(ALL_28_ROUTES - ADMIN_ROUTES))
 def test_sales_can_call_non_admin_routes(path) -> None:
     _, client = _client(role="sales")
     body = _minimal_body(path)
@@ -409,7 +412,7 @@ def test_sales_can_call_non_admin_routes(path) -> None:
 
 # ──────────────────────────────────────────────────── missing Idempotency-Key → 400 ──
 
-@pytest.mark.parametrize("path", sorted(ALL_27_ROUTES)[:3])
+@pytest.mark.parametrize("path", sorted(ALL_28_ROUTES)[:3])
 def test_missing_idempotency_key_is_400(path) -> None:
     _, client = _client(role="admin")
     body = _minimal_body(path)
@@ -486,7 +489,7 @@ def test_crm_authoring_mount_off_by_default() -> None:
     # With both, every route appears
     enabled, paths = routes(v2_database_url=LOOPBACK, v2_crm_authoring_enabled=True)
     assert enabled is True
-    assert ALL_27_ROUTES <= paths
+    assert ALL_28_ROUTES <= paths
 
 
 def test_crm_authoring_routes_404_when_switch_is_off(monkeypatch) -> None:

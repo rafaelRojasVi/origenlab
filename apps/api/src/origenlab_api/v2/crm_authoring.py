@@ -1439,6 +1439,32 @@ def _handle_add_organization_domain(
 
     domain_norm = _normalize_domain(domain)
 
+    # `(organization_id, domain_norm)` is unique and rows are never deleted, so the same domain
+    # re-added to the same institution is either already present (refused) or soft-removed
+    # (restored on its existing row — never a duplicate, never a bare unique violation).
+    cur.execute(
+        """
+        select id::text as id, organization_id::text as organization_id, domain_norm, scope,
+               removed_at is not null as removed
+          from crm.organization_domain
+         where organization_id = %s::uuid and domain_norm = %s
+           for update
+        """,
+        (org_id, domain_norm),
+    )
+    existing = _one(cur)
+    if existing is not None:
+        if not existing["removed"]:
+            raise CommandRefused(
+                409, "domain_already_present", "that domain is already on this organization"
+            )
+        return self._restore_domain_row(
+            cur, operator=operator, org_id=org_id, dom=existing, scope=scope,
+            reason=note_text, receipt_id=receipt_id,
+        )
+
+    _refuse_if_exclusive_domain_taken(cur, domain_norm=domain_norm, scope=scope, except_id=None)
+
     cur.execute(
         """
         insert into crm.organization_domain (organization_id, domain_norm, scope)
@@ -1464,7 +1490,149 @@ def _handle_add_organization_domain(
         operator=operator,
         receipt_id=receipt_id,
     )
-    return {"ok": True, "organization_id": org_id, "domain_id": dom["id"], "version": new_version}
+    return {
+        "ok": True, "organization_id": org_id, "domain_id": dom["id"],
+        "version": new_version, "restored": False,
+    }
+
+
+def _refuse_if_exclusive_domain_taken(
+    cur: Any, *, domain_norm: str, scope: str, except_id: str | None
+) -> None:
+    """An exclusive claim is refused while another live row claims the domain exclusively.
+
+    The partial unique index `organization_domain_exclusive_owner_key` enforces the same rule;
+    checking first turns a unique violation into a named refusal.
+    """
+    if scope != "exclusive":
+        return
+    cur.execute(
+        """
+        select organization_id::text as organization_id
+          from crm.organization_domain
+         where domain_norm = %s and scope = 'exclusive' and removed_at is null
+           and (%s::uuid is null or id <> %s::uuid)
+         limit 1
+        """,
+        (domain_norm, except_id, except_id),
+    )
+    if _one(cur) is not None:
+        raise CommandRefused(
+            409, "exclusive_domain_taken",
+            "another organization holds that domain exclusively; remove its claim first",
+        )
+
+
+def _restore_domain_row(
+    self: "V2CrmAuthoringRepository",
+    cur: Any,
+    *,
+    operator: OperatorIdentity,
+    org_id: str,
+    dom: dict[str, Any],
+    scope: str,
+    reason: str,
+    receipt_id: str,
+) -> dict[str, Any]:
+    """Bring a soft-removed domain row of `org_id` back into force, on the same row.
+
+    Callers have already locked the organization, checked its version and verified that
+    `dom` belongs to `org_id` and is removed. The removal triple is cleared as a whole (the
+    CHECK constraint accepts 0 or 3 of them, nothing between); the operator's reason travels
+    in the `organization.domain_restored` event because the row has no column for it.
+    """
+    if dom["organization_id"] != org_id:  # defensive: callers check this and refuse loudly
+        raise CommandRefused(
+            409, "domain_of_other_organization",
+            "that domain belongs to a different organization; a restore never moves a domain",
+        )
+    _refuse_if_exclusive_domain_taken(cur, domain_norm=dom["domain_norm"], scope=scope, except_id=dom["id"])
+
+    cur.execute(
+        """
+        update crm.organization_domain
+           set removed_at = null, removed_by_operator_id = null, remove_reason = null,
+               scope = %s
+         where id = %s::uuid and organization_id = %s::uuid and removed_at is not null
+        """,
+        (scope, dom["id"], org_id),
+    )
+    if cur.rowcount == 0:
+        raise CommandRefused(409, "domain_not_removed", "that domain is not removed")
+
+    cur.execute(
+        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
+        (org_id,),
+    )
+    new_version = _one(cur)["version"]
+
+    self._append_event(
+        cur,
+        aggregate_kind="organization",
+        aggregate_id=org_id,
+        event_type="organization.domain_restored",
+        payload={
+            "organization_id": org_id,
+            "domain_id": dom["id"],
+            "domain_norm": dom["domain_norm"],
+            "scope": scope,
+            "previous_scope": dom["scope"],
+            "reason": reason,
+        },
+        operator=operator,
+        receipt_id=receipt_id,
+    )
+    return {
+        "ok": True, "organization_id": org_id, "domain_id": dom["id"],
+        "version": new_version, "restored": True,
+    }
+
+
+def _handle_restore_organization_domain(
+    self: "V2CrmAuthoringRepository",
+    cur: Any,
+    operator: OperatorIdentity,
+    fields: dict[str, Any],
+    receipt_id: str,
+) -> dict[str, Any]:
+    """Explicit restore of a soft-removed domain, by its row id, on its own organization."""
+    org_id = fields["organization_id"]
+    expected_version = fields["expected_version"]
+    domain_id = fields["domain_id"]
+    note_text = fields["note"]
+
+    org = _live_organization_active(cur, org_id)
+    if org["version"] != expected_version:
+        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+
+    cur.execute(
+        """
+        select id::text as id, organization_id::text as organization_id, domain_norm, scope,
+               removed_at is not null as removed
+          from crm.organization_domain
+         where id = %s::uuid
+           for update
+        """,
+        (domain_id,),
+    )
+    dom = _one(cur)
+    if dom is None:
+        raise CommandRefused(404, "domain_not_found", "no such domain")
+    if dom["organization_id"] != org_id:
+        # Never silently re-home a domain: the operator names an organization and a row, and
+        # the row must already be that organization's.
+        raise CommandRefused(
+            409, "domain_of_other_organization",
+            "that domain belongs to a different organization; a restore never moves a domain",
+        )
+    if not dom["removed"]:
+        raise CommandRefused(409, "domain_not_removed", "that domain is not removed")
+
+    scope = fields.get("scope") or dom["scope"]
+    return self._restore_domain_row(
+        cur, operator=operator, org_id=org_id, dom=dom, scope=scope,
+        reason=note_text, receipt_id=receipt_id,
+    )
 
 
 def _handle_remove_organization_domain(
@@ -2067,7 +2235,9 @@ def _handle_archive_note(
 # ─────────────────────────────────────────────────────────────────────────── repository ──
 
 class V2CrmAuthoringRepository(CommandTransaction):
-    """27 CRM authoring commands, each in one transaction."""
+    """28 CRM authoring commands, each in one transaction."""
+
+    _restore_domain_row = _restore_domain_row
 
     _HANDLERS = {
         "create-person": _handle_create_person,
@@ -2088,6 +2258,7 @@ class V2CrmAuthoringRepository(CommandTransaction):
         "remove-organization-identifier": _handle_remove_organization_identifier,
         "add-organization-domain": _handle_add_organization_domain,
         "remove-organization-domain": _handle_remove_organization_domain,
+        "restore-organization-domain": _handle_restore_organization_domain,
         "add-organization-classification": _handle_add_organization_classification,
         "remove-organization-classification": _handle_remove_organization_classification,
         "link-organization-product-line": _handle_link_organization_product_line,
