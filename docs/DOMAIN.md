@@ -913,7 +913,7 @@ all-or-none). Never-deleted triggers protect `crm.organization_product_line`
 is replaced to add the `note` aggregate kind (`note.created`, `note.revised`,
 `note.archived`) and new event types for the lifecycle mutations:
 `person.updated / archived / restored`, `contact_point.updated / deactivated`,
-`organization.updated / archived / restored / identifier_added / identifier_removed / domain_added / domain_removed / product_line_linked / product_line_unlinked`,
+`organization.updated / archived / restored / identifier_added / identifier_removed / domain_added / domain_removed / domain_restored / product_line_linked / product_line_unlinked`,
 and `assertion.supplier_candidate_confirmed / rejected`.
 
 | # | Schema.table | Unique responsibility | Key invariant |
