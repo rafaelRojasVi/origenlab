@@ -32,6 +32,7 @@ export const CRM_COMMAND_PATHS = {
   removeOrganizationIdentifier: "/v2/commands/remove-organization-identifier",
   addOrganizationDomain: "/v2/commands/add-organization-domain",
   removeOrganizationDomain: "/v2/commands/remove-organization-domain",
+  restoreOrganizationDomain: "/v2/commands/restore-organization-domain",
   addOrganizationClassification: "/v2/commands/add-organization-classification",
   removeOrganizationClassification: "/v2/commands/remove-organization-classification",
   linkOrganizationProductLine: "/v2/commands/link-organization-product-line",
@@ -486,6 +487,18 @@ export function removeOrganizationDomain(
   idempotencyKey: string = newIdempotencyKey(),
 ): Promise<CommandReceipt> {
   return postCommand<CommandReceipt>(CRM_COMMAND_PATHS.removeOrganizationDomain, body, idempotencyKey);
+}
+
+/**
+ * Bring a soft-removed domain back on the organization it already belongs to (same row, no
+ * duplicate). The API refuses a `domain_id` of another organization: a restore never moves a
+ * domain. Re-adding the same domain through `addOrganizationDomain` restores it as well.
+ */
+export function restoreOrganizationDomain(
+  body: { organization_id: string; expected_version: number; domain_id: string; note: string; scope?: "exclusive" | "shared" },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<CommandReceipt & { domain_id?: string; restored?: boolean }> {
+  return postCommand<CommandReceipt & { domain_id?: string; restored?: boolean }>(CRM_COMMAND_PATHS.restoreOrganizationDomain, body, idempotencyKey);
 }
 
 export function addOrganizationClassification(

@@ -13,6 +13,8 @@ import { OrganizationsPage } from "../pages/OrganizationsPage";
 import { ProvidersPage } from "../pages/ProvidersPage";
 import { PipelinePage } from "../pages/PipelinePage";
 import { mayAuthorCrm, isAdmin } from "./authoring";
+import { OrgAuthoringSection } from "./OrgAuthoringSection";
+import type { OrganizationAuthoringResponse } from "./crmAuthoringApi";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -399,5 +401,104 @@ describe("supplier candidate confirm / reject", () => {
     const checkbox = within(dialog).getByRole("checkbox");
     fireEvent.click(checkbox);
     expect(rejectBtn).not.toBeDisabled();
+  });
+});
+
+
+// ── organization domains: soft-removed rows and their explicit restore ────────
+
+const ORG_ID = "0a000000-0000-4000-8000-00000000000a";
+
+function orgAuthoringFixture(): OrganizationAuthoringResponse {
+  return {
+    organization: {
+      id: ORG_ID, name: "Instituto Demo", legal_name: null, kind: "customer", status: "active",
+      archived_at: null, archive_reason: null, confirmation: "confirmed", version: 3,
+      merged_into_organization_id: null, created_at: "2026-09-01T00:00:00+00:00",
+    },
+    identifiers: [],
+    domains: [
+      { id: "d-live", domain_norm: "demo.test", scope: "shared", removed_at: null, remove_reason: null },
+      { id: "d-removed", domain_norm: "old-demo.test", scope: "exclusive", removed_at: "2026-09-20T12:00:00+00:00", remove_reason: "cambió de dominio" },
+    ],
+    classifications: [],
+    product_lines: [],
+    contact_points: [],
+    people: [],
+    notes: [],
+    references: { campaign_recipients: 0, opportunities: 0, quotes: 0, affiliations: 0, evidence_assertions: 0, catalog_products: 0 },
+    removal: { allowed: false, reasons: [] },
+    authoring: { enabled: true, may_author: true, may_archive: false },
+  };
+}
+
+function stubOrgAuthoring() {
+  const posts: { path: string; body: unknown; idempotencyKey: string | null }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
+      const json = (b: unknown) => Promise.resolve(new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } }));
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method !== "GET") {
+        const headers = new Headers(init?.headers);
+        posts.push({ path: url.pathname, body: JSON.parse(String(init?.body ?? "null")), idempotencyKey: headers.get("Idempotency-Key") });
+        return json({ ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "rcpt", version: 4, domain_id: "d-removed", restored: true });
+      }
+      if (url.pathname.endsWith(`/v2/workspace/organizations/${ORG_ID}/authoring`)) return json(orgAuthoringFixture());
+      if (url.pathname.endsWith("/auth/session")) return json({ authenticated: false, google_login_enabled: true, workspace_domain: null });
+      return Promise.resolve(new Response("{}", { status: 404 }));
+    }),
+  );
+  return posts;
+}
+
+describe("organization domain restore", () => {
+  it("lists the soft-removed domain apart, with its reason, and only the live one under «Dominios»", async () => {
+    stubOrgAuthoring();
+    render(withRole("sales", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor admin={false} />));
+    expect(await screen.findByText("Dominios (1)")).toBeInTheDocument();
+    expect(screen.getByText("demo.test")).toBeInTheDocument();
+    const removedList = screen.getByRole("list", { name: "Dominios eliminados" });
+    expect(within(removedList).getByText("old-demo.test")).toBeInTheDocument();
+    expect(within(removedList).getByText(/cambió de dominio/)).toBeInTheDocument();
+    // The live domain can be removed; the removed one can only be restored.
+    expect(within(removedList).queryByRole("button", { name: "Eliminar" })).toBeNull();
+    expect(within(removedList).getByRole("button", { name: "Restaurar" })).toBeInTheDocument();
+  });
+
+  it("restores through /v2/commands/restore-organization-domain with the row id, the loaded version and a reason", async () => {
+    const posts = stubOrgAuthoring();
+    render(withRole("sales", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor admin={false} />));
+    const removedList = await screen.findByRole("list", { name: "Dominios eliminados" });
+    fireEvent.click(within(removedList).getByRole("button", { name: "Restaurar" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText("Restaurar dominio")).toBeInTheDocument();
+    expect(within(dialog).getByText(/old-demo\.test/)).toBeInTheDocument();
+    const confirm = within(dialog).getByRole("button", { name: "Restaurar" });
+    expect(confirm).toBeDisabled();
+    expect(posts).toEqual([]);
+
+    fireEvent.change(within(dialog).getByLabelText(/Motivo/), { target: { value: "vuelven a usarlo" } });
+    expect(confirm).toBeDisabled(); // the reason alone is not enough: the consequences must be acknowledged
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    expect(confirm).not.toBeDisabled();
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].path).toBe("/v2/commands/restore-organization-domain");
+    expect(posts[0].body).toEqual({ organization_id: ORG_ID, expected_version: 3, domain_id: "d-removed", note: "vuelven a usarlo" });
+    expect(posts[0].idempotencyKey).toBeTruthy();
+  });
+
+  it("a viewer sees the removed domain but no «Restaurar»", async () => {
+    const posts = stubOrgAuthoring();
+    render(withRole("viewer", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor={false} admin={false} />));
+    const removedList = await screen.findByRole("list", { name: "Dominios eliminados" });
+    expect(within(removedList).getByText("old-demo.test")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restaurar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Eliminar" })).toBeNull();
+    expect(posts).toEqual([]);
   });
 });

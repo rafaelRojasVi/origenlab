@@ -277,7 +277,8 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
 /**
  * CRM authoring commands: freeform create/update/archive/restore/merge of person/organization/
  * contact_point, classification and product-line links, supplier-candidate resolution, and
- * notes (add, revise, archive). Twenty-seven exact paths under `/v2/commands/`. None is
+ * notes (add, revise, archive), and the explicit restore of a soft-removed organization domain.
+ * Twenty-eight exact paths under `/v2/commands/`. None is
  * evidence-bound, and none of the evidence-bound commands (create-organization, confirm-
  * organization, attach-contact-address, attribute-sender-organization, confirm-person-from-
  * evidence, the six case commands, apply-unsubscribe-replies, preview) is listed here — they
@@ -306,6 +307,7 @@ export const CRM_AUTHORING_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/remove-organization-identifier$/,
   /^\/v2\/commands\/add-organization-domain$/,
   /^\/v2\/commands\/remove-organization-domain$/,
+  /^\/v2\/commands\/restore-organization-domain$/,
   /^\/v2\/commands\/add-organization-classification$/,
   /^\/v2\/commands\/remove-organization-classification$/,
   /^\/v2\/commands\/link-organization-product-line$/,

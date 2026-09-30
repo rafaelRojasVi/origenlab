@@ -28,6 +28,7 @@ import {
   refusalOf,
   removeOrganizationClassification,
   removeOrganizationDomain,
+  restoreOrganizationDomain,
   removeOrganizationIdentifier,
   restoreOrganization,
   unlinkOrganizationProductLine,
@@ -532,8 +533,14 @@ function DomainSection({ domains, organizationId, orgVersion, mayAuthor, onRefre
   const [adding, setAdding] = useState(false);
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  const [restoreId, setRestoreId] = useState<string | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
   const active = domains.filter((d) => !d.removed_at);
-  const removeTarget = removeId ? domains.find((d) => d.id === removeId) ?? null : null;
+  // Soft-removed rows stay on the organization; an operator may bring one back on the same
+  // row (never a duplicate), and only here — a domain is never restored onto another organization.
+  const removed = domains.filter((d) => !!d.removed_at);
+  const removeTarget = removeId ? active.find((d) => d.id === removeId) ?? null : null;
+  const restoreTarget = restoreId ? removed.find((d) => d.id === restoreId) ?? null : null;
   return (
     <Section title={`Dominios (${active.length})`} aside={
       mayAuthor ? <button type="button" onClick={() => setAdding(true)} className="h-6 rounded-md border border-line bg-canvas-raised px-2.5 text-[11px] font-medium text-ink hover:bg-canvas-sunken">Agregar</button> : null
@@ -552,6 +559,59 @@ function DomainSection({ domains, organizationId, orgVersion, mayAuthor, onRefre
           ))}
         </ul>
       )}
+      {removed.length > 0 ? (
+        <details className="mt-2 rounded-md border border-dashed border-line" data-testid="removed-domains">
+          <summary className="cursor-pointer list-none px-3 py-1.5 text-[11px] text-ink-faint">
+            Eliminados ({removed.length})
+          </summary>
+          <ul className="divide-y divide-line border-t border-line" aria-label="Dominios eliminados">
+            {removed.map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+                <span className="font-mono text-ink-muted line-through">{d.domain_norm}</span>
+                {d.scope ? <Badge glyph={false}>{d.scope}</Badge> : null}
+                <span className="text-[11px] text-ink-faint">
+                  Eliminado el {fmtDate(d.removed_at)}
+                  {d.remove_reason ? ` — ${d.remove_reason}` : ""}
+                </span>
+                {mayAuthor ? (
+                  <button
+                    type="button"
+                    onClick={() => { setRestoreId(d.id); setRestoreError(null); }}
+                    className="ml-auto text-[11px] font-medium text-ink hover:underline"
+                  >
+                    Restaurar
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {restoreTarget ? (
+        <ConfirmDialog
+          title="Restaurar dominio"
+          lines={[
+            `Se restaurará el dominio "${restoreTarget.domain_norm}" en esta organización.`,
+            "Vuelve a estar vigente sobre la misma fila; ningún dominio se traslada a otra organización.",
+          ]}
+          requireReason
+          reasonLabel="Motivo"
+          confirmLabel="Restaurar"
+          error={restoreError}
+          onCancel={() => { setRestoreId(null); setRestoreError(null); }}
+          onConfirm={async (reason) => {
+            try {
+              await restoreOrganizationDomain({ organization_id: organizationId, expected_version: orgVersion, domain_id: restoreTarget.id, note: reason });
+              setRestoreId(null);
+              setRestoreError(null);
+              onRefresh();
+            } catch (err) {
+              const r = refusalOf(err);
+              setRestoreError(r ? `${r.code}: ${r.message}` : String(err));
+            }
+          }}
+        />
+      ) : null}
       {removeTarget ? (
         <ConfirmDialog
           title="Eliminar dominio"

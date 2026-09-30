@@ -1232,7 +1232,7 @@ describe("V2 durable read boundary allowlist", () => {
 });
 
 describe("CRM authoring command POST allowlist", () => {
-  const ALL_27_AUTHORING_PATHS = [
+  const ALL_28_AUTHORING_PATHS = [
     "/v2/commands/create-person",
     "/v2/commands/update-person",
     "/v2/commands/archive-person",
@@ -1251,6 +1251,7 @@ describe("CRM authoring command POST allowlist", () => {
     "/v2/commands/remove-organization-identifier",
     "/v2/commands/add-organization-domain",
     "/v2/commands/remove-organization-domain",
+    "/v2/commands/restore-organization-domain",
     "/v2/commands/add-organization-classification",
     "/v2/commands/remove-organization-classification",
     "/v2/commands/link-organization-product-line",
@@ -1262,18 +1263,18 @@ describe("CRM authoring command POST allowlist", () => {
     "/v2/commands/archive-note",
   ];
 
-  it("isAllowedCrmAuthoringCommandPostPath allows all 27 exact paths", async () => {
+  it("isAllowedCrmAuthoringCommandPostPath allows all 28 exact paths", async () => {
     const { isAllowedCrmAuthoringCommandPostPath } = await import("./allowlist");
-    for (const path of ALL_27_AUTHORING_PATHS) {
+    for (const path of ALL_28_AUTHORING_PATHS) {
       expect(isAllowedCrmAuthoringCommandPostPath(path), path).toBe(true);
     }
     // Query string is stripped: path still matches
     expect(isAllowedCrmAuthoringCommandPostPath("/v2/commands/create-person?x=1")).toBe(true);
   });
 
-  it("isAllowedPostPath admits all 27 authoring paths", async () => {
+  it("isAllowedPostPath admits all 28 authoring paths", async () => {
     const { isAllowedPostPath } = await import("./allowlist");
-    for (const path of ALL_27_AUTHORING_PATHS) {
+    for (const path of ALL_28_AUTHORING_PATHS) {
       expect(isAllowedPostPath(path), path).toBe(true);
     }
   });
@@ -1297,9 +1298,9 @@ describe("CRM authoring command POST allowlist", () => {
     }
   });
 
-  it("none of the 27 authoring command paths are GET-readable", async () => {
+  it("none of the 28 authoring command paths are GET-readable", async () => {
     const { isAllowedUpstreamPath } = await import("./allowlist");
-    for (const path of ALL_27_AUTHORING_PATHS) {
+    for (const path of ALL_28_AUTHORING_PATHS) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
     }
   });
