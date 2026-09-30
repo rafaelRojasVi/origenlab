@@ -1196,14 +1196,14 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("keeps the eleven real V2 command routes unreachable through this Worker", async () => {
+  it("keeps the twelve evidence-bound V2 command routes unreachable through this Worker", async () => {
     // The command boundary EXISTS in apps/api: POST /v2/commands/* records durable human
-    // decisions -- five about staged evidence, and six about a commercial case, which now
-    // include opening one, naming who is asking, and moving it through its stages. Building
-    // that boundary and letting a browser reach it are two separate decisions, and only the
-    // first has been taken. Until the second is taken deliberately, the Worker forwards
-    // neither the method nor the path -- so the operator workspace stays a preview by
-    // construction rather than by discipline.
+    // decisions -- six about staged evidence (including confirm-person-from-evidence), and six
+    // about a commercial case, which include opening one, naming who is asking, and moving it
+    // through its stages. Building that boundary and letting a browser reach it are two separate
+    // decisions, and only the first has been taken. Until the second is taken deliberately, the
+    // Worker forwards neither the method nor the path -- so the operator workspace stays a
+    // preview by construction rather than by discipline.
     //
     // The list is written out in full on purpose. A route added to apps/api and forgotten
     // here would be forgotten silently; a route added here that does not exist costs one
@@ -1216,6 +1216,7 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/create-organization",
       "/v2/commands/attach-contact-address",
       "/v2/commands/attribute-sender-organization",
+      "/v2/commands/confirm-person-from-evidence",
       // the commercial case
       "/v2/commands/open-commercial-case",
       "/v2/commands/link-case-evidence",
@@ -1226,6 +1227,123 @@ describe("V2 durable read boundary allowlist", () => {
     ]) {
       expect(isAllowedPostPath(path)).toBe(false);
       expect(isAllowedUpstreamPath(path)).toBe(false);
+    }
+  });
+});
+
+describe("CRM authoring command POST allowlist", () => {
+  const ALL_27_AUTHORING_PATHS = [
+    "/v2/commands/create-person",
+    "/v2/commands/update-person",
+    "/v2/commands/archive-person",
+    "/v2/commands/restore-person",
+    "/v2/commands/merge-people",
+    "/v2/commands/add-contact-point",
+    "/v2/commands/update-contact-point",
+    "/v2/commands/deactivate-contact-point",
+    "/v2/commands/link-person-organization",
+    "/v2/commands/unlink-person-organization",
+    "/v2/commands/register-organization",
+    "/v2/commands/update-organization",
+    "/v2/commands/archive-organization",
+    "/v2/commands/restore-organization",
+    "/v2/commands/add-organization-identifier",
+    "/v2/commands/remove-organization-identifier",
+    "/v2/commands/add-organization-domain",
+    "/v2/commands/remove-organization-domain",
+    "/v2/commands/add-organization-classification",
+    "/v2/commands/remove-organization-classification",
+    "/v2/commands/link-organization-product-line",
+    "/v2/commands/unlink-organization-product-line",
+    "/v2/commands/confirm-supplier-candidate",
+    "/v2/commands/reject-supplier-candidate",
+    "/v2/commands/add-note",
+    "/v2/commands/revise-note",
+    "/v2/commands/archive-note",
+  ];
+
+  it("isAllowedCrmAuthoringCommandPostPath allows all 27 exact paths", async () => {
+    const { isAllowedCrmAuthoringCommandPostPath } = await import("./allowlist");
+    for (const path of ALL_27_AUTHORING_PATHS) {
+      expect(isAllowedCrmAuthoringCommandPostPath(path), path).toBe(true);
+    }
+    // Query string is stripped: path still matches
+    expect(isAllowedCrmAuthoringCommandPostPath("/v2/commands/create-person?x=1")).toBe(true);
+  });
+
+  it("isAllowedPostPath admits all 27 authoring paths", async () => {
+    const { isAllowedPostPath } = await import("./allowlist");
+    for (const path of ALL_27_AUTHORING_PATHS) {
+      expect(isAllowedPostPath(path), path).toBe(true);
+    }
+  });
+
+  it("refuses neighbours: trailing slash, uppercase, -and-delete, delete-person, bare /v2/commands/", async () => {
+    const { isAllowedCrmAuthoringCommandPostPath, isAllowedPostPath } = await import("./allowlist");
+    for (const path of [
+      "/v2/commands/create-person/",           // trailing slash
+      "/v2/commands/Create-Person",            // uppercase
+      "/v2/commands/create-person-and-delete", // -and-delete neighbour
+      "/v2/commands/delete-person",            // delete variant
+      "/v2/commands/",                         // bare prefix
+      "/v2/commands/archive-person/extra",     // extra segment
+      "/v2/commands/ADD-NOTE",                 // uppercase
+      "/v2/commands/archive-note/",            // trailing slash
+      "/v2/commands/register-organization-and-send",
+      "/v2/commands/confirm-supplier-candidate/approve",
+    ]) {
+      expect(isAllowedCrmAuthoringCommandPostPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("none of the 27 authoring command paths are GET-readable", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of ALL_27_AUTHORING_PATHS) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+});
+
+describe("CRM authoring GET reads allowlist", () => {
+  const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+
+  it("forwards the three exact authoring reads, GET only", async () => {
+    const { isAllowedUpstreamPath, isAllowedPostPath } = await import("./allowlist");
+    const allowed = [
+      `/v2/workspace/people/${uuid}`,
+      "/v2/workspace/people/merge-preview",
+      `/v2/workspace/organizations/${uuid}/authoring`,
+    ];
+    for (const path of allowed) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(`${path}?x=1`), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("refuses the bare people list and per-person notes (not yet a browser surface)", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/people")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/workspace/people/")).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/workspace/people/${uuid}/notes`)).toBe(false);
+  });
+
+  it("refuses neighbours: uppercase uuid, trailing slash, extra segment, wrong shape", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of [
+      `/v2/workspace/people/${uuid.toUpperCase()}`,
+      `/v2/workspace/people/${uuid}/`,
+      `/v2/workspace/people/${uuid}/extra`,
+      "/v2/workspace/people/not-a-uuid",
+      "/v2/workspace/people/merge-preview/",
+      "/v2/workspace/people/merge-preview/extra",
+      `/v2/workspace/organizations/${uuid}/authoring/`,
+      `/v2/workspace/organizations/${uuid}/authoring/extra`,
+      `/v2/workspace/organizations/${uuid.toUpperCase()}/authoring`,
+      `/v2/workspace/organizations/${uuid}`,
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
     }
   });
 });
