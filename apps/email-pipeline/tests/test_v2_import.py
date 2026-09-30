@@ -1063,7 +1063,19 @@ def test_the_importer_opens_no_gmail_and_changes_no_send_state() -> None:
     for module in sorted(package.glob("*.py")):
         source = module.read_text(encoding="utf-8")
         assert "send_control" not in source, f"{module.name} touches the send flags"
-        assert "gmail" not in source.lower().replace("'gmail'", "").replace('"gmail"', ""), (
+        # Strip known-safe Gmail references before the check:
+        # • 'gmail' / "gmail" — the mailbox provider literal (plan.py)
+        # • gmail_message_id — the V1 SQLite column name (campaign_content_recovery.py reads it
+        #   by name from V1 rows; this is a column identifier, not a Gmail API call)
+        # • [gmail]/ — the V1 folder prefix stored in the emails table
+        safe_stripped = (
+            source.lower()
+            .replace("'gmail'", "")
+            .replace('"gmail"', "")
+            .replace("gmail_message_id", "")
+            .replace("[gmail]/", "")
+        )
+        assert "gmail" not in safe_stripped, (
             f"{module.name} references Gmail beyond the mailbox provider literal"
         )
 
@@ -1352,6 +1364,14 @@ def clean_db() -> Any:
             cur.execute(f"alter table outbound.{table} disable trigger {trigger}")
         cur.execute("delete from outbound.send_attempt")
         cur.execute("delete from outbound.campaign_recipient")
+        # Slice 6 tables reference campaign and must be cleared first.
+        # Their immutability triggers prevent DELETE unconditionally, so disable them first.
+        cur.execute("alter table outbound.campaign_content_message disable trigger campaign_content_message_immutable")
+        cur.execute("alter table outbound.campaign_content disable trigger campaign_content_immutable")
+        cur.execute("delete from outbound.campaign_content_message")
+        cur.execute("delete from outbound.campaign_content")
+        cur.execute("alter table outbound.campaign_content enable trigger campaign_content_immutable")
+        cur.execute("alter table outbound.campaign_content_message enable trigger campaign_content_message_immutable")
         cur.execute("delete from outbound.campaign")
         for table, trigger in guards:
             cur.execute(f"alter table outbound.{table} enable trigger {trigger}")
