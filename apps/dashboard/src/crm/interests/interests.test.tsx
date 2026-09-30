@@ -122,8 +122,9 @@ describe("ProvidersPage", () => {
     // A matching candidate is a hint on the brand, still unreviewed — not a directory entry.
     expect(within(dir).getByText(/Candidatos que la citan: hielscher\.invalid · sin revisar/)).toBeInTheDocument();
     expect(within(dir).queryByText("otro.invalid")).toBeNull();
-    // No action that confirms a candidate is enabled.
-    expect(screen.getByText("Confirmar como proveedor").closest("button")).toBeDisabled();
+    // No session → no write affordance for candidates at all.
+    expect(screen.queryByText(/Confirmar/)).toBeNull();
+    expect(screen.queryByText(/Rechazar/)).toBeNull();
   });
 });
 

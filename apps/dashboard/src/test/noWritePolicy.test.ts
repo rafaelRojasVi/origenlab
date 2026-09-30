@@ -30,7 +30,7 @@ describe("dashboard read-only policy", () => {
     expect(entries.length).toBeGreaterThan(5);
   });
 
-  // The dashboard records no commercial decision. Two modules may issue a mutating request:
+  // The dashboard records no commercial decision. Three modules may issue a mutating request:
   //  - authClient.ts's one POST site, to exactly four sign-in paths: `/auth/logout` (clears the
   //    session), `/auth/profile/select` and `/auth/profile/clear` (choose or leave an operator
   //    profile behind a shared Workspace sign-in; the API verifies the PIN), and the API's
@@ -42,9 +42,13 @@ describe("dashboard read-only policy", () => {
   //    it as a permanent unsubscribe; an admin dismisses a false positive), and the admin-only
   //    *block* / *unblock*, which place or lift a campaign safety block that only refuses. None
   //    approves, schedules or sends anything, and none lifts a confirmed unsubscribe.
+  //  - crmAuthoringApi.ts's POST to the 27 CRM authoring commands: freeform create/update/archive
+  //    of person/organization/contact_point, affiliations, product lines, supplier candidates,
+  //    and notes. All go through the API's Deciding role check (sales or admin).
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
+  const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";
   const CAMPAIGN_DRAFT_PATHS = [
     "/v2/commands/create-campaign-draft",
     "/v2/commands/save-campaign-draft",
@@ -55,8 +59,37 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/block-campaign",
     "/v2/commands/unblock-campaign",
   ];
+  const CRM_AUTHORING_PATHS = [
+    "/v2/commands/create-person",
+    "/v2/commands/update-person",
+    "/v2/commands/archive-person",
+    "/v2/commands/restore-person",
+    "/v2/commands/merge-people",
+    "/v2/commands/add-contact-point",
+    "/v2/commands/update-contact-point",
+    "/v2/commands/deactivate-contact-point",
+    "/v2/commands/link-person-organization",
+    "/v2/commands/unlink-person-organization",
+    "/v2/commands/register-organization",
+    "/v2/commands/update-organization",
+    "/v2/commands/archive-organization",
+    "/v2/commands/restore-organization",
+    "/v2/commands/add-organization-identifier",
+    "/v2/commands/remove-organization-identifier",
+    "/v2/commands/add-organization-domain",
+    "/v2/commands/remove-organization-domain",
+    "/v2/commands/add-organization-classification",
+    "/v2/commands/remove-organization-classification",
+    "/v2/commands/link-organization-product-line",
+    "/v2/commands/unlink-organization-product-line",
+    "/v2/commands/confirm-supplier-candidate",
+    "/v2/commands/reject-supplier-candidate",
+    "/v2/commands/add-note",
+    "/v2/commands/revise-note",
+    "/v2/commands/archive-note",
+  ];
 
-  it("allows only the logout POST and the campaign-command POST", () => {
+  it("allows only the logout POST, the campaign-command POST, and the CRM authoring POST", () => {
     const hits: string[] = [];
     for (const [path, text] of entries) {
       if (!MUTATION_METHOD.test(text) && !FORBIDDEN_FETCH.test(text)) continue;
@@ -68,6 +101,17 @@ describe("dashboard read-only policy", () => {
         const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
         if (JSON.stringify(commandPaths) !== JSON.stringify([...CAMPAIGN_DRAFT_PATHS].sort())) {
           hits.push(`${path} (may target only ${CAMPAIGN_DRAFT_PATHS.join(" and ")}, found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
+      if (path === CRM_AUTHORING_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...CRM_AUTHORING_PATHS].sort())) {
+          hits.push(`${path} (CRM authoring paths mismatch: found ${commandPaths.join(", ")})`);
         }
         continue;
       }
@@ -104,9 +148,9 @@ describe("dashboard read-only policy", () => {
     expect(hits).toEqual([]);
   });
 
-  it("names no V2 command outside the campaign client", () => {
+  it("names no V2 command outside the campaign client and the CRM authoring client", () => {
     const hits = entries
-      .filter(([path, text]) => path !== CAMPAIGN_DRAFT_FILE && /\/v2\/commands\//.test(text))
+      .filter(([path, text]) => path !== CAMPAIGN_DRAFT_FILE && path !== CRM_AUTHORING_FILE && /\/v2\/commands\//.test(text))
       .map(([path]) => path);
     expect(hits).toEqual([]);
   });

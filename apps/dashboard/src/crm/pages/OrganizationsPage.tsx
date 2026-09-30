@@ -31,6 +31,9 @@ import {
   initials,
 } from "../ui";
 import { useResource } from "../useResource";
+import { useMayAuthorCrm, useIsAdmin } from "../authoring/authoring";
+import { NewOrganizationForm } from "../authoring/NewOrganizationForm";
+import { OrgAuthoringSection } from "../authoring/OrgAuthoringSection";
 
 type Scope = "cases" | "all";
 
@@ -69,6 +72,9 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
   }, [pipeline]);
   const [openId, setOpenId] = useState<string | null>(null);
   const interests = useEquipmentInterests();
+  const mayAuthor = useMayAuthorCrm();
+  const admin = useIsAdmin();
+  const [showNewOrg, setShowNewOrg] = useState(false);
   const [line, setLine] = useState<string | null>(null);
   const interestsOf = (id: string) => (interests.kind === "ready" ? interests.data.byOrganization.get(id) : undefined);
   const openLine = (familyId: string) => {
@@ -81,6 +87,17 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
       <PageHeader
         title="Organizaciones"
         subtitle="Instituciones del CRM, ordenadas por conexiones durables. Las propuestas por máquina se marcan como tales."
+        actions={
+          mayAuthor ? (
+            <button
+              type="button"
+              onClick={() => setShowNewOrg(true)}
+              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black"
+            >
+              Nueva organización
+            </button>
+          ) : null
+        }
       />
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <Segmented
@@ -155,12 +172,20 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
                 interestState={interests}
                 interests={open ? interestsOf(open.organization_id) : undefined}
                 onSelectLine={openLine}
+                mayAuthor={mayAuthor}
+                admin={admin}
               />
             </>
           );
         }}
       </ResourceGate>
       <EquipmentLineDrawer state={interests} familyId={line} onClose={() => setLine(null)} />
+      {showNewOrg ? (
+        <NewOrganizationForm
+          onDone={() => { setShowNewOrg(false); reload(); }}
+          onCancel={() => setShowNewOrg(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -251,11 +276,15 @@ function OrgDrawer({
   interestState,
   interests,
   onSelectLine,
+  mayAuthor = false,
+  admin = false,
 }: {
   org: V2Organization | null;
   cases: OpportunityCardData[];
   onClose: () => void;
   navigate: (s: CrmSection, id?: string) => void;
+  mayAuthor?: boolean;
+  admin?: boolean;
 } & InterestProps) {
   if (!org) return null;
   const roles: [string, number][] = [
@@ -320,6 +349,9 @@ function OrgDrawer({
             : "Sin personas registradas: el CRM aún no vincula direcciones ni personas a instituciones."}
         </p>
       </Section>
+      {mayAuthor || admin ? (
+        <OrgAuthoringSection organizationId={org.organization_id} mayAuthor={mayAuthor} admin={admin} />
+      ) : null}
       <p className="font-mono text-[10px] text-ink-faint">organization {org.organization_id}</p>
     </Drawer>
   );

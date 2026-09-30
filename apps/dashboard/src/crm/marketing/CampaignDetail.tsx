@@ -11,7 +11,7 @@ import { CampaignHoldPanel } from "./CampaignHolds";
 import { EmailFrame } from "./EmailFrame";
 import { useMayAuthorCampaigns } from "./authoring";
 import { fetchCampaignArchive, newIdempotencyKey, refusalOf, setCampaignPlanning } from "./marketingApi";
-import type { CampaignArchive, EquipmentTaxonomy } from "./marketingTypes";
+import type { CampaignArchive, CampaignContentRecord, EquipmentTaxonomy } from "./marketingTypes";
 
 export type DetailTab = "resumen" | "html" | "destinatarios" | "respuestas" | "auditoria";
 
@@ -35,7 +35,7 @@ const RECIPIENT_LABEL: Record<string, string> = {
   unsubscribed: "Baja",
 };
 
-const HTML_STATE: Record<Exclude<CampaignArchive["html_state"], "archived_verified">, { title: string; body: string }> = {
+const HTML_STATE: Record<Exclude<CampaignArchive["html_state"], "archived_verified" | "sent_html_archived" | "historical_draft">, { title: string; body: string }> = {
   not_archived: {
     title: "HTML enviado no archivado",
     body: "El registro histórico de esta campaña no incluye el HTML que se envió. No se reconstruye ni se sustituye por un borrador.",
@@ -52,6 +52,24 @@ const HTML_STATE: Record<Exclude<CampaignArchive["html_state"], "archived_verifi
     title: "HTML archivado no verificable",
     body: "El HTML guardado no coincide con la huella registrada al congelar. No se muestra.",
   },
+  not_recovered: {
+    title: "HTML no recuperado",
+    body: "No se encontró ninguna copia del HTML enviado en el registro de correo archivado. El HTML no se reconstruye ni se sustituye.",
+  },
+  ambiguous_attribution: {
+    title: "Atribución ambigua",
+    body: "Varias variantes comparten el mismo asunto y no se puede atribuir de forma unívoca. El HTML no se atribuye nunca por asunto solamente; se requiere trazabilidad de destinatario.",
+  },
+};
+
+const ATTRIBUTION_METHOD_LABEL: Record<CampaignContentRecord["attribution_method"], string> = {
+  gmail_message_id: "id de Gmail",
+  recipient_lineage_timestamp: "lineage de destinatario + ventana de tiempo",
+};
+
+const ATTRIBUTION_CONFIDENCE_LABEL: Record<CampaignContentRecord["attribution_confidence"], string> = {
+  exact: "exacta",
+  corroborated: "corroborada",
 };
 
 type PreviewMode = "desktop" | "mobile" | "raw";
@@ -250,20 +268,143 @@ function AttemptsPanel({ archive: a }: { archive: CampaignArchive }) {
   );
 }
 
+/** Short date range for variant switcher label. */
+function variantDateRange(first: string | null, last: string | null): string {
+  if (!first) return "";
+  const f = fmtLongDay(first.slice(0, 10));
+  if (!last || first.slice(0, 10) === last.slice(0, 10)) return f;
+  return `${fmtLongDay(first.slice(0, 10))}–${fmtLongDay(last.slice(0, 10))}`;
+}
+
 function SentHtml({ archive: a }: { archive: CampaignArchive }) {
   const [mode, setMode] = useState<PreviewMode>("desktop");
+  const [variantIdx, setVariantIdx] = useState(0);
   const [blocked, setBlocked] = useState<{ images: number; removed: string[] }>({ images: 0, removed: [] });
   const onBlocked = useMemo(
     () => (images: string[], removed: string[]) => setBlocked({ images: images.length, removed }),
     [],
   );
+
+  // Handle recovered variants from campaign_content
+  if (a.html_state === "sent_html_archived" || a.html_state === "historical_draft") {
+    const contents = a.contents ?? [];
+    const variant = contents[variantIdx] ?? contents[0];
+    const isDraft = a.html_state === "historical_draft";
+    const panelNote = isDraft ? undefined : "Instantánea inmutable, verificada con su huella";
+
+    return (
+      <Panel
+        title="Contenido enviado"
+        note={panelNote}
+        aside={
+          <Segmented
+            label="Vista del correo"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: "desktop", label: "Escritorio" },
+              { value: "mobile", label: "Móvil" },
+              { value: "raw", label: "HTML" },
+            ]}
+          />
+        }
+      >
+        {/* State header */}
+        <div className="border-b border-line bg-canvas-sunken px-3 py-2 text-xs" data-testid="html-state-header" data-state={a.html_state}>
+          {isDraft ? (
+            <p className="font-semibold text-warn" data-testid="html-state-label">Borrador histórico</p>
+          ) : (
+            <p className="font-semibold text-good" data-testid="html-state-label">HTML enviado archivado</p>
+          )}
+          {isDraft ? (
+            <p className="text-ink-muted">Recuperado como borrador del archivo histórico; no se puede confirmar que fuese el HTML enviado.</p>
+          ) : (
+            <p className="text-ink-muted">HTML recuperado del archivo de correo enviado, verificado por huella.</p>
+          )}
+        </div>
+
+        {/* Variant switcher when more than one variant */}
+        {contents.length > 1 ? (
+          <div className="flex flex-wrap gap-1.5 border-b border-line px-3 py-2" data-testid="variant-switcher">
+            {contents.map((v, i) => (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => setVariantIdx(i)}
+                className={`rounded-md border px-2.5 py-1 text-xs ${i === variantIdx ? "border-brand-600 bg-brand-50 font-semibold text-brand-700" : "border-line text-ink hover:bg-canvas-sunken"}`}
+                data-testid={`variant-btn-${i}`}
+              >
+                {`Variante ${v.variant_no} · ${fmtInt(v.message_count)} mensajes · ${variantDateRange(v.first_sent_at, v.last_sent_at)}`}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {/* Subject / preheader for selected variant */}
+        {variant ? (
+          <div className="border-b border-line px-3 py-2 text-xs">
+            <p className="font-semibold text-ink">{variant.subject ?? a.subject ?? "Sin asunto registrado"}</p>
+            <p className="text-ink-muted">{variant.preheader ?? a.preheader ?? <span className="text-ink-faint">Sin preheader</span>}</p>
+          </div>
+        ) : null}
+
+        {/* Provenance line */}
+        {variant ? (
+          <div className="border-b border-line px-3 py-2 text-[11px] text-ink-muted" data-testid="variant-provenance">
+            <span>{fmtInt(variant.message_count)} mensajes</span>
+            {variant.first_sent_at ? <span> · primer envío {santiagoTime(variant.first_sent_at)}</span> : null}
+            {variant.last_sent_at ? <span> · último {santiagoTime(variant.last_sent_at)}</span> : null}
+            <span> · método «{ATTRIBUTION_METHOD_LABEL[variant.attribution_method]}»</span>
+            <span> · confianza {ATTRIBUTION_CONFIDENCE_LABEL[variant.attribution_confidence]}</span>
+            <span> · política {variant.attribution_policy_version}</span>
+            {variant.unmatched_attempt_count > 0 ? <span> · {fmtInt(variant.unmatched_attempt_count)} intentos sin copia</span> : null}
+            <span> · hash {variant.hash_verified ? <span className="text-good">✓ verificado</span> : <span className="text-bad">✗ no verificado</span>}</span>
+          </div>
+        ) : null}
+
+        {/* HTML preview */}
+        {variant ? (
+          mode === "raw" ? (
+            <pre
+              className="max-h-[48rem] overflow-auto whitespace-pre-wrap break-all bg-canvas-sunken p-3 font-mono text-[11px] leading-relaxed text-ink"
+              data-testid="raw-html"
+              aria-label="HTML enviado, sólo lectura"
+            >
+              {variant.body_html}
+            </pre>
+          ) : (
+            <div className="flex justify-center overflow-x-auto bg-canvas-sunken p-3" data-testid={`preview-${mode}`}>
+              <div className={mode === "mobile" ? "rounded-[1.5rem] border-[6px] border-ink/80 bg-white shadow-sm" : "bg-white shadow-sm"}>
+                <EmailFrame
+                  html={variant.body_html}
+                  width={mode === "mobile" ? 375 : 640}
+                  height={mode === "mobile" ? 700 : 860}
+                  title={`Correo enviado: ${a.name} (${mode === "mobile" ? "móvil" : "escritorio"})`}
+                  onBlocked={onBlocked}
+                />
+              </div>
+            </div>
+          )
+        ) : null}
+        {variant ? (
+          <p className="border-t border-line px-3 py-1.5 text-[11px] text-ink-faint" data-testid="preview-safety">
+            Vista aislada: sin scripts, formularios ni navegación; los enlaces no abren nada.
+            {blocked.images ? ` ${blocked.images} imagen(es) remota(s) no cargada(s) (posible seguimiento).` : ""}
+            {blocked.removed.length ? ` Eliminado: ${blocked.removed.join(", ")}.` : ""}
+          </p>
+        ) : null}
+      </Panel>
+    );
+  }
+
   if (a.html === null) {
-    const note = HTML_STATE[a.html_state as Exclude<CampaignArchive["html_state"], "archived_verified">];
+    // not_recovered or ambiguous_attribution or other plain-null states
+    const note = HTML_STATE[a.html_state as Exclude<CampaignArchive["html_state"], "archived_verified" | "sent_html_archived" | "historical_draft">];
     return (
       <Panel title="Contenido enviado">
         <div className="flex min-h-[16rem] flex-col items-center justify-center gap-1 px-6 py-10 text-center" data-testid="html-unavailable" data-state={a.html_state}>
-          <p className="text-sm font-semibold text-ink">{note.title}</p>
-          <p className="max-w-md text-xs text-ink-muted">{note.body}</p>
+          <p className="text-sm font-semibold text-ink">{note?.title ?? a.html_state}</p>
+          <p className="max-w-md text-xs text-ink-muted">{note?.body ?? ""}</p>
         </div>
       </Panel>
     );

@@ -140,6 +140,8 @@ export interface CampaignSummary {
   preheader?: string | null;
   /** Whether the stored campaign has HTML content. False means it was never imported. */
   has_html?: boolean;
+  /** Per-campaign html_state from the archive read, included in the marketing list when available. */
+  html_state?: "archived_verified" | "not_archived" | "not_frozen" | "no_html" | "fingerprint_mismatch" | "sent_html_archived" | "historical_draft" | "not_recovered" | "ambiguous_attribution";
   version?: number;
   approved_at: string | null;
   created_at: string | null;

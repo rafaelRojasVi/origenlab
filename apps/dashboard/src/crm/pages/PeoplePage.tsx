@@ -29,6 +29,9 @@ import {
   type InterestData,
 } from "../interests/EquipmentInterests";
 import type { ResourceState } from "../useResource";
+import { useMayAuthorCrm } from "../authoring/authoring";
+import { NewPersonForm } from "../authoring/NewPersonForm";
+import { PersonDrawer } from "../authoring/PersonDrawer";
 
 interface Recipient {
   address: string;
@@ -57,12 +60,26 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
   const redacted = contactAddressesRedacted(session);
   const interests = useEquipmentInterests();
   const [line, setLine] = useState<string | null>(null);
+  const mayAuthor = useMayAuthorCrm();
+  const [showNewPerson, setShowNewPerson] = useState(false);
+  const [openPersonId, setOpenPersonId] = useState<string | null>(null);
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Personas"
         subtitle="Quién está al otro lado de cada caso. Una dirección de correo no es una persona hasta que un operador la registra."
+        actions={
+          mayAuthor ? (
+            <button
+              type="button"
+              onClick={() => setShowNewPerson(true)}
+              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black"
+            >
+              Nuevo contacto
+            </button>
+          ) : null
+        }
       />
       {redacted ? (
         <p
@@ -119,7 +136,17 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
                   {page.items.map((c) => (
                     <li key={c.contact_point_id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
                       <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{c.address}</span>
-                      {c.person_display_name ? <Badge tone="good">{c.person_display_name}</Badge> : null}
+                      {c.person_display_name && c.person_id ? (
+                        <button
+                          type="button"
+                          onClick={() => setOpenPersonId(c.person_id!)}
+                          className="rounded-full border border-line bg-good-bg px-1.5 py-px text-[11px] font-medium text-good hover:border-good/40"
+                        >
+                          {c.person_display_name}
+                        </button>
+                      ) : c.person_display_name ? (
+                        <Badge tone="good">{c.person_display_name}</Badge>
+                      ) : null}
                       {c.organization_name ? <Badge glyph={false}>{c.organization_name}</Badge> : null}
                       <Badge tone={c.confirmation === "confirmed" ? "good" : "neutral"} glyph={false}>
                         {c.confirmation === "confirmed" ? "Confirmada" : "Importada"}
@@ -146,6 +173,19 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
         </ResourceGate>
       </Panel>
       <EquipmentLineDrawer state={interests} familyId={line} onClose={() => setLine(null)} />
+      {showNewPerson ? (
+        <NewPersonForm
+          onDone={() => { setShowNewPerson(false); reloadContacts(); }}
+          onCancel={() => setShowNewPerson(false)}
+        />
+      ) : null}
+      {openPersonId ? (
+        <PersonDrawer
+          personId={openPersonId}
+          onClose={() => setOpenPersonId(null)}
+          mayAuthor={mayAuthor}
+        />
+      ) : null}
     </div>
   );
 }

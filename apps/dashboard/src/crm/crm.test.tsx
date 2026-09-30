@@ -363,9 +363,11 @@ describe("dashboard shell", () => {
 });
 
 describe("no write path in the CRM workspace", () => {
-  // One exception, pinned by src/test/noWritePolicy.test.ts: the campaign-draft client may POST
-  // to exactly the two draft commands. It records email copy, never a commercial decision.
+  // Two exceptions, pinned by src/test/noWritePolicy.test.ts:
+  //  - the campaign-draft client (marketingApi.ts) POSTs to campaign commands.
+  //  - the CRM authoring client (crmAuthoringApi.ts) POSTs to CRM authoring commands.
   const DRAFT_CLIENT = "./marketing/marketingApi.ts";
+  const CRM_AUTHORING_CLIENT = "./authoring/crmAuthoringApi.ts";
 
   it("never issues a non-GET request or references a command route", () => {
     const sources = import.meta.glob(["./**/*.ts", "./**/*.tsx", "!./**/*.test.tsx", "!./**/*.test.ts"], {
@@ -376,7 +378,7 @@ describe("no write path in the CRM workspace", () => {
     expect(Object.keys(sources).length).toBeGreaterThan(5);
     expect(Object.keys(sources)).toContain(DRAFT_CLIENT);
     for (const [f, src] of Object.entries(sources)) {
-      if (f === DRAFT_CLIENT) continue;
+      if (f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);
       expect(src, f).not.toMatch(/\/operations\//);

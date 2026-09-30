@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { fetchPipeline } from "../crmApi";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
+import { useMayAuthorCrm } from "../authoring/authoring";
+import { NoteList } from "../authoring/NoteList";
 import {
   BOARD_COLUMNS,
   ORIGIN_LABEL,
@@ -385,6 +387,7 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
 }
 
 function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null; onClose: () => void }) {
+  const mayAuthor = useMayAuthorCrm();
   if (!card) return null;
   const status = STATUS_LABEL[card.status];
   const stage = stageDisplay(card);
@@ -517,6 +520,14 @@ function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null
           <DisabledAction id="drawer-revision" reason={WRITE_DISABLED_REASON}>Nueva revisión</DisabledAction>
         </div>
       </Section>
+
+      <NoteList
+        notes={[]}
+        subjectKind="opportunity"
+        subjectId={card.opportunity_id}
+        mayAuthor={mayAuthor}
+        onRefresh={() => undefined}
+      />
 
       <p className="font-mono text-[10px] text-ink-faint">opportunity {card.opportunity_id}</p>
     </Drawer>
