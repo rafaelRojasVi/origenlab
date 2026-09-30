@@ -220,7 +220,25 @@ export function DisabledAction({ children, reason, id }: { children: ReactNode; 
 
 export const WRITE_DISABLED_REASON = "Escritura desactivada hasta aprobación explícita";
 
+/** Only `http:` and `https:` may open in a new tab; `javascript:`, `data:`, `blob:` and relative values never become a link. */
+export function isSafeExternalHref(href: string): boolean {
+  try {
+    const url = new URL(href);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 export function ExternalLink({ href, children, label }: { href: string; children: ReactNode; label?: string }) {
+  if (!isSafeExternalHref(href)) {
+    // Defence in depth: every href here is server-built, but an unsafe scheme renders as inert text.
+    return (
+      <span className="text-ink-faint" title="Enlace no permitido" data-testid="external-link-refused">
+        {children}
+      </span>
+    );
+  }
   return (
     <a
       href={href}
