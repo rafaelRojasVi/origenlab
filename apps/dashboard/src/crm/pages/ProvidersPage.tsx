@@ -13,6 +13,7 @@ import {
   StatLine,
   initials,
 } from "../ui";
+import { candidateKey, candidateState, countUnreviewed, isUnreviewed } from "../supplierCandidates";
 import { useResource } from "../useResource";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NewOrganizationForm } from "../authoring/NewOrganizationForm";
@@ -87,7 +88,8 @@ function Body({
   const candidates = data.candidates.filter(
     (c) => !needle || c.domain.includes(needle) || (c.trade_name ?? "").toLowerCase().includes(needle),
   );
-  const unresolved = data.candidates.filter((c) => c.resolution === "unresolved").length;
+  // The same predicate the expanded list uses per row: one field, one answer.
+  const unresolved = countUnreviewed(data.candidates);
   return (
     <>
       <StatLine
@@ -194,8 +196,8 @@ function CandidatesList({
   );
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [rejectId, setRejectId] = useState<string | null>(null);
-  const confirmTarget = confirmId ? candidates.find((c) => (c as { assertion_id?: string }).assertion_id === confirmId) ?? null : null;
-  const rejectTarget = rejectId ? candidates.find((c) => (c as { assertion_id?: string }).assertion_id === rejectId) ?? null : null;
+  const confirmTarget = confirmId ? candidates.find((c) => c.assertion_id === confirmId) ?? null : null;
+  const rejectTarget = rejectId ? candidates.find((c) => c.assertion_id === rejectId) ?? null : null;
   return (
     <>
       <Panel
@@ -208,19 +210,19 @@ function CandidatesList({
             <EmptyState title="Ningún candidato coincide" />
           </div>
         ) : (
-          <ul className="divide-y divide-line">
-            {filtered.map((c) => {
-              const assertionId = (c as { assertion_id?: string }).assertion_id;
-              const review = (c as { review?: { state: string; decided_at?: string | null; note?: string | null } }).review;
-              const unresolved = (review?.state ?? c.resolution) === "unresolved";
+          <ul className="divide-y divide-line" aria-label="Candidatos detectados">
+            {filtered.map((c, i) => {
+              const assertionId = c.assertion_id;
+              const state = candidateState(c);
+              const unresolved = isUnreviewed(c);
               return (
-                <li key={c.domain} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+                <li key={candidateKey(c, i)} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium text-ink">{c.trade_name ?? c.domain}</p>
                     <p className="truncate text-[11px] text-ink-faint">{c.domain}</p>
                   </div>
                   <Badge tone={unresolved ? "warn" : "good"}>
-                    {review ? review.state : c.resolution === "unresolved" ? "Sin revisar" : c.resolution}
+                    {unresolved ? "Sin revisar" : state}
                   </Badge>
                   {mayAuthor && unresolved && assertionId ? (
                     <>
@@ -269,7 +271,7 @@ function CandidatesList({
 }
 
 function DirectoryCard({ entry }: { entry: SupplierDirectoryEntry }) {
-  const reviewed = entry.candidate_hints.filter((h) => h.resolution !== "unresolved").length;
+  const reviewed = entry.candidate_hints.filter((h) => !isUnreviewed(h)).length;
   return (
     <article className="flex gap-3 rounded-md border border-line bg-canvas-raised p-3" data-testid="directory-card">
       <span

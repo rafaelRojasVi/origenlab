@@ -1,3 +1,4 @@
+import type { SupplierCandidate } from "./supplierCandidates";
 import type { AudienceInterest } from "./marketing/marketingTypes";
 
 /**
@@ -122,14 +123,15 @@ export interface SupplierDirectoryEntry {
   model_count: number;
   crm_organizations: { organization_id: string; name: string; confirmation: string | null; roles: string[]; cases: number }[];
   /** Machine candidates whose domain or trade name names the brand. A hint, never a promotion. */
-  candidate_hints: { domain: string; trade_name: string | null; resolution: string }[];
+  candidate_hints: SupplierCandidate[];
 }
 
 export interface ProvidersResponse {
   /** The six catalogue brands, curated by the website — not detected. Older APIs omit it. */
   directory?: SupplierDirectoryEntry[];
   on_cases: { organization_id: string; name: string; confirmation: string; role: string; cases: number }[];
-  candidates: { domain: string; trade_name: string | null; resolution: string; mentions: number }[];
+  /** Machine candidates in `review.state` form (see supplierCandidates.ts). Never promoted here. */
+  candidates: SupplierCandidate[];
 }
 
 export interface CampaignSummary {

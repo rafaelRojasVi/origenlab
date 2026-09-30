@@ -84,7 +84,7 @@ function stub() {
       if (p.endsWith("/auth/session")) return json({ authenticated: false, google_login_enabled: true, workspace_domain: null });
       if (p.endsWith("/v2/workspace/overview")) return json({ entities: [], opportunities_by_stage: {}, organizations_by_confirmation: {}, contact_points_linked: { organization: 0, person: 0 }, assertions: [], drive_archive: { configured: false, documents: 0, revisions_with_drive_file: 0, revisions_total: 0 } });
       if (p.endsWith("/v2/workspace/pipeline")) return json({ items: [], drive_configured: false });
-      if (p.endsWith("/v2/workspace/providers")) return json({ directory: [], on_cases: [], candidates: [{ domain: "hielscher.com", trade_name: "Hielscher", resolution: "unresolved", assertion_id: "a0000000-0000-4000-8000-000000000001" }], authoring: { enabled: true } });
+      if (p.endsWith("/v2/workspace/providers")) return json({ directory: [], on_cases: [], candidates: [{ assertion_id: "a0000000-0000-4000-8000-000000000001", domain: "hielscher.com", trade_name: "Hielscher", review: { state: "unresolved", decided_at: null, note: null } }], authoring: { enabled: true } });
       if (p.includes("/v2/contacts")) return json({ items: [], total: 0 });
       if (p.endsWith("/v2/workspace/organizations")) return json({ items: [], total: 0, facets: { customers: 0, suppliers: 0, all: 0 } });
       if (p.endsWith("/v2/workspace/equipment-interests")) return json({ by_contact_point: [], by_address_ref: [], by_organization: [] });

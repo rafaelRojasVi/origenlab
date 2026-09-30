@@ -95,14 +95,14 @@ describe("ProvidersPage", () => {
     family: taxonomy.families.find((f) => f.id === b.family_id)!,
     model_count: taxonomy.models.filter((m) => m.brand_id === b.id).length,
     crm_organizations: [],
-    candidate_hints: b.id === "hielscher" ? [{ domain: "hielscher.invalid", trade_name: null, resolution: "unresolved" }] : [],
+    candidate_hints: b.id === "hielscher" ? [{ assertion_id: "a0000000-0000-4000-8000-000000000011", domain: "hielscher.invalid", trade_name: null, review: { state: "unresolved" } }] : [],
   }));
   const body: ProvidersResponse = {
     directory,
     on_cases: [],
     candidates: [
-      { domain: "hielscher.invalid", trade_name: null, resolution: "unresolved", mentions: 3 },
-      { domain: "otro.invalid", trade_name: "Otro Ltda", resolution: "unresolved", mentions: 1 },
+      { assertion_id: "a0000000-0000-4000-8000-000000000011", domain: "hielscher.invalid", trade_name: null, review: { state: "unresolved" } },
+      { assertion_id: "a0000000-0000-4000-8000-000000000012", domain: "otro.invalid", trade_name: "Otro Ltda", review: { state: "unresolved" } },
     ],
   };
 
