@@ -24,6 +24,7 @@ from origenlab_api.v2.campaign_planning import PLANNING_TIME_ZONE
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.contact_redaction import ContactRedactingRoute
+from origenlab_api.v2.crm_merge_preview import merge_preview
 from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 from origenlab_api.v2.equipment_interests import interest_index, supplier_directory
 from origenlab_api.v2.equipment_taxonomy import load_taxonomy
@@ -61,13 +62,87 @@ def get_pipeline(_: Operator, repo: Repo) -> Any:
 
 
 @workspace_router.get("/providers")
-def get_providers(_: Operator, repo: Repo) -> Any:
+def get_providers(_: Operator, repo: Repo, request: Request) -> Any:
     """The six catalogue brands first (the curated directory), then the machine candidates.
 
     A candidate is never promoted here: a brand name in its domain is shown as a hint only.
+    Lines are real CRM organizations linked to the six taxonomy product lines.
     """
     body = repo.providers()
     body["directory"] = supplier_directory(load_taxonomy(), body["on_cases"], body["candidates"])
+    body["authoring"] = {
+        "enabled": bool(getattr(request.app.state, "v2_crm_authoring_enabled", False)),
+    }
+    return body
+
+
+@workspace_router.get("/people/merge-preview")
+def get_merge_preview(
+    loser: Annotated[UUID, Query()],
+    winner: Annotated[UUID, Query()],
+    _: Operator,
+    repo: Repo,
+) -> Any:
+    """What a merge of loser → winner would move, without writing anything.
+
+    Returns the same preview shape the merge-people command verifies.  The
+    ``preview_sha256`` must be echoed back in the command body as
+    ``expected_preview_sha256``.
+
+    NOTE: This route must be registered before /people/{person_id} so FastAPI
+    does not treat the literal string "merge-preview" as a person_id UUID.
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _cur():  # type: ignore[no-untyped-def]
+        with repo._read() as c:  # noqa: SLF001
+            yield c
+
+    # Check for same-person before touching the DB (also lets fake repos skip _read).
+    if loser == winner:
+        raise HTTPException(status_code=422, detail={"code": "same_person"})
+
+    try:
+        with _cur() as cur:
+            preview = merge_preview(cur, str(loser), str(winner))
+    except ValueError as exc:
+        code = getattr(exc, "code", str(exc))
+        if code == "person_not_found":
+            raise HTTPException(status_code=404, detail={"code": code}) from exc
+        raise HTTPException(status_code=422, detail={"code": code}) from exc
+    return preview
+
+
+@workspace_router.get("/people/{person_id}")
+def get_person_authoring(person_id: UUID, operator: Operator, repo: Repo, request: Request) -> Any:
+    """Full authoring view of one person: contact points, affiliations, notes, references."""
+    body = repo.person_authoring(str(person_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such person")
+    enabled = bool(getattr(request.app.state, "v2_crm_authoring_enabled", False))
+    body["authoring"] = {
+        "enabled": enabled,
+        "may_author": enabled and getattr(operator, "role", None) in ("sales", "admin"),
+        "may_archive": enabled and getattr(operator, "role", None) == "admin",
+    }
+    return body
+
+
+@workspace_router.get("/organizations/{organization_id}/authoring")
+def get_organization_authoring(
+    organization_id: UUID, operator: Operator, repo: Repo, request: Request
+) -> Any:
+    """Full authoring view of one organization: identifiers, domains, product lines, notes."""
+    body = repo.organization_authoring(str(organization_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such organization")
+    enabled = bool(getattr(request.app.state, "v2_crm_authoring_enabled", False))
+    body["authoring"] = {
+        "enabled": enabled,
+        "may_author": enabled and getattr(operator, "role", None) in ("sales", "admin"),
+        "may_archive": enabled and getattr(operator, "role", None) == "admin",
+    }
     return body
 
 

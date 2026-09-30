@@ -56,9 +56,15 @@ def test_a_candidate_is_a_hint_beside_its_brand_never_promoted() -> None:
     ]
     before = [dict(c) for c in candidates]
     directory = {d["brand_id"]: d for d in supplier_directory(TAX, [], candidates)}
-    assert directory["hielscher"]["candidate_hints"] == [
-        {"domain": "hielscher.test", "trade_name": None, "resolution": "unresolved"}
-    ]
+    # Slice 6: hints now carry assertion_id and review from the DB-enriched candidates.
+    # The candidates passed here have no assertion_id/review, so those are None.
+    hint = directory["hielscher"]["candidate_hints"][0]
+    assert hint["domain"] == "hielscher.test"
+    assert hint["trade_name"] is None
+    assert hint["resolution"] == "unresolved"
+    # assertion_id and review are present (None when the candidate has no DB row)
+    assert "assertion_id" in hint
+    assert "review" in hint
     assert [h["domain"] for h in directory["serva"]["candidate_hints"]] == ["otro.test"]
     # "IKA" does not match inside "Mecánica": word boundaries.
     assert directory["ika"]["candidate_hints"] == []

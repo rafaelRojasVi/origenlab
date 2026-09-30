@@ -21,6 +21,7 @@ imported and is genuinely empty.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -728,22 +729,62 @@ class CrmWorkspaceRepository:
                 """
             )
             on_cases = self._rows(cur)
+            # Individual assertion rows (not grouped) so each can carry assertion_id + review.
+            # Multiple assertions with the same domain are shown as siblings; supplier_directory
+            # groups them by brand match.
             cur.execute(
                 """
-                select a.value_norm as domain, a.value->>'trade_name' as trade_name,
-                       a.resolution, count(*) as mentions
+                select a.id::text as assertion_id,
+                       a.value_norm as domain,
+                       a.value->>'trade_name' as trade_name,
+                       a.resolution,
+                       a.resolved_at::text as decided_at,
+                       a.ambiguity_note as note
                   from evidence.assertion a
                  where a.kind = 'supplier_candidate'
-                 group by 1, 2, 3
-                 order by 2 nulls last, 1
+                 order by a.value->>'trade_name' nulls last, a.value_norm
                 """
             )
             candidates = self._rows(cur)
-        for r in on_cases + candidates:
-            for k in ("cases", "mentions"):
-                if k in r:
-                    r[k] = int(r[k])
-        return {"on_cases": on_cases, "candidates": candidates}
+            # Product-line links: one row per (line_id, organization).
+            cur.execute(
+                """
+                select pl.line_id, o.id::text as organization_id, o.name,
+                       pl.id::text as link_id,
+                       pl.valid_from::text, pl.note
+                  from crm.organization_product_line pl
+                  join crm.organization o on o.id = pl.organization_id
+                 where pl.valid_to is null
+                 order by pl.line_id, o.name
+                """
+            )
+            line_orgs_rows = self._rows(cur)
+        for r in on_cases:
+            r["cases"] = int(r["cases"])
+        # Build lines[] keyed by the six taxonomy brand-ids.
+        lines_by_id: dict[str, list[dict[str, Any]]] = {lid: [] for lid in _LINE_NAMES}
+        for r in line_orgs_rows:
+            lid = r["line_id"]
+            if lid in lines_by_id:
+                lines_by_id[lid].append({
+                    "organization_id": r["organization_id"],
+                    "name": r["name"],
+                    "link_id": r["link_id"],
+                    "valid_from": r["valid_from"],
+                    "note": r.get("note"),
+                })
+        lines = [
+            {"line_id": lid, "name": _LINE_NAMES[lid], "organizations": orgs}
+            for lid, orgs in lines_by_id.items()
+        ]
+        # Enrich each candidate with review sub-object.
+        for c in candidates:
+            c["review"] = {
+                "state": c.pop("resolution"),
+                "decided_at": c.pop("decided_at"),
+                "note": c.pop("note"),
+            }
+        return {"on_cases": on_cases, "candidates": candidates, "lines": lines}
 
     # -- marketing
 
@@ -819,6 +860,9 @@ class CrmWorkspaceRepository:
             holds = read_campaign_holds(cur)
             cur.execute("select current_database()")
             database = cur.fetchone()[0]
+            # Campaign-content presence: override has_html and provide html_state for lists
+            all_cids = [c["campaign_id"] for c in campaigns]
+            content_state = _campaign_content_list_state(cur, all_cids)
         for c in campaigns:
             c["hold"] = campaign_hold(holds, c["campaign_id"])
             c["recipients_by_state"] = recip.get(c["campaign_id"], {})
@@ -831,6 +875,24 @@ class CrmWorkspaceRepository:
             c["attempt_totals"] = t["attempts"] if t else None
             c["replies"] = replies_state(replies.get(c["campaign_id"], 0), baja_lineage.get(c["campaign_id"], 0))
             c["subject_state"] = _subject_state(c)
+            # Override has_html when campaign_content has a sent_html row.
+            ccs = content_state.get(c["campaign_id"])
+            if ccs is not None:
+                has_from_content, state_from_content = ccs
+                if has_from_content:
+                    c["has_html"] = True
+                c["html_state"] = state_from_content
+            else:
+                # Derive html_state from the campaign row alone (same logic as campaign_archive
+                # but without body_html available in the list query — approximate).
+                if c.get("content_frozen_at") is None:
+                    c["html_state"] = "not_frozen" if c["status"] == "draft" else "not_archived"
+                elif c.get("has_html"):
+                    c["html_state"] = "archived_verified"
+                else:
+                    origin = c.get("origin", "")
+                    status = c.get("status", "")
+                    c["html_state"] = "not_recovered" if (origin == "imported_v1" and status == "archived") else "not_archived"
         return {
             "campaigns": campaigns,
             "holds": {k: v for k, v in holds.items() if k != "by_campaign"},
@@ -881,9 +943,11 @@ class CrmWorkspaceRepository:
                        c.audience_policy_version, c.created_at::text,
                        case when c.origin_source_record_id is not null then 'imported_v1' else 'native_v2' end as origin,
                        m.address_norm as sender_address, m.display_name as sender_name,
-                       current_database() as database
+                       current_database() as database,
+                       sr.payload->>'v1_campaign_id' as v1_campaign_id
                   from outbound.campaign c
                   left join comms.mailbox m on m.id = c.mailbox_id
+                  left join evidence.source_record sr on sr.id = c.origin_source_record_id
                  where c.id = %s
                 """,
                 (campaign_id,),
@@ -922,29 +986,49 @@ class CrmWorkspaceRepository:
             reply_count = int(cur.fetchone()[0])
             cur.execute(_BAJA_LINEAGE_BY_CAMPAIGN_SQL.replace("group by", "and s.campaign_id = %s group by"), (campaign_id,))
             lineage_rows = cur.fetchall()
-        c = rows[0]
-        body_text, body_html = c.pop("body_text"), c.pop("body_html")
-        if c["content_frozen_at"] is None:
-            html_state = "not_frozen" if c["status"] == "draft" else "not_archived"
-            html = None
-        elif body_html is None:
-            html_state, html = "no_html", None
-        elif c["content_sha256"] != content_sha256(c["subject"] or "", c["preheader"], body_text or "", body_html):
-            html_state, html = "fingerprint_mismatch", None
-        else:
-            html_state, html = "archived_verified", body_html
+            c = rows[0]
+            body_text = c.pop("body_text")
+            body_html = c.pop("body_html")
+            contents: list[dict] = []
+            recovery: dict | None = None
+            if c["content_frozen_at"] is None:
+                html_state = "not_frozen" if c["status"] == "draft" else "not_archived"
+                html: str | None = None
+            elif body_html is not None:
+                if c["content_sha256"] != content_sha256(c["subject"] or "", c["preheader"], body_text or "", body_html):
+                    html_state, html = "fingerprint_mismatch", None
+                else:
+                    html_state, html = "archived_verified", body_html
+            else:
+                # No body_html on the campaign row — look in campaign_content
+                html_state, html, contents, recovery = _compute_campaign_content_state(cur, campaign_id, c)
+                # Fallback subject / preheader from variant-1 content row when campaign has none
+                if not c.get("subject") and contents:
+                    v1 = next((cc for cc in contents if cc.get("variant_no") == 1), None)
+                    if v1 and v1.get("subject"):
+                        c["subject"] = v1["subject"]
+                        c["subject_state_override"] = "recovered"
+                    if v1 and v1.get("preheader"):
+                        c["preheader"] = v1["preheader"]
+                        c["preheader_state_override"] = "recovered"
+        subject_state = c.pop("subject_state_override", None) or _subject_state(c)
+        preheader_state = c.pop("preheader_state_override", None) or (
+            "recorded" if c.get("preheader") else ("not_imported" if c.get("origin") == "imported_v1" else "not_set")
+        )
         return {
             **c,
             "html": html,
             "html_state": html_state,
+            "contents": contents,
+            "recovery": recovery,
             "recipients_by_state": recipients,
             "send_attempts": attempts,
             "send_batches": batches,
             "totals": history["totals"],
             "attempt_totals": history["attempts"],
             "replies": replies_state(reply_count, int(lineage_rows[0][1]) if lineage_rows else 0),
-            "subject_state": _subject_state(c),
-            "preheader_state": "recorded" if c["preheader"] else ("not_imported" if c["origin"] == "imported_v1" else "not_set"),
+            "subject_state": subject_state,
+            "preheader_state": preheader_state,
             "immutable": c["status"] == "archived",
             "immutable_enforced_by_database": enforced,
             "metrics": {"opens": None, "clicks": None, "note": "Aperturas y clics no se registran en el CRM."},
@@ -1209,6 +1293,312 @@ class CrmWorkspaceRepository:
         )
         return out
 
+    # -- CRM authoring reads
+
+    def person_authoring(self, person_id: str) -> dict[str, Any] | None:
+        """Full authoring view of one person: contact points, affiliations, notes, references."""
+        with self._read() as cur:
+            cur.execute(
+                """
+                select p.id::text, p.display_name, p.given_name, p.family_name, p.title,
+                       p.status, p.archived_at::text, p.archive_reason, p.confirmation,
+                       p.version, p.created_at::text, p.updated_at::text,
+                       p.merged_into_person_id::text
+                  from crm.person p where p.id = %s::uuid
+                """,
+                (person_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            person = dict(zip([d[0] for d in cur.description], row, strict=True))
+
+            cur.execute(
+                """
+                select cp.id::text, cp.kind, cp.value_display, cp.value_norm, cp.usage,
+                       cp.status, cp.version, cp.note, cp.deactivated_at::text, cp.created_at::text
+                  from crm.contact_point cp
+                 where cp.person_id = %s::uuid
+                 order by cp.created_at, cp.id
+                """,
+                (person_id,),
+            )
+            contact_points = self._rows(cur)
+
+            cur.execute(
+                """
+                select a.id::text, a.organization_id::text, o.name as organization_name,
+                       a.role_title, a.unit_label, a.valid_from::text, a.valid_to::text,
+                       a.confirmation, a.note
+                  from crm.affiliation a
+                  left join crm.organization o on o.id = a.organization_id
+                 where a.person_id = %s::uuid
+                 order by a.valid_from nulls last, a.created_at
+                """,
+                (person_id,),
+            )
+            affiliations = self._rows(cur)
+
+            cur.execute(
+                """
+                select n.id::text, n.root_note_id::text, n.revision_no, n.body,
+                       n.author_operator_id::text, op.display_name as author_name,
+                       n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
+                       n.version,
+                       not exists (
+                         select 1 from crm.note n2 where n2.revision_of_note_id = n.id
+                       ) as is_latest
+                  from crm.note n
+                  left join platform.operator op on op.id = n.author_operator_id
+                 where n.subject_kind = 'person' and n.subject_id = %s::uuid
+                 order by coalesce(n.root_note_id, n.id), n.revision_no
+                """,
+                (person_id,),
+            )
+            notes = self._rows(cur)
+
+            # References — things that mention this person
+            cur.execute(
+                """
+                select
+                  (select count(*)::int from outbound.campaign_recipient
+                    where person_id = %s::uuid) as campaign_recipients,
+                  (select count(*)::int from crm.opportunity_participant
+                    where person_id = %s::uuid and valid_to is null) as opportunity_participants,
+                  (select count(*)::int from crm.quote q
+                    join crm.opportunity op on op.id = q.opportunity_id
+                    join crm.opportunity_participant pp
+                         on pp.opportunity_id = op.id and pp.person_id = %s::uuid) as quotes,
+                  (select count(*)::int from evidence.assertion a
+                    where a.resolved_kind = 'contact_point'
+                      and a.resolved_id in (
+                          select id from crm.contact_point where person_id = %s::uuid
+                      )) as evidence_assertions,
+                  (select count(*)::int from crm.note
+                    where subject_kind = 'person' and subject_id = %s::uuid) as notes
+                """,
+                (person_id, person_id, person_id, person_id, person_id),
+            )
+            ref_row = cur.fetchone()
+            refs = {
+                "campaign_recipients": ref_row[0],
+                "opportunity_participants": ref_row[1],
+                "quotes": ref_row[2],
+                "evidence_assertions": ref_row[3],
+                "notes": ref_row[4],
+            }
+
+        # Removal reasons (physical removal never allowed; archive is offered instead)
+        reasons: list[str] = []
+        if refs["campaign_recipients"]:
+            n = refs["campaign_recipients"]
+            reasons.append(f"Es destinatario en {n} campaña{'s' if n != 1 else ''}")
+        if refs["opportunity_participants"]:
+            n = refs["opportunity_participants"]
+            reasons.append(f"Participa en {n} caso{'s' if n != 1 else ''} comercial{'es' if n != 1 else ''}")
+        if refs["quotes"]:
+            n = refs["quotes"]
+            reasons.append(f"Hay {n} cotización{'es' if n != 1 else ''} relacionada{'s' if n != 1 else ''}")
+        if refs["evidence_assertions"]:
+            n = refs["evidence_assertions"]
+            reasons.append(f"Hay {n} elemento{'s' if n != 1 else ''} de evidencia")
+        if not reasons:
+            reasons = ["Sin referencias; puede archivarse"]
+
+        return {
+            "person": person,
+            "contact_points": contact_points,
+            "affiliations": affiliations,
+            "notes": notes,
+            "references": refs,
+            "removal": {"allowed": False, "reasons": reasons},
+            "authoring": None,  # injected by the route from request.app.state
+        }
+
+    def organization_authoring(self, org_id: str) -> dict[str, Any] | None:
+        """Full authoring view of one organization: identifiers, domains, product lines, people."""
+        with self._read() as cur:
+            cur.execute(
+                """
+                select o.id::text, o.name, o.legal_name, o.kind, o.status,
+                       o.archived_at::text, o.archive_reason, o.confirmation,
+                       o.version, o.merged_into_organization_id::text, o.created_at::text
+                  from crm.organization o where o.id = %s::uuid
+                """,
+                (org_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            org = dict(zip([d[0] for d in cur.description], row, strict=True))
+
+            cur.execute(
+                """
+                select ei.id::text, ei.scheme, ei.value_norm,
+                       ei.removed_at::text, ei.remove_reason
+                  from crm.external_identifier ei
+                 where ei.organization_id = %s::uuid
+                 order by ei.scheme, ei.value_norm
+                """,
+                (org_id,),
+            )
+            identifiers = self._rows(cur)
+
+            cur.execute(
+                """
+                select od.id::text, od.domain_norm, od.scope,
+                       od.removed_at::text, od.remove_reason
+                  from crm.organization_domain od
+                 where od.organization_id = %s::uuid
+                 order by od.scope, od.domain_norm
+                """,
+                (org_id,),
+            )
+            domains = self._rows(cur)
+
+            cur.execute(
+                """
+                select or2.id::text, or2.role, or2.valid_from::text, or2.valid_to::text,
+                       or2.note
+                  from crm.organization_relationship or2
+                 where or2.organization_id = %s::uuid
+                 order by or2.valid_from, or2.role
+                """,
+                (org_id,),
+            )
+            classifications = self._rows(cur)
+
+            cur.execute(
+                """
+                select pl.id::text, pl.line_id, pl.valid_from::text, pl.valid_to::text,
+                       pl.note
+                  from crm.organization_product_line pl
+                 where pl.organization_id = %s::uuid
+                 order by pl.line_id, pl.valid_from
+                """,
+                (org_id,),
+            )
+            pl_rows = self._rows(cur)
+            product_lines = [
+                {**r, "line_name": _LINE_NAMES.get(r["line_id"], r["line_id"])}
+                for r in pl_rows
+            ]
+
+            cur.execute(
+                """
+                select cp.id::text, cp.kind, cp.value_display, cp.value_norm, cp.usage,
+                       cp.status, cp.version, cp.note, cp.deactivated_at::text, cp.created_at::text
+                  from crm.contact_point cp
+                 where cp.organization_id = %s::uuid
+                 order by cp.created_at, cp.id
+                """,
+                (org_id,),
+            )
+            contact_points = self._rows(cur)
+
+            cur.execute(
+                """
+                select a.person_id::text, pe.display_name, a.role_title,
+                       a.valid_from::text, a.valid_to::text, a.id::text as affiliation_id
+                  from crm.affiliation a
+                  join crm.person pe on pe.id = a.person_id
+                 where a.organization_id = %s::uuid
+                 order by a.valid_from nulls last, pe.display_name
+                """,
+                (org_id,),
+            )
+            people = self._rows(cur)
+
+            cur.execute(
+                """
+                select n.id::text, n.root_note_id::text, n.revision_no, n.body,
+                       n.author_operator_id::text, op.display_name as author_name,
+                       n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
+                       n.version,
+                       not exists (
+                         select 1 from crm.note n2 where n2.revision_of_note_id = n.id
+                       ) as is_latest
+                  from crm.note n
+                  left join platform.operator op on op.id = n.author_operator_id
+                 where n.subject_kind = 'organization' and n.subject_id = %s::uuid
+                 order by coalesce(n.root_note_id, n.id), n.revision_no
+                """,
+                (org_id,),
+            )
+            notes = self._rows(cur)
+
+            cur.execute(
+                """
+                select
+                  (select count(*)::int from outbound.campaign_recipient cr
+                    join crm.contact_point cp2 on cp2.id = cr.contact_point_id
+                   where cp2.organization_id = %s::uuid
+                      or (cp2.person_id in (
+                            select person_id from crm.affiliation where organization_id = %s::uuid
+                          ))) as campaign_recipients,
+                  (select count(distinct op.opportunity_id)::int
+                     from crm.opportunity_organization op
+                    where op.organization_id = %s::uuid) as opportunities,
+                  (select count(distinct q.id)::int
+                     from crm.quote q
+                     join crm.opportunity opp on opp.id = q.opportunity_id
+                    where opp.organization_id = %s::uuid
+                       or opp.id in (
+                             select opportunity_id from crm.opportunity_organization
+                              where organization_id = %s::uuid
+                          )) as quotes,
+                  (select count(*)::int from crm.affiliation
+                    where organization_id = %s::uuid) as affiliations,
+                  (select count(*)::int from evidence.assertion
+                    where resolved_kind = 'organization' and resolved_id = %s::uuid) as evidence_assertions,
+                  (select count(*)::int from catalog.product
+                    where manufacturer_organization_id = %s::uuid) as catalog_products
+                """,
+                (org_id, org_id, org_id, org_id, org_id, org_id, org_id, org_id),
+            )
+            ref_row = cur.fetchone()
+            refs = {
+                "campaign_recipients": ref_row[0],
+                "opportunities": ref_row[1],
+                "quotes": ref_row[2],
+                "affiliations": ref_row[3],
+                "evidence_assertions": ref_row[4],
+                "catalog_products": ref_row[5],
+            }
+
+        reasons: list[str] = []
+        if refs["opportunities"]:
+            n = refs["opportunities"]
+            reasons.append(f"Participa en {n} caso{'s' if n != 1 else ''} comercial{'es' if n != 1 else ''}")
+        if refs["affiliations"]:
+            n = refs["affiliations"]
+            reasons.append(f"Tiene {n} afiliación{'es' if n != 1 else ''} de personas")
+        if refs["campaign_recipients"]:
+            n = refs["campaign_recipients"]
+            reasons.append(f"Sus contactos son destinatarios en {n} campaña{'s' if n != 1 else ''}")
+        if refs["catalog_products"]:
+            n = refs["catalog_products"]
+            reasons.append(f"Fabrica {n} producto{'s' if n != 1 else ''} del catálogo")
+        if refs["evidence_assertions"]:
+            n = refs["evidence_assertions"]
+            reasons.append(f"Hay {n} elemento{'s' if n != 1 else ''} de evidencia")
+        if not reasons:
+            reasons = ["Sin referencias; puede archivarse"]
+
+        return {
+            "organization": org,
+            "identifiers": identifiers,
+            "domains": domains,
+            "classifications": classifications,
+            "product_lines": product_lines,
+            "contact_points": contact_points,
+            "people": people,
+            "notes": notes,
+            "references": refs,
+            "removal": {"allowed": False, "reasons": reasons},
+            "authoring": None,  # injected by the route from request.app.state
+        }
+
     # -- review queue: what the CRM itself cannot show
 
     def review(self) -> dict[str, Any]:
@@ -1266,6 +1656,167 @@ def _subject_state(c: Mapping[str, Any]) -> str:
     if c.get("subject"):
         return "recorded"
     return "not_imported" if c.get("origin") == "imported_v1" else "not_set"
+
+
+#: Brand-id → human-readable name for ``crm.organization_product_line.line_id``.
+#: Mirrors the six entries in ``equipment_taxonomy.json`` brands array; pinned here so the
+#: product-line read does not load the full taxonomy just to name a line.
+_LINE_NAMES: dict[str, str] = {
+    "hielscher":       "Hielscher Ultrasonics",
+    "ortoalresa":      "Ortoalresa",
+    "ika":             "IKA",
+    "adam-equipment":  "Adam Equipment",
+    "loeser":          "Löser Messtechnik",
+    "serva":           "SERVA Electrophoresis",
+}
+
+
+def _compute_campaign_content_state(
+    cur: Any,
+    campaign_id: str,
+    campaign_row: Mapping[str, Any],
+) -> tuple[str, str | None, list[dict], dict | None]:
+    """Return (html_state, html, contents[], recovery) for a campaign that has no body_html.
+
+    Reads ``outbound.campaign_content`` and ``outbound.campaign_content_message``.  The
+    caller must own the read-only cursor and must have already confirmed ``body_html`` is
+    ``None`` on the campaign row.  This helper must not be called when ``body_html`` is set
+    (the fingerprint path handles that case in ``campaign_archive``).
+    """
+    # Content rows for this campaign (immutable; SELECT-only)
+    cur.execute(
+        """
+        select cc.id::text, cc.content_kind, cc.variant_no, cc.subject, cc.preheader,
+               cc.body_html, cc.body_html_sha256, cc.body_html_normalized_sha256,
+               cc.message_count, cc.first_sent_at::text, cc.last_sent_at::text,
+               cc.attribution_method, cc.attribution_confidence, cc.attribution_policy_version,
+               cc.unmatched_attempt_count,
+               (select count(*)::int from outbound.campaign_content_message ccm
+                 where ccm.campaign_content_id = cc.id
+                   and ccm.send_attempt_id is not null) as linked_attempts
+          from outbound.campaign_content cc
+         where cc.campaign_id = %s
+         order by cc.content_kind, cc.variant_no
+        """,
+        (campaign_id,),
+    )
+    cols = [d[0] for d in cur.description]
+    raw_contents = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
+
+    # Verify each content row: sha256(body_html) == body_html_sha256.
+    # Build a separate contents list (body_html excluded) and keep a parallel map of
+    # body_html by id so the html-state logic can still read it without touching raw_contents.
+    html_by_id: dict[str, str | None] = {}
+    contents: list[dict[str, Any]] = []
+    for row in raw_contents:
+        body = row.get("body_html") or ""
+        actual = hashlib.sha256(body.encode()).hexdigest()
+        verified = actual == row["body_html_sha256"]
+        html_by_id[row["id"]] = row["body_html"] if verified else None
+        content_row = {k: v for k, v in row.items() if k != "body_html"}
+        content_row["hash_verified"] = verified
+        contents.append(content_row)
+
+    # Recovery metadata: from the origin source_record of any content row for this campaign
+    recovery: dict[str, Any] | None = None
+    if raw_contents:
+        cur.execute(
+            """
+            select distinct on (sr.id)
+                   cc.attribution_policy_version as policy_version,
+                   sum(cc.message_count) over () as matched_messages,
+                   sum(cc.unmatched_attempt_count) over () as unmatched_attempts,
+                   sr.payload_sha256 as manifest_sha256
+              from outbound.campaign_content cc
+              join evidence.source_record sr on sr.id = cc.origin_source_record_id
+             where cc.campaign_id = %s
+             order by sr.id
+             limit 1
+            """,
+            (campaign_id,),
+        )
+        rec_row = cur.fetchone()
+        if rec_row:
+            recovery = {
+                "policy_version": rec_row[0],
+                "matched_messages": int(rec_row[1]) if rec_row[1] is not None else 0,
+                "unmatched_attempts": int(rec_row[2]) if rec_row[2] is not None else 0,
+                "manifest_sha256": rec_row[3],
+            }
+
+    sent_html_rows = [c for c in contents if c["content_kind"] == "sent_html"]
+    draft_rows = [c for c in contents if c["content_kind"] == "historical_draft"]
+
+    if sent_html_rows:
+        # Use variant 1; html is None when hash does not verify.
+        v1 = next((c for c in sent_html_rows if c["variant_no"] == 1), sent_html_rows[0])
+        html_state = "sent_html_archived" if v1["hash_verified"] else "fingerprint_mismatch"
+        html = html_by_id.get(v1["id"]) if v1["hash_verified"] else None
+        return html_state, html, contents, recovery
+
+    if draft_rows:
+        v1_draft = next((c for c in draft_rows if c["variant_no"] == 1), draft_rows[0])
+        v1_raw = next((r for r in raw_contents if r["id"] == v1_draft["id"]), None)
+        html_state = "historical_draft"
+        html = v1_raw["body_html"] if v1_raw else None
+        return html_state, html, contents, recovery
+
+    # No content rows — check for an ambiguous attribution source record
+    v1_id = campaign_row.get("v1_campaign_id")
+    if v1_id:
+        cur.execute(
+            """
+            select 1 from evidence.source_record sr
+             where sr.kind = 'migration_manifest'
+               and sr.dedupe_key like %s
+               and sr.payload->>'decision' = 'ambiguous'
+             limit 1
+            """,
+            (f"migration_manifest:campaign-content-recovery:{v1_id}:%",),
+        )
+        if cur.fetchone():
+            return "ambiguous_attribution", None, contents, recovery
+
+    # Archived imported campaign with no content → not_recovered; native → not_archived
+    origin = campaign_row.get("origin", "")
+    status = campaign_row.get("status", "")
+    if origin == "imported_v1" and status == "archived":
+        return "not_recovered", None, contents, recovery
+
+    return "not_archived", None, contents, recovery
+
+
+def _campaign_content_list_state(
+    cur: Any,
+    campaign_ids: list[str],
+) -> dict[str, tuple[bool, str]]:
+    """Bulk-compute (has_html_from_content, html_state_stub) for the marketing list.
+
+    Returns a dict keyed by campaign_id. ``has_html`` is True when there is at least one
+    ``sent_html`` content row. ``html_state_stub`` is ``'sent_html_archived'`` or
+    ``'historical_draft'`` when content exists; callers must fall back to the campaign-row
+    logic for campaigns with no content rows.
+    """
+    if not campaign_ids:
+        return {}
+    cur.execute(
+        """
+        select campaign_id::text,
+               bool_or(content_kind = 'sent_html') as has_sent_html,
+               bool_or(content_kind = 'historical_draft') as has_draft
+          from outbound.campaign_content
+         where campaign_id = any(%s::uuid[])
+         group by 1
+        """,
+        (campaign_ids,),
+    )
+    result: dict[str, tuple[bool, str]] = {}
+    for cid, has_sent, has_draft in cur.fetchall():
+        if has_sent:
+            result[cid] = (True, "sent_html_archived")
+        elif has_draft:
+            result[cid] = (False, "historical_draft")
+    return result
 
 
 def _attach_interests(
