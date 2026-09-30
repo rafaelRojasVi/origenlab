@@ -199,6 +199,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         app.include_router(google_auth_router)
     _mount_profile_login(app, settings, profile_login, dsn)
     _mount_v2_command_boundary(app, settings, dsn, connect)
+    _mount_crm_authoring(app, settings, dsn, connect)
     _mount_campaign_drafts(app, settings, dsn, connect)
     _mount_audience_freeze(app, settings, dsn, connect)
     _mount_campaign_planning(app, settings, dsn, connect)
@@ -270,6 +271,26 @@ def _mount_campaign_blocks(app: FastAPI, settings: Settings, dsn: str, connect: 
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(campaign_block_router)
+
+
+def _mount_crm_authoring(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
+    """Mount the 27 CRM authoring commands only behind their own switch.
+
+    Both a DSN and ``ORIGENLAB_V2_CRM_AUTHORING_ENABLED`` are required: reading the CRM and
+    writing freeform people/organizations into it are separate permissions.  Off, every
+    authoring path is a 404, which is the right answer for a surface that does not exist.
+    """
+    app.state.crm_authoring_enabled = settings.crm_authoring_configured()
+    if not app.state.crm_authoring_enabled:
+        return
+
+    from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
+    from origenlab_api.v2.crm_authoring_routes import crm_authoring_router
+
+    app.state.crm_authoring_repository = V2CrmAuthoringRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(crm_authoring_router)
 
 
 def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:

@@ -329,6 +329,19 @@ begin
     raise exception 'crm.note is never deleted; archive it instead' using errcode = 'P0001';
   end if;
   if tg_op = 'UPDATE' then
+    -- Identity-repoint exception: merge-people may change subject_id (and subject_kind)
+    -- to repoint notes from a merged-away person to the winner. Every other column is
+    -- frozen, and version does not advance (the repoint is not a content change).
+    if new.subject_id is distinct from old.subject_id
+       and new.body = old.body
+       and new.author_operator_id = old.author_operator_id
+       and new.root_note_id is not distinct from old.root_note_id
+       and new.revision_of_note_id is not distinct from old.revision_of_note_id
+       and new.revision_no = old.revision_no
+       and new.status = old.status
+       and new.version = old.version then
+      return new;  -- allow identity repoint; version stays the same
+    end if;
     if new.body is distinct from old.body
        or new.author_operator_id is distinct from old.author_operator_id
        or new.subject_kind is distinct from old.subject_kind
@@ -362,7 +375,8 @@ create trigger note_guard
 alter table crm.note enable row level security;
 
 grant select, insert on crm.note to origenlab_api;
-grant update (status, archived_at, archived_by_operator_id, archive_reason, version) on crm.note to origenlab_api;
+-- subject_id: merge-people identity-repoints notes from loser to winner (allowed by note_guard exception).
+grant update (status, archived_at, archived_by_operator_id, archive_reason, version, subject_id) on crm.note to origenlab_api;
 grant select on crm.note to origenlab_worker;
 
 create policy origenlab_api_select on crm.note for select to origenlab_api using (true);

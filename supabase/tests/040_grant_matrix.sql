@@ -117,7 +117,7 @@ insert into expected values
     ('outbound', 'campaign_content_message', 'origenlab_api', 'S', null, 'S'),
     ('outbound', 'campaign_content_message', 'origenlab_worker', 'S', null, 'S'),
     -- crm.note: api may INSERT and soft-archive (column-level UPDATE); worker reads only.
-    ('crm', 'note', 'origenlab_api', 'SI', array['status', 'archived_at', 'archived_by_operator_id', 'archive_reason', 'version'], 'SIU'),
+    ('crm', 'note', 'origenlab_api', 'SI', array['status', 'archived_at', 'archived_by_operator_id', 'archive_reason', 'version', 'subject_id'], 'SIU'),
     ('crm', 'note', 'origenlab_worker', 'S', null, 'S'),
     -- crm.organization_product_line: api may INSERT and close (column-level UPDATE); worker reads.
     ('crm', 'organization_product_line', 'origenlab_api', 'SI', array['valid_to', 'unlinked_by_operator_id', 'note', 'updated_at'], 'SIU'),
