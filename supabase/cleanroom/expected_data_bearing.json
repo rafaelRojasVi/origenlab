@@ -17,7 +17,7 @@
     "migration chain, the role bootstrap or a grant — never by how many rows a table holds. The",
     "chain probes compare the ledger against the files in supabase/migrations/ as the caller",
     "passes them, so a migration added on disk and not applied fails here without this file",
-    "changing. The inventory numbers (41 tables, 148 policies, the closed SECURITY DEFINER",
+    "changing. The inventory numbers (45 tables, 160 policies, the closed SECURITY DEFINER",
     "list) are the same constants verify_chain.sh, docs/DOMAIN.md §7 and docs/STATUS.md §2.1",
     "carry; a migration that moves one moves all of them in the same PR.",
     "",

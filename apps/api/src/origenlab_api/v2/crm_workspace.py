@@ -885,14 +885,15 @@ class CrmWorkspaceRepository:
             else:
                 # Derive html_state from the campaign row alone (same logic as campaign_archive
                 # but without body_html available in the list query — approximate).
-                if c.get("content_frozen_at") is None:
-                    c["html_state"] = "not_frozen" if c["status"] == "draft" else "not_archived"
-                elif c.get("has_html"):
-                    c["html_state"] = "archived_verified"
+                origin = c.get("origin", "")
+                status = c.get("status", "")
+                if origin == "imported_v1" and status == "archived":
+                    # An imported campaign never carries its own HTML: nothing recovered yet.
+                    c["html_state"] = "not_recovered"
+                elif c.get("content_frozen_at") is None or not c.get("has_html"):
+                    c["html_state"] = "not_frozen" if status == "draft" else "not_archived"
                 else:
-                    origin = c.get("origin", "")
-                    status = c.get("status", "")
-                    c["html_state"] = "not_recovered" if (origin == "imported_v1" and status == "archived") else "not_archived"
+                    c["html_state"] = "archived_verified"
         return {
             "campaigns": campaigns,
             "holds": {k: v for k, v in holds.items() if k != "by_campaign"},
@@ -991,16 +992,18 @@ class CrmWorkspaceRepository:
             body_html = c.pop("body_html")
             contents: list[dict] = []
             recovery: dict | None = None
-            if c["content_frozen_at"] is None:
-                html_state = "not_frozen" if c["status"] == "draft" else "not_archived"
-                html: str | None = None
-            elif body_html is not None:
+            html: str | None = None
+            if body_html is not None and c["content_frozen_at"] is not None:
                 if c["content_sha256"] != content_sha256(c["subject"] or "", c["preheader"], body_text or "", body_html):
                     html_state, html = "fingerprint_mismatch", None
                 else:
                     html_state, html = "archived_verified", body_html
+            elif body_html is not None:
+                # A draft with HTML but no frozen fingerprint: nothing is archived yet.
+                html_state = "not_frozen" if c["status"] == "draft" else "not_archived"
             else:
-                # No body_html on the campaign row — look in campaign_content
+                # No body_html on the campaign row (every imported campaign, whose content_frozen_at
+                # is null too) — the recovered content in outbound.campaign_content decides.
                 html_state, html, contents, recovery = _compute_campaign_content_state(cur, campaign_id, c)
                 # Fallback subject / preheader from variant-1 content row when campaign has none
                 if not c.get("subject") and contents:
@@ -1725,7 +1728,7 @@ def _compute_campaign_content_state(
             select distinct on (sr.id)
                    cc.attribution_policy_version as policy_version,
                    sum(cc.message_count) over () as matched_messages,
-                   sum(cc.unmatched_attempt_count) over () as unmatched_attempts,
+                   max(cc.unmatched_attempt_count) over () as unmatched_attempts,
                    sr.payload_sha256 as manifest_sha256
               from outbound.campaign_content cc
               join evidence.source_record sr on sr.id = cc.origin_source_record_id
@@ -1783,7 +1786,7 @@ def _compute_campaign_content_state(
     if origin == "imported_v1" and status == "archived":
         return "not_recovered", None, contents, recovery
 
-    return "not_archived", None, contents, recovery
+    return ("not_frozen" if status == "draft" else "not_archived"), None, contents, recovery
 
 
 def _campaign_content_list_state(

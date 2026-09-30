@@ -415,8 +415,8 @@ def world(disposable_database: str) -> dict[str, str]:
             cur,
             "insert into outbound.campaign (name, status, mailbox_id, origin_source_record_id,"
             " content_frozen_at, content_sha256, max_sends)"
-            " values (%s, 'archived', %s, %s, now(), %s, 1000)",
-            (f"Campaign A {tag}", mailbox, camp_a_sr, dummy_sha),
+            " values (%s, 'archived', %s, %s, null, null, 1000)",  # imported: never frozen, no fingerprint
+            (f"Campaign A {tag}", mailbox, camp_a_sr),
         )
 
         # Content variant 1 (good hash)
@@ -504,8 +504,8 @@ def world(disposable_database: str) -> dict[str, str]:
             cur,
             "insert into outbound.campaign (name, status, mailbox_id, origin_source_record_id,"
             " content_frozen_at, content_sha256, max_sends)"
-            " values (%s, 'archived', %s, %s, now(), %s, 1000)",
-            (f"Campaign B {tag} (ambiguous)", mailbox, camp_b_sr, dummy_sha),
+            " values (%s, 'archived', %s, %s, null, null, 1000)",
+            (f"Campaign B {tag} (ambiguous)", mailbox, camp_b_sr),
         )
         # Separate content-recovery source_record with decision=ambiguous (this is what the
         # code checks via the dedupe_key pattern migration_manifest:campaign-content-recovery:*)
