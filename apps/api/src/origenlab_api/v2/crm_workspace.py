@@ -1716,7 +1716,9 @@ def _compute_campaign_content_state(
         actual = hashlib.sha256(body.encode()).hexdigest()
         verified = actual == row["body_html_sha256"]
         html_by_id[row["id"]] = row["body_html"] if verified else None
-        content_row = {k: v for k, v in row.items() if k != "body_html"}
+        content_row = dict(row)
+        # The variant's HTML travels only when its stored hash recomputes; a mismatch ships null.
+        content_row["body_html"] = row["body_html"] if verified else None
         content_row["hash_verified"] = verified
         contents.append(content_row)
 
