@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Compare a clean-room probe stream against the declared expected state.
 
-Reads `key|value` lines on stdin (produced by supabase/cleanroom/verify.sql) and checks them
-against supabase/cleanroom/expected_counts.json. Exits 0 only if every probe matches.
+Reads `key|value` lines on stdin and checks them against a declared expectation file — by
+default supabase/cleanroom/expected_counts.json (the fresh-rebuild contract, fed by verify.sql);
+the data-bearing contract passes supabase/cleanroom/expected_data_bearing.json (fed by
+data_bearing.sql). Exits 0 only if every probe matches.
 
 The comparison is exact in both directions:
 
@@ -27,7 +29,9 @@ EXPECTED = Path(__file__).resolve().parent / "expected_counts.json"
 
 def main(argv: list[str]) -> int:
     expected_path = Path(argv[1]) if len(argv) > 1 else EXPECTED
-    probes = json.loads(expected_path.read_text())["probes"]
+    declared = json.loads(expected_path.read_text())
+    probes = declared["probes"]
+    contract = declared.get("contract", "fresh-rebuild")
 
     seen: dict[str, str] = {}
     for raw in sys.stdin:
@@ -58,7 +62,7 @@ def main(argv: list[str]) -> int:
         failures.append(f"{key}: measured but not declared in {expected_path.name}")
 
     if failures:
-        print(f"clean-room verification FAILED — {len(failures)} of {len(probes)} probes", file=sys.stderr)
+        print(f"clean-room verification ({contract}) FAILED — {len(failures)} of {len(probes)} probes", file=sys.stderr)
         for line in failures:
             print(f"FAIL  {line}", file=sys.stderr)
             why = probes.get(line.split(":")[0], {}).get("why")
@@ -66,7 +70,7 @@ def main(argv: list[str]) -> int:
                 print(f"      why it matters: {why}", file=sys.stderr)
         return 1
 
-    print(f"clean-room verification PASSED — {len(probes)} probes, all exact")
+    print(f"clean-room verification ({contract}) PASSED — {len(probes)} probes, all exact")
     for key in sorted(probes):
         print(f"ok    {key} = {seen[key]}")
     return 0

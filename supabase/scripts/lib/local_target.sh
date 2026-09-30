@@ -591,3 +591,43 @@ ol_psql_clean_maintenance() {
   psql "postgresql://${OL_DEV_SUPERUSER}:postgres@127.0.0.1:${OL_CLEAN_DB_PORT}/postgres" \
     -X -v ON_ERROR_STOP=1 "$@"
 }
+
+# ---------------------------------------------------------------------------
+# Scratch databases in the development container — `origenlab_test_<8 hex>`, and nothing else.
+#
+# supabase/scripts/cleanroom_verify_tests.sh proves the data-bearing contract against a restored
+# copy of `origenlab_clean`. The copy has to live in the same container (the dump is made with
+# the container's own pg_dump, and the CLI's cluster may belong to another working tree), and
+# it has to be disposable. This guard pins the name to the disposable pattern before the dev
+# guard runs, so nothing that goes through it can reach `origenlab_dev`, `origenlab_clean` or
+# `postgres` by name.
+
+# ol_require_dev_scratch_database <origenlab_test_8hex> [repo root]
+# Re-proves every fact `ol_require_dev_database` proves, then substitutes the scratch name. On
+# success exports OL_DEV_SCRATCH_DB_NAME and OL_DEV_SCRATCH_DB_URL (never printed) and UNSETS
+# OL_DEV_DB_URL, so a scratch script holds no working handle on `origenlab_dev`.
+ol_require_dev_scratch_database() {
+  local name="${1-}"
+  if [[ ! "$name" =~ ^origenlab_test_[0-9a-f]{8}$ ]]; then
+    echo "FAIL: dev scratch guard: '${name:-<empty>}' is not a disposable database name (origenlab_test_<8 hex>); refusing to connect." >&2
+    return 1
+  fi
+  ol_require_dev_database "${2:-${OL_REPO_ROOT:-$PWD}}" >/dev/null || return 1
+  unset OL_DEV_DB_URL
+
+  OL_DEV_SCRATCH_DB_NAME="$name"
+  OL_DEV_SCRATCH_DB_URL="postgresql://${OL_DEV_SUPERUSER}:postgres@127.0.0.1:${OL_DEV_PORT}/${name}"
+  export OL_DEV_SCRATCH_DB_NAME OL_DEV_SCRATCH_DB_URL
+  printf 'dev scratch database: role %s at 127.0.0.1:%s/%s (container %s)\n' \
+    "$OL_DEV_SUPERUSER" "$OL_DEV_PORT" "$name" "$OL_DEV_CONTAINER"
+  return 0
+}
+
+# psql against the validated scratch database. Refuses if the guard has not run.
+ol_psql_dev_scratch() {
+  if [[ -z "${OL_DEV_SCRATCH_DB_URL:-}" ]]; then
+    echo "FAIL: ol_psql_dev_scratch called before ol_require_dev_scratch_database succeeded; refusing to connect." >&2
+    return 1
+  fi
+  psql "$OL_DEV_SCRATCH_DB_URL" -X -v ON_ERROR_STOP=1 "$@"
+}

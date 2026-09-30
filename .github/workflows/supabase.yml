@@ -87,6 +87,12 @@ jobs:
       - name: Prove local database start retries only an image-pull failure, once
         run: supabase/scripts/start_local_db_retry_tests.sh
 
+      # Needs no database: proves the fresh-rebuild fixture still names the chain on disk (the
+      # check that was missing when it went stale at 25 of 40 migrations), that both clean-room
+      # contracts are well formed, and that compare.py fails closed on each.
+      - name: Prove the clean-room verification contracts are current and fail closed (static)
+        run: supabase/scripts/cleanroom_verify_tests.sh --static
+
       # At most two attempts. Only a final "failed to pull docker image from all registries"
       # earns the single retry; every other startup failure fails this step immediately.
       - name: Start local database
@@ -94,6 +100,15 @@ jobs:
 
       - name: Prove deterministic migration replay
         run: supabase/scripts/replay_evidence.sh "$RUNNER_TEMP/supabase-replay"
+
+      # Against a minted disposable database carrying the full chain and no business data: the
+      # data-bearing contract passes with no rows, the fresh-rebuild contract still fails without
+      # the historical load, and seven injected faults (a missing ledger row, a phantom one,
+      # a revoked definer EXECUTE, a readable pin_hash, a runtime write on platform.operator, RLS
+      # off, an unpinned search_path) each fail closed by name. The restored-copy part needs the
+      # development container and reports itself skipped here.
+      - name: Prove the clean-room data-bearing contract fails closed on a disposable database
+        run: supabase/scripts/cleanroom_verify_tests.sh --chain --cluster cli
 
       - name: Run pgTAP database tests
         run: supabase test db --local

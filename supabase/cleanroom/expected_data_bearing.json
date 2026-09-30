@@ -1,0 +1,87 @@
+{
+  "database": "origenlab_clean",
+  "contract": "data-bearing",
+  "what_this_is": [
+    "The invariant contract of a clean-room database that may carry business data.",
+    "",
+    "expected_counts.json describes the database immediately after `build`: exact counts, one",
+    "operator, zero opportunities. Those are the right assertions for a fresh rebuild and only",
+    "then. origenlab_clean has carried operator decisions since 2026-09-24 — evidence reviews, the",
+    "historical quotation import, the campaign import — and every one of them moves a count that",
+    "file declares. That is not drift to be re-baselined: a count that changes whenever a human",
+    "decides something is not a contract, and a fixture rewritten to today's numbers would be",
+    "stale by the next decision and would prove nothing about the next rebuild.",
+    "",
+    "Every probe below is emitted by supabase/cleanroom/data_bearing.sql and compared by",
+    "supabase/cleanroom/compare.py, exact in both directions. Each one is decided by the",
+    "migration chain, the role bootstrap or a grant — never by how many rows a table holds. The",
+    "chain probes compare the ledger against the files in supabase/migrations/ as the caller",
+    "passes them, so a migration added on disk and not applied fails here without this file",
+    "changing. The inventory numbers (41 tables, 148 policies, the closed SECURITY DEFINER",
+    "list) are the same constants verify_chain.sh, docs/DOMAIN.md §7 and docs/STATUS.md §2.1",
+    "carry; a migration that moves one moves all of them in the same PR.",
+    "",
+    "Historical business data is allowed. No probe here counts a business row."
+  ],
+  "probes": {
+    "migrations.missing_from_ledger": {
+      "expect": "<none>",
+      "why": "every file in supabase/migrations/ has its ledger row. A version listed here is a migration that exists on disk and was never applied to this database — the state a data-bearing database is in the moment canonical main gains a migration, and the reason verify must run after every apply."
+    },
+    "migrations.not_in_supabase_migrations": {
+      "expect": "<none>",
+      "why": "no ledger row names a version that is not on disk. A version here means the database was migrated from a branch that never merged, or a file was renamed after it was applied (the campaign-block migration was renamed before it reached origenlab_clean, precisely so this would stay empty)."
+    },
+    "migrations.ledger_has_duplicates": { "expect": 0, "why": "version is the ledger's primary key; a duplicate can only mean the ledger table itself was replaced." },
+
+    "schemas.present": { "expect": "catalog,comms,crm,evidence,outbound,platform,procurement", "why": "the seven private schemas (docs/DOMAIN.md §7), all present, none extra among them." },
+    "tables.count": { "expect": 41, "why": "the inventory at head 20260929100000 (docs/DOMAIN.md §7, docs/STATUS.md §2.1). Same constant as verify_chain.sh." },
+    "tables.by_schema": { "expect": "catalog=2,comms=4,crm=19,evidence=2,outbound=7,platform=6,procurement=1", "why": "the total alone would not notice a table moved between schemas." },
+    "tables.without_rls": { "expect": 0, "why": "row-level security is enabled on every table; a table created outside the chain, or one whose RLS was disabled to make a load easier, shows here." },
+    "tables.not_owned_by_origenlab_owner": { "expect": 0, "why": "every table is owned by the NOLOGIN owner role; a table owned by postgres or by a login role escapes the grant matrix." },
+    "policies.count": { "expect": 148, "why": "the policy inventory at head 20260929100000 (docs/STATUS.md §2.7.38). Same constant as verify_chain.sh." },
+    "policies.platform": {
+      "expect": "auth_event:origenlab_api_insert:INSERT,auth_event:origenlab_api_select:SELECT,auth_principal:origenlab_api_select:SELECT,auth_session:origenlab_api_insert:INSERT,auth_session:origenlab_api_select:SELECT,auth_session:origenlab_api_update:UPDATE,command_receipt:origenlab_api_insert:INSERT,command_receipt:origenlab_api_select:SELECT,command_receipt:origenlab_api_update:UPDATE,command_receipt:origenlab_worker_select:SELECT,operator:origenlab_api_select:SELECT,operator:origenlab_worker_select:SELECT,operator_profile:origenlab_api_select:SELECT",
+      "why": "the platform policies by name and command. Note what is absent: no runtime INSERT or UPDATE policy on platform.operator (20260928192000), no UPDATE policy on auth_principal or operator_profile (20260928194000) — the throttle is written only through the definers."
+    },
+    "foreign_keys.without_covering_index": { "expect": 0, "why": "every foreign key's referencing columns lead some index (090_foreign_key_indexes.sql proves the same on a fresh chain)." },
+
+    "roles.origenlab": { "expect": "origenlab_api,origenlab_migrator,origenlab_owner,origenlab_worker", "why": "the four roles of supabase/roles.sql, no fifth." },
+    "roles.with_forbidden_attribute": { "expect": 0, "why": "MIGRATION.md §5.2 check 1: no OrigenLab role bypasses RLS or holds SUPERUSER, CREATEROLE, CREATEDB or REPLICATION." },
+    "roles.owner_can_login": { "expect": "false", "why": "origenlab_owner is NOLOGIN; it is reached only by SET ROLE inside a migration." },
+    "roles.owner_holds_database_create": { "expect": "false", "why": "M14 revoked CREATE on the database from the owner; a schema can only come from the chain." },
+
+    "grants.schema_usage_held_by_public_roles": { "expect": 0, "why": "MIGRATION.md §5.2 check 3: PUBLIC, anon, authenticated and service_role hold USAGE on none of the seven schemas." },
+    "grants.table_privilege_held_by_public_roles": { "expect": 0, "why": "check 4, at table and column level: those four roles hold no privilege on any table." },
+    "grants.function_execute_held_by_public_roles": { "expect": 0, "why": "those four roles can EXECUTE nothing in the seven schemas — PostgreSQL grants EXECUTE to PUBLIC by default, so every function must have revoked it." },
+    "grants.default_privileges_for_public_roles": { "expect": 0, "why": "check 5: no ALTER DEFAULT PRIVILEGES hands those roles anything created later." },
+
+    "functions.security_definer": {
+      "expect": "outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb),platform.begin_pin_attempt(uuid,uuid),platform.finish_pin_attempt(uuid,uuid,uuid,bytea)",
+      "why": "the closed list (ARCHITECTURE.md §6.2), by signature. A fourth definer is a new privileged path and must be reviewed as one; a missing one means a migration was not applied."
+    },
+    "functions.security_definer_misconfigured": { "expect": 0, "why": "each definer is owned by origenlab_owner, pins search_path to pg_catalog, is executable by origenlab_api and by neither origenlab_worker nor origenlab_migrator. Any deviation counts once per function." },
+    "functions.not_owned_by_origenlab_owner": { "expect": 0, "why": "a function owned by another role is outside the chain's ownership model." },
+    "functions.record_pin_attempt_present": { "expect": 0, "why": "20260929100000 dropped platform.record_pin_attempt: called directly as origenlab_api it cleared both failure counters with no PIN (docs/STATUS.md §2.7.38). Its presence means that migration did not run." },
+
+    "auth.tables_present": { "expect": "auth_event,auth_principal,auth_session,operator_profile", "why": "the four sign-in tables of slice 1 (#38–#41) exist. They may be empty — they are, until a principal and profiles are provisioned — but the contract is that they exist with the boundary below." },
+    "auth.api_execute_begin_pin_attempt": { "expect": "true", "why": "the runtime role begins a PIN attempt only through the definer." },
+    "auth.api_execute_finish_pin_attempt": { "expect": "true", "why": "and finishes it only through the definer; without this EXECUTE no operator could ever sign in." },
+    "auth.api_execute_hmac_sha256": { "expect": "false", "why": "the HMAC helper is INVOKER and executable by its owner alone; the runtime role must not be able to compute a proof outside finish_pin_attempt." },
+    "auth.api_select_pin_hash": { "expect": "false", "why": "the stored verifier is never readable by the runtime role. Before 20260929100000 it was, through a table-level SELECT that a column REVOKE could not override." },
+    "auth.api_select_operator_profile_table_level": { "expect": "false", "why": "the table-level SELECT is gone; only named columns are granted. A table-level grant would silently re-cover pin_hash." },
+    "auth.api_operator_profile_columns_not_readable": { "expect": 0, "why": "every column but pin_hash is granted by name; a column added by a later migration and not granted would break the profile roster, so it is counted here." },
+    "auth.api_updates_auth_principal": { "expect": "false", "why": "no UPDATE, table- or column-level: the throttle counters on the principal are written only inside the definers (20260928194000, re-asserted by 20260929100000)." },
+    "auth.api_updates_operator_profile": { "expect": "false", "why": "the same for the profile row." },
+    "auth.api_writes_operator": { "expect": "false", "why": "20260928192000: the runtime role neither inserts nor updates platform.operator; operators are provisioned by profile_roster.py as the migrator." },
+    "auth.api_deletes_in_platform": { "expect": 0, "why": "nothing in platform.* is deletable by the runtime role; audit and receipts are append-only." },
+    "auth.api_auth_session_updatable_columns": { "expect": "revoked_at,revoked_reason", "why": "a session can be revoked and nothing else about it changed (20260928191000)." },
+    "auth.api_auth_session_insert_select": { "expect": "true", "why": "the runtime role opens and reads sessions." },
+    "auth.api_auth_event_insert_select_only": { "expect": "true", "why": "the audit trail is append-only for the runtime role: INSERT and SELECT, no UPDATE on any column." },
+    "auth.worker_reaches_sign_in_tables": { "expect": 0, "why": "origenlab_worker has no privilege on any of the four sign-in tables; sign-in is the API's alone." },
+
+    "outbound.send_control.any_flag_enabled": { "expect": "false", "why": "a local database must never be able to send, whatever else it holds." },
+    "residue.source_record_pytest": { "expect": 0, "why": "dedupe_key like 'pytest-%' — the fixture residue that quarantined origenlab_dev on 2026-09-22 is caught by name in any database, data-bearing or not." },
+    "residue.operator_pytest": { "expect": 0, "why": "email_norm like 'pytest-%', for the same reason." }
+  }
+}

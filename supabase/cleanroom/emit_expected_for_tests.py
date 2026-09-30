@@ -10,7 +10,10 @@ never calls it: a verification that could be handed its own expected answer woul
 nothing.
 
 Usage:
-    emit_expected_for_tests.py [key=value ...] [--drop key] [--add key=value]
+    emit_expected_for_tests.py [--expected path.json] [key=value ...] [--drop key] [--add key=value]
+
+`--expected` selects the contract to render (default: expected_counts.json, the fresh-rebuild
+contract; supabase/scripts/cleanroom_verify_tests.sh passes expected_data_bearing.json).
 """
 
 from __future__ import annotations
@@ -23,10 +26,14 @@ EXPECTED = Path(__file__).resolve().parent / "expected_counts.json"
 
 
 def main(argv: list[str]) -> int:
-    probes = json.loads(EXPECTED.read_text())["probes"]
+    args = list(argv[1:])
+    expected = EXPECTED
+    if len(args) >= 2 and args[0] == "--expected":
+        expected = Path(args[1])
+        args = args[2:]
+    probes = json.loads(expected.read_text())["probes"]
     values = {key: str(spec["expect"]) for key, spec in probes.items()}
 
-    args = list(argv[1:])
     while args:
         arg = args.pop(0)
         if arg == "--drop":

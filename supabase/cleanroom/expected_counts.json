@@ -1,7 +1,11 @@
 {
   "database": "origenlab_clean",
   "what_this_is": [
-    "The declared expected state of a freshly built clean-room database.",
+    "The declared expected state of a freshly built clean-room database — the FRESH-REBUILD",
+    "contract. It is what `build` verifies at its end and it is only true then: the moment an",
+    "operator decides something in the database these counts move, and that is not drift. The",
+    "contract that holds for a clean room carrying decisions is expected_data_bearing.json, and",
+    "`cleanroom_db.sh verify` without a flag checks that one; `verify --fresh-rebuild` checks this.",
     "",
     "Every probe below is emitted by supabase/cleanroom/verify.sql as one `key|value` line, and",
     "compared here by supabase/cleanroom/compare.py. The comparison is exact and two-way: a probe",
@@ -14,17 +18,25 @@
     "declares the post-R1 state, because R1 is part of the intended baseline and not a deviation",
     "from it: a build that reproduces only the September twenty is a build that lost a batch.",
     "",
+    "The two chain probes and the five table probes added on 2026-09-30 (campaign_block, the",
+    "four sign-in tables) are decided by the migration files, not by a rebuild, and were measured",
+    "on origenlab_clean after the 2026-09-30 apply; cleanroom_verify_tests.sh proves the chain",
+    "probes equal the files on disk on every run. The load counts have NOT been re-measured by a",
+    "rebuild since 2026-09-22: the staging directory still holds the same two manifests, so a",
+    "rebuild is expected to reproduce them, and the first rebuild that does not will fail here",
+    "loudly, which is the point.",
+    "",
     "If a build produces different numbers, either an input changed or the load is not",
     "reproducible, and both are things an operator must see rather than have rounded away."
   ],
   "probes": {
     "migrations.count": {
-      "expect": 25,
-      "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed, so the first rebuild after it would have failed here rather than silently: that is the check working. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
+      "expect": 40,
+      "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20260925200000",
-      "why": "slice3_historical_quotation_import, the newest migration on this branch — crm.quote.number_origin, the relaxed revision constraints and the audit vocabulary the historical quotation import writes. It adds no table, so every count below is unchanged by it. Installed into the existing origenlab_clean on 2026-09-26 (DDL and ledger row in one transaction) rather than by a rebuild."
+      "expect": "20260929100000",
+      "why": "slice1_pin_attempt_begin_finish, the newest migration on main — the PIN attempt boundary (docs/STATUS.md §2.7.38). The fifteen migrations between 20260925200000 and it (slice 5 campaign work, the campaign block, the eight sign-in migrations) were applied to the existing origenlab_clean on 2026-09-27 and 2026-09-30 rather than by a rebuild."
     },
 
     "source_record.total": {
@@ -113,6 +125,15 @@
     "outbound.send_control": { "expect": 1, "why": "the single bootstrap row." },
     "outbound.send_control.marketing_enabled": { "expect": 0, "why": "false. A clean-room build must never be able to send." },
     "outbound.send_control.transactional_enabled": { "expect": 0, "why": "false, for the same reason." },
+    "outbound.campaign_block.active": {
+      "expect": 1,
+      "why": "migration 20260928100000 seeds one active legacy_campaign block for V1 campaign septiembre18-2026-wave2 (reference incident_hold_september_2026, placed by the migrator, never lifted). A fresh build carries exactly that one; zero means the migration did not run, two means something else placed a block."
+    },
+
+    "platform.auth_principal": { "expect": 0, "why": "slice 1 sign-in tables ship empty: a principal is provisioned by profile_roster.py per environment, never by a build." },
+    "platform.operator_profile": { "expect": 0, "why": "no profile and no PIN exists in a fresh build; a row here is a credential nobody provisioned." },
+    "platform.auth_session": { "expect": 0, "why": "no session has been opened against a database nothing has signed in to." },
+    "platform.auth_event": { "expect": 0, "why": "no sign-in audit row; the table is append-only and a fresh build has nothing to append." },
 
     "catalog.product": { "expect": 0, "why": "slice 3." },
     "catalog.supplier_product": { "expect": 0, "why": "slice 3." },
