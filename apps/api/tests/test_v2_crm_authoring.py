@@ -383,7 +383,7 @@ def test_forged_header_cannot_escalate_viewer_to_admin() -> None:
     body = {"person_id": str(uuid.uuid4()), "expected_version": 1, "note": "reason"}
     forged_headers = {
         OPERATOR_EMAIL_HEADER: admin_op.email_norm,
-        "Idempotency-Key": "k-forged-1234567",
+        **_ikey(),
     }
     r = client.post(path, json=body, headers=forged_headers)
     assert r.status_code == 403

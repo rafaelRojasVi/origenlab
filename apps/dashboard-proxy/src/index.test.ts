@@ -1964,7 +1964,7 @@ describe("CRM authoring commands", () => {
   });
 
   const CREATE_PERSON = "https://proxy.test/api/v2/commands/create-person";
-  const KEY = "a1b2c3d4-e5f6-4a1b-8c2d-1a2b3c4d5e6f";
+  const KEY = "test-idempotency-key-crm-authoring";
 
   function good(extra: Record<string, string> = {}, body = JSON.stringify({ display_name: "Paloma" })) {
     return requestWithOrigin(CREATE_PERSON, {

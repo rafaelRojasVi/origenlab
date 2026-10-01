@@ -46,3 +46,12 @@ fb0eb35c9af4bafe3eb94dfb4fb5e5fae9029b6c:apps/api/tests/test_drive_preflight.py:
 1c5ef20ba203ffb918f5b61966fe8471613995b9:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1558
 1c5ef20ba203ffb918f5b61966fe8471613995b9:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1584
 1c5ef20ba203ffb918f5b61966fe8471613995b9:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1595
+
+# CRM authoring tests (feat/crm-campaign-html-and-contact-authoring-v1):
+# synthetic Idempotency-Key header values in the proxy and API authoring
+# tests, flagged by generic-api-key. They are request-dedup tokens in test
+# requests, not credentials; the tip now uses unmistakably synthetic values.
+# CI scans the full PR commit range, so these historical fingerprints remain
+# required. Fingerprint-specific: any other finding in these files must fail.
+2f9dc0070f768bab84229b2cbe5edecb36041ba5:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1967
+bed1e7a7ff2349173701c710d81513798b0e6ad9:apps/api/tests/test_v2_crm_authoring.py:generic-api-key:383
