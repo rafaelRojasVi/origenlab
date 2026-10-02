@@ -27,7 +27,11 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-09-29**, against `origin/main` (`ee0bf5c5`) plus this branch (§2.7.38; earlier sections as last measured 2026-09-26), measured from the
+Last verified: **2026-10-02**, against `origin/main` (`cb60c20d`, the merge of #619) for the
+hosting and GitHub facts of §2.4, §2.7.40, §2.8, §3.1 and §3.3 — read from the GitHub API, the
+public DNS and HTTP edge, and the repository, with nothing deployed, provisioned, purchased or
+mutated. Local database counts were last measured 2026-09-30 (§2.7.39) and are not re-measured
+here. Earlier sections as last measured 2026-09-26–29, measured from the
 local PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are measurements taken by the
 Slice 0 audit itself on 2026-09-21, over the reviewed Supavisor session route inside a server-
 confirmed read-only transaction, together with authenticated control-plane reads; the earlier
@@ -269,7 +273,7 @@ local database; L is rollback-only, and N drops its marker on both paths.
 | Modes | `--environment <classification> --dry-run`. **There is no apply mode and no connection in any mode** |
 | Bootstrap file | `supabase/hosted_roles.sql`, 4 roles, 1 membership, 2 platform-role option revocations, **17** analysed statements |
 | Static analyser | `supabase/audit/olaudit/bootstrap.py` — closed role set, no password, no platform-role grant, no unrecognised statement shape; one closed, privilege-removing exception (`PERMITTED_OPTION_REVOCATIONS`, matched exactly) |
-| Approved environments | `staging` (Pro daily backups, seven-day retention, PITR declined). **`production` blocked** — no recorded RPO/PITR decision |
+| Approved environments | `staging` (Pro daily backups, seven-day retention, PITR declined). **`production`: decision recorded 2026-10-02** in [`OPERATIONS.md`](OPERATIONS.md) §4.3 (RPO 24 h, Pro daily backups required, PITR declined initially, independent `pg_dump` around every data-bearing cutover) — **the tool still refuses `--environment production`**: `DURABILITY["production"]` carries `decided=False` and failure check L proves the refusal; mirroring the record into the tool is a separate reviewed change, not yet made |
 | Unit tests | **308** total — `python3 -m unittest discover -s supabase/audit/tests -t supabase/audit`; **74** of them cover the bootstrap |
 | Failure-injection checks | **91** — `supabase/scripts/hosted_bootstrap_failure_tests.sh`, no database required |
 | Execution rehearsal | **37 checks** — `supabase/scripts/hosted_bootstrap_rehearsal.sh`, local disposable database only, always-rolled-back transactions |
@@ -1716,7 +1720,7 @@ of `/v2/commands/*` stay refused. Built 2026-09-26 (37ae5132) and rebased onto `
 | Evidence | `cleanroom_verify_tests.sh` from the labelled working tree against the development container: **static 13** (S1 the fixture's chain probes equal the 40 files on disk; S2 both contracts emitted exactly, every probe reasoned, no business count in the data-bearing file; S3 `compare.py` names a missing migration, a readable `pin_hash`, a fourth definer, an unmeasured and an undeclared probe; S4 the scratch guard refuses `origenlab_clean`, `origenlab_dev` and an empty name, and its psql wrapper refuses before it), **chain 9** on a disposable database with the full chain and no rows (C1 data-bearing passes; C2 fresh still fails; C3–C9 a deleted ledger row, a phantom one, `EXECUTE` on `begin_pin_attempt` revoked, `SELECT (pin_hash)` granted, `UPDATE` on `platform.operator` granted, RLS off on `auth_session`, an unpinned definer `search_path` — each fails closed by probe name), **restored copy 3** (R1 data-bearing passes on a `pg_dump`/`pg_restore` copy of `origenlab_clean` made inside the container; R2 fresh fails on it naming `crm.opportunity`; R3 `origenlab_clean`'s ledger and `tup_inserted/updated/deleted` identical before and after: `40|20260929100000|74463|13106|210`). `cleanroom_db.sh verify` on `origenlab_clean`: **data-bearing PASSED 41/41**; `--fresh-rebuild` FAILED 19 of 46, all nineteen decision-driven. `cleanroom_failure_tests.sh` **30 passed**. CI now runs `--static` before the stack and `--chain --cluster cli` after the replay proof |
 | Boundaries | `origenlab_clean` opened **read-only** throughout (verify SQL inside `begin read only`; the copy made with `pg_dump`); every scratch database dropped on exit; `origenlab_dev` never opened; no Gmail, Drive or hosted Supabase connection; nothing provisioned, nothing deployed |
 
-### 2.7.40 Recovered campaign HTML and CRM authoring, 2026-09-30 — built locally on a disposable copy, nothing applied to `origenlab_clean`
+### 2.7.40 Recovered campaign HTML and CRM authoring, 2026-09-30 — merged to `main` 2026-10-02 (#619, `cb60c20d`); nothing applied to `origenlab_clean`, nothing deployed
 
 | | |
 |---|---|
@@ -1730,7 +1734,9 @@ of `/v2/commands/*` stay refused. Built 2026-09-26 (37ae5132) and rebased onto `
 | Evidence (re-run 2026-09-30 after the domain restore, the www images and the count fix) | pgTAP **26 files, 1,103 ok** on a throwaway `supabase/postgres` 17 container built from the committed chain (`073` 33, `074` 82); the single failure is `100` #22, the documented password-fixture noise. API **3,093 passed / 120 skipped / 0 failed** with database DSNs, the whole suite (39 DB-backed authoring command tests, five of them the domain restore). Pipeline **6,473 passed**. Dashboard **377** + build; proxy **351** + typecheck. Running the handlers against PostgreSQL found real defects the in-process fixtures hid — among them the archive read that returned before consulting the content table for every imported campaign, and variants shipped without their HTML |
 | Browser, on the disposable copy (no invented fixtures; second pass 2026-09-30 as `origenlab_api`) | viewer and admin at 1440 and 390 on personas, organizaciones, proveedores, oportunidades, marketing and all four campaign HTML tabs: **0 non-GET requests as viewer, 0 unmasked addresses, 0 horizontal overflow**; Hielscher renders two variants with the sender mailbox masked inside the preview, both September campaigns «HTML enviado archivado», the never-sent one «Nunca enviada» + «HTML no recuperado», no edit or resend button anywhere; Proveedores reads Candidatos 172 = Sin revisar 172 = list length for both roles; every preview frame keeps `sandbox=""` and `referrerpolicy="no-referrer"` in desktop and mobile. Admin: «Nuevo contacto» and «Nueva organización» each wrote one row, one receipt and the expected events; the person drawer shows «Archivar persona», «Fusionar» and «Por qué no se puede eliminar»; the case drawer shows «Agregar nota» |
 | Known gaps | replies stay «Respuestas no sincronizadas desde Gmail». Not a dashboard gap but a fact about the live site: the Hielscher variants reference `https://www.origenlab.cl/assets/email/*`, which the site now answers with a 301 to the apex and a 404 HTML page — the preview requests them from the allowed origin and the browser refuses the non-image answer; September's apex `/products/*` images are served (200). The disposable copy `origenlab_test_93eb8ad9` predates the in-place vocabulary edit of migration `20260930120000` and must be recreated before any restore rehearsal; the `origenlab_clean` plan (`--expect-contents 4 --expect-messages 3044` after the migration) is unchanged |
-| Not done | **nothing applied to `origenlab_clean`**, nothing pushed, deployed, provisioned or sent; the authoring switch is off everywhere; no Gmail write, no hosted connection |
+| Merge | PR #619 merged to `main` on 2026-10-02 at `01d95fe1` with a merge commit, `cb60c20d`; every `main` workflow green on that commit (api, dashboard, dashboard-proxy, email-pipeline, supabase, secret-scan). Merging is not deploying: Render and the cPanel job are untouched; the FastAPI Cloud GitHub App (§3.1) redeploys on `main` pushes outside the workflows, and **no FastAPI Cloud check run or deployment existed for `cb60c20d` when this was verified** (latest remains `c4cc0488`, 2026-09-30) |
+| Required before `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true` | three review findings from #619, **open and not fixed** — they do not block a read-only hosted deployment, which never mounts the commands: (1) **identifier soft-remove / re-add** — `crm.external_identifier` keeps a global `unique (scheme, value_norm)` that a soft-removed row still occupies, so re-adding surfaces a database unique violation as a 500 instead of a named conflict or a restore, unlike domains; (2) **organization aggregate concurrency** — sub-entity commands bump `crm.organization.version` with `set version = version + 1 where id = …` and no `and version = <expected>` compare-and-set, so the aggregate has no proven optimistic-concurrency guard; (3) **classification duplicates** — `add-organization-classification` accepts a duplicate active role relationship with no deterministic conflict or idempotency outcome. Tracked in the Phase A readiness PR description; fixes land in their own reviewed PR |
+| Not done | **nothing applied to `origenlab_clean`**, nothing deployed, provisioned or sent; the authoring switch is off everywhere; no Gmail write, no hosted connection |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 
@@ -1748,6 +1754,7 @@ to local PostgreSQL 17. The decision, its scope and the conditions for reopening
 | Legacy JWT key disablement | **NOT TAKEN — open gate item**; the exposed JWT secret is still unrotated |
 | Slice 0 hosted gate | **still closed**, verdict `INCOMPLETE`, unchanged by the freeze |
 | Backup entitlement | still absent — Free plan, no platform backup (§2.5) |
+| Adoption for production data | **not taken, 2026-10-02.** No committed file names the project, no application configuration points at it, no Pro upgrade has been purchased. The production durability posture it would need is now recorded ([`OPERATIONS.md`](OPERATIONS.md) §4.3); the bootstrap tool still refuses `production` (§2.4) |
 
 **The two manual security controls were offered to the operator and declined for now.** They
 are recorded here as open, and they are not attested, not satisfied and not deferred out of
@@ -1778,11 +1785,12 @@ proven there.
 | Where | What |
 |---|---|
 | Render | `origenlab-api` (Docker, 1 GB disk), `origenlab-dashboard` (static), managed Postgres. **No Render cron jobs.** |
-| Cloudflare | `apps/dashboard-proxy` Worker at `dashboard.origenlab.cl/api*` |
+| FastAPI Cloud | **a second deployment of `apps/api` exists, outside the workflows.** The `fastapi-cloud[bot]` GitHub App deploys every `main` push to `https://origenlab.fastapicloud.dev`, into the GitHub environment `Production – origenlab` (created 2026-07-03, branch policy + required reviewers): **96 deployments** through 2026-09-30 (`c4cc0488`); it has no Cloudflare Access in front of it and relies on `ORIGENLAB_API_AUTH_TOKEN`. Its plan, environment variables and database target cannot be read from this repository or from GitHub. The desired architecture is **one production API origin, initially Render**; whether to disconnect FastAPI Cloud is an **unresolved owner decision** (§3.3) — nothing was deleted or disconnected |
+| Cloudflare | `apps/dashboard-proxy` Worker at `dashboard.origenlab.cl/api*`. `api.origenlab.cl` and `dashboard.origenlab.cl` are Cloudflare-proxied and behind Cloudflare Access (verified 2026-10-02: an unauthenticated `GET /health` on `api.origenlab.cl` answers `302` to the Access login). **Which origin `api.origenlab.cl` reaches — Render `origenlab-api` or FastAPI Cloud — is not determinable from outside** and is an open owner check (§3.3) |
 | Operator machine | `auto-refresh-mail` every 3 min; `auto-mirror-dashboard` every 1 min; systemd user units for the local API |
 | HostGator (cPanel) | the public site `origenlab.cl`, served from the cPanel document root behind a Cloudflare proxy. Files still arrive by **manual upload** |
 | GitHub Actions | 8 workflows; **none is scheduled** — all are push/PR path-filtered or `workflow_dispatch` |
-| GitHub Actions → cPanel | `web-deploy`, two jobs. `build` runs `npm ci` and `npm run validate` and publishes the validated `dist/` as an artifact; it holds no secret and no environment. `deploy` mirrors that artifact into the cPanel public folder over SSH + rsync, and is **`workflow_dispatch` only, in the `production` environment** — a push to `main` never creates it, so no push can open an SSH connection. `apply=false` stops after the rsync dry run. **Never run against the real host:** the `production` environment, its five secrets (`CPANEL_HOST`, `CPANEL_PORT`, `CPANEL_USER`, `CPANEL_SSH_KEY`, `CPANEL_WEB_ROOT`) and the confirmed document root do not exist yet, so every run stops before opening a connection |
+| GitHub Actions → cPanel | `web-deploy`, two jobs. `build` runs `npm ci` and `npm run validate` and publishes the validated `dist/` as an artifact; it holds no secret and no environment. `deploy` mirrors that artifact into the cPanel public folder over SSH + rsync, and is **`workflow_dispatch` only, in the `production` environment** — a push to `main` never creates it, so no push can open an SSH connection. `apply=false` stops after the rsync dry run. **The GitHub `production` environment exists (created 2026-09-22, no protection rules) and holds the five secrets** `CPANEL_HOST`, `CPANEL_PORT`, `CPANEL_USER`, `CPANEL_SSH_KEY`, `CPANEL_WEB_ROOT` (set 2026-09-22; values unread). **The apply step has never run:** the `deploy` job was dispatched twice on 2026-09-22 and both runs failed at *Prepare SSH key* / *Dry run*, before the `--apply` step; every `main` push since runs `build` only. The site is therefore **still the manually uploaded tree on HostGator/cPanel behind Cloudflare**, and the real document root remains unconfirmed |
 
 ### 3.2 Known operational facts that surprise people
 
@@ -1816,6 +1824,19 @@ proven there.
   by hand in the Render dashboard, **every `POST /operations/*` durable write is
   returning 503 in production** and the Cotizaciones and Pipeline boards cannot
   write. Record the answer here once checked.
+- **Which origin does `api.origenlab.cl` reach?** Both candidates exist: Render
+  `origenlab-api` (`render.yaml`, host allowlist `api.origenlab.cl`) and the
+  FastAPI Cloud app at `origenlab.fastapicloud.dev` (§3.1). The hostname is
+  Cloudflare-proxied behind Access, so the answer is only in the Cloudflare DNS
+  record (or tunnel/origin rule) for `api.origenlab.cl`. The target state is one
+  production API origin, initially Render. Record the answer here; change nothing
+  until it is recorded.
+- **What is the FastAPI Cloud app's plan, environment and database target?** The
+  FastAPI Cloud dashboard for app `origenlab` (the GitHub deployment `log_url`
+  points at it) is the only place its environment variables — in particular any
+  `ORIGENLAB_POSTGRES_URL`, `ORIGENLAB_V2_DATABASE_URL` and the two V1 write
+  variables above — and its plan can be read. Record what it points at before
+  deciding whether to disconnect it.
 
 ## 4. Cross-era hazards
 

@@ -187,11 +187,23 @@ the whole thing back rather than being discovered afterwards:
 | Variable | Value |
 |---|---|
 | `ORIGENLAB_V2_DATABASE_URL` | the hosted DSN, as `origenlab_api` |
-| `ORIGENLAB_V2_JWKS_URL` | the project's JWKS |
+| `ORIGENLAB_GOOGLE_AUTH_ENABLED` | `true` — the Google Workspace OIDC session adapter is the production identity ([`apps/api/docs/PRODUCTION_AUTH.md`](../apps/api/docs/PRODUCTION_AUTH.md)) |
+| `ORIGENLAB_V2_JWKS_URL` | **unset — must remain unset** (corrected 2026-10-02, see below) |
+| `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` | unset (default `false`) — Phase A is a read-only hosted deployment; the authoring commands are not mounted |
 
-**Setting `ORIGENLAB_V2_JWKS_URL` disables the local development identity adapter outright**
-— the adapter is only ever chosen when no JWKS URL exists, and it independently refuses any
-non-loopback database. That is the intended production posture, not a precaution.
+**`ORIGENLAB_V2_JWKS_URL` must remain unset for the current deployment architecture.** An
+earlier revision of this step instructed the operator to set it to the project's JWKS. That
+was wrong, and the code proves it: `build_identity_port` in
+`apps/api/src/origenlab_api/v2/identity.py` chooses the JWKS adapter **whenever the variable
+is set, ahead of every other adapter**, and that adapter's `resolve` raises
+`IdentityMisconfigured` on **every request** — it exists as a target for Supabase Auth, which
+has not started ([`STATUS.md`](STATUS.md) §2, slice 1). Setting the variable would therefore
+break every authenticated production request. The production identity today is the Google
+OIDC session adapter, selected when no JWKS URL is set and Google sign-in is on; the
+development header adapter is refused independently whenever `ORIGENLAB_ENV=production`, so
+leaving the JWKS URL unset does not open it. When Supabase Auth replaces Google sign-in, this
+step changes in a reviewed PR that also lands the adapter implementation — never by setting
+the variable first.
 
 The dashboard needs no change: the proxy already lists the seven `/v2` GET paths by name and
 reconstructs the operator header from Cloudflare Access.
@@ -1232,7 +1244,7 @@ never connects.
 | Classification | Durability posture | State |
 |---|---|---|
 | `staging` | **Pro plan daily backups, seven-day retention. PITR deliberately declined** — staging carries no durable human commercial truth and is rebuildable from migrations, so the decision is *declined*, not *unmade* | **approved** |
-| `production` | **No RPO or PITR decision has been recorded** | **blocked** |
+| `production` | **Decided 2026-10-02** — RPO **24 hours**; **Pro plan daily backups required**; **PITR declined initially**; an independent logical `pg_dump` before and after every material data-bearing cutover — see *The production durability posture* below | **decided here; the tool still refuses it** — `DURABILITY["production"]` in `supabase/audit/olaudit/bootstrap.py` carries `decided=False` until a separate reviewed change mirrors this record |
 
 #### The staging provisioning posture
 
@@ -1258,11 +1270,31 @@ representation in this repository's code: nothing reads them, no check enforces 
 changing one changes nothing here. They are recorded as the decision, and the project's own
 settings remain the only authority on what was actually provisioned.
 
-**Production is blocked until its recovery-point objective and its PITR requirement are
-decided explicitly and recorded here in a reviewed change.** Staging's posture is not a
-precedent for it: production holds durable human commercial truth. A production requirement
-is never weakened to obtain a passing staging audit, and the tool refuses `--environment
-production` outright rather than emitting SQL under an undecided posture.
+#### The production durability posture
+
+**[V2 DECISION]** — recorded 2026-10-02 by the owner, in the reviewed change the bootstrap's
+own refusal asks for. This is the initial V2 production backup posture; staging's posture
+was not its precedent, because production holds durable human commercial truth.
+
+| Item | Decision |
+|---|---|
+| Recovery-point objective (RPO) | **24 hours** |
+| Platform backups | **Supabase Pro daily backups — required.** Step 1 of §1.2 upgrades `origenlab-v2` to Pro for this entitlement; step 2 verifies a backup exists before any write |
+| PITR | **Declined initially.** Not unmade: declined, with the revisit condition below |
+| Independent logical backup | **An independent logical `pg_dump` is required before and after every material data-bearing cutover**, under the existing runbook contracts — the clean-room `pg_dump` procedures of §4.1 (the `--restored` verification copy, and the dump taken before the 2026-09-30 slice-1 apply recorded in [`STATUS.md`](STATUS.md) §2.7.39), the cold-archive manifest and restore drill of §10, and the slice gates of [`MIGRATION.md`](MIGRATION.md) §5.2 |
+| Revisit | **PITR is reconsidered when V2 becomes the sole durable CRM writer** (V1 `commercial.*` decommissioned, [`MIGRATION.md`](MIGRATION.md) §5 slice 8), or earlier if the operational value of a sub-day recovery point justifies its cost |
+
+**What this record does and does not do.** It discharges the *decision* the production
+bootstrap requires: `bootstrap.py` refuses `--environment production` with the instruction
+to "record the decision in docs/OPERATIONS.md §4.3 in a reviewed change before bootstrapping
+production", and this is that record. It does **not** change the tool: `DURABILITY["production"]`
+still carries `decided=False`, so `hosted_role_bootstrap.sh --environment production` still
+refuses, and failure-injection check L still proves that it does. Mirroring this record into
+the tool — flipping `decided`, carrying this summary, and re-pointing check L — is a
+**separate reviewed tooling change**, not something done alongside the decision itself and
+never by weakening the guard. Until it lands, production bootstrapping remains refused on
+purpose. A production requirement is never weakened to obtain a passing staging audit, and
+the tool never emits SQL under an undecided posture.
 
 #### Applying it, and the credential
 
@@ -1547,7 +1579,8 @@ a runtime role extra privileges to work around an incident.
 
 | Item | Frequency | Verification |
 |---|---|---|
-| Database backup with point-in-time recovery | continuous | restore drill |
+| Database backup — production posture per §4.3: **Supabase Pro daily backups, RPO 24 hours; PITR declined initially** | daily | restore drill |
+| Independent logical `pg_dump` | before and after every material data-bearing cutover (§4.3) | `pg_restore --list` and a row-count reconciliation against the source |
 | **Independent Storage bucket backup** | daily | bucket restore drill |
 | Cold archive (SQLite, PST, Wave 1A, final V1 dump) | once, then immutable | `sha256sum -c` against the manifest on **both** copies |
 
@@ -1556,7 +1589,8 @@ restores the database is not a restore drill.
 
 Drill procedure:
 
-1. Restore the database to a scratch project at a chosen point in time.
+1. Restore the database to a scratch project from a chosen daily backup (or from the
+   independent `pg_dump` of §4.3 — drill both sources at least once).
 2. Restore the bucket backup into that project's Storage.
 3. Verify: the 37 tables exist; row counts are plausible; a sample quotation
    revision's `pdf_sha256` matches the restored object byte-for-byte and its

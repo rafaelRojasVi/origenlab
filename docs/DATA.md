@@ -947,8 +947,9 @@ Supplier evidence loads as `evidence.assertion` of kind `supplier_candidate`,
    RLS and grants — has been run locally over this import, and CI runs it on
    every change under `supabase/**`.
 2. **The single remaining step is a separately reviewed staging load**, which
-   is still not production; production remains blocked on the undecided
-   RPO/PITR posture ([`OPERATIONS.md`](OPERATIONS.md) §4.3). Adopting a hosted
+   is still not production; production's RPO/PITR posture was decided on
+   2026-10-02 ([`OPERATIONS.md`](OPERATIONS.md) §4.3), and its bootstrap stays
+   refused until the tool mirrors that record. Adopting a hosted
    project is itself a separate, untaken decision ([`STATUS.md`](STATUS.md) §2.5).
 3. **Nothing reads these rows yet.** The evidence and safety rows have no
    consumer: promotion from `evidence.assertion` to `crm.*` is the slice 2

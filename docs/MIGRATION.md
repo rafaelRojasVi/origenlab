@@ -188,15 +188,18 @@ hosted file grants no platform role anything, because hosted migrations connect 
 `origenlab_migrator`. `supabase/tests/100_hosted_role_bootstrap.sql` proves that membership
 closure holds in both directions.
 
-**Check 11 is decided per environment, and production is blocked.** Staging's durability
+**Check 11 is decided per environment, and production's bootstrap is still refused.** Staging's durability
 posture is Pro daily backups at seven-day retention with point-in-time recovery deliberately
 **declined** — staging carries no durable human commercial truth and is rebuildable from
-migrations, so the decision is made rather than deferred. **Production has no recorded RPO or
-PITR decision, so production cutover remains blocked** ([`OPERATIONS.md`](OPERATIONS.md) §4.3).
-Staging's posture is not a precedent for production, which does hold durable human commercial
-truth; a production requirement is never weakened to obtain a passing staging audit, and the
-bootstrap tool refuses `--environment production` outright rather than emitting SQL under an
-undecided posture.
+migrations, so the decision is made rather than deferred. **Production's posture was decided
+and recorded on 2026-10-02** ([`OPERATIONS.md`](OPERATIONS.md) §4.3, *The production
+durability posture*): RPO 24 hours, Supabase Pro daily backups required, PITR declined
+initially, an independent logical `pg_dump` before and after every material data-bearing
+cutover. Staging's posture was not its precedent — production holds durable human commercial
+truth. A production requirement is never weakened to obtain a passing staging audit, and the
+bootstrap tool **still refuses `--environment production`** today: its `DURABILITY` entry
+carries `decided=False` until a separate reviewed tooling change mirrors the recorded
+decision, so no SQL is emitted for production under either posture yet.
 
 Two things are **recorded rather than proven safe** and must be re-derived against
 the hosted role catalogue: the platform identities that hold `pg_read_all_data` or
@@ -356,5 +359,5 @@ seven canonical files plus the per-app READMEs that survive.
 | 3 | Promotion of the 172 supplier candidates | none automatic; a review queue; batch promotion only for records an operator marks approved |
 | 4 | Archive promotion scope | only messages tied to a historical quotation or an existing customer |
 | 5 | Retiring Cloudflare Access and the proxy | after MFA enforcement passes slice 1 |
-| 6 | Worker hosting and plan | a container background worker; PostgreSQL plan with point-in-time recovery |
+| 6 | Worker hosting and plan | a container background worker; the database plan follows the production durability posture of [`OPERATIONS.md`](OPERATIONS.md) §4.3 (Pro daily backups, PITR declined initially, revisited when V2 is the sole durable writer) |
 | 7 | Disposition of the undocumented V1 SQLite snapshots | operator judgement, recorded before slice 8 |
