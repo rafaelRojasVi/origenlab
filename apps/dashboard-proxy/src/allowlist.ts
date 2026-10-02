@@ -120,6 +120,13 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // upstream and masked destinations join only by an opaque keyed `address_ref`.
   /^\/v2\/workspace\/providers$/,
   /^\/v2\/workspace\/equipment-interests$/,
+  // CRM authoring reads (ContactRedactingRoute; viewer sees addresses masked as ***@domain).
+  // Three exact paths: person detail, organization authoring detail, and merge preview (with
+  // query string). Named individually — not `/v2/workspace/.+` — so nothing else becomes
+  // reachable until it is reviewed and listed here by name.
+  /^\/v2\/workspace\/people\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /^\/v2\/workspace\/people\/merge-preview$/,
+  /^\/v2\/workspace\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/authoring$/,
   // The rest of the CRM workspace (dashboard `#/crm/*`): four literal read paths and the one
   // cockpit read the CRM's review screen uses. Upstream each is GET-only, resolves the operator
   // from the dashboard session cookie (401 without one), and masks every email and phone for a
@@ -208,7 +215,7 @@ export function isAllowedCommercialOperationsPostPath(
 /**
  * CRM Marketing commands: create and save a campaign draft, freeze a draft's audience into an
  * immutable recipient snapshot, set an unsent campaign's internal planned day, and place or lift
- * a campaign safety block (admin only upstream). Six exact paths; none approves, schedules or
+ * a campaign safety block (admin only upstream). Eight exact paths; none approves, schedules or
  * sends anything — a block only refuses — and no send, approve or activate command exists
  * upstream to list.
  *
@@ -268,6 +275,59 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
 }
 
 /**
+ * CRM authoring commands: freeform create/update/archive/restore/merge of person/organization/
+ * contact_point, classification and product-line links, supplier-candidate resolution, and
+ * notes (add, revise, archive), and the explicit restore of a soft-removed organization domain.
+ * Twenty-eight exact paths under `/v2/commands/`. None is
+ * evidence-bound, and none of the evidence-bound commands (create-organization, confirm-
+ * organization, attach-contact-address, attribute-sender-organization, confirm-person-from-
+ * evidence, the six case commands, apply-unsubscribe-replies, preview) is listed here — they
+ * stay refused on the browser boundary until reviewed separately.
+ *
+ * Every request here must pass `marketingCommandRefusal` in index.ts: an allowed `Origin`, no
+ * cross-site `Sec-Fetch-Site`, a JSON body within `CRM_AUTHORING_MAX_BYTES`, and a
+ * well-formed `Idempotency-Key`. Roles are enforced upstream.
+ */
+export const CRM_AUTHORING_COMMAND_POST_PATHS: readonly RegExp[] = [
+  /^\/v2\/commands\/create-person$/,
+  /^\/v2\/commands\/update-person$/,
+  /^\/v2\/commands\/archive-person$/,
+  /^\/v2\/commands\/restore-person$/,
+  /^\/v2\/commands\/merge-people$/,
+  /^\/v2\/commands\/add-contact-point$/,
+  /^\/v2\/commands\/update-contact-point$/,
+  /^\/v2\/commands\/deactivate-contact-point$/,
+  /^\/v2\/commands\/link-person-organization$/,
+  /^\/v2\/commands\/unlink-person-organization$/,
+  /^\/v2\/commands\/register-organization$/,
+  /^\/v2\/commands\/update-organization$/,
+  /^\/v2\/commands\/archive-organization$/,
+  /^\/v2\/commands\/restore-organization$/,
+  /^\/v2\/commands\/add-organization-identifier$/,
+  /^\/v2\/commands\/remove-organization-identifier$/,
+  /^\/v2\/commands\/add-organization-domain$/,
+  /^\/v2\/commands\/remove-organization-domain$/,
+  /^\/v2\/commands\/restore-organization-domain$/,
+  /^\/v2\/commands\/add-organization-classification$/,
+  /^\/v2\/commands\/remove-organization-classification$/,
+  /^\/v2\/commands\/link-organization-product-line$/,
+  /^\/v2\/commands\/unlink-organization-product-line$/,
+  /^\/v2\/commands\/confirm-supplier-candidate$/,
+  /^\/v2\/commands\/reject-supplier-candidate$/,
+  /^\/v2\/commands\/add-note$/,
+  /^\/v2\/commands\/revise-note$/,
+  /^\/v2\/commands\/archive-note$/,
+];
+
+/** 64 KiB: enough for a CRM authoring body (names, notes, identifiers). */
+export const CRM_AUTHORING_MAX_BYTES = 65_536;
+
+export function isAllowedCrmAuthoringCommandPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return CRM_AUTHORING_COMMAND_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
+/**
  * Sign-out. Clears the session cookie upstream (and records the logout); listed apart from
  * the commercial commands so it can never inherit their headers or be mistaken for one.
  */
@@ -302,6 +362,7 @@ export function isAllowedPostPath(pathname: string): boolean {
     isAllowedPostUploadPath(pathname) ||
     isAllowedCommercialOperationsPostPath(pathname) ||
     isAllowedMarketingCommandPostPath(pathname) ||
+    isAllowedCrmAuthoringCommandPostPath(pathname) ||
     isAllowedAuthPostPath(pathname)
   );
 }

@@ -4,7 +4,7 @@
  * disabled with the reason next to it.
  */
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { Provenance } from "./crmTypes";
 import type { ResourceState } from "./useResource";
 
@@ -220,7 +220,25 @@ export function DisabledAction({ children, reason, id }: { children: ReactNode; 
 
 export const WRITE_DISABLED_REASON = "Escritura desactivada hasta aprobación explícita";
 
+/** Only `http:` and `https:` may open in a new tab; `javascript:`, `data:`, `blob:` and relative values never become a link. */
+export function isSafeExternalHref(href: string): boolean {
+  try {
+    const url = new URL(href);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 export function ExternalLink({ href, children, label }: { href: string; children: ReactNode; label?: string }) {
+  if (!isSafeExternalHref(href)) {
+    // Defence in depth: every href here is server-built, but an unsafe scheme renders as inert text.
+    return (
+      <span className="text-ink-faint" title="Enlace no permitido" data-testid="external-link-refused">
+        {children}
+      </span>
+    );
+  }
   return (
     <a
       href={href}
@@ -450,4 +468,247 @@ export function initials(name: string | null | undefined): string {
   if (!name) return "·";
   const parts = name.replace(/[^\p{L}\s]/gu, " ").trim().split(/\s+/).filter(Boolean);
   return (parts[0]?.[0] ?? "·").toUpperCase() + (parts[1]?.[0] ?? "").toUpperCase();
+}
+
+/* ─────────────────────────────────────────────────────── form primitives ── */
+
+/**
+ * A labelled form field wrapper. Renders a label, the field slot, and an optional hint.
+ * `required` adds an asterisk to the label text (accessible: marked aria-required on the child).
+ */
+export function FormField({
+  label,
+  htmlFor,
+  required,
+  hint,
+  error,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  required?: boolean;
+  hint?: string;
+  error?: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-w-0 space-y-1">
+      <label htmlFor={htmlFor} className="block text-xs font-medium text-ink">
+        {label}
+        {required ? <span aria-hidden="true" className="ml-0.5 text-bad"> *</span> : null}
+      </label>
+      {children}
+      {error ? <p className="text-[11px] text-bad">{error}</p> : hint ? <p className="text-[11px] text-ink-faint">{hint}</p> : null}
+    </div>
+  );
+}
+
+const INPUT_CLS =
+  "w-full min-w-0 rounded-md border border-line bg-canvas-raised px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50";
+
+export function TextInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  required,
+  disabled,
+  maxLength,
+}: {
+  id?: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  required?: boolean;
+  disabled?: boolean;
+  maxLength?: number;
+}) {
+  return (
+    <input
+      id={id}
+      type="text"
+      value={value}
+      onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
+      placeholder={placeholder}
+      required={required}
+      disabled={disabled}
+      maxLength={maxLength}
+      className={INPUT_CLS}
+    />
+  );
+}
+
+export function TextareaInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  required,
+  disabled,
+  maxLength,
+  rows = 3,
+}: {
+  id?: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  required?: boolean;
+  disabled?: boolean;
+  maxLength?: number;
+  rows?: number;
+}) {
+  return (
+    <textarea
+      id={id}
+      value={value}
+      onChange={(e: ChangeEvent<HTMLTextAreaElement>) => onChange(e.target.value)}
+      placeholder={placeholder}
+      required={required}
+      disabled={disabled}
+      maxLength={maxLength}
+      rows={rows}
+      className={`${INPUT_CLS} resize-y`}
+    />
+  );
+}
+
+export function SelectInput({
+  id,
+  value,
+  onChange,
+  options,
+  required,
+  disabled,
+  placeholder,
+}: {
+  id?: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  required?: boolean;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <select
+      id={id}
+      value={value}
+      onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange(e.target.value)}
+      required={required}
+      disabled={disabled}
+      className={INPUT_CLS}
+    >
+      {placeholder ? <option value="">{placeholder}</option> : null}
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── confirm dialog ── */
+
+/**
+ * A destructive-action confirmation dialog.
+ *
+ * The caller passes `lines` — concrete sentences about exactly what will change — and whether
+ * a `reason` is required (adds a mandatory textarea). Submit is blocked until the confirm
+ * checkbox is checked (and reason filled when required).
+ */
+export function ConfirmDialog({
+  title,
+  lines,
+  requireReason = false,
+  reasonLabel = "Motivo",
+  confirmLabel = "Confirmar",
+  cancelLabel = "Cancelar",
+  busy = false,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  lines: string[];
+  requireReason?: boolean;
+  reasonLabel?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  busy?: boolean;
+  error?: string | null;
+  onConfirm: (reason: string) => void;
+  onCancel: () => void;
+}) {
+  const [checked, setChecked] = useState(false);
+  const [reason, setReason] = useState("");
+  const canSubmit = checked && (!requireReason || reason.trim().length > 0) && !busy;
+
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="confirm-dialog-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+    >
+      <div className="absolute inset-0 bg-ink/30" onClick={onCancel} aria-hidden="true" />
+      <div className="relative w-full max-w-md min-w-0 rounded-xl border border-line bg-canvas-raised p-5 shadow-xl">
+        <h2 id="confirm-dialog-title" className="text-base font-semibold text-ink">
+          {title}
+        </h2>
+        <ul className="mt-3 space-y-1">
+          {lines.map((l, i) => (
+            <li key={i} className="flex gap-2 text-xs text-ink-muted">
+              <span aria-hidden="true" className="mt-0.5 shrink-0 text-ink-faint">·</span>
+              <span>{l}</span>
+            </li>
+          ))}
+        </ul>
+        {requireReason ? (
+          <div className="mt-3 space-y-1">
+            <label htmlFor="confirm-reason" className="block text-xs font-medium text-ink">
+              {reasonLabel} <span aria-hidden="true" className="text-bad">*</span>
+            </label>
+            <textarea
+              id="confirm-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              maxLength={2000}
+              placeholder="Escribe el motivo…"
+              className="w-full min-w-0 resize-y rounded-md border border-line bg-canvas-raised px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
+            />
+          </div>
+        ) : null}
+        <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-ink">
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => setChecked(e.target.checked)}
+            className="mt-0.5 shrink-0"
+          />
+          <span>Entiendo las consecuencias y confirmo esta acción.</span>
+        </label>
+        {error ? <p className="mt-2 text-[11px] text-bad">{error}</p> : null}
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="h-8 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken disabled:opacity-50"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            onClick={() => canSubmit && onConfirm(reason)}
+            disabled={!canSubmit}
+            className="h-8 rounded-md bg-bad px-3 text-xs font-medium text-white hover:bg-bad/90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {busy ? "…" : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

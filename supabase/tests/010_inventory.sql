@@ -40,9 +40,11 @@ select set_eq(
     'crm.opportunity_organization', 'crm.opportunity_interest', 'crm.opportunity_evidence',
     'outbound.campaign_block',
     'platform.auth_principal', 'platform.operator_profile', 'platform.auth_event',
-    'platform.auth_session'
+    'platform.auth_session',
+    'outbound.campaign_content', 'outbound.campaign_content_message',
+    'crm.note', 'crm.organization_product_line'
   ],
-  'exactly the reviewed 41 application tables exist');
+  'exactly the reviewed 45 application tables exist');
 
 select results_eq(
   $$ select n.nspname::text collate "default", count(*)::int
@@ -50,8 +52,8 @@ select results_eq(
       where c.relkind = 'r'
         and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       group by 1 order by 1 $$,
-  $$ values ('catalog', 2), ('comms', 4), ('crm', 19), ('evidence', 2), ('outbound', 7), ('platform', 6), ('procurement', 1) $$,
-  'counts by schema: crm 19, comms 4, outbound 7, evidence 2, catalog 2, procurement 1, platform 6');
+  $$ values ('catalog', 2), ('comms', 4), ('crm', 21), ('evidence', 2), ('outbound', 9), ('platform', 6), ('procurement', 1) $$,
+  'counts by schema: crm 21, comms 4, outbound 9, evidence 2, catalog 2, procurement 1, platform 6');
 
 -- No views, materialized views, partitions or foreign tables in Slice 0.
 select is(
@@ -98,6 +100,7 @@ select set_eq(
         'crm.opportunity_evidence_link_immutable',
         'crm.opportunity_stage_guard',
         'crm.quote_revision_historical_guard',
+        'crm.note_guard',
         'outbound.campaign_content_draft_only',
         'outbound.campaign_freeze_facts_write_once',
         'outbound.campaign_recipient_snapshot_guard',
@@ -107,6 +110,7 @@ select set_eq(
         'outbound.add_contact_control',
         'outbound.marketing_contact_refusals',
         'outbound.archived_campaign_immutable',
+        'outbound.campaign_content_immutable',
         'outbound.campaign_block_guard',
         'outbound.campaign_hold_refusals',
         'outbound.campaign_hold_guard',
@@ -116,7 +120,7 @@ select set_eq(
         'platform.auth_session_guard',
         'platform.auth_event_actor_guard', 'platform.hmac_sha256',
         'platform.begin_pin_attempt', 'platform.finish_pin_attempt'],
-  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the three W10 unsubscribe functions, the three campaign-block functions, the archived-campaign guard, the three sign-in version guards, the session guard, the audit-actor guard, the HMAC helper and the two PIN-attempt definers exist');
+  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the three W10 unsubscribe functions, the three campaign-block functions, the archived-campaign guard, the campaign-content-archive guard, the note guard, the three sign-in version guards, the session guard, the audit-actor guard, the HMAC helper and the two PIN-attempt definers exist');
 
 -- `public` holds nothing.
 select is(
@@ -144,7 +148,7 @@ select is(
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and c.relrowsecurity),
-  41, 'RLS is enabled on all 41 tables');
+  45, 'RLS is enabled on all 45 tables');
 select is(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r'
@@ -164,7 +168,7 @@ select is(
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and obj_description(c.oid, 'pg_class') like 'DOMAIN.md §7 #%'),
-  41, 'every table is commented with its DOMAIN.md §7 inventory number');
+  45, 'every table is commented with its DOMAIN.md §7 inventory number');
 
 select * from finish();
 rollback;

@@ -48,7 +48,13 @@ def supplier_directory(
                 o["roles"].append(r["role"])
                 o["cases"] = max(o["cases"], int(r.get("cases") or 0))
         hints = [
-            {"domain": c["domain"], "trade_name": c.get("trade_name"), "resolution": c["resolution"]}
+            {
+                "domain": c["domain"],
+                "trade_name": c.get("trade_name"),
+                "resolution": c["review"]["state"] if "review" in c else c.get("resolution"),
+                "assertion_id": c.get("assertion_id"),
+                "review": c.get("review"),
+            }
             for c in candidates
             if brand["id"] in _brands_named(taxonomy, c.get("domain"), c.get("trade_name"))
         ]

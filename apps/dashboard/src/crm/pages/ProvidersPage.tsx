@@ -3,7 +3,6 @@ import { fetchProviders } from "../crmApi";
 import type { SupplierDirectoryEntry } from "../crmTypes";
 import {
   Badge,
-  DisabledAction,
   EmptyState,
   ExternalLink,
   PageHeader,
@@ -12,25 +11,48 @@ import {
   SearchInput,
   Skeleton,
   StatLine,
-  WRITE_DISABLED_REASON,
   initials,
 } from "../ui";
+import { candidateKey, candidateState, countUnreviewed, isUnreviewed } from "../supplierCandidates";
 import { useResource } from "../useResource";
+import { useMayAuthorCrm } from "../authoring/authoring";
+import { NewOrganizationForm } from "../authoring/NewOrganizationForm";
+import { ConfirmCandidateForm, RejectCandidateForm } from "../authoring/CandidateReview";
 
 const ROLE_LABEL: Record<string, string> = { supplier: "Proveedor", manufacturer: "Fabricante" };
 
 export function ProvidersPage() {
   const [state, reload] = useResource(fetchProviders);
   const [q, setQ] = useState("");
+  const mayAuthor = useMayAuthorCrm();
+  const [showNewProvider, setShowNewProvider] = useState(false);
   return (
     <div className="space-y-4">
       <PageHeader
         title="Proveedores"
         subtitle="Las seis marcas que OrigenLab representa, los proveedores registrados en casos y, aparte, los candidatos detectados por máquina que nadie ha revisado."
+        actions={
+          mayAuthor ? (
+            <button
+              type="button"
+              onClick={() => setShowNewProvider(true)}
+              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black"
+            >
+              Agregar proveedor
+            </button>
+          ) : null
+        }
       />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} cards />}>
-        {(data) => <Body data={data} q={q} setQ={setQ} />}
+        {(data) => <Body data={data} q={q} setQ={setQ} mayAuthor={mayAuthor} onRefresh={reload} />}
       </ResourceGate>
+      {showNewProvider ? (
+        <NewOrganizationForm
+          forcedClassification="supplier"
+          onDone={() => { setShowNewProvider(false); reload(); }}
+          onCancel={() => setShowNewProvider(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -39,10 +61,14 @@ function Body({
   data,
   q,
   setQ,
+  mayAuthor = false,
+  onRefresh,
 }: {
   data: Awaited<ReturnType<typeof fetchProviders>>;
   q: string;
   setQ: (v: string) => void;
+  mayAuthor?: boolean;
+  onRefresh?: () => void;
 }) {
   const directory = useMemo(() => data.directory ?? [], [data.directory]);
   const onCases = useMemo(() => {
@@ -62,7 +88,8 @@ function Body({
   const candidates = data.candidates.filter(
     (c) => !needle || c.domain.includes(needle) || (c.trade_name ?? "").toLowerCase().includes(needle),
   );
-  const unresolved = data.candidates.filter((c) => c.resolution === "unresolved").length;
+  // The same predicate the expanded list uses per row: one field, one answer.
+  const unresolved = countUnreviewed(data.candidates);
   return (
     <>
       <StatLine
@@ -137,44 +164,114 @@ function Body({
           <span className="ml-auto text-[11px] font-normal text-ink-faint">Detectados por máquina · nunca se promueven solos</span>
         </summary>
         <div className="border-t border-line p-2">
-          <Panel
-            title="Candidatos"
-            note="Detectados por dominio en el manifiesto de migración · sin revisar no significa proveedor"
-            aside={<SearchInput value={q} onChange={setQ} label="Buscar candidatos" placeholder="Marca o dominio…" />}
-          >
-            {candidates.length === 0 ? (
-              <div className="p-3">
-                <EmptyState title="Ningún candidato coincide" />
-              </div>
-            ) : (
-              <ul className="grid grid-cols-1 divide-y divide-line sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-3">
-                {candidates.map((c) => (
-                  <li key={c.domain} className="flex items-center gap-2 border-line px-3 py-2 sm:border-b">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-medium text-ink">{c.trade_name ?? c.domain}</p>
-                      <p className="truncate text-[11px] text-ink-faint">{c.domain}</p>
-                    </div>
-                    <Badge tone={c.resolution === "unresolved" ? "warn" : "good"}>
-                      {c.resolution === "unresolved" ? "Sin revisar" : c.resolution}
-                    </Badge>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="border-t border-line px-3 py-2.5">
-              <DisabledAction id="providers-review-disabled" reason={WRITE_DISABLED_REASON}>
-                Confirmar como proveedor
-              </DisabledAction>
-            </div>
-          </Panel>
+          <CandidatesList
+            candidates={candidates}
+            q={q}
+            setQ={setQ}
+            mayAuthor={mayAuthor}
+            onRefresh={onRefresh}
+          />
         </div>
       </details>
     </>
   );
 }
 
+function CandidatesList({
+  candidates,
+  q,
+  setQ,
+  mayAuthor,
+  onRefresh,
+}: {
+  candidates: Awaited<ReturnType<typeof fetchProviders>>["candidates"];
+  q: string;
+  setQ: (v: string) => void;
+  mayAuthor: boolean;
+  onRefresh?: () => void;
+}) {
+  const needle = q.trim().toLowerCase();
+  const filtered = candidates.filter(
+    (c) => !needle || c.domain.includes(needle) || (c.trade_name ?? "").toLowerCase().includes(needle),
+  );
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [rejectId, setRejectId] = useState<string | null>(null);
+  const confirmTarget = confirmId ? candidates.find((c) => c.assertion_id === confirmId) ?? null : null;
+  const rejectTarget = rejectId ? candidates.find((c) => c.assertion_id === rejectId) ?? null : null;
+  return (
+    <>
+      <Panel
+        title="Candidatos"
+        note="Detectados por dominio en el manifiesto de migración · sin revisar no significa proveedor"
+        aside={<SearchInput value={q} onChange={setQ} label="Buscar candidatos" placeholder="Marca o dominio…" />}
+      >
+        {filtered.length === 0 ? (
+          <div className="p-3">
+            <EmptyState title="Ningún candidato coincide" />
+          </div>
+        ) : (
+          <ul className="divide-y divide-line" aria-label="Candidatos detectados">
+            {filtered.map((c, i) => {
+              const assertionId = c.assertion_id;
+              const state = candidateState(c);
+              const unresolved = isUnreviewed(c);
+              return (
+                <li key={candidateKey(c, i)} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-ink">{c.trade_name ?? c.domain}</p>
+                    <p className="truncate text-[11px] text-ink-faint">{c.domain}</p>
+                  </div>
+                  <Badge tone={unresolved ? "warn" : "good"}>
+                    {unresolved ? "Sin revisar" : state}
+                  </Badge>
+                  {mayAuthor && unresolved && assertionId ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmId(assertionId)}
+                        className="h-6 rounded-md border border-good/40 bg-good-bg px-2 text-[11px] font-medium text-good hover:bg-good/10"
+                      >
+                        Confirmar…
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRejectId(assertionId)}
+                        className="h-6 rounded-md border border-bad/40 bg-bad-bg px-2 text-[11px] font-medium text-bad hover:bg-bad/10"
+                      >
+                        Rechazar…
+                      </button>
+                    </>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Panel>
+      {confirmTarget && confirmId ? (
+        <ConfirmCandidateForm
+          assertionId={confirmId}
+          domain={confirmTarget.domain}
+          tradeName={confirmTarget.trade_name ?? null}
+          onDone={() => { setConfirmId(null); onRefresh?.(); }}
+          onCancel={() => setConfirmId(null)}
+        />
+      ) : null}
+      {rejectTarget && rejectId ? (
+        <RejectCandidateForm
+          assertionId={rejectId}
+          domain={rejectTarget.domain}
+          tradeName={rejectTarget.trade_name ?? null}
+          onDone={() => { setRejectId(null); onRefresh?.(); }}
+          onCancel={() => setRejectId(null)}
+        />
+      ) : null}
+    </>
+  );
+}
+
 function DirectoryCard({ entry }: { entry: SupplierDirectoryEntry }) {
-  const reviewed = entry.candidate_hints.filter((h) => h.resolution !== "unresolved").length;
+  const reviewed = entry.candidate_hints.filter((h) => !isUnreviewed(h)).length;
   return (
     <article className="flex gap-3 rounded-md border border-line bg-canvas-raised p-3" data-testid="directory-card">
       <span

@@ -224,6 +224,13 @@ class Settings(BaseSettings):
     approve or send a campaign.
     """
     v2_campaign_drafts_enabled: bool = False
+    """Mount POST /v2/commands/{create,update,...}-person/organization etc (freeform CRM authoring).
+
+    Default **false** and separate from v2_commands_enabled: evidence-bound decisions and
+    freeform create/archive/merge are different permissions. Neither switch creates a campaign
+    or sends anything.
+    """
+    v2_crm_authoring_enabled: bool = False
     """Mount POST /v2/commands/freeze-campaign-audience (WORKFLOWS.md §W4 step 2).
 
     Default **false** and separate from the drafts switch: committing an immutable recipient
@@ -434,6 +441,10 @@ class Settings(BaseSettings):
 
     def v2_campaign_drafts_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_drafts_enabled)
+
+    def crm_authoring_configured(self) -> bool:
+        """The CRM authoring boundary needs both a database and a deliberate switch."""
+        return self.v2_configured() and bool(self.v2_crm_authoring_enabled)
 
     def v2_campaign_planning_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_planning_enabled)

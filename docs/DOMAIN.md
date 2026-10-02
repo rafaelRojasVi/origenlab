@@ -735,18 +735,19 @@ list is decided, these rows are reclassified by the migration that introduces it
 | 13 | A case at `lead` has had no activity for eleven months | it is still `lead`. The dashboard shows *sin actividad hace 334 días*, computed at read time. Closing it is `abandon_opportunity(case, reason)` by an operator; without that act no row changes and no event exists (§3.4) |
 | 14 | A distributor that supplies OrigenLab asks to buy a unit for its own laboratory | the distributor's `supplier` relationship is untouched. `set_requesting_institution` is refused until the operator supplies a justification; with it, one `opportunity_organization(distributor, role=requesting_institution, confirmation=confirmed, confirmed_by=O)` carries `supplier_exception_reason`, and the triple can never be rewritten. The case card shows *proveedor registrado* **and** *solicitante — excepción justificada*. No marketing permission and no `prospect` relationship follow |
 
-## 7. Table inventory — the reviewed 41-table foundation
+## 7. Table inventory — the reviewed 45-table foundation
 
-Seven private schemas. **41 application tables** — 33 reviewed after the
-external CRM benchmark, the three of §7.1, the one of §7.2 and the four of
-§7.3 — the current
+Seven private schemas. **45 application tables** — 33 reviewed after the
+external CRM benchmark, the three of §7.1, the one of §7.2, the four of
+§7.3 and the four of §7.4 — the current
 reviewed foundation
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §13), not a permanent budget: a table
 is added only when a relational invariant proves it necessary, removed when
 nothing needs it, and every change is recorded here. Numbers are stable
 identifiers, so the two D0.3 additions are appended as 31 and 32, and the
-Slice 0 / M10c reply table as 33, the commercial case as 34–36 and the
-campaign safety block as 37 and the shared sign-in tables as 38–41, rather
+Slice 0 / M10c reply table as 33, the commercial case as 34–36, the
+campaign safety block as 37, the shared sign-in tables as 38–41 and the
+campaign-content archive and CRM authoring tables as 42–45, rather
 than renumbered into their schema blocks.
 Supabase-managed `auth`, `storage`, `pgmq` and migration-metadata tables are
 outside this count and outside this inventory.
@@ -889,6 +890,41 @@ only `revoked_at` / `revoked_reason`; it deletes nothing (no runtime role holds
 
 Counts by schema: `crm` 19, `comms` 4, `outbound` 7, `evidence` 2,
 `catalog` 2, `procurement` 1, `platform` 6 — **41**.
+
+### 7.4 Campaign-content archive and CRM authoring — built 2026-09-30
+
+Four tables — two in `outbound` and two in `crm` — numbered 42–45
+(`20260930120000_slice6_campaign_content_archive_and_crm_authoring`).
+`supabase/tests/010_inventory.sql` and `supabase/scripts/verify_chain.sh`
+assert **45**, `crm` **21** and `outbound` **9**.
+
+**Lifecycle columns on existing tables.** The migration also adds soft-removal
+and soft-archive columns to five existing CRM tables rather than separate
+history tables: `crm.organization` gains `archived_at / archived_by_operator_id / archive_reason`
+(all-or-none triple); `crm.person` gains `title`, a `status` vocabulary
+(`active / inactive / archived`) and the same archive triple; `crm.contact_point`
+gains `status` (`active / inactive`), `version`, `note`, `deactivated_at` and
+`deactivated_by_operator_id`; `crm.organization_domain` and `crm.external_identifier`
+each gain a soft-removal triple (`removed_at / removed_by_operator_id / remove_reason`,
+all-or-none). Never-deleted triggers protect `crm.organization_product_line`
+(never physically deleted; closed by `valid_to`).
+
+**Domain event vocabulary rewrite.** The `crm.domain_event_is_valid` CHECK function
+is replaced to add the `note` aggregate kind (`note.created`, `note.revised`,
+`note.archived`) and new event types for the lifecycle mutations:
+`person.updated / archived / restored`, `contact_point.updated / deactivated`,
+`organization.updated / archived / restored / identifier_added / identifier_removed / domain_added / domain_removed / domain_restored / product_line_linked / product_line_unlinked`,
+and `assertion.supplier_candidate_confirmed / rejected`.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 42 | `outbound.campaign_content` | immutable archive of one campaign's frozen HTML and plain-text bodies, keyed by the campaign's `content_sha256` | owned by `origenlab_owner`; INSERT-only (trigger `campaign_content_immutable`); `(campaign_id, content_sha256)` unique; no address or personal data columns; api and worker may SELECT |
+| 43 | `outbound.campaign_content_message` | per-send-attempt content snapshot linking a send attempt to the archived content | belongs to exactly one `campaign_content`; one row per `send_attempt_id`; INSERT-only through the same owner guard; api and worker may SELECT |
+| 44 | `crm.note` | operator-authored annotation on any CRM object — person, organization, case, contact point | body, author and subject are immutable once written (trigger `crm.note_guard`); archiving advances `version` by exactly one and is final; never deleted; a revision chains to a root note; api may INSERT and archive (column-level UPDATE: `status`, `archived_at`, `archived_by_operator_id`, `archive_reason`, `version`) |
+| 45 | `crm.organization_product_line` | links one organization to one product-line label — the brands and equipment families it handles | closed product-line vocabulary; at most one active link per `(organization_id, product_line)` (partial unique index excludes soft-removed rows); unlinked by setting `valid_to` (never deleted; trigger refuses DELETE); api may INSERT and unlink (column-level UPDATE: `valid_to`, `unlinked_by_operator_id`, `note`, `updated_at`) |
+
+Counts by schema: `crm` 21, `comms` 4, `outbound` 9, `evidence` 2,
+`catalog` 2, `procurement` 1, `platform` 6 — **45**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

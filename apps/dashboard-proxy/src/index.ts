@@ -1,7 +1,9 @@
 import {
   AUTH_PROFILE_MAX_BYTES,
+  CRM_AUTHORING_MAX_BYTES,
   isAllowedAuthPostPath,
   isAllowedAuthProfilePostPath,
+  isAllowedCrmAuthoringCommandPostPath,
   marketingCommandMaxBytes,
   isAllowedMarketingCommandPostPath,
   isAllowedPostPath,
@@ -176,7 +178,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     if (upstreamPath === null || !isAllowedPostPath(upstreamPath)) {
       return jsonError(request, 405, "method_not_allowed");
     }
-    if (isAllowedMarketingCommandPostPath(upstreamPath)) {
+    if (isAllowedMarketingCommandPostPath(upstreamPath) || isAllowedCrmAuthoringCommandPostPath(upstreamPath)) {
       const refusal = marketingCommandRefusal(request);
       if (refusal) {
         return jsonError(request, refusal.status, refusal.code);
@@ -223,6 +225,13 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     body.byteLength > marketingCommandMaxBytes(upstreamPath as string)
   ) {
     // A body larger than its declared Content-Length, or one sent without it.
+    return jsonError(request, 413, "payload_too_large");
+  }
+  if (
+    body !== undefined &&
+    isAllowedCrmAuthoringCommandPostPath(upstreamPath as string) &&
+    body.byteLength > CRM_AUTHORING_MAX_BYTES
+  ) {
     return jsonError(request, 413, "payload_too_large");
   }
   if (

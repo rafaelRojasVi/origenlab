@@ -1957,3 +1957,75 @@ describe("Campaign safety block commands and read", () => {
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("CRM authoring commands", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const CREATE_PERSON = "https://proxy.test/api/v2/commands/create-person";
+  const KEY = "test-idempotency-key-crm-authoring";
+
+  function good(extra: Record<string, string> = {}, body = JSON.stringify({ display_name: "Paloma" })) {
+    return requestWithOrigin(CREATE_PERSON, {
+      method: "POST",
+      body,
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": KEY,
+        "Sec-Fetch-Site": "same-site",
+        Cookie: "__Host-origenlab_session=s1; CF_Authorization=leak",
+        ...extra,
+      },
+    });
+  }
+
+  it("forwards a well-formed same-site JSON authoring command with its key and session cookie only", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(good(), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe("/v2/commands/create-person");
+    expect(upstream.method).toBe("POST");
+    expect(upstream.headers.get("Idempotency-Key")).toBe(KEY);
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+  });
+
+  it.each([
+    ["no Origin", {}, { origin: "" }, 403, "origin_not_allowed"],
+    ["a foreign Origin", {}, { origin: "https://evil.test" }, 403, "origin_not_allowed"],
+    ["a cross-site fetch", { "Sec-Fetch-Site": "cross-site" }, {}, 403, "cross_site_request"],
+    ["text/plain Content-Type", { "Content-Type": "text/plain" }, {}, 415, "unsupported_media_type"],
+    ["no Idempotency-Key", { "Idempotency-Key": "" }, {}, 400, "idempotency_key_required"],
+    ["malformed Idempotency-Key", { "Idempotency-Key": "short" }, {}, 400, "idempotency_key_required"],
+  ])("refuses %s before forwarding", async (_label, headerOver, originOver, status, code) => {
+    stubUpstreamFetch();
+    const base = good(headerOver as Record<string, string>);
+    const headers = new Headers(base.headers);
+    if ((originOver as { origin?: string }).origin !== undefined) {
+      const origin = (originOver as { origin: string }).origin;
+      if (origin) headers.set("Origin", origin);
+      else headers.delete("Origin");
+    }
+    const req = new Request(base.url, { method: "POST", headers, body: JSON.stringify({ display_name: "P" }) });
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toMatchObject({ error: { code } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("refuses an actual body larger than 64 KiB even when Content-Length understates it", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(good({}, "x".repeat(65_537)), TEST_ENV);
+    expect(res.status).toBe(413);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("does not make a CRM authoring command path GET-readable", async () => {
+    stubUpstreamFetch();
+    const req = requestWithOrigin(CREATE_PERSON, { method: "GET" });
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(403);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});

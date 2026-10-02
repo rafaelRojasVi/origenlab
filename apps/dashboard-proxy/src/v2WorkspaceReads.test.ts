@@ -131,3 +131,65 @@ describe("CRM workspace reads", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("CRM authoring reads", () => {
+  const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+  const AUTHORING_READS = [
+    `/v2/workspace/people/${uuid}`,
+    "/v2/workspace/people/merge-preview",
+    `/v2/workspace/organizations/${uuid}/authoring`,
+  ];
+
+  it.each(AUTHORING_READS)("forwards GET %s with the session cookie only", async (path) => {
+    const fetchMock = stubUpstream(200, JSON.stringify({ person_id: uuid }));
+    const response = await handleRequest(
+      new Request(`${DASHBOARD}/api${path}`, {
+        headers: {
+          Cookie: `CF_Authorization=edge; ${AUTH_SESSION_COOKIE}=session.token; other=1`,
+          [OPERATOR_EMAIL_HEADER]: "spoofed@origenlab.cl",
+        },
+      }),
+      TEST_ENV,
+    );
+    expect(response.status).toBe(200);
+    const upstream = fetchMock.mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe(path);
+    expect(upstream.method).toBe("GET");
+    expect(upstream.headers.get("Cookie")).toBe(`${AUTH_SESSION_COOKIE}=session.token`);
+    expect(upstream.headers.get(OPERATOR_EMAIL_HEADER)).toBeNull();
+  });
+
+  it("passes a viewer's masked answer back unchanged", async () => {
+    const masked = JSON.stringify({ person_id: uuid, contact_points: [{ address: "***@example.cl" }] });
+    stubUpstream(200, masked, [["X-OrigenLab-Redaction", "contact-addresses"]]);
+    const response = await handleRequest(
+      new Request(`${DASHBOARD}/api/v2/workspace/people/${uuid}`, {
+        headers: { Cookie: `${AUTH_SESSION_COOKIE}=v` },
+      }),
+      TEST_ENV,
+    );
+    expect(await response.text()).toBe(masked);
+  });
+
+  it.each(AUTHORING_READS.flatMap((p) => ["POST", "PUT", "PATCH", "DELETE"].map((m) => [m, p])))(
+    "refuses %s %s without forwarding it",
+    async (method, path) => {
+      const fetchMock = stubUpstream(200);
+      const response = await handleRequest(new Request(`${DASHBOARD}/api${path}`, { method }), TEST_ENV);
+      expect(response.status).toBe(405);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses the bare people list and per-person notes (not yet a browser surface)", async () => {
+    const fetchMock = stubUpstream(200);
+    for (const path of [
+      "/v2/workspace/people",
+      `/v2/workspace/people/${uuid}/notes`,
+    ]) {
+      const response = await handleRequest(new Request(`${DASHBOARD}/api${path}`), TEST_ENV);
+      expect(response.status, path).toBe(403);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

@@ -319,19 +319,27 @@ function Body({
   );
 }
 
+/** Label shown in the thumbnail when HTML is not available, using the per-campaign html_state. */
+function thumbnailUnavailableLabel(c: CampaignSummary): string {
+  if (c.html_state === "not_recovered") return "HTML no recuperado";
+  if (c.html_state === "ambiguous_attribution") return "Atribución ambigua";
+  return "HTML enviado no archivado";
+}
+
 /** A thumbnail of the stored HTML when there is some; otherwise it says it was never imported. */
 function Thumbnail({ c }: { c: CampaignSummary }) {
+  const hasHtml = c.has_html || c.html_state === "sent_html_archived" || c.html_state === "historical_draft";
   const [state] = useResource(
-    () => (c.has_html ? fetchCampaign(c.campaign_id) : Promise.resolve(null)),
-    [c.campaign_id, c.has_html, c.version],
+    () => (hasHtml ? fetchCampaign(c.campaign_id) : Promise.resolve(null)),
+    [c.campaign_id, hasHtml, c.version],
   );
-  if (!c.has_html) {
+  if (!hasHtml) {
     return (
       <div
         className="flex h-[150px] items-center justify-center rounded-md border border-dashed border-line-strong bg-canvas-sunken text-xs text-ink-muted"
         data-testid="thumb-not-imported"
       >
-        HTML enviado no archivado
+        {thumbnailUnavailableLabel(c)}
       </div>
     );
   }

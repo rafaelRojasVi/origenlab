@@ -396,6 +396,200 @@ describe("sent HTML archive", () => {
     expect(await screen.findByTestId("html-unavailable")).toHaveAttribute("data-state", "not_frozen");
     expect(screen.queryByTestId("email-frame")).toBeNull();
   });
+
+  it.each([
+    ["not_recovered", "HTML no recuperado"],
+    ["ambiguous_attribution", "Atribución ambigua"],
+  ])("html_state «%s» shows label «%s» and no email frame", async (state, label) => {
+    renderDetail(
+      archive({ html: null, html_state: state as CampaignArchive["html_state"] }),
+      FROZEN,
+      "sales",
+      true,
+      "html",
+    );
+    const box = await screen.findByTestId("html-unavailable");
+    expect(box).toHaveAttribute("data-state", state);
+    expect(box).toHaveTextContent(label);
+    expect(screen.queryByTestId("email-frame")).toBeNull();
+  });
+
+  it("ambiguous_attribution explanation mentions that attribution by subject alone is never used", async () => {
+    renderDetail(
+      archive({ html: null, html_state: "ambiguous_attribution" }),
+      FROZEN,
+      "sales",
+      true,
+      "html",
+    );
+    const box = await screen.findByTestId("html-unavailable");
+    expect(box).toHaveTextContent("asunto solamente");
+  });
+
+  it("sent_html_archived shows «HTML enviado archivado» state header and renders sandboxed HTML", async () => {
+    const recoveredVariant = {
+      id: "v1", content_kind: "sent_html" as const, variant_no: 1,
+      subject: "Asunto recuperado", preheader: "Pre recuperado",
+      body_html: HOSTILE_HTML, body_html_sha256: "aa".repeat(32), body_html_normalized_sha256: "bb".repeat(32),
+      message_count: 995, first_sent_at: "2026-09-02T17:21:00Z", last_sent_at: "2026-09-03T10:00:00Z",
+      attribution_method: "recipient_lineage_timestamp" as const, attribution_confidence: "corroborated" as const,
+      attribution_policy_version: "campaign-content-attribution/2026-09-30.v1",
+      unmatched_attempt_count: 82, linked_attempts: 1044, hash_verified: true,
+    };
+    renderDetail(
+      archive({ html: null, html_state: "sent_html_archived", contents: [recoveredVariant], recovery: { policy_version: "v1", matched_messages: 1044, unmatched_attempts: 82, manifest_sha256: "cc".repeat(32) } }),
+      FROZEN,
+      "sales",
+      true,
+      "html",
+    );
+    const header = await screen.findByTestId("html-state-header");
+    expect(header).toHaveAttribute("data-state", "sent_html_archived");
+    const label = within(header).getByTestId("html-state-label");
+    expect(label).toHaveTextContent("HTML enviado archivado");
+    // Should render a sandboxed iframe, not the raw hostile markup
+    const frame = await screen.findByTestId("email-frame");
+    expect(frame.tagName).toBe("IFRAME");
+    expect(frame.getAttribute("sandbox")).toBe("");
+    const srcdoc = frame.getAttribute("srcdoc") ?? "";
+    expect(srcdoc).not.toContain("<script>");
+    // Provenance line is shown
+    const prov = screen.getByTestId("variant-provenance");
+    expect(prov).toHaveTextContent("995 mensajes");
+    expect(prov).toHaveTextContent("lineage de destinatario + ventana de tiempo");
+    expect(prov).toHaveTextContent("corroborada");
+    expect(prov).toHaveTextContent("82 intentos sin copia");
+    expect(prov).toHaveTextContent("✓ verificado");
+    // No write affordance
+    expect(screen.queryByRole("button", { name: /Editar|Reenviar|Reabrir/ })).toBeNull();
+  });
+
+  it("historical_draft shows «Borrador histórico» label and never labels content as sent", async () => {
+    const draftVariant = {
+      id: "v1", content_kind: "historical_draft" as const, variant_no: 1,
+      subject: "Borrador asunto", preheader: null,
+      body_html: "<p>Borrador</p>", body_html_sha256: "dd".repeat(32), body_html_normalized_sha256: "ee".repeat(32),
+      message_count: 0, first_sent_at: null, last_sent_at: null,
+      attribution_method: "recipient_lineage_timestamp" as const, attribution_confidence: "corroborated" as const,
+      attribution_policy_version: "campaign-content-attribution/2026-09-30.v1",
+      unmatched_attempt_count: 0, linked_attempts: 0, hash_verified: false,
+    };
+    renderDetail(
+      archive({ html: null, html_state: "historical_draft", contents: [draftVariant] }),
+      FROZEN,
+      "sales",
+      true,
+      "html",
+    );
+    const header = await screen.findByTestId("html-state-header");
+    expect(header).toHaveAttribute("data-state", "historical_draft");
+    const stateLabel = within(header).getByTestId("html-state-label");
+    expect(stateLabel).toHaveTextContent("Borrador histórico");
+    // The label must not say «HTML enviado» (explanation text may mention it in a negative context)
+    expect(stateLabel).not.toHaveTextContent("HTML enviado");
+  });
+
+  it("multiple variants show a variant switcher that changes the rendered content", async () => {
+    const variant1 = {
+      id: "v1", content_kind: "sent_html" as const, variant_no: 1,
+      subject: "Asunto variante 1", preheader: null,
+      body_html: "<p>Variante A</p>", body_html_sha256: "aa".repeat(32), body_html_normalized_sha256: "bb".repeat(32),
+      message_count: 995, first_sent_at: "2026-09-02T17:21:00Z", last_sent_at: "2026-09-03T10:00:00Z",
+      attribution_method: "recipient_lineage_timestamp" as const, attribution_confidence: "corroborated" as const,
+      attribution_policy_version: "v1", unmatched_attempt_count: 0, linked_attempts: 995, hash_verified: true,
+    };
+    const variant2 = { ...variant1, id: "v2", variant_no: 2, subject: "Asunto variante 2", body_html: "<p>Variante B</p>", message_count: 49, first_sent_at: "2026-09-02T13:08:00Z", last_sent_at: "2026-09-02T13:20:00Z" };
+    renderDetail(
+      archive({ html: null, html_state: "sent_html_archived", contents: [variant1, variant2] }),
+      FROZEN,
+      "sales",
+      true,
+      "html",
+    );
+    const switcher = await screen.findByTestId("variant-switcher");
+    expect(within(switcher).getAllByRole("button")).toHaveLength(2);
+    // First variant is shown by default
+    expect(screen.getByTestId("variant-provenance")).toHaveTextContent("995 mensajes");
+    // Switch to variant 2
+    fireEvent.click(within(switcher).getByTestId("variant-btn-1"));
+    await waitFor(() => expect(screen.getByTestId("variant-provenance")).toHaveTextContent("49 mensajes"));
+  });
+
+  it("sandbox and CSP still apply to recovered HTML (iframe sandbox='' and no script survives)", async () => {
+    const variant = {
+      id: "v1", content_kind: "sent_html" as const, variant_no: 1,
+      subject: "S", preheader: null, body_html: HOSTILE_HTML,
+      body_html_sha256: "ff".repeat(32), body_html_normalized_sha256: "ff".repeat(32),
+      message_count: 100, first_sent_at: "2026-09-02T17:00:00Z", last_sent_at: "2026-09-02T18:00:00Z",
+      attribution_method: "recipient_lineage_timestamp" as const, attribution_confidence: "corroborated" as const,
+      attribution_policy_version: "v1", unmatched_attempt_count: 0, linked_attempts: 100, hash_verified: true,
+    };
+    renderDetail(
+      archive({ html: null, html_state: "sent_html_archived", contents: [variant] }),
+      FROZEN, "sales", true, "html",
+    );
+    const frame = await screen.findByTestId("email-frame");
+    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
+    const srcdoc = frame.getAttribute("srcdoc") ?? "";
+    const doc = new DOMParser().parseFromString(srcdoc, "text/html");
+    expect(doc.head.querySelector("meta[http-equiv]")?.getAttribute("content")).toContain("default-src 'none'");
+    expect(doc.querySelector("script")).toBeNull();
+    expect(doc.querySelector("form")).toBeNull();
+  });
+
+  it("a viewer sees the HTML tab with no write affordance and no non-GET fetch", async () => {
+    const variant = {
+      id: "v1", content_kind: "sent_html" as const, variant_no: 1,
+      subject: "S", preheader: null, body_html: "<p>Hola</p>",
+      body_html_sha256: "aa".repeat(32), body_html_normalized_sha256: "aa".repeat(32),
+      message_count: 100, first_sent_at: "2026-09-02T17:00:00Z", last_sent_at: "2026-09-02T18:00:00Z",
+      attribution_method: "recipient_lineage_timestamp" as const, attribution_confidence: "corroborated" as const,
+      attribution_policy_version: "v1", unmatched_attempt_count: 0, linked_attempts: 100, hash_verified: true,
+    };
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
+      if (init?.method && init.method.toUpperCase() !== "GET") posts.push(url.pathname);
+      return Promise.resolve(new Response(JSON.stringify(
+        archive({ html: null, html_state: "sent_html_archived", contents: [variant] })
+      ), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }));
+    render(
+      <AuthSessionContext.Provider value={{ session: { kind: "signed_in", method: "google_session", operator: { operatorId: "o1", email: "op@test.invalid", displayName: "Op", role: "viewer" } }, signOut: async () => true }}>
+        <CampaignDetail summary={FROZEN} planningEnabled={false} initialTab="html" onBack={() => undefined} onEdit={() => undefined} onPlanned={() => undefined} />
+      </AuthSessionContext.Provider>,
+    );
+    await screen.findByTestId("html-state-header");
+    expect(posts).toEqual([]);
+    // No edit/resend affordances
+    const buttons = screen.queryAllByRole("button").map((b) => b.textContent?.trim());
+    expect(buttons.some((t) => /Editar|Reenviar|Reabrir/.test(t ?? ""))).toBe(false);
+  });
+
+  it("a never-sent campaign shows «Nunca enviada» badge AND «HTML no recuperado» on the HTML tab", async () => {
+    const NEVER_SENT: CampaignSummary = {
+      ...base,
+      campaign_id: "a0000000-0000-4000-8000-000000000099",
+      name: "Nunca enviada ficticia",
+      status: "archived",
+      send_attempts: [],
+      attempt_totals: { attempts: 0, accepted: 0, rejected: 0, other: 0, delivery_confirmed: 0, delivery_pending: 0, delivery_bounced: 0, rejected_undated: 0, with_provider_id: 0, first_accepted_at: null, last_accepted_at: null },
+    };
+    renderDetail(
+      archive({ campaign_id: NEVER_SENT.campaign_id, html: null, html_state: "not_recovered", send_attempts: [], send_batches: [] }),
+      NEVER_SENT,
+      "sales",
+      true,
+      "html",
+    );
+    // «Nunca enviada» in the header
+    expect(await screen.findByTestId("detail-never-sent")).toHaveTextContent("Nunca enviada");
+    // «HTML no recuperado» in the HTML tab
+    const htmlUnavailable = await screen.findByTestId("html-unavailable");
+    expect(htmlUnavailable).toHaveTextContent("HTML no recuperado");
+    expect(htmlUnavailable).toHaveAttribute("data-state", "not_recovered");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────── planning

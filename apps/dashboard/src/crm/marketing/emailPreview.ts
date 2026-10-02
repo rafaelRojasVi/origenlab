@@ -9,7 +9,9 @@
  * 1. **Parsing, not regex.** `DOMParser` builds an inert document (it runs no script and loads
  *    no image), and the cleanup walks real elements and attributes.
  * 2. **A Content-Security-Policy** as the first element of `<head>`: `default-src 'none'`,
- *    images only from `https://origenlab.cl` and `data:`, inline styles only.
+ *    images only from the two OrigenLab website origins (`https://origenlab.cl` and
+ *    `https://www.origenlab.cl` — the historical Hielscher mailings reference the www host)
+ *    and `data:`, inline styles only.
  * 3. **`<iframe sandbox="">`** in `EmailFrame`: unique origin, no scripts, no forms, no popups,
  *    no top-level navigation; `referrerpolicy="no-referrer"`.
  *
@@ -18,10 +20,15 @@
  * nor navigates the dashboard.
  */
 
-export const PREVIEW_IMAGE_ORIGIN = "https://origenlab.cl";
+/**
+ * Exactly the origins a preview may load an image from. An origin is scheme + host (+ port),
+ * so `http://origenlab.cl`, `https://origenlab.cl.attacker.test`, `https://cdn.origenlab.cl`
+ * and `https://origenlab.cl:8443` are all different strings and all refused.
+ */
+export const PREVIEW_IMAGE_ORIGINS: readonly string[] = ["https://origenlab.cl", "https://www.origenlab.cl"];
 
 export const PREVIEW_CSP =
-  "default-src 'none'; img-src https://origenlab.cl data:; style-src 'unsafe-inline'; font-src data:; " +
+  `default-src 'none'; img-src ${PREVIEW_IMAGE_ORIGINS.join(" ")} data:; style-src 'unsafe-inline'; font-src data:; ` +
   "form-action 'none'; base-uri 'none'; frame-src 'none'; media-src 'none'; connect-src 'none'";
 
 const REMOVED_ELEMENTS = [
@@ -41,15 +48,26 @@ export interface PreviewResult {
   removed: string[];
 }
 
-function isAllowedImageUrl(raw: string): boolean {
+/**
+ * True only for a raster `data:` image or an absolute `https:` URL whose origin is one of
+ * `PREVIEW_IMAGE_ORIGINS`, carrying no credentials and no explicit port. `URL.origin` drops
+ * `user:pw@`, so the credential check is explicit: `https://user:pw@origenlab.cl/x` would
+ * otherwise pass on origin alone. Relative and protocol-relative URLs fail to parse and are
+ * refused; SVG `data:` URLs are refused because they can carry script.
+ */
+export function isAllowedImageUrl(raw: string): boolean {
   const value = raw.trim();
   if (/^data:image\/(png|jpe?g|gif|webp);/i.test(value)) return true;
+  let url: URL;
   try {
-    const url = new URL(value);
-    return url.protocol === "https:" && url.origin === PREVIEW_IMAGE_ORIGIN;
+    url = new URL(value);
   } catch {
     return false;
   }
+  if (url.protocol !== "https:") return false;
+  if (url.username !== "" || url.password !== "") return false;
+  if (url.port !== "") return false;
+  return PREVIEW_IMAGE_ORIGINS.includes(url.origin);
 }
 
 /** A link target that could run code: `javascript:`, `vbscript:`, or any `data:` URL (an SVG or HTML payload). */

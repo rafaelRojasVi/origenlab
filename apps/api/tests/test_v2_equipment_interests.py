@@ -48,17 +48,33 @@ def test_the_directory_is_the_six_catalogue_brands_in_order() -> None:
         assert d["model_count"] >= 1
 
 
+def _candidate(assertion_id: str, domain: str, trade_name: str | None, *, state: str = "unresolved") -> dict[str, Any]:
+    """One machine candidate exactly as `V2CrmWorkspaceRepository.providers()` returns it."""
+    return {
+        "assertion_id": assertion_id,
+        "domain": domain,
+        "trade_name": trade_name,
+        "review": {"state": state, "decided_at": None, "note": None},
+    }
+
+
 def test_a_candidate_is_a_hint_beside_its_brand_never_promoted() -> None:
     candidates = [
-        {"domain": "hielscher.test", "trade_name": None, "resolution": "unresolved", "mentions": 4},
-        {"domain": "mecanika.test", "trade_name": "Mecánica Ltda", "resolution": "unresolved", "mentions": 1},
-        {"domain": "otro.test", "trade_name": "SERVA Chile", "resolution": "unresolved", "mentions": 2},
+        _candidate("a1", "hielscher.test", None),
+        _candidate("a2", "mecanika.test", "Mecánica Ltda"),
+        _candidate("a3", "otro.test", "SERVA Chile", state="rejected"),
     ]
     before = [dict(c) for c in candidates]
     directory = {d["brand_id"]: d for d in supplier_directory(TAX, [], candidates)}
-    assert directory["hielscher"]["candidate_hints"] == [
-        {"domain": "hielscher.test", "trade_name": None, "resolution": "unresolved"}
-    ]
+    # A hint carries the candidate's review verbatim; `resolution` mirrors `review.state` so a
+    # count over hints and a count over candidates read the same fact.
+    hint = directory["hielscher"]["candidate_hints"][0]
+    assert hint["domain"] == "hielscher.test"
+    assert hint["trade_name"] is None
+    assert hint["assertion_id"] == "a1"
+    assert hint["review"] == {"state": "unresolved", "decided_at": None, "note": None}
+    assert hint["resolution"] == "unresolved"
+    assert directory["serva"]["candidate_hints"][0]["resolution"] == "rejected"
     assert [h["domain"] for h in directory["serva"]["candidate_hints"]] == ["otro.test"]
     # "IKA" does not match inside "Mecánica": word boundaries.
     assert directory["ika"]["candidate_hints"] == []
@@ -152,7 +168,7 @@ class _Repo:
         return {
             "on_cases": [{"organization_id": "o1", "name": "Löser Messtechnik", "confirmation": "confirmed",
                           "role": "manufacturer", "cases": 1}],
-            "candidates": [{"domain": "loeser.test", "trade_name": None, "resolution": "unresolved", "mentions": 1}],
+            "candidates": [_candidate("a-loeser", "loeser.test", None)],
         }
 
     def marketing_audience_inputs(self) -> AudienceInputs:
@@ -179,8 +195,10 @@ def test_providers_read_leads_with_the_directory_and_keeps_candidates_as_they_ar
     assert [d["brand_id"] for d in body["directory"]] == CANONICAL
     loeser = body["directory"][4]
     assert [o["organization_id"] for o in loeser["crm_organizations"]] == ["o1"]
-    assert loeser["candidate_hints"][0]["resolution"] == "unresolved"
-    assert body["candidates"] == [{"domain": "loeser.test", "trade_name": None, "resolution": "unresolved", "mentions": 1}]
+    assert loeser["candidate_hints"][0]["review"]["state"] == "unresolved"
+    # The canonical candidate shape: `review.state` is the state; there is no top-level `resolution`.
+    assert body["candidates"] == [_candidate("a-loeser", "loeser.test", None)]
+    assert "resolution" not in body["candidates"][0]
 
 
 @pytest.mark.parametrize("role", ["viewer", "sales"])

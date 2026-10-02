@@ -41,6 +41,11 @@ EXPECTED_EXTRA_TABLES = {
     "auth_event",
     # 20260928191000_slice1_revocable_profile_sessions.sql — DOMAIN.md §7 #41.
     "auth_session",
+    # 20260930120000_slice6_campaign_content_archive_and_crm_authoring.sql — DOMAIN.md §7 #42–#45.
+    "campaign_content",
+    "campaign_content_message",
+    "note",
+    "organization_product_line",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -105,6 +110,11 @@ POST_SLICE0_FUNCTIONS = {
     "platform.hmac_sha256",
     "platform.begin_pin_attempt",
     "platform.finish_pin_attempt",
+    # 20260930120000_slice6_campaign_content_archive_and_crm_authoring.sql — the
+    # INVOKER immutability guard for campaign_content (owner-INSERT-only) and the
+    # INVOKER note guard (no DELETE, immutable body/author/subject, version advance).
+    "outbound.campaign_content_immutable",
+    "crm.note_guard",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
@@ -179,6 +189,25 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     # auth_session_account_operator_idx on the same two columns.
     "platform.auth_session.(account_operator_id, sign_in_kind)"
     " -> platform.operator.(id, sign_in_kind)",
+    # 20260930120000_slice6_campaign_content_archive_and_crm_authoring.sql —
+    # lifecycle columns on existing tables and the four new tables.
+    # All sixteen are covered by plain unconditional indexes.
+    "crm.organization.organization_archived_by_operator_id_fkey",
+    "crm.person.person_archived_by_operator_id_fkey",
+    "crm.contact_point.contact_point_deactivated_by_operator_id_fkey",
+    "crm.organization_domain.organization_domain_removed_by_operator_id_fkey",
+    "crm.external_identifier.external_identifier_removed_by_operator_id_fkey",
+    "crm.note.note_author_operator_id_fkey",
+    "crm.note.note_archived_by_operator_id_fkey",
+    "crm.note.note_revision_of_note_id_fkey",
+    "crm.note.note_root_note_id_fkey",
+    "crm.organization_product_line.organization_product_line_organization_id_fkey",
+    "crm.organization_product_line.organization_product_line_linked_by_operator_id_fkey",
+    "crm.organization_product_line.organization_product_line_unlinked_by_operator_id_fkey",
+    "outbound.campaign_content.campaign_content_campaign_id_fkey",
+    "outbound.campaign_content.campaign_content_origin_source_record_id_fkey",
+    "outbound.campaign_content_message.campaign_content_message_campaign_content_id_fkey",
+    "outbound.campaign_content_message.campaign_content_message_send_attempt_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -189,7 +218,7 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 # covered only by a partial index; the slice-5 freeze key, the three
 # campaign-block keys and the eight sign-in keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 12
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 28
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -197,18 +226,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 42,
+        "relation_count": 46,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 41,
+        "table_count": 45,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 148,
+        "policy_count": 160,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -301,8 +330,8 @@ def main() -> int:
         if f'"table":"{table}"' not in a08_text:
             refuse(f"a08 does not name expected table {table}")
 
-    if "8 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly eight extra tables")
+    if "12 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly twelve extra tables")
 
     # The 23 policy additions must belong to those same eight reviewed tables:
     # four each for the first four (api select/insert/update, worker select),
@@ -331,8 +360,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "23 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly twenty-three extra policies")
+    if "35 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly thirty-five extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -351,7 +380,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 42, expected 34"],
+        "a04": ["relations in scope: observed 46, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "
@@ -370,8 +399,8 @@ def main() -> int:
     print(
         "ok: current local head differs from frozen Slice 0 only by the "
         "reviewed commercial-case, historical-quotation, slice-5 campaign, W10 "
-        "unsubscribe, campaign-block and shared-sign-in schema delta, less the "
-        "revoked runtime writes on platform.operator"
+        "unsubscribe, campaign-block, shared-sign-in and slice-6 campaign-content-archive "
+        "and crm-authoring schema delta, less the revoked runtime writes on platform.operator"
     )
     return 0
 

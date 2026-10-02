@@ -31,12 +31,12 @@
   ],
   "probes": {
     "migrations.count": {
-      "expect": 40,
+      "expect": 41,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20260929100000",
-      "why": "slice1_pin_attempt_begin_finish, the newest migration on main — the PIN attempt boundary (docs/STATUS.md §2.7.38). The fifteen migrations between 20260925200000 and it (slice 5 campaign work, the campaign block, the eight sign-in migrations) were applied to the existing origenlab_clean on 2026-09-27 and 2026-09-30 rather than by a rebuild."
+      "expect": "20260930120000",
+      "why": "slice6_campaign_content_archive_and_crm_authoring, the newest migration — the campaign-content archive and CRM authoring boundary (docs/STATUS.md §2.7.39)."
     },
 
     "source_record.total": {
@@ -137,6 +137,11 @@
 
     "catalog.product": { "expect": 0, "why": "slice 3." },
     "catalog.supplier_product": { "expect": 0, "why": "slice 3." },
-    "procurement.notice": { "expect": 0, "why": "not loaded." }
+    "procurement.notice": { "expect": 0, "why": "not loaded." },
+
+    "outbound.campaign_content": { "expect": 0, "why": "slice 6: the archive table ships empty; content is loaded by a separate import step outside the build." },
+    "outbound.campaign_content_message": { "expect": 0, "why": "slice 6: no message-level archive rows exist in a fresh build." },
+    "crm.note": { "expect": 0, "why": "slice 6: no operator notes exist in a fresh build; notes are operator decisions." },
+    "crm.organization_product_line": { "expect": 0, "why": "slice 6: no product-line links exist in a fresh build; they are operator decisions." }
   }
 }

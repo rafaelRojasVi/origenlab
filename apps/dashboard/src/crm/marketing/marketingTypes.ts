@@ -430,6 +430,35 @@ export interface SuppressionsResponse {
   storage: { table: string; database: string };
 }
 
+/** One variant of a campaign's stored HTML content (from `outbound.campaign_content`). */
+export interface CampaignContentRecord {
+  id: string;
+  content_kind: "sent_html" | "historical_draft";
+  variant_no: number;
+  subject: string | null;
+  preheader: string | null;
+  body_html: string;
+  body_html_sha256: string;
+  body_html_normalized_sha256: string;
+  message_count: number;
+  first_sent_at: string | null;
+  last_sent_at: string | null;
+  attribution_method: "gmail_message_id" | "recipient_lineage_timestamp";
+  attribution_confidence: "exact" | "corroborated";
+  attribution_policy_version: string;
+  unmatched_attempt_count: number;
+  linked_attempts: number;
+  hash_verified: boolean;
+}
+
+/** Recovery metadata from the campaign content importer. */
+export interface CampaignContentRecovery {
+  policy_version: string;
+  matched_messages: number;
+  unmatched_attempts: number;
+  manifest_sha256: string;
+}
+
 /** `GET /v2/workspace/marketing/campaigns/{id}/archive` — what was (or will be) sent, as stored. */
 export interface CampaignArchive {
   campaign_id: string;
@@ -449,7 +478,16 @@ export interface CampaignArchive {
   sender_name: string | null;
   /** Present only when the content is frozen and its fingerprint recomputes. */
   html: string | null;
-  html_state: "archived_verified" | "not_archived" | "not_frozen" | "no_html" | "fingerprint_mismatch";
+  html_state:
+    | "archived_verified"
+    | "not_archived"
+    | "not_frozen"
+    | "no_html"
+    | "fingerprint_mismatch"
+    | "sent_html_archived"
+    | "historical_draft"
+    | "not_recovered"
+    | "ambiguous_attribution";
   recipients_by_state: Record<string, number>;
   send_attempts: { submission_state: string; delivery_state: string; count: number }[];
   send_batches: { day: string; accepted: number; first_accepted_at: string; last_accepted_at: string }[];
@@ -462,6 +500,10 @@ export interface CampaignArchive {
   preheader_state?: ContentState;
   immutable?: boolean;
   immutable_enforced_by_database?: boolean;
+  /** Variants from `outbound.campaign_content`, when html_state is sent_html_archived/historical_draft. */
+  contents?: CampaignContentRecord[];
+  /** Recovery run metadata, when html_state is sent_html_archived. */
+  recovery?: CampaignContentRecovery | null;
 }
 
 export interface HistoryRecipient {

@@ -1,3 +1,4 @@
+import type { SupplierCandidate } from "./supplierCandidates";
 import type { AudienceInterest } from "./marketing/marketingTypes";
 
 /**
@@ -122,14 +123,15 @@ export interface SupplierDirectoryEntry {
   model_count: number;
   crm_organizations: { organization_id: string; name: string; confirmation: string | null; roles: string[]; cases: number }[];
   /** Machine candidates whose domain or trade name names the brand. A hint, never a promotion. */
-  candidate_hints: { domain: string; trade_name: string | null; resolution: string }[];
+  candidate_hints: SupplierCandidate[];
 }
 
 export interface ProvidersResponse {
   /** The six catalogue brands, curated by the website — not detected. Older APIs omit it. */
   directory?: SupplierDirectoryEntry[];
   on_cases: { organization_id: string; name: string; confirmation: string; role: string; cases: number }[];
-  candidates: { domain: string; trade_name: string | null; resolution: string; mentions: number }[];
+  /** Machine candidates in `review.state` form (see supplierCandidates.ts). Never promoted here. */
+  candidates: SupplierCandidate[];
 }
 
 export interface CampaignSummary {
@@ -140,6 +142,8 @@ export interface CampaignSummary {
   preheader?: string | null;
   /** Whether the stored campaign has HTML content. False means it was never imported. */
   has_html?: boolean;
+  /** Per-campaign html_state from the archive read, included in the marketing list when available. */
+  html_state?: "archived_verified" | "not_archived" | "not_frozen" | "no_html" | "fingerprint_mismatch" | "sent_html_archived" | "historical_draft" | "not_recovered" | "ambiguous_attribution";
   version?: number;
   approved_at: string | null;
   created_at: string | null;
