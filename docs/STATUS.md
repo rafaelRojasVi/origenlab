@@ -27,10 +27,11 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-10-02**, against `origin/main` (`cb60c20d`, the merge of #619) for the
+Last verified: **2026-10-02**, against `origin/main` (`7c6a7fef`, the merge of #620) for the
 hosting and GitHub facts of §2.4, §2.7.40, §2.8, §3.1 and §3.3 — read from the GitHub API, the
-public DNS and HTTP edge, and the repository, with nothing deployed, provisioned, purchased or
-mutated. Local database counts were last measured 2026-09-30 (§2.7.39) and are not re-measured
+public DNS and HTTP edge, the repository, and (later the same day) the Render API, the FastAPI
+Cloud CLI and the Cloudflare DNS table, all read-only, with nothing deployed, provisioned,
+purchased or mutated. Local database counts were last measured 2026-09-30 (§2.7.39) and are not re-measured
 here. Earlier sections as last measured 2026-09-26–29, measured from the
 local PostgreSQL 17 carrying the Slice 0 migrations. §2.5's hosted facts are measurements taken by the
 Slice 0 audit itself on 2026-09-21, over the reviewed Supavisor session route inside a server-
@@ -1784,9 +1785,9 @@ proven there.
 
 | Where | What |
 |---|---|
-| Render | `origenlab-api` (Docker, 1 GB disk), `origenlab-dashboard` (static), managed Postgres. **No Render cron jobs.** |
-| FastAPI Cloud | **a second deployment of `apps/api` exists, outside the workflows.** The `fastapi-cloud[bot]` GitHub App deploys every `main` push to `https://origenlab.fastapicloud.dev`, into the GitHub environment `Production – origenlab` (created 2026-07-03, branch policy + required reviewers): **96 deployments** through 2026-09-30 (`c4cc0488`); it has no Cloudflare Access in front of it and relies on `ORIGENLAB_API_AUTH_TOKEN`. Its plan, environment variables and database target cannot be read from this repository or from GitHub. The desired architecture is **one production API origin, initially Render**; whether to disconnect FastAPI Cloud is an **unresolved owner decision** (§3.3) — nothing was deleted or disconnected |
-| Cloudflare | `apps/dashboard-proxy` Worker at `dashboard.origenlab.cl/api*`. `api.origenlab.cl` and `dashboard.origenlab.cl` are Cloudflare-proxied and behind Cloudflare Access (verified 2026-10-02: an unauthenticated `GET /health` on `api.origenlab.cl` answers `302` to the Access login). **Which origin `api.origenlab.cl` reaches — Render `origenlab-api` or FastAPI Cloud — is not determinable from outside** and is an open owner check (§3.3) |
+| Render | Web service **`origenlab`** (`srv-d88ffpf7f7vs73b5jcf0` — the real name; `render.yaml` calls it `origenlab-api`), **Python runtime with root dir `apps/api`, not the Docker runtime `render.yaml` declares**, Starter plan, Oregon, 1 GB disk at `/var/data`, health-check path empty, **auto-deploys every `main` push** (live on `cb60c20d` since 2026-10-02 20:58Z). `origenlab-dashboard` (static, auto-deploys `main`). Managed Postgres `origenlab-dashboard-prod` (**PostgreSQL 18**, basic-256mb, Oregon). `api.origenlab.cl` is a **verified custom domain** of the web service. **No Render cron jobs.** Read 2026-10-02 over the Render API |
+| FastAPI Cloud | **a second, stale deployment of `apps/api` exists, and nothing reaches it.** App `origenlab` (team `rafarojasv6-372ad261`, us-east-1, directory `apps/api`) at `https://origenlab.fastapicloud.dev`, deployed by the `fastapi-cloud[bot]` GitHub App into the GitHub environment `Production – origenlab`. Read 2026-10-02 over its CLI: **240 deployments**, the last successful one `c4cc0488` (2026-09-30); **#619 (`cb60c20d`, 15 files under `apps/api`) and #620 produced no deployment, so its auto-deploy has stopped and it runs code from 2026-09-30.** **Zero custom domains** — `api.origenlab.cl` is not on it (§3.3). Seven environment variables: `ORIGENLAB_API_ALLOWED_HOSTS` (= its own hostname), `ORIGENLAB_API_AUTH_TOKEN`, `ORIGENLAB_API_BACKEND`, `ORIGENLAB_API_CORS_ORIGINS`, `ORIGENLAB_API_DISABLE_DOCS`, `ORIGENLAB_ENV`, `ORIGENLAB_POSTGRES_URL` — the last is marked secret and its target could not be read; **no write variables, no V2 variables**. Its `/health` answers 200 with `postgres_configured: true`, so it holds a live database credential. No connected integration resources; plan not exposed by the CLI (log retention is capped at one day). One day of logs: a cold start, this audit's probes and one scanner, **no real traffic**. It has no Cloudflare Access in front of it. The desired architecture is **one production API origin, Render**; disconnecting FastAPI Cloud (delete the app, uninstall the GitHub App) is the owner's call and **had not been taken** when this was written — nothing was deleted or disconnected |
+| Cloudflare | `apps/dashboard-proxy` Worker at `dashboard.origenlab.cl/api*`. DNS for `origenlab.cl` is on Cloudflare (Full setup, 22 records, no Tunnels on the account). **`api.origenlab.cl` is a proxied CNAME to `origenlab.onrender.com`** and **`dashboard.origenlab.cl` a proxied CNAME to `origenlab-dashboard.onrender.com`** (read from the DNS table by the owner, 2026-10-02); both sit behind Cloudflare Access (an unauthenticated `GET /health` on `api.origenlab.cl` answers `302` to the Access login). The apex and `www` are proxied A/CNAME records to the cPanel host; the cPanel service records (`cpanel`, `mail`, `webmail`, `whm`, `webdisk`, …) are **DNS-only and expose that host's IP** — Cloudflare flags it as a partially exposed origin. Not changed |
 | Operator machine | `auto-refresh-mail` every 3 min; `auto-mirror-dashboard` every 1 min; systemd user units for the local API |
 | HostGator (cPanel) | the public site `origenlab.cl`, served from the cPanel document root behind a Cloudflare proxy. Files still arrive by **manual upload** |
 | GitHub Actions | 8 workflows; **none is scheduled** — all are push/PR path-filtered or `workflow_dispatch` |
@@ -1817,26 +1818,33 @@ proven there.
 
 ### 3.3 Open — needs an operator check, not a code change
 
-- **Are `ORIGENLAB_COMMERCIAL_OPERATIONS_WRITES_ENABLED` and
-  `ORIGENLAB_POSTGRES_WRITE_URL` set on the deployed Render service?** Neither
-  appears in `render.yaml`, and `commercial_operations_writes_enabled` defaults
-  to `False` in `apps/api/src/origenlab_api/settings.py`. If they were not set
-  by hand in the Render dashboard, **every `POST /operations/*` durable write is
-  returning 503 in production** and the Cotizaciones and Pipeline boards cannot
-  write. Record the answer here once checked.
-- **Which origin does `api.origenlab.cl` reach?** Both candidates exist: Render
-  `origenlab-api` (`render.yaml`, host allowlist `api.origenlab.cl`) and the
-  FastAPI Cloud app at `origenlab.fastapicloud.dev` (§3.1). The hostname is
-  Cloudflare-proxied behind Access, so the answer is only in the Cloudflare DNS
-  record (or tunnel/origin rule) for `api.origenlab.cl`. The target state is one
-  production API origin, initially Render. Record the answer here; change nothing
-  until it is recorded.
-- **What is the FastAPI Cloud app's plan, environment and database target?** The
-  FastAPI Cloud dashboard for app `origenlab` (the GitHub deployment `log_url`
-  points at it) is the only place its environment variables — in particular any
-  `ORIGENLAB_POSTGRES_URL`, `ORIGENLAB_V2_DATABASE_URL` and the two V1 write
-  variables above — and its plan can be read. Record what it points at before
-  deciding whether to disconnect it.
+- **Answered 2026-10-02 — Render write variables.** Both are set on the Render
+  web service `origenlab`: `ORIGENLAB_COMMERCIAL_OPERATIONS_WRITES_ENABLED` is
+  `true`, and `ORIGENLAB_POSTGRES_WRITE_URL` points at the Render managed
+  Postgres `origenlab-dashboard-prod` — the same host and database as the read
+  URL, under a different database user. Neither appears in `render.yaml`; they
+  were set by hand. `POST /operations/*` is therefore configured to write, and
+  the earlier 503 worry was unfounded. The service also carries the Drive
+  quotation variables and the quotation-numbering seed by hand (names read,
+  values not).
+- **Answered 2026-10-02 — `api.origenlab.cl` reaches Render.** The Cloudflare
+  record is a proxied CNAME to `origenlab.onrender.com`, Render lists the
+  hostname as a verified custom domain, and FastAPI Cloud lists no custom
+  domain. The target state — one production API origin, Render — is already the
+  real state; FastAPI Cloud is unreachable by name.
+- **Answered 2026-10-02 — FastAPI Cloud (§3.1).** Seven variables, one secret
+  `ORIGENLAB_POSTGRES_URL` whose target the CLI hides, no write and no V2
+  variables, zero custom domains, auto-deploy stopped at `c4cc0488`, no real
+  traffic. Its plan is readable only on its billing page. **Open owner action:**
+  delete the app and uninstall the `fastapi-cloud` GitHub App, so that no second
+  copy of the API holds a production database credential. Not done as of this
+  entry.
+- **Open — `render.yaml` drifts from the real service.** The blueprint declares
+  a Docker runtime named `origenlab-api` with a health-check path; the running
+  service is a Python-runtime service named `origenlab`, root dir `apps/api`,
+  with no health-check path, on PostgreSQL 18. Nothing applies the blueprint
+  today; reconcile it (or delete it) in a reviewed change before anyone runs
+  `render blueprint launch`.
 
 ## 4. Cross-era hazards
 
