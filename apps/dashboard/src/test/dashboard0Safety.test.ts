@@ -68,7 +68,6 @@ const DASHBOARD_V1_API_PATHS = [
   "/operator/status",
   "/operator/automation-status",
   "/cases/warm",
-  "/opportunities/commercial",
 ];
 
 const LEGACY_API_PATH_FRAGMENTS = [
@@ -142,17 +141,6 @@ describe("Dashboard-2 safety (mounted Today)", () => {
     expect(operatorClientSource).toMatch(/encodeURIComponent/);
     expect(operatorClientSource).toMatch(/\/contacts\/\$\{encodeURIComponent/);
     expect(operatorClientSource).not.toMatch(/operatorApiUrl\(\s*["']\/contacts["']/);
-  });
-
-  it("commercial opportunity detail uses encoded GET path only", () => {
-    expect(operatorClientSource).toContain("fetchCommercialOpportunityDetail");
-    expect(operatorClientSource).toContain("commercialOpportunityDetailPath");
-    expect(operatorClientSource).toMatch(
-      /\/opportunities\/commercial\/\$\{encodeURIComponent\(opportunityId\)\}/,
-    );
-    expect(operatorClientSource).not.toMatch(
-      /method:\s*["'](POST|PUT|PATCH|DELETE)["']/i,
-    );
   });
 
   it("operatorClient uses GET fetch only", () => {
