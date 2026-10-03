@@ -12,8 +12,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // `/auth/*` and the named `/v2/*` reads below. `src/allowlist.test.ts` pins every V1 path as refused.
   // V2 durable read boundary. Exact paths only -- deliberately NOT /^\/v2\/.+/, so a
   // route added upstream is never reachable through this Worker until it is listed here
-  // by name. Every one of these is GET-only and read-only upstream; the V2 command
-  // boundary does not exist yet and must not become reachable by widening this list.
+  // by name. Every one of these is GET-only and read-only upstream. The V2 command boundary
+  // is reached only through the named POST lists further down, never by widening this one.
   /^\/v2\/contacts$/,
   /^\/v2\/organizations$/,
   /^\/v2\/prospects$/,
