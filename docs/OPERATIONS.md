@@ -191,7 +191,7 @@ Names and value shapes only; values are Render secrets and are never written in 
 | `ORIGENLAB_V2_DATABASE_URL` | the hosted DSN over the Supavisor **session** pooler, port 5432, as `origenlab_api.<project-ref>` (the API refuses port 6543) |
 | `ORIGENLAB_V2_DATABASE_REMOTE` | `true` |
 | `ORIGENLAB_V2_DATABASE_EXPECTED_HOST` | the pooler host name |
-| `ORIGENLAB_V2_DATABASE_SSLROOTCERT` | path of the Supabase Root 2021 CA PEM, delivered as a Render secret file |
+| `ORIGENLAB_V2_DATABASE_SSLROOTCERT` | path of the Supabase CA PEM that `verify-full` requires against the session pooler — its chain terminates at CN `Supabase Root 2021 CA` (verified 2026-10-03 with an `openssl s_client -starttls postgres` handshake against the pooler; the system trust store refuses it) — downloaded from the Supabase dashboard, Database settings → "Download certificate", and delivered to Render as a secret file |
 | `ORIGENLAB_GOOGLE_AUTH_ENABLED` | `true` — the Google Workspace OIDC session adapter is the production identity ([`apps/api/docs/PRODUCTION_AUTH.md`](../apps/api/docs/PRODUCTION_AUTH.md)) |
 | `ORIGENLAB_GOOGLE_CLIENT_ID` / `ORIGENLAB_GOOGLE_CLIENT_SECRET` | the production Internal OAuth client |
 | `ORIGENLAB_GOOGLE_WORKSPACE_DOMAIN` | `origenlab.cl` |

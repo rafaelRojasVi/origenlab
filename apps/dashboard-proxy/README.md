@@ -1,6 +1,6 @@
 # Dashboard API proxy (Cloudflare Worker)
 
-Same-origin, method+path allowlisted proxy for production dashboard builds. The browser calls `https://dashboard.origenlab.cl/api/*`; the Worker strips `/api`, checks an allowlist, and forwards to `apps/api` with upstream auth headers from Worker secrets. GET is allowlisted for the named V2 reads and `/health`; POST for the V2 marketing and CRM-authoring commands and the auth routes — this Worker is the trust boundary for both, not a pure read-only pass-through. Since 2026-10-03 it carries no identity of its own: the browser's identity is the dashboard session cookie, resolved by the API, and Cloudflare Access is retired from the dashboard hostname at Phase B (`docs/MIGRATION.md` decision 5). Only `api.origenlab.cl` keeps an Access application, which this Worker reaches with a service token.
+Same-origin, method+path allowlisted proxy for production dashboard builds. The browser calls `https://dashboard.origenlab.cl/api/*`; the Worker strips `/api`, checks an allowlist, and forwards to `apps/api` with upstream auth headers from Worker secrets. GET is allowlisted for the named V2 reads and `/health`; POST for the V2 marketing and CRM-authoring commands and the auth routes — this Worker is the trust boundary for both, not a pure read-only pass-through. From 2026-10-03 (built, not deployed: the Worker in Cloudflare still carries the previous allowlist and still rebuilds the operator header from Access until `docs/OPERATIONS.md` §1.2 step 9 runs; the Access application on the dashboard hostname is not yet removed, step 10; `docs/STATUS.md` §2.7.41) it carries no identity of its own: the browser's identity is the dashboard session cookie, resolved by the API, and Cloudflare Access is to be retired from the dashboard hostname at Phase B (`docs/MIGRATION.md` decision 5). Only `api.origenlab.cl` keeps an Access application, which this Worker reaches with a service token.
 
 **No browser token.** `ORIGENLAB_API_AUTH_TOKEN` is a Worker secret only — never `VITE_*`.
 
@@ -28,7 +28,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/auth/google/login`, `/auth/google/callback`, `/auth/session` | Dashboard Google Workspace sign-in (see *Sign-in exceptions* below) |
 | `/auth/profiles` | The signed-in shared Workspace account's operator profiles (id, name, role label) |
 
-**Refused on purpose** (403 `path_not_allowed`, never forwarded): every V1 surface — `/operator/*`, `/cases/warm`, `/opportunities/*`, `/operations/*`, `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — and the current dashboard calls none of them, so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. The V1 paths and the V1 POST commands (including the tender annex upload) were removed from the allowlist on 2026-10-03. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the named reads below are not listed either. The W10 unsubscribe tooling that carries message bodies (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`) is API-only and never listed. See `docs/OPERATIONS.md`.
+**Refused on purpose** (403 `path_not_allowed`, never forwarded): every V1 surface — `/operator/*`, `/cases/warm`, `/opportunities/*`, `/operations/*`, `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — and the current dashboard calls none of them, so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. The V1 paths and the V1 POST commands (including the tender annex upload) were removed from the allowlist in the source on 2026-10-03 (built, not deployed; see the note at the top). `/v2/cockpit/*` and every `/v2/workspace/*` path other than the named reads below are not listed either. The W10 unsubscribe tooling that carries message bodies (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`) is API-only and never listed. See `docs/OPERATIONS.md`.
 
 **POST** (trusted operator identity resolved upstream from the session cookie, `Idempotency-Key`, optimistic concurrency; each path is exact, no wildcard route):
 
@@ -37,7 +37,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/auth/logout` | Clears the dashboard session cookie and records the logout in `platform.auth_event`; writes no commercial state. Requires an allowed `Origin` and no cross-site `Sec-Fetch-Site` |
 | `/auth/profile/select`, `/auth/profile/clear` | Choose an operator profile with its PIN (verified by the API, never here), or return to the profile screen. Allowed `Origin`, no cross-site `Sec-Fetch-Site`, `Content-Type: application/json`, body ≤ 1 KiB. The API's local-only `/auth/dev/*` is never reachable |
 | `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning,resolve-unsubscribe-review,dismiss-unsubscribe-review,block-campaign,unblock-campaign}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends; a block only refuses |
-| `/v2/commands/<name>` for the 28 CRM-authoring commands (person, organization, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not listed. Each mounts upstream only behind its own switch |
+| `/v2/commands/<name>` for the 28 CRM-authoring commands (person, organization, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not listed. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
@@ -140,7 +140,7 @@ needs cookies and redirects, so `src/auth.ts` makes three exceptions and no othe
 
 The operator header is deleted on every path and never rebuilt: the Worker no longer reads the
 Cloudflare Access identity, so identity reaches the API only as the `__Host-` session cookie
-(changed 2026-10-03).
+(source changed 2026-10-03; built, not deployed — `docs/STATUS.md` §2.7.41).
 
 ## Environment
 
