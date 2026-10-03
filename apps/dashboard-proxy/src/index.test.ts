@@ -136,7 +136,7 @@ describe("handleRequest", () => {
     const res = await handleRequest(
       requestWithOrigin("https://proxy.test/api/operations/sales-opportunities/promote", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": "x-1" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "fix-wave-00000001" },
         body: "{}",
       }),
       TEST_ENV,

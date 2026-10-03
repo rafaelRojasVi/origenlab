@@ -619,6 +619,8 @@ describe("V1 surfaces are refused on the browser boundary", () => {
     "/operations/customer-quotes/quote_" + "a".repeat(32) + "/approve",
     "/operations/customer-quotes/quote_" + "a".repeat(32) + "/confirm-send",
     "/operations/customer-quotes/quote_" + "a".repeat(32) + "/close",
+    "/operations/tasks/task_" + "a".repeat(32) + "/cancel",
+    "/operations/customer-quotes/quote_" + "a".repeat(32) + "/request-adjustments",
   ];
 
   it.each(V1_GET_PATHS)("refuses GET %s", (path) => {

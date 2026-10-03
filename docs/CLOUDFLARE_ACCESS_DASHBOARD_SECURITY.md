@@ -1,6 +1,6 @@
 # Cloudflare Access — API origin protection
 
-> **2026-10-03.** Cloudflare Access no longer fronts `dashboard.origenlab.cl`. The dashboard's
+> **2026-10-03.** Cloudflare Access is to be retired from `dashboard.origenlab.cl` at Phase B (decision 5; not yet executed). The dashboard's
 > sign-in is the API's Google Workspace login with operator profiles
 > (`apps/api/docs/PRODUCTION_AUTH.md`). This document now covers only `api.origenlab.cl`, which
 > the Worker reaches with a service token. Decision: `docs/MIGRATION.md` §11 row 5.

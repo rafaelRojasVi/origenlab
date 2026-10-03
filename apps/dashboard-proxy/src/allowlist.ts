@@ -6,8 +6,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/health$/,
   // V1 surfaces (`/operator/*`, `/cases/warm`, `/opportunities/*`, `/operations/*`,
   // `/contacts/*`, `/mirror/*`) are deliberately absent. Upstream they are gated only by the
-  // shared API key -- no operator identity, no role, no redaction. Since Cloudflare Access was
-  // removed from the dashboard hostname (2026-10), the API session is the only identity this
+  // shared API key -- no operator identity, no role, no redaction. Once Cloudflare Access is
+  // retired from the dashboard hostname (OPERATIONS.md §1.2 step 10), the API session is the only identity this
   // Worker carries, so only routes that resolve an operator from that session are listed:
   // `/auth/*` and the named `/v2/*` reads below. `src/allowlist.test.ts` pins every V1 path as refused.
   // V2 durable read boundary. Exact paths only -- deliberately NOT /^\/v2\/.+/, so a
@@ -118,7 +118,7 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
  * upstream to list.
  *
  * Upstream each requires an active `sales` or `admin` operator (resolved from the verified
- * session or Cloudflare Access identity, never the body), an `Idempotency-Key`, and a
+ * session, never the body), an `Idempotency-Key`, and a
  * compare-and-set `expected_version` (save, freeze); the freeze also requires `confirmed: true`
  * and the preview fingerprint the operator was shown. Each mounts only behind its own API
  * switch. Every request here must also pass `marketingCommandRefusal` in index.ts: an allowed

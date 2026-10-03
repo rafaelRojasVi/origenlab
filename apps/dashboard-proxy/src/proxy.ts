@@ -49,8 +49,8 @@ export function buildUpstreamHeaders(
   }
 
   // Never forward a browser-supplied OriginLab operator header, and never derive one here:
-  // since Cloudflare Access left the dashboard hostname the Worker carries no identity of its
-  // own. The API resolves the operator from the session cookie forwarded below (auth.ts).
+  // once Cloudflare Access is retired from the dashboard hostname (OPERATIONS.md §1.2 step 10)
+  // the Worker carries no identity of its own. The API resolves the operator from the session cookie forwarded below (auth.ts).
   headers.delete(OPERATOR_EMAIL_HEADER);
 
   // The dashboard session cookie, and nothing else from the browser's cookie jar, reaches

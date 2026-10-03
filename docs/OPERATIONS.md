@@ -219,7 +219,7 @@ step changes in a reviewed PR that also lands the adapter implementation — nev
 the variable first.
 
 The dashboard build needs no change. The proxy lists the named `/v2` GET paths and `/auth/*`;
-since 2026-10-03 it no longer derives an operator header from Cloudflare Access (step 9).
+the Worker source no longer derives an operator header from Cloudflare Access (built 2026-10-03; not deployed until step 9).
 
 `origenlab_api` needs a password on the hosted project. `supabase/roles.sql` and
 `supabase/hosted_roles.sql` both assign none by design; it is a separate operator action with
@@ -229,15 +229,27 @@ a hidden secret input (§4.3, §13).
 
 Deploy `apps/dashboard-proxy` from `main` (`npm run validate`, then `npx wrangler deploy` from
 `apps/dashboard-proxy`). After this deploy the Worker forwards `/health`, `/auth/*` and the
-named `/v2/*` reads only, and never derives an operator header.
+named `/v2/*` reads on GET, the named `/v2/commands/*` POSTs (marketing, CRM authoring) plus the auth POSTs, with no identity of its own, and never derives an operator header.
 
 #### Step 10 — remove Cloudflare Access from the dashboard hostname
 
-Only after an operator has signed in end to end through the still-present Access screen
-(Google → profile → PIN → dashboard). In Cloudflare Zero Trust → Access → Applications, delete
-the application for `dashboard.origenlab.cl`. Keep the `api.origenlab.cl` application. Verify
-from outside: `GET /api/operator/status` → 403 `path_not_allowed`; `GET /api/v2/workspace/overview`
-with no cookie → 401; a fresh browser reaches the Google button directly.
+Run this step only when all of the following hold:
+
+- an operator has signed in end to end through the still-present Access screen
+  (Google → profile → PIN → dashboard);
+- (a) 2-step verification is enforced on the shared account `contacto@origenlab.cl`, checked in
+  Google Workspace admin — the decision's MFA depends on it;
+- (b) the shared account is pinned and the roster applied
+  ([`apps/api/docs/PRODUCTION_AUTH.md`](../apps/api/docs/PRODUCTION_AUTH.md) §Provisioning);
+- (c) the `api.origenlab.cl` Access application's own policy (service-token Service Auth) has been
+  confirmed independent of the dashboard application, so deleting the dashboard application
+  cannot strip the API's protection.
+
+Then, in Cloudflare Zero Trust → Access → Applications, delete the application for
+`dashboard.origenlab.cl`. Keep the `api.origenlab.cl` application. Verify from outside:
+`GET /api/operator/status` → 403 `path_not_allowed`; `GET /api/health` → 200 through the Worker;
+`GET /api/v2/workspace/overview` with no cookie → 401; a fresh browser reaches the Google button
+directly, and a full Google → profile → PIN sign-in completes (not just the Google button).
 Rollback: re-create the Access application (minutes) and `npx wrangler rollback`.
 
 MFA for this sign-in is Google 2-step verification enforced on the shared Workspace account;
