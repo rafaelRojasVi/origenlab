@@ -3,7 +3,6 @@ import { filterAuthCookieHeader, forwardsSessionCookie } from "./auth";
 export const API_AUTH_HEADER = "X-OriginLab-API-Key";
 export const OPERATOR_EMAIL_HEADER = "X-OriginLab-Operator-Email";
 export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
-export const CF_ACCESS_USER_EMAIL_HEADER = "Cf-Access-Authenticated-User-Email";
 export const CF_ACCESS_CLIENT_ID_HEADER = "CF-Access-Client-Id";
 export const CF_ACCESS_CLIENT_SECRET_HEADER = "CF-Access-Client-Secret";
 
@@ -49,18 +48,10 @@ export function buildUpstreamHeaders(
     headers.set(IDEMPOTENCY_KEY_HEADER, idempotencyKey);
   }
 
-  // Never forward a browser-supplied OriginLab operator header.
-  // Reconstruct it exclusively from Cloudflare Access authenticated identity.
+  // Never forward a browser-supplied OriginLab operator header, and never derive one here:
+  // since Cloudflare Access left the dashboard hostname the Worker carries no identity of its
+  // own. The API resolves the operator from the session cookie forwarded below (auth.ts).
   headers.delete(OPERATOR_EMAIL_HEADER);
-
-  const authenticatedOperator = incoming
-    .get(CF_ACCESS_USER_EMAIL_HEADER)
-    ?.trim()
-    .toLowerCase();
-
-  if (authenticatedOperator) {
-    headers.set(OPERATOR_EMAIL_HEADER, authenticatedOperator);
-  }
 
   // The dashboard session cookie, and nothing else from the browser's cookie jar, reaches
   // the paths that resolve an operator from it (see auth.ts).

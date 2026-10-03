@@ -1021,7 +1021,7 @@ describe("CRM card reads (supplier directory, observed equipment interests)", ()
     expect(await res.text()).toBe(masked);
   });
 
-  it.each(READS)("replaces a forged operator header with the Cloudflare Access identity on %s", async (path) => {
+  it.each(READS)("forwards no operator header on %s", async (path) => {
     stubUpstreamFetch();
     await handleRequest(
       requestWithOrigin(`https://proxy.test/api${path}`, {
@@ -1033,7 +1033,7 @@ describe("CRM card reads (supplier directory, observed equipment interests)", ()
       TEST_ENV,
     );
     const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
-    expect(upstream.headers.get("X-OriginLab-Operator-Email")).toBe("viewer@origenlab.cl");
+    expect(upstream.headers.get("X-OriginLab-Operator-Email")).toBeNull();
   });
 
   it.each(

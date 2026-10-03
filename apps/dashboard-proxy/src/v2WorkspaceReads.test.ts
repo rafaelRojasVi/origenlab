@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AUTH_SESSION_COOKIE } from "./auth";
 import { handleRequest } from "./index";
-import { CF_ACCESS_USER_EMAIL_HEADER, OPERATOR_EMAIL_HEADER, type ProxyEnv } from "./proxy";
+import { OPERATOR_EMAIL_HEADER, type ProxyEnv } from "./proxy";
 
 /**
  * The seven CRM workspace reads through the Worker. The Worker's part is narrow and pinned
@@ -73,20 +73,19 @@ describe("CRM workspace reads", () => {
     expect(upstream.headers.get(OPERATOR_EMAIL_HEADER)).toBeNull();
   });
 
-  it("derives the operator header only from Cloudflare Access, never from the browser", async () => {
+  it("forwards no operator header even when a Cloudflare Access header arrives", async () => {
     const fetchMock = stubUpstream(200);
     await handleRequest(
       new Request(`${DASHBOARD}/api/v2/workspace/overview`, {
         headers: {
-          [CF_ACCESS_USER_EMAIL_HEADER]: " Person@OrigenLab.cl ",
+          "Cf-Access-Authenticated-User-Email": " Person@OrigenLab.cl ",
           [OPERATOR_EMAIL_HEADER]: "spoofed@origenlab.cl",
         },
       }),
       TEST_ENV,
     );
-    // Informational upstream: with Google sign-in on, the API ignores it (401 without a session).
     const upstream = fetchMock.mock.calls[0][0] as Request;
-    expect(upstream.headers.get(OPERATOR_EMAIL_HEADER)).toBe("person@origenlab.cl");
+    expect(upstream.headers.get(OPERATOR_EMAIL_HEADER)).toBeNull();
   });
 
   it("keeps the work-queue query string", async () => {

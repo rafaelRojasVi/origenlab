@@ -253,49 +253,22 @@ describe("buildUpstreamUrl", () => {
   });
 });
 
-describe("commercial operator identity forwarding", () => {
-  it("reconstructs operator identity from Cloudflare Access", async () => {
+describe("operator identity is never derived by the Worker", () => {
+  it("drops a browser-sent operator header and ignores a Cloudflare Access header", async () => {
     const { buildUpstreamHeaders, OPERATOR_EMAIL_HEADER } = await import("./proxy");
-
     const incoming = new Headers({
       "Cf-Access-Authenticated-User-Email": "Tatiana@OrigenLab.CL",
       "X-OriginLab-Operator-Email": "spoofed@attacker.example",
     });
-
     const headers = buildUpstreamHeaders(
-      {
-        ORIGENLAB_API_UPSTREAM: "https://api.example.com",
-        ORIGENLAB_API_AUTH_TOKEN: "secret",
-      },
+      { ORIGENLAB_API_UPSTREAM: "https://api.example.com", ORIGENLAB_API_AUTH_TOKEN: "secret" },
       incoming,
     );
-
-    expect(headers.get(OPERATOR_EMAIL_HEADER)).toBe(
-      "tatiana@origenlab.cl",
-    );
-    expect(headers.get(OPERATOR_EMAIL_HEADER)).not.toBe(
-      "spoofed@attacker.example",
-    );
-  });
-
-  it("does not invent operator identity when Access identity is absent", async () => {
-    const { buildUpstreamHeaders, OPERATOR_EMAIL_HEADER } = await import("./proxy");
-
-    const incoming = new Headers({
-      "X-OriginLab-Operator-Email": "spoofed@attacker.example",
-    });
-
-    const headers = buildUpstreamHeaders(
-      {
-        ORIGENLAB_API_UPSTREAM: "https://api.example.com",
-        ORIGENLAB_API_AUTH_TOKEN: "secret",
-      },
-      incoming,
-    );
-
     expect(headers.get(OPERATOR_EMAIL_HEADER)).toBeNull();
+    expect(headers.has("Cf-Access-Authenticated-User-Email")).toBe(false);
   });
 });
+
 
 describe("V2 durable read boundary allowlist", () => {
   it("allows exactly the ten V2 listing paths", async () => {
