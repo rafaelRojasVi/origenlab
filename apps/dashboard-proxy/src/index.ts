@@ -7,7 +7,6 @@ import {
   marketingCommandMaxBytes,
   isAllowedMarketingCommandPostPath,
   isAllowedPostPath,
-  isAllowedPostUploadPath,
   isAllowedUpstreamPath,
   stripApiPrefix,
 } from "./allowlist";
@@ -19,7 +18,6 @@ export type { ProxyEnv } from "./proxy";
 export {
   stripApiPrefix,
   isAllowedUpstreamPath,
-  isAllowedPostUploadPath,
   isAllowedPostPath,
   buildUpstreamUrl,
   buildUpstreamHeaders,
@@ -171,9 +169,8 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
 
   // Method+path authorization, never method-only authorization.
   //
-  // POST is legal only for explicit annex-bundle commands and the narrowly
-  // enumerated commercial-operations commands. GET allowlisting never
-  // implies POST permission.
+  // POST is legal only for the enumerated marketing, CRM authoring and
+  // auth commands. GET allowlisting never implies POST permission.
   if (method === "POST") {
     if (upstreamPath === null || !isAllowedPostPath(upstreamPath)) {
       return jsonError(request, 405, "method_not_allowed");

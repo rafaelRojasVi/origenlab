@@ -70,15 +70,16 @@ describe("sign-in cookie filtering", () => {
     );
   });
 
-  it("sends no cookie at all to a V1 path", async () => {
+  it("never sends the session cookie to a V1 path: the Worker refuses it before any upstream call", async () => {
     const fetchMock = stubUpstream({ status: 200, body: "{}" });
-    await handleRequest(
+    const response = await handleRequest(
       new Request(`${DASHBOARD}/api/operator/status`, {
         headers: { Cookie: `${AUTH_SESSION_COOKIE}=signed.value` },
       }),
       TEST_ENV,
     );
-    expect(upstreamRequest(fetchMock).headers.get("Cookie")).toBeNull();
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("still never forwards a browser-supplied operator header on an auth path", async () => {

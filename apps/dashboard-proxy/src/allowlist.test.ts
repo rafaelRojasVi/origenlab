@@ -2,29 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   isAllowedPostPath,
-  isAllowedPostUploadPath,
   isAllowedUpstreamPath,
   stripApiPrefix,
 } from "../src/allowlist";
 import { buildUpstreamUrl } from "../src/proxy";
 
 describe("allowlist", () => {
-  const PRODUCTION_SMOKE_PATHS = [
-    "/health",
-    "/operator/status",
-    "/operator/automation-status",
-    "/operator/procurement/status",
-    "/operator/procurement/institutions",
-    "/operator/procurement/institutions/test-institution-id",
-    "/operator/procurement/queues/current_opportunity",
-    "/operator/procurement/queues/historical_prospect",
-    "/operator/procurement/queues/contact_gap",
-    "/operator/procurement/queues/institution_match_review",
-    "/operator/procurement/queues/line_evidence_review",
-    "/operator/procurement/queues/retender_review",
-    "/operator/procurement/tenders/745712-14-LE26",
-    "/operator/procurement/tenders/745712-14-LE26/attachment-navigation",
-  ];
+  const PRODUCTION_SMOKE_PATHS = ["/health"];
 
   // V1 surfaces with no role model and no redaction upstream. The Worker refuses them so
   // that V2 is the only browser path to CRM, contact and evidence data.
@@ -38,6 +22,32 @@ describe("allowlist", () => {
     "/mirror/audits/gmail-interactions",
     "/mirror/commercial/deals",
     "/mirror/x",
+    "/operator/status",
+    "/operator/automation-status",
+    "/operator/procurement/status",
+    "/operator/procurement/institutions",
+    "/operator/procurement/institutions/test-institution-id",
+    "/operator/procurement/queues/current_opportunity",
+    "/operator/procurement/queues/historical_prospect",
+    "/operator/procurement/queues/contact_gap",
+    "/operator/procurement/queues/institution_match_review",
+    "/operator/procurement/queues/line_evidence_review",
+    "/operator/procurement/queues/retender_review",
+    "/operator/procurement/tenders/745712-14-LE26",
+    "/operator/procurement/tenders/745712-14-LE26/attachment-navigation",
+    "/operator/procurement/tenders/745712-19-lp26",
+    "/cases/warm",
+    "/opportunities/commercial",
+    "/opportunities/commercial/o_0123456789abcdef0123456789abcdef",
+    "/operations/work-queue",
+    "/operations/sales-opportunities",
+    "/operations/customer-quotes",
+    "/operations/customer-quotes/drive-pending",
+    "/operations/customer-quotes/drive-pending/resolve",
+    "/operations/tasks",
+    "/operations/activities",
+    "/operations/sales-opportunities/promote",
+    "/operations/sales-opportunities/manual",
   ];
 
   it("stripApiPrefix maps /api/* to upstream paths", () => {
@@ -52,10 +62,8 @@ describe("allowlist", () => {
     expect(stripApiPrefix("/health")).toBeNull();
   });
 
-  it("isAllowedUpstreamPath allows dashboard read routes only", () => {
+  it("isAllowedUpstreamPath allows /health and refuses unlisted paths", () => {
     expect(isAllowedUpstreamPath("/health")).toBe(true);
-    expect(isAllowedUpstreamPath("/operator/status")).toBe(true);
-    expect(isAllowedUpstreamPath("/cases/warm")).toBe(true);
     expect(isAllowedUpstreamPath("/emails")).toBe(false);
     expect(isAllowedUpstreamPath("/operator/send")).toBe(false);
   });
@@ -209,65 +217,6 @@ describe("allowlist", () => {
     expect(isAllowedUpstreamPath("/v2/mirror/commercial/deals")).toBe(false);
   });
 
-  it("allows the PR3 machine-opportunity intake list and detail reads only", () => {
-    const opportunityId = "o_0123456789abcdef0123456789abcdef";
-
-    expect(isAllowedUpstreamPath("/opportunities/commercial")).toBe(true);
-    expect(isAllowedUpstreamPath(`/opportunities/commercial/${opportunityId}`)).toBe(true);
-    expect(
-      isAllowedUpstreamPath("/opportunities/commercial?limit=20&canonical_stage=quote_sent"),
-    ).toBe(true);
-
-    expect(isAllowedUpstreamPath("/opportunities/commercial/")).toBe(false);
-    expect(isAllowedUpstreamPath("/opportunities/commercial/not-an-id")).toBe(false);
-    expect(
-      isAllowedUpstreamPath(`/opportunities/commercial/${opportunityId}/extra`),
-    ).toBe(false);
-    expect(isAllowedUpstreamPath("/opportunities/commercial/o_short")).toBe(false);
-  });
-
-  it("allows CRM sales-opportunity nested read routes only", () => {
-    const salesId = "sales_0123456789abcdef0123456789abcdef";
-
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/${salesId}/activities`,
-      ),
-    ).toBe(true);
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/${salesId}/tasks`,
-      ),
-    ).toBe(true);
-
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/${salesId}/activities/extra`,
-      ),
-    ).toBe(false);
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/${salesId}/tasks/extra`,
-      ),
-    ).toBe(false);
-    expect(
-      isAllowedUpstreamPath(
-        "/operations/sales-opportunities/sales_not-valid/activities",
-      ),
-    ).toBe(false);
-  });
-
-  it("allows the durable sales-opportunity board list route only", () => {
-    expect(isAllowedUpstreamPath("/operations/sales-opportunities")).toBe(true);
-    expect(
-      isAllowedUpstreamPath(
-        "/operations/sales-opportunities?stage=new&stage=qualifying&limit=200",
-      ),
-    ).toBe(true);
-    expect(isAllowedUpstreamPath("/operations/sales-opportunities/")).toBe(false);
-    expect(isAllowedUpstreamPath("/operations/sales-opportunities/extra/path")).toBe(false);
-  });
-
   it("keeps representative write and non-dashboard paths blocked", () => {
     expect(isAllowedUpstreamPath("/emails")).toBe(false);
     expect(isAllowedUpstreamPath("/operator/send")).toBe(false);
@@ -290,101 +239,6 @@ describe("allowlist", () => {
     // route); the dashboard's actionable-opportunity summary now sources from
     // /operator/procurement/status (W1).
     expect(isAllowedUpstreamPath("/opportunities/equipment")).toBe(false);
-  });
-
-  it("allows real tender_code formats (mixed and lowercase), case preserved", () => {
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712-19-LP26")).toBe(true);
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/4291-46-LE26")).toBe(true);
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712-19-lp26")).toBe(true);
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/4291-46-le26")).toBe(true);
-    expect(
-      isAllowedUpstreamPath(
-        "/operator/procurement/tenders/745712-19-LP26/attachment-navigation",
-      ),
-    ).toBe(true);
-    expect(
-      isAllowedUpstreamPath(
-        "/operator/procurement/tenders/4291-46-le26/attachment-navigation",
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects tender_code segments that are not a conservative alphanumeric+hyphen token", () => {
-    // Dot-segments (path traversal) as the tender_code segment itself.
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/..")).toBe(false);
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/.")).toBe(false);
-    // Whitespace in the tender_code segment.
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712 19 LP26")).toBe(false);
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712-19-LP26 ")).toBe(false);
-    // Unexpected punctuation in the tender_code segment.
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712;19;LP26")).toBe(false);
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/<script>")).toBe(false);
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712%2F19")).toBe(false);
-    expect(
-      isAllowedUpstreamPath(
-        "/operator/procurement/tenders/745712%2F19/attachment-navigation",
-      ),
-    ).toBe(false);
-    // Deeper/extra path segments beyond the single tender_code segment.
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712-19-LP26/extra")).toBe(false);
-  });
-});
-
-describe("isAllowedPostUploadPath", () => {
-  it("accepts only the exact annex-bundle preview/import paths for a well-formed tender code", () => {
-    expect(
-      isAllowedPostUploadPath(
-        "/operator/procurement/tenders/745712-19-LP26/annex-bundle/preview",
-      ),
-    ).toBe(true);
-
-    expect(
-      isAllowedPostUploadPath(
-        "/operator/procurement/tenders/745712-19-LP26/annex-bundle/import",
-      ),
-    ).toBe(true);
-  });
-
-  it("is independent of isAllowedUpstreamPath: the plain tender path is never POST-legal", () => {
-    expect(isAllowedUpstreamPath("/operator/procurement/tenders/745712-19-LP26")).toBe(true);
-    expect(isAllowedPostUploadPath("/operator/procurement/tenders/745712-19-LP26")).toBe(false);
-  });
-
-  it("rejects every other allowlisted GET path", () => {
-    expect(isAllowedPostUploadPath("/operator/procurement/status")).toBe(false);
-    expect(isAllowedPostUploadPath("/operator/procurement/institutions")).toBe(false);
-    expect(isAllowedPostUploadPath("/operator/procurement/queues/current_opportunity")).toBe(false);
-    expect(
-      isAllowedPostUploadPath(
-        "/operator/procurement/tenders/745712-19-LP26/attachment-navigation",
-      ),
-    ).toBe(false);
-    expect(isAllowedPostUploadPath("/health")).toBe(false);
-  });
-
-  it("rejects deeper/extra path segments beyond preview/import", () => {
-    expect(
-      isAllowedPostUploadPath(
-        "/operator/procurement/tenders/745712-19-LP26/annex-bundle/preview/extra",
-      ),
-    ).toBe(false);
-
-    expect(
-      isAllowedPostUploadPath(
-        "/operator/procurement/tenders/745712-19-LP26/annex-bundle/import/extra",
-      ),
-    ).toBe(false);
-  });
-
-  it("rejects a malformed tender-code segment", () => {
-    expect(isAllowedPostUploadPath("/operator/procurement/tenders/745712 19/annex-bundle/preview")).toBe(false);
-    expect(isAllowedPostUploadPath("/operator/procurement/tenders/../annex-bundle/preview")).toBe(false);
-  });
-
-  it("strips query string before matching", () => {
-    expect(
-      isAllowedPostUploadPath("/operator/procurement/tenders/745712-19-LP26/annex-bundle/preview?declare_complete=true"),
-    ).toBe(true);
   });
 });
 
@@ -440,608 +294,6 @@ describe("commercial operator identity forwarding", () => {
     );
 
     expect(headers.get(OPERATOR_EMAIL_HEADER)).toBeNull();
-  });
-});
-
-describe("commercial operations POST allowlist", () => {
-  it("admits exactly the intended commercial command shapes", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import("./allowlist");
-
-    const opportunityId = `o_${"a".repeat(32)}`;
-    const taskId = `task_${"b".repeat(32)}`;
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/opportunities/${opportunityId}/state`,
-      ),
-    ).toBe(true);
-
-    expect(
-      isAllowedCommercialOperationsPostPath("/operations/activities"),
-    ).toBe(true);
-
-    expect(
-      isAllowedCommercialOperationsPostPath("/operations/tasks"),
-    ).toBe(true);
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/tasks/${taskId}/complete`,
-      ),
-    ).toBe(true);
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/tasks/${taskId}/cancel`,
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects malformed or broadened commercial command paths", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import("./allowlist");
-
-    const opportunityId = `o_${"a".repeat(32)}`;
-    const taskId = `task_${"b".repeat(32)}`;
-
-    const rejected = [
-      "/operations",
-      "/operations/",
-      "/operations/opportunities",
-      "/operations/opportunities/opp_1/state",
-      `/operations/opportunities/${opportunityId}`,
-      `/operations/opportunities/${opportunityId}/delete`,
-      "/operations/activities/extra",
-      "/operations/tasks/extra",
-      `/operations/tasks/${taskId}`,
-      `/operations/tasks/${taskId}/delete`,
-      `/operations/tasks/${taskId}/reopen`,
-      `/operations/tasks/task_${"b".repeat(31)}/complete`,
-      `/operations/tasks/task_${"b".repeat(33)}/complete`,
-      `/operations/tasks/task_${"G".repeat(32)}/complete`,
-    ];
-
-    for (const path of rejected) {
-      expect(
-        isAllowedCommercialOperationsPostPath(path),
-        path,
-      ).toBe(false);
-    }
-  });
-
-  it("combined POST gate preserves annex uploads", async () => {
-    const { isAllowedPostPath } = await import("./allowlist");
-
-    expect(
-      isAllowedPostPath(
-        "/operator/procurement/tenders/1234-5-LE26/annex-bundle/preview",
-      ),
-    ).toBe(true);
-
-    expect(
-      isAllowedPostPath(
-        "/operator/procurement/tenders/1234-5-LE26/annex-bundle/import",
-      ),
-    ).toBe(true);
-
-    expect(
-      isAllowedPostPath("/operations/activities"),
-    ).toBe(true);
-  });
-});
-
-
-describe("commercial operations GET readback allowlist", () => {
-  it("admits only exact per-opportunity readback paths", async () => {
-    const { isAllowedUpstreamPath } = await import("./allowlist");
-    const opportunityId = `o_${"a".repeat(32)}`;
-
-    for (const suffix of [
-      "state",
-      "activities",
-      "tasks",
-    ]) {
-      expect(
-        isAllowedUpstreamPath(
-          `/operations/opportunities/${opportunityId}/${suffix}`,
-        ),
-        suffix,
-      ).toBe(true);
-    }
-
-    expect(
-      isAllowedUpstreamPath(
-        "/operations/opportunities/opp_1/state",
-      ),
-    ).toBe(false);
-
-    expect(
-      isAllowedUpstreamPath("/operations/tasks"),
-    ).toBe(false);
-  });
-});
-
-describe("commercial work queue GET allowlist", () => {
-  it("admits the exact global work queue path only", async () => {
-    const { isAllowedUpstreamPath } =
-      await import("./allowlist");
-
-    expect(
-      isAllowedUpstreamPath(
-        "/operations/work-queue",
-      ),
-    ).toBe(true);
-
-    expect(
-      isAllowedUpstreamPath(
-        "/operations/work-queue/delete",
-      ),
-    ).toBe(false);
-  });
-});
-
-describe("CRM sales opportunity allowlist", () => {
-  const salesOpportunityId = `sales_${"c".repeat(32)}`;
-
-  it("allows the exact CRM sales-opportunity GET path", () => {
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/${salesOpportunityId}`,
-      ),
-    ).toBe(true);
-  });
-
-  it("allows only the exact CRM promotion POST path", async () => {
-    const {
-      isAllowedCommercialOperationsPostPath,
-      isAllowedPostPath,
-    } = await import("./allowlist");
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        "/operations/sales-opportunities/promote",
-      ),
-    ).toBe(true);
-
-    expect(
-      isAllowedPostPath(
-        "/operations/sales-opportunities/promote",
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects broadened or malformed CRM sales-opportunity paths", async () => {
-    const {
-      isAllowedCommercialOperationsPostPath,
-    } = await import("./allowlist");
-
-    expect(
-      isAllowedUpstreamPath(
-        "/operations/sales-opportunities/sales_short",
-      ),
-    ).toBe(false);
-
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/${salesOpportunityId}/extra`,
-      ),
-    ).toBe(false);
-
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/sales_${"G".repeat(32)}`,
-      ),
-    ).toBe(false);
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        "/operations/sales-opportunities",
-      ),
-    ).toBe(false);
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        "/operations/sales-opportunities/promote/extra",
-      ),
-    ).toBe(false);
-  });
-});
-
-
-describe("CRM-2 sales opportunity stage POST allowlist", () => {
-  const salesOpportunityId = `sales_${"d".repeat(32)}`;
-
-  it("admits the exact lifecycle stage POST path", async () => {
-    const {
-      isAllowedCommercialOperationsPostPath,
-      isAllowedPostPath,
-    } = await import("./allowlist");
-
-    const path =
-      `/operations/sales-opportunities/${salesOpportunityId}/stage`;
-
-    expect(
-      isAllowedCommercialOperationsPostPath(path),
-    ).toBe(true);
-
-    expect(
-      isAllowedPostPath(path),
-    ).toBe(true);
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `${path}?request_id=test`,
-      ),
-    ).toBe(true);
-  });
-
-  it("does not make the lifecycle command path GET-readable", () => {
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/${salesOpportunityId}/stage`,
-      ),
-    ).toBe(false);
-  });
-
-  it("rejects malformed or broadened lifecycle stage paths", async () => {
-    const {
-      isAllowedCommercialOperationsPostPath,
-    } = await import("./allowlist");
-
-    const rejected = [
-      "/operations/sales-opportunities/sales_short/stage",
-      `/operations/sales-opportunities/sales_${"G".repeat(32)}/stage`,
-      `/operations/sales-opportunities/${salesOpportunityId}`,
-      `/operations/sales-opportunities/${salesOpportunityId}/stage/extra`,
-      `/operations/sales-opportunities/${salesOpportunityId}/delete`,
-      `/operations/sales-opportunities/${salesOpportunityId}/reopen`,
-    ];
-
-    for (const path of rejected) {
-      expect(
-        isAllowedCommercialOperationsPostPath(path),
-        path,
-      ).toBe(false);
-    }
-  });
-});
-
-describe("CRM-Q1 customer quote allowlist", () => {
-  const salesId = "sales_0123456789abcdef0123456789abcdef";
-  const quoteId = "quote_0123456789abcdef0123456789abcdef";
-
-  it("allows the exact quote list GET and detail GET paths", () => {
-    expect(
-      isAllowedUpstreamPath(`/operations/sales-opportunities/${salesId}/quotes`),
-    ).toBe(true);
-    expect(isAllowedUpstreamPath(`/operations/customer-quotes/${quoteId}`)).toBe(
-      true,
-    );
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/${salesId}/quotes?limit=20`,
-      ),
-    ).toBe(true);
-  });
-
-  it("allows only the exact quote-create and drive-workspace POST paths", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/sales-opportunities/${salesId}/quotes`,
-      ),
-    ).toBe(true);
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/customer-quotes/${quoteId}/drive-workspace`,
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects malformed or broadened quote paths", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    // The bare collection root is now the CRM backend foundation global
-    // list route (see "manual sales-opportunity creation + global
-    // customer-quote list allowlist" below) -- only the trailing-slash
-    // variant stays closed.
-    expect(isAllowedUpstreamPath("/operations/customer-quotes/")).toBe(false);
-
-    // Malformed IDs.
-    expect(isAllowedUpstreamPath("/operations/customer-quotes/not-an-id")).toBe(
-      false,
-    );
-    expect(isAllowedUpstreamPath("/operations/customer-quotes/quote_short")).toBe(
-      false,
-    );
-    expect(
-      isAllowedUpstreamPath(
-        "/operations/customer-quotes/quote_0123456789ABCDEF0123456789ABCDEF",
-      ),
-    ).toBe(false);
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        "/operations/sales-opportunities/not-an-id/quotes",
-      ),
-    ).toBe(false);
-
-    // Deeper segments beyond the enumerated shapes.
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/${salesId}/quotes/extra`,
-      ),
-    ).toBe(false);
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/customer-quotes/${quoteId}/drive-workspace/extra`,
-      ),
-    ).toBe(false);
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/customer-quotes/${quoteId}/delete`,
-      ),
-    ).toBe(false);
-  });
-
-  it("does not make the drive-workspace command path GET-readable", () => {
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/customer-quotes/${quoteId}/drive-workspace`,
-      ),
-    ).toBe(false);
-  });
-});
-
-describe("manual sales-opportunity creation + global customer-quote list allowlist", () => {
-  it("allows the exact global customer-quote list GET path", () => {
-    expect(isAllowedUpstreamPath("/operations/customer-quotes")).toBe(true);
-    expect(
-      isAllowedUpstreamPath("/operations/customer-quotes?stage=quoting&limit=25"),
-    ).toBe(true);
-  });
-
-  it("rejects malformed or broadened global list paths", () => {
-    expect(isAllowedUpstreamPath("/operations/customer-quotes/")).toBe(false);
-    expect(isAllowedUpstreamPath("/operations/customer-quotes/extra")).toBe(false);
-    expect(isAllowedUpstreamPath("/operations/Customer-Quotes")).toBe(false);
-  });
-
-  it("allows only the exact manual sales-opportunity POST path", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    expect(
-      isAllowedCommercialOperationsPostPath("/operations/sales-opportunities/manual"),
-    ).toBe(true);
-  });
-
-  it("rejects malformed or broadened manual-create paths", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    expect(
-      isAllowedCommercialOperationsPostPath("/operations/sales-opportunities/manual/"),
-    ).toBe(false);
-    expect(
-      isAllowedCommercialOperationsPostPath("/operations/sales-opportunities/manual/extra"),
-    ).toBe(false);
-  });
-
-  it("does not make the manual-create command path GET-readable", () => {
-    expect(isAllowedUpstreamPath("/operations/sales-opportunities/manual")).toBe(false);
-  });
-
-  it("does not make the global customer-quote list path POST-writable", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    expect(isAllowedCommercialOperationsPostPath("/operations/customer-quotes")).toBe(
-      false,
-    );
-  });
-});
-
-describe("Drive Pendientes read-only projection allowlist (CRM-Q1D follow-up)", () => {
-  it("allows the exact GET path", () => {
-    expect(
-      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending"),
-    ).toBe(true);
-  });
-
-  it("rejects malformed or broadened variants", () => {
-    expect(
-      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/"),
-    ).toBe(false);
-    expect(
-      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/extra"),
-    ).toBe(false);
-    expect(
-      isAllowedUpstreamPath("/operations/customer-quotes/Drive-Pending"),
-    ).toBe(false);
-  });
-
-  it("does not make it POST-writable", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        "/operations/customer-quotes/drive-pending",
-      ),
-    ).toBe(false);
-  });
-});
-
-describe("Intake resolution read-only allowlist (CRM-Q2B)", () => {
-  it("allows the exact GET path", () => {
-    expect(
-      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/resolve"),
-    ).toBe(true);
-  });
-
-  it("allows it with a folder_name query string (query is stripped before matching)", () => {
-    expect(
-      isAllowedUpstreamPath(
-        "/operations/customer-quotes/drive-pending/resolve?folder_name=CN01191-ICN%20Chile",
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects malformed or broadened variants", () => {
-    expect(
-      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/resolve/"),
-    ).toBe(false);
-    expect(
-      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/resolve/extra"),
-    ).toBe(false);
-    expect(
-      isAllowedUpstreamPath("/operations/customer-quotes/drive-pending/Resolve"),
-    ).toBe(false);
-  });
-
-  it("does not make it POST-writable", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        "/operations/customer-quotes/drive-pending/resolve",
-      ),
-    ).toBe(false);
-  });
-});
-
-describe("CRM-Q2 workflow/adoption allowlist", () => {
-  const salesId = "sales_0123456789abcdef0123456789abcdef";
-  const quoteId = "quote_0123456789abcdef0123456789abcdef";
-
-  const transitionSegments = [
-    "submit-for-review",
-    "request-adjustments",
-    "approve",
-    "confirm-send",
-    "close",
-  ];
-
-  it("allows the exact revision-transition POST paths", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    for (const segment of transitionSegments) {
-      expect(
-        isAllowedCommercialOperationsPostPath(
-          `/operations/customer-quotes/${quoteId}/${segment}`,
-        ),
-      ).toBe(true);
-    }
-  });
-
-  it("does not make the transition command paths GET-readable", () => {
-    for (const segment of transitionSegments) {
-      expect(
-        isAllowedUpstreamPath(
-          `/operations/customer-quotes/${quoteId}/${segment}`,
-        ),
-      ).toBe(false);
-    }
-  });
-
-  it("rejects malformed quote IDs and extra segments on transition paths", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    for (const segment of transitionSegments) {
-      expect(
-        isAllowedCommercialOperationsPostPath(
-          `/operations/customer-quotes/not-an-id/${segment}`,
-        ),
-      ).toBe(false);
-      expect(
-        isAllowedCommercialOperationsPostPath(
-          `/operations/customer-quotes/${quoteId}/${segment}/extra`,
-        ),
-      ).toBe(false);
-    }
-  });
-
-  it("allows the exact adopt-drive-folder POST path", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/sales-opportunities/${salesId}/quotes/adopt-drive-folder`,
-      ),
-    ).toBe(true);
-  });
-
-  it("does not make the adopt-drive-folder path GET-readable", () => {
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/sales-opportunities/${salesId}/quotes/adopt-drive-folder`,
-      ),
-    ).toBe(false);
-  });
-
-  it("rejects malformed sales-opportunity IDs and extra segments on adopt-drive-folder", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        "/operations/sales-opportunities/not-an-id/quotes/adopt-drive-folder",
-      ),
-    ).toBe(false);
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/sales-opportunities/${salesId}/quotes/adopt-drive-folder/extra`,
-      ),
-    ).toBe(false);
-    // Never lets adoption ride the plain quote-create path or vice versa.
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/sales-opportunities/${salesId}/quotes`,
-      ),
-    ).toBe(true);
-  });
-
-  it("allows the exact event-history GET path and rejects malformed/extended variants", () => {
-    expect(
-      isAllowedUpstreamPath(`/operations/customer-quotes/${quoteId}/events`),
-    ).toBe(true);
-    expect(
-      isAllowedUpstreamPath("/operations/customer-quotes/not-an-id/events"),
-    ).toBe(false);
-    expect(
-      isAllowedUpstreamPath(
-        `/operations/customer-quotes/${quoteId}/events/extra`,
-      ),
-    ).toBe(false);
-  });
-
-  it("does not make the event-history path POST-writable", async () => {
-    const { isAllowedCommercialOperationsPostPath } = await import(
-      "../src/allowlist"
-    );
-
-    expect(
-      isAllowedCommercialOperationsPostPath(
-        `/operations/customer-quotes/${quoteId}/events`,
-      ),
-    ).toBe(false);
   });
 });
 
@@ -1345,6 +597,68 @@ describe("CRM authoring GET reads allowlist", () => {
       `/v2/workspace/organizations/${uuid}`,
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+});
+
+describe("V1 surfaces are refused on the browser boundary", () => {
+  const V1_GET_PATHS = [
+    "/operator/status",
+    "/operator/automation-status",
+    "/operator/procurement/status",
+    "/operator/procurement/institutions",
+    "/operator/procurement/institutions/test-institution-id",
+    "/operator/procurement/queues/current_opportunity",
+    "/operator/procurement/tenders/745712-14-LE26",
+    "/operator/procurement/tenders/745712-14-LE26/attachment-navigation",
+    "/cases/warm",
+    "/opportunities/commercial",
+    "/opportunities/commercial/o_" + "a".repeat(32),
+    "/operations/work-queue",
+    "/operations/sales-opportunities",
+    "/operations/sales-opportunities/sales_" + "a".repeat(32),
+    "/operations/sales-opportunities/sales_" + "a".repeat(32) + "/activities",
+    "/operations/sales-opportunities/sales_" + "a".repeat(32) + "/tasks",
+    "/operations/sales-opportunities/sales_" + "a".repeat(32) + "/quotes",
+    "/operations/customer-quotes",
+    "/operations/customer-quotes/quote_" + "a".repeat(32),
+    "/operations/customer-quotes/quote_" + "a".repeat(32) + "/events",
+    "/operations/customer-quotes/drive-pending",
+    "/operations/customer-quotes/drive-pending/resolve",
+    "/operations/opportunities/o_" + "a".repeat(32) + "/state",
+    "/operations/opportunities/o_" + "a".repeat(32) + "/activities",
+    "/operations/opportunities/o_" + "a".repeat(32) + "/tasks",
+  ];
+  const V1_POST_PATHS = [
+    "/operator/procurement/tenders/745712-14-LE26/annex-bundle/preview",
+    "/operator/procurement/tenders/745712-14-LE26/annex-bundle/import",
+    "/operations/opportunities/o_" + "a".repeat(32) + "/state",
+    "/operations/sales-opportunities/promote",
+    "/operations/sales-opportunities/manual",
+    "/operations/sales-opportunities/sales_" + "a".repeat(32) + "/stage",
+    "/operations/sales-opportunities/sales_" + "a".repeat(32) + "/quotes",
+    "/operations/sales-opportunities/sales_" + "a".repeat(32) + "/quotes/adopt-drive-folder",
+    "/operations/activities",
+    "/operations/tasks",
+    "/operations/tasks/task_" + "a".repeat(32) + "/complete",
+    "/operations/customer-quotes/quote_" + "a".repeat(32) + "/drive-workspace",
+    "/operations/customer-quotes/quote_" + "a".repeat(32) + "/submit-for-review",
+    "/operations/customer-quotes/quote_" + "a".repeat(32) + "/approve",
+    "/operations/customer-quotes/quote_" + "a".repeat(32) + "/confirm-send",
+    "/operations/customer-quotes/quote_" + "a".repeat(32) + "/close",
+  ];
+
+  it.each(V1_GET_PATHS)("refuses GET %s", (path) => {
+    expect(isAllowedUpstreamPath(path)).toBe(false);
+  });
+
+  it.each(V1_POST_PATHS)("refuses POST %s", (path) => {
+    expect(isAllowedPostPath(path)).toBe(false);
+  });
+
+  it("still allows exactly /health, the auth routes and the named v2 reads", () => {
+    for (const path of ["/health", "/auth/session", "/auth/profiles", "/auth/google/login", "/auth/google/callback", "/v2/workspace/overview", "/v2/workspace/pipeline", "/v2/cases"]) {
+      expect(isAllowedUpstreamPath(path)).toBe(true);
     }
   });
 });
