@@ -1,8 +1,17 @@
-# Cloudflare Access — dashboard and API protection
+# Cloudflare Access — API origin protection
 
-Runbook and **production record** for protecting **dashboard.origenlab.cl** and **api.origenlab.cl** with Cloudflare Zero Trust (Access).
+> **2026-10-03.** Cloudflare Access is to be retired from `dashboard.origenlab.cl` at Phase B (decision 5; not yet executed). The dashboard's
+> sign-in is the API's Google Workspace login with operator profiles
+> (`apps/api/docs/PRODUCTION_AUTH.md`). This document now covers only `api.origenlab.cl`, which
+> the Worker reaches with a service token. Decision: `docs/MIGRATION.md` §11 row 5.
+>
+> The decision is recorded; removing the dashboard Access application is a Phase B operator
+> step (`docs/OPERATIONS.md` §1.2 step 10) and had not been executed when this was written. The
+> 2026-05 and 2026-07 sections below are the production record of the two-application setup.
 
-**Status (2026-05-26):** Access is **enabled in production**. Operators must authenticate before reaching the dashboard or API on the custom domains.
+Runbook and **production record** for protecting **api.origenlab.cl** with Cloudflare Zero Trust (Access). **dashboard.origenlab.cl** is protected the same way until its application is removed.
+
+**Status (2026-05-26):** Access was **enabled in production** on both custom domains. After Phase B only the API hostname keeps an Access application.
 
 ## Production update (2026-07)
 
@@ -18,9 +27,9 @@ The dashboard **read-only Worker proxy** is live at `dashboard.origenlab.cl/api*
 
 **Secrets:** Cloudflare Access service tokens and `ORIGENLAB_API_AUTH_TOKEN` were **rotated after accidental exposure** (2026-07). Store only in Render / Wrangler secrets — never in git, chat, or `VITE_*`.
 
-**Two-layer auth (unchanged):**
+**Two-layer auth (as of 2026-07):**
 
-1. **Cloudflare Access** — operator SSO on `dashboard.origenlab.cl` and `api.origenlab.cl`.
+1. **Cloudflare Access** — operator SSO on `dashboard.origenlab.cl` and `api.origenlab.cl` (the dashboard application is retired at Phase B; the API one stays and the Worker presents a service token to it).
 2. **`ORIGENLAB_API_AUTH_TOKEN`** — API origin auth; Worker injects `X-OriginLab-API-Key` upstream.
 
 **Production smoke (2026-07-06):** 8/8 GET routes via `https://dashboard.origenlab.cl/api` returned HTTP 200 JSON with expected CORS and proxy diagnostic headers. See [`docs/dashboard/PRODUCTION_DASHBOARD_SMOKE_CHECKLIST.md`](dashboard/PRODUCTION_DASHBOARD_SMOKE_CHECKLIST.md).
@@ -39,8 +48,9 @@ The dashboard **read-only Worker proxy** is live at `dashboard.origenlab.cl/api*
 
 | Application | Hostname |
 |-------------|----------|
-| Dashboard | `dashboard.origenlab.cl` |
 | API | `api.origenlab.cl` |
+
+The dashboard application (`dashboard.origenlab.cl`) is in this record and is retired at Phase B (2026-10-03 decision; `docs/OPERATIONS.md` §1.2 step 10).
 
 ### Access policy
 
@@ -51,14 +61,14 @@ The dashboard **read-only Worker proxy** is live at `dashboard.origenlab.cl/api*
 | Include | Email |
 | Allowed emails | *(two operator accounts — not listed here)* |
 | | See the live allowlist in the Cloudflare Zero Trust dashboard: |
-| | **Access → Applications → OrigenLab Dashboard → Policies**. |
+| | **Access → Applications → OrigenLab Dashboard → Policies** (recorded under the dashboard application; before that application is deleted, confirm which policy the API application uses). |
 
 ### Application configuration (verified)
 
 | Component | Setting |
 |-----------|---------|
 | Dashboard API base (production) | `VITE_ORIGENLAB_API_BASE_URL=https://dashboard.origenlab.cl/api` (same-origin Worker proxy) |
-| Dashboard read-only proxy | Cloudflare Worker — [`apps/dashboard-proxy`](../apps/dashboard-proxy/README.md) on `dashboard.origenlab.cl/api*` |
+| Dashboard proxy | Cloudflare Worker — [`apps/dashboard-proxy`](../apps/dashboard-proxy/README.md) on `dashboard.origenlab.cl/api*`; the only caller that holds the service token |
 | API upstream (Worker `[vars]`) | `ORIGENLAB_API_UPSTREAM=https://api.origenlab.cl` |
 | API origin token (Worker secret) | `ORIGENLAB_API_AUTH_TOKEN` — same value as Render API |
 | Cloudflare Access service token (Worker secrets) | `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET` — **required** for Worker → `api.origenlab.cl` (Access-protected upstream) |
@@ -70,7 +80,6 @@ The dashboard **read-only Worker proxy** is live at `dashboard.origenlab.cl/api*
 
 | Check | Result |
 |-------|--------|
-| `https://dashboard.origenlab.cl` in browser (incognito) | Cloudflare Access login / code flow appears |
 | `https://api.origenlab.cl` in browser (incognito) | Cloudflare Access login / code flow appears |
 | `curl -i https://api.origenlab.cl/health` | **HTTP/2 302** redirect to Cloudflare Access login (not anonymous 200) |
 
@@ -124,7 +133,7 @@ Authorization: Bearer <token>
 
 | Layer | Protects | Does **not** replace |
 |-------|----------|----------------------|
-| **Cloudflare Access** | Custom domains (`api.origenlab.cl`, `dashboard.origenlab.cl`) | API bearer token on the origin |
+| **Cloudflare Access** | The API custom domain (`api.origenlab.cl`) | API bearer token on the origin |
 | **CORS** | Browser cross-origin policy for dashboard origin | Authentication |
 | **`ORIGENLAB_API_AUTH_TOKEN`** | Every private read route at the FastAPI app | Cloudflare SSO for operators |
 
@@ -134,7 +143,7 @@ Authorization: Bearer <token>
 
 **Smoke / curl:** When Access and API token auth are both enabled, send Cloudflare service-token headers **and** an API token header (`X-OriginLab-API-Key` in shell examples). See [`apps/api/docs/PRODUCTION_AUTH.md`](../apps/api/docs/PRODUCTION_AUTH.md).
 
-**Dashboard browser:** `credentials: include` carries Cloudflare cookies on same-origin `/api/*` calls. The **Cloudflare Worker** (`apps/dashboard-proxy`) forwards to `api.origenlab.cl` with **two upstream auth layers**:
+**Dashboard browser:** `credentials: include` carries the dashboard session cookie on same-origin `/api/*` calls (no Cloudflare cookie once the dashboard Access application is gone). The **Cloudflare Worker** (`apps/dashboard-proxy`) forwards to `api.origenlab.cl` with **two upstream auth layers**:
 
 1. **Cloudflare Access service token** (`CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` Worker secrets) — required because `api.origenlab.cl` is behind Access. Without these, upstream returns **302/403** (plain `curl /health` behaves the same).
 2. **`X-OriginLab-API-Key`** (`ORIGENLAB_API_AUTH_TOKEN` Worker secret) — API origin auth. Without it, private routes return **401** JSON after Access succeeds.
@@ -155,9 +164,9 @@ Never expose either secret in `VITE_*` or client JS. See [`apps/dashboard/docs/P
 
 ## Goals
 
-- Require identity (Google via Access) for operator access to the commercial dashboard and API.
-- Allow only approved operator emails; deny everyone else by default.
-- Avoid leaving the API reachable on the public internet while only the dashboard is protected.
+- Keep `api.origenlab.cl` unreachable except by the Worker (service token) and approved operator tooling.
+- Allow only approved identities; deny everyone else by default.
+- The dashboard hostname is no longer an Access goal: its identity is the API's Google Workspace session ([`apps/api/docs/PRODUCTION_AUTH.md`](../apps/api/docs/PRODUCTION_AUTH.md)), with MFA as Google 2-step verification on the shared account.
 
 ## Preconditions (completed for production)
 
@@ -166,12 +175,12 @@ Never expose either secret in `VITE_*` or client JS. See [`apps/dashboard/docs/P
 | `dashboard.origenlab.cl` DNS → Render **origenlab-dashboard** | Done |
 | `api.origenlab.cl` DNS → Render **origenlab-api** | Done |
 | API **CORS** allows `https://dashboard.origenlab.cl` | Done |
-| Access apps on dashboard + API hostnames | Done |
+| Access app on the API hostname | Done |
 | Operator emails in Allow policy | Done |
 
 ### CORS reminder
 
-The dashboard calls **`https://dashboard.origenlab.cl/api/*`** (same origin) after Access login; the Worker forwards to `https://api.origenlab.cl` with origin token auth. Production must keep `ORIGENLAB_API_CORS_ORIGINS` including `https://dashboard.origenlab.cl` for any direct API calls (smoke/CLI).
+The dashboard calls **`https://dashboard.origenlab.cl/api/*`** (same origin); the Worker forwards to `https://api.origenlab.cl` with the Access service token and origin token auth. Production must keep `ORIGENLAB_API_CORS_ORIGINS` including `https://dashboard.origenlab.cl` for any direct API calls (smoke/CLI).
 
 **CORS is not authentication.** Private routes also require `ORIGENLAB_API_AUTH_TOKEN` when `ORIGENLAB_ENV=production`.
 
@@ -179,32 +188,27 @@ The dashboard calls **`https://dashboard.origenlab.cl/api/*`** (same origin) aft
 
 1. [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → **Access** → **Applications**.
 2. **Application type:** Self-hosted.
-3. Two applications (production):
-   - `dashboard.origenlab.cl`
-   - `api.origenlab.cl`
+3. One application (production): `api.origenlab.cl`.
 4. **Session duration:** 12h or 24h (operator preference).
 5. **Identity provider:** Google.
 6. **Policy — Allow OrigenLab admins:** Include emails listed above; no catch-all Allow.
 
-### Protect both dashboard and API
-
-If only **dashboard.origenlab.cl** is behind Access, **api.origenlab.cl** (and any raw Render API URL) may remain directly callable. Production protects **both** hostnames.
+The Worker reaches the application with a Cloudflare Access service token (`CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` Worker secrets).
 
 ## Verification checklist (ongoing)
 
 | Step | Expected |
 |------|----------|
-| Open `https://dashboard.origenlab.cl` in incognito | Redirect to Cloudflare Access / login |
-| Log in with **allowed** email | Dashboard loads; same-origin `/api/*` calls succeed via Worker proxy |
-| Log in with **disallowed** email | Blocked by Access |
 | `curl -i https://api.origenlab.cl/health` (no session) | **302** to Access login |
-| Dashboard → network tab after login | Requests to `dashboard.origenlab.cl/api/*` return 200 (not 302 Access HTML, not 401 JSON) |
-| `GET /health` after login | **200** (not HEAD unless API adds HEAD) |
+| Dashboard (after sign-in) → network tab | Requests to `dashboard.origenlab.cl/api/*` return 200 (not 302 Access HTML, not 401 JSON) |
+| `GET /health` through the Worker | **200** (not HEAD unless API adds HEAD) |
 | Raw Render URLs | Confirm blocked or mitigated (see **Remaining hardening**) |
+
+Dashboard-hostname checks (no Access screen, `403 path_not_allowed` on V1 paths, `401` on a V2 read without a cookie) are in `docs/OPERATIONS.md` §1.2 step 10.
 
 ## Rollback
 
-1. Zero Trust → Access → Application → **Disable** or relax the Allow policy temporarily.
+1. Zero Trust → Access → Application → **Disable** or relax the Allow policy temporarily. (Rolling back the 2026-10-03 dashboard decision is a different action: re-create the Access application for `dashboard.origenlab.cl` and `npx wrangler rollback`, per `docs/OPERATIONS.md` §1.2 step 10.)
 2. Leave Render services and Postgres **unchanged** (no redeploy required for Access-only rollback).
 3. Do **not** modify SQLite or Postgres for Access rollback.
 4. Re-enable policy after operators confirm login flow.

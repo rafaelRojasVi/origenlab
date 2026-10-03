@@ -412,7 +412,7 @@ The header login still exists for work that does not need Google: set
 process (`apps/dashboard/README.md`). With both logins on, a Google session wins, and an
 invalid or expired session is refused — it is never rescued by the header.
 
-### Production activation (not yet possible)
+### Production activation (Phase B, 2026-10)
 
 1. A remote V2 database is chosen and adopted (an owner decision), `origenlab_api` has a
    password there, and the remote variables above are set (code ready, not exercised against
@@ -423,12 +423,16 @@ invalid or expired session is refused — it is never rescued by the header.
    --confirm-changes <N> --confirm-database <name>` with what that plan printed. The runtime
    API role cannot write `platform.operator` at all.
 3. Set the production column above as Render secrets on `origenlab-api`.
-4. Deploy `apps/dashboard-proxy`: it already lists `/auth/*` and passes exactly the two
-   `__Host-` cookies and the two checked redirects (`apps/dashboard-proxy/src/auth.ts`).
-   Cloudflare Access can stay in front of `dashboard.origenlab.cl`; the Worker never forwards
-   Access's `CF_Authorization` cookie upstream.
-5. Deploy the dashboard. Until step 4 the dashboard treats the Worker's `path_not_allowed` on
-   `/auth/session` as "no sign-in here" and behaves exactly as before.
+4. Deploy `apps/dashboard-proxy`; Cloudflare Access is removed from `dashboard.origenlab.cl`
+   after the first end-to-end sign-in (decision: `docs/MIGRATION.md` §11 row 5, runbook:
+   `docs/OPERATIONS.md` §1.2 steps 9 and 10). The Worker lists `/auth/*` and passes exactly the
+   two `__Host-` cookies and the two checked redirects (`apps/dashboard-proxy/src/auth.ts`); it
+   never forwards Access's `CF_Authorization` cookie upstream, and it never derives an operator
+   header. The `api.origenlab.cl` Access application stays.
+5. Deploy the dashboard. The gate fails closed: if the Worker answers `path_not_allowed` (or
+   anything but a session answer) on `/auth/session`, `AuthGate.tsx` renders «No se pudo
+   verificar la sesión» rather than opening the dashboard — it does not read the refusal as
+   "no sign-in here".
 
 ## Shared Workspace login with operator profiles
 

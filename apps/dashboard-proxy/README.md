@@ -1,6 +1,6 @@
 # Dashboard API proxy (Cloudflare Worker)
 
-Same-origin, method+path allowlisted proxy for production dashboard builds. The browser calls `https://dashboard.origenlab.cl/api/*`; the Worker strips `/api`, checks an allowlist, and forwards to `apps/api` with upstream auth headers from Worker secrets. GET is allowlisted for dashboard reads; POST is allowlisted narrowly for the durable commercial-operations commands and the tender annex import — this Worker is the trust boundary for both, not a pure read-only pass-through.
+Same-origin, method+path allowlisted proxy for production dashboard builds. The browser calls `https://dashboard.origenlab.cl/api/*`; the Worker strips `/api`, checks an allowlist, and forwards to `apps/api` with upstream auth headers from Worker secrets. GET is allowlisted for the named V2 reads and `/health`; POST for the V2 marketing and CRM-authoring commands and the auth routes — this Worker is the trust boundary for both, not a pure read-only pass-through. From 2026-10-03 (built, not deployed: the Worker in Cloudflare still carries the previous allowlist and still rebuilds the operator header from Access until `docs/OPERATIONS.md` §1.2 step 9 runs; the Access application on the dashboard hostname is not yet removed, step 10; `docs/STATUS.md` §2.7.41) it carries no identity of its own: the browser's identity is the dashboard session cookie, resolved by the API, and Cloudflare Access is to be retired from the dashboard hostname at Phase B (`docs/MIGRATION.md` decision 5). Only `api.origenlab.cl` keeps an Access application, which this Worker reaches with a service token.
 
 **No browser token.** `ORIGENLAB_API_AUTH_TOKEN` is a Worker secret only — never `VITE_*`.
 
@@ -24,31 +24,20 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | Upstream path | Purpose |
 |---------------|---------|
 | `/health` | Public health |
-| `/operator/status`, `/operator/automation-status` | Operator panels |
-| `/operator/procurement/*` | W1 institution/tender queues + T1 term detail |
-| `/cases/warm` | Warm cases |
-| `/opportunities/commercial`, `/opportunities/commercial/o_<32hex>` | PR3 machine-proposed opportunity intake (read-only) |
-| `/operations/work-queue`, `/operations/sales-opportunities/sales_<32hex>[/activities\|/tasks\|/quotes]`, `/operations/customer-quotes/quote_<32hex>`, `/operations/opportunities/o_<32hex>/[state\|activities\|tasks]` | Durable CRM reads |
-| `/operations/customer-quotes` | Global durable customer-quote list across all sales opportunities (Cotizaciones) |
 | `/v2/*` (named paths only — see `src/allowlist.ts`) | V2 durable reads |
 | `/auth/google/login`, `/auth/google/callback`, `/auth/session` | Dashboard Google Workspace sign-in (see *Sign-in exceptions* below) |
 | `/auth/profiles` | The signed-in shared Workspace account's operator profiles (id, name, role label) |
 
-**Refused on purpose** (403 `path_not_allowed`, never forwarded): V1 `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. `/v2/cockpit/*` and every `/v2/workspace/*` path other than the eight Marketing reads and the two CRM card reads below are not listed either. The W10 unsubscribe tooling that carries message bodies (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`) is API-only and never listed. See `docs/OPERATIONS.md`.
+**Refused on purpose** (GET: 403 `path_not_allowed`; POST: 405 `method_not_allowed`; never forwarded): every V1 surface — `/operator/*`, `/cases/warm`, `/opportunities/*`, `/operations/*`, `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — and the current dashboard calls none of them, so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. The V1 paths and the V1 POST commands (including the tender annex upload) were removed from the allowlist in the source on 2026-10-03 (built, not deployed; see the note at the top). `/v2/cockpit/*` and every `/v2/workspace/*` path other than the named reads below are not listed either. The W10 unsubscribe tooling that carries message bodies (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`) is API-only and never listed. See `docs/OPERATIONS.md`.
 
-**POST** (the only human write path — trusted operator identity, `Idempotency-Key`, optimistic concurrency; each ID format is regex-constrained, no wildcard route):
+**POST** (trusted operator identity resolved upstream from the session cookie, `Idempotency-Key`, optimistic concurrency; each path is exact, no wildcard route):
 
 | Upstream path | Purpose |
 |---------------|---------|
-| `/operations/opportunities/o_<32hex>/state` | PR3 operator confirm/reject |
-| `/operations/sales-opportunities/promote`, `/sales_<32hex>/stage` | Durable sales-opportunity lifecycle |
-| `/operations/sales-opportunities/manual` | Create a manually-initiated durable sales opportunity (no PR3 source) |
-| `/operations/activities`, `/operations/tasks`, `/operations/tasks/task_<32hex>/[complete\|cancel]` | Durable activities/tasks |
-| `/operations/sales-opportunities/sales_<32hex>/quotes`, `/operations/customer-quotes/quote_<32hex>/drive-workspace` | CRM-Q1 customer-quote create + Drive workspace retry |
-| `/operator/procurement/tenders/<code>/annex-bundle/[preview\|import]` | Explicit tender annex evidence upload |
 | `/auth/logout` | Clears the dashboard session cookie and records the logout in `platform.auth_event`; writes no commercial state. Requires an allowed `Origin` and no cross-site `Sec-Fetch-Site` |
 | `/auth/profile/select`, `/auth/profile/clear` | Choose an operator profile with its PIN (verified by the API, never here), or return to the profile screen. Allowed `Origin`, no cross-site `Sec-Fetch-Site`, `Content-Type: application/json`, body ≤ 1 KiB. The API's local-only `/auth/dev/*` is never reachable |
 | `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning,resolve-unsubscribe-review,dismiss-unsubscribe-review,block-campaign,unblock-campaign}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends; a block only refuses |
+| `/v2/commands/<name>` for the 28 CRM-authoring commands (person, organization, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not listed. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
@@ -61,8 +50,8 @@ Two exact GET paths (`src/allowlist.ts`), nothing under or beside them:
 | GET | `/v2/workspace/providers` | the six catalogue brands as the supplier directory, then the machine-detected candidates (hints only, never promoted) |
 | GET | `/v2/workspace/equipment-interests` | observed equipment interests per line, institution and destination; CRM people apart from address-only evidence |
 
-Same guarantees as every V2 read: the session cookie is the only cookie forwarded, a
-browser-sent operator header is dropped (the Cloudflare Access email replaces it), addresses are
+Same guarantees as every V2 read: the session cookie is the only cookie forwarded, the
+browser-sent operator header is dropped and nothing replaces it (identity is the session cookie), addresses are
 masked upstream for `viewer`, and masked destinations carry only an opaque keyed `address_ref`
 (an HMAC scoped to the API, never a plain hash of the address). Any other method is **405**;
 a neighbouring path is **403** `path_not_allowed`.
@@ -96,9 +85,8 @@ Exact paths only (`src/allowlist.ts`; UUIDs lower-case):
 
 **Roles.** Reads: any active operator; contact addresses are masked upstream for `viewer`
 (`contact_redaction.py`). Commands: an active `sales` or `admin` operator only (`admin` alone to dismiss a «BAJA» review and for the two block commands), resolved
-upstream from the verified identity (the dashboard session, or the Cloudflare Access email
-this Worker rewrites into the operator header — a browser-sent operator header is always
-dropped). Nothing in a body names the actor.
+upstream from the verified identity (the dashboard session cookie; the browser-sent operator
+header is always dropped and nothing replaces it). Nothing in a body names the actor.
 
 **Session and CSRF.** The session cookie is `__Host-origenlab_session` (HttpOnly, Secure,
 SameSite=Lax); only the two sign-in cookies ever reach upstream. For the eight commands the
@@ -106,8 +94,7 @@ Worker also refuses, before forwarding: a missing or unlisted `Origin` (403
 `origin_not_allowed`), `Sec-Fetch-Site: cross-site` (403 `cross_site_request`), any
 `Content-Type` other than `application/json` (415 — a cross-site form cannot send one without
 a preflight, which is answered only for listed origins), a body over 3.5 MB (4 KB for `set-campaign-planning`, 16 KB for the two block commands) declared or actual
-(413). CORS advertises `POST` and `Idempotency-Key` only on these and the V1 commercial
-command paths.
+(413). CORS advertises `POST` and `Idempotency-Key` only on these paths.
 
 **Idempotency.** `Idempotency-Key` is required and must match `^[A-Za-z0-9._:-]{8,128}$` (400
 `idempotency_key_required`); it is forwarded byte-for-byte. Upstream the key is one
@@ -135,7 +122,7 @@ The Worker is deliberately stricter than a generic pass-through proxy:
 - Allowed dashboard origins receive credentialed CORS headers and `Access-Control-Expose-Headers: X-Request-ID`.
 - Responses include `X-OriginLab-Proxy: dashboard-proxy`; forwarded upstream responses also include `X-OriginLab-Upstream-Status`.
 
-This keeps Cloudflare Access redirects/cookies and upstream CORS policy from leaking through `/api/*`.
+This keeps Cloudflare Access redirects/cookies (from the API hostname's Access application) and upstream CORS policy from leaking through `/api/*`.
 
 ### Sign-in exceptions
 
@@ -151,8 +138,9 @@ needs cookies and redirects, so `src/auth.ts` makes three exceptions and no othe
   to this dashboard's own root only, optionally with `?login_error=<code>`. Every other
   upstream 3xx is still a 502.
 
-The operator header is still deleted and rebuilt from Cloudflare Access on every path; the
-API's V2 boundary ignores it in production.
+The operator header is deleted on every path and never rebuilt: the Worker no longer reads the
+Cloudflare Access identity, so identity reaches the API only as the `__Host-` session cookie
+(source changed 2026-10-03; built, not deployed — `docs/STATUS.md` §2.7.41).
 
 ## Environment
 
@@ -185,7 +173,7 @@ Route in Cloudflare: `dashboard.origenlab.cl/api*` → this Worker (see `wrangle
 | **302 / 403** (HTML Access page) | Worker missing/wrong `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` for Access-protected upstream |
 | **502** JSON (`upstream_redirect_blocked`) | Upstream returned a redirect (often Cloudflare Access login); fix Worker Access service-token secrets |
 | **401** JSON (`unauthorized`) | Worker missing/wrong `ORIGENLAB_API_AUTH_TOKEN` (request passed Access but failed API origin auth) |
-| **403** `path_not_allowed` | Route not on dashboard read allowlist |
+| **403** `path_not_allowed` | Route not on the allowlist (every V1 path is refused) |
 | **405** | Mutating HTTP method |
 
 Secrets are never logged or returned in Worker responses.
@@ -196,7 +184,7 @@ Secrets are never logged or returned in Worker responses.
 VITE_ORIGENLAB_API_BASE_URL=https://dashboard.origenlab.cl/api npm run build
 ```
 
-Browser fetches stay same-origin (`credentials: include` for Cloudflare Access on the dashboard host). The Worker adds upstream auth — not the browser.
+Browser fetches stay same-origin (`credentials: include` for the dashboard session cookie). The Worker adds upstream auth — not the browser.
 
 ## Tests
 
