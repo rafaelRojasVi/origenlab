@@ -325,7 +325,7 @@ proposal, grouped by category, to be executed under the gates in §9.
 | Re-foundation pass output | `docs/refoundation/REFOUNDATION_PLAN.md`, `SYSTEM_INVENTORY.md`, `docs/data/DATA_AUTHORITY_MAP.md`, `docs/data/SQLITE_REGISTER.md` | **retain until slice 8** — they are the V1 inventory this migration reads; delete once the archive manifests are verified |
 | Workflow examples and template | `docs/workflows/*.md`, `docs/templates/WORKFLOW_TEMPLATE.md` | superseded by [`WORKFLOWS.md`](WORKFLOWS.md); delete after slice 5 |
 | Documentation meta | `docs/DOCUMENTATION_MAP.md`, `docs/PROJECT_CONTEXT.md` | superseded by [`README.md`](README.md); delete after slice 8, together with the last legacy file it indexes |
-| Proxy and access security | `docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md` | delete when Cloudflare Access and the proxy are retired (after slice 1) |
+| Proxy and access security | `docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md` | rewritten 2026-10-03 to cover the API application only; delete with the Worker |
 | Release and publication | `docs/RELEASE_PROCESS.md`, `docs/PUBLIC_RELEASE_CHECKLIST.md`, `docs/SECURITY_PUBLIC_REPO.md`, `docs/dashboard/PRODUCTION_DASHBOARD_SMOKE_CHECKLIST.md` | superseded by [`OPERATIONS.md`](OPERATIONS.md); delete after slice 8 |
 | App documentation trees | `apps/email-pipeline/docs/**` (~89 files), `apps/api/docs/**` (~20), `apps/web/docs/**` (~31), `apps/dashboard/docs/**` (~5) | delete with the code they document, slice by slice; `apps/web/docs/**` is **retained** because `apps/web` is retained |
 
@@ -339,7 +339,7 @@ seven canonical files plus the per-app READMEs that survive.
 | `apps/api` command layer, idempotency, quote service, Drive provider | **rewrite** onto the V2 schema; keep FastAPI |
 | `apps/dashboard` | **retain**; add Supabase Auth; repoint to the V2 API |
 | `apps/web` | **retain unchanged** |
-| `apps/dashboard-proxy` and Cloudflare Access | retain until slice 1 passes, then delete |
+| `apps/dashboard-proxy` and Cloudflare Access | retain the Worker until slice 1 passes, then delete; Cloudflare Access on the dashboard hostname retired 2026-10-03 (decision 5) |
 | Gmail IMAP and MIME parsing, the ChileCompra client, the historical-quote register, the Wave 1A tooling | **rewrite** as `apps/worker` adapters |
 | SQLite runtime, marts, PR2/PR3 identity and opportunity builders, the procurement projection chain, warm cases, the deal ledger, catalog build scripts, mirror sync | retain read-only until the slice 7 gate, then delete |
 | The V1 campaign sender, archive lanes, do-not-repeat scripts, **the break-glass Gmail script**, the `outbound.*` sidecar mirror | delete after slice 5 reconciles — **the break-glass script is deleted first**, and no equivalent enters V2 |
@@ -358,6 +358,6 @@ seven canonical files plus the per-app READMEs that survive.
 | 2 | Recontacting the 8,580 legacy addresses | never by marketing, except a per-recipient approved override with a reason; a transactional delivery to such an address is governed only by `all` blocks ([`WORKFLOWS.md`](WORKFLOWS.md) §1.6); a V2-era cooldown of 180 days after each accepted marketing send |
 | 3 | Promotion of the 172 supplier candidates | none automatic; a review queue; batch promotion only for records an operator marks approved |
 | 4 | Archive promotion scope | only messages tied to a historical quotation or an existing customer |
-| 5 | Retiring Cloudflare Access and the proxy | after MFA enforcement passes slice 1 |
+| 5 | Retiring Cloudflare Access and the proxy | **Decided 2026-10-03.** Access is retired from `dashboard.origenlab.cl` at Phase B, before slice 1: the dashboard's own Google Workspace sign-in with the shared-account profile selector is the only sign-in, MFA is Google 2-step verification enforced on the shared account, and the Worker forwards only `/health`, `/auth/*` and the named `/v2/*` reads with no identity of its own. `api.origenlab.cl` keeps its Access application and the Worker's service token. The Worker itself is retired with slice 1 as before |
 | 6 | Worker hosting and plan | a container background worker; the database plan follows the production durability posture of [`OPERATIONS.md`](OPERATIONS.md) §4.3 (Pro daily backups, PITR declined initially, revisited when V2 is the sole durable writer) |
 | 7 | Disposition of the undocumented V1 SQLite snapshots | operator judgement, recorded before slice 8 |

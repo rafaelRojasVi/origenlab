@@ -184,11 +184,24 @@ the whole thing back rather than being discovered afterwards:
 
 #### Step 8 — deploy API and dashboard configuration
 
+Names and value shapes only; values are Render secrets and are never written in the repository.
+
 | Variable | Value |
 |---|---|
-| `ORIGENLAB_V2_DATABASE_URL` | the hosted DSN, as `origenlab_api` |
+| `ORIGENLAB_V2_DATABASE_URL` | the hosted DSN over the Supavisor **session** pooler, port 5432, as `origenlab_api.<project-ref>` (the API refuses port 6543) |
+| `ORIGENLAB_V2_DATABASE_REMOTE` | `true` |
+| `ORIGENLAB_V2_DATABASE_EXPECTED_HOST` | the pooler host name |
+| `ORIGENLAB_V2_DATABASE_SSLROOTCERT` | path of the Supabase Root 2021 CA PEM, delivered as a Render secret file |
 | `ORIGENLAB_GOOGLE_AUTH_ENABLED` | `true` — the Google Workspace OIDC session adapter is the production identity ([`apps/api/docs/PRODUCTION_AUTH.md`](../apps/api/docs/PRODUCTION_AUTH.md)) |
+| `ORIGENLAB_GOOGLE_CLIENT_ID` / `ORIGENLAB_GOOGLE_CLIENT_SECRET` | the production Internal OAuth client |
+| `ORIGENLAB_GOOGLE_WORKSPACE_DOMAIN` | `origenlab.cl` |
+| `ORIGENLAB_AUTH_PUBLIC_BASE_URL` | `https://dashboard.origenlab.cl/api` |
+| `ORIGENLAB_AUTH_SESSION_SECRET` | random, at least 32 bytes |
+| `ORIGENLAB_AUTH_SESSION_TTL_SECONDS` | `43200` |
+| `ORIGENLAB_PROFILE_LOGIN_ENABLED` | `true` — the shared-account profile selector |
+| `ORIGENLAB_PROFILE_PIN_PEPPER` | random, at least 32 bytes — the same value the roster tool uses |
 | `ORIGENLAB_V2_JWKS_URL` | **unset — must remain unset** (corrected 2026-10-02, see below) |
+| `ORIGENLAB_DEV_LOGIN_ENABLED` | unset |
 | `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` | unset (default `false`) — Phase A is a read-only hosted deployment; the authoring commands are not mounted |
 
 **`ORIGENLAB_V2_JWKS_URL` must remain unset for the current deployment architecture.** An
@@ -205,12 +218,32 @@ leaving the JWKS URL unset does not open it. When Supabase Auth replaces Google 
 step changes in a reviewed PR that also lands the adapter implementation — never by setting
 the variable first.
 
-The dashboard needs no change: the proxy already lists the seven `/v2` GET paths by name and
-reconstructs the operator header from Cloudflare Access.
+The dashboard build needs no change. The proxy lists the named `/v2` GET paths and `/auth/*`;
+since 2026-10-03 it no longer derives an operator header from Cloudflare Access (step 9).
 
 `origenlab_api` needs a password on the hosted project. `supabase/roles.sql` and
 `supabase/hosted_roles.sql` both assign none by design; it is a separate operator action with
 a hidden secret input (§4.3, §13).
+
+#### Step 9 — the browser boundary becomes session-only
+
+Deploy `apps/dashboard-proxy` from `main` (`npm run validate`, then `npx wrangler deploy` from
+`apps/dashboard-proxy`). After this deploy the Worker forwards `/health`, `/auth/*` and the
+named `/v2/*` reads only, and never derives an operator header.
+
+#### Step 10 — remove Cloudflare Access from the dashboard hostname
+
+Only after an operator has signed in end to end through the still-present Access screen
+(Google → profile → PIN → dashboard). In Cloudflare Zero Trust → Access → Applications, delete
+the application for `dashboard.origenlab.cl`. Keep the `api.origenlab.cl` application. Verify
+from outside: `GET /api/operator/status` → 403 `path_not_allowed`; `GET /api/v2/workspace/overview`
+with no cookie → 401; a fresh browser reaches the Google button directly.
+Rollback: re-create the Access application (minutes) and `npx wrangler rollback`.
+
+MFA for this sign-in is Google 2-step verification enforced on the shared Workspace account;
+Cloudflare Access no longer adds a second factor on the dashboard hostname (decision:
+[`MIGRATION.md`](MIGRATION.md) §11 row 5, 2026-10-03). Neither step has been executed; the Worker
+in Cloudflare still carries the previous allowlist ([`STATUS.md`](STATUS.md) §2.7.41).
 
 #### What this runbook does not yet cover
 
@@ -247,17 +280,23 @@ both prefixes** — `apps/dashboard-proxy/src/allowlist.ts` no longer lists them
 answers **403 `path_not_allowed`** and is never forwarded (POST answers 405). V2 `/v2/*` is
 the only browser surface for CRM, contacts and evidence.
 
+Since 2026-10-03 the same holds for every other V1 prefix (`/operator/*`, `/cases/warm`,
+`/opportunities/*`, `/operations/*`, and the V1 POST commands), and the proxy no longer derives
+an operator identity from Cloudflare Access: the dashboard session cookie is the only identity
+it carries (§1.2 steps 9 and 10; built, not deployed — [`STATUS.md`](STATUS.md) §2.7.41).
+
 - **What stops working in the V1 panel:** every screen fed by the mirror (Catálogo,
   Proveedores, Prospectos, the lead-intel "Clientes" list, the commercial-deals and Gmail
   interaction audits) and the V1 contact drilldown panel. They show a load error; nothing
-  else in the V1 panel changes (`/operator/*`, `/cases/warm`, `/opportunities/*`,
-  `/operations/*` stay listed).
+  else in the V1 panel changes — until 2026-10-03 (§2.7.41), when `/operator/*`,
+  `/cases/warm`, `/opportunities/*` and `/operations/*` also leave the allowlist and the
+  whole V1 panel shows load errors.
 - **The API routes themselves still exist** and still answer a caller holding the API key
   directly. Closing them in the proxy is a browser-boundary decision, not a decommission.
 - **Stays closed until** either V1 is decommissioned ([`MIGRATION.md`](MIGRATION.md) §5) or
   the V1 routes are migrated behind the V2 role model (resolved operator, `viewer` masking).
   Re-listing a prefix without one of the two reopens the unmasked read and is refused in
-  review; `src/allowlist.test.ts` and `src/index.test.ts` pin both prefixes as refused.
+  review; `src/allowlist.test.ts` and `src/index.test.ts` pin every V1 prefix as refused.
 - **CRM workspace reads, by name:** `GET /v2/workspace/{overview,pipeline,providers,drive,review}`,
   `GET /v2/workspace/equipment-interests`, the Marketing reads under `/v2/workspace/marketing*`
   and `GET /v2/cockpit/work-queue` are listed, exactly — the reads the dashboard's CRM
@@ -267,7 +306,7 @@ the only browser surface for CRM, contacts and evidence.
 - **Still not exposed:** every other `/v2/cockpit/*` path — the other cockpit reads, the
   quotation PDF, `case-archive` and `import-review`. Each is a separate decision; the proxy
   suite pins their paths as refused. `/v2/commands/*` is listed only for the named Marketing
-  and case commands, POST only.
+  and CRM-authoring commands, POST only; the case commands are not listed.
 
 ## 3. Deployment
 
