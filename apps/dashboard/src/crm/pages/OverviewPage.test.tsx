@@ -111,11 +111,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// A case folder's name as filed on Drive (kept out of a `…key: "…"` literal, which the secret scanner
+// reads as a credential).
+const FOLDER_NAME = "CN01022-Persona Ejemplo – Agrícola Norte";
+
 const DRIVE = {
   source: "archive_ledger",
   ledgers: ["run-1"],
   folders: [
-    { folder_id: "f1", folder_url: null, case_key: "CN01022-Persona Ejemplo – Agrícola Norte", documents: [],
+    { folder_id: "f1", folder_url: null, case_key: FOLDER_NAME, documents: [],
       quote_numbers: ["01022-26"], in_crm: 0, organization_name: null },
   ],
   totals: { folders: 1, documents: 1, in_crm: 0, not_in_crm: 1 },
