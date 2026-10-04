@@ -55,8 +55,9 @@ LOCAL_OPERATOR_IDS: tuple[str, str] = (
 SEQUENCE = "crm.domain_event_stream_position_seq"
 SEQUENCE_COLUMN = ("crm.domain_event", "stream_position")
 
-#: Tables that must be empty on the target before a load, beyond TABLES themselves.
-EMPTY_SCHEMAS = ("crm", "evidence", "outbound", "comms", "catalog")
+#: Schemas whose tables must hold nothing but TABLES and the SINGLETONS rows: before a load (preflight and
+#: again inside apply's write transaction) and before rollback deletes anything.
+EMPTY_SCHEMAS = ("crm", "evidence", "outbound", "comms", "catalog", "procurement")
 SINGLETONS = {"outbound.send_control": 1, "outbound.campaign_block": 1}
 
 SESSION_SETTINGS: tuple[tuple[str, str], ...] = (

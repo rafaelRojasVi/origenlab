@@ -32,6 +32,7 @@ from typing import Any
 
 import psycopg
 from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
 from origenlab_api.v2 import hosted_data_load_plan as hp
 
@@ -47,9 +48,11 @@ DUMP_SCHEMAS = ("crm", "evidence", "outbound", "comms", "catalog", "platform")
 #: The role the hosted login authenticates as (Supavisor strips the ``.<project ref>`` suffix).
 HOSTED_LOGIN_ROLE = "origenlab_migrator"
 _APP_NAME = "origenlab-hosted-data-load"
+#: A dropped link must not leave the write transaction (and its table locks) waiting on a dead peer.
+HOSTED_KEEPALIVES = {"keepalives": 1, "keepalives_idle": 15, "keepalives_interval": 5, "keepalives_count": 3}
 _DISPOSABLE_DB = re.compile(r"origenlab_test_[0-9a-f]{8}")
 _SECRET_IN_URI = re.compile(r"(://[^:/@\s]+):[^@\s]*@")
-_PASSWORD_KV = re.compile(r"(password\s*=\s*)\S+", re.I)
+_PASSWORD_KV = re.compile(r"(password\s*=\s*)('(?:[^'\\]|\\.)*'|\S+)", re.I)
 _POOLER_HOST = re.compile(r"[a-z0-9.-]*pooler\.supabase\.com|db\.[a-z]{20}\.supabase\.co")
 
 
@@ -71,8 +74,9 @@ def redact(text: str, extra: Iterable[str] = ()) -> str:
 
 
 def scratch_conninfo(db: str, port: int = SOURCE_PORT) -> str:
-    return (f"host=127.0.0.1 port={port} dbname={db} user=supabase_admin password=postgres "
-            f"application_name={_APP_NAME}")
+    # make_conninfo quotes every value (a space, quote or backslash survives); never string-format a conninfo.
+    return make_conninfo(host="127.0.0.1", port=port, dbname=db, user="supabase_admin", password="postgres",
+                         application_name=_APP_NAME)
 
 
 def source_conninfo(port: int = SOURCE_PORT) -> str:
@@ -108,10 +112,10 @@ def hosted_target(repo_root: Path, environ: Mapping[str, str], target_file: Path
 
 def conninfo_for(t: Any) -> str:
     if t.mode == "local":
-        return scratch_conninfo(t.database) + " sslmode=disable"
-    return (f"host={t.host} hostaddr={t.hostaddr} port={t.port} dbname={t.database} user={t.user} "
-            f"sslmode={t.sslmode} sslrootcert={t.sslrootcert} password={t.password} "
-            f"application_name={_APP_NAME} connect_timeout=20")
+        return make_conninfo(scratch_conninfo(t.database), sslmode="disable")
+    return make_conninfo(host=t.host, hostaddr=t.hostaddr, port=t.port, dbname=t.database, user=t.user,
+                         sslmode=t.sslmode, sslrootcert=t.sslrootcert, password=t.password,
+                         application_name=_APP_NAME, connect_timeout=20, **HOSTED_KEEPALIVES)
 
 
 def connect_target(t: Any) -> psycopg.Connection:
@@ -502,6 +506,13 @@ def pg_dump_target(target: Any, out: Path, *, schema_only: bool = False) -> dict
         raise RuntimeError("pg_dump failed: " + redact(res.stderr.decode(errors="replace"), target_secrets(target))[-400:])
     out.chmod(0o600)
     return {"path": str(out), "sha256": write_sha256_sidecar(out), "bytes": out.stat().st_size}
+
+
+def lock_tables(cur, tables: Iterable[str]) -> None:
+    """SHARE ROW EXCLUSIVE on every table, in the given order: readers go on, no other writer gets in
+    between this transaction's checks and its writes (each wait bounded by the caller's lock_timeout)."""
+    cur.execute(sql.SQL("LOCK TABLE {} IN SHARE ROW EXCLUSIVE MODE").format(
+        sql.SQL(", ").join(sql.Identifier(*t.split(".", 1)) for t in tables)))
 
 
 def set_fks_deferrable(cur, table: str, fk_names: list[str], deferrable: bool) -> None:

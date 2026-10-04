@@ -411,3 +411,35 @@ def test_roster_hash_reads_identity_columns_only():
         assert "*" not in q.split(" from ")[0].replace("count(*)", "")
         for col in _THROTTLE:
             assert f'"{col}"' not in q
+
+
+# ---- final review: I4 quoted conninfo, I6 keepalives ---------------------------------------------
+
+from psycopg.conninfo import conninfo_to_dict  # noqa: E402
+
+
+def test_conninfo_round_trips_a_password_with_space_quote_and_backslash():
+    t = _hosted()
+    t.password = "p a's\\s w\\'rd"
+    d = conninfo_to_dict(io_.conninfo_for(t))
+    assert d["password"] == t.password
+    assert (d["host"], d["hostaddr"], d["port"], d["user"], d["sslmode"], d["sslrootcert"]) == \
+        (t.host, "3.3.3.3", "5432", t.user, "verify-full", "/x/ca.crt")
+
+
+def test_hosted_conninfo_carries_keepalives_and_connect_timeout():
+    d = conninfo_to_dict(io_.conninfo_for(_hosted()))
+    assert {k: d[k] for k in ("keepalives", "keepalives_idle", "keepalives_interval", "keepalives_count",
+                              "connect_timeout")} == {"keepalives": "1", "keepalives_idle": "15",
+                                                      "keepalives_interval": "5", "keepalives_count": "3",
+                                                      "connect_timeout": "20"}
+
+
+def test_local_and_scratch_conninfo_are_parseable():
+    d = conninfo_to_dict(io_.conninfo_for(SimpleNamespace(mode="local", database="origenlab_test_0123abcd")))
+    assert (d["host"], d["port"], d["dbname"], d["sslmode"]) == ("127.0.0.1", "54332", "origenlab_test_0123abcd", "disable")
+    assert conninfo_to_dict(io_.scratch_conninfo("origenlab_test_0123abcd"))["user"] == "supabase_admin"
+
+
+def test_redact_masks_a_quoted_password_whole():
+    assert io_.redact("password='p a\\'ss' host=x") == "password=*** host=x"

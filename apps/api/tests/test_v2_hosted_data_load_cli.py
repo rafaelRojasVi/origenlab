@@ -581,3 +581,131 @@ def test_plan_refusal_by_fingerprint_prints_diff(tmp_path, monkeypatch, capsys):
     assert cli.main(["plan", "--out", str(tmp_path), *AUTH]) == 11
     out = capsys.readouterr().out
     assert "REFUSED schema_fingerprint_identical" in out and "+ crm.note|e2e_extra" in out
+
+
+# ---- final review: locks first, bounded waits, apply re-check (I3, I6, M4) ------------------------
+
+import re  # noqa: E402
+
+_ROW_HASH_TABLE = re.compile(r"from ([a-z_]+\.[a-z_]+)\) t$")
+
+
+class _SrcCursor(_FakeCursor):
+    """Source fake: answers the snapshot re-hash of each planned table with ``conn.rows[table]``."""
+
+    def __init__(self, conn):
+        super().__init__(conn.log)
+        self.conn, self._row = conn, None
+
+    def execute(self, q, params=None):
+        self.log.append(str(q))
+        m = _ROW_HASH_TABLE.search(str(q))
+        self._row = self.conn.rows.get(m.group(1), (2, "h")) if m else None
+
+    def fetchone(self):
+        return self._row
+
+
+class _SrcConn(_FakeConn):
+    def __init__(self, rows=None):
+        super().__init__()
+        self.rows = rows or {}
+
+    def cursor(self):
+        return _SrcCursor(self)
+
+
+def _patch_apply_real(cli, monkeypatch, tmp_path, *, src=None, tgt=None, copied=None, invariants=None):
+    """apply over the 16 real table names: preflight passes, the target is empty, every helper logs."""
+    src, tgt = src or _SrcConn(), tgt or _CatConn()
+    for n in REAL:
+        tgt.counts[n] = 0
+    target = SimpleNamespace(mode="hosted", password="s3cret", user="u", project_ref="r", host="h", hostaddr="1.1.1.1")
+    plan = {**_plan_real(), "payload_rows_with_local_uuid": 0,
+            "sequence": {"name": SEQ, "target_last_value": 23095}}
+    monkeypatch.setattr(cli, "connect_both", lambda a: (src, tgt, target))
+    monkeypatch.setattr(cli, "load_plan", lambda p: (plan, "a" * 64))
+    monkeypatch.setattr(cli, "_facts", lambda *a, **k: (None, None, None))
+    monkeypatch.setattr(cli.hp, "evaluate", lambda **k: [{"check": "c", "ok": True, "detail": None}])
+    monkeypatch.setattr(cli.io_, "pg_dump_target", lambda *a, **k: {"path": "pre.dump", "bytes": 1})
+    monkeypatch.setattr(cli.io_, "apply_session_settings", lambda cur, local=False: tgt.log.append("SETTINGS"))
+    monkeypatch.setattr(cli.io_, "set_triggers", lambda cur, t, en: tgt.log.append(f"TRIGGERS {t} {en}"))
+    monkeypatch.setattr(cli.io_, "set_fks_deferrable", lambda cur, t, fks, d: tgt.log.append(f"FKS {t} {d}"))
+
+    def copy(sc, tc, name, cols, select_sql):
+        tgt.log.append(f"COPY {name}")
+        return (copied or {}).get(name, 2)
+
+    monkeypatch.setattr(cli.io_, "copy_table", copy)
+    monkeypatch.setattr(cli.io_, "post_copy_invariants", lambda cur, p, to: invariants if invariants is not None else
+                        [{"check": n, "ok": True, "detail": None} for n in cli.io_.invariant_names(p)])
+    monkeypatch.setattr(_FakeCursor, "statusmessage", "COMMIT")
+    (tmp_path / "out").mkdir(exist_ok=True)
+    return src, tgt
+
+
+def _lock_index(log):
+    return next(i for i, s in enumerate(log) if s.startswith("LOCK TABLE"))
+
+
+def test_rollback_locks_the_16_tables_before_the_first_check(tmp_path, monkeypatch):
+    """I3: a command committing between the checks and the DELETE would be silently deleted."""
+    cli = load_cli()
+    src, tgt = _patch_rollback(cli, monkeypatch)
+
+    def observed(cur, p):
+        tgt.log.append("OBSERVED")
+        return {n: (2, "h") for n in REAL}
+
+    monkeypatch.setattr(cli.io_, "observed_rows", observed)
+    assert cli.cmd_rollback(_rb_args(tmp_path)) == 0
+    log = tgt.log
+    lock = _lock_index(log)
+    assert log[lock] == "LOCK TABLE " + ", ".join(".".join(f'"{p}"' for p in n.split(".")) for n in REAL) + \
+        " IN SHARE ROW EXCLUSIVE MODE"
+    assert lock < log.index("OBSERVED")
+    assert log.index("SET LOCAL ROLE origenlab_owner") < lock
+    assert any("pg_advisory_xact_lock" in s for s in log[:lock])
+    assert not any(s.startswith(("select count(*)", "DELETE")) for s in log[:lock])
+
+
+@pytest.mark.parametrize("cmd", ["apply", "rollback"])
+def test_write_transactions_bound_every_wait(tmp_path, monkeypatch, cmd):
+    """I6: lock_timeout, a 5 min statement_timeout and a 60 s idle_in_transaction timeout, all SET LOCAL."""
+    cli = load_cli()
+    if cmd == "apply":
+        src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path)
+        assert cli.cmd_apply(_apply_args(tmp_path)) == 0
+    else:
+        src, tgt = _patch_rollback(cli, monkeypatch)
+        assert cli.cmd_rollback(_rb_args(tmp_path)) == 0
+    log = tgt.log
+    begin = log.index("BEGIN")
+    head = log[begin:_lock_index(log)]
+    assert "SET LOCAL lock_timeout = '30s'" in head
+    assert "SET LOCAL statement_timeout = '5min'" in head
+    assert "SET LOCAL idle_in_transaction_session_timeout = '60s'" in head
+    assert not any("15min" in s for s in log)
+
+
+def test_apply_refuses_when_the_target_changed_since_preflight(tmp_path, monkeypatch, capsys):
+    """M4: under the locks, a row outside the 16 (or in them) -> ROLLBACK, exit 11, nothing written."""
+    cli = load_cli()
+    tgt = _CatConn()
+    tgt.counts["crm.task"] = 1
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path, tgt=tgt)
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 11
+    out = capsys.readouterr().out
+    assert "target changed since preflight" in out and "crm.task" in out
+    log = tgt.log
+    assert _lock_index(log) < max(i for i, s in enumerate(log) if s.startswith("select count(*)"))
+    assert log[-1] == "ROLLBACK" and not any(s.startswith(("COPY", "FKS", "TRIGGERS", "COMMIT")) for s in log)
+    assert src.closed and tgt.closed
+
+
+def test_apply_refuses_when_a_planned_table_is_no_longer_empty(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path)
+    tgt.counts["crm.quote"] = 3
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 11
+    assert "crm.quote" in capsys.readouterr().out and not any(s.startswith("COPY") for s in tgt.log)

@@ -205,6 +205,21 @@ def _best_effort_rollback(cur) -> None:
         pass
 
 
+def _begin_write(tc, plan) -> None:
+    """Open apply's / rollback's one write transaction. Every wait is bounded (30 s per lock, 5 min per
+    statement, 60 s idle inside the transaction, so a vanished client cannot hold the locks), one loader
+    at a time (advisory lock), as the owner, with pinned settings, and the 16 tables locked against
+    writers BEFORE anything is checked: nothing can commit between a check and the writes it guards."""
+    tc.execute("BEGIN")
+    tc.execute("SET LOCAL lock_timeout = '30s'")
+    tc.execute("SET LOCAL statement_timeout = '5min'")
+    tc.execute("SET LOCAL idle_in_transaction_session_timeout = '60s'")
+    tc.execute("select pg_advisory_xact_lock(%s)", (hp.ADVISORY_LOCK_KEY,))
+    tc.execute("SET LOCAL ROLE origenlab_owner")
+    io_.apply_session_settings(tc, local=True)
+    io_.lock_tables(tc, [t["name"] for t in plan["tables"]])
+
+
 def _abort_apply(sc, tc, tgt, secrets) -> int:
     _best_effort_rollback(tc)
     _best_effort_rollback(sc)
@@ -255,12 +270,17 @@ def cmd_apply(args) -> int:
 
             # Phase 2: the one write transaction. Any psycopg error rolls everything back (exit 12).
             try:
-                tc.execute("BEGIN")
-                tc.execute("SET LOCAL lock_timeout = '30s'")
-                tc.execute("SET LOCAL statement_timeout = '15min'")
-                tc.execute("select pg_advisory_xact_lock(%s)", (hp.ADVISORY_LOCK_KEY,))
-                tc.execute("SET LOCAL ROLE origenlab_owner")
-                io_.apply_session_settings(tc, local=True)
+                _begin_write(tc, plan)
+                # The preflight read is minutes old: under the locks, the target must still be pristine.
+                # (target_counts covers exactly the 16, platform.command_receipt included; business_counts
+                # covers the EMPTY_SCHEMAS tables, read through the same helper as rollback.)
+                changed = {**{n: c for n, c in io_.target_counts(tc).items() if c != 0},
+                           **io_.rows_outside_load(plan, io_.business_counts(tc))}
+                if changed:
+                    _best_effort_rollback(tc)
+                    _best_effort_rollback(sc)
+                    print(f"target changed since preflight (table: rows) {changed}; nothing written")
+                    return EXIT_REFUSED
                 for t in plan["tables"]:
                     io_.set_fks_deferrable(tc, t["name"], t["fks"], True)
                     io_.set_triggers(tc, t["name"], False)
@@ -327,8 +347,6 @@ CHECKLIST = [("casos (crm.opportunity)", "crm.opportunity"), ("cotizaciones (crm
              ("destinatarios", "outbound.campaign_recipient"), ("eventos", "crm.domain_event")]
 SCRATCH_NAME = re.compile(r"origenlab_test_[0-9a-f]{8}")
 SCRATCH_SH = Path(__file__).with_name("hosted_data_load_scratch.sh")
-#: Schemas whose tables must hold nothing but the 16 loaded tables and the two singleton rows.
-ROLLBACK_SCHEMAS = (*hp.EMPTY_SCHEMAS, "procurement")
 
 
 def _mismatch(msg: str) -> int:
@@ -436,16 +454,11 @@ def cmd_rollback(args) -> int:
         secrets = io_.target_secrets(target)
         with tgt.cursor() as tc:
             try:
-                tc.execute("BEGIN")
-                tc.execute("SET LOCAL lock_timeout = '30s'")
-                tc.execute("SET LOCAL statement_timeout = '15min'")
-                tc.execute("select pg_advisory_xact_lock(%s)", (hp.ADVISORY_LOCK_KEY,))
-                tc.execute("SET LOCAL ROLE origenlab_owner")
-                io_.apply_session_settings(tc, local=True)
+                _begin_write(tc, plan)
                 if io_.classify_target_state(plan, io_.observed_rows(tc, plan)) != "loaded":
                     return _refuse_rollback(tc, "target does not match the plan exactly; refusing to delete anything. "
                                                 "Stop and see `rollback --help` (incident procedure).")
-                outside = io_.rows_outside_load(plan, io_.business_counts(tc, ROLLBACK_SCHEMAS))
+                outside = io_.rows_outside_load(plan, io_.business_counts(tc))
                 if outside:
                     return _refuse_rollback(tc, "rows exist outside the loaded tables (table: rows) "
                                                 f"{outside}; the target is no longer exactly what was loaded. "
@@ -467,7 +480,7 @@ def cmd_rollback(args) -> int:
                     io_.set_fks_deferrable(tc, t["name"], t["fks"], False)
                 # Every check on fresh reads, then the one statement a ROLLBACK cannot undo, then COMMIT.
                 dirty = {n: c for n, c in io_.target_counts(tc).items() if c != 0}
-                outside = io_.rows_outside_load(plan, io_.business_counts(tc, ROLLBACK_SCHEMAS))
+                outside = io_.rows_outside_load(plan, io_.business_counts(tc))
                 guards = _guard_checks(tc, plan)
                 print_checks(guards, secrets)
                 if dirty or outside or hp.refused(guards):

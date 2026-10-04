@@ -428,3 +428,14 @@ def test_roster_identity_columns_are_the_identity_and_never_the_pin_throttle():
 
 def test_qcols_quotes_every_name():
     assert hp.qcols(["id", 'we"ird']) == '"id", "we""ird"'
+
+
+def test_procurement_is_one_of_the_empty_schemas():
+    """M3: preflight, apply's in-transaction re-check and rollback all read this one constant."""
+    assert hp.EMPTY_SCHEMAS == ("crm", "evidence", "outbound", "comms", "catalog", "procurement")
+
+
+def test_procurement_rows_refuse_a_load():
+    tgt = good_target()
+    tgt["all_business_counts"]["procurement.notice"] = 1
+    assert "target_tables_empty" in hp.refused(_eval(target=tgt))
