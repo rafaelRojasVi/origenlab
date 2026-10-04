@@ -950,3 +950,11 @@ def test_apply_report_has_per_table_counts_and_elapsed_seconds(tmp_path, monkeyp
     assert isinstance(data["elapsed_seconds"], float) and data["elapsed_seconds"] >= 0
     assert data["plan_sha256"] == "a" * 64 and stat.S_IMODE(report.stat().st_mode) == 0o600
     assert "COMMITTED" in capsys.readouterr().out
+
+
+def test_verify_help_documents_13_and_14(capsys):
+    cli = load_cli()
+    with pytest.raises(SystemExit):
+        cli.main(["verify", "--help"])
+    out = capsys.readouterr().out
+    assert "13 VERIFY MISMATCH" in out and "14 VERIFY INCOMPLETE" in out and "never roll back on 14" in out

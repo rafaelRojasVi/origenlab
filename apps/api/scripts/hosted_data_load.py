@@ -563,6 +563,15 @@ def cmd_rollback(args) -> int:
         _close_clean(tgt)
 
 
+VERIFY_EPILOG = """\
+Exit codes:
+  0  loaded: every table, invariant, the post-load dump and its restore drill match the plan
+  13 VERIFY MISMATCH: the target is not the planned load (empty: the load did not commit, apply may be
+     re-run after a fresh plan; partial: an incident, do not re-apply)
+  14 VERIFY INCOMPLETE: the target read, post-load dump, scratch mint or restore drill could not run;
+     nothing is known to be wrong with the target: fix the cause and re-run verify (never roll back on 14)
+"""
+
 ROLLBACK_EPILOG = """\
 Incident procedure (documented only; this tool runs none of it).
   * A rollback refusal means the target is no longer exactly the loaded state. Stop.
@@ -598,7 +607,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("apply")
     _common(p, True)
     p.set_defaults(func=cmd_apply)
-    p = sub.add_parser("verify")
+    p = sub.add_parser("verify", formatter_class=argparse.RawDescriptionHelpFormatter, epilog=VERIFY_EPILOG)
     _common(p, True)
     p.set_defaults(func=cmd_verify)
     p = sub.add_parser("rollback", formatter_class=argparse.RawDescriptionHelpFormatter, epilog=ROLLBACK_EPILOG)
