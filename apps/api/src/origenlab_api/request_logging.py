@@ -17,6 +17,7 @@ Emits a single structured log line per request:
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from collections.abc import Awaitable, Callable
 
@@ -24,14 +25,23 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 logger = logging.getLogger(__name__)
+# Uvicorn configures only its own loggers, and an unconfigured one inherits the root's WARNING:
+# without this, every line was dropped in production while tests (which pin the level) passed.
+# Its own stderr handler at INFO, formatted like uvicorn's lines; still propagates, so pytest's
+# caplog sees it too.
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stderr)
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Log ``METHOD path status duration_ms`` for every request.
 
     No cookies, headers, bodies, query strings or identities are logged.
-    The log level is INFO so the lines appear in Render's default log view
-    without changing the root log level.
+    The line is INFO on its own stderr handler, so it appears in Render's log view whatever the
+    root logger is set to.
     """
 
     async def dispatch(
