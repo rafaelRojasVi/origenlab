@@ -1752,20 +1752,19 @@ Owner decision 2026-10-03 ([`MIGRATION.md`](MIGRATION.md) §11 row 5): Cloudflar
 | Docs | [`MIGRATION.md`](MIGRATION.md) decision 5 and §10; [`OPERATIONS.md`](OPERATIONS.md) §1.2 steps 8–10; `docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md` rewritten for the API application only; `apps/dashboard-proxy/README.md`; `apps/api/docs/PRODUCTION_AUTH.md` *Production activation* |
 | Not done | **the Worker in Cloudflare still carries the previous allowlist and still rebuilds the operator header from Access until step 9 (`npx wrangler deploy`) runs.** The Access application on `dashboard.origenlab.cl` is untouched (step 10, after an end-to-end sign-in). Merging does not deploy the Worker; it does redeploy the dashboard static site, unchanged. Nothing provisioned, no Render variable set |
 
-### 2.7.44 V1-lane campaign schedule in the Marketing calendar, 2026-10-04 — built, not deployed
+### 2.7.44 Cyber as a prepared campaign in the Marketing page, via the V1 lane, 2026-10-04 — built, not deployed
 
-The Cyber OrigenLab campaign (5–9 Oct 2026) runs through the old V1 systemd lane and is
-invisible in the V2 database. This slice makes it visible in the Marketing calendar and header
-without touching the database or adding a new route.
+The Cyber OrigenLab campaign (5–9 Oct 2026) is sent by the old V1 lane (the timer on the owner's PC) and is not in the V2 database. This slice shows it as a prepared campaign in progress — its plan per day and its email — without a database write or a new route. Interim: removed once its real results are imported.
 
 | | |
 |---|---|
-| Declaration | `apps/api/src/origenlab_api/v2/v1_lane_campaigns.json` — one entry: key `cyber-2026-10`, 5 send days, `send_time` 09:30, `promo_until` 2026-10-11. No addresses or audience sizes |
-| Loader | `apps/api/src/origenlab_api/v2/v1_lane_campaigns.py` — reads and validates the JSON; a bad file logs a warning and returns [] so the API never stops; 26 tests in `tests/test_v2_v1_lane_campaigns.py` catch typos in CI |
-| API route | `GET /v2/workspace/marketing` extended with a `v1_lane_campaigns` field; no new route, no proxy change; 4 tests in `tests/test_v2_marketing_v1_lane.py` |
-| Calendar | new `v1_lane` EventKind (green, distinct from sent/draft/frozen/planned); `buildV1LaneEvents()` produces one event per send day with honest label «Oleada N de M · canal V1 · Programada / En curso / resultado en el registro V1»; `CampaignCalendar` accepts optional `v1LaneCampaigns` prop |
-| Header | `MarketingOverview` shows «En curso por el canal V1: …» during the campaign window (first send day through `promo_until`) and «Programada por el canal V1: …» before it; nothing after `promo_until` |
-| Evidence | `apps/api/scripts/validate.sh`: **2769 passed**, 474 skipped; `apps/dashboard npm run validate`: **400 tests in 32 files**, build ok; `apps/dashboard-proxy npm run validate`: **336 tests in 5 files**, unchanged |
+| Declaration | `apps/api/src/origenlab_api/v2/v1_lane_campaigns.json`: key `cyber-2026-10`, 5 send days at 09:30, promo until 2026-10-11, `clients_per_day` 1,000 / 1,000 / 1,000 / 1,067 / 528 (the runner's wave sizes, counts only) and one `audience_rule` sentence. Validated strictly by a test on the committed file; at runtime a bad file logs a warning and yields nothing |
+| Email | never in the repository (it carries contact addresses): read from `ORIGENLAB_V2_V1_LANE_CONTENT_DIR` as `v1-lane-<key>.html` (on Render, a secret file under `/etc/secrets`); missing, oversized (> 256 KiB) or non-UTF-8 → no preview, never a failed read |
+| API | `GET /v2/workspace/marketing` carries `v1_lane_campaigns` (plan, total, rule, email); no new route, **no proxy change** |
+| Dashboard | Marketing → Campañas: a card per V1-lane campaign (Programada / En curso / Envío terminado · resultados por importar), each day with its planned clients and honest status (a past day reads «Programada · resultado en el registro V1» — never «enviada»), the total, the audience rule, the email in the sandboxed preview. Calendar: a «Canal V1» chip per day with its count. Header: «Programada / En curso por el canal V1: …» until the promo ends |
+| Never-sent history | historical V1 campaigns with no attempt and no send are hidden from the list and its count behind «Mostrar N campaña(s) nunca enviada(s)»; the record stays (owner decision 2026-10-04) |
+| Evidence | `apps/api/scripts/validate.sh`: **2786 passed**, 474 skipped; `apps/dashboard` `npm run validate`: **407 tests in 33 files**, build ok (one pre-existing timing-sensitive ProfileSelector test failed once under load, passed alone 3/3 and in two full runs); `apps/dashboard-proxy`: 336, unchanged |
+| Not done | not deployed; the email secret file and `ORIGENLAB_V2_V1_LANE_CONTENT_DIR` not yet set on Render |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 

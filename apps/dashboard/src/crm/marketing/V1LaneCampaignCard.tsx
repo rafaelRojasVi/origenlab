@@ -53,11 +53,11 @@ export function V1LaneCampaignCard({ campaign }: { campaign: V1LaneCampaign }) {
                 <li
                   key={day}
                   data-testid={`v1-lane-day-${day}`}
-                  className={`grid grid-cols-[6.5rem_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-[13px] ${
+                  className={`grid grid-cols-[9.5rem_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-[13px] ${
                     isToday ? "bg-good-bg/60" : ""
                   }`}
                 >
-                  <span className="font-medium text-ink">
+                  <span className="whitespace-nowrap font-medium text-ink">
                     {dayLabel(day)} <span className="text-[11px] font-normal text-ink-faint">· oleada {i + 1}</span>
                   </span>
                   <span className="tabular-nums text-ink">{plan ? `${fmtInt(plan[i])} clientes` : "—"}</span>
