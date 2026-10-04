@@ -98,7 +98,7 @@ def good_target(**over):
                       ["2998f4ae-aa60-4469-86ab-b1096ecda4c5", "Karla", "sales", "active", "shared_profile"]],
         "principals": 1, "profiles": 3, "command_receipts": 0,
         "send_control": {"marketing_enabled": False, "transactional_enabled": False, "hash": "sc"},
-        "campaign_block": {"scope": "all_campaigns", "legacy_campaign_key": "septiembre18-2026-wave2",
+        "campaign_block": {"scope": "legacy_campaign", "legacy_campaign_key": "septiembre18-2026-wave2",
                            "lifted_at": None, "hash": "cb"},
         "roster_hash": "roster", "advisory_lock_free": True, "other_sessions": [],
         "sequences": {hp.SEQUENCE: 1}, "pg_dump_probe_ok": True,
@@ -200,6 +200,11 @@ def test_flags_and_hold_row_are_required():
     assert "send_flags_false" in hp.refused(_eval(target=tgt))
     tgt = good_target()
     tgt["campaign_block"]["lifted_at"] = "2026-10-01T00:00:00Z"
+    assert "hold_row_active" in hp.refused(_eval(target=tgt))
+    # the migration's real hold row is scope legacy_campaign (all_campaigns requires a NULL key); a wrong scope is refused
+    assert "hold_row_active" not in hp.refused(_eval(target=good_target()))
+    tgt = good_target()
+    tgt["campaign_block"]["scope"] = "all_campaigns"
     assert "hold_row_active" in hp.refused(_eval(target=tgt))
 
 

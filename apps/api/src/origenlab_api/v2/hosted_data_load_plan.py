@@ -213,7 +213,7 @@ def evaluate(*, plan: Mapping, plan_sha: str, expected_sha: str, source: Mapping
     sc = target["send_control"]
     check("send_flags_false", sc["marketing_enabled"] is False and sc["transactional_enabled"] is False, sc)
     cb = target["campaign_block"]
-    check("hold_row_active", cb["scope"] == "all_campaigns" and cb["legacy_campaign_key"] == HOLD_KEY and cb["lifted_at"] is None, cb)
+    check("hold_row_active", cb["scope"] == "legacy_campaign" and cb["legacy_campaign_key"] == HOLD_KEY and cb["lifted_at"] is None, cb)
     check("no_other_target_sessions", not target["other_sessions"], target["other_sessions"])
     check("advisory_lock_free", bool(target["advisory_lock_free"]), ADVISORY_LOCK_KEY)
     check("server_is_postgres_17", int(target["server_version_num"]) // 10000 == 17, target["server_version_num"])
