@@ -246,7 +246,9 @@ class Settings(BaseSettings):
 
     Default **false** and separate from the drafts switch: committing an immutable recipient
     snapshot is a different decision from writing copy. A freeze approves and sends nothing;
-    no send command exists in this API.
+    no campaign send command exists in this API. The one route that sends is the admin-only
+    test send above (one campaign email to one address), and it refuses an address that
+    unsubscribed or is blocked.
     """
     v2_audience_freeze_enabled: bool = False
     """W12 recontact review inside the audience freeze (WORKFLOWS.md §W12).

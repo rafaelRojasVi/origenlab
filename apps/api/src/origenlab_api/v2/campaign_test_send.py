@@ -9,6 +9,11 @@ A crash between 2 and 3 leaves the receipt `in_progress`: a retry with that key 
 cannot send twice; a new key may send again — at most one duplicate, on a human's second click.
 
 Admin only. The request names a campaign and an address; it never carries HTML or a subject.
+An address that asked to be removed or is blocked is refused in step 1, before anything is
+recorded: an address-scope `outbound.contact_control` block for purpose `all` or `marketing`
+(every unsubscribe is one) or an unresolved «BAJA» held for review (WORKFLOWS.md §W10). A test has
+no campaign recipient, so it reads those live facts itself instead of
+`outbound.marketing_contact_refusals`; a prior contact or a cooldown is no block.
 """
 
 from __future__ import annotations
@@ -103,6 +108,27 @@ class V2CampaignTestSendRepository(CommandTransaction):
             raise CommandRefused(422, "campaign_has_no_subject", "la campaña no tiene asunto")
         return subject, html
 
+    # ------------------------------------------------------------------ the recipient
+
+    def _refuse_blocked_recipient(self, cur: Any, to: str) -> None:
+        address = to.strip().lower()
+        cur.execute(
+            """
+            select exists (
+                     select 1 from outbound.contact_control c
+                      where c.scope = 'address' and c.value_norm = %s and c.kind = 'block'
+                        and c.purpose in ('all', 'marketing'))
+                or exists (
+                     select 1 from evidence.assertion a
+                      where a.kind = 'unsubscribe_request' and a.resolution = 'unresolved'
+                        and a.value_norm = %s) as refused
+            """,
+            (address, address),
+        )
+        row = self._row(cur)
+        if row is None or row["refused"]:
+            raise CommandRefused(422, "test_recipient_blocked", "esa dirección pidió la baja o está bloqueada para envíos")
+
     # ------------------------------------------------------------------ limits
 
     def _usage(self, cur: Any, exclude_receipt: str | None = None) -> dict[str, Any]:
@@ -132,6 +158,7 @@ class V2CampaignTestSendRepository(CommandTransaction):
             receipt_id, replay = self._claim_receipt(cur, operator, idempotency_key, SEND_CAMPAIGN_TEST, digest)
             if replay is not None:
                 return replay
+            self._refuse_blocked_recipient(cur, body.to)  # rolls the claim back: no receipt
             cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (SEND_CAMPAIGN_TEST,))
             used = self._usage(cur, exclude_receipt=receipt_id)
             blocked = []

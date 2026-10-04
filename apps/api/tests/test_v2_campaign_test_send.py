@@ -291,3 +291,68 @@ def test_history_shows_a_failed_attempt_with_its_error_and_hides_in_progress(dis
     repo = V2CampaignTestSendRepository(psycopg.connect, runtime_dsn(disposable_database), FakeGmail(), None)
     out = repo.history(campaign_id=cid.upper(), v1_lane_key=None)
     assert [(t["status"], t["error"]) for t in out["tests"]] == [("failed", "network")]
+
+
+# ------------------------------------------------- unsubscribes and blocks (WORKFLOWS.md §W10)
+
+
+def _address(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:8]}@example.invalid"
+
+
+def _block(dsn, address: str, *, purpose: str, reason: str, source: str) -> None:
+    _owner(dsn, "insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) "
+                "values ('address', %s, 'block', %s, %s, %s)", (address, purpose, reason, source))
+
+
+def _unsubscribe_request(dsn, address: str, resolution: str = "unresolved") -> None:
+    record = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload) "
+                         "values ('gmail_message', %s, '{}'::jsonb) returning id::text",
+                    (f"pytest-test-send:{uuid.uuid4().hex}",))[0][0]
+    _owner(dsn, "insert into evidence.assertion (source_record_id, kind, value_norm, resolution) "
+                "values (%s, 'unsubscribe_request', %s, %s)", (record, address, resolution))
+
+
+@needs_db
+@pytest.mark.parametrize("control", ["operator_block_all", "unsubscribe_marketing", "baja_held_for_review"])
+def test_an_unsubscribed_or_blocked_address_is_refused_and_nothing_is_recorded_or_sent(
+        disposable_database, world, control: str) -> None:
+    _clear_receipts(disposable_database)
+    cid = _campaign(disposable_database, world, "<p>Hola</p>")
+    address = _address("baja")
+    if control == "operator_block_all":
+        _block(disposable_database, address, purpose="all", reason="pidió no recibir correos", source="operator_command")
+    elif control == "unsubscribe_marketing":
+        _block(disposable_database, address, purpose="marketing", reason="unsubscribe", source="unsubscribe_handler")
+    else:
+        _unsubscribe_request(disposable_database, address)
+    gmail = FakeGmail()
+    with pytest.raises(CommandRefused) as exc:
+        # Typed with capitals: the controls hold the normalised (lower-case) address.
+        _run(disposable_database, gmail, world["ops"]["admin"],
+             SendCampaignTestBody(to=address.upper(), campaign_id=uuid.UUID(cid)))
+    assert (exc.value.status_code, exc.value.code) == (422, "test_recipient_blocked")
+    assert str(exc.value) == "esa dirección pidió la baja o está bloqueada para envíos"
+    assert gmail.sent == [] and _receipt_count(disposable_database) == 0
+
+
+@needs_db
+def test_an_unrelated_address_still_sends_beside_blocked_ones(disposable_database, world) -> None:
+    _clear_receipts(disposable_database)
+    cid = _campaign(disposable_database, world, "<p>Hola</p>")
+    blocked = _address("bloqueada")
+    _block(disposable_database, blocked, purpose="all", reason="pidió no recibir correos", source="operator_command")
+    _unsubscribe_request(disposable_database, _address("pendiente"))
+    # Neither a dismissed «BAJA» nor a permanent prior contact is a block: the owner's own
+    # addresses are usually prior contacts.
+    dismissed, contacted = _address("descartada"), _address("contactada")
+    _unsubscribe_request(disposable_database, dismissed, resolution="rejected")
+    _owner(disposable_database, "insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source) "
+                                "values ('address', %s, 'prior_contact', 'marketing', 'wave 1A', 'wave1a_union')",
+           (contacted,))
+    gmail = FakeGmail()
+    for to in (_address("libre"), dismissed, contacted):
+        out = _run(disposable_database, gmail, world["ops"]["admin"],
+                   SendCampaignTestBody(to=to, campaign_id=uuid.UUID(cid)))
+        assert out["status"] == "sent" and out["to"] == to
+    assert len(gmail.sent) == 3 and _receipt_count(disposable_database) == 3
