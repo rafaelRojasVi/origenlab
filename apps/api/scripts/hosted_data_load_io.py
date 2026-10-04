@@ -427,9 +427,15 @@ def restore_into_scratch(dump: Path, scratch_db: str) -> None:
     ``--disable-triggers`` (superuser in the container) also skips the FK to platform.operator,
     which the scratch does not carry: the drill proves the loaded rows, not the roster."""
     subprocess.run(["docker", "cp", str(dump), f"{CONTAINER}:/tmp/post.dump"], check=True)
-    tables = [arg for t in hp.TABLES for arg in ("-t", t.split(".", 1)[1])]
-    res = subprocess.run(["docker", "exec", CONTAINER, "pg_restore", "-U", "supabase_admin", "-d", scratch_db,
-                          "--data-only", "--disable-triggers", "--no-owner", "--exit-on-error", *tables,
-                          "/tmp/post.dump"], capture_output=True, text=True)
-    if res.returncode != 0:
-        raise RuntimeError("pg_restore failed: " + redact(res.stderr)[-400:])
+    try:
+        tables = [arg for t in hp.TABLES for arg in ("-t", t.split(".", 1)[1])]
+        res = subprocess.run(["docker", "exec", CONTAINER, "pg_restore", "-U", "supabase_admin", "-d", scratch_db,
+                              "--data-only", "--disable-triggers", "--no-owner", "--exit-on-error", *tables,
+                              "/tmp/post.dump"], capture_output=True, text=True)
+        if res.returncode != 0:
+            raise RuntimeError("pg_restore failed: " + redact(res.stderr)[-400:])
+    finally:
+        try:
+            subprocess.run(["docker", "exec", CONTAINER, "rm", "-f", "/tmp/post.dump"], capture_output=True)
+        except OSError:
+            pass

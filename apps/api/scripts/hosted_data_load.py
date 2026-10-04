@@ -5,7 +5,7 @@
     uv run python scripts/hosted_data_load.py apply    --plan <file> --plan-sha256 <hex> \
         --authorize-hosted-connection --authorize-supavisor-session-route
     uv run python scripts/hosted_data_load.py verify   --plan <file> --plan-sha256 <hex> …
-    uv run python scripts/hosted_data_load.py rollback --plan <file> --plan-sha256 <hex> --confirm-truncate …
+    uv run python scripts/hosted_data_load.py rollback --plan <file> --plan-sha256 <hex> --confirm-delete-loaded-rows …
 
 The hosted credential is read from the environment variable named in supabase/.audit/hosted_target.env
 and never from argv. Every log line is redacted. Exit codes: 0 ok, 11 preflight refused,
@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -57,8 +58,15 @@ def connect_both(args):
     return src, tgt, target
 
 
+class PlanRefused(Exception):
+    """The plan file is not one this tool will act on (exit 11)."""
+
+
 def load_plan(path: Path) -> tuple[dict, str]:
     plan = json.loads(path.read_text(encoding="utf-8"))
+    names = [t.get("name") for t in plan.get("tables", [])]
+    if names != list(hp.TABLES):
+        raise PlanRefused("plan refused: its table list is not exactly the 16 tables this tool loads, in order")
     return plan, hp.plan_sha256(plan)
 
 
@@ -150,6 +158,24 @@ def _reread_target(tgt, secrets) -> None:
     dirty = {t: n for t, n in counts.items() if n}
     print(f"target after rollback: all {len(counts)} tables empty" if not dirty
           else f"target after rollback: NOT empty {dirty}")
+
+
+def _reread_state(tgt, plan, secrets) -> None:
+    """After a failed rollback: say only what a fresh read-only transaction observes."""
+    try:
+        with tgt.cursor() as cur:
+            cur.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            try:
+                cur.execute("SET LOCAL ROLE origenlab_owner")
+                state = io_.classify_target_state(plan, io_.observed_rows(cur, plan))
+                cur.execute(f"select last_value, is_called from {hp.SEQUENCE}")
+                last, called = cur.fetchone()
+            finally:
+                _best_effort_rollback(cur)
+    except psycopg.Error as exc:
+        print("could not re-read target: " + io_.redact(str(exc), secrets)[:400])
+        return
+    print(f"target re-read: state {state}; {hp.SEQUENCE} last_value={last} is_called={called}")
 
 
 def _best_effort_rollback(cur) -> None:
@@ -278,6 +304,7 @@ def cmd_apply(args) -> int:
 CHECKLIST = [("casos (crm.opportunity)", "crm.opportunity"), ("cotizaciones (crm.quote)", "crm.quote"),
              ("instituciones (crm.organization)", "crm.organization"), ("campañas archivadas", "outbound.campaign"),
              ("destinatarios", "outbound.campaign_recipient"), ("eventos", "crm.domain_event")]
+SCRATCH_NAME = re.compile(r"origenlab_test_[0-9a-f]{8}")
 SCRATCH_SH = Path(__file__).with_name("hosted_data_load_scratch.sh")
 #: Schemas whose tables must hold nothing but the 16 loaded tables and the two singleton rows.
 ROLLBACK_SCHEMAS = (*hp.EMPTY_SCHEMAS, "procurement")
@@ -329,6 +356,8 @@ def cmd_verify(args) -> int:
         if res.returncode != 0 or not lines:
             return _mismatch("scratch mint failed: " + io_.redact(res.stderr, secrets)[-400:])
         scratch = lines[-1].strip()
+        if not SCRATCH_NAME.fullmatch(scratch):
+            return _mismatch("scratch mint printed an unexpected name; refusing to use it (nothing dropped)")
         try:
             io_.restore_into_scratch(Path(post["path"]), scratch)
             with psycopg.connect(io_.scratch_conninfo(scratch), autocommit=True) as sconn, sconn.cursor() as cur:
@@ -341,7 +370,13 @@ def cmd_verify(args) -> int:
         except (RuntimeError, OSError, subprocess.CalledProcessError, psycopg.Error) as exc:
             return _mismatch("restore drill failed: " + io_.redact(str(exc), secrets)[:400])
         finally:
-            subprocess.run(["bash", str(SCRATCH_SH), "drop", scratch], capture_output=True, check=False)
+            try:
+                dropped = subprocess.run(["bash", str(SCRATCH_SH), "drop", scratch], capture_output=True,
+                                         check=False).returncode == 0
+            except OSError:
+                dropped = False
+            if not dropped:
+                print(f"WARNING: scratch database {scratch} could not be dropped; remove it manually")
         print(f"post-load dump: {post['path']}; restore into {scratch}: {restored}")
         if restored != "loaded":
             return _mismatch("VERIFY MISMATCH: the post-load dump does not restore to the planned rows")
@@ -387,17 +422,18 @@ def cmd_rollback(args) -> int:
                 tc.execute("SET LOCAL ROLE origenlab_owner")
                 io_.apply_session_settings(tc, local=True)
                 if io_.classify_target_state(plan, io_.observed_rows(tc, plan)) != "loaded":
-                    return _refuse_rollback(tc, "target does not match the plan exactly; refusing to delete anything "
-                                                "— restore from the pre-load dump instead")
+                    return _refuse_rollback(tc, "target does not match the plan exactly; refusing to delete anything. "
+                                                "Stop and see `rollback --help` (incident procedure).")
                 outside = io_.rows_outside_load(plan, io_.business_counts(tc, ROLLBACK_SCHEMAS))
                 if outside:
                     return _refuse_rollback(tc, "rows exist outside the loaded tables (table: rows) "
-                                                f"{outside}; the target is no longer exactly what was loaded — "
-                                                "restore from the pre-load dump instead")
+                                                f"{outside}; the target is no longer exactly what was loaded. "
+                                                "Stop and see `rollback --help` (incident procedure).")
                 guards = _guard_checks(tc, plan)
                 if hp.refused(guards):
                     print_checks(guards, secrets)
-                    return _refuse_rollback(tc, "roster or singleton rows changed since the plan; refusing")
+                    return _refuse_rollback(tc, "roster or singleton rows changed since the plan; refusing. "
+                                                "Stop and see `rollback --help` (incident procedure).")
                 for t in plan["tables"]:
                     io_.set_fks_deferrable(tc, t["name"], t["fks"], True)
                     io_.set_triggers(tc, t["name"], False)
@@ -408,20 +444,25 @@ def cmd_rollback(args) -> int:
                 for t in plan["tables"]:
                     io_.set_triggers(tc, t["name"], True)
                     io_.set_fks_deferrable(tc, t["name"], t["fks"], False)
-                tc.execute("select setval(%s::regclass, 1, false)", (hp.SEQUENCE,))
-                counts = io_.business_counts(tc, ROLLBACK_SCHEMAS)
-                dirty = {t["name"]: counts.get(t["name"]) for t in plan["tables"] if counts.get(t["name"]) != 0}
+                # Every check on fresh reads, then the one statement a ROLLBACK cannot undo, then COMMIT.
+                dirty = {n: c for n, c in io_.target_counts(tc).items() if c != 0}
+                outside = io_.rows_outside_load(plan, io_.business_counts(tc, ROLLBACK_SCHEMAS))
                 guards = _guard_checks(tc, plan)
                 print_checks(guards, secrets)
-                if dirty or hp.refused(guards):
-                    print(f"after DELETE: tables not empty {dirty}" if dirty else "roster or singleton rows changed")
+                if dirty or outside or hp.refused(guards):
+                    print("after DELETE: " + (f"tables not empty {dirty}" if dirty else
+                                              f"rows outside the load {outside}" if outside else
+                                              "roster or singleton rows changed"))
                     _best_effort_rollback(tc)
-                    print("transaction rolled back; target untouched")
+                    print("transaction rolled back")
+                    _reread_state(tgt, plan, secrets)
                     return EXIT_APPLY_FAILED
+                tc.execute("select setval(%s::regclass, 1, false)", (hp.SEQUENCE,))
             except psycopg.Error as exc:
                 _best_effort_rollback(tc)
                 print("rollback failed: " + io_.redact(str(exc), secrets)[:400])
-                print("transaction rolled back; target untouched")
+                print("transaction rolled back")
+                _reread_state(tgt, plan, secrets)
                 return EXIT_APPLY_FAILED
             except BaseException:
                 _best_effort_rollback(tc)
@@ -444,12 +485,15 @@ def cmd_rollback(args) -> int:
 
 
 ROLLBACK_EPILOG = """\
-Manual restore of the pre-load dump (documented only; this tool never runs it). Placeholders:
-  docker cp <pre-load-dump> origenlab_dev_db:/tmp/pre.dump
-  docker exec -e PGPASSWORD -e PGSSLMODE -e PGSSLROOTCERT -e PGHOSTADDR origenlab_dev_db pg_restore \\
-      --host <pooler-host> --port <port> --username <login-role> --dbname <database> \\
-      --role=origenlab_owner --data-only --disable-triggers /tmp/pre.dump
-Set the variable values in the environment from the target file; never on the command line.
+Incident procedure (documented only; this tool runs none of it).
+  * A rollback refusal means the target is no longer exactly the loaded state. Stop.
+  * Run `verify` to see the state.
+  * The pre-load dump records the pre-load roster and singleton rows. Inspect it with
+    `pg_restore --list <pre-load-dump>` or `pg_restore -f - <pre-load-dump>`; do not restore it
+    (a data-only restore cannot undo a load, collides with the roster and singletons, and
+    --disable-triggers needs a superuser the hosted target does not offer).
+  * Removing rows written after the load is a reviewed, manual transaction.
+  * The Supabase daily project backup is the whole-project last resort.
 """
 
 
@@ -478,11 +522,15 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_verify)
     p = sub.add_parser("rollback", formatter_class=argparse.RawDescriptionHelpFormatter, epilog=ROLLBACK_EPILOG)
     _common(p, True)
-    p.add_argument("--confirm-truncate", action="store_true", required=True,
-                   help="confirm emptying the 16 loaded tables (done with DELETE, not TRUNCATE)")
+    p.add_argument("--confirm-delete-loaded-rows", action="store_true", required=True,
+                   help="confirm deleting the rows of the 16 loaded tables (DELETE, never TRUNCATE)")
     p.set_defaults(func=cmd_rollback)
     args = ap.parse_args(argv)
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except PlanRefused as exc:
+        print(exc)
+        return EXIT_REFUSED
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ def test_apply_requires_plan_and_sha():
         cli.main(["apply", *AUTH])
 
 
-def test_rollback_requires_confirm_truncate():
+def test_rollback_requires_confirm_delete_loaded_rows():
     cli = load_cli()
     with pytest.raises(SystemExit):
         cli.main(["rollback", "--plan", "/tmp/p.json", "--plan-sha256", "a" * 64, *AUTH])
@@ -240,63 +240,128 @@ def test_apply_interrupt_inside_write_tx_rolls_back_and_closes(tmp_path, monkeyp
 
 # ---- Task 6: verify and rollback -------------------------------------------------------------
 
-def _plan_ab():
+import subprocess  # noqa: E402
+
+from psycopg import sql as pgsql  # noqa: E402
+
+REAL = load_cli().hp.TABLES
+SEQ = load_cli().hp.SEQUENCE
+
+
+def _plan_real():
     return {"remap": {"to": "x", "from": ["a"]}, "roster_hash": "r", "send_control_hash": "s", "campaign_block_hash": "c",
-            "tables": [{"name": "t.a", "count": 2, "hash": "ha", "pk": ["id"], "columns": [["id", "uuid"]], "fks": ["fk_a"]},
-                       {"name": "t.b", "count": 3, "hash": "hb", "pk": ["id"], "columns": [["id", "uuid"]], "fks": []}]}
+            "tables": [{"name": n, "count": 2, "hash": "h", "pk": ["id"], "columns": [["id", "uuid"]],
+                        "fks": ["fk_x"] if i == 0 else []} for i, n in enumerate(REAL)]}
 
 
-def _patch_rollback(cli, monkeypatch, *, outside=None, roster="r", commit_msg="COMMIT"):
-    src, tgt = _FakeConn(), _FakeConn()
+class _CatCursor(_FakeCursor):
+    """Catalogue-aware fake: honours the schema filter of business_counts and counts real names."""
+
+    def __init__(self, conn):
+        super().__init__(conn.log)
+        self.conn, self._rows = conn, None
+
+    def execute(self, q, params=None):
+        text = q.as_string(None) if isinstance(q, pgsql.Composed) else str(q)
+        self.log.append(text)
+        if text.startswith("DELETE FROM "):
+            name = text.split()[-1]
+            if name not in self.conn.sticky:
+                self.conn.counts[name] = 0
+        elif "from pg_class" in text:
+            self._rows = [(n,) for n in self.conn.counts if n.split(".")[0] in params[0]]
+        elif text.startswith("select count(*) from "):
+            n = text.split("from ", 1)[1].replace('"', "")
+            self._rows = [(self.conn.counts[n],)]
+        elif text.startswith("select last_value"):
+            self._rows = [(23095, True)]
+
+    def fetchone(self):
+        return self._rows[0]
+
+    def fetchall(self):
+        return self._rows
+
+
+class _CatConn(_FakeConn):
+    def __init__(self, sticky=()):
+        super().__init__()
+        # every real table loaded; platform.operator-ish and singleton tables outside the 16
+        self.counts = {n: 2 for n in REAL}
+        self.counts.update({"outbound.send_control": 1, "outbound.campaign_block": 1, "crm.task": 0,
+                            "platform.operator": 1, "procurement.notice": 0})
+        self.sticky = set(sticky)
+
+    def cursor(self):
+        return _CatCursor(self)
+
+
+def _patch_rollback(cli, monkeypatch, *, tgt=None, roster="r", commit_msg="COMMIT", observed=None):
+    src, tgt = _FakeConn(), tgt or _CatConn()
     target = SimpleNamespace(mode="hosted", password="s3cret", user="u", project_ref="r", host="h", hostaddr="1.1.1.1")
-    plan = _plan_ab()
+    plan = _plan_real()
     monkeypatch.setattr(cli, "connect_both", lambda a: (src, tgt, target))
     monkeypatch.setattr(cli, "load_plan", lambda p: (plan, "a" * 64))
-    deleted = lambda: any(s.startswith("DELETE") for s in tgt.log)  # noqa: E731
-    base = {"outbound.send_control": 1, "outbound.campaign_block": 1, **(outside or {})}
-    monkeypatch.setattr(cli.io_, "business_counts", lambda cur, schemas=None: (
-        {"t.a": 0, "t.b": 0, **base} if deleted() else {"t.a": 2, "t.b": 3, **base}))
-    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: {"t.a": (2, "ha"), "t.b": (3, "hb")})
+    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: observed or {n: (2, "h") for n in REAL})
     monkeypatch.setattr(cli.io_, "roster_hash", lambda cur: roster)
     monkeypatch.setattr(cli.io_, "_hash_rows", lambda cur, q: "s" if "send_control" in q else "c")
     monkeypatch.setattr(cli.io_, "apply_session_settings", lambda cur, local=False: tgt.log.append("SETTINGS"))
     monkeypatch.setattr(cli.io_, "set_triggers", lambda cur, t, en: tgt.log.append(f"TRIGGERS {t} {en}"))
     monkeypatch.setattr(cli.io_, "set_fks_deferrable", lambda cur, t, fks, d: tgt.log.append(f"FKS {t} {d}"))
-    _FakeCursor.statusmessage = commit_msg
+    monkeypatch.setattr(_FakeCursor, "statusmessage", commit_msg)
     return src, tgt
 
 
 def _rb_args(tmp_path):
     a = _apply_args(tmp_path)
-    a.confirm_truncate = True
+    a.confirm_delete_loaded_rows = True
     return a
 
 
-def test_rollback_deletes_in_reverse_order_and_never_truncates(tmp_path, monkeypatch, capsys):
+def test_rollback_succeeds_with_real_count_helpers_and_orders_statements(tmp_path, monkeypatch, capsys):
     cli = load_cli()
     src, tgt = _patch_rollback(cli, monkeypatch)
-    try:
-        assert cli.cmd_rollback(_rb_args(tmp_path)) == 0
-    finally:
-        _FakeCursor.statusmessage = "COMMIT"
-    assert not any("TRUNCATE" in s.upper() for s in tgt.log)
-    deletes = [s for s in tgt.log if s.startswith("DELETE")]
-    assert deletes == ["DELETE FROM t.b", "DELETE FROM t.a"]
-    assert tgt.log[0] == "BEGIN" and tgt.log[-1] == "COMMIT"
-    assert any("SET LOCAL ROLE origenlab_owner" in s for s in tgt.log)
-    assert any("SET CONSTRAINTS ALL DEFERRED" in s for s in tgt.log)
-    assert src.closed and tgt.closed
-    assert "s3cret" not in capsys.readouterr().out
+    assert cli.cmd_rollback(_rb_args(tmp_path)) == 0
+    log = tgt.log
+    assert not any("TRUNCATE" in s.upper() for s in log)
+    assert [s for s in log if s.startswith("DELETE")] == [f"DELETE FROM {n}" for n in reversed(REAL)]
+    assert log[0] == "BEGIN" and log[-1] == "COMMIT" and log[-2].startswith("select setval")
+    last_count = max(i for i, s in enumerate(log) if s.startswith("select count(*)"))
+    assert last_count < len(log) - 2
+    assert any("SET LOCAL ROLE origenlab_owner" in s for s in log) and "SET CONSTRAINTS ALL DEFERRED" in log
+    assert src.closed and tgt.closed and "s3cret" not in capsys.readouterr().out
+
+
+def test_rollback_dirty_after_delete_exits_12_without_setval_and_rereads(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_rollback(cli, monkeypatch, tgt=_CatConn(sticky=("crm.quote",)))
+    assert cli.cmd_rollback(_rb_args(tmp_path)) == 12
+    assert not any(s.startswith("select setval") for s in tgt.log) and "COMMIT" not in tgt.log
+    assert "ROLLBACK" in tgt.log
+    out = capsys.readouterr().out
+    assert "tables not empty" in out and "target re-read: state loaded" in out and "is_called=True" in out
+    assert "untouched" not in out and src.closed and tgt.closed
+
+
+def test_rollback_refuses_when_not_loaded(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    obs = {n: (0, "") for n in REAL}
+    obs[REAL[0]] = (2, "h")
+    src, tgt = _patch_rollback(cli, monkeypatch, observed=obs)
+    assert cli.cmd_rollback(_rb_args(tmp_path)) == 11
+    out = capsys.readouterr().out
+    assert "rollback --help" in out and "pre-load dump" not in out
+    assert not any(s.startswith(("DELETE", "select setval")) for s in tgt.log) and tgt.log[-1] == "ROLLBACK"
 
 
 def test_rollback_refuses_when_rows_exist_outside_the_load(tmp_path, monkeypatch, capsys):
     cli = load_cli()
-    src, tgt = _patch_rollback(cli, monkeypatch, outside={"crm.task": 2})
+    tgt = _CatConn()
+    tgt.counts["crm.task"] = 2
+    src, tgt = _patch_rollback(cli, monkeypatch, tgt=tgt)
     assert cli.cmd_rollback(_rb_args(tmp_path)) == 11
-    assert not any(s.startswith("DELETE") for s in tgt.log)
-    assert tgt.log[-1] == "ROLLBACK"
-    assert "crm.task" in capsys.readouterr().out
-    assert src.closed and tgt.closed
+    assert not any(s.startswith("DELETE") for s in tgt.log) and tgt.log[-1] == "ROLLBACK"
+    assert "crm.task" in capsys.readouterr().out and src.closed and tgt.closed
 
 
 def test_rollback_refuses_when_the_roster_changed(tmp_path, monkeypatch):
@@ -306,13 +371,25 @@ def test_rollback_refuses_when_the_roster_changed(tmp_path, monkeypatch):
     assert not any(s.startswith("DELETE") for s in tgt.log) and tgt.log[-1] == "ROLLBACK"
 
 
+def test_rollback_psycopg_error_rolls_back_without_setval(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_rollback(cli, monkeypatch)
+
+    def boom(cur, t, en):
+        raise psycopg.errors.LockNotAvailable("password=s3cret timeout")
+
+    monkeypatch.setattr(cli.io_, "set_triggers", boom)
+    assert cli.cmd_rollback(_rb_args(tmp_path)) == 12
+    out = capsys.readouterr().out
+    assert "s3cret" not in out and "target re-read" in out
+    assert "ROLLBACK" in tgt.log and not any(s.startswith("select setval") for s in tgt.log)
+    assert src.closed and tgt.closed
+
+
 def test_rollback_commit_with_unexpected_status_is_unknown_outcome(tmp_path, monkeypatch, capsys):
     cli = load_cli()
     src, tgt = _patch_rollback(cli, monkeypatch, commit_msg="ROLLBACK")
-    try:
-        assert cli.cmd_rollback(_rb_args(tmp_path)) == 12
-    finally:
-        _FakeCursor.statusmessage = "COMMIT"
+    assert cli.cmd_rollback(_rb_args(tmp_path)) == 12
     assert "unknown" in capsys.readouterr().out
 
 
@@ -329,36 +406,105 @@ def test_rollback_interrupt_rolls_back_and_closes(tmp_path, monkeypatch):
     assert "ROLLBACK" in tgt.log and src.closed and tgt.closed
 
 
-def test_rollback_help_epilog_has_placeholders_only(capsys):
+def test_rollback_help_has_incident_text_and_no_restore_recipe(capsys):
     cli = load_cli()
     with pytest.raises(SystemExit):
         cli.main(["rollback", "--help"])
     out = capsys.readouterr().out
-    assert "pg_restore" in out and "<" in out
-    for forbidden in ("supabase.co", "pooler.supabase.com", "origenlab_migrator"):
+    assert "--confirm-delete-loaded-rows" in out and "confirm-truncate" not in out
+    assert "Incident procedure" in out and "pg_restore --list" in out and "do not restore it" in out
+    for forbidden in ("supabase.co", "pooler.supabase.com", "origenlab_migrator", "--data-only"):
         assert forbidden not in out
+
+
+def test_load_plan_refuses_a_widened_or_reordered_table_set(tmp_path):
+    import json
+    cli = load_cli()
+    plan = _plan_real()
+    good = tmp_path / "ok.json"
+    good.write_text(json.dumps(plan))
+    assert cli.load_plan(good)[0]["tables"][0]["name"] == REAL[0]
+    for bad in (plan["tables"] + [{"name": "crm.task"}], list(reversed(plan["tables"])), plan["tables"][:-1]):
+        f = tmp_path / "bad.json"
+        f.write_text(json.dumps({**plan, "tables": bad}))
+        with pytest.raises(cli.PlanRefused):
+            cli.load_plan(f)
+    assert cli.main(["apply", "--plan", str(f), "--plan-sha256", "a" * 64, *AUTH]) == 11
+
+
+def _patch_verify(cli, monkeypatch, tmp_path, run):
+    src, tgt = _FakeConn(), _FakeConn()
+    target = SimpleNamespace(mode="hosted", password="s3cret", user="u", project_ref="r", host="h", hostaddr="1.1.1.1")
+    plan = _plan_real()
+    monkeypatch.setattr(cli, "connect_both", lambda a: (src, tgt, target))
+    monkeypatch.setattr(cli, "load_plan", lambda p: (plan, "a" * 64))
+    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: {n: (2, "h") for n in REAL})
+    monkeypatch.setattr(cli.io_, "apply_session_settings", lambda cur, local=False: None)
+    monkeypatch.setattr(cli.io_, "post_copy_invariants",
+                        lambda cur, p, to: [{"check": n, "ok": True, "detail": None} for n in cli.io_.invariant_names(p)])
+    monkeypatch.setattr(cli.io_, "pg_dump_target", lambda *a, **k: {"path": str(tmp_path / "post.dump"), "bytes": 1})
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    return src, tgt
+
+
+def _runner(calls, mint_out="origenlab_test_deadbeef\n", mint_rc=0, drop_rc=0):
+    def run(argv, **kw):
+        calls.append(argv[2:])
+        if argv[2] == "mint":
+            return subprocess.CompletedProcess(argv, mint_rc, mint_out, "boom password=s3cret")
+        return subprocess.CompletedProcess(argv, drop_rc, "", "")
+    return run
+
+
+def test_verify_mint_failure_exits_13_and_never_drops(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    calls = []
+    src, tgt = _patch_verify(cli, monkeypatch, tmp_path, _runner(calls, mint_out="", mint_rc=1))
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 13
+    assert calls == [["mint"]] and "s3cret" not in capsys.readouterr().out
+    assert src.closed and tgt.closed
+
+
+def test_verify_unknown_scratch_name_is_refused_and_never_dropped(tmp_path, monkeypatch):
+    cli = load_cli()
+    calls = []
+    _patch_verify(cli, monkeypatch, tmp_path, _runner(calls, mint_out="origenlab_clean\n"))
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 13
+    assert calls == [["mint"]]
+
+
+def test_verify_drops_scratch_after_restore_failure_and_warns_when_drop_fails(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    calls = []
+    _patch_verify(cli, monkeypatch, tmp_path, _runner(calls, drop_rc=1))
+
+    def fail(dump, name):
+        raise RuntimeError("pg_restore failed: password=s3cret")
+
+    monkeypatch.setattr(cli.io_, "restore_into_scratch", fail)
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 13
+    assert calls == [["mint"], ["drop", "origenlab_test_deadbeef"]]
+    out = capsys.readouterr().out
+    assert "s3cret" not in out and "origenlab_test_deadbeef could not be dropped" in out
 
 
 def test_verify_partial_state_exits_13_before_any_dump(tmp_path, monkeypatch, capsys):
     cli = load_cli()
-    src, tgt = _FakeConn(), _FakeConn()
-    target = SimpleNamespace(mode="hosted", password="s3cret", user="u", project_ref="r", host="h", hostaddr="1.1.1.1")
-    monkeypatch.setattr(cli, "connect_both", lambda a: (src, tgt, target))
-    monkeypatch.setattr(cli, "load_plan", lambda p: (_plan_ab(), "a" * 64))
-    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: {"t.a": (2, "ha"), "t.b": (0, "")})
-    monkeypatch.setattr(cli.io_, "apply_session_settings", lambda cur, local=False: None)
-    dumps = []
-    monkeypatch.setattr(cli.io_, "pg_dump_target", lambda *a, **k: dumps.append(1))
+    calls = []
+    src, tgt = _patch_verify(cli, monkeypatch, tmp_path, _runner(calls))
+    obs = {n: (0, "") for n in REAL}
+    obs[REAL[0]] = (2, "h")
+    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: obs)
     assert cli.cmd_verify(_apply_args(tmp_path)) == 13
     out = capsys.readouterr().out
-    assert "partial" in out and "incident" in out and dumps == []
+    assert "partial" in out and "incident" in out and calls == []
     assert any("READ ONLY" in s for s in tgt.log) and any("SET LOCAL ROLE origenlab_owner" in s for s in tgt.log)
     assert src.closed and tgt.closed
 
 
 def test_scratch_script_parses_and_lists_all_subcommands():
-    import subprocess
     script = _SCRIPTS / "hosted_data_load_scratch.sh"
     assert subprocess.run(["bash", "-n", str(script)]).returncode == 0
     text = script.read_text()
     assert "mint|clone-cleanroom|drop" in text and script.stat().st_mode & stat.S_IXUSR
+    assert text.count("cleanup_on_failure") >= 3
