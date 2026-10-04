@@ -13,6 +13,7 @@ Every value is fictitious.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -482,16 +483,26 @@ def test_w12_rides_on_the_freeze_switch_and_defaults_off() -> None:
     assert state(v2_database_url=LOOPBACK, v2_audience_freeze_enabled=True, v2_recontact_review_enabled=True) == (True, True)
 
 
+def _without_sanctioned_test_send(text: str) -> str:
+    # The one sanctioned sender: «Enviar prueba», one admin test to one address (switch-gated).
+    return re.sub(r"/send-campaign-test(?![\w-])", "", text)
+
+
 def test_no_send_capability_exists_anywhere_in_the_api() -> None:
     from pathlib import Path
 
     src = Path(__file__).resolve().parents[1] / "src" / "origenlab_api"
-    text = "\n".join(p.read_text(encoding="utf-8") for p in src.rglob("*.py"))
-    # The one sanctioned sender: «Enviar prueba», one admin test to one address (switch-gated).
-    text = text.replace("/send-campaign-test", "")
+    text = _without_sanctioned_test_send("\n".join(p.read_text(encoding="utf-8") for p in src.rglob("*.py")))
     for forbidden in ("googleapiclient", "gmail.users().messages().send", "smtplib", "/send-campaign",
                       "send_one(", "reserve_attempts("):
         assert forbidden not in text, forbidden
+
+
+@pytest.mark.parametrize("probe", ["/v2/commands/send-campaign-test-all", "/v2/commands/send-campaign-test_all",
+                                   "/v2/commands/send-campaign-test2"])
+def test_the_test_send_carve_out_never_hides_a_longer_path(probe: str) -> None:
+    assert "/send-campaign" in _without_sanctioned_test_send(f'"{probe}"')
+    assert "/send-campaign" not in _without_sanctioned_test_send('"/v2/commands/send-campaign-test"')
 
 
 # --------------------------------------------------------------------------- database (opt-in)
