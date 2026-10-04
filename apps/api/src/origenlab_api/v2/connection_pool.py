@@ -9,9 +9,10 @@ Session-state safety
 All ``SET`` statements used by V2 repositories are either transaction-level
 (``SET TRANSACTION READ ONLY``, ``SET TRANSACTION ISOLATION LEVEL …``) or
 transaction-local (``SET LOCAL statement_timeout``).  Both variants are reset
-when the transaction ends (commit or rollback).  The pool's own
-rollback-on-return always clears any open transaction before a connection is
-reused, so no session state leaks between requests.
+when the transaction ends (commit or rollback).  Like the ``psycopg.connect``
+context it replaces, leaving the block commits an open transaction (rolls it back
+on an exception), and the pool resets any connection still in a transaction
+before reuse, so no session state leaks between requests.
 
 Startup safety
 --------------
@@ -22,6 +23,7 @@ today without a pool.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import psycopg_pool
@@ -65,8 +67,10 @@ class V2ConnectionPool:
             max_idle=max_idle,
             max_lifetime=max_lifetime,
             check=psycopg_pool.ConnectionPool.check_connection,
-            open=False,  # opened from the app lifespan, not at construction
+            open=False,  # opened from the app lifespan, or on first use
         )
+        self._open_lock = threading.Lock()
+        self._opened = False
 
     @property
     def connect_options(self) -> dict[str, Any]:
@@ -84,7 +88,10 @@ class V2ConnectionPool:
         the background thread retries silently; requests fail normally until
         connectivity is restored.
         """
-        self._pool.open(wait=False)
+        with self._open_lock:
+            if not self._opened:
+                self._pool.open(wait=False)
+                self._opened = True
 
     def close(self) -> None:
         """Drain and shut down the pool.  Called from the FastAPI lifespan."""
@@ -98,12 +105,20 @@ class V2ConnectionPool:
         * ``dsn`` is accepted for API compatibility and ignored.
         * ``autocommit`` must be ``False`` (the only supported value).
 
-        On exit, ``psycopg_pool`` rolls back any open transaction before
-        returning the connection to the pool, so no uncommitted state leaks.
+        On exit an open transaction is committed (rolled back on an exception),
+        exactly as with ``psycopg.connect``'s context; every repository already
+        commits or rolls back explicitly.
         """
         if autocommit:
             raise ValueError(
                 "V2ConnectionPool.connect: autocommit=True is not supported; "
                 "every V2 repository uses explicit commit/rollback"
             )
+        # The lifespan normally opens the pool; anything that builds the app without running it
+        # (a TestClient outside `with`, a script) opens it here, on first use. Idempotent.
+        if not self._opened:
+            with self._open_lock:
+                if not self._opened:
+                    self._pool.open(wait=False)
+                    self._opened = True
         return self._pool.connection()

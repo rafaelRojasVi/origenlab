@@ -105,24 +105,6 @@ def test_remote_target_refusals_are_unchanged(tmp_path) -> None:
 # ────────────────────────────────────────────────── session-state safety ──
 
 
-def test_pool_connection_open_transaction_is_rolled_back_on_return() -> None:
-    """A connection with an open transaction is rolled back before it re-enters the pool.
-
-    psycopg_pool guarantees this behaviour; here we verify the guarantee is
-    present (the pool exposes it to callers).
-    """
-    rolled_back = []
-    conn = _FakePooledConn(on_rollback=lambda: rolled_back.append(True))
-    pool = _fake_pool_with_conn(conn)
-
-    with pool.connect(DSN) as c:
-        # simulate an open (uncommitted) read-only transaction
-        c._transaction_open = True
-
-    # psycopg_pool rolls back on exit — our fake verifies the hook ran
-    assert rolled_back, "pool must roll back open transaction on connection return"
-
-
 def test_no_session_set_commands_in_v2_repositories() -> None:
     """All SET commands in V2 repositories are transaction-level or LOCAL — audit.
 
@@ -408,3 +390,46 @@ class _FakePooledConn:
         if self._on_rollback:
             self._on_rollback()
         self._transaction_open = False
+
+
+# ── real database: the pool works even when no lifespan opened it ────────────
+
+_API_DSN = __import__("os").environ.get("ORIGENLAB_V2_API_TEST_DSN", "")
+
+
+@pytest.mark.skipif(not _API_DSN, reason="ORIGENLAB_V2_API_TEST_DSN names a disposable V2 database")
+def test_connect_opens_the_pool_on_first_use_without_a_lifespan() -> None:
+    """A TestClient without `with`, a script, a worker: nothing runs the lifespan, and the
+    first request must still get a connection instead of `PoolClosed: not open yet`."""
+    pool = V2ConnectionPool(_API_DSN)
+    try:
+        with pool.connect(_API_DSN) as conn:
+            assert conn.execute("select 1").fetchone() == (1,)
+            conn.rollback()
+        pool.open()  # the lifespan arriving later is harmless
+        with pool.connect(_API_DSN) as conn:
+            assert conn.execute("select 2").fetchone() == (2,)
+            conn.rollback()
+    finally:
+        pool.close()
+
+
+@pytest.mark.skipif(not _API_DSN, reason="ORIGENLAB_V2_API_TEST_DSN names a disposable V2 database")
+def test_pipeline_mode_reads_return_every_result_on_a_real_server() -> None:
+    """The hot reads send several statements per round trip; prove the results come back."""
+    pool = V2ConnectionPool(_API_DSN)
+    try:
+        with pool.connect(_API_DSN) as conn:
+            a, b = conn.cursor(), conn.cursor()
+            with conn.pipeline():
+                a.execute("set transaction read only")
+                a.execute("set local statement_timeout = 5000")
+                b.execute("select current_setting('statement_timeout'), current_setting('transaction_read_only')")
+            assert b.fetchone() == ("5s", "on")
+            conn.rollback()
+        with pool.connect(_API_DSN) as conn:
+            # Transaction-local settings did not survive into the next checkout.
+            assert conn.execute("select current_setting('transaction_read_only')").fetchone() == ("off",)
+            conn.rollback()
+    finally:
+        pool.close()
