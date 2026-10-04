@@ -12,6 +12,7 @@ import {
 } from "../../api/authClient";
 import { SESSION_REFUSED_EVENT } from "../../api/operatorClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
+import { clearResourceCache } from "../../crm/useResource";
 import { ProfileSelector } from "./ProfileSelector";
 
 function loginErrorFromUrl(): string | null {
@@ -57,6 +58,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
     window.addEventListener(SESSION_REFUSED_EVENT, onRefused);
     return () => window.removeEventListener(SESSION_REFUSED_EVENT, onRefused);
   }, [signedIn, refresh]);
+
+  // Pages remember their last answer per operator and profile (`useResource`). Whenever no
+  // session is confirmed — loading, signed out, profile screen, error — that memory goes, so
+  // nothing from before a sign-out or a profile change can be shown after it.
+  useEffect(() => {
+    if (!signedIn) clearResourceCache();
+  }, [signedIn]);
 
   // "Cerrar sesión". Nothing on this side changes until the server confirms it revoked the
   // session: on a failure the dashboard (or the profile screen) stays exactly as it was, the
