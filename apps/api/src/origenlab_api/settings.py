@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
-from pydantic import PrivateAttr, SecretStr
+from pydantic import Field, PrivateAttr, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -224,9 +224,6 @@ class Settings(BaseSettings):
     approve or send a campaign.
     """
     v2_campaign_drafts_enabled: bool = False
-    v2_campaign_test_send_enabled: bool = False
-    #: Render secret file with the gmail.send refresh token for contacto@ (scripts/gmail_send_authorize.py).
-    v2_gmail_send_token_file: str | None = None
     """Mount POST /v2/commands/{create,update,...}-person/organization etc (freeform CRM authoring).
 
     Default **false** and separate from v2_commands_enabled: evidence-bound decisions and
@@ -234,6 +231,17 @@ class Settings(BaseSettings):
     or sends anything.
     """
     v2_crm_authoring_enabled: bool = False
+    """Mount POST /v2/commands/send-campaign-test («Enviar prueba»).
+
+    Default **false** and needs `v2_test_send_token_file`. One admin-only test of a campaign's
+    stored email to one address, from the shared mailbox; it is not a campaign send.
+    """
+    v2_campaign_test_send_enabled: bool = False
+    """Render secret file with the send-scope refresh token for the shared mailbox.
+
+    Read from `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE` (the authorize script under scripts/ writes it).
+    """
+    v2_test_send_token_file: str | None = Field(default=None, validation_alias="ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE")
     """Mount POST /v2/commands/freeze-campaign-audience (WORKFLOWS.md §W4 step 2).
 
     Default **false** and separate from the drafts switch: committing an immutable recipient
@@ -445,7 +453,7 @@ class Settings(BaseSettings):
         return self.v2_configured() and bool(self.v2_commands_enabled)
 
     def v2_campaign_test_send_configured(self) -> bool:
-        return self.v2_configured() and bool(self.v2_campaign_test_send_enabled) and bool(self.v2_gmail_send_token_file)
+        return self.v2_configured() and bool(self.v2_campaign_test_send_enabled) and bool(self.v2_test_send_token_file)
 
     def v2_campaign_drafts_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_drafts_enabled)

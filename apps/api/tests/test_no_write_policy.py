@@ -12,19 +12,14 @@ _API_SRC = Path(__file__).resolve().parents[1] / "src" / "origenlab_api"
 
 # «Enviar prueba» (owner decision 2026-10-04): one admin-only test of one campaign's stored email to
 # one address, from contacto@. These are the only files allowed to name the Gmail send client;
-# every other file keeps the `gmail_send` guard. The allowance also covers the
-# route module, the `main.py` mount, `settings.py` (whose token-file field is named for it) and the
-# marketing read in `v2/crm_workspace_routes.py` (which imports the sender address constant), each by
-# exact path and nothing broader (never a directory). The one sanctioned sender is
-# `POST /v2/commands/send-campaign-test`, mounted only behind its own switch.
+# every other file keeps the `gmail_send` guard. The allowance is by exact path (never a directory):
+# the client module, the repository that calls it, and the `main.py` mount that builds the sender.
+# The one sanctioned sender is `POST /v2/commands/send-campaign-test`, mounted only behind its switch.
 _GMAIL_SEND_ALLOWED = frozenset(
     {
         "v2/gmail_send.py",
         "v2/campaign_test_send.py",
-        "v2/campaign_test_send_routes.py",
-        "v2/crm_workspace_routes.py",
         "main.py",
-        "settings.py",
     }
 )
 

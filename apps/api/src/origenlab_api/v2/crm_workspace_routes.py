@@ -21,8 +21,7 @@ from origenlab_api.v2.campaign_blocks import redact_for_viewer
 from origenlab_api.v2.campaign_calendar import campaign_lines
 from origenlab_api.v2.campaign_history import TOTALS, RecipientQuery
 from origenlab_api.v2.campaign_planning import PLANNING_TIME_ZONE
-from origenlab_api.v2.campaign_test_send import TEST_SENDS_PER_DAY, TEST_SENDS_PER_HOUR
-from origenlab_api.v2.gmail_send import SENDER_ADDRESS
+from origenlab_api.v2.campaign_test_send import SENDER_ADDRESS, TEST_SENDS_PER_DAY, TEST_SENDS_PER_HOUR
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.contact_redaction import ContactRedactingRoute

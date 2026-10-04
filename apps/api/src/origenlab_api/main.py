@@ -298,7 +298,7 @@ def _mount_campaign_test_send(app: FastAPI, settings: Settings, dsn: str, connec
     from origenlab_api.v2.gmail_send import GmailSender, load_send_token
 
     try:
-        token = load_send_token(settings.v2_gmail_send_token_file or "")
+        token = load_send_token(settings.v2_test_send_token_file or "")
     except ValueError as exc:
         logging.getLogger(__name__).warning("campaign test send disabled: %s", exc)
         return

@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from origenlab_api.v2.command_core import DEFAULT_COMMAND_TIMEOUT_MS, CommandTransaction, json_payload
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.gmail_send import (
+    SENDER_ADDRESS,  # noqa: F401 - re-exported for the marketing read
     TEST_SUBJECT_PREFIX,
     GmailSendError,
     build_test_message,

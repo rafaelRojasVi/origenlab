@@ -149,3 +149,26 @@ def test_the_limit_answer_carries_next_allowed_at_and_others_keep_their_shape() 
     other, _ = _client("sales")
     d2 = other.post(POST, json=BODY, headers=key).json()["detail"]
     assert set(d2) == {"code", "message"}
+
+
+def test_the_token_file_variable_is_read_through_its_alias(monkeypatch) -> None:
+    from origenlab_api.settings import Settings
+
+    monkeypatch.setenv("ORIGENLAB_DISABLE_DOTENV", "1")
+    monkeypatch.setenv("ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE", "/run/secrets/t.json")
+    monkeypatch.setenv("ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED", "true")
+    monkeypatch.setenv("ORIGENLAB_V2_DATABASE_URL", "postgresql://u:p@127.0.0.1:54332/unused")
+    st = Settings(_env_file=None)
+    assert st.v2_test_send_token_file == "/run/secrets/t.json" and st.v2_campaign_test_send_configured()
+
+
+@pytest.mark.parametrize("content", ["not json {", None])
+def test_an_unreadable_or_non_json_token_leaves_it_off_and_the_api_boots(monkeypatch, tmp_path: Path, caplog, content) -> None:
+    path = tmp_path / "bad.json"
+    if content is not None:
+        path.write_text(content)  # None: the path does not exist
+    with caplog.at_level("WARNING"):
+        app = _app(monkeypatch, ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED="true",
+                   ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE=str(path))
+    assert app.state.campaign_test_send_enabled is False and POST not in _v2_paths(app)
+    assert "campaign test send disabled" in caplog.text
