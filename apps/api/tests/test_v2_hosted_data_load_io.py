@@ -454,3 +454,44 @@ def test_redact_masks_hosted_shapes_before_the_target_is_known():
         assert leak not in r
     assert "<hosted-host>" in r and "<address>" in r and "<hosted-login>" in r and "port 5432" in r
     assert io_.redact("crm.organization_relationship 41 rows") == "crm.organization_relationship 41 rows"
+
+
+# ---- final review: M1 ------------------------------------------------------------------------------
+
+
+class _SeqCur:
+    def __init__(self, nxt):
+        self.nxt, self.log = nxt, []
+
+    def execute(self, q, params=None):
+        self.log.append(q.as_string(None) if hasattr(q, "as_string") else q)
+
+    def fetchone(self):
+        return (self.nxt,)
+
+
+def test_restart_sequence_is_transactional_ddl_not_setval():
+    cur = _SeqCur(0)
+    io_.restart_sequence(cur, 23096)
+    assert cur.log == ['ALTER SEQUENCE "crm"."domain_event_stream_position_seq" RESTART WITH 23096']
+
+
+def test_sequence_set_compares_the_next_value():
+    plan = {"tables": [], "payload_rows_with_local_uuid": 0, "sequence": {"name": "s", "target_last_value": 23095},
+            "roster_hash": "", "send_control_hash": "", "campaign_block_hash": "", "remap": {"to": "x", "from": ["a"]}}
+
+    class Cur(_SeqCur):
+        def fetchone(self):
+            q = self.log[-1]
+            if q.startswith("select case when is_called"):
+                return (self.nxt,)
+            return ("",) if "md5" in q else (0,)
+
+    def seq_check(nxt):
+        cur = Cur(nxt)
+        checks = io_.post_copy_invariants(cur, plan, "x")
+        assert any("case when is_called then last_value + 1 else last_value end" in q for q in cur.log)
+        return next(c for c in checks if c["check"] == "sequence_set")["ok"]
+
+    assert seq_check(23096) is True
+    assert seq_check(23095) is False

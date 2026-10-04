@@ -205,14 +205,13 @@ def _reread_state(tgt, plan, secrets) -> None:
                 cur.execute("SET LOCAL ROLE origenlab_owner")
                 io_.apply_session_settings(cur, local=True)
                 state = io_.classify_target_state(plan, io_.observed_rows(cur, plan))
-                cur.execute(f"select last_value, is_called from {hp.SEQUENCE}")
-                last, called = cur.fetchone()
+                nxt = io_.next_sequence_value(cur)
             finally:
                 _best_effort_rollback(cur)
     except psycopg.Error as exc:
         print("could not re-read target: " + io_.redact(str(exc), secrets)[:400])
         return
-    print(f"target re-read: state {state}; {hp.SEQUENCE} last_value={last} is_called={called}")
+    print(f"target re-read: state {state}; {hp.SEQUENCE} next value {nxt}")
 
 
 def _best_effort_rollback(cur) -> bool:
@@ -324,7 +323,7 @@ def cmd_apply(args) -> int:
                 for t in plan["tables"]:
                     io_.set_triggers(tc, t["name"], True)
                     io_.set_fks_deferrable(tc, t["name"], t["fks"], False)
-                tc.execute("select setval(%s::regclass, %s, true)", (hp.SEQUENCE, plan["sequence"]["target_last_value"]))
+                io_.restart_sequence(tc, plan["sequence"]["target_last_value"] + 1)
                 inv = io_.post_copy_invariants(tc, plan, remap_to)
                 print_checks(inv, secrets)
                 got, want = [c["check"] for c in inv], io_.invariant_names(plan)
@@ -526,7 +525,7 @@ def cmd_rollback(args) -> int:
                 for t in plan["tables"]:
                     io_.set_triggers(tc, t["name"], True)
                     io_.set_fks_deferrable(tc, t["name"], t["fks"], False)
-                # Every check on fresh reads, then the one statement a ROLLBACK cannot undo, then COMMIT.
+                # Every check on fresh reads, then the sequence reset as the last statement, then COMMIT.
                 dirty = {n: c for n, c in io_.target_counts(tc).items() if c != 0}
                 outside = io_.rows_outside_load(plan, io_.business_counts(tc))
                 guards = _guard_checks(tc, plan)
@@ -538,7 +537,7 @@ def cmd_rollback(args) -> int:
                     print(_rolled_back(_best_effort_rollback(tc)))
                     _reread_state(tgt, plan, secrets)
                     return EXIT_APPLY_FAILED
-                tc.execute("select setval(%s::regclass, 1, false)", (hp.SEQUENCE,))
+                io_.restart_sequence(tc, 1)
             except psycopg.Error as exc:
                 ok = _best_effort_rollback(tc)
                 print("rollback failed: " + io_.redact(str(exc), secrets)[:400])

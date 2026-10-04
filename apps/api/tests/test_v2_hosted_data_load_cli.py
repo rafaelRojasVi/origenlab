@@ -279,8 +279,8 @@ class _CatCursor(_FakeCursor):
         elif text.startswith("select count(*) from "):
             n = text.split("from ", 1)[1].replace('"', "")
             self._rows = [(self.conn.counts[n],)]
-        elif text.startswith("select last_value"):
-            self._rows = [(23095, True)]
+        elif text.startswith("select case when is_called"):
+            self._rows = [(23096,)]
 
     def fetchone(self):
         return self._rows[0]
@@ -332,21 +332,23 @@ def test_rollback_succeeds_with_real_count_helpers_and_orders_statements(tmp_pat
     log = tgt.log
     assert not any("TRUNCATE" in s.upper() for s in log)
     assert [s for s in log if s.startswith("DELETE")] == [f"DELETE FROM {n}" for n in reversed(REAL)]
-    assert log[0] == "BEGIN" and log[-1] == "COMMIT" and log[-2].startswith("select setval")
+    assert log[0] == "BEGIN" and log[-1] == "COMMIT"
+    assert log[-2] == 'ALTER SEQUENCE "crm"."domain_event_stream_position_seq" RESTART WITH 1'
+    assert not any("setval" in s for s in log)
     last_count = max(i for i, s in enumerate(log) if s.startswith("select count(*)"))
     assert last_count < len(log) - 2
     assert any("SET LOCAL ROLE origenlab_owner" in s for s in log) and "SET CONSTRAINTS ALL DEFERRED" in log
     assert src.closed and tgt.closed and "s3cret" not in capsys.readouterr().out
 
 
-def test_rollback_dirty_after_delete_exits_12_without_setval_and_rereads(tmp_path, monkeypatch, capsys):
+def test_rollback_dirty_after_delete_exits_12_without_restart_and_rereads(tmp_path, monkeypatch, capsys):
     cli = load_cli()
     src, tgt = _patch_rollback(cli, monkeypatch, tgt=_CatConn(sticky=("crm.quote",)))
     assert cli.cmd_rollback(_rb_args(tmp_path)) == 12
-    assert not any(s.startswith("select setval") for s in tgt.log) and "COMMIT" not in tgt.log
+    assert not any(s.startswith("ALTER SEQUENCE") for s in tgt.log) and "COMMIT" not in tgt.log
     assert "ROLLBACK" in tgt.log
     out = capsys.readouterr().out
-    assert "tables not empty" in out and "target re-read: state loaded" in out and "is_called=True" in out
+    assert "tables not empty" in out and "target re-read: state loaded" in out and "next value 23096" in out
     assert "untouched" not in out and src.closed and tgt.closed
 
 
@@ -358,7 +360,7 @@ def test_rollback_refuses_when_not_loaded(tmp_path, monkeypatch, capsys):
     assert cli.cmd_rollback(_rb_args(tmp_path)) == 11
     out = capsys.readouterr().out
     assert "rollback --help" in out and "pre-load dump" not in out
-    assert not any(s.startswith(("DELETE", "select setval")) for s in tgt.log) and tgt.log[-1] == "ROLLBACK"
+    assert not any(s.startswith(("DELETE", "ALTER SEQUENCE")) for s in tgt.log) and tgt.log[-1] == "ROLLBACK"
 
 
 def test_rollback_refuses_when_rows_exist_outside_the_load(tmp_path, monkeypatch, capsys):
@@ -378,7 +380,7 @@ def test_rollback_refuses_when_the_roster_changed(tmp_path, monkeypatch):
     assert not any(s.startswith("DELETE") for s in tgt.log) and tgt.log[-1] == "ROLLBACK"
 
 
-def test_rollback_psycopg_error_rolls_back_without_setval(tmp_path, monkeypatch, capsys):
+def test_rollback_psycopg_error_rolls_back_without_restart(tmp_path, monkeypatch, capsys):
     cli = load_cli()
     src, tgt = _patch_rollback(cli, monkeypatch)
 
@@ -389,7 +391,7 @@ def test_rollback_psycopg_error_rolls_back_without_setval(tmp_path, monkeypatch,
     assert cli.cmd_rollback(_rb_args(tmp_path)) == 12
     out = capsys.readouterr().out
     assert "s3cret" not in out and "target re-read" in out
-    assert "ROLLBACK" in tgt.log and not any(s.startswith("select setval") for s in tgt.log)
+    assert "ROLLBACK" in tgt.log and not any(s.startswith("ALTER SEQUENCE") for s in tgt.log)
     assert src.closed and tgt.closed
 
 
@@ -855,3 +857,16 @@ def test_ctrl_c_during_commit_says_outcome_unknown(tmp_path, monkeypatch, capsys
     with pytest.raises(KeyboardInterrupt):
         cli.cmd_apply(_apply_args(tmp_path))
     assert "commit outcome unknown — run `verify`" in capsys.readouterr().out
+
+
+# ---- final review: M1 sequence via ALTER SEQUENCE … RESTART --------------------------------------
+
+
+def test_apply_restarts_the_sequence_at_the_next_value_inside_the_transaction(tmp_path, monkeypatch):
+    cli = load_cli()
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path)
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 0
+    log = tgt.log
+    restart = log.index('ALTER SEQUENCE "crm"."domain_event_stream_position_seq" RESTART WITH 23096')
+    assert log.index("BEGIN") < restart < log.index("COMMIT")
+    assert not any("setval" in s for s in log)

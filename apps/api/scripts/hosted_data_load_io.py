@@ -521,6 +521,19 @@ def lock_tables(cur, tables: Iterable[str]) -> None:
         sql.SQL(", ").join(sql.Identifier(*t.split(".", 1)) for t in tables)))
 
 
+def restart_sequence(cur, next_value: int) -> None:
+    """The next value the app gets from crm.domain_event's stream. ALTER SEQUENCE … RESTART is
+    transactional (PG >= 10 writes a new relfilenode), unlike setval: a ROLLBACK undoes it."""
+    cur.execute(sql.SQL("ALTER SEQUENCE {} RESTART WITH {}").format(
+        sql.Identifier(*hp.SEQUENCE.split(".", 1)), sql.Literal(int(next_value))))
+
+
+def next_sequence_value(cur) -> int:
+    """What nextval would return (increment 1), without consuming it."""
+    cur.execute(f"select case when is_called then last_value + 1 else last_value end from {hp.SEQUENCE}")
+    return int(cur.fetchone()[0])
+
+
 def set_fks_deferrable(cur, table: str, fk_names: list[str], deferrable: bool) -> None:
     mode = "DEFERRABLE INITIALLY DEFERRED" if deferrable else "NOT DEFERRABLE"
     for name in fk_names:
@@ -586,8 +599,7 @@ def post_copy_invariants(cur, plan: Mapping, hosted_operator: str) -> list[dict]
     cur.execute("select count(*) from pg_constraint where contype = 'f' and condeferrable and conrelid = any(%s::regclass[])",
                 (list(hp.TABLES),))
     check("no_deferrable_fks", cur.fetchone()[0] == 0)
-    cur.execute(f"select last_value from {hp.SEQUENCE}")
-    check("sequence_set", int(cur.fetchone()[0]) == plan["sequence"]["target_last_value"])
+    check("sequence_set", next_sequence_value(cur) == plan["sequence"]["target_last_value"] + 1)
     return checks
 
 
