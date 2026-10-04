@@ -6,6 +6,7 @@ import { FOLLOW_UP_AFTER_DAYS, STALE_AFTER_DAYS, groupFollowUps, type FollowUpIt
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
 import { Badge, ExternalLink, PageHeader, Panel, ResourceGate, fmtDate, type Tone } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
+import { SANTIAGO, WEEKDAYS, todayInSantiago } from "../marketing/calendar";
 
 type Navigate = (s: CrmSection, id?: string) => void;
 
@@ -18,7 +19,11 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
   const [pipeline, reloadPipeline] = useResource(fetchPipeline);
   return (
     <div className="space-y-5">
-      <PageHeader title="Resumen" subtitle="A quién hacer seguimiento hoy, y el tipo de cambio del día." />
+      <PageHeader
+        title="Resumen"
+        subtitle="A quién hacer seguimiento hoy, y el tipo de cambio del día."
+        actions={<Clock />}
+      />
       <FxSection state={fx} reload={reloadFx} />
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => <FollowUpsBody items={p.items} navigate={navigate} />}
@@ -62,6 +67,11 @@ function FxSection({ state, reload }: { state: ResourceState<FxResponse>; reload
         {byCode.EUR ? <RateCard rate={byCode.EUR} unit="euro" index={1} /> : null}
         <Converter rates={fx.rates} uf={byCode.UF ?? null} />
       </div>
+      {[byCode.USD, byCode.EUR].some((r) => r && r.as_of < todayInSantiago()) ? (
+        <p data-testid="fx-weekend-note" className="text-[11px] text-ink-muted">
+          El Banco Central no publica el dólar ni el euro los fines de semana ni feriados: rige el último valor publicado.
+        </p>
+      ) : null}
       <p className="text-[11px] text-ink-faint">
         Fuente: {fx.source_label}. Consultado a las {fmtTime(fx.fetched_at)}.
         {fx.stale ? <span className="ml-1 font-medium text-warn">No se pudo actualizar; se muestran las últimas cifras.</span> : null}
@@ -85,7 +95,7 @@ function RateCard({ rate, unit, index }: { rate: FxRate; unit: string; index: nu
         <CountUp value={rate.clp} format={fmtRate} />
       </p>
       <p className="mt-auto pt-2 text-[11px] text-ink-faint">
-        pesos por {unit}, al {fmtDay(rate.as_of)}
+        pesos por {unit} · {publishedLabel(rate.as_of)}
       </p>
       <span
         aria-hidden="true"
@@ -380,6 +390,27 @@ function FollowUpsSkeleton() {
   );
 }
 
+/* ──────────────────────────────────────────────────────────────── clock ── */
+
+const CLOCK_DAY = new Intl.DateTimeFormat("es-CL", { timeZone: SANTIAGO, weekday: "long", day: "numeric", month: "long" });
+const CLOCK_TIME = new Intl.DateTimeFormat("es-CL", { timeZone: SANTIAGO, hour: "2-digit", minute: "2-digit", hour12: false });
+
+/** Today and the time in Santiago, so «hoy» on this page always means the same day for everyone. */
+function Clock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const day = CLOCK_DAY.format(now);
+  return (
+    <p data-testid="resumen-clock" className="text-right text-xs text-ink-muted" title="Hora de Santiago">
+      <span className="font-medium capitalize text-ink">{day}</span>
+      <span className="ml-2 tabular-nums">{CLOCK_TIME.format(now)}</span>
+    </p>
+  );
+}
+
 /* ──────────────────────────────────────────────────────────────── format ── */
 
 function daysAgo(days: number): string {
@@ -393,6 +424,13 @@ function fmtDay(day: string): string {
   const [y, m, d] = day.split("-").map(Number);
   if (!y || !m || !d) return day;
   return new Date(y, m - 1, d).toLocaleDateString("es-CL", { day: "numeric", month: "short" });
+}
+
+/** «publicado hoy», or the figure in force today and the day it was published («lun 30 mar»). */
+function publishedLabel(asOf: string): string {
+  if (asOf >= todayInSantiago()) return "publicado hoy";
+  const d = new Date(`${asOf}T12:00:00Z`);
+  return `vigente hoy · publicado el ${WEEKDAYS[(d.getUTCDay() + 6) % 7]} ${fmtDay(asOf)}`;
 }
 
 function fmtTime(iso: string): string {
