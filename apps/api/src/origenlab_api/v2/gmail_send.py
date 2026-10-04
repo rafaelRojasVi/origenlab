@@ -39,14 +39,47 @@ _LOCAL_PART = r"[A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*"
 _DOMAIN_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 _ADDRESS = re.compile(rf"{_LOCAL_PART}@(?:{_DOMAIN_LABEL}\.)+[A-Za-z]{{2,63}}")
 MAX_ADDRESS_LENGTH = 254
+#: A machine-readable Google error code (`invalid_grant`, `PERMISSION_DENIED`, `rateLimitExceeded`).
+_ERROR_CODE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 Transport = Callable[[str, str, dict[str, str], bytes, float], tuple[int, bytes]]
 
 
 class GmailSendError(RuntimeError):
-    def __init__(self, kind: str, message: str) -> None:
+    """`kind` is the error class; `detail` is the short reason the failed receipt keeps — Google's
+    HTTP status and error code (`HTTP 403 PERMISSION_DENIED/dailyLimitExceeded`), or the network
+    exception's class. Never Google's message text, the recipient or a token."""
+
+    def __init__(self, kind: str, message: str, detail: str | None = None) -> None:
         super().__init__(message)
         self.kind = kind
+        self.detail = detail
+
+
+def _google_error_code(raw: bytes) -> str | None:
+    """`error` (OAuth token endpoint) or `error.status` / `error.errors[0].reason` (Gmail API)."""
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    error = data.get("error")
+    parts: list[object] = []
+    if isinstance(error, str):
+        parts.append(error)
+    elif isinstance(error, dict):
+        parts.append(error.get("status"))
+        errors = error.get("errors")
+        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            parts.append(errors[0].get("reason"))
+    clean = [p for p in parts if isinstance(p, str) and _ERROR_CODE.fullmatch(p)]
+    return "/".join(clean) or None
+
+
+def _http_detail(status: int, raw: bytes) -> str:
+    code = _google_error_code(raw)
+    return f"HTTP {status} {code}" if code else f"HTTP {status}"
 
 
 @dataclass(frozen=True)
@@ -122,7 +155,8 @@ class GmailSender:
         }).encode()
         status, raw = self._call("POST", TOKEN_URL, {"Content-Type": "application/x-www-form-urlencoded"}, body)
         if status != 200:
-            raise GmailSendError("token_refresh_failed", f"token refresh answered {status}")
+            detail = _http_detail(status, raw)
+            raise GmailSendError("token_refresh_failed", f"token refresh answered {detail}", detail)
         try:
             data = json.loads(raw)
             if not isinstance(data, dict):
@@ -132,15 +166,16 @@ class GmailSender:
             if expires_in is None:
                 expires_in = 0
             self._expires_at = self._clock() + float(expires_in)
-        except (ValueError, KeyError, TypeError) as exc:
-            raise GmailSendError("token_refresh_failed", f"token endpoint returned invalid data: {exc}") from exc
+        except (ValueError, KeyError, TypeError) as exc:  # never echo the body: it holds the token
+            raise GmailSendError("token_refresh_failed", f"token endpoint returned invalid data ({type(exc).__name__})",
+                                 "HTTP 200 invalid_response") from exc
         return self._access
 
     def _call(self, method: str, url: str, headers: dict[str, str], body: bytes) -> tuple[int, bytes]:
         try:
             return self._transport(method, url, headers, body, TIMEOUT_SECONDS)
         except (OSError, http.client.HTTPException) as exc:
-            raise GmailSendError("network", str(exc)) from exc
+            raise GmailSendError("network", str(exc), type(exc).__name__) from exc
 
     def send(self, raw: bytes) -> str:
         token = self._access_token()
@@ -148,11 +183,13 @@ class GmailSender:
         status, body = self._call("POST", SEND_URL, {"Authorization": f"Bearer {token}",
                                                      "Content-Type": "application/json"}, payload)
         if status != 200:
-            raise GmailSendError("gmail_rejected", f"Gmail answered {status}")
+            detail = _http_detail(status, body)
+            raise GmailSendError("gmail_rejected", f"Gmail answered {detail}", detail)
         try:
             data = json.loads(body)
             if not isinstance(data, dict):
                 raise ValueError("not an object")
             return data["id"]
         except (ValueError, KeyError) as exc:
-            raise GmailSendError("gmail_rejected", f"Gmail returned invalid data: {exc}") from exc
+            raise GmailSendError("gmail_rejected", f"Gmail returned invalid data ({type(exc).__name__})",
+                                 "HTTP 200 invalid_response") from exc

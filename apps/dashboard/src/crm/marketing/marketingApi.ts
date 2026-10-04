@@ -276,7 +276,15 @@ export function refusalOf(err: unknown): { code: string; message: string } | nul
 export type TestSendTarget = { campaign_id: string } | { v1_lane_key: string };
 export interface TestSendResult { status: "sent"; to: string; subject: string; gmail_message_id: string; sent_at: string }
 export interface TestSendHistory {
-  tests: { at: string; by: string | null; to: string; status: "sent" | "failed"; error: string | null }[];
+  tests: {
+    at: string;
+    by: string | null;
+    to: string;
+    status: "sent" | "failed";
+    error: string | null;
+    /** Google's HTTP status and error code, e.g. `HTTP 403 PERMISSION_DENIED/dailyLimitExceeded`. */
+    error_detail?: string | null;
+  }[];
   remaining: { hour: number; day: number };
 }
 /** Admin-only «Enviar prueba»: the campaign's own email to ONE address, from the shared account. */

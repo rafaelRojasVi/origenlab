@@ -3,7 +3,7 @@ import { OperatorApiError } from "../../api/operatorClient";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { fmtDate } from "../ui";
 import { useResource } from "../useResource";
-import { fetchTestSendHistory, sendCampaignTest, type TestSendTarget } from "./marketingApi";
+import { fetchTestSendHistory, sendCampaignTest, type TestSendHistory, type TestSendTarget } from "./marketingApi";
 
 // The API's rule (gmail_send.valid_test_address): one plain ASCII mailbox — a local part of
 // [A-Za-z0-9._%+-] with no leading, trailing or doubled dot, DNS labels, an alphabetic TLD of
@@ -47,6 +47,12 @@ function errorText(err: unknown): string {
     }
   }
   return "No se pudo enviar la prueba.";
+}
+
+function outcome(t: TestSendHistory["tests"][number]): string {
+  if (t.status === "sent") return "enviada";
+  const why = t.error_detail || t.error;
+  return why ? `falló (${why})` : "falló";
 }
 
 /** «Enviar prueba»: the campaign's own email, to one address, from the shared account. Admin only. */
@@ -110,7 +116,7 @@ function Panel({ target, sender }: { target: TestSendTarget; sender: string }) {
           {history.data.tests.map((t) => (
             <li key={`${t.at}-${t.to}`} className="flex justify-between gap-2 py-1">
               <span className="truncate">{t.to}</span>
-              <span className="shrink-0">{t.status === "sent" ? "enviada" : "falló"} · {t.by ?? "—"} · {fmtDate(t.at)}</span>
+              <span className="shrink-0">{outcome(t)} · {t.by ?? "—"} · {fmtDate(t.at)}</span>
             </li>
           ))}
         </ul>

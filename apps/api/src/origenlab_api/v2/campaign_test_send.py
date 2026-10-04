@@ -179,7 +179,12 @@ class V2CampaignTestSendRepository(CommandTransaction):
         try:
             message_id = self._sender.send(raw)
         except GmailSendError as exc:
-            self._finish(receipt_id, 502, {**record, "status": "failed", "error": exc.kind})
+            # `detail` is Google's HTTP status and error code (or the network error's class): never
+            # Google's message text, the recipient or a token.
+            failed = {**record, "status": "failed", "error": exc.kind}
+            if exc.detail:
+                failed["error_detail"] = exc.detail
+            self._finish(receipt_id, 502, failed)
             raise CommandRefused(502, exc.kind, FAILURE_MESSAGE_ES.get(exc.kind, "No se pudo enviar.")) from exc
         response = {**record, "status": "sent", "gmail_message_id": message_id,
                     "sent_at": datetime.now(timezone.utc).isoformat(),
@@ -207,7 +212,7 @@ class V2CampaignTestSendRepository(CommandTransaction):
                 """
                 select r.created_at::text as at, o.display_name as by,
                        r.response_body->>'to' as to, r.response_body->>'status' as status,
-                       r.response_body->>'error' as error
+                       r.response_body->>'error' as error, r.response_body->>'error_detail' as error_detail
                   from platform.command_receipt r
                   left join platform.operator o on o.id = r.operator_id
                  where r.command_name = %s and r.status in ('completed', 'failed')

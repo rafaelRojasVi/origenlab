@@ -17,13 +17,13 @@ function asRole(role: string, ui: ReactNode) {
   );
 }
 
-function stub(post: { status: number; body: unknown }) {
+function stub(post: { status: number; body: unknown }, tests: unknown[] = []) {
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     calls.push({ url, init });
     if (url.includes("test-send-history")) {
-      return Promise.resolve(new Response(JSON.stringify({ tests: [], remaining: { hour: 10, day: 30 } }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ tests, remaining: { hour: 10, day: 30 } }), { status: 200 }));
     }
     return Promise.resolve(new Response(JSON.stringify(post.body), { status: post.status }));
   }));
@@ -101,6 +101,17 @@ describe("«Enviar prueba»", () => {
       fireEvent.change(field, { target: { value: ok } });
       expect(button(), ok).toBeEnabled();
     }
+  });
+
+  it("shows why a past test failed: Google's status and error code", async () => {
+    stub({ status: 200, body: {} }, [
+      { at: "2026-10-05T12:00:00Z", by: "Op", to: "ana@example.invalid", status: "failed", error: "gmail_rejected",
+        error_detail: "HTTP 403 PERMISSION_DENIED/dailyLimitExceeded" },
+      { at: "2026-10-05T11:00:00Z", by: "Op", to: "bea@example.invalid", status: "failed", error: "network" },
+    ]);
+    render(asRole("admin", <TestSendPanel target={TARGET} config={CONFIG} />));
+    expect(await screen.findByText(/falló \(HTTP 403 PERMISSION_DENIED\/dailyLimitExceeded\)/)).toBeInTheDocument();
+    expect(screen.getByText(/falló \(network\)/)).toBeInTheDocument();
   });
 
   it("does not send an address with a name or a comma", async () => {

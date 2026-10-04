@@ -228,3 +228,65 @@ def test_200_without_id_is_a_gmail_rejection() -> None:
     with pytest.raises(GmailSendError) as exc:
         GmailSender(TOKEN, transport=transport_missing_id, clock=_Clock()).send(b"x")
     assert exc.value.kind == "gmail_rejected"
+
+
+# ------------------------------------------- Google's status and error code, nothing else (history)
+
+LEAKY_ADDRESS = "ana@example.invalid"
+
+
+def _answers(token: tuple[int, bytes], send: tuple[int, bytes] | None = None):
+    def transport(method, url, headers, body, timeout):
+        if url.endswith("/token"):
+            return token
+        return send
+
+    return transport
+
+
+def _json(payload) -> bytes:
+    return json.dumps(payload).encode()
+
+
+def test_a_refused_refresh_keeps_googles_status_and_error_code_but_not_its_description() -> None:
+    answer = (400, _json({"error": "invalid_grant", "error_description": f"Token revoked for {LEAKY_ADDRESS}"}))
+    with pytest.raises(GmailSendError) as exc:
+        GmailSender(TOKEN, transport=_answers(answer), clock=_Clock()).send(b"x")
+    assert exc.value.kind == "token_refresh_failed"
+    assert exc.value.detail == "HTTP 400 invalid_grant"
+    assert "400" in str(exc.value) and "invalid_grant" in str(exc.value)
+    assert "revoked" not in str(exc.value) and LEAKY_ADDRESS not in str(exc.value)
+    assert TOKEN.refresh_token not in exc.value.detail and TOKEN.client_secret not in str(exc.value)
+
+
+def test_a_gmail_rejection_keeps_the_status_and_reason_but_not_the_message_or_recipient() -> None:
+    error = {"error": {"code": 403, "message": f"Daily sending quota exceeded for {LEAKY_ADDRESS}",
+                       "errors": [{"message": f"quota for {LEAKY_ADDRESS}", "domain": "usageLimits",
+                                   "reason": "dailyLimitExceeded"}],
+                       "status": "PERMISSION_DENIED"}}
+    t = _answers((200, _json({"access_token": "at-secret", "expires_in": 3600})), (403, _json(error)))
+    with pytest.raises(GmailSendError) as exc:
+        GmailSender(TOKEN, transport=t, clock=_Clock()).send(b"x")
+    assert exc.value.kind == "gmail_rejected"
+    assert exc.value.detail == "HTTP 403 PERMISSION_DENIED/dailyLimitExceeded"
+    assert "403" in str(exc.value) and "dailyLimitExceeded" in str(exc.value)
+    for leak in (LEAKY_ADDRESS, "quota", "at-secret"):
+        assert leak not in str(exc.value) and leak not in exc.value.detail
+
+
+@pytest.mark.parametrize("body", [b"<html>Bad gateway for ana@example.invalid</html>", _json({"error": "has spaces and @"}),
+                                  _json({"error": {"status": "x" * 80}}), _json(["not", "an", "object"]),
+                                  _json({"error": {"errors": "not a list"}})])
+def test_a_rejection_without_a_clean_error_code_keeps_only_the_status(body: bytes) -> None:
+    t = _answers((200, _json({"access_token": "at1", "expires_in": 3600})), (502, body))
+    with pytest.raises(GmailSendError) as exc:
+        GmailSender(TOKEN, transport=t, clock=_Clock()).send(b"x")
+    assert exc.value.kind == "gmail_rejected" and exc.value.detail == "HTTP 502"
+    assert LEAKY_ADDRESS not in str(exc.value)
+
+
+def test_a_malformed_success_is_named_without_echoing_the_body() -> None:
+    t = _answers((200, _json({"access_token": "at1", "expires_in": 3600})), (200, _json({"threadId": LEAKY_ADDRESS})))
+    with pytest.raises(GmailSendError) as exc:
+        GmailSender(TOKEN, transport=t, clock=_Clock()).send(b"x")
+    assert exc.value.kind == "gmail_rejected" and exc.value.detail == "HTTP 200 invalid_response"

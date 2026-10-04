@@ -57,13 +57,14 @@ def test_the_body_carries_no_html_and_no_subject() -> None:
 
 
 class FakeGmail:
-    def __init__(self, fail: str | None = None) -> None:
+    def __init__(self, fail: str | None = None, detail: str | None = None) -> None:
         self.sent: list[bytes] = []
         self.fail = fail
+        self.detail = detail
 
     def send(self, raw: bytes) -> str:
         if self.fail:
-            raise GmailSendError(self.fail, "fake failure")
+            raise GmailSendError(self.fail, "fake failure", self.detail)
         self.sent.append(raw)
         return f"gmail-{len(self.sent)}"
 
@@ -215,12 +216,18 @@ def test_a_revoked_permission_fails_the_receipt_with_a_502(disposable_database, 
     _clear_receipts(disposable_database)
     cid = _campaign(disposable_database, world, "<p>Hola</p>")
     with pytest.raises(CommandRefused) as exc:
-        _run(disposable_database, FakeGmail(fail="token_refresh_failed"), world["ops"]["admin"],
-             SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.UUID(cid)))
+        _run(disposable_database, FakeGmail(fail="token_refresh_failed", detail="HTTP 400 invalid_grant"),
+             world["ops"]["admin"], SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.UUID(cid)))
     assert exc.value.status_code == 502 and exc.value.code == "token_refresh_failed"
-    rows = _owner(disposable_database, "select status, response_body->>'error' from platform.command_receipt "
-                                       "where command_name = %s", (SEND_CAMPAIGN_TEST,))
-    assert rows == [("failed", "token_refresh_failed")]
+    rows = _owner(disposable_database, "select status, response_body->>'error', response_body->>'error_detail' "
+                                       "from platform.command_receipt where command_name = %s", (SEND_CAMPAIGN_TEST,))
+    assert rows == [("failed", "token_refresh_failed", "HTTP 400 invalid_grant")]
+    import psycopg
+
+    repo = V2CampaignTestSendRepository(psycopg.connect, runtime_dsn(disposable_database), FakeGmail(), None)
+    [listed] = repo.history(campaign_id=cid, v1_lane_key=None)["tests"]
+    assert (listed["status"], listed["error"], listed["error_detail"]) == (
+        "failed", "token_refresh_failed", "HTTP 400 invalid_grant")
 
 
 @needs_db
@@ -280,7 +287,8 @@ def test_history_shows_a_failed_attempt_with_its_error_and_hides_in_progress(dis
     cid = _campaign(disposable_database, world, "<p>Hola</p>")
     body = SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.UUID(cid))
     with pytest.raises(CommandRefused):
-        _run(disposable_database, FakeGmail(fail="network"), world["ops"]["admin"], body)
+        _run(disposable_database, FakeGmail(fail="gmail_rejected", detail="HTTP 403 PERMISSION_DENIED/dailyLimitExceeded"),
+             world["ops"]["admin"], body)
     # An attempt that crashed between Gmail and the receipt: in_progress, never listed.
     _owner(disposable_database,
            "insert into platform.command_receipt (operator_id, idempotency_key, command_name, request_digest, status) "
@@ -290,7 +298,8 @@ def test_history_shows_a_failed_attempt_with_its_error_and_hides_in_progress(dis
 
     repo = V2CampaignTestSendRepository(psycopg.connect, runtime_dsn(disposable_database), FakeGmail(), None)
     out = repo.history(campaign_id=cid.upper(), v1_lane_key=None)
-    assert [(t["status"], t["error"]) for t in out["tests"]] == [("failed", "network")]
+    assert [(t["status"], t["error"], t["error_detail"]) for t in out["tests"]] == [
+        ("failed", "gmail_rejected", "HTTP 403 PERMISSION_DENIED/dailyLimitExceeded")]
 
 
 # ------------------------------------------------- unsubscribes and blocks (WORKFLOWS.md §W10)
