@@ -2,31 +2,40 @@
  * The Marketing calendar, as pure functions: days in America/Santiago, friendly relative dates,
  * the month grid, and the events — each one placed on a date the CRM actually recorded.
  *
- * | kind     | date                                                        |
- * |----------|-------------------------------------------------------------|
- * | `sent`   | each real send batch: the Santiago day attempts were accepted |
- * | `frozen` | the day the audience was frozen                              |
- * | `draft`  | the day the draft was last saved                             |
- * | `planned`| the internal planned day — metadata, never a schedule        |
+ * | kind      | date                                                                   |
+ * |-----------|------------------------------------------------------------------------|
+ * | `sent`    | each real send batch: the Santiago day attempts were accepted           |
+ * | `frozen`  | the day the audience was frozen                                        |
+ * | `draft`   | the day the draft was last saved                                       |
+ * | `planned` | the internal planned day — metadata, never a schedule                  |
+ * | `v1_lane` | a declared send day for a campaign running through the old systemd lane |
  *
  * A campaign that went out over two days shows two `sent` events, never one invented date.
  * Timestamps arrive in UTC and are only ever *displayed* in Santiago time.
+ *
+ * V1-lane events show each declared send day with an honest status label:
+ * - future → «Programada»
+ * - today  → «En curso»
+ * - past   → «Programada · resultado en el registro V1»
+ * V2 cannot see whether V1 actually sent a wave (a STOP file can cancel one), so results are
+ * never invented or labelled as sent.
  */
 
-import type { CampaignSummary } from "../crmTypes";
+import type { CampaignSummary, V1LaneCampaign } from "../crmTypes";
 
 export const SANTIAGO = "America/Santiago";
 export const PLANNING_LABEL = "Planificación interna · no programa el envío";
 
-export type EventKind = "sent" | "draft" | "frozen" | "planned";
+export type EventKind = "sent" | "draft" | "frozen" | "planned" | "v1_lane";
 
-export const EVENT_KINDS: EventKind[] = ["sent", "frozen", "draft", "planned"];
+export const EVENT_KINDS: EventKind[] = ["sent", "frozen", "draft", "planned", "v1_lane"];
 
 export const EVENT_LABEL: Record<EventKind, string> = {
   sent: "Enviada",
   draft: "Borrador",
   frozen: "Audiencia congelada",
   planned: "Planificada",
+  v1_lane: "Canal V1",
 };
 
 /** Colour classes per kind: a filled chip for what happened, a dashed outline for intent. */
@@ -35,6 +44,7 @@ export const EVENT_STYLE: Record<EventKind, { chip: string; dot: string }> = {
   frozen: { chip: "border-info/40 bg-info-bg text-info", dot: "bg-info" },
   draft: { chip: "border-line-strong bg-canvas-sunken text-ink-muted", dot: "bg-ink-faint" },
   planned: { chip: "border-dashed border-warn bg-canvas-raised text-warn", dot: "bg-warn" },
+  v1_lane: { chip: "border-good/50 bg-good-bg text-good", dot: "bg-good" },
 };
 
 export interface CalendarEvent {
@@ -193,6 +203,69 @@ export function buildEvents(campaigns: CampaignSummary[]): CalendarEvent[] {
     }
   }
   return events.sort((a, b) => a.day.localeCompare(b.day) || (a.time ?? "").localeCompare(b.time ?? ""));
+}
+
+/**
+ * Honest day status for a V1-lane send day.
+ *
+ * V2 cannot verify whether V1 actually sent a wave (a STOP file can cancel one), so past days
+ * are never labelled as sent — only as «resultado en el registro V1».
+ */
+export function v1LaneStatus(sendDay: string, today: string): string {
+  if (sendDay > today) return "Programada";
+  if (sendDay === today) return "En curso";
+  return "Programada · resultado en el registro V1";
+}
+
+/**
+ * Build calendar events for V1-lane campaigns. One event per declared send day.
+ *
+ * The kind's label says «Canal V1»; the detail shows the wave («oleada N de M»), the clients planned
+ * for that day when declared, and the honest per-day status. A planned count, never a sent one:
+ * V2 cannot see what V1 actually sent.
+ */
+export function buildV1LaneEvents(campaigns: V1LaneCampaign[], today: string): CalendarEvent[] {
+  const events: CalendarEvent[] = [];
+  for (const c of campaigns) {
+    const total = c.send_days.length;
+    c.send_days.forEach((day, i) => {
+      events.push({
+        id: `v1:${c.key}:${day}`,
+        campaignId: "",   // not a CRM campaign; EventChip skips onOpen when empty
+        campaignName: c.name,
+        kind: "v1_lane",
+        day,
+        detail: [
+          `Oleada ${i + 1} de ${total}`,
+          c.clients_per_day?.[i] ? `${c.clients_per_day[i].toLocaleString("es-CL")} clientes` : null,
+          v1LaneStatus(day, today),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        time: c.send_time,
+        origin: "native_v2",
+        familyIds: [],
+        status: "v1_lane",
+      });
+    });
+  }
+  return events.sort((a, b) => a.day.localeCompare(b.day));
+}
+
+/**
+ * Active V1-lane banner status for a campaign.
+ *
+ * Returns:
+ * - `"upcoming"` — today is before the first send day
+ * - `"active"` — today is between the first send day and promo_until (inclusive)
+ * - `"done"` — today is after promo_until
+ */
+export type V1LaneBannerState = "upcoming" | "active" | "done";
+
+export function v1LaneBannerState(campaign: V1LaneCampaign, today: string): V1LaneBannerState {
+  if (today < campaign.send_days[0]) return "upcoming";
+  if (today > campaign.promo_until) return "done";
+  return "active";
 }
 
 export interface MarketingOverviewFigures {

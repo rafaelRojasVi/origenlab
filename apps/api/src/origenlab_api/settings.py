@@ -296,6 +296,8 @@ class Settings(BaseSettings):
     contradictory ledger fails the process. Unset, the workspace answers without Drive links.
     """
     v2_drive_archive_ledgers: str | None = None
+    #: Directory holding V1-lane campaign emails as `v1-lane-<key>.html` (on Render, /etc/secrets).
+    v2_v1_lane_content_dir: str | None = None
 
     # --- Dashboard login -----------------------------------------------------
     # Google Workspace sign-in for the V2 boundary (apps/api/docs/PRODUCTION_AUTH.md,

@@ -12,7 +12,8 @@ import { MarketingOverview } from "../marketing/MarketingOverview";
 import { SuppressionStatus } from "../marketing/SuppressionStatus";
 import { PLANNING_LABEL, fmtShortDay, relativeDay, santiagoTime, todayInSantiago } from "../marketing/calendar";
 import { EmailFrame } from "../marketing/EmailFrame";
-import { NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, cardTotals, neverSent } from "../marketing/campaignTotals";
+import { V1LaneCampaignCard } from "../marketing/V1LaneCampaignCard";
+import { NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, cardTotals, neverSent, isNeverSentHistorical } from "../marketing/campaignTotals";
 import { fetchCampaign, fetchTaxonomy } from "../marketing/marketingApi";
 import type { CampaignContent, EquipmentTaxonomy } from "../marketing/marketingTypes";
 import {
@@ -122,7 +123,11 @@ export function MarketingPage() {
         }
       />
       {state.kind === "ready" && view.kind === "list" && tab !== "audiencias" && tab !== "bajas" ? (
-        <MarketingOverview campaigns={state.data.campaigns} onOpen={(id) => openDetail(id)} />
+        <MarketingOverview
+          campaigns={state.data.campaigns}
+          onOpen={(id) => openDetail(id)}
+          v1LaneCampaigns={state.data.v1_lane_campaigns}
+        />
       ) : null}
       {view.kind === "list" ? <HoldsBanner onChanged={() => reload()} /> : null}
       <Segmented
@@ -171,7 +176,14 @@ export function MarketingPage() {
         )
       ) : tab === "calendario" && view.kind === "list" ? (
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} />}>
-          {(data) => <CampaignCalendar campaigns={data.campaigns} taxonomy={taxonomy} onOpen={(id) => openDetail(id)} />}
+          {(data) => (
+            <CampaignCalendar
+              campaigns={data.campaigns}
+              taxonomy={taxonomy}
+              onOpen={(id) => openDetail(id)}
+              v1LaneCampaigns={data.v1_lane_campaigns}
+            />
+          )}
         </ResourceGate>
       ) : view.kind === "freeze" && mayAuthor ? (
         <div className="space-y-3">
@@ -240,6 +252,7 @@ function Body({
   onOpen: (id: string) => void;
   onHistory: (id: string, tab?: DetailTab, total?: TotalKey) => void;
 }) {
+  const [showNeverSent, setShowNeverSent] = useState(false);
   const drafts = data.authoring?.drafts_enabled;
   const storage = data.storage;
   const fixture = storage ? /^origenlab_test_/.test(storage.database) : false;
@@ -265,24 +278,39 @@ function Body({
     </p>
     </>
   );
-  if (data.campaigns.length === 0) {
+  const v1Lane = (data.v1_lane_campaigns ?? []).map((c) => <V1LaneCampaignCard key={c.key} campaign={c} />);
+  // Historical V1 campaigns that never went out are hidden (the record stays in the CRM).
+  const hidden = data.campaigns.filter(isNeverSentHistorical);
+  const campaigns = showNeverSent ? data.campaigns : data.campaigns.filter((c) => !isNeverSentHistorical(c));
+  const revealNeverSent =
+    hidden.length > 0 ? (
+      <button type="button" onClick={() => setShowNeverSent((v) => !v)} className="text-xs font-medium text-brand-700 hover:underline">
+        {showNeverSent
+          ? `Ocultar ${hidden.length === 1 ? "la campaña nunca enviada" : "las campañas nunca enviadas"}`
+          : `Mostrar ${hidden.length} ${hidden.length === 1 ? "campaña nunca enviada" : "campañas nunca enviadas"}`}
+      </button>
+    ) : null;
+  if (campaigns.length === 0) {
     return (
       <>
+        {v1Lane}
         {note}
         <EmptyState title="Sin campañas">El CRM no tiene campañas registradas.</EmptyState>
+        {revealNeverSent}
       </>
     );
   }
-  const totalSent = data.campaigns.reduce((n, c) => n + (c.recipients_by_state.sent ?? 0), 0);
-  const totalBounced = data.campaigns.reduce((n, c) => n + (c.recipients_by_state.bounced ?? 0), 0);
-  const replies = data.campaigns.reduce((n, c) => n + c.replies_recorded, 0);
-  const sentRecipients = data.campaigns.reduce((n, c) => n + (c.totals?.sent ?? 0), 0);
+  const totalSent = campaigns.reduce((n, c) => n + (c.recipients_by_state.sent ?? 0), 0);
+  const totalBounced = campaigns.reduce((n, c) => n + (c.recipients_by_state.bounced ?? 0), 0);
+  const replies = campaigns.reduce((n, c) => n + c.replies_recorded, 0);
+  const sentRecipients = campaigns.reduce((n, c) => n + (c.totals?.sent ?? 0), 0);
   return (
     <>
+      {v1Lane}
       <StatLine
         items={[
-          { label: "Campañas", value: data.campaigns.length },
-          { label: "Borradores", value: data.campaigns.filter((c) => c.status === "draft").length },
+          { label: "Campañas", value: campaigns.length },
+          { label: "Borradores", value: campaigns.filter((c) => c.status === "draft").length },
           { label: "Destinatarios enviados", value: fmtInt(sentRecipients || totalSent), title: "Destinatarios con un envío aceptado por Gmail" },
           { label: "Rebotes registrados", value: fmtInt(totalBounced), tone: totalBounced ? "warn" : undefined },
           { label: "Respuestas", value: replies === 0 ? "no sincronizadas desde Gmail" : fmtInt(replies) },
@@ -290,7 +318,7 @@ function Body({
       />
       {note}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
-        {data.campaigns.map((c) => (
+        {campaigns.map((c) => (
           <CampaignCard
             key={c.campaign_id}
             c={c}
@@ -302,6 +330,7 @@ function Body({
           />
         ))}
       </div>
+      {revealNeverSent}
       {replies === 0 ? <NotImportedState title="Respuestas a campañas">{data.replies_note}</NotImportedState> : null}
       <p className="text-[11px] text-ink-faint">
         Aperturas y clics no se registran en el CRM y no se muestran. El estado de entrega de cada envío figura como «pendiente»

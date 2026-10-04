@@ -30,6 +30,8 @@ from origenlab_api.v2.equipment_interests import interest_index, supplier_direct
 from origenlab_api.v2.equipment_taxonomy import load_taxonomy
 from origenlab_api.v2.fx_rates import FxRates, FxUnavailable
 from origenlab_api.v2.marketing_audience import BASES, AudienceFilter, apply_filter, compose
+from origenlab_api.v2.v1_lane_campaigns import as_dict as v1_campaign_as_dict
+from origenlab_api.v2.v1_lane_campaigns import load_v1_lane_campaigns, load_v1_lane_html
 from origenlab_api.v2.unsubscribe_replies import (
     ACCEPTED_FORMS,
     BAJA_GRAMMAR_VERSION,
@@ -175,6 +177,13 @@ def get_marketing(operator: Operator, repo: Repo, request: Request) -> Any:
         "campaign_blocks_enabled": bool(getattr(request.app.state, "campaign_blocks_enabled", False)),
     }
     body["time_zone"] = PLANNING_TIME_ZONE
+    # V1-lane declarations: campaigns being sent through the old systemd lane that are not yet
+    # visible in the V2 database. Loaded from a checked-in JSON file; a bad file returns [].
+    # The email preview comes from outside the repository (it carries contact addresses).
+    content_dir = getattr(request.app.state, "v1_lane_content_dir", None)
+    body["v1_lane_campaigns"] = [
+        v1_campaign_as_dict(c, load_v1_lane_html(c.key, content_dir)) for c in load_v1_lane_campaigns()
+    ]
     return _holds_for(operator, body)
 
 

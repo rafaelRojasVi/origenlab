@@ -212,6 +212,22 @@ export interface SendBatch {
   last_accepted_at: string;
 }
 
+/** A campaign being sent through the V1 systemd lane, declared in apps/api v1_lane_campaigns.json. */
+export interface V1LaneCampaign {
+  key: string;
+  name: string;
+  channel: "v1";
+  send_days: string[];
+  send_time: string;
+  promo_until: string;
+  /** Clients planned per send day (the runner's wave sizes), same order as `send_days`. */
+  clients_per_day?: number[] | null;
+  total_clients?: number | null;
+  audience_rule?: string | null;
+  /** The email as sent, when the API has it (kept outside the repository). */
+  html?: string | null;
+}
+
 export interface MarketingResponse {
   campaigns: CampaignSummary[];
   contact_controls: { kind: string; scope: string; count: number }[];
@@ -220,6 +236,8 @@ export interface MarketingResponse {
   storage?: { table: string; database: string };
   authoring?: { drafts_enabled: boolean; freeze_enabled?: boolean; recontact_review_enabled?: boolean; planning_enabled?: boolean };
   time_zone?: string;
+  /** Campaigns running through the old V1 systemd lane, not yet in the V2 database. */
+  v1_lane_campaigns?: V1LaneCampaign[];
 }
 
 export interface DriveDocument extends DriveLinkRef {
