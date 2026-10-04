@@ -31,7 +31,7 @@ PLAN_TESTS = _load("_hosted_plan_tests", _TESTS / "test_v2_hosted_data_load_plan
 AUTH = ["--authorize-hosted-connection", "--authorize-supavisor-session-route"]
 
 
-def test_plan_requires_both_authorisations(capsys):
+def test_plan_requires_both_authorisations():
     cli = load_cli()
     with pytest.raises(SystemExit):
         cli.main(["plan", "--out", "/tmp/x"])
@@ -39,7 +39,7 @@ def test_plan_requires_both_authorisations(capsys):
         cli.main(["plan", "--out", "/tmp/x", "--authorize-hosted-connection"])
 
 
-def test_apply_requires_plan_and_sha(capsys):
+def test_apply_requires_plan_and_sha():
     cli = load_cli()
     with pytest.raises(SystemExit):
         cli.main(["apply", *AUTH])
@@ -72,12 +72,12 @@ class _Conn:
 
 def _patch_plan_env(cli, monkeypatch, *, refuse: bool):
     conns = (_Conn(), _Conn())
-    target = SimpleNamespace(mode="hosted", password="pw", user="u", project_ref="ref", host="h", hostaddr="1.2.3.4")
+    target = SimpleNamespace(mode="hosted", password="s3cretpw", user="loginuser", project_ref="projref123", host="db.example.test", hostaddr="10.9.8.7")
     monkeypatch.setattr(cli, "connect_both", lambda args: (*conns, target))
     monkeypatch.setattr(cli, "_facts", lambda *a, **k: (PLAN_TESTS.good_source(), PLAN_TESTS.good_target(), PLAN_TESTS.good_host()))
     monkeypatch.setattr(cli.io_, "pg_dump_target", lambda *a, **k: None)
     if refuse:
-        monkeypatch.setattr(cli.hp, "evaluate", lambda **k: [{"check": "x", "ok": False, "detail": "ref h pw"}])
+        monkeypatch.setattr(cli.hp, "evaluate", lambda **k: [{"check": "x", "ok": False, "detail": "projref123 db.example.test s3cretpw"}])
     return conns
 
 
@@ -88,8 +88,9 @@ def test_plan_refused_writes_no_file_and_exits_11(tmp_path, monkeypatch, capsys)
     out = capsys.readouterr().out
     assert rc == 11
     assert list(tmp_path.glob("plan-*.json")) == []
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
     assert "no plan written" in out
-    assert "pw" not in out and "1.2.3.4" not in out
+    assert "s3cretpw" not in out and "10.9.8.7" not in out
     assert all(c.closed for c in conns)
 
 
@@ -121,3 +122,29 @@ def test_connect_both_closes_source_when_target_fails(monkeypatch):
     with pytest.raises(RuntimeError):
         cli.connect_both(SimpleNamespace(target_file="x"))
     assert src.closed
+
+
+@pytest.mark.parametrize("exc_type", [RuntimeError, OSError])
+def test_probe_failure_cleans_up_redacts_and_refuses(tmp_path, monkeypatch, capsys, exc_type):
+    cli = load_cli()
+    conns = _patch_plan_env(cli, monkeypatch, refuse=False)
+    # the probe outcome reaches the facts the way the real readers pass it
+    monkeypatch.setattr(
+        cli, "_facts",
+        lambda args, src, tgt, target, op, probe: (
+            PLAN_TESTS.good_source(), PLAN_TESTS.good_target(pg_dump_probe_ok=probe), PLAN_TESTS.good_host()))
+
+    def failing_dump(target, out, *, schema_only=False):
+        Path(out).write_text("partial")
+        Path(str(out) + ".sha256").write_text("x")
+        raise exc_type("pg_dump failed: s3cretpw loginuser projref123 10.9.8.7")
+
+    monkeypatch.setattr(cli.io_, "pg_dump_target", failing_dump)
+    rc = cli.main(["plan", "--out", str(tmp_path), *AUTH])
+    cap = capsys.readouterr()
+    assert rc == 11
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
+    for secret in ("s3cretpw", "loginuser", "projref123", "10.9.8.7"):
+        assert secret not in cap.out + cap.err
+    assert "***" in cap.out
+    assert all(c.closed for c in conns)

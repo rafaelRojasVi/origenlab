@@ -82,15 +82,16 @@ def _facts(args, src, tgt, target, hosted_operator: str, pg_dump_probe: bool):
 
 def cmd_plan(args) -> int:
     src, tgt, target = connect_both(args)
-    secrets = io_.target_secrets(target)
     try:
+        secrets = io_.target_secrets(target)
         out = Path(args.out).expanduser()
+        # A refused run may leave the empty 0700 --out directory and nothing else.
         out.mkdir(parents=True, exist_ok=True, mode=0o700)
         probe = out / f"probe-{_stamp()}.schema.dump"
         try:
             io_.pg_dump_target(target, probe, schema_only=True)
             probe_ok = True
-        except RuntimeError as exc:
+        except (RuntimeError, OSError) as exc:
             print(io_.redact(str(exc), secrets))
             probe_ok = False
         finally:
