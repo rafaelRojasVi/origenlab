@@ -464,6 +464,15 @@ class _RecordingConnection:
     def rollback(self) -> None:
         return None
 
+    def pipeline(self):  # type: ignore[return]
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _noop():
+            yield
+
+        return _noop()
+
     def __enter__(self) -> "_RecordingConnection":
         return self
 
