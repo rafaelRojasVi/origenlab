@@ -183,3 +183,70 @@ def test_rows_outside_load_flags_new_rows_and_singleton_drift():
     assert io_.rows_outside_load(plan, ok) == {}
     bad = {**ok, "crm.task": 4, "outbound.campaign_block": 0}
     assert io_.rows_outside_load(plan, bad) == {"crm.task": 4, "outbound.campaign_block": 0}
+
+
+# ---- Task 7: test-only switches ----------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+_GOOD = "origenlab_test_0123abcd"
+
+
+@pytest.mark.parametrize("bad", ["origenlab_clean", "postgres", "origenlab_test_XYZ", "origenlab_test_0123abcdx", ""])
+def test_source_db_override_ignores_non_disposable_names(monkeypatch, bad):
+    monkeypatch.setenv("OL_HOSTED_LOAD_SOURCE_DB", bad)
+    assert "dbname=origenlab_clean" in io_.source_conninfo()
+
+
+def test_source_db_override_accepts_disposable_name(monkeypatch):
+    monkeypatch.setenv("OL_HOSTED_LOAD_SOURCE_DB", _GOOD)
+    assert f"dbname={_GOOD}" in io_.source_conninfo()
+
+
+def _tf(tmp_path: Path, text: str) -> Path:
+    f = tmp_path / "t.env"
+    f.write_text(text)
+    f.chmod(0o600)
+    return f
+
+
+def test_local_scratch_target_needs_matching_name_and_only_key(tmp_path):
+    ok = _tf(tmp_path, f"# c\nOL_HOSTED_LOCAL_SCRATCH={_GOOD}\n")
+    t = io_.hosted_target(Path("/"), {"OL_HOSTED_LOCAL_SCRATCH": _GOOD}, ok)
+    assert (t.mode, t.database, t.host, t.port, t.sslmode) == ("local", _GOOD, "127.0.0.1", 54332, "disable")
+    for env_name, text in [("origenlab_clean", "OL_HOSTED_LOCAL_SCRATCH=origenlab_clean\n"),
+                           ("origenlab_test_XYZ", "OL_HOSTED_LOCAL_SCRATCH=origenlab_test_XYZ\n"),
+                           (_GOOD, f"OL_HOSTED_LOCAL_SCRATCH={_GOOD}\nOL_HOSTED_HOST=x\n"),
+                           (_GOOD, "OL_HOSTED_LOCAL_SCRATCH=origenlab_test_ffffffff\n")]:
+        assert io_._local_scratch_target({"OL_HOSTED_LOCAL_SCRATCH": env_name}, _tf(tmp_path, text)) is None
+    assert io_._local_scratch_target({}, ok) is None
+
+
+def test_host_facts_for_local_target_keep_real_file_checks(tmp_path, monkeypatch):
+    f = _tf(tmp_path, f"OL_HOSTED_LOCAL_SCRATCH={_GOOD}\n")
+    f.chmod(0o644)
+    t = io_.hosted_target(Path("/"), {"OL_HOSTED_LOCAL_SCRATCH": _GOOD}, f)
+    monkeypatch.setattr(io_.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=""))
+    facts = io_.read_host_facts(Path("/"), f, t, proc=_fake_proc(tmp_path, {}))
+    assert facts["target_file_mode"] == 0o644  # the mode check stays real
+    assert (facts["route"], facts["port"], facts["sslmode"], facts["ca_exists"]) == ("supavisor-session", 5432, "verify-full", True)
+
+
+def test_target_ledger_is_read_before_the_role_switch(monkeypatch):
+    """origenlab_owner cannot read supabase_migrations (found by the e2e): the ledger is read as the login role."""
+    log: list[str] = []
+
+    class Cur:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, q, params=None): log.append(str(q))
+        def fetchone(self): raise StopIteration
+
+    class Conn:
+        def cursor(self): return Cur()
+
+    monkeypatch.setattr(io_, "_ledger", lambda cur: log.append("LEDGER") or ["1"])
+    monkeypatch.setattr(io_, "apply_session_settings", lambda cur, local=False: None)
+    with pytest.raises(StopIteration):
+        io_.read_target_facts(Conn(), SimpleNamespace(project_ref="r", host="h"), True)
+    assert log.index("LEDGER") < log.index("set local role origenlab_owner")

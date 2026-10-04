@@ -2,6 +2,16 @@
 
 Script-side on purpose (runs docker, reads /proc and the crontab). The decisions live in
 ``origenlab_api.v2.hosted_data_load_plan``; this module only observes and moves.
+
+Two TEST-ONLY switches exist for the end-to-end rehearsal (``tests/test_v2_hosted_data_load_e2e.py``).
+Neither can name a database that is not disposable: both accept only ``^origenlab_test_[0-9a-f]{8}$``
+(the pattern the scratch script enforces) and silently fall back to the real behaviour otherwise.
+
+* ``OL_HOSTED_LOAD_SOURCE_DB`` replaces the source ``origenlab_clean`` (``source_conninfo``).
+* ``OL_HOSTED_LOCAL_SCRATCH`` makes ``hosted_target`` return a loopback target on the dev
+  container, but only when the target file's single non-comment key is
+  ``OL_HOSTED_LOCAL_SCRATCH`` with that same value. ``read_host_facts`` then reports the TLS and
+  route facts as satisfied; the target-file mode and the process/crontab scans stay real.
 """
 from __future__ import annotations
 
@@ -29,6 +39,7 @@ SOURCE_DB = "origenlab_clean"
 SOURCE_PORT = 54332
 DUMP_SCHEMAS = ("crm", "evidence", "outbound", "comms", "catalog", "platform")
 _APP_NAME = "origenlab-hosted-data-load"
+_DISPOSABLE_DB = re.compile(r"origenlab_test_[0-9a-f]{8}")
 _SECRET_IN_URI = re.compile(r"(://[^:/@\s]+):[^@\s]*@")
 _PASSWORD_KV = re.compile(r"(password\s*=\s*)\S+", re.I)
 _POOLER_HOST = re.compile(r"[a-z0-9.-]*pooler\.supabase\.com|db\.[a-z]{20}\.supabase\.co")
@@ -57,10 +68,32 @@ def scratch_conninfo(db: str, port: int = SOURCE_PORT) -> str:
 
 
 def source_conninfo(port: int = SOURCE_PORT) -> str:
-    return scratch_conninfo(SOURCE_DB, port)
+    override = os.environ.get("OL_HOSTED_LOAD_SOURCE_DB", "")
+    return scratch_conninfo(override if _DISPOSABLE_DB.fullmatch(override) else SOURCE_DB, port)
+
+
+def _local_scratch_target(environ: Mapping[str, str], target_file: Path) -> Target | None:
+    """TEST-ONLY: a loopback Target on the dev container, for a disposable database named in the
+    environment AND as the only key of the target file. Anything else returns None."""
+    name = environ.get("OL_HOSTED_LOCAL_SCRATCH", "")
+    if not _DISPOSABLE_DB.fullmatch(name):
+        return None
+    try:
+        lines = [ln.strip() for ln in Path(target_file).read_text().splitlines()]
+    except OSError:
+        return None
+    keys = [ln for ln in lines if ln and not ln.startswith("#")]
+    if keys != [f"OL_HOSTED_LOCAL_SCRATCH={name}"]:
+        return None
+    return Target(mode="local", host="127.0.0.1", hostaddr=None, port=SOURCE_PORT, user="supabase_admin",
+                  database=name, sslmode="disable", sslrootcert=None, password="postgres", project_ref="e2e",
+                  route=ROUTE_SUPAVISOR_SESSION)
 
 
 def hosted_target(repo_root: Path, environ: Mapping[str, str], target_file: Path = TARGET_FILE) -> Target:
+    local = _local_scratch_target(environ, repo_root / target_file)
+    if local is not None:
+        return local
     return resolve(repo_root, dict(environ), target_file=target_file,
                    authorized_routes=frozenset({ROUTE_SUPAVISOR_SESSION}))
 
@@ -213,6 +246,8 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
     with conn.cursor() as cur:
         cur.execute("begin isolation level repeatable read read only")
         try:
+            # The ledger belongs to the login role: origenlab_owner has no access to supabase_migrations.
+            ledger = _ledger(cur)
             cur.execute("set local role origenlab_owner")
             apply_session_settings(cur, local=True)
             cur.execute("select current_setting('server_version_num')::int")
@@ -236,7 +271,7 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
             free = cur.fetchone()[0]
             return {
                 "project_ref": target.project_ref, "pooler_host": target.host, "server_version_num": int(ver),
-                "ledger": _ledger(cur), "tables": tables, "all_business_counts": counts,
+                "ledger": ledger, "tables": tables, "all_business_counts": counts,
                 "operators": _operators(cur), "principals": int(principals), "profiles": int(profiles),
                 "command_receipts": int(receipts),
                 "send_control": {
@@ -282,12 +317,18 @@ def read_host_facts(repo_root: Path, target_file: Path, target: Any, proc: Path 
     cron_lines = [ln for ln in cron_out.splitlines() if SOURCE_DB in ln and not ln.lstrip().startswith("#")]
     label = subprocess.run(["docker", "inspect", CONTAINER, "--format", '{{index .Config.Labels "com.origenlab.workdir"}}'],
                            capture_output=True, text=True).stdout.strip()
-    return {
+    facts = {
         "target_file_mode": st.st_mode & 0o777, "target_file_regular": path.is_file(),
         "route": target.route, "port": int(target.port), "sslmode": target.sslmode,
         "ca_exists": Path(target.sslrootcert).is_file(), "processes": _scan_processes(proc), "crontab": cron_lines,
         "container_label_ok": bool(label) and Path(label).resolve() == repo_root.resolve(),
+    } if target.mode != "local" else {
+        # TEST-ONLY local scratch target: the hosted-only facts hold by construction; the rest stays real.
+        "target_file_mode": st.st_mode & 0o777, "target_file_regular": path.is_file(),
+        "route": "supavisor-session", "port": 5432, "sslmode": "verify-full", "ca_exists": True,
+        "processes": _scan_processes(proc), "crontab": cron_lines, "container_label_ok": True,
     }
+    return facts
 
 
 def _pg_dump_command(target: Any, schema_only: bool) -> tuple[list[str], dict[str, str]]:
