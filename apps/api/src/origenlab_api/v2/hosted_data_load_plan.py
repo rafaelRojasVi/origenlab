@@ -146,6 +146,14 @@ def build_plan(*, source: Mapping, target: Mapping, hosted_operator: str, genera
     }
 
 
+def _parse_iso(s: str) -> datetime:
+    """Parse ISO 8601 timestamp; raise ValueError if malformed or naive (no tzinfo)."""
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        raise ValueError("naive timestamp")
+    return dt
+
+
 def evaluate(*, plan: Mapping, plan_sha: str, expected_sha: str, source: Mapping, target: Mapping,
              host: Mapping, now_iso: str) -> list[dict]:
     """One row per guard; a run proceeds only when every row is ok. Pure: no I/O."""
@@ -156,8 +164,15 @@ def evaluate(*, plan: Mapping, plan_sha: str, expected_sha: str, source: Mapping
 
     # plan
     check("plan_sha256_matches", plan_sha == expected_sha, {"actual": plan_sha, "expected": expected_sha})
-    age = datetime.fromisoformat(now_iso.replace("Z", "+00:00")) - datetime.fromisoformat(plan["generated_at"].replace("Z", "+00:00"))
-    check("plan_is_fresh", timedelta(0) <= age <= PLAN_MAX_AGE, str(age))
+    plan_is_fresh_ok = False
+    try:
+        now = _parse_iso(now_iso)
+        generated = _parse_iso(plan["generated_at"])
+        age = now - generated
+        plan_is_fresh_ok = timedelta(0) <= age <= PLAN_MAX_AGE
+    except (ValueError, TypeError):
+        pass
+    check("plan_is_fresh", plan_is_fresh_ok, "unparseable" if not plan_is_fresh_ok else None)
     check("remap_target_is_hosted_operator", plan["remap"]["to"] != "" and plan["remap"]["from"] == list(LOCAL_OPERATOR_IDS), plan["remap"])
 
     # ledgers
@@ -201,7 +216,7 @@ def evaluate(*, plan: Mapping, plan_sha: str, expected_sha: str, source: Mapping
     check("hold_row_active", cb["scope"] == "all_campaigns" and cb["legacy_campaign_key"] == HOLD_KEY and cb["lifted_at"] is None, cb)
     check("no_other_target_sessions", not target["other_sessions"], target["other_sessions"])
     check("advisory_lock_free", bool(target["advisory_lock_free"]), ADVISORY_LOCK_KEY)
-    check("server_is_postgres_17", int(target["server_version_num"]) >= 170000, target["server_version_num"])
+    check("server_is_postgres_17", int(target["server_version_num"]) // 10000 == 17, target["server_version_num"])
     check("pg_dump_can_reach_target", bool(target["pg_dump_probe_ok"]), None)
 
     # host

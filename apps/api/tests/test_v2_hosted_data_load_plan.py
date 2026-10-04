@@ -226,3 +226,94 @@ def test_source_operators_must_be_the_two_known():
 
 def test_pg_dump_probe_required():
     assert "pg_dump_can_reach_target" in hp.refused(_eval(target=good_target(pg_dump_probe_ok=False)))
+
+
+def test_source_ledger_head_wrong_head():
+    assert "source_ledger_head" in hp.refused(_eval(source=good_source(ledger=LEDGER[:-1] + ["20260930110000"])))
+
+
+def test_source_ledger_head_wrong_count():
+    assert "source_ledger_head" in hp.refused(_eval(source=good_source(ledger=LEDGER[:-1])))
+
+
+def test_source_system_identifier_matches_plan():
+    assert "source_system_identifier_matches_plan" in hp.refused(_eval(source=good_source(system_identifier="9999999999999999999")))
+
+
+def test_target_project_matches_plan():
+    assert "target_project_matches_plan" in hp.refused(_eval(target=good_target(project_ref="different-ref")))
+
+
+def test_hosted_roster_unchanged_since_plan():
+    assert "hosted_roster_unchanged_since_plan" in hp.refused(_eval(target=good_target(roster_hash="different-hash")))
+
+
+def test_fk_inventory_matches_plan_first_table():
+    tgt = good_target(); tgt["tables"]["crm.opportunity"]["fks"] = [["new_fk"]]
+    assert "fk_inventory_matches_plan:crm.opportunity" in hp.refused(_eval(target=tgt))
+
+
+def test_container_is_this_worktrees():
+    assert "container_is_this_worktrees" in hp.refused(_eval(host=good_host(container_label_ok=False)))
+
+
+def test_remap_target_is_hosted_operator_from_altered():
+    plan = _plan(); plan["remap"]["from"] = ["wrong-uuid"]
+    assert "remap_target_is_hosted_operator" in hp.refused(_eval(plan=plan))
+
+
+def test_target_file_mode_0600_via_regular_false():
+    assert "target_file_mode_0600" in hp.refused(_eval(host=good_host(target_file_regular=False)))
+
+
+def test_hosted_roster_shape_principals():
+    assert "hosted_roster_shape" in hp.refused(_eval(target=good_target(principals=2)))
+
+
+def test_hosted_roster_shape_command_receipts():
+    assert "hosted_roster_shape" in hp.refused(_eval(target=good_target(command_receipts=1)))
+
+
+def test_hosted_roster_shape_operators():
+    assert "hosted_roster_shape" in hp.refused(_eval(target=good_target(operators=good_target()["operators"] + [["x", "y", "z", "w", "v"]])))
+
+
+def test_route_is_supavisor_session_5432_via_route():
+    assert "route_is_supavisor_session_5432" in hp.refused(_eval(host=good_host(route="direct")))
+
+
+def test_empty_target_ledger():
+    assert "ledgers_identical" in hp.refused(_eval(target=good_target(ledger=[])))
+
+
+def test_empty_source_ledger():
+    assert "source_ledger_head" in hp.refused(_eval(source=good_source(ledger=[])))
+
+
+def test_empty_ledger_in_build_plan():
+    plan = hp.build_plan(source=good_source(ledger=[]), target=good_target(ledger=[]), hosted_operator=HOSTED, generated_at="2026-10-05T12:00:00Z")
+    assert plan["source"]["ledger_head"] is None
+    assert plan["target"]["ledger_head"] is None
+
+
+def test_future_generated_at():
+    plan = _plan(); plan["generated_at"] = "2026-10-05T14:00:00Z"
+    assert "plan_is_fresh" in hp.refused(_eval(plan=plan))
+
+
+def test_naive_generated_at():
+    plan = _plan(); plan["generated_at"] = "2026-10-05T12:00:00"
+    checks = _eval(plan=plan)
+    assert "plan_is_fresh" in hp.refused(checks)
+    assert any(c["detail"] == "unparseable" for c in checks if c["check"] == "plan_is_fresh")
+
+
+def test_garbage_generated_at():
+    plan = _plan(); plan["generated_at"] = "garbage"
+    checks = _eval(plan=plan)
+    assert "plan_is_fresh" in hp.refused(checks)
+    assert any(c["detail"] == "unparseable" for c in checks if c["check"] == "plan_is_fresh")
+
+
+def test_pg18_refused():
+    assert "server_is_postgres_17" in hp.refused(_eval(target=good_target(server_version_num=180000)))
