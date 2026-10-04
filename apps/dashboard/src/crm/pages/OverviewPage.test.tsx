@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import type { FxResponse } from "../fx";
@@ -111,6 +111,51 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// A case folder's name as filed on Drive (kept out of a `…key: "…"` literal, which the secret scanner
+// reads as a credential).
+const FOLDER_NAME = "CN01022-Persona Ejemplo – Agrícola Norte";
+
+const DRIVE = {
+  source: "archive_ledger",
+  ledgers: ["run-1"],
+  folders: [
+    { folder_id: "f1", folder_url: null, case_key: FOLDER_NAME, documents: [],
+      quote_numbers: ["01022-26"], in_crm: 0, organization_name: null },
+  ],
+  totals: { folders: 1, documents: 1, in_crm: 0, not_in_crm: 1 },
+};
+
+describe("Resumen · número de cotización", () => {
+  it("shows the last number the system knows and the next one", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
+    render(<OverviewPage navigate={() => undefined} />);
+    const box = await screen.findByTestId("quote-number-box");
+    await waitFor(() => expect(within(box).getByTestId("quote-last")).toHaveTextContent("01022-26"));
+    expect(within(box).getByTestId("quote-last")).toHaveTextContent("Agrícola Norte · Drive");
+    expect(within(box).getByTestId("quote-next")).toHaveTextContent("01023-26");
+  });
+
+  it("says a typed number is already used, and by whom", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
+    render(<OverviewPage navigate={() => undefined} />);
+    const input = await screen.findByLabelText("¿Ya existe este número?");
+    await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("01022-26"));
+    fireEvent.change(input, { target: { value: "1020" } });
+    expect(screen.getByTestId("quote-check")).toHaveTextContent(/Ya usado: 01020-26 · Laboratorio Andino · CRM/);
+    fireEvent.change(input, { target: { value: "01500-26" } });
+    expect(screen.getByTestId("quote-check")).toHaveTextContent(/No está en el CRM ni en el archivo de Drive/);
+    fireEvent.change(input, { target: { value: "hola" } });
+    expect(screen.getByTestId("quote-check")).toHaveTextContent(/Escribe un número/);
+  });
+
+  it("still answers from the CRM when the Drive archive cannot be read, and says so", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
+    render(<OverviewPage navigate={() => undefined} />);
+    await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("01020-26"));
+    expect(screen.getByTestId("quote-number-box")).toHaveTextContent(/sin el archivo de Drive/);
+  });
+});
+
 describe("Resumen", () => {
   it("shows the day's dólar, euro and UF in pesos with their date and source", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
@@ -144,7 +189,7 @@ describe("Resumen", () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
     const clock = await screen.findByTestId("resumen-clock");
-    expect(clock).toHaveTextContent(/martes.*31 de marzo/i);
+    expect(clock).toHaveTextContent(/Martes, 31 de marzo/); // only the first letter capitalised
     expect(clock).toHaveTextContent("12:00");
   });
 
