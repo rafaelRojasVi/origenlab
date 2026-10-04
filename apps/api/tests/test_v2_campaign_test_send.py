@@ -6,7 +6,9 @@ Every address is invented (example.invalid); Gmail is a fake that records what i
 from __future__ import annotations
 
 import email
+import email.header
 import uuid
+from datetime import datetime
 
 import pytest
 from pydantic import ValidationError
@@ -14,6 +16,7 @@ from pydantic import ValidationError
 from origenlab_api.v2.campaign_test_send import (
     SEND_CAMPAIGN_TEST,
     TEST_SENDS_PER_HOUR,
+    TestSendLimitRefused,
     SendCampaignTestBody,
     V2CampaignTestSendRepository,
 )
@@ -106,6 +109,15 @@ def _clear_receipts(dsn):
     _owner(dsn, "delete from platform.command_receipt where command_name = %s", (SEND_CAMPAIGN_TEST,))
 
 
+def _receipt_count(dsn) -> int:
+    return _owner(dsn, "select count(*) from platform.command_receipt where command_name = %s",
+                  (SEND_CAMPAIGN_TEST,))[0][0]
+
+
+def _set_subject(dsn, cid: str, subject: str) -> None:
+    _owner(dsn, "update outbound.campaign set subject = %s where id = %s", (subject, cid))
+
+
 def _run(dsn, gmail, operator, body, key=None):
     repo = V2CampaignTestSendRepository(__import__("psycopg").connect, runtime_dsn(dsn), gmail, None)
     return repo.send_test(operator=operator, body=body, idempotency_key=key or str(uuid.uuid4()),
@@ -129,11 +141,12 @@ def test_an_admin_sends_the_stored_email_and_the_receipt_records_it(disposable_d
 
 @needs_db
 def test_sales_may_not_send(disposable_database, world) -> None:
+    _clear_receipts(disposable_database)
     cid = _campaign(disposable_database, world, "<p>Hola</p>")
     with pytest.raises(CommandRefused) as exc:
         _run(disposable_database, FakeGmail(), world["ops"]["sales"],
              SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.UUID(cid)))
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 403 and exc.value.code == "admin_only"
 
 
 @needs_db
@@ -161,14 +174,17 @@ def test_a_campaign_without_html_is_refused_and_leaves_no_receipt(disposable_dat
 
 @needs_db
 def test_an_unknown_campaign_is_not_found(disposable_database, world) -> None:
+    _clear_receipts(disposable_database)
     with pytest.raises(CommandRefused) as exc:
         _run(disposable_database, FakeGmail(), world["ops"]["admin"],
              SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.uuid4()))
     assert exc.value.status_code == 404
+    assert _receipt_count(disposable_database) == 0
 
 
 @needs_db
 def test_a_v1_lane_campaign_without_its_email_file_is_refused(disposable_database, world) -> None:
+    _clear_receipts(disposable_database)
     with pytest.raises(CommandRefused) as exc:
         _run(disposable_database, FakeGmail(), world["ops"]["admin"],
              SendCampaignTestBody(to="ana@example.invalid", v1_lane_key=CYBER))
@@ -188,7 +204,10 @@ def test_the_eleventh_test_in_an_hour_is_refused_and_failures_do_not_count(dispo
     with pytest.raises(CommandRefused) as exc:
         _run(disposable_database, gmail, world["ops"]["admin"], body())
     assert exc.value.status_code == 429 and len(gmail.sent) == TEST_SENDS_PER_HOUR
-    assert "next_allowed_at" in str(exc.value)
+    assert isinstance(exc.value, TestSendLimitRefused) and "next_allowed_at" in str(exc.value)
+    assert datetime.fromisoformat(exc.value.next_allowed_at).tzinfo is not None
+    # the earlier failed attempt plus ten sends; the refused eleventh left no receipt
+    assert _receipt_count(disposable_database) == TEST_SENDS_PER_HOUR + 1
 
 
 @needs_db
@@ -218,3 +237,57 @@ def test_history_lists_the_campaigns_tests_newest_first_with_the_allowance(dispo
     assert [t["to"] for t in out["tests"]] == ["b@example.invalid", "a@example.invalid"]
     assert out["tests"][0]["by"] == "Op admin" and out["tests"][0]["status"] == "sent"
     assert out["remaining"] == {"hour": TEST_SENDS_PER_HOUR - 2, "day": 30 - 2}
+
+
+@needs_db
+def test_a_subject_with_a_line_break_is_refused_and_leaves_no_receipt(disposable_database, world) -> None:
+    _clear_receipts(disposable_database)
+    cid = _campaign(disposable_database, world, "<p>Hola</p>")
+    _set_subject(disposable_database, cid, "Hola\nmundo")
+    gmail = FakeGmail()
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, gmail, world["ops"]["admin"],
+             SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.UUID(cid)))
+    assert exc.value.status_code == 422 and exc.value.code == "campaign_subject_invalid"
+    assert gmail.sent == [] and _receipt_count(disposable_database) == 0
+
+
+@needs_db
+def test_a_v1_lane_campaign_sends_its_file_with_its_declared_subject(disposable_database, world, tmp_path) -> None:
+    _clear_receipts(disposable_database)
+    html = "<p>Cyber — ñandú</p>"
+    (tmp_path / f"v1-lane-{CYBER}.html").write_text(html, encoding="utf-8")
+    gmail = FakeGmail()
+    import psycopg
+
+    repo = V2CampaignTestSendRepository(psycopg.connect, runtime_dsn(disposable_database), gmail, str(tmp_path))
+    body = SendCampaignTestBody(to="ana@example.invalid", v1_lane_key=CYBER)
+    out = repo.send_test(operator=world["ops"]["admin"], body=body, idempotency_key=str(uuid.uuid4()),
+                         digest=request_digest(SEND_CAMPAIGN_TEST, body))
+    assert out["status"] == "sent"
+    msg = email.message_from_bytes(gmail.sent[0])
+    subject = str(email.header.make_header(email.header.decode_header(msg["Subject"])))
+    assert subject == "[PRUEBA] Cyber OrigenLab · 5% a 10% en productos seleccionados para laboratorio"
+    part = next(p for p in msg.walk() if p.get_content_type() == "text/html")
+    assert part.get_payload(decode=True).decode(part.get_content_charset()).rstrip() == html
+    listed = repo.history(campaign_id=None, v1_lane_key=CYBER)
+    assert [t["to"] for t in listed["tests"]] == ["ana@example.invalid"]
+
+
+@needs_db
+def test_history_shows_a_failed_attempt_with_its_error_and_hides_in_progress(disposable_database, world) -> None:
+    _clear_receipts(disposable_database)
+    cid = _campaign(disposable_database, world, "<p>Hola</p>")
+    body = SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.UUID(cid))
+    with pytest.raises(CommandRefused):
+        _run(disposable_database, FakeGmail(fail="network"), world["ops"]["admin"], body)
+    # An attempt that crashed between Gmail and the receipt: in_progress, never listed.
+    _owner(disposable_database,
+           "insert into platform.command_receipt (operator_id, idempotency_key, command_name, request_digest, status) "
+           "values (%s, %s, %s, %s, 'in_progress')",
+           (world["ops"]["admin"].operator_id, str(uuid.uuid4()), SEND_CAMPAIGN_TEST, "0" * 64))
+    import psycopg
+
+    repo = V2CampaignTestSendRepository(psycopg.connect, runtime_dsn(disposable_database), FakeGmail(), None)
+    out = repo.history(campaign_id=cid.upper(), v1_lane_key=None)
+    assert [(t["status"], t["error"]) for t in out["tests"]] == [("failed", "network")]

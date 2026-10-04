@@ -249,7 +249,7 @@ def test_the_committed_cyber_entry_carries_its_subject() -> None:
     assert as_dict(c)["subject"] == c.subject
 
 
-@pytest.mark.parametrize("bad", ["   ", "x" * 301, 5])
+@pytest.mark.parametrize("bad", ["   ", "x" * 301, 5, "Hola\nmundo", "Hola\rmundo"])
 def test_a_blank_or_long_subject_is_refused(bad) -> None:
     with pytest.raises(V1LaneValidationError, match="subject"):
         validate_entry({**GOOD, "subject": bad})

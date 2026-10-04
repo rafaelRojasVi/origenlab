@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import email
+import http.client
 import json
 from pathlib import Path
 
@@ -139,6 +140,17 @@ def test_gmail_refusing_the_message_is_a_rejection() -> None:
 def test_a_network_failure_is_named_as_such() -> None:
     def broken(*_a, **_k):
         raise OSError("down")
+
+    with pytest.raises(GmailSendError) as exc:
+        GmailSender(TOKEN, transport=broken, clock=_Clock()).send(b"x")
+    assert exc.value.kind == "network"
+
+
+@pytest.mark.parametrize("raised", [http.client.IncompleteRead(b"x"), http.client.BadStatusLine("x"),
+                                    http.client.RemoteDisconnected("closed")])
+def test_a_broken_http_exchange_is_named_a_network_failure(raised: Exception) -> None:
+    def broken(*_a, **_k):
+        raise raised
 
     with pytest.raises(GmailSendError) as exc:
         GmailSender(TOKEN, transport=broken, clock=_Clock()).send(b"x")

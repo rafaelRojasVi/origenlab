@@ -143,8 +143,14 @@ def validate_entry(entry: object) -> V1LaneCampaign:
         )
 
     subject = entry.get("subject")
-    if subject is not None and (not isinstance(subject, str) or not subject.strip() or len(subject) > 300):
-        raise V1LaneValidationError("subject must be a non-blank string of at most 300 characters")
+    if subject is not None and (
+        not isinstance(subject, str)
+        or not subject.strip()
+        or len(subject) > 300
+        or "\r" in subject
+        or "\n" in subject
+    ):
+        raise V1LaneValidationError("subject must be a single-line non-blank string of at most 300 characters")
 
     return V1LaneCampaign(
         key=key,

@@ -9,6 +9,7 @@ The V1 desktop token is never read. Plain HTTPS through `urllib`: no new runtime
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import re
 import time
@@ -127,7 +128,7 @@ class GmailSender:
     def _call(self, method: str, url: str, headers: dict[str, str], body: bytes) -> tuple[int, bytes]:
         try:
             return self._transport(method, url, headers, body, TIMEOUT_SECONDS)
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             raise GmailSendError("network", str(exc)) from exc
 
     def send(self, raw: bytes) -> str:

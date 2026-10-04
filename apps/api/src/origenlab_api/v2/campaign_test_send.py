@@ -65,6 +65,16 @@ class SendCampaignTestBody(BaseModel):
         return {"campaign_id": str(self.campaign_id)} if self.campaign_id else {"v1_lane_key": str(self.v1_lane_key)}
 
 
+class TestSendLimitRefused(CommandRefused):
+    """The 429: carries when the next test is allowed, as an ISO-8601 UTC string."""
+
+    __test__ = False  # not a pytest class, despite the name
+
+    def __init__(self, next_allowed_at: str | None) -> None:
+        super().__init__(429, "test_send_limit", f"límite de pruebas alcanzado; next_allowed_at={next_allowed_at}")
+        self.next_allowed_at = next_allowed_at
+
+
 class V2CampaignTestSendRepository(CommandTransaction):
     def __init__(self, connect: Any, dsn: str, sender: Any, v1_lane_content_dir: str | None,
                  statement_timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS) -> None:
@@ -99,9 +109,9 @@ class V2CampaignTestSendRepository(CommandTransaction):
             """
             select count(*) filter (where created_at > now() - interval '1 hour') as hour,
                    count(*) as day,
-                   (min(created_at) filter (where created_at > now() - interval '1 hour') + interval '1 hour')::text
+                   min(created_at) filter (where created_at > now() - interval '1 hour') + interval '1 hour'
                        as hour_frees_at,
-                   (min(created_at) + interval '1 day')::text as day_frees_at
+                   min(created_at) + interval '1 day' as day_frees_at
               from platform.command_receipt
              where command_name = %s and status in ('in_progress', 'completed')
                and created_at > now() - interval '1 day'
@@ -123,15 +133,23 @@ class V2CampaignTestSendRepository(CommandTransaction):
                 return replay
             cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (SEND_CAMPAIGN_TEST,))
             used = self._usage(cur, exclude_receipt=receipt_id)
-            if used["hour"] >= TEST_SENDS_PER_HOUR or used["day"] >= TEST_SENDS_PER_DAY:
-                next_at = used["hour_frees_at"] if used["hour"] >= TEST_SENDS_PER_HOUR else used["day_frees_at"]
-                raise CommandRefused(429, "test_send_limit",
-                                     f"límite de pruebas alcanzado; next_allowed_at={next_at}")
+            blocked = []
+            if used["hour"] >= TEST_SENDS_PER_HOUR:
+                blocked.append(used["hour_frees_at"])
+            if used["day"] >= TEST_SENDS_PER_DAY:
+                blocked.append(used["day_frees_at"])
+            if blocked:
+                latest = max(blocked)
+                raise TestSendLimitRefused(latest.astimezone(timezone.utc).isoformat())
             subject, html = self._content(cur, body)
+            try:
+                raw = build_test_message(to=body.to, subject=subject, html=html)
+            except ValueError as exc:  # e.g. a line break in the subject; rolls the claim back
+                raise CommandRefused(422, "campaign_subject_invalid", "el asunto de la campaña no es válido") from exc
         record = {"campaign": body.target(), "to": body.to, "subject": TEST_SUBJECT_PREFIX + subject,
                   "content_sha256": hashlib.sha256(html.encode("utf-8")).hexdigest()}
         try:
-            message_id = self._sender.send(build_test_message(to=body.to, subject=subject, html=html))
+            message_id = self._sender.send(raw)
         except GmailSendError as exc:
             self._finish(receipt_id, 502, {**record, "status": "failed", "error": exc.kind})
             raise CommandRefused(502, exc.kind, FAILURE_MESSAGE_ES.get(exc.kind, "No se pudo enviar.")) from exc
@@ -147,7 +165,7 @@ class V2CampaignTestSendRepository(CommandTransaction):
                 """
                 update platform.command_receipt
                    set status = %s, response_status = %s, response_body = %s::jsonb, completed_at = now()
-                 where id = %s
+                 where id = %s and status = 'in_progress'
                 """,
                 ("completed" if status_code == 200 else "failed", status_code, json_payload(response), receipt_id),
             )
@@ -155,7 +173,7 @@ class V2CampaignTestSendRepository(CommandTransaction):
     # ------------------------------------------------------------------ the read
 
     def history(self, *, campaign_id: str | None, v1_lane_key: str | None) -> dict[str, Any]:
-        target = {"campaign_id": campaign_id} if campaign_id else {"v1_lane_key": v1_lane_key}
+        target = {"campaign_id": str(UUID(campaign_id))} if campaign_id else {"v1_lane_key": v1_lane_key}
         with self._write() as cur:
             cur.execute(
                 """
