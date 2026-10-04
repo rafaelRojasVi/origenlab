@@ -159,6 +159,106 @@ def _ledger(cur) -> list[str]:
     return [r[0] for r in cur.fetchall()]
 
 
+def _ledger_readable(cur) -> bool:
+    """No exception on purpose (an error would abort the transaction): hosted
+    supabase_migrations is platform-owned and unreadable by the login."""
+    cur.execute("select has_schema_privilege('supabase_migrations', 'usage') "
+                "and has_table_privilege('supabase_migrations.schema_migrations', 'select')")
+    return bool(cur.fetchone()[0])
+
+
+def _ledger_or_none(cur) -> list[str] | None:
+    cur.execute("select to_regclass('supabase_migrations.schema_migrations') is not null")  # absent table: no error
+    if not cur.fetchone()[0] or not _ledger_readable(cur):
+        return None
+    return _ledger(cur)
+
+
+# Each query yields rows of text columns; a line is the columns joined with "|". ``n`` = the schemas
+# owned by origenlab_owner. No ACLs and no owners: hosted platform grants differ, the audit covers them.
+_REL = "from pg_class c join pg_namespace n on n.oid = c.relnamespace"
+_IN = "where n.nspname = any(%s)"
+_FINGERPRINT_QUERIES: dict[str, str] = {
+    "tables": f"""select n.nspname||'.'||c.relname, c.relkind::text, c.relrowsecurity::text, c.relforcerowsecurity::text
+                  {_REL} {_IN} and c.relkind in ('r','p','v','m','f')""",
+    "columns": f"""select n.nspname||'.'||c.relname, (row_number() over (partition by c.oid order by a.attnum))::text,
+                          a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull::text, a.attidentity::text,
+                          a.attgenerated::text, coalesce(pg_get_expr(d.adbin, d.adrelid), '')
+                   {_REL}
+                   join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+                   left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+                   {_IN} and c.relkind in ('r','p','v','m','f')""",
+    "constraints": f"""select n.nspname||'.'||c.relname, k.conname, k.contype::text, pg_get_constraintdef(k.oid),
+                              k.condeferrable::text, k.condeferred::text
+                       {_REL} join pg_constraint k on k.conrelid = c.oid {_IN}""",
+    "indexes": f"""select n.nspname||'.'||c.relname, pg_get_indexdef(i.indexrelid)
+                   {_REL} join pg_index i on i.indrelid = c.oid {_IN}""",
+    "triggers": f"""select n.nspname||'.'||c.relname, pg_get_triggerdef(t.oid), t.tgenabled::text
+                    {_REL} join pg_trigger t on t.tgrelid = c.oid and not t.tgisinternal {_IN}""",
+    "functions": """select n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')', p.prokind::text,
+                           p.prosecdef::text, p.provolatile::text, coalesce(p.proconfig::text, ''), md5(p.prosrc)
+                    from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = any(%s)""",
+    "policies": f"""select n.nspname||'.'||c.relname, o.polname, o.polcmd::text, o.polpermissive::text,
+                           coalesce((select string_agg(case when r = 0 then 'public' else (select rolname from pg_roles where oid = r) end,
+                                                       ',' order by 1) from unnest(o.polroles) r), ''),
+                           coalesce(pg_get_expr(o.polqual, o.polrelid), ''), coalesce(pg_get_expr(o.polwithcheck, o.polrelid), '')
+                    {_REL} join pg_policy o on o.polrelid = c.oid {_IN}""",
+    "views": f"""select n.nspname||'.'||c.relname, pg_get_viewdef(c.oid) {_REL} {_IN} and c.relkind in ('v','m')""",
+    "sequences": """select n.nspname||'.'||c.relname, format_type(q.seqtypid, null), q.seqincrement::text, q.seqmin::text,
+                           q.seqmax::text, q.seqcycle::text
+                    from pg_sequence q join pg_class c on c.oid = q.seqrelid join pg_namespace n on n.oid = c.relnamespace
+                    where n.nspname = any(%s)""",
+    "types": """select n.nspname||'.'||t.typname, t.typtype::text,
+                       case t.typtype
+                         when 'e' then (select string_agg(e.enumlabel, ',' order by e.enumsortorder) from pg_enum e where e.enumtypid = t.oid)
+                         when 'd' then format_type(t.typbasetype, t.typtypmod)||' '||t.typnotnull::text||' '||coalesce(pg_get_expr(t.typdefaultbin, 0), '')||' '||
+                                       coalesce((select string_agg(k.conname||':'||pg_get_constraintdef(k.oid), ',' order by k.conname)
+                                                 from pg_constraint k where k.contypid = t.oid), '')
+                         else (select string_agg(a.attname||' '||format_type(a.atttypid, a.atttypmod), ',' order by a.attnum)
+                               from pg_attribute a where a.attrelid = t.typrelid and a.attnum > 0 and not a.attisdropped)
+                       end
+                from pg_type t join pg_namespace n on n.oid = t.typnamespace
+                where n.nspname = any(%s)
+                  and (t.typtype in ('e','d','r') or (t.typtype = 'c' and exists
+                       (select 1 from pg_class c where c.oid = t.typrelid and c.relkind = 'c')))""",
+}
+
+
+def schema_fingerprint(cur) -> dict:
+    """What the migrations PRODUCED in every schema owned by ``origenlab_owner``, as one sha256 per
+    category (the repo audit's own "object by object" evidence, instead of a version list).
+    Cursor-level: no transaction control; ``set local search_path`` lasts to the caller's transaction end."""
+    cur.execute("set local search_path = pg_catalog")
+    cur.execute("select nspname from pg_namespace where nspowner = 'origenlab_owner'::regrole order by 1")
+    schemas = [r[0] for r in cur.fetchall()]
+    lines: dict[str, list[str]] = {}
+    for name, query in _FINGERPRINT_QUERIES.items():
+        cur.execute(query, (schemas,))
+        lines[name] = sorted("|".join("" if v is None else str(v) for v in row) for row in cur.fetchall())
+    cats = {k: hashlib.sha256("\n".join(v).encode("utf-8")).hexdigest() for k, v in lines.items()}
+    return {"schemas": schemas, "categories": cats, "lines": lines}
+
+
+def fingerprint_diff_lines(source_fp: Mapping, target_fp: Mapping, limit: int = 10) -> dict[str, list[str]]:
+    """Per differing category, up to ``limit`` lines: ``-`` only on the source, ``+`` only on the target."""
+    out: dict[str, list[str]] = {}
+    s_lines, t_lines = source_fp.get("lines", {}), target_fp.get("lines", {})
+    for cat in sorted(set(s_lines) | set(t_lines)):
+        s, t = set(s_lines.get(cat, ())), set(t_lines.get(cat, ()))
+        diff = [f"- {x}" for x in sorted(s - t)] + [f"+ {x}" for x in sorted(t - s)]
+        if diff:
+            out[cat] = diff[:limit]
+    if source_fp.get("schemas") != target_fp.get("schemas"):
+        out["schemas"] = [f"- {x}" for x in sorted(set(source_fp.get("schemas", ())) - set(target_fp.get("schemas", ())))][:limit] + \
+                         [f"+ {x}" for x in sorted(set(target_fp.get("schemas", ())) - set(source_fp.get("schemas", ())))][:limit]
+    return out
+
+
+def _fp_fields(fp: dict) -> dict:
+    return {"schema_fingerprint": {"schemas": fp["schemas"], "categories": fp["categories"]},
+            "schema_fingerprint_lines": fp["lines"]}
+
+
 def _operators(cur) -> list[list]:
     cur.execute("select id::text, display_name, role, status, sign_in_kind from platform.operator order by display_name")
     return [list(r) for r in cur.fetchall()]
@@ -236,6 +336,7 @@ def read_source_facts(conn, repo_root: Path, hosted_operator: str) -> dict:
                 "tables": tables, "operators": _operators(cur),
                 "other_sessions": _other_sessions(cur, same_role_only=False),
                 "sequences": _sequences(cur), "payload_rows_with_local_uuid": int(payload_rows),
+                **_fp_fields(schema_fingerprint(cur)),
             }
         finally:
             _rollback(cur)
@@ -246,8 +347,10 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
     with conn.cursor() as cur:
         cur.execute("begin isolation level repeatable read read only")
         try:
-            # The ledger belongs to the login role: origenlab_owner has no access to supabase_migrations.
-            ledger = _ledger(cur)
+            # The ledger belongs to the login role (origenlab_owner has no access to supabase_migrations) and on
+            # hosted it is platform-owned and unreadable even to the login: best effort, None if unreadable.
+            # schema_fingerprint_identical is the mandatory check that replaces it.
+            ledger = _ledger_or_none(cur)
             cur.execute("set local role origenlab_owner")
             apply_session_settings(cur, local=True)
             cur.execute("select current_setting('server_version_num')::int")
@@ -283,6 +386,7 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
                 "roster_hash": roster_hash(cur),
                 "advisory_lock_free": bool(free), "other_sessions": _other_sessions(cur, same_role_only=True),
                 "sequences": _sequences(cur), "pg_dump_probe_ok": bool(pg_dump_probe),
+                **_fp_fields(schema_fingerprint(cur)),
             }
         finally:
             _rollback(cur)

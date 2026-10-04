@@ -68,6 +68,15 @@ LOCAL1, LOCAL2 = hp.LOCAL_OPERATOR_IDS
 LEDGER = [f"2026090{i:02d}000000" for i in range(1, 41)] + ["20260930120000"]
 
 
+CATS = ("tables", "columns", "constraints", "indexes", "triggers", "functions", "policies", "views", "sequences", "types")
+
+
+def fp(**over):
+    cats = {c: f"hash-{c}" for c in CATS}
+    cats.update(over)
+    return {"schemas": ["comms", "crm"], "categories": cats}
+
+
 def _table(count, hash_="h", cols=(("id", "uuid"),), pk=("id",), triggers=(), fks=()):
     return {"columns": [list(c) for c in cols], "pk": list(pk), "count": count, "hash": hash_,
             "triggers": list(triggers), "fks": [list(f) for f in fks]}
@@ -81,7 +90,7 @@ def good_source(**over):
         "operators": [[LOCAL1, "Rafael", "admin", "active", "google_account"],
                       [LOCAL2, "Operador Local", "admin", "active", "google_account"]],
         "other_sessions": [], "sequences": {hp.SEQUENCE: 23095},
-        "payload_rows_with_local_uuid": 44,
+        "payload_rows_with_local_uuid": 44, "schema_fingerprint": fp(),
     }
     s.update(over)
     return s
@@ -101,7 +110,7 @@ def good_target(**over):
         "campaign_block": {"scope": "legacy_campaign", "legacy_campaign_key": "septiembre18-2026-wave2",
                            "lifted_at": None, "hash": "cb"},
         "roster_hash": "roster", "advisory_lock_free": True, "other_sessions": [],
-        "sequences": {hp.SEQUENCE: 1}, "pg_dump_probe_ok": True,
+        "sequences": {hp.SEQUENCE: 1}, "pg_dump_probe_ok": True, "schema_fingerprint": fp(),
     }
     t.update(over)
     return t
@@ -340,3 +349,63 @@ def test_garbage_generated_at():
 
 def test_pg18_refused():
     assert "server_is_postgres_17" in hp.refused(_eval(target=good_target(server_version_num=180000)))
+
+
+def test_plan_records_fingerprint_without_lines():
+    src = good_source()
+    src["schema_fingerprint"] = {**fp(), "lines": {"tables": ["x"]}}
+    plan = _plan(source=src)
+    assert plan["schema_fingerprint"] == fp()
+
+
+def test_fingerprint_mismatch_in_one_category_refuses():
+    r = hp.refused(_eval(target=good_target(schema_fingerprint=fp(columns="other"))))
+    assert "schema_fingerprint_identical" in r
+    checks = _eval(target=good_target(schema_fingerprint=fp(columns="other")))
+    detail = next(c for c in checks if c["check"] == "schema_fingerprint_identical")["detail"]
+    assert detail == ["columns"]
+
+
+def test_fingerprint_schema_list_mismatch_refuses():
+    t = fp()
+    t["schemas"] = ["crm"]
+    assert "schema_fingerprint_identical" in hp.refused(_eval(target=good_target(schema_fingerprint=t)))
+
+
+def test_fingerprint_plan_vs_target_mismatch_refuses():
+    plan = _plan()
+    plan["schema_fingerprint"] = fp(indexes="stale")
+    sha_ok = hp.refused(_eval(plan=plan))
+    assert "schema_fingerprint_identical" in sha_ok
+
+
+def test_fingerprint_lines_do_not_affect_equality():
+    t = {**fp(), "lines": {"tables": ["a"]}}
+    assert hp.refused(_eval(target=good_target(schema_fingerprint=t))) == []
+
+
+def test_unreadable_target_ledger_is_ok_but_fingerprint_still_required():
+    assert hp.refused(_eval(plan=_plan(target=good_target(ledger=None)), target=good_target(ledger=None))) == []
+    checks = _eval(plan=_plan(target=good_target(ledger=None)), target=good_target(ledger=None))
+    led = next(c for c in checks if c["check"] == "ledgers_identical")
+    assert led["ok"] and "platform-owned" in led["detail"]
+    r = hp.refused(_eval(plan=_plan(target=good_target(ledger=None)),
+                         target=good_target(ledger=None, schema_fingerprint=fp(tables="x"))))
+    assert r == ["schema_fingerprint_identical"]
+
+
+def test_build_plan_tolerates_unreadable_target_ledger():
+    plan = _plan(target=good_target(ledger=None))
+    assert plan["target"]["ledger_head"] is None and plan["target"]["ledger_count"] is None
+
+
+def test_missing_fingerprint_refuses():
+    s = good_source()
+    del s["schema_fingerprint"]
+    assert "schema_fingerprint_identical" in hp.refused(_eval(plan=_plan(source=good_source()), source=s))
+    t = good_target()
+    del t["schema_fingerprint"]
+    assert "schema_fingerprint_identical" in hp.refused(_eval(target=t))
+    p = _plan()
+    p["schema_fingerprint"] = None
+    assert "schema_fingerprint_identical" in hp.refused(_eval(plan=p))

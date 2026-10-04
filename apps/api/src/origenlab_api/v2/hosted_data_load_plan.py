@@ -116,6 +116,23 @@ REQUIRED_LEDGER_COUNT = 41
 HOLD_KEY = "septiembre18-2026-wave2"
 
 
+def _fp_summary(fp: Mapping | None) -> dict | None:
+    """Schemas + category hashes only; the diagnostic lines never enter the plan file."""
+    if not fp:
+        return None
+    return {"schemas": list(fp.get("schemas", [])), "categories": dict(fp.get("categories", {}))}
+
+
+def fingerprint_diff(a: Mapping | None, b: Mapping | None) -> list[str]:
+    """Names of the fingerprint parts that differ (``schemas`` or a category); all of them if one side is absent."""
+    a, b = _fp_summary(a), _fp_summary(b)
+    if a is None or b is None:
+        return ["missing"]
+    out = ["schemas"] if a["schemas"] != b["schemas"] else []
+    cats = sorted(set(a["categories"]) | set(b["categories"]))
+    return out + [c for c in cats if a["categories"].get(c) != b["categories"].get(c)]
+
+
 def build_plan(*, source: Mapping, target: Mapping, hosted_operator: str, generated_at: str) -> dict:
     tables = []
     for name in TABLES:
@@ -135,7 +152,9 @@ def build_plan(*, source: Mapping, target: Mapping, hosted_operator: str, genera
         "source": {"system_identifier": source["system_identifier"],
                    "ledger_head": source["ledger"][-1] if source["ledger"] else None, "ledger_count": len(source["ledger"])},
         "target": {"project_ref": target["project_ref"], "pooler_host": target["pooler_host"],
-                   "ledger_head": target["ledger"][-1] if target["ledger"] else None, "ledger_count": len(target["ledger"])},
+                   "ledger_head": target["ledger"][-1] if target["ledger"] else None,
+                   "ledger_count": len(target["ledger"]) if target["ledger"] is not None else None},
+        "schema_fingerprint": _fp_summary(source.get("schema_fingerprint")),
         "remap": {"from": list(LOCAL_OPERATOR_IDS), "to": hosted_operator},
         "tables": tables,
         "payload_rows_with_local_uuid": int(source["payload_rows_with_local_uuid"]),
@@ -179,8 +198,18 @@ def evaluate(*, plan: Mapping, plan_sha: str, expected_sha: str, source: Mapping
     check("source_ledger_head", source["ledger"][-1:] == [REQUIRED_HEAD] and len(source["ledger"]) == REQUIRED_LEDGER_COUNT,
           {"head": source["ledger"][-1:], "count": len(source["ledger"])})
     check("source_ledger_matches_disk", list(source["ledger"]) == list(source["migrations_on_disk"]), None)
-    check("ledgers_identical", list(source["ledger"]) == list(target["ledger"]),
-          {"source": len(source["ledger"]), "target": len(target["ledger"])})
+    if target["ledger"] is None:
+        check("ledgers_identical", True,
+              "target ledger unreadable (platform-owned); schema_fingerprint_identical decides")
+    else:
+        check("ledgers_identical", list(source["ledger"]) == list(target["ledger"]),
+              {"source": len(source["ledger"]), "target": len(target["ledger"])})
+    sfp, tfp, pfp = (source.get("schema_fingerprint"), target.get("schema_fingerprint"), plan.get("schema_fingerprint"))
+    if not (sfp and tfp and pfp):
+        fp_detail = ["missing"]
+    else:
+        fp_detail = sorted(set(fingerprint_diff(sfp, tfp)) | set(fingerprint_diff(sfp, pfp)))
+    check("schema_fingerprint_identical", not fp_detail, fp_detail)
     check("source_system_identifier_matches_plan", source["system_identifier"] == plan["source"]["system_identifier"], None)
     check("target_project_matches_plan", target["project_ref"] == plan["target"]["project_ref"], None)
 

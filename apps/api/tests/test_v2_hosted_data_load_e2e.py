@@ -118,12 +118,34 @@ def test_full_cycle_and_injected_failures(databases, tmp_path: Path):
     assert set(counts()) == {"0"}
     _psql(tgt, "drop trigger e2e_extra on crm.quote; drop function public.e2e_noop();")
 
-    # injected failure 3 (R4): a write-time error mid-load -> exit 12, one transaction, target still empty
-    _psql(tgt, "alter table crm.quote_revision add constraint e2e_reject check (false) not valid")
+    # injected failure 2b: schema drift in a table OUTSIDE the 16 (no per-table contract sees it) -> only the fingerprint does
+    _psql(tgt, "alter table crm.note add column e2e_extra int")
+    r = _cli(env, "apply", *ap, out=out)
+    assert r.returncode == EXIT_REFUSED and "schema_fingerprint_identical" in r.stdout
+    assert "crm.note" in r.stdout and "e2e_extra" in r.stdout and "+ crm.note" in r.stdout
+    assert set(counts()) == {"0"}
+    _psql(tgt, "alter table crm.note drop column e2e_extra")
+
+    # injected failure 3 (R4): a write-time error mid-load -> exit 12, one transaction, target still empty.
+    # The schema fingerprint now sees every constraint/trigger/column, so the injection must be invisible to the
+    # catalogue scope: an ACL (excluded from the fingerprint) -> the COPY into the 9th table is denied.
+    _psql(tgt, "revoke insert on crm.quote_revision from origenlab_owner")
     r = _cli(env, "apply", *ap, out=out)
     assert r.returncode == EXIT_FAILED and "all 16 tables empty" in r.stdout
+    assert "quote_revision" in r.stdout and "permission denied" in r.stdout
     assert set(counts()) == {"0"}
-    _psql(tgt, "alter table crm.quote_revision drop constraint e2e_reject")
+    _psql(tgt, "grant insert on crm.quote_revision to origenlab_owner")
+
+    # injected failure 3b: an event trigger (database-level, outside every fingerprinted schema) raising e2e_reject
+    # on the first DDL of the write transaction -> exit 12, the error names e2e_reject, target still empty
+    _psql(tgt, "create function public.e2e_reject() returns event_trigger language plpgsql as "
+               "$$ begin raise exception 'e2e_reject: injected failure'; end $$; "
+               "create event trigger e2e_reject on ddl_command_start execute function public.e2e_reject()")
+    r = _cli(env, "apply", *ap, out=out)
+    assert r.returncode == EXIT_FAILED and "all 16 tables empty" in r.stdout
+    assert "e2e_reject" in r.stdout
+    assert set(counts()) == {"0"}
+    _psql(tgt, "drop event trigger e2e_reject; drop function public.e2e_reject()")
 
     # the real apply
     r = _cli(env, "apply", *ap, out=out)
@@ -148,11 +170,12 @@ def test_full_cycle_and_injected_failures(databases, tmp_path: Path):
     seq = _psql(tgt, "select last_value, is_called from crm.domain_event_stream_position_seq")
     _psql(tgt, f"insert into crm.task (opportunity_id, owner_operator_id, title, due_at) "
                f"select id, '{hosted}', 'e2e outside row', now() from crm.opportunity limit 1")
+    assert _psql(tgt, "select count(*) from crm.task") == "1"
     r = _cli(env, "rollback", *ap, "--confirm-delete-loaded-rows", out=out)
     assert r.returncode == EXIT_REFUSED and "crm.task" in r.stdout, r.stdout
     assert counts() == loaded
     assert _psql(tgt, "select last_value, is_called from crm.domain_event_stream_position_seq") == seq
-    _psql(tgt, "delete from crm.task")
+    _psql(tgt, "delete from crm.task where title = 'e2e outside row'")
 
     # the real rollback
     r = _cli(env, "rollback", *ap, "--confirm-delete-loaded-rows", out=out)

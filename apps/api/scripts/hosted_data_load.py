@@ -84,6 +84,24 @@ def print_checks(checks, secrets=()) -> None:
         print(f"  {mark} {c['check']}{detail}")
 
 
+def print_fingerprint_diff(checks, sf, tf, secrets=()) -> None:
+    """On a schema_fingerprint_identical refusal: per differing category up to 10 catalogue lines
+    (``-`` only on the source, ``+`` only on the target). Catalogue text only, never data; redacted."""
+    if "schema_fingerprint_identical" not in hp.refused(checks) or not sf or not tf:
+        return
+    diff = io_.fingerprint_diff_lines({"schemas": sf.get("schema_fingerprint", {}).get("schemas"),
+                                       "lines": sf.get("schema_fingerprint_lines", {})},
+                                      {"schemas": tf.get("schema_fingerprint", {}).get("schemas"),
+                                       "lines": tf.get("schema_fingerprint_lines", {})})
+    print("schema differs from the clean room (- source only, + target only):")
+    for cat, lines in diff.items():
+        print(f"  [{cat}]")
+        for ln in lines:
+            print("    " + io_.redact(ln, secrets)[:300])
+    if not diff:
+        print("  (no line-level difference: the plan file's fingerprint is the one that differs)")
+
+
 def _facts(args, src, tgt, target, hosted_operator: str, pg_dump_probe: bool):
     sf = io_.read_source_facts(src, io_.REPO_ROOT, hosted_operator)
     tf = io_.read_target_facts(tgt, target, pg_dump_probe=pg_dump_probe)
@@ -113,6 +131,7 @@ def cmd_plan(args) -> int:
         sha = hp.plan_sha256(plan)
         checks = hp.evaluate(plan=plan, plan_sha=sha, expected_sha=sha, source=sf, target=tf, host=hf, now_iso=_now())
         print_checks(checks, secrets)
+        print_fingerprint_diff(checks, sf, tf, secrets)
         if hp.refused(checks):
             print("\npreflight refused; no plan written")
             return EXIT_REFUSED
@@ -203,6 +222,7 @@ def cmd_apply(args) -> int:
         checks = hp.evaluate(plan=plan, plan_sha=sha, expected_sha=args.plan_sha256, source=sf, target=tf, host=hf,
                              now_iso=_now())
         print_checks(checks, secrets)
+        print_fingerprint_diff(checks, sf, tf, secrets)
         if hp.refused(checks):
             print("preflight refused; nothing written")
             return EXIT_REFUSED

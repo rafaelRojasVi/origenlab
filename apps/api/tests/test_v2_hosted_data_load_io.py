@@ -245,8 +245,73 @@ def test_target_ledger_is_read_before_the_role_switch(monkeypatch):
     class Conn:
         def cursor(self): return Cur()
 
-    monkeypatch.setattr(io_, "_ledger", lambda cur: log.append("LEDGER") or ["1"])
+    monkeypatch.setattr(io_, "_ledger_or_none", lambda cur: log.append("LEDGER") or ["1"])
     monkeypatch.setattr(io_, "apply_session_settings", lambda cur, local=False: None)
     with pytest.raises(StopIteration):
         io_.read_target_facts(Conn(), SimpleNamespace(project_ref="r", host="h"), True)
     assert log.index("LEDGER") < log.index("set local role origenlab_owner")
+
+
+class _FpCur:
+    """Fake cursor: answers the schema list, then one canned row set per fingerprint category."""
+    def __init__(self, schemas, rows):
+        self.schemas, self.rows, self.log, self._res = schemas, rows, [], []
+        self._cats = iter(io_._FINGERPRINT_QUERIES)
+
+    def execute(self, q, params=None):
+        self.log.append(str(q))
+        if "from pg_namespace where nspowner" in q:
+            self._res = [(s,) for s in self.schemas]
+        elif q.startswith("set local"):
+            self._res = []
+        else:
+            self._res = self.rows.get(next(self._cats), [])
+
+    def fetchall(self):
+        return self._res
+
+
+def test_schema_fingerprint_shape_and_hashes():
+    import hashlib
+    cur = _FpCur(["crm", "comms"], {"tables": [("crm.b", "r", "f", "f"), ("crm.a", "r", "t", "f"), (None, "x", "y", "z")]})
+    fp = io_.schema_fingerprint(cur)
+    assert cur.log[0] == "set local search_path = pg_catalog"
+    assert fp["schemas"] == ["crm", "comms"]
+    assert set(fp["categories"]) == set(io_._FINGERPRINT_QUERIES) == set(fp["lines"])
+    assert set(fp["categories"]) == {"tables", "columns", "constraints", "indexes", "triggers", "functions",
+                                     "policies", "views", "sequences", "types"}
+    assert fp["lines"]["tables"] == ["crm.a|r|t|f", "crm.b|r|f|f", "|x|y|z"]  # sorted, NULL as empty
+    assert fp["categories"]["tables"] == hashlib.sha256("\n".join(fp["lines"]["tables"]).encode()).hexdigest()
+    assert fp["categories"]["views"] == hashlib.sha256(b"").hexdigest()
+
+
+def test_schema_fingerprint_excludes_acls_and_owners():
+    text = " ".join(io_._FINGERPRINT_QUERIES.values()).lower()
+    for banned in ("relacl", "proacl", "relowner", "proowner", "nspacl", "last_value"):
+        assert banned not in text
+
+
+def test_fingerprint_diff_lines_caps_and_signs():
+    a = {"schemas": ["crm"], "lines": {"columns": [f"c{i}" for i in range(30)], "tables": ["t"]}}
+    b = {"schemas": ["crm"], "lines": {"columns": ["c0", "extra"], "tables": ["t"]}}
+    d = io_.fingerprint_diff_lines(a, b)
+    assert set(d) == {"columns"} and len(d["columns"]) == 10
+    assert d["columns"][0] == "- c1" and "+ extra" not in d["columns"]
+    d = io_.fingerprint_diff_lines({"schemas": [], "lines": {"columns": ["x"]}}, {"schemas": [], "lines": {"columns": ["x", "crm.note|e2e_extra"]}})
+    assert d == {"columns": ["+ crm.note|e2e_extra"]}
+
+
+def test_ledger_is_none_when_unreadable_and_never_selected():
+    log = []
+
+    class Cur:
+        def __init__(self, exists, readable): self.exists, self.readable, self.val = exists, readable, None
+        def execute(self, q, params=None):
+            log.append(q)
+            self.val = self.exists if "to_regclass" in q else self.readable
+        def fetchone(self): return (self.val,)
+
+    assert io_._ledger_or_none(Cur(True, False)) is None
+    assert io_._ledger_or_none(Cur(False, True)) is None
+    assert not any("order by version" in q for q in log)
+    assert any("has_schema_privilege" in q and "has_table_privilege" in q for q in log)

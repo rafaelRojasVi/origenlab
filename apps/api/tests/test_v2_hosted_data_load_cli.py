@@ -536,3 +536,48 @@ def test_rollback_epilog_points_pg_restore_into_the_container(capsys):
         cli.main(["rollback", "--help"])
     out = capsys.readouterr().out
     assert "docker cp <dump> origenlab_dev_db:/tmp/x.dump" in out and "docker exec origenlab_dev_db pg_restore --list" in out
+
+
+def _fp_facts(extra_line):
+    fp = PLAN_TESTS.fp()
+    src = PLAN_TESTS.good_source(schema_fingerprint=fp)
+    src["schema_fingerprint_lines"] = {"columns": [f"crm.note|{i}" for i in range(12)]}
+    tgt = PLAN_TESTS.good_target(schema_fingerprint=PLAN_TESTS.fp(columns="other"))
+    tgt["schema_fingerprint_lines"] = {"columns": [*src["schema_fingerprint_lines"]["columns"], extra_line]}
+    return src, tgt
+
+
+def test_fingerprint_refusal_prints_catalogue_diff_redacted(capsys):
+    cli = load_cli()
+    src, tgt = _fp_facts("crm.note|e2e_extra projref123")
+    checks = [{"check": "schema_fingerprint_identical", "ok": False, "detail": ["columns"]}]
+    cli.print_fingerprint_diff(checks, src, tgt, ("projref123",))
+    out = capsys.readouterr().out
+    assert "[columns]" in out and "+ crm.note|e2e_extra ***" in out and "projref123" not in out
+
+
+def test_fingerprint_diff_is_capped_at_ten_lines(capsys):
+    cli = load_cli()
+    src, tgt = _fp_facts("x")
+    src["schema_fingerprint_lines"] = {"columns": [f"s{i}" for i in range(30)]}
+    tgt["schema_fingerprint_lines"] = {"columns": []}
+    cli.print_fingerprint_diff([{"check": "schema_fingerprint_identical", "ok": False, "detail": None}], src, tgt)
+    assert capsys.readouterr().out.count("    - s") == 10
+
+
+def test_no_diff_printed_when_fingerprint_check_passes_or_facts_absent(capsys):
+    cli = load_cli()
+    src, tgt = _fp_facts("x")
+    cli.print_fingerprint_diff([{"check": "schema_fingerprint_identical", "ok": True, "detail": None}], src, tgt)
+    cli.print_fingerprint_diff([{"check": "schema_fingerprint_identical", "ok": False, "detail": None}], None, None)
+    assert capsys.readouterr().out == ""
+
+
+def test_plan_refusal_by_fingerprint_prints_diff(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    _patch_plan_env(cli, monkeypatch, refuse=False)
+    src, tgt = _fp_facts("crm.note|e2e_extra")
+    monkeypatch.setattr(cli, "_facts", lambda *a, **k: (src, tgt, PLAN_TESTS.good_host()))
+    assert cli.main(["plan", "--out", str(tmp_path), *AUTH]) == 11
+    out = capsys.readouterr().out
+    assert "REFUSED schema_fingerprint_identical" in out and "+ crm.note|e2e_extra" in out
