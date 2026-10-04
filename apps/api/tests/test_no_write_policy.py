@@ -12,12 +12,19 @@ _API_SRC = Path(__file__).resolve().parents[1] / "src" / "origenlab_api"
 
 # «Enviar prueba» (owner decision 2026-10-04): one admin-only test of one campaign's stored email to
 # one address, from contacto@. These are the only files allowed to name the Gmail send client;
-# every other file keeps the `gmail_send` guard. Task 3 extends this allowance to the routes module
-# and the `main.py` mount, and nothing broader (never a directory).
+# every other file keeps the `gmail_send` guard. The allowance also covers the
+# route module, the `main.py` mount, `settings.py` (whose token-file field is named for it) and the
+# marketing read in `v2/crm_workspace_routes.py` (which imports the sender address constant), each by
+# exact path and nothing broader (never a directory). The one sanctioned sender is
+# `POST /v2/commands/send-campaign-test`, mounted only behind its own switch.
 _GMAIL_SEND_ALLOWED = frozenset(
     {
         "v2/gmail_send.py",
         "v2/campaign_test_send.py",
+        "v2/campaign_test_send_routes.py",
+        "v2/crm_workspace_routes.py",
+        "main.py",
+        "settings.py",
     }
 )
 
@@ -148,6 +155,7 @@ def test_openapi_documents_narrow_operator_mutation_boundary() -> None:
 
     assert "file-backed operator document import" in description
     assert "does not send email" in description
+    assert "except the one switch-gated post /v2/commands/send-campaign-test" in description
     assert "sqlite remains read-only" in description
     assert "durable commercial-operations writes" in description
     assert "explicitly allowlisted /operations/* command routes" in description

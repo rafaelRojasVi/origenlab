@@ -224,6 +224,9 @@ class Settings(BaseSettings):
     approve or send a campaign.
     """
     v2_campaign_drafts_enabled: bool = False
+    v2_campaign_test_send_enabled: bool = False
+    #: Render secret file with the gmail.send refresh token for contacto@ (scripts/gmail_send_authorize.py).
+    v2_gmail_send_token_file: str | None = None
     """Mount POST /v2/commands/{create,update,...}-person/organization etc (freeform CRM authoring).
 
     Default **false** and separate from v2_commands_enabled: evidence-bound decisions and
@@ -440,6 +443,9 @@ class Settings(BaseSettings):
         letting it record durable human decisions is a separate one.
         """
         return self.v2_configured() and bool(self.v2_commands_enabled)
+
+    def v2_campaign_test_send_configured(self) -> bool:
+        return self.v2_configured() and bool(self.v2_campaign_test_send_enabled) and bool(self.v2_gmail_send_token_file)
 
     def v2_campaign_drafts_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_drafts_enabled)

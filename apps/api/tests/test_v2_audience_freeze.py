@@ -487,6 +487,8 @@ def test_no_send_capability_exists_anywhere_in_the_api() -> None:
 
     src = Path(__file__).resolve().parents[1] / "src" / "origenlab_api"
     text = "\n".join(p.read_text(encoding="utf-8") for p in src.rglob("*.py"))
+    # The one sanctioned sender: «Enviar prueba», one admin test to one address (switch-gated).
+    text = text.replace("/send-campaign-test", "")
     for forbidden in ("googleapiclient", "gmail.users().messages().send", "smtplib", "/send-campaign",
                       "send_one(", "reserve_attempts("):
         assert forbidden not in text, forbidden
