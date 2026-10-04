@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
 
 #: Load order. Parents before children where a FK is not cyclic; cyclic FKs are made
 #: deferrable for the transaction, so the order only needs to be stable and documented.
@@ -107,3 +108,112 @@ def plan_sha256(plan: Mapping) -> str:
     return hashlib.sha256(
         json.dumps(plan, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     ).hexdigest()
+
+
+PLAN_MAX_AGE = timedelta(hours=24)
+REQUIRED_HEAD = "20260930120000"
+REQUIRED_LEDGER_COUNT = 41
+HOLD_KEY = "septiembre18-2026-wave2"
+
+
+def build_plan(*, source: Mapping, target: Mapping, hosted_operator: str, generated_at: str) -> dict:
+    tables = []
+    for name in TABLES:
+        s = source["tables"][name]
+        tables.append({
+            "name": name,
+            "columns": [list(c) for c in s["columns"]],
+            "pk": list(s["pk"]),
+            "count": int(s["count"]),
+            "hash": s["hash"],                       # hash of the REMAPPED projection
+            "triggers": sorted(target["tables"][name]["triggers"]),
+            "fks": sorted(fk[0] for fk in target["tables"][name]["fks"]),
+        })
+    seq_source = int(source["sequences"].get(SEQUENCE, 0))
+    return {
+        "generated_at": generated_at,
+        "source": {"system_identifier": source["system_identifier"],
+                   "ledger_head": source["ledger"][-1] if source["ledger"] else None, "ledger_count": len(source["ledger"])},
+        "target": {"project_ref": target["project_ref"], "pooler_host": target["pooler_host"],
+                   "ledger_head": target["ledger"][-1] if target["ledger"] else None, "ledger_count": len(target["ledger"])},
+        "remap": {"from": list(LOCAL_OPERATOR_IDS), "to": hosted_operator},
+        "tables": tables,
+        "payload_rows_with_local_uuid": int(source["payload_rows_with_local_uuid"]),
+        "sequence": {"name": SEQUENCE, "target_last_value": seq_source},
+        "roster_hash": target["roster_hash"],
+        "send_control_hash": target["send_control"]["hash"],
+        "campaign_block_hash": target["campaign_block"]["hash"],
+    }
+
+
+def evaluate(*, plan: Mapping, plan_sha: str, expected_sha: str, source: Mapping, target: Mapping,
+             host: Mapping, now_iso: str) -> list[dict]:
+    """One row per guard; a run proceeds only when every row is ok. Pure: no I/O."""
+    checks: list[dict] = []
+
+    def check(name: str, ok: bool, detail=None) -> None:
+        checks.append({"check": name, "ok": bool(ok), "detail": detail})
+
+    # plan
+    check("plan_sha256_matches", plan_sha == expected_sha, {"actual": plan_sha, "expected": expected_sha})
+    age = datetime.fromisoformat(now_iso.replace("Z", "+00:00")) - datetime.fromisoformat(plan["generated_at"].replace("Z", "+00:00"))
+    check("plan_is_fresh", timedelta(0) <= age <= PLAN_MAX_AGE, str(age))
+    check("remap_target_is_hosted_operator", plan["remap"]["to"] != "" and plan["remap"]["from"] == list(LOCAL_OPERATOR_IDS), plan["remap"])
+
+    # ledgers
+    check("source_ledger_head", source["ledger"][-1:] == [REQUIRED_HEAD] and len(source["ledger"]) == REQUIRED_LEDGER_COUNT,
+          {"head": source["ledger"][-1:], "count": len(source["ledger"])})
+    check("source_ledger_matches_disk", list(source["ledger"]) == list(source["migrations_on_disk"]), None)
+    check("ledgers_identical", list(source["ledger"]) == list(target["ledger"]),
+          {"source": len(source["ledger"]), "target": len(target["ledger"])})
+    check("source_system_identifier_matches_plan", source["system_identifier"] == plan["source"]["system_identifier"], None)
+    check("target_project_matches_plan", target["project_ref"] == plan["target"]["project_ref"], None)
+
+    # source shape
+    bad_counts = {t["name"]: (t["count"], source["tables"][t["name"]]["count"]) for t in plan["tables"]
+                  if source["tables"][t["name"]]["count"] != t["count"]}
+    check("source_counts_match_plan", not bad_counts, bad_counts)
+    ids = sorted(op[0] for op in source["operators"])
+    check("source_operators_are_the_two_known", ids == sorted(LOCAL_OPERATOR_IDS), ids)
+    check("only_known_sequence", set(source["sequences"]) <= {SEQUENCE}, sorted(source["sequences"]))
+    check("no_other_source_sessions", not source["other_sessions"], source["other_sessions"])
+
+    # target shape
+    for t in plan["tables"]:
+        name = t["name"]
+        check(f"column_contract_identical:{name}",
+              [list(c) for c in target["tables"][name]["columns"]] == t["columns"]
+              and [list(c) for c in source["tables"][name]["columns"]] == t["columns"], None)
+        check(f"trigger_inventory_matches_plan:{name}", sorted(target["tables"][name]["triggers"]) == t["triggers"],
+              sorted(target["tables"][name]["triggers"]))
+        check(f"fk_inventory_matches_plan:{name}", sorted(fk[0] for fk in target["tables"][name]["fks"]) == t["fks"], None)
+    non_empty = {n: c for n, c in target["all_business_counts"].items() if c != SINGLETONS.get(n, 0)}
+    check("target_tables_empty", not non_empty, non_empty)
+    hosted = [op for op in target["operators"] if op[0] == plan["remap"]["to"]]
+    check("hosted_operator_is_active_admin", bool(hosted) and hosted[0][2] == "admin" and hosted[0][3] == "active", hosted)
+    check("hosted_roster_shape", target["principals"] == 1 and target["profiles"] == 3 and len(target["operators"]) == 3
+          and target["command_receipts"] == 0,
+          {"principals": target["principals"], "profiles": target["profiles"], "operators": len(target["operators"])})
+    check("hosted_roster_unchanged_since_plan", target["roster_hash"] == plan["roster_hash"], None)
+    sc = target["send_control"]
+    check("send_flags_false", sc["marketing_enabled"] is False and sc["transactional_enabled"] is False, sc)
+    cb = target["campaign_block"]
+    check("hold_row_active", cb["scope"] == "all_campaigns" and cb["legacy_campaign_key"] == HOLD_KEY and cb["lifted_at"] is None, cb)
+    check("no_other_target_sessions", not target["other_sessions"], target["other_sessions"])
+    check("advisory_lock_free", bool(target["advisory_lock_free"]), ADVISORY_LOCK_KEY)
+    check("server_is_postgres_17", int(target["server_version_num"]) >= 170000, target["server_version_num"])
+    check("pg_dump_can_reach_target", bool(target["pg_dump_probe_ok"]), None)
+
+    # host
+    check("target_file_mode_0600", host["target_file_regular"] and host["target_file_mode"] == 0o600, oct(host["target_file_mode"]))
+    check("route_is_supavisor_session_5432", host["route"] == "supavisor-session" and host["port"] == 5432, (host["route"], host["port"]))
+    check("sslmode_verify_full", host["sslmode"] == "verify-full", host["sslmode"])
+    check("ca_file_exists", bool(host["ca_exists"]), None)
+    check("container_is_this_worktrees", bool(host["container_label_ok"]), None)
+    check("no_local_process_names_source", not host["processes"], host["processes"])
+    check("no_crontab_names_source", not host["crontab"], host["crontab"])
+    return checks
+
+
+def refused(checks) -> list[str]:
+    return [c["check"] for c in checks if not c["ok"]]
