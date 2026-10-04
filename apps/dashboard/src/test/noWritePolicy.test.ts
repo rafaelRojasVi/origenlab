@@ -202,13 +202,30 @@ describe("dashboard read-only policy", () => {
     expect(hits).toEqual([]);
   });
 
+  // Owner decision 2026-10-04: «Enviar prueba» (/v2/commands/send-campaign-test). Anything else
+  // that sends, approves, activates or dispatches — or a plain «Enviar» button — is still refused.
+  const SEND_CAPABILITY =
+    /gmail\.googleapis|googleapis\.com\/gmail|\/v2\/commands\/(?:send|approve|activate|dispatch)|>\s*Enviar(?:\s+campaña)?\s*</i;
+  const withoutSanctionedTestSend = (text: string) =>
+    text.replace(/\/v2\/commands\/send-campaign-test(?![\w-])/g, "");
+
   it("has no send capability except the admin-only test send of one campaign to one address", () => {
-    // Owner decision 2026-10-04: «Enviar prueba» (/v2/commands/send-campaign-test). Anything else
-    // that sends, approves, activates or dispatches — or a plain «Enviar» button — is still refused.
     const hits = entries
-      .map(([path, text]) => [path, text.replace(/\/v2\/commands\/send-campaign-test\b/g, "")] as const)
-      .filter(([, text]) => /gmail\.googleapis|googleapis\.com\/gmail|\/v2\/commands\/(?:send|approve|activate|dispatch)|>\s*Enviar(?:\s+campaña)?\s*</i.test(text))
+      .map(([path, text]) => [path, withoutSanctionedTestSend(text)] as const)
+      .filter(([, text]) => SEND_CAPABILITY.test(text))
       .map(([path]) => path);
     expect(hits).toEqual([]);
+  });
+
+  it("carves out exactly the test-send path, never a longer one that starts with it", () => {
+    for (const probe of [
+      "/v2/commands/send-campaign-test-all",
+      "/v2/commands/send-campaign-test-and-campaign",
+      "/v2/commands/send-campaign-test_all",
+      "/v2/commands/send-campaign-test2",
+    ]) {
+      expect(SEND_CAPABILITY.test(withoutSanctionedTestSend(`"${probe}"`)), probe).toBe(true);
+    }
+    expect(SEND_CAPABILITY.test(withoutSanctionedTestSend(`"/v2/commands/send-campaign-test"`))).toBe(false);
   });
 });
