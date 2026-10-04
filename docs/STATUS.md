@@ -1752,6 +1752,16 @@ Owner decision 2026-10-03 ([`MIGRATION.md`](MIGRATION.md) §11 row 5): Cloudflar
 | Docs | [`MIGRATION.md`](MIGRATION.md) decision 5 and §10; [`OPERATIONS.md`](OPERATIONS.md) §1.2 steps 8–10; `docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md` rewritten for the API application only; `apps/dashboard-proxy/README.md`; `apps/api/docs/PRODUCTION_AUTH.md` *Production activation* |
 | Not done | **the Worker in Cloudflare still carries the previous allowlist and still rebuilds the operator header from Access until step 9 (`npx wrangler deploy`) runs.** The Access application on `dashboard.origenlab.cl` is untouched (step 10, after an end-to-end sign-in). Merging does not deploy the Worker; it does redeploy the dashboard static site, unchanged. Nothing provisioned, no Render variable set |
 
+### 2.7.43 Resumen as a follow-up list, exchange rates, page memory, 2026-10-04 — built, not deployed
+
+| | |
+|---|---|
+| Dashboard | `#/crm/resumen`: dólar observado, euro and UF in pesos with a converter; open cases grouped by days since their latest revision was sent (7 or less, 8 to 30, more than 30), each row opening the case, its Drive PDF and its Gmail thread; a line saying how far the imported data reaches. Read-only. The data-health counts moved to Revisión → «Estado de los datos», read only when that tab opens. `useResource` keeps each page's last answer in memory (never browser storage) per operator, role and profile; `AuthGate` clears it whenever no session is confirmed. Archivo Drive is ordered by year and five-digit correlative, not as text |
+| API | `GET /v2/workspace/fx`: the Banco Central figures as mindicador.cl republishes them, cached an hour per process; a failed refresh keeps the last figures marked stale; with none, 503 and no retry for a minute. Display only: a quote records its own `fx_rate`/`fx_as_of`/`fx_source` ([`WORKFLOWS.md`](WORKFLOWS.md)) |
+| Proxy | `GET /v2/workspace/fx` by exact path |
+| Evidence | `apps/dashboard` `npm run validate`: **421 tests in 36 files**, build ok; `apps/dashboard-proxy`: 336 tests; API full suite against a disposable cluster: **3104 passed, 0 failed** |
+| Not done | Not deployed. Merging redeploys the API and the dashboard; **the Worker needs `npx wrangler deploy` for `/fx`**, and until then the card says «no disponible» while the rest of the page works |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
