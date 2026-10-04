@@ -10,17 +10,25 @@ import { useAuthSession } from "../../context/AuthSessionContext";
  * Admin-only: archive-person, restore-person, merge-people, archive-organization,
  * restore-organization. The UI enforces `isAdmin(session)` before showing those.
  *
- * Fails closed: a viewer, an unknown role or a session that is not confirmed gets no write
- * affordance, and keeps every read-only view.
+ * Both also require the API to have the commands mounted (`crm_authoring_enabled` on
+ * `/auth/session`, `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` upstream): with the switch off every
+ * authoring path is a 404, and an editor whose save can only fail is worse than none.
+ *
+ * Fails closed: a viewer, an unknown role, a session that is not confirmed or an API without
+ * the commands gets no write affordance, and keeps every read-only view.
  */
 export const ROLES_THAT_AUTHOR_CRM: ReadonlySet<string> = new Set(["sales", "admin"]);
 
 export function mayAuthorCrm(session: AuthSessionState): boolean {
-  return session.kind === "signed_in" && ROLES_THAT_AUTHOR_CRM.has(session.operator.role);
+  return (
+    session.kind === "signed_in" &&
+    session.crmAuthoringEnabled === true &&
+    ROLES_THAT_AUTHOR_CRM.has(session.operator.role)
+  );
 }
 
 export function isAdmin(session: AuthSessionState): boolean {
-  return session.kind === "signed_in" && session.operator.role === "admin";
+  return session.kind === "signed_in" && session.crmAuthoringEnabled === true && session.operator.role === "admin";
 }
 
 export function useMayAuthorCrm(): boolean {

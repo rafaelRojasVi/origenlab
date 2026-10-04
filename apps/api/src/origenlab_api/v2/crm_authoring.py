@@ -18,6 +18,8 @@ import re
 from datetime import date
 from typing import Any
 
+import psycopg
+
 from origenlab_api.v2.command_core import CommandTransaction, json_payload
 from origenlab_api.v2.commands import (
     CommandRefused,
@@ -281,12 +283,20 @@ def _handle_create_person(
     return {"ok": True, "person_id": person_id, "version": person["version"]}
 
 
-def _live_organization_active(cur: Any, organization_id: str) -> dict[str, Any]:
+def _live_organization_active(
+    cur: Any, organization_id: str, expected_version: int | None = None
+) -> dict[str, Any]:
+    """The organization, locked for the rest of the transaction, and only if still active.
+
+    The lock is what makes the version check mean something: a second writer that started from
+    the same version waits here, then reads the bumped version and is refused `stale_version`.
+    """
     cur.execute(
         """
         select id::text as id, name, kind, status, version
           from crm.organization
          where id = %s
+           for update
         """,
         (organization_id,),
     )
@@ -295,7 +305,25 @@ def _live_organization_active(cur: Any, organization_id: str) -> dict[str, Any]:
         raise CommandRefused(409, "organization_not_found", "no such organization")
     if row["status"] == "archived":
         raise CommandRefused(409, "archived_subject", "that organization is archived")
+    if expected_version is not None and row["version"] != expected_version:
+        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
     return row
+
+
+def _bump_organization_version(cur: Any, organization_id: str, expected_version: int) -> int:
+    """Compare-and-set the aggregate version after a sub-entity change; the new version."""
+    cur.execute(
+        """
+        update crm.organization set version = version + 1, updated_at = now()
+         where id = %s::uuid and version = %s
+        returning version
+        """,
+        (organization_id, expected_version),
+    )
+    row = _one(cur)
+    if row is None:
+        raise CommandRefused(409, "stale_version", "concurrent modification")
+    return row["version"]
 
 
 def _create_contact_point(
@@ -729,9 +757,7 @@ def _handle_add_contact_point(
     if person_id:
         _live_person(cur, person_id, expected_version)
     elif organization_id:
-        org = _live_organization_active(cur, organization_id)
-        if org["version"] != expected_version:
-            raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+        _live_organization_active(cur, organization_id, expected_version)
     else:
         raise CommandRefused(422, "missing_subject", "one of person_id or organization_id is required")
 
@@ -782,7 +808,7 @@ def _handle_add_contact_point(
             receipt_id=receipt_id,
         )
         # Bump person/org version
-        _bump_person_or_org_version(cur, person_id, organization_id)
+        _bump_person_or_org_version(cur, person_id, organization_id, expected_version)
         return {
             "ok": True, "contact_point_id": existing_cp["id"],
             "person_id": person_id, "organization_id": organization_id,
@@ -812,7 +838,7 @@ def _handle_add_contact_point(
         receipt_id=receipt_id,
     )
     # Bump the aggregate version
-    new_agg_version = _bump_person_or_org_version(cur, person_id, organization_id)
+    new_agg_version = _bump_person_or_org_version(cur, person_id, organization_id, expected_version)
     return {
         "ok": True,
         "contact_point_id": cp_id,
@@ -822,21 +848,23 @@ def _handle_add_contact_point(
     }
 
 
-def _bump_person_or_org_version(cur: Any, person_id: str | None, organization_id: str | None) -> int:
+def _bump_person_or_org_version(
+    cur: Any, person_id: str | None, organization_id: str | None, expected_version: int
+) -> int:
     if person_id:
         cur.execute(
-            "update crm.person set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-            (person_id,),
+            "update crm.person set version = version + 1, updated_at = now()"
+            " where id = %s::uuid and version = %s returning version",
+            (person_id, expected_version),
         )
     elif organization_id:
-        cur.execute(
-            "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-            (organization_id,),
-        )
+        return _bump_organization_version(cur, organization_id, expected_version)
     else:
         return 1
     row = _one(cur)
-    return row["version"] if row else 1
+    if row is None:
+        raise CommandRefused(409, "stale_version", "concurrent modification")
+    return row["version"]
 
 
 def _handle_update_contact_point(
@@ -1140,11 +1168,7 @@ def _handle_register_organization(
 
     # Bump version once for all added sub-entities, then re-read the authoritative value.
     if classification or domain or product_lines:
-        cur.execute(
-            "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-            (org_id,),
-        )
-        final_version = _one(cur)["version"]
+        final_version = _bump_organization_version(cur, org_id, org["version"])
     else:
         final_version = org["version"]
 
@@ -1341,38 +1365,83 @@ def _handle_add_organization_identifier(
     value = fields["value"]
     note_text = fields["note"]
 
-    org = _live_organization_active(cur, org_id)
-    if org["version"] != expected_version:
-        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+    _live_organization_active(cur, org_id, expected_version)
+    value_norm = value.strip()
 
+    # `(scheme, value_norm)` is unique across every subject and rows are never deleted, so a
+    # soft-removed identifier still holds its value. Re-adding it to the same organization
+    # restores that row; any other holder — live or removed — is a named conflict, never a
+    # bare unique violation, and a removed identifier is never moved to another subject.
     cur.execute(
         """
-        insert into crm.external_identifier
-            (organization_id, scheme, value_norm)
-        values (%s::uuid, %s, %s)
-        returning id::text as id
+        select id::text as id, organization_id::text as organization_id,
+               removed_at is not null as removed
+          from crm.external_identifier
+         where scheme = %s and value_norm = %s
+           for update
         """,
-        (org_id, scheme, value.strip()),
+        (scheme, value_norm),
     )
-    identifier = _one(cur)
+    existing = _one(cur)
+    if existing is not None and existing["organization_id"] != org_id:
+        raise CommandRefused(
+            409, "identifier_taken",
+            "that identifier is recorded on another record; it is never moved from it",
+        )
+    if existing is not None and not existing["removed"]:
+        raise CommandRefused(
+            409, "identifier_already_present", "that identifier is already on this organization"
+        )
 
-    # Bump org version
-    cur.execute(
-        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-        (org_id,),
-    )
-    new_version = _one(cur)["version"]
+    if existing is not None:
+        # The removal triple is cleared as a whole (the CHECK accepts 0 or 3 of them).
+        cur.execute(
+            """
+            update crm.external_identifier
+               set removed_at = null, removed_by_operator_id = null, remove_reason = null
+             where id = %s::uuid and removed_at is not null
+            """,
+            (existing["id"],),
+        )
+        identifier_id = existing["id"]
+    else:
+        try:
+            cur.execute(
+                """
+                insert into crm.external_identifier
+                    (organization_id, scheme, value_norm)
+                values (%s::uuid, %s, %s)
+                returning id::text as id
+                """,
+                (org_id, scheme, value_norm),
+            )
+        except psycopg.errors.UniqueViolation as exc:
+            # Another subject claimed the value between the read and the insert.
+            raise CommandRefused(
+                409, "identifier_taken",
+                "that identifier is recorded on another record; it is never moved from it",
+            ) from exc
+        identifier_id = _one(cur)["id"]
+
+    new_version = _bump_organization_version(cur, org_id, expected_version)
+    restored = existing is not None
 
     self._append_event(
         cur,
         aggregate_kind="organization",
         aggregate_id=org_id,
         event_type="organization.identifier_added",
-        payload={"organization_id": org_id, "scheme": scheme, "identifier_id": identifier["id"], "note": note_text},
+        payload={
+            "organization_id": org_id, "scheme": scheme, "identifier_id": identifier_id,
+            "note": note_text, "restored": restored,
+        },
         operator=operator,
         receipt_id=receipt_id,
     )
-    return {"ok": True, "organization_id": org_id, "identifier_id": identifier["id"], "version": new_version}
+    return {
+        "ok": True, "organization_id": org_id, "identifier_id": identifier_id,
+        "version": new_version, "restored": restored,
+    }
 
 
 def _handle_remove_organization_identifier(
@@ -1387,9 +1456,7 @@ def _handle_remove_organization_identifier(
     identifier_id = fields["identifier_id"]
     note_text = fields["note"]
 
-    org = _live_organization_active(cur, org_id)
-    if org["version"] != expected_version:
-        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+    _live_organization_active(cur, org_id, expected_version)
 
     cur.execute(
         """
@@ -1402,11 +1469,7 @@ def _handle_remove_organization_identifier(
     if cur.rowcount == 0:
         raise CommandRefused(404, "identifier_not_found", "identifier not found or already removed")
 
-    cur.execute(
-        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-        (org_id,),
-    )
-    new_version = _one(cur)["version"]
+    new_version = _bump_organization_version(cur, org_id, expected_version)
 
     self._append_event(
         cur,
@@ -1433,9 +1496,7 @@ def _handle_add_organization_domain(
     scope = fields.get("scope", "shared")
     note_text = fields["note"]
 
-    org = _live_organization_active(cur, org_id)
-    if org["version"] != expected_version:
-        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+    _live_organization_active(cur, org_id, expected_version)
 
     domain_norm = _normalize_domain(domain)
 
@@ -1459,7 +1520,8 @@ def _handle_add_organization_domain(
                 409, "domain_already_present", "that domain is already on this organization"
             )
         return self._restore_domain_row(
-            cur, operator=operator, org_id=org_id, dom=existing, scope=scope,
+            cur, operator=operator, org_id=org_id, expected_version=expected_version,
+            dom=existing, scope=scope,
             reason=note_text, receipt_id=receipt_id,
         )
 
@@ -1475,11 +1537,7 @@ def _handle_add_organization_domain(
     )
     dom = _one(cur)
 
-    cur.execute(
-        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-        (org_id,),
-    )
-    new_version = _one(cur)["version"]
+    new_version = _bump_organization_version(cur, org_id, expected_version)
 
     self._append_event(
         cur,
@@ -1529,6 +1587,7 @@ def _restore_domain_row(
     *,
     operator: OperatorIdentity,
     org_id: str,
+    expected_version: int,
     dom: dict[str, Any],
     scope: str,
     reason: str,
@@ -1560,11 +1619,7 @@ def _restore_domain_row(
     if cur.rowcount == 0:
         raise CommandRefused(409, "domain_not_removed", "that domain is not removed")
 
-    cur.execute(
-        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-        (org_id,),
-    )
-    new_version = _one(cur)["version"]
+    new_version = _bump_organization_version(cur, org_id, expected_version)
 
     self._append_event(
         cur,
@@ -1601,9 +1656,7 @@ def _handle_restore_organization_domain(
     domain_id = fields["domain_id"]
     note_text = fields["note"]
 
-    org = _live_organization_active(cur, org_id)
-    if org["version"] != expected_version:
-        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+    _live_organization_active(cur, org_id, expected_version)
 
     cur.execute(
         """
@@ -1630,7 +1683,8 @@ def _handle_restore_organization_domain(
 
     scope = fields.get("scope") or dom["scope"]
     return self._restore_domain_row(
-        cur, operator=operator, org_id=org_id, dom=dom, scope=scope,
+        cur, operator=operator, org_id=org_id, expected_version=expected_version,
+        dom=dom, scope=scope,
         reason=note_text, receipt_id=receipt_id,
     )
 
@@ -1647,9 +1701,7 @@ def _handle_remove_organization_domain(
     domain_id = fields["domain_id"]
     note_text = fields["note"]
 
-    org = _live_organization_active(cur, org_id)
-    if org["version"] != expected_version:
-        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+    _live_organization_active(cur, org_id, expected_version)
 
     cur.execute(
         """
@@ -1662,11 +1714,7 @@ def _handle_remove_organization_domain(
     if cur.rowcount == 0:
         raise CommandRefused(404, "domain_not_found", "domain not found or already removed")
 
-    cur.execute(
-        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-        (org_id,),
-    )
-    new_version = _one(cur)["version"]
+    new_version = _bump_organization_version(cur, org_id, expected_version)
 
     self._append_event(
         cur,
@@ -1693,9 +1741,26 @@ def _handle_add_organization_classification(
     valid_from = fields.get("valid_from") or str(date.today())
     note_text = fields["note"]
 
-    org = _live_organization_active(cur, org_id)
-    if org["version"] != expected_version:
-        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+    _live_organization_active(cur, org_id, expected_version)
+
+    # The same role may not overlap itself in time (`organization_relationship_no_overlap_same_role`).
+    # The new row runs open-ended from `valid_from`, so any row of that role still in force on or
+    # after that day conflicts; checking under the organization lock names it instead of a 500.
+    cur.execute(
+        """
+        select id::text as id
+          from crm.organization_relationship
+         where organization_id = %s::uuid and role = %s
+           and (valid_to is null or valid_to > %s::date)
+         limit 1
+        """,
+        (org_id, role, valid_from),
+    )
+    if _one(cur) is not None:
+        raise CommandRefused(
+            409, "classification_already_present",
+            "this organization already has that classification in force",
+        )
 
     cur.execute(
         """
@@ -1708,11 +1773,7 @@ def _handle_add_organization_classification(
     )
     rel = _one(cur)
 
-    cur.execute(
-        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-        (org_id,),
-    )
-    new_version = _one(cur)["version"]
+    new_version = _bump_organization_version(cur, org_id, expected_version)
 
     self._append_event(
         cur,
@@ -1739,26 +1800,38 @@ def _handle_remove_organization_classification(
     valid_to = fields.get("valid_to") or str(date.today())
     note_text = fields["note"]
 
-    org = _live_organization_active(cur, org_id)
-    if org["version"] != expected_version:
-        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+    _live_organization_active(cur, org_id, expected_version)
+
+    # `organization_relationship_validity` requires valid_to > valid_from, so a role cannot be
+    # closed on the day it opened; refuse that by name rather than surface the CHECK as a 500.
+    cur.execute(
+        """
+        select %s::date <= valid_from as closes_too_early, valid_from::text as valid_from
+          from crm.organization_relationship
+         where id = %s::uuid and organization_id = %s::uuid and valid_to is null
+           for update
+        """,
+        (valid_to, relationship_id, org_id),
+    )
+    rel = _one(cur)
+    if rel is None:
+        raise CommandRefused(404, "relationship_not_found", "relationship not found or already closed")
+    if rel["closes_too_early"]:
+        raise CommandRefused(
+            422, "valid_to_not_after_valid_from",
+            f"a classification can only be closed after the day it started ({rel['valid_from']})",
+        )
 
     cur.execute(
         """
         update crm.organization_relationship
            set valid_to = %s::date, note = coalesce(note, %s), updated_at = now()
-         where id = %s::uuid and organization_id = %s::uuid and valid_to is null
+         where id = %s::uuid
         """,
-        (valid_to, note_text, relationship_id, org_id),
+        (valid_to, note_text, relationship_id),
     )
-    if cur.rowcount == 0:
-        raise CommandRefused(404, "relationship_not_found", "relationship not found or already closed")
 
-    cur.execute(
-        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-        (org_id,),
-    )
-    new_version = _one(cur)["version"]
+    new_version = _bump_organization_version(cur, org_id, expected_version)
 
     self._append_event(
         cur,
@@ -1787,9 +1860,7 @@ def _handle_link_organization_product_line(
     if line_id not in PRODUCT_LINE_IDS:
         raise CommandRefused(422, "invalid_product_line", f"unknown product line: {line_id!r}")
 
-    org = _live_organization_active(cur, org_id)
-    if org["version"] != expected_version:
-        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+    _live_organization_active(cur, org_id, expected_version)
 
     # Check for existing active link
     cur.execute(
@@ -1810,11 +1881,7 @@ def _handle_link_organization_product_line(
     )
     link = _one(cur)
 
-    cur.execute(
-        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-        (org_id,),
-    )
-    new_version = _one(cur)["version"]
+    new_version = _bump_organization_version(cur, org_id, expected_version)
 
     self._append_event(
         cur,
@@ -1840,9 +1907,7 @@ def _handle_unlink_organization_product_line(
     link_id = fields["link_id"]
     note_text = fields["note"]
 
-    org = _live_organization_active(cur, org_id)
-    if org["version"] != expected_version:
-        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+    _live_organization_active(cur, org_id, expected_version)
 
     cur.execute(
         """
@@ -1856,11 +1921,7 @@ def _handle_unlink_organization_product_line(
     if cur.rowcount == 0:
         raise CommandRefused(404, "link_not_found", "product line link not found or already closed")
 
-    cur.execute(
-        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-        (org_id,),
-    )
-    new_version = _one(cur)["version"]
+    new_version = _bump_organization_version(cur, org_id, expected_version)
 
     self._append_event(
         cur,
@@ -2014,11 +2075,7 @@ def _handle_confirm_supplier_candidate(
             )
 
     # Bump org version
-    cur.execute(
-        "update crm.organization set version = version + 1, updated_at = now() where id = %s::uuid returning version",
-        (organization_id,),
-    )
-    new_org_version = _one(cur)["version"]
+    new_org_version = _bump_organization_version(cur, organization_id, org["version"])
 
     # Resolve assertion
     cur.execute(
