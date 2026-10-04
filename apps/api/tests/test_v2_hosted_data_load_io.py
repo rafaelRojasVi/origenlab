@@ -174,10 +174,10 @@ def test_invariant_names_cover_every_table_and_the_globals():
 def test_post_copy_invariants_emit_exactly_the_declared_names():
     class Cur:
         def execute(self, sql, params=None):
-            pass
+            self.q = str(sql)
 
         def fetchone(self):
-            return (1, "h")
+            return ("h",) if self.q.startswith("select coalesce(md5") else (1, "h")
 
     plan = {"tables": [{"name": t, "count": 1, "hash": "h", "pk": ["id"], "columns": [["id", "uuid"]]} for t in
                        ("comms.mailbox", "crm.domain_event")],
@@ -389,3 +389,25 @@ def test_ledger_probe_never_resolves_a_name_through_the_schema_acl():
     assert "has_schema_privilege(n.oid" in probe and "has_table_privilege(c.oid" in probe
     assert "'supabase_migrations.schema_migrations'" not in probe
 
+
+# ---- final review: I1 roster identity columns ----------------------------------------------------
+
+_THROTTLE = ("failed_attempts", "lockout_count", "locked_until", "last_failed_at", "pin_attempt_id", "pin_attempt_xact",
+             "pin_attempt_operator_id", "pin_attempt_nonce", "pin_set_at", "created_at", "updated_at")
+
+
+def test_roster_hash_reads_identity_columns_only():
+    """I1: a failed PIN writes the throttle columns; the roster hash must not see them."""
+    class Cur:
+        def __init__(self): self.log = []
+        def execute(self, q, params=None): self.log.append(q)
+        def fetchone(self): return ("d",)
+
+    cur = Cur()
+    assert io_.roster_hash(cur) == "ddd"
+    assert len(cur.log) == 3
+    for q, (table, cols) in zip(cur.log, io_.hp.ROSTER_IDENTITY_COLUMNS.items()):
+        assert f"select {io_.hp.qcols(cols)} from {table}" in q
+        assert "*" not in q.split(" from ")[0].replace("count(*)", "")
+        for col in _THROTTLE:
+            assert f'"{col}"' not in q

@@ -409,3 +409,22 @@ def test_missing_fingerprint_refuses():
     p = _plan()
     p["schema_fingerprint"] = None
     assert "schema_fingerprint_identical" in hp.refused(_eval(plan=p))
+
+
+def test_roster_identity_columns_are_the_identity_and_never_the_pin_throttle():
+    assert hp.ROSTER_IDENTITY_COLUMNS == {
+        "platform.operator": ("id", "auth_user_id", "email_norm", "display_name", "role", "status",
+                              "invited_by_operator_id", "version", "sign_in_kind"),
+        "platform.operator_profile": ("operator_id", "operator_sign_in_kind", "principal_id", "profile_key", "pin_hash",
+                                      "status", "sort_order", "version"),
+        "platform.auth_principal": ("id", "provider", "email_norm", "provider_subject", "provider_issuer", "status",
+                                    "version"),
+    }
+    flat = {c for cols in hp.ROSTER_IDENTITY_COLUMNS.values() for c in cols}
+    assert not flat & {"failed_attempts", "lockout_count", "locked_until", "last_failed_at", "pin_set_at",
+                       "created_at", "updated_at"}
+    assert not any(c.startswith("pin_attempt_") for c in flat)
+
+
+def test_qcols_quotes_every_name():
+    assert hp.qcols(["id", 'we"ird']) == '"id", "we""ird"'

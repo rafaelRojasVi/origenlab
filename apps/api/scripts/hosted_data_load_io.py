@@ -172,9 +172,9 @@ def _hash_rows(cur, sql: str) -> str:
 
 
 def roster_hash(cur) -> str:
-    return (_hash_rows(cur, "select * from platform.operator")
-            + _hash_rows(cur, "select * from platform.operator_profile")
-            + _hash_rows(cur, "select * from platform.auth_principal"))
+    """Identity columns only (``hp.ROSTER_IDENTITY_COLUMNS``): a failed PIN must not read as a changed roster."""
+    return "".join(_hash_rows(cur, f"select {hp.qcols(cols)} from {table}")
+                   for table, cols in hp.ROSTER_IDENTITY_COLUMNS.items())
 
 
 def _ledger(cur) -> list[str]:

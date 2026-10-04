@@ -71,9 +71,28 @@ ADVISORY_LOCK_KEY = int.from_bytes(
     hashlib.sha256(b"origenlab:hosted_data_load").digest()[:8], "big", signed=True
 )
 
+#: What "the hosted roster is unchanged" means: these identity columns, hashed by every call site
+#: (plan, apply's invariants, verify, rollback). Never the PIN-throttle columns (failed_attempts,
+#: lockout_count, locked_until, last_failed_at, pin_attempt_*), which any failed PIN writes and nothing
+#: resets (migration 20260928194000_slice1_pin_throttle_definer.sql), nor pin_set_at/created_at/updated_at.
+#: Names checked against the migrations (2026-10-04): all exist as spelled.
+ROSTER_IDENTITY_COLUMNS: dict[str, tuple[str, ...]] = {
+    "platform.operator": ("id", "auth_user_id", "email_norm", "display_name", "role", "status",
+                          "invited_by_operator_id", "version", "sign_in_kind"),
+    "platform.operator_profile": ("operator_id", "operator_sign_in_kind", "principal_id", "profile_key", "pin_hash",
+                                  "status", "sort_order", "version"),
+    "platform.auth_principal": ("id", "provider", "email_norm", "provider_subject", "provider_issuer", "status",
+                                "version"),
+}
+
 
 def _q(col: str) -> str:
     return '"' + col.replace('"', '""') + '"'
+
+
+def qcols(cols: Sequence[str]) -> str:
+    """A quoted, comma-separated column list (the one quoting rule for every projection)."""
+    return ", ".join(_q(c) for c in cols)
 
 
 def remap_select_sql(table: str, columns: Sequence[str], hosted_operator: str) -> str:

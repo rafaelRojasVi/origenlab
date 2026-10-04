@@ -213,6 +213,12 @@ def test_full_cycle_and_injected_failures(databases, tmp_path: Path):
     assert r.returncode == EXIT_REFUSED and "target_tables_empty" in r.stdout
     assert counts() == loaded
 
+    # I1: a failed PIN after the plan writes the throttle columns of the roster -> verify and rollback unaffected
+    _psql(tgt, "update platform.auth_principal set failed_attempts = failed_attempts + 1, "
+               "lockout_count = lockout_count + 1, last_failed_at = now()")
+    _psql(tgt, "update platform.operator_profile set failed_attempts = failed_attempts + 1, last_failed_at = now() "
+               "where profile_key = 'karla'")
+
     # verify (re-hash, post-load dump, restore drill)
     r = _cli(env, "verify", *ap, out=out)
     assert r.returncode == 0 and "target state: loaded" in r.stdout and "Checklist para el dashboard" in r.stdout
