@@ -372,7 +372,9 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("allows exactly the eight Marketing commands as POST, and no send, approve, schedule or activate", async () => {
+  // The eight non-sending Marketing commands. The one command that sends — the admin-only test
+  // send of one campaign email to one address — has its own test below.
+  it("allows the eight non-sending Marketing commands as POST, and no campaign send, approve, schedule or activate", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of [
       "/v2/commands/create-campaign-draft",
