@@ -1791,6 +1791,19 @@ The Cyber OrigenLab campaign (5–9 Oct 2026) is sent by the old V1 lane (the ti
 | Fix | the logger gets its own stderr handler at INFO (uvicorn's `INFO:     ` prefix); still propagates, so `caplog` keeps working. A new test runs a fresh process with uvicorn's `LOGGING_CONFIG` and reads stderr: `GET /ping 200 …ms`, no query string |
 | Evidence | `apps/api/scripts/validate.sh`: **2813 passed**, 476 skipped |
 
+### 2.7.47 «Enviar prueba»: an admin-only test send of a campaign's email, 2026-10-04 — built, not deployed
+
+An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V1-lane cards such as Cyber) to an address they choose, from `contacto@origenlab.cl`, subject prefixed `[PRUEBA]`, before the real send.
+
+| | |
+|---|---|
+| API | `v2/gmail_send.py` (gmail.send-only client; token file `{client_id, client_secret, refresh_token, address}`, address must be `contacto@origenlab.cl`), `v2/campaign_test_send.py` (admin-only command, 10/h and 30/24h from `platform.command_receipt`, two-phase receipt, history), `POST /v2/commands/send-campaign-test` (429 detail carries `next_allowed_at`), `GET /v2/workspace/marketing/test-send-history`. Mounted by `_mount_campaign_test_send` only when `ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED` is true and `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE` holds a valid token; a bad token leaves the feature off with a warning. The `gmail_send` write guard allows only the client, the command and the mount |
+| Proxy | the POST (4 KiB body) and the history GET, by exact path |
+| Dashboard | `TestSendPanel` on V2 campaigns with HTML and on V1-lane cards; admin only, history and remaining allowance |
+| Authorization | `apps/api/scripts/gmail_send_authorize.py`: one-time local OAuth as `contacto@`, refuses any other account, writes the token file mode 600. Procedure: `apps/api/README.md` «Campaign test sends» |
+| Evidence | `apps/api/scripts/validate.sh`: 2869 passed, 488 skipped; proxy 337 tests; the script's `token_payload` is unit-tested, the OAuth flow was never run |
+| Not done | token not authorized; Render secret file and both variables not set; API and Worker not redeployed. This branch is based before #631/#632: rebase on main at merge time (STATUS and README conflicts expected to be trivial) |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

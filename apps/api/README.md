@@ -366,6 +366,34 @@ numbering decision — see the table above.
     customer data or the eventual production template until that first
     test is reviewed.
 
+### Campaign test sends («Enviar prueba») — one-time setup
+
+Admin-only: sends the stored email of a marketing campaign to an address of the operator's choosing, from
+`contacto@origenlab.cl`, with the subject prefixed `[PRUEBA]`. The API holds only a `gmail.send` refresh token
+(it cannot read mail). Limits: 10 per hour and 30 per 24 hours, counted from `platform.command_receipt`; over the limit
+the API answers 429 with `next_allowed_at`. Off until all of the following is done; with the switch unset or a bad token
+file the route is not mounted (a bad token logs a warning and the feature stays off).
+
+1. Google Cloud, in the project of the dashboard login: enable the Gmail API; on the consent screen (type Internal) add the
+   scope `https://www.googleapis.com/auth/gmail.send`; create an OAuth client of type Desktop (for example
+   `origenlab-test-send`) and download its JSON.
+2. Locally, signed in to the browser as `contacto@origenlab.cl`:
+   ```bash
+   cd apps/api
+   uv run --extra drive-bootstrap python scripts/gmail_send_authorize.py \
+       --client-secrets ~/Downloads/client_secret_<id>.json \
+       --out ~/.config/origenlab-v2/gmail_send_token.json
+   ```
+   The script refuses any other account and writes the file with mode 600
+   (`{client_id, client_secret, refresh_token, address}`).
+3. Render: upload that file as the secret file `gmail-send-token.json`, then set
+   `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE=/etc/secrets/gmail-send-token.json` and
+   `ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED=true`. Redeploy the API, and redeploy the Worker
+   (`apps/dashboard-proxy`) so it allows `POST /v2/commands/send-campaign-test` and
+   `GET /v2/workspace/marketing/test-send-history`.
+4. Revoke: delete the secret file and unset the two variables on Render (the feature turns off), and remove the app's
+   access in the `contacto@` Google account (Security, third-party apps) so the refresh token dies.
+
 ## Tests
 
 Default local pre-PR check (frozen sync + full pytest, same shape as CI):
