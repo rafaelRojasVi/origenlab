@@ -174,6 +174,7 @@ def test_as_dict_round_trips() -> None:
         "clients_per_day": None,
         "total_clients": None,
         "audience_rule": None,
+        "subject": None,
         "html": None,
     }
 
@@ -240,3 +241,15 @@ def test_an_oversized_or_unreadable_html_is_skipped_with_a_warning(
         assert load_v1_lane_html("big", str(tmp_path)) is None
         assert load_v1_lane_html("bin", str(tmp_path)) is None
     assert "v1_lane_campaigns" in caplog.text
+
+
+def test_the_committed_cyber_entry_carries_its_subject() -> None:
+    c = validate_file(json.loads(JSON_PATH.read_text(encoding="utf-8")))[0]
+    assert c.subject == "Cyber OrigenLab · 5% a 10% en productos seleccionados para laboratorio"
+    assert as_dict(c)["subject"] == c.subject
+
+
+@pytest.mark.parametrize("bad", ["   ", "x" * 301, 5])
+def test_a_blank_or_long_subject_is_refused(bad) -> None:
+    with pytest.raises(V1LaneValidationError, match="subject"):
+        validate_entry({**GOOD, "subject": bad})

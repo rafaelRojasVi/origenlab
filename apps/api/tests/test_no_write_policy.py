@@ -10,6 +10,17 @@ from origenlab_api.main import create_app
 
 _API_SRC = Path(__file__).resolve().parents[1] / "src" / "origenlab_api"
 
+# «Enviar prueba» (owner decision 2026-10-04): one admin-only test of one campaign's stored email to
+# one address, from contacto@. These are the only files allowed to name the Gmail send client;
+# every other file keeps the `gmail_send` guard. Task 3 extends this allowance to the routes module
+# and the `main.py` mount, and nothing broader (never a directory).
+_GMAIL_SEND_ALLOWED = frozenset(
+    {
+        "v2/gmail_send.py",
+        "v2/campaign_test_send.py",
+    }
+)
+
 _FORBIDDEN_SUBSTRINGS = (
     "refresh_outbound_safety_memory",
     "05_workspace_gmail_imap_to_sqlite",
@@ -118,6 +129,8 @@ def test_origenlab_api_source_has_no_mutation_script_imports() -> None:
     for path in _API_SRC.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         for needle in _FORBIDDEN_SUBSTRINGS:
+            if needle == "gmail_send" and path.relative_to(_API_SRC).as_posix() in _GMAIL_SEND_ALLOWED:
+                continue
             if needle in text:
                 hits.append(f"{path.relative_to(_API_SRC)}: {needle}")
     assert hits == [], "forbidden references in apps/api:\n" + "\n".join(hits)
