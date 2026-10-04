@@ -1752,15 +1752,15 @@ Owner decision 2026-10-03 ([`MIGRATION.md`](MIGRATION.md) §11 row 5): Cloudflar
 | Docs | [`MIGRATION.md`](MIGRATION.md) decision 5 and §10; [`OPERATIONS.md`](OPERATIONS.md) §1.2 steps 8–10; `docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md` rewritten for the API application only; `apps/dashboard-proxy/README.md`; `apps/api/docs/PRODUCTION_AUTH.md` *Production activation* |
 | Not done | **the Worker in Cloudflare still carries the previous allowlist and still rebuilds the operator header from Access until step 9 (`npx wrangler deploy`) runs.** The Access application on `dashboard.origenlab.cl` is untouched (step 10, after an end-to-end sign-in). Merging does not deploy the Worker; it does redeploy the dashboard static site, unchanged. Nothing provisioned, no Render variable set |
 
-### 2.7.42 V2 connection pool and batched reads, 2026-10-04 — built, not deployed
+### 2.7.42 V2 connection pool and batched reads, 2026-10-04 — merged (#625, `dfd06ce3`) and deployed to Render 2026-10-04
 
 | | |
 |---|---|
 | Why | The Render API runs in Oregon and the hosted database in `sa-east-1`. Every V2 repository opened a new verify-full TLS connection per call (two per authenticated request: session, then page) and sent one statement per round trip. Production logs 2026-10-04: `/v2/workspace/pipeline` ≈ 5 s, `/v2/workspace/overview` ≈ 3 s |
 | API | One `psycopg_pool` per process (min 1, max 4, idle 300 s, lifetime 3600 s, a check per checkout) behind the repositories' unchanged `connect(dsn, autocommit=False)` shape; same TLS options, same startup refusals; opened by the lifespan or on first use. Every `SET` in `apps/api` is transaction-scoped (audited, and a test fails on a session-level one). Overview's 14 counts are one statement; the workspace pipeline and the read setup go out in psycopg pipeline mode. One log line per request: method, path, status, milliseconds; nothing else |
 | Evidence | Full API suite against a disposable cluster (`scripts/disposable_test_cluster.sh`): **3110 passed, 0 failed, no V2 DSN skip**; two tests prove pipeline-mode results and that transaction-local settings do not survive into the next checkout |
-| Not done | Not deployed. Real timings not yet measured: read them from the new log line after the deploy. The per-checkout check costs one round trip; revisit with those numbers |
-### 2.7.43 Resumen as a follow-up list, exchange rates, page memory, 2026-10-04 — built, not deployed
+| Not done | Real timings not yet measured: the per-request log line never reached Render's logs as first deployed (an unconfigured logger inherits the root's WARNING) — fixed in §2.7.45; read the numbers after that deploy. The per-checkout check costs one round trip; revisit with those numbers |
+### 2.7.43 Resumen as a follow-up list, exchange rates, page memory, 2026-10-04 — merged (#626, `67c69deb`) and deployed (Render API + dashboard; Worker `d4c1e304`) 2026-10-04
 
 | | |
 |---|---|
@@ -1768,8 +1768,8 @@ Owner decision 2026-10-03 ([`MIGRATION.md`](MIGRATION.md) §11 row 5): Cloudflar
 | API | `GET /v2/workspace/fx`: the Banco Central figures as mindicador.cl republishes them, cached an hour per process; a failed refresh keeps the last figures marked stale; with none, 503 and no retry for a minute. Display only: a quote records its own `fx_rate`/`fx_as_of`/`fx_source` ([`WORKFLOWS.md`](WORKFLOWS.md)) |
 | Proxy | `GET /v2/workspace/fx` by exact path |
 | Evidence | `apps/dashboard` `npm run validate`: **421 tests in 36 files**, build ok; `apps/dashboard-proxy`: 336 tests; API full suite against a disposable cluster: **3104 passed, 0 failed** |
-| Not done | Not deployed. Merging redeploys the API and the dashboard; **the Worker needs `npx wrangler deploy` for `/fx`**, and until then the card says «no disponible» while the rest of the page works |
-### 2.7.44 Cyber as a prepared campaign in the Marketing page, via the V1 lane, 2026-10-04 — built, not deployed
+| Deployed | API and dashboard redeployed on merge; the Worker deployed from `main` (`46e9c408`) as version `d4c1e304` on 2026-10-04: `/api/v2/workspace/fx` answers 401 without a session (forwarded), `/fx/` and V1 paths still 403 |
+### 2.7.44 Cyber as a prepared campaign in the Marketing page, via the V1 lane, 2026-10-04 — merged (#627, `46e9c408`) and deployed 2026-10-04
 
 The Cyber OrigenLab campaign (5–9 Oct 2026) is sent by the old V1 lane (the timer on the owner's PC) and is not in the V2 database. This slice shows it as a prepared campaign in progress — its plan per day and its email — without a database write or a new route. Interim: removed once its real results are imported.
 
@@ -1781,7 +1781,15 @@ The Cyber OrigenLab campaign (5–9 Oct 2026) is sent by the old V1 lane (the ti
 | Dashboard | Marketing → Campañas: a card per V1-lane campaign (Programada / En curso / Envío terminado · resultados por importar), each day with its planned clients and honest status (a past day reads «Programada · resultado en el registro V1» — never «enviada»), the total, the audience rule, the email in the sandboxed preview. Calendar: a «Canal V1» chip per day with its count. Header: «Programada / En curso por el canal V1: …» until the promo ends |
 | Never-sent history | historical V1 campaigns with no attempt and no send are hidden from the list and its count behind «Mostrar N campaña(s) nunca enviada(s)»; the record stays (owner decision 2026-10-04) |
 | Evidence | `apps/api/scripts/validate.sh`: **2786 passed**, 474 skipped; `apps/dashboard` `npm run validate`: **407 tests in 33 files**, build ok (one pre-existing timing-sensitive ProfileSelector test failed once under load, passed alone 3/3 and in two full runs); `apps/dashboard-proxy`: 336, unchanged |
-| Not done | not deployed; the email secret file and `ORIGENLAB_V2_V1_LANE_CONTENT_DIR` not yet set on Render |
+| Deployed | API and dashboard redeployed on merge; the secret file `v1-lane-cyber-2026-10.html` and `ORIGENLAB_V2_V1_LANE_CONTENT_DIR=/etc/secrets` set on the Render service before the deploy. **Remove the declaration entry once Cyber's results are imported** |
+
+### 2.7.45 The per-request timing line reaches the server log, 2026-10-04 — built, not deployed
+
+| | |
+|---|---|
+| Defect | §2.7.42's `RequestLoggingMiddleware` logged at INFO on `origenlab_api.request_logging`, which nothing configured: uvicorn configures only its own loggers, so the line inherited the root's WARNING and was dropped. Its tests pinned the level themselves and passed |
+| Fix | the logger gets its own stderr handler at INFO (uvicorn's `INFO:     ` prefix); still propagates, so `caplog` keeps working. A new test runs a fresh process with uvicorn's `LOGGING_CONFIG` and reads stderr: `GET /ping 200 …ms`, no query string |
+| Evidence | `apps/api/scripts/validate.sh`: **2813 passed**, 476 skipped |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 

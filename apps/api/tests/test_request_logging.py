@@ -93,3 +93,38 @@ def test_log_line_is_logged_for_every_status_code(caplog) -> None:
     assert caplog.records, "no log record emitted for 401 response"
     msg = caplog.records[0].getMessage()
     assert "401" in msg
+
+
+def test_the_line_reaches_the_server_log_as_uvicorn_configures_logging() -> None:
+    """Production, reproduced: a fresh process, uvicorn's own logging config, one request.
+
+    The tests above pin the logger's level themselves (`caplog.at_level(..., logger=...)`), so
+    they passed while production printed nothing: uvicorn configures only its own loggers, and an
+    unconfigured logger inherits the root's WARNING. This one reads what reaches stderr.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        """
+        import logging.config
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from uvicorn.config import LOGGING_CONFIG
+        logging.config.dictConfig(LOGGING_CONFIG)  # what uvicorn does at startup
+        from origenlab_api.request_logging import RequestLoggingMiddleware
+        app = FastAPI()
+        app.add_middleware(RequestLoggingMiddleware)
+        @app.get("/ping")
+        def ping():
+            return {"ok": True}
+        TestClient(app).get("/ping?secret=1")
+        """
+    )
+    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    lines = [line for line in out.stderr.splitlines() if "/ping" in line]
+    assert len(lines) == 1, out.stderr
+    assert "GET /ping 200 " in lines[0] and lines[0].rstrip().endswith("ms")
+    assert "secret" not in out.stderr
