@@ -85,6 +85,42 @@ function Section({
   }
 }
 
+/** The shared account the team works in; Drive and Gmail open as it, not as the browser's first account. */
+const SHARED_ACCOUNT = "contacto@origenlab.cl";
+const asShared = (url: string) => `${url}?authuser=${encodeURIComponent(SHARED_ACCOUNT)}`;
+
+/** Always-visible shortcuts to the tools the team leaves the panel for. */
+export const QUICK_LINKS: { label: string; short: string; href: string; title: string }[] = [
+  { label: "Drive", short: "Drive", href: asShared("https://drive.google.com/drive/my-drive"), title: `Google Drive de ${SHARED_ACCOUNT}` },
+  { label: "Gmail", short: "Gmail", href: asShared("https://mail.google.com/mail/"), title: `Gmail de ${SHARED_ACCOUNT}` },
+  { label: "Sitio web", short: "Web", href: "https://origenlab.cl/", title: "origenlab.cl" },
+];
+
+function QuickLinks() {
+  return (
+    <nav aria-label="Accesos directos" className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+      {QUICK_LINKS.map((l) => (
+        <a
+          key={l.label}
+          href={l.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={l.title}
+          aria-label={l.label}
+          className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-canvas-raised px-1.5 text-[12px] font-medium text-ink-muted transition-colors hover:border-line-strong hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 sm:px-2"
+        >
+          {/* Phones get the short word and no arrow, so the sign-out button stays on screen. */}
+          <span className="sm:hidden">{l.short}</span>
+          <span className="hidden sm:inline">{l.label}</span>
+          <span aria-hidden="true" className="hidden text-[10px] sm:inline">
+            ↗
+          </span>
+        </a>
+      ))}
+    </nav>
+  );
+}
+
 export function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean }) {
   const { session, signOut, switchProfile } = useAuthSession();
   return (
@@ -121,6 +157,7 @@ export function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boo
           </span>
         ) : null}
         <div className="ml-auto flex min-w-0 items-center gap-2">
+          <QuickLinks />
           {session.kind === "signed_in" ? (
             <span
               className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-canvas-raised py-0.5 pl-1 pr-1 text-xs text-ink-muted"

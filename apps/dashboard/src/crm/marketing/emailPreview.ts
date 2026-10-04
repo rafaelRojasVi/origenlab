@@ -70,6 +70,33 @@ export function isAllowedImageUrl(raw: string): boolean {
   return PREVIEW_IMAGE_ORIGINS.includes(url.origin);
 }
 
+/**
+ * Image resizers our own emails use to scale website photos (`wsrv.nl/?url=origenlab.cl/…&w=420`).
+ * Allowing the resizer itself would let any image on the internet through it, so it stays out of
+ * the CSP; instead the preview shows the original image the resizer points at, when that original
+ * is itself allowed. Exact origins, as for `PREVIEW_IMAGE_ORIGINS`.
+ */
+const IMAGE_RESIZER_ORIGINS: readonly string[] = ["https://wsrv.nl", "https://images.weserv.nl"];
+
+/**
+ * The allowed original behind a resizer URL, or null. The source must resolve to an
+ * `isAllowedImageUrl` image: a scheme-less source is read as https; any other scheme, a
+ * protocol-relative source, credentials or a port are refused like everywhere else.
+ */
+export function unproxyImageUrl(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (!IMAGE_RESIZER_ORIGINS.includes(url.origin) || url.username || url.password || url.port) return null;
+  const source = url.searchParams.get("url");
+  if (!source || source.startsWith("//")) return null;
+  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(source) ? source : `https://${source}`;
+  return isAllowedImageUrl(candidate) ? new URL(candidate).href : null;
+}
+
 /** A link target that could run code: `javascript:`, `vbscript:`, or any `data:` URL (an SVG or HTML payload). */
 function isScriptUrl(raw: string): boolean {
   const cleaned = raw.replace(/[\u0000- ]/g, "").toLowerCase();
@@ -85,6 +112,8 @@ function neutralizeCss(css: string, blocked: string[]): string {
     })
     .replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi, (whole, _q: string, url: string) => {
       if (isAllowedImageUrl(url)) return whole;
+      const original = unproxyImageUrl(url);
+      if (original) return `url('${original}')`;
       blocked.push(url);
       return "none";
     });
@@ -141,16 +170,25 @@ export function buildPreviewDocument(source: string | null | undefined): Preview
           const kept = attr.value
             .split(",")
             .map((c) => c.trim())
-            .filter((c) => {
-              const ok = isAllowedImageUrl(c.split(/\s+/)[0] ?? "");
-              if (!ok && c) blockedImages.push(c.split(/\s+/)[0]);
-              return ok;
-            });
+            .map((c) => {
+              const [first = "", ...rest] = c.split(/\s+/);
+              if (isAllowedImageUrl(first)) return c;
+              const original = unproxyImageUrl(first);
+              if (original) return [original, ...rest].join(" ");
+              if (c) blockedImages.push(first);
+              return "";
+            })
+            .filter(Boolean);
           if (kept.length) el.setAttribute("srcset", kept.join(", "));
           else el.removeAttribute("srcset");
           continue;
         }
         if (!isAllowedImageUrl(attr.value)) {
+          const original = unproxyImageUrl(attr.value);
+          if (original) {
+            el.setAttribute(attr.name, original);
+            continue;
+          }
           if (attr.value.trim()) blockedImages.push(attr.value.trim());
           if (el.tagName === "IMG" && name === "src") el.setAttribute("src", PLACEHOLDER);
           else el.removeAttribute(attr.name);

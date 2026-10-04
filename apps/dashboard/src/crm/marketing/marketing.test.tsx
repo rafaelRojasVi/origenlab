@@ -100,7 +100,9 @@ describe("buildPreviewDocument", () => {
     ["blob scheme", "blob:https://origenlab.cl/1234"],
     ["protocol-relative", "//origenlab.cl/a.png"],
     ["another host", "https://upload.wikimedia.org/x.png"],
-    ["image proxy", "https://wsrv.nl/?url=origenlab.cl/a.png"],
+    // A resizer is never loaded itself; one pointing at an OrigenLab image previews that original
+    // instead (owner decision 2026-10-04, emailPreview.proxied.test.ts). Pointing elsewhere: refused.
+    ["image proxy to another host", "https://wsrv.nl/?url=tracker.test/a.png"],
   ])("rejects an image URL that is not exactly the apex or www origin over https: %s", (_label, url) => {
     const out = buildPreviewDocument(`<img id="i" src="${url.replace(/"/g, "&quot;")}"><div style="background:url('${url}')">x</div>`);
     const doc = new DOMParser().parseFromString(out.html, "text/html");
