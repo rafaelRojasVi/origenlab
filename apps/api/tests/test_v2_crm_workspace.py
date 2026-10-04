@@ -287,6 +287,28 @@ def test_drive_archive_separates_in_crm_from_not_imported(tmp_path: Path) -> Non
     assert held["ledger_crm_status"] == "held"
 
 
+def test_drive_folders_are_newest_quote_number_first_not_text_order(tmp_path: Path) -> None:
+    """Typed numbers vary: a dropped leading zero, a revision digit glued on, a letter suffix.
+
+    Text order put "1013-26" above "01246-26"; the number, read as the five-digit correlative it
+    is meant to be, puts it where it belongs. The year comes first, so another year's number is
+    never mixed into this one's.
+    """
+    numbers = ["01024-26", "1013-26", "011728A-25", "01246-26", "012392-26"]
+    rows = [
+        _row(chr(ord("a") + i) * 64, f"f-{i}", folder=f"folder-{i}", quote_number=n, case_key=f"case-{i}")
+        for i, n in enumerate(numbers)
+    ]
+    out = compose_drive_archive(load_drive_ledgers([_ledger(tmp_path, "run-1", rows)]), {})
+    assert [f["quote_numbers"][0] for f in out["folders"]] == [
+        "01246-26",
+        "012392-26",
+        "01024-26",
+        "1013-26",
+        "011728A-25",
+    ]
+
+
 def test_every_counted_entity_has_a_provenance_note() -> None:
     from origenlab_api.v2.crm_workspace import _COUNT_SQL
 
@@ -327,6 +349,7 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/marketing/campaign-blocks",
         "/v2/workspace/drive",
         "/v2/workspace/review",
+        "/v2/workspace/fx",
     }
 
 

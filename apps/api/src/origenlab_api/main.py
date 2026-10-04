@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
@@ -11,6 +12,7 @@ from origenlab_api.backends.factory import validate_api_settings
 from origenlab_api.errors import register_exception_handlers
 from origenlab_api.http_security import configure_http_security, openapi_docs_enabled
 from origenlab_api.request_id import RequestIdMiddleware
+from origenlab_api.request_logging import RequestLoggingMiddleware
 from origenlab_api.response_timing import ResponseTimingMiddleware
 from origenlab_api.mirror import router as mirror_router
 from origenlab_api.routes import (
@@ -26,10 +28,30 @@ from origenlab_api.routes import (
 from origenlab_api.settings import Settings, get_settings
 
 
+@asynccontextmanager
+async def _app_lifespan(app: FastAPI):  # type: ignore[type-arg]
+    """Open the V2 connection pool at startup; close it at shutdown.
+
+    ``app.state.v2_pool`` is set by ``_mount_v2_read_boundary`` before the
+    app starts serving, so the pool is always ready when the lifespan runs.
+    When V2 is not configured the attribute is absent and the lifespan is a
+    no-op — which preserves the current V1-only behaviour.
+    """
+    pool = getattr(app.state, "v2_pool", None)
+    if pool is not None:
+        pool.open()
+    try:
+        yield
+    finally:
+        if pool is not None:
+            pool.close()
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     docs_on = openapi_docs_enabled(settings)
     app = FastAPI(
+        lifespan=_app_lifespan,
         title="OrigenLab API",
         description=(
             "Operator API (SQLite-first). "
@@ -49,11 +71,13 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if docs_on else None,
     )
     configure_http_security(app, settings)
-    # Starlette runs the last-added middleware outermost. Register request-id
-    # first, then timing, so ResponseTimingMiddleware wraps RequestIdMiddleware
-    # and both headers remain present on the response.
+    # Starlette runs the last-added middleware outermost.  Add in this order so the
+    # outermost (last-added) middleware wraps all others:
+    #   RequestLoggingMiddleware → ResponseTimingMiddleware → RequestIdMiddleware
+    # RequestLoggingMiddleware is outermost so it measures total dispatch time.
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(ResponseTimingMiddleware)
+    app.add_middleware(RequestLoggingMiddleware)
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(operator.router)
@@ -86,6 +110,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     from origenlab_api.v2.auth_routes import auth_router, google_auth_router
     from origenlab_api.v2.cockpit_repository import CockpitRepository
     from origenlab_api.v2.cockpit_routes import cockpit_router
+    from origenlab_api.v2.connection_pool import V2ConnectionPool
     from origenlab_api.v2.google_oidc import build_google_auth_config
     from origenlab_api.v2.identity import build_identity_port
     from origenlab_api.v2.repository import V2Repository
@@ -93,13 +118,21 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
 
     target = settings.v2_database_target()
     dsn = target.dsn
-    # Every repository connects through this: a remote target binds verify-full TLS here.
-    connect = target.connect_factory(psycopg.connect)
     if target.remote:
         from origenlab_api.v2.remote_database import verify_runtime_connection
 
-        # Prove the role and the TLS from inside one session before serving anything.
+        # Prove the role and the TLS from inside one ephemeral connection before the pool opens.
         verify_runtime_connection(target, psycopg.connect)
+    # One process-wide connection pool.  The pool is opened in _app_lifespan (wait=False),
+    # so startup does not block even if the database is momentarily unreachable.
+    # Every repository shares this pool instead of opening a new connection per call.
+    pool = V2ConnectionPool(
+        dsn,
+        connect_kwargs=target.connect_options,  # TLS options (sslmode, sslrootcert, …) or {}
+    )
+    app.state.v2_pool = pool
+    # ``connect`` retains the same context-manager API that every repository uses.
+    connect = pool.connect
     session_secret = _secret(settings.auth_session_secret)
     if not (session_secret or "").strip() and settings.production_mode():
         # Whatever the identity adapter, production needs one stable address-ref key shared

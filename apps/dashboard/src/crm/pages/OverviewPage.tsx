@@ -1,203 +1,402 @@
-import { fetchOverview, fetchPipeline } from "../crmApi";
-import type { EntityCount, OpportunityCardData, WorkspaceOverview } from "../crmTypes";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
+import { fetchFx, fetchPipeline } from "../crmApi";
+import type { OpportunityCardData } from "../crmTypes";
 import type { CrmSection } from "../crmRoute";
-import { STAGE_LABEL, byLatestSent, stageBasis } from "../stage";
-import { Badge, PageHeader, Panel, ProvenanceBadge, ResourceGate, Skeleton, fmtDate, fmtInt } from "../ui";
-import { useResource } from "../useResource";
+import { FOLLOW_UP_AFTER_DAYS, STALE_AFTER_DAYS, groupFollowUps, type FollowUpItem } from "../followUps";
+import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
+import { Badge, ExternalLink, PageHeader, Panel, ResourceGate, fmtDate, type Tone } from "../ui";
+import { useResource, type ResourceState } from "../useResource";
 
-const ENTITY_LABEL: Record<string, string> = {
-  opportunities: "Oportunidades",
-  quotes: "Cotizaciones",
-  quote_revisions: "Revisiones de cotización",
-  organizations: "Organizaciones",
-  contact_points: "Direcciones de contacto",
-  persons: "Personas",
-  affiliations: "Afiliaciones persona–institución",
-  tasks: "Tareas",
-  activities: "Actividades",
-  messages: "Mensajes (comms)",
-  products: "Productos del catálogo",
-  campaigns: "Campañas",
-  campaign_replies: "Respuestas a campañas",
-  drive_links_in_crm: "Enlaces de Drive en el CRM",
-};
+type Navigate = (s: CrmSection, id?: string) => void;
 
-export function OverviewPage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
-  const [overview, reloadOverview] = useResource(fetchOverview);
+/**
+ * The first page: who to follow up with today, and the day's exchange rates. Read-only. The
+ * data-health counts that used to live here are on Revisión → Estado de los datos.
+ */
+export function OverviewPage({ navigate }: { navigate: Navigate }) {
+  const [fx, reloadFx] = useResource(fetchFx);
   const [pipeline, reloadPipeline] = useResource(fetchPipeline);
   return (
-    <div className="space-y-4">
-      <PageHeader
-        title="Resumen"
-        subtitle="Qué contiene hoy el CRM, qué falta importar y dónde hace falta una decisión."
-      />
-      <ResourceGate state={overview} reload={reloadOverview} skeleton={<Skeleton rows={4} />}>
-        {(o) => (
-          <OverviewBody
-            overview={o}
-            navigate={navigate}
-            historical={pipeline.kind === "ready" ? pipeline.data.items.filter((c) => stageBasis(c) === "historical_import").length : null}
-          />
-        )}
-      </ResourceGate>
-      <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<Skeleton rows={4} />}>
-        {(p) => <RecentAndBlocked items={p.items} navigate={navigate} />}
+    <div className="space-y-5">
+      <PageHeader title="Resumen" subtitle="A quién hacer seguimiento hoy, y el tipo de cambio del día." />
+      <FxSection state={fx} reload={reloadFx} />
+      <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
+        {(p) => <FollowUpsBody items={p.items} navigate={navigate} />}
       </ResourceGate>
     </div>
   );
 }
 
-function Metric({
-  label,
-  value,
-  hint,
-  onClick,
-  tone,
-}: {
-  label: string;
-  value: string;
-  hint: string;
-  onClick?: () => void;
-  tone?: "bad";
-}) {
-  const body = (
-    <>
-      <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">{label}</p>
-      <p className={`mt-1 text-2xl font-semibold tabular-nums tracking-tight ${tone === "bad" ? "text-bad" : "text-ink"}`}>{value}</p>
-      <p className="mt-0.5 text-[11px] text-ink-muted">{hint}</p>
-    </>
-  );
-  return onClick ? (
-    <button
-      type="button"
-      onClick={onClick}
-      className="rounded-lg border border-line bg-canvas-raised px-3.5 py-3 text-left transition-colors hover:border-line-strong hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-    >
-      {body}
-    </button>
-  ) : (
-    <div className="rounded-lg border border-line bg-canvas-raised px-3.5 py-3">{body}</div>
+/* ───────────────────────────────────────────────────────── exchange rates ── */
+
+function FxSection({ state, reload }: { state: ResourceState<FxResponse>; reload: () => void }) {
+  if (state.kind === "loading") {
+    return (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.2fr]" aria-hidden="true">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="crm-skeleton h-[7.5rem] rounded-xl" />
+        ))}
+      </div>
+    );
+  }
+  if (state.kind !== "ready") {
+    return (
+      <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-canvas-sunken/70 px-4 py-3">
+        <p className="text-[13px] text-ink-muted">Tipo de cambio no disponible en este momento.</p>
+        <button
+          type="button"
+          onClick={reload}
+          className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink transition-colors hover:border-line-strong active:translate-y-px"
+        >
+          Reintentar
+        </button>
+      </div>
+    );
+  }
+  const fx = state.data;
+  const byCode = Object.fromEntries(fx.rates.map((r) => [r.code, r])) as Partial<Record<FxRate["code"], FxRate>>;
+  return (
+    <section aria-label="Tipo de cambio" className="space-y-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.2fr]">
+        {byCode.USD ? <RateCard rate={byCode.USD} unit="dólar" index={0} /> : null}
+        {byCode.EUR ? <RateCard rate={byCode.EUR} unit="euro" index={1} /> : null}
+        <Converter rates={fx.rates} uf={byCode.UF ?? null} />
+      </div>
+      <p className="text-[11px] text-ink-faint">
+        Fuente: {fx.source_label}. Consultado a las {fmtTime(fx.fetched_at)}.
+        {fx.stale ? <span className="ml-1 font-medium text-warn">No se pudo actualizar; se muestran las últimas cifras.</span> : null}
+      </p>
+    </section>
   );
 }
 
-function OverviewBody({
-  overview,
-  navigate,
-  historical,
-}: {
-  overview: WorkspaceOverview;
-  navigate: (s: CrmSection) => void;
-  historical: number | null;
-}) {
-  const byKey = Object.fromEntries(overview.entities.map((e) => [e.key, e])) as Record<string, EntityCount>;
-  const confirmed = overview.organizations_by_confirmation.confirmed ?? 0;
-  const drive = overview.drive_archive;
-  const openAssertions = overview.assertions
-    .filter((a) => a.resolution === "unresolved" || a.resolution === "ambiguous")
-    .reduce((n, a) => n + a.count, 0);
+function RateCard({ rate, unit, index }: { rate: FxRate; unit: string; index: number }) {
   return (
-    <>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Metric
-          label="Oportunidades"
-          value={fmtInt(byKey.opportunities?.count ?? 0)}
-          hint={
-            historical !== null && historical > 0
-              ? `${historical} con cotización enviada (histórico, estado actual sin verificar)`
-              : Object.entries(overview.opportunities_by_stage)
-                  .map(([s, n]) => `${n} ${STAGE_LABEL[s]?.toLowerCase() ?? s}`)
-                  .join(" · ")
-          }
-          onClick={() => navigate("oportunidades")}
-        />
-        <Metric
-          label="Cotizaciones"
-          value={fmtInt(byKey.quotes?.count ?? 0)}
-          hint={`${fmtInt(byKey.quote_revisions?.count ?? 0)} revisiones enviadas`}
-          onClick={() => navigate("oportunidades")}
-        />
-        <Metric
-          label="PDF en Drive"
-          value={drive.configured ? `${drive.revisions_with_drive_file}/${drive.revisions_total}` : "—"}
-          hint={drive.configured ? `${fmtInt(drive.documents)} documentos en el archivo de casos` : "Registros del archivo no cargados"}
-          onClick={() => navigate("drive")}
-        />
-        <Metric
-          label="Por revisar"
-          value={fmtInt(openAssertions)}
-          hint="Evidencias sin resolver o ambiguas"
-          onClick={() => navigate("revision")}
-        />
+    <div
+      data-testid={`fx-${rate.code}`}
+      className="crm-rise group relative flex flex-col overflow-hidden rounded-xl border border-line bg-canvas-raised px-4 py-3.5 shadow-[0_1px_2px_rgb(28_25_23/0.04)] transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-px hover:border-line-strong hover:shadow-[0_6px_16px_-8px_rgb(13_148_136/0.25)]"
+      style={{ "--i": index } as CSSProperties}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[12px] font-medium text-ink-muted">{rate.label}</p>
+        <span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">{rate.code}</span>
       </div>
+      <p className="mt-2 text-[28px] font-semibold leading-none tracking-tight text-ink tabular-nums">
+        <CountUp value={rate.clp} format={fmtRate} />
+      </p>
+      <p className="mt-auto pt-2 text-[11px] text-ink-faint">
+        pesos por {unit}, al {fmtDay(rate.as_of)}
+      </p>
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 origin-left scale-x-0 bg-brand-600 transition-transform duration-300 group-hover:scale-x-100"
+      />
+    </div>
+  );
+}
 
-      <Panel
-        title="Qué hay en el CRM"
-        note="Cero no siempre significa vacío: la etiqueta dice si se importó."
-        bodyClassName="divide-y divide-line"
-      >
-        {overview.entities.map((e) => (
-          <div key={e.key} className="grid grid-cols-[1fr_auto] items-start gap-x-3 gap-y-0.5 px-3 py-2 sm:grid-cols-[14rem_6rem_9rem_minmax(0,1fr)]">
-            <p className="text-[13px] font-medium text-ink">{ENTITY_LABEL[e.key] ?? e.key}</p>
-            <p className="text-right text-[13px] font-semibold tabular-nums text-ink sm:text-left">{fmtInt(e.count)}</p>
-            <div>
-              <ProvenanceBadge provenance={e.provenance} />
-            </div>
-            <p className="col-span-2 min-w-0 break-words text-[11px] leading-4 text-ink-muted sm:col-span-1">
-              {e.note}
-              {e.key === "organizations" ? ` ${fmtInt(confirmed)} confirmadas por un operador.` : ""}
-              {e.key === "contact_points"
-                ? ` Vinculadas: ${overview.contact_points_linked.organization} a institución, ${overview.contact_points_linked.person} a persona.`
-                : ""}
+const CURRENCIES: FxRate["code"][] = ["USD", "EUR", "UF"];
+
+function Converter({ rates, uf }: { rates: FxRate[]; uf: FxRate | null }) {
+  const inputId = useId();
+  const hintId = useId();
+  const [text, setText] = useState("");
+  const available = CURRENCIES.filter((c) => rates.some((r) => r.code === c));
+  const [code, setCode] = useState<FxRate["code"]>(available[0] ?? "USD");
+  const rate = rates.find((r) => r.code === code) ?? null;
+  const amount = text.trim() ? parseAmount(text) : null;
+  const invalid = text.trim() !== "" && amount === null;
+  return (
+    <div
+      className="crm-rise rounded-xl border border-line bg-canvas-raised px-4 py-3.5 shadow-[0_1px_2px_rgb(28_25_23/0.04)] sm:col-span-2 lg:col-span-1"
+      style={{ "--i": 2 } as CSSProperties}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor={inputId} className="text-[12px] font-medium text-ink-muted">
+          Monto
+        </label>
+        <div role="radiogroup" aria-label="Moneda" className="inline-flex rounded-md bg-canvas-sunken p-0.5">
+          {available.map((c) => (
+            <button
+              key={c}
+              type="button"
+              role="radio"
+              aria-checked={c === code}
+              onClick={() => setCode(c)}
+              className={`h-6 rounded-[5px] px-2 text-[11px] font-semibold transition-colors ${
+                c === code ? "bg-canvas-raised text-ink shadow-[0_1px_2px_rgb(24_24_27/0.08)]" : "text-ink-muted hover:text-ink"
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
+      <input
+        id={inputId}
+        inputMode="decimal"
+        autoComplete="off"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="1.250"
+        aria-describedby={hintId}
+        aria-invalid={invalid}
+        className="mt-2 h-9 w-full rounded-md border border-line bg-canvas px-2.5 text-[15px] tabular-nums text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+      />
+      <div className="mt-2 flex min-h-[2.25rem] items-baseline justify-between gap-3" aria-live="polite">
+        {amount !== null && rate ? (
+          <>
+            <p data-testid="fx-result" className="text-[22px] font-semibold leading-none tracking-tight text-ink tabular-nums">
+              {fmtClp(toClp(amount, rate.clp))}
             </p>
+            <p className="text-right text-[11px] text-ink-faint">× {fmtRate(rate.clp)}</p>
+          </>
+        ) : (
+          <p id={hintId} className={`text-[11px] ${invalid ? "text-bad" : "text-ink-faint"}`}>
+            {invalid ? "Escribe un monto, por ejemplo 1.250 o 1.250,50." : "Escribe un monto para verlo en pesos."}
+          </p>
+        )}
+      </div>
+      {uf ? (
+        <p className="mt-1 border-t border-line pt-2 text-[11px] text-ink-muted">
+          UF <span className="font-semibold text-ink tabular-nums">{fmtRate(uf.clp)}</span> al {fmtDay(uf.as_of)}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The figure rises to its value once, on arrival: a cue that it is today's. The text is set on
+ * the element directly (no re-render per frame) and starts at the final value, so a reader, a
+ * test or a reduced-motion setting always sees the real figure.
+ */
+function CountUp({ value, format }: { value: number; format: (n: number) => string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof window.matchMedia !== "function" || typeof window.requestAnimationFrame !== "function") return undefined;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return undefined;
+    const start = performance.now();
+    const from = value * 0.94;
+    let frame = 0;
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / 650);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = format(from + (value - from) * eased);
+      if (p < 1) frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      el.textContent = format(value);
+    };
+  }, [value, format]);
+  return <span ref={ref}>{format(value)}</span>;
+}
+
+/* ─────────────────────────────────────────────────────────── follow-ups ── */
+
+type GroupKey = "follow_up" | "this_week" | "older";
+
+const GROUPS: { key: GroupKey; title: string; hint: string; tone: Tone; empty: string }[] = [
+  {
+    key: "follow_up",
+    title: "Hacer seguimiento",
+    hint: `Enviadas hace ${FOLLOW_UP_AFTER_DAYS + 1} a ${STALE_AFTER_DAYS} días`,
+    tone: "warn",
+    empty: `Nada pendiente entre ${FOLLOW_UP_AFTER_DAYS + 1} y ${STALE_AFTER_DAYS} días.`,
+  },
+  {
+    key: "this_week",
+    title: "Esta semana",
+    hint: `Enviadas hace ${FOLLOW_UP_AFTER_DAYS} días o menos`,
+    tone: "neutral",
+    empty: `Ninguna cotización enviada en los últimos ${FOLLOW_UP_AFTER_DAYS} días.`,
+  },
+  {
+    key: "older",
+    title: "Más de un mes",
+    hint: "Probablemente ya decididas; siguen aquí hasta poder cerrarlas",
+    tone: "neutral",
+    empty: "Ninguna cotización con más de un mes.",
+  },
+];
+
+function FollowUpsBody({ items, navigate }: { items: OpportunityCardData[]; navigate: Navigate }) {
+  const groups = useMemo(() => groupFollowUps(items, new Date()), [items]);
+  const byKey: Record<GroupKey, FollowUpItem[]> = {
+    follow_up: groups.followUp,
+    this_week: groups.thisWeek,
+    older: groups.older,
+  };
+  const blocked = items.filter((i) => i.status === "blocked");
+  const dataIsBehind =
+    groups.latestSentAt !== null && Date.now() - new Date(groups.latestSentAt).getTime() > FOLLOW_UP_AFTER_DAYS * 86_400_000;
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]">
+      <div className="min-w-0 space-y-3">
+        <p data-testid="data-freshness" className="text-xs text-ink-muted">
+          {groups.latestSentAt ? (
+            <>
+              Datos hasta el <span className="font-medium text-ink">{fmtDate(groups.latestSentAt)}</span>.{" "}
+            </>
+          ) : null}
+          {groups.openWithQuote} {groups.openWithQuote === 1 ? "caso" : "casos"} con cotización abierta.
+          {dataIsBehind ? " Las cotizaciones enviadas después aún no están importadas." : ""}
+        </p>
+        {GROUPS.map((g) => (
+          <FollowUpGroup key={g.key} group={g} items={byKey[g.key]} navigate={navigate} />
+        ))}
+      </div>
+      <aside className="min-w-0 space-y-3">
+        <Panel
+          title="Requieren decisión"
+          aside={<Badge tone={blocked.length ? "bad" : "good"}>{blocked.length}</Badge>}
+          bodyClassName="divide-y divide-line"
+        >
+          {blocked.length === 0 ? (
+            <p className="px-3 py-4 text-xs text-ink-muted">Ningún caso bloqueado.</p>
+          ) : (
+            blocked.map((c) => (
+              <button
+                key={c.opportunity_id}
+                type="button"
+                onClick={() => navigate("oportunidades", c.opportunity_id)}
+                className="block w-full px-3 py-2 text-left transition-colors hover:bg-canvas-sunken/60 focus:outline-none focus-visible:bg-canvas-sunken"
+              >
+                <span className="block truncate text-[13px] font-medium text-ink">{c.organization?.name ?? c.title}</span>
+                <span className="block truncate text-[11px] text-bad">{c.attention.find((a) => a.blocking)?.label}</span>
+              </button>
+            ))
+          )}
+        </Panel>
+        {groups.withoutQuote.length > 0 ? (
+          <Panel title="Sin cotización enviada" aside={<Badge>{groups.withoutQuote.length}</Badge>} bodyClassName="divide-y divide-line">
+            {groups.withoutQuote.map((c) => (
+              <button
+                key={c.opportunity_id}
+                type="button"
+                onClick={() => navigate("oportunidades", c.opportunity_id)}
+                className="block w-full truncate px-3 py-2 text-left text-[13px] text-ink transition-colors hover:bg-canvas-sunken/60 focus:outline-none focus-visible:bg-canvas-sunken"
+              >
+                {c.organization?.name ?? c.title}
+              </button>
+            ))}
+          </Panel>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => navigate("revision")}
+          className="w-full rounded-lg border border-dashed border-line px-3 py-3 text-left transition-colors hover:border-line-strong hover:bg-canvas-raised"
+        >
+          <span className="block text-[13px] font-medium text-ink">Estado de los datos</span>
+          <span className="mt-0.5 block text-[11px] text-ink-muted">Qué se importó, qué falta y las evidencias por revisar, en Revisión.</span>
+        </button>
+      </aside>
+    </div>
+  );
+}
+
+function FollowUpGroup({ group, items, navigate }: { group: (typeof GROUPS)[number]; items: FollowUpItem[]; navigate: Navigate }) {
+  return (
+    <section data-testid={`followups-${group.key}`} className="crm-rise overflow-hidden rounded-xl border border-line bg-canvas-raised">
+      <header className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line px-4 py-2.5">
+        <h2 className="text-[14px] font-semibold text-ink">{group.title}</h2>
+        <Badge tone={items.length ? group.tone : "neutral"}>{items.length}</Badge>
+        <span className="ml-auto text-[11px] text-ink-faint">{group.hint}</span>
+      </header>
+      {items.length === 0 ? (
+        <p className="px-4 py-4 text-xs text-ink-muted">{group.empty}</p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {items.map((item, i) => (
+            <FollowUpRow key={item.card.opportunity_id} item={item} index={i} navigate={navigate} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function FollowUpRow({ item, index, navigate }: { item: FollowUpItem; index: number; navigate: Navigate }) {
+  const { card, days } = item;
+  const latest = card.latest_revision;
+  const number = latest?.quote_number ?? card.quote_numbers[0] ?? "";
+  const institution = card.organization?.name ?? "Sin institución";
+  const contact = card.contact?.name ?? card.contact?.address ?? null;
+  return (
+    <li
+      className="crm-rise grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/50 sm:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_auto]"
+      style={{ "--i": Math.min(index, 12) } as CSSProperties}
+    >
+      <span className="row-start-1 text-xs font-semibold tabular-nums text-ink">{number}</span>
+      <button
+        type="button"
+        onClick={() => navigate("oportunidades", card.opportunity_id)}
+        className="col-span-2 col-start-2 row-start-1 min-w-0 rounded text-left focus:outline-none sm:col-span-1 focus-visible:ring-2 focus-visible:ring-brand-600"
+      >
+        <span className="block truncate text-[13px] font-medium text-ink">{institution}</span>
+        {contact ? <span className="block truncate text-[11px] text-ink-muted">{contact}</span> : null}
+      </button>
+      {/* On a phone, days and links share the line under the institution; columns from `sm` up. */}
+      <span
+        className="col-start-2 row-start-2 text-[11px] tabular-nums text-ink-muted sm:col-start-3 sm:row-start-1 sm:text-right sm:text-xs"
+        title={`Enviada el ${fmtDate(item.sentAt)}`}
+      >
+        {daysAgo(days)}
+      </span>
+      <span className="col-start-3 row-start-2 flex items-center justify-end gap-3 text-[12px] sm:col-start-4 sm:row-start-1">
+        {latest?.drive ? (
+          <ExternalLink href={latest.drive.file_url} label={`PDF de ${number} en Drive`}>
+            PDF
+          </ExternalLink>
+        ) : null}
+        {latest?.gmail ? (
+          <ExternalLink href={latest.gmail.url} label={`Correo de ${number} en Gmail`}>
+            Correo
+          </ExternalLink>
+        ) : null}
+      </span>
+    </li>
+  );
+}
+
+function FollowUpsSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]" aria-hidden="true">
+      <div className="space-y-3">
+        {[0, 1].map((i) => (
+          <div key={i} className="space-y-2 rounded-xl border border-line bg-canvas-raised p-4">
+            <div className="crm-skeleton h-4 w-40 rounded" />
+            {[0, 1, 2, 3].map((j) => (
+              <div key={j} className="crm-skeleton h-8 rounded" />
+            ))}
           </div>
         ))}
-      </Panel>
-    </>
+      </div>
+      <div className="crm-skeleton h-32 rounded-lg" />
+    </div>
   );
 }
 
-function RecentAndBlocked({
-  items,
-  navigate,
-}: {
-  items: OpportunityCardData[];
-  navigate: (s: CrmSection, id?: string) => void;
-}) {
-  const recent = [...items].sort(byLatestSent).slice(0, 6);
-  const blocked = items.filter((i) => i.status === "blocked");
-  return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-      <Panel title="Últimas cotizaciones enviadas" note="Fechas de envío registradas; no indican el estado actual del negocio." bodyClassName="divide-y divide-line">
-        {recent.map((c) => (
-          <button
-            key={c.opportunity_id}
-            type="button"
-            onClick={() => navigate("oportunidades", c.opportunity_id)}
-            className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-canvas-sunken/50 focus:outline-none focus-visible:bg-canvas-sunken"
-          >
-            <span className="w-24 shrink-0 truncate text-xs font-semibold tabular-nums text-ink">{c.latest_revision?.quote_number ?? c.quote_numbers[0] ?? "—"}</span>
-            <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{c.organization?.name ?? "Sin institución"}</span>
-            <span className="hidden w-24 shrink-0 text-right text-[11px] text-ink-faint sm:block">{fmtDate(c.latest_revision?.sent_at)}</span>
-          </button>
-        ))}
-      </Panel>
-      <Panel title="Requieren decisión" aside={<Badge tone={blocked.length ? "bad" : "good"}>{blocked.length}</Badge>} bodyClassName="divide-y divide-line">
-        {blocked.length === 0 ? (
-          <p className="px-3 py-4 text-xs text-ink-muted">Ninguna oportunidad bloqueada.</p>
-        ) : (
-          blocked.map((c) => (
-            <button
-              key={c.opportunity_id}
-              type="button"
-              onClick={() => navigate("oportunidades", c.opportunity_id)}
-              className="block w-full px-3 py-2 text-left hover:bg-canvas-sunken/50 focus:outline-none focus-visible:bg-canvas-sunken"
-            >
-              <span className="block truncate text-[13px] font-medium text-ink">{c.organization?.name ?? c.title}</span>
-              <span className="block truncate text-[11px] text-bad">{c.attention.find((a) => a.blocking)?.label}</span>
-            </button>
-          ))
-        )}
-      </Panel>
-    </div>
-  );
+/* ──────────────────────────────────────────────────────────────── format ── */
+
+function daysAgo(days: number): string {
+  if (days === 0) return "hoy";
+  if (days === 1) return "ayer";
+  return `hace ${days} días`;
+}
+
+/** A `YYYY-MM-DD` day as "30 mar", read as that calendar day (no time-zone shift). */
+function fmtDay(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  if (!y || !m || !d) return day;
+  return new Date(y, m - 1, d).toLocaleDateString("es-CL", { day: "numeric", month: "short" });
+}
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hour12: false });
 }

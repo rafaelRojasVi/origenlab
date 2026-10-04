@@ -18,6 +18,7 @@ import {
   fmtInt,
 } from "../ui";
 import { useResource } from "../useResource";
+import { DataHealth } from "./DataHealth";
 
 const QUEUE_LABEL: Record<string, { label: string; action: string; blocking: boolean }> = {
   canonical_undetermined: { label: "Revisión canónica indeterminada", action: "Anular o reemplazar la revisión duplicada", blocking: true },
@@ -40,7 +41,7 @@ const LEDGER_STATUS: Record<string, { label: string; tone: "warn" | "bad" | "neu
   pending_organization_confirmation: { label: "Falta confirmar institución", tone: "warn" },
 };
 
-type Tab = "crm" | "not_imported" | "evidence";
+type Tab = "crm" | "not_imported" | "evidence" | "data";
 
 export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
   const [queue, reloadQueue] = useResource(fetchWorkQueue);
@@ -69,9 +70,12 @@ export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string
             count:
               review.kind === "ready" ? review.data.open_assertions.reduce((n, a) => n + a.count, 0) : undefined,
           },
+          { value: "data", label: "Estado de los datos" },
         ]}
       />
-      {tab === "crm" ? (
+      {tab === "data" ? (
+        <DataHealth navigate={navigate} />
+      ) : tab === "crm" ? (
         <ResourceGate state={queue} reload={reloadQueue} skeleton={<Skeleton rows={5} />}>
           {(q) => <CrmQueue items={q.items} navigate={navigate} />}
         </ResourceGate>

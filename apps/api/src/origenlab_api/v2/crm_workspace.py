@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
@@ -125,6 +126,61 @@ _COUNT_SQL: dict[str, str] = {
     "campaign_replies": "select count(*) from outbound.campaign_reply",
     "drive_links_in_crm": "select count(*) from crm.external_identifier",
 }
+
+# Keys in insertion order, for positional mapping of the combined counts query row.
+_COUNT_KEYS: list[str] = list(_COUNT_SQL)
+
+# One SELECT that returns all 14 entity counts as a single row — 1 round trip instead of 14.
+# Each column corresponds positionally to the same-position key in _COUNT_KEYS.
+_OVERVIEW_COUNTS_SQL: str = "select " + ",\n       ".join(
+    f"({sql})::bigint" for sql in _COUNT_SQL.values()
+)
+
+# SQL constants extracted from pipeline() so each is a named, testable unit.
+_SQL_PIPELINE_OPPS = """
+    select op.id::text as opportunity_id, op.title, op.stage,
+           op.organization_id::text as organization_id, o.name as organization_name,
+           o.confirmation as organization_confirmation,
+           op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason
+      from crm.opportunity op
+      left join crm.organization o on o.id = op.organization_id
+     order by op.updated_at desc, op.id
+"""
+_SQL_PIPELINE_CASE_ORGS = """
+    select oo.opportunity_id::text, oo.organization_id::text, oo.role,
+           o.name, oo.confirmation
+      from crm.opportunity_organization oo
+      join crm.organization o on o.id = oo.organization_id
+     where oo.valid_to is null
+"""
+_SQL_PIPELINE_QUOTES = """
+    select q.id::text as quote_id, q.opportunity_id::text, q.quote_number, q.number_origin
+      from crm.quote q
+"""
+_SQL_PIPELINE_REVISIONS = """
+    select qr.id::text as revision_id, qr.quote_id::text, qr.revision_no, qr.status,
+           qr.origin, qr.sent_at::text, qr.pdf_sha256, qr.superseded_by_revision_no,
+           qr.origin_source_record_id::text
+      from crm.quote_revision qr
+"""
+_SQL_PIPELINE_SOURCES = """
+    select sr.id::text as source_record_id,
+           sr.payload->>'gmail_message_id' as gmail_message_id,
+           sr.payload->>'gmail_thread_id' as gmail_thread_id,
+           sr.payload->>'recipients' as recipients,
+           sr.payload->>'subject_raw' as subject_raw,
+           sr.payload->'documents' as documents
+      from evidence.source_record sr
+     where sr.id in (select origin_source_record_id from crm.quote_revision
+                      where origin_source_record_id is not null)
+"""
+_SQL_PIPELINE_PARTICIPANTS = """
+    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary
+      from crm.opportunity_participant p
+      left join crm.person pe on pe.id = p.person_id
+     where p.valid_to is null
+     order by p.is_primary desc
+"""
 
 # Codes that stop a case from moving until an operator decides something. Everything else in a
 # card's ``attention`` list is informational (``pending``), never a blocker.
@@ -496,6 +552,24 @@ def _short_date(value: Any) -> str | None:
         return None
 
 
+_TYPED_QUOTE_NUMBER = re.compile(r"^(\d+)(.*)-(\d{2,4})$")
+
+
+def quote_number_order(number: str | None) -> tuple[int, int, str]:
+    """Sort key for a quote number as people typed it: (year, five-digit correlative, rest).
+
+    The correlative is meant to be five digits ("01246-26"), but folders also say "1013-26"
+    (leading zero dropped) and "012392-26" (a revision digit glued on). Padding to five and
+    reading only the first five puts each where its correlative says. Anything else sorts last.
+    """
+    m = _TYPED_QUOTE_NUMBER.match((number or "").strip())
+    if not m:
+        return (-1, -1, number or "")
+    digits, suffix, year = m.groups()
+    correlative, rest = digits.zfill(5)[:5], digits.zfill(5)[5:]
+    return (int(year), int(correlative), rest + suffix)
+
+
 def compose_drive_archive(
     drive: Mapping[str, DriveLink], crm_revisions: Mapping[str, Mapping[str, Any]]
 ) -> dict[str, Any]:
@@ -532,7 +606,7 @@ def compose_drive_archive(
             None,
         )
         out.append(f)
-    out.sort(key=lambda f: (f["quote_numbers"][:1] or [""])[0], reverse=True)
+    out.sort(key=lambda f: quote_number_order((f["quote_numbers"][:1] or [None])[0]), reverse=True)
     docs = [d for f in out for d in f["documents"]]
     return {
         "source": "archive_ledger",
@@ -577,8 +651,10 @@ class CrmWorkspaceRepository:
     def _read(self):  # type: ignore[no-untyped-def]
         with self._connect(self._dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
-                cur.execute("set transaction read only")
-                cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
+                # Pipeline both setup statements so they consume 1 RTT instead of 2.
+                with conn.pipeline():
+                    cur.execute("set transaction read only")
+                    cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
                 try:
                     yield cur
                 finally:
@@ -593,10 +669,10 @@ class CrmWorkspaceRepository:
 
     def overview(self) -> dict[str, Any]:
         with self._read() as cur:
-            counts: dict[str, int] = {}
-            for key, sql in _COUNT_SQL.items():
-                cur.execute(sql)
-                counts[key] = int(cur.fetchone()[0])
+            # 14 entity counts in one round trip (scalar subqueries → single row).
+            cur.execute(_OVERVIEW_COUNTS_SQL)
+            _row = cur.fetchone()
+            counts: dict[str, int] = {key: int(_row[i]) for i, key in enumerate(_COUNT_KEYS)}
             cur.execute(
                 "select confirmation, count(*) from crm.organization "
                 "where merged_into_organization_id is null group by 1"
@@ -635,60 +711,35 @@ class CrmWorkspaceRepository:
     # -- pipeline
 
     def pipeline(self) -> dict[str, Any]:
-        with self._read() as cur:
-            cur.execute(
-                """
-                select op.id::text as opportunity_id, op.title, op.stage,
-                       op.organization_id::text as organization_id, o.name as organization_name,
-                       o.confirmation as organization_confirmation,
-                       op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason
-                  from crm.opportunity op
-                  left join crm.organization o on o.id = op.organization_id
-                 order by op.updated_at desc, op.id
-                """
-            )
-            opps = self._rows(cur)
-            cur.execute(
-                """
-                select oo.opportunity_id::text, oo.organization_id::text, oo.role,
-                       o.name, oo.confirmation
-                  from crm.opportunity_organization oo
-                  join crm.organization o on o.id = oo.organization_id
-                 where oo.valid_to is null
-                """
-            )
-            case_orgs = self._rows(cur)
-            cur.execute(
-                """
-                select q.id::text as quote_id, q.opportunity_id::text, q.quote_number, q.number_origin
-                  from crm.quote q
-                """
-            )
-            quotes = self._rows(cur)
-            cur.execute(
-                """
-                select qr.id::text as revision_id, qr.quote_id::text, qr.revision_no, qr.status,
-                       qr.origin, qr.sent_at::text, qr.pdf_sha256, qr.superseded_by_revision_no,
-                       qr.origin_source_record_id::text
-                  from crm.quote_revision qr
-                """
-            )
-            revisions = self._rows(cur)
-            cur.execute(
-                """
-                select sr.id::text as source_record_id,
-                       sr.payload->>'gmail_message_id' as gmail_message_id,
-                       sr.payload->>'gmail_thread_id' as gmail_thread_id,
-                       sr.payload->>'recipients' as recipients,
-                       sr.payload->>'subject_raw' as subject_raw,
-                       sr.payload->'documents' as documents
-                  from evidence.source_record sr
-                 where sr.id in (select origin_source_record_id from crm.quote_revision
-                                  where origin_source_record_id is not null)
-                """
-            )
-            sources = {}
-            for row in self._rows(cur):
+        with self._connect(self._dsn, autocommit=False) as conn:
+            # Setup: 2 statements in 1 RTT.
+            setup = conn.cursor()
+            with conn.pipeline():
+                setup.execute("set transaction read only")
+                setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
+
+            # 6 data queries in 1 RTT via psycopg pipeline mode.
+            cur_opps = conn.cursor()
+            cur_case_orgs = conn.cursor()
+            cur_quotes = conn.cursor()
+            cur_revisions = conn.cursor()
+            cur_sources = conn.cursor()
+            cur_participants = conn.cursor()
+            with conn.pipeline():
+                cur_opps.execute(_SQL_PIPELINE_OPPS)
+                cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
+                cur_quotes.execute(_SQL_PIPELINE_QUOTES)
+                cur_revisions.execute(_SQL_PIPELINE_REVISIONS)
+                cur_sources.execute(_SQL_PIPELINE_SOURCES)
+                cur_participants.execute(_SQL_PIPELINE_PARTICIPANTS)
+
+            # Fetch after pipeline: all results are ready.
+            opps = self._rows(cur_opps)
+            case_orgs = self._rows(cur_case_orgs)
+            quotes = self._rows(cur_quotes)
+            revisions = self._rows(cur_revisions)
+            sources: dict[str, Any] = {}
+            for row in self._rows(cur_sources):
                 docs = row.get("documents")
                 if isinstance(docs, str):
                     docs = json.loads(docs)
@@ -696,16 +747,8 @@ class CrmWorkspaceRepository:
                     {"sha256": d.get("sha256"), "filename": d.get("filename")} for d in (docs or [])
                 ]
                 sources[row["source_record_id"]] = row
-            cur.execute(
-                """
-                select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary
-                  from crm.opportunity_participant p
-                  left join crm.person pe on pe.id = p.person_id
-                 where p.valid_to is null
-                 order by p.is_primary desc
-                """
-            )
-            participants = self._rows(cur)
+            participants = self._rows(cur_participants)
+            conn.rollback()
         cards = compose_pipeline(opps, case_orgs, quotes, revisions, sources, participants, self._drive)
         return {
             "items": cards,

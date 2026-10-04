@@ -28,6 +28,7 @@ from origenlab_api.v2.crm_merge_preview import merge_preview
 from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 from origenlab_api.v2.equipment_interests import interest_index, supplier_directory
 from origenlab_api.v2.equipment_taxonomy import load_taxonomy
+from origenlab_api.v2.fx_rates import FxRates, FxUnavailable
 from origenlab_api.v2.marketing_audience import BASES, AudienceFilter, apply_filter, compose
 from origenlab_api.v2.v1_lane_campaigns import as_dict as v1_campaign_as_dict
 from origenlab_api.v2.v1_lane_campaigns import load_v1_lane_campaigns, load_v1_lane_html
@@ -418,3 +419,17 @@ def get_drive(_: Operator, repo: Repo) -> Any:
 @workspace_router.get("/review")
 def get_review(_: Operator, repo: Repo) -> Any:
     return repo.review()
+
+
+#: The process's exchange-rate cache, unless the app supplies its own (tests do).
+_FX_RATES = FxRates()
+
+
+@workspace_router.get("/fx")
+def get_fx(_: Operator, request: Request) -> Any:
+    """Dólar observado, euro and UF in pesos, from the Banco Central (display only, cached 1 h)."""
+    rates: FxRates = getattr(request.app.state, "fx_rates", None) or _FX_RATES
+    try:
+        return rates.current()
+    except FxUnavailable:
+        raise HTTPException(status_code=503, detail="tipo de cambio no disponible") from None

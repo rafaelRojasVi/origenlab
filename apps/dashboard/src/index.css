@@ -88,6 +88,30 @@
   }
 }
 
+/* Resumen: cards and rows rise in, one after another (`--i` is the position, capped by the
+   caller), so the eye lands on the rates first and then reads down the follow-up list. */
+@keyframes crm-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.crm-rise {
+  animation: crm-rise 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-rise {
+    animation: none;
+  }
+}
+
 body {
   margin: 0;
   min-height: 100vh;
