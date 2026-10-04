@@ -44,6 +44,13 @@ def test_missing_token_file_is_refused(tmp_path: Path) -> None:
         load_send_token(str(tmp_path / "nope.json"))
 
 
+def test_token_file_with_array_instead_of_object_is_refused(tmp_path: Path) -> None:
+    p = tmp_path / "token.json"
+    p.write_text('["not", "an", "object"]', encoding="utf-8")
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        load_send_token(str(p))
+
+
 @pytest.mark.parametrize("ok", ["ana@example.invalid", "Ana.Perez+test@sub.example.invalid"])
 def test_a_plain_address_is_accepted(ok: str) -> None:
     assert valid_test_address(f"  {ok} ") == ok
@@ -136,3 +143,60 @@ def test_a_network_failure_is_named_as_such() -> None:
     with pytest.raises(GmailSendError) as exc:
         GmailSender(TOKEN, transport=broken, clock=_Clock()).send(b"x")
     assert exc.value.kind == "network"
+
+
+def test_non_json_200_from_token_endpoint_is_a_token_refresh_failure() -> None:
+    t = _Transport((200, {"access_token": "at1", "expires_in": 3600}))
+    t.answers[0] = (200, b"not valid json")
+
+    def transport_with_bad_token(*args, **kwargs):
+        t.calls.append((args[0], args[1], args[2], args[3]))
+        return 200, b"not valid json"
+
+    with pytest.raises(GmailSendError) as exc:
+        GmailSender(TOKEN, transport=transport_with_bad_token, clock=_Clock()).send(b"x")
+    assert exc.value.kind == "token_refresh_failed"
+
+
+def test_200_without_access_token_is_a_token_refresh_failure() -> None:
+    def transport_missing_access_token(*_a, **_k):
+        return 200, json.dumps({"expires_in": 3600}).encode()
+
+    with pytest.raises(GmailSendError) as exc:
+        GmailSender(TOKEN, transport=transport_missing_access_token, clock=_Clock()).send(b"x")
+    assert exc.value.kind == "token_refresh_failed"
+
+
+def test_expires_in_null_is_treated_as_zero() -> None:
+    t = _Transport(
+        (200, {"access_token": "at1", "expires_in": None}),
+        (200, {"id": "msg1"}),
+        (200, {"access_token": "at2", "expires_in": None}),
+        (200, {"id": "msg2"}),
+    )
+    sender = GmailSender(TOKEN, transport=t, clock=_Clock())
+    sender.send(b"raw1")
+    sender.send(b"raw2")
+    assert len(t.calls) == 4
+
+
+def test_non_json_200_from_send_endpoint_is_a_gmail_rejection() -> None:
+    def transport_bad_send(*_a, **_k):
+        if "send" in _a[1]:
+            return 200, b"not json"
+        return 200, json.dumps({"access_token": "at1", "expires_in": 3600}).encode()
+
+    with pytest.raises(GmailSendError) as exc:
+        GmailSender(TOKEN, transport=transport_bad_send, clock=_Clock()).send(b"x")
+    assert exc.value.kind == "gmail_rejected"
+
+
+def test_200_without_id_is_a_gmail_rejection() -> None:
+    def transport_missing_id(*_a, **_k):
+        if "send" in _a[1]:
+            return 200, json.dumps({"threadId": "t1"}).encode()
+        return 200, json.dumps({"access_token": "at1", "expires_in": 3600}).encode()
+
+    with pytest.raises(GmailSendError) as exc:
+        GmailSender(TOKEN, transport=transport_missing_id, clock=_Clock()).send(b"x")
+    assert exc.value.kind == "gmail_rejected"

@@ -1,9 +1,9 @@
 """Send one email as contacto@origenlab.cl through the Gmail API — the test-send path only.
 
 The credential is a refresh token for the `gmail.send` scope alone (it cannot read mail),
-authorized once by the owner as contacto@ via the authorization script, and kept as a
-Render secret file. The V1 desktop token is never read. Plain HTTPS through `urllib`:
-no new runtime dependency.
+authorized once by the owner as contacto@ with the local authorization script under
+apps/api/scripts, and kept as a Render secret file named by `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE`.
+The V1 desktop token is never read. Plain HTTPS through `urllib`: no new runtime dependency.
 """
 
 from __future__ import annotations
@@ -55,6 +55,8 @@ def load_send_token(path: str) -> GmailSendToken:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise ValueError(f"cannot read the Gmail send token: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("the Gmail send token must be a JSON object")
     fields = {k: data.get(k) for k in ("client_id", "client_secret", "refresh_token", "address")}
     if not all(isinstance(v, str) and v.strip() for v in fields.values()):
         raise ValueError("the Gmail send token needs client_id, client_secret, refresh_token and address")
@@ -109,9 +111,17 @@ class GmailSender:
         status, raw = self._call("POST", TOKEN_URL, {"Content-Type": "application/x-www-form-urlencoded"}, body)
         if status != 200:
             raise GmailSendError("token_refresh_failed", f"token refresh answered {status}")
-        data = json.loads(raw)
-        self._access = data["access_token"]
-        self._expires_at = self._clock() + float(data.get("expires_in", 0))
+        try:
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+            self._access = data["access_token"]
+            expires_in = data.get("expires_in", 0)
+            if expires_in is None:
+                expires_in = 0
+            self._expires_at = self._clock() + float(expires_in)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise GmailSendError("token_refresh_failed", f"token endpoint returned invalid data: {exc}") from exc
         return self._access
 
     def _call(self, method: str, url: str, headers: dict[str, str], body: bytes) -> tuple[int, bytes]:
@@ -127,4 +137,10 @@ class GmailSender:
                                                      "Content-Type": "application/json"}, payload)
         if status != 200:
             raise GmailSendError("gmail_rejected", f"Gmail answered {status}")
-        return json.loads(body)["id"]
+        try:
+            data = json.loads(body)
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+            return data["id"]
+        except (ValueError, KeyError) as exc:
+            raise GmailSendError("gmail_rejected", f"Gmail returned invalid data: {exc}") from exc
