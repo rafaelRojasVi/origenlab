@@ -16,3 +16,12 @@ def test_the_token_is_written_only_for_contacto() -> None:
         mod.token_payload("cid", "sec", "rt", "otra@example.invalid")
     with pytest.raises(SystemExit):
         mod.token_payload("cid", "sec", None, "contacto@origenlab.cl")
+
+
+def test_an_existing_loose_file_ends_at_mode_600(tmp_path) -> None:
+    target = tmp_path / "t.json"
+    target.write_text("old")
+    target.chmod(0o644)
+    mod.write_token_file(target, {"a": "b"})
+    assert (target.stat().st_mode & 0o777) == 0o600
+    assert target.read_text() == '{"a": "b"}'

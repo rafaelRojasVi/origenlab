@@ -42,6 +42,14 @@ def token_payload(
     }
 
 
+def write_token_file(out: Path, payload: dict) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+    os.chmod(out, 0o600)  # an existing file keeps its old mode through os.open
+
+
 def main() -> None:
     from google_auth_oauthlib.flow import InstalledAppFlow
 
@@ -59,13 +67,15 @@ def main() -> None:
         from google.auth.transport import requests as gat
         from google.oauth2 import id_token
 
-        email = id_token.verify_oauth2_token(raw, gat.Request(), creds.client_id).get("email")
+        try:
+            email = id_token.verify_oauth2_token(raw, gat.Request(), creds.client_id).get("email")
+        except Exception as exc:  # fail closed; never echo the token
+            raise SystemExit(
+                f"could not verify the signed-in account: {type(exc).__name__}: nothing written"
+            ) from None
     payload = token_payload(creds.client_id, creds.client_secret, creds.refresh_token, email)
     out = Path(a.out).expanduser()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh)
+    write_token_file(out, payload)
     print(f"written {out} for {payload['address']} (scope gmail.send)")
 
 
