@@ -97,6 +97,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/workspace\/pipeline$/,
   /^\/v2\/workspace\/drive$/,
   /^\/v2\/workspace\/review$/,
+  // Exchange rates for the Resumen (dólar observado, euro, UF): Banco Central figures the API
+  // reads from mindicador.cl and caches for an hour. Same GET-only, operator-session rule as the
+  // reads above; it carries no contact data. Nothing else under /fx is reachable.
+  /^\/v2\/workspace\/fx$/,
   /^\/v2\/cockpit\/work-queue$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to

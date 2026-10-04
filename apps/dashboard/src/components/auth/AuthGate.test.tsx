@@ -6,7 +6,8 @@ import {
   parseAuthSessionResponse,
   readLoginError,
 } from "../../api/authClient";
-import { useAuthSession } from "../../context/AuthSessionContext";
+import { AuthSessionContext, useAuthSession } from "../../context/AuthSessionContext";
+import { useResource } from "../../crm/useResource";
 import { AuthGate } from "./AuthGate";
 
 const SIGNED_IN = {
@@ -46,6 +47,14 @@ function Probe() {
       </button>
     </div>
   );
+}
+
+let rememberedAnswer = "primera";
+const rememberedLoader = () => Promise.resolve(rememberedAnswer);
+
+function RememberingProbe() {
+  const [state] = useResource(rememberedLoader);
+  return <p data-testid="remembered">{state.kind === "ready" ? state.data : state.kind}</p>;
 }
 
 describe("parseAuthSessionResponse", () => {
@@ -232,6 +241,33 @@ describe("AuthGate", () => {
     await waitFor(() => expect(screen.getByTestId("google-login-button")).toBeInTheDocument());
     expect(screen.queryByTestId("logout-failed")).toBeNull();
     expect(String(fetchMock.mock.calls[2][0])).toMatch(/\/auth\/logout$/);
+  });
+
+  it("forgets every page's remembered data once the session ends", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, SIGNED_IN))
+      .mockResolvedValueOnce(jsonResponse(200, { authenticated: false }))
+      .mockResolvedValueOnce(jsonResponse(401, SIGNED_OUT));
+    const gate = render(
+      <AuthGate>
+        <Probe />
+        <RememberingProbe />
+      </AuthGate>,
+    );
+    await waitFor(() => expect(screen.getByTestId("remembered")).toHaveTextContent("primera"));
+    fireEvent.click(screen.getByText("salir"));
+    await waitFor(() => expect(screen.getByTestId("google-login-button")).toBeInTheDocument());
+    gate.unmount();
+
+    // Same operator signs in again: nothing from before the sign-out is shown while loading.
+    rememberedAnswer = "segunda";
+    const session = parseAuthSessionResponse(200, SIGNED_IN);
+    render(
+      <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
+        <RememberingProbe />
+      </AuthSessionContext.Provider>,
+    );
+    expect(screen.getByTestId("remembered")).toHaveTextContent("loading");
   });
 
   it("signs out with a POST to /auth/logout and returns to the login screen", async () => {

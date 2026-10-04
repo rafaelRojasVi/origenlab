@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
@@ -551,6 +552,24 @@ def _short_date(value: Any) -> str | None:
         return None
 
 
+_TYPED_QUOTE_NUMBER = re.compile(r"^(\d+)(.*)-(\d{2,4})$")
+
+
+def quote_number_order(number: str | None) -> tuple[int, int, str]:
+    """Sort key for a quote number as people typed it: (year, five-digit correlative, rest).
+
+    The correlative is meant to be five digits ("01246-26"), but folders also say "1013-26"
+    (leading zero dropped) and "012392-26" (a revision digit glued on). Padding to five and
+    reading only the first five puts each where its correlative says. Anything else sorts last.
+    """
+    m = _TYPED_QUOTE_NUMBER.match((number or "").strip())
+    if not m:
+        return (-1, -1, number or "")
+    digits, suffix, year = m.groups()
+    correlative, rest = digits.zfill(5)[:5], digits.zfill(5)[5:]
+    return (int(year), int(correlative), rest + suffix)
+
+
 def compose_drive_archive(
     drive: Mapping[str, DriveLink], crm_revisions: Mapping[str, Mapping[str, Any]]
 ) -> dict[str, Any]:
@@ -587,7 +606,7 @@ def compose_drive_archive(
             None,
         )
         out.append(f)
-    out.sort(key=lambda f: (f["quote_numbers"][:1] or [""])[0], reverse=True)
+    out.sort(key=lambda f: quote_number_order((f["quote_numbers"][:1] or [None])[0]), reverse=True)
     docs = [d for f in out for d in f["documents"]]
     return {
         "source": "archive_ledger",

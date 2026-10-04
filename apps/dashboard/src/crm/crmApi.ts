@@ -17,6 +17,7 @@ import type {
   WorkQueueResponse,
   WorkspaceOverview,
 } from "./crmTypes";
+import type { FxResponse } from "./fx";
 
 export const WORKSPACE_PATHS = {
   overview: "/v2/workspace/overview",
@@ -26,6 +27,7 @@ export const WORKSPACE_PATHS = {
   marketing: "/v2/workspace/marketing",
   drive: "/v2/workspace/drive",
   review: "/v2/workspace/review",
+  fx: "/v2/workspace/fx",
   workQueue: "/v2/cockpit/work-queue",
 } as const;
 
@@ -36,6 +38,7 @@ export const fetchEquipmentInterests = () =>
   fetchJsonGet<EquipmentInterestsResponse>(operatorApiUrl(WORKSPACE_PATHS.equipmentInterests));
 export const fetchMarketing = () => fetchJsonGet<MarketingResponse>(operatorApiUrl(WORKSPACE_PATHS.marketing));
 export const fetchDriveArchive = () => fetchJsonGet<DriveArchiveResponse>(operatorApiUrl(WORKSPACE_PATHS.drive));
+export const fetchFx = () => fetchJsonGet<FxResponse>(operatorApiUrl(WORKSPACE_PATHS.fx));
 export const fetchReview = () => fetchJsonGet<ReviewResponse>(operatorApiUrl(WORKSPACE_PATHS.review));
 export const fetchWorkQueue = () =>
   fetchJsonGet<WorkQueueResponse>(operatorApiUrl(WORKSPACE_PATHS.workQueue, { limit: 200 }));
