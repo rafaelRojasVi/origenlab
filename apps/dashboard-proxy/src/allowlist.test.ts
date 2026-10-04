@@ -424,6 +424,19 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
+  it("allows the test send as an exact POST with a small body, and its history as a GET", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");
+    expect(isAllowedPostPath("/v2/commands/send-campaign-test")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/commands/send-campaign-test")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/send-campaign-test")).toBe(4_096);
+    expect(isAllowedUpstreamPath("/v2/workspace/marketing/test-send-history?v1_lane_key=cyber-2026-10")).toBe(true);
+    for (const p of ["/v2/commands/send-campaign", "/v2/commands/send-campaign-test/", "/v2/commands/send-campaign-tests",
+                     "/v2/workspace/marketing/test-send-history/x"]) {
+      expect(isAllowedPostPath(p), p).toBe(false);
+      expect(isAllowedUpstreamPath(p), p).toBe(false);
+    }
+  });
+
   it("keeps the twelve evidence-bound V2 command routes unreachable through this Worker", async () => {
     // The command boundary EXISTS in apps/api: POST /v2/commands/* records durable human
     // decisions -- six about staged evidence (including confirm-person-from-evidence), and six
