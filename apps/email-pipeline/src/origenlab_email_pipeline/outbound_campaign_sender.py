@@ -76,6 +76,8 @@ def send_campaign_batch(
     # Raises CampaignNotActiveError for a paused, completed, archived or unknown campaign.
     campaign = require_campaign_active(conn, campaign_id)
     sender_header = f"{campaign.sender_name} <{campaign.sender_email}>"
+    # The opt-out channel the campaign footer names: a reply with the word REMOVER.
+    list_unsubscribe = f"<mailto:{campaign.sender_email}?subject=REMOVER>"
     manual_status = load_manual_status_map(conn)
     mode = "live" if live else "dry_run"
 
@@ -124,7 +126,7 @@ def send_campaign_batch(
 
         msg, _inline_images = build_gmail_message_with_inline_images(
             sender_email=sender_header, to_emails=email, subject=campaign.subject,
-            html=html, html_dir=html_dir,
+            html=html, html_dir=html_dir, list_unsubscribe=list_unsubscribe,
         )
 
         if not live:

@@ -249,9 +249,9 @@ def test_no_automatic_cc_to_maribel(conn: sqlite3.Connection, html_file: Path) -
     rid = _reserve(conn, "jeanettetorres@pharmaisa.cl")
     captured = {}
 
-    def _capture(*, sender_email, to_emails, subject, html, html_dir, cc_emails=None):
+    def _capture(**kwargs):
         from origenlab_email_pipeline.gmail_send import build_gmail_message_with_inline_images as real
-        msg, imgs = real(sender_email=sender_email, to_emails=to_emails, subject=subject, html=html, html_dir=html_dir, cc_emails=cc_emails)
+        msg, imgs = real(**kwargs)
         captured["cc"] = msg.get("Cc")
         return msg, imgs
 
@@ -349,3 +349,24 @@ def test_a_pause_committed_mid_batch_stops_before_the_next_gmail_call(conn, html
     assert [(o.recipient_id, o.result, o.error) for o in outcomes] == [
         (first, "accepted", None), (second, "skipped", REASON_CAMPAIGN_NOT_ACTIVE)]
     assert conn.execute("SELECT COUNT(*) FROM outbound_send_attempt WHERE recipient_id = ?", (second,)).fetchone()[0] == 0
+
+
+def test_every_campaign_message_carries_a_mailto_list_unsubscribe(conn: sqlite3.Connection, html_file: Path) -> None:
+    """Gmail shows its own unsubscribe button from this header; the address and the REMOVER subject
+    match the opt-out sentence in the campaign footer, so a click lands as a reply we can act on."""
+    rid = _reserve(conn, "cliente@example.cl")
+    captured = {}
+
+    def _capture(**kwargs):
+        from origenlab_email_pipeline.gmail_send import build_gmail_message_with_inline_images as real
+        msg, imgs = real(**kwargs)
+        captured["list_unsubscribe"] = msg.get("List-Unsubscribe")
+        return msg, imgs
+
+    with patch("origenlab_email_pipeline.outbound_campaign_sender.build_gmail_message_with_inline_images", side_effect=_capture):
+        send_campaign_batch(
+            conn, campaign_id="hielscher-sonicators-2026", recipients=[(rid, "cliente@example.cl")],
+            html=html_file.read_text(), html_dir=html_file.parent, live=False, access_token=None,
+            gate_ctx=_permissive_ctx(), batch_id="b1",
+        )
+    assert captured["list_unsubscribe"] == "<mailto:contacto@origenlab.cl?subject=REMOVER>"

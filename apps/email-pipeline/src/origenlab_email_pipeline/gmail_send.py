@@ -56,6 +56,7 @@ def build_gmail_message_with_inline_images(
     html: str,
     html_dir: Path,
     cc_emails: Sequence[str] | None = None,
+    list_unsubscribe: str | None = None,
 ) -> tuple[EmailMessage, list[InlineImage]]:
     rewritten_html, inline_images = extract_inline_images_from_html(html, html_dir=html_dir)
 
@@ -74,6 +75,9 @@ def build_gmail_message_with_inline_images(
         if cc_list:
             msg["Cc"] = ", ".join(cc_list)
     msg["Subject"] = subject
+    if list_unsubscribe:
+        # RFC 2369: mail clients (Gmail among them) render their own unsubscribe control from it.
+        msg["List-Unsubscribe"] = list_unsubscribe
 
     msg.set_content(
         "Este correo contiene HTML. Si lo ve como texto plano, use un cliente que soporte HTML.",

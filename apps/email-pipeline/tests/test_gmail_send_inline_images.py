@@ -73,3 +73,26 @@ def test_build_gmail_message_rejects_empty_to(tmp_path: Path) -> None:
             html_dir=tmp_path,
         )
 
+
+
+def test_build_gmail_message_sets_list_unsubscribe_when_given(tmp_path: Path) -> None:
+    msg, _ = build_gmail_message_with_inline_images(
+        sender_email="OrigenLab <send@example.com>",
+        to_emails="a@example.com",
+        subject="Subj",
+        html="<html><body><p>x</p></body></html>",
+        html_dir=tmp_path,
+        list_unsubscribe="<mailto:send@example.com?subject=REMOVER>",
+    )
+    assert msg["List-Unsubscribe"] == "<mailto:send@example.com?subject=REMOVER>"
+
+
+def test_build_gmail_message_has_no_list_unsubscribe_by_default(tmp_path: Path) -> None:
+    msg, _ = build_gmail_message_with_inline_images(
+        sender_email="OrigenLab <send@example.com>",
+        to_emails="a@example.com",
+        subject="Subj",
+        html="<html><body><p>x</p></body></html>",
+        html_dir=tmp_path,
+    )
+    assert "List-Unsubscribe" not in msg
