@@ -10,9 +10,12 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
+
+import psycopg
+from psycopg import sql
 
 from origenlab_api.v2 import hosted_data_load_plan as hp
 
@@ -31,7 +34,18 @@ _PASSWORD_KV = re.compile(r"(password\s*=\s*)\S+", re.I)
 _POOLER_HOST = re.compile(r"[a-z0-9.-]*pooler\.supabase\.com|db\.[a-z]{20}\.supabase\.co")
 
 
-def redact(text: str) -> str:
+def target_secrets(t: Any) -> tuple[str, ...]:
+    """Values of a hosted target that must never be printed. Local targets carry only the
+    public dev-container defaults, so nothing is secret there."""
+    if t.mode == "local":
+        return ()
+    vals = (getattr(t, a, None) for a in ("password", "user", "project_ref", "host", "hostaddr"))
+    return tuple(v for v in vals if v)
+
+
+def redact(text: str, extra: Iterable[str] = ()) -> str:
+    for v in sorted({e for e in extra if e}, key=len, reverse=True):
+        text = text.replace(v, "***")
     text = _SECRET_IN_URI.sub(r"\1:***@", text)
     text = _PASSWORD_KV.sub(r"\1***", text)
     return _POOLER_HOST.sub("<hosted-host>", text)
@@ -136,6 +150,17 @@ def _sequences(cur) -> dict[str, int]:
     return {n: int(v) for n, v in cur.fetchall()}
 
 
+def _rollback(cur) -> None:
+    """Roll back; if the body already raised, a dead connection must not mask that error."""
+    if sys.exc_info()[0] is None:
+        cur.execute("rollback")
+        return
+    try:
+        cur.execute("rollback")
+    except psycopg.Error:
+        pass
+
+
 def _qcols(names: list[str]) -> str:
     return ", ".join('"' + c.replace('"', '""') + '"' for c in names)
 
@@ -162,7 +187,7 @@ def read_source_facts(conn, repo_root: Path, hosted_operator: str) -> dict:
                 "sequences": _sequences(cur), "payload_rows_with_local_uuid": int(payload_rows),
             }
         finally:
-            cur.execute("rollback")
+            _rollback(cur)
 
 
 def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
@@ -182,7 +207,7 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
                            where c.relkind = 'r' and n.nspname = any(%s) order by 1""", (list(hp.EMPTY_SCHEMAS),))
             counts = {}
             for (t,) in cur.fetchall():
-                cur.execute(f"select count(*) from {t}")
+                cur.execute(sql.SQL("select count(*) from {}").format(sql.Identifier(*t.split(".", 1))))
                 counts[t] = int(cur.fetchone()[0])
             cur.execute("select count(*) from platform.auth_principal")
             principals = cur.fetchone()[0]
@@ -212,7 +237,7 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
                 "sequences": _sequences(cur), "pg_dump_probe_ok": bool(pg_dump_probe),
             }
         finally:
-            cur.execute("rollback")
+            _rollback(cur)
 
 
 def _scan_processes(proc: Path) -> list[str]:
@@ -237,8 +262,11 @@ def _scan_processes(proc: Path) -> list[str]:
 def read_host_facts(repo_root: Path, target_file: Path, target: Any, proc: Path = Path("/proc")) -> dict:
     path = repo_root / target_file
     st = path.stat()
-    cron = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-    cron_lines = [ln for ln in cron.stdout.splitlines() if SOURCE_DB in ln and not ln.lstrip().startswith("#")]
+    try:
+        cron_out = subprocess.run(["crontab", "-l"], capture_output=True, text=True).stdout
+    except FileNotFoundError:
+        cron_out = ""
+    cron_lines = [ln for ln in cron_out.splitlines() if SOURCE_DB in ln and not ln.lstrip().startswith("#")]
     label = subprocess.run(["docker", "inspect", CONTAINER, "--format", '{{index .Config.Labels "com.origenlab.workdir"}}'],
                            capture_output=True, text=True).stdout.strip()
     return {
@@ -277,6 +305,6 @@ def pg_dump_target(target: Any, out: Path, *, schema_only: bool = False) -> dict
         res = subprocess.run(argv, stdout=fh, stderr=subprocess.PIPE, env={**os.environ, **extra})
     if res.returncode != 0 or out.stat().st_size == 0:
         out.unlink(missing_ok=True)
-        raise RuntimeError("pg_dump failed: " + redact(res.stderr.decode(errors="replace"))[-400:])
+        raise RuntimeError("pg_dump failed: " + redact(res.stderr.decode(errors="replace"), target_secrets(target))[-400:])
     out.chmod(0o600)
     return {"path": str(out), "sha256": write_sha256_sidecar(out), "bytes": out.stat().st_size}

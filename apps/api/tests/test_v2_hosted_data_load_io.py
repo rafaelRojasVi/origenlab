@@ -86,3 +86,44 @@ def test_pg_dump_command_keeps_secret_out_of_argv():
 def test_pg_dump_command_local_has_no_extra_env():
     argv, env = io_._pg_dump_command(SimpleNamespace(mode="local", database="scratch_db"), schema_only=False)
     assert env == {} and "scratch_db" in argv
+
+
+def _full_hosted():
+    t = _hosted()
+    t.project_ref = "abcdefghijklmnopqrst"
+    t.user = "origenlab_migrator.abcdefghijklmnopqrst"
+    return t
+
+
+def test_redact_extra_masks_login_ref_and_ip():
+    t = _full_hosted()
+    s = f'password authentication failed for user "{t.user}" ref {t.project_ref} at (3.3.3.3)'
+    r = io_.redact(s, io_.target_secrets(t))
+    assert t.user not in r and t.project_ref not in r and "3.3.3.3" not in r
+
+
+def test_redact_keeps_ordinary_text_and_local_has_no_secrets():
+    assert io_.redact("crm.quote 412 rows", io_.target_secrets(_full_hosted())) == "crm.quote 412 rows"
+    assert io_.target_secrets(SimpleNamespace(mode="local")) == ()
+
+
+def test_pg_dump_failure_leaks_nothing_and_removes_partial(tmp_path: Path, monkeypatch):
+    t = _full_hosted()
+    t.sslrootcert = "/x/ca.crt"
+    err = f'connection to server at "{t.host}" (3.3.3.3), port 5432 failed: password authentication failed for user "{t.user}"'
+
+    def fake_run(argv, **kw):
+        if "stdout" in kw:
+            kw["stdout"].write(b"partial")
+        return SimpleNamespace(returncode=1, stderr=err.encode())
+
+    monkeypatch.setattr(io_.subprocess, "run", fake_run)
+    out = tmp_path / "d" / "t.dump"
+    try:
+        io_.pg_dump_target(t, out)
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError as e:
+        msg = str(e)
+    for secret in (t.user, t.project_ref, "3.3.3.3", t.host, "s3cret"):
+        assert secret not in msg
+    assert not out.exists()
