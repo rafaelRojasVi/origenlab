@@ -171,6 +171,14 @@ def target_counts(cur) -> dict[str, int]:
     return {name: _count(cur, name) for name in hp.TABLES}
 
 
+def business_counts(cur, schemas: Iterable[str] = hp.EMPTY_SCHEMAS) -> dict[str, int]:
+    """Row count of every ordinary table in ``schemas`` (the 16 loaded tables included)."""
+    cur.execute("""select n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                   where c.relkind = 'r' and n.nspname = any(%s) order by 1""", (list(schemas),))
+    names = [t for (t,) in cur.fetchall()]
+    return {t: _count(cur, t) for t in names}
+
+
 def _qcols(names: list[str]) -> str:
     return ", ".join('"' + c.replace('"', '""') + '"' for c in names)
 
@@ -213,11 +221,7 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
             for name in hp.TABLES:
                 cols = [c[0] for c in _columns(cur, name)]
                 tables[name] = table_facts(cur, name, f"select {_qcols(cols)} from {name}")
-            cur.execute("""select n.nspname||'.'||c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
-                           where c.relkind = 'r' and n.nspname = any(%s) order by 1""", (list(hp.EMPTY_SCHEMAS),))
-            counts = {}
-            for (t,) in cur.fetchall():
-                counts[t] = _count(cur, t)
+            counts = business_counts(cur)
             cur.execute("select count(*) from platform.auth_principal")
             principals = cur.fetchone()[0]
             cur.execute("select count(*) from platform.operator_profile")
@@ -387,3 +391,45 @@ def post_copy_invariants(cur, plan: Mapping, hosted_operator: str) -> list[dict]
     cur.execute(f"select last_value from {hp.SEQUENCE}")
     check("sequence_set", int(cur.fetchone()[0]) == plan["sequence"]["target_last_value"])
     return checks
+
+
+def classify_target_state(plan: Mapping, observed: Mapping[str, tuple[int, str]]) -> str:
+    """``loaded``: every table's (count, hash) equals the plan; ``empty``: every plan table has
+    0 rows; anything else is ``partial``. Observed tables outside the plan are ignored."""
+    if all(tuple(observed[t["name"]]) == (t["count"], t["hash"]) for t in plan["tables"]):
+        return "loaded"
+    if all(observed[t["name"]][0] == 0 for t in plan["tables"]):
+        return "empty"
+    return "partial"
+
+
+def observed_rows(cur, plan: Mapping) -> dict[str, tuple[int, str]]:
+    out = {}
+    for t in plan["tables"]:
+        cur.execute(hp.row_hash_sql(f"select {_qcols([c[0] for c in t['columns']])} from {t['name']}", t["pk"]))
+        count, digest = cur.fetchone()
+        out[t["name"]] = (int(count), digest)
+    return out
+
+
+def rows_outside_load(plan: Mapping, counts: Mapping[str, int]) -> dict[str, int]:
+    """Tables other than the planned ones whose count is not the pristine one (0, or the singleton's 1)."""
+    own = {t["name"] for t in plan["tables"]}
+    bad = {n: c for n, c in counts.items() if n not in own and c != hp.SINGLETONS.get(n, 0)}
+    bad.update({n: 0 for n in hp.SINGLETONS if n not in counts})
+    return bad
+
+
+def restore_into_scratch(dump: Path, scratch_db: str) -> None:
+    """Restore only the 16 loaded tables into a freshly minted scratch database. A fresh scratch
+    already carries the seeded singletons, so restoring the whole dump would collide on them; the
+    16 table names are unique across the schemas, so bare ``-t`` names are unambiguous.
+    ``--disable-triggers`` (superuser in the container) also skips the FK to platform.operator,
+    which the scratch does not carry: the drill proves the loaded rows, not the roster."""
+    subprocess.run(["docker", "cp", str(dump), f"{CONTAINER}:/tmp/post.dump"], check=True)
+    tables = [arg for t in hp.TABLES for arg in ("-t", t.split(".", 1)[1])]
+    res = subprocess.run(["docker", "exec", CONTAINER, "pg_restore", "-U", "supabase_admin", "-d", scratch_db,
+                          "--data-only", "--disable-triggers", "--no-owner", "--exit-on-error", *tables,
+                          "/tmp/post.dump"], capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError("pg_restore failed: " + redact(res.stderr)[-400:])

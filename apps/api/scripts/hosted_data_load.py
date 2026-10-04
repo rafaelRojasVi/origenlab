@@ -9,13 +9,16 @@
 
 The hosted credential is read from the environment variable named in supabase/.audit/hosted_target.env
 and never from argv. Every log line is redacted. Exit codes: 0 ok, 11 preflight refused,
-12 apply invariant failed (transaction rolled back, target untouched), 13 verify mismatch.
+12 apply/rollback failed (transaction rolled back, target untouched), 13 verify mismatch.
+`rollback` empties the 16 loaded tables with DELETE (never TRUNCATE: 37 foreign keys from outside tables
+reference them and CASCADE would wipe the campaign hold row).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import subprocess
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -272,6 +275,183 @@ def cmd_apply(args) -> int:
         _close_clean(src)
         _close_clean(tgt)
 
+CHECKLIST = [("casos (crm.opportunity)", "crm.opportunity"), ("cotizaciones (crm.quote)", "crm.quote"),
+             ("instituciones (crm.organization)", "crm.organization"), ("campañas archivadas", "outbound.campaign"),
+             ("destinatarios", "outbound.campaign_recipient"), ("eventos", "crm.domain_event")]
+SCRATCH_SH = Path(__file__).with_name("hosted_data_load_scratch.sh")
+#: Schemas whose tables must hold nothing but the 16 loaded tables and the two singleton rows.
+ROLLBACK_SCHEMAS = (*hp.EMPTY_SCHEMAS, "procurement")
+
+
+def _mismatch(msg: str) -> int:
+    print(msg)
+    return EXIT_VERIFY_MISMATCH
+
+
+def cmd_verify(args) -> int:
+    plan, sha = load_plan(args.plan)
+    if sha != args.plan_sha256:
+        print("plan sha256 mismatch")
+        return EXIT_REFUSED
+    src, tgt, target = connect_both(args)
+    try:
+        secrets = io_.target_secrets(target)
+        # Read-only re-hash of the target, as the owner role (the login role is NOINHERIT).
+        try:
+            with tgt.cursor() as tc:
+                tc.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                try:
+                    tc.execute("SET LOCAL ROLE origenlab_owner")
+                    io_.apply_session_settings(tc, local=True)
+                    obs = io_.observed_rows(tc, plan)
+                    state = io_.classify_target_state(plan, obs)
+                    inv = io_.post_copy_invariants(tc, plan, plan["remap"]["to"]) if state == "loaded" else []
+                finally:
+                    _best_effort_rollback(tc)
+        except psycopg.Error as exc:
+            return _mismatch("verify could not read the target: " + io_.redact(str(exc), secrets)[:400])
+        print(f"target state: {state}")
+        print_checks(inv, secrets)
+        if state == "loaded" and [c["check"] for c in inv] != io_.invariant_names(plan):
+            return _mismatch("VERIFY MISMATCH: invariant set differs from the expected one")
+        if state != "loaded" or hp.refused(inv):
+            return _mismatch("VERIFY MISMATCH" + (" — partial state: treat as an incident, do not re-apply"
+                                                  if state == "partial" else ""))
+        try:
+            post = io_.pg_dump_target(target, Path(args.out).expanduser() / f"post-{_stamp()}.dump")
+        except (RuntimeError, OSError) as exc:
+            return _mismatch("post-load dump failed: " + io_.redact(str(exc), secrets))
+        try:
+            res = subprocess.run(["bash", str(SCRATCH_SH), "mint"], capture_output=True, text=True)
+        except OSError as exc:
+            return _mismatch("scratch mint could not run: " + io_.redact(str(exc), secrets))
+        lines = res.stdout.strip().splitlines()
+        if res.returncode != 0 or not lines:
+            return _mismatch("scratch mint failed: " + io_.redact(res.stderr, secrets)[-400:])
+        scratch = lines[-1].strip()
+        try:
+            io_.restore_into_scratch(Path(post["path"]), scratch)
+            with psycopg.connect(io_.scratch_conninfo(scratch), autocommit=True) as sconn, sconn.cursor() as cur:
+                cur.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                try:
+                    io_.apply_session_settings(cur, local=True)
+                    restored = io_.classify_target_state(plan, io_.observed_rows(cur, plan))
+                finally:
+                    _best_effort_rollback(cur)
+        except (RuntimeError, OSError, subprocess.CalledProcessError, psycopg.Error) as exc:
+            return _mismatch("restore drill failed: " + io_.redact(str(exc), secrets)[:400])
+        finally:
+            subprocess.run(["bash", str(SCRATCH_SH), "drop", scratch], capture_output=True, check=False)
+        print(f"post-load dump: {post['path']}; restore into {scratch}: {restored}")
+        if restored != "loaded":
+            return _mismatch("VERIFY MISMATCH: the post-load dump does not restore to the planned rows")
+        print("\nChecklist para el dashboard:")
+        for label, table in CHECKLIST:
+            print(f"  {label:36} {obs[table][0]}")
+        print("  personas: 0 · flags de envío: false/false · retenciones activas: 1")
+        return 0
+    finally:
+        _close_clean(src)
+        _close_clean(tgt)
+
+
+def _guard_checks(cur, plan) -> list[dict]:
+    return [{"check": "roster_unchanged", "ok": io_.roster_hash(cur) == plan["roster_hash"], "detail": None},
+            {"check": "send_control_unchanged",
+             "ok": io_._hash_rows(cur, "select * from outbound.send_control") == plan["send_control_hash"], "detail": None},
+            {"check": "campaign_block_unchanged",
+             "ok": io_._hash_rows(cur, "select * from outbound.campaign_block") == plan["campaign_block_hash"],
+             "detail": None}]
+
+
+def _refuse_rollback(tc, msg: str) -> int:
+    _best_effort_rollback(tc)
+    print(msg)
+    return EXIT_REFUSED
+
+
+def cmd_rollback(args) -> int:
+    plan, sha = load_plan(args.plan)
+    if sha != args.plan_sha256:
+        print("plan sha256 mismatch")
+        return EXIT_REFUSED
+    src, tgt, target = connect_both(args)
+    try:
+        secrets = io_.target_secrets(target)
+        with tgt.cursor() as tc:
+            try:
+                tc.execute("BEGIN")
+                tc.execute("SET LOCAL lock_timeout = '30s'")
+                tc.execute("SET LOCAL statement_timeout = '15min'")
+                tc.execute("select pg_advisory_xact_lock(%s)", (hp.ADVISORY_LOCK_KEY,))
+                tc.execute("SET LOCAL ROLE origenlab_owner")
+                io_.apply_session_settings(tc, local=True)
+                if io_.classify_target_state(plan, io_.observed_rows(tc, plan)) != "loaded":
+                    return _refuse_rollback(tc, "target does not match the plan exactly; refusing to delete anything "
+                                                "— restore from the pre-load dump instead")
+                outside = io_.rows_outside_load(plan, io_.business_counts(tc, ROLLBACK_SCHEMAS))
+                if outside:
+                    return _refuse_rollback(tc, "rows exist outside the loaded tables (table: rows) "
+                                                f"{outside}; the target is no longer exactly what was loaded — "
+                                                "restore from the pre-load dump instead")
+                guards = _guard_checks(tc, plan)
+                if hp.refused(guards):
+                    print_checks(guards, secrets)
+                    return _refuse_rollback(tc, "roster or singleton rows changed since the plan; refusing")
+                for t in plan["tables"]:
+                    io_.set_fks_deferrable(tc, t["name"], t["fks"], True)
+                    io_.set_triggers(tc, t["name"], False)
+                tc.execute("SET CONSTRAINTS ALL DEFERRED")
+                for t in reversed(plan["tables"]):
+                    tc.execute(f"DELETE FROM {t['name']}")
+                tc.execute("SET CONSTRAINTS ALL IMMEDIATE")
+                for t in plan["tables"]:
+                    io_.set_triggers(tc, t["name"], True)
+                    io_.set_fks_deferrable(tc, t["name"], t["fks"], False)
+                tc.execute("select setval(%s::regclass, 1, false)", (hp.SEQUENCE,))
+                counts = io_.business_counts(tc, ROLLBACK_SCHEMAS)
+                dirty = {t["name"]: counts.get(t["name"]) for t in plan["tables"] if counts.get(t["name"]) != 0}
+                guards = _guard_checks(tc, plan)
+                print_checks(guards, secrets)
+                if dirty or hp.refused(guards):
+                    print(f"after DELETE: tables not empty {dirty}" if dirty else "roster or singleton rows changed")
+                    _best_effort_rollback(tc)
+                    print("transaction rolled back; target untouched")
+                    return EXIT_APPLY_FAILED
+            except psycopg.Error as exc:
+                _best_effort_rollback(tc)
+                print("rollback failed: " + io_.redact(str(exc), secrets)[:400])
+                print("transaction rolled back; target untouched")
+                return EXIT_APPLY_FAILED
+            except BaseException:
+                _best_effort_rollback(tc)
+                print("rollback interrupted; transaction rolled back")
+                raise
+            try:
+                tc.execute("COMMIT")
+            except psycopg.Error as exc:
+                print("COMMIT raised: " + io_.redact(str(exc), secrets)[:400])
+                print("commit outcome unknown; run `verify` before anything else")
+                return EXIT_APPLY_FAILED
+            if tc.statusmessage != "COMMIT":
+                print(f"commit outcome unknown (server answered {tc.statusmessage!r}); run `verify` before anything else")
+                return EXIT_APPLY_FAILED
+        print("ROLLED BACK: the 16 tables are empty again; roster and singletons untouched")
+        return 0
+    finally:
+        _close_clean(src)
+        _close_clean(tgt)
+
+
+ROLLBACK_EPILOG = """\
+Manual restore of the pre-load dump (documented only; this tool never runs it). Placeholders:
+  docker cp <pre-load-dump> origenlab_dev_db:/tmp/pre.dump
+  docker exec -e PGPASSWORD -e PGSSLMODE -e PGSSLROOTCERT -e PGHOSTADDR origenlab_dev_db pg_restore \\
+      --host <pooler-host> --port <port> --username <login-role> --dbname <database> \\
+      --role=origenlab_owner --data-only --disable-triggers /tmp/pre.dump
+Set the variable values in the environment from the target file; never on the command line.
+"""
+
 
 def _common(p: argparse.ArgumentParser, with_plan: bool) -> None:
     p.add_argument("--target-file", default=str(io_.TARGET_FILE))
@@ -293,12 +473,14 @@ def main(argv=None) -> int:
     p = sub.add_parser("apply")
     _common(p, True)
     p.set_defaults(func=cmd_apply)
-    for name, task in (("verify", "Task 6"), ("rollback", "Task 6")):
-        p = sub.add_parser(name)
-        _common(p, True)
-        if name == "rollback":
-            p.add_argument("--confirm-truncate", action="store_true", required=True)
-        p.set_defaults(func=lambda a, n=name, t=task: sys.exit(f"{n}: {t}"))
+    p = sub.add_parser("verify")
+    _common(p, True)
+    p.set_defaults(func=cmd_verify)
+    p = sub.add_parser("rollback", formatter_class=argparse.RawDescriptionHelpFormatter, epilog=ROLLBACK_EPILOG)
+    _common(p, True)
+    p.add_argument("--confirm-truncate", action="store_true", required=True,
+                   help="confirm emptying the 16 loaded tables (done with DELETE, not TRUNCATE)")
+    p.set_defaults(func=cmd_rollback)
     args = ap.parse_args(argv)
     return int(args.func(args))
 

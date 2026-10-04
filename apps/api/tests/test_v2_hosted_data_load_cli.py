@@ -236,3 +236,129 @@ def test_apply_interrupt_inside_write_tx_rolls_back_and_closes(tmp_path, monkeyp
     assert any(s.upper() == "BEGIN" for s in tgt.log)
     assert any(s.upper() == "ROLLBACK" for s in tgt.log)
     assert src.closed and tgt.closed
+
+
+# ---- Task 6: verify and rollback -------------------------------------------------------------
+
+def _plan_ab():
+    return {"remap": {"to": "x", "from": ["a"]}, "roster_hash": "r", "send_control_hash": "s", "campaign_block_hash": "c",
+            "tables": [{"name": "t.a", "count": 2, "hash": "ha", "pk": ["id"], "columns": [["id", "uuid"]], "fks": ["fk_a"]},
+                       {"name": "t.b", "count": 3, "hash": "hb", "pk": ["id"], "columns": [["id", "uuid"]], "fks": []}]}
+
+
+def _patch_rollback(cli, monkeypatch, *, outside=None, roster="r", commit_msg="COMMIT"):
+    src, tgt = _FakeConn(), _FakeConn()
+    target = SimpleNamespace(mode="hosted", password="s3cret", user="u", project_ref="r", host="h", hostaddr="1.1.1.1")
+    plan = _plan_ab()
+    monkeypatch.setattr(cli, "connect_both", lambda a: (src, tgt, target))
+    monkeypatch.setattr(cli, "load_plan", lambda p: (plan, "a" * 64))
+    deleted = lambda: any(s.startswith("DELETE") for s in tgt.log)  # noqa: E731
+    base = {"outbound.send_control": 1, "outbound.campaign_block": 1, **(outside or {})}
+    monkeypatch.setattr(cli.io_, "business_counts", lambda cur, schemas=None: (
+        {"t.a": 0, "t.b": 0, **base} if deleted() else {"t.a": 2, "t.b": 3, **base}))
+    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: {"t.a": (2, "ha"), "t.b": (3, "hb")})
+    monkeypatch.setattr(cli.io_, "roster_hash", lambda cur: roster)
+    monkeypatch.setattr(cli.io_, "_hash_rows", lambda cur, q: "s" if "send_control" in q else "c")
+    monkeypatch.setattr(cli.io_, "apply_session_settings", lambda cur, local=False: tgt.log.append("SETTINGS"))
+    monkeypatch.setattr(cli.io_, "set_triggers", lambda cur, t, en: tgt.log.append(f"TRIGGERS {t} {en}"))
+    monkeypatch.setattr(cli.io_, "set_fks_deferrable", lambda cur, t, fks, d: tgt.log.append(f"FKS {t} {d}"))
+    _FakeCursor.statusmessage = commit_msg
+    return src, tgt
+
+
+def _rb_args(tmp_path):
+    a = _apply_args(tmp_path)
+    a.confirm_truncate = True
+    return a
+
+
+def test_rollback_deletes_in_reverse_order_and_never_truncates(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_rollback(cli, monkeypatch)
+    try:
+        assert cli.cmd_rollback(_rb_args(tmp_path)) == 0
+    finally:
+        _FakeCursor.statusmessage = "COMMIT"
+    assert not any("TRUNCATE" in s.upper() for s in tgt.log)
+    deletes = [s for s in tgt.log if s.startswith("DELETE")]
+    assert deletes == ["DELETE FROM t.b", "DELETE FROM t.a"]
+    assert tgt.log[0] == "BEGIN" and tgt.log[-1] == "COMMIT"
+    assert any("SET LOCAL ROLE origenlab_owner" in s for s in tgt.log)
+    assert any("SET CONSTRAINTS ALL DEFERRED" in s for s in tgt.log)
+    assert src.closed and tgt.closed
+    assert "s3cret" not in capsys.readouterr().out
+
+
+def test_rollback_refuses_when_rows_exist_outside_the_load(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_rollback(cli, monkeypatch, outside={"crm.task": 2})
+    assert cli.cmd_rollback(_rb_args(tmp_path)) == 11
+    assert not any(s.startswith("DELETE") for s in tgt.log)
+    assert tgt.log[-1] == "ROLLBACK"
+    assert "crm.task" in capsys.readouterr().out
+    assert src.closed and tgt.closed
+
+
+def test_rollback_refuses_when_the_roster_changed(tmp_path, monkeypatch):
+    cli = load_cli()
+    src, tgt = _patch_rollback(cli, monkeypatch, roster="other")
+    assert cli.cmd_rollback(_rb_args(tmp_path)) == 11
+    assert not any(s.startswith("DELETE") for s in tgt.log) and tgt.log[-1] == "ROLLBACK"
+
+
+def test_rollback_commit_with_unexpected_status_is_unknown_outcome(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_rollback(cli, monkeypatch, commit_msg="ROLLBACK")
+    try:
+        assert cli.cmd_rollback(_rb_args(tmp_path)) == 12
+    finally:
+        _FakeCursor.statusmessage = "COMMIT"
+    assert "unknown" in capsys.readouterr().out
+
+
+def test_rollback_interrupt_rolls_back_and_closes(tmp_path, monkeypatch):
+    cli = load_cli()
+    src, tgt = _patch_rollback(cli, monkeypatch)
+
+    def boom(cur, t, en):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.io_, "set_triggers", boom)
+    with pytest.raises(KeyboardInterrupt):
+        cli.cmd_rollback(_rb_args(tmp_path))
+    assert "ROLLBACK" in tgt.log and src.closed and tgt.closed
+
+
+def test_rollback_help_epilog_has_placeholders_only(capsys):
+    cli = load_cli()
+    with pytest.raises(SystemExit):
+        cli.main(["rollback", "--help"])
+    out = capsys.readouterr().out
+    assert "pg_restore" in out and "<" in out
+    for forbidden in ("supabase.co", "pooler.supabase.com", "origenlab_migrator"):
+        assert forbidden not in out
+
+
+def test_verify_partial_state_exits_13_before_any_dump(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _FakeConn(), _FakeConn()
+    target = SimpleNamespace(mode="hosted", password="s3cret", user="u", project_ref="r", host="h", hostaddr="1.1.1.1")
+    monkeypatch.setattr(cli, "connect_both", lambda a: (src, tgt, target))
+    monkeypatch.setattr(cli, "load_plan", lambda p: (_plan_ab(), "a" * 64))
+    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: {"t.a": (2, "ha"), "t.b": (0, "")})
+    monkeypatch.setattr(cli.io_, "apply_session_settings", lambda cur, local=False: None)
+    dumps = []
+    monkeypatch.setattr(cli.io_, "pg_dump_target", lambda *a, **k: dumps.append(1))
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 13
+    out = capsys.readouterr().out
+    assert "partial" in out and "incident" in out and dumps == []
+    assert any("READ ONLY" in s for s in tgt.log) and any("SET LOCAL ROLE origenlab_owner" in s for s in tgt.log)
+    assert src.closed and tgt.closed
+
+
+def test_scratch_script_parses_and_lists_all_subcommands():
+    import subprocess
+    script = _SCRIPTS / "hosted_data_load_scratch.sh"
+    assert subprocess.run(["bash", "-n", str(script)]).returncode == 0
+    text = script.read_text()
+    assert "mint|clone-cleanroom|drop" in text and script.stat().st_mode & stat.S_IXUSR

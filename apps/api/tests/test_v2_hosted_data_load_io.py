@@ -155,3 +155,31 @@ def test_post_copy_invariants_emit_exactly_the_declared_names():
             "roster_hash": "r", "send_control_hash": "s", "campaign_block_hash": "c", "remap": {"to": "x", "from": ["a", "b"]}}
     got = [c["check"] for c in io_.post_copy_invariants(Cur(), plan, "x")]
     assert got == io_.invariant_names(plan)
+
+
+def _plan2():
+    return {"tables": [{"name": "a", "count": 2, "hash": "ha"}, {"name": "b", "count": 3, "hash": "hb"}]}
+
+
+def test_verify_classifies_loaded_empty_and_partial():
+    assert io_.classify_target_state(_plan2(), {"a": (2, "ha"), "b": (3, "hb")}) == "loaded"
+    assert io_.classify_target_state(_plan2(), {"a": (0, ""), "b": (0, "")}) == "empty"
+    assert io_.classify_target_state(_plan2(), {"a": (2, "ha"), "b": (0, "")}) == "partial"
+
+
+def test_verify_classifies_partial_state_as_incident():
+    # a hash drift with full counts is still partial: somebody wrote after the load
+    assert io_.classify_target_state(_plan2(), {"a": (2, "ha"), "b": (3, "xx")}) == "partial"
+
+
+def test_classify_ignores_observed_tables_outside_the_plan():
+    assert io_.classify_target_state(_plan2(), {"a": (2, "ha"), "b": (3, "hb"), "zzz": (9, "q")}) == "loaded"
+    assert io_.classify_target_state(_plan2(), {"a": (0, ""), "b": (0, ""), "zzz": (9, "q")}) == "empty"
+
+
+def test_rows_outside_load_flags_new_rows_and_singleton_drift():
+    plan = _plan2()
+    ok = {"a": 2, "b": 3, "outbound.send_control": 1, "outbound.campaign_block": 1, "crm.task": 0}
+    assert io_.rows_outside_load(plan, ok) == {}
+    bad = {**ok, "crm.task": 4, "outbound.campaign_block": 0}
+    assert io_.rows_outside_load(plan, bad) == {"crm.task": 4, "outbound.campaign_block": 0}
