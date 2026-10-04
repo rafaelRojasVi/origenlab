@@ -5,7 +5,17 @@ import { fmtDate } from "../ui";
 import { useResource } from "../useResource";
 import { fetchTestSendHistory, sendCampaignTest, type TestSendTarget } from "./marketingApi";
 
-const PLAIN_ADDRESS = /^[^@\s,;<>"']+@[^@\s,;<>"']+\.[^@\s,;<>"']+$/;
+// The API's rule (gmail_send.valid_test_address): one plain ASCII mailbox — a local part of
+// [A-Za-z0-9._%+-] with no leading, trailing or doubled dot, DNS labels, an alphabetic TLD of
+// 2–63 letters — at most 254 characters. No name, comment, encoded word, group or separator.
+const PLAIN_ADDRESS =
+  /^[A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/;
+const MAX_ADDRESS_LENGTH = 254;
+
+function isPlainAddress(raw: string): boolean {
+  const value = raw.trim();
+  return value.length <= MAX_ADDRESS_LENGTH && PLAIN_ADDRESS.test(value);
+}
 
 const HOUR_SANTIAGO = new Intl.DateTimeFormat("es-CL", {
   timeZone: "America/Santiago",
@@ -60,7 +70,7 @@ function Panel({ target, sender }: { target: TestSendTarget; sender: string }) {
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const key = JSON.stringify(target);
   const [history, reload] = useResource(() => fetchTestSendHistory(target), [key]);
-  const valid = PLAIN_ADDRESS.test(to.trim());
+  const valid = isPlainAddress(to);
   const send = useCallback(async () => {
     setBusy(true);
     setResult(null);

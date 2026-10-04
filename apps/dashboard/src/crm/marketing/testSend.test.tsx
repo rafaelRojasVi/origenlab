@@ -70,6 +70,39 @@ describe("«Enviar prueba»", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Límite de pruebas alcanzado. Intenta más tarde.");
   });
 
+  it("accepts only one plain mailbox — the API's rule, the reviewer's probes included", () => {
+    stub({ status: 200, body: {} });
+    render(asRole("admin", <TestSendPanel target={TARGET} config={CONFIG} />));
+    const field = screen.getByLabelText("Enviar una prueba a");
+    const button = () => screen.getByRole("button", { name: "Enviar prueba" });
+    for (const bad of [
+      "a@b.example(origenlab.cl",
+      "=?utf-8?q?boss?=@=?utf-8?q?origenlab?=.cl",
+      "ops:ana@x.example",
+      "ñandú@example.invalid",
+      "a@b.c",
+      "a@b.123",
+      ".a@example.invalid",
+      "a.@example.invalid",
+      "a..b@example.invalid",
+      "a@-b.example",
+      "a@b-.example",
+      "a@b..example",
+      "a@example.invalid.",
+      `a@${"d".repeat(64)}.example`,
+      `${"x".repeat(250)}@example.invalid`,
+      '"Ana" <ana@example.invalid>',
+      "a@example.invalid;b@example.invalid",
+    ]) {
+      fireEvent.change(field, { target: { value: bad } });
+      expect(button(), bad).toBeDisabled();
+    }
+    for (const ok of ["ana@example.invalid", " Ana.Perez+test@sub.example.invalid ", "a_b%c-d@x-y.example.invalid"]) {
+      fireEvent.change(field, { target: { value: ok } });
+      expect(button(), ok).toBeEnabled();
+    }
+  });
+
   it("does not send an address with a name or a comma", async () => {
     const calls = stub({ status: 200, body: {} });
     render(asRole("admin", <TestSendPanel target={TARGET} config={CONFIG} />));

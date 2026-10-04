@@ -52,7 +52,8 @@ def test_token_file_with_array_instead_of_object_is_refused(tmp_path: Path) -> N
         load_send_token(str(p))
 
 
-@pytest.mark.parametrize("ok", ["ana@example.invalid", "Ana.Perez+test@sub.example.invalid"])
+@pytest.mark.parametrize("ok", ["ana@example.invalid", "Ana.Perez+test@sub.example.invalid",
+                                "a_b%c-d@x-y.example.invalid", "a@b.cl", "x" * 64 + "@" + "d" * 63 + ".example"])
 def test_a_plain_address_is_accepted(ok: str) -> None:
     assert valid_test_address(f"  {ok} ") == ok
 
@@ -60,7 +61,15 @@ def test_a_plain_address_is_accepted(ok: str) -> None:
 @pytest.mark.parametrize(
     "bad",
     ['"Ana" <ana@example.invalid>', "a@example.invalid, b@example.invalid", "a@example.invalid\r\nBcc: z@example.invalid",
-     "a@example.invalid;b@example.invalid", "sin-arroba", "a@b", "a @example.invalid", "x" * 250 + "@example.invalid", ""],
+     "a@example.invalid;b@example.invalid", "sin-arroba", "a@b", "a @example.invalid", "x" * 250 + "@example.invalid", "",
+     # What a mail parser reads differently from what is recorded: a comment, encoded words, a
+     # group name, a non-ASCII local part — and shapes no mailbox has (one-letter or numeric TLD,
+     # dots out of place, a label edged with a hyphen, a trailing newline).
+     "a@b.example(origenlab.cl", "=?utf-8?q?boss?=@=?utf-8?q?origenlab?=.cl", "ops:ana@x.example",
+     "ñandú@example.invalid", "a@b.c", "a@b.123", ".a@example.invalid", "a.@example.invalid",
+     "a..b@example.invalid", "a@-b.example", "a@b-.example", "a@b..example", "a@.example",
+     "a@example.invalid.", "a@example.invalid\nb", "a@" + "d" * 64 + ".example", "a!b@example.invalid",
+     "a@b_c.example", "a@example.c0m"],
 )
 def test_anything_but_one_plain_address_is_refused(bad: str) -> None:
     with pytest.raises(ValueError):
@@ -77,6 +86,13 @@ def test_the_message_is_the_stored_html_with_the_test_subject_and_headers() -> N
     assert msg["X-OrigenLab-Test-Send"] == "1"
     part = next(p for p in msg.walk() if p.get_content_type() == "text/html")
     assert part.get_payload(decode=True).decode(part.get_content_charset()).rstrip() == html
+
+
+@pytest.mark.parametrize("to", ['"Ana" <a@example.invalid>', "a@example.invalid, b@example.invalid",
+                                "Ops: a@example.invalid;", "a@example.invalid (z@example.invalid)"])
+def test_the_message_refuses_a_to_header_that_does_not_parse_back_to_exactly_that_address(to: str) -> None:
+    with pytest.raises(ValueError):
+        build_test_message(to=to, subject="Asunto", html="<p>x</p>")
 
 
 class _Transport:

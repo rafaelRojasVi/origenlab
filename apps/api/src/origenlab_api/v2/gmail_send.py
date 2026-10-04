@@ -31,8 +31,14 @@ TEST_SUBJECT_PREFIX = "[PRUEBA] "
 TIMEOUT_SECONDS = 10.0
 REFRESH_MARGIN_SECONDS = 60.0
 
-#: One plain address: no display name, list separator, quote, angle bracket, space or control.
-_ADDRESS = re.compile(r"^[^@\s,;<>\"'\x00-\x1f\x7f]+@[^@\s,;<>\"'\x00-\x1f\x7f]+\.[^@\s,;<>\"'\x00-\x1f\x7f]+$")
+#: One plain ASCII mailbox and nothing a mail parser could read differently from what is recorded
+#: (no display name, comment, encoded word, group, quote or separator): a local part of
+#: `[A-Za-z0-9._%+-]` with no leading, trailing or doubled dot; one or more DNS labels; an
+#: alphabetic top-level domain of 2-63 letters. The dashboard's PLAIN_ADDRESS is the same rule.
+_LOCAL_PART = r"[A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*"
+_DOMAIN_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_ADDRESS = re.compile(rf"{_LOCAL_PART}@(?:{_DOMAIN_LABEL}\.)+[A-Za-z]{{2,63}}")
+MAX_ADDRESS_LENGTH = 254
 
 Transport = Callable[[str, str, dict[str, str], bytes, float], tuple[int, bytes]]
 
@@ -68,7 +74,7 @@ def load_send_token(path: str) -> GmailSendToken:
 
 def valid_test_address(raw: str) -> str:
     value = (raw or "").strip()
-    if len(value) > 254 or not _ADDRESS.match(value):
+    if len(value) > MAX_ADDRESS_LENGTH or not _ADDRESS.fullmatch(value):
         raise ValueError("escribe una sola dirección de correo, sin nombre ni separadores")
     return value
 
@@ -80,6 +86,11 @@ def build_test_message(*, to: str, subject: str, html: str) -> bytes:
     msg["Subject"] = TEST_SUBJECT_PREFIX + subject
     msg["List-Unsubscribe"] = f"<mailto:{SENDER_ADDRESS}?subject=REMOVER>"
     msg["X-OrigenLab-Test-Send"] = "1"
+    # The recorded recipient must be the one Gmail delivers to: the parsed header holds exactly
+    # one mailbox, and it is `to` itself.
+    recipients = msg["To"].addresses
+    if len(recipients) != 1 or recipients[0].addr_spec != to:
+        raise ValueError("the To header does not parse back to exactly the one address given")
     msg.set_content(html, subtype="html", charset="utf-8")
     return msg.as_bytes()
 
