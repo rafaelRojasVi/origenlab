@@ -339,10 +339,10 @@ def cmd_apply(args) -> int:
             except psycopg.Error as exc:
                 print("apply failed: " + io_.redact(str(exc), secrets)[:400])
                 return _abort_apply(sc, tc, tgt, secrets)
-            except BaseException:
+            except BaseException as exc:
                 ok = io_.best_effort_rollback(tc)
                 io_.best_effort_rollback(sc)
-                print(f"apply interrupted; {_rolled_back(ok)}")
+                print(f"apply {_stopped_by(exc)}; {_rolled_back(ok)}")
                 raise
 
             # Phase 3: COMMIT, judged on its own: a failure here leaves the outcome unknown.
@@ -377,6 +377,10 @@ def cmd_apply(args) -> int:
 def _mismatch(msg: str) -> int:
     print(msg)
     return EXIT_VERIFY_MISMATCH
+
+
+def _stopped_by(exc: BaseException) -> str:
+    return "interrupted" if isinstance(exc, KeyboardInterrupt) else "stopped by an unexpected error"
 
 
 def _incomplete(msg: str) -> int:
@@ -462,7 +466,11 @@ def cmd_verify(args) -> int:
                 print(f"WARNING: scratch database {scratch} could not be dropped; remove it manually")
         print(f"post-load dump: {post['path']}; restore into {scratch}: {restored}")
         if restored != "loaded":
-            return _mismatch("VERIFY MISMATCH: the post-load dump does not restore to the planned rows")
+            # The target itself already passed its re-hash and every invariant above; a drill that
+            # disagrees points at the dump/restore path or a write between the read and the dump —
+            # never a reason to roll back.
+            return _incomplete("the target passed its re-hash and every invariant, but the post-load dump "
+                               f"restored as {restored!r}; re-run verify — do not roll back")
         print("\nChecklist para el dashboard:")
         for label, table in CHECKLIST:
             print(f"  {label:36} {obs[table][0]}")
@@ -541,9 +549,9 @@ def cmd_rollback(args) -> int:
                 print(_rolled_back(ok))
                 _reread_state(tgt, plan, secrets)
                 return EXIT_APPLY_FAILED
-            except BaseException:
+            except BaseException as exc:
                 ok = io_.best_effort_rollback(tc)
-                print(f"rollback interrupted; {_rolled_back(ok)}; run `verify` before anything else")
+                print(f"rollback {_stopped_by(exc)}; {_rolled_back(ok)}; run `verify` before anything else")
                 raise
             try:
                 tc.execute("COMMIT")

@@ -764,7 +764,8 @@ def test_unexpected_error_inside_the_write_transaction_exits_12(tmp_path, monkey
     rc = cli.main(["apply", "--plan", "p", "--plan-sha256", "a" * 64, "--out", str(tmp_path / "out"), *AUTH])
     out = capsys.readouterr().out
     assert rc == 12 and "ROLLBACK" in tgt.log and "COMMIT" not in tgt.log
-    assert "apply interrupted; transaction rolled back" in out and "run `verify`" in out and "10.9.8.7" not in out
+    assert "apply stopped by an unexpected error; transaction rolled back" in out
+    assert "run `verify`" in out and "10.9.8.7" not in out
 
 
 def test_unexpected_error_before_the_write_transaction_exits_11(tmp_path, monkeypatch, capsys):
@@ -958,3 +959,24 @@ def test_verify_help_documents_13_and_14(capsys):
         cli.main(["verify", "--help"])
     out = capsys.readouterr().out
     assert "13 VERIFY MISMATCH" in out and "14 VERIFY INCOMPLETE" in out and "never roll back on 14" in out
+
+
+def test_verify_drill_disagreeing_with_a_verified_target_is_incomplete_14_not_rollback(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    calls = []
+    _patch_verify(cli, monkeypatch, tmp_path, _runner(calls))
+    reads = iter([{n: (2, "h") for n in REAL}, {n: (0, "") for n in REAL}])  # target loaded, drill empty
+    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: next(reads))
+    monkeypatch.setattr(cli.io_, "restore_into_scratch", lambda dump, db: None)
+
+    class _Scratch:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def cursor(self): return self
+        def execute(self, *a, **k): pass
+
+    monkeypatch.setattr(cli.psycopg, "connect", lambda *a, **k: _Scratch())
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 14
+    out = capsys.readouterr().out
+    assert "do not roll back" in out and "VERIFY INCOMPLETE" in out and "VERIFY MISMATCH" not in out
+    assert ["drop", "origenlab_test_deadbeef"] in calls
