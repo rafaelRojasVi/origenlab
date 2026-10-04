@@ -11,7 +11,8 @@ dependencies = [
     "pydantic>=2",
     "pydantic-settings>=2.14.2",
     # Imported at app startup by /mirror route dependencies.
-    "psycopg[binary]>=3.2",
+    # psycopg-pool adds the ConnectionPool class used by V2 database pooling.
+    "psycopg[binary,pool]>=3.2",
     # RS256 signature check of Google ID tokens against Google's JWKS (v2/google_jwks.py), and
     # Argon2id for operator-profile PINs (v2/profile_pin.py) — in cryptography since 44.
     "cryptography>=44",
@@ -23,9 +24,9 @@ dev = [
     "httpx>=0.27",
     { include-group = "postgres" },
 ]
-postgres = ["psycopg[binary]>=3.2"]
+postgres = ["psycopg[binary,pool]>=3.2"]
 [project.optional-dependencies]
-postgres = ["psycopg[binary]>=3.2"]
+postgres = ["psycopg[binary,pool]>=3.2"]
 # CRM-Q1 Drive activation: credentials for the quote Drive workspace adapter
 # (uv sync --extra drive). Installed in the production image (Dockerfile).
 drive = ["google-auth>=2"]

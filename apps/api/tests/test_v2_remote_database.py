@@ -345,8 +345,15 @@ def test_startup_probes_a_remote_target_and_binds_tls_for_every_repository(ca, m
     app = FastAPI()
     main._mount_v2_read_boundary(app, settings)
     assert len(probed) == 1 and probed[0][1] is psycopg.connect
+    # The process-wide pool holds the TLS connect options; every repository shares it.
+    pool = app.state.v2_pool
+    assert pool.connect_options.get("sslmode") == "verify-full"
+    assert pool.connect_options.get("sslrootcert") == ca
+    # All repositories must use pool.connect, not bare psycopg.connect.
     connect = app.state.v2_repository._connect
-    assert connect.keywords["sslmode"] == "verify-full" and connect.keywords["sslrootcert"] == ca
+    assert connect is not psycopg.connect
+    # connect is pool.connect (bound method) — verify it belongs to the pool
+    assert getattr(connect, "__self__", None) is pool
 
     # Every command family mounted since the remote target landed connects the same way: with
     # all switches on, no repository on app.state may hold a bare psycopg.connect.
@@ -361,6 +368,8 @@ def test_startup_probes_a_remote_target_and_binds_tls_for_every_repository(ca, m
     })
     full = FastAPI()
     main._mount_v2_read_boundary(full, everything)
+    full_pool = full.state.v2_pool
+    assert full_pool.connect_options.get("sslmode") == "verify-full", "full pool must have TLS"
     repositories = {
         name: value for name, value in full.state._state.items()
         if name.endswith("_repository")
@@ -372,7 +381,10 @@ def test_startup_probes_a_remote_target_and_binds_tls_for_every_repository(ca, m
     for name, repository in repositories.items():
         bound = getattr(repository, "_connect", None)
         assert bound is not psycopg.connect, f"{name} bypasses the verified TLS target"
-        assert getattr(bound, "keywords", {}).get("sslmode") == "verify-full", name
+        # bound is pool.connect (bound method); verify it belongs to a pool with TLS options
+        assert getattr(bound, "__self__", None) is full_pool, (
+            f"{name} uses a connect not backed by the TLS pool"
+        )
 
     def refuse(t, c):
         raise RemoteTargetRefused("the runtime role holds SUPERUSER")
