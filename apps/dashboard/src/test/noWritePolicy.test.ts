@@ -58,6 +58,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/dismiss-unsubscribe-review",
     "/v2/commands/block-campaign",
     "/v2/commands/unblock-campaign",
+    "/v2/commands/send-campaign-test",
   ];
   const CRM_AUTHORING_PATHS = [
     "/v2/commands/create-person",
@@ -201,8 +202,11 @@ describe("dashboard read-only policy", () => {
     expect(hits).toEqual([]);
   });
 
-  it("has no send capability: no Gmail client, no send command, no Send button", () => {
+  it("has no send capability except the admin-only test send of one campaign to one address", () => {
+    // Owner decision 2026-10-04: «Enviar prueba» (/v2/commands/send-campaign-test). Anything else
+    // that sends, approves, activates or dispatches — or a plain «Enviar» button — is still refused.
     const hits = entries
+      .map(([path, text]) => [path, text.replace(/\/v2\/commands\/send-campaign-test\b/g, "")] as const)
       .filter(([, text]) => /gmail\.googleapis|googleapis\.com\/gmail|\/v2\/commands\/(?:send|approve|activate|dispatch)|>\s*Enviar(?:\s+campaña)?\s*</i.test(text))
       .map(([path]) => path);
     expect(hits).toEqual([]);

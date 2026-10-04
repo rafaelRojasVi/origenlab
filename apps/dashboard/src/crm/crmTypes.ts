@@ -226,6 +226,7 @@ export interface V1LaneCampaign {
   audience_rule?: string | null;
   /** The email as sent, when the API has it (kept outside the repository). */
   html?: string | null;
+  subject?: string | null;
 }
 
 export interface MarketingResponse {
@@ -238,6 +239,7 @@ export interface MarketingResponse {
   time_zone?: string;
   /** Campaigns running through the old V1 systemd lane, not yet in the V2 database. */
   v1_lane_campaigns?: V1LaneCampaign[];
+  test_send?: { enabled: boolean; per_hour: number; per_day: number; sender: string };
 }
 
 export interface DriveDocument extends DriveLinkRef {
