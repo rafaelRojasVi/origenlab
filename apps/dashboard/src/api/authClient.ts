@@ -57,6 +57,11 @@ export type AuthSessionState =
       /** Present only for a profile selected behind a shared sign-in. */
       profile?: AuthProfile | null;
       canSwitchProfile?: boolean;
+      /**
+       * Whether the API has the CRM authoring commands mounted. Off, every one is a 404, so no
+       * CRM editor is offered. Absent or anything but `true` reads as off.
+       */
+      crmAuthoringEnabled?: boolean;
     }
   | {
       kind: "signed_out";
@@ -112,6 +117,7 @@ export function parseAuthSessionResponse(status: number, body: unknown): AuthSes
             }
           : null,
       canSwitchProfile: data.can_switch_profile === true,
+      crmAuthoringEnabled: data.crm_authoring_enabled === true,
     };
   }
   if (status === 401 && data.state === "profile_required") {

@@ -202,7 +202,7 @@ Names and value shapes only; values are Render secrets and are never written in 
 | `ORIGENLAB_PROFILE_PIN_PEPPER` | random, at least 32 bytes — the same value the roster tool uses |
 | `ORIGENLAB_V2_JWKS_URL` | **unset — must remain unset** (corrected 2026-10-02, see below) |
 | `ORIGENLAB_DEV_LOGIN_ENABLED` | unset |
-| `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` | unset (default `false`) — Phase A is a read-only hosted deployment; the authoring commands are not mounted |
+| `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` | `true` once the operator turns CRM authoring on (the 28 `/v2/commands/*` people/organization/note commands, sales and admin); unset (default `false`) keeps the hosted deployment read-only and every authoring path a 404. The three #619 review findings that gated it are fixed ([`STATUS.md`](STATUS.md) §2.7.46). `GET /auth/session` reports the switch as `crm_authoring_enabled`, and the dashboard offers no CRM editor while it is off |
 
 **`ORIGENLAB_V2_JWKS_URL` must remain unset for the current deployment architecture.** An
 earlier revision of this step instructed the operator to set it to the project's JWKS. That

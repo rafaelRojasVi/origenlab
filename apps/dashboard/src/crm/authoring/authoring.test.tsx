@@ -18,19 +18,20 @@ import type { OrganizationAuthoringResponse } from "./crmAuthoringApi";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-function sessionFor(role: string | null): AuthSessionState {
+function sessionFor(role: string | null, crmAuthoringEnabled = true): AuthSessionState {
   return role === null
     ? ({ kind: "loading" } as AuthSessionState)
     : ({
         kind: "signed_in",
         method: "google_session",
         operator: { operatorId: "o1", email: "op@example.test", displayName: "Operador de prueba", role },
+        crmAuthoringEnabled,
       } as AuthSessionState);
 }
 
-function withRole(role: string | null, node: ReactNode) {
+function withRole(role: string | null, node: ReactNode, crmAuthoringEnabled = true) {
   return (
-    <AuthSessionContext.Provider value={{ session: sessionFor(role), signOut: async () => true }}>
+    <AuthSessionContext.Provider value={{ session: sessionFor(role, crmAuthoringEnabled), signOut: async () => true }}>
       {node}
     </AuthSessionContext.Provider>
   );
@@ -119,6 +120,36 @@ describe("mayAuthorCrm", () => {
 
   it.each(["loading", "signed_out", "unconfigured", "error"])("session %s → false", (kind) => {
     expect(mayAuthorCrm({ kind } as AuthSessionState)).toBe(false);
+  });
+});
+
+describe("with the API's authoring commands not mounted", () => {
+  it.each(["sales", "admin"])("signed-in %s may not author and is not offered admin actions", (role) => {
+    expect(mayAuthorCrm(sessionFor(role, false))).toBe(false);
+    expect(isAdmin(sessionFor(role, false))).toBe(false);
+  });
+
+  it("a session that does not say is treated as off", () => {
+    const session = sessionFor("admin");
+    if (session.kind === "signed_in") delete session.crmAuthoringEnabled;
+    expect(mayAuthorCrm(session)).toBe(false);
+    expect(isAdmin(session)).toBe(false);
+  });
+
+  it.each(["sales", "admin"])("%s sees no write affordance on any CRM list page", async (role) => {
+    const calls = stub();
+    const pages = [
+      <PeoplePage key="p" navigate={() => undefined} />,
+      <OrganizationsPage key="o" navigate={() => undefined} />,
+      <ProvidersPage key="v" />,
+    ];
+    for (const page of pages) {
+      const { unmount } = render(withRole(role, page, false));
+      await waitFor(() => expect(calls.some((c) => c.path.includes("/v2/"))).toBe(true));
+      expectNoWriteAffordance();
+      unmount();
+    }
+    expect(writes(calls)).toEqual([]);
   });
 });
 

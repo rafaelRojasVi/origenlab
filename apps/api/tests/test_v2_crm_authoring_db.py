@@ -1251,3 +1251,210 @@ def test_exclusive_claim_is_refused_by_name_while_another_organization_holds_it(
             "domain": domain, "scope": "exclusive", "note": "c claims",
         })
     assert exc.value.code == "exclusive_domain_taken"
+
+
+# ───────────────────────── the three gates on ORIGENLAB_V2_CRM_AUTHORING_ENABLED (#619 review) ──
+
+
+def _new_org(dsn, world, label):
+    created = _run(dsn, world["sales"], "register-organization", {
+        "name": f"{label} {world['tag']} {uuid.uuid4().hex[:6]}", "kind": "company", "note": label,
+    })
+    return created["organization_id"], created["version"]
+
+
+def _identifier_rows(dsn, scheme, value_norm):
+    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select id::text, organization_id::text, removed_at is not null"
+            " from crm.external_identifier where scheme = %s and value_norm = %s",
+            (scheme, value_norm),
+        )
+        return cur.fetchall()
+
+
+@needs_db
+def test_readding_a_removed_identifier_restores_the_same_row(disposable_database, world):
+    org_id, ver = _new_org(disposable_database, world, "IdRestore")
+    rut = f"7{uuid.uuid4().int % 10**7:07d}-1"
+    added = _run(disposable_database, world["sales"], "add-organization-identifier", {
+        "organization_id": org_id, "expected_version": ver, "scheme": "rut", "value": rut, "note": "add",
+    })
+    removed = _run(disposable_database, world["sales"], "remove-organization-identifier", {
+        "organization_id": org_id, "expected_version": added["version"],
+        "identifier_id": added["identifier_id"], "note": "typo, removing",
+    })
+
+    # Before the fix the global unique (scheme, value_norm) surfaced here as a 500.
+    readded = _run(disposable_database, world["sales"], "add-organization-identifier", {
+        "organization_id": org_id, "expected_version": removed["version"],
+        "scheme": "rut", "value": f" {rut} ", "note": "it was right after all",
+    })
+    assert readded["ok"] is True
+    assert readded["restored"] is True
+    assert readded["identifier_id"] == added["identifier_id"], "the existing row is restored, not a new one"
+    assert readded["version"] == removed["version"] + 1
+    assert _identifier_rows(disposable_database, "rut", rut) == [(added["identifier_id"], org_id, False)]
+    payload = _last_event_payload(disposable_database, "organization", org_id, "organization.identifier_added")
+    assert payload["restored"] is True and payload["identifier_id"] == added["identifier_id"]
+
+
+@needs_db
+def test_adding_an_identifier_already_present_is_refused_not_a_500(disposable_database, world):
+    org_id, ver = _new_org(disposable_database, world, "IdTwice")
+    rut = f"8{uuid.uuid4().int % 10**7:07d}-2"
+    added = _run(disposable_database, world["sales"], "add-organization-identifier", {
+        "organization_id": org_id, "expected_version": ver, "scheme": "rut", "value": rut, "note": "add",
+    })
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "add-organization-identifier", {
+            "organization_id": org_id, "expected_version": added["version"],
+            "scheme": "rut", "value": rut, "note": "again",
+        })
+    assert exc.value.status_code == 409 and exc.value.code == "identifier_already_present"
+    assert len(_identifier_rows(disposable_database, "rut", rut)) == 1
+
+
+@needs_db
+def test_identifier_held_by_another_organization_is_refused_by_name(disposable_database, world):
+    org_a, ver_a = _new_org(disposable_database, world, "IdOwnerA")
+    org_b, ver_b = _new_org(disposable_database, world, "IdClaimB")
+    rut = f"9{uuid.uuid4().int % 10**7:07d}-3"
+    added = _run(disposable_database, world["sales"], "add-organization-identifier", {
+        "organization_id": org_a, "expected_version": ver_a, "scheme": "rut", "value": rut, "note": "a",
+    })
+
+    # Live on A: B is refused by name.
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "add-organization-identifier", {
+            "organization_id": org_b, "expected_version": ver_b, "scheme": "rut", "value": rut, "note": "b",
+        })
+    assert exc.value.status_code == 409 and exc.value.code == "identifier_taken"
+
+    # Soft-removed on A: still A's row — never moved to B, and still a named refusal.
+    _run(disposable_database, world["sales"], "remove-organization-identifier", {
+        "organization_id": org_a, "expected_version": added["version"],
+        "identifier_id": added["identifier_id"], "note": "removed from a",
+    })
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "add-organization-identifier", {
+            "organization_id": org_b, "expected_version": ver_b, "scheme": "rut", "value": rut, "note": "b",
+        })
+    assert exc.value.status_code == 409 and exc.value.code == "identifier_taken"
+    assert _identifier_rows(disposable_database, "rut", rut) == [(added["identifier_id"], org_a, True)]
+
+
+@needs_db
+def test_duplicate_active_classification_is_refused_by_name(disposable_database, world):
+    org_id, ver = _new_org(disposable_database, world, "ClassTwice")
+    added = _run(disposable_database, world["sales"], "add-organization-classification", {
+        "organization_id": org_id, "expected_version": ver, "role": "supplier", "note": "supplier",
+    })
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "add-organization-classification", {
+            "organization_id": org_id, "expected_version": added["version"], "role": "supplier", "note": "again",
+        })
+    assert exc.value.status_code == 409 and exc.value.code == "classification_already_present"
+
+    # The refusal wrote nothing: one open row, version unchanged, a different role still fine.
+    with psycopg.connect(runtime_dsn(disposable_database)) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select count(*) from crm.organization_relationship"
+            " where organization_id = %s::uuid and role = 'supplier' and valid_to is null",
+            (org_id,),
+        )
+        assert cur.fetchone()[0] == 1
+    other = _run(disposable_database, world["sales"], "add-organization-classification", {
+        "organization_id": org_id, "expected_version": added["version"], "role": "manufacturer", "note": "also",
+    })
+    assert other["version"] == added["version"] + 1
+
+
+def _wait_for_lock_waiter(dsn, *, timeout_s=10.0):
+    """Block until some other session of this database is waiting on a row lock."""
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    with psycopg.connect(runtime_dsn(dsn), autocommit=True) as conn, conn.cursor() as cur:
+        while time.monotonic() < deadline:
+            cur.execute(
+                "select count(*) from pg_stat_activity"
+                " where datname = current_database() and pid <> pg_backend_pid()"
+                " and wait_event_type = 'Lock'"
+            )
+            if cur.fetchone()[0] > 0:
+                return
+            time.sleep(0.05)
+    raise AssertionError("the command never waited on the organization row")
+
+
+@needs_db
+@pytest.mark.parametrize("command,fields", [
+    ("add-organization-classification", {"role": "partner", "note": "race"}),
+    ("link-organization-product-line", {"line_id": "ika", "note": "race"}),
+    ("add-organization-domain", {"domain": "race-{suffix}.example.test", "note": "race"}),
+    ("add-organization-identifier", {"scheme": "rut", "value": "6{suffix}-0", "note": "race"}),
+])
+def test_org_sub_entity_command_loses_to_a_concurrent_version_bump(
+    disposable_database, world, command, fields
+):
+    """Two writers start from the same version: the one that commits second must be refused.
+
+    A concurrent transaction bumps the organization's version and holds the row while the
+    command runs against the version both started from. When it commits, the command must
+    answer `stale_version` and write nothing — not silently stack its change on top.
+    """
+    import threading
+
+    org_id, ver = _new_org(disposable_database, world, "Race")
+    suffix = f"{uuid.uuid4().int % 10**7:07d}"
+    body = {k: (v.format(suffix=suffix) if isinstance(v, str) else v) for k, v in fields.items()}
+    body.update({"organization_id": org_id, "expected_version": ver})
+
+    outcome: dict[str, object] = {}
+
+    def run_command():
+        try:
+            outcome["result"] = _run(disposable_database, world["sales"], command, body)
+        except BaseException as exc:  # noqa: BLE001 - the assertion below names it
+            outcome["error"] = exc
+
+    with psycopg.connect(runtime_dsn(disposable_database)) as rival, rival.cursor() as cur:
+        cur.execute(
+            "update crm.organization set version = version + 1 where id = %s::uuid", (org_id,)
+        )
+        worker = threading.Thread(target=run_command)
+        worker.start()
+        _wait_for_lock_waiter(disposable_database)
+        rival.commit()
+    worker.join(timeout=30)
+    assert not worker.is_alive()
+
+    assert "result" not in outcome, f"{command} stacked its change on a concurrent bump"
+    err = outcome["error"]
+    assert isinstance(err, CommandRefused) and err.code == "stale_version"
+    with psycopg.connect(runtime_dsn(disposable_database)) as conn, conn.cursor() as cur:
+        cur.execute("select version from crm.organization where id = %s::uuid", (org_id,))
+        assert cur.fetchone()[0] == ver + 1, "only the rival's bump landed"
+
+
+@needs_db
+def test_closing_a_classification_on_its_first_day_is_refused_by_name(disposable_database, world):
+    """`valid_to > valid_from` is a table CHECK: a same-day close was a 500, now a named refusal."""
+    org_id, ver = _new_org(disposable_database, world, "SameDay")
+    added = _run(disposable_database, world["sales"], "add-organization-classification", {
+        "organization_id": org_id, "expected_version": ver, "role": "supplier",
+        "valid_from": "2026-10-04", "note": "opened",
+    })
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "remove-organization-classification", {
+            "organization_id": org_id, "expected_version": added["version"],
+            "relationship_id": added["relationship_id"], "valid_to": "2026-10-04", "note": "same day",
+        })
+    assert exc.value.status_code == 422 and exc.value.code == "valid_to_not_after_valid_from"
+
+    closed = _run(disposable_database, world["sales"], "remove-organization-classification", {
+        "organization_id": org_id, "expected_version": added["version"],
+        "relationship_id": added["relationship_id"], "valid_to": "2026-10-05", "note": "next day",
+    })
+    assert closed["version"] == added["version"] + 1
