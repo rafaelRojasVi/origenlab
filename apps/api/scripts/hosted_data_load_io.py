@@ -322,7 +322,8 @@ def pg_dump_target(target: Any, out: Path, *, schema_only: bool = False) -> dict
 def set_fks_deferrable(cur, table: str, fk_names: list[str], deferrable: bool) -> None:
     mode = "DEFERRABLE INITIALLY DEFERRED" if deferrable else "NOT DEFERRABLE"
     for name in fk_names:
-        cur.execute(f'ALTER TABLE {table} ALTER CONSTRAINT "{name}" {mode}')
+        cur.execute(sql.SQL("ALTER TABLE {} ALTER CONSTRAINT {} " + mode).format(
+            sql.Identifier(*table.split(".", 1)), sql.Identifier(name)))
 
 
 def set_triggers(cur, table: str, enable: bool) -> None:
@@ -374,12 +375,13 @@ def post_copy_invariants(cur, plan: Mapping, hosted_operator: str) -> list[dict]
     check("roster_unchanged", roster_hash(cur) == plan["roster_hash"])
     check("send_control_unchanged", _hash_rows(cur, "select * from outbound.send_control") == plan["send_control_hash"])
     check("campaign_block_unchanged", _hash_rows(cur, "select * from outbound.campaign_block") == plan["campaign_block_hash"])
-    cur.execute("select coalesce(bool_or(marketing_enabled or transactional_enabled), false) from outbound.send_control")
-    check("send_flags_false", cur.fetchone()[0] is False)
-    cur.execute("select count(*) from pg_trigger where not tgisinternal and tgenabled <> 'O' and tgrelid::regclass::text = any(%s)",
+    cur.execute("select count(*) = 1 and coalesce(bool_and(not marketing_enabled and not transactional_enabled), false) "
+                "from outbound.send_control")
+    check("send_flags_false", cur.fetchone()[0] is True)
+    cur.execute("select count(*) from pg_trigger where not tgisinternal and tgenabled <> 'O' and tgrelid = any(%s::regclass[])",
                 (list(hp.TABLES),))
     check("all_user_triggers_enabled", cur.fetchone()[0] == 0)
-    cur.execute("select count(*) from pg_constraint where contype = 'f' and condeferrable and conrelid::regclass::text = any(%s)",
+    cur.execute("select count(*) from pg_constraint where contype = 'f' and condeferrable and conrelid = any(%s::regclass[])",
                 (list(hp.TABLES),))
     check("no_deferrable_fks", cur.fetchone()[0] == 0)
     cur.execute(f"select last_value from {hp.SEQUENCE}")

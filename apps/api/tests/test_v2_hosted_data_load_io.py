@@ -139,3 +139,19 @@ def test_invariant_names_cover_every_table_and_the_globals():
     assert {"payload_hosted_uuid_rows", "payload_local_uuid_rows_zero", "no_foreign_operator_refs",
             "roster_unchanged", "send_control_unchanged", "campaign_block_unchanged", "send_flags_false",
             "all_user_triggers_enabled", "no_deferrable_fks", "sequence_set"} <= set(names)
+
+
+def test_post_copy_invariants_emit_exactly_the_declared_names():
+    class Cur:
+        def execute(self, sql, params=None):
+            pass
+
+        def fetchone(self):
+            return (1, "h")
+
+    plan = {"tables": [{"name": t, "count": 1, "hash": "h", "pk": ["id"], "columns": [["id", "uuid"]]} for t in
+                       ("comms.mailbox", "crm.domain_event")],
+            "payload_rows_with_local_uuid": 44, "sequence": {"name": "s", "target_last_value": 1},
+            "roster_hash": "r", "send_control_hash": "s", "campaign_block_hash": "c", "remap": {"to": "x", "from": ["a", "b"]}}
+    got = [c["check"] for c in io_.post_copy_invariants(Cur(), plan, "x")]
+    assert got == io_.invariant_names(plan)

@@ -146,7 +146,8 @@ def test_plan_sha_mismatch_refuses():
 
 
 def test_stale_plan_refuses():
-    plan = _plan(); plan["generated_at"] = "2026-10-01T00:00:00Z"
+    plan = _plan()
+    plan["generated_at"] = "2026-10-01T00:00:00Z"
     assert "plan_is_fresh" in hp.refused(_eval(plan=plan))
 
 
@@ -156,29 +157,36 @@ def test_ledger_drift_refuses():
 
 
 def test_source_count_drift_refuses():
-    src = good_source(); src["tables"]["crm.quote"]["count"] = 66
+    src = good_source()
+    src["tables"]["crm.quote"]["count"] = 66
     assert "source_counts_match_plan" in hp.refused(_eval(source=src))
 
 
 def test_column_contract_drift_refuses():
-    tgt = good_target(); tgt["tables"]["crm.quote"]["columns"] = [["id", "uuid"], ["extra", "text"]]
+    tgt = good_target()
+    tgt["tables"]["crm.quote"]["columns"] = [["id", "uuid"], ["extra", "text"]]
     assert "column_contract_identical:crm.quote" in hp.refused(_eval(target=tgt))
 
 
 def test_non_empty_target_refuses():
-    tgt = good_target(); tgt["tables"]["crm.quote"]["count"] = 1; tgt["all_business_counts"]["crm.quote"] = 1
+    tgt = good_target()
+    tgt["tables"]["crm.quote"]["count"] = 1
+    tgt["all_business_counts"]["crm.quote"] = 1
     assert "target_tables_empty" in hp.refused(_eval(target=tgt))
 
 
 def test_unexpected_business_rows_elsewhere_refuse():
-    tgt = good_target(); tgt["all_business_counts"]["crm.person"] = 2
+    tgt = good_target()
+    tgt["all_business_counts"]["crm.person"] = 2
     assert "target_tables_empty" in hp.refused(_eval(target=tgt))
 
 
 def test_hosted_operator_must_be_active_admin():
-    tgt = good_target(); tgt["operators"][0] = [HOSTED, "Rafael", "sales", "active", "shared_profile"]
+    tgt = good_target()
+    tgt["operators"][0] = [HOSTED, "Rafael", "sales", "active", "shared_profile"]
     assert "hosted_operator_is_active_admin" in hp.refused(_eval(target=tgt))
-    tgt = good_target(); tgt["operators"] = tgt["operators"][1:]
+    tgt = good_target()
+    tgt["operators"] = tgt["operators"][1:]
     assert "hosted_operator_is_active_admin" in hp.refused(_eval(target=tgt))
 
 
@@ -187,9 +195,11 @@ def test_roster_shape_refuses_when_changed():
 
 
 def test_flags_and_hold_row_are_required():
-    tgt = good_target(); tgt["send_control"]["marketing_enabled"] = True
+    tgt = good_target()
+    tgt["send_control"]["marketing_enabled"] = True
     assert "send_flags_false" in hp.refused(_eval(target=tgt))
-    tgt = good_target(); tgt["campaign_block"]["lifted_at"] = "2026-10-01T00:00:00Z"
+    tgt = good_target()
+    tgt["campaign_block"]["lifted_at"] = "2026-10-01T00:00:00Z"
     assert "hold_row_active" in hp.refused(_eval(target=tgt))
 
 
@@ -210,17 +220,20 @@ def test_target_file_and_tls_refusals():
 
 
 def test_trigger_and_fk_inventory_must_match_plan():
-    tgt = good_target(); tgt["tables"]["crm.opportunity"]["triggers"] = ["opportunity_stage_guard", "new_guard"]
+    tgt = good_target()
+    tgt["tables"]["crm.opportunity"]["triggers"] = ["opportunity_stage_guard", "new_guard"]
     assert "trigger_inventory_matches_plan:crm.opportunity" in hp.refused(_eval(target=tgt))
 
 
 def test_unknown_sequence_refuses():
-    src = good_source(); src["sequences"]["crm.other_seq"] = 5
+    src = good_source()
+    src["sequences"]["crm.other_seq"] = 5
     assert "only_known_sequence" in hp.refused(_eval(source=src))
 
 
 def test_source_operators_must_be_the_two_known():
-    src = good_source(); src["operators"].append(["aaaaaaaa-0000-4000-8000-000000000000", "X", "admin", "active", "google_account"])
+    src = good_source()
+    src["operators"].append(["aaaaaaaa-0000-4000-8000-000000000000", "X", "admin", "active", "google_account"])
     assert "source_operators_are_the_two_known" in hp.refused(_eval(source=src))
 
 
@@ -249,7 +262,8 @@ def test_hosted_roster_unchanged_since_plan():
 
 
 def test_fk_inventory_matches_plan_first_table():
-    tgt = good_target(); tgt["tables"]["crm.opportunity"]["fks"] = [["new_fk"]]
+    tgt = good_target()
+    tgt["tables"]["crm.opportunity"]["fks"] = [["new_fk"]]
     assert "fk_inventory_matches_plan:crm.opportunity" in hp.refused(_eval(target=tgt))
 
 
@@ -258,7 +272,8 @@ def test_container_is_this_worktrees():
 
 
 def test_remap_target_is_hosted_operator_from_altered():
-    plan = _plan(); plan["remap"]["from"] = ["wrong-uuid"]
+    plan = _plan()
+    plan["remap"]["from"] = ["wrong-uuid"]
     assert "remap_target_is_hosted_operator" in hp.refused(_eval(plan=plan))
 
 
@@ -297,19 +312,22 @@ def test_empty_ledger_in_build_plan():
 
 
 def test_future_generated_at():
-    plan = _plan(); plan["generated_at"] = "2026-10-05T14:00:00Z"
+    plan = _plan()
+    plan["generated_at"] = "2026-10-05T14:00:00Z"
     assert "plan_is_fresh" in hp.refused(_eval(plan=plan))
 
 
 def test_naive_generated_at():
-    plan = _plan(); plan["generated_at"] = "2026-10-05T12:00:00"
+    plan = _plan()
+    plan["generated_at"] = "2026-10-05T12:00:00"
     checks = _eval(plan=plan)
     assert "plan_is_fresh" in hp.refused(checks)
     assert any(c["detail"] == "unparseable" for c in checks if c["check"] == "plan_is_fresh")
 
 
 def test_garbage_generated_at():
-    plan = _plan(); plan["generated_at"] = "garbage"
+    plan = _plan()
+    plan["generated_at"] = "garbage"
     checks = _eval(plan=plan)
     assert "plan_is_fresh" in hp.refused(checks)
     assert any(c["detail"] == "unparseable" for c in checks if c["check"] == "plan_is_fresh")

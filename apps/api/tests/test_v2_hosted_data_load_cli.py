@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import psycopg
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
@@ -160,6 +161,8 @@ class _FakeCursor:
     def __exit__(self, *exc):
         return False
 
+    statusmessage = "COMMIT"
+
     def execute(self, sql, params=None):
         self.log.append(str(sql))
 
@@ -168,6 +171,7 @@ class _FakeConn:
     def __init__(self):
         self.log: list[str] = []
         self.closed = False
+        self.info = SimpleNamespace(transaction_status=psycopg.pq.TransactionStatus.IDLE)
 
     def cursor(self):
         return _FakeCursor(self.log)
@@ -213,4 +217,22 @@ def test_apply_pre_dump_failure_exits_11_before_any_begin(tmp_path, monkeypatch,
     out = capsys.readouterr().out
     assert "s3cret" not in out
     assert not any("begin" in s.lower() for s in tgt.log + src.log)
+    assert src.closed and tgt.closed
+
+
+def test_apply_interrupt_inside_write_tx_rolls_back_and_closes(tmp_path, monkeypatch):
+    cli = load_cli()
+    src, tgt = _patch_apply(cli, monkeypatch, False, lambda *a, **k: {"path": "p", "bytes": 1})
+    calls = []
+
+    def settings(cur, local=False):
+        calls.append(1)
+        if len(calls) == 2:  # the target's, inside the write transaction
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.io_, "apply_session_settings", settings)
+    with pytest.raises(KeyboardInterrupt):
+        cli.cmd_apply(_apply_args(tmp_path))
+    assert any(s.upper() == "BEGIN" for s in tgt.log)
+    assert any(s.upper() == "ROLLBACK" for s in tgt.log)
     assert src.closed and tgt.closed

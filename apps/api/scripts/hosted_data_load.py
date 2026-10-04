@@ -119,6 +119,18 @@ def cmd_plan(args) -> int:
         tgt.close()
 
 
+def _close_clean(conn) -> None:
+    """Never leave a transaction open behind a close (a pooler may not abort it for us)."""
+    try:
+        if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+            with conn.cursor() as cur:
+                _best_effort_rollback(cur)
+    except psycopg.Error:
+        pass
+    finally:
+        conn.close()
+
+
 def _reread_target(tgt, secrets) -> None:
     """After a rollback: prove the target is back to empty, in a fresh read-only transaction."""
     try:
@@ -147,6 +159,7 @@ def _best_effort_rollback(cur) -> None:
 def _abort_apply(sc, tc, tgt, secrets) -> int:
     _best_effort_rollback(tc)
     _best_effort_rollback(sc)
+    print("transaction rolled back")
     _reread_target(tgt, secrets)
     return EXIT_APPLY_FAILED
 
@@ -211,7 +224,6 @@ def cmd_apply(args) -> int:
                         short[t["name"]] = (n, t["count"])
                 if short:
                     print(f"copied row counts differ from plan (copied, expected): {short}")
-                    print("transaction rolled back")
                     return _abort_apply(sc, tc, tgt, secrets)
                 tc.execute("SET CONSTRAINTS ALL IMMEDIATE")
                 for t in plan["tables"]:
@@ -220,14 +232,33 @@ def cmd_apply(args) -> int:
                 tc.execute("select setval(%s::regclass, %s, true)", (hp.SEQUENCE, plan["sequence"]["target_last_value"]))
                 inv = io_.post_copy_invariants(tc, plan, remap_to)
                 print_checks(inv, secrets)
-                if hp.refused(inv):
-                    print("invariants failed; transaction rolled back")
+                got, want = [c["check"] for c in inv], io_.invariant_names(plan)
+                if got != want:
+                    print(f"invariant set differs from the expected one: missing {sorted(set(want) - set(got))}, "
+                          f"unexpected {sorted(set(got) - set(want))}")
                     return _abort_apply(sc, tc, tgt, secrets)
-                tc.execute("COMMIT")
+                if hp.refused(inv):
+                    print("invariants failed")
+                    return _abort_apply(sc, tc, tgt, secrets)
             except psycopg.Error as exc:
                 print("apply failed: " + io_.redact(str(exc), secrets)[:400])
-                print("transaction rolled back")
                 return _abort_apply(sc, tc, tgt, secrets)
+            except BaseException:
+                _best_effort_rollback(tc)
+                _best_effort_rollback(sc)
+                print("apply interrupted; transaction rolled back")
+                raise
+
+            # Phase 3: COMMIT, judged on its own: a failure here leaves the outcome unknown.
+            try:
+                tc.execute("COMMIT")
+            except psycopg.Error as exc:
+                print("COMMIT raised: " + io_.redact(str(exc), secrets)[:400])
+                print("commit outcome unknown; run `verify` before anything else")
+                return EXIT_APPLY_FAILED
+            if tc.statusmessage != "COMMIT":
+                print(f"commit outcome unknown (server answered {tc.statusmessage!r}); run `verify` before anything else")
+                return EXIT_APPLY_FAILED
             _best_effort_rollback(sc)
         report = out / f"apply-{_stamp()}.json"
         try:
@@ -238,8 +269,8 @@ def cmd_apply(args) -> int:
             print("COMMITTED, but the report could not be written: " + io_.redact(str(exc), secrets)[:200])
         return 0
     finally:
-        src.close()
-        tgt.close()
+        _close_clean(src)
+        _close_clean(tgt)
 
 
 def _common(p: argparse.ArgumentParser, with_plan: bool) -> None:
