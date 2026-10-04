@@ -9,7 +9,7 @@
 
 The hosted credential is read from the environment variable named in supabase/.audit/hosted_target.env
 and never from argv. Every log line is redacted. Exit codes: 0 ok, 11 preflight refused,
-12 apply/rollback failed (transaction rolled back, target untouched), 13 verify mismatch.
+12 apply/rollback failed (rolled back, or commit outcome unknown: run verify), 13 verify mismatch.
 `rollback` empties the 16 loaded tables with DELETE (never TRUNCATE: 37 foreign keys from outside tables
 reference them and CASCADE would wipe the campaign hold row).
 """
@@ -167,6 +167,7 @@ def _reread_state(tgt, plan, secrets) -> None:
             cur.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             try:
                 cur.execute("SET LOCAL ROLE origenlab_owner")
+                io_.apply_session_settings(cur, local=True)
                 state = io_.classify_target_state(plan, io_.observed_rows(cur, plan))
                 cur.execute(f"select last_value, is_called from {hp.SEQUENCE}")
                 last, called = cur.fetchone()
@@ -466,7 +467,7 @@ def cmd_rollback(args) -> int:
                 return EXIT_APPLY_FAILED
             except BaseException:
                 _best_effort_rollback(tc)
-                print("rollback interrupted; transaction rolled back")
+                print("rollback interrupted; transaction rolled back; run `verify` before anything else")
                 raise
             try:
                 tc.execute("COMMIT")
@@ -489,7 +490,9 @@ Incident procedure (documented only; this tool runs none of it).
   * A rollback refusal means the target is no longer exactly the loaded state. Stop.
   * Run `verify` to see the state.
   * The pre-load dump records the pre-load roster and singleton rows. Inspect it with
-    `pg_restore --list <pre-load-dump>` or `pg_restore -f - <pre-load-dump>`; do not restore it
+    `pg_restore --list` or `pg_restore -f -` INSIDE the container (the host's pg_restore is 16 and
+    cannot read a 17 archive): `docker cp <dump> origenlab_dev_db:/tmp/x.dump`, then
+    `docker exec origenlab_dev_db pg_restore --list /tmp/x.dump`; do not restore it
     (a data-only restore cannot undo a load, collides with the roster and singletons, and
     --disable-triggers needs a superuser the hosted target does not offer).
   * Removing rows written after the load is a reviewed, manual transaction.

@@ -508,3 +508,31 @@ def test_scratch_script_parses_and_lists_all_subcommands():
     text = script.read_text()
     assert "mint|clone-cleanroom|drop" in text and script.stat().st_mode & stat.S_IXUSR
     assert text.count("cleanup_on_failure") >= 3
+
+
+def test_reread_state_pins_settings_after_the_role_switch(monkeypatch, capsys):
+    cli = load_cli()
+    tgt = _CatConn()
+    monkeypatch.setattr(cli.io_, "apply_session_settings", lambda cur, local=False: tgt.log.append(f"SETTINGS local={local}"))
+    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: {n: (0, "") for n in REAL})
+    cli._reread_state(tgt, _plan_real(), ())
+    role = tgt.log.index("SET LOCAL ROLE origenlab_owner")
+    assert tgt.log[role + 1] == "SETTINGS local=True"
+    assert "state empty" in capsys.readouterr().out
+
+
+def test_rollback_interrupt_message_says_run_verify(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    _patch_rollback(cli, monkeypatch)
+    monkeypatch.setattr(cli.io_, "set_triggers", lambda *a: (_ for _ in ()).throw(KeyboardInterrupt))
+    with pytest.raises(KeyboardInterrupt):
+        cli.cmd_rollback(_rb_args(tmp_path))
+    assert "run `verify` before anything else" in capsys.readouterr().out
+
+
+def test_rollback_epilog_points_pg_restore_into_the_container(capsys):
+    cli = load_cli()
+    with pytest.raises(SystemExit):
+        cli.main(["rollback", "--help"])
+    out = capsys.readouterr().out
+    assert "docker cp <dump> origenlab_dev_db:/tmp/x.dump" in out and "docker exec origenlab_dev_db pg_restore --list" in out
