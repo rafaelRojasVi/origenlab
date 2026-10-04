@@ -155,6 +155,22 @@ adds the `manual_contact_status` hard inactive/hold block — no gate logic is d
 campaign-specific vendor/domain list is maintained (known-vendor noise is caught by the
 existing `supplier_master` supplier-domain filter, reused as-is).
 
+**Audience kind.** `outbound_campaign.audience_kind` (`cold` | `warm`, set once at `init
+--audience`, default `cold`) is the only campaign-level input to the gate. Two of the shared
+gate's refusals — `sent_history` and `outreach_contacted` — are cold-list memory: "never insist
+on a stranger we already wrote to once". A `warm` campaign is addressed to people we have
+corresponded with on purpose, so for it those two facts are the selection criterion and
+`outbound_campaign_gate.WARM_WAIVED_REASONS` drops exactly them from the result. Nothing
+else is relaxed: `suppression`, `domain_suppression`, `supplier_domain`, `noise_email` /
+`noise_organization`, `outreach_replied`, `outreach_snoozed` and the manual inactive/hold
+block refuse a warm candidate exactly as they refuse a cold one, and the campaign ledger still
+refuses a second send to anyone who already received *this* campaign. Because the kind lives on
+the campaign row, `select` and the pre-send recheck cannot disagree about it, and a ledger
+created before the column existed is upgraded in place with every existing campaign as `cold`.
+Before this existed (2026-10-04) the only way to run a client campaign was to point
+`--sent-folder` at a folder absent from the database and reset `outreach_contact_state` by
+hand — both of which silently weakened the record instead of stating the intent.
+
 **Live-send crash safety:** a live send is two-phase — `outbound_campaign_store.begin_live_attempt`
 persists (and commits) an `in_flight` row *before* the Gmail API call; `finish_live_attempt`
 resolves it to `accepted`/`failed` afterward. If the process dies between Gmail accepting the

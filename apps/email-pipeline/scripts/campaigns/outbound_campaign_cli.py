@@ -66,6 +66,7 @@ from origenlab_email_pipeline.outbound_campaign_research_queue import (
     compute_research_queue,
     research_org_to_row,
 )
+from origenlab_email_pipeline.outbound_campaign_gate import AUDIENCE_COLD, AUDIENCE_KINDS
 from origenlab_email_pipeline.outbound_campaign_sender import send_campaign_batch
 from origenlab_email_pipeline.outbound_campaign_store import (
     CampaignAlreadyExistsError,
@@ -100,7 +101,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
                 conn, campaign_id=args.campaign_id, name=args.name,
                 sender_email=args.sender_email, sender_name=args.sender_name,
                 subject=args.subject, target_attempt_count=args.target,
-                baseline_attempt_count=args.baseline,
+                baseline_attempt_count=args.baseline, audience_kind=args.audience,
             )
         except CampaignAlreadyExistsError as exc:
             print(str(exc), file=sys.stderr)
@@ -417,6 +418,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--subject", required=True)
     p_init.add_argument("--target", type=int, required=True)
     p_init.add_argument("--baseline", type=int, default=0)
+    p_init.add_argument(
+        "--audience", choices=list(AUDIENCE_KINDS), default=AUDIENCE_COLD,
+        help="cold (default): a prospect list, the gate refuses anyone contacto@ ever wrote to. "
+             "warm: people we already correspond with on purpose (clients, quote requesters); "
+             "only the sent_history and outreach_contacted refusals are waived, everything "
+             "else in the gate still applies.",
+    )
     _add_db_arg(p_init)
     p_init.set_defaults(func=_cmd_init)
 

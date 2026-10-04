@@ -16,7 +16,11 @@ import uuid as _uuid
 from dataclasses import dataclass
 
 from origenlab_email_pipeline.business_mart import emails_in
-from origenlab_email_pipeline.outbound_campaign_gate import evaluate_campaign_eligibility
+from origenlab_email_pipeline.outbound_campaign_gate import (
+    AUDIENCE_COLD,
+    AUDIENCE_KINDS,
+    evaluate_campaign_eligibility,
+)
 from origenlab_email_pipeline.timeutil import now_iso
 
 RECIPIENT_STATES: tuple[str, ...] = (
@@ -77,11 +81,13 @@ class CampaignRow:
     status: str
     created_at: str
     updated_at: str
+    audience_kind: str = AUDIENCE_COLD
 
 
 _CAMPAIGN_COLS = (
     "campaign_id", "name", "sender_email", "sender_name", "subject",
     "target_attempt_count", "baseline_attempt_count", "status", "created_at", "updated_at",
+    "audience_kind",
 )
 
 
@@ -96,22 +102,27 @@ def create_campaign(
     target_attempt_count: int,
     baseline_attempt_count: int = 0,
     status: str = "active",
+    audience_kind: str = AUDIENCE_COLD,
     at_iso: str | None = None,
 ) -> None:
     cid = (campaign_id or "").strip()
     if not cid:
         raise ValueError("campaign_id requerido")
+    if audience_kind not in AUDIENCE_KINDS:
+        raise ValueError(f"audience_kind debe ser uno de {AUDIENCE_KINDS}: {audience_kind!r}")
     ts = at_iso or now_iso()
     try:
         conn.execute(
             """
             INSERT INTO outbound_campaign (
               campaign_id, name, sender_email, sender_name, subject,
-              target_attempt_count, baseline_attempt_count, status, created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?)
+              target_attempt_count, baseline_attempt_count, status, audience_kind,
+              created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
             """,
             (cid, name, sender_email, sender_name, subject,
-             int(target_attempt_count), int(baseline_attempt_count), status, ts, ts),
+             int(target_attempt_count), int(baseline_attempt_count), status, audience_kind,
+             ts, ts),
         )
     except sqlite3.IntegrityError as exc:
         raise CampaignAlreadyExistsError(f"Campaign ya existe: {cid}") from exc
@@ -235,6 +246,9 @@ def reserve_next_batch(
     require_campaign_active(conn, campaign_id)
     ts = at_iso or now_iso()
     batch_id = str(_uuid.uuid4())
+    campaign = get_campaign(conn, campaign_id)
+    if campaign is None:
+        raise ValueError(f"Unknown campaign: {campaign_id}")
     rows = conn.execute(
         "SELECT id, email_norm, institution_name FROM outbound_campaign_recipient "
         "WHERE campaign_id = ? AND state = 'candidate' ORDER BY id",
@@ -249,6 +263,7 @@ def reserve_next_batch(
         result = evaluate_campaign_eligibility(
             contact_email=email_norm, institution_name=institution_name,
             gate_ctx=gate_ctx, manual_status_by_email=manual_status_by_email,
+            audience_kind=campaign.audience_kind,
         )
         if result.eligible:
             conn.execute(
