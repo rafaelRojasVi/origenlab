@@ -122,6 +122,32 @@ describe("Resumen", () => {
     expect(screen.getByText(/Banco Central de Chile, vía mindicador\.cl/)).toBeInTheDocument();
   });
 
+  it("says an older figure is still the one in force today, and when it was published", async () => {
+    // NOW is Tuesday 31 March; the dollar and euro were last published on Monday 30.
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
+    render(<OverviewPage navigate={() => undefined} />);
+    const usd = await screen.findByTestId("fx-USD");
+    expect(usd).toHaveTextContent(/vigente hoy/i);
+    expect(usd).toHaveTextContent(/publicado el lun 30 mar/i);
+    expect(screen.getByTestId("fx-weekend-note")).toHaveTextContent(/fines de semana ni feriados/);
+  });
+
+  it("says «publicado hoy» when the figure is today's", async () => {
+    const today = { ...FX, rates: FX.rates.map((r) => ({ ...r, as_of: "2026-03-31" })) };
+    respond({ "/v2/workspace/fx": today, "/v2/workspace/pipeline": PIPELINE });
+    render(<OverviewPage navigate={() => undefined} />);
+    expect(await screen.findByTestId("fx-USD")).toHaveTextContent(/publicado hoy/i);
+    expect(screen.queryByTestId("fx-weekend-note")).toBeNull();
+  });
+
+  it("shows today's date and the time in Santiago", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
+    render(<OverviewPage navigate={() => undefined} />);
+    const clock = await screen.findByTestId("resumen-clock");
+    expect(clock).toHaveTextContent(/martes.*31 de marzo/i);
+    expect(clock).toHaveTextContent("12:00");
+  });
+
   it("converts an amount typed the Chilean way into pesos", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
