@@ -59,10 +59,11 @@ describe("buildV1LaneEvents", () => {
     expect(events[4].detail).toMatch(/oleada 5 de 5/i);
   });
 
-  it("includes 'canal V1' in the detail", () => {
+  it("names the V1 lane once: in the event kind, not again in the detail", () => {
     vi.setSystemTime(new Date("2026-10-04T15:00:00Z"));
     const events = buildV1LaneEvents([CYBER], todayInSantiago());
-    expect(events[0].detail).toMatch(/canal V1/i);
+    expect(events[0].kind).toBe("v1_lane");
+    expect(events[0].detail).not.toMatch(/canal V1/i);
   });
 
   it("carries the send_time as the event time", () => {
