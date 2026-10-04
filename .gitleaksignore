@@ -55,3 +55,8 @@ fb0eb35c9af4bafe3eb94dfb4fb5e5fae9029b6c:apps/api/tests/test_drive_preflight.py:
 # required. Fingerprint-specific: any other finding in these files must fail.
 2f9dc0070f768bab84229b2cbe5edecb36041ba5:apps/dashboard-proxy/src/index.test.ts:generic-api-key:1967
 bed1e7a7ff2349173701c710d81513798b0e6ad9:apps/api/tests/test_v2_crm_authoring.py:generic-api-key:383
+
+# PR #632 (2026-10-04): generic-api-key matched a test fixture's Drive folder name
+# (`case_key: "CN01022-Persona Ejemplo – Agrícola Norte"`, invented) — not a credential. Commit
+# 176fde3d moved the string into a constant; this fingerprint covers the earlier commit only.
+6af295da67a5569002d5c06de8cb0ea7fc3fcaf0:apps/dashboard/src/crm/pages/OverviewPage.test.tsx:generic-api-key:118
