@@ -12,6 +12,12 @@ Neither can name a database that is not disposable: both accept only ``^origenla
   container, but only when the target file's single non-comment key is
   ``OL_HOSTED_LOCAL_SCRATCH`` with that same value. ``read_host_facts`` then reports the TLS and
   route facts as satisfied; the target-file mode and the process/crontab scans stay real.
+  Against that local target, every statement runs with the HOSTED login's privileges:
+  ``connect_target`` logs in as the local superuser and immediately runs
+  ``SET SESSION AUTHORIZATION origenlab_migrator`` (NOINHERIT, SET-only membership in
+  origenlab_owner, no access to supabase_migrations — exactly the hosted login), and the
+  container's pg_dump connects as origenlab_migrator over the container's own loopback. The
+  source connection stays the local superuser, as it is in production.
 """
 from __future__ import annotations
 
@@ -38,6 +44,8 @@ CONTAINER = "origenlab_dev_db"
 SOURCE_DB = "origenlab_clean"
 SOURCE_PORT = 54332
 DUMP_SCHEMAS = ("crm", "evidence", "outbound", "comms", "catalog", "platform")
+#: The role the hosted login authenticates as (Supavisor strips the ``.<project ref>`` suffix).
+HOSTED_LOGIN_ROLE = "origenlab_migrator"
 _APP_NAME = "origenlab-hosted-data-load"
 _DISPOSABLE_DB = re.compile(r"origenlab_test_[0-9a-f]{8}")
 _SECRET_IN_URI = re.compile(r"(://[^:/@\s]+):[^@\s]*@")
@@ -106,6 +114,21 @@ def conninfo_for(t: Any) -> str:
             f"application_name={_APP_NAME} connect_timeout=20")
 
 
+def connect_target(t: Any) -> psycopg.Connection:
+    """The target connection (autocommit: every transaction is an explicit BEGIN/COMMIT/ROLLBACK).
+
+    TEST-ONLY branch: a local scratch target assumes the hosted login right after connecting, so the
+    e2e proves every target statement under hosted privileges instead of the local superuser's."""
+    conn = psycopg.connect(conninfo_for(t), autocommit=True)
+    if t.mode == "local":
+        try:
+            conn.execute(f"SET SESSION AUTHORIZATION {HOSTED_LOGIN_ROLE}")
+        except BaseException:
+            conn.close()
+            raise
+    return conn
+
+
 def apply_session_settings(cur, local: bool = False) -> None:
     # SET does not take bind parameters (psycopg 3 binds server-side); set_config does.
     for k, v in hp.SESSION_SETTINGS:
@@ -159,17 +182,20 @@ def _ledger(cur) -> list[str]:
     return [r[0] for r in cur.fetchall()]
 
 
-def _ledger_readable(cur) -> bool:
-    """No exception on purpose (an error would abort the transaction): hosted
-    supabase_migrations is platform-owned and unreadable by the login."""
-    cur.execute("select has_schema_privilege('supabase_migrations', 'usage') "
-                "and has_table_privilege('supabase_migrations.schema_migrations', 'select')")
-    return bool(cur.fetchone()[0])
+#: Probed by OID only. Any name resolution through the schema (to_regclass, ::regclass, the text forms
+#: of has_*_privilege) RAISES "permission denied for schema supabase_migrations" for a login without
+#: USAGE — the hosted origenlab_migrator — and an error would abort the read transaction.
+_LEDGER_READABLE = """select case when has_schema_privilege(n.oid, 'usage') then has_table_privilege(c.oid, 'select')
+                                 else false end
+                      from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                      where n.nspname = 'supabase_migrations' and c.relname = 'schema_migrations'"""
 
 
 def _ledger_or_none(cur) -> list[str] | None:
-    cur.execute("select to_regclass('supabase_migrations.schema_migrations') is not null")  # absent table: no error
-    if not cur.fetchone()[0] or not _ledger_readable(cur):
+    """The ledger, or None when it is absent (no row) or unreadable by this login (hosted: platform-owned)."""
+    cur.execute(_LEDGER_READABLE)
+    row = cur.fetchone()
+    if row is None or not row[0]:
         return None
     return _ledger(cur)
 
@@ -266,14 +292,22 @@ def _operators(cur) -> list[list]:
 
 def _other_sessions(cur, same_role_only: bool) -> list[dict]:
     """Source: every other client session on the database (nobody may write the clean room).
-    Target: only other sessions of our own login role (``session_user``; ``current_user`` is
-    ``origenlab_owner`` after SET LOCAL ROLE). The Render API's `origenlab_api` pool is always
-    connected and only reads; it waits on the apply's locks instead of seeing half a load
-    (spec §5 step 4, §6 'no other session as origenlab_migrator')."""
-    role_filter = "and usename = session_user" if same_role_only else ""
+
+    Target: other NON-IDLE sessions of our own login role (``usename = session_user``). Must run
+    BEFORE ``SET LOCAL ROLE origenlab_owner``: pg_stat_activity shows backend_type/state only for
+    sessions whose role the CURRENT user has privileges of, so as the owner the login's sessions read
+    NULL and nothing would match. ``idle`` backends are what the Supavisor session pool keeps between
+    clients and never refuse; an open transaction (``idle in transaction``) or a running statement
+    does. A NULL state or backend_type (hidden details) counts as busy: fail closed. The Render API's
+    `origenlab_api` pool is always connected and only reads; it waits on the apply's locks instead of
+    seeing half a load (spec §5 step 4, §6 'no other session as origenlab_migrator')."""
+    if same_role_only:
+        flt = ("coalesce(backend_type, 'client backend') = 'client backend' and usename = session_user "
+               "and state is distinct from 'idle'")
+    else:
+        flt = "backend_type = 'client backend'"
     cur.execute(f"""select pid, usename, application_name, state from pg_stat_activity
-                    where datname = current_database() and pid <> pg_backend_pid()
-                      and backend_type = 'client backend' {role_filter}""")
+                    where datname = current_database() and pid <> pg_backend_pid() and {flt}""")
     return [dict(zip(("pid", "user", "app", "state"), r)) for r in cur.fetchall()]
 
 
@@ -351,6 +385,8 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
             # hosted it is platform-owned and unreadable even to the login: best effort, None if unreadable.
             # schema_fingerprint_identical is the mandatory check that replaces it.
             ledger = _ledger_or_none(cur)
+            # Also as the login role: after the switch pg_stat_activity hides the login's sessions (I2).
+            sessions = _other_sessions(cur, same_role_only=True)
             cur.execute("set local role origenlab_owner")
             apply_session_settings(cur, local=True)
             cur.execute("select current_setting('server_version_num')::int")
@@ -384,8 +420,8 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
                 "campaign_block": {"scope": cb_row[0], "legacy_campaign_key": cb_row[1], "lifted_at": cb_row[2],
                                    "hash": _hash_rows(cur, "select * from outbound.campaign_block")},
                 "roster_hash": roster_hash(cur),
-                "advisory_lock_free": bool(free), "other_sessions": _other_sessions(cur, same_role_only=True),
-                "sequences": _sequences(cur), "pg_dump_probe_ok": bool(pg_dump_probe),
+                "advisory_lock_free": bool(free), "other_sessions": sessions,
+                "pg_dump_probe_ok": bool(pg_dump_probe),
                 **_fp_fields(schema_fingerprint(cur)),
             }
         finally:
@@ -436,18 +472,18 @@ def read_host_facts(repo_root: Path, target_file: Path, target: Any, proc: Path 
 
 
 def _pg_dump_command(target: Any, schema_only: bool) -> tuple[list[str], dict[str, str]]:
-    """argv carries variable NAMES only; secrets travel in the returned extra environment."""
-    schemas = [f"--schema={s}" for s in DUMP_SCHEMAS]
-    if target.mode == "local":  # Task 7 e2e: a disposable database on this same container
-        argv = ["docker", "exec", CONTAINER, "pg_dump", "-U", "supabase_admin", "--dbname", target.database,
-                "--format=custom", "--role=origenlab_owner", "--no-owner", *schemas]
-        extra: dict[str, str] = {}
+    """argv carries libpq variable NAMES only (``docker exec -e NAME``); every connection value,
+    hosted or not, travels in the returned extra environment (never in /proc/*/cmdline)."""
+    if target.mode == "local":
+        # TEST-ONLY: a disposable database on this same container, dumped as the hosted login over the
+        # container's own loopback (pg_hba trust there), so the dump runs with hosted privileges.
+        extra = {"PGHOST": "127.0.0.1", "PGPORT": "5432", "PGUSER": HOSTED_LOGIN_ROLE, "PGDATABASE": target.database}
     else:
-        argv = ["docker", "exec", "-e", "PGPASSWORD", "-e", "PGSSLMODE", "-e", "PGSSLROOTCERT", "-e", "PGHOSTADDR",
-                CONTAINER, "pg_dump", "--host", target.host, "--port", str(target.port), "--username", target.user,
-                "--dbname", target.database, "--format=custom", "--role=origenlab_owner", "--no-owner", *schemas]
-        extra = {"PGPASSWORD": target.password, "PGSSLMODE": "verify-full",
-                 "PGSSLROOTCERT": "/tmp/hosted-ca.crt", "PGHOSTADDR": target.hostaddr}
+        extra = {"PGHOST": target.host, "PGHOSTADDR": target.hostaddr, "PGPORT": str(target.port),
+                 "PGUSER": target.user, "PGDATABASE": target.database, "PGPASSWORD": target.password,
+                 "PGSSLMODE": "verify-full", "PGSSLROOTCERT": "/tmp/hosted-ca.crt"}
+    argv = ["docker", "exec", *(a for name in extra for a in ("-e", name)), CONTAINER, "pg_dump",
+            "--format=custom", "--role=origenlab_owner", "--no-owner", *(f"--schema={s}" for s in DUMP_SCHEMAS)]
     if schema_only:
         argv.append("--schema-only")
     return argv, extra

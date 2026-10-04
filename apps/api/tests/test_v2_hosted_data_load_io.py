@@ -76,16 +76,46 @@ def test_scan_processes_reports_only_real_clients(tmp_path: Path):
     assert len(found) == 1 and found[0].startswith("psql")
 
 
-def test_pg_dump_command_keeps_secret_out_of_argv():
-    argv, env = io_._pg_dump_command(_hosted(), schema_only=True)
-    assert not any("s3cret" in a for a in argv)
-    assert env["PGPASSWORD"] == "s3cret" and env["PGHOSTADDR"] == "3.3.3.3"
-    assert "PGPASSWORD" in argv and "--schema-only" in argv
+_PG_NAMES = ("PGHOST", "PGHOSTADDR", "PGPORT", "PGUSER", "PGDATABASE", "PGPASSWORD", "PGSSLMODE", "PGSSLROOTCERT")
 
 
-def test_pg_dump_command_local_has_no_extra_env():
-    argv, env = io_._pg_dump_command(SimpleNamespace(mode="local", database="scratch_db"), schema_only=False)
-    assert env == {} and "scratch_db" in argv
+def test_pg_dump_command_keeps_every_hosted_value_out_of_argv():
+    """M5: host, address, port, login, database, password and TLS settings travel by NAME only."""
+    t = _hosted()
+    t.database = "postgres_e2e_db"
+    argv, env = io_._pg_dump_command(t, schema_only=True)
+    for value in (t.host, t.hostaddr, str(t.port), t.user, t.database, t.password, "/tmp/hosted-ca.crt"):
+        assert not any(value in a for a in argv), value
+    assert set(env) == set(_PG_NAMES)
+    assert (env["PGHOST"], env["PGHOSTADDR"], env["PGPORT"], env["PGUSER"], env["PGDATABASE"], env["PGPASSWORD"]) == \
+        (t.host, "3.3.3.3", "5432", t.user, "postgres_e2e_db", "s3cret")
+    assert env["PGSSLMODE"] == "verify-full" and env["PGSSLROOTCERT"] == "/tmp/hosted-ca.crt"
+    exec_part = argv[:argv.index(io_.CONTAINER)]
+    assert exec_part == ["docker", "exec", *(a for n in env for a in ("-e", n))]
+    assert "--schema-only" in argv and "--role=origenlab_owner" in argv
+
+
+def test_pg_dump_command_local_dumps_as_the_hosted_login():
+    """TEST-ONLY local target: the container's pg_dump connects as origenlab_migrator, like hosted."""
+    argv, env = io_._pg_dump_command(SimpleNamespace(mode="local", database="origenlab_test_0123abcd"), schema_only=False)
+    assert env == {"PGHOST": "127.0.0.1", "PGPORT": "5432", "PGUSER": "origenlab_migrator",
+                   "PGDATABASE": "origenlab_test_0123abcd"}
+    assert "origenlab_test_0123abcd" not in argv and "supabase_admin" not in argv and "--schema-only" not in argv
+
+
+def test_connect_target_assumes_the_hosted_login_only_for_a_local_target(monkeypatch):
+    executed: list[str] = []
+
+    class Conn:
+        def execute(self, q):
+            executed.append(q)
+
+    monkeypatch.setattr(io_.psycopg, "connect", lambda info, **k: Conn())
+    io_.connect_target(SimpleNamespace(mode="local", database="origenlab_test_0123abcd"))
+    assert executed == ["SET SESSION AUTHORIZATION origenlab_migrator"]
+    executed.clear()
+    io_.connect_target(_hosted())
+    assert executed == []
 
 
 def _full_hosted():
@@ -232,8 +262,9 @@ def test_host_facts_for_local_target_keep_real_file_checks(tmp_path, monkeypatch
     assert (facts["route"], facts["port"], facts["sslmode"], facts["ca_exists"]) == ("supavisor-session", 5432, "verify-full", True)
 
 
-def test_target_ledger_is_read_before_the_role_switch(monkeypatch):
-    """origenlab_owner cannot read supabase_migrations (found by the e2e): the ledger is read as the login role."""
+def test_target_ledger_and_sessions_are_read_before_the_role_switch(monkeypatch):
+    """origenlab_owner cannot read supabase_migrations (found by the e2e), and after the switch
+    pg_stat_activity hides the login's sessions (I2): both are read as the login role."""
     log: list[str] = []
 
     class Cur:
@@ -246,10 +277,32 @@ def test_target_ledger_is_read_before_the_role_switch(monkeypatch):
         def cursor(self): return Cur()
 
     monkeypatch.setattr(io_, "_ledger_or_none", lambda cur: log.append("LEDGER") or ["1"])
+    monkeypatch.setattr(io_, "_other_sessions", lambda cur, same_role_only: log.append(f"SESSIONS {same_role_only}") or [])
     monkeypatch.setattr(io_, "apply_session_settings", lambda cur, local=False: None)
     with pytest.raises(StopIteration):
         io_.read_target_facts(Conn(), SimpleNamespace(project_ref="r", host="h"), True)
-    assert log.index("LEDGER") < log.index("set local role origenlab_owner")
+    role = log.index("set local role origenlab_owner")
+    assert log.index("LEDGER") < role and log.index("SESSIONS True") < role
+
+
+def _sessions_sql(same_role_only: bool) -> str:
+    class Cur:
+        def execute(self, q, params=None): self.q = q
+        def fetchall(self): return []
+    cur = Cur()
+    io_._other_sessions(cur, same_role_only)
+    return " ".join(cur.q.split())
+
+
+def test_target_session_guard_ignores_idle_pool_backends_and_fails_closed_on_hidden_rows():
+    q = _sessions_sql(True)
+    assert "usename = session_user" in q and "state is distinct from 'idle'" in q
+    assert "coalesce(backend_type, 'client backend') = 'client backend'" in q
+
+
+def test_source_session_guard_refuses_every_other_client_session():
+    q = _sessions_sql(False)
+    assert "session_user" not in q and "idle" not in q and "backend_type = 'client backend'" in q
 
 
 class _FpCur:
@@ -301,17 +354,38 @@ def test_fingerprint_diff_lines_caps_and_signs():
     assert d == {"columns": ["+ crm.note|e2e_extra"]}
 
 
-def test_ledger_is_none_when_unreadable_and_never_selected():
-    log = []
+class _LedgerCur:
+    """Fake cursor: the OID probe answers ``probe`` (a row, or None when the table is absent)."""
+    def __init__(self, probe):
+        self.probe, self.log, self._res = probe, [], None
 
-    class Cur:
-        def __init__(self, exists, readable): self.exists, self.readable, self.val = exists, readable, None
-        def execute(self, q, params=None):
-            log.append(q)
-            self.val = self.exists if "to_regclass" in q else self.readable
-        def fetchone(self): return (self.val,)
+    def execute(self, q, params=None):
+        self.log.append(q)
+        self._res = [("20260930120000",)] if "order by version" in q else self.probe
 
-    assert io_._ledger_or_none(Cur(True, False)) is None
-    assert io_._ledger_or_none(Cur(False, True)) is None
-    assert not any("order by version" in q for q in log)
-    assert any("has_schema_privilege" in q and "has_table_privilege" in q for q in log)
+    def fetchone(self):
+        return self._res
+
+    def fetchall(self):
+        return self._res
+
+
+def test_ledger_is_none_when_absent_or_unreadable_and_never_selected():
+    for probe in (None, (False,)):
+        cur = _LedgerCur(probe)
+        assert io_._ledger_or_none(cur) is None
+        assert not any("order by version" in q for q in cur.log)
+    cur = _LedgerCur((True,))
+    assert io_._ledger_or_none(cur) == ["20260930120000"]
+
+
+def test_ledger_probe_never_resolves_a_name_through_the_schema_acl():
+    """C1: to_regclass / ::regclass / has_table_privilege('<name>') RAISE "permission denied for schema
+    supabase_migrations" for the hosted login; the probe must go through OIDs only."""
+    cur = _LedgerCur(None)
+    io_._ledger_or_none(cur)
+    probe = cur.log[0]
+    assert "to_regclass" not in probe and "::regclass" not in probe
+    assert "has_schema_privilege(n.oid" in probe and "has_table_privilege(c.oid" in probe
+    assert "'supabase_migrations.schema_migrations'" not in probe
+

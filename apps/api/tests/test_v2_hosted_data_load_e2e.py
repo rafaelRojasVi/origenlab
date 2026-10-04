@@ -2,6 +2,11 @@
 container: source = a restored copy of origenlab_clean, target = a fresh chain + a test roster.
 Nothing here touches origenlab_clean or the hosted project.
 
+Every TARGET statement of the loader runs as the hosted login (origenlab_migrator: NOINHERIT, SET-only
+membership in origenlab_owner, no access to supabase_migrations) — the loader's local-mode connect path
+runs SET SESSION AUTHORIZATION, and the container's pg_dump connects as that role — so a privilege the
+hosted login lacks fails here, not on the hosted project.
+
 Run with ORIGENLAB_HOSTED_LOAD_E2E=1 (needs the origenlab_dev_db container, a few minutes)."""
 from __future__ import annotations
 
@@ -10,6 +15,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -34,6 +41,36 @@ def _drop(name: str) -> None:
 def _psql(db: str, sql: str) -> str:
     return subprocess.run(["docker", "exec", "origenlab_dev_db", "psql", "-U", "supabase_admin", "-d", db, "-At", "-c", sql],
                           capture_output=True, text=True, check=True).stdout.strip()
+
+
+@contextmanager
+def _login_session(db: str, *, in_transaction: bool):
+    """A psql session logged in as the hosted login over the container's own loopback (pg_hba trust):
+    ``idle`` (a Supavisor session-pool backend) or ``idle in transaction`` (an open BEGIN)."""
+    p = subprocess.Popen(["docker", "exec", "-i", "origenlab_dev_db", "psql", "-X", "-q", "-h", "127.0.0.1",
+                          "-U", "origenlab_migrator", "-d", db], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, text=True)
+    state = "idle in transaction" if in_transaction else "idle"
+    try:
+        p.stdin.write("begin;\nselect 1;\n" if in_transaction else "select 1;\n")
+        p.stdin.flush()
+        probe = (f"select count(*) from pg_stat_activity where datname = '{db}' "
+                 f"and usename = 'origenlab_migrator' and state = '{state}'")
+        deadline = time.monotonic() + 20
+        while _psql(db, probe) != "1":
+            assert time.monotonic() < deadline, f"the {state} origenlab_migrator session never appeared"
+            time.sleep(0.2)
+        yield
+    finally:
+        try:
+            p.stdin.write("rollback;\n" if in_transaction else "")
+            p.stdin.close()
+        except OSError:
+            pass
+        try:
+            p.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            p.kill()
 
 
 def _roster(tgt: str, tmp_path: Path) -> str:
@@ -98,13 +135,25 @@ def test_full_cycle_and_injected_failures(databases, tmp_path: Path):
     def counts():
         return [_psql(tgt, f"select count(*) from {t['name']}") for t in plan["tables"]]
 
-    r = _cli(env, "plan", *tf, "--hosted-operator", hosted, out=out)
+    # an IDLE session of the hosted login (what the Supavisor session pool keeps) never refuses
+    with _login_session(tgt, in_transaction=False):
+        r = _cli(env, "plan", *tf, "--hosted-operator", hosted, out=out)
     assert r.returncode == 0, r.stdout + r.stderr
+    assert "ok  no_other_target_sessions" in r.stdout
     plan_path = next(out.glob("plan-*.json"))
     sha = r.stdout.split("sha256: ")[1].split()[0]
     plan = json.loads(plan_path.read_text())
     assert len(plan["tables"]) == 16 and sum(t["count"] for t in plan["tables"]) > 50_000
     ap = ["--plan", str(plan_path), "--plan-sha256", sha, *tf]
+
+    # injected failure 0 (I2): an open BEGIN as the same login -> plan and apply refuse, nothing written
+    with _login_session(tgt, in_transaction=True):
+        r = _cli(env, "plan", *tf, "--hosted-operator", hosted, out=out)
+        assert r.returncode == EXIT_REFUSED and "REFUSED no_other_target_sessions" in r.stdout, r.stdout + r.stderr
+        r = _cli(env, "apply", *ap, out=out)
+        assert r.returncode == EXIT_REFUSED and "REFUSED no_other_target_sessions" in r.stdout, r.stdout + r.stderr
+    assert list(out.glob("plan-*.json")) == [plan_path]
+    assert set(counts()) == {"0"}
 
     # injected failure 1: wrong sha -> refused, nothing written
     r = _cli(env, "apply", "--plan", str(plan_path), "--plan-sha256", "0" * 64, *tf, out=out)
@@ -155,7 +204,9 @@ def test_full_cycle_and_injected_failures(databases, tmp_path: Path):
     assert _psql(tgt, f"select count(*) from crm.domain_event where actor_operator_id is not null and actor_operator_id <> '{hosted}'") == "0"
     assert _psql(tgt, "select count(*) from pg_trigger where not tgisinternal and tgenabled <> 'O'") == "0"
     assert _psql(tgt, "select count(*) from pg_constraint where contype='f' and condeferrable") == "0"
-    assert _psql(tgt, "select last_value from crm.domain_event_stream_position_seq") == str(plan["sequence"]["target_last_value"])
+    # the next value the app gets continues the clean room's stream
+    assert _psql(tgt, "select case when is_called then last_value + 1 else last_value end "
+                      "from crm.domain_event_stream_position_seq") == str(plan["sequence"]["target_last_value"] + 1)
 
     # injected failure 4: a second apply -> target not empty -> refused
     r = _cli(env, "apply", *ap, out=out)

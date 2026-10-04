@@ -51,7 +51,7 @@ def connect_both(args):
     # BEGIN / COMMIT / ROLLBACK statement, so its boundaries are visible in the code.
     src = psycopg.connect(io_.source_conninfo(), autocommit=True)
     try:
-        tgt = psycopg.connect(io_.conninfo_for(target), autocommit=True)
+        tgt = io_.connect_target(target)
     except Exception:
         src.close()
         raise
