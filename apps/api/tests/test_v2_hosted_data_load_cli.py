@@ -148,3 +148,69 @@ def test_probe_failure_cleans_up_redacts_and_refuses(tmp_path, monkeypatch, caps
         assert secret not in cap.out + cap.err
     assert "***" in cap.out
     assert all(c.closed for c in conns)
+
+
+class _FakeCursor:
+    def __init__(self, log):
+        self.log = log
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.log.append(str(sql))
+
+
+class _FakeConn:
+    def __init__(self):
+        self.log: list[str] = []
+        self.closed = False
+
+    def cursor(self):
+        return _FakeCursor(self.log)
+
+    def close(self):
+        self.closed = True
+
+
+def _apply_args(tmp_path):
+    return SimpleNamespace(plan=tmp_path / "p.json", plan_sha256="a" * 64, out=str(tmp_path / "out"),
+                           target_file="x", authorize_hosted_connection=True, authorize_supavisor_session_route=True)
+
+
+def _patch_apply(cli, monkeypatch, refused: bool, dump):
+    src, tgt = _FakeConn(), _FakeConn()
+    target = SimpleNamespace(mode="hosted", password="s3cret", user="u", project_ref="r", host="h", hostaddr="1.1.1.1")
+    plan = {"remap": {"to": "x", "from": ["a"]}, "tables": []}
+    monkeypatch.setattr(cli, "connect_both", lambda a: (src, tgt, target))
+    monkeypatch.setattr(cli, "load_plan", lambda p: (plan, "sha"))
+    monkeypatch.setattr(cli, "_facts", lambda *a, **k: (None, None, None))
+    monkeypatch.setattr(cli.hp, "evaluate", lambda **k: [{"check": "c", "ok": not refused, "detail": None}])
+    monkeypatch.setattr(cli.io_, "pg_dump_target", dump)
+    return src, tgt
+
+
+def test_apply_refusal_exits_11_and_never_dumps_or_writes(tmp_path, monkeypatch):
+    cli = load_cli()
+    calls = []
+    src, tgt = _patch_apply(cli, monkeypatch, True, lambda *a, **k: calls.append(1))
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 11
+    assert calls == [] and tgt.log == [] and src.log == []
+    assert src.closed and tgt.closed
+
+
+def test_apply_pre_dump_failure_exits_11_before_any_begin(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+
+    def boom(*a, **k):
+        raise RuntimeError("pg_dump failed: password=s3cret for u")
+
+    src, tgt = _patch_apply(cli, monkeypatch, False, boom)
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 11
+    out = capsys.readouterr().out
+    assert "s3cret" not in out
+    assert not any("begin" in s.lower() for s in tgt.log + src.log)
+    assert src.closed and tgt.closed

@@ -161,6 +161,16 @@ def _rollback(cur) -> None:
         pass
 
 
+def _count(cur, table: str) -> int:
+    cur.execute(sql.SQL("select count(*) from {}").format(sql.Identifier(*table.split(".", 1))))
+    return int(cur.fetchone()[0])
+
+
+def target_counts(cur) -> dict[str, int]:
+    """Row count of each of the 16 loaded tables. No transaction control: the caller opens and closes."""
+    return {name: _count(cur, name) for name in hp.TABLES}
+
+
 def _qcols(names: list[str]) -> str:
     return ", ".join('"' + c.replace('"', '""') + '"' for c in names)
 
@@ -207,8 +217,7 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
                            where c.relkind = 'r' and n.nspname = any(%s) order by 1""", (list(hp.EMPTY_SCHEMAS),))
             counts = {}
             for (t,) in cur.fetchall():
-                cur.execute(sql.SQL("select count(*) from {}").format(sql.Identifier(*t.split(".", 1))))
-                counts[t] = int(cur.fetchone()[0])
+                counts[t] = _count(cur, t)
             cur.execute("select count(*) from platform.auth_principal")
             principals = cur.fetchone()[0]
             cur.execute("select count(*) from platform.operator_profile")
@@ -308,3 +317,71 @@ def pg_dump_target(target: Any, out: Path, *, schema_only: bool = False) -> dict
         raise RuntimeError("pg_dump failed: " + redact(res.stderr.decode(errors="replace"), target_secrets(target))[-400:])
     out.chmod(0o600)
     return {"path": str(out), "sha256": write_sha256_sidecar(out), "bytes": out.stat().st_size}
+
+
+def set_fks_deferrable(cur, table: str, fk_names: list[str], deferrable: bool) -> None:
+    mode = "DEFERRABLE INITIALLY DEFERRED" if deferrable else "NOT DEFERRABLE"
+    for name in fk_names:
+        cur.execute(f'ALTER TABLE {table} ALTER CONSTRAINT "{name}" {mode}')
+
+
+def set_triggers(cur, table: str, enable: bool) -> None:
+    cur.execute(f"ALTER TABLE {table} {'ENABLE' if enable else 'DISABLE'} TRIGGER USER")
+
+
+def copy_table(src_cur, tgt_cur, table: str, columns: list[str], select_sql: str) -> int:
+    """Binary COPY source SELECT -> target table; returns the rows the target reports written."""
+    cols = _qcols(columns)
+    with src_cur.copy(f"COPY ({select_sql}) TO STDOUT (FORMAT binary)") as out, \
+         tgt_cur.copy(f"COPY {table} ({cols}) FROM STDIN (FORMAT binary)") as inp:
+        for chunk in out:
+            inp.write(chunk)
+    return tgt_cur.rowcount
+
+
+def invariant_names(plan: Mapping) -> list[str]:
+    names = [f"rows_match:{t['name']}" for t in plan["tables"]]
+    return names + ["payload_hosted_uuid_rows", "payload_local_uuid_rows_zero", "no_foreign_operator_refs",
+                    "roster_unchanged", "send_control_unchanged", "campaign_block_unchanged", "send_flags_false",
+                    "all_user_triggers_enabled", "no_deferrable_fks", "sequence_set"]
+
+
+def post_copy_invariants(cur, plan: Mapping, hosted_operator: str) -> list[dict]:
+    """Re-hash everything inside the write transaction, before COMMIT."""
+    checks: list[dict] = []
+
+    def check(name, ok, detail=None):
+        checks.append({"check": name, "ok": bool(ok), "detail": detail})
+
+    for t in plan["tables"]:
+        cur.execute(hp.row_hash_sql(f"select {_qcols([c[0] for c in t['columns']])} from {t['name']}", t["pk"]))
+        count, digest = cur.fetchone()
+        check(f"rows_match:{t['name']}", (int(count), digest) == (t["count"], t["hash"]),
+              {"count": int(count), "expected": t["count"]})
+    cur.execute("select count(*) from crm.domain_event where payload::text like %s", (f"%{hosted_operator}%",))
+    got = cur.fetchone()[0]
+    check("payload_hosted_uuid_rows", got == plan["payload_rows_with_local_uuid"],
+          {"rows": got, "expected": plan["payload_rows_with_local_uuid"]})
+    cur.execute("select count(*) from crm.domain_event where payload::text ~ %s", ("|".join(plan["remap"]["from"]),))
+    left = cur.fetchone()[0]
+    check("payload_local_uuid_rows_zero", left == 0, left)
+    foreign = 0
+    for table, cols in hp.OPERATOR_COLUMNS.items():
+        for c in cols:
+            cur.execute(f'select count(*) from {table} where "{c}" is not null and "{c}" not in (select id from platform.operator)')
+            foreign += cur.fetchone()[0]
+    check("no_foreign_operator_refs", foreign == 0, foreign)
+    check("roster_unchanged", roster_hash(cur) == plan["roster_hash"])
+    check("send_control_unchanged", _hash_rows(cur, "select * from outbound.send_control") == plan["send_control_hash"])
+    check("campaign_block_unchanged", _hash_rows(cur, "select * from outbound.campaign_block") == plan["campaign_block_hash"])
+    cur.execute("select coalesce(bool_or(marketing_enabled or transactional_enabled), false) from outbound.send_control")
+    check("send_flags_false", cur.fetchone()[0] is False)
+    cur.execute("select count(*) from pg_trigger where not tgisinternal and tgenabled <> 'O' and tgrelid::regclass::text = any(%s)",
+                (list(hp.TABLES),))
+    check("all_user_triggers_enabled", cur.fetchone()[0] == 0)
+    cur.execute("select count(*) from pg_constraint where contype = 'f' and condeferrable and conrelid::regclass::text = any(%s)",
+                (list(hp.TABLES),))
+    check("no_deferrable_fks", cur.fetchone()[0] == 0)
+    cur.execute(f"select last_value from {hp.SEQUENCE}")
+    check("sequence_set", int(cur.fetchone()[0]) == plan["sequence"]["target_last_value"])
+    return checks

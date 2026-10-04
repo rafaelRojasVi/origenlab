@@ -127,3 +127,15 @@ def test_pg_dump_failure_leaks_nothing_and_removes_partial(tmp_path: Path, monke
     for secret in (t.user, t.project_ref, "3.3.3.3", t.host, "s3cret"):
         assert secret not in msg
     assert not out.exists()
+
+
+def test_invariant_names_cover_every_table_and_the_globals():
+    plan = {"tables": [{"name": t, "count": 1, "hash": "h", "pk": ["id"], "columns": [["id", "uuid"]]} for t in
+                       ("comms.mailbox", "crm.domain_event")],
+            "payload_rows_with_local_uuid": 44, "sequence": {"name": "crm.domain_event_stream_position_seq", "target_last_value": 23095},
+            "roster_hash": "r", "send_control_hash": "s", "campaign_block_hash": "c", "remap": {"to": "x", "from": ["a", "b"]}}
+    names = io_.invariant_names(plan)
+    assert "rows_match:comms.mailbox" in names and "rows_match:crm.domain_event" in names
+    assert {"payload_hosted_uuid_rows", "payload_local_uuid_rows_zero", "no_foreign_operator_refs",
+            "roster_unchanged", "send_control_unchanged", "campaign_block_unchanged", "send_flags_false",
+            "all_user_triggers_enabled", "no_deferrable_fks", "sequence_set"} <= set(names)

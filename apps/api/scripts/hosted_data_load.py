@@ -119,6 +119,129 @@ def cmd_plan(args) -> int:
         tgt.close()
 
 
+def _reread_target(tgt, secrets) -> None:
+    """After a rollback: prove the target is back to empty, in a fresh read-only transaction."""
+    try:
+        with tgt.cursor() as cur:
+            cur.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            try:
+                cur.execute("SET LOCAL ROLE origenlab_owner")
+                counts = io_.target_counts(cur)
+            finally:
+                _best_effort_rollback(cur)
+    except psycopg.Error as exc:
+        print("could not re-read target: " + io_.redact(str(exc), secrets)[:400])
+        return
+    dirty = {t: n for t, n in counts.items() if n}
+    print(f"target after rollback: all {len(counts)} tables empty" if not dirty
+          else f"target after rollback: NOT empty {dirty}")
+
+
+def _best_effort_rollback(cur) -> None:
+    try:
+        cur.execute("ROLLBACK")
+    except psycopg.Error:
+        pass
+
+
+def _abort_apply(sc, tc, tgt, secrets) -> int:
+    _best_effort_rollback(tc)
+    _best_effort_rollback(sc)
+    _reread_target(tgt, secrets)
+    return EXIT_APPLY_FAILED
+
+
+def cmd_apply(args) -> int:
+    plan, sha = load_plan(args.plan)
+    src, tgt, target = connect_both(args)
+    try:
+        secrets = io_.target_secrets(target)
+        sf, tf, hf = _facts(args, src, tgt, target, plan["remap"]["to"], pg_dump_probe=True)
+        checks = hp.evaluate(plan=plan, plan_sha=sha, expected_sha=args.plan_sha256, source=sf, target=tf, host=hf,
+                             now_iso=_now())
+        print_checks(checks, secrets)
+        if hp.refused(checks):
+            print("preflight refused; nothing written")
+            return EXIT_REFUSED
+        out = Path(args.out).expanduser()
+        try:
+            pre = io_.pg_dump_target(target, out / f"pre-{_stamp()}.dump")
+        except (RuntimeError, OSError) as exc:
+            print(io_.redact(str(exc), secrets))
+            print("pre-load dump failed; nothing written")
+            return EXIT_REFUSED
+        print(f"pre-load dump: {pre['path']} ({pre['bytes']} bytes)")
+
+        remap_to = plan["remap"]["to"]
+        with src.cursor() as sc, tgt.cursor() as tc:
+            # Phase 1: the source snapshot must still match the plan. Nothing is open on the target.
+            sc.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            try:
+                io_.apply_session_settings(sc, local=True)
+                for t in plan["tables"]:
+                    cols = [c[0] for c in t["columns"]]
+                    sc.execute(hp.row_hash_sql(hp.remap_select_sql(t["name"], cols, remap_to), t["pk"]))
+                    if tuple(sc.fetchone()) != (t["count"], t["hash"]):
+                        _best_effort_rollback(sc)
+                        print(f"source drifted since plan: {t['name']}")
+                        return EXIT_REFUSED
+            except psycopg.Error as exc:
+                _best_effort_rollback(sc)
+                print("source snapshot check failed: " + io_.redact(str(exc), secrets)[:400])
+                return EXIT_REFUSED
+
+            # Phase 2: the one write transaction. Any psycopg error rolls everything back (exit 12).
+            try:
+                tc.execute("BEGIN")
+                tc.execute("SET LOCAL lock_timeout = '30s'")
+                tc.execute("SET LOCAL statement_timeout = '15min'")
+                tc.execute("select pg_advisory_xact_lock(%s)", (hp.ADVISORY_LOCK_KEY,))
+                tc.execute("SET LOCAL ROLE origenlab_owner")
+                io_.apply_session_settings(tc, local=True)
+                for t in plan["tables"]:
+                    io_.set_fks_deferrable(tc, t["name"], t["fks"], True)
+                    io_.set_triggers(tc, t["name"], False)
+                tc.execute("SET CONSTRAINTS ALL DEFERRED")
+                short = {}
+                for t in plan["tables"]:
+                    cols = [c[0] for c in t["columns"]]
+                    n = io_.copy_table(sc, tc, t["name"], cols, hp.remap_select_sql(t["name"], cols, remap_to))
+                    print(f"  copied {t['name']:40} {n:>8}")
+                    if n != t["count"]:
+                        short[t["name"]] = (n, t["count"])
+                if short:
+                    print(f"copied row counts differ from plan (copied, expected): {short}")
+                    print("transaction rolled back")
+                    return _abort_apply(sc, tc, tgt, secrets)
+                tc.execute("SET CONSTRAINTS ALL IMMEDIATE")
+                for t in plan["tables"]:
+                    io_.set_triggers(tc, t["name"], True)
+                    io_.set_fks_deferrable(tc, t["name"], t["fks"], False)
+                tc.execute("select setval(%s::regclass, %s, true)", (hp.SEQUENCE, plan["sequence"]["target_last_value"]))
+                inv = io_.post_copy_invariants(tc, plan, remap_to)
+                print_checks(inv, secrets)
+                if hp.refused(inv):
+                    print("invariants failed; transaction rolled back")
+                    return _abort_apply(sc, tc, tgt, secrets)
+                tc.execute("COMMIT")
+            except psycopg.Error as exc:
+                print("apply failed: " + io_.redact(str(exc), secrets)[:400])
+                print("transaction rolled back")
+                return _abort_apply(sc, tc, tgt, secrets)
+            _best_effort_rollback(sc)
+        report = out / f"apply-{_stamp()}.json"
+        try:
+            report.write_text(json.dumps({"plan_sha256": sha, "pre_dump": pre, "committed_at": _now()}, indent=1))
+            report.chmod(0o600)
+            print(f"COMMITTED. report: {report}")
+        except OSError as exc:
+            print("COMMITTED, but the report could not be written: " + io_.redact(str(exc), secrets)[:200])
+        return 0
+    finally:
+        src.close()
+        tgt.close()
+
+
 def _common(p: argparse.ArgumentParser, with_plan: bool) -> None:
     p.add_argument("--target-file", default=str(io_.TARGET_FILE))
     p.add_argument("--out", default=str(OUT_DIR), help="where plan, dumps and reports are written (0700/0600)")
@@ -136,7 +259,10 @@ def main(argv=None) -> int:
     _common(p, False)
     p.add_argument("--hosted-operator", default=DEFAULT_HOSTED_OPERATOR, type=_uuid)
     p.set_defaults(func=cmd_plan)
-    for name, task in (("apply", "Task 5"), ("verify", "Task 6"), ("rollback", "Task 6")):
+    p = sub.add_parser("apply")
+    _common(p, True)
+    p.set_defaults(func=cmd_apply)
+    for name, task in (("verify", "Task 6"), ("rollback", "Task 6")):
         p = sub.add_parser(name)
         _common(p, True)
         if name == "rollback":
