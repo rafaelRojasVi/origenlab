@@ -122,7 +122,11 @@ export function MarketingPage() {
         }
       />
       {state.kind === "ready" && view.kind === "list" && tab !== "audiencias" && tab !== "bajas" ? (
-        <MarketingOverview campaigns={state.data.campaigns} onOpen={(id) => openDetail(id)} />
+        <MarketingOverview
+          campaigns={state.data.campaigns}
+          onOpen={(id) => openDetail(id)}
+          v1LaneCampaigns={state.data.v1_lane_campaigns}
+        />
       ) : null}
       {view.kind === "list" ? <HoldsBanner onChanged={() => reload()} /> : null}
       <Segmented
@@ -171,7 +175,14 @@ export function MarketingPage() {
         )
       ) : tab === "calendario" && view.kind === "list" ? (
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} />}>
-          {(data) => <CampaignCalendar campaigns={data.campaigns} taxonomy={taxonomy} onOpen={(id) => openDetail(id)} />}
+          {(data) => (
+            <CampaignCalendar
+              campaigns={data.campaigns}
+              taxonomy={taxonomy}
+              onOpen={(id) => openDetail(id)}
+              v1LaneCampaigns={data.v1_lane_campaigns}
+            />
+          )}
         </ResourceGate>
       ) : view.kind === "freeze" && mayAuthor ? (
         <div className="space-y-3">

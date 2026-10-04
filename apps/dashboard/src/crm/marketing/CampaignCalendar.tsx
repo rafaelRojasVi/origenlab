@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { CampaignSummary } from "../crmTypes";
+import type { CampaignSummary, V1LaneCampaign } from "../crmTypes";
 import {
   EVENT_KINDS,
   EVENT_LABEL,
@@ -8,6 +8,7 @@ import {
   WEEKDAYS,
   addMonths,
   buildEvents,
+  buildV1LaneEvents,
   fmtLongDay,
   fmtMonth,
   monthGrid,
@@ -25,19 +26,27 @@ const NO_LINE = "__none__";
  * A full-size monthly calendar of campaign history and planning. Each event sits on a date the
  * CRM recorded; `planned` events are internal planning and schedule nothing. On a phone the grid
  * becomes an agenda list of the same month.
+ *
+ * V1-lane events (kind `v1_lane`) show declared send days for campaigns running through the old
+ * systemd lane. They are non-interactive: V2 has no detail page for a V1-lane send.
  */
 export function CampaignCalendar({
   campaigns,
   taxonomy,
   today = todayInSantiago(),
   onOpen,
+  v1LaneCampaigns = [],
 }: {
   campaigns: CampaignSummary[];
   taxonomy: EquipmentTaxonomy | null;
   today?: string;
   onOpen: (campaignId: string) => void;
+  v1LaneCampaigns?: V1LaneCampaign[];
 }) {
-  const events = useMemo(() => buildEvents(campaigns), [campaigns]);
+  const events = useMemo(
+    () => [...buildEvents(campaigns), ...buildV1LaneEvents(v1LaneCampaigns, today)],
+    [campaigns, v1LaneCampaigns, today],
+  );
   const [month, setMonth] = useState(() => monthOf(today));
   const [kinds, setKinds] = useState<Set<EventKind>>(() => new Set(EVENT_KINDS));
   const [line, setLine] = useState<string>("");
@@ -210,16 +219,10 @@ export function CampaignCalendar({
 
 function EventChip({ e, today, onOpen, wide = false }: { e: CalendarEvent; today: string; onOpen: (id: string) => void; wide?: boolean }) {
   const rel = relativeDay(e.day, today);
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen(e.campaignId)}
-      data-testid="calendar-event"
-      data-kind={e.kind}
-      data-origin={e.origin}
-      title={`${EVENT_LABEL[e.kind]} · ${e.campaignName} · ${e.detail}${e.time ? ` · ${e.time}` : ""} · ${rel}`}
-      className={`block w-full rounded-md border px-1.5 py-1 text-left text-[11px] leading-tight hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-600 ${EVENT_STYLE[e.kind].chip}`}
-    >
+  const title = `${EVENT_LABEL[e.kind]} · ${e.campaignName} · ${e.detail}${e.time ? ` · ${e.time}` : ""} · ${rel}`;
+  const cls = `block w-full rounded-md border px-1.5 py-1 text-left text-[11px] leading-tight ${EVENT_STYLE[e.kind].chip}`;
+  const content = (
+    <>
       <span className="flex items-center gap-1">
         {e.origin === "imported_v1" ? (
           <span className="shrink-0 rounded border border-current px-0.5 text-[9px] font-semibold opacity-80" aria-label="Histórica importada">
@@ -233,6 +236,35 @@ function EventChip({ e, today, onOpen, wide = false }: { e: CalendarEvent; today
         {e.time ? ` · ${e.time}` : ""}
       </span>
       <span className="block opacity-80">{rel}</span>
+    </>
+  );
+  // V1-lane events are not CRM campaigns: there is no detail page to open.
+  if (!e.campaignId) {
+    return (
+      <div
+        data-testid="calendar-event"
+        data-kind={e.kind}
+        data-origin={e.origin}
+        title={title}
+        className={cls}
+        role="note"
+        aria-label={title}
+      >
+        {content}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(e.campaignId)}
+      data-testid="calendar-event"
+      data-kind={e.kind}
+      data-origin={e.origin}
+      title={title}
+      className={`${cls} hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-600`}
+    >
+      {content}
     </button>
   );
 }
