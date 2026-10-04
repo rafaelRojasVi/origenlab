@@ -1752,6 +1752,15 @@ Owner decision 2026-10-03 ([`MIGRATION.md`](MIGRATION.md) §11 row 5): Cloudflar
 | Docs | [`MIGRATION.md`](MIGRATION.md) decision 5 and §10; [`OPERATIONS.md`](OPERATIONS.md) §1.2 steps 8–10; `docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md` rewritten for the API application only; `apps/dashboard-proxy/README.md`; `apps/api/docs/PRODUCTION_AUTH.md` *Production activation* |
 | Not done | **the Worker in Cloudflare still carries the previous allowlist and still rebuilds the operator header from Access until step 9 (`npx wrangler deploy`) runs.** The Access application on `dashboard.origenlab.cl` is untouched (step 10, after an end-to-end sign-in). Merging does not deploy the Worker; it does redeploy the dashboard static site, unchanged. Nothing provisioned, no Render variable set |
 
+### 2.7.42 V2 connection pool and batched reads, 2026-10-04 — built, not deployed
+
+| | |
+|---|---|
+| Why | The Render API runs in Oregon and the hosted database in `sa-east-1`. Every V2 repository opened a new verify-full TLS connection per call (two per authenticated request: session, then page) and sent one statement per round trip. Production logs 2026-10-04: `/v2/workspace/pipeline` ≈ 5 s, `/v2/workspace/overview` ≈ 3 s |
+| API | One `psycopg_pool` per process (min 1, max 4, idle 300 s, lifetime 3600 s, a check per checkout) behind the repositories' unchanged `connect(dsn, autocommit=False)` shape; same TLS options, same startup refusals; opened by the lifespan or on first use. Every `SET` in `apps/api` is transaction-scoped (audited, and a test fails on a session-level one). Overview's 14 counts are one statement; the workspace pipeline and the read setup go out in psycopg pipeline mode. One log line per request: method, path, status, milliseconds; nothing else |
+| Evidence | Full API suite against a disposable cluster (`scripts/disposable_test_cluster.sh`): **3110 passed, 0 failed, no V2 DSN skip**; two tests prove pipeline-mode results and that transaction-local settings do not survive into the next checkout |
+| Not done | Not deployed. Real timings not yet measured: read them from the new log line after the deploy. The per-checkout check costs one round trip; revisit with those numbers |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
