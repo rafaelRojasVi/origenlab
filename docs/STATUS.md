@@ -1801,7 +1801,7 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Proxy | the POST (4 KiB body) and the history GET, by exact path |
 | Dashboard | `TestSendPanel` on V2 campaigns with HTML and on V1-lane cards; admin only, history and remaining allowance |
 | Authorization | `apps/api/scripts/gmail_send_authorize.py`: one-time local OAuth as `contacto@`, refuses any other account, writes the token file mode 600. Procedure: `apps/api/README.md` «Campaign test sends» |
-| Evidence | `apps/api/scripts/validate.sh`: 2869 passed, 488 skipped; proxy 337 tests; the script's `token_payload` is unit-tested, the OAuth flow was never run |
+| Evidence | `apps/api/scripts/validate.sh`: 2869 passed, 488 skipped; dashboard 470 tests, proxy 337 tests; the script's `token_payload` is unit-tested, the OAuth flow was never run |
 | Not done | token not authorized; Render secret file and both variables not set; API and Worker not redeployed. This branch is based before #631/#632: rebase on main at merge time (STATUS and README conflicts expected to be trivial) |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
