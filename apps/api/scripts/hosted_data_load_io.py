@@ -54,6 +54,10 @@ _DISPOSABLE_DB = re.compile(r"origenlab_test_[0-9a-f]{8}")
 _SECRET_IN_URI = re.compile(r"(://[^:/@\s]+):[^@\s]*@")
 _PASSWORD_KV = re.compile(r"(password\s*=\s*)('(?:[^'\\]|\\.)*'|\S+)", re.I)
 _POOLER_HOST = re.compile(r"[a-z0-9.-]*pooler\.supabase\.com|db\.[a-z]{20}\.supabase\.co")
+# Generic shapes, for errors raised before the target's own values are known (secrets unknown):
+# a Supavisor login is "<role>.<20-letter project ref>"; any IPv4 literal may be the pinned hostaddr.
+_POOLER_LOGIN = re.compile(r"\b[a-z_][a-z0-9_]*\.[a-z]{20}\b")
+_IPV4 = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])")
 
 
 def target_secrets(t: Any) -> tuple[str, ...]:
@@ -70,7 +74,9 @@ def redact(text: str, extra: Iterable[str] = ()) -> str:
         text = text.replace(v, "***")
     text = _SECRET_IN_URI.sub(r"\1:***@", text)
     text = _PASSWORD_KV.sub(r"\1***", text)
-    return _POOLER_HOST.sub("<hosted-host>", text)
+    text = _POOLER_HOST.sub("<hosted-host>", text)
+    text = _POOLER_LOGIN.sub("<hosted-login>", text)
+    return _IPV4.sub("<address>", text)
 
 
 def scratch_conninfo(db: str, port: int = SOURCE_PORT) -> str:

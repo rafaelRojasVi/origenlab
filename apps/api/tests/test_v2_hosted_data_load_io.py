@@ -443,3 +443,14 @@ def test_local_and_scratch_conninfo_are_parseable():
 
 def test_redact_masks_a_quoted_password_whole():
     assert io_.redact("password='p a\\'ss' host=x") == "password=*** host=x"
+
+
+def test_redact_masks_hosted_shapes_before_the_target_is_known():
+    """I5: an error raised before the target resolves is redacted by shape alone."""
+    s = ('connection to server at "aws-0-sa-east-1.pooler.supabase.com" (1.2.3.4), port 5432 failed: '
+         'FATAL: password authentication failed for user "origenlab_migrator.abcdefghijklmnopqrst"')
+    r = io_.redact(s)
+    for leak in ("pooler.supabase.com", "1.2.3.4", "abcdefghijklmnopqrst"):
+        assert leak not in r
+    assert "<hosted-host>" in r and "<address>" in r and "<hosted-login>" in r and "port 5432" in r
+    assert io_.redact("crm.organization_relationship 41 rows") == "crm.organization_relationship 41 rows"

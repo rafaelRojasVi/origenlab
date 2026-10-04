@@ -8,8 +8,15 @@
     uv run python scripts/hosted_data_load.py rollback --plan <file> --plan-sha256 <hex> --confirm-delete-loaded-rows …
 
 The hosted credential is read from the environment variable named in supabase/.audit/hosted_target.env
-and never from argv. Every log line is redacted. Exit codes: 0 ok, 11 preflight refused,
-12 apply/rollback failed (rolled back, or commit outcome unknown: run verify), 13 verify mismatch.
+and never from argv. Every log line is redacted, unexpected errors included (no traceback is printed;
+Ctrl-C still interrupts). Exit codes:
+  0  ok
+  11 refused: preflight, plan file or a target that changed; nothing was written
+  12 apply/rollback failed after its write transaction began (rolled back, or commit outcome
+     unknown: run verify)
+  13 verify mismatch: the target is not the planned load (the runbook's rollback trigger)
+  14 verify incomplete: the target read, the post-load dump, the scratch mint or the restore drill
+     could not run (infrastructure); nothing is known to be wrong with the target — fix and re-run
 `rollback` empties the 16 loaded tables with DELETE (never TRUNCATE: 37 foreign keys from outside tables
 reference them and CASCADE would wipe the campaign hold row).
 """
@@ -31,7 +38,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hosted_data_load_io as io_  # noqa: E402
 from origenlab_api.v2 import hosted_data_load_plan as hp  # noqa: E402
 
-EXIT_REFUSED, EXIT_APPLY_FAILED, EXIT_VERIFY_MISMATCH = 11, 12, 13
+EXIT_REFUSED, EXIT_APPLY_FAILED, EXIT_VERIFY_MISMATCH, EXIT_VERIFY_INCOMPLETE = 11, 12, 13, 14
+#: What main() needs to report an unexpected exception: the hosted values to redact (known once the
+#: target file resolves) and whether apply/rollback had opened their write transaction. Reset per run.
+_RUN: dict = {"secrets": (), "write_began": False}
+#: What pg_dump_target can raise: its own redacted RuntimeError, docker missing, docker cp failing.
+_DUMP_ERRORS = (RuntimeError, OSError, subprocess.CalledProcessError)
 OUT_DIR = Path("~/data/origenlab-v2-migration/hosted-load").expanduser()
 DEFAULT_HOSTED_OPERATOR = "3b2cddb9-2c18-4d12-93ed-6714d3e8b57a"
 
@@ -44,9 +56,14 @@ def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _resolve_target(args):
+    target = io_.hosted_target(io_.REPO_ROOT, os.environ, Path(args.target_file))
+    _RUN["secrets"] = io_.target_secrets(target)
+    return target
+
+
 def connect_both(args):
-    repo = io_.REPO_ROOT
-    target = io_.hosted_target(repo, os.environ, Path(args.target_file))
+    target = _resolve_target(args)
     # autocommit=True: every transaction in this tool is opened and closed by an explicit
     # BEGIN / COMMIT / ROLLBACK statement, so its boundaries are visible in the code.
     src = psycopg.connect(io_.source_conninfo(), autocommit=True)
@@ -120,7 +137,7 @@ def cmd_plan(args) -> int:
         try:
             io_.pg_dump_target(target, probe, schema_only=True)
             probe_ok = True
-        except (RuntimeError, OSError) as exc:
+        except _DUMP_ERRORS as exc:
             print(io_.redact(str(exc), secrets))
             probe_ok = False
         finally:
@@ -198,11 +215,18 @@ def _reread_state(tgt, plan, secrets) -> None:
     print(f"target re-read: state {state}; {hp.SEQUENCE} last_value={last} is_called={called}")
 
 
-def _best_effort_rollback(cur) -> None:
+def _best_effort_rollback(cur) -> bool:
+    """ROLLBACK; True when the server confirmed it. A failed ROLLBACK (dead link) is not reported as one:
+    the server aborts the transaction when the session ends, but this tool did not see it happen."""
     try:
         cur.execute("ROLLBACK")
+        return True
     except psycopg.Error:
-        pass
+        return False
+
+
+def _rolled_back(ok: bool) -> str:
+    return "transaction rolled back" if ok else "rollback attempted (the ROLLBACK itself failed)"
 
 
 def _begin_write(tc, plan) -> None:
@@ -221,9 +245,9 @@ def _begin_write(tc, plan) -> None:
 
 
 def _abort_apply(sc, tc, tgt, secrets) -> int:
-    _best_effort_rollback(tc)
+    ok = _best_effort_rollback(tc)
     _best_effort_rollback(sc)
-    print("transaction rolled back")
+    print(_rolled_back(ok))
     _reread_target(tgt, secrets)
     return EXIT_APPLY_FAILED
 
@@ -244,7 +268,7 @@ def cmd_apply(args) -> int:
         out = Path(args.out).expanduser()
         try:
             pre = io_.pg_dump_target(target, out / f"pre-{_stamp()}.dump")
-        except (RuntimeError, OSError) as exc:
+        except _DUMP_ERRORS as exc:
             print(io_.redact(str(exc), secrets))
             print("pre-load dump failed; nothing written")
             return EXIT_REFUSED
@@ -269,6 +293,7 @@ def cmd_apply(args) -> int:
                 return EXIT_REFUSED
 
             # Phase 2: the one write transaction. Any psycopg error rolls everything back (exit 12).
+            _RUN["write_began"] = True
             try:
                 _begin_write(tc, plan)
                 # The preflight read is minutes old: under the locks, the target must still be pristine.
@@ -314,9 +339,9 @@ def cmd_apply(args) -> int:
                 print("apply failed: " + io_.redact(str(exc), secrets)[:400])
                 return _abort_apply(sc, tc, tgt, secrets)
             except BaseException:
-                _best_effort_rollback(tc)
+                ok = _best_effort_rollback(tc)
                 _best_effort_rollback(sc)
-                print("apply interrupted; transaction rolled back")
+                print(f"apply interrupted; {_rolled_back(ok)}")
                 raise
 
             # Phase 3: COMMIT, judged on its own: a failure here leaves the outcome unknown.
@@ -326,6 +351,9 @@ def cmd_apply(args) -> int:
                 print("COMMIT raised: " + io_.redact(str(exc), secrets)[:400])
                 print("commit outcome unknown; run `verify` before anything else")
                 return EXIT_APPLY_FAILED
+            except BaseException:
+                print("commit outcome unknown — run `verify` before anything else")
+                raise
             if tc.statusmessage != "COMMIT":
                 print(f"commit outcome unknown (server answered {tc.statusmessage!r}); run `verify` before anything else")
                 return EXIT_APPLY_FAILED
@@ -354,6 +382,20 @@ def _mismatch(msg: str) -> int:
     return EXIT_VERIFY_MISMATCH
 
 
+def _incomplete(msg: str) -> int:
+    print(msg)
+    print("VERIFY INCOMPLETE: nothing is known to be wrong with the target; fix the cause and re-run verify")
+    return EXIT_VERIFY_INCOMPLETE
+
+
+def _print_counts(plan, obs) -> None:
+    print(f"  {'table':40} {'observed':>9} {'planned':>9}")
+    for t in plan["tables"]:
+        n = obs[t["name"]][0]
+        mark = "" if (n, obs[t["name"]][1]) == (t["count"], t["hash"]) else "   <- differs"
+        print(f"  {t['name']:40} {n:>9} {t['count']:>9}{mark}")
+
+
 def cmd_verify(args) -> int:
     plan, sha = load_plan(args.plan)
     if sha != args.plan_sha256:
@@ -375,28 +417,33 @@ def cmd_verify(args) -> int:
                 finally:
                     _best_effort_rollback(tc)
         except psycopg.Error as exc:
-            return _mismatch("verify could not read the target: " + io_.redact(str(exc), secrets)[:400])
+            return _incomplete("verify could not read the target: " + io_.redact(str(exc), secrets)[:400])
         print(f"target state: {state}")
+        if state != "loaded":
+            _print_counts(plan, obs)
+            if state == "empty":
+                return _mismatch("VERIFY MISMATCH — empty: the load did not commit; apply may be re-run after a "
+                                 "fresh plan")
+            return _mismatch("VERIFY MISMATCH — partial state: treat as an incident, do not re-apply")
         print_checks(inv, secrets)
-        if state == "loaded" and [c["check"] for c in inv] != io_.invariant_names(plan):
+        if [c["check"] for c in inv] != io_.invariant_names(plan):
             return _mismatch("VERIFY MISMATCH: invariant set differs from the expected one")
-        if state != "loaded" or hp.refused(inv):
-            return _mismatch("VERIFY MISMATCH" + (" — partial state: treat as an incident, do not re-apply"
-                                                  if state == "partial" else ""))
+        if hp.refused(inv):
+            return _mismatch("VERIFY MISMATCH")
         try:
             post = io_.pg_dump_target(target, Path(args.out).expanduser() / f"post-{_stamp()}.dump")
-        except (RuntimeError, OSError) as exc:
-            return _mismatch("post-load dump failed: " + io_.redact(str(exc), secrets))
+        except _DUMP_ERRORS as exc:
+            return _incomplete("post-load dump failed: " + io_.redact(str(exc), secrets)[:400])
         try:
             res = subprocess.run(["bash", str(SCRATCH_SH), "mint"], capture_output=True, text=True)
         except OSError as exc:
-            return _mismatch("scratch mint could not run: " + io_.redact(str(exc), secrets))
+            return _incomplete("scratch mint could not run: " + io_.redact(str(exc), secrets))
         lines = res.stdout.strip().splitlines()
         if res.returncode != 0 or not lines:
-            return _mismatch("scratch mint failed: " + io_.redact(res.stderr, secrets)[-400:])
+            return _incomplete("scratch mint failed: " + io_.redact(res.stderr, secrets)[-400:])
         scratch = lines[-1].strip()
         if not SCRATCH_NAME.fullmatch(scratch):
-            return _mismatch("scratch mint printed an unexpected name; refusing to use it (nothing dropped)")
+            return _incomplete("scratch mint printed an unexpected name; refusing to use it (nothing dropped)")
         try:
             io_.restore_into_scratch(Path(post["path"]), scratch)
             with psycopg.connect(io_.scratch_conninfo(scratch), autocommit=True) as sconn, sconn.cursor() as cur:
@@ -407,7 +454,7 @@ def cmd_verify(args) -> int:
                 finally:
                     _best_effort_rollback(cur)
         except (RuntimeError, OSError, subprocess.CalledProcessError, psycopg.Error) as exc:
-            return _mismatch("restore drill failed: " + io_.redact(str(exc), secrets)[:400])
+            return _incomplete("restore drill failed: " + io_.redact(str(exc), secrets)[:400])
         finally:
             try:
                 dropped = subprocess.run(["bash", str(SCRATCH_SH), "drop", scratch], capture_output=True,
@@ -453,6 +500,7 @@ def cmd_rollback(args) -> int:
     try:
         secrets = io_.target_secrets(target)
         with tgt.cursor() as tc:
+            _RUN["write_began"] = True
             try:
                 _begin_write(tc, plan)
                 if io_.classify_target_state(plan, io_.observed_rows(tc, plan)) != "loaded":
@@ -487,20 +535,19 @@ def cmd_rollback(args) -> int:
                     print("after DELETE: " + (f"tables not empty {dirty}" if dirty else
                                               f"rows outside the load {outside}" if outside else
                                               "roster or singleton rows changed"))
-                    _best_effort_rollback(tc)
-                    print("transaction rolled back")
+                    print(_rolled_back(_best_effort_rollback(tc)))
                     _reread_state(tgt, plan, secrets)
                     return EXIT_APPLY_FAILED
                 tc.execute("select setval(%s::regclass, 1, false)", (hp.SEQUENCE,))
             except psycopg.Error as exc:
-                _best_effort_rollback(tc)
+                ok = _best_effort_rollback(tc)
                 print("rollback failed: " + io_.redact(str(exc), secrets)[:400])
-                print("transaction rolled back")
+                print(_rolled_back(ok))
                 _reread_state(tgt, plan, secrets)
                 return EXIT_APPLY_FAILED
             except BaseException:
-                _best_effort_rollback(tc)
-                print("rollback interrupted; transaction rolled back; run `verify` before anything else")
+                ok = _best_effort_rollback(tc)
+                print(f"rollback interrupted; {_rolled_back(ok)}; run `verify` before anything else")
                 raise
             try:
                 tc.execute("COMMIT")
@@ -508,6 +555,9 @@ def cmd_rollback(args) -> int:
                 print("COMMIT raised: " + io_.redact(str(exc), secrets)[:400])
                 print("commit outcome unknown; run `verify` before anything else")
                 return EXIT_APPLY_FAILED
+            except BaseException:
+                print("commit outcome unknown — run `verify` before anything else")
+                raise
             if tc.statusmessage != "COMMIT":
                 print(f"commit outcome unknown (server answered {tc.statusmessage!r}); run `verify` before anything else")
                 return EXIT_APPLY_FAILED
@@ -562,10 +612,23 @@ def main(argv=None) -> int:
                    help="confirm deleting the rows of the 16 loaded tables (DELETE, never TRUNCATE)")
     p.set_defaults(func=cmd_rollback)
     args = ap.parse_args(argv)
+    _RUN.update(secrets=(), write_began=False)
     try:
         return int(args.func(args))
     except PlanRefused as exc:
         print(exc)
+        return EXIT_REFUSED
+    except Exception as exc:  # not BaseException: Ctrl-C still interrupts
+        # Connect failures, docker/subprocess errors, a bad plan file …: one redacted line, no traceback
+        # (a traceback would print the hosted host, address and login verbatim).
+        print(f"{args.cmd}: unexpected error: " + io_.redact(f"{type(exc).__name__}: {exc}", _RUN["secrets"])[:600])
+        if args.cmd == "verify":
+            print("VERIFY INCOMPLETE: nothing is known to be wrong with the target; fix the cause and re-run verify")
+            return EXIT_VERIFY_INCOMPLETE
+        if _RUN["write_began"]:
+            print("the write transaction had begun: run `verify` before anything else")
+            return EXIT_APPLY_FAILED
+        print("nothing was written")
         return EXIT_REFUSED
 
 

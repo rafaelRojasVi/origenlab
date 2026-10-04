@@ -54,7 +54,10 @@ def test_rollback_requires_confirm_delete_loaded_rows():
 
 def test_exit_codes_are_the_documented_ones():
     cli = load_cli()
-    assert (cli.EXIT_REFUSED, cli.EXIT_APPLY_FAILED, cli.EXIT_VERIFY_MISMATCH) == (11, 12, 13)
+    assert (cli.EXIT_REFUSED, cli.EXIT_APPLY_FAILED, cli.EXIT_VERIFY_MISMATCH, cli.EXIT_VERIFY_INCOMPLETE) == \
+        (11, 12, 13, 14)
+    for line in ("11 refused", "12 apply/rollback failed", "13 verify mismatch", "14 verify incomplete"):
+        assert line in cli.__doc__
 
 
 def test_hosted_operator_must_be_a_uuid():
@@ -110,7 +113,7 @@ def test_plan_clean_writes_one_0600_file(tmp_path, monkeypatch, capsys):
 def test_connect_both_closes_source_when_target_fails(monkeypatch):
     cli = load_cli()
     src = _Conn()
-    monkeypatch.setattr(cli.io_, "hosted_target", lambda *a, **k: SimpleNamespace())
+    monkeypatch.setattr(cli.io_, "hosted_target", lambda *a, **k: SimpleNamespace(mode="hosted"))
     monkeypatch.setattr(cli.io_, "source_conninfo", lambda: "s")
     monkeypatch.setattr(cli.io_, "conninfo_for", lambda t: "t")
 
@@ -264,6 +267,9 @@ class _CatCursor(_FakeCursor):
     def execute(self, q, params=None):
         text = q.as_string(None) if isinstance(q, pgsql.Composed) else str(q)
         self.log.append(text)
+        for prefix, exc in self.conn.raise_on.items():
+            if text.startswith(prefix):
+                raise exc
         if text.startswith("DELETE FROM "):
             name = text.split()[-1]
             if name not in self.conn.sticky:
@@ -291,6 +297,7 @@ class _CatConn(_FakeConn):
         self.counts.update({"outbound.send_control": 1, "outbound.campaign_block": 1, "crm.task": 0,
                             "platform.operator": 1, "procurement.notice": 0})
         self.sticky = set(sticky)
+        self.raise_on: dict[str, BaseException] = {}
 
     def cursor(self):
         return _CatCursor(self)
@@ -456,11 +463,11 @@ def _runner(calls, mint_out="origenlab_test_deadbeef\n", mint_rc=0, drop_rc=0):
     return run
 
 
-def test_verify_mint_failure_exits_13_and_never_drops(tmp_path, monkeypatch, capsys):
+def test_verify_mint_failure_is_incomplete_14_and_never_drops(tmp_path, monkeypatch, capsys):
     cli = load_cli()
     calls = []
     src, tgt = _patch_verify(cli, monkeypatch, tmp_path, _runner(calls, mint_out="", mint_rc=1))
-    assert cli.cmd_verify(_apply_args(tmp_path)) == 13
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 14
     assert calls == [["mint"]] and "s3cret" not in capsys.readouterr().out
     assert src.closed and tgt.closed
 
@@ -469,7 +476,7 @@ def test_verify_unknown_scratch_name_is_refused_and_never_dropped(tmp_path, monk
     cli = load_cli()
     calls = []
     _patch_verify(cli, monkeypatch, tmp_path, _runner(calls, mint_out="origenlab_clean\n"))
-    assert cli.cmd_verify(_apply_args(tmp_path)) == 13
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 14
     assert calls == [["mint"]]
 
 
@@ -482,7 +489,7 @@ def test_verify_drops_scratch_after_restore_failure_and_warns_when_drop_fails(tm
         raise RuntimeError("pg_restore failed: password=s3cret")
 
     monkeypatch.setattr(cli.io_, "restore_into_scratch", fail)
-    assert cli.cmd_verify(_apply_args(tmp_path)) == 13
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 14
     assert calls == [["mint"], ["drop", "origenlab_test_deadbeef"]]
     out = capsys.readouterr().out
     assert "s3cret" not in out and "origenlab_test_deadbeef could not be dropped" in out
@@ -709,3 +716,142 @@ def test_apply_refuses_when_a_planned_table_is_no_longer_empty(tmp_path, monkeyp
     tgt.counts["crm.quote"] = 3
     assert cli.cmd_apply(_apply_args(tmp_path)) == 11
     assert "crm.quote" in capsys.readouterr().out and not any(s.startswith("COPY") for s in tgt.log)
+
+
+# ---- final review: unexpected errors are redacted and mapped (I5); verify outcomes (M2) ----------
+
+_HOSTED_ERR = ('connection to server at "aws-0-sa-east-1.pooler.supabase.com" (1.2.3.4), port 5432 failed: '
+               'FATAL: password authentication failed for user "origenlab_migrator.abcdefghijklmnopqrst"')
+
+
+@pytest.mark.parametrize(("cmd", "code"), [("plan", 11), ("apply", 11), ("rollback", 11), ("verify", 14)])
+def test_connect_failure_is_redacted_and_mapped(tmp_path, monkeypatch, capsys, cmd, code):
+    """I5: no traceback, no hosted host / address / login, and the documented exit code."""
+    cli = load_cli()
+
+    def boom(args):
+        raise psycopg.OperationalError(_HOSTED_ERR)
+
+    monkeypatch.setattr(cli, "connect_both", boom)
+    monkeypatch.setattr(cli, "connect_target", boom, raising=False)
+    monkeypatch.setattr(cli, "load_plan", lambda p: (_plan_real(), "a" * 64))
+    extra = {"plan": [], "apply": ["--plan", "p", "--plan-sha256", "a" * 64],
+             "verify": ["--plan", "p", "--plan-sha256", "a" * 64],
+             "rollback": ["--plan", "p", "--plan-sha256", "a" * 64, "--confirm-delete-loaded-rows"]}[cmd]
+    assert cli.main([cmd, "--out", str(tmp_path), *extra, *AUTH]) == code
+    cap = capsys.readouterr()
+    text = cap.out + cap.err
+    for leak in ("pooler.supabase.com", "1.2.3.4", "origenlab_migrator.abcdefghijklmnopqrst", "abcdefghijklmnopqrst",
+                 "Traceback"):
+        assert leak not in text
+    assert "OperationalError" in text
+
+
+def test_unexpected_error_inside_the_write_transaction_exits_12(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path)
+
+    def broken(*a, **k):
+        raise ValueError("bug at 10.9.8.7")
+
+    monkeypatch.setattr(cli.io_, "copy_table", broken)
+    rc = cli.main(["apply", "--plan", "p", "--plan-sha256", "a" * 64, "--out", str(tmp_path / "out"), *AUTH])
+    out = capsys.readouterr().out
+    assert rc == 12 and "ROLLBACK" in tgt.log and "COMMIT" not in tgt.log
+    assert "apply interrupted; transaction rolled back" in out and "run `verify`" in out and "10.9.8.7" not in out
+
+
+def test_unexpected_error_before_the_write_transaction_exits_11(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "_facts", lambda *a, **k: (_ for _ in ()).throw(KeyError("tables")))
+    rc = cli.main(["apply", "--plan", "p", "--plan-sha256", "a" * 64, "--out", str(tmp_path / "out"), *AUTH])
+    assert rc == 11 and "nothing was written" in capsys.readouterr().out
+    assert "BEGIN" not in tgt.log
+
+
+def test_ctrl_c_still_interrupts_main(tmp_path, monkeypatch):
+    cli = load_cli()
+    monkeypatch.setattr(cli, "connect_both", lambda a: (_ for _ in ()).throw(KeyboardInterrupt))
+    with pytest.raises(KeyboardInterrupt):
+        cli.main(["plan", "--out", str(tmp_path), *AUTH])
+
+
+_CPE = subprocess.CalledProcessError(1, ["docker", "cp", "/x/ca.crt", "origenlab_dev_db:/tmp/hosted-ca.crt"])
+
+
+def test_pre_dump_docker_cp_failure_refuses_11(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path)
+    monkeypatch.setattr(cli.io_, "pg_dump_target", lambda *a, **k: (_ for _ in ()).throw(_CPE))
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 11
+    assert "pre-load dump failed; nothing written" in capsys.readouterr().out and "BEGIN" not in tgt.log
+
+
+def test_probe_docker_cp_failure_is_a_refusal_not_a_crash(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    _patch_plan_env(cli, monkeypatch, refuse=False)
+    monkeypatch.setattr(cli, "_facts", lambda args, src, tgt, target, op, probe: (
+        PLAN_TESTS.good_source(), PLAN_TESTS.good_target(pg_dump_probe_ok=probe), PLAN_TESTS.good_host()))
+    monkeypatch.setattr(cli.io_, "pg_dump_target", lambda *a, **k: (_ for _ in ()).throw(_CPE))
+    assert cli.main(["plan", "--out", str(tmp_path), *AUTH]) == 11
+    assert "REFUSED pg_dump_can_reach_target" in capsys.readouterr().out
+
+
+def test_post_dump_failure_is_verify_incomplete_14(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    calls = []
+    _patch_verify(cli, monkeypatch, tmp_path, _runner(calls))
+    monkeypatch.setattr(cli.io_, "pg_dump_target", lambda *a, **k: (_ for _ in ()).throw(_CPE))
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 14
+    assert "VERIFY INCOMPLETE" in capsys.readouterr().out and calls == []
+
+
+def test_verify_empty_prints_counts_and_says_apply_may_be_rerun(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    calls = []
+    _patch_verify(cli, monkeypatch, tmp_path, _runner(calls))
+    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: {n: (0, "") for n in REAL})
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 13
+    out = capsys.readouterr().out
+    assert "target state: empty" in out and "the load did not commit; apply may be re-run after a fresh plan" in out
+    assert "observed" in out and "planned" in out and f"{REAL[0]:40} {0:>9} {2:>9}" in out and calls == []
+
+
+def test_verify_partial_prints_observed_vs_planned_per_table(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    _patch_verify(cli, monkeypatch, tmp_path, _runner([]))
+    obs = {n: (2, "h") for n in REAL}
+    obs["crm.quote"] = (1, "x")
+    monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: obs)
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 13
+    out = capsys.readouterr().out
+    assert f"{'crm.quote':40} {1:>9} {2:>9}   <- differs" in out and "incident" in out
+
+
+def test_verify_target_read_failure_is_incomplete_14(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    _patch_verify(cli, monkeypatch, tmp_path, _runner([]))
+    monkeypatch.setattr(cli.io_, "observed_rows",
+                        lambda cur, p: (_ for _ in ()).throw(psycopg.OperationalError("server closed the connection")))
+    assert cli.cmd_verify(_apply_args(tmp_path)) == 14
+
+
+def test_failed_rollback_statement_is_reported_as_attempted(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    tgt = _CatConn()
+    tgt.raise_on["ROLLBACK"] = psycopg.OperationalError("connection lost")
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path, tgt=tgt, copied={"crm.quote": 1})
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 12
+    out = capsys.readouterr().out
+    assert "rollback attempted (the ROLLBACK itself failed)" in out and "transaction rolled back" not in out
+
+
+def test_ctrl_c_during_commit_says_outcome_unknown(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    tgt = _CatConn()
+    tgt.raise_on["COMMIT"] = KeyboardInterrupt()
+    _patch_apply_real(cli, monkeypatch, tmp_path, tgt=tgt)
+    with pytest.raises(KeyboardInterrupt):
+        cli.cmd_apply(_apply_args(tmp_path))
+    assert "commit outcome unknown — run `verify`" in capsys.readouterr().out
