@@ -307,7 +307,9 @@ def _patch_rollback(cli, monkeypatch, *, tgt=None, roster="r", commit_msg="COMMI
     src, tgt = _FakeConn(), tgt or _CatConn()
     target = SimpleNamespace(mode="hosted", password="s3cret", user="u", project_ref="r", host="h", hostaddr="1.1.1.1")
     plan = _plan_real()
-    monkeypatch.setattr(cli, "connect_both", lambda a: (src, tgt, target))
+    # rollback reads no source: a connect_both call would fail the test
+    monkeypatch.setattr(cli, "connect_both", lambda a: pytest.fail("rollback opened a source connection"))
+    monkeypatch.setattr(cli, "connect_target", lambda a: (tgt, target))
     monkeypatch.setattr(cli, "load_plan", lambda p: (plan, "a" * 64))
     monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: observed or {n: (2, "h") for n in REAL})
     monkeypatch.setattr(cli.io_, "roster_hash", lambda cur: roster)
@@ -338,7 +340,7 @@ def test_rollback_succeeds_with_real_count_helpers_and_orders_statements(tmp_pat
     last_count = max(i for i, s in enumerate(log) if s.startswith("select count(*)"))
     assert last_count < len(log) - 2
     assert any("SET LOCAL ROLE origenlab_owner" in s for s in log) and "SET CONSTRAINTS ALL DEFERRED" in log
-    assert src.closed and tgt.closed and "s3cret" not in capsys.readouterr().out
+    assert tgt.closed and src.log == [] and "s3cret" not in capsys.readouterr().out
 
 
 def test_rollback_dirty_after_delete_exits_12_without_restart_and_rereads(tmp_path, monkeypatch, capsys):
@@ -349,7 +351,7 @@ def test_rollback_dirty_after_delete_exits_12_without_restart_and_rereads(tmp_pa
     assert "ROLLBACK" in tgt.log
     out = capsys.readouterr().out
     assert "tables not empty" in out and "target re-read: state loaded" in out and "next value 23096" in out
-    assert "untouched" not in out and src.closed and tgt.closed
+    assert "untouched" not in out and tgt.closed and src.log == []
 
 
 def test_rollback_refuses_when_not_loaded(tmp_path, monkeypatch, capsys):
@@ -370,7 +372,7 @@ def test_rollback_refuses_when_rows_exist_outside_the_load(tmp_path, monkeypatch
     src, tgt = _patch_rollback(cli, monkeypatch, tgt=tgt)
     assert cli.cmd_rollback(_rb_args(tmp_path)) == 11
     assert not any(s.startswith("DELETE") for s in tgt.log) and tgt.log[-1] == "ROLLBACK"
-    assert "crm.task" in capsys.readouterr().out and src.closed and tgt.closed
+    assert "crm.task" in capsys.readouterr().out and tgt.closed and src.log == []
 
 
 def test_rollback_refuses_when_the_roster_changed(tmp_path, monkeypatch):
@@ -392,7 +394,7 @@ def test_rollback_psycopg_error_rolls_back_without_restart(tmp_path, monkeypatch
     out = capsys.readouterr().out
     assert "s3cret" not in out and "target re-read" in out
     assert "ROLLBACK" in tgt.log and not any(s.startswith("ALTER SEQUENCE") for s in tgt.log)
-    assert src.closed and tgt.closed
+    assert tgt.closed and src.log == []
 
 
 def test_rollback_commit_with_unexpected_status_is_unknown_outcome(tmp_path, monkeypatch, capsys):
@@ -412,7 +414,7 @@ def test_rollback_interrupt_rolls_back_and_closes(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.io_, "set_triggers", boom)
     with pytest.raises(KeyboardInterrupt):
         cli.cmd_rollback(_rb_args(tmp_path))
-    assert "ROLLBACK" in tgt.log and src.closed and tgt.closed
+    assert "ROLLBACK" in tgt.log and tgt.closed and src.log == []
 
 
 def test_rollback_help_has_incident_text_and_no_restore_recipe(capsys):
@@ -445,12 +447,14 @@ def _patch_verify(cli, monkeypatch, tmp_path, run):
     src, tgt = _FakeConn(), _FakeConn()
     target = SimpleNamespace(mode="hosted", password="s3cret", user="u", project_ref="r", host="h", hostaddr="1.1.1.1")
     plan = _plan_real()
-    monkeypatch.setattr(cli, "connect_both", lambda a: (src, tgt, target))
+    # verify reads no source: a connect_both call would fail the test
+    monkeypatch.setattr(cli, "connect_both", lambda a: pytest.fail("verify opened a source connection"))
+    monkeypatch.setattr(cli, "connect_target", lambda a: (tgt, target))
     monkeypatch.setattr(cli, "load_plan", lambda p: (plan, "a" * 64))
     monkeypatch.setattr(cli.io_, "observed_rows", lambda cur, p: {n: (2, "h") for n in REAL})
     monkeypatch.setattr(cli.io_, "apply_session_settings", lambda cur, local=False: None)
     monkeypatch.setattr(cli.io_, "post_copy_invariants",
-                        lambda cur, p, to: [{"check": n, "ok": True, "detail": None} for n in cli.io_.invariant_names(p)])
+                        lambda cur, p, to, obs=None: [{"check": n, "ok": True, "detail": None} for n in cli.io_.invariant_names(p)])
     monkeypatch.setattr(cli.io_, "pg_dump_target", lambda *a, **k: {"path": str(tmp_path / "post.dump"), "bytes": 1})
     monkeypatch.setattr(cli.subprocess, "run", run)
     return src, tgt
@@ -471,7 +475,7 @@ def test_verify_mint_failure_is_incomplete_14_and_never_drops(tmp_path, monkeypa
     src, tgt = _patch_verify(cli, monkeypatch, tmp_path, _runner(calls, mint_out="", mint_rc=1))
     assert cli.cmd_verify(_apply_args(tmp_path)) == 14
     assert calls == [["mint"]] and "s3cret" not in capsys.readouterr().out
-    assert src.closed and tgt.closed
+    assert tgt.closed and src.log == [] and not src.closed  # verify never touches a source
 
 
 def test_verify_unknown_scratch_name_is_refused_and_never_dropped(tmp_path, monkeypatch):
@@ -508,7 +512,7 @@ def test_verify_partial_state_exits_13_before_any_dump(tmp_path, monkeypatch, ca
     out = capsys.readouterr().out
     assert "partial" in out and "incident" in out and calls == []
     assert any("READ ONLY" in s for s in tgt.log) and any("SET LOCAL ROLE origenlab_owner" in s for s in tgt.log)
-    assert src.closed and tgt.closed
+    assert tgt.closed and src.log == [] and not src.closed
 
 
 def test_scratch_script_parses_and_lists_all_subcommands():
@@ -870,3 +874,79 @@ def test_apply_restarts_the_sequence_at_the_next_value_inside_the_transaction(tm
     restart = log.index('ALTER SEQUENCE "crm"."domain_event_stream_position_seq" RESTART WITH 23096')
     assert log.index("BEGIN") < restart < log.index("COMMIT")
     assert not any("setval" in s for s in log)
+
+
+# ---- final review: M6 apply paths no test covered ------------------------------------------------
+
+
+def test_apply_source_drift_refuses_11_before_the_target_transaction(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path, src=_SrcConn(rows={"crm.quote": (3, "h")}))
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 11
+    assert "source drifted since plan: crm.quote" in capsys.readouterr().out
+    assert "BEGIN" not in tgt.log and src.log[-1] == "ROLLBACK"
+    assert src.closed and tgt.closed
+
+
+def test_apply_copied_count_mismatch_rolls_back_12_and_rereads(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path, copied={"crm.quote": 1})
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 12
+    out = capsys.readouterr().out
+    assert "copied row counts differ from plan" in out and "'crm.quote': (1, 2)" in out
+    assert "transaction rolled back" in out and "target after rollback: all 16 tables empty" in out
+    assert "COMMIT" not in tgt.log and "ROLLBACK" in tgt.log
+    assert not any(s.startswith("ALTER SEQUENCE") for s in tgt.log)
+
+
+def test_apply_failed_invariant_rolls_back_12(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    names = cli.io_.invariant_names(_plan_real())
+    inv = [{"check": n, "ok": n != "roster_unchanged", "detail": None} for n in names]
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path, invariants=inv)
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 12
+    out = capsys.readouterr().out
+    assert "REFUSED roster_unchanged" in out and "invariants failed" in out and "transaction rolled back" in out
+    assert "COMMIT" not in tgt.log
+
+
+def test_apply_unexpected_invariant_set_rolls_back_12(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    inv = [{"check": "rows_match:comms.mailbox", "ok": True, "detail": None}]
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path, invariants=inv)
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 12
+    assert "invariant set differs from the expected one" in capsys.readouterr().out and "COMMIT" not in tgt.log
+
+
+def test_apply_commit_raising_is_outcome_unknown_12(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    tgt = _CatConn()
+    tgt.raise_on["COMMIT"] = psycopg.OperationalError("SSL connection has been closed unexpectedly at 10.0.0.9")
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path, tgt=tgt)
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 12
+    out = capsys.readouterr().out
+    assert "COMMIT raised" in out and "commit outcome unknown; run `verify` before anything else" in out
+    assert "10.0.0.9" not in out and "COMMITTED" not in out
+    assert list((tmp_path / "out").glob("apply-*.json")) == []
+
+
+def test_apply_commit_status_other_than_commit_is_outcome_unknown_12(tmp_path, monkeypatch, capsys):
+    cli = load_cli()
+    src, tgt = _patch_apply_real(cli, monkeypatch, tmp_path)
+    monkeypatch.setattr(_FakeCursor, "statusmessage", "ROLLBACK")
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 12
+    out = capsys.readouterr().out
+    assert "commit outcome unknown (server answered 'ROLLBACK')" in out and "COMMITTED" not in out
+
+
+def test_apply_report_has_per_table_counts_and_elapsed_seconds(tmp_path, monkeypatch, capsys):
+    import json
+    cli = load_cli()
+    _patch_apply_real(cli, monkeypatch, tmp_path)
+    assert cli.cmd_apply(_apply_args(tmp_path)) == 0
+    report = next((tmp_path / "out").glob("apply-*.json"))
+    data = json.loads(report.read_text())
+    assert data["tables"] == {n: 2 for n in REAL} and list(data["tables"]) == list(REAL)
+    assert isinstance(data["elapsed_seconds"], float) and data["elapsed_seconds"] >= 0
+    assert data["plan_sha256"] == "a" * 64 and stat.S_IMODE(report.stat().st_mode) == 0o600
+    assert "COMMITTED" in capsys.readouterr().out

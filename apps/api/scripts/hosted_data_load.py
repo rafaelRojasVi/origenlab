@@ -25,9 +25,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +46,10 @@ _RUN: dict = {"secrets": (), "write_began": False}
 _DUMP_ERRORS = (RuntimeError, OSError, subprocess.CalledProcessError)
 OUT_DIR = Path("~/data/origenlab-v2-migration/hosted-load").expanduser()
 DEFAULT_HOSTED_OPERATOR = "3b2cddb9-2c18-4d12-93ed-6714d3e8b57a"
+SCRATCH_SH = Path(__file__).with_name("hosted_data_load_scratch.sh")
+CHECKLIST = [("casos (crm.opportunity)", "crm.opportunity"), ("cotizaciones (crm.quote)", "crm.quote"),
+             ("instituciones (crm.organization)", "crm.organization"), ("campañas archivadas", "outbound.campaign"),
+             ("destinatarios", "outbound.campaign_recipient"), ("eventos", "crm.domain_event")]
 
 
 def _now() -> str:
@@ -60,6 +64,12 @@ def _resolve_target(args):
     target = io_.hosted_target(io_.REPO_ROOT, os.environ, Path(args.target_file))
     _RUN["secrets"] = io_.target_secrets(target)
     return target
+
+
+def connect_target(args):
+    """The target alone: verify and rollback read nothing from the source."""
+    target = _resolve_target(args)
+    return io_.connect_target(target), target
 
 
 def connect_both(args):
@@ -171,7 +181,7 @@ def _close_clean(conn) -> None:
     try:
         if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
             with conn.cursor() as cur:
-                _best_effort_rollback(cur)
+                io_.best_effort_rollback(cur)
     except psycopg.Error:
         pass
     finally:
@@ -187,7 +197,7 @@ def _reread_target(tgt, secrets) -> None:
                 cur.execute("SET LOCAL ROLE origenlab_owner")
                 counts = io_.target_counts(cur)
             finally:
-                _best_effort_rollback(cur)
+                io_.best_effort_rollback(cur)
     except psycopg.Error as exc:
         print("could not re-read target: " + io_.redact(str(exc), secrets)[:400])
         return
@@ -207,21 +217,11 @@ def _reread_state(tgt, plan, secrets) -> None:
                 state = io_.classify_target_state(plan, io_.observed_rows(cur, plan))
                 nxt = io_.next_sequence_value(cur)
             finally:
-                _best_effort_rollback(cur)
+                io_.best_effort_rollback(cur)
     except psycopg.Error as exc:
         print("could not re-read target: " + io_.redact(str(exc), secrets)[:400])
         return
     print(f"target re-read: state {state}; {hp.SEQUENCE} next value {nxt}")
-
-
-def _best_effort_rollback(cur) -> bool:
-    """ROLLBACK; True when the server confirmed it. A failed ROLLBACK (dead link) is not reported as one:
-    the server aborts the transaction when the session ends, but this tool did not see it happen."""
-    try:
-        cur.execute("ROLLBACK")
-        return True
-    except psycopg.Error:
-        return False
 
 
 def _rolled_back(ok: bool) -> str:
@@ -244,14 +244,15 @@ def _begin_write(tc, plan) -> None:
 
 
 def _abort_apply(sc, tc, tgt, secrets) -> int:
-    ok = _best_effort_rollback(tc)
-    _best_effort_rollback(sc)
+    ok = io_.best_effort_rollback(tc)
+    io_.best_effort_rollback(sc)
     print(_rolled_back(ok))
     _reread_target(tgt, secrets)
     return EXIT_APPLY_FAILED
 
 
 def cmd_apply(args) -> int:
+    started = time.monotonic()
     plan, sha = load_plan(args.plan)
     src, tgt, target = connect_both(args)
     try:
@@ -283,11 +284,11 @@ def cmd_apply(args) -> int:
                     cols = [c[0] for c in t["columns"]]
                     sc.execute(hp.row_hash_sql(hp.remap_select_sql(t["name"], cols, remap_to), t["pk"]))
                     if tuple(sc.fetchone()) != (t["count"], t["hash"]):
-                        _best_effort_rollback(sc)
+                        io_.best_effort_rollback(sc)
                         print(f"source drifted since plan: {t['name']}")
                         return EXIT_REFUSED
             except psycopg.Error as exc:
-                _best_effort_rollback(sc)
+                io_.best_effort_rollback(sc)
                 print("source snapshot check failed: " + io_.redact(str(exc), secrets)[:400])
                 return EXIT_REFUSED
 
@@ -301,21 +302,22 @@ def cmd_apply(args) -> int:
                 changed = {**{n: c for n, c in io_.target_counts(tc).items() if c != 0},
                            **io_.rows_outside_load(plan, io_.business_counts(tc))}
                 if changed:
-                    _best_effort_rollback(tc)
-                    _best_effort_rollback(sc)
+                    io_.best_effort_rollback(tc)
+                    io_.best_effort_rollback(sc)
                     print(f"target changed since preflight (table: rows) {changed}; nothing written")
                     return EXIT_REFUSED
                 for t in plan["tables"]:
                     io_.set_fks_deferrable(tc, t["name"], t["fks"], True)
                     io_.set_triggers(tc, t["name"], False)
                 tc.execute("SET CONSTRAINTS ALL DEFERRED")
-                short = {}
+                copied: dict[str, int] = {}
                 for t in plan["tables"]:
                     cols = [c[0] for c in t["columns"]]
-                    n = io_.copy_table(sc, tc, t["name"], cols, hp.remap_select_sql(t["name"], cols, remap_to))
+                    copied[t["name"]] = n = io_.copy_table(sc, tc, t["name"], cols,
+                                                           hp.remap_select_sql(t["name"], cols, remap_to))
                     print(f"  copied {t['name']:40} {n:>8}")
-                    if n != t["count"]:
-                        short[t["name"]] = (n, t["count"])
+                short = {t["name"]: (copied[t["name"]], t["count"]) for t in plan["tables"]
+                         if copied[t["name"]] != t["count"]}
                 if short:
                     print(f"copied row counts differ from plan (copied, expected): {short}")
                     return _abort_apply(sc, tc, tgt, secrets)
@@ -338,8 +340,8 @@ def cmd_apply(args) -> int:
                 print("apply failed: " + io_.redact(str(exc), secrets)[:400])
                 return _abort_apply(sc, tc, tgt, secrets)
             except BaseException:
-                ok = _best_effort_rollback(tc)
-                _best_effort_rollback(sc)
+                ok = io_.best_effort_rollback(tc)
+                io_.best_effort_rollback(sc)
                 print(f"apply interrupted; {_rolled_back(ok)}")
                 raise
 
@@ -356,10 +358,12 @@ def cmd_apply(args) -> int:
             if tc.statusmessage != "COMMIT":
                 print(f"commit outcome unknown (server answered {tc.statusmessage!r}); run `verify` before anything else")
                 return EXIT_APPLY_FAILED
-            _best_effort_rollback(sc)
+            io_.best_effort_rollback(sc)
         report = out / f"apply-{_stamp()}.json"
         try:
-            report.write_text(json.dumps({"plan_sha256": sha, "pre_dump": pre, "committed_at": _now()}, indent=1))
+            report.write_text(json.dumps({"plan_sha256": sha, "pre_dump": pre, "committed_at": _now(),
+                                          "tables": copied, "elapsed_seconds": round(time.monotonic() - started, 1)},
+                                         indent=1))
             report.chmod(0o600)
             print(f"COMMITTED. report: {report}")
         except OSError as exc:
@@ -368,12 +372,6 @@ def cmd_apply(args) -> int:
     finally:
         _close_clean(src)
         _close_clean(tgt)
-
-CHECKLIST = [("casos (crm.opportunity)", "crm.opportunity"), ("cotizaciones (crm.quote)", "crm.quote"),
-             ("instituciones (crm.organization)", "crm.organization"), ("campañas archivadas", "outbound.campaign"),
-             ("destinatarios", "outbound.campaign_recipient"), ("eventos", "crm.domain_event")]
-SCRATCH_NAME = re.compile(r"origenlab_test_[0-9a-f]{8}")
-SCRATCH_SH = Path(__file__).with_name("hosted_data_load_scratch.sh")
 
 
 def _mismatch(msg: str) -> int:
@@ -400,7 +398,7 @@ def cmd_verify(args) -> int:
     if sha != args.plan_sha256:
         print("plan sha256 mismatch")
         return EXIT_REFUSED
-    src, tgt, target = connect_both(args)
+    tgt, target = connect_target(args)
     try:
         secrets = io_.target_secrets(target)
         # Read-only re-hash of the target, as the owner role (the login role is NOINHERIT).
@@ -412,9 +410,9 @@ def cmd_verify(args) -> int:
                     io_.apply_session_settings(tc, local=True)
                     obs = io_.observed_rows(tc, plan)
                     state = io_.classify_target_state(plan, obs)
-                    inv = io_.post_copy_invariants(tc, plan, plan["remap"]["to"]) if state == "loaded" else []
+                    inv = io_.post_copy_invariants(tc, plan, plan["remap"]["to"], obs) if state == "loaded" else []
                 finally:
-                    _best_effort_rollback(tc)
+                    io_.best_effort_rollback(tc)
         except psycopg.Error as exc:
             return _incomplete("verify could not read the target: " + io_.redact(str(exc), secrets)[:400])
         print(f"target state: {state}")
@@ -441,7 +439,7 @@ def cmd_verify(args) -> int:
         if res.returncode != 0 or not lines:
             return _incomplete("scratch mint failed: " + io_.redact(res.stderr, secrets)[-400:])
         scratch = lines[-1].strip()
-        if not SCRATCH_NAME.fullmatch(scratch):
+        if not io_.DISPOSABLE_DB.fullmatch(scratch):
             return _incomplete("scratch mint printed an unexpected name; refusing to use it (nothing dropped)")
         try:
             io_.restore_into_scratch(Path(post["path"]), scratch)
@@ -451,7 +449,7 @@ def cmd_verify(args) -> int:
                     io_.apply_session_settings(cur, local=True)
                     restored = io_.classify_target_state(plan, io_.observed_rows(cur, plan))
                 finally:
-                    _best_effort_rollback(cur)
+                    io_.best_effort_rollback(cur)
         except (RuntimeError, OSError, subprocess.CalledProcessError, psycopg.Error) as exc:
             return _incomplete("restore drill failed: " + io_.redact(str(exc), secrets)[:400])
         finally:
@@ -471,7 +469,6 @@ def cmd_verify(args) -> int:
         print("  personas: 0 · flags de envío: false/false · retenciones activas: 1")
         return 0
     finally:
-        _close_clean(src)
         _close_clean(tgt)
 
 
@@ -485,7 +482,7 @@ def _guard_checks(cur, plan) -> list[dict]:
 
 
 def _refuse_rollback(tc, msg: str) -> int:
-    _best_effort_rollback(tc)
+    io_.best_effort_rollback(tc)
     print(msg)
     return EXIT_REFUSED
 
@@ -495,7 +492,7 @@ def cmd_rollback(args) -> int:
     if sha != args.plan_sha256:
         print("plan sha256 mismatch")
         return EXIT_REFUSED
-    src, tgt, target = connect_both(args)
+    tgt, target = connect_target(args)
     try:
         secrets = io_.target_secrets(target)
         with tgt.cursor() as tc:
@@ -534,18 +531,18 @@ def cmd_rollback(args) -> int:
                     print("after DELETE: " + (f"tables not empty {dirty}" if dirty else
                                               f"rows outside the load {outside}" if outside else
                                               "roster or singleton rows changed"))
-                    print(_rolled_back(_best_effort_rollback(tc)))
+                    print(_rolled_back(io_.best_effort_rollback(tc)))
                     _reread_state(tgt, plan, secrets)
                     return EXIT_APPLY_FAILED
                 io_.restart_sequence(tc, 1)
             except psycopg.Error as exc:
-                ok = _best_effort_rollback(tc)
+                ok = io_.best_effort_rollback(tc)
                 print("rollback failed: " + io_.redact(str(exc), secrets)[:400])
                 print(_rolled_back(ok))
                 _reread_state(tgt, plan, secrets)
                 return EXIT_APPLY_FAILED
             except BaseException:
-                ok = _best_effort_rollback(tc)
+                ok = io_.best_effort_rollback(tc)
                 print(f"rollback interrupted; {_rolled_back(ok)}; run `verify` before anything else")
                 raise
             try:
@@ -563,7 +560,6 @@ def cmd_rollback(args) -> int:
         print("ROLLED BACK: the 16 tables are empty again; roster and singletons untouched")
         return 0
     finally:
-        _close_clean(src)
         _close_clean(tgt)
 
 

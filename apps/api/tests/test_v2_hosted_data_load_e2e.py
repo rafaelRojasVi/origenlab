@@ -199,6 +199,8 @@ def test_full_cycle_and_injected_failures(databases, tmp_path: Path):
     # the real apply
     r = _cli(env, "apply", *ap, out=out)
     assert r.returncode == 0 and "COMMITTED" in r.stdout, r.stdout + r.stderr
+    report = json.loads(next(out.glob("apply-*.json")).read_text())
+    assert report["tables"] == {t["name"]: t["count"] for t in plan["tables"]} and report["elapsed_seconds"] >= 0
     loaded = counts()
     assert loaded == [str(t["count"]) for t in plan["tables"]]
     assert _psql(tgt, f"select count(*) from crm.domain_event where actor_operator_id is not null and actor_operator_id <> '{hosted}'") == "0"

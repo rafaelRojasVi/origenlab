@@ -50,7 +50,8 @@ HOSTED_LOGIN_ROLE = "origenlab_migrator"
 _APP_NAME = "origenlab-hosted-data-load"
 #: A dropped link must not leave the write transaction (and its table locks) waiting on a dead peer.
 HOSTED_KEEPALIVES = {"keepalives": 1, "keepalives_idle": 15, "keepalives_interval": 5, "keepalives_count": 3}
-_DISPOSABLE_DB = re.compile(r"origenlab_test_[0-9a-f]{8}")
+#: The only database names a test switch or the verify scratch may ever name (the scratch script's own guard).
+DISPOSABLE_DB = re.compile(r"origenlab_test_[0-9a-f]{8}")
 _SECRET_IN_URI = re.compile(r"(://[^:/@\s]+):[^@\s]*@")
 _PASSWORD_KV = re.compile(r"(password\s*=\s*)('(?:[^'\\]|\\.)*'|\S+)", re.I)
 _POOLER_HOST = re.compile(r"[a-z0-9.-]*pooler\.supabase\.com|db\.[a-z]{20}\.supabase\.co")
@@ -87,14 +88,14 @@ def scratch_conninfo(db: str, port: int = SOURCE_PORT) -> str:
 
 def source_conninfo(port: int = SOURCE_PORT) -> str:
     override = os.environ.get("OL_HOSTED_LOAD_SOURCE_DB", "")
-    return scratch_conninfo(override if _DISPOSABLE_DB.fullmatch(override) else SOURCE_DB, port)
+    return scratch_conninfo(override if DISPOSABLE_DB.fullmatch(override) else SOURCE_DB, port)
 
 
 def _local_scratch_target(environ: Mapping[str, str], target_file: Path) -> Target | None:
     """TEST-ONLY: a loopback Target on the dev container, for a disposable database named in the
     environment AND as the only key of the target file. Anything else returns None."""
     name = environ.get("OL_HOSTED_LOCAL_SCRATCH", "")
-    if not _DISPOSABLE_DB.fullmatch(name):
+    if not DISPOSABLE_DB.fullmatch(name):
         return None
     try:
         lines = [ln.strip() for ln in Path(target_file).read_text().splitlines()]
@@ -327,15 +328,15 @@ def _sequences(cur) -> dict[str, int]:
     return {n: int(v) for n, v in cur.fetchall()}
 
 
-def _rollback(cur) -> None:
-    """Roll back; if the body already raised, a dead connection must not mask that error."""
-    if sys.exc_info()[0] is None:
-        cur.execute("rollback")
-        return
+def best_effort_rollback(cur) -> bool:
+    """ROLLBACK; True when the server confirmed it. Never raises a psycopg error: a dead link must not
+    mask the error that got us here, and a failed ROLLBACK is reported by the caller as "attempted"
+    (the server aborts the transaction when the session ends, but this tool did not see it)."""
     try:
-        cur.execute("rollback")
+        cur.execute("ROLLBACK")
+        return True
     except psycopg.Error:
-        pass
+        return False
 
 
 def _count(cur, table: str) -> int:
@@ -354,10 +355,6 @@ def business_counts(cur, schemas: Iterable[str] = hp.EMPTY_SCHEMAS) -> dict[str,
                    where c.relkind = 'r' and n.nspname = any(%s) order by 1""", (list(schemas),))
     names = [t for (t,) in cur.fetchall()]
     return {t: _count(cur, t) for t in names}
-
-
-def _qcols(names: list[str]) -> str:
-    return ", ".join('"' + c.replace('"', '""') + '"' for c in names)
 
 
 def read_source_facts(conn, repo_root: Path, hosted_operator: str) -> dict:
@@ -383,7 +380,7 @@ def read_source_facts(conn, repo_root: Path, hosted_operator: str) -> dict:
                 **_fp_fields(schema_fingerprint(cur)),
             }
         finally:
-            _rollback(cur)
+            best_effort_rollback(cur)
 
 
 def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
@@ -404,7 +401,7 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
             tables = {}
             for name in hp.TABLES:
                 cols = [c[0] for c in _columns(cur, name)]
-                tables[name] = table_facts(cur, name, f"select {_qcols(cols)} from {name}")
+                tables[name] = table_facts(cur, name, f"select {hp.qcols(cols)} from {name}")
             counts = business_counts(cur)
             cur.execute("select count(*) from platform.auth_principal")
             principals = cur.fetchone()[0]
@@ -435,7 +432,7 @@ def read_target_facts(conn, target: Any, pg_dump_probe: bool) -> dict:
                 **_fp_fields(schema_fingerprint(cur)),
             }
         finally:
-            _rollback(cur)
+            best_effort_rollback(cur)
 
 
 def _scan_processes(proc: Path) -> list[str]:
@@ -547,7 +544,7 @@ def set_triggers(cur, table: str, enable: bool) -> None:
 
 def copy_table(src_cur, tgt_cur, table: str, columns: list[str], select_sql: str) -> int:
     """Binary COPY source SELECT -> target table; returns the rows the target reports written."""
-    cols = _qcols(columns)
+    cols = hp.qcols(columns)
     with src_cur.copy(f"COPY ({select_sql}) TO STDOUT (FORMAT binary)") as out, \
          tgt_cur.copy(f"COPY {table} ({cols}) FROM STDIN (FORMAT binary)") as inp:
         for chunk in out:
@@ -562,18 +559,20 @@ def invariant_names(plan: Mapping) -> list[str]:
                     "all_user_triggers_enabled", "no_deferrable_fks", "sequence_set"]
 
 
-def post_copy_invariants(cur, plan: Mapping, hosted_operator: str) -> list[dict]:
-    """Re-hash everything inside the write transaction, before COMMIT."""
+def post_copy_invariants(cur, plan: Mapping, hosted_operator: str,
+                         observed: Mapping[str, tuple[int, str]] | None = None) -> list[dict]:
+    """Re-hash everything inside the write transaction, before COMMIT (verify passes the ``observed``
+    rows it has just read in the same snapshot instead of hashing every table twice)."""
     checks: list[dict] = []
 
     def check(name, ok, detail=None):
         checks.append({"check": name, "ok": bool(ok), "detail": detail})
 
+    observed = observed_rows(cur, plan) if observed is None else observed
     for t in plan["tables"]:
-        cur.execute(hp.row_hash_sql(f"select {_qcols([c[0] for c in t['columns']])} from {t['name']}", t["pk"]))
-        count, digest = cur.fetchone()
-        check(f"rows_match:{t['name']}", (int(count), digest) == (t["count"], t["hash"]),
-              {"count": int(count), "expected": t["count"]})
+        count, digest = observed[t["name"]]
+        check(f"rows_match:{t['name']}", (count, digest) == (t["count"], t["hash"]),
+              {"count": count, "expected": t["count"]})
     cur.execute("select count(*) from crm.domain_event where payload::text like %s", (f"%{hosted_operator}%",))
     got = cur.fetchone()[0]
     check("payload_hosted_uuid_rows", got == plan["payload_rows_with_local_uuid"],
@@ -584,7 +583,8 @@ def post_copy_invariants(cur, plan: Mapping, hosted_operator: str) -> list[dict]
     foreign = 0
     for table, cols in hp.OPERATOR_COLUMNS.items():
         for c in cols:
-            cur.execute(f'select count(*) from {table} where "{c}" is not null and "{c}" not in (select id from platform.operator)')
+            q = hp.qcols([c])
+            cur.execute(f"select count(*) from {table} where {q} is not null and {q} not in (select id from platform.operator)")
             foreign += cur.fetchone()[0]
     check("no_foreign_operator_refs", foreign == 0, foreign)
     check("roster_unchanged", roster_hash(cur) == plan["roster_hash"])
@@ -614,9 +614,11 @@ def classify_target_state(plan: Mapping, observed: Mapping[str, tuple[int, str]]
 
 
 def observed_rows(cur, plan: Mapping) -> dict[str, tuple[int, str]]:
+    """(count, hash) of each planned table as it is now, with the plan's columns and key order: the
+    one row-comparison helper (verify, rollback, the failed-rollback re-read, apply's invariants)."""
     out = {}
     for t in plan["tables"]:
-        cur.execute(hp.row_hash_sql(f"select {_qcols([c[0] for c in t['columns']])} from {t['name']}", t["pk"]))
+        cur.execute(hp.row_hash_sql(f"select {hp.qcols([c[0] for c in t['columns']])} from {t['name']}", t["pk"]))
         count, digest = cur.fetchone()
         out[t["name"]] = (int(count), digest)
     return out

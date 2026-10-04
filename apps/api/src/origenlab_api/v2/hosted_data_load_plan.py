@@ -68,6 +68,11 @@ SESSION_SETTINGS: tuple[tuple[str, str], ...] = (
     ("bytea_output", "hex"),
 )
 
+PLAN_MAX_AGE = timedelta(hours=24)
+REQUIRED_HEAD = "20260930120000"
+REQUIRED_LEDGER_COUNT = 41
+HOLD_KEY = "septiembre18-2026-wave2"
+
 ADVISORY_LOCK_KEY = int.from_bytes(
     hashlib.sha256(b"origenlab:hosted_data_load").digest()[:8], "big", signed=True
 )
@@ -128,12 +133,6 @@ def plan_sha256(plan: Mapping) -> str:
     return hashlib.sha256(
         json.dumps(plan, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     ).hexdigest()
-
-
-PLAN_MAX_AGE = timedelta(hours=24)
-REQUIRED_HEAD = "20260930120000"
-REQUIRED_LEDGER_COUNT = 41
-HOLD_KEY = "septiembre18-2026-wave2"
 
 
 def _fp_summary(fp: Mapping | None) -> dict | None:

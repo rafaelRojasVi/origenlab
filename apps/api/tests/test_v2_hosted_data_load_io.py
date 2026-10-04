@@ -495,3 +495,41 @@ def test_sequence_set_compares_the_next_value():
 
     assert seq_check(23096) is True
     assert seq_check(23095) is False
+
+
+# ---- final review: M7 one helper each ------------------------------------------------------------
+
+
+def test_best_effort_rollback_reports_whether_the_server_confirmed():
+    import psycopg
+
+    class Cur:
+        def __init__(self, fail): self.fail, self.log = fail, []
+        def execute(self, q):
+            self.log.append(q)
+            if self.fail:
+                raise psycopg.OperationalError("connection lost")
+
+    assert io_.best_effort_rollback(Cur(False)) is True
+    assert io_.best_effort_rollback(Cur(True)) is False
+    assert not hasattr(io_, "_rollback") and not hasattr(io_, "_qcols")
+
+
+def test_post_copy_invariants_reuse_the_observed_rows_they_are_given():
+    class Cur:
+        def __init__(self): self.log = []
+        def execute(self, q, params=None): self.log.append(str(q))
+        def fetchone(self): return ("h",) if self.log[-1].startswith("select coalesce(md5") else (0,)
+
+    plan = {"tables": [{"name": "comms.mailbox", "count": 2, "hash": "h", "pk": ["id"], "columns": [["id", "uuid"]]}],
+            "payload_rows_with_local_uuid": 0, "sequence": {"name": "s", "target_last_value": 0},
+            "roster_hash": "", "send_control_hash": "", "campaign_block_hash": "", "remap": {"to": "x", "from": ["a"]}}
+    cur = Cur()
+    checks = io_.post_copy_invariants(cur, plan, "x", {"comms.mailbox": (2, "h")})
+    assert checks[0] == {"check": "rows_match:comms.mailbox", "ok": True, "detail": {"count": 2, "expected": 2}}
+    assert not any(q.startswith("select count(*), coalesce(md5") for q in cur.log)
+
+
+def test_one_disposable_name_pattern():
+    assert io_.DISPOSABLE_DB.fullmatch("origenlab_test_0123abcd") and not io_.DISPOSABLE_DB.fullmatch("origenlab_clean")
+    assert "SCRATCH_NAME" not in (_SCRIPTS / "hosted_data_load.py").read_text()

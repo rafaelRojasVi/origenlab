@@ -110,7 +110,7 @@ def good_target(**over):
         "campaign_block": {"scope": "legacy_campaign", "legacy_campaign_key": "septiembre18-2026-wave2",
                            "lifted_at": None, "hash": "cb"},
         "roster_hash": "roster", "advisory_lock_free": True, "other_sessions": [],
-        "sequences": {hp.SEQUENCE: 1}, "pg_dump_probe_ok": True, "schema_fingerprint": fp(),
+        "pg_dump_probe_ok": True, "schema_fingerprint": fp(),
     }
     t.update(over)
     return t
