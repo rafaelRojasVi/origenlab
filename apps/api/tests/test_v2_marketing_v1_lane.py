@@ -59,10 +59,11 @@ class _MarketingRepo:
         }
 
 
-def _client(role: str = "admin") -> TestClient:
+def _client(role: str = "admin", content_dir: str | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(workspace_router)
     app.state.crm_workspace = _MarketingRepo()
+    app.state.v1_lane_content_dir = content_dir
     app.state.v2_identity = LocalDevIdentity(LOOPBACK, _Lookup(_operator(role)))
     return TestClient(app)
 
@@ -107,3 +108,21 @@ def test_marketing_v1_lane_campaigns_all_roles_see_the_field() -> None:
     for role in ("viewer", "sales", "admin"):
         body = _client(role).get("/v2/workspace/marketing", headers=HEADERS).json()
         assert "v1_lane_campaigns" in body, f"v1_lane_campaigns missing for role={role}"
+
+
+def test_marketing_carries_the_plan_per_day_and_its_total() -> None:
+    c = _client().get("/v2/workspace/marketing", headers=HEADERS).json()["v1_lane_campaigns"][0]
+    assert c["clients_per_day"] == [1000, 1000, 1000, 1067, 528]
+    assert c["total_clients"] == 4595
+    assert c["audience_rule"]
+
+
+def test_marketing_carries_the_email_when_the_content_directory_holds_it(tmp_path: Path) -> None:
+    (tmp_path / "v1-lane-cyber-2026-10.html").write_text("<p>Cyber</p>", encoding="utf-8")
+    c = _client(content_dir=str(tmp_path)).get("/v2/workspace/marketing", headers=HEADERS).json()["v1_lane_campaigns"][0]
+    assert c["html"] == "<p>Cyber</p>"
+
+
+def test_marketing_has_no_email_without_a_content_directory() -> None:
+    c = _client().get("/v2/workspace/marketing", headers=HEADERS).json()["v1_lane_campaigns"][0]
+    assert c["html"] is None

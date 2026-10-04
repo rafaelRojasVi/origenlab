@@ -174,6 +174,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         drive=load_drive_ledgers(ledgers),
         statement_timeout_ms=settings.v2_statement_timeout_ms,
     )
+    app.state.v1_lane_content_dir = settings.v2_v1_lane_content_dir
     app.include_router(workspace_router)
     if settings.v2_import_review_plan_dir:
         from origenlab_api.v2.quote_import_review import QuoteImportReviewRepository, load_plan

@@ -17,6 +17,7 @@ from origenlab_api.v2.v1_lane_campaigns import (
     V1LaneCampaign,
     as_dict,
     load_v1_lane_campaigns,
+    load_v1_lane_html,
     validate_entry,
     validate_file,
 )
@@ -170,4 +171,72 @@ def test_as_dict_round_trips() -> None:
         "send_days": ["2026-10-05", "2026-10-06"],
         "send_time": "09:30",
         "promo_until": "2026-10-11",
+        "clients_per_day": None,
+        "total_clients": None,
+        "audience_rule": None,
+        "html": None,
     }
+
+
+# ---------------------------------------------------------------------------
+# 5. The plan per day and the audience rule
+# ---------------------------------------------------------------------------
+
+
+def test_committed_file_declares_the_cyber_plan_per_day() -> None:
+    """How many clients go out each day: the runner's wave files, as counts only."""
+    c = validate_file(json.loads(JSON_PATH.read_text(encoding="utf-8")))[0]
+    assert c.clients_per_day == (1000, 1000, 1000, 1067, 528)
+    assert as_dict(c)["total_clients"] == 4595
+    assert c.audience_rule and len(c.audience_rule) <= 400
+
+
+def test_an_entry_without_a_plan_is_still_valid() -> None:
+    c = validate_entry(GOOD)
+    assert c.clients_per_day is None and c.audience_rule is None
+
+
+@pytest.mark.parametrize(
+    ("override", "match"),
+    [
+        ({"clients_per_day": [1000]}, "clients_per_day"),  # one per send day
+        ({"clients_per_day": [1000, 0]}, "clients_per_day"),
+        ({"clients_per_day": [1000, -5]}, "clients_per_day"),
+        ({"clients_per_day": [1000, True]}, "clients_per_day"),
+        ({"clients_per_day": [1000, 1.5]}, "clients_per_day"),
+        ({"clients_per_day": [1000, 5001]}, "clients_per_day"),
+        ({"clients_per_day": "1000"}, "clients_per_day"),
+        ({"audience_rule": "   "}, "audience_rule"),
+        ({"audience_rule": "x" * 401}, "audience_rule"),
+    ],
+)
+def test_a_malformed_plan_is_refused(override: dict, match: str) -> None:
+    with pytest.raises(V1LaneValidationError, match=match):
+        validate_entry({**GOOD, **override})
+
+
+# ---------------------------------------------------------------------------
+# 6. The email, from a content directory outside the repository
+# ---------------------------------------------------------------------------
+
+
+def test_html_is_read_from_the_content_directory(tmp_path: Path) -> None:
+    (tmp_path / "v1-lane-test-2026.html").write_text("<p>Hola</p>", encoding="utf-8")
+    assert load_v1_lane_html("test-2026", str(tmp_path)) == "<p>Hola</p>"
+
+
+def test_no_content_directory_or_no_file_means_no_html(tmp_path: Path) -> None:
+    assert load_v1_lane_html("test-2026", None) is None
+    assert load_v1_lane_html("test-2026", "") is None
+    assert load_v1_lane_html("test-2026", str(tmp_path)) is None
+
+
+def test_an_oversized_or_unreadable_html_is_skipped_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "v1-lane-big.html").write_text("x" * (256 * 1024 + 1), encoding="utf-8")
+    (tmp_path / "v1-lane-bin.html").write_bytes(b"\xff\xfe\x00bad")
+    with caplog.at_level(logging.WARNING):
+        assert load_v1_lane_html("big", str(tmp_path)) is None
+        assert load_v1_lane_html("bin", str(tmp_path)) is None
+    assert "v1_lane_campaigns" in caplog.text

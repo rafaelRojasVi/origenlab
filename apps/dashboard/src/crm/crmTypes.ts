@@ -220,6 +220,12 @@ export interface V1LaneCampaign {
   send_days: string[];
   send_time: string;
   promo_until: string;
+  /** Clients planned per send day (the runner's wave sizes), same order as `send_days`. */
+  clients_per_day?: number[] | null;
+  total_clients?: number | null;
+  audience_rule?: string | null;
+  /** The email as sent, when the API has it (kept outside the repository). */
+  html?: string | null;
 }
 
 export interface MarketingResponse {

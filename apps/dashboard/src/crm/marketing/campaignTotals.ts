@@ -64,3 +64,11 @@ export function neverSent(c: Pick<CampaignSummary, "status" | "send_attempts" | 
   const attempts = c.attempt_totals ? c.attempt_totals.attempts : c.send_attempts.reduce((n, a) => n + a.count, 0);
   return attempts === 0;
 }
+
+/**
+ * A campaign imported from V1 that never went out: no attempt, no send. The Marketing list hides
+ * these by default (the record stays in the CRM; history is never deleted), behind a link.
+ */
+export function isNeverSentHistorical(c: CampaignSummary): boolean {
+  return c.origin === "imported_v1" && !c.first_sent_at && neverSent(c);
+}

@@ -4,9 +4,23 @@
       "key": "cyber-2026-10",
       "name": "Cyber OrigenLab",
       "channel": "v1",
-      "send_days": ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"],
+      "send_days": [
+        "2026-10-05",
+        "2026-10-06",
+        "2026-10-07",
+        "2026-10-08",
+        "2026-10-09"
+      ],
       "send_time": "09:30",
-      "promo_until": "2026-10-11"
+      "promo_until": "2026-10-11",
+      "clients_per_day": [
+        1000,
+        1000,
+        1000,
+        1067,
+        528
+      ],
+      "audience_rule": "Clientes que escribieron, cotizaron o compraron; sin proveedores ni bajas; los contactados en septiembre van al final."
     }
   ]
 }

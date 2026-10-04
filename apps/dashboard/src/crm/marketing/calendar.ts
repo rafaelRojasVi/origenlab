@@ -220,8 +220,9 @@ export function v1LaneStatus(sendDay: string, today: string): string {
 /**
  * Build calendar events for V1-lane campaigns. One event per declared send day.
  *
- * The kind's label says «Canal V1»; the detail shows wave number and total («oleada N de M»). The detail carries the
- * honest per-day status; no send counts or recipients are shown because V2 cannot see them.
+ * The kind's label says «Canal V1»; the detail shows the wave («oleada N de M»), the clients planned
+ * for that day when declared, and the honest per-day status. A planned count, never a sent one:
+ * V2 cannot see what V1 actually sent.
  */
 export function buildV1LaneEvents(campaigns: V1LaneCampaign[], today: string): CalendarEvent[] {
   const events: CalendarEvent[] = [];
@@ -234,7 +235,13 @@ export function buildV1LaneEvents(campaigns: V1LaneCampaign[], today: string): C
         campaignName: c.name,
         kind: "v1_lane",
         day,
-        detail: `Oleada ${i + 1} de ${total} · ${v1LaneStatus(day, today)}`,
+        detail: [
+          `Oleada ${i + 1} de ${total}`,
+          c.clients_per_day?.[i] ? `${c.clients_per_day[i].toLocaleString("es-CL")} clientes` : null,
+          v1LaneStatus(day, today),
+        ]
+          .filter(Boolean)
+          .join(" · "),
         time: c.send_time,
         origin: "native_v2",
         familyIds: [],

@@ -208,6 +208,8 @@ describe("an archived campaign that was never sent", () => {
   it("the card, the detail header and the send record say «Nunca enviada»", async () => {
     stub({ campaign: NEVER_SENT });
     render(withRole("admin", <MarketingPage />));
+    // Hidden from the list by default (owner, 2026-10-04); the link shows it.
+    fireEvent.click(await screen.findByRole("button", { name: "Mostrar 1 campaña nunca enviada" }));
     const card = await screen.findByTestId("campaign-card");
     expect(within(card).getByTestId("never-sent")).toHaveTextContent("Nunca enviada");
     fireEvent.click(within(card).getByTestId("open-history"));
