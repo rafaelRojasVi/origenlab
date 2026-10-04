@@ -69,7 +69,8 @@ sidecar) lives in SQLite. See [`OUTBOUND_SOURCE_OF_TRUTH.md` § Campaign ledger]
 
 | Step | Command (from `apps/email-pipeline/`) |
 |------|----------------------------------------|
-| Create/init a campaign | `uv run python scripts/campaigns/outbound_campaign_cli.py init --campaign-id <id> --name <name> --sender-email <email> --sender-name <name> --subject <subject> --target <n> --baseline <n> [--db <path>]` |
+| Create/init a campaign | `uv run python scripts/campaigns/outbound_campaign_cli.py init --campaign-id <id> --name <name> --sender-email <email> --sender-name <name> --subject <subject> --target <n> --baseline <n> [--audience cold\|warm] [--db <path>]` |
+| Audience kind | `--audience cold` (default) is a prospect list: the gate refuses anyone `contacto@` ever wrote to (`sent_history`) or an earlier batch reached (`outreach_contacted`). `--audience warm` is for people we already correspond with on purpose — clients, quote requesters, buyers — and waives **only** those two refusals; bajas, blocked domains, suppliers, noise mailboxes, `replied`/`snoozed` and the manual inactive/hold status still apply. Decide it at `init`; it cannot be changed from the CLI afterwards. |
 | Register/update a manual contact fact | `... contact-status set --email <email> --status active\|inactive\|hold [--org-domain ...] [--org-name ...] [--role ...] [--reason ...] [--evidence ...] [--effective-at ...]` |
 | Show a contact's manual status | `... contact-status show --email <email>` |
 | Add candidates | `... candidates add --campaign-id <id> --email <email> [--email <email2> ...] [--institution ...]` |

@@ -459,3 +459,56 @@ def test_default_db_path_never_resolves_under_downloads(monkeypatch, tmp_path: P
     monkeypatch.setenv("ORIGENLAB_DATA_ROOT", str(tmp_path / "data"))
     resolved = load_settings().resolved_sqlite_path()
     assert "Downloads" not in str(resolved)
+
+
+def test_warm_campaign_select_reserves_prior_contact_but_still_blocks_supplier(db_path: Path, capsys) -> None:
+    """The audience kind is decided at `init` and read back by `select`: a warm campaign
+    reserves a mailbox an earlier batch already contacted, while a supplier-domain
+    candidate is still refused by the unchanged canonical filter. The same candidates
+    under a cold campaign are both blocked."""
+    from origenlab_email_pipeline.db import connect as real_connect, init_schema
+    from origenlab_email_pipeline.outreach_contact_state import ensure_outreach_contact_state_table
+    from origenlab_email_pipeline.supplier_schema import ensure_supplier_tables
+
+    conn = real_connect(db_path)
+    init_schema(conn)
+    ensure_supplier_tables(conn)
+    ensure_outreach_contact_state_table(conn)
+    conn.execute(
+        "INSERT INTO supplier_master (domain_norm, trade_name, created_at, updated_at) "
+        "VALUES ('kalstein.cl', 'Kalstein', 't', 't')"
+    )
+    conn.execute(
+        "INSERT INTO outreach_contact_state (contact_email_norm, state, first_contacted_at, last_contacted_at, "
+        "source, updated_at, updated_by) VALUES ('cliente@lab.cl', 'contacted', 't', 't', 'batch', 't', 'test')"
+    )
+    conn.commit()
+    conn.close()
+
+    common = ["--sender-email", "contacto@origenlab.cl", "--sender-name", "S", "--subject", "Subj", "--target", "10"]
+    _run(db_path, "init", "--campaign-id", "cold-list", "--name", "N", *common, capsys=capsys)
+    _run(db_path, "init", "--campaign-id", "clientes-warm", "--name", "N", *common, "--audience", "warm", capsys=capsys)
+    for cid in ("cold-list", "clientes-warm"):
+        _run(db_path, "candidates", "add", "--campaign-id", cid,
+             "--email", "cliente@lab.cl", "--email", "ventas@kalstein.cl", capsys=capsys)
+
+    _, cold_out = _run(db_path, "select", "--campaign-id", "cold-list", "--n", "10",
+                       "--gmail-user", "contacto@origenlab.cl", capsys=capsys)
+    _, warm_out = _run(db_path, "select", "--campaign-id", "clientes-warm", "--n", "10",
+                       "--gmail-user", "contacto@origenlab.cl", capsys=capsys)
+    assert json.loads(cold_out) | {"reserved": 0, "blocked": 2} == json.loads(cold_out)
+    assert json.loads(warm_out) | {"reserved": 1, "blocked": 1} == json.loads(warm_out)
+    _, batch_out = _run(db_path, "batch", "show", "--campaign-id", "clientes-warm", capsys=capsys)
+    assert [r["email_norm"] for r in json.loads(batch_out)] == ["cliente@lab.cl"]
+    conn = sqlite3.connect(str(db_path))
+    reasons = dict(conn.execute(
+        "SELECT email_norm, block_reason FROM outbound_campaign_recipient WHERE state='blocked' AND campaign_id='clientes-warm'"
+    ).fetchall())
+    assert reasons == {"ventas@kalstein.cl": "supplier_domain"}
+    conn.close()
+
+
+def test_init_rejects_unknown_audience(db_path: Path, capsys) -> None:
+    with pytest.raises(SystemExit):
+        _run(db_path, "init", "--campaign-id", "x", "--name", "N", "--sender-email", "contacto@origenlab.cl",
+             "--sender-name", "S", "--subject", "Subj", "--target", "1", "--audience", "tepid", capsys=capsys)

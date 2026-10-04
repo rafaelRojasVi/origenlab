@@ -344,3 +344,71 @@ def test_an_unknown_campaign_is_never_treated_as_active(conn: sqlite3.Connection
     assert err.value.status is None
     _make_hielscher(conn)
     assert require_campaign_active(conn, "hielscher-sonicators-2026").status == "active"
+
+
+# --- audience kind ------------------------------------------------------------------------
+
+def test_campaign_audience_defaults_to_cold(conn: sqlite3.Connection) -> None:
+    _make_hielscher(conn)
+    assert get_campaign(conn, "hielscher-sonicators-2026").audience_kind == "cold"
+
+
+def test_warm_campaign_round_trips(conn: sqlite3.Connection) -> None:
+    create_campaign(
+        conn, campaign_id="cyber-2026-10", name="Cyber", sender_email="contacto@origenlab.cl",
+        sender_name="OrigenLab", subject="Cyber", target_attempt_count=10, audience_kind="warm",
+    )
+    assert get_campaign(conn, "cyber-2026-10").audience_kind == "warm"
+
+
+def test_unknown_audience_kind_refused_at_create(conn: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError):
+        create_campaign(
+            conn, campaign_id="x", name="X", sender_email="contacto@origenlab.cl",
+            sender_name="O", subject="S", target_attempt_count=1, audience_kind="tepid",
+        )
+
+
+def test_ledger_created_before_audience_kind_gets_the_column(tmp_path: Path) -> None:
+    """A ledger from before the column existed is upgraded in place; its campaigns are cold."""
+    c = sqlite3.connect(str(tmp_path / "old.sqlite"))
+    c.executescript(
+        """
+        CREATE TABLE outbound_campaign (
+          campaign_id TEXT PRIMARY KEY, name TEXT NOT NULL, sender_email TEXT NOT NULL,
+          sender_name TEXT NOT NULL, subject TEXT NOT NULL, target_attempt_count INTEGER NOT NULL,
+          baseline_attempt_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        INSERT INTO outbound_campaign VALUES ('old','Old','contacto@origenlab.cl','O','S',1,0,'active','t','t');
+        """
+    )
+    c.commit()
+    ensure_outbound_campaign_tables(c)
+    assert get_campaign(c, "old").audience_kind == "cold"
+    with pytest.raises(sqlite3.IntegrityError):
+        c.execute("UPDATE outbound_campaign SET audience_kind='tepid' WHERE campaign_id='old'")
+    c.close()
+
+
+def test_warm_campaign_reserves_prior_contacts_cold_campaign_blocks_them(conn: sqlite3.Connection) -> None:
+    ctx = _permissive_ctx(
+        sent_recipient_norms=frozenset({"cliente@lab.cl"}),
+        outreach_state_by_email={"cliente@lab.cl": "contacted"},
+    )
+    _make_hielscher(conn)  # cold
+    create_campaign(
+        conn, campaign_id="cyber-2026-10", name="Cyber", sender_email="contacto@origenlab.cl",
+        sender_name="OrigenLab", subject="Cyber", target_attempt_count=10, audience_kind="warm",
+    )
+    for cid in ("hielscher-sonicators-2026", "cyber-2026-10"):
+        upsert_recipient_candidate(conn, campaign_id=cid, email="cliente@lab.cl", source_kind="manual")
+    cold = reserve_next_batch(conn, "hielscher-sonicators-2026", gate_ctx=ctx, manual_status_by_email={}, n=5)
+    warm = reserve_next_batch(conn, "cyber-2026-10", gate_ctx=ctx, manual_status_by_email={}, n=5)
+    assert cold.reserved == [] and cold.blocked[0][1] == "sent_history"
+    assert len(warm.reserved) == 1 and warm.blocked == []
+
+
+def test_reserve_unknown_campaign_raises(conn: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError):
+        reserve_next_batch(conn, "nope", gate_ctx=_permissive_ctx(), manual_status_by_email={}, n=1)

@@ -105,6 +105,7 @@ def send_campaign_batch(
         recheck = evaluate_campaign_eligibility(
             contact_email=email, institution_name=None,
             gate_ctx=gate_ctx, manual_status_by_email=manual_status,
+            audience_kind=campaign.audience_kind,
         )
         if not recheck.eligible:
             reason = recheck.reasons[0] if recheck.reasons else "ineligible"

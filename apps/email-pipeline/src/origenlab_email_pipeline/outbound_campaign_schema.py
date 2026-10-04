@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS outbound_campaign (
   baseline_attempt_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active','paused','completed','archived')),
+  audience_kind TEXT NOT NULL DEFAULT 'cold'
+    CHECK (audience_kind IN ('cold','warm')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -116,6 +118,19 @@ _TABLES = (
 
 def ensure_outbound_campaign_tables(conn: sqlite3.Connection) -> None:
     conn.executescript(OUTBOUND_CAMPAIGN_SCHEMA_SQL)
+    _ensure_column(
+        conn, "outbound_campaign", "audience_kind",
+        "TEXT NOT NULL DEFAULT 'cold' CHECK (audience_kind IN ('cold','warm'))",
+    )
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    """Add ``column`` to a ledger created before it existed. Every campaign that predates
+    the column is a cold-list campaign, which is what the default says."""
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        conn.commit()
 
 
 def outbound_campaign_tables_exist(conn: sqlite3.Connection) -> bool:
