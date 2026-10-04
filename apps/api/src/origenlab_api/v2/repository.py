@@ -66,8 +66,10 @@ class V2Repository(OperatorLookup):
         """
         with self._connect(self._dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
-                cur.execute("set transaction read only")
-                cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
+                # Pipeline both setup statements: 1 RTT instead of 2.
+                with conn.pipeline():
+                    cur.execute("set transaction read only")
+                    cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
                 try:
                     yield cur
                 finally:
