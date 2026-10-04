@@ -1752,6 +1752,21 @@ Owner decision 2026-10-03 ([`MIGRATION.md`](MIGRATION.md) §11 row 5): Cloudflar
 | Docs | [`MIGRATION.md`](MIGRATION.md) decision 5 and §10; [`OPERATIONS.md`](OPERATIONS.md) §1.2 steps 8–10; `docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md` rewritten for the API application only; `apps/dashboard-proxy/README.md`; `apps/api/docs/PRODUCTION_AUTH.md` *Production activation* |
 | Not done | **the Worker in Cloudflare still carries the previous allowlist and still rebuilds the operator header from Access until step 9 (`npx wrangler deploy`) runs.** The Access application on `dashboard.origenlab.cl` is untouched (step 10, after an end-to-end sign-in). Merging does not deploy the Worker; it does redeploy the dashboard static site, unchanged. Nothing provisioned, no Render variable set |
 
+### 2.7.44 V1-lane campaign schedule in the Marketing calendar, 2026-10-04 — built, not deployed
+
+The Cyber OrigenLab campaign (5–9 Oct 2026) runs through the old V1 systemd lane and is
+invisible in the V2 database. This slice makes it visible in the Marketing calendar and header
+without touching the database or adding a new route.
+
+| | |
+|---|---|
+| Declaration | `apps/api/src/origenlab_api/v2/v1_lane_campaigns.json` — one entry: key `cyber-2026-10`, 5 send days, `send_time` 09:30, `promo_until` 2026-10-11. No addresses or audience sizes |
+| Loader | `apps/api/src/origenlab_api/v2/v1_lane_campaigns.py` — reads and validates the JSON; a bad file logs a warning and returns [] so the API never stops; 26 tests in `tests/test_v2_v1_lane_campaigns.py` catch typos in CI |
+| API route | `GET /v2/workspace/marketing` extended with a `v1_lane_campaigns` field; no new route, no proxy change; 4 tests in `tests/test_v2_marketing_v1_lane.py` |
+| Calendar | new `v1_lane` EventKind (green, distinct from sent/draft/frozen/planned); `buildV1LaneEvents()` produces one event per send day with honest label «Oleada N de M · canal V1 · Programada / En curso / resultado en el registro V1»; `CampaignCalendar` accepts optional `v1LaneCampaigns` prop |
+| Header | `MarketingOverview` shows «En curso por el canal V1: …» during the campaign window (first send day through `promo_until`) and «Programada por el canal V1: …» before it; nothing after `promo_until` |
+| Evidence | `apps/api/scripts/validate.sh`: **2769 passed**, 474 skipped; `apps/dashboard npm run validate`: **400 tests in 32 files**, build ok; `apps/dashboard-proxy npm run validate`: **336 tests in 5 files**, unchanged |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
