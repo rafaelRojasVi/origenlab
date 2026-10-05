@@ -41,6 +41,16 @@ const LEDGER_STATUS: Record<string, { label: string; tone: "warn" | "bad" | "neu
   pending_organization_confirmation: { label: "Falta confirmar institución", tone: "warn" },
 };
 
+/** The tab badge counts what blocks the CRM. Pending evidence is the Gmail inflow's pile — it can
+ *  run to hundreds a week and would drown the blockers — so it is shown inside the tab, not here.
+ *  `counts` covers the whole queue, not just the page; without it only the page's items are known. */
+export function blockingCount(queue: { items: WorkQueueItem[]; counts?: Record<string, number> }): number {
+  if (queue.counts) {
+    return Object.entries(queue.counts).reduce((n, [kind, c]) => (kind === "pending_evidence" ? n : n + c), 0);
+  }
+  return queue.items.filter((i) => i.kind !== "pending_evidence").length;
+}
+
 type Tab = "crm" | "not_imported" | "evidence" | "data";
 
 export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
@@ -58,7 +68,7 @@ export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string
         value={tab}
         onChange={setTab}
         options={[
-          { value: "crm", label: "Bloqueos del CRM", count: queue.kind === "ready" ? queue.data.total : undefined },
+          { value: "crm", label: "Bloqueos del CRM", count: queue.kind === "ready" ? blockingCount(queue.data) : undefined },
           {
             value: "not_imported",
             label: "No importadas",
