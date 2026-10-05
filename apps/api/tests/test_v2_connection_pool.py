@@ -417,21 +417,25 @@ def test_no_session_set_commands_in_v2_repositories() -> None:
     )
 
 
-# ─────────────────────────────────────────── statement-count: overview ──
+# ─────────────────────────────────────────── round trips: hot reads (fakes) ──
+#
+# Fast guards without a database; `test_v2_roundtrip_budget.py` measures the same on the wire.
 
 
 class _CountingCursor:
-    """Fake psycopg cursor that records every SQL statement executed."""
+    """Fake psycopg cursor: records statements on its connection and answers with zeros."""
 
-    def __init__(self) -> None:
-        self.statements: list[str] = []
+    def __init__(self, conn: "_CountingConn") -> None:
+        self._conn = conn
         self.description: list[tuple] = []
         self._result: list = []
 
-    def execute(self, sql: str, params: Any = None) -> None:
-        self.statements.append(sql.strip().split()[0].upper())  # first keyword
-        # Feed synthetic results for the queries overview() and pipeline() run
+    def execute(self, sql: str, params: Any = None) -> "_CountingCursor":
+        self._conn.statements.append(sql.strip().split()[0].upper())  # first keyword
+        if not self._conn.in_pipeline:
+            self._conn.round_trips += 1
         self._feed(sql)
+        return self
 
     def fetchone(self) -> tuple | None:
         return self._result[0] if self._result else None
@@ -439,29 +443,28 @@ class _CountingCursor:
     def fetchall(self) -> list:
         return list(self._result)
 
+    def close(self) -> None:
+        pass
+
     def _feed(self, sql: str) -> None:
         lower = sql.strip().lower()
-        # Counts (combined or individual) → return zeros
-        if "select count" in lower or "select (" in lower:
-            if "crm.organization" in lower and "confirmation" in lower and "group by" in lower:
-                self._result = []  # group by returns empty
-                self.description = [("confirmation",), ("count",)]
-            elif "crm.opportunity" in lower and "stage" in lower and "group by" in lower:
+        if self._conn.preset is not None:
+            self._result = list(self._conn.preset)
+            self.description = [("c",)]
+        elif "select count" in lower or "select (" in lower:
+            if "group by" in lower:
                 self._result = []
-                self.description = [("stage",), ("count",)]
+                self.description = [("k",), ("count",)]
             elif "filter (where" in lower:
                 self._result = [(0, 0)]
                 self.description = [("x",), ("y",)]
-            elif "pdf_sha256" in lower:
-                self._result = []
-                self.description = [("pdf_sha256",)]
-            elif "evidence.assertion" in lower and "kind" in lower:
-                self._result = []
-                self.description = [("kind",), ("resolution",), ("count",)]
             else:
                 # Combined counts query: return 14 zeros
                 self._result = [(0,) * 14]
                 self.description = [("c",)] * 14
+        elif lower.startswith("select"):
+            self._result = []
+            self.description = [("c",)]
         else:
             self._result = []
             self.description = []
@@ -477,34 +480,43 @@ class _CountingCursor:
 
 
 class _CountingConn:
-    """Fake psycopg connection backed by a single CountingCursor."""
+    """Fake psycopg connection: a statement outside a pipeline, or a pipeline exit, is a round trip."""
 
-    def __init__(self) -> None:
-        self._cur = _CountingCursor()
-        self.rolled_back = False
+    def __init__(self, preset: list | None = None) -> None:
+        import psycopg
+
+        self.statements: list[str] = []
+        self.round_trips = 0
+        self.in_pipeline = 0
+        self.closed = False
+        self.autocommit = False
+        self.preset = preset
+        self.info = MagicMock(transaction_status=psycopg.pq.TransactionStatus.IDLE, dbname="fake")
 
     def cursor(self) -> _CountingCursor:
-        return self._cur
+        return _CountingCursor(self)
 
     def rollback(self) -> None:
-        self.rolled_back = True
+        self.round_trips += 1
 
     def commit(self) -> None:
         pass
 
     @contextmanager
     def pipeline(self):
-        yield
+        self.in_pipeline += 1
+        try:
+            yield
+        finally:
+            self.in_pipeline -= 1
+            if not self.in_pipeline:
+                self.round_trips += 1
 
     def __enter__(self) -> "_CountingConn":
         return self
 
     def __exit__(self, *args: Any) -> None:
         pass
-
-    @property
-    def statements(self) -> list[str]:
-        return self._cur.statements
 
 
 def _fake_connect_factory(conn: _CountingConn):
@@ -517,26 +529,20 @@ def _fake_connect_factory(conn: _CountingConn):
     return _connect
 
 
-def test_overview_statement_count_is_at_most_eight() -> None:
-    """After the combined-counts optimisation, overview() runs ≤ 8 SQL statements.
-
-    Before: 14 individual COUNTs + 5 other queries + 2 setup = 21 statements.
-    After:  1 combined COUNT + 5 other queries + 2 setup     ≤  8 statements.
-    """
+def test_overview_is_one_round_trip() -> None:
+    """Setup, the 14 entity counts, five more reads and the rollback: one pipeline."""
     from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 
     conn = _CountingConn()
     repo = CrmWorkspaceRepository(connect=_fake_connect_factory(conn), dsn="unused")
     repo.overview()
-    # Allow a small buffer for pipeline-grouped setup counts
-    assert len(conn.statements) <= 8, (
-        f"overview() used {len(conn.statements)} statements; expected ≤ 8. "
-        f"Statements: {conn.statements}"
-    )
+    assert conn.round_trips == 1, conn.statements
+    assert conn.statements[:2] == ["BEGIN", "SET"] and conn.statements[-1] == "ROLLBACK"
+    assert conn.autocommit is False, "the connection goes back as it came"
 
 
 def test_overview_output_shape_is_unchanged() -> None:
-    """The combined-counts optimisation must not change the response shape."""
+    """The batched overview keeps the response shape."""
     from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository, _COUNT_SQL
 
     conn = _CountingConn()
@@ -552,38 +558,34 @@ def test_overview_output_shape_is_unchanged() -> None:
         assert "count" in entity
 
 
-def test_pipeline_statement_count_is_at_most_eight() -> None:
-    """pipeline() runs ≤ 8 SQL statements: 2 setup + 6 data queries.
-
-    With psycopg pipeline mode the 6 data queries are sent in 1 RTT (instead of
-    6), but the SQL statement count stays at 8 — the test documents the bound.
-    """
+def test_pipeline_is_one_round_trip() -> None:
     from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 
     conn = _CountingConn()
     repo = CrmWorkspaceRepository(connect=_fake_connect_factory(conn), dsn="unused")
     result = repo.pipeline()
-    assert len(conn.statements) <= 8, (
-        f"pipeline() used {len(conn.statements)} statements; expected ≤ 8. "
-        f"Statements: {conn.statements}"
-    )
+    assert conn.round_trips == 1, conn.statements
     assert "items" in result and "total" in result
 
 
-def test_operator_session_statement_count_is_at_most_three() -> None:
-    """operator_session() runs at most 3 SQL statements: setup (≤2) + 1 query."""
+def test_operator_session_is_one_round_trip() -> None:
+    """The per-request session read: setup, the one statement and the rollback together."""
     from origenlab_api.v2.auth_session_store import AuthSessionStore
 
-    conn = _CountingConn()
-    conn._cur._result = [None]  # no session found
-
+    conn = _CountingConn(preset=[])  # no session found
     store = AuthSessionStore(connect=_fake_connect_factory(conn), dsn="unused")
-    result = store.operator_session(b"fake-hash")
-    assert result is None
-    assert len(conn.statements) <= 3, (
-        f"operator_session() used {len(conn.statements)} statements; expected ≤ 3. "
-        f"Statements: {conn.statements}"
-    )
+    assert store.operator_session(b"fake-hash") is None
+    assert conn.round_trips == 1, conn.statements
+    assert conn.statements == ["BEGIN", "SET", "SELECT", "ROLLBACK"]
+
+
+def test_profile_binding_is_one_round_trip() -> None:
+    from origenlab_api.v2.profile_auth import ProfileAuthRepository
+
+    conn = _CountingConn(preset=[])
+    repo = ProfileAuthRepository(connect=_fake_connect_factory(conn), dsn="unused")
+    assert repo.binding("00000000-0000-4000-8000-000000000001", None, b"h") == (None, None, None)
+    assert conn.round_trips == 1, conn.statements
 
 
 # ─────────────────────────────────── helpers ──────────────────────────────────

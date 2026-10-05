@@ -414,13 +414,14 @@ def get_marketing_audience(
     bases = tuple(basis or ())
     if any(b not in BASES for b in bases):
         raise HTTPException(status_code=422, detail="unknown basis")
-    composed = compose(taxonomy, repo.marketing_audience_inputs())
+    # The inputs and the campaign holds: one read-only transaction, one round trip.
+    inputs, holds = repo.marketing_audience()
+    composed = compose(taxonomy, inputs)
     flt = AudienceFilter(
         family_id=family_id, brand_id=brand_id, model_id=model_id,
         organization_id=str(organization_id) if organization_id else None,
         bases=bases, recorded=recorded, q=q,
     )
-    holds = repo.campaign_blocks()
     # A preview is not a freeze, but an operator building an audience while every campaign is
     # blocked must see it here, not first at the freeze.
     campaign_holds = {"all_campaigns": holds["all_campaigns"], "legacy": holds["legacy"], "effect": holds["effect"]}

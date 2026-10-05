@@ -12,6 +12,8 @@ import json
 from contextlib import contextmanager
 from typing import Any
 
+from origenlab_api.v2.read_transaction import read_transaction, run_together
+
 #: Maximum number of search hits returned; truncated flag set when reached.
 MAX_SEARCH_HITS = 50
 
@@ -28,6 +30,257 @@ _ALL_STAGES = (
 )
 
 
+# The cockpit KPI statements, in the order `kpis` reads them back.
+_KPI_QUOTATION_REVISIONS = """
+    select
+      count(*) filter (
+        where qr.origin = 'historical_import'
+          and qr.status = 'sent'
+          and qr.superseded_by_revision_no is null
+      ) as sent_historical_revisions,
+      count(*) filter (
+        where qr.origin = 'historical_import'
+          and qr.status = 'void'
+      ) as void_historical_revisions
+    from crm.quote_revision qr
+"""
+
+_KPI_UNDETERMINED_CANONICAL = """
+    select count(*) from (
+      select qr.quote_id
+      from crm.quote_revision qr
+      where qr.status <> 'void'
+        and qr.superseded_by_revision_no is null
+      group by qr.quote_id
+      having count(*) > 1
+    ) sub
+"""
+
+_KPI_SHARED_PRINTED = """
+    select count(*) from (
+      select q.quote_number
+      from crm.quote q
+      where q.number_origin = 'printed_historical'
+      group by q.quote_number
+      having count(distinct q.opportunity_id) > 1
+    ) sub
+"""
+
+_KPI_EVIDENCE = """
+    select
+      -- distinct: the join repeats a record once per assertion
+      count(distinct sr.id) filter (
+        where sr.review_status = 'pending' and not sr.is_quarantined
+      ) as pending_records,
+      count(*) filter (
+        where a.kind = 'document_reference' and a.resolution = 'unresolved'
+      ) as unresolved_docs
+    from evidence.source_record sr
+    full outer join evidence.assertion a on a.source_record_id = sr.id
+"""
+
+_KPI_MISSING_THREAD = """
+    select count(*)
+    from crm.quote_revision qr
+    join evidence.source_record sr on sr.id = qr.origin_source_record_id
+    where qr.origin = 'historical_import'
+      and (sr.payload->>'gmail_thread_id') is null
+"""
+
+_KPI_MISSING_DOCUMENT = """
+    select count(*)
+    from crm.quote_revision qr
+    join evidence.source_record sr on sr.id = qr.origin_source_record_id
+    where qr.origin = 'historical_import'
+      and (
+        sr.payload->'documents' is null
+        or jsonb_array_length(sr.payload->'documents') = 0
+      )
+"""
+
+_KPI_BY_STAGE = """
+    select stage, count(*) from crm.opportunity group by stage
+"""
+
+_KPI_LEADS_WITHOUT_INSTITUTION = """
+    select count(*)
+    from crm.opportunity op
+    where op.stage = 'lead'
+      and op.organization_id is null
+      and not exists (
+        select 1 from crm.opportunity_organization oo
+         where oo.opportunity_id = op.id
+           and oo.role = 'requesting_institution'
+           and oo.valid_to is null
+      )
+"""
+
+_KPI_STATEMENTS: tuple[str, ...] = (
+    _KPI_QUOTATION_REVISIONS,
+    _KPI_UNDETERMINED_CANONICAL,
+    _KPI_SHARED_PRINTED,
+    _KPI_EVIDENCE,
+    _KPI_MISSING_THREAD,
+    _KPI_MISSING_DOCUMENT,
+    _KPI_BY_STAGE,
+    _KPI_LEADS_WITHOUT_INSTITUTION,
+)
+
+
+# The work queue page and its total (`work_queue`).
+_WORK_QUEUE_SQL = """
+    with items as (
+      -- pending_evidence
+      select
+        'pending_evidence'                    as kind,
+        'Source record awaiting review'       as reason,
+        'Review the evidence record'          as next_action,
+        jsonb_build_object('source_record_id', sr.id::text) as subject_ids,
+        extract(day from now() - sr.created_at)::int        as age_days,
+        sr.kind                                              as label,
+        sr.created_at                                        as sort_at
+      from evidence.source_record sr
+      where sr.review_status = 'pending' and not sr.is_quarantined
+
+      union all
+
+      -- unresolved_document
+      select
+        'unresolved_document',
+        'Document reference assertion unresolved',
+        'Resolve or reject the document assertion',
+        jsonb_build_object(
+          'assertion_id',      a.id::text,
+          'source_record_id',  a.source_record_id::text
+        ),
+        extract(day from now() - a.created_at)::int,
+        a.value_norm,
+        a.created_at
+      from evidence.assertion a
+      where a.kind = 'document_reference' and a.resolution = 'unresolved'
+
+      union all
+
+      -- canonical_undetermined
+      select
+        'canonical_undetermined',
+        'Quote has multiple active revisions — canonical is ambiguous',
+        'Void or supersede the duplicate revision',
+        jsonb_build_object(
+          'quote_id',         q.id::text,
+          'opportunity_id',   q.opportunity_id::text
+        ),
+        extract(day from now() - q.created_at)::int,
+        q.quote_number,
+        q.created_at
+      from crm.quote q
+      where (
+        select count(*)
+        from crm.quote_revision qr
+        where qr.quote_id = q.id
+          and qr.status <> 'void'
+          and qr.superseded_by_revision_no is null
+      ) > 1
+
+      union all
+
+      -- shared_printed_number
+      select
+        'shared_printed_number',
+        'Printed quote number appears on multiple opportunities',
+        'Confirm which opportunity each document belongs to',
+        jsonb_build_object(
+          'quote_number', q.quote_number,
+          'quote_id',     min(q.id::text)
+        ),
+        extract(day from now() - min(q.created_at))::int,
+        q.quote_number,
+        min(q.created_at)
+      from crm.quote q
+      where q.number_origin = 'printed_historical'
+      group by q.quote_number
+      having count(distinct q.opportunity_id) > 1
+
+      union all
+
+      -- case_without_institution
+      select
+        'case_without_institution',
+        'Lead-stage case has no requesting institution',
+        'Set or confirm the requesting institution',
+        jsonb_build_object('opportunity_id', op.id::text),
+        extract(day from now() - op.created_at)::int,
+        op.title,
+        op.created_at
+      from crm.opportunity op
+      where op.stage = 'lead'
+        and op.organization_id is null
+        and not exists (
+          select 1 from crm.opportunity_organization oo
+           where oo.opportunity_id = op.id
+             and oo.role = 'requesting_institution'
+             and oo.valid_to is null
+        )
+
+      union all
+
+      -- case_without_quote
+      select
+        'case_without_quote',
+        'Active quoting/negotiating case has no sent quote',
+        'Create or record a quotation',
+        jsonb_build_object('opportunity_id', op.id::text),
+        extract(day from now() - op.created_at)::int,
+        op.title,
+        op.created_at
+      from crm.opportunity op
+      where op.stage in ('quoting', 'negotiating')
+        and op.closed_at is null
+        and not exists (
+          select 1
+          from crm.quote q
+          join crm.quote_revision qr on qr.quote_id = q.id
+          where q.opportunity_id = op.id
+            and qr.status = 'sent'
+            and qr.superseded_by_revision_no is null
+        )
+    )
+    select kind, reason, next_action, subject_ids, age_days, label
+    from items
+    order by sort_at, kind
+    limit %s offset %s
+"""
+
+_WORK_QUEUE_TOTAL_SQL = """
+    select
+      (select count(*) from evidence.source_record where review_status='pending' and not is_quarantined)
+    + (select count(*) from evidence.assertion where kind='document_reference' and resolution='unresolved')
+    + (select count(*) from (
+        select quote_id from crm.quote_revision
+        where status <> 'void' and superseded_by_revision_no is null
+        group by quote_id having count(*) > 1
+      ) sub)
+    + (select count(*) from (
+        select quote_number from crm.quote where number_origin='printed_historical'
+        group by quote_number having count(distinct opportunity_id) > 1
+      ) sub2)
+    + (select count(*) from crm.opportunity op
+        where op.stage='lead' and op.organization_id is null
+          and not exists (
+            select 1 from crm.opportunity_organization oo
+             where oo.opportunity_id=op.id and oo.role='requesting_institution' and oo.valid_to is null
+          ))
+    + (select count(*) from crm.opportunity op
+        where op.stage in ('quoting','negotiating') and op.closed_at is null
+          and not exists (
+            select 1 from crm.quote q
+            join crm.quote_revision qr on qr.quote_id=q.id
+            where q.opportunity_id=op.id and qr.status='sent' and qr.superseded_by_revision_no is null
+          ))
+    as total
+"""
+
+
 class CockpitRepository:
     """Read queries supporting ``/v2/cockpit/*``.
 
@@ -42,122 +295,31 @@ class CockpitRepository:
 
     @contextmanager
     def _read(self):  # type: ignore[override]
-        with self._connect(self._dsn, autocommit=False) as conn:
-            with conn.cursor() as cur:
-                # Pipeline both setup statements: 1 RTT instead of 2.
-                with conn.pipeline():
-                    cur.execute("set transaction read only")
-                    cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
-                try:
-                    yield cur
-                finally:
-                    conn.rollback()
+        """One read-only transaction (`read_transaction.py`), yielding a psycopg-like cursor."""
+        with read_transaction(self._connect, self._dsn, self._statement_timeout_ms) as session:
+            with session.cursor() as cur:
+                yield cur
 
     # ------------------------------------------------------------------ KPIs
 
     def kpis(self) -> dict[str, Any]:
-        """All cockpit KPIs in one transaction."""
+        """All cockpit KPIs in one transaction, and in one round trip: the statements are
+        independent, so they travel together with the transaction's setup and rollback."""
         with self._read() as cur:
-            # -- quotation kpis
-            cur.execute("""
-                select
-                  count(*) filter (
-                    where qr.origin = 'historical_import'
-                      and qr.status = 'sent'
-                      and qr.superseded_by_revision_no is null
-                  ) as sent_historical_revisions,
-                  count(*) filter (
-                    where qr.origin = 'historical_import'
-                      and qr.status = 'void'
-                  ) as void_historical_revisions
-                from crm.quote_revision qr
-            """)
-            row = cur.fetchone()
+            (revisions, undetermined_cur, shared_cur, evidence, thread_cur, doc_cur, stage_cur,
+             leads_cur) = run_together(cur, [(sql, None) for sql in _KPI_STATEMENTS], final=True)
+            row = revisions.fetchone()
             sent_historical, void_historical = int(row[0]), int(row[1])
-
-            cur.execute("""
-                select count(*) from (
-                  select qr.quote_id
-                  from crm.quote_revision qr
-                  where qr.status <> 'void'
-                    and qr.superseded_by_revision_no is null
-                  group by qr.quote_id
-                  having count(*) > 1
-                ) sub
-            """)
-            undetermined = int(cur.fetchone()[0])
-
-            cur.execute("""
-                select count(*) from (
-                  select q.quote_number
-                  from crm.quote q
-                  where q.number_origin = 'printed_historical'
-                  group by q.quote_number
-                  having count(distinct q.opportunity_id) > 1
-                ) sub
-            """)
-            shared_printed = int(cur.fetchone()[0])
-
-            # -- evidence kpis
-            cur.execute("""
-                select
-                  -- distinct: the join repeats a record once per assertion
-                  count(distinct sr.id) filter (
-                    where sr.review_status = 'pending' and not sr.is_quarantined
-                  ) as pending_records,
-                  count(*) filter (
-                    where a.kind = 'document_reference' and a.resolution = 'unresolved'
-                  ) as unresolved_docs
-                from evidence.source_record sr
-                full outer join evidence.assertion a on a.source_record_id = sr.id
-            """)
-            row = cur.fetchone()
+            undetermined = int(undetermined_cur.fetchone()[0])
+            shared_printed = int(shared_cur.fetchone()[0])
+            row = evidence.fetchone()
             pending_sr, unresolved_dr = int(row[0]), int(row[1])
-
-            # revisions missing thread_id
-            cur.execute("""
-                select count(*)
-                from crm.quote_revision qr
-                join evidence.source_record sr on sr.id = qr.origin_source_record_id
-                where qr.origin = 'historical_import'
-                  and (sr.payload->>'gmail_thread_id') is null
-            """)
-            missing_thread = int(cur.fetchone()[0])
-
-            # revisions missing document entry
-            cur.execute("""
-                select count(*)
-                from crm.quote_revision qr
-                join evidence.source_record sr on sr.id = qr.origin_source_record_id
-                where qr.origin = 'historical_import'
-                  and (
-                    sr.payload->'documents' is null
-                    or jsonb_array_length(sr.payload->'documents') = 0
-                  )
-            """)
-            missing_doc = int(cur.fetchone()[0])
-
-            # -- opportunity kpis
-            cur.execute("""
-                select stage, count(*) from crm.opportunity group by stage
-            """)
+            missing_thread = int(thread_cur.fetchone()[0])
+            missing_doc = int(doc_cur.fetchone()[0])
             by_stage: dict[str, int] = {s: 0 for s in _ALL_STAGES}
-            for stage, cnt in cur.fetchall():
+            for stage, cnt in stage_cur.fetchall():
                 by_stage[stage] = int(cnt)
-
-            cur.execute("""
-                select count(*)
-                from crm.opportunity op
-                where op.stage = 'lead'
-                  and op.organization_id is null
-                  and not exists (
-                    select 1 from crm.opportunity_organization oo
-                     where oo.opportunity_id = op.id
-                       and oo.role = 'requesting_institution'
-                       and oo.valid_to is null
-                  )
-            """)
-            leads_no_inst = int(cur.fetchone()[0])
+            leads_no_inst = int(leads_cur.fetchone()[0])
 
         return {
             "quotations": {
@@ -181,164 +343,15 @@ class CockpitRepository:
     # --------------------------------------------------------------- work queue
 
     def work_queue(self, limit: int, offset: int) -> dict[str, Any]:
-        """Typed work items ordered by age (oldest first) then kind."""
+        """Typed work items ordered by age (oldest first) then kind; the page and its total
+        in one round trip."""
         with self._read() as cur:
-            cur.execute("""
-                with items as (
-                  -- pending_evidence
-                  select
-                    'pending_evidence'                    as kind,
-                    'Source record awaiting review'       as reason,
-                    'Review the evidence record'          as next_action,
-                    jsonb_build_object('source_record_id', sr.id::text) as subject_ids,
-                    extract(day from now() - sr.created_at)::int        as age_days,
-                    sr.kind                                              as label,
-                    sr.created_at                                        as sort_at
-                  from evidence.source_record sr
-                  where sr.review_status = 'pending' and not sr.is_quarantined
-
-                  union all
-
-                  -- unresolved_document
-                  select
-                    'unresolved_document',
-                    'Document reference assertion unresolved',
-                    'Resolve or reject the document assertion',
-                    jsonb_build_object(
-                      'assertion_id',      a.id::text,
-                      'source_record_id',  a.source_record_id::text
-                    ),
-                    extract(day from now() - a.created_at)::int,
-                    a.value_norm,
-                    a.created_at
-                  from evidence.assertion a
-                  where a.kind = 'document_reference' and a.resolution = 'unresolved'
-
-                  union all
-
-                  -- canonical_undetermined
-                  select
-                    'canonical_undetermined',
-                    'Quote has multiple active revisions — canonical is ambiguous',
-                    'Void or supersede the duplicate revision',
-                    jsonb_build_object(
-                      'quote_id',         q.id::text,
-                      'opportunity_id',   q.opportunity_id::text
-                    ),
-                    extract(day from now() - q.created_at)::int,
-                    q.quote_number,
-                    q.created_at
-                  from crm.quote q
-                  where (
-                    select count(*)
-                    from crm.quote_revision qr
-                    where qr.quote_id = q.id
-                      and qr.status <> 'void'
-                      and qr.superseded_by_revision_no is null
-                  ) > 1
-
-                  union all
-
-                  -- shared_printed_number
-                  select
-                    'shared_printed_number',
-                    'Printed quote number appears on multiple opportunities',
-                    'Confirm which opportunity each document belongs to',
-                    jsonb_build_object(
-                      'quote_number', q.quote_number,
-                      'quote_id',     min(q.id::text)
-                    ),
-                    extract(day from now() - min(q.created_at))::int,
-                    q.quote_number,
-                    min(q.created_at)
-                  from crm.quote q
-                  where q.number_origin = 'printed_historical'
-                  group by q.quote_number
-                  having count(distinct q.opportunity_id) > 1
-
-                  union all
-
-                  -- case_without_institution
-                  select
-                    'case_without_institution',
-                    'Lead-stage case has no requesting institution',
-                    'Set or confirm the requesting institution',
-                    jsonb_build_object('opportunity_id', op.id::text),
-                    extract(day from now() - op.created_at)::int,
-                    op.title,
-                    op.created_at
-                  from crm.opportunity op
-                  where op.stage = 'lead'
-                    and op.organization_id is null
-                    and not exists (
-                      select 1 from crm.opportunity_organization oo
-                       where oo.opportunity_id = op.id
-                         and oo.role = 'requesting_institution'
-                         and oo.valid_to is null
-                    )
-
-                  union all
-
-                  -- case_without_quote
-                  select
-                    'case_without_quote',
-                    'Active quoting/negotiating case has no sent quote',
-                    'Create or record a quotation',
-                    jsonb_build_object('opportunity_id', op.id::text),
-                    extract(day from now() - op.created_at)::int,
-                    op.title,
-                    op.created_at
-                  from crm.opportunity op
-                  where op.stage in ('quoting', 'negotiating')
-                    and op.closed_at is null
-                    and not exists (
-                      select 1
-                      from crm.quote q
-                      join crm.quote_revision qr on qr.quote_id = q.id
-                      where q.opportunity_id = op.id
-                        and qr.status = 'sent'
-                        and qr.superseded_by_revision_no is null
-                    )
-                )
-                select kind, reason, next_action, subject_ids, age_days, label
-                from items
-                order by sort_at, kind
-                limit %s offset %s
-            """, (limit, offset))
-            columns = [d[0] for d in cur.description]
-            rows = cur.fetchall()
-            items = [dict(zip(columns, r, strict=True)) for r in rows]
-
-            # total (count all branches without limit/offset)
-            cur.execute("""
-                select
-                  (select count(*) from evidence.source_record where review_status='pending' and not is_quarantined)
-                + (select count(*) from evidence.assertion where kind='document_reference' and resolution='unresolved')
-                + (select count(*) from (
-                    select quote_id from crm.quote_revision
-                    where status <> 'void' and superseded_by_revision_no is null
-                    group by quote_id having count(*) > 1
-                  ) sub)
-                + (select count(*) from (
-                    select quote_number from crm.quote where number_origin='printed_historical'
-                    group by quote_number having count(distinct opportunity_id) > 1
-                  ) sub2)
-                + (select count(*) from crm.opportunity op
-                    where op.stage='lead' and op.organization_id is null
-                      and not exists (
-                        select 1 from crm.opportunity_organization oo
-                         where oo.opportunity_id=op.id and oo.role='requesting_institution' and oo.valid_to is null
-                      ))
-                + (select count(*) from crm.opportunity op
-                    where op.stage in ('quoting','negotiating') and op.closed_at is null
-                      and not exists (
-                        select 1 from crm.quote q
-                        join crm.quote_revision qr on qr.quote_id=q.id
-                        where q.opportunity_id=op.id and qr.status='sent' and qr.superseded_by_revision_no is null
-                      ))
-                as total
-            """)
-            total = int(cur.fetchone()[0])
+            listed, counted = run_together(
+                cur, [(_WORK_QUEUE_SQL, (limit, offset)), (_WORK_QUEUE_TOTAL_SQL, None)], final=True
+            )
+            columns = [d[0] for d in listed.description]
+            items = [dict(zip(columns, r, strict=True)) for r in listed.fetchall()]
+            total = int(counted.fetchone()[0])
 
         # convert jsonb to dict
         for item in items:
@@ -398,9 +411,6 @@ class CockpitRepository:
                 left join crm.organization o on o.id = op.organization_id
                 {where}
             """
-            cur.execute(count_sql, params)
-            total = int(cur.fetchone()[0])
-
             sql = f"""
                 select
                   op.id::text                                as opportunity_id,
@@ -434,9 +444,13 @@ class CockpitRepository:
                 order by op.updated_at desc, op.id
                 limit %s offset %s
             """
-            cur.execute(sql, (*params, limit, offset))
-            cols = [d[0] for d in cur.description]
-            items = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
+            # The count and the page in one round trip, with the transaction's setup and end.
+            counted, listed = run_together(
+                cur, [(count_sql, params), (sql, (*params, limit, offset))], final=True
+            )
+            total = int(counted.fetchone()[0])
+            cols = [d[0] for d in listed.description]
+            items = [dict(zip(cols, r, strict=True)) for r in listed.fetchall()]
 
         return {"items": items, "total": total, "limit": limit, "offset": offset}
 
@@ -665,9 +679,6 @@ class CockpitRepository:
                 left join crm.organization o on o.id = op.organization_id
                 {where}
             """
-            cur.execute(count_sql, params)
-            total = int(cur.fetchone()[0])
-
             sql = f"""
                 select
                   q.id::text                                        as quote_id,
@@ -699,9 +710,12 @@ class CockpitRepository:
                 order by q.created_at desc, q.id
                 limit %s offset %s
             """
-            cur.execute(sql, (*params, limit, offset))
-            cols = [d[0] for d in cur.description]
-            items = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
+            counted, listed = run_together(
+                cur, [(count_sql, params), (sql, (*params, limit, offset))], final=True
+            )
+            total = int(counted.fetchone()[0])
+            cols = [d[0] for d in listed.description]
+            items = [dict(zip(cols, r, strict=True)) for r in listed.fetchall()]
 
         return {"items": items, "total": total, "limit": limit, "offset": offset}
 

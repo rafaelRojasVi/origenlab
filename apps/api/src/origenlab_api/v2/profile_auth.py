@@ -68,6 +68,7 @@ from datetime import timedelta
 from typing import Any, Iterator
 
 from origenlab_api.v2.profile_pin import NEW_PIN_RE, PinChallenge, PinHasher
+from origenlab_api.v2.read_transaction import ReadSession, read_transaction
 
 #: Roles that may use the dashboard at all (`docs/OPERATIONS.md` §2).
 DASHBOARD_ROLES = ("viewer", "sales", "admin")
@@ -185,17 +186,11 @@ class ProfileAuthRepository:
         self._statement_timeout_ms = statement_timeout_ms
 
     @contextmanager
-    def _read(self) -> Iterator[Any]:
-        with self._connect(self._dsn, autocommit=False) as conn:
-            with conn.cursor() as cur:
-                # Pipeline both setup statements: 1 RTT instead of 2.
-                with conn.pipeline():
-                    cur.execute("set transaction read only")
-                    cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
-                try:
-                    yield cur
-                finally:
-                    conn.rollback()
+    def _read(self) -> Iterator[ReadSession]:
+        """One read-only transaction (`read_transaction.py`). Every read here is one statement,
+        sent as the session's final one: setup, statement and rollback in one round trip."""
+        with read_transaction(self._connect, self._dsn, self._statement_timeout_ms) as session:
+            yield session
 
     @contextmanager
     def _write(self) -> Iterator[Any]:
@@ -214,8 +209,8 @@ class ProfileAuthRepository:
     def principal_by_email(self, email_norm: str) -> PrincipalRecord | None:
         """By address alone — the local development shortcut only. Google sign-in uses
         :meth:`principals_for_google`, which also matches the account's issuer and subject."""
-        with self._read() as cur:
-            cur.execute(
+        with self._read() as session:
+            cur = session.final(
                 f"select {_PRINCIPAL_COLUMNS} "
                 "from platform.auth_principal where provider = 'google' and email_norm = %s",
                 (email_norm,),
@@ -231,8 +226,8 @@ class ProfileAuthRepository:
         (a recreated account under the same address; a renamed account) is a refusal, never a
         fall-through to the individual-operator path.
         """
-        with self._read() as cur:
-            cur.execute(
+        with self._read() as session:
+            cur = session.final(
                 f"select {_PRINCIPAL_COLUMNS} from platform.auth_principal "
                 "where provider = 'google' "
                 "  and (email_norm = %s or (provider_issuer = %s and provider_subject = %s)) "
@@ -254,8 +249,8 @@ class ProfileAuthRepository:
         if pid is None:
             return None, None, None
         oid = parse_uuid(operator_id) if operator_id is not None else None
-        with self._read() as cur:
-            cur.execute(
+        with self._read() as session:
+            cur = session.final(
                 """
                 select a.id::text, a.email_norm, a.provider_subject, a.status, a.version,
                        a.provider_issuer,
@@ -380,8 +375,8 @@ class ProfileAuthRepository:
         pid = parse_uuid(principal_id)
         if pid is None:
             return []
-        with self._read() as cur:
-            cur.execute(
+        with self._read() as session:
+            cur = session.final(
                 """
                 select p.operator_id::text, o.display_name, o.role
                   from platform.operator_profile p

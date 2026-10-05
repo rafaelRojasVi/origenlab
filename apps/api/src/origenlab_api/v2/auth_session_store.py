@@ -21,6 +21,7 @@ from typing import Any, Iterator
 
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.profile_auth import parse_uuid
+from origenlab_api.v2.read_transaction import read_transaction
 
 
 @dataclass(frozen=True)
@@ -40,32 +41,23 @@ class AuthSessionStore:
         self._statement_timeout_ms = statement_timeout_ms
 
     @contextmanager
-    def _cursor(self, *, read_only: bool) -> Iterator[Any]:
+    def _write(self) -> Iterator[Any]:
         with self._connect(self._dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
-                if read_only:
-                    # Pipeline both setup statements: 1 RTT instead of 2.
-                    with conn.pipeline():
-                        cur.execute("set transaction read only")
-                        cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
-                else:
-                    cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
+                cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
                 try:
                     yield cur
                 except BaseException:
                     conn.rollback()
                     raise
-                if read_only:
-                    conn.rollback()
-                else:
-                    conn.commit()
+                conn.commit()
 
     def open_operator_session(self, *, operator_id: str, token_hash: bytes, expires_at: int) -> None:
         """Record a new session of this operator, expiring at `expires_at` (epoch seconds)."""
         oid = parse_uuid(operator_id)
         if oid is None:
             raise ValueError("not an operator id")
-        with self._cursor(read_only=False) as cur:
+        with self._write() as cur:
             cur.execute(
                 "insert into platform.auth_session "
                 "  (token_hash, sign_in_kind, account_operator_id, expires_at) "
@@ -75,8 +67,10 @@ class AuthSessionStore:
 
     def operator_session(self, token_hash: bytes) -> OperatorSessionRow | None:
         """The session row named by `token_hash` and its operator, or None when there is none."""
-        with self._cursor(read_only=True) as cur:
-            cur.execute(
+        # Read on every request: one read-only transaction whose setup, statement and rollback
+        # share one round trip (`read_transaction.py`).
+        with read_transaction(self._connect, self._dsn, self._statement_timeout_ms) as session:
+            cur = session.final(
                 """
                 select s.revoked_at is null and s.expires_at > now(),
                        o.id::text, o.email_norm, o.display_name, o.role, o.status, o.version
@@ -105,7 +99,7 @@ class AuthSessionStore:
         oid = parse_uuid(operator_id)
         if oid is None:
             raise ValueError("not an operator id")
-        with self._cursor(read_only=False) as cur:
+        with self._write() as cur:
             cur.execute(
                 "update platform.auth_session set revoked_at = now(), revoked_reason = 'logout' "
                 "where token_hash = %s and sign_in_kind = 'google_account' "

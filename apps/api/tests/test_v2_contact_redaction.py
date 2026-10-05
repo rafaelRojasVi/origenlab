@@ -447,6 +447,9 @@ class _RecordingCursor:
     def fetchall(self) -> list[Any]:
         return []
 
+    def close(self) -> None:
+        return None
+
     def __enter__(self) -> "_RecordingCursor":
         return self
 
@@ -455,8 +458,18 @@ class _RecordingCursor:
 
 
 class _RecordingConnection:
+    """Stands in for a psycopg connection: what the read transaction touches, and no more."""
+
+    closed = False
+
     def __init__(self, log: list[tuple[str, Any]]) -> None:
+        from types import SimpleNamespace
+
+        import psycopg
+
         self._log = log
+        self.autocommit = False
+        self.info = SimpleNamespace(transaction_status=psycopg.pq.TransactionStatus.IDLE, dbname="unused")
 
     def cursor(self) -> _RecordingCursor:
         return _RecordingCursor(self._log)

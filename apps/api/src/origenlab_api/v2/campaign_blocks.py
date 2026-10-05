@@ -43,6 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
+from origenlab_api.v2.read_transaction import Statement, run_together
 
 BLOCK_CAMPAIGN = "block-campaign"
 UNBLOCK_CAMPAIGN = "unblock-campaign"
@@ -153,52 +154,64 @@ def _labelled(block: dict[str, Any]) -> dict[str, Any]:
     return {**block, "scope_label": SCOPE_LABEL.get(block["scope"], block["scope"])}
 
 
+_ACTIVE_BLOCKS_SQL = f"""
+    select {_BLOCK_COLUMNS}
+      from outbound.campaign_block b
+      left join platform.operator po on po.id = b.placed_by_operator_id
+      left join platform.operator lo on lo.id = b.lifted_by_operator_id
+     where b.lifted_at is null
+     order by b.placed_at, b.id
+"""
+
+_LIFTED_BLOCKS_SQL = f"""
+    select {_BLOCK_COLUMNS}
+      from outbound.campaign_block b
+      left join platform.operator po on po.id = b.placed_by_operator_id
+      left join platform.operator lo on lo.id = b.lifted_by_operator_id
+     where b.lifted_at is not null
+     order by b.lifted_at desc, b.id
+     limit %s
+"""
+
+_PER_CAMPAIGN_HOLDS_SQL = """
+    select c.id::text as campaign_id, outbound.campaign_hold_refusals(c.id) as refusals,
+           (select count(*) + count(b.lifted_at) from outbound.campaign_block b
+             where b.scope = 'campaign' and b.campaign_id = c.id)::int as block_version
+      from outbound.campaign c
+"""
+
+_ALL_CAMPAIGNS_BLOCK_VERSION_SQL = """
+    select (count(*) + count(lifted_at))::int from outbound.campaign_block where scope = 'all_campaigns'
+"""
+
+
+def campaign_holds_statements(*, lifted_limit: int = 20) -> list[Statement]:
+    """The four independent reads behind `read_campaign_holds`, for a caller to batch."""
+    return [
+        (_ACTIVE_BLOCKS_SQL, None),
+        (_LIFTED_BLOCKS_SQL, (lifted_limit,)),
+        (_PER_CAMPAIGN_HOLDS_SQL, None),
+        (_ALL_CAMPAIGNS_BLOCK_VERSION_SQL, None),
+    ]
+
+
 def read_campaign_holds(cur: Any, *, lifted_limit: int = 20) -> dict[str, Any]:
     """Every active block, the latest lifted ones, and each target's compare-and-set version.
 
     `by_campaign` answers, for every V2 campaign, what `outbound.campaign_hold_refusals` says
     right now — the same function the triggers enforce — plus its campaign-scope block and
-    block_version. `all_campaigns` is the global block and its version.
+    block_version. `all_campaigns` is the global block and its version. One round trip.
     """
-    cur.execute(
-        f"""
-        select {_BLOCK_COLUMNS}
-          from outbound.campaign_block b
-          left join platform.operator po on po.id = b.placed_by_operator_id
-          left join platform.operator lo on lo.id = b.lifted_by_operator_id
-         where b.lifted_at is null
-         order by b.placed_at, b.id
-        """
-    )
-    active = [_labelled(b) for b in _rows(cur)]
-    cur.execute(
-        f"""
-        select {_BLOCK_COLUMNS}
-          from outbound.campaign_block b
-          left join platform.operator po on po.id = b.placed_by_operator_id
-          left join platform.operator lo on lo.id = b.lifted_by_operator_id
-         where b.lifted_at is not null
-         order by b.lifted_at desc, b.id
-         limit %s
-        """,
-        (lifted_limit,),
-    )
-    lifted = [_labelled(b) for b in _rows(cur)]
-    cur.execute(
-        """
-        select c.id::text as campaign_id, outbound.campaign_hold_refusals(c.id) as refusals,
-               (select count(*) + count(b.lifted_at) from outbound.campaign_block b
-                 where b.scope = 'campaign' and b.campaign_id = c.id)::int as block_version
-          from outbound.campaign c
-        """
-    )
-    per_campaign = _rows(cur)
-    cur.execute(
-        """
-        select (count(*) + count(lifted_at))::int from outbound.campaign_block where scope = 'all_campaigns'
-        """
-    )
-    all_version = cur.fetchone()[0]
+    return campaign_holds_from(run_together(cur, campaign_holds_statements(lifted_limit=lifted_limit)))
+
+
+def campaign_holds_from(cursors: list[Any]) -> dict[str, Any]:
+    """`read_campaign_holds` from the executed cursors of `campaign_holds_statements`."""
+    active_cur, lifted_cur, per_campaign_cur, version_cur = cursors
+    active = [_labelled(b) for b in _rows(active_cur)]
+    lifted = [_labelled(b) for b in _rows(lifted_cur)]
+    per_campaign = _rows(per_campaign_cur)
+    all_version = version_cur.fetchone()[0]
 
     active_by_campaign = {b["campaign_id"]: b for b in active if b["scope"] == "campaign"}
     global_block = next((b for b in active if b["scope"] == "all_campaigns"), None)

@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from origenlab_api.v2.identity import OperatorIdentity, OperatorLookup
+from origenlab_api.v2.read_transaction import read_transaction, run_together
 
 #: Every listing is bounded. An unbounded operator list is a way to turn one careless request
 #: into a full export of the contact database.
@@ -53,47 +54,49 @@ class V2Repository(OperatorLookup):
 
     @contextmanager
     def _read(self) -> Iterator[Any]:
-        """One read-only transaction, proven read-only by the server.
+        """One read-only transaction, proven read-only by the server (`read_transaction.py`).
 
-        `set transaction read only` comes first and `set local statement_timeout` second, so
-        both are unambiguously inside the transaction the driver has already opened. The
-        order matters: `set local` outside a transaction is silently a no-op, and a timeout
-        that quietly did not apply is worse than no timeout at all.
-
-        A write attempted in here fails with SQLSTATE 25006, which
-        `test_a_write_is_refused_by_the_server` proves against a real database rather than
-        assuming.
+        The transaction is opened with `begin transaction read only` and `set local
+        statement_timeout` follows inside it, so the timeout can never silently miss the
+        transaction; both travel in the same round trip as the first statement. A write
+        attempted in here fails with SQLSTATE 25006, which `test_a_write_is_refused_by_the_server`
+        proves against a real database rather than assuming. The cursor yielded behaves like a
+        psycopg cursor; `_page` and `run_together` send independent statements together.
         """
-        with self._connect(self._dsn, autocommit=False) as conn:
-            with conn.cursor() as cur:
-                # Pipeline both setup statements: 1 RTT instead of 2.
-                with conn.pipeline():
-                    cur.execute("set transaction read only")
-                    cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
-                try:
-                    yield cur
-                finally:
-                    conn.rollback()
+        with read_transaction(self._connect, self._dsn, self._statement_timeout_ms) as session:
+            with session.cursor() as cur:
+                yield cur
 
     def _page(self, cur: Any, sql: str, count_sql: str, params: tuple[Any, ...],
-              limit: int, offset: int) -> Page:
-        cur.execute(count_sql, params)
-        total = int(cur.fetchone()[0])
-        cur.execute(sql, (*params, limit, offset))
-        columns = [d[0] for d in cur.description]
-        items = [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
-        return Page(items=items, total=total, limit=limit, offset=offset)
+              limit: int, offset: int, *, final: bool = False) -> Page:
+        """The count and the page, in one round trip.
+
+        With `final=True` the transaction ends in that same round trip: a list whose read is
+        only its page costs one round trip in all.
+        """
+        return self._paged(cur, sql, count_sql, params, limit, offset, final=final)[0]
+
+    def _paged(self, cur: Any, sql: str, count_sql: str, params: tuple[Any, ...],
+               limit: int, offset: int, *, final: bool = False,
+               also: tuple[tuple[str, Any], ...] = ()) -> tuple[Page, list[Any]]:
+        """`_page`, with the `also` statements sent beside it; returns their executed cursors."""
+        counted, paged, *extra = run_together(
+            cur, [(count_sql, params), (sql, (*params, limit, offset)), *also], final=final
+        )
+        total = int(counted.fetchone()[0])
+        columns = [d[0] for d in paged.description]
+        items = [dict(zip(columns, row, strict=True)) for row in paged.fetchall()]
+        return Page(items=items, total=total, limit=limit, offset=offset), extra
 
     # ------------------------------------------------------------------ identity
 
     def by_email(self, email_norm: str) -> OperatorIdentity | None:
-        with self._read() as cur:
-            cur.execute(
+        with read_transaction(self._connect, self._dsn, self._statement_timeout_ms) as session:
+            row = session.final(
                 "select id::text, email_norm, display_name, role, status, version "
                 "from platform.operator where email_norm = %s",
                 (email_norm,),
-            )
-            row = cur.fetchone()
+            ).fetchone()
         if row is None:
             return None
         return OperatorIdentity(
@@ -198,7 +201,7 @@ class V2Repository(OperatorLookup):
         """
         count_sql = f"select count(*) {joins} {where}"
         with self._read() as cur:
-            return self._page(cur, sql, count_sql, tuple(params), limit, offset)
+            return self._page(cur, sql, count_sql, tuple(params), limit, offset, final=True)
 
     #: A current participant row for the channel `cp`, directly or through its person.
     _CONTACT_PARTICIPATION = """
@@ -442,10 +445,10 @@ class V2Repository(OperatorLookup):
         with self._read() as cur:
             # psycopg ints come back as int already; `sum()` over bigint is numeric, so the
             # three summed metrics are normalised here rather than leaking Decimal to JSON.
-            page = self._page(cur, sql, count_sql, tuple(params), limit, offset)
-            cur.execute(facet_sql, tuple(params))
-            facet_row = cur.fetchone()
-            facets = {d[0]: int(v) for d, v in zip(cur.description, facet_row, strict=True)}
+            page, (facet_cur,) = self._paged(cur, sql, count_sql, tuple(params), limit, offset,
+                                             final=True, also=((facet_sql, tuple(params)),))
+            facet_row = facet_cur.fetchone()
+            facets = {d[0]: int(v) for d, v in zip(facet_cur.description, facet_row, strict=True)}
         for item in page.items:
             for key in ("interest_count", "quote_count", "activity_count"):
                 item[key] = int(item[key])
@@ -494,7 +497,7 @@ class V2Repository(OperatorLookup):
         """
         count_sql = f"select count(*) from crm.opportunity op {where}"
         with self._read() as cur:
-            return self._page(cur, sql, count_sql, params, limit, offset)
+            return self._page(cur, sql, count_sql, params, limit, offset, final=True)
 
     # ----------------------------------------------------------------- follow-ups
 
@@ -528,7 +531,7 @@ class V2Repository(OperatorLookup):
         """
         count_sql = f"select count(*) from crm.task t {where}"
         with self._read() as cur:
-            return self._page(cur, sql, count_sql, params, limit, offset)
+            return self._page(cur, sql, count_sql, params, limit, offset, final=True)
 
     # --------------------------------------------------------------- review queue
 
@@ -540,8 +543,8 @@ class V2Repository(OperatorLookup):
         (the migration transcribed an observation and wants it confirmed), and unresolved
         assertions (nothing has looked at them yet).
         """
-        with self._read() as cur:
-            cur.execute(
+        with read_transaction(self._connect, self._dsn, self._statement_timeout_ms) as session:
+            cur = session.final(
                 """
                 select
                   (select count(*) from evidence.assertion where resolution = 'ambiguous')
@@ -602,7 +605,7 @@ class V2Repository(OperatorLookup):
               {where}
         """
         with self._read() as cur:
-            return self._page(cur, sql, count_sql, params, limit, offset)
+            return self._page(cur, sql, count_sql, params, limit, offset, final=True)
 
     # ---------------------------------------------------------------- the cards
 
@@ -1449,7 +1452,7 @@ class V2Repository(OperatorLookup):
               {where}
         """
         with self._read() as cur:
-            return self._page(cur, sql, count_sql, params, limit, offset)
+            return self._page(cur, sql, count_sql, params, limit, offset, final=True)
 
     # ----------------------------------------------- the review queue, record by record
 
@@ -1824,11 +1827,13 @@ class V2Repository(OperatorLookup):
         """
         count_sql = f"select count(*) from crm.opportunity op {where}"
         with self._read() as cur:
-            cur.execute(count_sql, tuple(params))
-            total = int(cur.fetchone()[0])
-            items = self._rows(
-                cur, sql, (list(self.CASE_ROLE_ORDER), *params, limit, offset)
+            counted, listed = run_together(
+                cur, [(count_sql, tuple(params)), (sql, (list(self.CASE_ROLE_ORDER), *params, limit, offset))],
+                final=True,
             )
+            total = int(counted.fetchone()[0])
+            columns = [d[0] for d in listed.description]
+            items = [dict(zip(columns, row, strict=True)) for row in listed.fetchall()]
         return Page(items=items, total=total, limit=limit, offset=offset)
 
     def organization_cases(

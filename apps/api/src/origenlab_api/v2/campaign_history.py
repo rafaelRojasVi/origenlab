@@ -26,6 +26,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from origenlab_api.v2.contact_redaction import sees_contact_addresses
+from origenlab_api.v2.read_transaction import Statement, run_together
 
 GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
 
@@ -202,18 +203,27 @@ EMPTY_ATTEMPTS = {
 }
 
 
+def all_totals_statements() -> list[Statement]:
+    """The two independent reads behind `read_all_totals`, for a caller to batch."""
+    return [(totals_sql("all"), None), (ATTEMPTS_SQL.format(filter=""), None)]
+
+
 def read_all_totals(cur: Any) -> dict[str, dict[str, Any]]:
     """``{campaign_id: {"totals": {...}, "attempts": {...}}}`` for every campaign with a row."""
-    cur.execute(totals_sql("all"))
-    cols = [d[0] for d in cur.description]
+    return all_totals_from(run_together(cur, all_totals_statements()))
+
+
+def all_totals_from(cursors: list[Any]) -> dict[str, dict[str, Any]]:
+    """`read_all_totals` from the executed cursors of `all_totals_statements`."""
+    totals_cur, attempts_cur = cursors
+    cols = [d[0] for d in totals_cur.description]
     out: dict[str, dict[str, Any]] = {}
-    for row in cur.fetchall():
+    for row in totals_cur.fetchall():
         rec = dict(zip(cols, row, strict=True))
         cid = rec.pop("campaign_id")
         out[cid] = {"totals": rec, "attempts": dict(EMPTY_ATTEMPTS)}
-    cur.execute(ATTEMPTS_SQL.format(filter=""))
-    cols = [d[0] for d in cur.description]
-    for row in cur.fetchall():
+    cols = [d[0] for d in attempts_cur.description]
+    for row in attempts_cur.fetchall():
         rec = dict(zip(cols, row, strict=True))
         cid = rec.pop("campaign_id")
         out.setdefault(cid, {"totals": {k: 0 for k in TOTALS}, "attempts": dict(EMPTY_ATTEMPTS)})["attempts"] = rec
