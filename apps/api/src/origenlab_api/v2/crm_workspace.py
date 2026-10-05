@@ -1458,6 +1458,7 @@ class CrmWorkspaceRepository:
             "notes": notes,
             "references": refs,
             "removal": {"allowed": False, "reasons": reasons},
+            "web_suggestions": None,  # injected by the route from the suggestions file
             "authoring": None,  # injected by the route from request.app.state
         }
 

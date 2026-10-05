@@ -30,6 +30,7 @@ from origenlab_api.v2.equipment_interests import interest_index, supplier_direct
 from origenlab_api.v2.equipment_taxonomy import load_taxonomy
 from origenlab_api.v2.fx_rates import FxRates, FxUnavailable
 from origenlab_api.v2.marketing_audience import BASES, AudienceFilter, apply_filter, compose
+from origenlab_api.v2.org_web_suggestions import load_org_suggestions, suggestion_for
 from origenlab_api.v2.v1_lane_campaigns import as_dict as v1_campaign_as_dict
 from origenlab_api.v2.v1_lane_campaigns import load_v1_lane_campaigns, load_v1_lane_html
 from origenlab_api.v2.unsubscribe_replies import (
@@ -146,6 +147,10 @@ def get_organization_authoring(
         "may_author": enabled and getattr(operator, "role", None) in ("sales", "admin"),
         "may_archive": enabled and getattr(operator, "role", None) == "admin",
     }
+    # Read per request, like the V1-lane declaration: a bad file is a warning and null, never a 500.
+    body["web_suggestions"] = suggestion_for(
+        load_org_suggestions(getattr(request.app.state, "org_suggestions_file", None)), str(organization_id)
+    )
     return body
 
 
