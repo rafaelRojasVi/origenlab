@@ -223,14 +223,19 @@ def compute_person_suggestions(
     last: dict[str, str] = {}
     for row in rows:
         sent = row.sent_at or ""
-        eligible = [
+        # Subdomains are deliberately not excluded (same rule as `quote_crm_import_plan.OWN_DOMAINS`).
+        recipients = [
             (raw, address) for raw, address in parse_recipients(row.recipients)
-            if address.rpartition("@")[2] not in OWN_DOMAINS and not (address in held and held[address].blocks)
+            if address.rpartition("@")[2] not in OWN_DOMAINS
         ]
-        named = {address: clean_name(raw, local_part=address.partition("@")[0]) for raw, address in eligible}
+        named = {address: clean_name(raw, local_part=address.partition("@")[0]) for raw, address in recipients}
+        # Held addresses still count as nameless recipients: the PDF may be theirs. Held only
+        # suppresses that address's own suggestion.
         nameless = [a for a, n in named.items() if n is None and not _generic(a)]
         from_pdf = _filename_person(row, organizations) if len(nameless) == 1 else None
         for address, name in named.items():
+            if address in held and held[address].blocks:
+                continue
             if name is not None:
                 names[address].append((2, sent, name))
             elif from_pdf is not None and nameless == [address]:

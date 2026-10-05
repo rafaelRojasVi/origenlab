@@ -186,6 +186,42 @@ def test_own_domains_are_the_import_plans() -> None:
     assert OWN_DOMAINS == quote_crm_import_plan.OWN_DOMAINS
 
 
+def test_a_held_nameless_recipient_still_counts_so_the_pdf_is_not_guessed_onto_the_free_one() -> None:
+    both = row("held@labficticio.example.invalid, free@labficticio.example.invalid", org=LAB,
+               filenames=["CN00987-Marta Inventada – Labficticio.pdf"])
+    held = {"held@labficticio.example.invalid": HeldAddress(on_person=True, usage="personal", status="active")}
+    assert compute_person_suggestions([both], ORGS, held) == []
+
+
+def test_a_person_named_own_domain_address_is_not_suggested() -> None:
+    assert compute_person_suggestions([row("Persona Ficticia <persona@origenlab.cl>")], ORGS, {}) == []
+
+
+def test_an_own_domain_nameless_address_does_not_count_toward_the_pdf_guard() -> None:
+    hit = row("ficticio@origenlab.cl, minventada@labficticio.example.invalid", org=LAB,
+              filenames=["CN00987-Marta Inventada – Labficticio.pdf"])
+    [s] = compute_person_suggestions([hit], ORGS, {})
+    assert (s["email"], s["display_name"]) == ("minventada@labficticio.example.invalid", "Marta Inventada")
+
+
+def test_an_encoded_display_name_is_decoded_end_to_end() -> None:
+    header = "=?UTF-8?Q?P=C3=A9rez=2C_Ana?= <ana@ficticia.example.invalid>"
+    assert parse_recipients(header) == [("=?UTF-8?Q?P=C3=A9rez=2C_Ana?=", "ana@ficticia.example.invalid")]
+    [s] = compute_person_suggestions([row(header)], ORGS, {})
+    assert s["display_name"] == "Ana Pérez"
+
+
+def test_a_desk_mailbox_alone_is_not_named_by_the_pdf() -> None:
+    hit = row("contacto@ficticia.example.invalid", filenames=["CN00001-Rosa Díaz – Ficticia.pdf"])
+    assert compute_person_suggestions([hit], ORGS, {}) == []
+
+
+def test_an_address_with_an_unknown_individual_owner_is_suggested() -> None:
+    held = {"ana@ficticia.example.invalid": HeldAddress(on_person=False, usage="individual_owner_unknown", status="active")}
+    [s] = compute_person_suggestions([row("Ana Pérez <ana@ficticia.example.invalid>")], ORGS, held)
+    assert s["existing_contact_point"] == "individual_owner_unknown"
+
+
 # ───────────────────────────────────────────────────────────────────────── route ──
 
 
@@ -209,6 +245,9 @@ class _Repo:
         }
         return {"items": [item], "total": 1}
 
+    def organization_authoring(self, org_id: str) -> dict[str, Any]:
+        return {"organization": {"id": org_id}, "person_suggestions": self.person_suggestions()["items"]}
+
 
 def _client(role: str) -> TestClient:
     app = FastAPI()
@@ -228,6 +267,12 @@ def test_a_viewer_reads_them_with_addresses_masked() -> None:
     response = _client("viewer").get("/v2/workspace/person-suggestions")
     assert response.status_code == 200 and "ana@" not in response.text
     assert response.headers.get("X-OrigenLab-Redaction")
+
+
+def test_a_viewer_sees_the_card_suggestions_with_addresses_masked() -> None:
+    response = _client("viewer").get(f"/v2/workspace/organizations/{UNI}/authoring")
+    assert response.status_code == 200 and "ana@" not in response.text
+    assert response.json()["person_suggestions"][0]["display_name"] == "Ana Pérez"
 
 
 # ─────────────────────────────────────────────────────────────────────── database ──
