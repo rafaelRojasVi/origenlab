@@ -200,7 +200,7 @@ def main() -> int:
         raise SystemExit("--since must be ISO 8601 with an offset, e.g. 2026-10-12T15:00:00Z")
     _private_dir(args.out)  # refuse a path inside the repository before touching anything
     v1_rows, undated = read_v1_rows(args.sqlite.expanduser(), since)
-    with open_worker_db(config_from_env(os.environ).database) as db:
+    with open_worker_db(config_from_env(os.environ, need_storage=False).database) as db:
         v2_ids = read_v2_ids(db.connection, since)
     counts, missing = reconcile(v1_rows, v2_ids)
     extra = extra_ids(v1_rows, v2_ids)

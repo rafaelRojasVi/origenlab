@@ -71,7 +71,7 @@ def main() -> int:
     out_dir = args.out.expanduser().resolve()
     if out_dir == REPO_ROOT or REPO_ROOT in out_dir.parents:
         raise SystemExit("--out must be outside the repository")
-    config = config_from_env(os.environ)
+    config = config_from_env(os.environ, need_storage=False)
     with open_worker_db(config.database) as db:
         staged = read_staged(db.connection)
     gmail = GmailReader(config.gmail)

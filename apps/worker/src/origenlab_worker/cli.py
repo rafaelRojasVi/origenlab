@@ -53,7 +53,10 @@ class WorkerConfig:
     enabled: bool
 
 
-def config_from_env(env: Mapping[str, str]) -> WorkerConfig:
+def config_from_env(env: Mapping[str, str], *, need_storage: bool = True) -> WorkerConfig:
+    """The cron's settings. The owner scripts that never touch Storage (`payload_parity.py`,
+    `shadow_reconcile.py`) pass `need_storage=False`: the S3 secret is then neither required nor
+    read, and `config.storage` is None."""
     gmail = GmailCredentials(
         client_id=(env.get(ENV_CLIENT_ID) or "").strip(),
         client_secret=(env.get(ENV_CLIENT_SECRET) or "").strip(),
@@ -61,7 +64,7 @@ def config_from_env(env: Mapping[str, str]) -> WorkerConfig:
     )
     if not (gmail.client_id and gmail.client_secret and gmail.refresh_token):
         raise ConfigRefused("gmail_credentials_missing")
-    storage = StorageConfig.from_env(env)
+    storage = StorageConfig.from_env(env) if need_storage else None
     database = remote_worker_target(
         env.get(ENV_DATABASE_URL) or "",
         expected_host=env.get(ENV_EXPECTED_HOST),
@@ -76,6 +79,8 @@ def config_from_env(env: Mapping[str, str]) -> WorkerConfig:
 @contextmanager
 def open_components(config: WorkerConfig) -> Iterator[tuple[Any, Any, Any]]:
     with open_worker_db(config.database) as db:
+        if config.storage is None:  # only the owner scripts build a config without storage
+            raise ConfigRefused("storage_not_configured")
         yield db, GmailReader(config.gmail), S3EmlStore(config.storage.client())
 
 
