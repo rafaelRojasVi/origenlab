@@ -209,6 +209,12 @@ class Settings(BaseSettings):
     """Supabase Auth JWKS URL. When set, JWKS verification is used and the local development identity adapter is never constructed."""
     v2_jwks_url: str | None = None
     v2_statement_timeout_ms: int = 15_000
+    """Connections the V2 pool holds open at all times (`ORIGENLAB_V2_POOL_SIZE`).
+
+    The pool never shrinks below it (`min_size == max_size`), so a quiet period does not cost
+    the next request a new TCP + TLS + SCRAM handshake to the hosted pooler.
+    """
+    v2_pool_size: int = Field(default=4, ge=1, le=32)
     """When true, mount POST /v2/commands/* — the human-review command boundary.
 
     Default **false**, like `commercial_operations_writes_enabled` above and for the same

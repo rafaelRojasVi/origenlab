@@ -12,7 +12,38 @@ transaction-local (``SET LOCAL statement_timeout``).  Both variants are reset
 when the transaction ends (commit or rollback).  Like the ``psycopg.connect``
 context it replaces, leaving the block commits an open transaction (rolls it back
 on an exception), and the pool resets any connection still in a transaction
-before reuse, so no session state leaks between requests.
+before reuse, so no session state leaks between requests.  A connection whose
+``autocommit`` was switched on inside a block (``read_transaction.py`` does, to
+send its own ``begin read only``) is switched back before it is returned; one that
+cannot be is closed, and the pool replaces it.
+
+Round trips
+-----------
+The hosted API is ~180 ms from its database, so what a checkout costs matters
+(``tests/test_v2_roundtrip_budget.py``):
+
+* **No health check on checkout.** ``psycopg_pool``'s ``check`` sends an empty
+  query before every checkout — one round trip per request. Instead, a connection
+  that died while idle (closed by the pooler or the server, or dropped by the
+  network) is detected where it fails: on its **first round trip**. If that raises
+  ``psycopg.OperationalError`` *and* the connection is now broken, the connection
+  is discarded and the work of that first round trip — and nothing else — is
+  replayed once on a fresh connection (:class:`_CheckedOutConnection`). Nothing can
+  have been committed on a connection whose first round trip failed, so the replay
+  is safe for reads and writes alike. A failure after the first round trip, a body
+  that fails inside a pipeline, or anything this wrapper cannot replay is raised as
+  it always was.
+* **The pool never shrinks.** ``min_size == max_size`` (``ORIGENLAB_V2_POOL_SIZE``,
+  default 4), so a quiet period does not close connections that the next burst
+  would have to reopen through TCP + TLS + SCRAM (~5 round trips each).
+  ``max_idle`` only ever closes connections above ``min_size``, so it cannot apply;
+  ``max_lifetime`` still recycles each connection about hourly, in the background.
+* **TCP keepalives** keep an idle connection's path alive through NATs and detect a
+  dead peer without a request having to find out.
+* **No automatic server-side prepares.** psycopg prepares a statement the sixth time
+  a connection runs it — one extra round trip — and every later rollback then sends
+  ``DEALLOCATE ALL`` (another). The V2 reads end in a rollback and their queries
+  take milliseconds, so preparing saves nothing and costs round trips.
 
 Startup safety
 --------------
@@ -23,10 +54,26 @@ today without a pool.
 """
 from __future__ import annotations
 
+import logging
 import threading
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
+import psycopg
 import psycopg_pool
+
+logger = logging.getLogger(__name__)
+
+#: The pool size when ``ORIGENLAB_V2_POOL_SIZE`` is not set.
+DEFAULT_POOL_SIZE = 4
+
+#: Keepalive probes after 60 s idle, every 15 s, 4 misses: a dead path is known in ~2 min.
+_KEEPALIVES: dict[str, Any] = {
+    "keepalives": 1,
+    "keepalives_idle": 60,
+    "keepalives_interval": 15,
+    "keepalives_count": 4,
+}
 
 
 class V2ConnectionPool:
@@ -48,25 +95,26 @@ class V2ConnectionPool:
         self,
         dsn: str,
         *,
-        min_size: int = 1,
-        max_size: int = 4,
+        size: int = DEFAULT_POOL_SIZE,
         connect_kwargs: dict[str, Any] | None = None,
-        max_idle: float = 300.0,
         max_lifetime: float = 3600.0,
     ) -> None:
-        kwargs: dict[str, Any] = dict(connect_kwargs or {})
+        if size < 1:
+            raise ValueError("V2ConnectionPool: size must be at least 1")
+        kwargs: dict[str, Any] = {**_KEEPALIVES, **dict(connect_kwargs or {})}
         # Repositories always open connections with autocommit=False; enforce it.
         kwargs["autocommit"] = False
+        # Never prepare server-side: see the module docstring ("Round trips").
+        kwargs["prepare_threshold"] = None
         # Kept separately so connect_options is inspectable without accessing pool internals.
         self._connect_options: dict[str, Any] = dict(kwargs)
+        self._size = size
         self._pool = psycopg_pool.ConnectionPool(
             conninfo=dsn,
-            min_size=min_size,
-            max_size=max_size,
+            min_size=size,
+            max_size=size,
             kwargs=kwargs,
-            max_idle=max_idle,
             max_lifetime=max_lifetime,
-            check=psycopg_pool.ConnectionPool.check_connection,
             open=False,  # opened from the app lifespan, or on first use
         )
         self._open_lock = threading.Lock()
@@ -81,6 +129,11 @@ class V2ConnectionPool:
         """
         return dict(self._connect_options)
 
+    @property
+    def size(self) -> int:
+        """Connections held open at all times (``min_size == max_size``)."""
+        return self._size
+
     def open(self) -> None:
         """Start pool maintenance without blocking for ``min_size`` connections.
 
@@ -92,6 +145,11 @@ class V2ConnectionPool:
             if not self._opened:
                 self._pool.open(wait=False)
                 self._opened = True
+
+    def wait(self, timeout: float = 30.0) -> None:
+        """Block until the pool holds all ``size`` connections (tests and warm-up only)."""
+        self.open()
+        self._pool.wait(timeout=timeout)
 
     def close(self) -> None:
         """Drain and shut down the pool.  Called from the FastAPI lifespan."""
@@ -117,8 +175,286 @@ class V2ConnectionPool:
         # The lifespan normally opens the pool; anything that builds the app without running it
         # (a TestClient outside `with`, a script) opens it here, on first use. Idempotent.
         if not self._opened:
-            with self._open_lock:
-                if not self._opened:
-                    self._pool.open(wait=False)
-                    self._opened = True
-        return self._pool.connection()
+            self.open()
+        return self._checkout()
+
+    # ------------------------------------------------------------------ checkout
+
+    @contextmanager
+    def _checkout(self) -> Iterator["_CheckedOutConnection"]:
+        held = _CheckedOutConnection(self, self._getconn())
+        try:
+            try:
+                yield held
+            except BaseException:
+                _finish(held.raw, failed=True)
+                raise
+            _finish(held.raw, failed=False)
+        finally:
+            self._putconn(held.raw)
+
+    def _getconn(self) -> Any:
+        """A connection from the pool; one already known closed or broken is replaced once."""
+        conn = self._pool.getconn()
+        if _is_dead(conn):
+            self._putconn(conn)
+            conn = self._pool.getconn()
+        return conn
+
+    def _putconn(self, conn: Any) -> None:
+        # A connection switched to autocommit inside the block goes back as the pool made it,
+        # or not at all: closed, the pool discards it and opens a replacement in the background.
+        if not conn.closed:
+            try:
+                if conn.autocommit:
+                    if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                        conn.rollback()
+                    conn.autocommit = False
+            except Exception:  # noqa: BLE001 - a connection we cannot reset is not reused
+                logger.warning("V2 pool: closing a connection that could not be reset", exc_info=True)
+                conn.close()
+        self._pool.putconn(conn)
+
+    def _replace(self, dead: Any) -> Any:
+        """Discard `dead` and hand back a fresh connection (the retry of a first round trip)."""
+        try:
+            dead.close()
+        finally:
+            self._pool.putconn(dead)
+        return self._getconn()
+
+
+def _is_dead(conn: Any) -> bool:
+    return bool(conn.closed or getattr(conn, "broken", False))
+
+
+def _finish(conn: Any, *, failed: bool) -> None:
+    """What ``psycopg.Connection.__exit__`` does for a pooled connection, on the one we hold."""
+    if conn.closed:
+        return
+    if failed:
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001 - the original exception is the one to raise
+            logger.warning("V2 pool: rollback after a failed block also failed", exc_info=True)
+    else:
+        conn.commit()
+
+
+# ---------------------------------------------------------------------- first-round-trip retry
+
+
+class _CheckedOutConnection:
+    """The connection a repository holds for one checkout: a psycopg connection that can retry
+    its **first** round trip once on a fresh connection.
+
+    Until a round trip succeeds, every operation that shapes the connection or the work is
+    journalled: attribute sets (``autocommit``), cursors, statements, pipeline entries and
+    exits. A round trip that then fails with ``OperationalError`` on a connection that is now
+    closed or broken — a connection that died while idle in the pool — is replayed on a fresh
+    one, journal and all, once. The first successful round trip ends the journal; from there
+    on this object only delegates.
+
+    The retry happens only where the whole first round trip is known: a statement outside
+    pipeline mode, or the exit of the outermost pipeline. A failure raised in the middle of a
+    pipeline body, a fetch or a commit inside a pipeline, or any operation this class does not
+    journal ends the journal, so nothing is ever replayed partially.
+    """
+
+    #: Client-side attributes: reading them neither talks to the server nor needs replaying.
+    _PASSIVE = frozenset({"info", "closed", "broken", "autocommit", "pgconn", "adapters",
+                          "read_only", "isolation_level", "deferrable", "prepare_threshold",
+                          "fileno"})
+
+    def __init__(self, pool: V2ConnectionPool, conn: Any) -> None:
+        self.__dict__.update(_pool=pool, _conn=conn, _journal=[], _pipelines=0)
+
+    # -- plumbing
+
+    @property
+    def raw(self) -> Any:
+        """The psycopg connection currently held."""
+        return self._conn
+
+    def __getattr__(self, name: str) -> Any:
+        value = getattr(self._conn, name)
+        if name not in self._PASSIVE and callable(value):
+            self._stop_journal()  # an operation we cannot replay: no retry from here on
+        return value
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self._conn, name, value)
+        if self._journal is not None:
+            self._journal.append(("set", name, value))
+
+    def _stop_journal(self) -> None:
+        self.__dict__["_journal"] = None
+
+    def _round_trip(self, run: Any) -> Any:
+        """Run one round trip; on a dead connection during the first, replay it once."""
+        if self._journal is None:
+            return run()
+        try:
+            result = run()
+        except psycopg.OperationalError:
+            if self._journal is None or not _is_dead(self._conn):
+                self._stop_journal()
+                raise
+            result = self._replay()
+        self._stop_journal()
+        return result
+
+    def _replay(self) -> Any:
+        journal = self._journal or []
+        self._stop_journal()
+        logger.warning("V2 pool: a pooled connection was dead on its first round trip; "
+                       "retrying once on a fresh connection")
+        self.__dict__["_conn"] = self._pool._replace(self._conn)
+        stack: list[Any] = []
+        result: Any = None
+        for entry in journal:
+            kind = entry[0]
+            if kind == "set":
+                setattr(self._conn, entry[1], entry[2])
+            elif kind == "cursor":
+                entry[1]._bind(self._conn)
+            elif kind == "execute":
+                cursor, method, args, kwargs = entry[1:]
+                result = getattr(cursor._real, method)(*args, **kwargs)
+            elif kind == "enter":
+                manager = self._conn.pipeline()
+                manager.__enter__()
+                stack.append(manager)
+            elif kind == "exit":
+                stack.pop().__exit__(None, None, None)
+        return result
+
+    # -- the connection API the repositories use
+
+    def cursor(self, *args: Any, **kwargs: Any) -> "_Cursor":
+        cursor = _Cursor(self, args, kwargs)
+        if self._journal is not None:
+            self._journal.append(("cursor", cursor))
+        return cursor
+
+    def execute(self, query: Any, params: Any = None, **kwargs: Any) -> "_Cursor":
+        return self.cursor().execute(query, params, **kwargs)
+
+    def pipeline(self) -> "_Pipeline":
+        return _Pipeline(self)
+
+    def commit(self) -> None:
+        # Outside a pipeline, a commit before any statement has nothing to send; inside one it
+        # is a round trip in the middle of the body. Neither is replayed.
+        if self._pipelines:
+            self._stop_journal()
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        if self._pipelines:
+            self._stop_journal()
+        self._conn.rollback()
+
+
+class _Cursor:
+    """A cursor of a :class:`_CheckedOutConnection`, rebound to the fresh connection on a retry."""
+
+    def __init__(self, owner: _CheckedOutConnection, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        self._owner = owner
+        self._args = args
+        self._kwargs = kwargs
+        self._real = owner.raw.cursor(*args, **kwargs)
+
+    def _bind(self, conn: Any) -> None:
+        self._real = conn.cursor(*self._args, **self._kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+    def __enter__(self) -> "_Cursor":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self._real.close()
+
+    def __iter__(self) -> Iterator[Any]:
+        self._fetching()
+        return iter(self._real)
+
+    def _fetching(self) -> None:
+        # Inside a pipeline a fetch is a round trip of its own, in the middle of the body.
+        if self._owner._pipelines and self._owner._journal is not None:
+            self._owner._stop_journal()
+
+    def fetchone(self) -> Any:
+        self._fetching()
+        return self._real.fetchone()
+
+    def fetchmany(self, *args: Any, **kwargs: Any) -> Any:
+        self._fetching()
+        return self._real.fetchmany(*args, **kwargs)
+
+    def fetchall(self) -> Any:
+        self._fetching()
+        return self._real.fetchall()
+
+    def execute(self, *args: Any, **kwargs: Any) -> "_Cursor":
+        self._run("execute", args, kwargs)
+        return self
+
+    def executemany(self, *args: Any, **kwargs: Any) -> None:
+        self._run("executemany", args, kwargs)
+
+    def _run(self, method: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        owner = self._owner
+        if owner._journal is None:
+            getattr(self._real, method)(*args, **kwargs)
+            return
+        owner._journal.append(("execute", self, method, args, kwargs))
+        if owner._pipelines:
+            # Queued; the round trip is the pipeline's exit. A failure here, mid-body, is final.
+            try:
+                getattr(self._real, method)(*args, **kwargs)
+            except BaseException:
+                owner._stop_journal()
+                raise
+            return
+        owner._round_trip(lambda: getattr(self._real, method)(*args, **kwargs))
+
+
+class _Pipeline:
+    """``conn.pipeline()`` on a :class:`_CheckedOutConnection`: its exit is a round trip."""
+
+    def __init__(self, owner: _CheckedOutConnection) -> None:
+        self._owner = owner
+        self._manager: Any = None
+        self._pipeline: Any = None
+
+    def __enter__(self) -> "_Pipeline":
+        owner = self._owner
+        if owner._journal is not None:
+            owner._journal.append(("enter",))
+        self._manager = owner.raw.pipeline()
+        self._pipeline = self._manager.__enter__()
+        owner.__dict__["_pipelines"] += 1
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        owner = self._owner
+        owner.__dict__["_pipelines"] -= 1
+        if exc_type is not None:
+            owner._stop_journal()
+            self._manager.__exit__(exc_type, exc, tb)
+            return None
+        if owner._journal is not None:
+            owner._journal.append(("exit",))
+        if owner._journal is None or owner._pipelines:
+            self._manager.__exit__(None, None, None)
+            return None
+        manager = self._manager
+        owner._round_trip(lambda: manager.__exit__(None, None, None))
+        return None
+
+    def sync(self) -> None:
+        self._owner._stop_journal()
+        self._pipeline.sync()

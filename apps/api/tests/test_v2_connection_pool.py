@@ -73,6 +73,268 @@ def test_pool_without_tls_options_still_sets_autocommit_false() -> None:
     assert seen_kwargs.get("autocommit") is False
 
 
+def test_pool_never_shrinks_and_never_health_checks() -> None:
+    """min_size == max_size (no idle shrink to reopen through TLS), and no `check` round trip."""
+    with patch("origenlab_api.v2.connection_pool.psycopg_pool") as mock_mod:
+        V2ConnectionPool(DSN, size=6)
+        kwargs = mock_mod.ConnectionPool.call_args.kwargs
+    assert kwargs["min_size"] == kwargs["max_size"] == 6
+    assert "check" not in kwargs
+    assert "max_idle" not in kwargs  # psycopg_pool only ever idles connections above min_size
+
+
+def test_pool_size_defaults_to_four_and_refuses_zero() -> None:
+    with patch("origenlab_api.v2.connection_pool.psycopg_pool") as mock_mod:
+        pool = V2ConnectionPool(DSN)
+        assert mock_mod.ConnectionPool.call_args.kwargs["min_size"] == 4
+    assert pool.size == 4
+    with pytest.raises(ValueError, match="at least 1"):
+        V2ConnectionPool(DSN, size=0)
+
+
+def test_pool_connections_never_prepare_and_keep_alive() -> None:
+    """Auto-prepare costs a round trip, and every later rollback a DEALLOCATE ALL."""
+    pool = _fake_pool(connect_kwargs=TLS_OPTIONS)
+    options = pool.connect_options
+    assert options["prepare_threshold"] is None
+    assert options["keepalives"] == 1 and options["keepalives_idle"] == 60
+    assert options["sslmode"] == "verify-full"  # the target's own options still win
+
+
+def test_pool_size_setting_reads_the_environment(monkeypatch) -> None:
+    from origenlab_api.settings import Settings
+
+    monkeypatch.setenv("ORIGENLAB_V2_POOL_SIZE", "7")
+    assert Settings(_env_file=None).v2_pool_size == 7
+    monkeypatch.setenv("ORIGENLAB_V2_POOL_SIZE", "0")
+    with pytest.raises(ValueError):
+        Settings(_env_file=None)
+
+
+# ───────────────────────────────────── first-round-trip retry (fake connections) ──
+
+
+class _FakePipeline:
+    def __init__(self, conn: "_RetryConn") -> None:
+        self.conn = conn
+
+    def sync(self) -> None:
+        self.conn._flush()
+
+
+class _FakePipelineManager:
+    def __init__(self, conn: "_RetryConn") -> None:
+        self.conn = conn
+
+    def __enter__(self) -> _FakePipeline:
+        self.conn.in_pipeline += 1
+        return _FakePipeline(self.conn)
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.conn.in_pipeline -= 1
+        if exc_type is None and not self.conn.in_pipeline:
+            self.conn._flush()
+        return False
+
+
+class _RetryCursor:
+    def __init__(self, conn: "_RetryConn") -> None:
+        self.conn = conn
+        self.rows: list[tuple] = []
+
+    def execute(self, query: str, params: Any = None) -> "_RetryCursor":
+        self.conn.statements.append(query)
+        if self.conn.in_pipeline:
+            self.conn.queued.append((self, query))
+            if self.conn.fail_mid_pipeline:
+                self.conn.broken = True
+                raise __import__("psycopg").OperationalError("socket gone mid-body")
+        else:
+            self.conn._send([(self, query)])
+        return self
+
+    def fetchone(self) -> tuple | None:
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self) -> list[tuple]:
+        return list(self.rows)
+
+    def close(self) -> None:
+        pass
+
+
+class _RetryConn:
+    """A connection that is dead on arrival (`dead`), or answers each query with its name."""
+
+    def __init__(self, name: str, *, dead: bool = False, error: Exception | None = None) -> None:
+        import psycopg
+
+        self.name = name
+        self.dead = dead
+        self.error = error
+        self.closed = False
+        self.broken = False
+        self.autocommit = False
+        self.in_pipeline = 0
+        self.fail_mid_pipeline = False
+        self.queued: list[tuple[_RetryCursor, str]] = []
+        self.statements: list[str] = []
+        self.round_trips = 0
+        self.commits = 0
+        self.info = MagicMock(transaction_status=psycopg.pq.TransactionStatus.IDLE)
+
+    def cursor(self, *args: Any, **kwargs: Any) -> _RetryCursor:
+        return _RetryCursor(self)
+
+    def pipeline(self) -> _FakePipelineManager:
+        return _FakePipelineManager(self)
+
+    def _flush(self) -> None:
+        batch, self.queued = self.queued, []
+        self._send(batch)
+
+    def _send(self, batch: list[tuple[_RetryCursor, str]]) -> None:
+        import psycopg
+
+        self.round_trips += 1
+        if self.dead:
+            self.broken = True
+            raise psycopg.OperationalError("server closed the connection unexpectedly")
+        if self.error is not None:
+            raise self.error
+        for cursor, query in batch:
+            cursor.rows = [(self.name, query)]
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def rollback(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeInnerPool:
+    def __init__(self, conns: list[_RetryConn]) -> None:
+        self.ready = list(conns)
+        self.returned: list[_RetryConn] = []
+
+    def getconn(self) -> _RetryConn:
+        return self.ready.pop(0)
+
+    def putconn(self, conn: _RetryConn) -> None:
+        self.returned.append(conn)
+
+    def open(self, wait: bool = False) -> None:
+        pass
+
+
+def _retry_pool(*conns: _RetryConn) -> tuple[V2ConnectionPool, _FakeInnerPool]:
+    inner = _FakeInnerPool(list(conns))
+    with patch("origenlab_api.v2.connection_pool.psycopg_pool") as mock_mod:
+        mock_mod.ConnectionPool.return_value = inner
+        pool = V2ConnectionPool(DSN, size=2)
+    return pool, inner
+
+
+def test_a_connection_dead_on_its_first_statement_is_replaced_and_the_statement_replayed() -> None:
+    dead, fresh = _RetryConn("dead", dead=True), _RetryConn("fresh")
+    pool, inner = _retry_pool(dead, fresh)
+    with pool.connect(DSN) as conn:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("select 1")
+            assert cur.fetchone() == ("fresh", "select 1")
+        conn.autocommit = False
+    assert dead.closed and inner.returned[0] is dead  # discarded, the pool replaces it
+    assert inner.returned[-1] is fresh and fresh.autocommit is False
+    assert fresh.statements == ["select 1"]
+
+
+def test_a_dead_pipeline_is_replayed_whole_on_a_fresh_connection() -> None:
+    dead, fresh = _RetryConn("dead", dead=True), _RetryConn("fresh")
+    pool, inner = _retry_pool(dead, fresh)
+    with pool.connect(DSN) as conn:
+        conn.autocommit = True
+        setup, a, b = conn.cursor(), conn.cursor(), conn.cursor()
+        with conn.pipeline():
+            setup.execute("begin read only")
+            a.execute("select a")
+            b.execute("select b")
+            setup.execute("rollback")
+        assert (a.fetchone(), b.fetchone()) == (("fresh", "select a"), ("fresh", "select b"))
+    assert fresh.statements == ["begin read only", "select a", "select b", "rollback"]
+    assert fresh.round_trips == 1, "the replayed pipeline is still one round trip"
+    assert fresh.autocommit is False, "returned to the pool as the pool made it"
+
+
+def test_the_retry_happens_once_only() -> None:
+    pool, inner = _retry_pool(_RetryConn("dead", dead=True), _RetryConn("also-dead", dead=True))
+    with pytest.raises(__import__("psycopg").OperationalError):
+        with pool.connect(DSN) as conn:
+            conn.cursor().execute("select 1")
+    assert [c.name for c in inner.returned] == ["dead", "also-dead"]
+
+
+def test_an_error_on_a_live_connection_is_never_retried() -> None:
+    import psycopg
+
+    timeout = psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
+    live, spare = _RetryConn("live", error=timeout), _RetryConn("spare")
+    pool, inner = _retry_pool(live, spare)
+    with pytest.raises(psycopg.errors.QueryCanceled):
+        with pool.connect(DSN) as conn:
+            conn.cursor().execute("select pg_sleep(60)")
+    assert inner.ready == [spare] and spare.statements == []
+
+
+def test_only_the_first_round_trip_is_retried() -> None:
+    import psycopg
+
+    conn_a, spare = _RetryConn("a"), _RetryConn("spare")
+    pool, inner = _retry_pool(conn_a, spare)
+    with pytest.raises(psycopg.OperationalError):
+        with pool.connect(DSN) as conn:
+            cur = conn.cursor()
+            cur.execute("insert one")
+            conn_a.dead = True  # dies between two statements of the same transaction
+            cur.execute("insert two")
+    assert inner.ready == [spare], "a transaction that already did work is never replayed"
+
+
+def test_a_failure_in_the_middle_of_a_pipeline_body_is_not_replayed() -> None:
+    import psycopg
+
+    dead, spare = _RetryConn("dead"), _RetryConn("spare")
+    dead.fail_mid_pipeline = True
+    pool, inner = _retry_pool(dead, spare)
+    with pytest.raises(psycopg.OperationalError):
+        with pool.connect(DSN) as conn:
+            with conn.pipeline():
+                conn.cursor().execute("select a")
+                conn.cursor().execute("select b")  # never reached: the body cannot be resumed
+    assert inner.ready == [spare]
+
+
+def test_a_connection_known_dead_at_checkout_is_swapped_before_use() -> None:
+    closed, fresh = _RetryConn("closed"), _RetryConn("fresh")
+    closed.closed = True
+    pool, inner = _retry_pool(closed, fresh)
+    with pool.connect(DSN) as conn:
+        assert conn.cursor().execute("select 1").fetchone() == ("fresh", "select 1")
+    assert inner.returned == [closed, fresh] and closed.statements == []
+
+
+def test_the_block_commits_on_success_and_resets_autocommit_left_on() -> None:
+    conn_a = _RetryConn("a")
+    pool, inner = _retry_pool(conn_a)
+    with pool.connect(DSN) as conn:
+        conn.autocommit = True
+        conn.cursor().execute("select 1")
+    assert conn_a.commits == 1 and conn_a.autocommit is False and inner.returned == [conn_a]
+
+
 # ─────────────────────────────────────────────── remote-target refusals ──
 
 
@@ -431,5 +693,31 @@ def test_pipeline_mode_reads_return_every_result_on_a_real_server() -> None:
             # Transaction-local settings did not survive into the next checkout.
             assert conn.execute("select current_setting('transaction_read_only')").fetchone() == ("off",)
             conn.rollback()
+    finally:
+        pool.close()
+
+
+@pytest.mark.skipif(not _API_DSN, reason="ORIGENLAB_V2_API_TEST_DSN names a disposable V2 database")
+def test_a_backend_killed_while_idle_is_retried_transparently() -> None:
+    """The case the health check used to cover: the server ends an idle pooled connection."""
+    import os
+
+    import psycopg
+
+    maintenance = os.environ.get("ORIGENLAB_V2_TEST_DSN", "")
+    if not maintenance:
+        pytest.skip("ORIGENLAB_V2_TEST_DSN is required to end a backend")
+    pool = V2ConnectionPool(_API_DSN, size=1)
+    try:
+        pool.wait()
+        with pool.connect(_API_DSN) as conn:
+            before = conn.execute("select pg_backend_pid()").fetchone()[0]
+            conn.rollback()
+        with psycopg.connect(maintenance, autocommit=True) as admin:
+            assert admin.execute("select pg_terminate_backend(%s)", (before,)).fetchone() == (True,)
+        with pool.connect(_API_DSN) as conn:
+            after = conn.execute("select pg_backend_pid()").fetchone()[0]
+            conn.rollback()
+        assert after != before
     finally:
         pool.close()
