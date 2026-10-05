@@ -24,6 +24,7 @@ from origenlab_api.v2.person_suggestions import (
     compute_person_suggestions,
     parse_recipients,
     person_from_filename,
+    safe_person_suggestions,
 )
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
 
@@ -85,6 +86,31 @@ def test_a_header_without_addresses_gives_nothing() -> None:
 )
 def test_only_a_persons_name_is_a_name(raw: str | None, local: str, expected: str | None) -> None:
     assert clean_name(raw, local_part=local) == expected
+
+
+@pytest.mark.parametrize("raw", ["=?utf-8?b?x?=", "=?utf-8?q?Ana?= =?utf-8?b?x?=", "=?utf-8?b?"])
+def test_a_cut_off_encoded_word_is_no_name_not_an_error(raw: str) -> None:
+    assert clean_name(raw, local_part="x") is None
+
+
+def test_a_cut_off_encoded_word_does_not_stop_the_computation() -> None:
+    header = "=?utf-8?b?x?= <bad@ficticia.example.invalid>, Ana Pérez <ana@ficticia.example.invalid>"
+    got = [s["email"] for s in compute_person_suggestions([row(header)], ORGS, {})]
+    assert got == ["ana@ficticia.example.invalid"]
+
+
+@pytest.mark.parametrize("raw", ["Universidad Ficticia", "Mesa de Ayuda", "Biblioteca Central", "Clínica Norte",
+                                 "FUNDACIÓN Sur", "Hospital Base", "Ministerio X"])
+def test_an_institutions_words_are_not_a_persons_name(raw: str) -> None:
+    assert clean_name(raw, local_part="x") is None
+
+
+def test_a_name_equal_to_the_institution_is_no_name_but_a_person_is() -> None:
+    inst = ("Labficticio", "Laboratorio de Ensayos Ficticio SpA")
+    assert clean_name("LABFICTICIO", local_part="x", institutions=inst) is None
+    assert clean_name("Labfictício", local_part="x", institutions=inst) is None
+    assert clean_name("Ana Pérez", local_part="x", institutions=inst) == "Ana Pérez"
+    assert compute_person_suggestions([row("Labficticio <x@labficticio.example.invalid>", org=LAB)], ORGS, {}) == []
 
 
 def test_the_pdf_name_gives_a_person_and_an_institution() -> None:
@@ -273,6 +299,58 @@ def test_a_viewer_sees_the_card_suggestions_with_addresses_masked() -> None:
     response = _client("viewer").get(f"/v2/workspace/organizations/{UNI}/authoring")
     assert response.status_code == 200 and "ana@" not in response.text
     assert response.json()["person_suggestions"][0]["display_name"] == "Ana Pérez"
+
+
+class _BrokenCursor:
+    """Fails the way a malformed row would, inside the computation."""
+
+    description = (("quote_id",),)
+
+    def execute(self, *_: Any) -> None:
+        raise RuntimeError("Marta Secreta <leak@ficticia.example.invalid>")
+
+
+def test_suggestions_that_raise_give_nothing_and_a_warning_with_the_class_only(caplog) -> None:
+    with caplog.at_level("WARNING"):
+        assert safe_person_suggestions(_BrokenCursor()) == []
+    assert [r.getMessage() for r in caplog.records] == ["person_suggestions: no suggestions — RuntimeError"]
+    assert "Secreta" not in caplog.text and "leak@" not in caplog.text
+
+
+def test_the_card_and_the_get_answer_200_when_the_computation_raises(monkeypatch) -> None:
+    import contextlib
+
+    from origenlab_api.v2 import person_suggestions as module
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    def boom(*_: Any) -> None:
+        raise ValueError("Marta Secreta")
+
+    monkeypatch.setattr(module, "compute_person_suggestions", boom)
+
+    class _Cur:
+        description = (("quote_id",),)
+
+        def execute(self, *_: Any) -> None: ...
+
+        def fetchall(self) -> list[Any]:
+            return []
+
+    repo = CrmWorkspaceRepository(None, "unused")
+
+    @contextlib.contextmanager
+    def fake_read():  # type: ignore[no-untyped-def]
+        yield _Cur()
+
+    monkeypatch.setattr(repo, "_read", fake_read)
+    assert repo.person_suggestions() == {"items": [], "total": 0}
+
+    app = FastAPI()
+    app.state.v2_identity = _Identity("sales")
+    app.state.crm_workspace = repo
+    app.include_router(workspace_router)
+    response = TestClient(app).get("/v2/workspace/person-suggestions")
+    assert response.status_code == 200 and response.json() == {"items": [], "total": 0}
 
 
 # ─────────────────────────────────────────────────────────────────────── database ──

@@ -24,17 +24,21 @@ person's name; an address the CRM already holds on a person, as a shared mailbox
 from __future__ import annotations
 
 import json
+import logging
 import re
 import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from email.errors import HeaderParseError
 from email.header import decode_header, make_header
 from email.utils import getaddresses
 from typing import Any
 
 from origenlab_api.v2.marketing_audience import address_ref
+
+logger = logging.getLogger(__name__)
 
 #: The same two domains as `quote_crm_import_plan.OWN_DOMAINS` (pinned by a test).
 OWN_DOMAINS = frozenset({"origenlab.cl", "labdelivery.cl"})
@@ -53,6 +57,9 @@ GENERIC_NAME_WORDS = frozenset({
     "ventas", "contacto", "compras", "adquisiciones", "abastecimiento", "administracion",
     "recepcion", "secretaria", "oficina", "laboratorio", "contabilidad", "finanzas",
     "facturacion", "cotizaciones", "soporte", "gerencia", "departamento", "unidad", "info", "admin",
+    # An institution's words («Universidad Ficticia», «Mesa de Ayuda»), folded like `fold`.
+    "universidad", "hospital", "instituto", "facultad", "centro", "clinica", "biblioteca",
+    "municipalidad", "ministerio", "fundacion", "corporacion", "mesa", "equipo", "ayuda", "servicio",
 })
 
 #: `crm.contact_point.usage` values that say nobody owns the address yet (DOMAIN.md §2.5).
@@ -154,15 +161,19 @@ def parse_recipients(raw: str | None) -> list[tuple[str | None, str]]:
     return out
 
 
-def clean_name(raw: str | None, *, local_part: str) -> str | None:
-    """A person's name as a display name gives it, or None when it is not one."""
+def clean_name(raw: str | None, *, local_part: str, institutions: Iterable[str | None] = ()) -> str | None:
+    """A person's name as a display name gives it, or None when it is not one.
+
+    `institutions` are names the display name must not equal (the case institution's name and
+    legal name, ignoring case and accents).
+    """
     if not raw:
         return None
     name = raw
     if "=?" in name:
         try:
             name = str(make_header(decode_header(name)))
-        except (ValueError, LookupError, UnicodeDecodeError):
+        except (ValueError, LookupError, UnicodeDecodeError, HeaderParseError):
             return None
     name = " ".join(name.replace('"', " ").strip(" '").split())
     if name.count(",") == 1:
@@ -174,6 +185,8 @@ def clean_name(raw: str | None, *, local_part: str) -> str | None:
     if any(not _WORD.match(w) for w in words) or any(fold(w) in GENERIC_NAME_WORDS for w in words):
         return None
     if fold(name) == fold(local_part):
+        return None
+    if fold(name) in {fold(i) for i in institutions if i} - {""}:
         return None
     return name.title() if name.isupper() or name.islower() else name
 
@@ -193,12 +206,13 @@ def _filename_person(row: SourceRow, organizations: Mapping[str, OrgNames]) -> s
     org = organizations.get(row.organization_id or "")
     if org is None:
         return None
+    institutions = (org.name, org.legal_name)
     found: str | None = None
     for filename in row.filenames:
         parsed = person_from_filename(filename)
         if parsed is None or not org.matches(parsed[1]):
             continue
-        name = clean_name(parsed[0], local_part="")
+        name = clean_name(parsed[0], local_part="", institutions=institutions)
         if name is None:
             continue
         if found is not None and found != name:
@@ -228,7 +242,12 @@ def compute_person_suggestions(
             (raw, address) for raw, address in parse_recipients(row.recipients)
             if address.rpartition("@")[2] not in OWN_DOMAINS
         ]
-        named = {address: clean_name(raw, local_part=address.partition("@")[0]) for raw, address in recipients}
+        org_names = organizations.get(row.organization_id or "")
+        institutions = (org_names.name, org_names.legal_name) if org_names else ()
+        named = {
+            address: clean_name(raw, local_part=address.partition("@")[0], institutions=institutions)
+            for raw, address in recipients
+        }
         # Held addresses still count as nameless recipients: the PDF may be theirs. Held only
         # suppresses that address's own suggestion.
         nameless = [a for a, n in named.items() if n is None and not _generic(a)]
@@ -307,3 +326,15 @@ def read_person_suggestions(cur: Any) -> list[dict[str, Any]]:
         cur.execute(HELD_SQL, (addresses,))
         held = {r["value_norm"]: HeldAddress(bool(r["on_person"]), r["usage"], r["status"]) for r in _dicts(cur)}
     return compute_person_suggestions(rows, organizations, held)
+
+
+def safe_person_suggestions(cur: Any) -> list[dict[str, Any]]:
+    """`read_person_suggestions`, or [] with one warning: suggestions never fail a card.
+
+    Only the exception's class name is logged — a header's text names people.
+    """
+    try:
+        return read_person_suggestions(cur)
+    except Exception as exc:  # noqa: BLE001 - one bad sender header must not 500 every institution card
+        logger.warning("person_suggestions: no suggestions — %s", exc.__class__.__name__)
+        return []
