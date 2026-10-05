@@ -6,11 +6,14 @@ The Slice 0 audit baseline intentionally describes the frozen hosted foundation:
 
 Current repository head is later and intentionally carries the commercial-case
 schema, the historical-quotation import, the slice-5 campaign schema, W10 and
-the campaign safety blocks (outbound.campaign_block) and the shared Workspace
+the campaign safety blocks (outbound.campaign_block), the shared Workspace
 sign-in tables (platform.auth_principal, platform.operator_profile,
-platform.auth_event, platform.auth_session). Therefore a local audit of current
-head must conclude LOCAL_FAIL — but only for the exact reviewed post-Slice-0
-additions.
+platform.auth_event, platform.auth_session), the slice-6 campaign-content
+archive and CRM authoring tables, and the slice-7 catalog tables
+(catalog.product_image, catalog.supplier_terms, catalog.fx_rate,
+catalog.cost_parameter) and quote-document lines (evidence.document_line).
+Therefore a local audit of current head must conclude LOCAL_FAIL — but only for
+the exact reviewed post-Slice-0 additions.
 
 It also carries one reviewed *removal*: 20260928192000 revoked the runtime API
 role's INSERT and UPDATE on platform.operator, so the baseline's two policies
@@ -46,6 +49,13 @@ EXPECTED_EXTRA_TABLES = {
     "campaign_content_message",
     "note",
     "organization_product_line",
+    # 20261005134832_slice7_catalog_products_suppliers.sql — DOMAIN.md §7 #50–#51.
+    "product_image",
+    "supplier_terms",
+    # 20261005140628_slice7_catalog_pricing_inputs_document_lines.sql — DOMAIN.md §7 #52–#54.
+    "fx_rate",
+    "cost_parameter",
+    "document_line",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -53,7 +63,8 @@ EXPECTED_EXTRA_TABLES = {
 # search_path = pg_catalog and no EXECUTE for a Data-API-facing role, is pinned
 # by pgTAP (supabase/tests/010_inventory.sql, 063_commercial_case_commands.sql,
 # 064_historical_quotation_import.sql, 065-068 for the slice-5 campaign
-# triggers, 069 for W10, 071 for the campaign blocks and 072 for the archived-campaign guard). This file refuses any count other than 3 + len(these).
+# triggers, 069 for W10, 071 for the campaign blocks, 072 for the archived-campaign guard and
+# 091 for the document-line review guard). This file refuses any count other than 3 + len(these).
 # The one exception to SECURITY INVOKER is EXPECTED_SECURITY_DEFINER below.
 SLICE0_FUNCTION_COUNT = 3
 
@@ -115,6 +126,10 @@ POST_SLICE0_FUNCTIONS = {
     # INVOKER note guard (no DELETE, immutable body/author/subject, version advance).
     "outbound.campaign_content_immutable",
     "crm.note_guard",
+    # 20261005140628_slice7_catalog_pricing_inputs_document_lines.sql — the INVOKER
+    # trigger guard that lets a document line change only by one review of a
+    # disputed line (pgTAP: 091_catalog_1a.sql).
+    "evidence.document_line_review_guard",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
@@ -208,6 +223,26 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     "outbound.campaign_content.campaign_content_origin_source_record_id_fkey",
     "outbound.campaign_content_message.campaign_content_message_campaign_content_id_fkey",
     "outbound.campaign_content_message.campaign_content_message_send_attempt_id_fkey",
+    # 20261005134832_slice7_catalog_products_suppliers.sql — one new column on each
+    # of catalog.product and catalog.supplier_product, and the two new tables. All
+    # six are covered by plain unconditional indexes: product_content_confirmed_by_idx,
+    # product_image_product_idx (product_id leads it), product_image_created_by_idx,
+    # supplier_product_recorded_by_idx, supplier_terms_pkey (the key is the
+    # referencing column) and supplier_terms_updated_by_idx.
+    "catalog.product.product_content_confirmed_by_operator_id_fkey",
+    "catalog.product_image.product_image_product_id_fkey",
+    "catalog.product_image.product_image_created_by_operator_id_fkey",
+    "catalog.supplier_product.supplier_product_recorded_by_operator_id_fkey",
+    "catalog.supplier_terms.supplier_terms_supplier_organization_id_fkey",
+    "catalog.supplier_terms.supplier_terms_updated_by_operator_id_fkey",
+    # 20261005140628_slice7_catalog_pricing_inputs_document_lines.sql — the three new
+    # tables. All four are covered by plain unconditional indexes: fx_rate_recorded_by_idx,
+    # cost_parameter_set_by_idx, document_line_key (the unique key that source_record_id
+    # leads) and document_line_reviewed_by_idx.
+    "catalog.fx_rate.fx_rate_recorded_by_operator_id_fkey",
+    "catalog.cost_parameter.cost_parameter_set_by_operator_id_fkey",
+    "evidence.document_line.document_line_source_record_id_fkey",
+    "evidence.document_line.document_line_reviewed_by_operator_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -216,9 +251,10 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 
 # Foreign keys covered by a non-partial index. The historical-origin key is
 # covered only by a partial index; the slice-5 freeze key, the three
-# campaign-block keys and the eight sign-in keys by plain ones.
+# campaign-block keys, the eight sign-in keys, the sixteen slice-6 keys and the
+# ten slice-7 catalog and document-line keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 28
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 38
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -226,18 +262,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 46,
+        "relation_count": 51,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 45,
+        "table_count": 50,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 160,
+        "policy_count": 173,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -316,8 +352,10 @@ def main() -> int:
                     f"expected {expected!r}"
                 )
 
-    # The inventory delta must be precisely the three commercial-case tables,
-    # outbound.campaign_block and the four sign-in tables.
+    # The inventory delta must be precisely the reviewed tables of
+    # EXPECTED_EXTRA_TABLES: the three commercial-case tables,
+    # outbound.campaign_block, the four sign-in tables, the four slice-6 tables
+    # and the five slice-7 catalog and evidence tables.
     a08_findings = checks["a08"].get("findings") or []
     if len(a08_findings) != 2:
         refuse(f"a08 has unexpected findings: {a08_findings!r}")
@@ -326,19 +364,43 @@ def main() -> int:
     if "baseline are absent here" in a08_text:
         refuse("a08 reports a table missing from current head")
 
-    for table in EXPECTED_EXTRA_TABLES:
-        if f'"table":"{table}"' not in a08_text:
-            refuse(f"a08 does not name expected table {table}")
+    # Like a09 below, the audit lists at most twelve entries and then "...", and the
+    # seventeen extra tables do not fit. What it names must all be reviewed
+    # tables; only an untruncated list must name each of them, and a truncated
+    # one must name exactly the twelve the audit prints — so a name the pattern
+    # cannot read is refused rather than skipped. The exact count bounds what the
+    # truncation hides, and supabase/tests/010_inventory.sql pins every table by
+    # name.
+    a08_extra = [f for f in a08_findings if "present here and not in the baseline" in f]
+    if len(a08_extra) != 1:
+        refuse("a08 does not report the extra tables")
+    a08_named = re.findall(r'"table":"([a-z0-9_]+)"', a08_extra[0])
+    if a08_extra[0].rstrip().endswith("..."):
+        if len(a08_named) != 12:
+            refuse(f"a08 is truncated but names {len(a08_named)} tables, expected twelve")
+    else:
+        for table in sorted(EXPECTED_EXTRA_TABLES):
+            if f'"table":"{table}"' not in a08_text:
+                refuse(f"a08 does not name expected table {table}")
 
-    if "12 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly twelve extra tables")
+    unreviewed_tables = sorted(set(a08_named) - EXPECTED_EXTRA_TABLES)
+    if unreviewed_tables:
+        refuse(f"a08 names unreviewed tables: {unreviewed_tables!r}")
 
-    # The 23 policy additions must belong to those same eight reviewed tables:
-    # four each for the first four (api select/insert/update, worker select),
-    # one each for auth_principal and operator_profile (api select: their
-    # throttle is written by platform.finish_pin_attempt, 20260929100000), two
-    # for auth_event (api select, insert) and three for auth_session (api
-    # select, insert, update).
+    if "17 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly seventeen extra tables")
+
+    # The 48 policy additions must belong to those same seventeen reviewed tables:
+    # four each for the three commercial-case tables and campaign_block (api
+    # select/insert/update, worker select), one each for auth_principal and
+    # operator_profile (api select: their throttle is written by
+    # platform.finish_pin_attempt, 20260929100000), two for auth_event (api
+    # select, insert), three for auth_session (api select, insert, update), two
+    # each for campaign_content and campaign_content_message (api and worker
+    # select), four each for note and organization_product_line (api
+    # select/insert/update, worker select), three each for product_image,
+    # supplier_terms and document_line (api select/insert/update) and two each for
+    # fx_rate and cost_parameter (api select, insert: both are append-only).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -360,13 +422,18 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "35 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly thirty-five extra policies")
+    if "48 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly forty-eight extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
-    # name each of them. The exact count above bounds what the truncation hides.
-    named = set(re.findall(r'"table":"([a-z_]+)"', a09_text))
+    # name each of them, and a truncated one must name exactly the twelve policies the audit
+    # prints — so a table name the pattern cannot read is refused rather than skipped (the
+    # same rule as a08). The exact count above bounds what the truncation hides.
+    a09_named = re.findall(r'"table":"([a-z0-9_]+)"', a09_text)
+    if a09_text.rstrip().endswith("...") and len(a09_named) != 12:
+        refuse(f"a09 is truncated but names {len(a09_named)} tables, expected twelve")
+    named = set(a09_named)
     unexpected = sorted(named - EXPECTED_EXTRA_TABLES)
     if unexpected:
         refuse(f"a09 names policies on unreviewed tables: {unexpected!r}")
@@ -380,7 +447,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 46, expected 34"],
+        "a04": ["relations in scope: observed 51, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "
@@ -399,8 +466,9 @@ def main() -> int:
     print(
         "ok: current local head differs from frozen Slice 0 only by the "
         "reviewed commercial-case, historical-quotation, slice-5 campaign, W10 "
-        "unsubscribe, campaign-block, shared-sign-in and slice-6 campaign-content-archive "
-        "and crm-authoring schema delta, less the revoked runtime writes on platform.operator"
+        "unsubscribe, campaign-block, shared-sign-in, slice-6 campaign-content-archive "
+        "and crm-authoring and slice-7 catalog and document-line schema delta, less the revoked runtime "
+        "writes on platform.operator"
     )
     return 0
 

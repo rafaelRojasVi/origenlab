@@ -28,6 +28,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/auth/google/login`, `/auth/google/callback`, `/auth/session` | Dashboard Google Workspace sign-in (see *Sign-in exceptions* below) |
 | `/auth/profiles` | The signed-in shared Workspace account's operator profiles (id, name, role label) |
 | `/v2/workspace/mail-quote-numbers` | Quote numbers already seen in the captured Gmail (number, first sighting, message count; the 500 newest), for the Resumen's quote-number box. No address, subject or institution; GET only, operator session |
+| `/v2/catalog/*` (7 exact paths — see *Catalog 1a* below) | Catalog reads |
 
 **Refused on purpose** (GET: 403 `path_not_allowed`; POST: 405 `method_not_allowed`; never forwarded): every V1 surface — `/operator/*`, `/cases/warm`, `/opportunities/*`, `/operations/*`, `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — and the current dashboard calls none of them, so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. The V1 paths and the V1 POST commands (including the tender annex upload) were removed from the allowlist in the source on 2026-10-03 (built, not deployed; see the note at the top). `/v2/cockpit/*` and every `/v2/workspace/*` path other than the named reads below are not listed either. The W10 unsubscribe tooling that carries message bodies (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`) is API-only and never listed. See `docs/OPERATIONS.md`.
 
@@ -39,6 +40,8 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/auth/profile/select`, `/auth/profile/clear` | Choose an operator profile with its PIN (verified by the API, never here), or return to the profile screen. Allowed `Origin`, no cross-site `Sec-Fetch-Site`, `Content-Type: application/json`, body ≤ 1 KiB. The API's local-only `/auth/dev/*` is never reachable |
 | `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning,resolve-unsubscribe-review,dismiss-unsubscribe-review,block-campaign,unblock-campaign}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends; a block only refuses |
 | `/v2/commands/<name>` for the 29 CRM-authoring commands (person, organization — `confirm-organization-record` included —, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not listed. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
+| `/v2/commands/{create-product,update-product,confirm-product-content,record-supplier-cost,set-supplier-terms,set-cost-parameter,record-fx-rate,update-product-image,review-document-line}` | Catalog commands: 9 exact paths, JSON, body ≤ 64 KiB — see *Catalog 1a* below |
+| `/v2/commands/add-product-image` | Catalog image upload: the one multipart POST, body ≤ 8 MiB + 64 KiB — see *Catalog 1a* below |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
@@ -96,7 +99,7 @@ Worker also refuses, before forwarding: a missing or unlisted `Origin` (403
 `origin_not_allowed`), `Sec-Fetch-Site: cross-site` (403 `cross_site_request`), any
 `Content-Type` other than `application/json` (415 — a cross-site form cannot send one without
 a preflight, which is answered only for listed origins), a body over 3.5 MB (4 KB for `set-campaign-planning`, 16 KB for the two block commands) declared or actual
-(413). CORS advertises `POST` and `Idempotency-Key` only on these paths.
+(413). CORS advertises `POST` on every listed POST path and `Idempotency-Key` on the marketing and catalog command paths.
 
 **Idempotency.** `Idempotency-Key` is required and must match `^[A-Za-z0-9._:-]{8,128}$` (400
 `idempotency_key_required`); it is forwarded byte-for-byte. Upstream the key is one
@@ -114,6 +117,35 @@ review decisions and the send blockers.
 are 404 upstream. **Sending is blocked**: no send, approve, activate or recontact-override
 command exists, and BAJA/unsubscribe processing is unsupported until an inbound-reply
 processor and a durable suppression ledger are proven.
+
+## Catalog 1a
+
+Seven exact GET paths (`src/allowlist.ts`; UUIDs lower-case, query strings pass through unchanged):
+
+| Method | Upstream path | Upstream behaviour |
+|---|---|---|
+| GET | `/v2/catalog/products` | the product list |
+| GET | `/v2/catalog/products/<uuid>` | one product |
+| GET | `/v2/catalog/price-history` | price history (`model_key`, `limit`) |
+| GET | `/v2/catalog/suppliers/<uuid>/terms` | one supplier's terms |
+| GET | `/v2/catalog/fx` | FX rates |
+| GET | `/v2/catalog/parameters` | cost parameters |
+| GET | `/v2/catalog/images/<uuid>/url` | JSON `{url, expires_in}`: a short-lived signed URL. The Worker never streams image bytes |
+
+Ten exact POST paths, all under `/v2/commands/`, each behind `catalogCommandRefusal` (`src/index.ts`):
+an allowed `Origin` (403 `origin_not_allowed`), no cross-site `Sec-Fetch-Site` (403
+`cross_site_request`), the right `Content-Type` (415), a well-formed `Idempotency-Key` (400) and a
+body within the limit, declared or actual (413). CORS advertises `POST` and `Idempotency-Key` on
+these paths. The upload's multipart type needs no preflight, so its CSRF protection rests on the
+required `Idempotency-Key` (a custom header, which forces one) plus the Origin and Sec-Fetch-Site checks.
+
+- Nine JSON commands (`create-product`, `update-product`, `confirm-product-content`,
+  `record-supplier-cost`, `set-supplier-terms`, `set-cost-parameter`, `record-fx-rate`,
+  `update-product-image`, `review-document-line`): `application/json`, body ≤ 64 KiB
+  (`CATALOG_COMMAND_MAX_BYTES`).
+- One multipart command, `add-product-image`: `multipart/form-data; boundary=...` (a type without
+  a boundary is 415), body ≤ 8 MiB + 64 KiB (`CATALOG_UPLOAD_MAX_BYTES`). The API caps the file at
+  8 MiB itself. JSON to this path and multipart to a JSON command are both 415.
 
 ## Response hardening
 

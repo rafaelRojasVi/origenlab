@@ -27,7 +27,7 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed; §2.7.49 added 2026-10-04 from the branch's own validation, nothing deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
+Last verified: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed; §2.7.49 added 2026-10-04 from the branch's own validation, nothing deployed; §2.7.51 added 2026-10-05 from the branch's own validation, nothing applied or deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
 hosting and GitHub facts of §2.4, §2.7.40, §2.8, §3.1 and §3.3 — read from the GitHub API, the
 public DNS and HTTP edge, the repository, and (later the same day) the Render API, the FastAPI
 Cloud CLI and the Cloudflare DNS table, all read-only, with nothing deployed, provisioned,
@@ -1853,6 +1853,17 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Dashboard | `knownQuoteNumbers` takes Gmail as a third source («Gmail» in the label): a `CN01247` token takes the Santiago year of the day first seen and joins a CRM/Drive entry with the same year and correlative, so `lastAndNext` and `findUses` count it. «Siguiente» and «Copiar» wait for all three reads. If the Gmail read fails, the box answers from CRM + Drive and says «los números de Gmail no se pudieron leer», never that a number is unused |
 | Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **3446 passed**, 120 skipped (the same V1 Alembic-head and TLS-server skips as §2.7.49; no V2 DSN skip); `apps/dashboard` `npm run validate`: **551 passed** (45 files) + build; `apps/dashboard-proxy` `npm run validate`: **357 passed** (5 files); public-repo hygiene check: passed |
 | Not done | not deployed (Render API, dashboard, Worker). Until the Worker carries the new path the box shows the «Gmail no se pudieron leer» note. Only numbers in attachment file names are seen (the capture's `cn_tokens`); a number written only in a subject or body is still unknown |
+
+### 2.7.51 Catalog 1a backend: products, supplier costs, exchange rates, cost parameters, quote-document lines, 2026-10-05 — built locally, not applied, not deployed
+
+| | |
+|---|---|
+| Schema | two migrations, `20261005134832_slice7_catalog_products_suppliers.sql` and `20261005140628_slice7_catalog_pricing_inputs_document_lines.sql`: `catalog.product` gains Spanish content, specs, physical data, a generated `model_key` (unique per manufacturer) and a content origin; `catalog.supplier_product` gains price kinds and the wider observation key; new tables `catalog.product_image`, `catalog.supplier_terms`, `catalog.fx_rate`, `catalog.cost_parameter` (five public keys seeded) and `evidence.document_line`; `evidence.source_record` kind `quote_document`; `crm.note` subjects include products; nine new domain events. Inventory #50–#54 and the changed #26, #27, #44 are in [`DOMAIN.md`](DOMAIN.md) §7.5 |
+| API | `/v2/catalog/*` reads, nine `/v2/commands/*` catalog commands and the multipart `add-product-image`, mounted only behind `ORIGENLAB_V2_QUOTING_ENABLED` (default `false`); exchange rates from Banco Central (BDE, else mindicador) stored in `catalog.fx_rate`; `GET /v2/workspace/fx` falls back to the newest stored rate when every source fails and writes USD and EUR through after a successful mindicador fetch (findic is shown, never stored); the published DHL Chile import tariff as data; no price calculation (catalog 1b) |
+| Tools | `apps/api/scripts/catalog/`: four importers (price lists, supplier documents and costing sheets, quote history, cost parameters), each plan / apply / verify / rollback, loopback-only, disposable database or the clean room; and the enrichment tool (Claude, dry-run by default). Runbooks in [`OPERATIONS.md`](OPERATIONS.md) §14 |
+| Proxy and dashboard | proxy allowlist for the catalog paths and a bounded multipart upload; no dashboard screen |
+| Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **4012 passed**, 120 skipped (the V1 Alembic-head and TLS-server skips of §2.7.49); `supabase test db --local`: 27 files, **1157 assertions**, PASS; `supabase/audit` unit tests 352; `apps/dashboard-proxy` `npm run validate` **377 passed** + typecheck; `apps/dashboard` `npm run validate` **552 passed** (45 files) + build |
+| Not done | **not applied to any database but disposable test clusters**: neither migration is on `origenlab_clean` or the hosted project (so the clean-room expected counts already name them, and the next clean-room rebuild is their first); not deployed (Render API, Worker); the `catalog` bucket, the dedicated Storage key and the BDE credentials do not exist ([`OPERATIONS.md`](OPERATIONS.md) §14.1–14.2); the euro series of BDE is unconfirmed and the BDE response parse has not run against the live service; no catalog data is loaded anywhere (the clean-room rehearsal of the importers is a private owner step); hosted loading waits for PR #623's authorised route; no dashboard screen reads or writes the catalog |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 

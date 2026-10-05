@@ -118,6 +118,36 @@ resolved by picking a candidate.
   the Wave 1A bundle and the final V1 PostgreSQL dump. It is offline, hashed,
   and discoverable only through manifests. It is never a query target.
 
+### 5.1 Catalog 1a — writers, quote documents and the exchange-rate rule
+
+Writers by table (every one writes as `origenlab_api`, under its grants and RLS; the
+importers hold an owner-capable login only to record their manifest and, for quote
+documents, the `evidence.source_record` row, because the runtime role has no INSERT there):
+
+| Table | Writer |
+|---|---|
+| `catalog.product`, `catalog.product_image`, `catalog.supplier_terms`, `catalog.supplier_product` | the catalog commands (`create-product`, `update-product`, `confirm-product-content`, `add-product-image`, `update-product-image`, `set-supplier-terms`, `record-supplier-cost`); the price-list and supplier-document importers; the enrichment tool (content and images as `machine` / `proposed`) |
+| `catalog.cost_parameter` | `set-cost-parameter`; the cost-parameter importer (same SQL) |
+| `catalog.fx_rate` | `record-fx-rate` (manual: operator and reason); the pricing lookup and the Resumen exchange-rate read, which store Banco Central observations |
+| `evidence.document_line` | the quote-history importer (inserts); `review-document-line` (the single review of a disputed line) |
+| `evidence.source_record` kind `quote_document` | the quote-history importer, through its admin login, in the manifest's transaction |
+
+**`quote_document` evidence.** A past quote PDF is acquired evidence, never a quote: its
+`source_record` is `pending`, its `dedupe_key` is `quote_document:` plus the PDF's sha256, and its
+payload holds only the quote number, ISO date, client *type*, currency, net total, template and file
+hash. The client's institution, contact, conditions and free text never enter it. Its lines are
+`evidence.document_line` rows, durable evidence (not a rebuildable projection), each carrying the
+result of the cross-check between the AI extraction and the PDF's layout text. Nothing here writes
+`crm.quote` or any sent-quote record.
+
+**Exchange-rate source rule.** Pricing uses Banco Central figures. The order is: a manual
+`catalog.fx_rate` row for the day (newest by `created_at` wins), else the stored Banco Central
+row, else a fresh fetch — the BDE web service when its credentials are configured, otherwise
+mindicador. A rate for a non-business day is the last business day's. findic is shown but never
+stored. When every source fails, `GET /v2/workspace/fx` answers the newest stored observation
+rather than nothing. A stored rate up to seven days old is served without refetching newer
+observations (catalog 1b revisits this).
+
 ## 6. Gmail message identity and ingestion
 
 **[V2 DECISION]**

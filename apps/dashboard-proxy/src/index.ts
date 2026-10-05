@@ -1,13 +1,16 @@
 import {
   AUTH_PROFILE_MAX_BYTES,
   CRM_AUTHORING_MAX_BYTES,
+  catalogCommandMaxBytes,
   isAllowedAuthPostPath,
   isAllowedAuthProfilePostPath,
+  isAllowedCatalogCommandPostPath,
+  isAllowedCatalogUploadPostPath,
   isAllowedCrmAuthoringCommandPostPath,
-  marketingCommandMaxBytes,
   isAllowedMarketingCommandPostPath,
   isAllowedPostPath,
   isAllowedUpstreamPath,
+  marketingCommandMaxBytes,
   stripApiPrefix,
 } from "./allowlist";
 import { filterAuthSetCookies, isAllowedAuthRedirect, isAuthPath } from "./auth";
@@ -92,13 +95,10 @@ export const AUTH_TIMING_HEADERS = ["Server-Timing", "X-Process-Time-Ms"] as con
 
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/;
 
-/**
- * The CSRF and replay guard for the marketing commands, checked before anything is forwarded.
- * The session cookie is SameSite=Lax and HttpOnly; these checks do not rely on that alone:
- * a cross-site form or script cannot send an allowed `Origin`, a JSON `Content-Type` without a
- * preflight this Worker only answers for allowed origins, or a custom `Idempotency-Key`.
- */
-export function marketingCommandRefusal(request: Request): { status: number; code: string } | null {
+type Refusal = { status: number; code: string } | null;
+
+/** Origin and Sec-Fetch-Site: the part of every command guard that needs no body rule. */
+function originRefusal(request: Request): Refusal {
   if (!isAllowedOrigin(request.headers.get("Origin"))) {
     return { status: 403, code: "origin_not_allowed" };
   }
@@ -106,19 +106,69 @@ export function marketingCommandRefusal(request: Request): { status: number; cod
   if (site !== null && site !== "same-origin" && site !== "same-site") {
     return { status: 403, code: "cross_site_request" };
   }
-  const contentType = (request.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
-  if (contentType !== "application/json") {
+  return null;
+}
+
+/**
+ * The shared core of the marketing and catalog command guards, checked before anything is
+ * forwarded: Origin, Sec-Fetch-Site, the caller's Content-Type rule (`typeOk`, given the raw
+ * header), a well-formed `Idempotency-Key`, and a declared Content-Length within `maxBytes`.
+ */
+function commandRefusal(
+  request: Request,
+  rule: { typeOk: (rawContentType: string) => boolean; maxBytes: number },
+): Refusal {
+  const origin = originRefusal(request);
+  if (origin) return origin;
+  if (!rule.typeOk((request.headers.get("Content-Type") || "").trim())) {
     return { status: 415, code: "unsupported_media_type" };
   }
   if (!IDEMPOTENCY_KEY_RE.test(request.headers.get(IDEMPOTENCY_KEY_HEADER) || "")) {
     return { status: 400, code: "idempotency_key_required" };
   }
   const length = Number(request.headers.get("Content-Length") || "0");
-  const upstreamPath = stripApiPrefix(new URL(request.url).pathname) ?? "";
-  if (!Number.isFinite(length) || length > marketingCommandMaxBytes(upstreamPath)) {
+  if (!Number.isFinite(length) || length > rule.maxBytes) {
     return { status: 413, code: "payload_too_large" };
   }
   return null;
+}
+
+const isJsonType = (raw: string): boolean => raw.split(";")[0].trim().toLowerCase() === "application/json";
+
+/**
+ * `multipart/form-data` whose FIRST parameter is a non-empty `boundary=`. A boundary given after
+ * another parameter is refused (415): the browser's FormData always sends it first.
+ */
+const isMultipartWithBoundary = (raw: string): boolean => /^multipart\/form-data;\s*boundary=\S/i.test(raw);
+
+/**
+ * The CSRF and replay guard for the marketing commands, checked before anything is forwarded.
+ * The session cookie is SameSite=Lax and HttpOnly; these checks do not rely on that alone:
+ * a cross-site form or script cannot send an allowed `Origin`, a JSON `Content-Type` without a
+ * preflight this Worker only answers for allowed origins, or a custom `Idempotency-Key`.
+ */
+export function marketingCommandRefusal(request: Request): Refusal {
+  const path = stripApiPrefix(new URL(request.url).pathname) ?? "";
+  return commandRefusal(request, { typeOk: isJsonType, maxBytes: marketingCommandMaxBytes(path) });
+}
+
+/**
+ * The guard for the catalog commands: the nine JSON commands need `application/json`; the image
+ * upload needs `multipart/form-data` with a leading `boundary=`. The two never swap: multipart
+ * to a JSON command and JSON to the upload are both 415. Limits come from
+ * `catalogCommandMaxBytes(path)`.
+ *
+ * CSRF on the upload: multipart is a "simple" content type, so a cross-site form could send one
+ * without a preflight. Protection there rests on the required `Idempotency-Key` (a custom header,
+ * which forces a preflight this Worker answers only for listed origins) together with the Origin
+ * and Sec-Fetch-Site checks, not on the content type.
+ */
+export function catalogCommandRefusal(request: Request): Refusal {
+  const path = stripApiPrefix(new URL(request.url).pathname) ?? "";
+  return commandRefusal(request, {
+    typeOk: isAllowedCatalogUploadPostPath(path) ? isMultipartWithBoundary : isJsonType,
+    maxBytes: catalogCommandMaxBytes(path),
+  });
 }
 
 /**
@@ -129,14 +179,9 @@ export function marketingCommandRefusal(request: Request): { status: number; cod
  * cross-site form can send, and no cross-site script can send without a preflight this Worker
  * only answers for allowed origins) of at most `AUTH_PROFILE_MAX_BYTES`.
  */
-export function authCommandRefusal(request: Request): { status: number; code: string } | null {
-  if (!isAllowedOrigin(request.headers.get("Origin"))) {
-    return { status: 403, code: "origin_not_allowed" };
-  }
-  const site = request.headers.get("Sec-Fetch-Site");
-  if (site !== null && site !== "same-origin" && site !== "same-site") {
-    return { status: 403, code: "cross_site_request" };
-  }
+export function authCommandRefusal(request: Request): Refusal {
+  const origin = originRefusal(request);
+  if (origin) return origin;
   const upstreamPath = stripApiPrefix(new URL(request.url).pathname) ?? "";
   if (isAllowedAuthProfilePostPath(upstreamPath)) {
     const contentType = (request.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
@@ -169,14 +214,20 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
 
   // Method+path authorization, never method-only authorization.
   //
-  // POST is legal only for the enumerated marketing, CRM authoring and
-  // auth commands. GET allowlisting never implies POST permission.
+  // POST is legal only for the enumerated marketing, CRM authoring,
+  // catalog and auth commands. GET allowlisting never implies POST permission.
   if (method === "POST") {
     if (upstreamPath === null || !isAllowedPostPath(upstreamPath)) {
       return jsonError(request, 405, "method_not_allowed");
     }
     if (isAllowedMarketingCommandPostPath(upstreamPath) || isAllowedCrmAuthoringCommandPostPath(upstreamPath)) {
       const refusal = marketingCommandRefusal(request);
+      if (refusal) {
+        return jsonError(request, refusal.status, refusal.code);
+      }
+    }
+    if (isAllowedCatalogCommandPostPath(upstreamPath) || isAllowedCatalogUploadPostPath(upstreamPath)) {
+      const refusal = catalogCommandRefusal(request);
       if (refusal) {
         return jsonError(request, refusal.status, refusal.code);
       }
@@ -228,6 +279,14 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     body !== undefined &&
     isAllowedCrmAuthoringCommandPostPath(upstreamPath as string) &&
     body.byteLength > CRM_AUTHORING_MAX_BYTES
+  ) {
+    return jsonError(request, 413, "payload_too_large");
+  }
+  if (
+    body !== undefined &&
+    (isAllowedCatalogCommandPostPath(upstreamPath as string) ||
+      isAllowedCatalogUploadPostPath(upstreamPath as string)) &&
+    body.byteLength > catalogCommandMaxBytes(upstreamPath as string)
   ) {
     return jsonError(request, 413, "payload_too_large");
   }
