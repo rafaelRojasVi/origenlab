@@ -23,6 +23,8 @@ from pathlib import Path
 from origenlab_worker.gmail_client import API_BASE, READONLY_SCOPE
 from origenlab_worker.gmail_sync import MAILBOX_ADDRESS
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
 
 def token_payload(client_id: str, client_secret: str, refresh_token: str | None,
                   profile_email: str | None, granted_scopes: Iterable[str] | None) -> dict[str, str]:
@@ -47,6 +49,15 @@ def _profile_email(access_token: str) -> str:
         return str(json.loads(resp.read()).get("emailAddress") or "")
 
 
+def checked_out_path(path: Path) -> Path:
+    """`--out` resolved, and refused if it is the repository or inside it (a token file there could
+    be committed). Resolving first means `..` and symlinks cannot slip past the check."""
+    resolved = path.expanduser().resolve()
+    if resolved == REPO_ROOT or REPO_ROOT in resolved.parents:
+        raise SystemExit("--out must be outside the repository: nothing written")
+    return resolved
+
+
 def write_private(path: Path, payload: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -62,11 +73,11 @@ def main() -> None:
     parser.add_argument("--client-secrets", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
+    out = checked_out_path(args.out)  # before the browser opens: a refused path costs no consent
     flow = InstalledAppFlow.from_client_secrets_file(str(args.client_secrets), scopes=[READONLY_SCOPE])
     creds = flow.run_local_server(port=0, login_hint=MAILBOX_ADDRESS, prompt="consent", access_type="offline")
     payload = token_payload(creds.client_id, creds.client_secret, creds.refresh_token,
                             _profile_email(creds.token), creds.granted_scopes or creds.scopes)
-    out = args.out.expanduser()
     write_private(out, payload)
     print(f"written {out} (mode 600) for {payload['address']} — scope gmail.readonly")
 

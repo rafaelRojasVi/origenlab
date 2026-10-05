@@ -38,3 +38,15 @@ def test_the_file_is_private(tmp_path: Path) -> None:
     path = tmp_path / "nested" / "token.json"
     authorize.write_private(path, {"a": "b"})
     assert oct(path.stat().st_mode & 0o777) == "0o600"
+
+
+def test_an_out_path_inside_the_repository_is_refused(tmp_path: Path) -> None:
+    for inside in (authorize.REPO_ROOT / "token.json", authorize.REPO_ROOT / "apps" / ".." / "t.json",
+                   authorize.REPO_ROOT):
+        with pytest.raises(SystemExit):
+            authorize.checked_out_path(inside)
+    link = tmp_path / "link"
+    link.symlink_to(authorize.REPO_ROOT)
+    with pytest.raises(SystemExit):
+        authorize.checked_out_path(link / "token.json")
+    assert authorize.checked_out_path(tmp_path / "t.json") == (tmp_path / "t.json").resolve()
