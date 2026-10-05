@@ -54,3 +54,43 @@ describe("known quote numbers", () => {
     expect(findUses(KNOWN, parseQuoteNumber("1172", 26)!)).toEqual([]); // 011728A is -25
   });
 });
+
+const mail = (quote_number: string, first_seen_at: string, messages = 1) => ({ quote_number, first_seen_at, messages });
+
+describe("Gmail as a third source", () => {
+  const WITH_MAIL = knownQuoteNumbers(
+    [card("01245-26", "Laboratorio Andino")],
+    [folder(["01246-26"], null, "CN01246-Persona Ejemplo – Agrícola Norte")],
+    [mail("CN01245", "2026-03-02T15:00:00Z"), mail("CN01247", "2026-03-10T15:00:00Z", 2), mail("CN01248", "2026-03-11T15:00:00Z")],
+  );
+  const byNumber = Object.fromEntries(WITH_MAIL.map((k) => [k.number, k]));
+
+  it("adds a number seen only in Gmail, its year from the day it was first seen", () => {
+    expect(byNumber["CN01247"]).toMatchObject({ year: 26, correlative: 1247, label: null, sources: ["Gmail"] });
+  });
+
+  it("joins a Gmail sighting to the CRM or Drive entry of the same number", () => {
+    expect(byNumber["01245-26"]).toMatchObject({ label: "Laboratorio Andino", sources: ["CRM", "Gmail"] });
+    expect(byNumber["CN01245"]).toBeUndefined();
+  });
+
+  it("moves the last and next numbers past what Gmail shows as sent", () => {
+    const { last, next } = lastAndNext(WITH_MAIL, 26);
+    expect(last).toMatchObject({ number: "CN01248", sources: ["Gmail"] });
+    expect(next).toBe("01249-26");
+  });
+
+  it("finds a typed number that only Gmail knows", () => {
+    expect(findUses(WITH_MAIL, parseQuoteNumber("1247", 26)!).map((k) => k.sources)).toEqual([["Gmail"]]);
+  });
+
+  it("reads the year in Santiago: New Year's Eve evening is still the old year", () => {
+    const [k] = knownQuoteNumbers([], [], [mail("CN01300", "2026-01-01T02:00:00Z")]);
+    expect(k).toMatchObject({ year: 25, correlative: 1300 });
+  });
+
+  it("ignores what is not a number and keeps working without Gmail", () => {
+    expect(knownQuoteNumbers([], [], [mail("CN", "2026-03-02T15:00:00Z"), mail("CN01250", "not a date")])).toEqual([]);
+    expect(knownQuoteNumbers([card("01245-26", "Laboratorio Andino")], [])).toHaveLength(1);
+  });
+});

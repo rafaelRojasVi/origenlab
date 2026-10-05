@@ -27,6 +27,7 @@ const READS = [
   "/v2/workspace/review",
   "/v2/workspace/person-suggestions",
   "/v2/workspace/mail-sync",
+  "/v2/workspace/mail-quote-numbers",
   "/v2/cockpit/work-queue",
 ];
 

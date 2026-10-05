@@ -56,6 +56,36 @@ DRIVE_FILE_URL = "https://drive.google.com/file/d/{}/view"
 MAIL_SYNC_MAILBOX = "contacto@origenlab.cl"
 MAIL_SYNC_LATE_MINUTES = 30
 
+#: How many Gmail quote numbers `/v2/workspace/mail-quote-numbers` returns, newest first.
+MAIL_QUOTE_NUMBERS_LIMIT = 500
+
+# The CN tokens the Gmail capture (apps/worker capture.py) proposed from attachment file names,
+# one row per distinct number: when it was first seen and in how many messages. A record an
+# operator rejected does not count; any other review state does, because a number sent by email
+# is used whether or not anyone has reviewed the message. `sent_at` is the message's Date header
+# as ISO 8601 (the capture falls back to Gmail's internal date); anything else falls back to
+# when the record was captured, so one odd header cannot fail the read.
+MAIL_QUOTE_NUMBERS_SQL = rf"""
+with seen as (
+  select btrim(n.value) as quote_number,
+         case when sr.payload->>'sent_at' ~ '^\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}'
+              then (sr.payload->>'sent_at')::timestamptz else sr.acquired_at end as seen_at,
+         sr.id
+    from evidence.source_record sr
+    cross join lateral jsonb_array_elements_text(
+      case when jsonb_typeof(sr.payload->'proposed_quote_numbers') = 'array'
+           then sr.payload->'proposed_quote_numbers' else '[]'::jsonb end
+    ) as n(value)
+   where sr.kind = 'gmail_message' and sr.review_status <> 'rejected'
+)
+select quote_number, min(seen_at) as first_seen_at, count(distinct id)::int as messages
+  from seen
+ where quote_number <> ''
+ group by quote_number
+ order by first_seen_at desc, quote_number desc
+ limit {MAIL_QUOTE_NUMBERS_LIMIT}
+"""
+
 
 def mail_sync_state(
     authorization_state: str | None, last_synced_at: datetime | None, minutes_since_sync: int | None
@@ -1702,6 +1732,19 @@ class CrmWorkspaceRepository:
             )
             row = cur.fetchone()
         return mail_sync_state(*(row or (None, None, None)))
+
+    def mail_quote_numbers(self) -> dict[str, Any]:
+        """Quote numbers the captured Gmail already shows: number, first sighting, message count.
+        No address, subject or institution, so every role reads the same body."""
+        with self._read() as cur:
+            cur.execute(MAIL_QUOTE_NUMBERS_SQL)
+            rows = cur.fetchall()
+        return {
+            "items": [
+                {"quote_number": str(n), "first_seen_at": seen.isoformat(), "messages": int(count)}
+                for n, seen, count in rows
+            ]
+        }
 
     # -- review queue: what the CRM itself cannot show
 

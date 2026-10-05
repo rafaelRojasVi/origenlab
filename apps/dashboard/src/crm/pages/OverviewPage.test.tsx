@@ -148,6 +148,35 @@ describe("Resumen · número de cotización", () => {
     expect(screen.getByTestId("quote-check")).toHaveTextContent(/Escribe un número/);
   });
 
+  it("counts the numbers Gmail already shows as sent", async () => {
+    const mail = { items: [{ quote_number: "CN01030", first_seen_at: "2026-03-30T14:00:00Z", messages: 2 }] };
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE, "/v2/workspace/mail-quote-numbers": mail });
+    render(<OverviewPage navigate={() => undefined} />);
+    const input = await screen.findByLabelText("¿Ya existe este número?");
+    await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("CN01030"));
+    expect(screen.getByTestId("quote-last")).toHaveTextContent("Gmail");
+    expect(screen.getByTestId("quote-next")).toHaveTextContent("01031-26");
+    fireEvent.change(input, { target: { value: "1030" } });
+    expect(screen.getByTestId("quote-check")).toHaveTextContent(/Ya usado: CN01030 · Gmail/);
+    fireEvent.change(input, { target: { value: "01500-26" } });
+    expect(screen.getByTestId("quote-check")).toHaveTextContent(/No está en el CRM, en Drive ni en Gmail/);
+  });
+
+  it("still answers from the CRM and Drive when Gmail numbers cannot be read, and never says free", async () => {
+    respond({
+      "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE,
+      "/v2/workspace/mail-quote-numbers": new Response("{}", { status: 500 }),
+    });
+    render(<OverviewPage navigate={() => undefined} />);
+    const input = await screen.findByLabelText("¿Ya existe este número?");
+    await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("01022-26"));
+    await waitFor(() => expect(screen.getByTestId("quote-number-box")).toHaveTextContent(/números de Gmail no se pudieron leer/));
+    expect(screen.getByTestId("quote-next")).toHaveTextContent("01023-26");
+    fireEvent.change(input, { target: { value: "01500-26" } });
+    expect(screen.getByTestId("quote-check")).toHaveTextContent(/no se pudieron leer/);
+    expect(screen.getByTestId("quote-check")).not.toHaveTextContent(/libre/i);
+  });
+
   it("still answers from the CRM when the Drive archive cannot be read, and says so", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
