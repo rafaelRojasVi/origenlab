@@ -5,6 +5,12 @@ Idempotent by construction: every write is `ON CONFLICT DO NOTHING` on the table
 each message commits alone, the `.eml` is uploaded before the row that names it, and the cursor
 moves only after every message of the window committed. A crash re-reads the same window on the
 next run, and what already committed is counted as a duplicate.
+
+`RunReport.mode` is one of: `locked`, `no_mailbox`, `paused`, `not_authorized`, `wrong_account`,
+`history`, `resync`, `init_baseline`, `init_resumed`, `already_initialized`, plus a `_dry_run`
+suffix on `history`, `resync` and `init` (`init_dry_run`). A run that fails before its mode is
+known reports where it stopped: `start` (lock or mailbox read), `profile` (Gmail's account check)
+or `init` (the baseline).
 """
 
 from __future__ import annotations
@@ -79,6 +85,10 @@ class EmlStore(Protocol):
 
 @dataclass
 class RunCounts:
+    """`bulk_sends` is a subset of `stored`. A `too_large` message is kept as `parse_failed` in the
+    database but counted only in `too_large`, not in `parse_failed`. In a dry run `stored` means
+    "would store" and `evidence` stays 0."""
+
     seen: int = 0
     stored: int = 0
     evidence: int = 0
@@ -103,6 +113,10 @@ class RunReport:
         """Counts, mode and an error *class* — never a subject, body, address or Gmail id."""
         return {"event": "gmail_sync", "mode": self.mode, "exit": self.exit_code,
                 "error": self.error, **asdict(self.counts)}
+
+
+def _label(mode: str, dry_run: bool) -> str:
+    return f"{mode}_dry_run" if dry_run and mode in ("history", "resync", "init") else mode
 
 
 def _utcnow() -> datetime:
@@ -152,25 +166,46 @@ def run_gmail_sync(
         profile = gmail.profile()
         if profile.email_address != mailbox.address:
             return RunReport("wrong_account", EXIT_AUTH, counts)
-        mode = "history" if mailbox.history_id is not None else "resync"
-        mode, message_ids, cursor = _window(gmail, mailbox, profile, now)
+        message_ids: list[str] | None = None
+        cursor = profile.history_id
+        if mailbox.history_id is not None:
+            mode = "history"
+            try:
+                window = gmail.history(mailbox.history_id)
+                message_ids, cursor = list(window.message_ids), window.history_id
+            except HistoryExpired:
+                pass
+        if message_ids is None:
+            mode = "resync"
+            if mailbox.last_synced_at is None:
+                # Resyncing from "now" would skip older mail silently; stopping is the safe answer.
+                return RunReport(_label(mode, dry_run), EXIT_CONFIG, counts, error="no_resync_baseline")
+            since = mailbox.last_synced_at - RESYNC_OVERLAP
+            # The new baseline is the profile read *before* the list: mail that arrives while the
+            # list runs is replayed from it next run and refused as a duplicate — never skipped.
+            message_ids = gmail.messages_after(int(since.timestamp()))
+        if not cursor:
+            return RunReport(_label(mode, dry_run), EXIT_FAILED, counts, error="empty_history_id")
         names = _LabelNames(gmail)
         for message_id in message_ids:
             _capture_one(message_id, db=db, gmail=gmail, store=store, mailbox=mailbox,
                          names=names, dry_run=dry_run, counts=counts)
         if dry_run:
-            return RunReport(f"{mode}_dry_run", EXIT_OK, counts)
+            return RunReport(_label(mode, dry_run), EXIT_OK, counts)
         db.advance_cursor(mailbox.id, cursor)
         return RunReport(mode, EXIT_OK, counts)
     except GmailAuthError as exc:
-        if exc.kind == "invalid_grant" and mailbox is not None and not dry_run:
+        error = exc.kind
+        # Only consent that was live can be revoked; a bad token at `--init` revokes nothing.
+        if (exc.kind == "invalid_grant" and mailbox is not None and not dry_run
+                and mailbox.authorization_state == "authorized"):
             try:
                 db.mark_revoked(mailbox.id)
             except Exception as db_exc:  # noqa: BLE001 — the class only, as below
-                return RunReport(mode, EXIT_AUTH, counts, error=f"{exc.kind}+{type(db_exc).__name__}")
-        return RunReport(mode, EXIT_AUTH, counts, error=exc.kind)
+                error = f"{exc.kind}+{type(db_exc).__name__}"
+        return RunReport(_label(mode, dry_run), EXIT_AUTH, counts, error=error)
     except Exception as exc:  # noqa: BLE001 — the class only: an exception's text may carry an address
-        return RunReport(mode, EXIT_FAILED, counts, error=type(exc).__name__)
+        return RunReport(_label(mode, dry_run), EXIT_FAILED, counts, error=type(exc).__name__)
 
 
 def _init(db: SyncDb, gmail: GmailSource, store: EmlStore, mailbox: Mailbox, dry_run: bool,
@@ -187,20 +222,6 @@ def _init(db: SyncDb, gmail: GmailSource, store: EmlStore, mailbox: Mailbox, dry
         return RunReport("init_dry_run", EXIT_OK, counts)
     outcome = db.authorize(mailbox.id, baseline_history_id=profile.history_id, scopes=[READONLY_SCOPE])
     return RunReport(f"init_{outcome}", EXIT_OK, counts)
-
-
-def _window(gmail: GmailSource, mailbox: Mailbox, profile: Profile,
-            now: Callable[[], datetime]) -> tuple[str, list[str], str]:
-    if mailbox.history_id is not None:
-        try:
-            window = gmail.history(mailbox.history_id)
-            return "history", list(window.message_ids), window.history_id
-        except HistoryExpired:
-            pass
-    since = (mailbox.last_synced_at or now()) - RESYNC_OVERLAP
-    # The new baseline is the profile read *before* the list: mail that arrives while the list
-    # runs is replayed from it next run and refused as a duplicate — never skipped.
-    return "resync", gmail.messages_after(int(since.timestamp())), profile.history_id
 
 
 def _count_unparsed(counts: RunCounts, reason: str) -> None:

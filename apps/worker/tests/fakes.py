@@ -21,16 +21,17 @@ from origenlab_worker.gmail_client import (
     Profile,
     RawMessage,
 )
-from origenlab_worker.storage import StorageTooLarge
+from origenlab_worker.storage import StorageConflict, StorageTooLarge
 
 LAST_SYNC = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
 
 
 class FakeDb:
     def __init__(self, *, state: str = "authorized", history_id: str | None = "100",
-                 last_synced_at: datetime | None = LAST_SYNC, locked_by_other: bool = False) -> None:
+                 last_synced_at: datetime | None = LAST_SYNC, locked_by_other: bool = False, no_mailbox: bool = False) -> None:
         self.box = Mailbox("mb-1", MAILBOX, state, history_id, last_synced_at)
         self.locked_by_other = locked_by_other
+        self.no_mailbox = no_mailbox
         self.messages: dict[str, object] = {}
         self.evidence: set[str] = set()
         self.cursor: list[str] = []
@@ -42,7 +43,7 @@ class FakeDb:
         return not self.locked_by_other
 
     def mailbox(self, address: str) -> Mailbox | None:
-        return self.box if address == self.box.address else None
+        return self.box if address == self.box.address and not self.no_mailbox else None
 
     def authorize(self, mailbox_id, *, baseline_history_id, scopes):
         self.authorized.append((baseline_history_id, scopes))
@@ -95,32 +96,42 @@ class FakeGmail:
     expire_on_page: int | None = None
     revoke_on_page: int | None = None
     revoke_on_metadata: str | None = None
+    revoke_on_profile: bool = False
+    auth_kind: str = "invalid_grant"
+    after_error: bool = False
+    calls: list[str] = field(default_factory=list)
     unavailable_raw: str | None = None
     after_calls: list[int] = field(default_factory=list)
     raw_calls: list[str] = field(default_factory=list)
     label_calls: int = 0
 
     def profile(self) -> Profile:
+        self.calls.append("profile")
+        if self.revoke_on_profile:
+            raise GmailAuthError(self.auth_kind)
         return Profile(self.email, self.current)
 
     def history(self, start_history_id: str) -> HistoryWindow:
+        self.calls.append("history")
         ids: dict[str, None] = {}
         for number, page in enumerate(self.pages):
             if number == self.expire_on_page:
                 raise HistoryExpired("history_expired")
             if number == self.revoke_on_page:
-                raise GmailAuthError("invalid_grant")
+                raise GmailAuthError(self.auth_kind)
             ids.update(dict.fromkeys(page))
         return HistoryWindow(tuple(ids), self.current)
 
     def messages_after(self, epoch_seconds: int) -> list[str]:
         self.after_calls.append(epoch_seconds)
+        if self.after_error:
+            raise GmailUnavailable("http_503")
         self.current = "999"  # mail arriving while the list runs moves Gmail's history id on
         return list(self.after)
 
     def metadata(self, message_id: str) -> MessageMeta:
         if message_id == self.revoke_on_metadata:
-            raise GmailAuthError("invalid_grant")
+            raise GmailAuthError(self.auth_kind)
         m = self.messages.get(message_id)
         if m is None:
             raise GmailNotFound("not_found")
@@ -152,6 +163,8 @@ class FakeStore:
         if any(key.endswith(f"/{gmail_id}.eml") for gmail_id in self.too_large):
             raise StorageTooLarge("storage_object_too_large")
         if key in self.objects:
+            if self.objects[key] != raw:
+                raise StorageConflict("storage_object_conflict")
             return "present"
         self.objects[key] = raw
         return "stored"

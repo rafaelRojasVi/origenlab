@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
 from fakes import LAST_SYNC, FakeDb, FakeGmail, FakeMessage, FakeStore
 from mailfixtures import MAILBOX, RAW_NO_FROM, make_raw
-from origenlab_worker.gmail_client import READONLY_SCOPE
+from origenlab_worker.gmail_client import READONLY_SCOPE, GmailUnavailable
 from origenlab_worker.gmail_sync import (
     EXIT_AUTH,
     EXIT_CONFIG,
@@ -166,12 +168,21 @@ def test_a_dry_run_reads_everything_and_writes_nothing() -> None:
 def test_another_run_holding_the_lock_is_a_quiet_exit() -> None:
     gmail = FakeGmail()
     report = run(FakeDb(locked_by_other=True), gmail)
-    assert (report.mode, report.exit_code, gmail.after_calls) == ("locked", EXIT_OK, [])
+    assert (report.mode, report.exit_code, gmail.calls, gmail.after_calls) == ("locked", EXIT_OK, [], [])
 
 
 def test_the_pause_switch_and_an_unauthorized_mailbox_touch_nothing() -> None:
-    assert run(FakeDb(), FakeGmail(), enabled=False).mode == "paused"
-    assert run(FakeDb(state="unauthorized"), FakeGmail()).mode == "not_authorized"
+    for kwargs, mode in (({"enabled": False}, "paused"), ({}, "not_authorized")):
+        db = FakeDb(state="unauthorized") if mode == "not_authorized" else FakeDb()
+        gmail = FakeGmail(pages=[["m1"]], messages={"m1": FakeMessage(INBOUND)})
+        report = run(db, gmail, **kwargs)
+        assert (report.mode, report.exit_code) == (mode, EXIT_OK)
+        assert (gmail.calls, gmail.raw_calls, gmail.after_calls, db.cursor, db.messages) == ([], [], [], [], {})
+
+
+def test_a_missing_mailbox_row_is_a_configuration_error() -> None:
+    report = run(FakeDb(no_mailbox=True), FakeGmail())
+    assert (report.mode, report.exit_code) == ("no_mailbox", EXIT_CONFIG)
 
 
 def test_a_token_for_another_account_is_refused() -> None:
@@ -212,3 +223,56 @@ def test_a_database_failure_while_marking_revoked_still_exits_2_by_class_only() 
     db.mark_revoked = broken
     report = run(db, FakeGmail(pages=[["m1"]], revoke_on_page=0))
     assert (report.exit_code, report.error) == (EXIT_AUTH, "invalid_grant+RuntimeError")
+
+
+def test_a_storage_conflict_stops_the_run_by_class_and_holds_the_cursor() -> None:
+    gmail = gmail_with(m1=FakeMessage(INBOUND), m2=FakeMessage(OUTBOUND, labels=("SENT",)))
+    store = FakeStore()
+    store.objects[f"{MAILBOX}/2026/10/m2.eml"] = b"different bytes"
+    db = FakeDb()
+    report = run(db, gmail, store)
+    assert (report.exit_code, report.error, list(db.messages), db.cursor) == (EXIT_FAILED, "StorageConflict", ["m1"], [])
+
+
+@pytest.mark.parametrize("kind", ["token_refresh_failed", "scope_not_readonly", "unauthorized"])
+def test_only_invalid_grant_revokes_the_mailbox(kind: str) -> None:
+    db = FakeDb()
+    report = run(db, FakeGmail(pages=[["m1"]], revoke_on_page=0, auth_kind=kind))
+    assert (report.exit_code, report.error, db.revoked, db.cursor) == (EXIT_AUTH, kind, False, [])
+
+
+def test_a_dry_run_never_revokes() -> None:
+    db = FakeDb()
+    report = run(db, FakeGmail(pages=[["m1"]], revoke_on_page=0), dry_run=True)
+    assert (report.mode, report.exit_code, report.error, db.revoked) == ("history_dry_run", EXIT_AUTH, "invalid_grant", False)
+
+
+def test_an_expired_history_without_a_last_sync_fails_closed() -> None:
+    db = FakeDb(last_synced_at=None)
+    gmail = FakeGmail(pages=[["m1"]], expire_on_page=0, after=["m1"], messages={"m1": FakeMessage(INBOUND)})
+    report = run(db, gmail, now=lambda: LAST_SYNC)
+    assert (report.mode, report.exit_code, report.error) == ("resync", EXIT_CONFIG, "no_resync_baseline")
+    assert (gmail.after_calls, db.cursor, db.messages) == ([], [], {})
+
+
+def test_a_bad_token_at_init_does_not_revoke_a_never_authorized_mailbox() -> None:
+    db = FakeDb(state="unauthorized", history_id=None, last_synced_at=None)
+    report = run(db, FakeGmail(revoke_on_profile=True), init=True)
+    assert (report.exit_code, report.error, db.revoked) == (EXIT_AUTH, "invalid_grant", False)
+
+
+def test_an_empty_history_id_never_becomes_the_cursor() -> None:
+    db = FakeDb()
+    gmail = gmail_with(m1=FakeMessage(INBOUND))
+    gmail.current = ""
+    report = run(db, gmail)
+    assert (report.exit_code, report.error, db.cursor) == (EXIT_FAILED, "empty_history_id", [])
+
+
+def test_a_failed_resync_listing_reports_resync_and_a_failed_dry_run_says_so() -> None:
+    report = run(FakeDb(), FakeGmail(pages=[["m1"]], expire_on_page=0, after_error=True))
+    assert (report.mode, report.exit_code, report.error) == ("resync", EXIT_FAILED, "GmailUnavailable")
+    dry = run(FakeDb(), FakeGmail(pages=[["m1"]], revoke_on_page=0), dry_run=True)
+    assert dry.mode == "history_dry_run"
+    failed = run(FakeDb(), FakeGmail(pages=[["m1"]], expire_on_page=0, after_error=True), dry_run=True)
+    assert failed.mode == "resync_dry_run"
