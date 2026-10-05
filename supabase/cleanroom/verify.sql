@@ -101,6 +101,9 @@ union all select 'crm.organization_product_line', count(*)::text from crm.organi
 
 union all select 'catalog.product_image', count(*)::text from catalog.product_image
 union all select 'catalog.supplier_terms', count(*)::text from catalog.supplier_terms
+union all select 'catalog.fx_rate', count(*)::text from catalog.fx_rate
+union all select 'catalog.cost_parameter', count(*)::text from catalog.cost_parameter
+union all select 'evidence.document_line', count(*)::text from evidence.document_line
 ;
 
 commit;

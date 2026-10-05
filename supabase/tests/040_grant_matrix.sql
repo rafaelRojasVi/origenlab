@@ -129,9 +129,20 @@ insert into expected values
     -- catalog.supplier_terms — api inserts and edits the terms (column-level UPDATE, never the
     -- supplier key or created_at); the worker holds nothing.
     ('catalog', 'supplier_terms', 'origenlab_api', 'SI', array['currency', 'origin_country', 'route', 'incoterm', 'default_discount_pct', 'packing_pct', 'map_enforced', 'default_lead_time_es', 'notes', 'version', 'updated_by_operator_id', 'updated_at'], 'SIU'),
-    ('catalog', 'supplier_terms', 'origenlab_worker', '', null, '');
+    ('catalog', 'supplier_terms', 'origenlab_worker', '', null, ''),
+    -- 20261005140628: catalog.fx_rate and catalog.cost_parameter — append-only history: api reads
+    -- and inserts, never updates; the worker holds nothing.
+    ('catalog', 'fx_rate', 'origenlab_api', 'SI', null, 'SI'),
+    ('catalog', 'fx_rate', 'origenlab_worker', '', null, ''),
+    ('catalog', 'cost_parameter', 'origenlab_api', 'SI', null, 'SI'),
+    ('catalog', 'cost_parameter', 'origenlab_worker', '', null, ''),
+    -- evidence.document_line — api inserts lines and reviews a disputed one (column-level UPDATE of
+    -- the money, the optional flag and the review fields; never the line's identity); the worker
+    -- holds nothing.
+    ('evidence', 'document_line', 'origenlab_api', 'SI', array['qty', 'unit_price', 'line_total', 'optional', 'check_status', 'reviewed_by_operator_id', 'reviewed_at', 'review_note', 'updated_at'], 'SIU'),
+    ('evidence', 'document_line', 'origenlab_worker', '', null, '');
 
-select is((select count(*)::int from expected), 94, 'the matrix covers all 47 tables for both runtime roles');
+select is((select count(*)::int from expected), 100, 'the matrix covers all 50 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

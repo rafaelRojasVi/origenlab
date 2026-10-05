@@ -26,21 +26,23 @@
     "rebuild is expected to reproduce them, and the first rebuild that does not will fail here",
     "loudly, which is the point.",
     "",
-    "The chain probes and the two catalog table probes moved on 2026-10-05 (20261005134832,",
-    "catalog.product_image and catalog.supplier_terms) are likewise decided by the migration",
-    "files; that migration has not been applied to origenlab_clean.",
+    "The chain probes and the five catalog/evidence table probes moved on 2026-10-05",
+    "(20261005134832: catalog.product_image and catalog.supplier_terms; 20261005140628:",
+    "catalog.fx_rate, catalog.cost_parameter and evidence.document_line) are likewise decided by",
+    "the migration files — cost_parameter's 5 rows are that migration's seed; neither migration",
+    "has been applied to origenlab_clean.",
     "",
     "If a build produces different numbers, either an input changed or the load is not",
     "reproducible, and both are things an operator must see rather than have rounded away."
   ],
   "probes": {
     "migrations.count": {
-      "expect": 42,
+      "expect": 43,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20261005134832",
-      "why": "slice7_catalog_products_suppliers, the newest migration — product content and search keys, product images, richer supplier price observations, supplier terms and notes on products."
+      "expect": "20261005140628",
+      "why": "slice7_catalog_pricing_inputs_document_lines, the newest migration — pricing exchange rates, costing parameters (seeded) and quote-document lines as durable evidence, after 20261005134832's product content, images, supplier observations, supplier terms and notes on products."
     },
 
     "source_record.total": {
@@ -148,6 +150,9 @@
     "crm.note": { "expect": 0, "why": "slice 6: no operator notes exist in a fresh build; notes are operator decisions." },
     "crm.organization_product_line": { "expect": 0, "why": "slice 6: no product-line links exist in a fresh build; they are operator decisions." },
     "catalog.product_image": { "expect": 0, "why": "slice 7: no product photo exists in a fresh build; images are uploaded or proposed and then confirmed by an operator." },
-    "catalog.supplier_terms": { "expect": 0, "why": "slice 7: no supplier terms exist in a fresh build; they are operator decisions." }
+    "catalog.supplier_terms": { "expect": 0, "why": "slice 7: no supplier terms exist in a fresh build; they are operator decisions." },
+    "catalog.fx_rate": { "expect": 0, "why": "slice 7: no exchange rate exists in a fresh build; rates are fetched from Banco Central or entered by an operator." },
+    "catalog.cost_parameter": { "expect": 5, "why": "slice 7: migration 20261005140628 seeds only the five public/regulatory costing parameters (iva_rate, duty_rate_general, duty_rate_fta, courier_threshold_usd_fob, insurance_pct_of_fob; valid_from 2026-01-01, no operator). The repository is public, so the other eighteen keys are set per environment by an operator. Fewer means the seed did not run; more means something set a parameter during the build." },
+    "evidence.document_line": { "expect": 0, "why": "slice 7: no quote-document line exists in a fresh build; lines are loaded by a separate extraction step outside the build." }
   }
 }

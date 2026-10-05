@@ -215,7 +215,7 @@ select is(
   (select count(*)::int from information_schema.tables
     where table_schema in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and table_type = 'BASE TABLE'),
-  47, 'the commands migration adds no table: the inventory is 36 plus the later outbound.campaign_block (#37), the four sign-in tables (#38–#41), the four slice-6 tables (#42–#45) and the two slice-7 catalog tables (#50–#51)');
+  50, 'the commands migration adds no table: the inventory is 36 plus the later outbound.campaign_block (#37), the four sign-in tables (#38–#41), the four slice-6 tables (#42–#45) and the five slice-7 catalog tables (#50–#54)');
 select is(
   (select count(*)::int from pg_trigger t join pg_class c on c.oid = t.tgrelid
      join pg_namespace n on n.oid = c.relnamespace

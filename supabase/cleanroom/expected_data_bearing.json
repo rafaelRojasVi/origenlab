@@ -17,7 +17,7 @@
     "migration chain, the role bootstrap or a grant — never by how many rows a table holds. The",
     "chain probes compare the ledger against the files in supabase/migrations/ as the caller",
     "passes them, so a migration added on disk and not applied fails here without this file",
-    "changing. The inventory numbers (47 tables, 166 policies, the closed SECURITY DEFINER",
+    "changing. The inventory numbers (50 tables, 173 policies, the closed SECURITY DEFINER",
     "list) are the same constants verify_chain.sh, docs/DOMAIN.md §7 and docs/STATUS.md §2.1",
     "carry; a migration that moves one moves all of them in the same PR.",
     "",
@@ -35,11 +35,11 @@
     "migrations.ledger_has_duplicates": { "expect": 0, "why": "version is the ledger's primary key; a duplicate can only mean the ledger table itself was replaced." },
 
     "schemas.present": { "expect": "catalog,comms,crm,evidence,outbound,platform,procurement", "why": "the seven private schemas (docs/DOMAIN.md §7), all present, none extra among them." },
-    "tables.count": { "expect": 47, "why": "the inventory at head 20261005134832 (docs/DOMAIN.md §7, docs/STATUS.md §2.1). Same constant as verify_chain.sh." },
-    "tables.by_schema": { "expect": "catalog=4,comms=4,crm=21,evidence=2,outbound=9,platform=6,procurement=1", "why": "the total alone would not notice a table moved between schemas." },
+    "tables.count": { "expect": 50, "why": "the inventory at head 20261005140628 (docs/DOMAIN.md §7, docs/STATUS.md §2.1). Same constant as verify_chain.sh." },
+    "tables.by_schema": { "expect": "catalog=6,comms=4,crm=21,evidence=3,outbound=9,platform=6,procurement=1", "why": "the total alone would not notice a table moved between schemas." },
     "tables.without_rls": { "expect": 0, "why": "row-level security is enabled on every table; a table created outside the chain, or one whose RLS was disabled to make a load easier, shows here." },
     "tables.not_owned_by_origenlab_owner": { "expect": 0, "why": "every table is owned by the NOLOGIN owner role; a table owned by postgres or by a login role escapes the grant matrix." },
-    "policies.count": { "expect": 166, "why": "the policy inventory at head 20261005134832: the 160 of 20260930120000 (docs/STATUS.md §2.7.39) plus the six origenlab_api policies on catalog.product_image and catalog.supplier_terms. Same constant as verify_chain.sh." },
+    "policies.count": { "expect": 173, "why": "the policy inventory at head 20261005140628: the 160 of 20260930120000 (docs/STATUS.md §2.7.39), the six origenlab_api policies on catalog.product_image and catalog.supplier_terms (20261005134832), and the seven origenlab_api policies on catalog.fx_rate, catalog.cost_parameter and evidence.document_line (20261005140628). Same constant as verify_chain.sh." },
     "policies.platform": {
       "expect": "auth_event:origenlab_api_insert:INSERT,auth_event:origenlab_api_select:SELECT,auth_principal:origenlab_api_select:SELECT,auth_session:origenlab_api_insert:INSERT,auth_session:origenlab_api_select:SELECT,auth_session:origenlab_api_update:UPDATE,command_receipt:origenlab_api_insert:INSERT,command_receipt:origenlab_api_select:SELECT,command_receipt:origenlab_api_update:UPDATE,command_receipt:origenlab_worker_select:SELECT,operator:origenlab_api_select:SELECT,operator:origenlab_worker_select:SELECT,operator_profile:origenlab_api_select:SELECT",
       "why": "the platform policies by name and command. Note what is absent: no runtime INSERT or UPDATE policy on platform.operator (20260928192000), no UPDATE policy on auth_principal or operator_profile (20260928194000) — the throttle is written only through the definers."
