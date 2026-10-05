@@ -10,12 +10,35 @@ from origenlab_api.main import create_app
 
 _API_SRC = Path(__file__).resolve().parents[1] / "src" / "origenlab_api"
 
+# «Enviar prueba» (owner decision 2026-10-04): one admin-only test of one campaign's stored email to
+# one address, from contacto@. These are the only files allowed to name the Gmail send client;
+# every other file keeps the `gmail_send` guard. The allowance is by exact path (never a directory):
+# the client module, the repository that calls it, and the `main.py` mount that builds the sender.
+# The one sanctioned sender is `POST /v2/commands/send-campaign-test`, mounted only behind its switch.
+_GMAIL_SEND_ALLOWED = frozenset(
+    {
+        "v2/gmail_send.py",
+        "v2/campaign_test_send.py",
+        "main.py",
+    }
+)
+
+# The Gmail API host itself: only the client module may name it, so nothing else can reach Gmail
+# around the client (and its limits, receipts and recipient refusals).
+_GMAIL_API_HOST_ALLOWED = frozenset({"v2/gmail_send.py"})
+
+_ALLOWED_BY_NEEDLE = {
+    "gmail_send": _GMAIL_SEND_ALLOWED,
+    "gmail.googleapis.com": _GMAIL_API_HOST_ALLOWED,
+}
+
 _FORBIDDEN_SUBSTRINGS = (
     "refresh_outbound_safety_memory",
     "05_workspace_gmail_imap_to_sqlite",
     "sync_dashboard_postgres_mirror",
     "alembic",
     "gmail_send",
+    "gmail.googleapis.com",
     "send_inline_html",
     "subprocess",
     "build_equipment_first_operator_queue",
@@ -118,6 +141,8 @@ def test_origenlab_api_source_has_no_mutation_script_imports() -> None:
     for path in _API_SRC.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         for needle in _FORBIDDEN_SUBSTRINGS:
+            if path.relative_to(_API_SRC).as_posix() in _ALLOWED_BY_NEEDLE.get(needle, frozenset()):
+                continue
             if needle in text:
                 hits.append(f"{path.relative_to(_API_SRC)}: {needle}")
     assert hits == [], "forbidden references in apps/api:\n" + "\n".join(hits)
@@ -135,6 +160,7 @@ def test_openapi_documents_narrow_operator_mutation_boundary() -> None:
 
     assert "file-backed operator document import" in description
     assert "does not send email" in description
+    assert "except the one switch-gated post /v2/commands/send-campaign-test" in description
     assert "sqlite remains read-only" in description
     assert "durable commercial-operations writes" in description
     assert "explicitly allowlisted /operations/* command routes" in description

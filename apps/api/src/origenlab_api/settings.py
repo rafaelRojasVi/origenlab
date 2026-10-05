@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
-from pydantic import PrivateAttr, SecretStr
+from pydantic import Field, PrivateAttr, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -231,11 +231,24 @@ class Settings(BaseSettings):
     or sends anything.
     """
     v2_crm_authoring_enabled: bool = False
+    """Mount POST /v2/commands/send-campaign-test («Enviar prueba»).
+
+    Default **false** and needs `v2_test_send_token_file`. One admin-only test of a campaign's
+    stored email to one address, from the shared mailbox; it is not a campaign send.
+    """
+    v2_campaign_test_send_enabled: bool = False
+    """Render secret file with the send-scope refresh token for the shared mailbox.
+
+    Read from `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE` (the authorize script under scripts/ writes it).
+    """
+    v2_test_send_token_file: str | None = Field(default=None, validation_alias="ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE")
     """Mount POST /v2/commands/freeze-campaign-audience (WORKFLOWS.md §W4 step 2).
 
     Default **false** and separate from the drafts switch: committing an immutable recipient
     snapshot is a different decision from writing copy. A freeze approves and sends nothing;
-    no send command exists in this API.
+    no campaign send command exists in this API. The one route that sends is the admin-only
+    test send above (one campaign email to one address), and it refuses an address that
+    unsubscribed or is blocked.
     """
     v2_audience_freeze_enabled: bool = False
     """W12 recontact review inside the audience freeze (WORKFLOWS.md §W12).
@@ -440,6 +453,9 @@ class Settings(BaseSettings):
         letting it record durable human decisions is a separate one.
         """
         return self.v2_configured() and bool(self.v2_commands_enabled)
+
+    def v2_campaign_test_send_configured(self) -> bool:
+        return self.v2_configured() and bool(self.v2_campaign_test_send_enabled) and bool(self.v2_test_send_token_file)
 
     def v2_campaign_drafts_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_drafts_enabled)

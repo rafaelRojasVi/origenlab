@@ -159,6 +159,7 @@ export function MarketingPage() {
             key={`${view.campaignId}:${view.tab ?? ""}:${view.total ?? ""}`}
             summary={detailSummary}
             planningEnabled={planningEnabled}
+            testSend={state.kind === "ready" ? state.data.test_send : undefined}
             taxonomy={taxonomy}
             initialTab={view.tab}
             initialTotal={view.total}
@@ -278,7 +279,7 @@ function Body({
     </p>
     </>
   );
-  const v1Lane = (data.v1_lane_campaigns ?? []).map((c) => <V1LaneCampaignCard key={c.key} campaign={c} />);
+  const v1Lane = (data.v1_lane_campaigns ?? []).map((c) => <V1LaneCampaignCard key={c.key} campaign={c} testSend={data.test_send} />);
   // Historical V1 campaigns that never went out are hidden (the record stays in the CRM).
   const hidden = data.campaigns.filter(isNeverSentHistorical);
   const campaigns = showNeverSent ? data.campaigns : data.campaigns.filter((c) => !isNeverSentHistorical(c));

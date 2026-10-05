@@ -1,8 +1,9 @@
 import { useState } from "react";
-import type { V1LaneCampaign } from "../crmTypes";
+import type { MarketingResponse, V1LaneCampaign } from "../crmTypes";
 import { fmtInt } from "../ui";
 import { WEEKDAYS, todayInSantiago, v1LaneBannerState, v1LaneStatus } from "./calendar";
 import { EmailFrame } from "./EmailFrame";
+import { TestSendPanel } from "./TestSendPanel";
 
 const MONTH = new Intl.DateTimeFormat("es-CL", { timeZone: "UTC", month: "short" });
 
@@ -23,7 +24,13 @@ const STATE_LABEL = {
  * is: the plan, day by day, and the email. Every figure is a planned count from the declaration,
  * never a sent one: V2 cannot see what V1 sent until the results are imported.
  */
-export function V1LaneCampaignCard({ campaign }: { campaign: V1LaneCampaign }) {
+export function V1LaneCampaignCard({
+  campaign,
+  testSend,
+}: {
+  campaign: V1LaneCampaign;
+  testSend?: MarketingResponse["test_send"];
+}) {
   const today = todayInSantiago();
   const state = v1LaneBannerState(campaign, today);
   const [full, setFull] = useState(false);
@@ -100,6 +107,7 @@ export function V1LaneCampaignCard({ campaign }: { campaign: V1LaneCampaign }) {
               >
                 {full ? "Ver miniatura" : "Ver correo completo"}
               </button>
+              <TestSendPanel target={{ v1_lane_key: campaign.key }} config={testSend} />
             </div>
           ) : (
             <p

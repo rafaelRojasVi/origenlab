@@ -16,6 +16,7 @@ Validation rules:
 - ``clients_per_day`` (optional): one positive whole count per send day, at most 5,000 — the
   runner's daily wave sizes, counts only (the repository is public: never names or addresses)
 - ``audience_rule`` (optional): one non-blank sentence, at most 400 characters
+- ``subject`` (optional): the email's subject line, non-blank, at most 300 characters
 
 The email itself never lives here: it carries contact addresses. ``load_v1_lane_html`` reads it
 from a content directory outside the repository (``ORIGENLAB_V2_V1_LANE_CONTENT_DIR``; on Render,
@@ -60,6 +61,7 @@ class V1LaneCampaign:
     promo_until: str
     clients_per_day: tuple[int, ...] | None = None
     audience_rule: str | None = None
+    subject: str | None = None
 
 
 class V1LaneValidationError(ValueError):
@@ -140,6 +142,16 @@ def validate_entry(entry: object) -> V1LaneCampaign:
             f"audience_rule must be one non-blank sentence of at most {MAX_AUDIENCE_RULE_CHARS} characters"
         )
 
+    subject = entry.get("subject")
+    if subject is not None and (
+        not isinstance(subject, str)
+        or not subject.strip()
+        or len(subject) > 300
+        or "\r" in subject
+        or "\n" in subject
+    ):
+        raise V1LaneValidationError("subject must be a single-line non-blank string of at most 300 characters")
+
     return V1LaneCampaign(
         key=key,
         name=name,
@@ -149,6 +161,7 @@ def validate_entry(entry: object) -> V1LaneCampaign:
         promo_until=promo_until,
         clients_per_day=clients_per_day,
         audience_rule=audience_rule.strip() if audience_rule else None,
+        subject=subject.strip() if subject else None,
     )
 
 
@@ -224,5 +237,6 @@ def as_dict(campaign: V1LaneCampaign, html: str | None = None) -> dict:
         "clients_per_day": plan,
         "total_clients": sum(plan) if plan else None,
         "audience_rule": campaign.audience_rule,
+        "subject": campaign.subject,
         "html": html,
     }

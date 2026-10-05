@@ -372,7 +372,9 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("allows exactly the eight Marketing commands as POST, and no send, approve, schedule or activate", async () => {
+  // The eight non-sending Marketing commands. The one command that sends — the admin-only test
+  // send of one campaign email to one address — has its own test below.
+  it("allows the eight non-sending Marketing commands as POST, and no campaign send, approve, schedule or activate", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of [
       "/v2/commands/create-campaign-draft",
@@ -421,6 +423,19 @@ describe("V2 durable read boundary allowlist", () => {
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
       expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
+  it("allows the test send as an exact POST with a small body, and its history as a GET", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");
+    expect(isAllowedPostPath("/v2/commands/send-campaign-test")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/commands/send-campaign-test")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/send-campaign-test")).toBe(4_096);
+    expect(isAllowedUpstreamPath("/v2/workspace/marketing/test-send-history?v1_lane_key=cyber-2026-10")).toBe(true);
+    for (const p of ["/v2/commands/send-campaign", "/v2/commands/send-campaign-test/", "/v2/commands/send-campaign-tests",
+                     "/v2/workspace/marketing/test-send-history/x"]) {
+      expect(isAllowedPostPath(p), p).toBe(false);
+      expect(isAllowedUpstreamPath(p), p).toBe(false);
     }
   });
 
