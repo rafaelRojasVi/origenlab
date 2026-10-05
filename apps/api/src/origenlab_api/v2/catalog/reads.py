@@ -211,7 +211,8 @@ class V2CatalogReads:
         now = dt.datetime.now(dt.timezone.utc)
         history, current = [], {}
         for r in rows:
-            entry = {"key": r["key"],
+            # `id` is what set-cost-parameter takes back as `expected_current_id`.
+            entry = {"id": r["id"], "key": r["key"],
                      "value": r["value_numeric"] if r["value_numeric"] is not None else r["value_json"],
                      "valid_from": r["valid_from"], "set_by": r["set_by"], "reason": r["reason"]}
             history.append(entry)

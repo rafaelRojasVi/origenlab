@@ -130,3 +130,177 @@ def test_parameters_are_forbidden_to_viewer_in_the_production_envelope() -> None
 def test_parameters_readable_by_sales_and_admin(role) -> None:
     r = _client(role).get("/v2/catalog/parameters", headers=HEADERS)
     assert r.status_code == 200 and r.json() == {"current": {}, "history": []}
+
+
+# ──────────────────────────────────────────────────────── command routes ──
+
+from origenlab_api.v2.catalog.routes import catalog_command_router  # noqa: E402
+from origenlab_api.v2.commands import CommandRefused  # noqa: E402
+
+PID = "00000000-0000-4000-8000-0000000000aa"
+ORG = "00000000-0000-4000-8000-0000000000bb"
+COMMAND_BODIES = {
+    "create-product": {"manufacturer_organization_id": ORG, "model_number": "SONIC-100", "weight_kg": "1.5"},
+    "update-product": {"product_id": PID, "expected_version": 1, "name_es": "Sonicador"},
+    "confirm-product-content": {"product_id": PID, "expected_version": 1},
+    "record-supplier-cost": {"product_id": PID, "supplier_organization_id": ORG, "price": "10.5", "currency": "EUR",
+                             "price_kind": "dealer_net", "as_of": "2026-09-01T00:00:00+00:00"},
+    "set-supplier-terms": {"supplier_organization_id": ORG, "currency": "EUR", "route": "import_courier"},
+    "set-cost-parameter": {"key": "iva_rate", "value": "0.19", "reason": "sintético"},
+    "record-fx-rate": {"currency": "USD", "rate_date": "2026-09-01", "clp_per_unit": "900", "reason": "sintético"},
+    "review-document-line": {"document_line_id": PID, "review_note": "revisado"},
+}
+
+
+class _FakeRepo:
+    def __init__(self, refusal: CommandRefused | None = None):
+        self.calls: list[dict] = []
+        self._refusal = refusal
+
+    def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        if self._refusal is not None:
+            raise self._refusal
+        return {"ok": True, "replayed": False}
+
+
+def _command_client(role="sales", repo=None):
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(catalog_command_router)
+    app.state.catalog_repository = repo or _FakeRepo()
+    operator = OperatorIdentity(operator_id="00000000-0000-4000-8000-000000000001", email_norm="op@example.test",
+                                display_name="Op", role=role, status="active")
+    app.state.v2_identity = LocalDevIdentity(LOOPBACK, _Lookup(operator))
+    return app.state.catalog_repository, TestClient(app)
+
+
+def _ikey():
+    return {**HEADERS, "Idempotency-Key": uuid.uuid4().hex}
+
+
+def test_the_command_router_exposes_exactly_the_eight_catalog_commands() -> None:
+    paths = {r.path for r in catalog_command_router.routes}
+    assert paths == {f"/v2/commands/{name}" for name in COMMAND_BODIES}
+
+
+@pytest.mark.parametrize("command", sorted(COMMAND_BODIES))
+def test_viewer_cannot_command(command) -> None:
+    repo, client = _command_client("viewer")
+    r = client.post(f"/v2/commands/{command}", json=COMMAND_BODIES[command], headers=_ikey())
+    assert r.status_code == 403
+    err = r.json()["error"]
+    assert err["code"] == "forbidden" and err["details"]["code"] == "role_may_not_decide"
+    assert repo.calls == []
+
+
+@pytest.mark.parametrize("role", ["sales", "admin"])
+@pytest.mark.parametrize("command", sorted(COMMAND_BODIES))
+def test_sales_and_admin_reach_the_handler_with_a_json_ready_body(command, role) -> None:
+    repo, client = _command_client(role)
+    r = client.post(f"/v2/commands/{command}", json=COMMAND_BODIES[command], headers=_ikey())
+    assert r.status_code == 200, r.text
+    [call] = repo.calls
+    assert call["command_name"] == command and call["operator"].role == role
+    # Decimal, UUID and date travel as strings, exactly what the handlers bind.
+    import json as _json
+
+    _json.dumps(call["fields"])
+    if command == "create-product":
+        assert call["fields"]["weight_kg"] == "1.5" and call["fields"]["manufacturer_organization_id"] == ORG
+
+
+def test_unauthenticated_command_is_401() -> None:
+    _, client = _command_client()
+    r = client.post("/v2/commands/create-product", json=COMMAND_BODIES["create-product"])
+    assert r.status_code == 401 and r.json()["error"]["code"] == "unauthorized"
+
+
+def test_missing_idempotency_key_is_400_in_the_production_envelope() -> None:
+    repo, client = _command_client()
+    r = client.post("/v2/commands/create-product", json=COMMAND_BODIES["create-product"], headers=HEADERS)
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "validation_error"
+    assert repo.calls == []
+
+
+@pytest.mark.parametrize(("status", "code", "envelope"), [
+    (409, "duplicate_model", "conflict"), (409, "stale_version", "conflict"),
+    (409, "duplicate_observation", "conflict"), (409, "parameter_changed", "conflict"),
+    (404, "product_not_found", "not_found"), (422, "value_out_of_range", "validation_error"),
+])
+def test_refusals_surface_in_the_production_envelope(status, code, envelope) -> None:
+    _, client = _command_client(repo=_FakeRepo(CommandRefused(status, code, "refused")))
+    r = client.post("/v2/commands/create-product", json=COMMAND_BODIES["create-product"], headers=_ikey())
+    assert r.status_code == status
+    err = r.json()["error"]
+    assert err["code"] == envelope and err["details"]["code"] == code
+
+
+@pytest.mark.parametrize(("command", "patch"), [
+    ("create-product", {"surprise": 1}),
+    ("create-product", {"model_number": "   "}),
+    ("create-product", {"origin_country": "chile"}),
+    ("create-product", {"weight_kg": "-1"}),
+    ("create-product", {"product_kind": "widget"}),
+    ("create-product", {"specs": [{"label_es": "Potencia", "value": "1", "extra": "x"}]}),
+    ("record-supplier-cost", {"discount_pct": "1"}),
+    ("record-supplier-cost", {"currency": "GBP"}),
+    ("record-supplier-cost", {"price": "NaN"}),
+    ("set-supplier-terms", {"packing_pct": "0.6"}),
+    ("set-cost-parameter", {"key": "secret_markup"}),
+    ("set-cost-parameter", {"reason": "  "}),
+    ("set-cost-parameter", {"value": "-0.1"}),
+    ("record-fx-rate", {"reason": "   "}),
+    ("record-fx-rate", {"currency": "CLP"}),
+    ("record-fx-rate", {"clp_per_unit": "0"}),
+    ("review-document-line", {"review_note": "ok"}),
+    ("review-document-line", {"qty": "0"}),
+])
+def test_bad_bodies_are_422_in_the_production_envelope(command, patch) -> None:
+    repo, client = _command_client()
+    r = client.post(f"/v2/commands/{command}", json={**COMMAND_BODIES[command], **patch}, headers=_ikey())
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "validation_error"
+    assert repo.calls == []
+
+
+def test_update_product_leaves_out_what_was_not_sent() -> None:
+    repo, client = _command_client()
+    client.post("/v2/commands/update-product", json=COMMAND_BODIES["update-product"], headers=_ikey())
+    fields = repo.calls[0]["fields"]
+    # Defaults that would overwrite stored data are absent, not False or [].
+    assert fields["specs"] is None and fields["is_dangerous_goods"] is None and fields["active"] is None
+
+
+def test_switch_on_mounts_the_command_routes() -> None:
+    from origenlab_api import main
+    from origenlab_api.settings import Settings
+
+    app = FastAPI()
+    main._mount_catalog(app, Settings(_env_file=None, v2_database_url=LOOPBACK, v2_quoting_enabled=True),
+                        LOOPBACK, lambda *a, **k: 1 / 0)
+    assert {f"/v2/commands/{name}" for name in COMMAND_BODIES} <= set(app.openapi()["paths"])
+    assert app.state.catalog_repository is not None
+    app = FastAPI()
+    main._mount_catalog(app, Settings(_env_file=None, v2_database_url=LOOPBACK), LOOPBACK, lambda *a, **k: 1 / 0)
+    assert "/v2/commands/create-product" not in set(app.openapi()["paths"])
+
+
+def test_add_note_accepts_a_product_subject_and_keeps_the_others() -> None:
+    from pydantic import ValidationError
+
+    from origenlab_api.v2.crm_authoring_routes import AddNoteBody
+
+    for kind in ("person", "organization", "opportunity", "product"):
+        assert AddNoteBody(subject_kind=kind, subject_id=PID, body="nota").subject_kind == kind
+    with pytest.raises(ValidationError):
+        AddNoteBody(subject_kind="quote", subject_id=PID, body="nota")
+
+
+def test_catalog_commands_module_never_deletes() -> None:
+    import pathlib
+
+    import origenlab_api.v2.catalog.commands as module
+
+    assert "delete from" not in pathlib.Path(module.__file__).read_text(encoding="utf-8").lower()
