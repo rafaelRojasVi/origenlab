@@ -209,6 +209,12 @@ class Settings(BaseSettings):
     """Supabase Auth JWKS URL. When set, JWKS verification is used and the local development identity adapter is never constructed."""
     v2_jwks_url: str | None = None
     v2_statement_timeout_ms: int = 15_000
+    """How long a V2 command waits for a row lock another transaction holds (`lock_timeout`).
+
+    Past it the command rolls back and answers 409 `record_busy` (`errors.DatabaseRefusal`)
+    instead of waiting until `v2_statement_timeout_ms` cancels it. Keep it well below that.
+    """
+    v2_lock_timeout_ms: int = 3_000
     """When true, mount POST /v2/commands/* — the human-review command boundary.
 
     Default **false**, like `commercial_operations_writes_enabled` above and for the same

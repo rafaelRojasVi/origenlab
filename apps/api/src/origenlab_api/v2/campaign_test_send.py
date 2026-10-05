@@ -25,7 +25,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from origenlab_api.v2.command_core import DEFAULT_COMMAND_TIMEOUT_MS, CommandTransaction, json_payload
+from origenlab_api.v2.command_core import (
+    DEFAULT_COMMAND_LOCK_TIMEOUT_MS,
+    DEFAULT_COMMAND_TIMEOUT_MS,
+    CommandTransaction,
+    json_payload,
+)
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.gmail_send import (
     SENDER_ADDRESS,  # noqa: F401 - re-exported for the marketing read
@@ -83,8 +88,9 @@ class TestSendLimitRefused(CommandRefused):
 
 class V2CampaignTestSendRepository(CommandTransaction):
     def __init__(self, connect: Any, dsn: str, sender: Any, v1_lane_content_dir: str | None,
-                 statement_timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS) -> None:
-        super().__init__(connect, dsn, statement_timeout_ms)
+                 statement_timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
+                 lock_timeout_ms: int = DEFAULT_COMMAND_LOCK_TIMEOUT_MS) -> None:
+        super().__init__(connect, dsn, statement_timeout_ms, lock_timeout_ms)
         self._sender = sender
         self._v1_lane_content_dir = v1_lane_content_dir
 

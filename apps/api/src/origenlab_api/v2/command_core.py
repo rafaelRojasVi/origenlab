@@ -31,12 +31,18 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, Callable
 
+from origenlab_api.errors import database_refusal
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
 
 #: A command reads a handful of rows and writes a handful. One that has not finished in this
 #: long is stuck on a lock, and failing is better than holding one.
 DEFAULT_COMMAND_TIMEOUT_MS = 15_000
+
+#: How long a command waits for a row another transaction holds. Another operator's command
+#: finishes in milliseconds; a wait this long means the row is busy, and the operator is told
+#: so (409 `record_busy`) rather than kept waiting until the statement timeout cancels it.
+DEFAULT_COMMAND_LOCK_TIMEOUT_MS = 3_000
 
 
 def json_payload(value: Any) -> str:
@@ -54,15 +60,21 @@ class CommandTransaction:
     #: declare one answers `unknown_command` rather than raising an AttributeError.
     _HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {}
 
+    #: A subclass that needs one snapshot for every read (`audience_freeze.py`) names its
+    #: isolation level here; it is set as the transaction's first statement.
+    _ISOLATION: str | None = None
+
     def __init__(
         self,
         connect: Any,
         dsn: str,
         statement_timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
+        lock_timeout_ms: int = DEFAULT_COMMAND_LOCK_TIMEOUT_MS,
     ) -> None:
         self._connect = connect
         self._dsn = dsn
         self._statement_timeout_ms = statement_timeout_ms
+        self._lock_timeout_ms = lock_timeout_ms
 
     # ------------------------------------------------------------------ the transaction
 
@@ -74,16 +86,32 @@ class CommandTransaction:
         manager to commit on the way out would make "what happens when a handler raises"
         depend on which driver is installed, and that is precisely the behaviour this is
         about.
+
+        A row lock held past `lock_timeout`, a statement past `statement_timeout`, no free
+        pooled connection, or a unique constraint no handler checked for are not bugs: they
+        leave the transaction rolled back — nothing written, the receipt included — and
+        surface as `errors.DatabaseRefusal` (`record_busy`, `service_busy`, `duplicate`)
+        instead of a 500. A handler that turns one of them into its own `CommandRefused`
+        first (`identifier_taken`, `already_blocked`) keeps its answer.
         """
-        with self._connect(self._dsn, autocommit=False) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
-                try:
-                    yield cur
-                except BaseException:
-                    conn.rollback()
-                    raise
-                conn.commit()
+        try:
+            with self._connect(self._dsn, autocommit=False) as conn:
+                with conn.cursor() as cur:
+                    if self._ISOLATION is not None:
+                        cur.execute(f"set transaction isolation level {self._ISOLATION}")
+                    cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
+                    cur.execute(f"set local lock_timeout = {int(self._lock_timeout_ms)}")
+                    try:
+                        yield cur
+                    except BaseException:
+                        conn.rollback()
+                        raise
+                    conn.commit()
+        except Exception as exc:
+            refusal = database_refusal(exc)
+            if refusal is None:
+                raise
+            raise refusal from exc
 
     def _row(self, cur: Any) -> dict[str, Any] | None:
         row = cur.fetchone()

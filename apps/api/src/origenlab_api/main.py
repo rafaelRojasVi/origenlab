@@ -251,7 +251,8 @@ def _mount_unsubscribe(app: FastAPI, settings: Settings, dsn: str, connect: Any)
 
     app.state.unsubscribe_apply_enabled = settings.v2_unsubscribe_apply_configured()
     app.state.unsubscribe_repository = V2UnsubscribeRepository(
-        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        lock_timeout_ms=settings.v2_lock_timeout_ms,
     )
     app.include_router(unsubscribe_preview_router)
     if app.state.unsubscribe_apply_enabled:
@@ -271,6 +272,7 @@ def _mount_audience_freeze(app: FastAPI, settings: Settings, dsn: str, connect: 
 
     app.state.audience_freeze_repository = V2AudienceFreezeRepository(
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        lock_timeout_ms=settings.v2_lock_timeout_ms,
         recontact_review_enabled=app.state.recontact_review_enabled,
     )
     app.include_router(audience_freeze_router)
@@ -286,7 +288,8 @@ def _mount_campaign_planning(app: FastAPI, settings: Settings, dsn: str, connect
     from origenlab_api.v2.campaign_planning_routes import campaign_planning_router
 
     app.state.campaign_planning_repository = V2CampaignPlanningRepository(
-        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        lock_timeout_ms=settings.v2_lock_timeout_ms,
     )
     app.include_router(campaign_planning_router)
 
@@ -309,6 +312,7 @@ def _mount_campaign_test_send(app: FastAPI, settings: Settings, dsn: str, connec
     app.state.campaign_test_send_repository = V2CampaignTestSendRepository(
         connect, dsn, GmailSender(token), settings.v2_v1_lane_content_dir,
         statement_timeout_ms=settings.v2_statement_timeout_ms,
+        lock_timeout_ms=settings.v2_lock_timeout_ms,
     )
     app.include_router(campaign_test_send_router)
     app.state.campaign_test_send_enabled = True
@@ -328,7 +332,8 @@ def _mount_campaign_blocks(app: FastAPI, settings: Settings, dsn: str, connect: 
     from origenlab_api.v2.campaign_blocks import V2CampaignBlockRepository
 
     app.state.campaign_block_repository = V2CampaignBlockRepository(
-        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        lock_timeout_ms=settings.v2_lock_timeout_ms,
     )
     app.include_router(campaign_block_router)
 
@@ -348,7 +353,8 @@ def _mount_crm_authoring(app: FastAPI, settings: Settings, dsn: str, connect: An
     from origenlab_api.v2.crm_authoring_routes import crm_authoring_router
 
     app.state.crm_authoring_repository = V2CrmAuthoringRepository(
-        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        lock_timeout_ms=settings.v2_lock_timeout_ms,
     )
     app.include_router(crm_authoring_router)
 
@@ -363,7 +369,8 @@ def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str, connect: 
     from origenlab_api.v2.campaign_drafts import V2CampaignDraftRepository
 
     app.state.campaign_draft_repository = V2CampaignDraftRepository(
-        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        lock_timeout_ms=settings.v2_lock_timeout_ms,
     )
     app.include_router(campaign_draft_router)
 
@@ -492,13 +499,15 @@ def _mount_v2_command_boundary(
     from origenlab_api.v2.command_routes import command_router
 
     app.state.v2_command_repository = V2CommandRepository(
-        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        lock_timeout_ms=settings.v2_lock_timeout_ms,
     )
     # The commercial-case commands run on the same database, as the same role, behind the
     # same switch. A second repository rather than a second connection pool: both are
     # `CommandTransaction`, and neither knows anything the other does not.
     app.state.v2_case_command_repository = V2CaseCommandRepository(
-        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        lock_timeout_ms=settings.v2_lock_timeout_ms,
     )
     app.include_router(command_router)
     app.include_router(case_command_router)

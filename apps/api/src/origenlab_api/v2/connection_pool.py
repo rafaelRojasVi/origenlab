@@ -8,7 +8,8 @@ Session-state safety
 --------------------
 All ``SET`` statements used by V2 repositories are either transaction-level
 (``SET TRANSACTION READ ONLY``, ``SET TRANSACTION ISOLATION LEVEL …``) or
-transaction-local (``SET LOCAL statement_timeout``).  Both variants are reset
+transaction-local (``SET LOCAL statement_timeout``, ``SET LOCAL lock_timeout``).
+Both variants are reset
 when the transaction ends (commit or rollback).  Like the ``psycopg.connect``
 context it replaces, leaving the block commits an open transaction (rolls it back
 on an exception), and the pool resets any connection still in a transaction

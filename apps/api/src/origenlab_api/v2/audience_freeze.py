@@ -52,10 +52,9 @@ import hashlib
 import json
 import re
 from collections import defaultdict
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Annotated, Any, Iterator, Literal, Mapping
+from typing import Annotated, Any, Literal, Mapping
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -716,20 +715,9 @@ class V2AudienceFreezeRepository(CommandTransaction):
         #: therefore the fingerprint, so a preview taken under the other setting is refused.
         self._recontact_review = recontact_review_enabled
 
-    @contextmanager
-    def _write(self) -> Iterator[Any]:
-        # One snapshot for every read the plan makes: the receipt claim is the transaction's
-        # first statement, so the isolation level is set before it.
-        with self._connect(self._dsn, autocommit=False) as conn:
-            with conn.cursor() as cur:
-                cur.execute("set transaction isolation level repeatable read")
-                cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
-                try:
-                    yield cur
-                except BaseException:
-                    conn.rollback()
-                    raise
-                conn.commit()
+    #: One snapshot for every read the plan makes: the receipt claim is the transaction's
+    #: first statement, so `CommandTransaction._write` sets the isolation level before it.
+    _ISOLATION = "repeatable read"
 
     def _freeze(self, cur: Any, operator: OperatorIdentity, f: dict[str, Any], receipt_id: str) -> dict[str, Any]:
         from origenlab_api.v2.crm_workspace import read_marketing_audience_inputs
