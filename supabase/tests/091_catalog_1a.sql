@@ -4,7 +4,7 @@
 -- lines as durable evidence (#54) and the domain-event vocabulary they need. Synthetic fixtures only.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(43);
+select plan(51);
 
 -- product extensions
 select has_column('catalog', 'product', 'model_key', 'product.model_key exists');
@@ -91,9 +91,10 @@ select ok(exists (select 1 from pg_trigger where tgname = 'document_line_never_d
 select ok(pg_get_constraintdef((select oid from pg_constraint where conname = 'domain_event_aggregate_kind_check')) like '%cost_parameter%',
   'cost_parameter aggregate');
 
--- The review guard, exercised as the owner so the trigger (not a grant) is what speaks. pgTAP is
--- reachable as the owner only through this transaction-scoped USAGE grant (rolled back below).
--- A fresh test database holds no operator, so a synthetic one is written first.
+-- The review guard, exercised as the owner so the trigger (not a grant) is what speaks — it bounds
+-- the owner and the migrator too. pgTAP is reachable as the owner only through this
+-- transaction-scoped USAGE grant (rolled back below). A fresh test database holds no operator,
+-- so a synthetic one is written first.
 grant usage on schema extensions to origenlab_owner;
 set local role origenlab_owner;
 insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status)
@@ -101,17 +102,58 @@ insert into platform.operator (id, auth_user_id, email_norm, display_name, role,
           'catalog.reviewer@example.test', 'Catalog Reviewer', 'admin', 'active');
 insert into evidence.source_record (id, kind, dedupe_key, payload)
   values ('00000000-0000-4000-8000-0000000000d1', 'quote_document', 'quote_document:test', '{"printed_quote_number":"T-1"}');
-insert into evidence.document_line (source_record_id, line_no, currency, extractor, check_status) values
-  ('00000000-0000-4000-8000-0000000000d1', 1, 'CLP', 'test', 'verified'),
-  ('00000000-0000-4000-8000-0000000000d1', 2, 'CLP', 'test', 'disputed');
+insert into evidence.document_line (source_record_id, line_no, model, currency, extractor, check_status) values
+  ('00000000-0000-4000-8000-0000000000d1', 1, 'Sonic-100', 'CLP', 'test', 'verified'),
+  ('00000000-0000-4000-8000-0000000000d1', 2, 'Sonic-100', 'CLP', 'test', 'disputed'),
+  ('00000000-0000-4000-8000-0000000000d1', 3, 'Sonic-100', 'CLP', 'test', 'disputed');
+select throws_ok(
+  $$ insert into evidence.document_line (source_record_id, line_no, currency, extractor, check_status, reviewed_by_operator_id, reviewed_at)
+       values ('00000000-0000-4000-8000-0000000000d1', 9, 'CLP', 'test', 'reviewed', '00000000-0000-4000-8000-0000000000d9', now()) $$,
+  '23514', 'document_line_review_guard: a line is never inserted as reviewed', 'a line cannot be inserted already reviewed');
 select throws_ok(
   $$ update evidence.document_line set check_status = 'reviewed', reviewed_by_operator_id = '00000000-0000-4000-8000-0000000000d9',
        reviewed_at = now() where line_no = 1 $$,
-  '23514', null, 'a verified line cannot be reviewed');
+  '23514', 'document_line_review_guard: only a disputed line may become reviewed', 'a verified line cannot be reviewed');
 select lives_ok(
   $$ update evidence.document_line set check_status = 'reviewed', reviewed_by_operator_id = '00000000-0000-4000-8000-0000000000d9',
-       reviewed_at = now(), review_note = 'synthetic review', updated_at = now() where line_no = 2 $$,
+       reviewed_at = now(), review_note = 'synthetic review', qty = 2, updated_at = now() where line_no = 2 $$,
   'a disputed line can be reviewed');
+select throws_ok(
+  $$ update evidence.document_line set check_status = 'reviewed', reviewed_by_operator_id = '00000000-0000-4000-8000-0000000000d9',
+       reviewed_at = now(), review_note = 'second look' where line_no = 2 $$,
+  '23514', 'document_line_review_guard: only a disputed line may become reviewed', 'a reviewed line cannot be reviewed again');
+select throws_ok(
+  $$ update evidence.document_line set check_status = 'reviewed', reviewed_by_operator_id = '00000000-0000-4000-8000-0000000000d9',
+       reviewed_at = now(), model = 'Sonic-200' where line_no = 3 $$,
+  '23514', 'document_line_review_guard: only qty, unit_price, line_total, optional and the review fields may change',
+  'a review cannot rewrite what the document says (model)');
+select throws_ok(
+  $$ delete from evidence.document_line where line_no = 1 $$,
+  'P0001', 'evidence.document_line: DELETE refused — rows are never deleted', 'a document line is never deleted');
+
+-- fx_rate: a manual rate carries an operator and a non-blank reason; a mistaken manual rate is
+-- superseded by a newer manual row (readers take the newest); an automatic rate is unique per
+-- day, currency and provider.
+select throws_ok(
+  $$ insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider, recorded_by_operator_id)
+       values ('2026-10-01', 'USD', 950, 'manual', 'operator', '00000000-0000-4000-8000-0000000000d9') $$,
+  '23514', 'new row for relation "fx_rate" violates check constraint "fx_rate_manual_shape"', 'a manual rate without a reason is refused');
+select throws_ok(
+  $$ insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider, reason, recorded_by_operator_id)
+       values ('2026-10-01', 'USD', 950, 'manual', 'operator', '   ', '00000000-0000-4000-8000-0000000000d9') $$,
+  '23514', 'new row for relation "fx_rate" violates check constraint "fx_rate_reason_nonblank"', 'a blank reason is refused');
+select lives_ok(
+  $$ insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider, reason, recorded_by_operator_id) values
+       ('2026-10-01', 'USD', 950, 'manual', 'operator', 'synthetic rate', '00000000-0000-4000-8000-0000000000d9'),
+       ('2026-10-01', 'USD', 951, 'manual', 'operator', 'synthetic correction', '00000000-0000-4000-8000-0000000000d9') $$,
+  'two manual rates for the same day and currency are allowed (the newer supersedes)');
+insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider)
+  values ('2026-10-01', 'USD', 949.5, 'bcentral', 'bde');
+select throws_ok(
+  $$ insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider)
+       values ('2026-10-01', 'USD', 949.6, 'bcentral', 'bde') $$,
+  '23505', 'duplicate key value violates unique constraint "fx_rate_bcentral_key"',
+  'a second automatic rate for the same day, currency and provider is refused');
 reset role;
 
 select * from finish();

@@ -177,6 +177,32 @@ class DeclaredGapTest(unittest.TestCase):
         a09["findings"][2] = head + ": " + "; ".join(entries.split("; ")[:12]) + " ..."
         self.assertEqual(0, self.run_gap(report))
 
+    @staticmethod
+    def truncate_a09(report, keep=12, rename=None):
+        """Render a09's extra policies the way the audit does past twelve: the first `keep`
+        entries, then " ...". `rename` = (old, new) table name applied to the first kept entry
+        that names it."""
+        a09 = check_of(report, "a09")
+        head, sep, entries = a09["findings"][2].partition("not in the baseline: ")
+        kept = entries.split("; ")[:keep]
+        if rename:
+            i = next(i for i, e in enumerate(kept) if f'"table":"{rename[0]}"' in e)
+            kept[i] = kept[i].replace(f'"table":"{rename[0]}"', f'"table":"{rename[1]}"')
+        a09["findings"][2] = head + sep + "; ".join(kept) + " ..."
+        return kept
+
+    def test_a_truncated_a09_list_must_name_exactly_twelve_tables(self):
+        # A name the pattern cannot read is not skipped: the truncated list then names eleven.
+        report = current_head_report()
+        kept = self.truncate_a09(report, rename=("opportunity_evidence", "Other-Table"))
+        self.assertTrue(any('"table":"Other-Table"' in e for e in kept))
+        self.assert_refused(report, "a09 is truncated but names 11 tables, expected twelve")
+
+    def test_a_truncated_a09_list_with_an_entry_dropped_is_refused(self):
+        report = current_head_report()
+        self.truncate_a09(report, keep=11)
+        self.assert_refused(report, "a09 is truncated but names 11 tables, expected twelve")
+
     def test_an_untruncated_a09_list_must_name_every_table(self):
         report = current_head_report()
         a09 = check_of(report, "a09")

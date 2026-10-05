@@ -22,10 +22,13 @@ create table catalog.fx_rate (
   constraint fx_rate_manual_shape check (
     (source = 'manual') = (provider = 'operator')
     and (source <> 'manual' or (recorded_by_operator_id is not null and reason is not null))),
-  constraint fx_rate_key unique (rate_date, currency, source, provider)
+  constraint fx_rate_reason_nonblank check (reason is null or length(btrim(reason)) > 0)
 );
 comment on table catalog.fx_rate is
-  'DOMAIN.md §7 #52 — Banco Central observed USD/EUR in CLP per day (via BDE or mindicador) or manual with reason; append-only.';
+  'DOMAIN.md §7 #52 — Banco Central observed USD/EUR in CLP per day (via BDE or mindicador; one row per day, currency and provider) or manual with operator and reason; append-only. A mistaken manual rate is superseded by a newer manual row: the newest manual row (by created_at) wins for its day and currency, else the bcentral row.';
+-- Automatic rates are unique per day, currency and provider. Manual rows are not, so a
+-- correction is a newer row rather than an update.
+create unique index fx_rate_bcentral_key on catalog.fx_rate (rate_date, currency, provider) where source = 'bcentral';
 create index fx_rate_lookup_idx on catalog.fx_rate (currency, rate_date desc);
 create index fx_rate_recorded_by_idx on catalog.fx_rate (recorded_by_operator_id);
 create trigger fx_rate_append_only before update or delete on catalog.fx_rate
@@ -66,11 +69,11 @@ create trigger cost_parameter_append_only before update or delete on catalog.cos
 -- has no row until an operator sets it per environment with a reason; readers treat a key with
 -- no current row as unset.
 insert into catalog.cost_parameter (key, value_numeric, valid_from, reason) values
-  ('iva_rate', 0.19, '2026-01-01', 'seed: Chilean VAT'),
-  ('duty_rate_general', 0.06, '2026-01-01', 'seed: Aduanas general ad valorem tariff on CIF'),
-  ('duty_rate_fta', 0.00, '2026-01-01', 'seed: EU/US free-trade preference with origin declaration'),
-  ('courier_threshold_usd_fob', 3000, '2026-01-01', 'seed: Aduanas courier regime threshold'),
-  ('insurance_pct_of_fob', 0.00, '2026-01-01', 'seed: no insurance component by default');
+  ('iva_rate', 0.19, '2026-01-01 00:00+00', 'seed: Chilean VAT'),
+  ('duty_rate_general', 0.06, '2026-01-01 00:00+00', 'seed: Aduanas general ad valorem tariff on CIF'),
+  ('duty_rate_fta', 0.00, '2026-01-01 00:00+00', 'seed: EU/US free-trade preference with origin declaration'),
+  ('courier_threshold_usd_fob', 3000, '2026-01-01 00:00+00', 'seed: Aduanas courier regime threshold'),
+  ('insurance_pct_of_fob', 0.00, '2026-01-01 00:00+00', 'seed: no insurance component by default');
 
 -- evidence: quote documents.
 alter table evidence.source_record drop constraint source_record_kind_check;
@@ -127,20 +130,35 @@ language plpgsql
 set search_path = pg_catalog
 as $$
 begin
+  if tg_op = 'INSERT' then
+    -- A review is an operator act on a disputed line, never something a line is born with.
+    if new.check_status = 'reviewed' or new.reviewed_by_operator_id is not null or new.reviewed_at is not null then
+      raise exception 'document_line_review_guard: a line is never inserted as reviewed'
+        using errcode = 'check_violation';
+    end if;
+    return new;
+  end if;
   if old.check_status <> 'disputed' or new.check_status <> 'reviewed' then
     raise exception 'document_line_review_guard: only a disputed line may become reviewed'
       using errcode = 'check_violation';
   end if;
-  if new.source_record_id <> old.source_record_id or new.line_no <> old.line_no or new.extractor <> old.extractor
-     or new.currency <> old.currency or new.created_at <> old.created_at then
-    raise exception 'document_line_review_guard: identity columns are immutable' using errcode = 'check_violation';
+  -- Every column outside the API's column-level UPDATE grant is what the document says and who
+  -- extracted it. The whole row minus those columns is compared, so the owner and the migrator
+  -- are bounded too and a column added later is frozen unless it is named here.
+  if (to_jsonb(new) - array['qty', 'unit_price', 'line_total', 'optional', 'check_status',
+                            'reviewed_by_operator_id', 'reviewed_at', 'review_note', 'updated_at'])
+     is distinct from
+     (to_jsonb(old) - array['qty', 'unit_price', 'line_total', 'optional', 'check_status',
+                            'reviewed_by_operator_id', 'reviewed_at', 'review_note', 'updated_at']) then
+    raise exception 'document_line_review_guard: only qty, unit_price, line_total, optional and the review fields may change'
+      using errcode = 'check_violation';
   end if;
   return new;
 end;
 $$;
 comment on function evidence.document_line_review_guard() is
-  'Trigger guard for evidence.document_line: the only update is the one review of a disputed line (disputed → reviewed); source record, line number, extractor, currency and created_at never change. SECURITY INVOKER.';
-create trigger document_line_review_guard before update on evidence.document_line
+  'Trigger guard for evidence.document_line (BEFORE INSERT OR UPDATE): a line is never inserted reviewed (status reviewed, reviewer or review time); the only update is the one review of a disputed line (disputed → reviewed), which may change only qty, unit_price, line_total, optional, check_status, reviewed_by_operator_id, reviewed_at, review_note and updated_at — every other column, for every role, never changes. SECURITY INVOKER.';
+create trigger document_line_review_guard before insert or update on evidence.document_line
   for each row execute function evidence.document_line_review_guard();
 create trigger document_line_never_deleted before delete on evidence.document_line
   for each row execute function platform.reject_mutation('never deleted');

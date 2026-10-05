@@ -427,8 +427,13 @@ def main() -> int:
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
-    # name each of them. The exact count above bounds what the truncation hides.
-    named = set(re.findall(r'"table":"([a-z0-9_]+)"', a09_text))
+    # name each of them, and a truncated one must name exactly the twelve policies the audit
+    # prints — so a table name the pattern cannot read is refused rather than skipped (the
+    # same rule as a08). The exact count above bounds what the truncation hides.
+    a09_named = re.findall(r'"table":"([a-z0-9_]+)"', a09_text)
+    if a09_text.rstrip().endswith("...") and len(a09_named) != 12:
+        refuse(f"a09 is truncated but names {len(a09_named)} tables, expected twelve")
+    named = set(a09_named)
     unexpected = sorted(named - EXPECTED_EXTRA_TABLES)
     if unexpected:
         refuse(f"a09 names policies on unreviewed tables: {unexpected!r}")
