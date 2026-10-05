@@ -87,13 +87,13 @@ def _owner(dsn, sql, params=()):
 def world(disposable_database):
     tag = uuid.uuid4().hex[:8]
     ops = {}
-    for role in ("admin", "sales"):
+    for name, role in (("admin", "admin"), ("sales", "sales"), ("admin2", "admin")):
         rows = _owner(disposable_database,
                       "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
                       "values (gen_random_uuid(), %s, %s, %s, 'active') returning id::text",
-                      (f"{role}-{tag}@example.test", f"Op {role}", role))
-        ops[role] = OperatorIdentity(operator_id=rows[0][0], email_norm=f"{role}-{tag}@example.test",
-                                     display_name=f"Op {role}", role=role, status="active")
+                      (f"{name}-{tag}@example.test", f"Op {name}", role))
+        ops[name] = OperatorIdentity(operator_id=rows[0][0], email_norm=f"{name}-{tag}@example.test",
+                                     display_name=f"Op {name}", role=role, status="active")
     mailbox = _owner(disposable_database, "insert into comms.mailbox (address_norm, display_name) "
                                           "values (%s, 'Ventas') returning id::text", (f"m-{tag}@example.invalid",))[0][0]
     return {"ops": ops, "mailbox": mailbox}
@@ -209,6 +209,24 @@ def test_the_eleventh_test_in_an_hour_is_refused_and_failures_do_not_count(dispo
     assert datetime.fromisoformat(exc.value.next_allowed_at).tzinfo is not None
     # the earlier failed attempt plus ten sends; the refused eleventh left no receipt
     assert _receipt_count(disposable_database) == TEST_SENDS_PER_HOUR + 1
+
+
+@needs_db
+def test_the_limit_is_shared_the_eleventh_test_from_a_second_admin_is_refused(disposable_database, world) -> None:
+    _clear_receipts(disposable_database)
+    cid = _campaign(disposable_database, world, "<p>Hola</p>")
+    gmail = FakeGmail()
+    for _ in range(TEST_SENDS_PER_HOUR):
+        _run(disposable_database, gmail, world["ops"]["admin"],
+             SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.UUID(cid)))
+    with pytest.raises(TestSendLimitRefused) as exc:
+        _run(disposable_database, gmail, world["ops"]["admin2"],
+             SendCampaignTestBody(to="bea@example.invalid", campaign_id=uuid.UUID(cid)))
+    assert (exc.value.status_code, exc.value.code) == (429, "test_send_limit")
+    assert len(gmail.sent) == TEST_SENDS_PER_HOUR and _receipt_count(disposable_database) == TEST_SENDS_PER_HOUR
+    by = _owner(disposable_database, "select distinct operator_id::text from platform.command_receipt "
+                                     "where command_name = %s", (SEND_CAMPAIGN_TEST,))
+    assert by == [(world["ops"]["admin"].operator_id,)]  # the second admin left no receipt
 
 
 @needs_db
