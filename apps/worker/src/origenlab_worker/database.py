@@ -23,13 +23,21 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from ipaddress import ip_address
-from typing import Any
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlsplit
 
 from origenlab_worker.errors import ConfigRefused
 
+if TYPE_CHECKING:
+    from origenlab_worker.capture import Capture, UnparsedMessage
+
 WORKER_ROLE = "origenlab_worker"
 APP_NAME = "origenlab-worker-gmail-sync"
+LOCK_NAME = "origenlab-worker:gmail-sync"
+#: A lock holder idle this long is a dead run whose session outlived it (spec §11.1): a live run
+#: issues a statement every few seconds.
+STALE_LOCK_AFTER = timedelta(minutes=30)
 TRANSACTION_POOLER_PORT = 6543
 SESSION_PORT = 5432
 DISPOSABLE_DB = re.compile(r"origenlab_test_[0-9a-f]{8}")
@@ -252,6 +260,59 @@ def verify_worker_connection(conn: Any, target: WorkerTarget) -> None:
             raise TargetRefused("worker_can_execute_security_definer")
 
 
+@dataclass(frozen=True)
+class Mailbox:
+    id: str
+    address: str
+    authorization_state: str
+    history_id: str | None
+    last_synced_at: datetime | None
+
+
+@dataclass(frozen=True)
+class RecordOutcome:
+    new_message: bool
+    evidence_created: bool
+
+
+_INSERT_MESSAGE = """
+insert into comms.message
+    (mailbox_id, provider_message_id, provider_thread_id, rfc822_message_id_norm, direction,
+     internal_date, subject, labels, eml_storage_path, eml_sha256, size_bytes, parse_status, parse_error)
+values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+on conflict (mailbox_id, provider_message_id) do nothing
+returning id::text
+"""
+_INSERT_PARTICIPANT = """
+insert into comms.message_participant (message_id, role, address_norm, display_name)
+values (%s, %s, %s, %s)
+on conflict (message_id, role, address_norm) do nothing
+"""
+_INSERT_ATTACHMENT = """
+insert into comms.attachment (message_id, part_index, filename, mime_type, size_bytes, sha256)
+values (%s, %s, %s, %s, %s, %s)
+on conflict (message_id, part_index) do nothing
+"""
+_INSERT_EVIDENCE = """
+insert into evidence.source_record (kind, dedupe_key, payload, source_uri, review_status)
+values ('gmail_message', %s, %s, %s, 'pending')
+on conflict (dedupe_key) do nothing
+returning id::text
+"""
+_STALE_HOLDERS = """
+select l.pid
+  from pg_locks l
+  join pg_stat_activity a on a.pid = l.pid
+ cross join (select hashtextextended(%s, 0) as key) k
+ where l.locktype = 'advisory' and l.granted and l.objsubid = 1
+   and l.classid = ((k.key >> 32) & 4294967295)::oid
+   and l.objid = (k.key & 4294967295)::oid
+   and l.pid <> pg_backend_pid()
+   and a.usename = current_user
+   and a.state = 'idle'
+   and a.state_change < now() - make_interval(secs => %s)
+"""
+
 class WorkerDb:
     def __init__(self, conn: Any, statement_timeout_ms: int = 30_000) -> None:
         self._conn = conn
@@ -266,6 +327,143 @@ class WorkerDb:
         with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(f"set local statement_timeout = {self._timeout}")
             yield cur
+
+
+    # ------------------------------------------------------------------ the run lock
+
+    def try_lock(self, stale_after: timedelta = STALE_LOCK_AFTER) -> bool:
+        """One run at a time, whatever Render does on overlap (spec §6).
+
+        A session-level advisory lock survives every per-message commit and dies with the session.
+        If the holder is a session left idle past `stale_after` — a killed run whose pooled server
+        session was not reset — it is terminated (a role may end its own sessions) and the lock taken.
+        """
+        with self._conn.cursor() as cur:
+            cur.execute("select pg_try_advisory_lock(hashtextextended(%s, 0))", (LOCK_NAME,))
+            if cur.fetchone()[0]:
+                return True
+            cur.execute(_STALE_HOLDERS, (LOCK_NAME, stale_after.total_seconds()))
+            stale = [row[0] for row in cur.fetchall()]
+            if not stale:
+                return False
+            for pid in stale:
+                cur.execute("select pg_terminate_backend(%s, 5000)", (pid,))
+            cur.execute("select pg_try_advisory_lock(hashtextextended(%s, 0))", (LOCK_NAME,))
+            return bool(cur.fetchone()[0])
+
+    # ------------------------------------------------------------------ the mailbox
+
+    def mailbox(self, address: str) -> Mailbox | None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "select id::text, address_norm, authorization_state, history_id, last_synced_at "
+                "from comms.mailbox where address_norm = %s",
+                (address,),
+            )
+            row = cur.fetchone()
+        return Mailbox(*row) if row else None
+
+    def authorize(self, mailbox_id: str, *, baseline_history_id: str, scopes: list[str]) -> str:
+        """`baseline` on the first authorization (capture starts now); `resumed` when a cursor
+        exists — after a pause or a re-consent the capture continues from it, nothing is skipped."""
+        with self._tx() as cur:
+            cur.execute("select history_id from comms.mailbox where id = %s for update", (mailbox_id,))
+            (current,) = cur.fetchone()
+            cur.execute(
+                """
+                update comms.mailbox
+                   set authorization_state = 'authorized', granted_scopes = %s,
+                       history_id = coalesce(history_id, %s),
+                       last_synced_at = coalesce(last_synced_at, now()),
+                       updated_at = now()
+                 where id = %s
+                """,
+                (scopes, baseline_history_id, mailbox_id),
+            )
+        return "baseline" if current is None else "resumed"
+
+    def mark_revoked(self, mailbox_id: str) -> None:
+        with self._tx() as cur:
+            cur.execute(
+                "update comms.mailbox set authorization_state = 'revoked', updated_at = now() where id = %s",
+                (mailbox_id,),
+            )
+
+    def advance_cursor(self, mailbox_id: str, history_id: str) -> None:
+        with self._tx() as cur:
+            cur.execute(
+                "update comms.mailbox set history_id = %s, last_synced_at = now(), updated_at = now() "
+                "where id = %s",
+                (history_id, mailbox_id),
+            )
+
+    # ------------------------------------------------------------------ messages
+
+    def message_exists(self, mailbox_id: str, provider_message_id: str) -> bool:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "select 1 from comms.message where mailbox_id = %s and provider_message_id = %s",
+                (mailbox_id, provider_message_id),
+            )
+            return cur.fetchone() is not None
+
+    def record(
+        self, capture: Capture, *, mailbox_id: str, eml_path: str, eml_sha256: str, size_bytes: int
+    ) -> RecordOutcome:
+        """The message, its participants and attachments, and — unless it is a bulk send — its
+        pending evidence, in one transaction."""
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(
+                _INSERT_MESSAGE,
+                (mailbox_id, capture.provider_message_id, capture.provider_thread_id,
+                 capture.rfc822_message_id_norm, capture.direction, capture.internal_date,
+                 capture.subject, list(capture.labels), eml_path, eml_sha256, size_bytes,
+                 "parsed", None),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return RecordOutcome(new_message=False, evidence_created=False)
+            message_id = row[0]
+            if capture.participants:
+                cur.executemany(
+                    _INSERT_PARTICIPANT,
+                    [(message_id, p.role, p.address_norm, p.display_name) for p in capture.participants],
+                )
+            if capture.attachments:
+                cur.executemany(
+                    _INSERT_ATTACHMENT,
+                    [(message_id, a.part_index, a.filename, a.mime_type, a.size_bytes, a.sha256)
+                     for a in capture.attachments],
+                )
+            if capture.is_bulk_send:
+                return RecordOutcome(new_message=True, evidence_created=False)
+            cur.execute(
+                _INSERT_EVIDENCE,
+                (f"gmail_message:{capture.provider_message_id}", Jsonb(capture.payload),
+                 f"gmail://msg/{capture.provider_message_id}"),
+            )
+            return RecordOutcome(new_message=True, evidence_created=cur.fetchone() is not None)
+
+    def record_unparsed(
+        self,
+        row: UnparsedMessage,
+        *,
+        mailbox_id: str,
+        eml_path: str | None,
+        eml_sha256: str | None,
+        size_bytes: int | None,
+    ) -> bool:
+        """A message kept without evidence (`parse_failed`, with its reason). True if new."""
+        with self._tx() as cur:
+            cur.execute(
+                _INSERT_MESSAGE,
+                (mailbox_id, row.provider_message_id, row.provider_thread_id,
+                 row.rfc822_message_id_norm, row.direction, row.internal_date, row.subject,
+                 list(row.labels), eml_path, eml_sha256, size_bytes, "parse_failed", row.reason),
+            )
+            return cur.fetchone() is not None
 
 
 @contextmanager
@@ -286,6 +484,7 @@ def open_worker_db(target: WorkerTarget, connect: Callable[..., Any] | None = No
 
 
 __all__ = [
-    "ALLOWED_OUTSIDE_WRITES", "APP_NAME", "TargetRefused", "WORKER_ROLE", "WorkerDb", "WorkerTarget", "local_test_target",
-    "open_worker_db", "remote_worker_target", "verify_worker_connection", "write_ca_file",
+    "ALLOWED_OUTSIDE_WRITES", "APP_NAME", "LOCK_NAME", "STALE_LOCK_AFTER", "Mailbox", "RecordOutcome",
+    "TargetRefused", "WORKER_ROLE", "WorkerDb", "WorkerTarget", "local_test_target", "open_worker_db",
+    "remote_worker_target", "verify_worker_connection", "write_ca_file",
 ]
