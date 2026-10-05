@@ -98,6 +98,9 @@ union all select 'outbound.campaign_content', count(*)::text from outbound.campa
 union all select 'outbound.campaign_content_message', count(*)::text from outbound.campaign_content_message
 union all select 'crm.note', count(*)::text from crm.note
 union all select 'crm.organization_product_line', count(*)::text from crm.organization_product_line
+
+union all select 'catalog.product_image', count(*)::text from catalog.product_image
+union all select 'catalog.supplier_terms', count(*)::text from catalog.supplier_terms
 ;
 
 commit;

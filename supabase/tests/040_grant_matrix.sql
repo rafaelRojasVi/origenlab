@@ -121,9 +121,17 @@ insert into expected values
     ('crm', 'note', 'origenlab_worker', 'S', null, 'S'),
     -- crm.organization_product_line: api may INSERT and close (column-level UPDATE); worker reads.
     ('crm', 'organization_product_line', 'origenlab_api', 'SI', array['valid_to', 'unlinked_by_operator_id', 'note', 'updated_at'], 'SIU'),
-    ('crm', 'organization_product_line', 'origenlab_worker', 'S', null, 'S');
+    ('crm', 'organization_product_line', 'origenlab_worker', 'S', null, 'S'),
+    -- 20261005134832: catalog.product_image — api inserts and edits order, caption and status
+    -- (column-level UPDATE; the image itself is never rewritten); the worker holds nothing.
+    ('catalog', 'product_image', 'origenlab_api', 'SI', array['sort_order', 'caption_es', 'status', 'version', 'updated_at'], 'SIU'),
+    ('catalog', 'product_image', 'origenlab_worker', '', null, ''),
+    -- catalog.supplier_terms — api inserts and edits the terms (column-level UPDATE, never the
+    -- supplier key or created_at); the worker holds nothing.
+    ('catalog', 'supplier_terms', 'origenlab_api', 'SI', array['currency', 'origin_country', 'route', 'incoterm', 'default_discount_pct', 'packing_pct', 'map_enforced', 'default_lead_time_es', 'notes', 'version', 'updated_by_operator_id', 'updated_at'], 'SIU'),
+    ('catalog', 'supplier_terms', 'origenlab_worker', '', null, '');
 
-select is((select count(*)::int from expected), 90, 'the matrix covers all 45 tables for both runtime roles');
+select is((select count(*)::int from expected), 94, 'the matrix covers all 47 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

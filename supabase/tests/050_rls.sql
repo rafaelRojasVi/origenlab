@@ -202,9 +202,17 @@ insert into expected_policies values
     ('crm', 'organization_product_line', 'origenlab_api', 'SELECT'),
     ('crm', 'organization_product_line', 'origenlab_api', 'INSERT'),
     ('crm', 'organization_product_line', 'origenlab_api', 'UPDATE'),
-    ('crm', 'organization_product_line', 'origenlab_worker', 'SELECT');
+    ('crm', 'organization_product_line', 'origenlab_worker', 'SELECT'),
+    -- 20261005134832: catalog.product_image and catalog.supplier_terms — api reads, inserts and
+    -- edits (column-level UPDATE); the worker has no policy on either.
+    ('catalog', 'product_image', 'origenlab_api', 'SELECT'),
+    ('catalog', 'product_image', 'origenlab_api', 'INSERT'),
+    ('catalog', 'product_image', 'origenlab_api', 'UPDATE'),
+    ('catalog', 'supplier_terms', 'origenlab_api', 'SELECT'),
+    ('catalog', 'supplier_terms', 'origenlab_api', 'INSERT'),
+    ('catalog', 'supplier_terms', 'origenlab_api', 'UPDATE');
 
-select is((select count(*)::int from expected_policies), 160, 'the matrix implies 160 policies');
+select is((select count(*)::int from expected_policies), 166, 'the matrix implies 166 policies');
 
 -- Posture.
 select is(

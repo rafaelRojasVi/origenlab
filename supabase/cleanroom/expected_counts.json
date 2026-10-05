@@ -26,17 +26,21 @@
     "rebuild is expected to reproduce them, and the first rebuild that does not will fail here",
     "loudly, which is the point.",
     "",
+    "The chain probes and the two catalog table probes moved on 2026-10-05 (20261005134832,",
+    "catalog.product_image and catalog.supplier_terms) are likewise decided by the migration",
+    "files; that migration has not been applied to origenlab_clean.",
+    "",
     "If a build produces different numbers, either an input changed or the load is not",
     "reproducible, and both are things an operator must see rather than have rounded away."
   ],
   "probes": {
     "migrations.count": {
-      "expect": 41,
+      "expect": 42,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20260930120000",
-      "why": "slice6_campaign_content_archive_and_crm_authoring, the newest migration — the campaign-content archive and CRM authoring boundary (docs/STATUS.md §2.7.39)."
+      "expect": "20261005134832",
+      "why": "slice7_catalog_products_suppliers, the newest migration — product content and search keys, product images, richer supplier price observations, supplier terms and notes on products."
     },
 
     "source_record.total": {
@@ -142,6 +146,8 @@
     "outbound.campaign_content": { "expect": 0, "why": "slice 6: the archive table ships empty; content is loaded by a separate import step outside the build." },
     "outbound.campaign_content_message": { "expect": 0, "why": "slice 6: no message-level archive rows exist in a fresh build." },
     "crm.note": { "expect": 0, "why": "slice 6: no operator notes exist in a fresh build; notes are operator decisions." },
-    "crm.organization_product_line": { "expect": 0, "why": "slice 6: no product-line links exist in a fresh build; they are operator decisions." }
+    "crm.organization_product_line": { "expect": 0, "why": "slice 6: no product-line links exist in a fresh build; they are operator decisions." },
+    "catalog.product_image": { "expect": 0, "why": "slice 7: no product photo exists in a fresh build; images are uploaded or proposed and then confirmed by an operator." },
+    "catalog.supplier_terms": { "expect": 0, "why": "slice 7: no supplier terms exist in a fresh build; they are operator decisions." }
   }
 }
