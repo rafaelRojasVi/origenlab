@@ -255,6 +255,139 @@ def _handle_confirm_product_content(self: "V2CatalogRepository", cur: Any, opera
             "confirmed_by_operator_id": operator.operator_id}
 
 
+# ------------------------------------------------------------------ product images
+
+_DUPLICATE_IMAGE = frozenset({"product_image_path_key"})
+#: The image columns an operator edits, in the order the change list reports them.
+_IMAGE_FIELDS = ("status", "caption_es", "sort_order")
+
+
+def _lock_product_stream(cur: Any, product_id: str) -> None:
+    """Lock the product row: it owns the product event stream the image events append to.
+
+    `_append_event` computes max(seq) + 1 per aggregate, so two image commands on one product —
+    or an image command and a cost, update or confirm — must append in turn, not collide on
+    `domain_event_aggregate_seq_key`. NO KEY UPDATE, as `record-supplier-cost` takes, still lets
+    the image row's own foreign key to the product take its KEY SHARE.
+    """
+    cur.execute("select id from catalog.product where id = %s::uuid for no key update", (product_id,))
+    if _one(cur) is None:
+        raise CommandRefused(404, "product_not_found", "no such product")
+
+
+def _refuse_labdelivery_image(*parts: str | None) -> None:
+    try:
+        refuse_labdelivery(*parts)
+    except LabdeliveryRefused as exc:
+        raise CommandRefused(422, "labdelivery_refused", "an image of Labdelivery origin is refused") from exc
+
+
+def _handle_add_product_image(self: "V2CatalogRepository", cur: Any, operator: OperatorIdentity,
+                              fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
+    """Record an image the route has already put in the private bucket.
+
+    The bytes are in Storage before this transaction opens (their path is their hash, so a
+    rollback here leaves an object the next upload of the same bytes reuses). The same bytes
+    already on this product hand back that image — `already_present: true`, no second row, no
+    event. An operator's upload is the operator's decision, so it is `confirmed`; only machine
+    proposals (`created_by_operator_id` null) start `proposed` (spec D4).
+    """
+    product_id = fields["product_id"]
+    _refuse_labdelivery_image(fields.get("caption_es"), fields.get("source_url"))
+    _lock_product_stream(cur, product_id)
+    cur.execute(
+        """
+        select id::text as id, version, status from catalog.product_image
+         where product_id = %s::uuid and sha256 = %s
+         order by created_at, id
+         limit 1
+        """,
+        (product_id, fields["sha256"]),
+    )
+    existing = _one(cur)
+    if existing is not None:
+        return {"ok": True, "product_id": product_id, "image_id": existing["id"], "version": existing["version"],
+                "status": existing["status"], "already_present": True}
+    _execute_mapped(
+        cur,
+        """
+        insert into catalog.product_image
+            (product_id, storage_bucket, storage_path, sha256, content_type, sort_order, caption_es, source,
+             source_url, status, created_by_operator_id)
+        values (%s::uuid, 'catalog', %s, %s, %s,
+                (select coalesce(max(sort_order) + 1, 0) from catalog.product_image where product_id = %s::uuid),
+                %s, %s, %s, 'confirmed', %s::uuid)
+        returning id::text as id, version, status
+        """,
+        (product_id, fields["storage_path"], fields["sha256"], fields["content_type"], product_id,
+         fields.get("caption_es"), fields["source"], fields.get("source_url"), operator.operator_id),
+        # Unreachable under the product lock (the select above would have found it); kept as an answer.
+        unique={_DUPLICATE_IMAGE: ("duplicate_image", "this product already has that image")},
+    )
+    image = _one(cur)
+    assert image is not None  # noqa: S101 - `returning` on a successful insert
+    self._append_event(cur, aggregate_kind="product", aggregate_id=product_id, event_type="product.image_added",
+                       payload={"image_id": image["id"], "sha256": fields["sha256"],
+                                "content_type": fields["content_type"], "source": fields["source"]},
+                       operator=operator, receipt_id=receipt_id)
+    return {"ok": True, "product_id": product_id, "image_id": image["id"], "version": image["version"],
+            "status": image["status"], "already_present": False}
+
+
+def _handle_update_product_image(self: "V2CatalogRepository", cur: Any, operator: OperatorIdentity,
+                                 fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
+    """Change an image's status (confirm / hide), caption or position; never its bytes.
+
+    A field left out (null) is unchanged; a blank caption clears it. Hiding is how an image
+    leaves the catalog — rows are never deleted.
+    """
+    image_id, expected_version = fields["image_id"], fields["expected_version"]
+    _refuse_labdelivery_image(fields.get("caption_es"))
+    # The image's product never changes (the runtime role cannot update product_id), so it can be
+    # read unlocked to find which stream to lock. Product, then image: the order add-product-image
+    # takes too, so the two never deadlock.
+    cur.execute("select product_id::text as product_id from catalog.product_image where id = %s::uuid", (image_id,))
+    found = _one(cur)
+    if found is None:
+        raise CommandRefused(404, "image_not_found", "no such image")
+    product_id = found["product_id"]
+    _lock_product_stream(cur, product_id)
+    cur.execute(
+        "select status, caption_es, sort_order, version from catalog.product_image where id = %s::uuid for update",
+        (image_id,),
+    )
+    image = _one(cur)
+    assert image is not None  # noqa: S101 - images are never deleted
+    if image["version"] != expected_version:
+        raise CommandRefused(409, "stale_version", "the image was modified since you loaded it")
+
+    submitted = {f: fields[f] for f in _IMAGE_FIELDS if fields.get(f) is not None}
+    if "caption_es" in submitted:
+        submitted["caption_es"] = submitted["caption_es"] or None  # blank clears
+    changes = {f: v for f, v in submitted.items() if image[f] != v}
+    if not changes:
+        raise CommandRefused(422, "no_changes", "nothing to update: every submitted value is already stored")
+    _execute_mapped(
+        cur,
+        f"""
+        update catalog.product_image
+           set {", ".join(f"{f} = %s" for f in changes)}, version = version + 1, updated_at = now()
+         where id = %s::uuid and version = %s
+        returning version
+        """,
+        [*changes.values(), image_id, expected_version],
+        unique={},
+    )
+    updated = _one(cur)
+    if updated is None:  # pragma: no cover - the row is locked; kept as the compare-and-set's other half
+        raise CommandRefused(409, "stale_version", "concurrent modification")
+    self._append_event(cur, aggregate_kind="product", aggregate_id=product_id, event_type="product.image_updated",
+                       payload={"image_id": image_id, "changed": list(changes),
+                                "status": changes.get("status", image["status"]), "note": fields.get("note")},
+                       operator=operator, receipt_id=receipt_id)
+    return {"ok": True, "product_id": product_id, "image_id": image_id, "version": updated["version"]}
+
+
 # ------------------------------------------------------------------ supplier costs and terms
 
 def _handle_record_supplier_cost(self: "V2CatalogRepository", cur: Any, operator: OperatorIdentity,
@@ -491,12 +624,14 @@ def _handle_review_document_line(self: "V2CatalogRepository", cur: Any, operator
 
 
 class V2CatalogRepository(CommandTransaction):
-    """The eight catalog commands, each in one transaction."""
+    """The ten catalog commands, each in one transaction."""
 
     _HANDLERS = {
         "create-product": _handle_create_product,
         "update-product": _handle_update_product,
         "confirm-product-content": _handle_confirm_product_content,
+        "add-product-image": _handle_add_product_image,
+        "update-product-image": _handle_update_product_image,
         "record-supplier-cost": _handle_record_supplier_cost,
         "set-supplier-terms": _handle_set_supplier_terms,
         "set-cost-parameter": _handle_set_cost_parameter,

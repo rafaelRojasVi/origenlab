@@ -179,6 +179,22 @@ class V2CatalogReads:
             product["notes"] = self._rows(cur)
         return _plain(product)
 
+    def product_exists(self, product_id: uuid.UUID) -> bool:
+        with self._read() as cur:
+            cur.execute("select exists (select 1 from catalog.product where id = %s)", (product_id,))
+            return bool(cur.fetchone()[0])
+
+    def image(self, image_id: uuid.UUID) -> dict[str, Any] | None:
+        """One image's object and status, hidden or not — whether to sign it is the route's call."""
+        with self._read() as cur:
+            cur.execute(
+                "select id, product_id, storage_bucket, storage_path, content_type, status, version "
+                "from catalog.product_image where id = %s",
+                (image_id,),
+            )
+            rows = self._rows(cur)
+        return _plain(rows[0]) if rows else None
+
     # -- suppliers
 
     @staticmethod

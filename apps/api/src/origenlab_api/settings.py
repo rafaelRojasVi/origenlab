@@ -239,6 +239,12 @@ class Settings(BaseSettings):
     """BDE series for the observed dollar. The euro series is unconfirmed from an official source,
     so it defaults empty (BDE then declines EUR and mindicador answers)."""
     v2_bde_series_eur: str = ""
+    """Origin of the Supabase project whose private `catalog` bucket holds product images
+    (`https://<ref>.supabase.co`). Without it and the key below, image routes answer 503."""
+    v2_storage_url: str | None = None
+    """The dedicated `sb_secret_…` key FastAPI uses for the Storage API and nothing else
+    (ARCHITECTURE §7). Server environment only; never logged."""
+    v2_storage_secret_key: SecretStr | None = None
     """Mount POST /v2/commands/send-campaign-test («Enviar prueba»).
 
     Default **false** and needs `v2_test_send_token_file`. One admin-only test of a campaign's
@@ -480,6 +486,11 @@ class Settings(BaseSettings):
     def quoting_configured(self) -> bool:
         """The catalog/quoting surface needs both a database and a deliberate switch."""
         return self.v2_configured() and bool(self.v2_quoting_enabled)
+
+    def catalog_storage_configured(self) -> bool:
+        """Product images need both the Storage origin and its dedicated secret key."""
+        return bool(self.v2_storage_url and self.v2_storage_secret_key
+                    and self.v2_storage_secret_key.get_secret_value())
 
     def v2_campaign_planning_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_planning_enabled)

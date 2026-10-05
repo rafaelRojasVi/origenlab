@@ -149,6 +149,7 @@ COMMAND_BODIES = {
     "set-cost-parameter": {"key": "iva_rate", "value": "0.19", "reason": "sintético"},
     "record-fx-rate": {"currency": "USD", "rate_date": "2026-09-01", "clp_per_unit": "900", "reason": "sintético"},
     "review-document-line": {"document_line_id": PID, "review_note": "revisado"},
+    "update-product-image": {"image_id": PID, "expected_version": 1, "status": "hidden"},
 }
 
 
@@ -179,9 +180,10 @@ def _ikey():
     return {**HEADERS, "Idempotency-Key": uuid.uuid4().hex}
 
 
-def test_the_command_router_exposes_exactly_the_eight_catalog_commands() -> None:
+def test_the_command_router_exposes_exactly_the_ten_catalog_commands() -> None:
+    # add-product-image is multipart; its route tests live in test_v2_catalog_images.py.
     paths = {r.path for r in catalog_command_router.routes}
-    assert paths == {f"/v2/commands/{name}" for name in COMMAND_BODIES}
+    assert paths == {f"/v2/commands/{name}" for name in [*COMMAND_BODIES, "add-product-image"]}
 
 
 @pytest.mark.parametrize("command", sorted(COMMAND_BODIES))

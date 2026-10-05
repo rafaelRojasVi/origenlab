@@ -371,8 +371,32 @@ def _mount_catalog(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> 
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.state.catalog_fx = _build_catalog_fx(settings, app.state.catalog_reads, connect, dsn)
+    app.state.catalog_storage = _build_catalog_storage(settings)
     app.include_router(catalog_read_router)
     app.include_router(catalog_command_router)
+
+
+def _build_catalog_storage(settings: Settings) -> Any:
+    """The private `catalog` bucket, or None (image routes then answer 503 `storage_unavailable`).
+
+    A configuration that would expose the key (plain http to a remote host, a legacy JWT key) is
+    refused here and logged without the key; the rest of the API still starts.
+    """
+    if not settings.catalog_storage_configured():
+        return None
+
+    import httpx
+
+    from origenlab_api.v2.catalog.storage import SupabaseStorage
+
+    assert settings.v2_storage_url is not None and settings.v2_storage_secret_key is not None  # noqa: S101
+    client = httpx.Client(timeout=httpx.Timeout(30.0, connect=5.0))
+    try:
+        return SupabaseStorage(settings.v2_storage_url, settings.v2_storage_secret_key.get_secret_value(), client)
+    except ValueError as exc:
+        client.close()
+        logging.getLogger(__name__).warning("catalog image storage disabled: %s", exc)
+        return None
 
 
 def _build_catalog_fx(settings: Settings, reads: Any, connect: Any, dsn: str) -> Any:
