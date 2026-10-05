@@ -4,7 +4,7 @@
 -- lines as durable evidence (#54) and the domain-event vocabulary they need. Synthetic fixtures only.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(51);
+select plan(53);
 
 -- product extensions
 select has_column('catalog', 'product', 'model_key', 'product.model_key exists');
@@ -154,6 +154,22 @@ select throws_ok(
        values ('2026-10-01', 'USD', 949.6, 'bcentral', 'bde') $$,
   '23505', 'duplicate key value violates unique constraint "fx_rate_bcentral_key"',
   'a second automatic rate for the same day, currency and provider is refused');
+
+-- One normalised model per manufacturer: the database, not the API, decides what a duplicate
+-- model is (product_one_model_key_per_manufacturer over the generated model_key).
+insert into crm.organization (id, kind, name, confirmation)
+  values ('00000000-0000-4000-8000-0000000000a2', 'company', 'Other Maker Test', 'confirmed');
+insert into catalog.product (manufacturer_organization_id, model_number)
+  values ('00000000-0000-4000-8000-0000000000a1', 'SONIC-100');
+select throws_ok(
+  $$ insert into catalog.product (manufacturer_organization_id, model_number)
+       values ('00000000-0000-4000-8000-0000000000a1', 'sonic 100') $$,
+  '23505', 'duplicate key value violates unique constraint "product_one_model_key_per_manufacturer"',
+  'the same normalised model twice for one manufacturer is refused');
+select lives_ok(
+  $$ insert into catalog.product (manufacturer_organization_id, model_number)
+       values ('00000000-0000-4000-8000-0000000000a2', 'sonic 100') $$,
+  'the same normalised model for another manufacturer is allowed');
 reset role;
 
 select * from finish();

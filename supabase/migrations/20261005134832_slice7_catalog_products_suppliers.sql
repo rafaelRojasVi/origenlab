@@ -39,6 +39,10 @@ alter table catalog.product
   add constraint product_version_positive check (version >= 1);
 
 create index product_model_key_idx on catalog.product (model_key);
+-- One normalised model per manufacturer: «SONIC-100» and «sonic 100» are the same product. The
+-- database decides, not the API, so every writer (commands, importers) gets the same answer. The
+-- Slice 0 key on the raw model_number (product_manufacturer_model_key) stays; this one is wider.
+create unique index product_one_model_key_per_manufacturer on catalog.product (manufacturer_organization_id, model_key);
 create index product_search_tsv_idx on catalog.product using gin (search_tsv);
 create index product_content_confirmed_by_idx on catalog.product (content_confirmed_by_operator_id);
 
