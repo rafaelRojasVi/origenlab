@@ -120,6 +120,70 @@ def test_without_any_figure_a_failure_is_unavailable_and_not_retried_at_once() -
     assert fetch.calls == 2
 
 
+# ────────────────────────────────────────────────────────── second source ──
+
+
+def _findic_body(usd: Any = 984.82) -> dict[str, Any]:
+    # findic.cl answers in mindicador's shape, but dates each value with the plain Chile day.
+    return {
+        "autor": "findic.cl",
+        "dolar": {"codigo": "dolar", "nombre": "Dólar observado", "fecha": "2026-10-05", "valor": usd},
+        "euro": {"codigo": "euro", "nombre": "Euro", "fecha": "2026-10-05", "valor": 1108.41},
+        "uf": {"codigo": "uf", "nombre": "Unidad de fomento (UF)", "fecha": "2026-10-05", "valor": 41098.15},
+    }
+
+
+def test_reads_a_plain_chile_day_as_the_date() -> None:
+    out = parse_mindicador(_findic_body())
+    assert [r["as_of"] for r in out] == ["2026-10-05", "2026-10-05", "2026-10-05"]
+
+
+def test_refuses_a_plain_date_that_is_not_a_day() -> None:
+    body = _findic_body()
+    body["dolar"]["fecha"] = "2026-13-45"
+    assert [r["code"] for r in parse_mindicador(body)] == ["EUR", "UF"]
+
+
+def test_a_failed_first_source_falls_back_to_the_second() -> None:
+    first, second = _Fetch(OSError("connection reset")), _Fetch(_findic_body())
+    fx = FxRates(sources=(("mindicador.cl", first), ("findic.cl", second)), clock=_Clock())
+    out = fx.current()
+    assert out["stale"] is False
+    assert out["source"] == "findic.cl"
+    assert out["source_label"] == "Banco Central de Chile, vía findic.cl"
+    assert out["source_url"] == "https://findic.cl"
+    assert out["rates"][0]["clp"] == 984.82
+    assert (first.calls, second.calls) == (1, 1)
+
+
+def test_a_working_first_source_never_asks_the_second() -> None:
+    first, second = _Fetch(_body()), _Fetch(_findic_body())
+    fx = FxRates(sources=(("mindicador.cl", first), ("findic.cl", second)), clock=_Clock())
+    assert fx.current()["source"] == "mindicador.cl"
+    assert second.calls == 0
+
+
+def test_an_unusable_answer_from_the_first_source_also_falls_back() -> None:
+    first, second = _Fetch({"autor": "mindicador.cl"}), _Fetch(_findic_body())
+    fx = FxRates(sources=(("mindicador.cl", first), ("findic.cl", second)), clock=_Clock())
+    assert fx.current()["source"] == "findic.cl"
+
+
+def test_every_source_failing_is_unavailable_and_each_failure_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    first, second = _Fetch(OSError("connection reset")), _Fetch(TimeoutError("timed out"))
+    fx = FxRates(sources=(("mindicador.cl", first), ("findic.cl", second)), clock=_Clock())
+    with caplog.at_level("WARNING", logger="origenlab_api.v2.fx_rates"):
+        with pytest.raises(FxUnavailable):
+            fx.current()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("mindicador.cl" in m and "OSError" in m for m in messages)
+    assert any("findic.cl" in m and "TimeoutError" in m for m in messages)
+
+
+def test_the_default_sources_are_mindicador_then_findic() -> None:
+    assert [name for name, _ in FxRates()._sources] == ["mindicador.cl", "findic.cl"]
+
+
 # ──────────────────────────────────────────────────────────────── route ──
 
 
