@@ -26,7 +26,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from origenlab_worker.database import WorkerTarget, open_worker_db, remote_worker_target, write_ca_file
@@ -46,9 +46,10 @@ ENV_ENABLED = "ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED"
 
 @dataclass(frozen=True)
 class WorkerConfig:
-    database: WorkerTarget
-    gmail: GmailCredentials
-    storage: StorageConfig
+    # Each of the three holds a secret (a DSN password, an OAuth secret, an S3 key): none is repr'd.
+    database: WorkerTarget = field(repr=False)
+    gmail: GmailCredentials = field(repr=False)
+    storage: StorageConfig = field(repr=False)
     enabled: bool
 
 

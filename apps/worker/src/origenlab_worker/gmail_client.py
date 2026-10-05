@@ -29,7 +29,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
@@ -77,8 +77,8 @@ class GmailUnavailable(GmailError):
 @dataclass(frozen=True)
 class GmailCredentials:
     client_id: str
-    client_secret: str
-    refresh_token: str
+    client_secret: str = field(repr=False)
+    refresh_token: str = field(repr=False)
 
 
 @dataclass(frozen=True)

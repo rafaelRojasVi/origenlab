@@ -213,3 +213,19 @@ def test_init_with_the_switch_off_still_opens_components(capsys) -> None:
     env = {**GOOD_ENV, "ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED": "false"}
     assert main(["gmail-sync", "--init"], env, components=_components(db, FakeGmail(), FakeStore())) == 0
     assert _line(capsys)["mode"] == "init_baseline"
+
+
+def test_no_secret_reaches_a_repr() -> None:
+    """A traceback or a log of a config object must never print a credential."""
+    from origenlab_worker.database import WorkerTarget
+    from origenlab_worker.gmail_client import GmailCredentials
+    from origenlab_worker.storage import StorageConfig
+
+    gmail = GmailCredentials("cid", client_secret="cs-fake9", refresh_token="rt-fake9")
+    storage = StorageConfig("https://x.supabase.co/storage/v1/s3", "sa-east-1", "kid", secret_access_key="sk-fake9")
+    target = WorkerTarget(dsn="postgresql://u:pw-fake9@h:5432/db", database="db", remote=True)
+    from origenlab_worker.cli import WorkerConfig
+    config = WorkerConfig(database=target, gmail=gmail, storage=storage, enabled=True)
+    text = repr(gmail) + repr(storage) + repr(target) + repr(config)
+    for secret in ("cs-fake9", "rt-fake9", "sk-fake9", "pw-fake9"):
+        assert secret not in text
