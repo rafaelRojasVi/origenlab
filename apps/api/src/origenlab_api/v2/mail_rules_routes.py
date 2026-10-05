@@ -63,12 +63,20 @@ ReadingAdmin = Annotated[OperatorIdentity, Depends(_reading_admin)]
 DecidingAdmin = Annotated[OperatorIdentity, Depends(_deciding_admin)]
 
 
+class MailRulePair(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: Annotated[str, Field(min_length=1, max_length=64)]
+    rule_id: Annotated[str, Field(pattern=r"^R[1-8]$")]
+
+
 class ApplyMailRulesBody(BaseModel):
-    """Optionally restrict the run to some emails; by default every `auto` action is applied."""
+    """The previewed `(evidence_id, rule_id)` pairs to apply, at most ten per call. The server
+    re-plans and applies a pair only if the rules still say the same rule, automatically."""
 
     model_config = ConfigDict(extra="forbid")
 
-    evidence_ids: Annotated[list[str], Field(max_length=2000)] | None = None
+    actions: Annotated[list[MailRulePair], Field(min_length=1, max_length=10)]
 
 
 class UndoMailRuleActionBody(BaseModel):
@@ -96,7 +104,7 @@ def apply_mail_rules(
     (email, rule), so a second press applies nothing new."""
     try:
         require_idempotency_key(idempotency_key)
-        return repo.apply(operator, body.evidence_ids)
+        return repo.apply(operator, [p.model_dump() for p in body.actions])
     except CommandRefused as exc:
         raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
 

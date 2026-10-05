@@ -181,8 +181,10 @@ def test_r3_opens_a_case_for_a_known_institution_with_a_new_number() -> None:
     assert stages == ["qualifying", "qualified", "quoting"]
     record = action.commands[-1]["inputs"]
     assert record["quote_number"] == "01239-26"
-    assert record["quote_number"] in record["printed_quote_numbers"]
-    assert "CN12395" in record["printed_quote_numbers"]
+    # Only the token is printed (in the file name); the canonical number is derived, and says so.
+    assert record["printed_quote_numbers"] == ["CN12395"]
+    assert record["quote_number_derivation"] == {
+        "token": "CN12395", "restored_leading_zero": True, "year_from_sent_at": 26}
     assert record["document_sha256"] == PDF_SHA
     assert record["origin_source_record_id"] == "e-1"
     add = action.commands[1]["inputs"]
@@ -291,7 +293,7 @@ def test_r5_with_two_quotes_on_the_case_is_a_proposal() -> None:
 def test_r5_ignores_a_void_revision() -> None:
     action = only(Snapshot(
         evidence=(mail(direction="inbound", sender="compras@cliente.test", subject="OC 991",
-                       documents=()),),
+                       documents=(MailDocument(filename="OC_991.pdf", sha256=OTHER_SHA, cn_tokens=()),)),),
         cases=(case(stage="negotiating", thread_ids=("t-1",), quotes=(quote(
             "01200-26",
             QuoteRevision(id="r-1", revision_no=1, status="void", version=2, superseded=False),
@@ -366,3 +368,94 @@ def test_two_new_emails_with_the_same_new_number_open_one_case_and_propose_the_o
     assert (first.rule_id, first.mode) == ("R3", "auto")
     assert second.mode == "proposal"
     assert any("misma cotización" in r for r in second.reasons)
+
+
+# ------------------------------------------------------------------ review fixes (C2, M1, M3, I2)
+
+LINKED = dict(cases=(case(thread_ids=("t-1",), quotes=(quote("01200-26"),)),),
+              organizations=(org(), org(id="o-s", name="Proveedor", domains=("proveedor.test",), is_supplier=True)))
+OC_PDF = (MailDocument(filename="OC 4500123.pdf", sha256=OTHER_SHA, cn_tokens=()),)
+
+
+def test_r5_subject_only_is_a_proposal() -> None:
+    action = only(Snapshot(evidence=(mail(direction="inbound", sender="compras@cliente.test",
+                                          subject="Orden de compra 4500123", documents=()),), **LINKED))
+    assert (action.rule_id, action.mode) == ("R5", "proposal")
+    assert any("adjunto" in r for r in action.reasons)
+
+
+def test_r5_a_supplier_confirming_an_oc_is_a_proposal() -> None:
+    action = only(Snapshot(evidence=(mail(direction="inbound", sender="ventas@proveedor.test",
+                                          subject="Confirmacion OC 4500123", documents=OC_PDF),), **LINKED))
+    assert (action.rule_id, action.mode) == ("R5", "proposal")
+
+
+def test_r5_an_internal_forward_of_an_oc_is_a_proposal() -> None:
+    action = only(Snapshot(evidence=(mail(direction="inbound", sender="ventas@origenlab.cl",
+                                          subject="RV: OC 4500123", documents=OC_PDF),), **LINKED))
+    assert (action.rule_id, action.mode) == ("R5", "proposal")
+
+
+def test_r5_from_another_institution_is_a_proposal() -> None:
+    action = only(Snapshot(evidence=(mail(direction="inbound", sender="x@otra.test",
+                                          subject="OC", documents=OC_PDF),), **LINKED))
+    assert (action.rule_id, action.mode) == ("R5", "proposal")
+
+
+def test_r5_a_free_mail_sender_on_the_linked_thread_with_the_oc_attached_wins() -> None:
+    action = only(Snapshot(evidence=(mail(direction="inbound", sender="persona@gmail.com",
+                                          subject="te mando la oc", documents=OC_PDF),), **LINKED))
+    assert (action.rule_id, action.mode) == ("R5", "auto")
+
+
+def test_r6_from_a_supplier_is_a_proposal() -> None:
+    action = only(Snapshot(evidence=(mail(direction="inbound", sender="ventas@proveedor.test", documents=(),
+                                          subject="ya fue gestionada por otro proveedor"),), **LINKED))
+    assert (action.rule_id, action.mode) == ("R6", "proposal")
+
+
+def test_r3_needs_contacto_as_sender() -> None:
+    action = only(Snapshot(evidence=(mail(sender="ventas@origenlab.cl"),), cases=(), organizations=(org(),)))
+    assert action.mode == "none"
+
+
+def test_r3_a_supplier_rfq_or_internal_hint_is_not_outbound() -> None:
+    for hint in ("supplier_rfq", "internal_only"):
+        action = only(Snapshot(evidence=(mail(direction_hint=hint),), cases=(), organizations=(org(),)))
+        assert action.mode == "none", hint
+
+
+def test_r4_claims_the_domain_within_one_pass() -> None:
+    first, second = plan(Snapshot(evidence=(
+        mail(recipients=("a@nuevo.test",)),
+        mail(id="e-2", thread_id="t-2", recipients=("b@nuevo.test",),
+             documents=(MailDocument(filename="CN01300.pdf", sha256=OTHER_SHA, cn_tokens=("CN01300",)),)),
+    ), cases=(), organizations=()))
+    assert (first.rule_id, first.mode) == ("R4", "auto")
+    assert second.mode == "proposal"
+
+
+def test_a_yearless_crm_number_matches_by_its_revision_year_only_as_a_proposal() -> None:
+    rev = QuoteRevision(id="r-1", revision_no=1, status="sent", version=1, superseded=False,
+                        sent_at="2026-03-01T12:00:00+00:00")
+    action = only(Snapshot(evidence=(mail(thread_id="t-new"),),
+                           cases=(case(quotes=(quote("CN01239", rev),)),), organizations=(org(),)))
+    assert (action.rule_id, action.mode) == ("R2", "proposal")
+
+
+def test_a_correlative_already_used_last_year_is_a_proposal_not_a_new_case() -> None:
+    action = only(Snapshot(evidence=(mail(thread_id="t-new"),),
+                           cases=(case(quotes=(quote("01239-25"),)),), organizations=(org(),)))
+    assert action.rule_id in ("R2", "R3")
+    assert action.mode == "proposal"
+    assert any("2025" in r or "-25" in r for r in action.reasons)
+
+
+def test_cn12395_and_cn01239_are_the_same_quote_in_one_pass() -> None:
+    first, second = plan(Snapshot(evidence=(
+        mail(),
+        mail(id="e-2", thread_id="t-2",
+             documents=(MailDocument(filename="CN01239.pdf", sha256=OTHER_SHA, cn_tokens=("CN01239",)),)),
+    ), cases=(), organizations=(org(),)))
+    assert (first.mode, first.quote_number) == ("auto", "01239-26")
+    assert (second.mode, second.quote_number) == ("proposal", "01239-26")

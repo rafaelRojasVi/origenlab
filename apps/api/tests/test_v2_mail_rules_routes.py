@@ -38,8 +38,8 @@ class _FakeRepo:
         self.calls.append(("preview",))
         return {"actions": [], "applied": []}
 
-    def apply(self, operator, evidence_ids):
-        self.calls.append(("apply", operator.operator_id, evidence_ids))
+    def apply(self, operator, pairs):
+        self.calls.append(("apply", operator.operator_id, pairs))
         return {"applied": [], "refused": []}
 
     def undo(self, operator, receipt_id, note):
@@ -59,6 +59,7 @@ def _client(repo, role="admin"):
 
 
 KEY = {**HEADERS, "Idempotency-Key": "k-12345678"}
+PAIR = {"evidence_id": "e-1", "rule_id": "R3"}
 
 
 @pytest.mark.parametrize("role", ["sales", "viewer"])
@@ -66,7 +67,7 @@ def test_only_an_admin_previews_applies_or_undoes(role) -> None:
     repo = _FakeRepo()
     client = _client(repo, role)
     assert client.get(PREVIEW, headers=HEADERS).status_code == 403
-    assert client.post(APPLY, json={}, headers=KEY).status_code == 403
+    assert client.post(APPLY, json={"actions": [PAIR]}, headers=KEY).status_code == 403
     assert client.post(UNDO, json={"receipt_id": RECEIPT, "note": "x"}, headers=KEY).status_code == 403
     assert repo.calls == []
 
@@ -75,9 +76,9 @@ def test_an_admin_previews_applies_and_undoes() -> None:
     repo = _FakeRepo()
     client = _client(repo)
     assert client.get(PREVIEW, headers=HEADERS).status_code == 200
-    assert client.post(APPLY, json={"evidence_ids": ["e-1"]}, headers=KEY).status_code == 200
+    assert client.post(APPLY, json={"actions": [PAIR]}, headers=KEY).status_code == 200
     assert client.post(UNDO, json={"receipt_id": RECEIPT, "note": "equivocada"}, headers=KEY).status_code == 200
-    assert repo.calls == [("preview",), ("apply", "00000000-0000-4000-8000-000000000001", ["e-1"]),
+    assert repo.calls == [("preview",), ("apply", "00000000-0000-4000-8000-000000000001", [PAIR]),
                           ("undo", RECEIPT, "equivocada")]
 
 
@@ -85,7 +86,9 @@ def test_the_client_cannot_send_actions_and_commands_need_a_key() -> None:
     repo = _FakeRepo()
     client = _client(repo)
     assert client.post(APPLY, json={"actions": [{"rule_id": "R3"}]}, headers=KEY).status_code == 422
-    assert client.post(APPLY, json={}, headers=HEADERS).status_code == 400
+    assert client.post(APPLY, json={"actions": [PAIR]}, headers=HEADERS).status_code == 400
+    assert client.post(APPLY, json={"actions": [PAIR] * 11}, headers=KEY).status_code == 422
+    assert client.post(APPLY, json={"actions": [{"evidence_id": "e", "rule_id": "R9"}]}, headers=KEY).status_code == 422
     assert client.post(UNDO, json={"receipt_id": RECEIPT, "note": " "}, headers=KEY).status_code == 422
     assert [c[0] for c in repo.calls] == []
 

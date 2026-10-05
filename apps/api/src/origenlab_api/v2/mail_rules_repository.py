@@ -56,7 +56,6 @@ from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.mail_rules import (
     AUTO,
     OWN_DOMAINS,
-    PROPOSAL,
     SYSTEM_LABEL,
     CaseQuote,
     CaseState,
@@ -89,6 +88,9 @@ RECORD_CASE_WON = "record_case_won"
 UNLINK_CASE_EVIDENCE = "unlink_case_evidence"
 CORRECT_CASE_STAGE = "correct_case_stage"
 ARCHIVE_ORGANIZATION = "archive-organization"
+REMOVE_ORGANIZATION_DOMAIN = "remove-organization-domain"
+#: «Aplicar» sends the previewed pairs in batches of this size; the dashboard drives the batches.
+APPLY_BATCH = 10
 
 
 def _digest(value: dict[str, Any]) -> str:
@@ -102,11 +104,20 @@ def _json(value: Any) -> Any:
 
 # ─────────────────────────────────────────────────────────────── the snapshot ──
 
+#: Live Phase 4a captures only — the records the worker writes: a `comms.message` in the same
+#: transaction, no staging hash, no assertions. The staged historical `gmail_message` records are
+#: never acted on (they are read only through `_LINKS_SQL`, for the threads of their cases), and
+#: neither is a record a person rejected.
 _EVIDENCE_SQL = """
 select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id
   from evidence.source_record sr
-  left join comms.message m on m.provider_message_id = sr.payload ->> 'gmail_message_id'
+  join lateral (select cm.direction, cm.provider_thread_id from comms.message cm
+                 where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
+                 order by cm.created_at limit 1) m on true
  where sr.kind = 'gmail_message' and not sr.is_quarantined
+   and sr.review_status <> 'rejected'
+   and sr.payload ->> 'staging_source_record_sha256' is null
+   and not exists (select 1 from evidence.assertion a where a.source_record_id = sr.id)
  order by sr.id
 """
 _LINKS_SQL = """
@@ -124,7 +135,7 @@ select id::text as id, title, stage, version, organization_id::text as organizat
 _QUOTES_SQL = """
 select q.id::text as quote_id, q.opportunity_id::text as opportunity_id, q.quote_number,
        r.id::text as revision_id, r.revision_no, r.status, r.version,
-       r.superseded_by_revision_no is not null as superseded
+       r.superseded_by_revision_no is not null as superseded, r.sent_at
   from crm.quote q
   left join crm.quote_revision r on r.quote_id = q.id
  order by q.quote_number, r.revision_no
@@ -201,6 +212,7 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
             sent_at=p.get("sent_at"), documents=docs,
             linked_case_ids=tuple(sorted(set(linked_cases.get(r["id"], [])))),
             campaign_thread=bool(thread and thread in campaign_threads),
+            direction_hint=p.get("direction_hint"),
         ))
         display[r["id"]] = {"subject": p.get("subject_raw"), "sent_at": p.get("sent_at"),
                             "direction": direction}
@@ -213,7 +225,8 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
         if r["revision_id"]:
             q["revisions"].append(QuoteRevision(id=r["revision_id"], revision_no=int(r["revision_no"]),
                                                 status=r["status"], version=int(r["version"]),
-                                                superseded=bool(r["superseded"])))
+                                                superseded=bool(r["superseded"]),
+                                                sent_at=r["sent_at"].isoformat() if r["sent_at"] else None))
     by_case: dict[str, list[CaseQuote]] = {}
     for qid, q in quotes.items():
         by_case.setdefault(q["opportunity_id"], []).append(
@@ -337,21 +350,25 @@ class MailRulesRepository(V2CaseCommandRepository):
 
     # ------------------------------------------------------------------ apply
 
-    def apply(self, operator: OperatorIdentity, evidence_ids: list[str] | None = None) -> dict[str, Any]:
+    def apply(self, operator: OperatorIdentity, pairs: list[dict[str, str]]) -> dict[str, Any]:
+        """Apply the previewed `(evidence_id, rule_id)` pairs — at most `APPLY_BATCH` per call — and
+        only those whose fresh re-plan still says the same rule in `auto` mode. Anything else is
+        refused as `plan_changed`; an email that arrived after the preview is never applied."""
+        if not pairs:
+            raise CommandRefused(422, "nothing_to_apply", "name the previewed actions to apply")
+        if len(pairs) > APPLY_BATCH:
+            raise CommandRefused(422, "batch_too_large", f"at most {APPLY_BATCH} actions per call")
         actions, _display, _snapshot = self.plan()
-        wanted = set(evidence_ids) if evidence_ids else None
+        by_evidence = {a.evidence_id: a for a in actions}
         applied: list[dict[str, Any]] = []
         refused: list[dict[str, Any]] = []
-        proposals = 0
-        no_action = 0
-        for action in actions:
-            if wanted is not None and action.evidence_id not in wanted:
-                continue
-            if action.mode == PROPOSAL:
-                proposals += 1
-                continue
-            if action.mode != AUTO:
-                no_action += 1
+        for pair in pairs:
+            evidence_id, rule_id = str(pair["evidence_id"]), str(pair["rule_id"])
+            action = by_evidence.get(evidence_id)
+            if action is None or action.rule_id != rule_id or action.mode != AUTO:
+                now = "nada" if action is None else f"{action.rule_id} ({action.mode})"
+                refused.append({"evidence_id": evidence_id, "rule_id": rule_id, "code": "plan_changed",
+                                "message": f"las reglas ya no proponen {rule_id} automática para este correo; ahora: {now}"})
                 continue
             try:
                 applied.append(self._apply_action(operator, action))
@@ -364,8 +381,7 @@ class MailRulesRepository(V2CaseCommandRepository):
                 refused.append({"evidence_id": action.evidence_id, "rule_id": action.rule_id,
                                 "code": "database_refused",
                                 "message": str(exc).splitlines()[0] if str(exc) else type(exc).__name__})
-        return {"applied": applied, "refused": refused, "proposals_left_for_review": proposals,
-                "no_rule_applies": no_action}
+        return {"applied": applied, "refused": refused}
 
     def _apply_action(self, operator: OperatorIdentity, action: PlannedAction) -> dict[str, Any]:
         key = f"mail-rule:{action.evidence_id}:{action.rule_id}"
@@ -376,6 +392,17 @@ class MailRulesRepository(V2CaseCommandRepository):
             "applied_by_operator_id": operator.operator_id,
         })
         with self._write() as cur:
+            # One apply per email, whoever presses: the lock serialises two concurrent runs, and the
+            # second then sees the first's receipt.
+            cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mail-rule:{action.evidence_id}",))
+            cur.execute(
+                "select operator_id::text, idempotency_key from platform.command_receipt "
+                "where command_name = %s and status = 'completed' and response_body ->> 'evidence_id' = %s",
+                (APPLY_COMMAND, action.evidence_id),
+            )
+            done = cur.fetchone()
+            if done is not None and (done[0] != operator.operator_id or done[1] != key):
+                raise CommandRefused(409, "already_applied", "another run already acted on this email")
             receipt_id, replay = self._claim_receipt(cur, operator, key, APPLY_COMMAND, digest)
             if replay is not None:
                 return replay
@@ -457,7 +484,15 @@ class MailRulesRepository(V2CaseCommandRepository):
                 "source": "mail_rules_undo", "undoes_receipt_id": receipt_id,
                 "rule_id": action.get("rule_id"), "evidence_id": action.get("evidence_id"),
             })
-            steps = self._undo_steps(cur, person, action, note, own)
+            try:
+                steps, kept = self._undo_steps(cur, person, action, note, own)
+            except CommandRefused:
+                raise
+            except Exception as exc:
+                if not _is_database_error(exc):
+                    raise
+                raise CommandRefused(409, "undo_refused_by_database",
+                                     str(exc).splitlines()[0] if str(exc) else type(exc).__name__) from exc
             response = {
                 "undoes_receipt_id": receipt_id,
                 "rule_id": action.get("rule_id"),
@@ -465,6 +500,7 @@ class MailRulesRepository(V2CaseCommandRepository):
                 "case_id": action.get("case_id"),
                 "note": note,
                 "steps": steps,
+                "organization_kept": kept,
                 "idempotency_key": key,
                 "command_receipt_id": own,
                 "replayed": False,
@@ -473,8 +509,9 @@ class MailRulesRepository(V2CaseCommandRepository):
             return response
 
     def _undo_steps(self, cur: Any, operator: OperatorIdentity, action: dict[str, Any], note: str,
-                    receipt_id: str) -> list[dict[str, Any]]:
+                    receipt_id: str) -> tuple[list[dict[str, Any]], str | None]:
         rule = action.get("rule_id")
+        kept: str | None = None
         created = action.get("created") or {}
         case_id = action.get("case_id")
         done: list[dict[str, Any]] = []
@@ -504,14 +541,44 @@ class MailRulesRepository(V2CaseCommandRepository):
                                      "stage": "abandoned", "close_reason": DISCARDED_BY_CORRECTION, "note": note})
             org_id = created.get("organization_id")
             if rule == "R4" and org_id:
-                cur.execute("select version, confirmation, status from crm.organization where id = %s", (org_id,))
-                org = cur.fetchone()
-                if org is not None and org[1] == "machine_proposed" and org[2] == "active":
-                    run(ARCHIVE_ORGANIZATION, {"organization_id": org_id, "expected_version": int(org[0]),
-                                               "note": note})
+                kept = self._retire_mail_organization(cur, org_id, action, note, run)
         if not done:
             raise CommandRefused(409, "nothing_to_undo", "this action left nothing that can be reversed")
-        return done
+        return done, kept
+
+    def _retire_mail_organization(self, cur: Any, org_id: str, action: dict[str, Any], note: str,
+                                  run: Callable[[str, dict[str, Any]], None]) -> str | None:
+        """Archive the institution «por confirmar» R4 created, and remove the domain it added — unless
+        a person confirmed it or another open case uses it. Returns why it was kept, or None."""
+        cur.execute("select version, confirmation, status from crm.organization where id = %s", (org_id,))
+        org = cur.fetchone()
+        if org is None or org[2] != "active":
+            return None
+        if org[1] != "machine_proposed":
+            return "la institución ya fue confirmada por una persona: se conserva"
+        cur.execute(
+            """
+            select count(distinct o.id) from crm.opportunity_organization oo
+              join crm.opportunity o on o.id = oo.opportunity_id
+             where oo.organization_id = %s and oo.valid_to is null and o.closed_at is null
+            """,
+            (org_id,),
+        )
+        others = int(cur.fetchone()[0])
+        if others:
+            return f"la institución está en {others} caso(s) abierto(s): se conserva, con su dominio"
+        version = int(org[0])
+        cur.execute(
+            "select id::text from crm.organization_domain where organization_id = %s and removed_at is null "
+            "and origin_source_record_id = %s",
+            (org_id, action.get("evidence_id")),
+        )
+        for (domain_id,) in cur.fetchall():
+            run(REMOVE_ORGANIZATION_DOMAIN, {"organization_id": org_id, "expected_version": version,
+                                             "domain_id": domain_id, "note": note})
+            version += 1
+        run(ARCHIVE_ORGANIZATION, {"organization_id": org_id, "expected_version": version, "note": note})
+        return None
 
     def _case_version(self, cur: Any, case_id: str) -> int:
         cur.execute("select version from crm.opportunity where id = %s", (case_id,))
@@ -531,7 +598,7 @@ class MailRulesRepository(V2CaseCommandRepository):
         if command in _QUOTE_BODIES:
             fields = validated_quote_import(command, _QUOTE_BODIES[command](**inputs))
             return self._quotes._HANDLERS[command](self._quotes, cur, operator, fields, receipt_id)
-        if command == ARCHIVE_ORGANIZATION:
+        if command in (ARCHIVE_ORGANIZATION, REMOVE_ORGANIZATION_DOMAIN):
             return self._authoring._HANDLERS[command](self._authoring, cur, operator, dict(inputs), receipt_id)
         local: dict[str, Callable[..., dict[str, Any]]] = {
             REGISTER_MAIL_ORGANIZATION: MailRulesRepository._register_mail_organization,
@@ -551,7 +618,8 @@ class MailRulesRepository(V2CaseCommandRepository):
         domain and the email it came from. A person confirms, renames or archives it later."""
         domain = str(fields["domain"]).strip().lower()
         cur.execute(
-            "select organization_id::text from crm.organization_domain where domain_norm = %s and removed_at is null",
+            "select d.organization_id::text from crm.organization_domain d join crm.organization o on o.id = d.organization_id "
+            "where d.domain_norm = %s and d.removed_at is null and o.status = 'active'",
             (domain,),
         )
         if cur.fetchone() is not None:
@@ -691,8 +759,13 @@ class MailRulesRepository(V2CaseCommandRepository):
                 """,
                 (fields["to_stage"], case_id, int(version)),
             )
-        finally:
-            cur.execute("select set_config('origenlab.case_stage_correction', '', true)")
+        except Exception as exc:
+            # The transaction is aborted now: nothing more runs on it, the refusal rolls it back.
+            if not _is_database_error(exc):
+                raise
+            raise CommandRefused(409, "stage_correction_refused",
+                                 str(exc).splitlines()[0] if str(exc) else type(exc).__name__) from exc
+        cur.execute("select set_config('origenlab.case_stage_correction', '', true)")
         event = self._append_event(
             cur, aggregate_kind="opportunity", aggregate_id=case_id, event_type="opportunity.stage_corrected",
             payload={"from_stage": stage, "to_stage": fields["to_stage"], "note": fields["note"]},

@@ -23,7 +23,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from origenlab_api.v2.commands import CommandRefused, DecisionBody, as_uuid
 
@@ -48,6 +48,22 @@ def _sha(value: str, what: str) -> str:
     if not _SHA256.match(folded):
         raise ValueError(f"{what} must be a lower-case SHA-256 hex digest")
     return folded
+
+
+class QuoteNumberDerivation(BaseModel):
+    """How a number the document does not print exactly was read from one it does.
+
+    The email → cases rules read a capture token such as «CN12395» off a PDF's file name and
+    record the canonical «01239-26»: the leading zero the capture dropped is restored and the
+    year is the Santiago year of the email. The token is what is printed; the number is derived,
+    and the request says exactly how, so the command can recompute it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: Annotated[str, Field(min_length=1, max_length=32)]
+    restored_leading_zero: bool
+    year_from_sent_at: Annotated[int, Field(ge=0, le=99)]
 
 
 class RecordHistoricalQuotationBody(DecisionBody):
@@ -76,6 +92,7 @@ class RecordHistoricalQuotationBody(DecisionBody):
     filename: Annotated[str, Field(min_length=1, max_length=400)] | None = None
     supersedes_document_sha256: str | None = None
     number_on_other_opportunity_reason: Annotated[str, Field(min_length=1, max_length=2000)] | None = None
+    quote_number_derivation: QuoteNumberDerivation | None = None
 
     @field_validator("document_sha256")
     @classmethod
@@ -98,7 +115,9 @@ class RecordHistoricalQuotationBody(DecisionBody):
     def _number_is_printed(self) -> RecordHistoricalQuotationBody:
         if not QUOTE_NUMBER_SHAPE.match(self.quote_number):
             raise ValueError("quote_number does not have the shape crm.quote accepts")
-        if self.quote_number not in self.printed_quote_numbers:
+        if self.quote_number_derivation is not None:
+            self._check_derivation()
+        elif self.quote_number not in self.printed_quote_numbers:
             raise ValueError(
                 "quote_number must be one of printed_quote_numbers exactly — a historical "
                 "number is the one the document prints, never a normalised or new one"
@@ -106,6 +125,21 @@ class RecordHistoricalQuotationBody(DecisionBody):
         if self.supersedes_document_sha256 == self.document_sha256:
             raise ValueError("a document cannot supersede itself")
         return self
+
+    def _check_derivation(self) -> None:
+        from origenlab_api.v2.mail_rules import canonical_quote_number, gmail_quote_key, santiago_year
+
+        d = self.quote_number_derivation
+        assert d is not None  # noqa: S101
+        if d.token not in self.printed_quote_numbers:
+            raise ValueError("quote_number_derivation: the token must be one of printed_quote_numbers")
+        sent = self.sent_at.isoformat()
+        key = gmail_quote_key(d.token, sent)
+        digits = re.sub(r"^(CN|COT)?\s*-?\s*", "", d.token.strip(), flags=re.IGNORECASE)
+        restored = bool(re.fullmatch(r"[1-9]\d{4,}", digits))
+        if (key is None or canonical_quote_number(key) != self.quote_number
+                or restored != d.restored_leading_zero or santiago_year(sent) != d.year_from_sent_at):
+            raise ValueError("quote_number_derivation does not recompute to quote_number from the token and sent_at")
 
 
 class VoidHistoricalQuoteRevisionBody(DecisionBody):
@@ -136,6 +170,8 @@ def validated_quote_import(command_name: str, body: DecisionBody) -> dict[str, A
             filename=body.filename,
             supersedes_document_sha256=body.supersedes_document_sha256,
             number_on_other_opportunity_reason=(body.number_on_other_opportunity_reason or "").strip() or None,
+            quote_number_derivation=(body.quote_number_derivation.model_dump()
+                                     if body.quote_number_derivation else None),
         )
         return fields
     if isinstance(body, VoidHistoricalQuoteRevisionBody):

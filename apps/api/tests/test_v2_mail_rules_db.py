@@ -51,19 +51,32 @@ def _operator(operator_id, role="admin"):
                             display_name="Admin Ficticio", role=role, status="active")
 
 
-def _mail(conn, *, thread, direction_hint, sender, recipients, subject, documents=()):
+def _mail(conn, *, thread, direction_hint, sender, recipients, subject, documents=(), direction=None,
+          review_status="pending", staged=False):
+    """A live 4a capture: the evidence record and its `comms.message`, as the worker writes them.
+    `staged=True` makes a historical staged record instead (no message, a staging hash)."""
     gid = uuid.uuid4().hex[:16]
     payload = {
         "gmail_message_id": gid, "gmail_thread_id": thread, "direction_hint": direction_hint,
         "sender": sender, "recipients": recipients, "subject_raw": subject,
         "sent_at": "2026-10-01T15:00:00+00:00", "documents": list(documents),
         "proposed_quote_numbers": sorted({t for d in documents for t in d["cn_tokens"]}),
+        "staging_source_record_sha256": ("f" * 64) if staged else None,
     }
-    return conn.execute(
-        "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) "
-        "values ('gmail_message', %s, %s::jsonb, %s) returning id::text",
-        (f"gmail_message:{gid}", json.dumps(payload), f"gmail://msg/{gid}"),
+    record = conn.execute(
+        "insert into evidence.source_record (kind, dedupe_key, payload, source_uri, review_status) "
+        "values ('gmail_message', %s, %s::jsonb, %s, %s) returning id::text",
+        (f"gmail_message:{gid}", json.dumps(payload), f"gmail://msg/{gid}", review_status),
     ).fetchone()[0]
+    if not staged:
+        mailbox = conn.execute(
+            "insert into comms.mailbox (address_norm) values (%s) returning id",
+            (f"mbox-{gid}@example.test",)).fetchone()[0]
+        conn.execute(
+            "insert into comms.message (mailbox_id, provider_message_id, provider_thread_id, direction, internal_date) "
+            "values (%s, %s, %s, %s, now())",
+            (mailbox, gid, thread, direction or ("outbound" if direction_hint else "inbound")))
+    return record
 
 
 def _doc(filename, cn_tokens=()):
@@ -112,6 +125,11 @@ def world(db):
     return w
 
 
+def _pairs(repo, ids):
+    return [{"evidence_id": a["evidence_id"], "rule_id": a["rule_id"]}
+            for a in repo.preview()["actions"] if a["evidence_id"] in ids and a["mode"] == "auto"]
+
+
 def _action(preview, evidence_id):
     return next(a for a in preview["actions"] if a["evidence_id"] == evidence_id)
 
@@ -139,7 +157,7 @@ def test_preview_plans_and_writes_nothing(db, world) -> None:
 def test_apply_creates_through_the_commands_as_the_system_and_is_idempotent(db, world) -> None:
     repo = _repo(db)
     op = _operator(world["admin"])
-    result = repo.apply(op, [world["e_known"], world["e_new"], world["e_free"], world["e_supplier"]])
+    result = repo.apply(op, _pairs(repo, [world["e_known"], world["e_new"], world["e_free"], world["e_supplier"]]))
     assert not result["refused"], result["refused"]
     by_rule = {a["rule_id"]: a for a in result["applied"]}
     assert set(by_rule) == {"R3", "R4"}
@@ -167,15 +185,18 @@ def test_apply_creates_through_the_commands_as_the_system_and_is_idempotent(db, 
                 world["e_free"], world["e_supplier"])[0] == 0
 
     before = _counts(db)
-    again = repo.apply(op, [world["e_known"], world["e_new"], world["e_free"], world["e_supplier"]])
-    assert again == {"applied": [], "refused": [], "proposals_left_for_review": 0, "no_rule_applies": 2}
+    assert _pairs(repo, [world["e_known"], world["e_new"]]) == []
+    again = repo.apply(op, [{"evidence_id": world["e_known"], "rule_id": "R3"}])
+    assert again["applied"] == []
+    assert [r["code"] for r in again["refused"]] == ["plan_changed"]
     assert _counts(db) == before
     assert _action(repo.preview(), world["e_free"])["mode"] == "none"
     assert not any(a["evidence_id"] == world["e_known"] for a in repo.preview()["actions"])
 
 
 def _apply_only(db, world, evidence_id):
-    result = _repo(db).apply(_operator(world["admin"]), [evidence_id])
+    repo = _repo(db)
+    result = repo.apply(_operator(world["admin"]), _pairs(repo, [evidence_id]))
     assert not result["refused"], result["refused"]
     assert len(result["applied"]) == 1, result
     return result["applied"][0]
@@ -276,3 +297,120 @@ def test_an_unknown_receipt_is_refused(db, world) -> None:
     with pytest.raises(CommandRefused) as refused:
         _repo(db).undo(_operator(world["admin"]), str(uuid.uuid4()), "nada")
     assert refused.value.code == "applied_action_not_found"
+
+
+# ------------------------------------------------------------------ review fixes
+
+
+def test_rejected_and_staged_records_are_never_planned(db, world) -> None:
+    pdf = lambda: [_doc(f"CN0{uuid.uuid4().int % 8000 + 1000}.pdf", [f"CN0{uuid.uuid4().int % 8000 + 1000}"])]  # noqa: E731
+    with _owner(db) as conn:
+        rejected = _mail(conn, thread=f"t-r-{world['tag']}", direction_hint="external", sender="contacto@origenlab.cl",
+                         recipients=f"x@{world['client_domain']}", subject="Cotización", documents=pdf(),
+                         review_status="rejected")
+        staged = _mail(conn, thread=f"t-s-{world['tag']}", direction_hint="external", sender="contacto@origenlab.cl",
+                       recipients=f"x@{world['client_domain']}", subject="Cotización", documents=pdf(), staged=True)
+    planned = {a["evidence_id"] for a in _repo(db).preview()["actions"]}
+    assert rejected not in planned and staged not in planned
+    assert world["e_known"] in planned
+
+
+def test_apply_takes_only_previewed_pairs_and_refuses_a_changed_plan(db, world) -> None:
+    repo = _repo(db)
+    op = _operator(world["admin"])
+    previewed = _pairs(repo, [world["e_known"]])
+    with _owner(db) as conn:
+        late = _mail(conn, thread=f"t-late-{world['tag']}", direction_hint="external", sender="contacto@origenlab.cl",
+                     recipients=f"y@{world['client_domain']}", subject="Cotización",
+                     documents=[_doc("CN09990.pdf", ["CN09990"])])
+    assert _action(repo.preview(), late)["mode"] == "auto"
+    result = repo.apply(op, [*previewed, {"evidence_id": world["e_new"], "rule_id": "R3"}])
+    assert [a["evidence_id"] for a in result["applied"]] == [world["e_known"]]
+    assert [(r["evidence_id"], r["code"]) for r in result["refused"]] == [(world["e_new"], "plan_changed")]
+    assert _action(repo.preview(), late)["mode"] == "auto"  # the late email was not applied
+
+    from origenlab_api.v2.commands import CommandRefused
+
+    with pytest.raises(CommandRefused) as refused:
+        repo.apply(op, [{"evidence_id": str(uuid.uuid4()), "rule_id": "R1"}] * 11)
+    assert refused.value.code == "batch_too_large"
+
+
+def test_two_concurrent_applies_of_one_email_apply_it_once(db, world) -> None:
+    import threading
+
+    repo = _repo(db)
+    pairs = _pairs(repo, [world["e_known"]])
+    with _owner(db) as conn:
+        other = conn.execute(
+            "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+            "values (gen_random_uuid(), %s, 'Otra Admin', 'admin', 'active') returning id::text",
+            (f"concurrente-{uuid.uuid4().hex[:8]}@example.test",)).fetchone()[0]
+    results: list[dict] = []
+    barrier = threading.Barrier(2)
+
+    def run(operator_id):
+        barrier.wait()
+        results.append(_repo(db).apply(_operator(operator_id), pairs))
+
+    threads = [threading.Thread(target=run, args=(o,)) for o in (world["admin"], other)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    applied = [a for r in results for a in r["applied"]]
+    refused = [x for r in results for x in r["refused"]]
+    assert len(applied) == 1
+    assert [x["code"] for x in refused] in (["already_applied"], ["plan_changed"])
+    assert _one(db, "select count(*) from crm.opportunity where origin_source_record_id = %s", world["e_known"])[0] == 1
+
+
+def test_undo_r4_removes_the_domain_so_the_next_email_can_create_again(db, world) -> None:
+    repo = _repo(db)
+    r4 = _apply_only(db, world, world["e_new"])
+    undone = repo.undo(_operator(world["admin"]), r4["command_receipt_id"], "dominio equivocado")
+    assert any(s["command"] == "remove-organization-domain" for s in undone["steps"])
+    assert _one(db, "select count(*) from crm.organization_domain where domain_norm = %s and removed_at is null",
+                world["new_domain"])[0] == 0
+    with _owner(db) as conn:
+        again = _mail(conn, thread=f"t-again-{world['tag']}", direction_hint="external", sender="contacto@origenlab.cl",
+                      recipients=f"otra@{world['new_domain']}", subject="Cotización",
+                      documents=[_doc("CN09977.pdf", ["CN09977"])])
+    assert (_action(repo.preview(), again)["rule_id"], _action(repo.preview(), again)["mode"]) == ("R4", "auto")
+
+
+def test_undo_r4_keeps_an_institution_another_live_case_uses(db, world) -> None:
+    repo = _repo(db)
+    r4 = _apply_only(db, world, world["e_new"])
+    with _owner(db) as conn:
+        second = _mail(conn, thread=f"t-two-{world['tag']}", direction_hint="external", sender="contacto@origenlab.cl",
+                       recipients=f"otra@{world['new_domain']}", subject="Cotización",
+                       documents=[_doc("CN09966.pdf", ["CN09966"])])
+    r3 = _apply_only(db, world, second)
+    assert (r3["rule_id"], r3["organization_id"]) == ("R3", r4["organization_id"])
+    undone = repo.undo(_operator(world["admin"]), r4["command_receipt_id"], "no era nuevo")
+    assert undone["organization_kept"]
+    assert _one(db, "select status from crm.organization where id = %s", r4["organization_id"])[0] == "active"
+
+
+def test_a_stage_a_person_set_afterwards_is_not_corrected_and_the_refusal_is_a_409(db, world) -> None:
+    from origenlab_api.v2.commands import CommandRefused
+
+    repo = _repo(db)
+    r3 = _apply_only(db, world, world["e_known"])
+    with _owner(db) as conn:
+        lost = _mail(conn, thread=world["t1"], direction_hint=None, sender=f"compras@{world['client_domain']}",
+                     recipients="contacto@origenlab.cl", subject="ya fue gestionada por otro proveedor")
+    r6 = _apply_only(db, world, lost)
+    with _owner(db) as conn:
+        seq = conn.execute("select max(seq) + 1 from crm.domain_event where aggregate_id = %s",
+                           (r3["case_id"],)).fetchone()[0]
+        conn.execute(
+            "insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, "
+            "actor_kind, actor_operator_id) values ('opportunity', %s, %s, 'opportunity.staged', 1, "
+            "'{\"from_stage\": \"quoting\", \"to_stage\": \"lost\"}', 'operator', %s)",
+            (r3["case_id"], seq, world["admin"]))
+    with pytest.raises(CommandRefused) as refused:
+        repo.undo(_operator(world["admin"]), r6["command_receipt_id"], "deshacer")
+    assert (refused.value.status_code, refused.value.code) == (409, "stage_correction_refused")
+    assert _one(db, "select stage from crm.opportunity where id = %s", r3["case_id"])[0] == "lost"

@@ -373,3 +373,23 @@ def test_a_live_capture_without_assertions_records_and_promotes_nothing(disposab
     assert result["assertion_id"] is None
     assert _count(disposable_database, "select count(*) from crm.quote_revision where pdf_sha256 = %s",
                   world["sha_c"]) == 1
+
+
+def test_a_derived_number_states_its_derivation_and_claims_only_the_token_as_printed() -> None:
+    body = _body(quote_number="01239-26", printed_quote_numbers=["CN12395"],
+                 sent_at=datetime(2026, 10, 1, 15, 0, tzinfo=UTC),
+                 quote_number_derivation={"token": "CN12395", "restored_leading_zero": True, "year_from_sent_at": 26})
+    fields = validated_quote_import(RECORD_HISTORICAL_QUOTATION, body)
+    assert fields["printed_quote_numbers"] == ["CN12395"]
+    assert fields["quote_number_derivation"]["token"] == "CN12395"
+
+
+def test_a_derivation_that_does_not_recompute_is_refused() -> None:
+    with pytest.raises(ValidationError, match="derivation"):
+        _body(quote_number="01240-26", printed_quote_numbers=["CN12395"],
+              sent_at=datetime(2026, 10, 1, 15, 0, tzinfo=UTC),
+              quote_number_derivation={"token": "CN12395", "restored_leading_zero": True, "year_from_sent_at": 26})
+    with pytest.raises(ValidationError, match="derivation"):
+        _body(quote_number="01239-26", printed_quote_numbers=["CN01239"],
+              sent_at=datetime(2026, 10, 1, 15, 0, tzinfo=UTC),
+              quote_number_derivation={"token": "CN12395", "restored_leading_zero": True, "year_from_sent_at": 26})
