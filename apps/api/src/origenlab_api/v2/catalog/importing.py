@@ -58,6 +58,7 @@ class Plan(TypedDict, total=False):
     items: list[PlanItem]
     counts: dict[str, int]
     conflicts: list[dict[str, Any]]
+    skipped: list[dict[str, str]]
 
 
 # ------------------------------------------------------------------ hashing and serialisation
@@ -135,7 +136,8 @@ def _item_body(item: Mapping[str, Any]) -> str:
 
 
 def build_plan(importer: str, inputs: Sequence[PlanInput], items: Iterable[PlanItem],
-               extra_counts: Mapping[str, int] | None = None) -> Plan:
+               extra_counts: Mapping[str, int] | None = None,
+               skipped: Sequence[Mapping[str, str]] | None = None) -> Plan:
     """Order the items by action, merge exact duplicates, keep the first of conflicting ones.
 
     Two items with one key and the same action and fields are one item (`duplicates_merged`).
@@ -143,6 +145,9 @@ def build_plan(importer: str, inputs: Sequence[PlanInput], items: Iterable[PlanI
     per key, the `source` (input file hash and row reference) that was kept and those dropped —
     never the values. Importers plan their inputs in file-hash order, so the winner does not
     depend on the order of the command-line flags.
+
+    `skipped` lists inputs deliberately not planned as `{"path_sha256", "reason"}` (never a path);
+    the key is left out of the plan when nothing was skipped, so other importers' plans keep their bytes.
     """
     seen: dict[str, PlanItem] = {}
     merged = 0
@@ -173,6 +178,9 @@ def build_plan(importer: str, inputs: Sequence[PlanInput], items: Iterable[PlanI
         counts[k] = int(v)
     plan: Plan = {"importer": importer, "version": PLAN_VERSION, "inputs": list(inputs), "items": ordered,
                   "counts": counts, "conflicts": [conflicts[k] for k in sorted(conflicts)]}
+    if skipped:
+        plan["skipped"] = sorted(({"path_sha256": s["path_sha256"], "reason": s["reason"]} for s in skipped),
+                                 key=lambda s: (s["reason"], s["path_sha256"]))
     # Round-trip through JSON so the plan in memory is exactly the plan on disk (Decimal → str).
     return json.loads(plan_bytes(plan))
 

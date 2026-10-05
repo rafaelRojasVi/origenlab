@@ -233,7 +233,7 @@ def _verify_add_observation(ctx: Context, item: importing.PlanItem) -> tuple[str
 
 # ------------------------------------------------------------------ supplier terms
 
-_TERMS_FIELDS = ("currency", "route", "map_enforced")
+_TERMS_FIELDS = ("currency", "route", "map_enforced", "packing_pct")
 
 
 def _apply_set_terms(ctx: Context, item: importing.PlanItem) -> str:
@@ -243,10 +243,10 @@ def _apply_set_terms(ctx: Context, item: importing.PlanItem) -> str:
     ctx.cur.execute("select id from crm.organization where id = %s::uuid for no key update", (supplier,))
     ctx.cur.execute(
         "insert into catalog.supplier_terms (supplier_organization_id, currency, origin_country, route, "
-        "map_enforced, updated_by_operator_id) values (%s::uuid, %s, %s, %s, %s, %s::uuid) "
+        "map_enforced, packing_pct, updated_by_operator_id) values (%s::uuid, %s, %s, %s, %s, %s::numeric, %s::uuid) "
         "on conflict (supplier_organization_id) do nothing returning version",
         (supplier, fields["currency"], fields.get("origin_country"), fields["route"], bool(fields["map_enforced"]),
-         ctx.operator.operator_id))
+         fields.get("packing_pct"), ctx.operator.operator_id))
     if _row(ctx.cur) is None:
         # Existing terms are the operator's and are never changed by an import.
         status = _verify_set_terms(ctx, item)[0]
@@ -260,7 +260,7 @@ def _verify_set_terms(ctx: Context, item: importing.PlanItem) -> tuple[str, list
     supplier = ctx.ids.get(item["fields"]["supplier"])
     row = None
     if supplier is not None:
-        ctx.cur.execute("select currency, route, map_enforced, version from catalog.supplier_terms "
+        ctx.cur.execute("select currency, route, map_enforced, packing_pct, version from catalog.supplier_terms "
                         "where supplier_organization_id = %s::uuid", (supplier,))
         row = _row(ctx.cur)
     status, diffs = importing.compare(item["fields"], row, _TERMS_FIELDS)
