@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { MailSyncBanner } from "./MailSyncBanner";
 import { googleLoginUrl } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { REDACTION_NOTICE, contactAddressesRedacted } from "./redaction";
@@ -44,6 +45,7 @@ export function CrmApp({ route }: { route: ShellRoute }) {
         Saltar al contenido
       </a>
       <TopBar onMenu={() => setMenuOpen((v) => !v)} menuOpen={menuOpen} />
+      <MailSyncBanner refreshKey={routeKey} />
       <div className="mx-auto flex w-full max-w-[1600px]">
         <SideNav route={route} navigate={navigate} open={menuOpen} />
         <main id="crm-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pb-10 pt-4 focus:outline-none sm:px-6">

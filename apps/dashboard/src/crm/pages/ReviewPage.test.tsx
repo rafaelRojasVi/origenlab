@@ -62,3 +62,19 @@ describe("Revisión → Estado de los datos", () => {
     expect(screen.getByText("Enlaces de Drive guardados en el CRM")).toBeInTheDocument();
   });
 });
+
+describe("Revisión → Bloqueos del CRM", () => {
+  it("shows the queue's true count for a kind when the page holds only part of it", async () => {
+    const evidence = [0, 1].map((i) => ({
+      kind: "pending_evidence", reason: "r", next_action: "n",
+      subject_ids: { source_record_id: `00000000-0000-4000-8000-00000000000${i}` }, age_days: 1, label: "gmail_message",
+    }));
+    respond({
+      "/v2/cockpit/work-queue": { items: evidence, total: 412, counts: { pending_evidence: 412 }, limit: 200, offset: 0 },
+      "/v2/workspace/review": { archived_not_in_crm: [], open_assertions: [], ambiguous_organizations: [], drive_configured: true },
+    });
+    render(<ReviewPage navigate={() => undefined} />);
+    expect(await screen.findByText("· 412")).toBeInTheDocument();
+    expect(screen.getByText(/se muestran los 2 más antiguos/)).toBeInTheDocument();
+  });
+});

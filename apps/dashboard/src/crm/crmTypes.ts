@@ -298,8 +298,19 @@ export interface WorkQueueItem {
 export interface WorkQueueResponse {
   items: WorkQueueItem[];
   total: number;
+  /** Items per kind across the whole queue, not just this page. */
+  counts?: Record<string, number>;
   limit: number;
   offset: number;
+}
+
+/** `GET /v2/workspace/mail-sync` — whether the Gmail capture is running (Phase 4a). */
+export interface MailSyncStatus {
+  state: "ok" | "late" | "stopped" | "not_started" | "not_configured";
+  authorization_state: string | null;
+  last_synced_at: string | null;
+  minutes_since_sync: number | null;
+  late_after_minutes: number;
 }
 
 /** One equipment line: a taxonomy family (one brand each), the same six Marketing filters on. */

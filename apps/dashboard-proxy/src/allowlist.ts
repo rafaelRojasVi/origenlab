@@ -106,6 +106,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // reads from mindicador.cl and caches for an hour. Same GET-only, operator-session rule as the
   // reads above; it carries no contact data. Nothing else under /fx is reachable.
   /^\/v2\/workspace\/fx$/,
+  // Gmail capture status for the dashboard banner (Phase 4a): state and last sync time of the one
+  // captured mailbox. Same GET-only, operator-session rule as the reads above; it carries no
+  // address and no message. Nothing under it is reachable.
+  /^\/v2\/workspace\/mail-sync$/,
   /^\/v2\/cockpit\/work-queue$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to

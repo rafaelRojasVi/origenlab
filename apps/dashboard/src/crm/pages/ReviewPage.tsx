@@ -77,7 +77,7 @@ export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string
         <DataHealth navigate={navigate} />
       ) : tab === "crm" ? (
         <ResourceGate state={queue} reload={reloadQueue} skeleton={<Skeleton rows={5} />}>
-          {(q) => <CrmQueue items={q.items} navigate={navigate} />}
+          {(q) => <CrmQueue items={q.items} counts={q.counts} navigate={navigate} />}
         </ResourceGate>
       ) : (
         <ResourceGate state={review} reload={reloadReview} skeleton={<Skeleton rows={5} />}>
@@ -88,7 +88,15 @@ export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string
   );
 }
 
-function CrmQueue({ items, navigate }: { items: WorkQueueItem[]; navigate: (s: CrmSection, id?: string) => void }) {
+function CrmQueue({
+  items,
+  counts,
+  navigate,
+}: {
+  items: WorkQueueItem[];
+  counts?: Record<string, number>;
+  navigate: (s: CrmSection, id?: string) => void;
+}) {
   const [expanded, setExpanded] = useState<string | null>(null);
   if (items.length === 0) return <EmptyState title="Sin bloqueos en el CRM">Ningún caso ni cotización necesita una decisión.</EmptyState>;
   const meta = (kind: string, fallback: string) => QUEUE_LABEL[kind] ?? { label: kind, action: fallback, blocking: false };
@@ -131,7 +139,10 @@ function CrmQueue({ items, navigate }: { items: WorkQueueItem[]; navigate: (s: C
                 <Badge tone="warn">Pendiente</Badge>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[13px] font-medium text-ink">
-                    {m.label} <span className="tabular-nums text-ink-muted">· {rows.length}</span>
+                    {m.label} <span className="tabular-nums text-ink-muted">· {fmtInt(counts?.[kind] ?? rows.length)}</span>
+                    {(counts?.[kind] ?? rows.length) > rows.length ? (
+                      <span className="text-[11px] font-normal text-ink-faint"> · se muestran los {rows.length} más antiguos</span>
+                    ) : null}
                   </span>
                   <span className="block text-[11px] text-ink-muted">
                     {[...labels.keys()].every((l) => l.length <= 24)
