@@ -193,11 +193,19 @@ select n.nspname || '.' || c.relname, p.privilege
 """
 
 # A SECURITY DEFINER function runs with its owner's rights, whatever the worker's own grants are.
+# Only functions the worker can actually call count: EXECUTE on it, USAGE on its schema, not a
+# trigger function (uncallable directly), and not extension-owned (installing an extension needs a
+# superuser, so the worker's reach cannot grow that way). Never skipped by schema name: a schema
+# called `extensions` or `auth` that holds an ordinary definer function must still refuse.
 _DEFINER_PROBE = """
 select n.nspname || '.' || p.proname
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
  where p.prosecdef and n.nspname not in ('pg_catalog', 'information_schema')
    and has_function_privilege(p.oid, 'EXECUTE')
+   and has_schema_privilege(n.oid, 'USAGE')
+   and p.prorettype not in ('trigger'::regtype, 'event_trigger'::regtype)
+   and not exists (select 1 from pg_depend d
+                    where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')
  order by 1
 """
 

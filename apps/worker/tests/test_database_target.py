@@ -306,6 +306,39 @@ def test_execute_on_a_security_definer_function_is_refused(scratch_database) -> 
 
 
 @needs_worker_db
+def test_a_definer_function_in_a_schema_without_usage_is_not_refused(scratch_database) -> None:
+    with _owner(scratch_database) as conn:
+        conn.execute("reset role")  # the owner cannot create schemas; the maintenance login can
+        conn.execute("create schema ol_t_hidden")
+        try:
+            conn.execute("revoke all on schema ol_t_hidden from public")
+            conn.execute("create function ol_t_hidden.f() returns int language sql security definer as 'select 1'")
+            conn.execute("grant execute on function ol_t_hidden.f() to origenlab_worker")
+            with open_worker_db(local_test_target(worker_dsn(scratch_database))):
+                pass
+        finally:
+            conn.execute("drop schema ol_t_hidden cascade")
+
+
+@needs_worker_db
+def test_an_extension_owned_definer_function_is_skipped(scratch_database) -> None:
+    from origenlab_worker.database import _DEFINER_PROBE
+
+    with _owner(scratch_database) as conn:
+        owned = conn.execute(
+            "select n.nspname || '.' || p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace "
+            "join pg_depend d on d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e' "
+            "where p.prosecdef and has_function_privilege('origenlab_worker', p.oid, 'EXECUTE') "
+            "and n.nspname not in ('pg_catalog', 'information_schema')"
+        ).fetchall()
+    if not owned:
+        pytest.skip("this cluster has no extension-owned SECURITY DEFINER function the worker can execute")
+    with open_worker_db(local_test_target(worker_dsn(scratch_database))) as db:
+        found = {r[0] for r in db.connection.execute(_DEFINER_PROBE).fetchall()}
+    assert not found & {r[0] for r in owned}
+
+
+@needs_worker_db
 def test_a_missing_grant_and_a_missing_policy_are_refused_and_restored(scratch_database) -> None:
     with _owner(scratch_database) as conn:
         conn.execute("revoke select on comms.mailbox from origenlab_worker")
