@@ -29,7 +29,7 @@ from starlette.datastructures import FormData, UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from origenlab_api.v2.catalog.fx import FxUnavailable
-from origenlab_api.v2.catalog.keys import PARAMETER_KEYS, PRODUCT_KINDS, LabdeliveryRefused, refuse_labdelivery
+from origenlab_api.v2.catalog.keys import PARAMETER_KEYS, model_key as normalize_model_key, PRODUCT_KINDS, LabdeliveryRefused, refuse_labdelivery
 from origenlab_api.v2.catalog.reads import V2CatalogReads
 from origenlab_api.v2.catalog.redaction import redact_costs
 from origenlab_api.v2.catalog.storage import (
@@ -70,6 +70,16 @@ def product_detail(product_id: UUID, request: Request, operator: Operator) -> di
     if found is None:
         raise HTTPException(404, detail={"code": "product_not_found", "message": "product not found"})
     return redact_costs(found, operator.role)
+
+
+@catalog_read_router.get("/price-history")
+def price_history(request: Request, operator: Operator, model_key: str = Query(..., max_length=120),
+                  limit: int = Query(20, ge=1, le=100)) -> dict:
+    # Quoted sell prices are not costs: every authenticated role sees the history, unredacted.
+    key = normalize_model_key(model_key)
+    if key is None:
+        raise HTTPException(422, detail={"code": "invalid_model_key", "message": "model_key has no letter or digit"})
+    return _reads(request).price_history(key, limit)
 
 
 @catalog_read_router.get("/suppliers/{organization_id}/terms")

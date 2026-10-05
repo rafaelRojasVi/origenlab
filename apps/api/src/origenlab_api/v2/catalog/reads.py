@@ -7,6 +7,7 @@ database and a string in every payload. Cost redaction for the viewer role is th
 from __future__ import annotations
 
 import datetime as dt
+import statistics
 import uuid
 from contextlib import contextmanager
 from decimal import Decimal
@@ -67,6 +68,10 @@ def _plain(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_plain(v) for v in value]
     return value
+
+
+_MEDIAN_STATUSES = ("verified", "reviewed", "single_source")
+_MONEY_STEP = Decimal("0.0001")
 
 
 def _like_escape(key: str) -> str:
@@ -182,7 +187,73 @@ class V2CatalogReads:
                 (product_id,),
             )
             product["notes"] = self._rows(cur)
+            product["price_history"] = self._price_history(cur, product["model_key"], 20)
+            product["kit_suggestions"] = self._kit_suggestions(cur, product["model_key"], Decimal("0.30"))
         return _plain(product)
+
+    # -- quoted-price history and kits (evidence.document_line; 1b adds authored quote lines)
+
+    def price_history(self, model_key_: str, limit: int = 20) -> dict[str, Any]:
+        """What quote documents charged for a model, newest first, with the median of the last five.
+
+        Optional lines are left out. Disputed lines are listed but never enter the median, which
+        takes only single-unit lines of a trustworthy status, in the currency of the newest one.
+        """
+        with self._read() as cur:
+            return _plain(self._price_history(cur, model_key_, limit))
+
+    def kit_suggestions(self, model_key_: str, min_share: Decimal = Decimal("0.30")) -> list[dict[str, Any]]:
+        """Other models that share quote documents with this one, by share of those documents."""
+        with self._read() as cur:
+            return _plain(self._kit_suggestions(cur, model_key_, min_share))
+
+    def _price_history(self, cur: Any, key: str | None, limit: int) -> dict[str, Any]:
+        key = model_key(key)
+        if key is None:
+            return {"model_key": None, "items": [], "median_last_5": None}
+        base = (
+            "select s.payload->>'quote_date' as date, l.line_total, l.qty, l.unit_price, l.currency, "
+            "l.check_status, s.payload->>'client_type' as client_type, "
+            "s.payload->>'printed_quote_number' as document_number "
+            "from evidence.document_line l join evidence.source_record s on s.id = l.source_record_id "
+            "where l.model_key = %s and s.kind = 'quote_document' and not l.optional "
+        )
+        order = "order by s.payload->>'quote_date' desc nulls last, l.line_no desc, l.id desc "
+        cur.execute(base + order + "limit %s", (key, limit))
+        items = [{**r, "source": "documento"} for r in self._rows(cur)]
+        cur.execute(
+            base + "and l.line_total is not null and (l.qty is null or l.qty = 1) and l.check_status = any(%s) "
+            + order + "limit 5", (key, list(_MEDIAN_STATUSES)),
+        )
+        recent = self._rows(cur)
+        median = None
+        if recent:
+            totals = [r["line_total"] for r in recent if r["currency"] == recent[0]["currency"]]
+            median = str(Decimal(statistics.median(totals)).quantize(_MONEY_STEP))
+        return {"model_key": key, "items": items, "median_last_5": median}
+
+    def _kit_suggestions(self, cur: Any, key: str | None, min_share: Decimal) -> list[dict[str, Any]]:
+        key = model_key(key)
+        if key is None:
+            return []
+        cur.execute(
+            "with docs as (select distinct l.source_record_id from evidence.document_line l "
+            "  join evidence.source_record s on s.id = l.source_record_id "
+            "  where l.model_key = %s and s.kind = 'quote_document') "
+            "select (select count(*) from docs) as total, l.model_key, min(l.brand) as brand, "
+            "count(distinct l.source_record_id) as n "
+            "from evidence.document_line l join docs d on d.source_record_id = l.source_record_id "
+            "where l.model_key is not null and l.model_key <> %s group by l.model_key",
+            (key, key),
+        )
+        out = []
+        for r in self._rows(cur):
+            share = Decimal(r["n"]) / Decimal(r["total"])
+            if share >= min_share:
+                out.append({"model_key": r["model_key"], "brand": r["brand"],
+                            "share": share.quantize(_MONEY_STEP)})
+        out.sort(key=lambda e: (-e["share"], e["model_key"]))
+        return out[:10]
 
     def product_exists(self, product_id: uuid.UUID) -> bool:
         with self._read() as cur:

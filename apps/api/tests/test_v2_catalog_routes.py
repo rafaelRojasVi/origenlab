@@ -42,6 +42,11 @@ class _FakeReads:
     def supplier_terms(self, organization_id):
         return None
 
+    def price_history(self, model_key, limit=20):
+        self.calls.append(("history", (model_key, limit)))
+        return {"model_key": model_key, "items": [{"line_total": "1100.0000", "unit_price": "1100.0000"}],
+                "median_last_5": "1100.0000"}
+
     def parameters(self):
         return {"current": {}, "history": []}
 
@@ -335,3 +340,39 @@ def test_the_review_guard_refusal_is_line_not_disputed_not_500() -> None:
     assert (exc.value.status_code, exc.value.code) == (409, "line_not_disputed")
     with pytest.raises(psycopg.errors.CheckViolation):  # unmapped: a defect, not an answer
         _execute_mapped(_Cur(), "update …", (), unique={})
+
+
+def test_price_history_is_visible_to_every_role_unredacted() -> None:
+    for role in ("viewer", "sales", "admin"):
+        r = _client(role).get("/v2/catalog/price-history?model_key=SONIC100", headers=HEADERS)
+        assert r.status_code == 200
+        assert r.json()["items"] == [{"line_total": "1100.0000", "unit_price": "1100.0000"}]
+
+
+def test_price_history_normalizes_the_key_and_defaults_the_limit() -> None:
+    client = _client()
+    for raw in ("sonic-100", "SONIC 100", "sonic_100"):
+        assert client.get("/v2/catalog/price-history", params={"model_key": raw}, headers=HEADERS).json()["model_key"] == "SONIC100"
+    assert client.app.state.catalog_reads.calls[-1] == ("history", ("SONIC100", 20))
+
+
+@pytest.mark.parametrize("query", ["model_key=", "model_key=%20-_./%20", "", "model_key=X&limit=0",
+                                   "model_key=X&limit=101"])
+def test_price_history_bad_input_is_422_in_the_production_envelope(query) -> None:
+    r = _client().get(f"/v2/catalog/price-history?{query}", headers=HEADERS)
+    assert r.status_code == 422 and r.json()["error"]["code"] == "validation_error"
+
+
+def test_price_history_blank_key_names_its_code() -> None:
+    r = _client().get("/v2/catalog/price-history?model_key=%20-_./", headers=HEADERS)
+    assert r.json()["error"]["details"]["code"] == "invalid_model_key"
+
+
+def test_price_history_limit_bounds_are_accepted() -> None:
+    client = _client()
+    for limit in (1, 100):
+        assert client.get(f"/v2/catalog/price-history?model_key=X&limit={limit}", headers=HEADERS).status_code == 200
+
+
+def test_price_history_unauthenticated_is_refused() -> None:
+    assert _client().get("/v2/catalog/price-history?model_key=X").status_code == 401

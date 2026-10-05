@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from decimal import Decimal
 
 import psycopg
 import pytest
@@ -169,3 +170,95 @@ def test_total_is_correct_when_offset_is_past_the_end(disposable_database):
         _seed_product(dsn, model=f"OFF-{n}", name="o", name_es="Fuera de rango", manufacturer=mfr)
     out = _reads(dsn).search_products("fuera de rango", None, None, 2, 5)
     assert out["items"] == [] and out["total"] == 3
+
+
+# ------------------------------------------------------------------ price history and kits
+
+def _quote(dsn: str, quote_date: str, number: str, client_type: str = "universidad") -> uuid.UUID:
+    return _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload) values ('quote_document', %s, "
+                       "jsonb_build_object('quote_date', %s::text, 'printed_quote_number', %s::text, "
+                       "'client_type', %s::text)) returning id",
+                  (f"quote_document:{uuid.uuid4().hex}", quote_date, number, client_type))[0][0]
+
+
+def _qline(dsn, source, line_no, model, total, *, qty="1", status="verified", optional=False, brand="ACME",
+           currency="CLP"):
+    _owner(dsn, "insert into evidence.document_line (source_record_id, line_no, brand, model, model_key, qty, "
+                "unit_price, line_total, currency, optional, extractor, check_status) values "
+                "(%s, %s, %s, %s, upper(regexp_replace(%s::text, '[\\s\\-_./]', '', 'g')), %s, %s, %s, %s, %s, 'test', %s)",
+           (source, line_no, brand, model, model, qty, total, total, currency, optional, status))
+
+
+def _history_fixture(dsn: str, sonic: str = "SONIC-100", probe: str = "PROBE-2"):
+    """`sonic` quoted at 1000/1100/1200 on three dates; `probe` beside it in two of the three."""
+    q1, q2, q3 = (_quote(dsn, d, n) for d, n in (("2026-01-10", "T-A"), ("2026-02-10", "T-B"), ("2026-03-10", "T-C")))
+    _qline(dsn, q1, 1, sonic, "1000.0000")
+    _qline(dsn, q1, 2, probe, "50.0000", brand="PROBA")
+    _qline(dsn, q2, 1, sonic, "1100.0000")
+    _qline(dsn, q2, 2, probe, "50.0000", brand="PROBA")
+    _qline(dsn, q2, 3, probe, "50.0000", brand="PROBA")  # twice in one document: counts once
+    _qline(dsn, q3, 1, sonic, "1200.0000")
+    _qline(dsn, q3, 2, None, "10.0000")  # no model: never a suggestion
+    return q1, q2, q3
+
+
+@needs_db
+def test_price_history_order_median_and_exclusions(disposable_database):
+    dsn = disposable_database
+    q1, q2, q3 = _history_fixture(dsn, "ORDER-100", "ORDPROBE-2")
+    _qline(dsn, q3, 5, "ORDER-100", "9999.0000", optional=True)  # optional: not listed
+    _qline(dsn, q3, 6, "ORDER-100", "5000.0000", status="disputed")  # listed, never in the median
+    _qline(dsn, q1, 7, "ORDER-100", "4000.0000", qty="4")  # not a single unit: listed, not in the median
+    history = _reads(dsn).price_history("ORDER100")
+    assert history["model_key"] == "ORDER100"
+    assert history["median_last_5"] == "1100.0000"
+    assert [(i["document_number"], i["line_total"], i["check_status"]) for i in history["items"]] == [
+        ("T-C", "5000.0000", "disputed"), ("T-C", "1200.0000", "verified"),
+        ("T-B", "1100.0000", "verified"), ("T-A", "4000.0000", "verified"), ("T-A", "1000.0000", "verified")]
+    first = history["items"][0]
+    assert first["date"] == "2026-03-10" and first["source"] == "documento" and first["currency"] == "CLP"
+    assert first["client_type"] == "universidad" and first["qty"] == "1.000000" and first["unit_price"] == "5000.0000"
+    assert history["items"][3]["qty"] == "4.000000"
+    assert "9999.0000" not in {i["line_total"] for i in history["items"]}
+
+
+@needs_db
+def test_price_history_limit_and_median_use_the_last_five(disposable_database):
+    dsn = disposable_database
+    for n in range(1, 8):
+        _qline(dsn, _quote(dsn, f"2026-04-{n:02d}", f"L-{n}"), 1, "LIMIT-1", f"{n * 100}.0000")
+    history = _reads(dsn).price_history("limit 1", limit=2)
+    assert [i["line_total"] for i in history["items"]] == ["700.0000", "600.0000"]
+    assert history["median_last_5"] == "500.0000"  # 300..700, not all seven
+    assert _reads(dsn).price_history("NO-SUCH-MODEL") == {"model_key": "NOSUCHMODEL", "items": [], "median_last_5": None}
+
+
+@needs_db
+def test_price_history_median_ignores_disputed_and_other_currencies(disposable_database):
+    dsn = disposable_database
+    _qline(dsn, _quote(dsn, "2026-05-01", "M-1"), 1, "MEDIAN-1", "10.0000", currency="USD")
+    _qline(dsn, _quote(dsn, "2026-05-02", "M-2"), 1, "MEDIAN-1", "200.0000")
+    _qline(dsn, _quote(dsn, "2026-05-03", "M-3"), 1, "MEDIAN-1", "400.0000", status="single_source")
+    _qline(dsn, _quote(dsn, "2026-05-04", "M-4"), 1, "MEDIAN-1", "999999.0000", status="disputed")
+    history = _reads(dsn).price_history("MEDIAN-1")
+    assert len(history["items"]) == 4 and history["median_last_5"] == "300.0000"  # mean of 200 and 400, CLP only
+
+
+@needs_db
+def test_kit_suggestions_count_documents_not_lines(disposable_database):
+    dsn = disposable_database
+    _history_fixture(dsn, "KITSON-100", "KITPROBE-2")
+    [kit] = _reads(dsn).kit_suggestions("kitson-100")
+    assert kit == {"model_key": "KITPROBE2", "brand": "PROBA", "share": "0.6667"}
+    assert _reads(dsn).kit_suggestions("KITSON-100", min_share=Decimal("0.70")) == []
+    assert _reads(dsn).kit_suggestions("UNQUOTED-9") == []
+
+
+@needs_db
+def test_detail_carries_history_and_kits(disposable_database):
+    dsn = disposable_database
+    _history_fixture(dsn, "DETSON-100", "DETPROBE-2")
+    _, prod = _seed_product(dsn, model="DETSON-100", name="Ultrasonic processor", name_es="Sonicador ultrasónico")
+    detail = _reads(dsn).product_detail(prod)
+    assert detail["price_history"]["median_last_5"] == "1100.0000"
+    assert detail["kit_suggestions"][0]["model_key"] == "DETPROBE2"
