@@ -1468,8 +1468,15 @@ class CrmWorkspaceRepository:
                 """
                 select o.id::text, o.name, o.legal_name, o.kind, o.status,
                        o.archived_at::text, o.archive_reason, o.confirmation,
-                       o.version, o.merged_into_organization_id::text, o.created_at::text
-                  from crm.organization o where o.id = %s::uuid
+                       o.version, o.merged_into_organization_id::text, o.created_at::text,
+                       o.confirmed_by_operator_id::text as confirmed_by_operator_id,
+                       cop.display_name as confirmed_by_name,
+                       (select max(e.recorded_at)::text from crm.domain_event e
+                         where e.aggregate_kind = 'organization' and e.aggregate_id = o.id
+                           and e.event_type = 'organization.confirmed') as confirmed_at
+                  from crm.organization o
+                  left join platform.operator cop on cop.id = o.confirmed_by_operator_id
+                 where o.id = %s::uuid
                 """,
                 (org_id,),
             )

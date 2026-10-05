@@ -1237,6 +1237,78 @@ def _handle_update_organization(
     return {"ok": True, "organization_id": org_id, "version": expected_version + 1}
 
 
+def _handle_confirm_organization_record(
+    self: "V2CrmAuthoringRepository",
+    cur: Any,
+    operator: OperatorIdentity,
+    fields: dict[str, Any],
+    receipt_id: str,
+) -> dict[str, Any]:
+    """Confirm an institution as a whole record — the card's «Confirmar institución».
+
+    Not the evidence-bound `confirm-organization`, which decides that one asserted *name* is an
+    organization and needs that assertion. This needs only the record: an operator looked at it
+    and says it is right. An institution already confirmed answers the same way with
+    `already_confirmed: true` — no event, no version bump — and that is checked before the
+    version, so the second of two operators clicking gets the outcome they wanted, not a conflict.
+    """
+    org_id = fields["organization_id"]
+    expected_version = fields["expected_version"]
+    note_text = fields.get("note")
+
+    cur.execute(
+        """
+        select id::text as id, status, version, confirmation,
+               confirmed_by_operator_id::text as confirmed_by_operator_id,
+               merged_into_organization_id::text as merged_into_organization_id
+          from crm.organization
+         where id = %s::uuid
+           for update
+        """,
+        (org_id,),
+    )
+    org = _one(cur)
+    if org is None:
+        raise CommandRefused(404, "organization_not_found", "no such organization")
+    if org["merged_into_organization_id"] is not None:
+        raise CommandRefused(409, "organization_merged", "that organization has been merged into another")
+    if org["status"] == "archived":
+        raise CommandRefused(409, "archived_subject", "that organization is archived")
+    if org["confirmation"] == "confirmed":
+        return {
+            "ok": True, "organization_id": org_id, "version": org["version"],
+            "already_confirmed": True, "confirmed_by_operator_id": org["confirmed_by_operator_id"],
+        }
+    if org["version"] != expected_version:
+        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+
+    cur.execute(
+        """
+        update crm.organization
+           set confirmation = 'confirmed', confirmed_by_operator_id = %s::uuid,
+               version = version + 1, updated_at = now()
+         where id = %s::uuid and version = %s
+        """,
+        (operator.operator_id, org_id, expected_version),
+    )
+    if cur.rowcount == 0:
+        raise CommandRefused(409, "stale_version", "concurrent modification")
+
+    self._append_event(
+        cur,
+        aggregate_kind="organization",
+        aggregate_id=org_id,
+        event_type="organization.confirmed",
+        payload={"confirmed_from": "crm_authoring", "note": note_text},
+        operator=operator,
+        receipt_id=receipt_id,
+    )
+    return {
+        "ok": True, "organization_id": org_id, "version": expected_version + 1,
+        "already_confirmed": False, "confirmed_by_operator_id": operator.operator_id,
+    }
+
+
 def _handle_archive_organization(
     self: "V2CrmAuthoringRepository",
     cur: Any,
@@ -2292,7 +2364,7 @@ def _handle_archive_note(
 # ─────────────────────────────────────────────────────────────────────────── repository ──
 
 class V2CrmAuthoringRepository(CommandTransaction):
-    """28 CRM authoring commands, each in one transaction."""
+    """29 CRM authoring commands, each in one transaction."""
 
     _restore_domain_row = _restore_domain_row
 
@@ -2311,6 +2383,7 @@ class V2CrmAuthoringRepository(CommandTransaction):
         "update-organization": _handle_update_organization,
         "archive-organization": _handle_archive_organization,
         "restore-organization": _handle_restore_organization,
+        "confirm-organization-record": _handle_confirm_organization_record,
         "add-organization-identifier": _handle_add_organization_identifier,
         "remove-organization-identifier": _handle_remove_organization_identifier,
         "add-organization-domain": _handle_add_organization_domain,

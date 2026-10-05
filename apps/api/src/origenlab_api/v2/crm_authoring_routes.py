@@ -1,7 +1,7 @@
 """CRM freeform authoring command boundary — `POST /v2/commands/<crm-command>`.
 
 Mounted only when `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true` **and** a V2 DSN is set
-(default off).  All 28 routes require:
+(default off).  All 29 routes require:
 - An active operator with role `sales` or `admin` (viewer → 403 `role_may_not_decide`).
 - An `Idempotency-Key` header (absent → 400).
 - A JSON body whose shape is enforced by Pydantic with `extra="forbid"`.
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -200,6 +201,16 @@ class UpdateOrganizationBody(_Base):
     name: Annotated[str | None, Field(default=None, min_length=1, max_length=500)] = None
     legal_name: Annotated[str | None, Field(default=None, min_length=1, max_length=500)] = None
     kind: Annotated[str | None, Field(default=None, min_length=1, max_length=40)] = None
+
+
+class ConfirmOrganizationRecordBody(BaseModel):
+    """confirm-organization-record: the click is the decision, so `note` is optional."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    organization_id: UUID
+    expected_version: int
+    note: Annotated[str | None, _NOTE_OPT] = None
 
 
 class ArchiveOrganizationBody(_Base):
@@ -473,6 +484,19 @@ def update_organization(
 ) -> dict[str, Any]:
     return _run(command_name="update-organization", body=body,
                 fields=body.model_dump(), repo=repo,
+                operator=operator, idempotency_key=idempotency_key)
+
+
+@crm_authoring_router.post("/confirm-organization-record")
+def confirm_organization_record(
+    body: ConfirmOrganizationRecordBody,
+    operator: Deciding,
+    repo: CrmAuthoringRepo,
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """«Confirmar institución»: machine_proposed → confirmed. Not the evidence-bound confirm-organization."""
+    return _run(command_name="confirm-organization-record", body=body,
+                fields=body.model_dump(mode="json"), repo=repo,
                 operator=operator, idempotency_key=idempotency_key)
 
 
