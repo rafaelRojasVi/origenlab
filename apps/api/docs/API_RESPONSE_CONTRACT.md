@@ -227,6 +227,10 @@ Runbook: [`PRODUCTION_AUTH.md`](PRODUCTION_AUTH.md).
 | `backend_unavailable`   | 503  | Postgres read-model connection or driver failure (mirror unreachable). Response is sanitized: no DSNs, passwords, SQL, or tracebacks in `message` or `details`. |
 | `mirror_not_configured` | 503  | Mirror route without `ORIGENLAB_POSTGRES_URL`.                                                                                                                  |
 | `internal_error`        | 500  | Unexpected failure (no traceback in body).                                                                                                                      |
+| `conflict`              | 409  | A V2 command refused (`CommandRefused`). Its specific code is in `details.code` (`stale_version`, `idempotency_key_reused`, …) — branch on that one. Refusals with another status carry that status's generic code (`not_found`, `forbidden`, `validation_error`) the same way. |
+| `record_busy`           | 409  | A V2 command waited past `lock_timeout` (`ORIGENLAB_V2_LOCK_TIMEOUT_MS`, 3 s) for a row another transaction holds. Rolled back, receipt included; retry.        |
+| `duplicate`             | 409  | A V2 command hit a unique constraint it did not check for itself (a lost race). Rolled back. `details.constraint` names the constraint, never the values.       |
+| `service_busy`          | 503  | A V2 command passed `statement_timeout`, or no pooled V2 connection was free (any route). Rolled back; `Retry-After: 5`.                                         |
 
 **Examples (shipped):**
 
@@ -236,6 +240,7 @@ Runbook: [`PRODUCTION_AUTH.md`](PRODUCTION_AUTH.md).
 - `GET /mirror/...` 404 → **404**, `error.code`: `not_found`.
 - Unknown path → **404**, `error.code`: `not_found`.
 - Host allowlist reject → **403**, `error.code`: `forbidden`.
+- V2 command on a stale version → **409**, `error.code`: `conflict`, `error.details.code`: `stale_version`. A bare `FastAPI()` app (no handlers, as in some unit tests) answers `{"detail": {"code", "message"}}` instead; the dashboard parses both (`apps/dashboard/src/crm/commandRefusal.ts`).
 
 ### Safety rules for errors
 
@@ -358,6 +363,7 @@ Raw absolute paths (`/home/…`, `/mnt/…`, parent directories) must **not** ap
 
 | Date    | Change                                                                                                                                                                                                                                                             |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10 | V2 commands: `lock_timeout` (`ORIGENLAB_V2_LOCK_TIMEOUT_MS`, default 3000) beside the statement timeout; SQLSTATE 55P03 → **409** `record_busy`, 57014 → **503** `service_busy` + `Retry-After: 5`, unhandled 23505 → **409** `duplicate` (`details.constraint`); `PoolTimeout` → **503** `service_busy` on any route. Previously all **500** `internal_error`. |
 | 2026-08 | **PHASE W1 correction to the row below:** the `commercial.equipment_opportunity*` writer/read model is no longer scheduled — direct Postgres publication is now legacy/manual-backfill opt-in (`--publish-read-model`, default `false`); the tracked cron wrapper explicitly disables it. Schema/views remain in place, frozen for an observation period. See [`../../email-pipeline/docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md`](../../email-pipeline/docs/architecture/EQUIPMENT_READ_MODEL_BOUNDARY.md).                                              |
 | 2026-08 | `GET /opportunities/equipment` retired. The dashboard's actionable-opportunity summary now sources from `GET /operator/procurement/status` (W1). The underlying `commercial.equipment_opportunity*` writer/read model is unaffected and remains scheduled.        |
 | 2026-07 | `GET /operator/automation-status`: additive `ndr_pending_review` (pending NDR review counts/paths/status); nested paths basename-redacted like other automation sections.                                                                                          |

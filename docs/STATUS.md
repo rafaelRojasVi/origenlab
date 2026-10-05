@@ -27,7 +27,7 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
+Last verified: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed; §2.7.49 added 2026-10-05 the same way), against `origin/main` (`7c6a7fef`, the merge of #620) for the
 hosting and GitHub facts of §2.4, §2.7.40, §2.8, §3.1 and §3.3 — read from the GitHub API, the
 public DNS and HTTP edge, the repository, and (later the same day) the Render API, the FastAPI
 Cloud CLI and the Cloudflare DNS table, all read-only, with nothing deployed, provisioned,
@@ -1831,6 +1831,16 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Schema | none: `organization.confirmed` and `contact_point.updated` were already in `domain_event_type_check` |
 | Evidence | after merging `main` (#633): `apps/api/scripts/validate.sh` with disposable-cluster DSNs exported **3418 passed**, 120 skipped, 0 failed (skips: V1 Alembic-head `ORIGENLAB_TEST_POSTGRES_URL` tests and the TLS-server tests; no V2 DSN skip); dashboard `npm run validate` **536 passed** (44 files) + build; proxy `npm run validate` **345 passed** (5 files); public-repo hygiene passed; no customer name in the branch diff; gitleaks not installed locally (CI runs it) |
 | Not done | Worker not deployed (the two new proxy paths); the suggestions file not uploaded as a Render secret file and `ORIGENLAB_V2_ORG_SUGGESTIONS_FILE` unset, API not redeployed; the owner's manual check (confirm two institutions, apply suggestions to two, create two people) not run |
+
+### 2.7.49 Command conflicts in Spanish, and a busy database refuses instead of a 500, 2026-10-05 — built, not deployed
+
+| | |
+|---|---|
+| Trigger | read-only audit 2026-10-05: production registers `errors.py`, which answers a refused command as `{"error": {"code": "conflict", "details": {"code": "stale_version", …}}}`, while every dashboard `refusalOf` parsed only the bare-FastAPI `{"detail": …}` its tests mocked — a 409 showed `http_409: {raw JSON}`. A command waiting on a row lock until `statement_timeout` (15 s), an exhausted V2 pool, and a unique race no handler checked (contact point `(kind, value_norm)`) all answered 500 `internal_error` |
+| API | `CommandTransaction._write` sets `lock_timeout` (`ORIGENLAB_V2_LOCK_TIMEOUT_MS`, default 3000, wired into every command repository) beside the statement timeout and, after the rollback, maps SQLSTATE 55P03 → 409 `record_busy`, 57014 → 503 `service_busy` with `Retry-After: 5`, 23505 → 409 `duplicate` with `details.constraint` (the name only), `PoolTimeout` → 503 `service_busy` (`errors.DatabaseRefusal`). `PoolTimeout` on a read answers the same. Refusals a handler already gives a unique violation (`identifier_taken`, `already_blocked`) are unchanged; everything else stays 500. The audience freeze sets its isolation level through the base transaction instead of its own `_write`. [`apps/api/docs/API_RESPONSE_CONTRACT.md`](../apps/api/docs/API_RESPONSE_CONTRACT.md) lists the codes |
+| Dashboard | `crm/commandRefusal.ts`: one parser for both envelopes and the Worker's, one Spanish table, a fallback that keeps the code and never shows a body. A stale version offers «Cargar versión actual» (`CommandErrorNotice`, `ConfirmDialog.onReload`): the record is read again while the form stays open, typed values kept, next save on the new version — every CRM authoring form and dialog and the campaign hold forms; the campaign editor, audience freeze and planning panel cannot re-read and say how to recover. `crm/commandKey.ts`: a form keeps its Idempotency-Key only to resend the identical body after no answer or a 5xx, and takes a new one after a success or any 4xx; a new campaign draft keeps one create key until the create succeeds |
+| Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs exported: **3432 passed**, 120 skipped, 0 failed; 14 new API tests, three of them against PostgreSQL through `create_app()` (a held row lock → `record_busy` and the same key then succeeds; `statement_timeout` → `service_busy`; a real contact-point unique race → `duplicate`). Dashboard `npm run validate`: **578 passed** (47 files) + build. Proxy `npm run validate`: **345 passed**, untouched |
+| Not done | nothing deployed (API, dashboard); `ORIGENLAB_V2_LOCK_TIMEOUT_MS` unset on Render (the default applies). Read errors (`ResourceGate`, opening a campaign) still show the raw response text |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 
