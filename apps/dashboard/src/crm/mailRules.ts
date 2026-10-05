@@ -1,8 +1,9 @@
 /**
  * Email → cases rules (spec 2026-10-05): the dry run, apply and undo. Admin only upstream.
  *
- * The browser never sends an action: «Aplicar» asks the API to plan again and apply what the
- * rules say now. Each POST carries a fresh `Idempotency-Key`; the API keys each action's receipt
+ * «Aplicar» sends the previewed `(evidence_id, rule_id)` pairs, ten at a time; the API re-plans and
+ * applies a pair only if the rules still say the same thing, so nothing the preview did not show
+ * is applied. Each POST carries a fresh `Idempotency-Key`; the API keys each action's receipt
  * by (email, rule), so a second press applies nothing new.
  */
 import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../api/operatorClient";
@@ -62,12 +63,18 @@ export interface MailRulesPreview {
   applied: AppliedMailAction[];
 }
 
-export interface ApplyMailRulesResult {
-  applied: { evidence_id: string; rule_id: string }[];
-  refused: { evidence_id: string; rule_id: string; code: string; message: string }[];
-  proposals_left_for_review: number;
-  no_rule_applies: number;
+export interface MailRulePair {
+  evidence_id: string;
+  rule_id: string;
 }
+
+export interface ApplyMailRulesResult {
+  applied: MailRulePair[];
+  refused: (MailRulePair & { code: string; message: string })[];
+}
+
+/** The API applies at most this many pairs per call; the page drives the batches. */
+export const APPLY_BATCH = 10;
 
 /** What each rule does, in the operator's words. */
 export const RULE_LABEL: Record<string, string> = {
@@ -104,7 +111,9 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const applyMailRules = () => postJson<ApplyMailRulesResult>(MAIL_RULES_PATHS.apply, {});
+/** One batch of previewed pairs. The API re-plans and applies only pairs it still plans the same. */
+export const applyMailRules = (actions: MailRulePair[]) =>
+  postJson<ApplyMailRulesResult>(MAIL_RULES_PATHS.apply, { actions });
 
 export const undoMailRuleAction = (receiptId: string, note: string) =>
   postJson<{ undoes_receipt_id: string }>(MAIL_RULES_PATHS.undo, { receipt_id: receiptId, note });

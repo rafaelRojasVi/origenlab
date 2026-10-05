@@ -1,6 +1,7 @@
 import { useId, useMemo, useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import {
+  APPLY_BATCH,
   RULE_LABEL,
   applyMailRules,
   fetchMailRulesPreview,
@@ -44,19 +45,30 @@ function AdminPanel() {
   const [showPlan, setShowPlan] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ApplyMailRulesResult | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const apply = async () => {
+  /** The previewed automatic pairs, ten per request, in order; stops at the first failed request. */
+  const apply = async (actions: PlannedMailAction[]) => {
+    const pairs = actions.filter((a) => a.mode === "auto").map((a) => ({ evidence_id: a.evidence_id, rule_id: a.rule_id }));
     setBusy(true);
     setError(null);
-    setResult(null);
+    const total: ApplyMailRulesResult = { applied: [], refused: [] };
+    setResult(total);
+    setProgress({ done: 0, total: pairs.length });
     try {
-      setResult(await applyMailRules());
-      reload();
+      for (let i = 0; i < pairs.length; i += APPLY_BATCH) {
+        const batch = await applyMailRules(pairs.slice(i, i + APPLY_BATCH));
+        total.applied.push(...batch.applied);
+        total.refused.push(...batch.refused);
+        setResult({ applied: [...total.applied], refused: [...total.refused] });
+        setProgress({ done: Math.min(i + APPLY_BATCH, pairs.length), total: pairs.length });
+      }
     } catch (err) {
       setError(refusalMessage(err, "No se pudieron aplicar las acciones."));
     } finally {
       setBusy(false);
+      reload();
     }
   };
 
@@ -86,7 +98,7 @@ function AdminPanel() {
                 >
                   Vista previa
                 </button>
-                <button type="button" className={PRIMARY} disabled={!p.commands_enabled || busy || autoCount === 0} onClick={() => void apply()}>
+                <button type="button" className={PRIMARY} disabled={!p.commands_enabled || busy || autoCount === 0} onClick={() => void apply(p.actions)}>
                   Aplicar{autoCount ? ` (${autoCount})` : ""}
                 </button>
               </div>
@@ -96,6 +108,12 @@ function AdminPanel() {
               {error ? (
                 <p role="alert" className="text-xs text-bad">
                   {error}
+                </p>
+              ) : null}
+              {progress ? (
+                <p className="text-[11px] tabular-nums text-ink-muted">
+                  {busy ? "Aplicando… " : ""}
+                  {progress.done} de {progress.total} procesadas
                 </p>
               ) : null}
               {result ? <ApplyResult result={result} /> : null}
@@ -114,8 +132,7 @@ function ApplyResult({ result }: { result: ApplyMailRulesResult }) {
   return (
     <div role="status" className="space-y-1 text-xs">
       <p className="text-good">
-        {n} aplicada{n === 1 ? "" : "s"} · {result.refused.length} rechazada{result.refused.length === 1 ? "" : "s"} ·{" "}
-        {result.proposals_left_for_review} propuesta{result.proposals_left_for_review === 1 ? "" : "s"} para Revisión
+        {n} aplicada{n === 1 ? "" : "s"} · {result.refused.length} rechazada{result.refused.length === 1 ? "" : "s"}
       </p>
       {result.refused.map((r) => (
         <p key={`${r.evidence_id}-${r.rule_id}`} className="text-bad">

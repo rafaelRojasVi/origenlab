@@ -121,9 +121,7 @@ describe("Revisión → Acciones automáticas del correo", () => {
       "/v2/workspace/mail-rules/preview": PREVIEW,
       "/v2/commands/apply-mail-rules": {
         applied: [{ evidence_id: "e-1", rule_id: "R3" }],
-        refused: [{ evidence_id: "e-4", rule_id: "R1", code: "case_moved", message: "el caso cambió" }],
-        proposals_left_for_review: 1,
-        no_rule_applies: 1,
+        refused: [{ evidence_id: "e-4", rule_id: "R1", code: "plan_changed", message: "el caso cambió" }],
       },
     });
     render(withRole("admin", <MailRulesPanel />));
@@ -133,7 +131,8 @@ describe("Revisión → Acciones automáticas del correo", () => {
     const post = calls.find((c) => c.method === "POST");
     expect(post?.path).toBe("/v2/commands/apply-mail-rules");
     expect(post?.key).toBeTruthy();
-    expect(post?.body).toEqual({});
+    // Exactly the previewed automatic pairs: never an email the preview did not show.
+    expect(post?.body).toEqual({ actions: [{ evidence_id: "e-1", rule_id: "R3" }] });
   });
 
   it("undoes one applied action with a note, and never offers to undo twice", async () => {
@@ -154,6 +153,20 @@ describe("Revisión → Acciones automáticas del correo", () => {
     const undo = calls.find((c) => c.path === "/v2/commands/undo-mail-rule-action");
     expect(undo?.body).toEqual({ receipt_id: "00000000-0000-4000-8000-0000000000aa", note: "no era de este caso" });
     expect(undo?.key).toBeTruthy();
+  });
+
+  it("applies in batches of ten and shows the progress", async () => {
+    const many = Array.from({ length: 23 }, (_, i) => ({ ...PREVIEW.actions[0], evidence_id: `e-${i}` }));
+    const calls = respond({
+      "/v2/workspace/mail-rules/preview": { ...PREVIEW, actions: many },
+      "/v2/commands/apply-mail-rules": { applied: [{ evidence_id: "x", rule_id: "R3" }], refused: [] },
+    });
+    render(withRole("admin", <MailRulesPanel />));
+    fireEvent.click(await screen.findByRole("button", { name: /Aplicar/ }));
+    expect(await screen.findByText(/23 de 23 procesadas/)).toBeInTheDocument();
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts.map((c) => (c.body as { actions: unknown[] }).actions.length)).toEqual([10, 10, 3]);
+    expect(new Set(posts.map((c) => c.key)).size).toBe(3);
   });
 
   it("says so when the commands are not enabled", async () => {
