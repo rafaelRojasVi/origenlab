@@ -252,10 +252,17 @@ class _RetryConn:
             cursor.rows = [(self.name, query)]
 
     def commit(self) -> None:
+        self._refuse_if_closed()
         self.commits += 1
 
     def rollback(self) -> None:
-        pass
+        self._refuse_if_closed()
+
+    def _refuse_if_closed(self) -> None:
+        import psycopg
+
+        if self.closed:  # as psycopg does: a closed connection has no transaction to end
+            raise psycopg.OperationalError("the connection is closed")
 
     def close(self) -> None:
         self.closed = True
@@ -271,8 +278,12 @@ class _FakeInnerPool:
     def __init__(self, conns: list[_RetryConn]) -> None:
         self.ready = list(conns)
         self.returned: list[_RetryConn] = []
+        #: Raised by `getconn` once `ready` is empty: an outage's PoolTimeout.
+        self.exhausted: Exception | None = None
 
     def getconn(self) -> _RetryConn:
+        if not self.ready and self.exhausted is not None:
+            raise self.exhausted
         return self.ready.pop(0)
 
     def putconn(self, conn: _RetryConn) -> None:
@@ -448,6 +459,58 @@ def test_a_failed_replacement_returns_nothing_twice() -> None:
             inner.getconn = outage  # type: ignore[method-assign]
             conn.cursor().execute("select 1")
     assert inner.returned == [dead]
+
+
+def _read_final(session: Any) -> None:
+    session.final("select 1")
+
+
+def _read_batch(session: Any) -> None:
+    session.batch([("select 1", None), ("select 2", None)])
+
+
+def _read_cursor(session: Any) -> None:
+    with session.cursor() as cur:
+        cur.execute("select 1")
+
+
+@pytest.mark.parametrize("read", [_read_final, _read_batch, _read_cursor], ids=["final", "batch", "cursor"])
+def test_a_read_whose_replacement_checkout_fails_raises_that_failure_unchanged(read) -> None:
+    """The retry returned the dead connection and the pool had no other (an outage). The read
+    raises that PoolTimeout itself: closing the session on the way out must not replace it with
+    an error about the connection the checkout no longer holds. The dead one went back once."""
+    import psycopg_pool
+
+    from origenlab_api.v2.read_transaction import read_transaction
+
+    dead = _RetryConn("dead", dead=True)
+    pool, inner = _retry_pool(dead)
+    inner.exhausted = outage = psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+    with pytest.raises(psycopg_pool.PoolTimeout) as raised:
+        with read_transaction(pool.connect, DSN, 5000) as session:
+            read(session)
+    assert raised.value is outage
+    assert inner.returned == [dead]
+
+
+def test_a_command_rolling_back_after_a_failed_replacement_raises_the_original_failure() -> None:
+    """Command code rolls back in its `except` and re-raises. After a retry that could not get a
+    fresh connection there is nothing to roll back — the transaction died with the dead
+    connection, which is the pool's again — and that rollback must not replace the PoolTimeout."""
+    import psycopg_pool
+
+    dead = _RetryConn("dead", dead=True)
+    pool, inner = _retry_pool(dead)
+    inner.exhausted = outage = psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+    with pytest.raises(psycopg_pool.PoolTimeout) as raised:
+        with pool.connect(DSN) as conn:
+            try:
+                conn.execute("insert into t values (1)")
+            except Exception:
+                conn.rollback()
+                raise
+    assert raised.value is outage
+    assert inner.returned == [dead], "returned once, by the retry; never again by the checkout"
 
 
 def test_reaching_the_raw_connection_through_a_cursor_ends_the_retry() -> None:

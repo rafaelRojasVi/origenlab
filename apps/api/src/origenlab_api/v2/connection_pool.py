@@ -207,14 +207,14 @@ class V2ConnectionPool:
             try:
                 yield held
             except BaseException:
-                if held.raw is not None:
+                if not held.released:
                     _finish(held.raw, failed=True)
                 raise
-            if held.raw is not None:
+            if not held.released:
                 _finish(held.raw, failed=False)
         finally:
-            # None: a retry already returned the dead connection and could not get another.
-            if held.raw is not None:
+            # Released: a retry already returned the dead connection and could not get another.
+            if not held.released:
                 self._putconn(held.raw)
 
     def _getconn(self) -> Any:
@@ -350,7 +350,7 @@ class _CheckedOutConnection:
                           "fileno"})
 
     def __init__(self, pool: V2ConnectionPool, conn: Any) -> None:
-        self.__dict__.update(_pool=pool, _conn=conn, _journal=[], _pipelines=0)
+        self.__dict__.update(_pool=pool, _conn=conn, _journal=[], _pipelines=0, _released=False)
 
     # -- plumbing
 
@@ -358,6 +358,17 @@ class _CheckedOutConnection:
     def raw(self) -> Any:
         """The psycopg connection currently held."""
         return self._conn
+
+    @property
+    def released(self) -> bool:
+        """True once a retry gave the dead connection back to the pool and got no other.
+
+        The dead connection stays held, closed, so that code on the way out (a session's
+        ``close``, a command's ``rollback``) meets a closed connection rather than none and the
+        error that ended the work surfaces unchanged. The checkout must not finish or return it
+        a second time.
+        """
+        return self._released
 
     def __getattr__(self, name: str) -> Any:
         value = getattr(self._conn, name)
@@ -392,12 +403,12 @@ class _CheckedOutConnection:
         self._stop_journal()
         logger.warning("V2 pool: a pooled connection was dead on its first round trip; "
                        "retrying once on a fresh connection")
-        dead = self._conn
         # From here the dead connection belongs to the pool again: if no fresh one can be had
-        # (an outage), the checkout must not return it a second time.
-        self.__dict__["_conn"] = None
-        self._pool._discard(dead)
+        # (an outage), it stays held but released (see `released`), never returned twice.
+        self.__dict__["_released"] = True
+        self._pool._discard(self._conn)
         self.__dict__["_conn"] = self._pool._getconn()
+        self.__dict__["_released"] = False
         stack: list[Any] = []
         result: Any = None
         for entry in journal:
@@ -439,6 +450,10 @@ class _CheckedOutConnection:
         self._conn.commit()
 
     def rollback(self) -> None:
+        if self._released:
+            # The transaction died with the dead connection; psycopg would raise "the connection
+            # is closed" here and replace the error the caller is handling.
+            return
         if self._pipelines:
             self._stop_journal()
         self._conn.rollback()
