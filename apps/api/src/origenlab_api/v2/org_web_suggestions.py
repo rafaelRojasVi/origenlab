@@ -28,6 +28,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from origenlab_api.v2.quote_crm_promotion import FREE_MAIL_DOMAINS
+
 log = logging.getLogger(__name__)
 
 FILE_VERSION = 1
@@ -108,6 +110,8 @@ def validate_entry(entry: object) -> dict[str, Any]:
         email_domain = email_domain.lower()
         if not _DOMAIN.match(email_domain):
             raise OrgSuggestionsError("email_domain is not a host name")
+        if email_domain in FREE_MAIL_DOMAINS:
+            email_domain = None  # a mail provider's domain belongs to no institution
     kind = _text(entry, "type", 40)
     if kind is not None and not _KIND.match(kind):
         raise OrgSuggestionsError("type must be a lower_snake_case token (the CRM's kind shape)")

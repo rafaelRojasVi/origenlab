@@ -83,3 +83,55 @@ def test_the_output_must_live_outside_the_repository(tmp_path: Path) -> None:
     assert builder.main(["--in", str(research), "--out", str(out)]) == 0
     assert ORG_A in json.loads(out.read_text(encoding="utf-8"))["organizations"]
     assert out.stat().st_mode & 0o077 == 0
+
+
+def test_a_free_mail_domain_is_dropped_and_counted_and_vouches_for_nothing() -> None:
+    research = _research(
+        ORG_A, email_domain="Gmail.com", rut="12.345.678-5", website=None,
+        sources=[{"url": "https://gmail.com/rut", "shows": "RUT 12.345.678-5"}],
+    )
+    data, counts = builder.build([research, _research(ORG_B)])
+    assert data["organizations"][ORG_A]["email_domain"] is None
+    assert data["organizations"][ORG_A]["rut_source"] == "directory"
+    assert data["organizations"][ORG_B]["email_domain"] == "ficticio.example"
+    assert counts["domain_dropped_free_mail"] == 1
+
+
+def test_the_output_is_created_private_and_a_looser_old_file_is_tightened(tmp_path: Path) -> None:
+    research = tmp_path / "suggestions.json"
+    research.write_text(json.dumps([_research(ORG_A)]), encoding="utf-8")
+    out = tmp_path / "org-suggestions.json"
+    out.write_text("old", encoding="utf-8")
+    out.chmod(0o644)
+    assert builder.main(["--in", str(research), "--out", str(out)]) == 0
+    assert out.stat().st_mode & 0o777 == 0o600
+
+
+def test_check_accepts_a_built_file_and_prints_the_summary(tmp_path: Path, capsys) -> None:
+    research = tmp_path / "suggestions.json"
+    research.write_text(json.dumps([_research(ORG_A, rut="12.345.678-5")]), encoding="utf-8")
+    out = tmp_path / "org-suggestions.json"
+    assert builder.main(["--in", str(research), "--out", str(out)]) == 0
+    capsys.readouterr()
+    assert builder.main(["--check", str(out)]) == 0
+    assert json.loads(capsys.readouterr().out) == {"organizations": 1, "rut_directory": 1, "rut_official": 0}
+
+
+def test_check_refuses_a_hand_edit_that_breaks_the_file(tmp_path: Path, capsys) -> None:
+    research = tmp_path / "suggestions.json"
+    research.write_text(json.dumps([_research(ORG_A)]), encoding="utf-8")
+    out = tmp_path / "org-suggestions.json"
+    assert builder.main(["--in", str(research), "--out", str(out)]) == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    data["organizations"][ORG_A]["confidence"] = "segura"
+    out.write_text(json.dumps(data), encoding="utf-8")
+    capsys.readouterr()
+    assert builder.main(["--check", str(out)]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("invalid: OrgSuggestionsError") and ORG_A in err
+    assert builder.main(["--check", str(tmp_path / "missing.json")]) == 1
+
+
+def test_in_and_out_are_still_required_to_build(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        builder.main(["--in", str(tmp_path / "x.json")])

@@ -192,3 +192,9 @@ def test_the_file_is_read_per_request(tmp_path: Path) -> None:
     assert client.get(f"/v2/workspace/organizations/{ORG}/authoring").json()["web_suggestions"] is None
     _write(Path(path), {ORG: _entry()})
     assert client.get(f"/v2/workspace/organizations/{ORG}/authoring").json()["web_suggestions"] is not None
+
+
+@pytest.mark.parametrize("domain", ["gmail.com", "Hotmail.com", "outlook.com", "yahoo.com", "live.com", "icloud.com"])
+def test_a_free_mail_domain_is_no_institutions_domain_and_does_not_fail_the_file(tmp_path: Path, domain: str) -> None:
+    s = load_org_suggestions(_file(tmp_path, {ORG: _entry(email_domain=domain)}))
+    assert s[ORG]["email_domain"] is None and s[ORG]["display_name"]
