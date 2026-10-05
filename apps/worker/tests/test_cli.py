@@ -11,14 +11,14 @@ import pytest
 
 from fakes import FakeDb, FakeGmail, FakeMessage, FakeStore
 from mailfixtures import make_raw
-from origenlab_worker.cli import config_from_env, main
+from origenlab_worker.cli import _on_sigterm, config_from_env, main
 from origenlab_worker.errors import ConfigRefused
 
 #: A syntactically complete PEM block with no real certificate in it.
 FAKE_CA = "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n"
 HOST = "pooler.example.invalid"
 GOOD_ENV = {
-    "ORIGENLAB_WORKER_DATABASE_URL": f"postgresql://origenlab_worker.abcdefghijklmnopqrst:pw@{HOST}:5432/postgres",
+    "ORIGENLAB_WORKER_DATABASE_URL": f"postgresql://origenlab_worker.ref0123:pw@{HOST}:5432/postgres",
     "ORIGENLAB_WORKER_DATABASE_EXPECTED_HOST": HOST,
     "ORIGENLAB_WORKER_DATABASE_CA_PEM": FAKE_CA,
     "ORIGENLAB_WORKER_GMAIL_CLIENT_ID": "cid",
@@ -134,7 +134,82 @@ def test_an_exception_message_with_an_address_never_reaches_the_log_line(capsys)
 
 
 def test_no_credential_value_reaches_the_output(capsys) -> None:
-    main(["gmail-sync"], {**GOOD_ENV, "ORIGENLAB_WORKER_DATABASE_URL": "postgresql://postgres:pw@x/y"})
+    secrets = {
+        "ORIGENLAB_WORKER_GMAIL_CLIENT_SECRET": "cs-fake9",
+        "ORIGENLAB_WORKER_GMAIL_REFRESH_TOKEN": "1//0fake-refresh-token-value",
+        "ORIGENLAB_WORKER_STORAGE_S3_SECRET_ACCESS_KEY": "s3-fake9",
+    }
+    password = "db-fake9"
+    url = f"postgresql://origenlab_worker.ref0123:{password}@{HOST}:5432/postgres"
+    env = {**GOOD_ENV, **secrets, "ORIGENLAB_WORKER_DATABASE_URL": url}
+
+    @contextmanager
+    def components(config):
+        raise OSError(f"connection to {url} failed for {config.gmail.client_secret} {config.gmail.refresh_token}")
+        yield  # pragma: no cover
+
+    code = main(["gmail-sync"], env, components=components)
     captured = capsys.readouterr()
-    for secret in ("sec", "ksec", "pw@", "rt\""):
-        assert secret not in captured.out + captured.err
+    assert code == 1
+    for value in (*secrets.values(), password, url):
+        assert value not in captured.out + captured.err
+
+
+@pytest.mark.parametrize("argv", [["gmail-synk"], ["gmail-sync", "--dry-runn"], []])
+def test_a_usage_error_is_one_json_line_with_exit_3_and_no_usage_dump(argv, capsys) -> None:
+    code = main(argv, GOOD_ENV, components=_components(FakeDb(), FakeGmail(), FakeStore()))
+    captured = capsys.readouterr()
+    assert code == 3 and captured.err == ""
+    lines = captured.out.strip().splitlines()
+    assert len(lines) == 1 and json.loads(lines[0])["error"] == "usage" and json.loads(lines[0])["exit"] == 3
+
+
+def test_help_still_prints_help_and_exits_0(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["gmail-sync", "--help"], GOOD_ENV)
+    assert exc.value.code == 0 and "--dry-run" in capsys.readouterr().out
+
+
+def test_a_keyboard_interrupt_is_one_line_with_exit_1(capsys) -> None:
+    @contextmanager
+    def components(_config):
+        raise KeyboardInterrupt
+        yield  # pragma: no cover
+
+    code = main(["gmail-sync"], GOOD_ENV, components=components)
+    line = _line(capsys)
+    assert code == 1 and line["error"] == "interrupted"
+
+
+def test_sigterm_becomes_one_line_with_exit_1_and_the_cleanup_runs(capsys) -> None:
+    cleaned = []
+
+    @contextmanager
+    def components(_config):
+        try:
+            _on_sigterm(15, None)  # what Render's SIGTERM does to the running code
+            yield None, None, None  # pragma: no cover
+        finally:
+            cleaned.append(True)
+
+    code = main(["gmail-sync"], GOOD_ENV, components=components)
+    line = _line(capsys)
+    assert code == 1 and line["error"] == "terminated" and cleaned == [True]
+
+
+def test_a_paused_run_opens_nothing(capsys) -> None:
+    @contextmanager
+    def components(_config):
+        raise AssertionError("a paused run must not open a connection")
+        yield  # pragma: no cover
+
+    code = main(["gmail-sync"], {**GOOD_ENV, "ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED": "false"}, components=components)
+    line = _line(capsys)
+    assert code == 0 and line["mode"] == "paused"
+
+
+def test_init_with_the_switch_off_still_opens_components(capsys) -> None:
+    db = FakeDb(state="unauthorized", history_id=None, last_synced_at=None)
+    env = {**GOOD_ENV, "ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED": "false"}
+    assert main(["gmail-sync", "--init"], env, components=_components(db, FakeGmail(), FakeStore())) == 0
+    assert _line(capsys)["mode"] == "init_baseline"

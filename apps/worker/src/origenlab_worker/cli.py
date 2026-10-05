@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import resource
+import signal
 import sys
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -31,7 +32,7 @@ from typing import Any
 from origenlab_worker.database import WorkerTarget, open_worker_db, remote_worker_target, write_ca_file
 from origenlab_worker.errors import ConfigRefused
 from origenlab_worker.gmail_client import GmailCredentials, GmailReader
-from origenlab_worker.gmail_sync import EXIT_CONFIG, EXIT_FAILED, RunCounts, RunReport, run_gmail_sync
+from origenlab_worker.gmail_sync import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, RunCounts, RunReport, run_gmail_sync
 from origenlab_worker.storage import S3EmlStore, StorageConfig
 
 ENV_DATABASE_URL = "ORIGENLAB_WORKER_DATABASE_URL"
@@ -80,8 +81,25 @@ def open_components(config: WorkerConfig) -> Iterator[tuple[Any, Any, Any]]:
 Components = Callable[[WorkerConfig], AbstractContextManager[tuple[Any, Any, Any]]]
 
 
+class _UsageError(Exception):
+    """A command line argparse refused. argparse would print usage and exit 2 — the Gmail-auth code."""
+
+
+class _Terminated(BaseException):
+    """Render's SIGTERM, raised in the running code so every `finally` (unlock, close) still runs."""
+
+
+def _on_sigterm(_signum: int, _frame: Any) -> None:
+    raise _Terminated
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> Any:  # noqa: ARG002 — usage text is never printed
+        raise _UsageError
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="origenlab-worker")
+    parser = _Parser(prog="origenlab-worker")
     commands = parser.add_subparsers(dest="command", required=True)
     sync = commands.add_parser("gmail-sync", help="capture new contacto@ mail into the V2 database")
     sync.add_argument("--init", action="store_true", help="owner, once: authorize and take the baseline")
@@ -92,6 +110,7 @@ def _parser() -> argparse.ArgumentParser:
 def _emit(report: RunReport, started: float) -> int:
     line = report.as_log()
     line["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+    # ru_maxrss is KB on Linux (Render); integer division floors it, so a tiny run reports 0.
     line["max_rss_mb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
     print(json.dumps(line, sort_keys=True), flush=True)
     return report.exit_code
@@ -103,18 +122,37 @@ def main(
     *,
     components: Components = open_components,
 ) -> int:
-    args = _parser().parse_args(argv)
     started = time.monotonic()
+    try:
+        args = _parser().parse_args(argv)
+    except _UsageError:
+        return _emit(RunReport("usage", EXIT_CONFIG, RunCounts(), error="usage"), started)
     env = os.environ if environ is None else environ
+    previous = None
+    try:
+        previous = signal.signal(signal.SIGTERM, _on_sigterm)
+    except ValueError:  # not the main thread (tests): no handler, nothing else changes
+        pass
     try:
         config = config_from_env(env)
-        with components(config) as (db, gmail, store):
-            report = run_gmail_sync(db=db, gmail=gmail, store=store, enabled=config.enabled,
-                                    init=args.init, dry_run=args.dry_run)
+        if not config.enabled and not args.init:
+            # Paused: no Supavisor session every ten minutes for a run that would do nothing.
+            report = RunReport("paused", EXIT_OK, RunCounts())
+        else:
+            with components(config) as (db, gmail, store):
+                report = run_gmail_sync(db=db, gmail=gmail, store=store, enabled=config.enabled,
+                                        init=args.init, dry_run=args.dry_run)
     except ConfigRefused as exc:
         report = RunReport("config_refused", EXIT_CONFIG, RunCounts(), error=exc.code)
+    except _Terminated:
+        report = RunReport("failed", EXIT_FAILED, RunCounts(), error="terminated")
+    except KeyboardInterrupt:
+        report = RunReport("failed", EXIT_FAILED, RunCounts(), error="interrupted")
     except Exception as exc:  # noqa: BLE001 — connection or TLS failure: the class, never the text
         report = RunReport("failed", EXIT_FAILED, RunCounts(), error=type(exc).__name__)
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
     return _emit(report, started)
 
 
