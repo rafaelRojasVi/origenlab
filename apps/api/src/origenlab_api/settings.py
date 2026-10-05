@@ -209,12 +209,17 @@ class Settings(BaseSettings):
     """Supabase Auth JWKS URL. When set, JWKS verification is used and the local development identity adapter is never constructed."""
     v2_jwks_url: str | None = None
     v2_statement_timeout_ms: int = 15_000
-    """Connections the V2 pool holds open at all times (`ORIGENLAB_V2_POOL_SIZE`).
+    """Connections the V2 pool holds open at all times (`ORIGENLAB_V2_POOL_SIZE`, 1–8).
 
     The pool never shrinks below it (`min_size == max_size`), so a quiet period does not cost
-    the next request a new TCP + TLS + SCRAM handshake to the hosted pooler.
+    the next request a new TCP + TLS + SCRAM handshake to the hosted pooler. Each one is a
+    Supavisor **session-mode** client and holds a server connection of the project for as long
+    as it lives, out of a ceiling shared with every other session-mode client of the project
+    (migrations, scheduled jobs, the CLI). During a Render deploy the old and the new instance
+    overlap, so the API briefly holds twice this many. Capped at 8 for that reason; raise the
+    cap only against the project's measured pooler limit.
     """
-    v2_pool_size: int = Field(default=4, ge=1, le=32)
+    v2_pool_size: int = Field(default=4, ge=1, le=8)
     """When true, mount POST /v2/commands/* — the human-review command boundary.
 
     Default **false**, like `commercial_operations_writes_enabled` above and for the same

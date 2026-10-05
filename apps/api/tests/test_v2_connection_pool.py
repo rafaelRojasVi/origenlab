@@ -106,9 +106,10 @@ def test_pool_size_setting_reads_the_environment(monkeypatch) -> None:
 
     monkeypatch.setenv("ORIGENLAB_V2_POOL_SIZE", "7")
     assert Settings(_env_file=None).v2_pool_size == 7
-    monkeypatch.setenv("ORIGENLAB_V2_POOL_SIZE", "0")
-    with pytest.raises(ValueError):
-        Settings(_env_file=None)
+    for refused in ("0", "9"):
+        monkeypatch.setenv("ORIGENLAB_V2_POOL_SIZE", refused)
+        with pytest.raises(ValueError):
+            Settings(_env_file=None)
 
 
 # ───────────────────────────────────── first-round-trip retry (fake connections) ──
@@ -163,12 +164,57 @@ class _RetryCursor:
         pass
 
 
+class _FakePgconn:
+    """The libpq side of a fake connection, on a real socket pair: the test plays the server.
+
+    `server_says(b"...")` makes the idle socket readable; `server_closes()` sends the FIN.
+    `consume_input` reads what is there; a FATAL notice reaches the connection's notice
+    handlers, as libpq delivers an ErrorResponse that arrives while idle; EOF raises.
+    """
+
+    def __init__(self, owner: "_RetryConn") -> None:
+        import socket
+
+        import psycopg
+
+        self._owner = owner
+        self._client, self._server = socket.socketpair()
+        self.status = psycopg.pq.ConnStatus.OK
+
+    @property
+    def socket(self) -> int:
+        return self._client.fileno()
+
+    def server_says(self, data: bytes) -> None:
+        self._server.sendall(data)
+
+    def server_closes(self) -> None:
+        self._server.close()
+
+    def consume_input(self) -> None:
+        import psycopg
+
+        data = self._client.recv(65536)
+        if not data:
+            self.status = psycopg.pq.ConnStatus.BAD
+            raise psycopg.OperationalError("consuming input failed: server closed the connection unexpectedly")
+        if b"FATAL" in data:
+            diagnostic = MagicMock(severity="FATAL", severity_nonlocalized="FATAL", sqlstate="57P01")
+            for handler in list(self._owner.notice_handlers):
+                handler(diagnostic)
+
+
 class _RetryConn:
-    """A connection that is dead on arrival (`dead`), or answers each query with its name."""
+    """A connection that is dead on arrival (`dead`), or answers each query with its name.
+
+    `dead` is a silent drop: the socket shows nothing, the first request fails. The probe
+    cases use `pgconn.server_says` / `pgconn.server_closes` instead."""
 
     def __init__(self, name: str, *, dead: bool = False, error: Exception | None = None) -> None:
         import psycopg
 
+        self.notice_handlers: list[Any] = []
+        self.pgconn = _FakePgconn(self)
         self.name = name
         self.dead = dead
         self.error = error
@@ -213,6 +259,12 @@ class _RetryConn:
 
     def close(self) -> None:
         self.closed = True
+
+    def add_notice_handler(self, handler: Any) -> None:
+        self.notice_handlers.append(handler)
+
+    def remove_notice_handler(self, handler: Any) -> None:
+        self.notice_handlers.remove(handler)
 
 
 class _FakeInnerPool:
@@ -324,6 +376,93 @@ def test_a_connection_known_dead_at_checkout_is_swapped_before_use() -> None:
     with pool.connect(DSN) as conn:
         assert conn.cursor().execute("select 1").fetchone() == ("fresh", "select 1")
     assert inner.returned == [closed, fresh] and closed.statements == []
+
+
+def test_the_checkout_probe_discards_a_connection_the_server_closed_while_idle() -> None:
+    """No round trip: the FIN on the idle socket is enough, and nothing is sent on it."""
+    closed, fresh = _RetryConn("closed"), _RetryConn("fresh")
+    closed.pgconn.server_says(b"E...FATAL: terminating connection due to administrator command")
+    closed.pgconn.server_closes()
+    pool, inner = _retry_pool(closed, fresh)
+    with pool.connect(DSN) as conn:
+        assert conn.cursor().execute("select 1").fetchone() == ("fresh", "select 1")
+    assert closed.closed and inner.returned == [closed, fresh]
+    assert closed.statements == [] and closed.round_trips == 0
+
+
+def test_the_checkout_probe_trusts_a_fatal_message_before_the_close_arrives() -> None:
+    """The FATAL can land a moment before the FIN; it alone condemns the connection."""
+    dying, fresh = _RetryConn("dying"), _RetryConn("fresh")
+    dying.pgconn.server_says(b"E...FATAL: terminating connection due to idle-session timeout")
+    pool, inner = _retry_pool(dying, fresh)
+    with pool.connect(DSN) as conn:
+        assert conn.cursor().execute("select 1").fetchone() == ("fresh", "select 1")
+    assert inner.returned[0] is dying and dying.statements == []
+    assert dying.notice_handlers == [], "the probe leaves no handler behind"
+
+
+def test_the_checkout_probe_keeps_a_connection_with_a_harmless_message() -> None:
+    chatty, spare = _RetryConn("chatty"), _RetryConn("spare")
+    chatty.pgconn.server_says(b"S...application_name")
+    pool, inner = _retry_pool(chatty, spare)
+    with pool.connect(DSN) as conn:
+        assert conn.cursor().execute("select 1").fetchone() == ("chatty", "select 1")
+    assert inner.ready == [spare]
+
+
+def test_the_checkout_probe_gives_up_after_size_plus_one_candidates() -> None:
+    """After an outage every idle connection may be dead: the probe tries `size + 1`, hands the
+    last out unprobed, and the first-round-trip retry is the backstop."""
+    candidates = [_RetryConn(f"dead-{i}", dead=True) for i in range(3)]
+    for c in candidates:
+        c.pgconn.server_closes()
+    fresh = _RetryConn("fresh")
+    pool, inner = _retry_pool(*candidates, fresh)  # size 2: three candidates at most
+    with pool.connect(DSN) as conn:
+        assert conn.cursor().execute("select 1").fetchone() == ("fresh", "select 1")
+    assert [c.name for c in inner.returned] == ["dead-0", "dead-1", "dead-2", "fresh"]
+    assert [c.round_trips for c in candidates] == [0, 0, 1], "only the unprobed one was tried"
+
+
+def test_a_connection_handed_out_in_autocommit_is_reset_without_a_round_trip() -> None:
+    left_on = _RetryConn("left-on")
+    left_on.autocommit = True
+    pool, inner = _retry_pool(left_on)
+    with pool.connect(DSN) as conn:
+        assert conn.autocommit is False
+        assert left_on.round_trips == 0
+
+
+def test_a_failed_replacement_returns_nothing_twice() -> None:
+    """The fake twin of the real-server test: the dead connection goes back once, only once."""
+    import psycopg_pool
+
+    dead = _RetryConn("dead", dead=True)
+    pool, inner = _retry_pool(dead)  # nothing to replace it with
+
+    def outage() -> Any:
+        raise psycopg_pool.PoolTimeout("couldn't get a connection")
+
+    with pytest.raises(psycopg_pool.PoolTimeout):
+        with pool.connect(DSN) as conn:
+            inner.getconn = outage  # type: ignore[method-assign]
+            conn.cursor().execute("select 1")
+    assert inner.returned == [dead]
+
+
+def test_reaching_the_raw_connection_through_a_cursor_ends_the_retry() -> None:
+    """`run_together` sends work on `cursor.connection`, which the journal never sees."""
+    import psycopg
+
+    dead, spare = _RetryConn("dead", dead=True), _RetryConn("spare")
+    pool, inner = _retry_pool(dead, spare)
+    with pytest.raises(psycopg.OperationalError):
+        with pool.connect(DSN) as conn:
+            cur = conn.cursor()
+            cur._real.connection = dead  # the fake cursor's raw connection
+            assert cur.connection is dead
+            cur.execute("select 1")
+    assert inner.ready == [spare], "nothing replayed"
 
 
 def test_the_block_commits_on_success_and_resets_autocommit_left_on() -> None:
@@ -699,27 +838,141 @@ def test_pipeline_mode_reads_return_every_result_on_a_real_server() -> None:
         pool.close()
 
 
-@pytest.mark.skipif(not _API_DSN, reason="ORIGENLAB_V2_API_TEST_DSN names a disposable V2 database")
-def test_a_backend_killed_while_idle_is_retried_transparently() -> None:
-    """The case the health check used to cover: the server ends an idle pooled connection."""
-    import os
+_MAINTENANCE_DSN = __import__("os").environ.get("ORIGENLAB_V2_TEST_DSN", "")
+needs_both_dsns = pytest.mark.skipif(
+    not (_API_DSN and _MAINTENANCE_DSN), reason="ORIGENLAB_V2_TEST_DSN and ORIGENLAB_V2_API_TEST_DSN are both required"
+)
+
+
+def _end_the_idle_backend(pool: V2ConnectionPool) -> int:
+    """End the pool's one idle connection from the server side, as a pooler or an idle timeout
+    would, and wait until the backend is gone. Returns its pid."""
+    import time
 
     import psycopg
 
-    maintenance = os.environ.get("ORIGENLAB_V2_TEST_DSN", "")
-    if not maintenance:
-        pytest.skip("ORIGENLAB_V2_TEST_DSN is required to end a backend")
+    with pool.connect(_API_DSN) as conn:
+        pid = conn.execute("select pg_backend_pid()").fetchone()[0]
+        conn.rollback()
+    with psycopg.connect(_MAINTENANCE_DSN, autocommit=True) as admin:
+        assert admin.execute("select pg_terminate_backend(%s)", (pid,)).fetchone() == (True,)
+        for _ in range(100):
+            if admin.execute("select count(*) from pg_stat_activity where pid = %s", (pid,)).fetchone() == (0,):
+                break
+            time.sleep(0.05)
+        else:  # pragma: no cover - the server did not end it
+            raise AssertionError("the backend did not exit")
+    time.sleep(0.05)  # the FIN crosses the loopback
+    return pid
+
+
+def _read_pid_plain(pool: V2ConnectionPool) -> int:
+    with pool.connect(_API_DSN) as conn:
+        pid = conn.execute("select pg_backend_pid()").fetchone()[0]
+        conn.rollback()
+    return pid
+
+
+def _read_pid_final(pool: V2ConnectionPool) -> int:
+    from origenlab_api.v2.read_transaction import read_transaction
+
+    with read_transaction(pool.connect, _API_DSN, 5000) as session:
+        return session.final("select pg_backend_pid()").fetchone()[0]
+
+
+def _read_pid_batch(pool: V2ConnectionPool) -> int:
+    from origenlab_api.v2.read_transaction import read_transaction
+
+    with read_transaction(pool.connect, _API_DSN, 5000) as session:
+        pid, one = session.batch([("select pg_backend_pid()", None), ("select 1", None)])
+        assert one.fetchone() == (1,)
+        return pid.fetchone()[0]
+
+
+def _read_pid_cursor(pool: V2ConnectionPool) -> int:
+    from origenlab_api.v2.read_transaction import read_transaction
+
+    with read_transaction(pool.connect, _API_DSN, 5000) as session:
+        with session.cursor() as cur:
+            cur.execute("select pg_backend_pid()")
+            return cur.fetchone()[0]
+
+
+@needs_both_dsns
+@pytest.mark.parametrize("read", [_read_pid_plain, _read_pid_final, _read_pid_batch, _read_pid_cursor],
+                         ids=["plain-execute", "read-final", "read-batch", "read-cursor"])
+def test_a_backend_ended_while_idle_never_reaches_the_caller(read) -> None:
+    """The case the health check used to cover: the server ends an idle pooled connection. A
+    read transaction queues its first statement in pipeline mode, where psycopg consumes the
+    waiting FIN at that statement — inside the body, beyond the exit retry — so the checkout's
+    zero-round-trip probe must have discarded the connection already."""
     pool = V2ConnectionPool(_API_DSN, size=1)
     try:
         pool.wait()
-        with pool.connect(_API_DSN) as conn:
-            before = conn.execute("select pg_backend_pid()").fetchone()[0]
-            conn.rollback()
-        with psycopg.connect(maintenance, autocommit=True) as admin:
-            assert admin.execute("select pg_terminate_backend(%s)", (before,)).fetchone() == (True,)
-        with pool.connect(_API_DSN) as conn:
-            after = conn.execute("select pg_backend_pid()").fetchone()[0]
-            conn.rollback()
-        assert after != before
+        before = _end_the_idle_backend(pool)
+        assert read(pool) != before
+    finally:
+        pool.close()
+
+
+@needs_both_dsns
+def test_the_session_check_survives_a_backend_ended_while_idle() -> None:
+    """Every request starts with the session check; it must not be the request that finds out."""
+    from origenlab_api.v2.auth_session_store import AuthSessionStore
+    from origenlab_api.v2.profile_auth import ProfileAuthRepository
+
+    pool = V2ConnectionPool(_API_DSN, size=1)
+    try:
+        pool.wait()
+        _end_the_idle_backend(pool)
+        assert ProfileAuthRepository(pool.connect, _API_DSN).binding(
+            "00000000-0000-4000-8000-000000000001", None, b"no-such-session") == (None, None, None)
+        _end_the_idle_backend(pool)
+        assert AuthSessionStore(pool.connect, _API_DSN).operator_session(b"no-such-session") is None
+    finally:
+        pool.close()
+
+
+@needs_both_dsns
+def test_a_failed_replacement_never_returns_the_dead_connection_twice(monkeypatch) -> None:
+    """The retry returns the dead connection, then asks for a fresh one. If that request fails
+    (an outage: PoolTimeout), the checkout must not hand the dead one back a second time — the
+    pool would schedule a second replacement and outgrow its size for good."""
+    import time
+
+    import psycopg
+    import psycopg_pool
+
+    from origenlab_api.v2 import connection_pool as module
+
+    name = "rtt-replace-" + __import__("uuid").uuid4().hex[:8]
+    pool = V2ConnectionPool(_API_DSN, size=1, connect_kwargs={"application_name": name})
+    try:
+        pool.wait()
+        # A silent drop: the probe cannot see it, the first round trip fails at its end.
+        monkeypatch.setattr(module, "_is_alive", lambda conn: not (conn.closed or conn.broken))
+        _end_the_idle_backend(pool)
+        real_getconn = pool._getconn
+        calls = {"n": 0}
+
+        def getconn_then_outage():  # type: ignore[no-untyped-def]
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+            return real_getconn()
+
+        monkeypatch.setattr(pool, "_getconn", getconn_then_outage)
+        with pytest.raises(psycopg_pool.PoolTimeout):
+            with pool.connect(_API_DSN) as conn:
+                conn.execute("select 1")
+        monkeypatch.undo()
+        pool.wait()
+        time.sleep(0.5)  # let any (wrongly) scheduled second replacement land
+        stats = pool._pool.get_stats()
+        assert stats["pool_size"] <= 1 and stats.get("pool_available", 0) <= 1, stats
+        with psycopg.connect(_MAINTENANCE_DSN, autocommit=True) as admin:
+            (backends,) = admin.execute(
+                "select count(*) from pg_stat_activity where application_name = %s", (name,)).fetchone()
+        assert backends <= 1
     finally:
         pool.close()

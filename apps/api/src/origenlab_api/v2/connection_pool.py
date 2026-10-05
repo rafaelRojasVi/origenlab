@@ -23,16 +23,32 @@ The hosted API is ~180 ms from its database, so what a checkout costs matters
 (``tests/test_v2_roundtrip_budget.py``):
 
 * **No health check on checkout.** ``psycopg_pool``'s ``check`` sends an empty
-  query before every checkout — one round trip per request. Instead, a connection
-  that died while idle (closed by the pooler or the server, or dropped by the
-  network) is detected where it fails: on its **first round trip**. If that raises
-  ``psycopg.OperationalError`` *and* the connection is now broken, the connection
-  is discarded and the work of that first round trip — and nothing else — is
-  replayed once on a fresh connection (:class:`_CheckedOutConnection`). Nothing can
-  have been committed on a connection whose first round trip failed, so the replay
-  is safe for reads and writes alike. A failure after the first round trip, a body
-  that fails inside a pipeline, or anything this wrapper cannot replay is raised as
-  it always was.
+  query before every checkout — one round trip per request. A connection that died
+  while idle is caught in two places instead, neither of which costs a round trip:
+
+  1. **At checkout, a zero-round-trip probe** (:func:`_is_alive`). A pooler or a server
+     that ends an idle connection says so on the socket (an error message, a FIN or a
+     RST), so an idle connection whose socket is readable is suspect: the probe lets
+     libpq consume what is there and discards the connection if libpq now calls it
+     closed or bad, then takes another (at most ``size + 1`` attempts). This is what
+     keeps a **read** safe: a read queues its first statement in pipeline mode, and
+     psycopg consumes the waiting FIN at that statement — inside the caller's pipeline
+     body, where nothing can be replayed.
+  2. **On the first round trip, a retry** (:class:`_CheckedOutConnection`) for the drop
+     the socket cannot show yet — a path silently dropped by the network, whose failure
+     only appears once a request has been sent. If that round trip raises
+     ``psycopg.OperationalError`` *and* the connection is now broken, the connection is
+     discarded and the work of that first round trip — and nothing else — is replayed
+     once on a fresh connection. A failure after the first round trip, a body that fails
+     inside a pipeline, or anything this wrapper cannot replay is raised as it always was.
+
+  **The replay is safe only because nothing can have been committed** before the first
+  round trip completed: :meth:`V2ConnectionPool.connect` refuses ``autocommit=True`` and
+  resets any connection handed out in autocommit, so a statement sent on a fresh checkout
+  runs inside a transaction psycopg opens (``BEGIN``), or inside the explicit ``begin
+  transaction read only`` that ``read_transaction.py`` sends first. A dead connection's
+  open transaction dies with it. Anything that would break this — a checkout used in
+  autocommit for writes — must not be added.
 * **The pool never shrinks.** ``min_size == max_size`` (``ORIGENLAB_V2_POOL_SIZE``,
   default 4), so a quiet period does not close connections that the next burst
   would have to reopen through TCP + TLS + SCRAM (~5 round trips each).
@@ -55,6 +71,7 @@ today without a pool.
 from __future__ import annotations
 
 import logging
+import select
 import threading
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -63,6 +80,9 @@ import psycopg
 import psycopg_pool
 
 logger = logging.getLogger(__name__)
+
+#: Reads the checkout probe makes at most while the idle socket stays readable.
+_PROBE_READS = 4
 
 #: The pool size when ``ORIGENLAB_V2_POOL_SIZE`` is not set.
 DEFAULT_POOL_SIZE = 4
@@ -187,19 +207,39 @@ class V2ConnectionPool:
             try:
                 yield held
             except BaseException:
-                _finish(held.raw, failed=True)
+                if held.raw is not None:
+                    _finish(held.raw, failed=True)
                 raise
-            _finish(held.raw, failed=False)
+            if held.raw is not None:
+                _finish(held.raw, failed=False)
         finally:
-            self._putconn(held.raw)
+            # None: a retry already returned the dead connection and could not get another.
+            if held.raw is not None:
+                self._putconn(held.raw)
 
     def _getconn(self) -> Any:
-        """A connection from the pool; one already known closed or broken is replaced once."""
+        """A live-looking connection from the pool, in the state the repositories expect.
+
+        Each candidate is probed without a round trip (:func:`_is_alive`); a dead one is
+        discarded — the pool opens its replacement in the background — and another taken, at
+        most ``size + 1`` times (after an outage every idle connection may be dead). The last
+        candidate is handed out unprobed: the first-round-trip retry still covers it.
+        """
         conn = self._pool.getconn()
-        if _is_dead(conn):
-            self._putconn(conn)
+        for _ in range(self._size):
+            if _is_alive(conn) and _reset_autocommit(conn):
+                return conn
+            self._discard(conn)
             conn = self._pool.getconn()
+        _reset_autocommit(conn)
         return conn
+
+    def _discard(self, conn: Any) -> None:
+        """Return `conn` closed: the pool drops it and opens a replacement in the background."""
+        try:
+            conn.close()
+        finally:
+            self._pool.putconn(conn)
 
     def _putconn(self, conn: Any) -> None:
         # A connection switched to autocommit inside the block goes back as the pool made it,
@@ -215,17 +255,54 @@ class V2ConnectionPool:
                 conn.close()
         self._pool.putconn(conn)
 
-    def _replace(self, dead: Any) -> Any:
-        """Discard `dead` and hand back a fresh connection (the retry of a first round trip)."""
-        try:
-            dead.close()
-        finally:
-            self._pool.putconn(dead)
-        return self._getconn()
 
 
 def _is_dead(conn: Any) -> bool:
     return bool(conn.closed or getattr(conn, "broken", False))
+
+
+def _is_alive(conn: Any) -> bool:
+    """Whether an idle pooled connection still looks usable — decided without a round trip.
+
+    An idle connection has nothing to read. If its socket is readable, the server or the
+    pooler sent something unasked: typically a ``FATAL`` error just before closing (idle
+    timeout, ``pg_terminate_backend``, a restart) and then the close itself. libpq consumes
+    what is there — the ``FATAL`` arrives as a notice, the close as an error on the next read —
+    so the probe reads until the socket is quiet (a few reads at most) and calls the
+    connection dead on a ``FATAL`` notice, a read error, or a status that is not ``OK``.
+    Anything harmless (a notice, a parameter status, a TLS record) leaves it alive.
+    """
+    if _is_dead(conn):
+        return False
+    pgconn = conn.pgconn
+    fatal: list[str] = []
+
+    def note(diagnostic: Any) -> None:
+        if (getattr(diagnostic, "severity_nonlocalized", None) or diagnostic.severity) in ("FATAL", "PANIC"):
+            fatal.append(diagnostic.sqlstate or "")
+
+    conn.add_notice_handler(note)
+    try:
+        for _ in range(_PROBE_READS):
+            readable, _, _ = select.select([pgconn.socket], [], [], 0)
+            if not readable:
+                break
+            pgconn.consume_input()
+    except (OSError, ValueError, psycopg.OperationalError):
+        return False
+    finally:
+        conn.remove_notice_handler(note)
+    return not fatal and pgconn.status == psycopg.pq.ConnStatus.OK and not _is_dead(conn)
+
+
+def _reset_autocommit(conn: Any) -> bool:
+    """Hand a connection out with ``autocommit`` off (no round trip); False if that fails."""
+    try:
+        if conn.autocommit:
+            conn.autocommit = False
+    except Exception:  # noqa: BLE001 - such a connection is discarded, never handed out
+        return False
+    return True
 
 
 def _finish(conn: Any, *, failed: bool) -> None:
@@ -257,8 +334,14 @@ class _CheckedOutConnection:
 
     The retry happens only where the whole first round trip is known: a statement outside
     pipeline mode, or the exit of the outermost pipeline. A failure raised in the middle of a
-    pipeline body, a fetch or a commit inside a pipeline, or any operation this class does not
-    journal ends the journal, so nothing is ever replayed partially.
+    pipeline body, a fetch or a commit inside a pipeline, the raw connection reached through a
+    cursor's ``connection``, or any operation this class does not journal ends the journal, so
+    nothing is ever replayed partially. A drop that the socket already shows is the checkout
+    probe's job (:func:`_is_alive`), not this class's: a read sees it inside its pipeline body.
+
+    Replaying is safe because nothing can have committed before the first round trip
+    completed — the module docstring states the invariant (no autocommit checkouts; reads
+    begin explicitly) that keeps it so.
     """
 
     #: Client-side attributes: reading them neither talks to the server nor needs replaying.
@@ -309,7 +392,12 @@ class _CheckedOutConnection:
         self._stop_journal()
         logger.warning("V2 pool: a pooled connection was dead on its first round trip; "
                        "retrying once on a fresh connection")
-        self.__dict__["_conn"] = self._pool._replace(self._conn)
+        dead = self._conn
+        # From here the dead connection belongs to the pool again: if no fresh one can be had
+        # (an outage), the checkout must not return it a second time.
+        self.__dict__["_conn"] = None
+        self._pool._discard(dead)
+        self.__dict__["_conn"] = self._pool._getconn()
         stack: list[Any] = []
         result: Any = None
         for entry in journal:
@@ -365,11 +453,21 @@ class _Cursor:
         self._kwargs = kwargs
         self._real = owner.raw.cursor(*args, **kwargs)
 
+    #: Client-side cursor attributes: reading them sends nothing and needs no replay.
+    _PASSIVE = frozenset({"description", "rowcount", "rownumber", "statusmessage", "pgresult", "closed",
+                          "query", "params", "format", "row_factory", "close", "nextset", "scroll"})
+
     def _bind(self, conn: Any) -> None:
         self._real = conn.cursor(*self._args, **self._kwargs)
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._real, name)
+        value = getattr(self._real, name)
+        # `connection` hands out the raw connection (`read_transaction.run_together` uses it):
+        # work sent through it is not journalled, so it ends the retry. So does any operation
+        # this class does not journal (`stream`, `copy`, ...).
+        if name == "connection" or (callable(value) and name not in self._PASSIVE):
+            self._owner._stop_journal()
+        return value
 
     def __enter__(self) -> "_Cursor":
         return self
