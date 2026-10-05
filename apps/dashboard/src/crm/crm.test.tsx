@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { OperatorApiError } from "../api/operatorClient";
 import { splitAddress } from "./address";
 import { crmHash, isCrmHash, parseCrmHash } from "./crmRoute";
-import type { OpportunityCardData, PipelineResponse, WorkspaceOverview } from "./crmTypes";
+import type { OpportunityCardData, PipelineResponse } from "./crmTypes";
 import { PipelinePage } from "./pages/PipelinePage";
 import { PeoplePage } from "./pages/PeoplePage";
 import { AuthSessionContext } from "../context/AuthSessionContext";
@@ -222,11 +222,8 @@ describe("PipelinePage", () => {
 
 describe("PeoplePage", () => {
   it("says persons are not imported, and lists Gmail recipients as evidence, not people", async () => {
-    const overview: Partial<WorkspaceOverview> = {
-      entities: [{ key: "persons", count: 0, provenance: "not_imported", note: "…" }],
-    };
-    respond({
-      "/v2/workspace/overview": overview,
+    const calls = respond({
+      "/v2/workspace/person-suggestions": { items: [], total: 0, registered_persons: 0 },
       "/v2/workspace/pipeline": { items: [withLatest(card())], total: 1, drive_configured: true },
       "/v2/contacts": { items: [], total: 0, limit: 30, offset: 0 },
     });
@@ -235,14 +232,25 @@ describe("PeoplePage", () => {
     expect(await screen.findByText("Destinatarios de cotizaciones")).toBeInTheDocument();
     expect(screen.getByText("persona@ejemplo.invalid")).toBeInTheDocument();
     expect(screen.queryByTestId("people-redaction-note")).toBeNull();
+    // The count rides on the suggestions answer: the whole overview is never read for it.
+    expect(calls.some((c) => c.url.includes("/v2/workspace/overview"))).toBe(false);
+  });
+
+  it("shows the registered people count from the suggestions answer", async () => {
+    respond({
+      "/v2/workspace/person-suggestions": { items: [], total: 0, registered_persons: 1234 },
+      "/v2/workspace/pipeline": { items: [], total: 0, drive_configured: true },
+      "/v2/contacts": { items: [], total: 0, limit: 30, offset: 0 },
+    });
+    render(<PeoplePage navigate={() => undefined} />);
+    expect(await screen.findByText("Personas registradas")).toBeInTheDocument();
+    expect(screen.getByText(/1[.\u00a0 ]?234/)).toBeInTheDocument();
+    expect(screen.queryByText("El CRM no tiene personas registradas")).toBeNull();
   });
 
   it("tells a viewer that the API masked the addresses, and renders the masked form as given", async () => {
-    const overview: Partial<WorkspaceOverview> = {
-      entities: [{ key: "persons", count: 0, provenance: "not_imported", note: "…" }],
-    };
     respond({
-      "/v2/workspace/overview": overview,
+      "/v2/workspace/person-suggestions": { items: [], total: 0, registered_persons: 0 },
       "/v2/workspace/pipeline": {
         items: [withLatest(card({ contact: { source: "gmail_recipient", name: null, address: "Persona Ejemplo <***@ejemplo.invalid>", others: 0 } }))],
         total: 1,
@@ -271,7 +279,7 @@ describe("PeoplePage", () => {
 
   it("offers a viewer a name search, not an address search the API would refuse", async () => {
     respond({
-      "/v2/workspace/overview": { entities: [{ key: "persons", count: 0, provenance: "not_imported", note: "…" }] },
+      "/v2/workspace/person-suggestions": { items: [], total: 0, registered_persons: 0 },
       "/v2/workspace/pipeline": { items: [], total: 0, drive_configured: true },
       "/v2/contacts": { items: [], total: 0, limit: 30, offset: 0 },
     });
@@ -297,7 +305,7 @@ describe("PeoplePage", () => {
 
   it("keeps the address search for sales, whose query does reach addresses", async () => {
     respond({
-      "/v2/workspace/overview": { entities: [{ key: "persons", count: 0, provenance: "not_imported", note: "…" }] },
+      "/v2/workspace/person-suggestions": { items: [], total: 0, registered_persons: 0 },
       "/v2/workspace/pipeline": { items: [], total: 0, drive_configured: true },
       "/v2/contacts": { items: [], total: 0, limit: 30, offset: 0 },
     });

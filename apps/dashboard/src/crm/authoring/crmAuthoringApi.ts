@@ -234,6 +234,8 @@ export interface PersonSuggestion {
 export interface PersonSuggestionsResponse {
   items: PersonSuggestion[];
   total: number;
+  /** People the CRM holds (`crm.person`); null when the API could not read it. */
+  registered_persons?: number | null;
 }
 
 export interface OrganizationAuthoringResponse {

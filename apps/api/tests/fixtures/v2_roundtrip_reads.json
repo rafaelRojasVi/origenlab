@@ -1276,6 +1276,7 @@
  },
  "person_suggestions": {
   "items": [],
+  "registered_persons": 1,
   "total": 0
  },
  "pipeline": {

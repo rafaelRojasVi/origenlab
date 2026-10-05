@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchV2Contacts } from "../../api/v2Client";
-import { fetchOverview, fetchPipeline } from "../crmApi";
+import { fetchPipeline } from "../crmApi";
 import type { OpportunityCardData } from "../crmTypes";
 import type { CrmSection } from "../crmRoute";
 import {
@@ -43,8 +43,22 @@ interface Recipient {
 }
 
 
+/** How many people the CRM holds; nothing when the API could not say. */
+function RegisteredPersons({ count }: { count: number | null | undefined }) {
+  if (count === undefined || count === null) return null;
+  if (count === 0) {
+    return (
+      <NotImportedState title="El CRM no tiene personas registradas">
+        Las personas de V1 (<code>commercial.contact</code>) no se han migrado porque su volcado no existe localmente, y
+        ninguna evidencia se ha promovido a persona todavía. Abajo están los contactos reales que sí existen: los
+        destinatarios de las cotizaciones (evidencia de Gmail) y las direcciones importadas.
+      </NotImportedState>
+    );
+  }
+  return <StatLine items={[{ label: "Personas registradas", value: fmtInt(count) }]} />;
+}
+
 export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
-  const [overview, reloadOverview] = useResource(fetchOverview);
   const [pipeline, reloadPipeline] = useResource(fetchPipeline);
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -57,7 +71,6 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
     [debounced],
   );
 
-  const persons = overview.kind === "ready" ? overview.data.entities.find((e) => e.key === "persons")?.count ?? 0 : null;
   const { session } = useAuthSession();
   const redacted = contactAddressesRedacted(session);
   const interests = useEquipmentInterests();
@@ -65,6 +78,8 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
   const mayAuthor = useMayAuthorCrm();
   const [showNewPerson, setShowNewPerson] = useState(false);
   const [openPersonId, setOpenPersonId] = useState<string | null>(null);
+  // The suggestions answer also carries how many people the CRM holds: one request, not the
+  // whole overview for one number.
   const [suggestions, reloadSuggestions] = useResource(fetchPersonSuggestions);
 
   return (
@@ -94,19 +109,12 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
           esta pantalla no las tiene. Un operador con rol <strong>sales</strong> o <strong>admin</strong> las ve completas.
         </p>
       ) : null}
-      <ResourceGate state={overview} reload={reloadOverview} skeleton={<Skeleton rows={1} />}>
-        {() =>
-          persons === 0 ? (
-            <NotImportedState title="El CRM no tiene personas registradas">
-              Las personas de V1 (<code>commercial.contact</code>) no se han migrado porque su volcado no existe localmente, y
-              ninguna evidencia se ha promovido a persona todavía. Abajo están los contactos reales que sí existen: los
-              destinatarios de las cotizaciones (evidencia de Gmail) y las direcciones importadas.
-            </NotImportedState>
-          ) : (
-            <StatLine items={[{ label: "Personas registradas", value: fmtInt(persons ?? 0) }]} />
-          )
-        }
-      </ResourceGate>
+      {/* The count rides on the suggestions answer; if that read fails, the panel below says so once. */}
+      {suggestions.kind === "loading" ? (
+        <Skeleton rows={1} />
+      ) : suggestions.kind === "ready" ? (
+        <RegisteredPersons count={suggestions.data.registered_persons} />
+      ) : null}
 
       <Panel
         title="Personas sugeridas"
@@ -122,7 +130,6 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
                 onCreated={() => {
                   reloadSuggestions();
                   reloadContacts();
-                  reloadOverview();
                 }}
               />
             )}

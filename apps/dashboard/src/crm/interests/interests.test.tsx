@@ -168,7 +168,7 @@ describe("Intereses observados on organization cards", () => {
 describe("Intereses observados on people cards", () => {
   it("joins a masked recipient to its evidence by its opaque address ref and lists several lines", async () => {
     respond({
-      "/v2/workspace/overview": { entities: [{ key: "persons", count: 0, provenance: "not_imported", note: "…" }] },
+      "/v2/workspace/person-suggestions": { items: [], total: 0, registered_persons: 0 },
       "/v2/workspace/pipeline": {
         items: [{
           opportunity_id: "c1", title: "Caso", stage: "quoting", created_at: null, updated_at: null, closed_at: null,

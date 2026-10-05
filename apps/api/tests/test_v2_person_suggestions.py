@@ -338,19 +338,30 @@ def test_the_card_and_the_get_answer_200_when_the_computation_raises(monkeypatch
 
     repo = CrmWorkspaceRepository(None, "unused")
 
-    @contextlib.contextmanager
-    def fake_read():  # type: ignore[no-untyped-def]
-        yield _Cur()
+    class _Count:
+        def fetchone(self) -> tuple[int]:
+            return (3,)
 
-    monkeypatch.setattr(repo, "_read", fake_read)
-    assert repo.person_suggestions() == {"items": [], "total": 0}
+    class _Session:
+        def cursor(self):  # type: ignore[no-untyped-def]
+            return contextlib.nullcontext(_Cur())
+
+        def final(self, *_: Any) -> _Count:
+            return _Count()
+
+    @contextlib.contextmanager
+    def fake_session():  # type: ignore[no-untyped-def]
+        yield _Session()
+
+    monkeypatch.setattr(repo, "_session", fake_session)
+    assert repo.person_suggestions() == {"items": [], "total": 0, "registered_persons": 3}
 
     app = FastAPI()
     app.state.v2_identity = _Identity("sales")
     app.state.crm_workspace = repo
     app.include_router(workspace_router)
     response = TestClient(app).get("/v2/workspace/person-suggestions")
-    assert response.status_code == 200 and response.json() == {"items": [], "total": 0}
+    assert response.status_code == 200 and response.json() == {"items": [], "total": 0, "registered_persons": 3}
 
 
 # ─────────────────────────────────────────────────────────────────────── database ──
@@ -455,7 +466,13 @@ def test_the_read_suggests_from_the_crm_and_skips_who_is_already_a_person(dispos
     from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 
     repo = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(disposable_database))
-    items = {s["email"]: s for s in repo.person_suggestions()["items"]}
+    answer = repo.person_suggestions()
+    items = {s["email"]: s for s in answer["items"]}
+    # The People page's count rides on this answer: crm.person as the database counts it.
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute("select count(*) from crm.person")
+        assert answer["registered_persons"] == cur.fetchone()[0] >= 1
     assert set(items) == {seeded["ana"], seeded["gis"]}
     ana, gis = items[seeded["ana"]], items[seeded["gis"]]
     assert (ana["display_name"], ana["organization_id"], ana["existing_contact_point"]) == (

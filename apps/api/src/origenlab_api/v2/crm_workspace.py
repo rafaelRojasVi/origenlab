@@ -32,6 +32,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+
 from origenlab_api.v2.audience_freeze import SEND_TIME_REFUSAL_LABEL
 from origenlab_api.v2.campaign_blocks import (
     campaign_hold,
@@ -1674,10 +1676,20 @@ class CrmWorkspaceRepository:
         }
 
     def person_suggestions(self) -> dict[str, Any]:
-        """People the quote emails name and the CRM does not hold yet (`person_suggestions.py`)."""
-        with self._read() as cur:
-            items = safe_person_suggestions(cur)
-        return {"items": items, "total": len(items)}
+        """People the quote emails name and the CRM does not hold yet (`person_suggestions.py`),
+        and how many people the CRM does hold (`registered_persons`, the overview's `persons`
+        count) — so the People page needs no second request for its one number. The count and
+        the transaction's rollback share the last round trip; it is null if it could not be
+        read, never a guessed zero."""
+        with self._session() as session:
+            with session.cursor() as cur:
+                items = safe_person_suggestions(cur)
+            registered: int | None
+            try:
+                registered = int(session.final(_COUNT_SQL["persons"]).fetchone()[0])
+            except psycopg.Error:
+                registered = None
+        return {"items": items, "total": len(items), "registered_persons": registered}
 
     # -- review queue: what the CRM itself cannot show
 
