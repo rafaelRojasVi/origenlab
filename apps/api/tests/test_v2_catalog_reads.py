@@ -134,7 +134,7 @@ def test_parameters_current_and_history(disposable_database):
     _owner(dsn, "insert into catalog.cost_parameter (key, value_numeric, valid_from, reason) values "
                 "('default_markup_service', 0.111, '2026-02-01 00:00+00', 'synthetic old'), "
                 "('default_markup_service', 0.222, '2026-03-01 00:00+00', 'synthetic new'), "
-                "('default_markup_accessory', 0.333, '2999-01-01 00:00+00', 'synthetic future')")
+                "('default_markup_accessory', 0.3071, '2999-01-01 00:00+00', 'synthetic future')")
     out = reads.parameters()
     assert out["current"]["default_markup_service"]["value"] == "0.222000"
     assert out["current"]["default_markup_service"]["reason"] == "synthetic new"

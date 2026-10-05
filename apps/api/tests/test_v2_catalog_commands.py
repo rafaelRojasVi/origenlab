@@ -271,7 +271,7 @@ def test_confirm_product_content_stale_version_refused(disposable_database, oper
 # ------------------------------------------------------------------ record-supplier-cost
 
 def _cost(pid: str, supplier: str, **extra) -> dict:
-    return {"product_id": pid, "supplier_organization_id": supplier, "price": "1234.5", "currency": "EUR",
+    return {"product_id": pid, "supplier_organization_id": supplier, "price": "3187.5", "currency": "EUR",
             "price_kind": "dealer_net", "as_of": "2026-09-01T00:00:00+00:00", **extra}
 
 
@@ -285,7 +285,7 @@ def test_record_supplier_cost_appends_an_observation(disposable_database, operat
     [row] = _owner(dsn, "select price, currency, price_kind, list_price, discount_pct, source_document, "
                         "provenance_note, recorded_by_operator_id::text from catalog.supplier_product "
                         "where id = %s", (out["supplier_product_id"],))
-    assert row == (Decimal("1234.500000"), "EUR", "dealer_net", Decimal("2000.000000"), Decimal("0.300000"),
+    assert row == (Decimal("3187.500000"), "EUR", "dealer_net", Decimal("2000.000000"), Decimal("0.300000"),
                    "OF-0001", "oferta sintética", operator.operator_id)
     [(event_type, payload, actor_kind, _)] = [e for e in _events(dsn, "product", pid) if e[0] == "product.cost_recorded"]
     assert (event_type, actor_kind) == ("product.cost_recorded", "operator")
@@ -300,8 +300,24 @@ def test_cost_event_payload_has_no_price(disposable_database, operator) -> None:
     _run(dsn, operator, "record-supplier-cost", _cost(pid, supplier, price="777.25", list_price="999",
                                                       discount_pct="0.2222", note="precio 777.25"))
     [payload] = [e[1] for e in _events(dsn, "product", pid) if e[0] == "product.cost_recorded"]
-    assert not {"price", "list_price", "discount_pct", "note"} & set(payload)
-    assert "777.25" not in str(payload) and "999" not in str(payload)
+    # Structural, not a substring scan: an id in the payload can contain any digits.
+    forbidden_key_words = ("price", "cost", "amount", "value", "discount", "note")
+    # price_kind names the kind of observation, not an amount.
+    assert not [k for k in payload if k != "price_kind" and any(w in k.lower() for w in forbidden_key_words)]
+    leaked = {"777.25", "999", "0.2222", "precio 777.25"}
+
+    def _leaves(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                yield k
+                yield from _leaves(v)
+        elif isinstance(node, (list, tuple)):
+            for v in node:
+                yield from _leaves(v)
+        else:
+            yield node
+
+    assert not [v for v in _leaves(payload) if str(v) in leaked or v in (777.25, 999, 0.2222)]
 
 
 @needs_db

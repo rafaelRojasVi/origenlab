@@ -32,7 +32,7 @@ CLIENT_NAME = "Instituto Ficticio de Pruebas"
 CLIENT_CONTACT = "Persona Inventada Ejemplo"
 CLIENT_UNIT = "Unidad Imaginaria"
 CLIENT_EMAIL = "persona.inventada@example.test"
-CLIENT_PHONE = "+56 9 1234 5678"
+CLIENT_PHONE = "+56 9 8000 1111"
 
 
 def _sha() -> str:
@@ -40,7 +40,7 @@ def _sha() -> str:
 
 
 def _docx_text(rows: list[tuple[str, str, str]], *, letterhead: str = "OrigenLab") -> str:
-    """The docx/web layout: header over three lines, one row per block, `$ 1.234.000` amounts."""
+    """The docx/web layout: header over three lines, one row per block, `$ 1.236.000` amounts."""
     out = [f"{letterhead}                                   ventas@example.test",
            "                                       Valdivia, 2 de enero de 2026", "",
            f"Sra. {CLIENT_CONTACT}", CLIENT_NAME, "", "",
@@ -99,9 +99,9 @@ def _standard_docs(root: Path, tag: str) -> tuple[str, str]:
     """Two documents: one docx (verified, disputed, single-source lines), one xlsx (verified)."""
     a, b = _sha(), _sha()
     m1, m2, m3 = f"{tag}-1", f"{tag}-2", f"{tag}-3"
-    _write_doc(root, _extraction(a, [_line("1", m1, 1234000), _line("2", m2, 500000), _line("3", m3, 70000)],
+    _write_doc(root, _extraction(a, [_line("1", m1, 1236000), _line("2", m2, 500000), _line("3", m3, 70000)],
                                  quote_number=f"{tag}-A", date="02-01-2026"),
-               _docx_text([("1", m1, "1.234.000"), ("2", m2, "550.000")]))
+               _docx_text([("1", m1, "1.236.000"), ("2", m2, "550.000")]))
     _write_doc(root, _extraction(b, [_line("1", m1, 1200000)], quote_number=f"{tag}-B", date="2026-03-04",
                                  template="xlsx_master", client_type="private_company"),
                _xlsx_text([("1", m1, "1.200.000")]))
@@ -124,10 +124,10 @@ def test_plan_cross_checks_lines_into_one_document_item_each(tmp_path, capsys) -
     assert {i["action"] for i in plan["items"]} == {"add_quote_document"}
     first = docs[f"quote_document:{a}"]["fields"]
     assert first["payload"] == {"printed_quote_number": "ACME-A", "quote_date": "2026-01-02",
-                                "client_type": "university", "currency": "CLP", "net_total": "1804000",
+                                "client_type": "university", "currency": "CLP", "net_total": "1806000",
                                 "template": "docx_web2026", "file_sha256": a}
     assert [(ln["line_no"], ln["model_key"], ln["line_total"], ln["check_status"]) for ln in first["lines"]] == [
-        (1, "ACME1", "1234000", "verified"), (2, "ACME2", "500000", "disputed"), (3, "ACME3", "70000", "single_source")]
+        (1, "ACME1", "1236000", "verified"), (2, "ACME2", "500000", "disputed"), (3, "ACME3", "70000", "single_source")]
     assert {ln["extractor"] for ln in first["lines"]} == {"ai_v1+template_v1"}
     assert [ln["check_status"] for ln in docs[f"quote_document:{b}"]["fields"]["lines"]] == ["verified"]
     assert plan["counts"]["add_quote_document"] == 2
@@ -347,12 +347,12 @@ def test_history_apply_twice_inserts_once(disposable_database, operator, tmp_pat
     [(doc_id, kind, status, payload, payload_sha)] = _doc_rows(dsn, a)
     assert (kind, status, payload_sha) == ("quote_document", "pending", a)
     assert payload == {"printed_quote_number": f"{tag}-A", "quote_date": "2026-01-02", "client_type": "university",
-                       "currency": "CLP", "net_total": "1804000", "template": "docx_web2026", "file_sha256": a,
+                       "currency": "CLP", "net_total": "1806000", "template": "docx_web2026", "file_sha256": a,
                        "origin_source_record_id": manifest}
     lines = _owner(dsn, "select line_no, model_key, line_total, qty, unit_price, currency, check_status, extractor "
                         "from evidence.document_line where source_record_id = %s order by line_no", (doc_id,))
     assert lines == [
-        (1, f"{tag}1", Decimal("1234000.0000"), Decimal("1.000000"), Decimal("1234000.0000"), "CLP", "verified",
+        (1, f"{tag}1", Decimal("1236000.0000"), Decimal("1.000000"), Decimal("1236000.0000"), "CLP", "verified",
          "ai_v1+template_v1"),
         (2, f"{tag}2", Decimal("500000.0000"), Decimal("1.000000"), Decimal("500000.0000"), "CLP", "disputed",
          "ai_v1+template_v1"),

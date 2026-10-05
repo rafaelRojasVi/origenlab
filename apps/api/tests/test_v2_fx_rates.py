@@ -17,7 +17,7 @@ from origenlab_api.v2.fx_rates import FxRates, FxUnavailable, parse_mindicador
 from origenlab_api.v2.identity import IdentityPort, IdentityRefused, OperatorIdentity
 
 
-def _body(usd: Any = 950.5, eur: Any = 1050.25, uf: Any = 40000.0) -> dict[str, Any]:
+def _body(usd: Any = 950.5, eur: Any = 1049.75, uf: Any = 40000.0) -> dict[str, Any]:
     # mindicador dates each value at midnight Chile time, written in UTC.
     return {
         "autor": "mindicador.cl",
@@ -55,7 +55,7 @@ def test_reads_dollar_euro_and_uf_in_pesos_dated_in_chile() -> None:
     out = parse_mindicador(_body())
     assert out == [
         {"code": "USD", "label": "Dólar observado", "clp": 950.5, "as_of": "2026-01-15"},
-        {"code": "EUR", "label": "Euro", "clp": 1050.25, "as_of": "2026-01-15"},
+        {"code": "EUR", "label": "Euro", "clp": 1049.75, "as_of": "2026-01-15"},
         {"code": "UF", "label": "UF", "clp": 40000.0, "as_of": "2026-01-16"},
     ]
 
@@ -354,7 +354,7 @@ def test_a_mindicador_fetch_writes_usd_and_eur_through_once() -> None:
     assert writer.calls == [[
         {"rate_date": dt.date(2026, 1, 15), "currency": "USD", "clp_per_unit": Decimal("950.5"),
          "provider": "mindicador"},
-        {"rate_date": dt.date(2026, 1, 15), "currency": "EUR", "clp_per_unit": Decimal("1050.25"),
+        {"rate_date": dt.date(2026, 1, 15), "currency": "EUR", "clp_per_unit": Decimal("1049.75"),
          "provider": "mindicador"},
     ]]
 

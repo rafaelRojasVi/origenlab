@@ -32,7 +32,7 @@ Sra. Cliente Sintética
   ITEM
 
 
-   1     ACME-1     Equipo sintético de prueba, modelo uno                      $ 1.234.000
+   1     ACME-1     Equipo sintético de prueba, modelo uno                      $ 1.236.000
 
 
          SONIC-100
@@ -59,9 +59,9 @@ OrigenLab                                                                 ventas
 
  ITEM              MARCA / REF.                    DETALLE / ESPECIFICACIONES            CANT.      PRECIO UNIT. TOTAL
                                             Descripción sintética de la fila uno,
-        1 ACME · ACME-1                     sigue la descripción                          1              $1,234,000
+        1 ACME · ACME-1                     sigue la descripción                          1              $1,236,000
         2 ACME · SONIC-100                  Otro equipo sintético                         2              $1.000.000
-                                                                   SUBTOTAL NETO                         $2,234,000
+                                                                   SUBTOTAL NETO                         $2,236,000
 """
 
 
@@ -70,7 +70,7 @@ OrigenLab                                                                 ventas
 def test_docx_layout_rows_and_totals() -> None:
     lines = parse_template_lines(DOCX_TEXT)
     assert lines == [
-        TemplateLine(item_label="1", model="ACME-1", line_total=Decimal("1234000")),
+        TemplateLine(item_label="1", model="ACME-1", line_total=Decimal("1236000")),
         TemplateLine(item_label="2", model="SONIC-100", line_total=Decimal("3400000")),
         TemplateLine(item_label="2.1", model="25", line_total=Decimal("250000")),
         TemplateLine(item_label=None, model=None, line_total=Decimal("90000")),
@@ -80,14 +80,14 @@ def test_docx_layout_rows_and_totals() -> None:
 
 def test_xlsx_layout_rows_and_totals() -> None:
     assert parse_template_lines(XLSX_TEXT) == [
-        TemplateLine(item_label="1", model="ACME-1", line_total=Decimal("1234000")),
+        TemplateLine(item_label="1", model="ACME-1", line_total=Decimal("1236000")),
         TemplateLine(item_label="2", model="SONIC-100", line_total=Decimal("1000000")),
     ]
 
 
 def test_single_line_row_with_the_briefs_amount() -> None:
-    text = "  ITEM   REF    DETALLE      TOTAL\n\n   1     ACME-1    Equipo     $ 1.234.000\n"
-    assert parse_template_lines(text) == [TemplateLine("1", "ACME-1", Decimal("1234000"))]
+    text = "  ITEM   REF    DETALLE      TOTAL\n\n   1     ACME-1    Equipo     $ 1.236.000\n"
+    assert parse_template_lines(text) == [TemplateLine("1", "ACME-1", Decimal("1236000"))]
 
 
 def test_text_without_a_known_header_gives_model_less_lines() -> None:
@@ -96,8 +96,8 @@ def test_text_without_a_known_header_gives_model_less_lines() -> None:
 
 
 def test_lines_not_ending_with_a_clp_amount_are_ignored() -> None:
-    text = "  ITEM   REF    DETALLE      TOTAL\n\n   1     ACME-1    Equipo  $ 1.234.000 aprox\n" \
-           "\n   2     ACME-2    Equipo     USD 1,234.50\n\n   3     ACME-3    Equipo     $ 1.234,50\n" \
+    text = "  ITEM   REF    DETALLE      TOTAL\n\n   1     ACME-1    Equipo  $ 1.236.000 aprox\n" \
+           "\n   2     ACME-2    Equipo     USD 1,236.50\n\n   3     ACME-3    Equipo     $ 1.236,50\n" \
            "\n   4     ACME-4    Equipo     $ 1,234.567\n"
     assert parse_template_lines(text) == []
 
@@ -109,9 +109,9 @@ def _ai(item: str | None, model: str | None, total: str | None) -> dict:
 
 
 def test_cross_check_verified_by_model_and_total() -> None:
-    [line] = cross_check([_ai("1", "acme 1", "1234000")], [TemplateLine("1", "ACME-1", Decimal("1234000"))])
+    [line] = cross_check([_ai("1", "acme 1", "1236000")], [TemplateLine("1", "ACME-1", Decimal("1236000"))])
     assert line.check_status == "verified" and line.ai_index == 0
-    assert line.ai_total == line.template_total == Decimal("1234000")
+    assert line.ai_total == line.template_total == Decimal("1236000")
 
 
 def test_cross_check_verified_when_the_template_line_has_no_model() -> None:
@@ -121,9 +121,9 @@ def test_cross_check_verified_when_the_template_line_has_no_model() -> None:
 
 
 def test_cross_check_disputed_when_totals_differ_for_the_same_model() -> None:
-    [line] = cross_check([_ai("1", "ACME-1", "1234000")], [TemplateLine("1", "ACME-1", Decimal("1243000"))])
+    [line] = cross_check([_ai("1", "ACME-1", "1236000")], [TemplateLine("1", "ACME-1", Decimal("1263000"))])
     assert line.check_status == "disputed"
-    assert (line.ai_total, line.template_total) == (Decimal("1234000"), Decimal("1243000"))
+    assert (line.ai_total, line.template_total) == (Decimal("1236000"), Decimal("1263000"))
 
 
 def test_cross_check_disputed_when_totals_differ_for_the_same_item_label() -> None:
@@ -132,7 +132,7 @@ def test_cross_check_disputed_when_totals_differ_for_the_same_item_label() -> No
 
 
 def test_cross_check_single_source_on_either_side() -> None:
-    checked = cross_check([_ai("1", "ACME-1", "1234000"), _ai("3", "ACME-3", None)],
+    checked = cross_check([_ai("1", "ACME-1", "1236000"), _ai("3", "ACME-3", None)],
                           [TemplateLine("2", "ACME-2", Decimal("500000"))])
     by_side = {(c.ai_index is not None, c.check_status) for c in checked}
     assert by_side == {(True, "single_source"), (False, "single_source")}
@@ -142,22 +142,22 @@ def test_cross_check_single_source_on_either_side() -> None:
 
 
 def test_cross_check_a_different_model_and_item_is_not_the_same_line() -> None:
-    checked = cross_check([_ai("1", "ACME-1", "1234000")], [TemplateLine("2", "ACME-2", Decimal("1234000"))])
+    checked = cross_check([_ai("1", "ACME-1", "1236000")], [TemplateLine("2", "ACME-2", Decimal("1236000"))])
     assert sorted(c.check_status for c in checked) == ["single_source", "single_source"]
 
 
 def test_cross_check_verified_by_model_and_total_records_its_reason() -> None:
-    [line] = cross_check([_ai("4", "ACME-1", "1234000")], [TemplateLine("9", "ACME-1", Decimal("1234000"))])
+    [line] = cross_check([_ai("4", "ACME-1", "1236000")], [TemplateLine("9", "ACME-1", Decimal("1236000"))])
     assert (line.check_status, line.reason) == ("verified", "model_total_match")
 
 
 def test_cross_check_same_item_and_total_is_verified_even_when_the_models_differ() -> None:
-    [line] = cross_check([_ai("1", "ACME-1", "1234000")], [TemplateLine("1", "1234567", Decimal("1234000"))])
+    [line] = cross_check([_ai("1", "ACME-1", "1236000")], [TemplateLine("1", "1234567", Decimal("1236000"))])
     assert (line.check_status, line.reason) == ("verified", "item_total_match")
 
 
 def test_cross_check_same_item_other_total_and_other_model_stays_apart() -> None:
-    checked = cross_check([_ai("1", "ACME-1", "1234000")], [TemplateLine("1", "ACME-2", Decimal("1000"))])
+    checked = cross_check([_ai("1", "ACME-1", "1236000")], [TemplateLine("1", "ACME-2", Decimal("1000"))])
     assert sorted(c.check_status for c in checked) == ["single_source", "single_source"]
     assert all(c.reason is None for c in checked)
 
@@ -176,9 +176,9 @@ def _extraction(**overrides) -> dict:
         "sha256": SHA, "is_origenlab_issued_quote": True, "quote_number": "00001-26", "date": "2026-01-02",
         "city": "Ciudad Sintética", "client_contact": "Persona Inventada", "client_institution": "Instituto Ficticio",
         "client_unit": "Unidad Imaginaria", "client_type": "university", "currency": "CLP",
-        "prices_include_iva": False, "lines": [], "subtotal_net": 1234000, "iva_amount": 234460, "total": 1468460,
+        "prices_include_iva": False, "lines": [], "subtotal_net": 1236000, "iva_amount": 234840, "total": 1470840,
         "conditions": {"delivery": "pronto"}, "template": "docx_web2026",
-        "sum_check": {"lines_sum": 1234000, "stated_net": 1234000, "ok": True}, "extraction_issues": [],
+        "sum_check": {"lines_sum": 1236000, "stated_net": 1236000, "ok": True}, "extraction_issues": [],
     }
     return {**base, **overrides}
 
@@ -186,7 +186,7 @@ def _extraction(**overrides) -> dict:
 def test_payload_has_exactly_the_contract_keys_and_no_client_identity() -> None:
     payload = quote_document_payload(_extraction(), SHA)
     assert payload == {"printed_quote_number": "00001-26", "quote_date": "2026-01-02", "client_type": "university",
-                       "currency": "CLP", "net_total": "1234000", "template": "docx_web2026", "file_sha256": SHA}
+                       "currency": "CLP", "net_total": "1236000", "template": "docx_web2026", "file_sha256": SHA}
     assert "client_institution" not in payload and "client_contact" not in payload
     text = repr(payload)
     for secret in ("Persona Inventada", "Instituto Ficticio", "Unidad Imaginaria", "Ciudad Sintética", "pronto"):
@@ -225,10 +225,10 @@ def test_description_text_starting_in_the_ref_column_is_not_a_model() -> None:
 
 def test_small_and_zero_clp_amounts_parse() -> None:
     text = ("  ITEM   REF    DETALLE      TOTAL\n\n   1     ACME-1    Equipo     $ 0\n"
-            "\n   2     ACME-2    Equipo     $ 500\n\n   3     ACME-3    Equipo     $ 1.234\n")
+            "\n   2     ACME-2    Equipo     $ 500\n\n   3     ACME-3    Equipo     $ 1.236\n")
     assert parse_template_lines(text) == [TemplateLine("1", "ACME-1", Decimal("0")),
                                           TemplateLine("2", "ACME-2", Decimal("500")),
-                                          TemplateLine("3", "ACME-3", Decimal("1234"))]
+                                          TemplateLine("3", "ACME-3", Decimal("1236"))]
 
 
 def test_a_numeric_ai_item_with_an_integer_value_matches_its_label() -> None:

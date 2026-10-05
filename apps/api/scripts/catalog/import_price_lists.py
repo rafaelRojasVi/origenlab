@@ -92,7 +92,7 @@ def _money(value: Any) -> Decimal | None:
 
 
 def _euro(text: str) -> Decimal:
-    """"1.234,56" → Decimal("1234.56")."""
+    """"1.236,56" → Decimal("1236.56")."""
     return Decimal(text.replace(".", "").replace(",", ".")).quantize(_SIX)
 
 

@@ -58,9 +58,9 @@ def _today():
 
 
 def test_weekend_resolves_to_previous_business_day():
-    fx = PricingFx(_Reads({}), _Writer(), [_Provider({date(2026, 10, 2): D("1104.57")})], _today)
+    fx = PricingFx(_Reads({}), _Writer(), [_Provider({date(2026, 10, 2): D("1099.13")})], _today)
     q = fx.rate("EUR", date(2026, 10, 4))
-    assert q["clp_per_unit"] == D("1104.57") and q["as_of"] == date(2026, 10, 2)
+    assert q["clp_per_unit"] == D("1099.13") and q["as_of"] == date(2026, 10, 2)
 
 
 def test_stored_rate_wins_and_no_provider_call():
@@ -117,8 +117,8 @@ def test_writer_failure_does_not_fail_the_read():
 
 
 def test_parse_mindicador_payload():
-    payload = {"serie": [{"fecha": "2026-10-02T03:00:00.000Z", "valor": 1104.57}]}
-    assert MindicadorProvider.parse(payload) == {date(2026, 10, 2): D("1104.57")}
+    payload = {"serie": [{"fecha": "2026-10-02T03:00:00.000Z", "valor": 1099.13}]}
+    assert MindicadorProvider.parse(payload) == {date(2026, 10, 2): D("1099.13")}
 
 
 def test_parse_bde_payload():
