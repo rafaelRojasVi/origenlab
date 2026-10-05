@@ -93,4 +93,17 @@ describe("Gmail as a third source", () => {
     expect(knownQuoteNumbers([], [], [mail("CN", "2026-03-02T15:00:00Z"), mail("CN01250", "not a date")])).toEqual([]);
     expect(knownQuoteNumbers([card("01245-26", "Laboratorio Andino")], [])).toHaveLength(1);
   });
+
+  it("reads a Gmail token whose leading zero was dropped as the 0xxxx series with a revision digit", () => {
+    // The capture writes «CN012395-….pdf» as «CN12395»: correlative 01239, revision 5 — not 12395.
+    const known = knownQuoteNumbers(
+      [],
+      [],
+      [mail("CN12395", "2026-06-26T15:00:00Z"), mail("CN11024", "2026-05-18T15:00:00Z"), mail("CN01255", "2026-10-05T15:00:00Z")],
+    );
+    const byNumber = Object.fromEntries(known.map((k) => [k.number, k]));
+    expect(byNumber["CN12395"]).toMatchObject({ year: 26, correlative: 1239 });
+    expect(byNumber["CN11024"]).toMatchObject({ year: 26, correlative: 1102 });
+    expect(lastAndNext(known, 26)).toMatchObject({ last: { number: "CN01255" }, next: "01256-26" });
+  });
 });
