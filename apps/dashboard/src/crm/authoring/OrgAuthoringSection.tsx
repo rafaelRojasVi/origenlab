@@ -38,6 +38,7 @@ import {
 } from "./crmAuthoringApi";
 import { ContactPointList } from "./ContactPointList";
 import { NoteList } from "./NoteList";
+import { PersonSuggestionList } from "./PersonSuggestionList";
 import { WebSuggestionsSection } from "./WebSuggestionsSection";
 import { refusalText } from "./webSuggestions";
 
@@ -113,6 +114,17 @@ function OrgAuthoringBody({
           mayAuthor={mayAuthor && organization.status === "active"}
           onRefresh={onRefresh}
         />
+      ) : null}
+
+      {data.person_suggestions && data.person_suggestions.length > 0 ? (
+        <Section title={`Personas sugeridas (${data.person_suggestions.length})`}>
+          <PersonSuggestionList
+            items={data.person_suggestions}
+            mayAuthor={mayAuthor && organization.status === "active"}
+            showOrganization={false}
+            onCreated={onRefresh}
+          />
+        </Section>
       ) : null}
 
       {/* Status */}

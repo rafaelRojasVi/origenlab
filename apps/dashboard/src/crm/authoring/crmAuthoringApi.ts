@@ -54,6 +54,7 @@ export const CRM_READ_PATHS = {
   organizationAuthoring: (id: string) => `/v2/workspace/organizations/${encodeURIComponent(id)}/authoring`,
   mergePreview: (loser: string, winner: string) =>
     `/v2/workspace/people/merge-preview?loser=${encodeURIComponent(loser)}&winner=${encodeURIComponent(winner)}`,
+  personSuggestions: () => "/v2/workspace/person-suggestions",
 } as const;
 
 /* ── response types ─────────────────────────────────────────────────────── */
@@ -215,6 +216,26 @@ export interface OrgWebSuggestion {
   notes: string | null;
 }
 
+/** A person the quote emails name and the CRM does not hold yet (`v2/person_suggestions.py`). */
+export interface PersonSuggestion {
+  /** Opaque keyed reference to the address; what «Ocultar» stores, never the address. */
+  suggestion_ref: string;
+  email: string;
+  display_name: string;
+  name_source: "recipient" | "filename";
+  organization_id: string | null;
+  organization_name: string | null;
+  quotes: number;
+  last_sent_at: string | null;
+  /** The address is already in the CRM with no owner; «Crear persona» assigns it. */
+  existing_contact_point: "unattributed" | "individual_owner_unknown" | null;
+}
+
+export interface PersonSuggestionsResponse {
+  items: PersonSuggestion[];
+  total: number;
+}
+
 export interface OrganizationAuthoringResponse {
   organization: {
     id: string;
@@ -243,6 +264,7 @@ export interface OrganizationAuthoringResponse {
   removal: { allowed: false; reasons: string[] };
   authoring: { enabled: boolean; may_author: boolean; may_archive: boolean };
   web_suggestions?: OrgWebSuggestion | null;
+  person_suggestions?: PersonSuggestion[];
 }
 
 export interface MergePreviewResponse {
@@ -313,6 +335,9 @@ export const fetchOrganizationAuthoring = (organizationId: string) =>
 
 export const fetchMergePreview = (loser: string, winner: string) =>
   fetchJsonGet<MergePreviewResponse>(operatorApiUrl(CRM_READ_PATHS.mergePreview(loser, winner)));
+
+export const fetchPersonSuggestions = () =>
+  fetchJsonGet<PersonSuggestionsResponse>(operatorApiUrl(CRM_READ_PATHS.personSuggestions()));
 
 /* ── person commands ─────────────────────────────────────────────────────── */
 

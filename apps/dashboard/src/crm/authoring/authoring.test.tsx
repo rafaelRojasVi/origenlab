@@ -66,6 +66,7 @@ function expectNoWriteAffordance() {
     "Guardar",
     "Confirmar institución",
     "Aplicar",
+    "Crear persona",
   ];
   const offending = screen.queryAllByRole("button").filter((b) => {
     const text = (b.textContent ?? "").trim();
@@ -91,6 +92,12 @@ function stub() {
       if (p.endsWith("/v2/workspace/pipeline")) return json({ items: [], drive_configured: false });
       if (p.endsWith("/v2/workspace/providers")) return json({ directory: [], on_cases: [], candidates: [{ assertion_id: "a0000000-0000-4000-8000-000000000001", domain: "hielscher.com", trade_name: "Hielscher", review: { state: "unresolved", decided_at: null, note: null } }], authoring: { enabled: true } });
       if (p.includes("/v2/contacts")) return json({ items: [], total: 0 });
+      if (p.endsWith("/v2/workspace/person-suggestions")) {
+        return json({
+          items: [{ suggestion_ref: "ref-x", email: "x@ficticia.example.invalid", display_name: "Persona Ficticia", name_source: "recipient", organization_id: null, organization_name: null, quotes: 1, last_sent_at: null, existing_contact_point: null }],
+          total: 1,
+        });
+      }
       if (p.endsWith("/v2/workspace/organizations")) return json({ items: [], total: 0, facets: { customers: 0, suppliers: 0, all: 0 } });
       if (p.endsWith("/v2/workspace/equipment-interests")) return json({ by_contact_point: [], by_address_ref: [], by_organization: [] });
       if (init?.method && init.method.toUpperCase() !== "GET") {
