@@ -1,9 +1,15 @@
 """Read contacto@origenlab.cl through the Gmail REST API — `gmail.readonly` only.
 
-Mirrors the campaign test-send client (`apps/api/src/origenlab_api/v2/gmail_send.py` on
-`feat/campaign-test-send-v1` @ `e488c2a1`: `Transport` :37, `urllib_transport` :87, the
-refresh-with-margin `_access_token` :105 and the `_call` that names a network failure :128):
-plain HTTPS through `urllib`, no Google SDK at runtime.
+Mirrors the campaign test-send client (`apps/api/src/origenlab_api/v2/gmail_send.py`, merged on
+main in #633: `Transport`, `urllib_transport`, the refresh-with-margin `_access_token` and the
+`_call` that names a network failure) without importing it: plain HTTPS through `urllib`, no
+Google SDK at runtime.
+
+Error kinds. `GmailAuthError`: `invalid_grant`, `token_refresh_failed`, `scope_not_readonly`,
+`unauthorized`. `GmailNotFound`: `not_found`. `HistoryExpired`: `history_expired`.
+`GmailUnavailable`: `network`, `http_<status>` (also for a token endpoint 429/5xx),
+`invalid_json` (any answer whose shape or values are not what Gmail documents),
+`retries_exhausted`, `too_many_pages`. No message ever carries a token, address, subject or id.
 
 The refresh token belongs to a Workspace *Internal* OAuth client that contacto@ consented to once
 (`scripts/gmail_readonly_authorize.py`). Every refresh re-checks that Google granted exactly
@@ -14,13 +20,15 @@ The refresh token belongs to a Workspace *Internal* OAuth client that contacto@ 
 from __future__ import annotations
 
 import base64
+import binascii
 import http.client
 import json
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,8 +39,10 @@ TIMEOUT_SECONDS = 30.0
 REFRESH_MARGIN_SECONDS = 60.0
 MAX_ATTEMPTS = 4
 PAGE_SIZE = 500
+MAX_PAGES = 1000
 METADATA_HEADERS = ("From", "Subject", "Message-ID", "Date")
 RETRYABLE = frozenset({429, 500, 502, 503, 504})
+_MALFORMED = (ValueError, TypeError, AttributeError, KeyError, binascii.Error)
 
 Transport = Callable[[str, str, dict[str, str], bytes, float], tuple[int, bytes]]
 
@@ -118,6 +128,32 @@ def _json(raw: bytes) -> Any:
         return None
 
 
+@contextmanager
+def _well_formed() -> Iterator[None]:
+    """Whatever a 200 body holds, a wrong shape or value is `invalid_json` and never echoed."""
+    try:
+        yield
+    except _MALFORMED:
+        raise GmailUnavailable("invalid_json") from None
+
+
+def _items(value: Any) -> list[dict[str, Any]]:
+    """A JSON list of objects, or nothing; anything else is malformed."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
+        raise TypeError("expected a list of objects")
+    return value
+
+
+def _labels(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise TypeError("labelIds")
+    return tuple(str(v) for v in value)
+
+
 def _b64url(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
 
@@ -163,20 +199,26 @@ class GmailReader:
         status, raw = self._call(
             "POST", self._token_url, {"Content-Type": "application/x-www-form-urlencoded"}, body
         )
-        data = _json(raw)
-        data = data if isinstance(data, dict) else {}
+        parsed = _json(raw)
+        data: dict[str, Any] = parsed if isinstance(parsed, dict) else {}
         if status != 200:
+            if status in RETRYABLE:
+                raise GmailUnavailable(f"http_{status}")
             if data.get("error") == "invalid_grant":
                 raise GmailAuthError("invalid_grant")
             raise GmailAuthError("token_refresh_failed")
-        scopes = tuple(sorted(str(data.get("scope") or "").split()))
+        if not isinstance(parsed, dict):
+            raise GmailUnavailable("invalid_json")
+        with _well_formed():
+            scopes = tuple(sorted(str(data.get("scope") or "").split()))
+            expires_in = float(data.get("expires_in") or 0)
         if scopes != (READONLY_SCOPE,):
             raise GmailAuthError("scope_not_readonly")
         access = data.get("access_token")
         if not isinstance(access, str) or not access:
             raise GmailAuthError("token_refresh_failed")
         self._access = access
-        self._expires_at = self._clock() + float(data.get("expires_in") or 0)
+        self._expires_at = self._clock() + expires_in
         self.granted_scopes = scopes
         return access
 
@@ -189,7 +231,8 @@ class GmailReader:
         query = urllib.parse.urlencode(params or {}, doseq=True)
         url = f"{self._api_base}/{path}" + (f"?{query}" if query else "")
         refreshed = False
-        for attempt in range(MAX_ATTEMPTS):
+        attempt = 0
+        while True:
             status, raw = self._call("GET", url, {"Authorization": f"Bearer {self._token()}"}, b"")
             if status == 200:
                 data = _json(raw)
@@ -205,9 +248,9 @@ class GmailReader:
                 raise GmailNotFound("not_found")
             if status in RETRYABLE and attempt < MAX_ATTEMPTS - 1:
                 self._sleep(2.0**attempt)
+                attempt += 1
                 continue
             raise GmailUnavailable(f"http_{status}")
-        raise GmailUnavailable("retries_exhausted")
 
     # ------------------------------------------------------------------ the reads
 
@@ -222,7 +265,7 @@ class GmailReader:
         """Every message added since `start_history_id`, oldest first, each id once."""
         ids: dict[str, None] = {}
         latest, token = start_history_id, None
-        while True:
+        for _ in range(MAX_PAGES):
             params: dict[str, Any] = {
                 "startHistoryId": start_history_id,
                 "historyTypes": "messageAdded",
@@ -234,63 +277,70 @@ class GmailReader:
                 data = self._get("history", params)
             except GmailNotFound:
                 raise HistoryExpired("history_expired") from None
-            for record in data.get("history") or []:
-                for added in record.get("messagesAdded") or []:
-                    message_id = (added.get("message") or {}).get("id")
-                    if message_id:
-                        ids.setdefault(str(message_id), None)
-            latest = str(data.get("historyId") or latest)
-            token = data.get("nextPageToken")
+            with _well_formed():
+                for record in _items(data.get("history")):
+                    for added in _items(record.get("messagesAdded")):
+                        message_id = (added.get("message") or {}).get("id")
+                        if message_id:
+                            ids.setdefault(str(message_id), None)
+                latest = str(data.get("historyId") or latest)
+                token = data.get("nextPageToken")
             if not token:
                 return HistoryWindow(tuple(ids), latest)
+        raise GmailUnavailable("too_many_pages")
 
     def messages_after(self, epoch_seconds: int) -> list[str]:
         """The resync list: every message after `epoch_seconds`, oldest first, spam and trash excluded."""
         ids: list[str] = []
         token = None
-        while True:
+        for _ in range(MAX_PAGES):
             params: dict[str, Any] = {"q": f"after:{int(epoch_seconds)}", "maxResults": PAGE_SIZE}
             if token:
                 params["pageToken"] = token
             data = self._get("messages", params)
-            ids.extend(str(m["id"]) for m in data.get("messages") or [] if m.get("id"))
-            token = data.get("nextPageToken")
+            with _well_formed():
+                ids.extend(str(m["id"]) for m in _items(data.get("messages")) if m.get("id"))
+                token = data.get("nextPageToken")
             if not token:
                 return list(dict.fromkeys(reversed(ids)))
+        raise GmailUnavailable("too_many_pages")
 
     def metadata(self, message_id: str) -> MessageMeta:
         data = self._get(
             f"messages/{urllib.parse.quote(message_id, safe='')}",
             {"format": "metadata", "metadataHeaders": list(METADATA_HEADERS)},
         )
-        headers: dict[str, str] = {}
-        for header in (data.get("payload") or {}).get("headers") or []:
-            name = str(header.get("name") or "").lower()
-            if name and name not in headers:
-                headers[name] = str(header.get("value") or "")
-        return MessageMeta(
-            message_id=str(data.get("id") or message_id),
-            thread_id=data.get("threadId"),
-            label_ids=tuple(data.get("labelIds") or ()),
-            size_estimate=int(data.get("sizeEstimate") or 0),
-            internal_date_ms=int(data.get("internalDate") or 0),
-            headers=headers,
-        )
+        with _well_formed():
+            headers: dict[str, str] = {}
+            for header in _items((data.get("payload") or {}).get("headers")):
+                name = str(header.get("name") or "").lower()
+                if name and name not in headers:
+                    headers[name] = str(header.get("value") or "")
+            return MessageMeta(
+                message_id=str(data.get("id") or message_id),
+                thread_id=data.get("threadId"),
+                label_ids=_labels(data.get("labelIds")),
+                size_estimate=int(data.get("sizeEstimate") or 0),
+                internal_date_ms=int(data.get("internalDate") or 0),
+                headers=headers,
+            )
 
     def raw(self, message_id: str) -> RawMessage:
         data = self._get(f"messages/{urllib.parse.quote(message_id, safe='')}", {"format": "raw"})
-        return RawMessage(
-            message_id=str(data.get("id") or message_id),
-            thread_id=data.get("threadId"),
-            label_ids=tuple(data.get("labelIds") or ()),
-            internal_date_ms=int(data.get("internalDate") or 0),
-            raw=_b64url(str(data.get("raw") or "")),
-        )
+        with _well_formed():
+            return RawMessage(
+                message_id=str(data.get("id") or message_id),
+                thread_id=data.get("threadId"),
+                label_ids=_labels(data.get("labelIds")),
+                internal_date_ms=int(data.get("internalDate") or 0),
+                raw=_b64url(str(data.get("raw") or "")),
+            )
 
     def labels(self) -> dict[str, str]:
         data = self._get("labels")
-        return {
-            str(label["id"]): str(label.get("name") or label["id"])
-            for label in data.get("labels") or []
-            if label.get("id")
-        }
+        with _well_formed():
+            return {
+                str(label["id"]): str(label.get("name") or label["id"])
+                for label in _items(data.get("labels"))
+                if label.get("id")
+            }

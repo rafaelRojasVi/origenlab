@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 
 import pytest
 
+from origenlab_worker import gmail_client
 from origenlab_worker.gmail_client import (
     READONLY_SCOPE,
     GmailAuthError,
@@ -168,3 +170,102 @@ def test_a_missing_message_is_not_found() -> None:
 def test_labels_map_ids_to_names() -> None:
     s = _Script(token(), ("labels", 200, {"labels": [{"id": "INBOX", "name": "INBOX"}, {"id": "Label_7", "name": "Borradores 2026"}]}))
     assert reader(s).labels() == {"INBOX": "INBOX", "Label_7": "Borradores 2026"}
+
+
+def _invalid(script, call) -> None:
+    with pytest.raises(GmailUnavailable) as exc:
+        call(reader(script))
+    assert exc.value.kind == "invalid_json"
+    assert "oauth" not in str(exc.value) and "abc" not in str(exc.value)
+
+
+@pytest.mark.parametrize("body", [b"not json", b"[1]", b'"x"'])
+def test_a_token_200_that_is_not_a_json_object_is_invalid_json(body) -> None:
+    _invalid(_Script((TOKEN, 200, body)), lambda r: r.profile())
+
+
+def test_a_non_numeric_expires_in_is_invalid_json() -> None:
+    _invalid(_Script((TOKEN, 200, {"access_token": "at1", "expires_in": "abc", "scope": READONLY_SCOPE})),
+             lambda r: r.profile())
+
+
+@pytest.mark.parametrize("body", [b"not json", b"[1]"])
+def test_a_malformed_top_level_body_is_invalid_json(body) -> None:
+    _invalid(_Script(token(), ("profile", 200, body)), lambda r: r.profile())
+
+
+@pytest.mark.parametrize("history", ["abc", [{"messagesAdded": "abc"}], [{"messagesAdded": ["abc"]}], ["abc"]])
+def test_a_malformed_history_record_is_invalid_json(history) -> None:
+    _invalid(_Script(token(), ("history", 200, {"history": history})), lambda r: r.history("100"))
+
+
+@pytest.mark.parametrize("body", [{"messages": "abc"}, {"messages": ["abc"]}])
+def test_a_malformed_list_is_invalid_json(body) -> None:
+    _invalid(_Script(token(), ("messages", 200, body)), lambda r: r.messages_after(1))
+
+
+@pytest.mark.parametrize("body", [
+    {"id": "m1", "sizeEstimate": "abc"}, {"id": "m1", "internalDate": "abc"},
+    {"id": "m1", "payload": "abc"}, {"id": "m1", "payload": {"headers": ["abc"]}},
+    {"id": "m1", "labelIds": 5}, {"id": "m1", "labelIds": "INBOX"},
+])
+def test_a_malformed_metadata_is_invalid_json(body) -> None:
+    _invalid(_Script(token(), ("format=metadata", 200, body)), lambda r: r.metadata("m1"))
+
+
+@pytest.mark.parametrize("body", [{"id": "m1", "raw": "a"}, {"id": "m1", "internalDate": "abc", "raw": ""},
+                                  {"id": "m1", "labelIds": 5}])
+def test_a_malformed_raw_is_invalid_json(body) -> None:
+    _invalid(_Script(token(), ("format=raw", 200, body)), lambda r: r.raw("m1"))
+
+
+def test_a_malformed_label_list_is_invalid_json() -> None:
+    _invalid(_Script(token(), ("labels", 200, {"labels": ["abc"]})), lambda r: r.labels())
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_a_token_endpoint_outage_is_unavailable_not_an_auth_error(status) -> None:
+    with pytest.raises(GmailUnavailable) as exc:
+        reader(_Script((TOKEN, status, {"error": "backend_error"}))).profile()
+    assert exc.value.kind == f"http_{status}"
+
+
+def test_a_token_400_that_is_not_invalid_grant_is_token_refresh_failed() -> None:
+    with pytest.raises(GmailAuthError) as exc:
+        reader(_Script((TOKEN, 400, {"error": "invalid_client"}))).profile()
+    assert exc.value.kind == "token_refresh_failed"
+
+
+def test_a_token_response_without_a_scope_is_refused() -> None:
+    with pytest.raises(GmailAuthError) as exc:
+        reader(_Script((TOKEN, 200, {"access_token": "at1", "expires_in": 3600}))).profile()
+    assert exc.value.kind == "scope_not_readonly"
+
+
+def test_a_401_on_the_last_attempt_still_earns_its_one_refresh() -> None:
+    s = _Script(token(), ("profile", 503, {}), ("profile", 503, {}), ("profile", 503, {}), ("profile", 401, {}),
+                token(access="at2"), ("profile", 200, {"emailAddress": "x@example.invalid", "historyId": "1"}))
+    assert reader(s).profile().history_id == "1" and not s.steps
+    assert s.calls[-1][2]["Authorization"] == "Bearer at2"
+
+
+@pytest.mark.parametrize("error", [http.client.IncompleteRead(b""), TimeoutError("slow"), http.client.BadStatusLine("x")])
+def test_http_exceptions_and_timeouts_are_network(error) -> None:
+    def broken(*_args):
+        raise error
+
+    with pytest.raises(GmailUnavailable) as exc:
+        GmailReader(CREDS, transport=broken, sleep=lambda s: None).profile()
+    assert exc.value.kind == "network"
+
+
+def test_a_page_token_that_never_ends_is_a_typed_error(monkeypatch) -> None:
+    monkeypatch.setattr(gmail_client, "MAX_PAGES", 3)
+    forever = [("history", 200, page("a1", next_token="p"))] * 5
+    with pytest.raises(GmailUnavailable) as exc:
+        reader(_Script(token(), *forever)).history("100")
+    assert exc.value.kind == "too_many_pages"
+    loop = [("messages", 200, {"messages": [{"id": "n"}], "nextPageToken": "p"})] * 5
+    with pytest.raises(GmailUnavailable) as exc:
+        reader(_Script(token(), *loop)).messages_after(1)
+    assert exc.value.kind == "too_many_pages"
