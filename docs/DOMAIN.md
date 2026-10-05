@@ -46,6 +46,7 @@ implementation.
 | **Domain event** | Append-only audit of one state transition, with a closed type and a versioned payload. | `crm.domain_event` |
 | **Send attempt** | One intent to deliver one message to one address. Submission and delivery are tracked separately. **The only send ledger.** | `outbound.send_attempt` |
 | **Contact control** | A `block`, a permanent `prior_contact` fact, or a dated `cooldown` on an address or a domain, each scoped to a `purpose` (`all` or `marketing`). | `outbound.contact_control` |
+| **Quote document** | A past quote PDF held as evidence: one `source_record` of kind `quote_document` with its lines in `evidence.document_line`, each cross-checked. Never trusted truth; it informs price history. | `evidence.source_record`, `evidence.document_line` |
 | **Source record** | An acquired external record with provenance and review status. | `evidence.source_record` |
 | **Assertion** | A typed observed fact extracted from a source record, with a resolution. | `evidence.assertion` |
 
@@ -626,14 +627,46 @@ under `WHERE version = %s`.
 
 - A **manufacturer** is an organization holding the `manufacturer` relationship.
 - `catalog.product` is a manufacturer's model, identified by
-  `(manufacturer_organization_id, model_number)`. A product belongs to exactly
-  one manufacturer.
+  `(manufacturer_organization_id, model_number)` and, since catalog 1a, by the
+  wider `(manufacturer_organization_id, model_key)`: `model_key` is the model
+  upper-cased with spaces, hyphens, underscores, dots and slashes removed, so
+  «SONIC-100» and «sonic 100» are one product. A product belongs to exactly
+  one manufacturer. It carries Spanish content (`name_es`, `description_es`,
+  `category_es`, `specs`), physical data (weight, dimensions, origin country,
+  HS code, dangerous goods) and a `product_kind` in `{equipment, accessory,
+  consumable, spare_part, service}`. Its content has an origin
+  (`import`, `machine`, `operator`); machine content is a proposal until an
+  operator confirms it, and operator content is never overwritten by a tool.
 - A **supplier** is an organization holding the `supplier` relationship. A
   supplier is not a separate identity table; a distributor that also buys is
   one organization with two relationship rows.
 - `catalog.supplier_product` is an **append-only price observation**:
-  `(supplier_organization_id, product_id, as_of)` with a price, a currency and
-  a provenance. It is never overwritten; the current price is the newest row.
+  `(supplier_organization_id, product_id, as_of, price_kind, min_qty)` with a
+  price, a currency and a provenance. It is never overwritten; the current
+  cost is the newest non-stale row by `as_of`, preferring a per-deal kind on
+  the same day.
+- **Price kinds** (`catalog.supplier_product.price_kind`): `dealer_net`,
+  `list`, `map`, `supplier_offer`, `order_confirmation`, `purchase_order`,
+  `costing_sheet`, `negotiated`. The last five are *per-deal* kinds — they
+  record what one deal cost, not a standing list — and win over a list kind
+  observed the same day. `is_stale` marks a price from a superseded list.
+- **Supplier terms** (`catalog.supplier_terms`, one row per supplier
+  organization): currency, origin country, import route (`import_courier`,
+  `import_freight`, `domestic`), incoterm, default discount, packing share,
+  whether the maker enforces MAP, default lead time. Set by an operator or by
+  an importer when the supplier has none; never deleted.
+- **Cost parameters** (`catalog.cost_parameter`): a closed vocabulary of
+  costing inputs (carrier discount and fuel surcharge, customs fee, duty
+  rates, insurance, cost profiles, markups per product kind, margin targets,
+  price-deviation warning, VAT). Append-only history; the current value is the
+  newest `valid_from <= now()`. The repository is public, so only the five
+  public or regulatory keys are seeded; every other key is unset until an
+  operator sets it per environment.
+- **Document line check statuses** (`evidence.document_line.check_status`):
+  `verified` (the AI extraction and the layout text agree), `single_source`
+  (only one reading exists), `disputed` (they disagree) and `reviewed` (an
+  operator resolved a disputed line). Only a disputed line may be reviewed,
+  once, and only its quantity, prices and optional flag change.
 - A quote line references a product and carries its own supplier cost currency
   and FX snapshot, so a repriced catalog never changes a sent quote.
 
@@ -735,11 +768,11 @@ list is decided, these rows are reclassified by the migration that introduces it
 | 13 | A case at `lead` has had no activity for eleven months | it is still `lead`. The dashboard shows *sin actividad hace 334 días*, computed at read time. Closing it is `abandon_opportunity(case, reason)` by an operator; without that act no row changes and no event exists (§3.4) |
 | 14 | A distributor that supplies OrigenLab asks to buy a unit for its own laboratory | the distributor's `supplier` relationship is untouched. `set_requesting_institution` is refused until the operator supplies a justification; with it, one `opportunity_organization(distributor, role=requesting_institution, confirmation=confirmed, confirmed_by=O)` carries `supplier_exception_reason`, and the triple can never be rewritten. The case card shows *proveedor registrado* **and** *solicitante — excepción justificada*. No marketing permission and no `prospect` relationship follow |
 
-## 7. Table inventory — the reviewed 45-table foundation
+## 7. Table inventory — the reviewed 50-table foundation
 
-Seven private schemas. **45 application tables** — 33 reviewed after the
+Seven private schemas. **50 application tables** — 33 reviewed after the
 external CRM benchmark, the three of §7.1, the one of §7.2, the four of
-§7.3 and the four of §7.4 — the current
+§7.3, the four of §7.4 and the five of §7.5 — the current
 reviewed foundation
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §13), not a permanent budget: a table
 is added only when a relational invariant proves it necessary, removed when
@@ -747,7 +780,8 @@ nothing needs it, and every change is recorded here. Numbers are stable
 identifiers, so the two D0.3 additions are appended as 31 and 32, and the
 Slice 0 / M10c reply table as 33, the commercial case as 34–36, the
 campaign safety block as 37, the shared sign-in tables as 38–41 and the
-campaign-content archive and CRM authoring tables as 42–45, rather
+campaign-content archive and CRM authoring tables as 42–45 and the catalog
+1a tables as 50–54 (46–49 are not assigned by this change), rather
 than renumbered into their schema blocks.
 Supabase-managed `auth`, `storage`, `pgmq` and migration-metadata tables are
 outside this count and outside this inventory.
@@ -779,8 +813,8 @@ outside this count and outside this inventory.
 | 23 | `outbound.contact_control` | purpose-scoped `block` / `prior_contact` / `cooldown` | `(scope, value_norm, kind, purpose)` unique; `block.purpose ∈ {all, marketing}`; `prior_contact` and `cooldown` ⇒ `marketing` only; `prior_contact` never deleted, never expires; an unsubscribe (`reason = unsubscribe`, or any block a «BAJA» was linked to) never updated or deleted — no re-subscription; written only through `outbound.add_contact_control`; truth table in [`WORKFLOWS.md`](WORKFLOWS.md) §1.6, «BAJA» in §W10 |
 | 24 | `evidence.source_record` | acquired external record and migration manifests | `dedupe_key` unique; supersession chain; quarantine flag |
 | 25 | `evidence.assertion` | typed observation with resolution | `(source_record_id, kind, value_norm)`; closed `kind`; an `unsubscribe_request` is written only by `outbound.add_contact_control` and resolves to its `contact_control` — or stays `unresolved` while held for review, blocking its exact address from marketing, until that function decides it once — resolved to its control, or (admin, pending holds only) dismissed as `rejected`, which may still be confirmed later; a confirmed request is never dismissed; otherwise never changed |
-| 26 | `catalog.product` | manufacturer model | `(manufacturer_organization_id, model_number)` unique |
-| 27 | `catalog.supplier_product` | supplier price observation | append-only; `(supplier_organization_id, product_id, as_of)` |
+| 26 | `catalog.product` | manufacturer model, its Spanish content, specs and physical data | `(manufacturer_organization_id, model_number)` unique **and** `(manufacturer_organization_id, model_key)` unique, where `model_key = upper(model_number` with whitespace, `-`, `_`, `.`, `/` removed`)` (generated; the database decides, not the API); `product_kind` closed; `content_origin ∈ {import, machine, operator}`; a confirmation names its operator and time together; `version` for optimistic concurrency; never deleted (`active = false` retires it) |
+| 27 | `catalog.supplier_product` | supplier price observation | append-only; `(supplier_organization_id, product_id, as_of, price_kind, min_qty)` unique, nulls not distinct; closed `price_kind`; `discount_pct` in [0, 1) |
 | 28 | `procurement.notice` | ChileCompra notice head and history | `codigo_externo` unique; `disappeared_at` for withdrawal |
 | 29 | `platform.operator` | auth user → role and status | auth uid unique; `role ∈ {admin, sales, viewer}`; the runtime API role only reads it — created and changed by the migrator roster tools (`20260928192000`) |
 | 30 | `platform.command_receipt` | command idempotency | `(operator_id, idempotency_key)`; digest mismatch → 409 |
@@ -920,11 +954,32 @@ and `assertion.supplier_candidate_confirmed / rejected`.
 |---|---|---|---|
 | 42 | `outbound.campaign_content` | immutable archive of one campaign's frozen HTML and plain-text bodies, keyed by the campaign's `content_sha256` | owned by `origenlab_owner`; INSERT-only (trigger `campaign_content_immutable`); `(campaign_id, content_sha256)` unique; no address or personal data columns; api and worker may SELECT |
 | 43 | `outbound.campaign_content_message` | per-send-attempt content snapshot linking a send attempt to the archived content | belongs to exactly one `campaign_content`; one row per `send_attempt_id`; INSERT-only through the same owner guard; api and worker may SELECT |
-| 44 | `crm.note` | operator-authored annotation on any CRM object — person, organization, case, contact point | body, author and subject are immutable once written (trigger `crm.note_guard`); archiving advances `version` by exactly one and is final; never deleted; a revision chains to a root note; api may INSERT and archive (column-level UPDATE: `status`, `archived_at`, `archived_by_operator_id`, `archive_reason`, `version`) |
+| 44 | `crm.note` | operator-authored annotation on any CRM object — person, organization, case, contact point, product | body, author and subject are immutable once written (trigger `crm.note_guard`); archiving advances `version` by exactly one and is final; never deleted; a revision chains to a root note; api may INSERT and archive (column-level UPDATE: `status`, `archived_at`, `archived_by_operator_id`, `archive_reason`, `version`) |
 | 45 | `crm.organization_product_line` | links one organization to one product-line label — the brands and equipment families it handles | closed product-line vocabulary; at most one active link per `(organization_id, product_line)` (partial unique index excludes soft-removed rows); unlinked by setting `valid_to` (never deleted; trigger refuses DELETE); api may INSERT and unlink (column-level UPDATE: `valid_to`, `unlinked_by_operator_id`, `note`, `updated_at`) |
 
-Counts by schema: `crm` 21, `comms` 4, `outbound` 9, `evidence` 2,
-`catalog` 2, `procurement` 1, `platform` 6 — **45**.
+### 7.5 Catalog 1a — products, images, supplier terms, exchange rates, cost parameters, document lines
+
+Built locally 2026-10-05 by `20261005134832_slice7_catalog_products_suppliers.sql` and
+`20261005140628_slice7_catalog_pricing_inputs_document_lines.sql`. Not applied to any
+database other than disposable test clusters. Five tables, numbered 50–54; #26, #27 and #44
+change as above.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 50 | `catalog.product_image` | one product photo in the private `catalog` Storage bucket | `(storage_bucket, storage_path)` unique; bucket is always `catalog`; `status ∈ {proposed, confirmed, hidden}`; never deleted (hide it); a machine-proposed image has no creating operator; api may INSERT and update ordering, caption, status |
+| 51 | `catalog.supplier_terms` | commercial terms of one supplier organization | one row per supplier; `currency ∈ {EUR, USD, CLP}`; `route` closed; discount in [0, 0.99], packing in [0, 0.5]; never deleted; `version` for concurrency |
+| 52 | `catalog.fx_rate` | pricing exchange rate, CLP per unit of USD or EUR | append-only; one Banco Central row per day, currency and provider; a manual row names its operator and reason; the newest manual row wins for its day, else the Banco Central row. Display-only rates in `v2/fx_rates.py` stay separate (a fetched mindicador USD/EUR is also written through here) |
+| 53 | `catalog.cost_parameter` | costing parameter history | append-only; closed `key`; exactly one of `value_numeric` / `value_json`; `(key, valid_from)` unique; five public keys seeded with no operator |
+| 54 | `evidence.document_line` | one line of a quote document, as extracted and cross-checked | `(source_record_id, line_no)` unique; never deleted; inserted never reviewed; only a disputed line may become reviewed, changing only quantity, prices, optional flag and the review fields (trigger `document_line_review_guard`) |
+
+Domain events added: `product.updated`, `product.content_confirmed`, `product.image_added`,
+`product.image_updated`, `product.cost_recorded`, `organization.supplier_terms_set`,
+`fx_rate.recorded`, `cost_parameter.set`, `source_record.document_line_reviewed`; aggregate kinds
+`fx_rate` and `cost_parameter`. An event names a cost parameter's key and never its value, and a
+product cost event carries no price.
+
+Counts by schema: `crm` 21, `comms` 4, `outbound` 9, `evidence` 3,
+`catalog` 6, `procurement` 1, `platform` 6 — **50**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

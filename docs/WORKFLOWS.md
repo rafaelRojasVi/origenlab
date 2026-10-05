@@ -550,6 +550,40 @@ the notice history is evidence an operator reads.
 **Zero automatic promotion.** No supplier candidate becomes an organization
 without an operator command.
 
+#### W8a — Catalog commands (catalog 1a)
+
+Every command is `POST /v2/commands/<name>` with an
+`Idempotency-Key`; a change to an existing row carries `expected_version`; each writes exactly one
+domain event. Roles: `admin` and `sales` write; `viewer` reads without costs.
+
+| Command | Effect | Event |
+|---|---|---|
+| `create-product` | a manufacturer's model; refused if the normalised `model_key` already exists for that manufacturer | `product.created` |
+| `update-product` | content, specs, physical data; `content_origin` becomes `operator` | `product.updated` |
+| `confirm-product-content` | an operator confirms machine-proposed content | `product.content_confirmed` |
+| `add-product-image` / `update-product-image` | upload (multipart, through FastAPI to the private bucket) / reorder, caption, hide | `product.image_added` / `product.image_updated` |
+| `record-supplier-cost` | a new `catalog.supplier_product` observation; append-only | `product.cost_recorded` (no price in the payload) |
+| `set-supplier-terms` | create or update one supplier's terms | `organization.supplier_terms_set` |
+| `set-cost-parameter` | a new `catalog.cost_parameter` row; the event names the key, not the value | `cost_parameter.set` |
+| `record-fx-rate` | a manual exchange rate with a reason | `fx_rate.recorded` |
+| `review-document-line` | the one review of a disputed document line | `source_record.document_line_reviewed` |
+
+**Enrichment: proposal, then confirmation.** The enrichment tool (OPERATIONS §14.4) proposes
+Spanish content and manufacturer images for products whose content an operator has not
+confirmed. Its writes are `content_origin = machine` and image `status = proposed`, with no
+operator; nothing is shown as confirmed. An operator reviews each product and confirms it
+(`confirm-product-content`) or edits it (`update-product`, which makes the content the
+operator's). The tool never overwrites operator or confirmed content.
+
+**History review of disputed lines.** The quote-history importer cross-checks each AI-extracted
+line against the PDF's layout text. A line that disagrees is `disputed`; the importer writes
+`disputed.csv` beside its plan for the owner. An operator resolves each through
+`review-document-line`, supplying the corrected quantity and prices and a note; the line becomes
+`reviewed`, once. Verified and single-source lines need no action.
+
+Catalog 1a ships no price calculation. The rounding amendment to the quotation price rule (§W3a)
+belongs to catalog 1b.
+
 ### W9 — Ambiguous send resolution
 
 | Outcome of `send_one` | Submission state | Recipient | Budget / lock |

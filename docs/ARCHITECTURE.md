@@ -96,6 +96,7 @@ second lifecycle.
 | `outbound.send_control` | one admin function |
 | `outbound.campaign`, `campaign_recipient` | FastAPI for lifecycle and freeze; the send functions for recipient state |
 | `evidence.*`, `catalog.*`, `procurement.*` | the worker and loaders; FastAPI for operator resolution |
+| `catalog.*` writes of catalog 1a (products, images, supplier terms and costs, exchange rates, cost parameters, document-line review) | FastAPI commands as `origenlab_api`; the private importers and the enrichment tool write the same rows through the same SQL as `origenlab_api`, and each product image is also written to Storage by FastAPI only ([§7](#m-arch-storage)) |
 | `platform.*` | FastAPI |
 | `crm.domain_event` | every command and function — **INSERT only; no UPDATE, no DELETE grant exists** |
 
@@ -579,6 +580,7 @@ set, or that a role present in both carries the same memberships. What
 transfers unchanged is the direction of the assertion: no OrigenLab-created
 role and no Data-API-facing role is ever inside these predefined roles.
 
+<a id="m-arch-storage"></a>
 ## 7. Storage
 
 - **All buckets are private. There are zero storage policies and zero public
@@ -599,6 +601,17 @@ role and no Data-API-facing role is ever inside these predefined roles.
   as for the secret key — the restriction is a rule of use: the key lives only
   in the Gmail capture's Render environment and rotates by
   [`OPERATIONS.md`](OPERATIONS.md) §13.
+- **The `catalog` bucket (catalog 1a) is private, like every bucket.** FastAPI
+  is the only writer: `POST /v2/commands/add-product-image` stores the bytes
+  under a content-hash path (`catalog.product_image.storage_path`) with the
+  dedicated `sb_secret_...` key and the Storage API only. It is configured by
+  `ORIGENLAB_V2_STORAGE_URL` (the project origin) and
+  `ORIGENLAB_V2_STORAGE_SECRET_KEY`; without both, the image routes answer 503
+  and everything else in the catalog works. The key is refused over plain
+  `http` to a non-loopback host and a legacy JWT key is refused. A browser
+  gets a signed URL from `GET /v2/catalog/images/{id}/url`, never a path.
+  Product images are not in the database backup: the bucket is backed up
+  separately ([`OPERATIONS.md`](OPERATIONS.md) §14).
 - A browser receives a **signed URL valid for at most 10 minutes**, minted
   only after FastAPI has authorized that specific operator for that specific
   object. Uploads go through FastAPI.
