@@ -30,10 +30,10 @@ The hosted API is ~180 ms from its database, so what a checkout costs matters
      that ends an idle connection says so on the socket (an error message, a FIN or a
      RST), so an idle connection whose socket is readable is suspect: the probe lets
      libpq read and parse what is there and discards the connection on a ``FATAL`` or if
-     libpq now calls it closed or bad, then takes another (at most ``size + 1`` attempts). This is what
-     keeps a **read** safe: a read queues its first statement in pipeline mode, and
-     psycopg consumes the waiting FIN at that statement — inside the caller's pipeline
-     body, where nothing can be replayed.
+     libpq now calls it closed or bad, then takes another (at most ``size + 1``
+     attempts). This is what keeps a **read** safe: a read queues its first statement in
+     pipeline mode, and psycopg consumes the waiting FIN at that statement — inside the
+     caller's pipeline body, where nothing can be replayed.
   2. **On the first round trip, a retry** (:class:`_CheckedOutConnection`) for the drop
      the socket cannot show yet — a path silently dropped by the network, whose failure
      only appears once a request has been sent. If that round trip raises
