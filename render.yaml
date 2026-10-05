@@ -111,6 +111,9 @@ services:
       # Not a secret: use the image's Python, never download one at build or run time.
       - key: UV_PYTHON_DOWNLOADS
         value: never
+      # The interpreter apps/worker/.python-version pins, in case Render does not read that file.
+      - key: PYTHON_VERSION
+        value: 3.12.13
       - key: ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED
         sync: false
       - key: ORIGENLAB_WORKER_DATABASE_URL

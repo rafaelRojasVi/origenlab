@@ -168,7 +168,7 @@ class FakeStore:
             raise StorageTooLarge("storage_object_too_large")
         if key in self.objects:
             if self.objects[key] != raw:
-                raise StorageConflict("storage_object_conflict")
+                raise StorageConflict("stored_object_differs")
             return "present"
         self.objects[key] = raw
         return "stored"

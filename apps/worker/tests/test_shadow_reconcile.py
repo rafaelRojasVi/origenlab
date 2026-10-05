@@ -34,7 +34,7 @@ def test_only_contacto_gmail_rows_since_go_live_are_read(tmp_path: Path) -> None
         (4, f"gmail:{MAILBOX}/[Gmail]/Enviados", "[Gmail]/Enviados", "<d@x.invalid>", "2026-10-13T10:00:00-03:00"),
     ])
     rows, undated = shadow.read_v1_rows(path, SINCE)
-    assert ([row.email_id for row in rows], undated) == ([1, 4], 0)
+    assert ([row.email_id for row in rows], undated) == ([1, 4], [])
 
 
 def test_every_v1_row_is_present_explained_or_missing() -> None:
@@ -90,7 +90,7 @@ def test_a_naive_date_is_read_as_utc_and_an_undated_row_is_counted(tmp_path: Pat
         (7, "gmail:otra@example.invalid/INBOX", "INBOX", "<g@x.invalid>", None),  # other mailbox
     ])
     rows, undated = shadow.read_v1_rows(path, SINCE)
-    assert ([row.email_id for row in rows], undated) == ([1], 4)
+    assert ([row.email_id for row in rows], [r.email_id for r in undated]) == ([1], [3, 4, 5, 6])
 
 
 def test_an_undated_row_makes_the_exit_code_one(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -110,5 +110,58 @@ def test_an_undated_row_makes_the_exit_code_one(tmp_path: Path, monkeypatch, cap
     monkeypatch.setattr(shadow, "read_v2_ids", lambda *_a: set())
     monkeypatch.setattr("sys.argv", ["x", "--sqlite", str(path), "--since", "2026-10-12T15:00:00Z",
                                      "--out", str(tmp_path / "out")])
+    assert shadow.main() == 1
+    assert "undated=1" in capsys.readouterr().out
+
+
+def _undated(*specs):
+    return [shadow.V1Row(i, folder, None, None) for i, folder in specs]
+
+
+def test_a_folder_explained_undated_row_never_counts() -> None:
+    rows = _undated((1, "INBOX"), (2, "[Gmail]/Spam"), (3, "[Gmail]/Borradores"), (4, "[Gmail]/Papelera"))
+    assert [r.email_id for r in shadow.undated_in_scope(rows, None)] == [1]
+
+
+def test_undated_rows_count_only_above_the_go_live_v1_id() -> None:
+    rows = _undated((10, "INBOX"), (11, "INBOX"), (12, "[Gmail]/Enviados"))
+    assert [r.email_id for r in shadow.undated_in_scope(rows, 10)] == [11, 12]
+    assert [r.email_id for r in shadow.undated_in_scope(rows, None)] == [10, 11, 12]
+
+
+def test_the_undated_file_is_private_and_lists_ids_folders_and_dates(tmp_path: Path) -> None:
+    path = shadow.write_undated(tmp_path / "out", [shadow.V1Row(7, "INBOX", "<a@x.invalid>", "garbage")])
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert path.read_text().splitlines() == ["v1_email_id,folder,date_iso", "7,INBOX,garbage"]
+    assert "x.invalid" not in path.read_text()
+    with pytest.raises(SystemExit):
+        shadow.write_undated(shadow.REPO_ROOT / "apps", [])
+
+
+def test_historical_and_folder_explained_undated_rows_do_not_fail_the_run(tmp_path: Path, monkeypatch, capsys) -> None:
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    mine = f"gmail:{MAILBOX}/INBOX"
+    path = v1_sqlite(tmp_path, [
+        (5, mine, "INBOX", "<a@x.invalid>", None),                       # historical: id <= go-live id
+        (50, mine, "[Gmail]/Spam", "<b@x.invalid>", None),               # explained by its folder
+    ])
+
+    @contextmanager
+    def fake_db(_target):
+        yield SimpleNamespace(connection=None)
+
+    import origenlab_worker.cli as cli
+    import origenlab_worker.database as database
+    monkeypatch.setattr(cli, "config_from_env", lambda *_a, **_k: SimpleNamespace(database=None))
+    monkeypatch.setattr(database, "open_worker_db", fake_db)
+    monkeypatch.setattr(shadow, "read_v2_ids", lambda *_a: set())
+    argv = ["x", "--sqlite", str(path), "--since", "2026-10-12T15:00:00Z", "--out", str(tmp_path / "out")]
+    monkeypatch.setattr("sys.argv", argv + ["--since-v1-id", "10"])
+    assert shadow.main() == 0
+    assert "undated=0" in capsys.readouterr().out
+    assert (tmp_path / "out" / "undated.csv").read_text().count("\n") == 1  # header only
+    monkeypatch.setattr("sys.argv", argv)  # no bound: the historical row counts
     assert shadow.main() == 1
     assert "undated=1" in capsys.readouterr().out

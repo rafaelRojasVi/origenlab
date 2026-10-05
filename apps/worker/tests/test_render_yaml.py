@@ -25,7 +25,7 @@ SECRET_KEYS = (
 
 
 #: The only plain values: not secrets, set in the file on purpose.
-PLAIN_VALUES = {"UV_PYTHON_DOWNLOADS": "never"}
+PLAIN_VALUES = {"UV_PYTHON_DOWNLOADS": "never", "PYTHON_VERSION": "3.12.13"}
 
 
 def _service() -> str:

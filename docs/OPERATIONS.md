@@ -1625,7 +1625,7 @@ One JSON line per run in the cron's Render log — `event`, `mode`, `exit`, the 
 `error` is a fixed code or a class name, by what failed. A Storage error is its code
 (`stored_object_differs`, `storage_check_http_403`, `storage_head_http_500`,
 `storage_too_large_below_cap`); a Gmail error is its kind (`http_503`, `network`, `invalid_json`,
-`retries_exhausted`, `too_many_pages`, or an authorization kind below); a database error is its class
+`too_many_pages`, or an authorization kind below); a database error is its class
 and SQLSTATE (`UniqueViolation:23505`, `OperationalError`); a configuration refusal is its code
 (`database_url_has_options`); anything else is its class name only.
 
@@ -1633,7 +1633,7 @@ and SQLSTATE (`UniqueViolation:23505`, `OperationalError`); a configuration refu
 (a dry run: **would** store; `evidence` stays 0); `evidence` pending evidence rows created;
 `bulk_sends` campaign copies — a **subset of `stored`**, kept without evidence; `duplicates` already
 captured, refused by the unique keys; `skipped_draft`/`_spam`/`_trash` never downloaded; `gone`
-deleted from Gmail between the list and the read; `too_large` messages Gmail itself sizes over 50 MiB, kept as
+deleted from Gmail between the list and the read; `too_large` messages over 50 MiB (by Gmail's estimate or by the bytes actually downloaded), kept as
 `parse_failed` rows without an `.eml` but **counted only here, not in `parse_failed`**;
 `parse_failed` messages whose `.eml` is kept and that produced no evidence.
 
@@ -1655,7 +1655,8 @@ stage it reached (`start`, `profile`, `init`).
 | `paused`, 0 | `ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED` is not `true`; **a paused cron opens no database session** | intended? |
 | `not_authorized`, 0 | the mailbox is `unauthorized` or `revoked` | §8.3 |
 | any, 1 | Gmail, the database or Storage failed mid-run; the cursor did not move. `error` is the code or class (see above): `terminated` (Render's SIGTERM), `interrupted` (Ctrl-C), `stored_object_differs` (§8.5), `storage_too_large_below_cap` (Storage refused a message Gmail sizes under 50 MiB: the bucket's or the project's upload limit is below 60 MB — raise it; the run must not turn evidence into a `too_large` row), `empty_history_id` (Gmail returned no history id: nothing was captured, retry), `UniqueViolation:23505` and other database classes | Render e-mails it; the next run retries the same window |
-| `init_dry_run` or `init`, 1, `storage_check_http_403` | the Storage pre-flight (`--init`, `--init --dry-run`) could not list bucket `mail`: the S3 key is wrong (403) or the bucket is missing (404). It is exit **1**, not 3 | fix the key or the bucket (§8.7 step 4) and rerun |
+| `init_dry_run` or `init`, 1, `storage_check_http_403` | the Storage pre-flight (`--init`, `--init --dry-run`) was refused listing bucket `mail`: the S3 key id or secret is wrong, or the key was deleted. It is exit **1**, not 3 | fix `ORIGENLAB_WORKER_STORAGE_S3_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` (§8.7 step 4) and rerun |
+| `init_dry_run` or `init`, 1, `storage_check_http_404` | the pre-flight found no bucket `mail` (or the endpoint or region points at another project) | create the private bucket `mail`, or correct `ORIGENLAB_WORKER_STORAGE_S3_ENDPOINT` / `_REGION`, and rerun |
 | any, 2 | `invalid_grant` (consent revoked; the mailbox is now `revoked`), `scope_not_readonly`, `token_refresh_failed` (Google refused the OAuth client or the refresh request: a wrong or deleted client id or secret, or a malformed token), `unauthorized` (a 401 that survived a fresh token) — the last two are client problems and do not revoke the mailbox | §8.3 |
 | `wrong_account`, 2 | the consent is not contacto@'s | §8.3 |
 | `usage`, 3 | the command line is not `gmail-sync [--init] [--dry-run]` | fix the cron's command |
@@ -1747,7 +1748,11 @@ select n.nspname || '.' || c.relname, p.privilege
              else has_table_privilege('origenlab_worker', c.oid, p.privilege) end)
  order by 1, 2;
 
--- the policies the capture writes through (expected: 8 rows)
+-- the policies the capture writes through. The result must include these 8 (more rows are normal):
+--   comms.mailbox: origenlab_worker_select, origenlab_worker_update
+--   comms.message: origenlab_worker_select, origenlab_worker_insert
+--   comms.message_participant: origenlab_worker_insert; comms.attachment: origenlab_worker_insert
+--   evidence.source_record: origenlab_worker_select, origenlab_worker_insert
 select schemaname, tablename, policyname from pg_policies where 'origenlab_worker' = any(roles) order by 1, 2, 3;
 ```
 
@@ -1804,7 +1809,12 @@ Exit 0: every message V1 ingested from contacto@ since go-live is in `comms.mess
 (draft, spam, trash). Exit 1 lists the rest in `<out>/missing.csv` (V1 id, folder, date — no subject,
 no address); the script splits missing ids into sent and received by V1 folder. A V1 row whose
 `date_iso` is missing or unparseable cannot be placed against go-live: it is printed as `undated=N`
-and also makes the exit code 1 (a `date_iso` without an offset is read as UTC). The script needs the
+and also makes the exit code 1 (a `date_iso` without an offset is read as UTC), unless its folder
+explains it (draft, spam, trash) or its id is at or below `--since-v1-id`. V1's `emails` table has no
+ingestion timestamp, so right before `--init` read V1's highest id (`select max(id) from emails` on the
+SQLite file, read-only) and pass it as `--since-v1-id` on every run of the week; without it every undated
+row of the lane counts, and one historical row fails the gate forever. The undated ids are written to
+`<out>/undated.csv` (V1 id, folder, date text). The script needs the
 database and Gmail settings only; it never reads the S3 secret.
 
 The week must also confirm one thing the code cannot: that mail **sent from the Gmail web UI**
@@ -1873,9 +1883,9 @@ contacto@origenlab.cl ([`MIGRATION.md`](MIGRATION.md)). Without it every run ans
    account, the database probe, the bucket — nothing written). This hosted run is also the proof that
    Supabase's own extension functions do not trip the definer probe. A refusal is a code: exit 3 names a
    refused setting (`worker_policy_missing`, `login_not_worker`); exit 1 `storage_check_http_403` is a
-   wrong S3 key; exit 2 `wrong_account` / `scope_not_readonly` means redo step 2. For a refused probe,
+   wrong S3 key and `storage_check_http_404` a missing bucket; exit 2 `wrong_account` / `scope_not_readonly` means redo step 2. For a refused probe,
    §8.4 lists what the login can reach. Then the command `… gmail-sync --init`, Trigger Run:
-   `"mode": "init_baseline"`; write down the run's UTC time (the shadow week's `--since`). Set the
+   `"mode": "init_baseline"`; write down the run's UTC time (the shadow week's `--since`) and V1's highest `emails.id` at that moment (its `--since-v1-id`, §8.6). Set the
    command back to `uv run --no-sync origenlab-worker gmail-sync` — a leftover `--init` exits 3 on every
    run, so it cannot go unnoticed — and set `ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED=true`. The next run logs
    `"mode": "history", "exit": 0`.

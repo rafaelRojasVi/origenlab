@@ -244,7 +244,7 @@ def test_a_storage_conflict_stops_the_run_by_class_and_holds_the_cursor() -> Non
     store.objects[f"{MAILBOX}/2026/10/m2.eml"] = b"different bytes"
     db = FakeDb()
     report = run(db, gmail, store)
-    assert (report.exit_code, report.error, list(db.messages), db.cursor) == (EXIT_FAILED, "storage_object_conflict", ["m1"], [])
+    assert (report.exit_code, report.error, list(db.messages), db.cursor) == (EXIT_FAILED, "stored_object_differs", ["m1"], [])
 
 
 @pytest.mark.parametrize("kind", ["token_refresh_failed", "scope_not_readonly", "unauthorized"])
@@ -335,3 +335,24 @@ def test_history_mode_moves_the_cursor_to_the_profile_read_before_the_list() -> 
     db = FakeDb()
     assert run(db, gmail).mode == "history"
     assert db.cursor == ["200"]
+
+
+def test_real_bytes_over_the_cap_are_too_large_even_when_gmails_estimate_is_under() -> None:
+    """The cap is checked on the downloaded bytes: no upload, a too_large row, the run goes on."""
+    huge = FakeMessage(INBOUND + b"x" * (MAX_RAW_BYTES + 1), size=1000)  # estimate far under the real size
+    gmail = gmail_with(big=huge, m2=FakeMessage(OUTBOUND, labels=("SENT",)))
+    db, store = FakeDb(), FakeStore()
+    report = run(db, gmail, store)
+    assert (report.exit_code, report.counts.too_large, report.counts.stored) == (EXIT_OK, 1, 1)
+    status, row, eml_path, digest = db.messages["big"]
+    assert (status, row.reason, eml_path, digest) == ("parse_failed", "too_large", None, None)
+    assert db.cursor == ["200"] and len(store.objects) == 1
+    dry = run(FakeDb(), gmail, FakeStore(), dry_run=True)
+    assert (dry.counts.too_large, dry.counts.stored) == (1, 1)
+
+
+def test_a_message_exactly_at_the_cap_is_not_too_large() -> None:
+    at_cap = FakeMessage(INBOUND + b"x" * (MAX_RAW_BYTES - len(INBOUND)), size=MAX_RAW_BYTES)
+    db = FakeDb()
+    report = run(db, gmail_with(m1=at_cap))
+    assert (report.counts.too_large, report.counts.stored) == (0, 1)

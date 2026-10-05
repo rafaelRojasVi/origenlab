@@ -9,7 +9,7 @@ Error kinds. `GmailAuthError`: `invalid_grant`, `token_refresh_failed`, `scope_n
 `unauthorized`. `GmailNotFound`: `not_found`. `HistoryExpired`: `history_expired`.
 `GmailUnavailable`: `network`, `http_<status>` (also for a token endpoint 429/5xx),
 `invalid_json` (any answer whose shape or values are not what Gmail documents),
-`retries_exhausted`, `too_many_pages`. No message ever carries a token, address, subject or id.
+`too_many_pages`. No message ever carries a token, address, subject or id.
 
 The refresh token belongs to a Workspace *Internal* OAuth client that contacto@ consented to once
 (`scripts/gmail_readonly_authorize.py`). Every refresh re-checks that Google granted exactly

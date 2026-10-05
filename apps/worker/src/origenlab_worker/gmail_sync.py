@@ -295,6 +295,10 @@ def _capture_one(message_id: str, *, db: SyncDb, gmail: GmailSource, store: EmlS
     except GmailNotFound:
         counts.gone += 1
         return
+    if len(raw.raw) > MAX_RAW_BYTES:
+        # The cap is enforced on the real bytes: Gmail's estimate can be low. Kept without a body.
+        unparsed("too_large", None, None, len(raw.raw))
+        return
     digest = hashlib.sha256(raw.raw).hexdigest()
     label_ids = raw.label_ids or meta.label_ids
     try:
@@ -318,7 +322,7 @@ def _capture_one(message_id: str, *, db: SyncDb, gmail: GmailSource, store: EmlS
     try:
         store.put_if_absent(key, raw.raw)
     except StorageTooLarge:
-        # Gmail's own size is under the cap (checked above), so Storage's limit is what is wrong:
+        # The message is at or under the cap (checked on its real bytes above), so Storage's limit is wrong:
         # a bucket limit set too low must fail loudly and hold the cursor, not strip evidence.
         raise StorageError("storage_too_large_below_cap") from None
     eml_path = f"{BUCKET}/{key}"

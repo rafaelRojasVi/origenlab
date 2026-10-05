@@ -49,7 +49,7 @@ class WorkerConfig:
     # Each of the three holds a secret (a DSN password, an OAuth secret, an S3 key): none is repr'd.
     database: WorkerTarget = field(repr=False)
     gmail: GmailCredentials = field(repr=False)
-    storage: StorageConfig = field(repr=False)
+    storage: StorageConfig | None = field(repr=False)
     enabled: bool
 
 

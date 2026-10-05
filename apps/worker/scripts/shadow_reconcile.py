@@ -12,6 +12,7 @@ Reads V1's SQLite read-only (`mode=ro`; V1's cron keeps writing it) and `comms.m
 `origenlab_worker` inside a read-only transaction. Matches by normalized RFC 822 Message-ID.
 
 Stdout: counts only. Files in `--out` (mode 600, never inside the repository):
+  undated.csv             V1 id, folder, raw date_iso of rows with no usable Date that count (below).
   missing.csv             V1 id, folder, direction, date - no subject, no address.
   missing_message_ids.txt RFC 822 Message-IDs V1 has and comms.message lacks (a Message-ID carries a
                           domain, so it stays out of stdout and out of missing.csv).
@@ -30,8 +31,13 @@ Rows without a Message-ID have no direction split of their own beyond the same f
 `missing_sent` first: it is the signal that web-UI sends are not arriving. Exit 1 while anything
 is unexplained.
 
-A V1 row whose `date_iso` is missing or unparseable is `undated`: printed, and exit 1 (it cannot be
-placed against go-live). A `date_iso` without an offset is read as UTC.
+A V1 row whose `date_iso` is missing or unparseable cannot be placed against go-live. It is `undated`
+(printed, listed in `undated.csv`, exit 1) unless its folder explains it (draft, spam, trash) or its id
+is at or below `--since-v1-id`. V1's `emails` table has no ingestion timestamp, so that id is the only
+bound: right before `--init`, read V1's highest id (`select max(id) from emails` on the SQLite file,
+read-only) and pass it as `--since-v1-id` on every run of the week. Without it every undated row of
+the lane counts, and one historical row fails the gate forever. A `date_iso` without an offset is read
+as UTC.
 """
 
 from __future__ import annotations
@@ -81,13 +87,13 @@ def direction_of(folder: str | None) -> str:
     return "received"
 
 
-def read_v1_rows(sqlite_path: Path, since: datetime) -> tuple[list[V1Row], int]:
+def read_v1_rows(sqlite_path: Path, since: datetime) -> tuple[list[V1Row], list[V1Row]]:
     """`(rows, undated)`: V1 rows from contacto@'s Gmail lanes whose Date header is at or after
-    `since`, and how many rows have no usable Date header at all.
+    `since`, and the rows that have no usable Date header at all.
 
     A Date without an offset is read as UTC. A missing or unparseable one cannot be placed against
-    go-live, so it is counted as `undated` instead of silently leaving the gate; `main` prints it
-    and exits 1.
+    go-live, so it is returned as undated instead of silently leaving the gate. Which undated rows
+    matter is decided by `undated_in_scope`.
     """
     conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
     try:
@@ -99,17 +105,29 @@ def read_v1_rows(sqlite_path: Path, since: datetime) -> tuple[list[V1Row], int]:
     finally:
         conn.close()
     out: list[V1Row] = []
-    undated = 0
+    undated: list[V1Row] = []
     for email_id, folder, message_id, date_iso in rows:
         when = _parse(date_iso)
         if when is None:
-            undated += 1
+            undated.append(V1Row(int(email_id), folder or "", message_id, date_iso))
             continue
         if when.tzinfo is None:
             when = when.replace(tzinfo=timezone.utc)
         if when >= since:
             out.append(V1Row(int(email_id), folder or "", message_id, date_iso))
     return out, undated
+
+
+def undated_in_scope(undated: Iterable[V1Row], since_v1_id: int | None) -> list[V1Row]:
+    """The undated rows that could be mail from after go-live. V1's `emails` table has no ingestion
+    timestamp, so the only bound is the id: with `since_v1_id` (V1's last `emails.id` at go-live) only
+    ids above it count; without it every undated row counts. A row whose folder V1 maps to draft, spam
+    or trash is explained by that folder and never counts."""
+    return [
+        row for row in undated
+        if SKIPPED_INTAKE.get(classify_intake_folder(row.folder)) is None
+        and (since_v1_id is None or row.email_id > since_v1_id)
+    ]
 
 
 def reconcile(v1_rows: Iterable[V1Row], v2_ids: set[str]) -> tuple[Counter[str], list[V1Row]]:
@@ -179,6 +197,15 @@ def write_missing(out_dir: Path, rows: list[V1Row]) -> Path:
     return path
 
 
+def write_undated(out_dir: Path, rows: list[V1Row]) -> Path:
+    path = _private_dir(out_dir) / "undated.csv"
+    with _private_file(path) as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["v1_email_id", "folder", "date_iso"])
+        writer.writerows((r.email_id, r.folder, r.date_iso) for r in rows)
+    return path
+
+
 def write_ids(out_dir: Path, name: str, ids: Iterable[str]) -> Path:
     path = _private_dir(out_dir) / name
     with _private_file(path) as fh:
@@ -193,18 +220,23 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sqlite", required=True, type=Path)
     parser.add_argument("--since", required=True, help="go-live, ISO 8601 with offset (the --init run's time)")
+    parser.add_argument("--since-v1-id", type=int, default=None,
+                        help="V1's highest emails.id at go-live: undated rows at or below it are history")
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     since = _parse(args.since)
     if since is None or since.tzinfo is None:
         raise SystemExit("--since must be ISO 8601 with an offset, e.g. 2026-10-12T15:00:00Z")
     _private_dir(args.out)  # refuse a path inside the repository before touching anything
-    v1_rows, undated = read_v1_rows(args.sqlite.expanduser(), since)
+    v1_rows, undated_rows = read_v1_rows(args.sqlite.expanduser(), since)
+    undated_rows = undated_in_scope(undated_rows, args.since_v1_id)
+    undated = len(undated_rows)
     with open_worker_db(config_from_env(os.environ, need_storage=False).database) as db:
         v2_ids = read_v2_ids(db.connection, since)
     counts, missing = reconcile(v1_rows, v2_ids)
     extra = extra_ids(v1_rows, v2_ids)
     path = write_missing(args.out, missing)
+    write_undated(args.out, undated_rows)
     write_ids(args.out, "missing_message_ids.txt",
               sorted({n for r in missing if (n := normalize_rfc822_id(r.message_id))}))
     write_ids(args.out, "extra_message_ids.txt", extra)
