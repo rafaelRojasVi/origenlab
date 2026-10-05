@@ -383,3 +383,48 @@ def test_an_unrelated_address_still_sends_beside_blocked_ones(disposable_databas
                    SendCampaignTestBody(to=to, campaign_id=uuid.UUID(cid)))
         assert out["status"] == "sent" and out["to"] == to
     assert len(gmail.sent) == 3 and _receipt_count(disposable_database) == 3
+
+
+class _GmailThenBusyReceipt(FakeGmail):
+    """Sends, then another transaction locks the receipt, so recording the send must wait on it."""
+
+    def __init__(self, dsn: str) -> None:
+        super().__init__()
+        self._dsn = dsn
+        self.holder = None
+
+    def send(self, raw: bytes) -> str:
+        import psycopg
+
+        message_id = super().send(raw)
+        self.holder = psycopg.connect(self._dsn)
+        self.holder.execute("set role origenlab_owner")
+        self.holder.execute("select id from platform.command_receipt where command_name = %s and status = 'in_progress' "
+                            "for update", (SEND_CAMPAIGN_TEST,))
+        return message_id
+
+
+@needs_db
+def test_a_sent_test_that_cannot_be_recorded_says_so_and_never_invites_a_resend(disposable_database, world) -> None:
+    """Gmail accepted it; the record waited past lock_timeout. Not «nothing was written, retry»."""
+    import psycopg
+
+    _clear_receipts(disposable_database)
+    cid = _campaign(disposable_database, world, "<p>Hola</p>")
+    gmail = _GmailThenBusyReceipt(disposable_database)
+    body = SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.UUID(cid))
+    repo = V2CampaignTestSendRepository(psycopg.connect, runtime_dsn(disposable_database), gmail, None, lock_timeout_ms=200)
+    try:
+        with pytest.raises(CommandRefused) as exc:
+            repo.send_test(operator=world["ops"]["admin"], body=body, idempotency_key=str(uuid.uuid4()),
+                           digest=request_digest(SEND_CAMPAIGN_TEST, body))
+    finally:
+        if gmail.holder is not None:
+            gmail.holder.rollback()
+            gmail.holder.close()
+    assert (exc.value.status_code, exc.value.code) == (503, "sent_not_recorded")
+    assert str(exc.value) == "La prueba se envió, pero no quedó registrada. No la reenvíes; avisa al administrador."
+    assert len(gmail.sent) == 1
+    rows = _owner(disposable_database, "select status from platform.command_receipt where command_name = %s",
+                  (SEND_CAMPAIGN_TEST,))
+    assert rows == [("in_progress",)]

@@ -31,7 +31,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, Callable
 
-from origenlab_api.errors import database_refusal
+from origenlab_api.errors import (
+    LOCK_NOT_AVAILABLE,
+    QUERY_CANCELED,
+    database_refusal,
+    log_unrefused_database_failure,
+)
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
 
@@ -79,7 +84,7 @@ class CommandTransaction:
     # ------------------------------------------------------------------ the transaction
 
     @contextmanager
-    def _write(self) -> Iterator[Any]:
+    def _write(self, command_name: str | None = None) -> Iterator[Any]:
         """One read-write transaction, committed only if the whole command succeeded.
 
         The commit and the rollback are both explicit. Relying on the driver's context
@@ -88,11 +93,13 @@ class CommandTransaction:
         about.
 
         A row lock held past `lock_timeout`, a statement past `statement_timeout`, no free
-        pooled connection, or a unique constraint no handler checked for are not bugs: they
-        leave the transaction rolled back — nothing written, the receipt included — and
-        surface as `errors.DatabaseRefusal` (`record_busy`, `service_busy`, `duplicate`)
-        instead of a 500. A handler that turns one of them into its own `CommandRefused`
-        first (`identifier_taken`, `already_blocked`) keeps its answer.
+        pooled connection, a business natural key or an event-stream position taken by a
+        concurrent transaction are not bugs: they leave the transaction rolled back — nothing
+        written, the receipt included — and surface as `errors.DatabaseRefusal`
+        (`record_busy`, `command_timeout`, `service_busy`, `duplicate`) instead of a 500. A
+        handler that turns one of them into its own `CommandRefused` first
+        (`identifier_taken`, `already_blocked`) keeps its answer. Any other unique violation
+        stays a 500, and its constraint is logged by name. `command_name` is for the log.
         """
         try:
             with self._connect(self._dsn, autocommit=False) as conn:
@@ -110,7 +117,9 @@ class CommandTransaction:
         except Exception as exc:
             refusal = database_refusal(exc)
             if refusal is None:
+                log_unrefused_database_failure(exc, command_name)
                 raise
+            refusal.command = command_name
             raise refusal from exc
 
     def _row(self, cur: Any) -> dict[str, Any] | None:
@@ -136,17 +145,32 @@ class CommandTransaction:
         The loser reads the existing receipt and gets one of three answers — the stored
         response (a replay), a 409 because the key was reused for a *different* request, or
         a 409 because the first call is still running.
+
+        While the first call has claimed the key and not finished, its receipt row is not
+        committed and this insert waits on it. If the wait outlasts `lock_timeout` (or the
+        statement timeout), the answer is 409 `command_in_progress` — never `record_busy`,
+        which tells the client the command did not run and invites a new key: the first call
+        may still commit, and a new key would run the same decision twice.
         """
-        cur.execute(
-            """
-            insert into platform.command_receipt
-                (operator_id, idempotency_key, command_name, request_digest, status)
-            values (%s, %s, %s, %s, 'in_progress')
-            on conflict (operator_id, idempotency_key) do nothing
-            returning id::text as id
-            """,
-            (operator.operator_id, idempotency_key, command_name, digest),
-        )
+        try:
+            cur.execute(
+                """
+                insert into platform.command_receipt
+                    (operator_id, idempotency_key, command_name, request_digest, status)
+                values (%s, %s, %s, %s, 'in_progress')
+                on conflict (operator_id, idempotency_key) do nothing
+                returning id::text as id
+                """,
+                (operator.operator_id, idempotency_key, command_name, digest),
+            )
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) in (LOCK_NOT_AVAILABLE, QUERY_CANCELED):
+                raise CommandRefused(
+                    409,
+                    "command_in_progress",
+                    "a command with this Idempotency-Key is still running; wait and send it again",
+                ) from exc
+            raise
         claimed = self._row(cur)
         if claimed is not None:
             return claimed["id"], None
@@ -291,7 +315,7 @@ class CommandTransaction:
         if handler is None:  # pragma: no cover - the router names the command, not the client
             raise CommandRefused(404, "unknown_command", f"no such command '{command_name}'")
 
-        with self._write() as cur:
+        with self._write(command_name) as cur:
             receipt_id, replay = self._claim_receipt(
                 cur, operator, idempotency_key, command_name, digest
             )

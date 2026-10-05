@@ -8,13 +8,15 @@ sends (`{"error": {"code", "message", "details", "request_id"}}`) — not the ba
 The first half needs no database: a fake connection raises the driver's own exception classes
 inside the real `CommandTransaction`. The second half runs the real commands, as the real
 `origenlab_api` role, through `create_app()` against a disposable database, and makes
-PostgreSQL itself raise `lock_timeout`, `statement_timeout` and the unique violation.
+PostgreSQL itself raise `lock_timeout` (on a row and on a running command's receipt),
+`statement_timeout` and the unique violation.
 
 Every name and address is fictitious.
 """
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -28,6 +30,7 @@ from psycopg_pool import PoolTimeout
 
 from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
 from origenlab_api.errors import (
+    DUPLICATE_CONSTRAINTS,
     SERVICE_BUSY_RETRY_AFTER_SECONDS,
     database_refusal,
     register_exception_handlers,
@@ -131,12 +134,19 @@ def _no_free_connection(_dsn: str, *, autocommit: bool = False):
     raise PoolTimeout("couldn't get a connection after 30.00 sec")
 
 
-class _UniqueOnContactPoint(psycopg.errors.UniqueViolation):
-    """What psycopg raises for a lost race on `crm.contact_point (kind, value_norm)`."""
+def _unique_on(constraint: str, schema: str, table: str) -> type[psycopg.errors.UniqueViolation]:
+    """A psycopg unique violation whose server diagnostic names `constraint` on `schema.table`."""
 
-    @property
-    def diag(self) -> SimpleNamespace:  # type: ignore[override]
-        return SimpleNamespace(constraint_name="contact_point_kind_value_key")
+    class _Unique(psycopg.errors.UniqueViolation):
+        @property
+        def diag(self) -> SimpleNamespace:  # type: ignore[override]
+            return SimpleNamespace(constraint_name=constraint, schema_name=schema, table_name=table)
+
+    return _Unique
+
+
+#: What psycopg raises for a lost race on `crm.contact_point (kind, value_norm)`.
+_UniqueOnContactPoint = _unique_on("contact_point_kind_value_key", "crm", "contact_point")
 
 
 def _production_app(repo: object) -> TestClient:
@@ -171,17 +181,24 @@ def test_each_sqlstate_maps_to_one_refusal_and_everything_else_stays_a_fault() -
     busy = database_refusal(psycopg.errors.LockNotAvailable("canceling statement due to lock timeout"))
     assert (busy.status_code, busy.code, busy.retry_after) == (409, "record_busy", None)
 
-    for exc in (psycopg.errors.QueryCanceled("canceling statement due to statement timeout"),
-                PoolTimeout("couldn't get a connection after 30.00 sec")):
-        refusal = database_refusal(exc)
-        assert (refusal.status_code, refusal.code) == (503, "service_busy")
-        assert refusal.retry_after == SERVICE_BUSY_RETRY_AFTER_SECONDS == 5
+    timeout = database_refusal(psycopg.errors.QueryCanceled("canceling statement due to statement timeout"))
+    assert (timeout.status_code, timeout.code, timeout.retry_after) == (503, "command_timeout", None)
 
-    duplicate = database_refusal(_UniqueOnContactPoint("duplicate key value"))
-    assert (duplicate.status_code, duplicate.code) == (409, "duplicate")
-    assert duplicate.details == {"constraint": "contact_point_kind_value_key"}
-    # Without a server diagnostic there is no constraint to name, and nothing is invented.
-    assert database_refusal(psycopg.errors.UniqueViolation("duplicate key value")).details == {}
+    pool = database_refusal(PoolTimeout("couldn't get a connection after 30.00 sec"))
+    assert (pool.status_code, pool.code) == (503, "service_busy")
+    assert pool.retry_after == SERVICE_BUSY_RETRY_AFTER_SECONDS == 5
+
+    for constraint in DUPLICATE_CONSTRAINTS:
+        duplicate = database_refusal(_unique_on(constraint, "crm", "t")("duplicate key value"))
+        assert (duplicate.status_code, duplicate.code, duplicate.details) == (409, "duplicate", {"constraint": constraint})
+
+    seq = database_refusal(_unique_on("domain_event_aggregate_seq_key", "crm", "domain_event")("duplicate key value"))
+    assert (seq.status_code, seq.code, seq.details) == (409, "record_busy", {})
+
+    # Any other unique key is a bug if a command trips it — and so is one with no diagnostic.
+    for other in ("domain_event_stream_position_key", "quote_number_key", "command_receipt_operator_key_key"):
+        assert database_refusal(_unique_on(other, "crm", "t")("duplicate key value")) is None
+    assert database_refusal(psycopg.errors.UniqueViolation("duplicate key value")) is None
 
     for fault in (psycopg.errors.SerializationFailure("x"), psycopg.errors.UndefinedTable("x"),
                   psycopg.OperationalError("x"), ValueError("x"), CommandRefused(409, "stale_version", "x")):
@@ -224,13 +241,26 @@ def test_a_row_lock_held_past_lock_timeout_is_record_busy_and_writes_nothing() -
     assert conn.statements[:2] == ["set local statement_timeout = 4321", "set local lock_timeout = 1234"]
 
 
-def test_a_statement_timeout_inside_a_command_is_service_busy_with_retry_after() -> None:
+def test_a_statement_timeout_inside_a_command_is_command_timeout_naming_the_command(caplog) -> None:
     conn = _FakeConn(psycopg.errors.QueryCanceled("canceling statement due to statement timeout"))
-    response = _update_person(_production_app(_repo_over(conn)))
+    with caplog.at_level(logging.WARNING, logger="origenlab_api.errors"):
+        response = _update_person(_production_app(_repo_over(conn)))
 
     assert response.status_code == 503
-    assert response.json()["error"]["code"] == "service_busy"
-    assert response.headers["Retry-After"] == "5"
+    assert response.json()["error"]["code"] == "command_timeout"
+    assert "Retry-After" not in response.headers
+    assert conn.rolled_back is True and conn.committed is False
+    assert "command not run: command_timeout (command=update-person, cause=QueryCanceled" in caplog.text
+
+
+def test_a_running_command_holding_its_receipt_answers_command_in_progress() -> None:
+    """The same key while the first call has not committed: never `record_busy` (a new key)."""
+    conn = _FakeConn(psycopg.errors.LockNotAvailable("lock timeout"), when="insert into platform.command_receipt")
+    response = _update_person(_production_app(_repo_over(conn)))
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert (error["code"], error["details"]["code"]) == ("conflict", "command_in_progress")
     assert conn.rolled_back is True and conn.committed is False
 
 
@@ -256,13 +286,14 @@ def test_a_pool_timeout_on_a_read_is_service_busy_too() -> None:
     assert response.headers["Retry-After"] == "5"
 
 
-def test_a_lost_unique_race_is_duplicate_naming_the_constraint_never_the_value() -> None:
+def test_a_lost_unique_race_is_duplicate_naming_the_constraint_never_the_value(caplog) -> None:
     value = "duplicado-ficticio@example.test"
     conn = _FakeConn(_UniqueOnContactPoint(
         'duplicate key value violates unique constraint "contact_point_kind_value_key"\n'
         f"DETAIL:  Key (kind, value_norm)=(email, {value}) already exists."
     ))
-    response = _update_person(_production_app(_repo_over(conn)))
+    with caplog.at_level(logging.WARNING, logger="origenlab_api.errors"):
+        response = _update_person(_production_app(_repo_over(conn)))
 
     assert response.status_code == 409
     error = response.json()["error"]
@@ -270,6 +301,41 @@ def test_a_lost_unique_race_is_duplicate_naming_the_constraint_never_the_value()
     assert error["details"] == {"constraint": "contact_point_kind_value_key"}
     assert value not in response.text
     assert conn.rolled_back is True and conn.committed is False
+    assert "constraint=contact_point_kind_value_key" in caplog.text
+    assert value not in caplog.text
+
+
+def test_a_lost_race_for_an_event_position_is_record_busy(caplog) -> None:
+    conn = _FakeConn(_unique_on("domain_event_aggregate_seq_key", "crm", "domain_event")(
+        'duplicate key value violates unique constraint "domain_event_aggregate_seq_key"'
+    ))
+    with caplog.at_level(logging.WARNING, logger="origenlab_api.errors"):
+        response = _update_person(_production_app(_repo_over(conn)))
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert (error["code"], error["details"]) == ("record_busy", {})
+    assert "command not run: record_busy (command=update-person" in caplog.text
+    assert "constraint=domain_event_aggregate_seq_key" in caplog.text
+
+
+def test_any_other_unique_violation_stays_a_500_and_names_its_constraint(caplog) -> None:
+    secret_value = "00042-26"
+    conn = _FakeConn(_unique_on("quote_number_key", "crm", "quote")(
+        'duplicate key value violates unique constraint "quote_number_key"\n'
+        f"DETAIL:  Key (quote_number)=({secret_value}) already exists."
+    ))
+    with caplog.at_level(logging.WARNING, logger="origenlab_api.errors"):
+        response = _update_person(_production_app(_repo_over(conn)))
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "internal_error"
+    assert conn.rolled_back is True and conn.committed is False
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR and r.name == "origenlab_api.errors"]
+    assert len(errors) == 1
+    assert "update-person" in errors[0].getMessage()
+    assert "quote_number_key" in errors[0].getMessage() and "crm.quote" in errors[0].getMessage()
+    assert secret_value not in errors[0].getMessage()
 
 
 def test_a_genuinely_unexpected_database_error_still_answers_500() -> None:
@@ -285,12 +351,12 @@ def test_a_genuinely_unexpected_database_error_still_answers_500() -> None:
 def test_the_isolation_level_still_comes_first_for_the_audience_freeze() -> None:
     conn = _FakeConn(psycopg.errors.LockNotAvailable("lock timeout"), when="insert into platform.command_receipt")
     repo = V2AudienceFreezeRepository(_connect_to(conn), "fake-dsn", statement_timeout_ms=4321, lock_timeout_ms=1234)
-    with pytest.raises(Exception) as raised:
+    with pytest.raises(CommandRefused) as raised:
         repo.execute(
             command_name="freeze-campaign-audience", operator=_operator(), fields={},
             idempotency_key="k", digest="d",
         )
-    assert getattr(raised.value, "code", None) == "record_busy"
+    assert raised.value.code == "command_in_progress"
     assert conn.statements[:3] == [
         "set transaction isolation level repeatable read",
         "set local statement_timeout = 4321",
@@ -368,7 +434,7 @@ def seeded(disposable_database):
                 (name, operator_id),
             )
             people.append(cur.fetchone())
-    return {"tag": tag, "email": email, "people": people}
+    return {"tag": tag, "email": email, "operator_id": operator_id, "people": people}
 
 
 def _headers(seeded: dict, key: str) -> dict[str, str]:
@@ -421,7 +487,48 @@ def test_postgres_lock_timeout_answers_record_busy_and_the_same_key_then_succeed
 
 
 @needs_db
-def test_postgres_statement_timeout_inside_a_command_answers_service_busy(
+def test_postgres_resending_a_running_commands_key_answers_command_in_progress(
+    monkeypatch: pytest.MonkeyPatch, disposable_database, seeded
+) -> None:
+    """The first call has claimed the key and not committed: the resend waits on its receipt row.
+
+    After `lock_timeout` it must say «still running» (409 `command_in_progress`), so the client
+    keeps the key: a `record_busy` here invited a new key, and with it a second execution once
+    the first call committed.
+    """
+    from origenlab_api.main import create_app
+
+    person_id, version = seeded["people"][1]
+    _v2_env(monkeypatch, runtime_dsn(disposable_database), lock_ms=300)
+    key = uuid.uuid4().hex
+    first = psycopg.connect(disposable_database)  # the first call, mid-flight: receipt claimed, not committed
+    try:
+        first.execute("set role origenlab_owner")
+        first.execute(
+            "insert into platform.command_receipt (operator_id, idempotency_key, command_name, request_digest, status)"
+            " values (%s::uuid, %s, 'update-person', %s, 'in_progress')",
+            (seeded["operator_id"], key, "0" * 64),
+        )
+        with TestClient(create_app()) as client:
+            started = time.monotonic()
+            response = client.post(
+                "/v2/commands/update-person",
+                json={"person_id": person_id, "expected_version": version, "display_name": "Otra", "note": "prueba"},
+                headers=_headers(seeded, key),
+            )
+            waited = time.monotonic() - started
+    finally:
+        first.rollback()
+        first.close()
+    assert response.status_code == 409, response.text
+    error = response.json()["error"]
+    assert (error["code"], error["details"]["code"]) == ("conflict", "command_in_progress")
+    assert waited < 5
+    assert _receipts(disposable_database, key) == 0
+
+
+@needs_db
+def test_postgres_statement_timeout_inside_a_command_answers_command_timeout(
     monkeypatch: pytest.MonkeyPatch, disposable_database, seeded
 ) -> None:
     from origenlab_api.main import create_app
@@ -442,8 +549,7 @@ def test_postgres_statement_timeout_inside_a_command_answers_service_busy(
             holder.rollback()
             holder.close()
     assert response.status_code == 503, response.text
-    assert response.json()["error"]["code"] == "service_busy"
-    assert response.headers["Retry-After"] == "5"
+    assert response.json()["error"]["code"] == "command_timeout"
     assert _receipts(disposable_database, key) == 0
 
 

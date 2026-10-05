@@ -26,6 +26,24 @@ LOCK_NOT_AVAILABLE = "55P03"
 QUERY_CANCELED = "57014"
 UNIQUE_VIOLATION = "23505"
 
+#: Unique constraints that are a business natural key: a violation means the operator tried to
+#: record something that already exists (usually a race the command's own check could not see,
+#: because the other row was not committed yet) → 409 `duplicate`. Every other unique
+#: constraint is a bug if a command trips it, and stays a 500.
+DUPLICATE_CONSTRAINTS: frozenset[str] = frozenset({
+    "contact_point_kind_value_key",           # crm.contact_point (kind, value_norm): one channel, one row
+    "external_identifier_scheme_value_key",   # crm.external_identifier (scheme, value_norm): a RUT once
+    "organization_domain_org_domain_key",     # crm.organization_domain (organization_id, domain_norm)
+    "organization_domain_exclusive_owner_key",  # one exclusive, in-force owner per domain
+    "organization_product_line_active_key",   # crm.organization_product_line: one open link per line
+})
+
+#: Unique constraints that order an append-only stream. Two transactions computed the same next
+#: position for one aggregate: a lost race, and retrying is right → 409 `record_busy`.
+SEQUENCE_CONSTRAINTS: frozenset[str] = frozenset({
+    "domain_event_aggregate_seq_key",         # crm.domain_event (aggregate_kind, aggregate_id, seq)
+})
+
 
 class DatabaseRefusal(Exception):
     """A command the database stopped for a reason the operator can act on — not a bug.
@@ -34,11 +52,14 @@ class DatabaseRefusal(Exception):
     nothing the command would have written exists, its idempotency receipt included: the same
     request may be sent again. `code` is what the dashboard reads:
 
-    * `record_busy` (409) — another transaction held a row lock longer than `lock_timeout`;
-    * `service_busy` (503, `Retry-After`) — the statement timed out, or no pooled connection
-      was free in time;
-    * `duplicate` (409) — a unique constraint the command did not check for itself refused
-      the row; `details.constraint` names the constraint, never the values.
+    * `record_busy` (409) — another transaction held a row lock longer than `lock_timeout`, or
+      won the race for the next position of an event stream (`SEQUENCE_CONSTRAINTS`);
+    * `command_timeout` (503) — the command ran past `statement_timeout` and was cancelled;
+    * `service_busy` (503, `Retry-After`) — no pooled connection was free in time;
+    * `duplicate` (409) — a business natural key (`DUPLICATE_CONSTRAINTS`) refused the row;
+      `details.constraint` names the constraint, never the values.
+
+    `constraint` and `command` are for the log line only (schema object and command names).
     """
 
     def __init__(
@@ -49,6 +70,7 @@ class DatabaseRefusal(Exception):
         *,
         details: dict[str, Any] | None = None,
         retry_after: int | None = None,
+        constraint: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
@@ -56,6 +78,8 @@ class DatabaseRefusal(Exception):
         self.message = message
         self.details = details or {}
         self.retry_after = retry_after
+        self.constraint = constraint
+        self.command: str | None = None
 
 
 def _service_busy() -> DatabaseRefusal:
@@ -67,12 +91,18 @@ def _service_busy() -> DatabaseRefusal:
     )
 
 
+def unique_constraint(exc: BaseException) -> str | None:
+    """The name of the unique constraint a violation names (the server's diagnostic), if any."""
+    name = getattr(getattr(exc, "diag", None), "constraint_name", None)
+    return str(name) if name else None
+
+
 def database_refusal(exc: BaseException) -> DatabaseRefusal | None:
     """The refusal a database failure inside a command stands for, or None for a real fault.
 
     Reads `sqlstate` rather than matching driver classes, so a fake connection in a test and
-    psycopg in production take the same path. Anything not listed stays an exception and
-    answers 500 `internal_error`.
+    psycopg in production take the same path. Anything not listed — a unique violation outside
+    the two allowlists included — stays an exception and answers 500 `internal_error`.
     """
     if isinstance(exc, PoolTimeout):
         return _service_busy()
@@ -84,16 +114,43 @@ def database_refusal(exc: BaseException) -> DatabaseRefusal | None:
             "another operator is saving this record; nothing was written, retry in a few seconds",
         )
     if sqlstate == QUERY_CANCELED:
-        return _service_busy()
-    if sqlstate == UNIQUE_VIOLATION:
-        constraint = getattr(getattr(exc, "diag", None), "constraint_name", None)
         return DatabaseRefusal(
-            409,
-            "duplicate",
-            "a record with these values already exists; nothing was written",
-            details={"constraint": str(constraint)} if constraint else {},
+            503,
+            "command_timeout",
+            "the command took too long and was cancelled; nothing was written",
         )
+    if sqlstate == UNIQUE_VIOLATION:
+        constraint = unique_constraint(exc)
+        if constraint in DUPLICATE_CONSTRAINTS:
+            return DatabaseRefusal(
+                409,
+                "duplicate",
+                "a record with these values already exists; nothing was written",
+                details={"constraint": constraint},
+                constraint=constraint,
+            )
+        if constraint in SEQUENCE_CONSTRAINTS:
+            return DatabaseRefusal(
+                409,
+                "record_busy",
+                "another operator changed this record at the same moment; nothing was written, retry",
+                constraint=constraint,
+            )
     return None
+
+
+def log_unrefused_database_failure(exc: BaseException, command: str | None) -> None:
+    """Name a unique violation that stays a 500 — constraint and table, never the values."""
+    if getattr(exc, "sqlstate", None) != UNIQUE_VIOLATION:
+        return
+    diag = getattr(exc, "diag", None)
+    table = ".".join(str(part) for part in (getattr(diag, "schema_name", None), getattr(diag, "table_name", None)) if part)
+    _log.error(
+        "command %s failed on unique constraint %s (%s): not a known natural key or event sequence",
+        command or "-",
+        unique_constraint(exc) or "-",
+        table or "-",
+    )
 
 _POSTGRES_URL_RE = re.compile(r"postgres(?:ql)?://[^\s\"']+", re.IGNORECASE)
 _ENV_SECRET_RE = re.compile(
@@ -297,9 +354,15 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request,
         exc: DatabaseRefusal,
     ) -> JSONResponse:
-        # The code and the driver's class name only: a path can carry an identifier.
+        # Codes and schema object names only: a path or a driver message can carry values.
         cause = exc.__cause__
-        _log.warning("command not run: %s (%s)", exc.code, type(cause).__name__ if cause else "-")
+        _log.warning(
+            "command not run: %s (command=%s, cause=%s, constraint=%s)",
+            exc.code,
+            exc.command or "-",
+            type(cause).__name__ if cause else "-",
+            exc.constraint or "-",
+        )
         response = json_error_response(
             exc.status_code,
             code=exc.code,

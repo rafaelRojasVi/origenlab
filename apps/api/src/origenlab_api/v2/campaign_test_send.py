@@ -19,6 +19,7 @@ no campaign recipient, so it reads those live facts itself instead of
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID
@@ -42,6 +43,8 @@ from origenlab_api.v2.gmail_send import (
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.v1_lane_campaigns import load_v1_lane_campaigns, load_v1_lane_html
 
+_log = logging.getLogger(__name__)
+
 SEND_CAMPAIGN_TEST = "send-campaign-test"
 TEST_SENDS_PER_HOUR = 10
 TEST_SENDS_PER_DAY = 30
@@ -52,6 +55,10 @@ FAILURE_MESSAGE_ES = {
     "gmail_rejected": "Gmail rechazó el mensaje.",
     "network": "No se pudo contactar a Gmail.",
 }
+
+#: Gmail accepted the message and recording it failed. Not «nothing was written, retry»: the
+#: email is out, and a resend would send it again.
+SENT_NOT_RECORDED_ES = "La prueba se envió, pero no quedó registrada. No la reenvíes; avisa al administrador."
 
 
 class SendCampaignTestBody(BaseModel):
@@ -160,7 +167,7 @@ class V2CampaignTestSendRepository(CommandTransaction):
                   idempotency_key: str, digest: str) -> dict[str, Any]:
         if operator.role != "admin":
             raise CommandRefused(403, "admin_only", "sólo un perfil de administración envía pruebas")
-        with self._write() as cur:
+        with self._write(SEND_CAMPAIGN_TEST) as cur:
             receipt_id, replay = self._claim_receipt(cur, operator, idempotency_key, SEND_CAMPAIGN_TEST, digest)
             if replay is not None:
                 return replay
@@ -190,16 +197,26 @@ class V2CampaignTestSendRepository(CommandTransaction):
             failed = {**record, "status": "failed", "error": exc.kind}
             if exc.detail:
                 failed["error_detail"] = exc.detail
-            self._finish(receipt_id, 502, failed)
+            try:
+                self._finish(receipt_id, 502, failed)
+            except Exception as record_exc:  # nothing was sent: the send failure is the answer
+                _log.error("test send %s failed and its failure was not recorded (%s)",
+                           receipt_id, type(record_exc).__name__)
             raise CommandRefused(502, exc.kind, FAILURE_MESSAGE_ES.get(exc.kind, "No se pudo enviar.")) from exc
         response = {**record, "status": "sent", "gmail_message_id": message_id,
                     "sent_at": datetime.now(timezone.utc).isoformat(),
                     "idempotency_key": idempotency_key, "command_receipt_id": receipt_id, "replayed": False}
-        self._finish(receipt_id, 200, response)
+        try:
+            self._finish(receipt_id, 200, response)
+        except Exception as record_exc:
+            # The email is already out. Whatever stopped the record (a busy row, a timeout, a lost
+            # connection), «nothing was written, retry» would be false and a retry would resend it.
+            _log.error("test send %s delivered but not recorded (%s)", receipt_id, type(record_exc).__name__)
+            raise CommandRefused(503, "sent_not_recorded", SENT_NOT_RECORDED_ES) from record_exc
         return response
 
     def _finish(self, receipt_id: str, status_code: int, response: dict[str, Any]) -> None:
-        with self._write() as cur:
+        with self._write(SEND_CAMPAIGN_TEST) as cur:
             cur.execute(
                 """
                 update platform.command_receipt
