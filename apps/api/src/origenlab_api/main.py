@@ -199,7 +199,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     app.include_router(v2_router)
     app.include_router(cockpit_router)
     from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository, load_drive_ledgers
-    from origenlab_api.v2.crm_workspace_routes import workspace_router
+    from origenlab_api.v2.crm_workspace_routes import build_fx_rates, workspace_router
 
     ledgers = [p.strip() for p in (settings.v2_drive_archive_ledgers or "").split(",") if p.strip()]
     app.state.crm_workspace = CrmWorkspaceRepository(
@@ -210,6 +210,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     )
     app.state.v1_lane_content_dir = settings.v2_v1_lane_content_dir
     app.state.org_suggestions_file = settings.v2_org_suggestions_file
+    app.state.fx_rates = build_fx_rates(connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms)
     app.include_router(workspace_router)
     if settings.v2_import_review_plan_dir:
         from origenlab_api.v2.quote_import_review import QuoteImportReviewRepository, load_plan

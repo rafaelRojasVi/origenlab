@@ -452,8 +452,24 @@ def get_mail_quote_numbers(_: Operator, repo: Repo) -> Any:
     return repo.mail_quote_numbers()
 
 
-#: The process's exchange-rate cache, unless the app supplies its own (tests do).
+#: The process's exchange-rate cache, unless the app supplies its own (`build_fx_rates`; tests).
 _FX_RATES = FxRates()
+
+
+def build_fx_rates(connect: Any, dsn: str, statement_timeout_ms: int = 30_000) -> FxRates:
+    """The exchange-rate cache over the V2 database: when every source fails and no figures are in
+    memory it answers the newest stored `catalog.fx_rate` observation (the pricing lookup's
+    precedence rule), and each mindicador.cl fetch writes its USD and EUR through to that table.
+
+    Both use the API's own pooled connection as `origenlab_api`: a read-only transaction for the
+    lookup, and `FxCacheWriter`'s own short write transaction (`on conflict do nothing`).
+    """
+    from origenlab_api.v2.catalog.fx import FxCacheWriter
+    from origenlab_api.v2.catalog.reads import V2CatalogReads
+
+    reads = V2CatalogReads(connect, dsn, statement_timeout_ms=statement_timeout_ms)
+    return FxRates(store_reader=reads.stored_fx,
+                   store_writer=FxCacheWriter(connect, dsn, statement_timeout_ms))
 
 
 @workspace_router.get("/fx")

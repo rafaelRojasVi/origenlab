@@ -233,3 +233,174 @@ def test_route_says_503_when_no_figure_is_available() -> None:
     client = _app(VIEWER, FxRates(fetch=_Fetch(OSError("down")), clock=_Clock()))
     res = client.get("/v2/workspace/fx")
     assert res.status_code == 503
+
+
+# ───────────────────────────────────────── stored Banco Central figures (Task 16) ──
+#
+# A fresh API process (any deploy) has no figures in memory. When every source fails it answers
+# the newest stored `catalog.fx_rate` observation instead of «no disponible»; every successful
+# mindicador.cl fetch writes its USD and EUR through to that table. Readers and writers are fakes
+# here; tests/test_v2_fx_rates_db.py proves the real SQL.
+
+import datetime as dt  # noqa: E402
+from decimal import Decimal  # noqa: E402
+
+#: 2026-10-05 15:00 UTC — noon in Santiago.
+_WALL = dt.datetime(2026, 10, 5, 15, 0, tzinfo=dt.timezone.utc).timestamp()
+
+
+def _row(currency: str, day: str, clp: str, created: str = "2026-10-03T12:30:00+00:00") -> dict[str, Any]:
+    return {"currency": currency, "rate_date": dt.date.fromisoformat(day), "clp_per_unit": Decimal(clp),
+            "source": "bcentral", "provider": "mindicador", "created_at": dt.datetime.fromisoformat(created)}
+
+
+class _Store:
+    """A stored-rate reader: `(currency, on) -> row | None`, recording what it was asked."""
+
+    def __init__(self, *rows: dict[str, Any], error: Exception | None = None) -> None:
+        self.rows = {r["currency"]: r for r in rows}
+        self.error = error
+        self.asked: list[tuple[str, dt.date]] = []
+
+    def __call__(self, currency: str, on: dt.date) -> dict[str, Any] | None:
+        self.asked.append((currency, on))
+        if self.error is not None:
+            raise self.error
+        return self.rows.get(currency)
+
+
+class _Writer:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.calls: list[list[dict[str, Any]]] = []
+        self.error = error
+
+    def __call__(self, rows: list[dict[str, Any]]) -> None:
+        self.calls.append(rows)
+        if self.error is not None:
+            raise self.error
+
+
+def _down() -> _Fetch:
+    return _Fetch(OSError("connection refused"))
+
+
+def test_a_fresh_process_with_every_source_down_answers_the_stored_figures() -> None:
+    store = _Store(_row("USD", "2026-10-02", "952.500000", "2026-10-02T13:00:00+00:00"),
+                   _row("EUR", "2026-10-03", "1101.250000", "2026-10-03T13:30:00+00:00"))
+    fx = FxRates(sources=(("mindicador.cl", _down()), ("findic.cl", _down())), clock=_Clock(),
+                 wall_clock=lambda: _WALL, store_reader=store)
+    assert fx.current() == {
+        "source": "catalog.fx_rate",
+        "source_label": "Banco Central de Chile (último valor guardado)",
+        "source_url": "https://si3.bcentral.cl",
+        "rates": [
+            {"code": "USD", "label": "Dólar observado", "clp": 952.5, "as_of": "2026-10-02"},
+            {"code": "EUR", "label": "Euro", "clp": 1101.25, "as_of": "2026-10-03"},
+        ],
+        "fetched_at": "2026-10-03T13:30:00+00:00",
+        "stale": True,
+    }
+    # Asked for each stored currency as of today in Chile, never a later day.
+    assert store.asked == [("USD", dt.date(2026, 10, 5)), ("EUR", dt.date(2026, 10, 5))]
+
+
+def test_one_stored_currency_is_enough() -> None:
+    fx = FxRates(fetch=_down(), clock=_Clock(), wall_clock=lambda: _WALL,
+                 store_reader=_Store(_row("EUR", "2026-10-03", "1101.25")))
+    out = fx.current()
+    assert [r["code"] for r in out["rates"]] == ["EUR"]
+    assert out["stale"] is True
+
+
+def test_a_fresh_process_with_an_empty_store_is_still_unavailable() -> None:
+    fx = FxRates(fetch=_down(), clock=_Clock(), wall_clock=lambda: _WALL, store_reader=_Store())
+    with pytest.raises(FxUnavailable):
+        fx.current()
+
+
+def test_a_stored_row_dated_after_today_is_never_shown() -> None:
+    store = _Store(_row("USD", "2026-10-06", "999"), _row("EUR", "2026-10-03", "1101.25"))
+    fx = FxRates(fetch=_down(), clock=_Clock(), wall_clock=lambda: _WALL, store_reader=store)
+    assert [r["code"] for r in fx.current()["rates"]] == ["EUR"]
+
+
+def test_figures_in_memory_win_over_the_store() -> None:
+    store, clock = _Store(_row("USD", "2026-10-02", "1")), _Clock()
+    fx = FxRates(fetch=_Fetch(_body(usd=950.5), OSError("down")), clock=clock, store_reader=store)
+    fx.current()
+    clock.now += 3601
+    out = fx.current()
+    assert out["stale"] is True and out["rates"][0]["clp"] == 950.5
+    assert store.asked == []
+
+
+def test_a_failing_store_read_is_logged_and_unavailable(caplog: pytest.LogCaptureFixture) -> None:
+    store = _Store(error=RuntimeError("could not connect to server"))
+    fx = FxRates(fetch=_down(), clock=_Clock(), wall_clock=lambda: _WALL, store_reader=store)
+    with caplog.at_level("WARNING", logger="origenlab_api.v2.fx_rates"):
+        with pytest.raises(FxUnavailable):
+            fx.current()
+    assert any("stored" in r.getMessage() and "RuntimeError" in r.getMessage() for r in caplog.records)
+
+
+def test_a_mindicador_fetch_writes_usd_and_eur_through_once() -> None:
+    writer, clock = _Writer(), _Clock()
+    fx = FxRates(fetch=_Fetch(_body()), clock=clock, store_writer=writer)
+    fx.current()
+    clock.now += 3599
+    fx.current()  # served from memory: no second write
+    assert writer.calls == [[
+        {"rate_date": dt.date(2026, 1, 15), "currency": "USD", "clp_per_unit": Decimal("950.5"),
+         "provider": "mindicador"},
+        {"rate_date": dt.date(2026, 1, 15), "currency": "EUR", "clp_per_unit": Decimal("1050.25"),
+         "provider": "mindicador"},
+    ]]
+
+
+def test_a_findic_fetch_is_never_written_through() -> None:
+    # catalog.fx_rate names only reviewed providers (bde, mindicador, operator); findic.cl's
+    # figures are shown, never stored under another provider's name.
+    writer = _Writer()
+    fx = FxRates(sources=(("mindicador.cl", _down()), ("findic.cl", _Fetch(_findic_body()))),
+                 clock=_Clock(), store_writer=writer)
+    assert fx.current()["source"] == "findic.cl"
+    assert writer.calls == []
+
+
+def test_a_failing_write_through_changes_nothing_and_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    plain = FxRates(fetch=_Fetch(_body()), clock=_Clock(), wall_clock=lambda: _WALL).current()
+    fx = FxRates(fetch=_Fetch(_body()), clock=_Clock(), wall_clock=lambda: _WALL,
+                 store_writer=_Writer(error=RuntimeError("deadlock detected")))
+    with caplog.at_level("WARNING", logger="origenlab_api.v2.fx_rates"):
+        assert fx.current() == plain
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1 and "RuntimeError" in warnings[0].getMessage()
+
+
+def test_a_failed_source_is_logged_once_per_retry_window(caplog: pytest.LogCaptureFixture) -> None:
+    clock = _Clock()
+    fx = FxRates(fetch=_Fetch(ConnectionResetError("reset by peer")), clock=clock, wall_clock=lambda: _WALL,
+                 store_reader=_Store(_row("USD", "2026-10-02", "952.5")))
+    with caplog.at_level("WARNING", logger="origenlab_api.v2.fx_rates"):
+        fx.current()
+        clock.now += 30
+        fx.current()
+    source_logs = [r.getMessage() for r in caplog.records if "fx source" in r.getMessage()]
+    assert len(source_logs) == 1 and "ConnectionResetError" in source_logs[0]
+
+
+def test_route_answers_the_stored_figures_with_the_usual_shape() -> None:
+    fx = FxRates(fetch=_down(), clock=_Clock(), wall_clock=lambda: _WALL,
+                 store_reader=_Store(_row("USD", "2026-10-02", "952.5")))
+    res = _app(VIEWER, fx).get("/v2/workspace/fx")
+    assert res.status_code == 200
+    body = res.json()
+    assert set(body) == {"source", "source_label", "source_url", "rates", "fetched_at", "stale"}
+    assert body["stale"] is True and body["rates"][0] == {
+        "code": "USD", "label": "Dólar observado", "clp": 952.5, "as_of": "2026-10-02"}
+
+
+def test_route_says_503_not_500_when_the_store_read_fails() -> None:
+    fx = FxRates(fetch=_down(), clock=_Clock(), wall_clock=lambda: _WALL,
+                 store_reader=_Store(error=RuntimeError("pool timeout")))
+    assert _app(VIEWER, fx).get("/v2/workspace/fx").status_code == 503
