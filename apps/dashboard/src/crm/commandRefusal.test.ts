@@ -91,12 +91,14 @@ describe("refusalText: one Spanish table, never a raw body", () => {
     ["record_busy", "Otro operador está guardando este registro. Reintenta en unos segundos."],
     ["service_busy", "El sistema está ocupado. Reintenta en unos segundos."],
     ["duplicate", "Ya existe un registro con esos datos."],
+    ["command_in_progress", "Tu solicitud anterior todavía se está procesando; espera unos segundos y vuelve a intentar."],
+    ["command_timeout", "La operación tardó demasiado y se canceló; no se guardó nada. Si se repite, avisa al administrador."],
   ])("%s, from the production envelope", (code, text) => {
     expect(refusalText(parseRefusal(409, productionBody(code)))).toBe(text);
     expect(refusalText(parseRefusal(409, bareBody(code)))).toBe(text);
   });
 
-  it.each(["idempotency_key_reused", "command_in_progress", "idempotency_conflict", "command_already_failed", "network_error"])(
+  it.each(["idempotency_key_reused", "command_in_progress", "idempotency_conflict", "command_already_failed", "network_error", "command_timeout", "sent_not_recorded"])(
     "%s has a Spanish sentence of its own",
     (code) => {
       const text = refusalText({ status: 409, code, message: "english", details: {} });

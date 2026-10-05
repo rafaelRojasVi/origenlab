@@ -35,7 +35,6 @@ describe("CommandKey", () => {
 
   it.each([
     [409, "stale_version"],
-    [409, "record_busy"],
     [409, "duplicate"],
     [409, "idempotency_key_reused"],
     [422, "validation_error"],
@@ -47,17 +46,21 @@ describe("CommandKey", () => {
     expect(key.keyFor(body)).not.toBe(first);
   });
 
-  it("keeps the key while the first request under it may still be running", () => {
-    const key = new CommandKey();
-    const first = key.keyFor(body);
-    key.settle(refused(409, "command_in_progress"));
-    expect(key.keyFor(body)).toBe(first);
-  });
+  it.each(["command_in_progress", "idempotency_conflict", "record_busy"])(
+    "keeps the key after %s: the first request under it may still commit",
+    (code) => {
+      const key = new CommandKey();
+      const first = key.keyFor(body);
+      key.settle(refused(409, code));
+      expect(key.keyFor(body)).toBe(first);
+    },
+  );
 
   it("settlesAttempt says which answers end an attempt", () => {
     expect(settlesAttempt()).toBe(true);
     expect(settlesAttempt(refused(409, "stale_version"))).toBe(true);
     expect(settlesAttempt(refused(409, "command_in_progress"))).toBe(false);
+    expect(settlesAttempt(refused(409, "record_busy"))).toBe(false);
     expect(settlesAttempt(new OperatorApiError("", 500))).toBe(false);
     expect(settlesAttempt(new TypeError("Failed to fetch"))).toBe(false);
   });

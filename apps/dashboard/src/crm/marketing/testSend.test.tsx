@@ -62,6 +62,18 @@ describe("«Enviar prueba»", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/Límite de pruebas alcanzado\. La próxima se puede enviar a las 10:00\./);
   });
 
+  it("a test Gmail accepted but the API could not record says not to resend (production envelope)", async () => {
+    const said = "La prueba se envió, pero no quedó registrada. No la reenvíes; avisa al administrador.";
+    stub({ status: 503, body: { error: { code: "backend_unavailable", message: said,
+                                         details: { code: "sent_not_recorded", message: said }, request_id: "r" } } });
+    render(asRole("admin", <TestSendPanel target={TARGET} config={CONFIG} />));
+    fireEvent.change(screen.getByLabelText("Enviar una prueba a"), { target: { value: "ana@example.invalid" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar prueba" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(said);
+    expect(alert.textContent).not.toMatch(/[{}]|sent_not_recorded|backend_unavailable/);
+  });
+
   it("falls back when the 429 carries no time", async () => {
     stub({ status: 429, body: { detail: { code: "test_send_limit", message: "límite" } } });
     render(asRole("admin", <TestSendPanel target={TARGET} config={CONFIG} />));

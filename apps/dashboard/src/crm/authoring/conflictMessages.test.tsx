@@ -154,8 +154,14 @@ describe("a create form's Idempotency-Key", () => {
   }
   const submit = () => fireEvent.click(screen.getByRole("button", { name: "Crear contacto" }));
 
-  it("is resent for the identical request after no answer, and turned over after a refusal", async () => {
-    const api = stubApi(() => undefined, ["network", productionTop(503, "service_busy"), productionTop(409, "record_busy")]);
+  it("is resent while the first attempt may still run, and turned over after a settling refusal", async () => {
+    const api = stubApi(() => undefined, [
+      "network",
+      productionTop(503, "service_busy"),
+      productionTop(409, "record_busy"),
+      production(409, "command_in_progress", "conflict"),
+      production(409, "contact_point_taken", "conflict"),
+    ]);
     const done = vi.fn();
     render(<NewPersonForm onDone={done} onCancel={() => undefined} />);
     fill();
@@ -168,15 +174,19 @@ describe("a create form's Idempotency-Key", () => {
     expect(await screen.findByText(REFUSAL_MESSAGES.record_busy)).toBeInTheDocument();
     expect(screen.getByRole("alert").textContent).not.toMatch(/[{}]|record_busy|english/);
     submit();
+    expect(await screen.findByText(REFUSAL_MESSAGES.command_in_progress)).toBeInTheDocument();
+    submit();
+    expect(await screen.findByText(REFUSAL_MESSAGES.contact_point_taken)).toBeInTheDocument();
+    submit();
     await waitFor(() => expect(done).toHaveBeenCalledTimes(1));
 
     const keys = api.posts.map((p) => p.key);
-    expect(keys).toHaveLength(4);
-    // No answer, then a 503: the same request is resent under the same key (a replay at worst).
-    expect(keys[1]).toBe(keys[0]);
-    expect(keys[2]).toBe(keys[0]);
-    // A 409 settled it: the next attempt is a new request.
-    expect(keys[3]).not.toBe(keys[2]);
+    expect(keys).toHaveLength(6);
+    // No answer, a 503, a busy row, «still running»: the first attempt may yet commit, so the
+    // same request is resent under the same key — a replay at worst, never a second person.
+    expect(new Set(keys.slice(0, 5)).size).toBe(1);
+    // A refusal that settles it (nothing was written): the next attempt is a new request.
+    expect(keys[5]).not.toBe(keys[4]);
   });
 
   it("an edited body never reuses the key of an unanswered attempt", async () => {

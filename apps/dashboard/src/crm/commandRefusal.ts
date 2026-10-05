@@ -88,8 +88,11 @@ export const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
   duplicate: "Ya existe un registro con esos datos.",
   idempotency_key_reused:
     "Este envío ya se había registrado con otros datos. Recarga para ver lo que quedó guardado antes de intentarlo otra vez.",
-  idempotency_conflict: "Este envío todavía se está procesando. Espera unos segundos y recarga.",
-  command_in_progress: "Este envío todavía se está procesando. Espera unos segundos y recarga.",
+  idempotency_conflict: "Tu solicitud anterior todavía se está procesando; espera unos segundos y vuelve a intentar.",
+  command_in_progress: "Tu solicitud anterior todavía se está procesando; espera unos segundos y vuelve a intentar.",
+  command_timeout:
+    "La operación tardó demasiado y se canceló; no se guardó nada. Si se repite, avisa al administrador.",
+  sent_not_recorded: "La prueba se envió, pero no quedó registrada. No la reenvíes; avisa al administrador.",
   command_already_failed: "Un intento anterior de este envío falló. Vuelve a intentarlo.",
   // The request never reached a decision.
   network_error: "No se pudo contactar al servidor. Revisa la conexión y reintenta; un mismo envío no se registra dos veces.",
