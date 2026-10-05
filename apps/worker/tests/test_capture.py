@@ -174,3 +174,127 @@ def test_an_unparsed_row_comes_from_gmails_metadata() -> None:
         mailbox_address=MAILBOX, reason="too_large",
     )
     assert (row.direction, row.subject, row.rfc822_message_id_norm, row.reason) == ("outbound", "xy", "big@x.invalid", "too_large")
+
+
+# ---- fix round 1 ----
+
+ALIAS = "OrigenLab Ventas <ventas@alias.invalid>"
+
+
+def _raw_with_part(content_type: str, filename: str) -> bytes:
+    return (
+        b"From: Ana <ana@cliente.invalid>\r\nTo: contacto@origenlab.cl\r\nSubject: x\r\n"
+        b"Message-ID: <nul@cliente.invalid>\r\nMIME-Version: 1.0\r\n"
+        b'Content-Type: multipart/mixed; boundary="b1"\r\n\r\n'
+        b"--b1\r\nContent-Type: text/plain\r\n\r\nhola\r\n"
+        b"--b1\r\nContent-Type: " + content_type.encode() + b"\r\n"
+        b'Content-Disposition: attachment; filename="' + filename.encode() + b'"\r\n\r\n'
+        b"datos\r\n--b1--\r\n"
+    )
+
+
+def _no_nul(c) -> None:
+    assert "\x00" not in json.dumps(c.payload, ensure_ascii=False)
+    for p in c.participants:
+        assert "\x00" not in p.address_norm and "\x00" not in (p.display_name or "")
+    for a in c.attachments:
+        assert "\x00" not in (a.filename or "") and "\x00" not in a.mime_type
+    assert all("\x00" not in x for x in c.labels)
+    assert "\x00" not in (c.rfc822_message_id_norm or "") and "\x00" not in (c.subject or "")
+
+
+def test_a_nul_in_a_content_type_never_reaches_the_attachment_row() -> None:
+    c = capture(_raw_with_part("application/pd\x00f", "a.pdf"))
+    _no_nul(c)
+    assert [a.mime_type for a in c.attachments] == ["application/pdf"]
+
+
+def test_a_nul_in_an_attachment_filename_is_removed() -> None:
+    c = capture(_raw_with_part("application/pdf", "CN 1005\x00.pdf"))
+    _no_nul(c)
+    assert c.attachments[0].filename == "CN 1005.pdf"
+
+
+def test_a_nul_in_the_from_address_and_name_is_removed() -> None:
+    c = capture(make_raw(frm="An\x00a <an\x00a@cliente.invalid>"))
+    _no_nul(c)
+
+
+def test_a_nul_in_a_user_label_name_and_the_message_id_is_removed() -> None:
+    c = capture(make_raw(message_id="<a\x00b@cliente.invalid>"), labels=("Label_1",), names={"Label_1": "Bo\x00rrador"})
+    _no_nul(c)
+    assert c.labels == ("Borrador",) and c.rfc822_message_id_norm == "ab@cliente.invalid"
+
+
+def test_a_message_in_inbox_and_sent_from_a_send_as_alias_is_outbound_by_the_sent_label() -> None:
+    c = capture(make_raw(frm=ALIAS, to=MAILBOX), labels=("INBOX", "SENT"))
+    assert c.direction == "outbound"
+
+
+def test_the_mailbox_as_sender_without_a_sent_label_is_outbound_in_any_case() -> None:
+    c = capture(make_raw(frm=f"OrigenLab <Contacto@OrigenLab.cl>", to="x@cliente.invalid"), labels=("INBOX",))
+    assert c.direction == "outbound"
+
+
+def test_an_alias_sender_without_a_sent_label_is_inbound() -> None:
+    assert capture(make_raw(frm=ALIAS), labels=("INBOX",)).direction == "inbound"
+
+
+def test_the_convention_string_is_the_staged_literal() -> None:
+    c = capture(make_raw())
+    assert c.payload["quote_number_convention"] == "CN<serial, zero-padded to 5> — proposed, requires operator confirmation"
+    assert QUOTE_NUMBER_CONVENTION == c.payload["quote_number_convention"]
+
+
+def test_the_payload_key_names_are_pinned() -> None:
+    assert sorted(PAYLOAD_KEYS) == sorted([
+        "gmail_message_id", "gmail_thread_id", "rfc822_message_id", "gmail_label_ids", "gmail_labels",
+        "raw_sha256", "intake_class", "tier", "direction_hint", "sent_at", "subject_raw", "sender",
+        "recipients", "documents", "proposed_quote_numbers", "quote_number_convention", "quote_number",
+        "opportunity_id", "sent_revision", "source_email_id", "staging_source_record_sha256",
+    ])
+    assert sorted(DOCUMENT_KEYS) == sorted([
+        "source_email_id", "source_attachment_id", "filename", "sha256", "cn_tokens",
+        "bytes_hash_verified", "stored_path",
+    ])
+
+
+def test_ids_recipients_and_attachment_facts_have_their_values() -> None:
+    from mailfixtures import PDF
+
+    c = capture(make_raw(to="Pedro <pedro@otro.invalid>, contacto@origenlab.cl", cc="luz@otro.invalid",
+                         pdf_name="Cotizacion CN01005.pdf"))
+    assert c.payload["gmail_message_id"] == GMAIL_ID and c.payload["gmail_thread_id"] == THREAD_ID
+    assert c.payload["recipients"] == "Pedro <pedro@otro.invalid>, contacto@origenlab.cl; luz@otro.invalid"
+    digest = hashlib.sha256(PDF).hexdigest()
+    assert c.payload["documents"][0]["sha256"] == digest
+    (att,) = c.attachments
+    assert (att.part_index, att.size_bytes, att.sha256) == (att.part_index, len(PDF), digest)
+    assert isinstance(att.part_index, int) and att.part_index >= 0
+
+
+def test_build_capture_runs_the_staging_validator() -> None:
+    from origenlab_worker.v1_reuse import ManifestRefused
+
+    with pytest.raises(ManifestRefused):
+        capture(make_raw(), labels=("DRAFT",))
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"message_id": "not an id <<"},
+    {"message_id": None},
+    {"to": "@@@, ;;; , <>, undisclosed-recipients:;"},
+    {"to": "", "cc": ",,,"},
+])
+def test_hostile_headers_still_build_a_capture(kwargs) -> None:
+    assert capture(make_raw(**kwargs)).payload["gmail_message_id"] == GMAIL_ID
+
+
+def test_a_duplicated_message_id_header_builds_a_capture() -> None:
+    raw = make_raw().replace(b"Message-ID: <m1@cliente.invalid>", b"Message-ID: <m1@cliente.invalid>\r\nMessage-ID: <m2@cliente.invalid>")
+    assert capture(raw).rfc822_message_id_norm in {"m1@cliente.invalid", "m2@cliente.invalid"}
+
+
+def test_an_empty_body_builds_a_capture() -> None:
+    raw = b"From: Ana <ana@cliente.invalid>\r\nTo: contacto@origenlab.cl\r\nSubject: vacio\r\n\r\n"
+    assert capture(raw).payload["tier"] == "G2_gmail_no_doc"

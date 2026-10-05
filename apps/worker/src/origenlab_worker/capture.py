@@ -185,7 +185,13 @@ def internal_datetime(internal_date_ms: int) -> datetime:
 
 
 def _direction(label_ids: Sequence[str], from_address: str | None, mailbox_address: str) -> str:
-    return "outbound" if "SENT" in label_ids or from_address == mailbox_address else "inbound"
+    """Outbound when Gmail labels it SENT, or when it is From the mailbox itself.
+
+    The From rule covers a copy of our own mail that arrives without a SENT label (a Bcc or a note
+    to ourselves); the SENT label covers Send-As aliases, whose From is not the mailbox.
+    """
+    mine = from_address is not None and from_address.lower() == mailbox_address.lower()
+    return "outbound" if "SENT" in label_ids or mine else "inbound"
 
 
 def _label_names(label_ids: Sequence[str], names: Mapping[str, str]) -> tuple[str, ...]:
@@ -294,7 +300,7 @@ def build_capture(
             AttachmentMeta(
                 part_index=int(part["part_index"]),
                 filename=clean_text(part["filename"]),
-                mime_type=part["content_type"] or "application/octet-stream",
+                mime_type=clean_text(part["content_type"]) or "application/octet-stream",
                 size_bytes=int(part["size_bytes"] or 0),
                 sha256=part["sha256"],
             )
