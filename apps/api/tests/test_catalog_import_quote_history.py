@@ -208,6 +208,17 @@ def test_a_reseller_text_is_skipped_and_the_clean_one_planned(tmp_path, capsys) 
         plan["skipped"][0]["path_sha256"], "")
 
 
+def test_a_reseller_text_whose_extraction_names_the_reseller_is_skipped(tmp_path) -> None:
+    sha = _sha()
+    _write_doc(tmp_path / "in", _extraction(sha, [_line("1", "ACME-1", 1000)],
+                                            extraction_issues=["membrete de Lab Delivery"]),
+               _docx_text([("1", "ACME-1", "1.000")], letterhead="Juan Andrés Tejeda — equipos"))
+    assert _plan(tmp_path / "in", tmp_path / "out") == 0
+    plan, _ = _load(tmp_path / "out")
+    assert plan["items"] == [] and plan["counts"]["skipped_labdelivery_letterhead"] == 1
+    assert [s["reason"] for s in plan["skipped"]] == ["labdelivery_letterhead"]
+
+
 def test_item_and_total_matches_are_counted_by_reason(tmp_path) -> None:
     sha = _sha()
     _write_doc(tmp_path / "in", _extraction(sha, [_line("1", "ACME-1", 1000), _line("2", "ACME-2", 2000)]),

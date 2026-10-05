@@ -97,7 +97,8 @@ def test_text_without_a_known_header_gives_model_less_lines() -> None:
 
 def test_lines_not_ending_with_a_clp_amount_are_ignored() -> None:
     text = "  ITEM   REF    DETALLE      TOTAL\n\n   1     ACME-1    Equipo  $ 1.234.000 aprox\n" \
-           "\n   2     ACME-2    Equipo     USD 1,234.50\n\n   3     ACME-3    Equipo     $ 500\n"
+           "\n   2     ACME-2    Equipo     USD 1,234.50\n\n   3     ACME-3    Equipo     $ 1.234,50\n" \
+           "\n   4     ACME-4    Equipo     $ 1,234.567\n"
     assert parse_template_lines(text) == []
 
 
@@ -220,3 +221,19 @@ def test_description_text_starting_in_the_ref_column_is_not_a_model() -> None:
             "   2      SONIC-200 Equipo sintético con una descripción larga y su código     $ 200.000\n")
     assert parse_template_lines(text) == [TemplateLine("1", None, Decimal("100000")),
                                           TemplateLine("2", "SONIC-200", Decimal("200000"))]
+
+
+def test_small_and_zero_clp_amounts_parse() -> None:
+    text = ("  ITEM   REF    DETALLE      TOTAL\n\n   1     ACME-1    Equipo     $ 0\n"
+            "\n   2     ACME-2    Equipo     $ 500\n\n   3     ACME-3    Equipo     $ 1.234\n")
+    assert parse_template_lines(text) == [TemplateLine("1", "ACME-1", Decimal("0")),
+                                          TemplateLine("2", "ACME-2", Decimal("500")),
+                                          TemplateLine("3", "ACME-3", Decimal("1234"))]
+
+
+def test_a_numeric_ai_item_with_an_integer_value_matches_its_label() -> None:
+    ai = [{"item": 1.0, "model": "OTHER-1", "line_total": Decimal("1000")},
+          {"item": 2, "model": "OTHER-2", "line_total": Decimal("2000")}]
+    checked = cross_check(ai, [TemplateLine("1", "ACME-1", Decimal("1000")), TemplateLine("2", "ACME-2", Decimal("2000"))])
+    assert [(c.check_status, c.reason, c.item_label) for c in checked] == [
+        ("verified", "item_total_match", "1"), ("verified", "item_total_match", "2")]

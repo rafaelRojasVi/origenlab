@@ -19,8 +19,9 @@ Layouts, as pdftotext prints them:
 * xlsx master: header `ITEM · MARCA / REF. · DETALLE · CANT. · PRECIO UNIT. · TOTAL`; one printed
   line per row holding `<item> <brand> · <model> … <qty> … <amount>`.
 
-An amount is a CLP amount at the end of a line: `$`, then thousands groups separated by `.` (the
-docx template) or `,` (the xlsx master), never decimals. Totals rows (neto, IVA, total, …) carry no
+An amount is a CLP amount at the end of a line: `$`, then digits in thousands groups separated by
+`.` (the docx template) or `,` (the xlsx master) — one separator per amount, never decimals; `$ 0`
+and `$ 500` count. Totals rows (neto, IVA, total, …) carry no
 item and are skipped. A text in neither layout still gives its priced lines, with no item or model.
 
 **No client identity.** `quote_document_payload` carries the quote's number, date, client *type*,
@@ -43,7 +44,7 @@ CURRENCIES = ("CLP", "USD", "EUR")
 CLIENT_TYPES = ("university", "public_health", "public_other", "private_company", "research_center", "individual",
                 "unknown")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_AMOUNT = re.compile(r"\$\s?(\d{1,3}(?:([.,])\d{3})(?:\2\d{3})*)\s*$")
+_AMOUNT = re.compile(r"\$\s?(\d{1,3}(?:([.,])\d{3})?(?:\2\d{3})*)\s*$")
 _CELL = re.compile(r"\S+(?: \S+)*")
 _ITEM = re.compile(r"^(\d{1,3}(?:\.\d{1,3})*)\.?$")
 _XLSX_ROW = re.compile(r"^\s*(?P<item>\d{1,3}(?:\.\d{1,3})*)\.?\s+(?P<brand>[^·\s][^·]*?)\s+·\s+(?P<model>\S+)")
@@ -86,7 +87,8 @@ def _amount(line: str) -> tuple[Decimal, int] | None:
     m = _AMOUNT.search(line.rstrip())
     if m is None:
         return None
-    return Decimal(m.group(1).replace(m.group(2), "")), m.start()
+    digits = m.group(1) if m.group(2) is None else m.group(1).replace(m.group(2), "")
+    return Decimal(digits), m.start()
 
 
 def _cells(line: str) -> list[tuple[int, str]]:
@@ -219,6 +221,15 @@ def _total(value: Any) -> Decimal | None:
     return number
 
 
+def _ai_item(value: Any) -> str | None:
+    """The AI's item as a label: a number with an integer value (`1`, `1.0`) is `"1"`."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool) and value == int(value):
+        return str(int(value))
+    return str(value)
+
+
 def cross_check(ai_lines: list[dict[str, Any]], template_lines: list[TemplateLine]) -> list[CheckedLine]:
     """Every AI line (in order) with its status, then every template line no AI line matched.
 
@@ -226,7 +237,7 @@ def cross_check(ai_lines: list[dict[str, Any]], template_lines: list[TemplateLin
     Verified pairs are settled first, over all lines, so a disputed pairing never takes the
     template line another AI line agrees with.
     """
-    ai = [(_item(str(a.get("item"))) if a.get("item") is not None else None, model_key(a.get("model")),
+    ai = [(_item(_ai_item(a.get("item"))), model_key(a.get("model")),
            _total(a.get("line_total"))) for a in ai_lines]
     tl = [(_item(t.item_label), model_key(t.model), t.line_total) for t in template_lines]
     unused = list(range(len(tl)))

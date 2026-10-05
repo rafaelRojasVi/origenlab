@@ -240,29 +240,32 @@ def build_quote_history_plan(extractions: list[Path], text_dir: Path) -> tuple[i
         "skipped_labdelivery_letterhead")})
     for record, path in hashed:
         name = path.name
+        _refuse_labdelivery(name, str(path.resolve()), name)
+        if not _SHA256.match(path.stem):
+            raise _fail(name, "sha256", "not the 64-hex sha256 the file is named by")
+        text_path = text_dir / f"{path.stem}.txt"
+        if not text_path.is_file():
+            raise _fail(name, "text", "no layout text for this document in --texts")
+        _refuse_labdelivery(text_path.name, str(text_path.resolve()), text_path.name)
+        text = text_path.read_text(encoding="utf-8")
+        records += [record, importing.input_record(text_path, "quote_text")]
+        if is_labdelivery(text):
+            # Labdelivery letterhead or footer in the document itself: skipped, never written, and
+            # its extraction never read (owner ruling 2026-10-05). A written string of Labdelivery
+            # origin in any other document still refuses.
+            counts["skipped_labdelivery_letterhead"] += 1
+            skipped.append({"path_sha256": record["path_sha256"], "reason": "labdelivery_letterhead"})
+            continue
         raw = path.read_text(encoding="utf-8")
-        _refuse_labdelivery(name, str(path.resolve()), name, raw)
+        _refuse_labdelivery(name, raw)
         try:
             extraction = json.loads(raw)
         except ValueError:
             raise _Bad(f"{name}: not JSON") from None
         if not isinstance(extraction, dict):
             raise _fail(name, "document", "not an object")
-        sha = extraction.get("sha256")
-        if not isinstance(sha, str) or not _SHA256.match(sha) or path.stem != sha:
+        if extraction.get("sha256") != path.stem:
             raise _fail(name, "sha256", "not the 64-hex sha256 the file is named by")
-        text_path = text_dir / f"{sha}.txt"
-        if not text_path.is_file():
-            raise _fail(name, "text", "no layout text for this document in --texts")
-        text = text_path.read_text(encoding="utf-8")
-        _refuse_labdelivery(text_path.name, str(text_path.resolve()), text_path.name)
-        records += [record, importing.input_record(text_path, "quote_text")]
-        if is_labdelivery(text):
-            # Labdelivery letterhead or footer in the document itself: skipped, never written
-            # (owner ruling 2026-10-05); a written string of Labdelivery origin still refuses.
-            counts["skipped_labdelivery_letterhead"] += 1
-            skipped.append({"path_sha256": record["path_sha256"], "reason": "labdelivery_letterhead"})
-            continue
         issued = extraction.get("is_origenlab_issued_quote")
         if issued is False:
             counts["skipped_not_origenlab_quote"] += 1
