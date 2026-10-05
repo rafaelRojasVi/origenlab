@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+from collections import Counter
 from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -25,9 +26,10 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from origenlab_api.v2.catalog.fx import FxUnavailable
-from origenlab_api.v2.catalog.keys import PARAMETER_KEYS, PRODUCT_KINDS
+from origenlab_api.v2.catalog.keys import PARAMETER_KEYS, PRODUCT_KINDS, LabdeliveryRefused, refuse_labdelivery
 from origenlab_api.v2.catalog.reads import V2CatalogReads
 from origenlab_api.v2.catalog.redaction import redact_costs
 from origenlab_api.v2.catalog.storage import (
@@ -63,7 +65,8 @@ def search_products(request: Request, operator: Operator, q: str | None = Query(
 
 @catalog_read_router.get("/products/{product_id}")
 def product_detail(product_id: UUID, request: Request, operator: Operator) -> dict:
-    found = _reads(request).product_detail(product_id)
+    # Hidden images (each with its status) only for the roles that may un-hide them.
+    found = _reads(request).product_detail(product_id, include_hidden=operator.role in ("sales", "admin"))
     if found is None:
         raise HTTPException(404, detail={"code": "product_not_found", "message": "product not found"})
     return redact_costs(found, operator.role)
@@ -414,17 +417,61 @@ async def _read_capped_body(request: Request, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
+def _invalid_multipart() -> HTTPException:
+    return HTTPException(400, detail={"code": "invalid_multipart",
+                                      "message": "the body is not a valid multipart form with one image"})
+
+
 async def _parse_upload_form(request: Request, body: bytes) -> FormData:
-    """Parse the already-capped body as multipart: one file part at most, a handful of fields."""
+    """Parse the already-capped body as multipart: one file part at most, a handful of fields.
+
+    A body the parser cannot read is 400 `invalid_multipart`. Starlette turns its own limits
+    (too many files or fields, no boundary) into a bare 400, but lets the parser's errors
+    (`python_multipart` `MultipartParseError`, a `ValueError`) escape as a 500; both end here.
+    """
     async def replay() -> dict[str, Any]:
         return {"type": "http.request", "body": body, "more_body": False}
 
-    return await Request(request.scope, replay).form(max_files=1, max_fields=8)
+    try:
+        return await Request(request.scope, replay).form(max_files=1, max_fields=8)
+    except (ValueError, StarletteHTTPException):
+        raise _invalid_multipart() from None
 
 
 def _form_invalid(errors: list[dict[str, Any]]) -> RequestValidationError:
     # Only what the production envelope reports: never the submitted value (it may be a file).
     return RequestValidationError([{k: e[k] for k in ("type", "loc", "msg") if k in e} for e in errors])
+
+
+def _labdelivery_refused() -> HTTPException:
+    return HTTPException(422, detail={"code": "labdelivery_refused", "message": "input of Labdelivery origin is refused"})
+
+
+def _store_image(request: Request, parsed: AddProductImageForm, data: bytes,
+                 declared: str | None) -> AddProductImageFields:
+    """Check the bytes, find the product, hash, and put the object — in the threadpool, off the event loop.
+
+    Hashing up to 8 MiB and the Storage request both block; neither may stall other requests.
+    """
+    try:
+        content_type = check_image(data, declared)
+    except ImageRefused as exc:
+        raise HTTPException(exc.status_code, detail={"code": exc.code, "message": exc.message}) from None
+    if not _reads(request).product_exists(parsed.product_id):
+        # Checked before the upload, so a mistyped product leaves no object behind; the command
+        # checks again under its lock.
+        raise HTTPException(404, detail={"code": "product_not_found", "message": "no such product"})
+    sha256 = hashlib.sha256(data).hexdigest()
+    fields = AddProductImageFields(
+        product_id=parsed.product_id, sha256=sha256, content_type=content_type,
+        storage_path=image_path(parsed.product_id, sha256, content_type), caption_es=parsed.caption_es,
+        source=parsed.source, source_url=parsed.source_url,
+    )
+    try:
+        _storage(request).put_if_absent(fields.storage_path, data, content_type)
+    except StorageUnavailable:
+        raise HTTPException(503, detail=_STORAGE_UNAVAILABLE) from None
+    return fields
 
 
 _ADD_IMAGE_OPENAPI = {"requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {
@@ -447,9 +494,11 @@ async def add_product_image(request: Request, operator: Deciding,
 
     In this order, and nothing later starts before everything earlier passed: the operator may
     decide (the dependency), the key is present, Storage is configured, the body fits, the form
-    is valid, the bytes are an accepted image; then the object is put under its content-addressed
+    parses with one value per field and is valid, nothing in it names Labdelivery, the bytes are
+    an accepted image, the product exists; then the object is put under its content-addressed
     path, and only then does the command transaction write the row and `product.image_added`. A
-    failed transaction leaves an object that the next upload of the same bytes reuses.
+    failed transaction leaves an object that the next upload of the same bytes reuses. Checking
+    and hashing the bytes and the put run in the threadpool, off the event loop.
 
     The form is parsed here rather than declared as `Form`/`File` parameters, because FastAPI
     reads a declared form body before it resolves any dependency: an unauthorized caller's
@@ -459,37 +508,30 @@ async def add_product_image(request: Request, operator: Deciding,
         key = require_idempotency_key(idempotency_key)
     except CommandRefused as exc:
         raise HTTPException(exc.status_code, detail=_detail(exc)) from exc
-    storage = _storage(request)
+    _storage(request)  # 503 before reading anything when there is nowhere to put the image
     form = await _parse_upload_form(request, await _read_capped_body(request, MAX_UPLOAD_BODY_BYTES))
     try:
+        items = form.multi_items()
+        repeated = sorted(k for k, n in Counter(k for k, _ in items).items() if n > 1)
+        if repeated:  # one value per field: "the last one wins" would be a silent choice
+            raise _form_invalid([{"type": "duplicate_field", "loc": ("body", name), "msg": "field sent more than once"}
+                                 for name in repeated])
         upload = form.get("file")
         if not isinstance(upload, UploadFile):
             raise _form_invalid([{"type": "missing", "loc": ("body", "file"), "msg": "an image file is required"}])
         try:
-            parsed = AddProductImageForm(**{k: v for k, v in form.multi_items() if k != "file"})
+            parsed = AddProductImageForm(**{k: v for k, v in items if k != "file"})
         except ValidationError as exc:
             raise _form_invalid(exc.errors()) from None
+        # Spec S5, before anything is stored: the caption, the source URL and the file's own name.
+        # The command refuses every submitted string again (V2CatalogRepository.execute).
+        try:
+            refuse_labdelivery(parsed.caption_es, parsed.source_url, upload.filename)
+        except LabdeliveryRefused:
+            raise _labdelivery_refused() from None
         data = await upload.read(MAX_IMAGE_BYTES + 1)
         declared = upload.content_type
     finally:
         await form.close()
-    try:
-        content_type = check_image(data, declared)
-    except ImageRefused as exc:
-        raise HTTPException(exc.status_code, detail={"code": exc.code, "message": exc.message}) from None
-    if not await run_in_threadpool(_reads(request).product_exists, parsed.product_id):
-        # Checked before the upload, so a mistyped product leaves no object behind; the command
-        # checks again under its lock.
-        raise HTTPException(404, detail={"code": "product_not_found", "message": "no such product"})
-
-    sha256 = hashlib.sha256(data).hexdigest()
-    fields = AddProductImageFields(
-        product_id=parsed.product_id, sha256=sha256, content_type=content_type,
-        storage_path=image_path(parsed.product_id, sha256, content_type), caption_es=parsed.caption_es,
-        source=parsed.source, source_url=parsed.source_url,
-    )
-    try:
-        await run_in_threadpool(storage.put_if_absent, fields.storage_path, data, content_type)
-    except StorageUnavailable:
-        raise HTTPException(503, detail=_STORAGE_UNAVAILABLE) from None
+    fields = await run_in_threadpool(_store_image, request, parsed, data, declared)
     return await run_in_threadpool(_command, "add-product-image", fields, request, operator, key)

@@ -15,6 +15,11 @@ source record) before appending: `_append_event` computes the next `seq` per agg
 unserialised appends to one stream would collide on `domain_event_aggregate_seq_key` as a 500.
 Cost-parameter and FX events each open a new stream (aggregate = the new row).
 
+**Nothing of Labdelivery origin enters the catalog** (spec S5): `V2CatalogRepository.execute`
+refuses a command whose submitted text names it — every string the command carries, the note
+that would land in the append-only event stream included — before any transaction opens. The
+checks inside individual handlers stay as a second line.
+
 **What this module never does:** delete a row; write a price, a discount or a parameter value
 into an event payload (the events say *that* a cost or parameter was recorded, the tables say
 *what* it was, behind the viewer redaction of the reads); open `platform.command_receipt` or
@@ -24,6 +29,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from collections.abc import Iterator
 from typing import Any
 
 import psycopg
@@ -342,7 +348,7 @@ def _handle_update_product_image(self: "V2CatalogRepository", cur: Any, operator
     leaves the catalog — rows are never deleted.
     """
     image_id, expected_version = fields["image_id"], fields["expected_version"]
-    _refuse_labdelivery_image(fields.get("caption_es"))
+    _refuse_labdelivery_image(fields.get("caption_es"), fields.get("note"))
     # The image's product never changes (the runtime role cannot update product_id), so it can be
     # read unlocked to find which stream to lock. Product, then image: the order add-product-image
     # takes too, so the two never deadlock.
@@ -623,8 +629,35 @@ def _handle_review_document_line(self: "V2CatalogRepository", cur: Any, operator
             "check_status": "reviewed"}
 
 
+def _submitted_text(value: Any) -> Iterator[str]:
+    """Every string a command's fields carry, however nested (spec items, lists)."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _submitted_text(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _submitted_text(item)
+
+
 class V2CatalogRepository(CommandTransaction):
     """The ten catalog commands, each in one transaction."""
+
+    def execute(self, *, command_name: str, operator: OperatorIdentity, fields: dict[str, Any],
+                idempotency_key: str, digest: str) -> dict[str, Any]:
+        """Refuse Labdelivery material in any submitted text, then run the command.
+
+        Every string is checked, not a list of free-text fields: a field added later is covered
+        without anyone remembering to add it, and identifiers, dates, numbers and closed
+        vocabularies cannot spell the guarded names, so checking them costs nothing.
+        """
+        try:
+            refuse_labdelivery(*_submitted_text(fields))
+        except LabdeliveryRefused as exc:
+            raise CommandRefused(422, "labdelivery_refused", "input of Labdelivery origin is refused") from exc
+        return super().execute(command_name=command_name, operator=operator, fields=fields,
+                               idempotency_key=idempotency_key, digest=digest)
 
     _HANDLERS = {
         "create-product": _handle_create_product,

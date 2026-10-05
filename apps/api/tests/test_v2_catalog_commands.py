@@ -595,3 +595,71 @@ def test_concurrent_costs_on_one_product_take_consecutive_event_positions(dispos
     seqs = _owner(dsn, "select seq, event_type from crm.domain_event where aggregate_kind = 'product' "
                        "and aggregate_id = %s order by seq", (pid,))
     assert seqs == [(1, "product.created"), (2, "product.cost_recorded"), (3, "product.cost_recorded")]
+
+
+# ------------------------------------------------------------------ Labdelivery, slice-wide (spec S5)
+
+_ORG = "00000000-0000-4000-8000-0000000000bb"
+_PID = "00000000-0000-4000-8000-0000000000aa"
+_LAB = "según la cotización de Labdelivery"
+#: A valid body for every catalog command; each case below puts Labdelivery into one free-text field.
+_VALID_BODIES = {
+    "create-product": {"manufacturer_organization_id": _ORG, "model_number": "SONIC-100"},
+    "update-product": {"product_id": _PID, "expected_version": 1, "name_es": "Sonicador"},
+    "confirm-product-content": {"product_id": _PID, "expected_version": 1},
+    "record-supplier-cost": {"product_id": _PID, "supplier_organization_id": _ORG, "price": "10.5",
+                             "currency": "EUR", "price_kind": "dealer_net", "as_of": "2026-09-01T00:00:00+00:00"},
+    "set-supplier-terms": {"supplier_organization_id": _ORG, "currency": "EUR", "route": "import_courier"},
+    "set-cost-parameter": {"key": "iva_rate", "value": "0.19", "reason": "sintético"},
+    "record-fx-rate": {"currency": "USD", "rate_date": "2026-09-01", "clp_per_unit": "900", "reason": "sintético"},
+    "review-document-line": {"document_line_id": _PID, "review_note": "revisado"},
+    "update-product-image": {"image_id": _PID, "expected_version": 1, "status": "hidden"},
+    "add-product-image": {"product_id": _PID, "sha256": "a" * 64, "content_type": "image/png",
+                          "storage_path": f"products/{_PID}/{'a' * 64}.png"},
+}
+_FREE_TEXT = [(command, "note", _LAB) for command in _VALID_BODIES if command != "add-product-image"] + [
+    ("create-product", "model_number", "Labdelivery 100"),
+    ("create-product", "name", _LAB),
+    ("create-product", "name_es", _LAB),
+    ("create-product", "description_es", _LAB),
+    ("create-product", "category_es", _LAB),
+    ("create-product", "specs", [{"label_es": "Origen", "value": _LAB}]),
+    ("update-product", "description_es", _LAB),
+    ("update-product", "specs", [{"label_es": _LAB, "value": "1"}]),
+    ("record-supplier-cost", "source_document", _LAB),
+    ("record-supplier-cost", "incoterm", "Labdelivery"),
+    ("set-supplier-terms", "notes", _LAB),
+    ("set-supplier-terms", "default_lead_time_es", _LAB),
+    ("set-supplier-terms", "incoterm", "Labdelivery"),
+    ("set-cost-parameter", "reason", _LAB),
+    ("record-fx-rate", "reason", _LAB),
+    ("review-document-line", "review_note", _LAB),
+    ("update-product-image", "caption_es", _LAB),
+    ("add-product-image", "caption_es", _LAB),
+    ("add-product-image", "source_url", "https://lab-delivery.example/x.png"),
+]
+
+
+def _no_transaction(*_args, **_kwargs):
+    raise AssertionError("a Labdelivery refusal must come before any transaction opens")
+
+
+@pytest.mark.parametrize(("command", "field", "value"), _FREE_TEXT,
+                         ids=[f"{c}-{f}" for c, f, _ in _FREE_TEXT])
+def test_labdelivery_in_any_free_text_field_of_any_catalog_command_is_refused(command, field, value) -> None:
+    from origenlab_api.v2.catalog.routes import AddProductImageFields, UpdateProductImageBody
+
+    bodies = {**BODIES, "update-product-image": UpdateProductImageBody, "add-product-image": AddProductImageFields}
+    body = bodies[command](**{**_VALID_BODIES[command], field: value})
+    operator = OperatorIdentity(operator_id="00000000-0000-4000-8000-000000000001", email_norm="op@example.test",
+                                display_name="Op", role="sales", status="active")
+    repo = V2CatalogRepository(_no_transaction, "postgresql://unused@127.0.0.1/unused")
+    with pytest.raises(CommandRefused) as exc:
+        repo.execute(command_name=command, operator=operator, fields=body.model_dump(mode="json"),
+                     idempotency_key=uuid.uuid4().hex, digest=request_digest(command, body))
+    assert (exc.value.status_code, exc.value.code) == (422, "labdelivery_refused")
+
+
+def test_every_catalog_command_is_covered_by_the_labdelivery_cases() -> None:
+    assert set(_VALID_BODIES) == set(V2CatalogRepository._HANDLERS)
+    assert {c for c, f, _ in _FREE_TEXT if f == "note"} == set(V2CatalogRepository._HANDLERS) - {"add-product-image"}

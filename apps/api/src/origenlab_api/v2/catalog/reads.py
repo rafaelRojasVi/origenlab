@@ -125,7 +125,12 @@ class V2CatalogReads:
             }))
         return {"items": items, "total": total, "limit": limit, "offset": offset}
 
-    def product_detail(self, product_id: uuid.UUID) -> dict[str, Any] | None:
+    def product_detail(self, product_id: uuid.UUID, include_hidden: bool = False) -> dict[str, Any] | None:
+        """The product with its images, costs, terms and notes.
+
+        Hidden images are left out unless `include_hidden` (the route asks for them for the
+        roles that may un-hide one); every image carries its `status` either way.
+        """
         with self._read() as cur:
             cur.execute(
                 "select p.*, m.name as manufacturer_name from catalog.product p "
@@ -142,8 +147,8 @@ class V2CatalogReads:
             cur.execute(
                 "select id, storage_path, sha256, content_type, width_px, height_px, sort_order, caption_es, "
                 "source, source_url, status, version, created_at from catalog.product_image "
-                "where product_id = %s and status <> 'hidden' order by sort_order, created_at, id",
-                (product_id,),
+                "where product_id = %s and (%s or status <> 'hidden') order by sort_order, created_at, id",
+                (product_id, include_hidden),
             )
             product["images"] = self._rows(cur)
             cur.execute(

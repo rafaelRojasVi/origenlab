@@ -34,7 +34,7 @@ class _FakeReads:
                            "current_cost": {"price": "100.000000", "currency": "EUR"}}],
                 "total": 1, "limit": args[3], "offset": args[4]}
 
-    def product_detail(self, product_id):
+    def product_detail(self, product_id, include_hidden=False):
         if str(product_id) == "00000000-0000-4000-8000-0000000000aa":
             return {"id": str(product_id), "cost_history": [{"price": "90"}], "name_es": "X"}
         return None

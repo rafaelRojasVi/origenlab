@@ -138,14 +138,14 @@ def test_fake_storage_puts_once_and_signs() -> None:
 
 # ──────────────────────────────────────────────────────── SupabaseStorage over HTTP ──
 
-def _supabase(handler) -> tuple[SupabaseStorage, list[httpx.Request]]:
+def _supabase(handler, base: str = BASE) -> tuple[SupabaseStorage, list[httpx.Request]]:
     seen: list[httpx.Request] = []
 
     def record(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         return handler(request)
 
-    return SupabaseStorage(BASE, KEY, httpx.Client(transport=httpx.MockTransport(record))), seen
+    return SupabaseStorage(base, KEY, httpx.Client(transport=httpx.MockTransport(record))), seen
 
 
 def test_put_if_absent_posts_the_bytes_without_upsert() -> None:
@@ -241,9 +241,31 @@ def test_supabase_storage_refuses_an_unsafe_configuration(base, key) -> None:
     assert key not in str(exc.value) or not key
 
 
-def test_supabase_storage_allows_plain_http_only_to_a_loopback_literal() -> None:
-    SupabaseStorage("http://127.0.0.1:54321", KEY, httpx.Client())
-    SupabaseStorage(BASE + "/", KEY, httpx.Client())  # a trailing slash is not doubled
+@pytest.mark.parametrize("base", ["http://127.0.0.1:54321", "http://[::1]:54321"])
+def test_supabase_storage_allows_plain_http_to_a_loopback_literal(base) -> None:
+    storage, seen = _supabase(lambda r: httpx.Response(200), base)
+    storage.put_if_absent("products/p/a.png", _png(), "image/png")
+    assert str(seen[0].url) == f"{base}/storage/v1/object/catalog/products/p/a.png"
+
+
+@pytest.mark.parametrize("base", ["http://localhost:54321", "http://10.0.0.5:54321", "http://127.0.0.1.example:1"])
+def test_supabase_storage_refuses_plain_http_to_anything_else(base) -> None:
+    with pytest.raises(ValueError):
+        SupabaseStorage(base, KEY, httpx.Client())
+
+
+def test_a_trailing_slash_on_the_origin_is_not_doubled() -> None:
+    signed = "/object/sign/catalog/products/p/a.png?token=invented"
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"signedURL": signed})
+
+    storage, seen = _supabase(answer, BASE + "/")
+    storage.put_if_absent("products/p/a.png", _png(), "image/png")
+    url = storage.signed_url("products/p/a.png", 600)
+    assert [str(r.url) for r in seen] == [f"{BASE}/storage/v1/object/catalog/products/p/a.png",
+                                          f"{BASE}/storage/v1/object/sign/catalog/products/p/a.png"]
+    assert url == f"{BASE}/storage/v1{signed}"
 
 
 def test_supabase_storage_never_shows_its_key() -> None:
@@ -322,12 +344,17 @@ class _FakeRepo:
 class _FakeReads:
     def __init__(self, images: dict[str, dict]):
         self._images = images
+        self.detail_calls: list[bool] = []
 
     def image(self, image_id):
         return self._images.get(str(image_id))
 
     def product_exists(self, product_id):
         return str(product_id) == PID
+
+    def product_detail(self, product_id, include_hidden=False):
+        self.detail_calls.append(include_hidden)
+        return {"id": str(product_id), "images": []}
 
 
 def _operator(role: str) -> OperatorIdentity:
@@ -406,12 +433,56 @@ def test_oversize_upload_is_413_and_stores_nothing() -> None:
     assert app.state.catalog_storage.objects == {} and app.state.catalog_repository.calls == []
 
 
+def _asgi_upload(app, headers: dict[str, str]) -> tuple[int, dict, int]:
+    """POST an upload straight into the ASGI app with a receive that counts every read.
+
+    The body never ends (`more_body` is always true), so a handler that read it would either be
+    seen reading or run into the cap; one that refuses first reads nothing.
+    """
+    import asyncio
+
+    reads = 0
+    sent: list[dict] = []
+
+    async def receive() -> dict:
+        nonlocal reads
+        reads += 1
+        return {"type": "http.request", "body": b"x" * 4096, "more_body": True}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    raw = [(k.lower().encode(), v.encode()) for k, v in
+           {"content-type": "multipart/form-data; boundary=x", **headers}.items()]
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST",
+             "scheme": "http", "path": "/v2/commands/add-product-image", "raw_path": b"/v2/commands/add-product-image",
+             "query_string": b"", "root_path": "", "headers": raw, "client": ("127.0.0.1", 50000),
+             "server": ("testserver", 80)}
+    asyncio.run(app(scope, receive, send))
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    return start["status"], json.loads(body), reads
+
+
 def test_a_body_declared_far_over_the_limit_is_413_before_it_is_read() -> None:
-    app, client = _client()
-    r = client.post("/v2/commands/add-product-image", headers={**_ikey(), "content-type": "multipart/form-data; "
-                    "boundary=x"}, content=b"x" * (MAX_IMAGE_BYTES + 128 * 1024))
-    assert r.status_code == 413 and r.json()["error"]["details"]["code"] == "image_too_large"
+    app, _ = _client()
+    status, body, reads = _asgi_upload(app, {**_ikey(), "content-length": str(MAX_IMAGE_BYTES + 128 * 1024)})
+    assert (status, body["error"]["details"]["code"]) == (413, "image_too_large")
+    assert reads == 0
     assert app.state.catalog_storage.objects == {}
+
+
+@pytest.mark.parametrize(("role", "headers", "status"), [
+    ("sales", {"Idempotency-Key": "k-1"}, 401),        # no operator header: unauthenticated
+    ("viewer", {**HEADERS, "Idempotency-Key": "k-1"}, 403),
+    ("sales", HEADERS, 400),                           # no Idempotency-Key
+])
+def test_a_refused_upload_reads_no_body_bytes(role, headers, status) -> None:
+    app, _ = _client(role)
+    got, _, reads = _asgi_upload(app, {**headers, "content-length": "1048576"})
+    assert got == status
+    assert reads == 0
+    assert app.state.catalog_storage.objects == {} and app.state.catalog_repository.calls == []
 
 
 def test_a_body_without_a_length_is_capped_while_it_streams() -> None:
@@ -506,8 +577,50 @@ def test_upload_without_a_file_or_with_two_is_refused() -> None:
     assert r.status_code == 422
     r = client.post("/v2/commands/add-product-image", headers=_ikey(), data={"product_id": PID},
                     files=[("file", ("a.png", _png(1), "image/png")), ("file", ("b.png", _png(2), "image/png"))])
-    assert r.status_code in (400, 422)
+    assert r.status_code == 400
+    assert r.json()["error"]["details"]["code"] == "invalid_multipart"
     assert app.state.catalog_storage.objects == {} and app.state.catalog_repository.calls == []
+
+
+@pytest.mark.parametrize("body", [
+    b"this is not multipart at all",
+    b"--abc\r\nno headers and no end",
+    b"--zzz\r\nContent-Disposition: form-data; name=\"product_id\"\r\n\r\nx\r\n--zzz--\r\n",
+])
+def test_a_malformed_multipart_body_is_400_not_500(body) -> None:
+    app, client = _client()
+    r = client.post("/v2/commands/add-product-image", content=body,
+                    headers={**_ikey(), "content-type": "multipart/form-data; boundary=abc"})
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["details"]["code"] == "invalid_multipart"
+    assert app.state.catalog_storage.objects == {} and app.state.catalog_repository.calls == []
+
+
+@pytest.mark.parametrize("field", ["product_id", "caption_es", "source"])
+def test_a_repeated_form_field_is_422_not_last_one_wins(field) -> None:
+    app, client = _client()
+    values = {"product_id": [PID, PID], "caption_es": ["uno", "dos"], "source": ["upload", "datasheet"]}[field]
+    r = client.post("/v2/commands/add-product-image", headers=_ikey(),
+                    data={"product_id": PID, field: values}, files={"file": ("a.png", _png(), "image/png")})
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "validation_error"
+    assert app.state.catalog_storage.objects == {} and app.state.catalog_repository.calls == []
+
+
+@pytest.mark.parametrize(("form", "filename"), [
+    ({"caption_es": "Foto de Labdelivery"}, "foto.png"),
+    ({"source_url": "https://lab-delivery.example/x.png"}, "foto.png"),
+    ({}, "logo-labdelivery.png"),
+    ({}, "Juan Andrés Tejeda.png"),
+])
+def test_labdelivery_upload_is_refused_before_anything_is_stored(form, filename) -> None:
+    app, client = _client()
+    r = client.post("/v2/commands/add-product-image", headers=_ikey(), data={"product_id": PID, **form},
+                    files={"file": (filename, _png(), "image/png")})
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["details"]["code"] == "labdelivery_refused"
+    assert app.state.catalog_storage.objects == {} and app.state.catalog_storage.puts == 0
+    assert app.state.catalog_repository.calls == []
 
 
 def test_an_unknown_product_is_404_before_anything_is_stored() -> None:
@@ -580,6 +693,14 @@ def test_signed_url_for_a_confirmed_image(role) -> None:
     assert body["expires_in"] == 600 and set(body) == {"url", "expires_in"}
     assert IMAGES[IMG]["storage_path"] in body["url"] and "600" in body["url"]
     assert "no-store" in r.headers["cache-control"]
+
+
+@pytest.mark.parametrize(("role", "include_hidden"), [("viewer", False), ("sales", True), ("admin", True)])
+def test_product_detail_lists_hidden_images_for_sales_and_admin_only(role, include_hidden) -> None:
+    app, client = _client(role)
+    r = client.get(f"/v2/catalog/products/{PID}", headers=HEADERS)
+    assert r.status_code == 200, r.text
+    assert app.state.catalog_reads.detail_calls == [include_hidden]
 
 
 def test_hidden_image_is_404_for_a_viewer_and_signed_for_sales_and_admin() -> None:
@@ -789,6 +910,21 @@ def test_update_product_image_changes_status_caption_and_order(disposable_databa
     [row] = _images(dsn, pid)
     assert (row["caption_es"], row["status"], row["version"]) == (None, "confirmed", 3)
     assert len(reads.product_detail(uuid.UUID(pid))["images"]) == 1
+
+
+@needs_db
+def test_product_detail_includes_hidden_images_only_when_asked(disposable_database, db_operator) -> None:
+    from origenlab_api.v2.catalog.reads import V2CatalogReads
+
+    dsn = disposable_database
+    pid = _product(dsn)
+    shown = _add(dsn, db_operator, pid, _png(65))["image_id"]
+    hidden = _add(dsn, db_operator, pid, _png(66))["image_id"]
+    _update(dsn, db_operator, {"image_id": hidden, "expected_version": 1, "status": "hidden"})
+    reads = V2CatalogReads(psycopg.connect, runtime_dsn(dsn))
+    assert [(i["id"], i["status"]) for i in reads.product_detail(uuid.UUID(pid))["images"]] == [(shown, "confirmed")]
+    everything = reads.product_detail(uuid.UUID(pid), include_hidden=True)["images"]
+    assert [(i["id"], i["status"]) for i in everything] == [(shown, "confirmed"), (hidden, "hidden")]
 
 
 @needs_db
