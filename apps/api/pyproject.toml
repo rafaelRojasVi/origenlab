@@ -36,6 +36,9 @@ drive = ["google-auth>=2"]
 # it never runs the interactive browser consent flow, so the production
 # image has no reason to carry this.
 drive-bootstrap = ["google-auth-oauthlib>=1"]
+enrich = [
+    "anthropic>=1.11.0",
+]
 
 [tool.uv.sources]
 origenlab-email-pipeline = { path = "../email-pipeline", editable = true }
