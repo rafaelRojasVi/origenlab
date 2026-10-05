@@ -66,7 +66,9 @@ Startup safety
 The pool is opened with ``wait=False``: the background maintenance thread
 starts without blocking.  If the database is unreachable at boot the pool
 starts empty and the first request fails per-request, exactly as it does
-today without a pool.
+today without a pool — after the checkout timeout
+(``ORIGENLAB_V2_POOL_CHECKOUT_TIMEOUT_S``, default 10 s), which also bounds the
+wait when every connection is busy.
 """
 from __future__ import annotations
 
@@ -86,6 +88,9 @@ _PROBE_READS = 4
 
 #: The pool size when ``ORIGENLAB_V2_POOL_SIZE`` is not set.
 DEFAULT_POOL_SIZE = 4
+
+#: Seconds a checkout waits for a connection when ``ORIGENLAB_V2_POOL_CHECKOUT_TIMEOUT_S`` is not set.
+DEFAULT_CHECKOUT_TIMEOUT = 10.0
 
 #: Keepalive probes after 60 s idle, every 15 s, 4 misses: a dead path is known in ~2 min.
 _KEEPALIVES: dict[str, Any] = {
@@ -118,9 +123,12 @@ class V2ConnectionPool:
         size: int = DEFAULT_POOL_SIZE,
         connect_kwargs: dict[str, Any] | None = None,
         max_lifetime: float = 3600.0,
+        checkout_timeout: float = DEFAULT_CHECKOUT_TIMEOUT,
     ) -> None:
         if size < 1:
             raise ValueError("V2ConnectionPool: size must be at least 1")
+        if checkout_timeout <= 0:
+            raise ValueError("V2ConnectionPool: checkout_timeout must be positive")
         kwargs: dict[str, Any] = {**_KEEPALIVES, **dict(connect_kwargs or {})}
         # Repositories always open connections with autocommit=False; enforce it.
         kwargs["autocommit"] = False
@@ -129,12 +137,14 @@ class V2ConnectionPool:
         # Kept separately so connect_options is inspectable without accessing pool internals.
         self._connect_options: dict[str, Any] = dict(kwargs)
         self._size = size
+        self._checkout_timeout = checkout_timeout
         self._pool = psycopg_pool.ConnectionPool(
             conninfo=dsn,
             min_size=size,
             max_size=size,
             kwargs=kwargs,
             max_lifetime=max_lifetime,
+            timeout=checkout_timeout,  # what every getconn() waits at most, then PoolTimeout
             open=False,  # opened from the app lifespan, or on first use
         )
         self._open_lock = threading.Lock()
@@ -153,6 +163,11 @@ class V2ConnectionPool:
     def size(self) -> int:
         """Connections held open at all times (``min_size == max_size``)."""
         return self._size
+
+    @property
+    def checkout_timeout(self) -> float:
+        """Seconds a checkout waits for a connection before ``PoolTimeout``."""
+        return self._checkout_timeout
 
     def open(self) -> None:
         """Start pool maintenance without blocking for ``min_size`` connections.

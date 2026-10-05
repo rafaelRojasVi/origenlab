@@ -130,6 +130,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     pool = V2ConnectionPool(
         dsn,
         size=settings.v2_pool_size,
+        checkout_timeout=settings.v2_pool_checkout_timeout_s,
         connect_kwargs=target.connect_options,  # TLS options (sslmode, sslrootcert, …) or {}
     )
     app.state.v2_pool = pool

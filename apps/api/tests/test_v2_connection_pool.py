@@ -112,6 +112,72 @@ def test_pool_size_setting_reads_the_environment(monkeypatch) -> None:
             Settings(_env_file=None)
 
 
+def test_pool_checkout_timeout_setting_reads_the_environment(monkeypatch) -> None:
+    from origenlab_api.settings import Settings
+
+    monkeypatch.delenv("ORIGENLAB_V2_POOL_CHECKOUT_TIMEOUT_S", raising=False)
+    assert Settings(_env_file=None).v2_pool_checkout_timeout_s == 10
+    monkeypatch.setenv("ORIGENLAB_V2_POOL_CHECKOUT_TIMEOUT_S", "3")
+    assert Settings(_env_file=None).v2_pool_checkout_timeout_s == 3
+    for refused in ("0", "61"):
+        monkeypatch.setenv("ORIGENLAB_V2_POOL_CHECKOUT_TIMEOUT_S", refused)
+        with pytest.raises(ValueError):
+            Settings(_env_file=None)
+
+
+def test_pool_checkout_waits_at_most_its_timeout() -> None:
+    """psycopg_pool's own default is 30 s: during an outage every request would wait that long."""
+    with patch("origenlab_api.v2.connection_pool.psycopg_pool") as mock_mod:
+        assert V2ConnectionPool(DSN).checkout_timeout == 10
+        assert mock_mod.ConnectionPool.call_args.kwargs["timeout"] == 10
+        pool = V2ConnectionPool(DSN, checkout_timeout=2)
+        assert mock_mod.ConnectionPool.call_args.kwargs["timeout"] == 2
+    assert pool.checkout_timeout == 2
+    with pytest.raises(ValueError, match="checkout_timeout"):
+        V2ConnectionPool(DSN, checkout_timeout=0)
+
+
+def test_the_app_builds_its_pool_with_the_configured_checkout_timeout() -> None:
+    from fastapi import FastAPI
+
+    from origenlab_api import main
+    from origenlab_api.settings import Settings
+
+    settings = Settings(
+        _env_file=None,
+        v2_database_url="postgresql://origenlab_api:pw@127.0.0.1:54332/origenlab_dev",
+        dev_login_enabled=True,
+        v2_pool_checkout_timeout_s=7,
+    )
+    app = FastAPI()
+    main._mount_v2_read_boundary(app, settings)
+    assert app.state.v2_pool.checkout_timeout == 7
+
+
+def test_a_checkout_during_an_outage_gives_up_after_the_timeout() -> None:
+    """A real pool that cannot open a single connection: the request fails after the
+    configured wait, not after psycopg_pool's 30 s."""
+    import socket
+    import time
+
+    import psycopg_pool
+
+    refusing = socket.socket()  # bound, never listening: every connection attempt is refused
+    refusing.bind(("127.0.0.1", 0))
+    port = refusing.getsockname()[1]
+    pool = V2ConnectionPool(f"postgresql://origenlab_api:pw@127.0.0.1:{port}/none", size=1, checkout_timeout=1)
+    try:
+        started = time.monotonic()
+        with pytest.raises(psycopg_pool.PoolTimeout):
+            with pool.connect(DSN):
+                pass
+        waited = time.monotonic() - started
+    finally:
+        pool.close()
+        refusing.close()
+    assert 0.9 <= waited < 5, waited
+
+
 # ───────────────────────────────────── first-round-trip retry (fake connections) ──
 
 
@@ -925,6 +991,26 @@ def test_pipeline_mode_reads_return_every_result_on_a_real_server() -> None:
             conn.rollback()
     finally:
         pool.close()
+
+
+@pytest.mark.skipif(not _API_DSN, reason="ORIGENLAB_V2_API_TEST_DSN names a disposable V2 database")
+def test_a_checkout_with_every_connection_busy_gives_up_after_the_timeout() -> None:
+    import time
+
+    import psycopg_pool
+
+    pool = V2ConnectionPool(_API_DSN, size=1, checkout_timeout=1)
+    try:
+        pool.wait()
+        with pool.connect(_API_DSN):  # the pool's only connection, held
+            started = time.monotonic()
+            with pytest.raises(psycopg_pool.PoolTimeout):
+                with pool.connect(_API_DSN):
+                    pass
+            waited = time.monotonic() - started
+    finally:
+        pool.close()
+    assert 0.9 <= waited < 5, waited
 
 
 _MAINTENANCE_DSN = __import__("os").environ.get("ORIGENLAB_V2_TEST_DSN", "")

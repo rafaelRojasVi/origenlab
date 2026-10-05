@@ -220,6 +220,12 @@ class Settings(BaseSettings):
     cap only against the project's measured pooler limit.
     """
     v2_pool_size: int = Field(default=4, ge=1, le=8)
+    """Seconds a request waits for a V2 pool connection (`ORIGENLAB_V2_POOL_CHECKOUT_TIMEOUT_S`, 1–60).
+
+    With every connection busy, or none to be had (the database or its pooler unreachable),
+    the request fails with `PoolTimeout` after this wait instead of psycopg_pool's own 30 s.
+    """
+    v2_pool_checkout_timeout_s: int = Field(default=10, ge=1, le=60)
     """When true, mount POST /v2/commands/* — the human-review command boundary.
 
     Default **false**, like `commercial_operations_writes_enabled` above and for the same
