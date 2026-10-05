@@ -305,6 +305,18 @@ export interface WorkQueueResponse {
 }
 
 /** `GET /v2/workspace/mail-sync` — whether the Gmail capture is running (Phase 4a). */
+/** One quote number the captured Gmail shows (`/v2/workspace/mail-quote-numbers`). No client data. */
+export interface MailQuoteNumber {
+  /** As the capture proposed it from an attachment name, e.g. «CN01247» (no year). */
+  quote_number: string;
+  first_seen_at: string;
+  messages: number;
+}
+
+export interface MailQuoteNumbersResponse {
+  items: MailQuoteNumber[];
+}
+
 export interface MailSyncStatus {
   state: "ok" | "late" | "stopped" | "not_started" | "not_configured";
   authorization_state: string | null;

@@ -1,5 +1,5 @@
 import { useId, useMemo, useState } from "react";
-import { fetchDriveArchive } from "./crmApi";
+import { fetchDriveArchive, fetchMailQuoteNumbers } from "./crmApi";
 import type { PipelineResponse } from "./crmTypes";
 import { todayInSantiago } from "./marketing/calendar";
 import { findUses, knownQuoteNumbers, lastAndNext, parseQuoteNumber, type KnownNumber } from "./quoteNumbers";
@@ -11,11 +11,14 @@ function where(k: KnownNumber): string {
 
 /**
  * The last quote number the system knows and the next one, and a check for a typed number.
- * Read-only and honest about its reach: a quotation that is in neither the CRM nor the Drive
- * archive is unknown here, so a number not found is «not in the CRM or Drive», never «free».
+ * Read-only and honest about its reach: a quotation that is in none of the CRM, the Drive archive
+ * or the captured Gmail is unknown here, so a number not found is «not in the CRM, Drive or
+ * Gmail», never «free». When the Gmail numbers cannot be read the box still answers from the CRM
+ * and Drive and says that Gmail is missing; the next number waits until every read has answered.
  */
 export function QuoteNumberBox({ pipeline }: { pipeline: ResourceState<PipelineResponse> }) {
   const [drive] = useResource(fetchDriveArchive);
+  const [mail] = useResource(fetchMailQuoteNumbers);
   const inputId = useId();
   const [typed, setTyped] = useState("");
   const [copied, setCopied] = useState(false);
@@ -25,10 +28,12 @@ export function QuoteNumberBox({ pipeline }: { pipeline: ResourceState<PipelineR
       knownQuoteNumbers(
         pipeline.kind === "ready" ? pipeline.data.items : [],
         drive.kind === "ready" ? drive.data.folders : [],
+        mail.kind === "ready" ? mail.data.items : [],
       ),
-    [pipeline, drive],
+    [pipeline, drive, mail],
   );
-  const loading = pipeline.kind === "loading" || drive.kind === "loading";
+  const loading = pipeline.kind === "loading" || drive.kind === "loading" || mail.kind === "loading";
+  const mailMissing = mail.kind !== "ready" && mail.kind !== "loading";
   const { last, next } = lastAndNext(known, year);
   const parsed = typed.trim() ? parseQuoteNumber(typed, year) : null;
   const uses = parsed ? findUses(known, parsed) : [];
@@ -60,11 +65,11 @@ export function QuoteNumberBox({ pipeline }: { pipeline: ResourceState<PipelineR
       <div data-testid="quote-next" className="min-w-0">
         <p className="text-[12px] font-medium text-ink-muted">Siguiente</p>
         <div className="mt-0.5 flex items-center gap-2">
-          <p className="text-[20px] font-semibold leading-none tracking-tight text-brand-700 tabular-nums">{loading && !last ? "…" : next}</p>
+          <p className="text-[20px] font-semibold leading-none tracking-tight text-brand-700 tabular-nums">{loading ? "…" : next}</p>
           <button
             type="button"
             onClick={copy}
-            disabled={loading && !last}
+            disabled={loading}
             className="h-6 rounded-md border border-line px-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
           >
             {copied ? "Copiado" : "Copiar"}
@@ -89,14 +94,19 @@ export function QuoteNumberBox({ pipeline }: { pipeline: ResourceState<PipelineR
           ) : uses.length ? (
             <span className="font-medium text-bad">Ya usado: {uses.map((u) => `${u.number} · ${where(u)}`).join(" — ")}</span>
           ) : (
-            <span className="text-good">No está en el CRM ni en el archivo de Drive.</span>
+            <span className={mailMissing ? "text-ink-muted" : "text-good"}>
+              {mailMissing
+                ? "No está en el CRM ni en el archivo de Drive; los números de Gmail no se pudieron leer."
+                : "No está en el CRM, en Drive ni en Gmail."}
+            </span>
           )}
         </p>
       </div>
       <p className="text-[11px] text-ink-faint md:col-span-3">
-        Según el CRM y el archivo de Drive
-        {drive.kind !== "ready" && drive.kind !== "loading" ? " (sin el archivo de Drive: no se pudo leer)" : ""}. Una
-        cotización que aún no está en ninguno de los dos no aparece aquí.
+        Según el CRM, el archivo de Drive y los correos de Gmail
+        {drive.kind !== "ready" && drive.kind !== "loading" ? " (sin el archivo de Drive: no se pudo leer)" : ""}
+        {mailMissing ? " (los números de Gmail no se pudieron leer)" : ""}. Una cotización que aún no está en
+        ninguno de los tres no aparece aquí.
       </p>
     </section>
   );
