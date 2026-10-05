@@ -168,8 +168,9 @@ class _FakePgconn:
     """The libpq side of a fake connection, on a real socket pair: the test plays the server.
 
     `server_says(b"...")` makes the idle socket readable; `server_closes()` sends the FIN.
-    `consume_input` reads what is there; a FATAL notice reaches the connection's notice
-    handlers, as libpq delivers an ErrorResponse that arrives while idle; EOF raises.
+    As in libpq, `consume_input` only reads what is there into a buffer (EOF raises) and parses
+    nothing; `is_busy` parses the buffer, and only then does a FATAL that arrived while idle
+    reach the connection's notice handlers.
     """
 
     def __init__(self, owner: "_RetryConn") -> None:
@@ -179,6 +180,7 @@ class _FakePgconn:
 
         self._owner = owner
         self._client, self._server = socket.socketpair()
+        self._unparsed = b""
         self.status = psycopg.pq.ConnStatus.OK
 
     @property
@@ -198,10 +200,15 @@ class _FakePgconn:
         if not data:
             self.status = psycopg.pq.ConnStatus.BAD
             raise psycopg.OperationalError("consuming input failed: server closed the connection unexpectedly")
+        self._unparsed += data
+
+    def is_busy(self) -> bool:
+        data, self._unparsed = self._unparsed, b""
         if b"FATAL" in data:
             diagnostic = MagicMock(severity="FATAL", severity_nonlocalized="FATAL", sqlstate="57P01")
             for handler in list(self._owner.notice_handlers):
                 handler(diagnostic)
+        return False
 
 
 class _RetryConn:

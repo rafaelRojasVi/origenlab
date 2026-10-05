@@ -29,8 +29,8 @@ The hosted API is ~180 ms from its database, so what a checkout costs matters
   1. **At checkout, a zero-round-trip probe** (:func:`_is_alive`). A pooler or a server
      that ends an idle connection says so on the socket (an error message, a FIN or a
      RST), so an idle connection whose socket is readable is suspect: the probe lets
-     libpq consume what is there and discards the connection if libpq now calls it
-     closed or bad, then takes another (at most ``size + 1`` attempts). This is what
+     libpq read and parse what is there and discards the connection on a ``FATAL`` or if
+     libpq now calls it closed or bad, then takes another (at most ``size + 1`` attempts). This is what
      keeps a **read** safe: a read queues its first statement in pipeline mode, and
      psycopg consumes the waiting FIN at that statement — inside the caller's pipeline
      body, where nothing can be replayed.
@@ -266,11 +266,14 @@ def _is_alive(conn: Any) -> bool:
 
     An idle connection has nothing to read. If its socket is readable, the server or the
     pooler sent something unasked: typically a ``FATAL`` error just before closing (idle
-    timeout, ``pg_terminate_backend``, a restart) and then the close itself. libpq consumes
-    what is there — the ``FATAL`` arrives as a notice, the close as an error on the next read —
-    so the probe reads until the socket is quiet (a few reads at most) and calls the
-    connection dead on a ``FATAL`` notice, a read error, or a status that is not ``OK``.
-    Anything harmless (a notice, a parameter status, a TLS record) leaves it alive.
+    timeout, ``pg_terminate_backend``, a restart) and then the close itself. ``consume_input``
+    only reads the socket into libpq's buffer and parses nothing; ``is_busy`` then parses what
+    was read — still no round trip — and libpq hands an error that arrived while idle to the
+    notice handlers. The close shows as an error on a later read. So the probe reads and parses
+    until the socket is quiet (a few reads at most) and calls the connection dead on a
+    ``FATAL`` notice, a read error, or a status that is not ``OK``. Anything harmless (a
+    notice, a parameter status, a ``NOTIFY`` — still delivered later — or a TLS record) leaves
+    it alive.
     """
     if _is_dead(conn):
         return False
@@ -288,6 +291,7 @@ def _is_alive(conn: Any) -> bool:
             if not readable:
                 break
             pgconn.consume_input()
+            pgconn.is_busy()  # parses what was read: an error sent while idle reaches `note`
     except (OSError, ValueError, psycopg.OperationalError):
         return False
     finally:
