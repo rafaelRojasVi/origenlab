@@ -86,3 +86,19 @@ def test_ordinary_text_passes():
     assert not is_labdelivery("ACME synthetic price list 2026")
     assert not is_labdelivery(None)
     refuse_labdelivery("ACME", None, "Valdivia")
+
+
+@pytest.mark.parametrize("text", [
+    "Lab/Delivery", "lab\u2013delivery", "LAB\u2014DELIVERY", "Lab_Delivery", "LAB.DELIVERY",
+    "lab+delivery", "lab\u00addelivery", "lab\u200bdelivery", "Lab\nDelivery", "labdelivery.cl",
+    "https://www.labdelivery.cl/x", "Juan Andre\u0301s Tejeda", "Tejeda Arellano",
+])
+def test_labdelivery_more_variants(text):
+    assert is_labdelivery(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Collab Delivery", "Elab delivery", "laboratory delivery", "ACME lab deliveries schedule", "Valdivia",
+])
+def test_labdelivery_no_false_positive_in_words(text):
+    assert not is_labdelivery(text)

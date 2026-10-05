@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 _MODEL_STRIP = re.compile(r"[\s\-_./]")
-_LABDELIVERY = re.compile(r"lab[\s\-_.]*delivery|juan\s+andr[eé]s\s+tejeda", re.IGNORECASE)
+_NON_ALNUM = re.compile(r"[\W_]+")
+_LABDELIVERY = re.compile(
+    r"(?<![a-z0-9])(?:lab ?delivery|juan andres tejeda|tejeda arellano)(?![a-z0-9])"
+)
 
 PRODUCT_KINDS = ("equipment", "accessory", "consumable", "spare_part", "service")
 PRICE_KINDS = ("dealer_net", "list", "map", "supplier_offer", "order_confirmation", "purchase_order",
@@ -37,15 +41,25 @@ def _upper_simple(ch: str) -> str:
 
 
 def model_key(model: str | None) -> str | None:
-    """Same normalisation as catalog.product.model_key (generated column)."""
+    """Same normalisation as catalog.product.model_key (generated column).
+
+    Python `\\s` is Unicode-aware while Postgres `\\s` follows the server locale;
+    the database index (Task 6) is the authority for duplicates.
+    """
     if model is None:
         return None
     key = "".join(_upper_simple(c) for c in _MODEL_STRIP.sub("", model))
     return key or None
 
 
+def _fold(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return _NON_ALNUM.sub(" ", stripped.casefold()).strip()
+
+
 def is_labdelivery(text: str | None) -> bool:
-    return bool(text) and bool(_LABDELIVERY.search(text))
+    return bool(text) and bool(_LABDELIVERY.search(_fold(text)))
 
 
 def refuse_labdelivery(*parts: str | None) -> None:
