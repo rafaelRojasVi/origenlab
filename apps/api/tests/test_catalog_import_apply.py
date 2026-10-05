@@ -25,6 +25,7 @@ from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts" / "catalog"
 sys.path.insert(0, str(_SCRIPTS))
 import _common  # noqa: E402
+import import_cost_parameters as icp  # noqa: E402
 import import_price_lists as ipl  # noqa: E402
 
 
@@ -312,3 +313,68 @@ def test_rollback_refused_when_a_later_observation_references_a_product(disposab
     assert ipl.main(_argv("rollback", dsn, plan, sha, tmp_path / "r", None,
                           "--confirm-delete-loaded-rows")) == _common.EXIT_REFUSED
     assert _manifest_id(dsn, sha) is not None
+
+
+# ------------------------------------------------------------------ cost parameters
+
+def _params_file(tmp_path: Path, name: str, params: list[dict]) -> Path:
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps({"parameters": params}), encoding="utf-8")
+    return path
+
+
+def _params_plan(tmp_path: Path, name: str, params: list[dict]) -> tuple[Path, str]:
+    out = tmp_path / name
+    assert icp.main(["plan", "--parameters", str(_params_file(tmp_path, name, params)), "--out", str(out)]) == 0
+    data = (out / "plan.json").read_bytes()
+    return out / "plan.json", importing.sha256_bytes(data)
+
+
+@needs_db
+def test_cost_parameters_apply_verify_rollback(disposable_database, operator, tmp_path,
+                                               capsys: pytest.CaptureFixture[str]) -> None:
+    dsn = disposable_database
+    params = [{"key": "default_markup_service", "value": 0.5, "unit": "fraction", "reason": "valor de prueba"},
+              {"key": "profile_agent_clp", "value": 12345, "unit": "CLP", "reason": "valor de prueba"}]
+    plan, sha = _params_plan(tmp_path, "p", params)
+    assert icp.main(_argv("apply", dsn, plan, sha, tmp_path / "a1", operator)) == 0
+    assert icp.main(_argv("apply", dsn, plan, sha, tmp_path / "a2", operator)) == 0
+    assert _report(tmp_path / "a2", "apply-report.json")["inserted"] == 0
+    assert icp.main(_argv("verify", dsn, plan, sha, tmp_path / "v")) == 0
+    printed = capsys.readouterr()
+    assert "12345" not in printed.out + printed.err and "0.5" not in printed.out + printed.err
+    assert "default_markup_service" in printed.out
+
+    manifest = _manifest_id(dsn, sha)
+    rows = _owner(dsn, "select key, value_numeric, set_by_operator_id::text, reason from catalog.cost_parameter "
+                       "where key in ('default_markup_service', 'profile_agent_clp') order by key")
+    assert rows == [("default_markup_service", Decimal("0.500000"), operator.operator_id, "valor de prueba"),
+                    ("profile_agent_clp", Decimal("12345.000000"), operator.operator_id, "valor de prueba")]
+    events = _owner(dsn, "select event_type, payload from crm.domain_event "
+                         "where payload->>'origin_source_record_id' = %s order by 1", (manifest,))
+    assert {e[0] for e in events} == {"cost_parameter.set"}
+    assert all("value" not in e[1] for e in events)
+
+    assert icp.main(_argv("rollback", dsn, plan, sha, tmp_path / "r", None, "--confirm-delete-loaded-rows")) == 0
+    assert _owner(dsn, "select count(*) from catalog.cost_parameter where key in "
+                       "('default_markup_service', 'profile_agent_clp')") == [(0,)]
+
+
+def test_cost_parameter_keys_are_the_closed_vocabulary(tmp_path) -> None:
+    path = _params_file(tmp_path, "bad", [{"key": "test_param_a", "value": 0.5, "unit": "x", "reason": "prueba"}])
+    assert icp.main(["plan", "--parameters", str(path), "--out", str(tmp_path / "o")]) == _common.EXIT_REFUSED
+
+
+def test_cost_parameter_values_never_printed_on_refusal(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = _params_file(tmp_path, "neg", [{"key": "margin_target_min", "value": -7.25, "unit": "fraction",
+                                           "reason": "prueba"}])
+    assert icp.main(["plan", "--parameters", str(path), "--out", str(tmp_path / "o")]) == _common.EXIT_REFUSED
+    printed = capsys.readouterr()
+    assert "7.25" not in printed.out + printed.err
+
+
+def test_cost_parameter_plan_has_no_path(tmp_path) -> None:
+    plan, _ = _params_plan(tmp_path, "np", [{"key": "margin_target_max", "value": 0.4, "unit": "fraction",
+                                             "reason": "prueba"}])
+    text = plan.read_text(encoding="utf-8")
+    assert str(tmp_path) not in text and "np.json" not in text
