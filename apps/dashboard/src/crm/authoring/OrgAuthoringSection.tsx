@@ -21,6 +21,7 @@ import {
   addOrganizationDomain,
   addOrganizationIdentifier,
   archiveOrganization,
+  confirmOrganizationRecord,
   fetchOrganizationAuthoring,
   linkOrganizationProductLine,
   newIdempotencyKey,
@@ -37,6 +38,9 @@ import {
 } from "./crmAuthoringApi";
 import { ContactPointList } from "./ContactPointList";
 import { NoteList } from "./NoteList";
+import { PersonSuggestionsCardSection } from "./PersonSuggestionList";
+import { WebSuggestionsSection } from "./WebSuggestionsSection";
+import { refusalText } from "./webSuggestions";
 
 const PRODUCT_LINE_LABELS: Record<string, string> = {
   hielscher: "Hielscher",
@@ -51,11 +55,17 @@ interface Props {
   organizationId: string;
   mayAuthor: boolean;
   admin: boolean;
+  /** Called after a change the list behind the card shows too (confirmation, name, people). */
+  onChanged?: () => void;
 }
 
-export function OrgAuthoringSection({ organizationId, mayAuthor, admin }: Props) {
+export function OrgAuthoringSection({ organizationId, mayAuthor, admin, onChanged }: Props) {
   const load = useCallback(() => fetchOrganizationAuthoring(organizationId), [organizationId]);
   const [state, reload] = useResource(load, [organizationId]);
+  const refresh = useCallback(() => {
+    reload();
+    onChanged?.();
+  }, [reload, onChanged]);
   return (
     <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={4} />}>
       {(data) => (
@@ -64,7 +74,7 @@ export function OrgAuthoringSection({ organizationId, mayAuthor, admin }: Props)
           organizationId={organizationId}
           mayAuthor={mayAuthor}
           admin={admin}
-          onRefresh={reload}
+          onRefresh={refresh}
         />
       )}
     </ResourceGate>
@@ -91,6 +101,29 @@ function OrgAuthoringBody({
 
   return (
     <>
+      <ConfirmationBar
+        organization={organization}
+        mayAuthor={mayAuthor && organization.status === "active"}
+        onDone={onRefresh}
+      />
+
+      {data.web_suggestions ? (
+        <WebSuggestionsSection
+          data={data}
+          suggestion={data.web_suggestions}
+          mayAuthor={mayAuthor && organization.status === "active"}
+          onRefresh={onRefresh}
+        />
+      ) : null}
+
+      {data.person_suggestions && data.person_suggestions.length > 0 ? (
+        <PersonSuggestionsCardSection
+          items={data.person_suggestions}
+          mayAuthor={mayAuthor && organization.status === "active"}
+          onCreated={onRefresh}
+        />
+      ) : null}
+
       {/* Status */}
       {organization.status === "archived" ? (
         <div className="rounded-md border border-warn/30 bg-warn-bg px-3 py-2 text-xs text-warn">
@@ -272,6 +305,71 @@ function OrgAuthoringBody({
         />
       ) : null}
     </>
+  );
+}
+
+/**
+ * Whether an operator has looked at this institution. «Confirmar institución» while it is only
+ * machine-proposed; afterwards who confirmed it and when (`organization.confirmed` event).
+ */
+function ConfirmationBar({
+  organization,
+  mayAuthor,
+  onDone,
+}: {
+  organization: OrganizationAuthoringResponse["organization"];
+  mayAuthor: boolean;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const keyRef = useRef(newIdempotencyKey());
+
+  if (organization.confirmation === "confirmed") {
+    return (
+      <p className="flex flex-wrap items-center gap-1.5 text-xs text-ink-muted" data-testid="org-confirmation">
+        <Badge tone="good">Confirmada</Badge>
+        <span>
+          {organization.confirmed_by_name ? `por ${organization.confirmed_by_name}` : "por un operador"}
+          {organization.confirmed_at ? ` el ${fmtDate(organization.confirmed_at)}` : ""}
+        </span>
+      </p>
+    );
+  }
+
+  async function confirm() {
+    setBusy(true);
+    setError(null);
+    try {
+      await confirmOrganizationRecord(
+        { organization_id: organization.id, expected_version: organization.version },
+        keyRef.current,
+      );
+      onDone();
+    } catch (err) {
+      const r = refusalOf(err);
+      setError(refusalText(r?.code ?? "error", r?.message ?? String(err)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="org-confirmation">
+      <Badge tone="warn" title="Nombre propuesto por máquina desde la migración">Propuesta</Badge>
+      <span className="text-ink-muted">Ningún operador ha revisado esta institución.</span>
+      {mayAuthor ? (
+        <button
+          type="button"
+          onClick={() => void confirm()}
+          disabled={busy}
+          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50"
+        >
+          {busy ? "…" : "Confirmar institución"}
+        </button>
+      ) : null}
+      {error ? <p className="w-full text-[11px] text-bad">{error}</p> : null}
+    </div>
   );
 }
 

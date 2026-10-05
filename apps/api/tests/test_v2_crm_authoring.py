@@ -2,7 +2,7 @@
 
 Covers: body validation, role checks (viewer 403 incl. forged header escalation attempt),
 admin-only gates, missing Idempotency-Key (400), replay (replayed=true, no second handler call),
-product-line closed list, no `delete from` in the module source, all 28 route shapes present,
+product-line closed list, no `delete from` in the module source, all 29 route shapes present,
 switch off-by-default, mount test, and per-command shape validation.
 
 **No database, no network.**  Every handler call goes to a _FakeRepo that captures its args.
@@ -59,7 +59,7 @@ ADMIN_ROUTES = {
     "/v2/commands/restore-organization",
 }
 
-ALL_28_ROUTES = {
+ALL_ROUTES = {
     "/v2/commands/create-person",
     "/v2/commands/update-person",
     "/v2/commands/archive-person",
@@ -74,6 +74,7 @@ ALL_28_ROUTES = {
     "/v2/commands/update-organization",
     "/v2/commands/archive-organization",
     "/v2/commands/restore-organization",
+    "/v2/commands/confirm-organization-record",
     "/v2/commands/add-organization-identifier",
     "/v2/commands/remove-organization-identifier",
     "/v2/commands/add-organization-domain",
@@ -265,11 +266,11 @@ def test_archive_person_forbids_extra() -> None:
         ArchivePersonBody(person_id=str(uuid.uuid4()), expected_version=1, note="r", extra="bad")
 
 
-# ──────────────────────────────────────────────────────────────────── 28 routes ──
+# ──────────────────────────────────────────────────────────────────── 29 routes ──
 
-def test_the_router_exposes_exactly_28_posts() -> None:
+def test_the_router_exposes_exactly_29_posts() -> None:
     routes = set(r.path for r in crm_authoring_router.routes)
-    assert routes == ALL_28_ROUTES
+    assert routes == ALL_ROUTES
     # All are POST
     for r in crm_authoring_router.routes:
         assert tuple(sorted(r.methods)) == ("POST",), f"{r.path} has non-POST methods"
@@ -277,7 +278,7 @@ def test_the_router_exposes_exactly_28_posts() -> None:
 
 # ──────────────────────────────────────────────────────── viewer 403 on every route ──
 
-@pytest.mark.parametrize("path", sorted(ALL_28_ROUTES))
+@pytest.mark.parametrize("path", sorted(ALL_ROUTES))
 def test_viewer_403_on_all_routes(path) -> None:
     """A viewer (any role that is not sales/admin) gets 403 on every command route."""
     _, client = _client(role="viewer")
@@ -358,6 +359,8 @@ def _minimal_body(path: str) -> dict:
         return {"note_id": pid, "expected_version": 1, "body": "revised"}
     if path == "/v2/commands/archive-note":
         return {"note_id": pid, "expected_version": 1, "note": note}
+    if path == "/v2/commands/confirm-organization-record":
+        return {"organization_id": oid, "expected_version": 1}
     raise ValueError(f"No minimal body defined for {path}")
 
 
@@ -401,7 +404,7 @@ def test_sales_refused_on_admin_only_routes(path) -> None:
     assert r.json()["detail"]["code"] == "role_may_not_archive"
 
 
-@pytest.mark.parametrize("path", sorted(ALL_28_ROUTES - ADMIN_ROUTES))
+@pytest.mark.parametrize("path", sorted(ALL_ROUTES - ADMIN_ROUTES))
 def test_sales_can_call_non_admin_routes(path) -> None:
     _, client = _client(role="sales")
     body = _minimal_body(path)
@@ -412,7 +415,7 @@ def test_sales_can_call_non_admin_routes(path) -> None:
 
 # ──────────────────────────────────────────────────── missing Idempotency-Key → 400 ──
 
-@pytest.mark.parametrize("path", sorted(ALL_28_ROUTES)[:3])
+@pytest.mark.parametrize("path", sorted(ALL_ROUTES)[:3])
 def test_missing_idempotency_key_is_400(path) -> None:
     _, client = _client(role="admin")
     body = _minimal_body(path)
@@ -489,7 +492,7 @@ def test_crm_authoring_mount_off_by_default() -> None:
     # With both, every route appears
     enabled, paths = routes(v2_database_url=LOOPBACK, v2_crm_authoring_enabled=True)
     assert enabled is True
-    assert ALL_28_ROUTES <= paths
+    assert ALL_ROUTES <= paths
 
 
 def test_crm_authoring_routes_404_when_switch_is_off(monkeypatch) -> None:
@@ -628,3 +631,33 @@ def test_confirm_supplier_classification_must_be_supplier_or_manufacturer() -> N
             classification="customer",
             note="test",
         )
+
+
+# ──────────────────────────────────────────────────── confirm-organization-record ──
+
+def test_confirm_organization_record_takes_an_optional_note_and_nothing_else() -> None:
+    _, client = _client(role="sales")
+    path = "/v2/commands/confirm-organization-record"
+    oid = str(uuid.uuid4())
+    ok = client.post(path, json={"organization_id": oid, "expected_version": 1}, headers={**HEADERS, **_ikey()})
+    assert ok.status_code == 200
+    for body in (
+        {"organization_id": oid, "expected_version": 1, "confirmation": "confirmed"},
+        {"organization_id": "no-es-uuid", "expected_version": 1},
+        {"organization_id": oid, "expected_version": 1, "note": "   "},
+        {"organization_id": oid},
+    ):
+        assert client.post(path, json=body, headers={**HEADERS, **_ikey()}).status_code == 422, body
+
+
+def test_confirm_organization_record_hands_the_handler_a_json_ready_body() -> None:
+    app, client = _client(role="admin")
+    oid = str(uuid.uuid4())
+    client.post(
+        "/v2/commands/confirm-organization-record",
+        json={"organization_id": oid, "expected_version": 4, "note": "revisada"},
+        headers={**HEADERS, **_ikey()},
+    )
+    [call] = app.state.crm_authoring_repository.calls
+    assert call["command_name"] == "confirm-organization-record"
+    assert call["fields"] == {"organization_id": oid, "expected_version": 4, "note": "revisada"}

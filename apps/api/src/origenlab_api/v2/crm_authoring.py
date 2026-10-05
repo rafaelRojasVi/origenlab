@@ -238,13 +238,13 @@ def _handle_create_person(
         receipt_id=receipt_id,
     )
 
-    # Optional email contact point
+    # Optional email contact point: a new row, or the ownerless one the CRM already holds.
+    email_contact_point_id: str | None = None
+    email_claimed = False
     if email:
         value_norm = _normalize_contact_value("email", email)
-        _create_contact_point(
-            self, cur, operator, receipt_id,
-            kind="email", value_norm=value_norm, value_display=value_norm,
-            person_id=person_id, organization_id=None, usage="personal",
+        email_contact_point_id, email_claimed = _attach_person_email(
+            self, cur, operator, receipt_id, person_id=person_id, value_norm=value_norm,
         )
 
     # Optional phone contact point
@@ -280,7 +280,77 @@ def _handle_create_person(
         )
 
     # Bump person version so the create returns version=1 (already 1 from default)
-    return {"ok": True, "person_id": person_id, "version": person["version"]}
+    return {
+        "ok": True, "person_id": person_id, "version": person["version"],
+        "email_contact_point_id": email_contact_point_id, "email_claimed": email_claimed,
+    }
+
+
+def _attach_person_email(
+    self: "V2CrmAuthoringRepository",
+    cur: Any,
+    operator: OperatorIdentity,
+    receipt_id: str,
+    *,
+    person_id: str,
+    value_norm: str,
+) -> tuple[str, bool]:
+    """The new person's email contact point, and whether an existing row was claimed.
+
+    `crm.contact_point` holds one row per address, globally (`contact_point_kind_value_key`), and
+    the historical import left quote recipients there with no owner. An ownerless row is claimed —
+    `unattributed` becomes `personal`; `individual_owner_unknown` becomes `work` and keeps the
+    institution that operates it — so the person and the evidence share one row. Another person's
+    address, a shared mailbox and a deactivated address are refused by name, never a 500.
+    """
+    cur.execute(
+        """
+        select id::text as id, person_id::text as person_id,
+               organization_id::text as organization_id, usage, status
+          from crm.contact_point
+         where kind = 'email' and value_norm = %s
+           for update
+        """,
+        (value_norm,),
+    )
+    existing = _one(cur)
+    if existing is None:
+        cp_id = _create_contact_point(
+            self, cur, operator, receipt_id,
+            kind="email", value_norm=value_norm, value_display=value_norm,
+            person_id=person_id, organization_id=None, usage="personal",
+        )
+        return cp_id, False
+    if existing["person_id"] is not None:
+        raise CommandRefused(409, "contact_point_taken", "this email address belongs to another person")
+    if existing["usage"] == "shared_mailbox":
+        raise CommandRefused(409, "shared_mailbox", "this email address is a shared mailbox, not a person's")
+    if existing["status"] != "active":
+        raise CommandRefused(409, "contact_point_inactive", "this email address is deactivated in the CRM")
+
+    usage = "work" if existing["organization_id"] else "personal"
+    cur.execute(
+        """
+        update crm.contact_point
+           set person_id = %s::uuid, usage = %s, confirmation = 'confirmed',
+               version = version + 1, updated_at = now()
+         where id = %s::uuid and person_id is null
+        """,
+        (person_id, usage, existing["id"]),
+    )
+    self._append_event(
+        cur,
+        aggregate_kind="contact_point",
+        aggregate_id=existing["id"],
+        event_type="contact_point.updated",
+        payload={
+            "kind": "email", "contact_point_id": existing["id"], "claimed_by_person_id": person_id,
+            "usage": usage, "previous_usage": existing["usage"],
+        },
+        operator=operator,
+        receipt_id=receipt_id,
+    )
+    return existing["id"], True
 
 
 def _live_organization_active(
@@ -1235,6 +1305,78 @@ def _handle_update_organization(
         receipt_id=receipt_id,
     )
     return {"ok": True, "organization_id": org_id, "version": expected_version + 1}
+
+
+def _handle_confirm_organization_record(
+    self: "V2CrmAuthoringRepository",
+    cur: Any,
+    operator: OperatorIdentity,
+    fields: dict[str, Any],
+    receipt_id: str,
+) -> dict[str, Any]:
+    """Confirm an institution as a whole record — the card's «Confirmar institución».
+
+    Not the evidence-bound `confirm-organization`, which decides that one asserted *name* is an
+    organization and needs that assertion. This needs only the record: an operator looked at it
+    and says it is right. An institution already confirmed answers the same way with
+    `already_confirmed: true` — no event, no version bump — and that is checked before the
+    version, so the second of two operators clicking gets the outcome they wanted, not a conflict.
+    """
+    org_id = fields["organization_id"]
+    expected_version = fields["expected_version"]
+    note_text = fields.get("note")
+
+    cur.execute(
+        """
+        select id::text as id, status, version, confirmation,
+               confirmed_by_operator_id::text as confirmed_by_operator_id,
+               merged_into_organization_id::text as merged_into_organization_id
+          from crm.organization
+         where id = %s::uuid
+           for update
+        """,
+        (org_id,),
+    )
+    org = _one(cur)
+    if org is None:
+        raise CommandRefused(404, "organization_not_found", "no such organization")
+    if org["merged_into_organization_id"] is not None:
+        raise CommandRefused(409, "organization_merged", "that organization has been merged into another")
+    if org["status"] == "archived":
+        raise CommandRefused(409, "archived_subject", "that organization is archived")
+    if org["confirmation"] == "confirmed":
+        return {
+            "ok": True, "organization_id": org_id, "version": org["version"],
+            "already_confirmed": True, "confirmed_by_operator_id": org["confirmed_by_operator_id"],
+        }
+    if org["version"] != expected_version:
+        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+
+    cur.execute(
+        """
+        update crm.organization
+           set confirmation = 'confirmed', confirmed_by_operator_id = %s::uuid,
+               version = version + 1, updated_at = now()
+         where id = %s::uuid and version = %s
+        """,
+        (operator.operator_id, org_id, expected_version),
+    )
+    if cur.rowcount == 0:
+        raise CommandRefused(409, "stale_version", "concurrent modification")
+
+    self._append_event(
+        cur,
+        aggregate_kind="organization",
+        aggregate_id=org_id,
+        event_type="organization.confirmed",
+        payload={"confirmed_from": "crm_authoring", "note": note_text},
+        operator=operator,
+        receipt_id=receipt_id,
+    )
+    return {
+        "ok": True, "organization_id": org_id, "version": expected_version + 1,
+        "already_confirmed": False, "confirmed_by_operator_id": operator.operator_id,
+    }
 
 
 def _handle_archive_organization(
@@ -2292,7 +2434,7 @@ def _handle_archive_note(
 # ─────────────────────────────────────────────────────────────────────────── repository ──
 
 class V2CrmAuthoringRepository(CommandTransaction):
-    """28 CRM authoring commands, each in one transaction."""
+    """29 CRM authoring commands, each in one transaction."""
 
     _restore_domain_row = _restore_domain_row
 
@@ -2311,6 +2453,7 @@ class V2CrmAuthoringRepository(CommandTransaction):
         "update-organization": _handle_update_organization,
         "archive-organization": _handle_archive_organization,
         "restore-organization": _handle_restore_organization,
+        "confirm-organization-record": _handle_confirm_organization_record,
         "add-organization-identifier": _handle_add_organization_identifier,
         "remove-organization-identifier": _handle_remove_organization_identifier,
         "add-organization-domain": _handle_add_organization_domain,
