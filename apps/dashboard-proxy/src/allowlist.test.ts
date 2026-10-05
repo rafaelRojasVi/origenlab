@@ -79,7 +79,7 @@ describe("allowlist", () => {
     expect(isAllowedPostPath(path)).toBe(false);
   });
 
-  it("allows exactly the eight CRM workspace reads, GET only", () => {
+  it("allows exactly the CRM workspace reads, GET only", () => {
     for (const path of [
       "/v2/workspace/overview",
       "/v2/workspace/pipeline",
@@ -97,7 +97,7 @@ describe("allowlist", () => {
 
   it("keeps every other workspace and cockpit path refused", () => {
     // Built upstream, GET-only and redacting, but not a browser surface: each of these is
-    // a separate decision. Neighbours of the eight allowed paths are refused too.
+    // a separate decision. Neighbours of the allowed paths are refused too.
     const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
     const sha = "a".repeat(64);
     for (const path of [

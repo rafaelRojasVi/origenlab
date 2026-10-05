@@ -181,7 +181,8 @@ class CockpitRepository:
     # --------------------------------------------------------------- work queue
 
     def work_queue(self, limit: int, offset: int) -> dict[str, Any]:
-        """Typed work items ordered by age (oldest first) then kind."""
+        """Typed work items: every blocker kind first, ``pending_evidence`` last, each group oldest
+        first, then by kind (a steady Gmail inflow must not push a blocker off the page)."""
         with self._read() as cur:
             cur.execute("""
                 with items as (

@@ -5,7 +5,7 @@ import { handleRequest } from "./index";
 import { OPERATOR_EMAIL_HEADER, type ProxyEnv } from "./proxy";
 
 /**
- * The eight CRM workspace reads through the Worker. The Worker's part is narrow and pinned
+ * The CRM workspace reads through the Worker. The Worker's part is narrow and pinned
  * here: exact paths, GET only, the dashboard session cookie and nothing else goes upstream,
  * no browser-supplied identity, and the API's answer — 401 without a session, a masked body
  * for a viewer — comes back unchanged. Authentication and the viewer mask themselves are

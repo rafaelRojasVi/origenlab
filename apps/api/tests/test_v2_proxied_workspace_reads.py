@@ -1,4 +1,4 @@
-"""The eight CRM reads the dashboard proxy lists, behind a production-configured API.
+"""The CRM reads the dashboard proxy lists, behind a production-configured API.
 
 `apps/dashboard-proxy/src/allowlist.ts` names exactly these paths. The Worker forwards only the
 dashboard session cookie and adds `X-OriginLab-Operator-Email` from Cloudflare Access; it does
