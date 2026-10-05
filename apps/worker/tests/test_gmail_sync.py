@@ -129,7 +129,7 @@ def test_gmail_failing_mid_window_exits_1_and_holds_the_cursor() -> None:
     gmail.unavailable_raw = "m2"
     db = FakeDb()
     report = run(db, gmail)
-    assert (report.exit_code, report.error, list(db.messages), db.cursor) == (EXIT_FAILED, "GmailUnavailable", ["m1"], [])
+    assert (report.exit_code, report.error, list(db.messages), db.cursor) == (EXIT_FAILED, "http_503", ["m1"], [])
 
 
 def test_a_failure_is_logged_by_class_never_by_its_text() -> None:
@@ -231,7 +231,7 @@ def test_a_storage_conflict_stops_the_run_by_class_and_holds_the_cursor() -> Non
     store.objects[f"{MAILBOX}/2026/10/m2.eml"] = b"different bytes"
     db = FakeDb()
     report = run(db, gmail, store)
-    assert (report.exit_code, report.error, list(db.messages), db.cursor) == (EXIT_FAILED, "StorageConflict", ["m1"], [])
+    assert (report.exit_code, report.error, list(db.messages), db.cursor) == (EXIT_FAILED, "storage_object_conflict", ["m1"], [])
 
 
 @pytest.mark.parametrize("kind", ["token_refresh_failed", "scope_not_readonly", "unauthorized"])
@@ -271,8 +271,32 @@ def test_an_empty_history_id_never_becomes_the_cursor() -> None:
 
 def test_a_failed_resync_listing_reports_resync_and_a_failed_dry_run_says_so() -> None:
     report = run(FakeDb(), FakeGmail(pages=[["m1"]], expire_on_page=0, after_error=True))
-    assert (report.mode, report.exit_code, report.error) == ("resync", EXIT_FAILED, "GmailUnavailable")
+    assert (report.mode, report.exit_code, report.error) == ("resync", EXIT_FAILED, "http_503")
     dry = run(FakeDb(), FakeGmail(pages=[["m1"]], revoke_on_page=0), dry_run=True)
     assert dry.mode == "history_dry_run"
     failed = run(FakeDb(), FakeGmail(pages=[["m1"]], expire_on_page=0, after_error=True), dry_run=True)
     assert failed.mode == "resync_dry_run"
+
+
+def test_a_database_error_is_its_class_and_sqlstate_never_its_text() -> None:
+    import psycopg.errors
+
+    class Leaky(psycopg.errors.UniqueViolation):
+        sqlstate = "23505"
+
+    db = FakeDb()
+
+    def broken(*_a, **_k):
+        raise Leaky("duplicate key (address)=(ana@cliente.invalid)")
+
+    db.record = broken
+    report = run(db, gmail_with(m1=FakeMessage(INBOUND)))
+    assert report.error == "Leaky:23505" and "ana@" not in str(report.as_log())
+    bare = FakeDb()
+    bare.record = lambda *_a, **_k: (_ for _ in ()).throw(psycopg.OperationalError("ana@cliente.invalid"))
+    assert run(bare, gmail_with(m1=FakeMessage(INBOUND))).error == "OperationalError"
+
+
+def test_an_unknown_failure_stays_class_only() -> None:
+    from origenlab_worker.gmail_sync import failure_code
+    assert failure_code(KeyError("ana@cliente.invalid")) == "KeyError"

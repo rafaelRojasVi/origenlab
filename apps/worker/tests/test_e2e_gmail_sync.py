@@ -67,7 +67,7 @@ def test_two_runs_a_failure_between_messages_and_a_resync_leave_exact_rows(dsn, 
         server.state.failing_raw = {"m7"}
         first = run()
         c = first.counts
-        assert (first.mode, first.exit_code, first.error) == ("history", 1, "GmailUnavailable")
+        assert (first.mode, first.exit_code, first.error) == ("history", 1, "http_503")
         assert (c.seen, c.stored, c.evidence, c.parse_failed) == (7, 2, 2, 1)
         assert (c.skipped_spam, c.skipped_draft, c.skipped_trash) == (1, 1, 1)
         assert owner_rows(dsn, "select history_id from comms.mailbox") == [("100",)]

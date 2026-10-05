@@ -21,6 +21,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
+import psycopg
+
 from origenlab_worker.capture import (
     Capture,
     ParseFailed,
@@ -33,6 +35,7 @@ from origenlab_worker.database import Mailbox, RecordOutcome
 from origenlab_worker.gmail_client import (
     READONLY_SCOPE,
     GmailAuthError,
+    GmailError,
     GmailNotFound,
     HistoryExpired,
     HistoryWindow,
@@ -40,7 +43,7 @@ from origenlab_worker.gmail_client import (
     Profile,
     RawMessage,
 )
-from origenlab_worker.storage import BUCKET, StorageTooLarge, eml_key
+from origenlab_worker.storage import BUCKET, StorageError, StorageTooLarge, eml_key
 
 MAILBOX_ADDRESS = "contacto@origenlab.cl"
 RESYNC_OVERLAP = timedelta(days=1)
@@ -113,6 +116,23 @@ class RunReport:
         """Counts, mode and an error *class* — never a subject, body, address or Gmail id."""
         return {"event": "gmail_sync", "mode": self.mode, "exit": self.exit_code,
                 "error": self.error, **asdict(self.counts)}
+
+
+def failure_code(exc: BaseException) -> str:
+    """What the log line says about a failed run — never `str(exc)`, which may carry an address.
+
+    `StorageError.code` and `GmailError.kind` are fixed identifiers by construction. A database
+    error is its class plus the SQLSTATE (`UniqueViolation:23505`), a five-character code Postgres
+    defines. Anything else is its class name only.
+    """
+    if isinstance(exc, StorageError):
+        return exc.code
+    if isinstance(exc, GmailError):
+        return exc.kind
+    if isinstance(exc, psycopg.Error):
+        state = exc.sqlstate
+        return f"{type(exc).__name__}:{state}" if state else type(exc).__name__
+    return type(exc).__name__
 
 
 def _label(mode: str, dry_run: bool) -> str:
@@ -204,8 +224,8 @@ def run_gmail_sync(
             except Exception as db_exc:  # noqa: BLE001 — the class only, as below
                 error = f"{exc.kind}+{type(db_exc).__name__}"
         return RunReport(_label(mode, dry_run), EXIT_AUTH, counts, error=error)
-    except Exception as exc:  # noqa: BLE001 — the class only: an exception's text may carry an address
-        return RunReport(_label(mode, dry_run), EXIT_FAILED, counts, error=type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — a code or a class, never the text (it may carry an address)
+        return RunReport(_label(mode, dry_run), EXIT_FAILED, counts, error=failure_code(exc))
 
 
 def _init(db: SyncDb, gmail: GmailSource, store: EmlStore, mailbox: Mailbox, dry_run: bool,
