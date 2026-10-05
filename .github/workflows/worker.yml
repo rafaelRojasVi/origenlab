@@ -40,3 +40,38 @@ jobs:
         with:
           enable-cache: true
       - run: ./scripts/validate.sh
+  # The database tests (probe, writes, lock, end to end) skip without a database. Here they run
+  # against a throwaway cluster as the real origenlab_worker login, and the job fails if any skips.
+  db-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/worker
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Start a disposable PostgreSQL cluster
+        run: |
+          set -euo pipefail
+          # Not captured: the script's stdout carries the ::add-mask:: commands for the passwords.
+          ../api/scripts/disposable_test_cluster.sh up "$RUNNER_TEMP/v2-test-db.env"
+          grep '^OL_TEST_CLUSTER=' "$RUNNER_TEMP/v2-test-db.env" >> "$GITHUB_ENV"
+      - name: Worker tests with the V2 database
+        run: |
+          set -euo pipefail
+          set -a; . "$RUNNER_TEMP/v2-test-db.env"; set +a
+          uv sync --group dev --frozen
+          uv run --frozen pytest tests -q -rs | tee "$RUNNER_TEMP/pytest.out"
+      - name: No database test skipped
+        run: |
+          set -euo pipefail
+          if grep -E '^SKIPPED .*ORIGENLAB_V2_(WORKER_)?TEST_DSN' "$RUNNER_TEMP/pytest.out"; then
+            echo "::error::worker database tests skipped: the cluster was not reachable"
+            exit 1
+          fi
+      - name: Remove the cluster
+        if: always()
+        run: |
+          if [ -n "${OL_TEST_CLUSTER:-}" ]; then ../api/scripts/disposable_test_cluster.sh down "$OL_TEST_CLUSTER"; fi

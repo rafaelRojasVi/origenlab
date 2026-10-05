@@ -43,6 +43,17 @@ needs_db = pytest.mark.skipif(
     reason="ORIGENLAB_V2_TEST_DSN and ORIGENLAB_V2_API_TEST_DSN are both required",
 )
 
+#: The `origenlab_worker` login (apps/worker's tests): the role the Gmail capture writes as.
+_WORKER_DSN = assert_not_protected(
+    os.environ.get("ORIGENLAB_V2_WORKER_TEST_DSN", "").strip(),
+    variable="ORIGENLAB_V2_WORKER_TEST_DSN",
+)
+
+needs_worker_db = pytest.mark.skipif(
+    not (_TEST_DSN and _WORKER_DSN),
+    reason="ORIGENLAB_V2_TEST_DSN and ORIGENLAB_V2_WORKER_TEST_DSN are both required",
+)
+
 RUNTIME_ROLE = "origenlab_api"
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
@@ -65,6 +76,11 @@ def swap_database(dsn: str, database: str) -> str:
 def runtime_dsn(disposable_database: str) -> str:
     """The `origenlab_api` login, pointed at the disposable database."""
     return swap_database(_API_DSN, disposable_database.rpartition("/")[2])
+
+
+def worker_dsn(disposable_database: str) -> str:
+    """The `origenlab_worker` login, pointed at the disposable database."""
+    return swap_database(_WORKER_DSN, disposable_database.rpartition("/")[2])
 
 
 def build_disposable_database():
