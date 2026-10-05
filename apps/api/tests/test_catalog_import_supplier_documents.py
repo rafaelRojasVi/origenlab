@@ -56,7 +56,8 @@ def _obs(plan: importing.Plan) -> list[dict]:
 
 
 def _sheet(lines=None, quote="Q-CLIENT-9", **extra) -> dict:
-    return {"quote_number": quote, "fx_eur": 1000, "fx_usd": 900, "date": "2026-04-01",
+    return {"quote_number": quote, "fx_eur": 1000, "fx_usd": 900, "fx_date": "2026-04-01",
+            "source": "SRC-PRIVATE-7", "expenses": {"flete": 1}, "totals": {"total": 1}, "iva": 0.19,
             "lines": lines if lines is not None else [
                 {"brand": SUPPLIER, "model": "ACME-1", "supplier_unit_cost": 1000.0, "cost_currency": "EUR"}], **extra}
 
@@ -141,11 +142,24 @@ def test_costing_sheet_lines(tmp_path) -> None:
 
 def test_costing_sheet_date_from_flag_and_required(tmp_path) -> None:
     sheet = _sheet()
-    del sheet["date"]
-    with pytest.raises(ValueError, match=r"sheets\.json: date"):
+    del sheet["fx_date"]
+    with pytest.raises(ValueError, match=r"sheets\.json: fx_date"):
         _plan(tmp_path, [], sheets=sheet)
     plan = _plan(tmp_path, [], sheets=sheet, sheet_as_of="2026-05-05")
     assert _obs(plan)[0]["fields"]["as_of"] == "2026-05-05"
+    sheet["fx_date"] = "05/05/2026"  # invalid: the flag is the fallback, else refused
+    assert _obs(_plan(tmp_path, [], sheets=sheet, sheet_as_of="2026-05-06"))[0]["fields"]["as_of"] == "2026-05-06"
+    with pytest.raises(ValueError, match=r"sheets\.json: fx_date"):
+        _plan(tmp_path, [], sheets=sheet)
+    sheet["fx_date"] = "2026-04-01"
+    assert _obs(_plan(tmp_path, [], sheets=[sheet], sheet_as_of="2026-05-06"))[0]["fields"]["as_of"] == "2026-04-01"
+
+
+def test_costing_sheet_private_keys_never_reach_the_plan(tmp_path) -> None:
+    plan = _plan(tmp_path, [], sheets=[_sheet(quote="Q-SECRET-42")])
+    text = importing.plan_bytes(plan).decode()
+    for private in ("Q-SECRET-42", "SRC-PRIVATE-7", "flete", "quote_number", "expenses", "totals"):
+        assert private not in text
 
 
 def test_costing_sheet_as_list_and_line_without_cost(tmp_path) -> None:

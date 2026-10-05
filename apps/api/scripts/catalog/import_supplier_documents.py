@@ -7,8 +7,9 @@ study:
     <document>.json   {"doc_type", "issuer", "recipient", "doc_number", "date", "currency", "incoterm",
                        "lines": [{"model", "description", "qty", "unit_price", "discount_pct",
                                   "net_unit_price", "line_total"}], "packing", "freight", "total"}
-    <costing>.json    {"quote_number", "fx_eur", "fx_usd", "date"?, "lines": [{"brand", "model",
-                       "supplier_unit_cost", "cost_currency", ...}]}  (one sheet, a list, or {"sheets": [...]})
+    <costing>.json    [{"fx_date", "lines": [{"brand", "model", "supplier_unit_cost", "cost_currency", ...}], ...}]
+                      (a list of sheets; one sheet or {"sheets": [...]} also work). Only `fx_date` and
+                      `lines` are read; quote_number, source, expenses and totals never are.
 
     uv run python scripts/catalog/import_supplier_documents.py plan --out ~/data/…/catalog-import-<ts> \\
         --documents <dir or file.json> [--documents …] --costing-sheets <sheets.json> \\
@@ -22,7 +23,7 @@ What each document becomes (price = `net_unit_price`, else `unit_price`; `as_of`
   the currency is not CLP or the supplier is one of `--domestic-supplier`. `source_document` is the
   document number. When a discount and both prices are given, the list price and discount (a percent in
   the file, a fraction in the column) are kept too.
-* costing sheet lines -> `costing_sheet` for the brand; `source_document` is the literal "costing sheet".
+* costing sheet lines -> `costing_sheet` for the brand, `as_of` = the sheet's `fx_date`; `source_document` is the literal "costing sheet".
   The quote number, exchange rates and anything else about the client's quote never leave the file.
 * `sales_invoice`, `company_paperwork` and a purchase order that fails the rule are skipped and counted
   by reason, with the sha256 of their path.
@@ -235,12 +236,18 @@ def _costing_observations(name: str, data: Any, sheet_as_of: str | None) -> list
         if not isinstance(sheet, dict):
             raise _fail(name, f"sheets[{s}]", "not an object")
         # The sheet's quote number, rates and client are deliberately never read.
-        if sheet.get("date") not in (None, ""):
-            as_of = _day(name, "date", sheet["date"])
-        elif sheet_as_of:
+        # Only `fx_date` and `lines` are read; quote_number, source, expenses and totals never are.
+        as_of = None
+        if sheet.get("fx_date") not in (None, ""):
+            try:
+                as_of = _day(name, "fx_date", sheet["fx_date"])
+            except _Bad:
+                if not sheet_as_of:
+                    raise
+        if as_of is None:
+            if not sheet_as_of:
+                raise _fail(name, "fx_date", "missing; give --costing-as-of YYYY-MM-DD")
             as_of = sheet_as_of
-        else:
-            raise _fail(name, "date", "missing; give --costing-as-of YYYY-MM-DD")
         for n, line in enumerate(_lines(name, sheet)):
             at = f"lines[{n}]"
             brand = _text(name, f"{at}.brand", _need(name, line, "brand", f"{at}.brand"))
@@ -364,7 +371,7 @@ def _add_plan_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--documents", type=Path, action="append", default=[],
                    help="extracted supplier document JSON, or a directory of them")
     p.add_argument("--costing-sheets", type=Path, action="append", default=[], help="costing sheet JSON")
-    p.add_argument("--costing-as-of", metavar="YYYY-MM-DD", help="the date of costing sheets that carry none")
+    p.add_argument("--costing-as-of", metavar="YYYY-MM-DD", help="fallback date for sheets whose fx_date is missing or invalid")
     p.add_argument("--domestic-supplier", action="append", default=[], metavar="NAME",
                    help="a supplier whose CLP purchase orders count (default: only non-CLP ones do)")
     p.add_argument("--route", choices=ROUTES, default="import_courier",
