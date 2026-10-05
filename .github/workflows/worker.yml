@@ -29,7 +29,7 @@ on:
       - ".github/workflows/worker.yml"
 
 jobs:
-  test:
+  worker-test:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -42,7 +42,7 @@ jobs:
       - run: ./scripts/validate.sh
   # The database tests (probe, writes, lock, end to end) skip without a database. Here they run
   # against a throwaway cluster as the real origenlab_worker login, and the job fails if any skips.
-  db-test:
+  worker-db-test:
     runs-on: ubuntu-latest
     defaults:
       run:
