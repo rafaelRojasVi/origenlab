@@ -286,6 +286,19 @@ def test_a_pool_timeout_on_a_read_is_service_busy_too() -> None:
     assert response.headers["Retry-After"] == "5"
 
 
+def test_a_statement_timeout_on_the_receipt_claim_is_command_timeout_not_in_progress(caplog) -> None:
+    """A degraded database is not reported as «your earlier request is still running»."""
+    conn = _FakeConn(psycopg.errors.QueryCanceled("canceling statement due to statement timeout"),
+                     when="insert into platform.command_receipt")
+    with caplog.at_level(logging.WARNING, logger="origenlab_api.errors"):
+        response = _update_person(_production_app(_repo_over(conn)))
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "command_timeout"
+    assert conn.rolled_back is True and conn.committed is False
+    assert "command not run: command_timeout (command=update-person, cause=QueryCanceled" in caplog.text
+
+
 def test_a_lost_unique_race_is_duplicate_naming_the_constraint_never_the_value(caplog) -> None:
     value = "duplicado-ficticio@example.test"
     conn = _FakeConn(_UniqueOnContactPoint(

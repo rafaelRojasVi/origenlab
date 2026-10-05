@@ -26,6 +26,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from origenlab_api.errors import DatabaseRefusal
 from origenlab_api.v2.command_core import (
     DEFAULT_COMMAND_LOCK_TIMEOUT_MS,
     DEFAULT_COMMAND_TIMEOUT_MS,
@@ -200,8 +201,10 @@ class V2CampaignTestSendRepository(CommandTransaction):
             try:
                 self._finish(receipt_id, 502, failed)
             except Exception as record_exc:  # nothing was sent: the send failure is the answer
-                _log.error("test send %s failed and its failure was not recorded (%s)",
-                           receipt_id, type(record_exc).__name__)
+                # A refusal the database gave is expected; anything else is a bug and keeps its traceback.
+                _log.error("test send %s failed and its failure was not recorded (%s, code=%s)",
+                           receipt_id, type(record_exc).__name__, getattr(record_exc, "code", None),
+                           exc_info=not isinstance(record_exc, DatabaseRefusal))
             raise CommandRefused(502, exc.kind, FAILURE_MESSAGE_ES.get(exc.kind, "No se pudo enviar.")) from exc
         response = {**record, "status": "sent", "gmail_message_id": message_id,
                     "sent_at": datetime.now(timezone.utc).isoformat(),
@@ -211,7 +214,10 @@ class V2CampaignTestSendRepository(CommandTransaction):
         except Exception as record_exc:
             # The email is already out. Whatever stopped the record (a busy row, a timeout, a lost
             # connection), «nothing was written, retry» would be false and a retry would resend it.
-            _log.error("test send %s delivered but not recorded (%s)", receipt_id, type(record_exc).__name__)
+            # A refusal the database gave is expected; anything else is a bug and keeps its traceback.
+            _log.error("test send %s delivered but not recorded (%s, code=%s)",
+                       receipt_id, type(record_exc).__name__, getattr(record_exc, "code", None),
+                       exc_info=not isinstance(record_exc, DatabaseRefusal))
             raise CommandRefused(503, "sent_not_recorded", SENT_NOT_RECORDED_ES) from record_exc
         return response
 

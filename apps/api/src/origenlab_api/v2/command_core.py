@@ -33,7 +33,6 @@ from typing import Any, Callable
 
 from origenlab_api.errors import (
     LOCK_NOT_AVAILABLE,
-    QUERY_CANCELED,
     database_refusal,
     log_unrefused_database_failure,
 )
@@ -147,10 +146,11 @@ class CommandTransaction:
         a 409 because the first call is still running.
 
         While the first call has claimed the key and not finished, its receipt row is not
-        committed and this insert waits on it. If the wait outlasts `lock_timeout` (or the
-        statement timeout), the answer is 409 `command_in_progress` — never `record_busy`,
-        which tells the client the command did not run and invites a new key: the first call
-        may still commit, and a new key would run the same decision twice.
+        committed and this insert waits on it. If the wait outlasts `lock_timeout`, the answer
+        is 409 `command_in_progress` — never `record_busy`, which tells the client the command
+        did not run and invites a new key: the first call may still commit, and a new key would
+        run the same decision twice. A statement timeout here takes the normal path (503
+        `command_timeout`): a degraded database is not "your earlier request is still running".
         """
         try:
             cur.execute(
@@ -164,7 +164,7 @@ class CommandTransaction:
                 (operator.operator_id, idempotency_key, command_name, digest),
             )
         except Exception as exc:
-            if getattr(exc, "sqlstate", None) in (LOCK_NOT_AVAILABLE, QUERY_CANCELED):
+            if getattr(exc, "sqlstate", None) == LOCK_NOT_AVAILABLE:
                 raise CommandRefused(
                     409,
                     "command_in_progress",

@@ -405,8 +405,10 @@ class _GmailThenBusyReceipt(FakeGmail):
 
 
 @needs_db
-def test_a_sent_test_that_cannot_be_recorded_says_so_and_never_invites_a_resend(disposable_database, world) -> None:
+def test_a_sent_test_that_cannot_be_recorded_says_so_and_never_invites_a_resend(disposable_database, world, caplog) -> None:
     """Gmail accepted it; the record waited past lock_timeout. Not «nothing was written, retry»."""
+    import logging
+
     import psycopg
 
     _clear_receipts(disposable_database)
@@ -415,7 +417,8 @@ def test_a_sent_test_that_cannot_be_recorded_says_so_and_never_invites_a_resend(
     body = SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.UUID(cid))
     repo = V2CampaignTestSendRepository(psycopg.connect, runtime_dsn(disposable_database), gmail, None, lock_timeout_ms=200)
     try:
-        with pytest.raises(CommandRefused) as exc:
+        with caplog.at_level(logging.ERROR, logger="origenlab_api.v2.campaign_test_send"), \
+                pytest.raises(CommandRefused) as exc:
             repo.send_test(operator=world["ops"]["admin"], body=body, idempotency_key=str(uuid.uuid4()),
                            digest=request_digest(SEND_CAMPAIGN_TEST, body))
     finally:
@@ -423,8 +426,43 @@ def test_a_sent_test_that_cannot_be_recorded_says_so_and_never_invites_a_resend(
             gmail.holder.rollback()
             gmail.holder.close()
     assert (exc.value.status_code, exc.value.code) == (503, "sent_not_recorded")
+    [logged] = [r for r in caplog.records if r.name == "origenlab_api.v2.campaign_test_send"]
+    # A refusal the database gave: named by its code, no traceback.
+    assert "delivered but not recorded (DatabaseRefusal, code=record_busy)" in logged.getMessage()
+    assert not logged.exc_info
     assert str(exc.value) == "La prueba se envió, pero no quedó registrada. No la reenvíes; avisa al administrador."
     assert len(gmail.sent) == 1
     rows = _owner(disposable_database, "select status from platform.command_receipt where command_name = %s",
                   (SEND_CAMPAIGN_TEST,))
     assert rows == [("in_progress",)]
+
+
+class _FinishBreaks(V2CampaignTestSendRepository):
+    """A bug in recording the sent test (not a database refusal)."""
+
+    def _finish(self, receipt_id, status_code, response):
+        if status_code == 200:
+            raise TypeError("a programming error after the send")
+        super()._finish(receipt_id, status_code, response)
+
+
+@needs_db
+def test_a_bug_after_the_send_keeps_its_traceback_in_the_log(disposable_database, world, caplog) -> None:
+    import logging
+
+    import psycopg
+
+    _clear_receipts(disposable_database)
+    cid = _campaign(disposable_database, world, "<p>Hola</p>")
+    gmail = FakeGmail()
+    body = SendCampaignTestBody(to="ana@example.invalid", campaign_id=uuid.UUID(cid))
+    repo = _FinishBreaks(psycopg.connect, runtime_dsn(disposable_database), gmail, None)
+    with caplog.at_level(logging.ERROR, logger="origenlab_api.v2.campaign_test_send"), \
+            pytest.raises(CommandRefused) as exc:
+        repo.send_test(operator=world["ops"]["admin"], body=body, idempotency_key=str(uuid.uuid4()),
+                       digest=request_digest(SEND_CAMPAIGN_TEST, body))
+    assert (exc.value.status_code, exc.value.code) == (503, "sent_not_recorded")
+    assert len(gmail.sent) == 1
+    [logged] = [r for r in caplog.records if r.name == "origenlab_api.v2.campaign_test_send"]
+    assert "delivered but not recorded (TypeError, code=None)" in logged.getMessage()
+    assert logged.exc_info is not None and logged.exc_info[0] is TypeError
