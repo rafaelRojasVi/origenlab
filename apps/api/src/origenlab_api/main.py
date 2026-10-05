@@ -236,6 +236,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     _mount_profile_login(app, settings, profile_login, dsn)
     _mount_v2_command_boundary(app, settings, dsn, connect)
     _mount_crm_authoring(app, settings, dsn, connect)
+    _mount_catalog(app, settings, dsn, connect)
     _mount_campaign_drafts(app, settings, dsn, connect)
     _mount_audience_freeze(app, settings, dsn, connect)
     _mount_campaign_planning(app, settings, dsn, connect)
@@ -351,6 +352,21 @@ def _mount_crm_authoring(app: FastAPI, settings: Settings, dsn: str, connect: An
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(crm_authoring_router)
+
+
+def _mount_catalog(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
+    """Mount the catalog reads only behind ``ORIGENLAB_V2_QUOTING_ENABLED``; off, they are a 404."""
+    app.state.quoting_enabled = settings.quoting_configured()
+    if not app.state.quoting_enabled:
+        return
+
+    from origenlab_api.v2.catalog.reads import V2CatalogReads
+    from origenlab_api.v2.catalog.routes import catalog_read_router
+
+    app.state.catalog_reads = V2CatalogReads(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(catalog_read_router)
 
 
 def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:

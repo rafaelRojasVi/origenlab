@@ -231,6 +231,8 @@ class Settings(BaseSettings):
     or sends anything.
     """
     v2_crm_authoring_enabled: bool = False
+    """Mount the catalog and quoting surface (`/v2/catalog/*`). Default **false**; needs a V2 database."""
+    v2_quoting_enabled: bool = False
     """Mount POST /v2/commands/send-campaign-test («Enviar prueba»).
 
     Default **false** and needs `v2_test_send_token_file`. One admin-only test of a campaign's
@@ -468,6 +470,10 @@ class Settings(BaseSettings):
     def crm_authoring_configured(self) -> bool:
         """The CRM authoring boundary needs both a database and a deliberate switch."""
         return self.v2_configured() and bool(self.v2_crm_authoring_enabled)
+
+    def quoting_configured(self) -> bool:
+        """The catalog/quoting surface needs both a database and a deliberate switch."""
+        return self.v2_configured() and bool(self.v2_quoting_enabled)
 
     def v2_campaign_planning_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_planning_enabled)
