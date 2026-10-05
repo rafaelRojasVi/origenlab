@@ -8,13 +8,13 @@ with `extra="forbid"`; the handlers live in `commands.V2CatalogRepository`.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from origenlab_api.v2.catalog.keys import PARAMETER_KEYS, PRODUCT_KINDS
 from origenlab_api.v2.catalog.reads import V2CatalogReads
@@ -94,6 +94,11 @@ class SpecItem(BaseModel):
     unit: Annotated[str, StringConstraints(max_length=20)] | None = None
     source: Literal["import", "machine", "operator"] = "operator"
 
+    @field_validator("unit")
+    @classmethod
+    def _blank_unit_is_none(cls, v: str | None) -> str | None:
+        return v or None
+
 
 class CreateProductBody(_Base):
     manufacturer_organization_id: UUID
@@ -110,6 +115,15 @@ class CreateProductBody(_Base):
     height_cm: Decimal | None = Field(None, ge=0)
     origin_country: Country | None = None
     is_dangerous_goods: bool = False
+
+    @field_validator("model_number", check_fields=False)
+    @classmethod
+    def _model_has_a_character(cls, v: str | None) -> str | None:
+        # model_key drops spaces, dashes, underscores, dots and slashes; a model made only of
+        # those would have an empty key and could not be told apart from another.
+        if v is not None and not any(c.isalnum() for c in v):
+            raise ValueError("model_number must contain a letter or a digit")
+        return v
 
 
 class UpdateProductBody(CreateProductBody):
@@ -135,7 +149,7 @@ class RecordSupplierCostBody(_Base):
     price: Decimal = Field(ge=0)
     currency: Currency
     price_kind: PriceKind
-    as_of: datetime
+    as_of: AwareDatetime  # an instant: a timestamp without its offset is refused
     list_price: Decimal | None = Field(None, ge=0)
     discount_pct: Decimal | None = Field(None, ge=0, lt=1)
     incoterm: _Incoterm | None = None

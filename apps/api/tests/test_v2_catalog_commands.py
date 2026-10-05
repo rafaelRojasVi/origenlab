@@ -6,6 +6,8 @@ validated by its Pydantic model and handed over as `model_dump(mode="json")`, wi
 from __future__ import annotations
 
 import datetime as dt
+import threading
+import time
 import uuid
 from decimal import Decimal
 
@@ -187,6 +189,7 @@ def test_update_product_bumps_version_and_names_what_changed(disposable_database
     assert (row["weight_kg"], row["active"], row["version"]) == (Decimal("2.500"), False, 2)
     updated = [e for e in _events(dsn, "product", pid) if e[0] == "product.updated"]
     assert len(updated) == 1 and sorted(updated[0][1]["changed"]) == ["active", "weight_kg"]
+    assert (updated[0][2], updated[0][3]) == ("operator", operator.operator_id)
 
 
 @needs_db
@@ -352,6 +355,7 @@ def test_set_supplier_terms_creates_then_updates(disposable_database, operator) 
     assert (refused.status_code, refused.code) == (409, "stale_version")
     events = _events(dsn, "organization", supplier)
     assert [e[0] for e in events] == ["organization.supplier_terms_set"] * 2
+    assert {(e[2], e[3]) for e in events} == {("operator", operator.operator_id)}
     assert {k: events[1][1][k] for k in ("route", "currency")} == {"route": "import_freight", "currency": "EUR"}
     assert "default_discount_pct" not in events[0][1]
 
@@ -517,3 +521,77 @@ def test_notes_on_other_subjects_are_unchanged(disposable_database, operator) ->
     out = _note(disposable_database, operator, {"subject_kind": "organization",
                                                 "subject_id": _org(disposable_database), "body": "Proveedor serio."})
     assert out["ok"] is True
+
+
+# ------------------------------------------------------------------ fix round 1
+
+@needs_db
+def test_update_product_moves_it_to_another_live_manufacturer(disposable_database, operator) -> None:
+    dsn = disposable_database
+    pid = _new_product(dsn, operator, model="MOVE-1")
+    other = _org(dsn)
+    out = _run(dsn, operator, "update-product", {"product_id": pid, "expected_version": 1,
+                                                  "manufacturer_organization_id": other})
+    assert out["version"] == 2 and str(_product(dsn, pid)["manufacturer_organization_id"]) == other
+    [changed] = [e[1]["changed"] for e in _events(dsn, "product", pid) if e[0] == "product.updated"]
+    assert changed == ["manufacturer_organization_id"]
+    archived = _org(dsn, archived_by=operator.operator_id)
+    refused = _refused(dsn, operator, "update-product", {"product_id": pid, "expected_version": 2,
+                                                         "manufacturer_organization_id": archived})
+    assert (refused.status_code, refused.code) == (409, "archived_subject")
+    refused = _refused(dsn, operator, "update-product", {"product_id": pid, "expected_version": 2,
+                                                         "manufacturer_organization_id": str(uuid.uuid4())})
+    assert (refused.status_code, refused.code) == (404, "manufacturer_not_found")
+    assert _product(dsn, pid)["version"] == 2
+
+
+@needs_db
+@pytest.mark.parametrize("field", ["source_document", "note"])
+def test_a_labdelivery_cost_is_refused(disposable_database, operator, field) -> None:
+    dsn = disposable_database
+    pid, supplier = _new_product(dsn, operator), _org(dsn, kind="supplier")
+    refused = _refused(dsn, operator, "record-supplier-cost", _cost(pid, supplier, **{field: "Cotización Lab-Delivery 12"}))
+    assert (refused.status_code, refused.code) == (422, "labdelivery_refused")
+    assert _owner(dsn, "select count(*) from catalog.supplier_product where product_id = %s", (pid,)) == [(0,)]
+
+
+def _ungranted_locks(dsn: str) -> int:
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        # A row-lock wait is an ungranted transactionid (or tuple) lock; transactionid rows carry
+        # no database, so this counts the whole disposable cluster, which only this test uses now.
+        cur.execute("select count(*) from pg_locks where not granted")
+        return cur.fetchone()[0]
+
+
+@needs_db
+def test_concurrent_costs_on_one_product_take_consecutive_event_positions(disposable_database, operator) -> None:
+    """Two costs on one product while a third transaction holds the product: both wait, then append
+    one after the other (seq 2 and 3) instead of colliding on the stream position."""
+    dsn = disposable_database
+    pid, supplier = _new_product(dsn, operator), _org(dsn, kind="supplier")
+    results: dict[int, object] = {}
+
+    def record(i: int) -> None:
+        try:
+            results[i] = _run(dsn, operator, "record-supplier-cost",
+                              _cost(pid, supplier, as_of=f"2026-09-0{i + 1}T00:00:00+00:00"))
+        except Exception as exc:  # noqa: BLE001 - the assertion below names it
+            results[i] = exc
+
+    with psycopg.connect(dsn) as holder, holder.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute("select id from catalog.product where id = %s for update", (pid,))
+        threads = [threading.Thread(target=record, args=(i,)) for i in (1, 2)]
+        for t in threads:
+            t.start()
+        deadline = time.monotonic() + 10
+        while _ungranted_locks(dsn) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert _ungranted_locks(dsn) >= 2 and all(t.is_alive() for t in threads)
+        holder.commit()  # release both at the same instant
+    for t in threads:
+        t.join(timeout=30)
+    assert all(isinstance(r, dict) and r["ok"] for r in results.values()), results
+    seqs = _owner(dsn, "select seq, event_type from crm.domain_event where aggregate_kind = 'product' "
+                       "and aggregate_id = %s order by seq", (pid,))
+    assert seqs == [(1, "product.created"), (2, "product.cost_recorded"), (3, "product.cost_recorded")]

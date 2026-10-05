@@ -244,6 +244,9 @@ def test_refusals_surface_in_the_production_envelope(status, code, envelope) -> 
     ("create-product", {"weight_kg": "-1"}),
     ("create-product", {"product_kind": "widget"}),
     ("create-product", {"specs": [{"label_es": "Potencia", "value": "1", "extra": "x"}]}),
+    ("create-product", {"model_number": "-./ _"}),
+    ("update-product", {"model_number": "--"}),
+    ("record-supplier-cost", {"as_of": "2026-09-01T00:00:00"}),
     ("record-supplier-cost", {"discount_pct": "1"}),
     ("record-supplier-cost", {"currency": "GBP"}),
     ("record-supplier-cost", {"price": "NaN"}),
@@ -304,3 +307,29 @@ def test_catalog_commands_module_never_deletes() -> None:
     import origenlab_api.v2.catalog.commands as module
 
     assert "delete from" not in pathlib.Path(module.__file__).read_text(encoding="utf-8").lower()
+
+
+def test_a_blank_spec_unit_is_none() -> None:
+    from origenlab_api.v2.catalog.routes import CreateProductBody
+
+    body = CreateProductBody(manufacturer_organization_id=ORG, model_number="X1",
+                             specs=[{"label_es": "Potencia", "value": "1", "unit": "   "},
+                                    {"label_es": "Peso", "value": "2", "unit": " kg "}])
+    assert [s.unit for s in body.specs] == [None, "kg"]
+
+
+def test_the_review_guard_refusal_is_line_not_disputed_not_500() -> None:
+    import psycopg
+
+    from origenlab_api.v2.catalog.commands import _execute_mapped
+
+    class _Cur:
+        def execute(self, *_):
+            raise psycopg.errors.CheckViolation("document_line_review_guard: only a disputed line may become reviewed")
+
+    with pytest.raises(CommandRefused) as exc:
+        _execute_mapped(_Cur(), "update …", (), unique={},
+                        check=("line_not_disputed", "only a disputed line can be reviewed"))
+    assert (exc.value.status_code, exc.value.code) == (409, "line_not_disputed")
+    with pytest.raises(psycopg.errors.CheckViolation):  # unmapped: a defect, not an answer
+        _execute_mapped(_Cur(), "update …", (), unique={})

@@ -10,6 +10,11 @@ cost observation is whatever `supplier_product_observation_key` refuses. Their u
 become the 409s below — never a 500, and never a second normalisation in Python that could
 disagree with the generated `model_key`.
 
+**Every handler locks the row that owns the event stream it appends to** (product, organization,
+source record) before appending: `_append_event` computes the next `seq` per aggregate, and two
+unserialised appends to one stream would collide on `domain_event_aggregate_seq_key` as a 500.
+Cost-parameter and FX events each open a new stream (aggregate = the new row).
+
 **What this module never does:** delete a row; write a price, a discount or a parameter value
 into an event payload (the events say *that* a cost or parameter was recorded, the tables say
 *what* it was, behind the viewer redaction of the reads); open `platform.command_receipt` or
@@ -23,6 +28,7 @@ from typing import Any
 
 import psycopg
 
+from origenlab_api.v2.catalog.keys import LabdeliveryRefused, refuse_labdelivery
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
@@ -55,11 +61,15 @@ def _one(cur: Any) -> dict[str, Any] | None:
     return dict(zip([d[0] for d in cur.description], row, strict=True))
 
 
-def _write(cur: Any, sql: str, params: Any, *, unique: dict[frozenset[str], tuple[str, str]]) -> None:
+def _execute_mapped(cur: Any, sql: str, params: Any, *, unique: dict[frozenset[str], tuple[str, str]],
+                    check: tuple[str, str] | None = None) -> None:
     """Run one write; the database's refusals that are domain answers become refusals, not 500s.
 
-    `unique` maps constraint names to the 409 code and message for that violation. A unique
-    violation of any other constraint is a defect and propagates.
+    (Not `CommandTransaction._write`, which opens the transaction this runs inside.)
+
+    `unique` maps constraint names to the 409 code and message for that violation; `check`, when
+    given, is the 409 for a check violation (a guard trigger refusing the write). A unique or check
+    violation that is not mapped is a defect and propagates.
     """
     try:
         cur.execute(sql, params)
@@ -69,22 +79,30 @@ def _write(cur: Any, sql: str, params: Any, *, unique: dict[frozenset[str], tupl
             if name in names:
                 raise CommandRefused(409, code, message) from exc
         raise
+    except psycopg.errors.CheckViolation as exc:
+        if check is None:
+            raise
+        raise CommandRefused(409, *check) from exc
     except psycopg.errors.NumericValueOutOfRange as exc:
         raise CommandRefused(422, "value_out_of_range", "a number is too large for its field") from exc
 
 
-def _live_party(cur: Any, organization_id: str, *, not_found_code: str, what: str) -> dict[str, Any]:
-    """The manufacturer or supplier organization, share-locked, only if it is live.
+def _live_party(cur: Any, organization_id: str, *, not_found_code: str, what: str,
+                appends_to_its_stream: bool = False) -> dict[str, Any]:
+    """The manufacturer or supplier organization, locked, only if it is live.
 
     `FOR SHARE` holds off a concurrent archive or merge until this command commits, without
-    serialising two commands that both only read the organization.
+    serialising two commands that only read the organization. A command that appends to the
+    organization's own event stream takes `FOR NO KEY UPDATE` instead, the lock every other
+    organization command holds while it appends, so two appends never compute the same seq.
     """
+    lock = "for no key update" if appends_to_its_stream else "for share"
     cur.execute(
-        """
+        f"""
         select id::text as id, name, status, merged_into_organization_id::text as merged_into_organization_id
           from crm.organization
          where id = %s::uuid
-           for share
+           {lock}
         """,
         (organization_id,),
     )
@@ -132,7 +150,7 @@ def _handle_create_product(self: "V2CatalogRepository", cur: Any, operator: Oper
                            fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
     maker = fields["manufacturer_organization_id"]
     _live_party(cur, maker, not_found_code="manufacturer_not_found", what="manufacturer")
-    _write(
+    _execute_mapped(
         cur,
         """
         insert into catalog.product
@@ -183,7 +201,7 @@ def _handle_update_product(self: "V2CatalogRepository", cur: Any, operator: Oper
     if _CONTENT_FIELDS & changes.keys():
         assignments += ["content_origin = 'operator'", "content_confirmed_by_operator_id = null",
                         "content_confirmed_at = null"]
-    _write(
+    _execute_mapped(
         cur,
         f"""
         update catalog.product
@@ -244,11 +262,19 @@ def _handle_record_supplier_cost(self: "V2CatalogRepository", cur: Any, operator
     """Append one cost observation. The event carries no money: not the price, the list price,
     the discount, nor the operator's note (which is the observation's provenance instead)."""
     product_id, supplier = fields["product_id"], fields["supplier_organization_id"]
-    cur.execute("select id::text as id from catalog.product where id = %s::uuid", (product_id,))
+    try:
+        refuse_labdelivery(fields.get("source_document"), fields.get("note"))
+    except LabdeliveryRefused as exc:
+        raise CommandRefused(422, "labdelivery_refused", "a cost of Labdelivery origin is refused") from exc
+    # This lock protects the product's event stream (`_append_event` computes max(seq) + 1 per
+    # aggregate): two costs on one product, or a cost and an update/confirm (which hold FOR
+    # UPDATE), append one after the other instead of colliding on the stream position. NO KEY
+    # UPDATE still lets other transactions' foreign keys to the product take their KEY SHARE.
+    cur.execute("select id::text as id from catalog.product where id = %s::uuid for no key update", (product_id,))
     if _one(cur) is None:
         raise CommandRefused(404, "product_not_found", "no such product")
     _live_party(cur, supplier, not_found_code="supplier_not_found", what="supplier")
-    _write(
+    _execute_mapped(
         cur,
         """
         insert into catalog.supplier_product
@@ -283,7 +309,7 @@ def _handle_set_supplier_terms(self: "V2CatalogRepository", cur: Any, operator: 
                                fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
     """Create the supplier's terms (no `expected_version`) or replace them whole (with it)."""
     supplier, expected_version = fields["supplier_organization_id"], fields.get("expected_version")
-    _live_party(cur, supplier, not_found_code="supplier_not_found", what="supplier")
+    _live_party(cur, supplier, not_found_code="supplier_not_found", what="supplier", appends_to_its_stream=True)
     cur.execute("select version from catalog.supplier_terms where supplier_organization_id = %s::uuid for update",
                 (supplier,))
     existing = _one(cur)
@@ -294,7 +320,7 @@ def _handle_set_supplier_terms(self: "V2CatalogRepository", cur: Any, operator: 
         if expected_version is not None:
             raise CommandRefused(409, "stale_version",
                                  "this supplier has no terms yet; create them without expected_version")
-        _write(
+        _execute_mapped(
             cur,
             """
             insert into catalog.supplier_terms
@@ -311,7 +337,7 @@ def _handle_set_supplier_terms(self: "V2CatalogRepository", cur: Any, operator: 
             raise CommandRefused(409, "terms_exist", "this supplier already has terms; update them with expected_version")
         if existing["version"] != expected_version:
             raise CommandRefused(409, "stale_version", "the supplier terms were modified since you loaded them")
-        _write(
+        _execute_mapped(
             cur,
             """
             update catalog.supplier_terms
@@ -361,7 +387,7 @@ def _handle_set_cost_parameter(self: "V2CatalogRepository", cur: Any, operator: 
     if expected_current_id is not None and (current is None or current["id"] != expected_current_id):
         raise CommandRefused(409, "parameter_changed",
                              "this parameter was changed since you loaded it; reload and decide again")
-    _write(
+    _execute_mapped(
         cur,
         """
         insert into catalog.cost_parameter (key, value_numeric, valid_from, set_by_operator_id, reason)
@@ -382,7 +408,7 @@ def _handle_record_fx_rate(self: "V2CatalogRepository", cur: Any, operator: Oper
                            fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
     """A manual rate for a day, with its reason. Manual rows are not unique: the newest one wins
     for its day and currency, so a mistake is corrected by recording again."""
-    _write(
+    _execute_mapped(
         cur,
         """
         insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider, reason, recorded_by_operator_id)
@@ -411,6 +437,19 @@ def _handle_review_document_line(self: "V2CatalogRepository", cur: Any, operator
     waits, then finds the line reviewed and is refused. The database guard bounds the same rule.
     """
     line_id = fields["document_line_id"]
+    # The line's source record never changes (the review guard freezes it), so it can be read
+    # unlocked to find which stream to lock.
+    cur.execute("select source_record_id::text as source_record_id from evidence.document_line where id = %s::uuid",
+                (line_id,))
+    found = _one(cur)
+    if found is None:
+        raise CommandRefused(404, "document_line_not_found", "no such document line")
+    # The source record's event stream is the one appended to below (`_append_event` computes
+    # max(seq) + 1 per aggregate): lock its owner row before the line, as the evidence commands
+    # lock the record, so two reviews of one document — or a review and a review act — append in
+    # turn. Always record, then line: one order, no deadlock.
+    cur.execute("select id from evidence.source_record where id = %s::uuid for no key update",
+                (found["source_record_id"],))
     cur.execute(
         """
         select id::text as id, source_record_id::text as source_record_id, check_status
@@ -421,11 +460,11 @@ def _handle_review_document_line(self: "V2CatalogRepository", cur: Any, operator
         (line_id,),
     )
     line = _one(cur)
-    if line is None:
-        raise CommandRefused(404, "document_line_not_found", "no such document line")
+    assert line is not None  # noqa: S101 - lines are never deleted
     if line["check_status"] != "disputed":
         raise CommandRefused(409, "line_not_disputed", "only a disputed line can be reviewed")
-    _write(
+    not_disputed = ("line_not_disputed", "only a disputed line can be reviewed")
+    _execute_mapped(
         cur,
         """
         update evidence.document_line
@@ -434,11 +473,15 @@ def _handle_review_document_line(self: "V2CatalogRepository", cur: Any, operator
                check_status = 'reviewed', reviewed_by_operator_id = %s::uuid, reviewed_at = now(),
                review_note = %s, updated_at = now()
          where id = %s::uuid and check_status = 'disputed'
+        returning id
         """,
         (fields.get("qty"), fields.get("unit_price"), fields.get("line_total"), fields.get("optional"),
          operator.operator_id, fields["review_note"], line_id),
         unique={},
+        check=not_disputed,  # the review guard says the same thing, in case it ever speaks first
     )
+    if _one(cur) is None:  # pragma: no cover - the line is locked and was disputed
+        raise CommandRefused(409, *not_disputed)
     self._append_event(cur, aggregate_kind="source_record", aggregate_id=line["source_record_id"],
                        event_type="source_record.document_line_reviewed",
                        payload={"document_line_id": line_id, "note": fields.get("note")},
