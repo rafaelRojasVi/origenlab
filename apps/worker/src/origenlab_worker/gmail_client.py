@@ -41,6 +41,10 @@ MAX_ATTEMPTS = 4
 PAGE_SIZE = 500
 MAX_PAGES = 1000
 METADATA_HEADERS = ("From", "Subject", "Message-ID", "Date")
+#: A message becomes capturable by arriving *or* by gaining one of these labels: a draft that is
+#: sent gets `SENT`, a message moved out of spam gets `INBOX`.
+CAPTURE_LABELS = frozenset({"SENT", "INBOX"})
+HISTORY_TYPES = ("messageAdded", "labelAdded")
 RETRYABLE = frozenset({429, 500, 502, 503, 504})
 _MALFORMED = (ValueError, TypeError, AttributeError, KeyError, binascii.Error)
 
@@ -262,13 +266,15 @@ class GmailReader:
         )
 
     def history(self, start_history_id: str) -> HistoryWindow:
-        """Every message added since `start_history_id`, oldest first, each id once."""
+        """Every message added since `start_history_id`, oldest first, each id once. A message that
+        gained `SENT` or `INBOX` (a draft sent later, a message moved out of spam) counts as added.
+        Other label changes and every label removal are not tracked."""
         ids: dict[str, None] = {}
         latest, token = start_history_id, None
         for _ in range(MAX_PAGES):
             params: dict[str, Any] = {
                 "startHistoryId": start_history_id,
-                "historyTypes": "messageAdded",
+                "historyTypes": list(HISTORY_TYPES),
                 "maxResults": PAGE_SIZE,
             }
             if token:
@@ -282,6 +288,10 @@ class GmailReader:
                     for added in _items(record.get("messagesAdded")):
                         message_id = (added.get("message") or {}).get("id")
                         if message_id:
+                            ids.setdefault(str(message_id), None)
+                    for changed in _items(record.get("labelsAdded")):
+                        message_id = (changed.get("message") or {}).get("id")
+                        if message_id and CAPTURE_LABELS & set(_labels(changed.get("labelIds"))):
                             ids.setdefault(str(message_id), None)
                 latest = str(data.get("historyId") or latest)
                 token = data.get("nextPageToken")

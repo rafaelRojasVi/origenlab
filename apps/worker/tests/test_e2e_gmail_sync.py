@@ -105,3 +105,41 @@ def test_two_runs_a_failure_between_messages_and_a_resync_leave_exact_rows(dsn, 
                            "where dedupe_key = 'gmail_message:m2'") == [(["CN01005"],)]
     assert s3_client.list_objects_v2(Bucket=BUCKET)["KeyCount"] == 5
     assert business_rows(dsn) == before  # not one row in crm.* or outbound.*
+
+
+@pytest.fixture(scope="module")
+def label_dsn():
+    yield from build_disposable_database()
+
+
+def test_a_draft_sent_later_and_a_message_moved_out_of_spam_are_captured_on_the_next_run(label_dsn, s3_client) -> None:
+    """R7, narrowed: `labelAdded` of SENT or INBOX makes a message capturable; both go through the
+    real reader, HTTP, the database boundary and Storage."""
+    seed_mailbox(label_dsn)
+    target = local_test_target(worker_dsn(label_dsn))
+    now_ms = int(time.time() * 1000) - 3_600_000
+    with FakeGmailServer() as server:
+        reader = GmailReader(CREDS, api_base=server.api_base, token_url=server.token_url, sleep=lambda _s: None)
+        store = S3EmlStore(s3_client)
+
+        def run(**kw):
+            with open_worker_db(target) as db:
+                return run_gmail_sync(db=db, gmail=reader, store=store, enabled=True, **kw)
+
+        assert run(init=True).mode == "init_baseline"
+        s = server.state
+        s.add("dr1", make_raw(frm=f"OrigenLab <{MAILBOX}>", to="ana@cliente.invalid", message_id="<dr1@origenlab.invalid>"),
+              labels=("DRAFT",), internal_ms=now_ms)
+        s.add("sp1", make_raw(message_id="<sp1@cliente.invalid>"), labels=("SPAM",), internal_ms=now_ms + 1)
+        first = run().counts
+        assert (first.skipped_draft, first.skipped_spam, first.stored) == (1, 1, 0)
+        s.messages["dr1"]["labels"].remove("DRAFT")
+        s.add_label("dr1", "SENT")
+        s.messages["sp1"]["labels"].remove("SPAM")  # «no es spam»
+        s.add_label("sp1", "INBOX")
+        second = run().counts
+        assert (second.stored, second.evidence, second.skipped_draft, second.skipped_spam) == (2, 2, 0, 0)
+        third = run().counts
+        assert (third.seen, third.duplicates, third.stored) == (0, 0, 0)
+    assert owner_rows(label_dsn, "select provider_message_id, direction from comms.message order by 1") == [
+        ("dr1", "outbound"), ("sp1", "inbound")]

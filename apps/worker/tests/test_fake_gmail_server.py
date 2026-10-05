@@ -29,3 +29,14 @@ def test_the_reader_pages_lists_and_decodes_against_the_fake() -> None:
         state.expired_below = 1000
         with pytest.raises(HistoryExpired):
             reader.history("100")
+
+
+def test_the_fake_serves_label_additions_as_history() -> None:
+    with FakeGmailServer() as server:
+        state = server.state
+        state.add("d1", make_raw(message_id="<d1@cliente.invalid>"), labels=("DRAFT",), internal_ms=INTERNAL_MS)
+        state.add_label("d1", "SENT")
+        reader = GmailReader(GmailCredentials("cid", "sec", "rt"), api_base=server.api_base,
+                             token_url=server.token_url, sleep=lambda _s: None)
+        assert reader.history("100").message_ids == ("d1",)
+        assert reader.history("101").message_ids == ("d1",)  # only the labelAdded record is after 101

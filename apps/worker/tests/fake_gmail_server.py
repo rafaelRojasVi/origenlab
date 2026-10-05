@@ -27,7 +27,7 @@ LABELS = [{"id": "INBOX", "name": "INBOX"}, {"id": "SENT", "name": "SENT"}, {"id
 class FakeMailbox:
     email: str = MAILBOX
     history_id: int = 100
-    history: list[tuple[int, str]] = field(default_factory=list)
+    history: list[tuple[int, str, str, tuple[str, ...]]] = field(default_factory=list)
     messages: dict[str, dict] = field(default_factory=dict)
     expired_below: int = 0
     failing_raw: set[str] = field(default_factory=set)
@@ -38,12 +38,18 @@ class FakeMailbox:
         self.history_id += 1
         self.messages[message_id] = {"raw": raw, "labels": list(labels), "internal_ms": internal_ms,
                                      "thread_id": thread_id}
-        self.history.append((self.history_id, message_id))
+        self.history.append((self.history_id, message_id, "messageAdded", ()))
+
+    def add_label(self, message_id: str, label: str) -> None:
+        """A `labelAdded` history record (a draft that was sent, a message moved out of spam)."""
+        self.history_id += 1
+        self.messages[message_id]["labels"].append(label)
+        self.history.append((self.history_id, message_id, "labelAdded", (label,)))
 
     def list_again(self, message_id: str) -> None:
         """The same message in a second history record (Gmail does this)."""
         self.history_id += 1
-        self.history.append((self.history_id, message_id))
+        self.history.append((self.history_id, message_id, "messageAdded", ()))
 
 
 class FakeGmailServer:
@@ -79,9 +85,19 @@ class FakeGmailServer:
                     start = int(query["startHistoryId"][0])
                     if start < state.expired_below:
                         return self._send(404, {"error": {"code": 404}})
-                    rows = [m for h, m in state.history if h > start]
-                    return self._page(rows, query, "history", lambda ids: [{"messagesAdded": [{"message": {"id": i}}]} for i in ids],
-                                      {"historyId": str(state.history_id)})
+                    wanted = set(query.get("historyTypes", ["messageAdded"]))
+                    rows = [(m, kind, added) for h, m, kind, added in state.history if h > start and kind in wanted]
+
+                    def render(entries):
+                        out = []
+                        for m, kind, added in entries:
+                            if kind == "messageAdded":
+                                out.append({"messagesAdded": [{"message": {"id": m}}]})
+                            else:
+                                out.append({"labelsAdded": [{"message": {"id": m}, "labelIds": list(added)}]})
+                        return out
+
+                    return self._page(rows, query, "history", render, {"historyId": str(state.history_id)})
                 if path == "messages":
                     after = int(query["q"][0].removeprefix("after:"))
                     rows = sorted((m for m, v in state.messages.items() if v["internal_ms"] // 1000 > after),

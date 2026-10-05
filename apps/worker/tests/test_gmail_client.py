@@ -81,7 +81,7 @@ def test_history_reads_every_page_in_order_and_names_each_id_once() -> None:
                 ("pageToken=p2", 200, page("a2", "a3", history_id="107")))
     window = reader(s).history("100")
     assert (window.message_ids, window.history_id) == (("a1", "a2", "a3"), "107")
-    assert "historyTypes=messageAdded" in s.calls[1][1]
+    assert "historyTypes=messageAdded&historyTypes=labelAdded" in s.calls[1][1]
 
 
 def test_history_with_nothing_new_still_returns_the_current_id() -> None:
@@ -269,3 +269,30 @@ def test_a_page_token_that_never_ends_is_a_typed_error(monkeypatch) -> None:
     with pytest.raises(GmailUnavailable) as exc:
         reader(_Script(token(), *loop)).messages_after(1)
     assert exc.value.kind == "too_many_pages"
+
+
+def _labels_added(message_id, *added):
+    return {"labelsAdded": [{"message": {"id": message_id, "labelIds": ["DRAFT", *added]}, "labelIds": list(added)}]}
+
+
+def test_a_message_that_gained_sent_or_inbox_is_collected_once_in_order() -> None:
+    body = {"history": [
+        {"messagesAdded": [{"message": {"id": "a1"}}]},
+        _labels_added("a2", "SENT"),
+        _labels_added("a3", "INBOX"),
+        _labels_added("a1", "SENT"),
+    ], "historyId": "110"}
+    window = reader(_Script(token(), ("history", 200, body))).history("100")
+    assert window.message_ids == ("a1", "a2", "a3")
+
+
+def test_other_label_additions_are_not_collected() -> None:
+    body = {"history": [_labels_added("a1", "STARRED"), _labels_added("a2", "TRASH"),
+                        _labels_added("a3", "SPAM"), _labels_added("a4", "Label_7")], "historyId": "110"}
+    assert reader(_Script(token(), ("history", 200, body))).history("100").message_ids == ()
+
+
+@pytest.mark.parametrize("history", [[{"labelsAdded": "abc"}], [{"labelsAdded": ["abc"]}],
+                                     [{"labelsAdded": [{"message": {"id": "a"}, "labelIds": "SENT"}]}]])
+def test_a_malformed_label_record_is_invalid_json(history) -> None:
+    _invalid(_Script(token(), ("history", 200, {"history": history})), lambda r: r.history("100"))

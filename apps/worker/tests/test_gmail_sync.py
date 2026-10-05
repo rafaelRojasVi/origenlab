@@ -300,3 +300,15 @@ def test_a_database_error_is_its_class_and_sqlstate_never_its_text() -> None:
 def test_an_unknown_failure_stays_class_only() -> None:
     from origenlab_worker.gmail_sync import failure_code
     assert failure_code(KeyError("ana@cliente.invalid")) == "KeyError"
+
+
+def test_a_draft_sent_later_is_skipped_on_run_one_and_captured_on_run_two() -> None:
+    db, store = FakeDb(), FakeStore()
+    draft = FakeMessage(OUTBOUND, labels=("DRAFT",))
+    first = run(db, FakeGmail(pages=[["d1"]], messages={"d1": draft}), store)
+    assert (first.counts.skipped_draft, first.counts.stored, list(db.messages)) == (1, 0, [])
+    sent = FakeMessage(OUTBOUND, labels=("SENT",))  # history now lists it again, via labelAdded
+    second = run(db, FakeGmail(pages=[["d1"]], messages={"d1": sent}), store)
+    assert (second.counts.stored, second.counts.evidence, list(db.messages)) == (1, 1, ["d1"])
+    third = run(db, FakeGmail(pages=[["d1"]], messages={"d1": sent}), store)
+    assert (third.counts.duplicates, third.counts.stored) == (1, 0)
