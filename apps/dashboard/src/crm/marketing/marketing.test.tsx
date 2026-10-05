@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import taxonomyJson from "../../../../api/src/origenlab_api/v2/equipment_taxonomy.json";
@@ -268,6 +268,69 @@ function renderAs(role: string | null) {
     </AuthSessionContext.Provider>,
   );
 }
+
+/** Stands in for the browser's IntersectionObserver; `reveal()` scrolls every observed card in. */
+class FakeIntersectionObserver {
+  static instances: FakeIntersectionObserver[] = [];
+  readonly targets: Element[] = [];
+
+  constructor(private readonly callback: IntersectionObserverCallback) {
+    FakeIntersectionObserver.instances.push(this);
+  }
+
+  observe(target: Element): void {
+    this.targets.push(target);
+  }
+
+  unobserve(): void {}
+
+  disconnect(): void {
+    this.targets.length = 0;
+  }
+
+  static reveal(): void {
+    for (const observer of FakeIntersectionObserver.instances) {
+      const entries = observer.targets.map((target) => ({ isIntersecting: true, target }) as IntersectionObserverEntry);
+      if (entries.length) observer.callback(entries, observer as unknown as IntersectionObserver);
+    }
+  }
+}
+
+function campaignReads(): string[] {
+  const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL][] } }).mock.calls;
+  return calls
+    .map(([input]) => new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost").pathname)
+    .filter((path) => path.includes("/v2/workspace/marketing/campaigns/"));
+}
+
+describe("campaign thumbnails", () => {
+  afterEach(() => {
+    FakeIntersectionObserver.instances = [];
+    vi.unstubAllGlobals();
+  });
+
+  it("are read only once their card comes near the viewport", async () => {
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+    stubApi(false);
+    render(<MarketingPage />);
+    const cards = await screen.findAllByTestId("campaign-card");
+    expect(within(cards[0]).getByLabelText("Cargando miniatura")).toBeInTheDocument();
+    expect(campaignReads()).toEqual([]);
+
+    act(() => FakeIntersectionObserver.reveal());
+    expect(await within(cards[0]).findByTestId("thumb")).toBeInTheDocument();
+    expect(campaignReads()).toEqual([`/v2/workspace/marketing/campaigns/${DRAFT.campaign_id}`]);
+  });
+
+  it("load at once where the browser cannot tell what is visible", async () => {
+    vi.stubGlobal("IntersectionObserver", undefined);
+    stubApi(false);
+    render(<MarketingPage />);
+    const cards = await screen.findAllByTestId("campaign-card");
+    expect(await within(cards[0]).findByTestId("thumb")).toBeInTheDocument();
+    expect(campaignReads()).toEqual([`/v2/workspace/marketing/campaigns/${DRAFT.campaign_id}`]);
+  });
+});
 
 describe("MarketingPage", () => {
   beforeEach(() => vi.spyOn(window, "confirm").mockReturnValue(true));

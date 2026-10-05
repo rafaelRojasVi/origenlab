@@ -15,6 +15,7 @@ import { EmailFrame } from "../marketing/EmailFrame";
 import { V1LaneCampaignCard } from "../marketing/V1LaneCampaignCard";
 import { NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, cardTotals, neverSent, isNeverSentHistorical } from "../marketing/campaignTotals";
 import { fetchCampaign, fetchTaxonomy } from "../marketing/marketingApi";
+import { useInView } from "../useInView";
 import type { CampaignContent, EquipmentTaxonomy } from "../marketing/marketingTypes";
 import {
   Badge,
@@ -356,12 +357,17 @@ function thumbnailUnavailableLabel(c: CampaignSummary): string {
   return "HTML enviado no archivado";
 }
 
-/** A thumbnail of the stored HTML when there is some; otherwise it says it was never imported. */
+/** A thumbnail of the stored HTML when there is some; otherwise it says it was never imported.
+ *
+ * Each thumbnail is a request of its own, so it is read only once its card comes near the
+ * viewport (`useInView`); a list of fifty campaigns no longer asks for fifty at once. */
 function Thumbnail({ c }: { c: CampaignSummary }) {
   const hasHtml = c.has_html || c.html_state === "sent_html_archived" || c.html_state === "historical_draft";
+  const [placeholder, visible] = useInView<HTMLDivElement>();
+  const wanted = hasHtml && visible;
   const [state] = useResource(
-    () => (hasHtml ? fetchCampaign(c.campaign_id) : Promise.resolve(null)),
-    [c.campaign_id, hasHtml, c.version],
+    () => (wanted ? fetchCampaign(c.campaign_id) : Promise.resolve(null)),
+    [c.campaign_id, wanted, c.version],
   );
   if (!hasHtml) {
     return (
@@ -374,7 +380,7 @@ function Thumbnail({ c }: { c: CampaignSummary }) {
     );
   }
   if (state.kind !== "ready" || !state.data?.body_html) {
-    return <div className="crm-skeleton h-[150px] rounded-md" aria-label="Cargando miniatura" />;
+    return <div ref={placeholder} className="crm-skeleton h-[150px] rounded-md" aria-label="Cargando miniatura" />;
   }
   return (
     <div className="flex h-[150px] justify-center overflow-hidden rounded-md border border-line bg-canvas-sunken" data-testid="thumb">
