@@ -369,10 +369,15 @@ numbering decision — see the table above.
 ### Campaign test sends («Enviar prueba») — one-time setup
 
 Admin-only: sends the stored email of a marketing campaign to an address of the operator's choosing, from
-`contacto@origenlab.cl`, with the subject prefixed `[PRUEBA]`. The API holds only a `gmail.send` refresh token
-(it cannot read mail). Limits: 10 per hour and 30 per 24 hours, counted from `platform.command_receipt`; over the limit
-the API answers 429 with `next_allowed_at`. Off until all of the following is done; with the switch unset or a bad token
-file the route is not mounted (a bad token logs a warning and the feature stays off).
+`contacto@origenlab.cl`, with the subject prefixed `[PRUEBA]`. The grant is `gmail.send` plus `openid` and
+`userinfo.email` — identity only, so the authorization script can prove the signed-in account is `contacto@`; nothing
+in it reads mail. Limits: 10 per hour and 30 per 24 hours across all operators, counted from
+`platform.command_receipt`; over the limit the API answers 429 with `next_allowed_at`. An address that asked to be
+removed or is blocked (an address-scope block for purpose `all`/`marketing`, or a «BAJA» held for review) is refused
+with 422 before anything is recorded or sent. Off until all of the following is done; with the switch unset or an
+unreadable or malformed token file the route is not mounted (a warning «campaign test send disabled» is logged and
+the feature stays off). A revoked but well-formed token still mounts: each send then fails as `token_refresh_failed`,
+and the history shows Google's status and code (for example `HTTP 400 invalid_grant`).
 
 1. Google Cloud, in the project of the dashboard login: enable the Gmail API; on the consent screen (type Internal) add the
    scope `https://www.googleapis.com/auth/gmail.send`; create an OAuth client of type Desktop (for example
@@ -391,8 +396,18 @@ file the route is not mounted (a bad token logs a warning and the feature stays 
    `ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED=true`. Redeploy the API, and redeploy the Worker
    (`apps/dashboard-proxy`) so it allows `POST /v2/commands/send-campaign-test` and
    `GET /v2/workspace/marketing/test-send-history`.
-4. Revoke: delete the secret file and unset the two variables on Render (the feature turns off), and remove the app's
-   access in the `contacto@` Google account (Security, third-party apps) so the refresh token dies.
+4. Revoke (at any time): delete the secret file and unset the two variables on Render (the feature turns off), and
+   remove the app's access in the `contacto@` Google account (Security, third-party apps) so the refresh token dies.
+5. Cyber's test needs the V1-lane email already deployed for its preview: `ORIGENLAB_V2_V1_LANE_CONTENT_DIR` and the
+   secret file `v1-lane-cyber-2026-10.html` (without it, its test is refused with «la campaña no tiene un correo
+   guardado»). V2 campaigns need nothing more than their saved HTML.
+6. After the redeploy, as an admin: `GET /v2/workspace/marketing` answers `test_send.enabled: true`, and the Render log
+   of that deploy has no «campaign test send disabled» warning.
+7. Send one Cyber test and one V2-campaign test to a personal address. Check that each arrives from
+   `OrigenLab <contacto@origenlab.cl>` with «[PRUEBA]» in the subject, that images load and links open, that the REMOVER
+   link opens a mail to `contacto@` with subject `REMOVER`, and that each test appears as a row in the panel's history.
+8. Delete the downloaded `client_secret_*.json` (the token file already holds what the API needs).
+9. After the deploy, open a PR that updates `docs/STATUS.md` with what was deployed and verified.
 
 ## Tests
 

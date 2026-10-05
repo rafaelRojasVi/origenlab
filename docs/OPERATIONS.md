@@ -203,6 +203,8 @@ Names and value shapes only; values are Render secrets and are never written in 
 | `ORIGENLAB_V2_JWKS_URL` | **unset — must remain unset** (corrected 2026-10-02, see below) |
 | `ORIGENLAB_DEV_LOGIN_ENABLED` | unset |
 | `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` | unset (default `false`) — Phase A is a read-only hosted deployment; the authoring commands are not mounted |
+| `ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED` | `true` once the owner has authorized the Gmail send token (`apps/api/README.md` «Campaign test sends»); unset (default `false`) leaves «Enviar prueba» unmounted. Mounted only together with a readable, valid token file below — a bad file logs «campaign test send disabled» and the feature stays off |
+| `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE` | `/etc/secrets/gmail-send-token.json` — the Render secret file holding the `gmail.send` refresh token for `contacto@origenlab.cl` (`{client_id, client_secret, refresh_token, address}`); it cannot read mail. Revoking is deleting the file and both variables, and removing the app's access in the `contacto@` Google account |
 
 **`ORIGENLAB_V2_JWKS_URL` must remain unset for the current deployment architecture.** An
 earlier revision of this step instructed the operator to set it to the project's JWKS. That
