@@ -100,7 +100,17 @@ services:
     schedule: "*/10 * * * *"
     buildCommand: uv sync --frozen --no-dev
     startCommand: uv run --no-sync origenlab-worker gmail-sync
+    # The cron imports V1's parser from apps/email-pipeline (v1_reuse), so a change there rebuilds it
+    # too; paths are relative to the repository root, not rootDir.
+    buildFilter:
+      paths:
+        - apps/worker/**
+        - apps/email-pipeline/**
+        - render.yaml
     envVars:
+      # Not a secret: use the image's Python, never download one at build or run time.
+      - key: UV_PYTHON_DOWNLOADS
+        value: never
       - key: ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED
         sync: false
       - key: ORIGENLAB_WORKER_DATABASE_URL

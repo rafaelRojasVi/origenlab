@@ -24,6 +24,10 @@ SECRET_KEYS = (
 )
 
 
+#: The only plain values: not secrets, set in the file on purpose.
+PLAIN_VALUES = {"UV_PYTHON_DOWNLOADS": "never"}
+
+
 def _service() -> str:
     text = RENDER_YAML.read_text(encoding="utf-8")
     start = text.index("  - type: cron\n    name: origenlab-gmail-sync\n")
@@ -44,11 +48,20 @@ def test_every_worker_variable_is_set_on_render_never_in_the_file() -> None:
     service = _service()
     for key in SECRET_KEYS:
         assert re.search(rf"- key: {key}\n\s+sync: false\n", service + "\n"), key
-    assert "value:" not in service
+    assert re.findall(r"- key: (\S+)\n\s+value: (\S+)", service) == list(PLAIN_VALUES.items())
+    assert service.count("value:") == len(PLAIN_VALUES)  # no other literal, secret or not
+
+
+def test_a_change_to_the_imported_v1_code_rebuilds_the_cron() -> None:
+    service = _service()
+    match = re.search(r"buildFilter:\n\s+paths:\n((?:\s+- \S+\n)+)", service + "\n")
+    assert match is not None
+    assert set(re.findall(r"- (\S+)", match.group(1))) == {"apps/worker/**", "apps/email-pipeline/**", "render.yaml"}
 
 
 def test_the_cron_keys_are_exactly_the_names_the_code_reads() -> None:
     in_code = {v for mod in (cli, storage) for k, v in vars(mod).items()
                if k.startswith("ENV_") and isinstance(v, str)}
     in_yaml = set(re.findall(r"- key: (\S+)", _service()))
-    assert in_yaml == in_code == set(SECRET_KEYS)
+    assert in_yaml - set(PLAIN_VALUES) == in_code == set(SECRET_KEYS)
+    assert set(PLAIN_VALUES) <= in_yaml
