@@ -83,8 +83,26 @@ def test_request_carries_only_product_data_never_prices_costs_or_client_fields()
         # The system prompt may say what is excluded; the product payload never carries it.
         assert word not in json.dumps(request["messages"], ensure_ascii=False).lower(), word
     assert "SONIC-100" in body and "ACME Instruments" in body and "40 kHz" in body
-    assert request["model"] == "claude-opus-5-5"
     assert request["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_the_default_model_is_haiku_4_5_with_structured_output_and_nothing_it_rejects() -> None:
+    assert enrichment.DEFAULT_MODEL == "claude-haiku-4-5-20251001"
+    request = enrichment.build_request(_product(), DATASHEET, None)
+    assert request["model"] == "claude-haiku-4-5-20251001"
+    assert request["output_config"] == {"format": {"type": "json_schema", "schema": enrichment.OUTPUT_SCHEMA}}
+    # Haiku 4.5 takes neither adaptive thinking, effort nor the server-side refusal fallback.
+    assert not {"thinking", "betas", "fallbacks"} & request.keys()
+
+
+def test_a_model_override_is_honoured_with_what_that_model_supports() -> None:
+    request = enrichment.build_request(_product(), DATASHEET, None, model="claude-sonnet-5-5")
+    assert request["model"] == "claude-sonnet-5-5"
+    assert request["thinking"] == {"type": "adaptive"} and request["output_config"]["effort"] == "medium"
+    assert request["output_config"]["format"]["type"] == "json_schema"
+    assert request["fallbacks"] == "default" and request["betas"] == ["server-side-fallback-2026-07-01"]
+    with pytest.raises(ValueError):
+        enrichment.build_request(_product(), DATASHEET, None, model="gpt-4o")
 
 
 def test_scrub_removes_commercial_lines_and_counts_them() -> None:
@@ -363,6 +381,28 @@ def test_dry_run_writes_nothing(disposable_database, operator_email, tmp_path, m
     assert _owner(dsn, "select count(*) from crm.domain_event")[0][0] == events_before
     assert _owner(dsn, "select count(*) from catalog.product_image where product_id = %s", (pid,))[0][0] == 0
     assert storage.puts == 0 and len(client.beta.messages.requests) == 1
+    assert client.beta.messages.requests[0]["model"] == "claude-haiku-4-5-20251001"
+
+
+@needs_db
+def test_the_cli_model_flag_is_honoured(disposable_database, operator_email, tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-SECRETKEYVALUE")
+    dsn = disposable_database
+    model = f"MDL-{uuid.uuid4().hex[:4].upper()}"
+    _make_products(dsn, model)
+    client = _fake_client({model: _answer(model)})
+    out = tmp_path / "model"
+    argv = ["--target-dsn", runtime_dsn(dsn), "--operator-email", operator_email, "--select", f"model_keys:{model}",
+            "--out", str(out), "--source-dir", str(_source_dir(tmp_path, model)), "--model", "claude-sonnet-5-5"]
+    assert ep.main(argv, client=client, storage=FakeStorage()) == ep.EXIT_OK
+    assert [r["model"] for r in client.beta.messages.requests] == ["claude-sonnet-5-5"]
+    assert json.loads((out / "enrich-report.json").read_text(encoding="utf-8"))["model"] == "claude-sonnet-5-5"
+
+
+def test_a_bad_model_flag_is_refused(tmp_path) -> None:
+    local = "postgresql://origenlab_api:pw@127.0.0.1:5432/origenlab_test_0123abcd"
+    assert ep.main(["--target-dsn", local, "--operator-email", "x@example.test", "--select", "all-missing",
+                    "--out", str(tmp_path / "o"), "--model", "gpt-4o"], client=_fail_client()) == ep.EXIT_REFUSED
 
 
 @needs_db

@@ -19,7 +19,7 @@ proven on the server.
 data and its datasheet/page text with commercial lines removed; nothing kept that the source does
 not state. Sources are plain text files the operator extracted beforehand, by model key:
 `DIR/<MODEL_KEY>.datasheet.txt` and `DIR/<MODEL_KEY>.page.txt` (either may be absent). The
-model is one synchronous Messages request per product (`enrichment.MODEL`); the key is read from
+model is one synchronous Messages request per product (`enrichment.DEFAULT_MODEL`, or `--model`); the key is read from
 `ANTHROPIC_API_KEY` and never printed, logged or written.
 
 **What apply writes, per product, in its own transaction** (one product's failure leaves the
@@ -361,7 +361,7 @@ def _jsonable(value: Any) -> Any:
 
 
 def propose(client: Any, product: dict[str, Any], source_dir: Path | None,
-            domains: tuple[str, ...]) -> tuple[str, enrichment.EnrichmentResult | None, str | None]:
+            domains: tuple[str, ...], model: str = enrichment.DEFAULT_MODEL) -> tuple[str, enrichment.EnrichmentResult | None, str | None]:
     """(outcome, result, detail) for one product: `proposed` with a result, or why not."""
     datasheet = _read_source(source_dir, product["model_key"], "datasheet")
     page = _read_source(source_dir, product["model_key"], "page")
@@ -370,7 +370,7 @@ def propose(client: Any, product: dict[str, Any], source_dir: Path | None,
         return "refused_labdelivery", None, None
     if any(len(t or "") > enrichment.MAX_SOURCE_CHARS for t in (datasheet, page)):
         return "source_too_long", None, None
-    request = enrichment.build_request(product, datasheet, page)
+    request = enrichment.build_request(product, datasheet, page, model=model)
     try:
         message = client.beta.messages.create(**request)
     except Exception as exc:  # noqa: BLE001 - reported by class only; a message may echo request data
@@ -414,6 +414,8 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument("--target-dsn", required=True, help="the origenlab_api login of a loopback database")
     ap.add_argument("--operator-email", required=True, help="the operator recorded as actor of the events")
     ap.add_argument("--select", required=True, help="quoted | all-missing | model_keys:A,B")
+    ap.add_argument("--model", default=enrichment.DEFAULT_MODEL,
+                    help=f"the Claude model (default {enrichment.DEFAULT_MODEL}, the cost-sensitive choice)")
     ap.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help=f"at most this many products (≤ {MAX_LIMIT})")
     ap.add_argument("--source-dir", type=Path, help="DIR/<MODEL_KEY>.datasheet.txt and DIR/<MODEL_KEY>.page.txt")
     ap.add_argument("--manufacturer-domain", action="append", default=[],
@@ -433,6 +435,7 @@ def main(argv: list[str] | None = None, *, client: Any = None, storage: CatalogS
     import psycopg
 
     try:
+        enrichment.check_model_id(args.model)
         select_mode, keys = parse_select(args.select)
         domains = parse_domains(args.manufacturer_domain)
         if not 1 <= args.limit <= MAX_LIMIT:
@@ -478,7 +481,7 @@ def main(argv: list[str] | None = None, *, client: Any = None, storage: CatalogS
         for product in products:
             domains_here = domains.for_brand(product["brand"])
             item: dict[str, Any] = {"model_key": product["model_key"], "product_id": product["id"]}
-            outcome, result, detail = propose(client, product, args.source_dir, domains_here)
+            outcome, result, detail = propose(client, product, args.source_dir, domains_here, args.model)
             if detail:
                 item["detail"] = detail
             if result is not None:
@@ -511,7 +514,7 @@ def main(argv: list[str] | None = None, *, client: Any = None, storage: CatalogS
     counts: dict[str, int] = {}
     for item in items:
         counts[item["outcome"]] = counts.get(item["outcome"], 0) + 1
-    report = {"tool": "enrich_products", "mode": "apply" if args.apply else "dry_run", "model": enrichment.MODEL,
+    report = {"tool": "enrich_products", "mode": "apply" if args.apply else "dry_run", "model": args.model,
               "target_database": _common.dbname(args.target_dsn), "select": select_mode, "operator_id":
               operator.operator_id, "started_at": started, "finished_at": datetime.now(UTC).isoformat(),
               "counts": counts, "items": items}

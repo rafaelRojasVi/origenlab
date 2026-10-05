@@ -36,12 +36,36 @@ from urllib.parse import urlsplit
 
 from origenlab_api.v2.catalog.keys import PRODUCT_KINDS, refuse_labdelivery
 
-#: Claude Opus 5.5 — the current default model; multilingual extraction at medium effort.
-MODEL = "claude-opus-5-5"
+#: Claude Haiku 4.5 (dated id) — the cost-sensitive default for ~7,000 products (owner ruling);
+#: `--model` overrides it. Haiku 4.5 supports structured outputs, but not adaptive thinking,
+#: `effort` or the server-side refusal fallback, so those are sent only to models that take them.
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+MODEL = DEFAULT_MODEL
 MAX_TOKENS = 16000
 EFFORT = "medium"
 #: Server-side refusal fallback ("default" routes by refusal category); rejected by the Batches API.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+#: Models that take `thinking: {type: "adaptive"}` with `output_config.effort` (claude-api skill).
+_ADAPTIVE_MODELS = ("claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8",
+                    "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6")
+#: Models the skill documents `fallbacks: "default"` for on the Claude API.
+_FALLBACK_MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5")
+_MODEL_ID = re.compile(r"^claude-[a-z0-9-]{1,80}$")
+
+
+def check_model_id(model: str) -> str:
+    """A plausible Claude model id (`claude-…`), or ValueError."""
+    if not _MODEL_ID.match(model or ""):
+        raise ValueError("--model must be a Claude model id such as claude-haiku-4-5-20251001")
+    return model
+
+
+def supports_adaptive_thinking(model: str) -> bool:
+    return model in _ADAPTIVE_MODELS
+
+
+def supports_fallbacks(model: str) -> bool:
+    return model in _FALLBACK_MODELS
 
 MAX_NAME = 160
 MAX_DESCRIPTION = 1200
@@ -188,11 +212,13 @@ OUTPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-def build_request(product: dict[str, Any], datasheet_text: str | None, page_text: str | None) -> dict[str, Any]:
+def build_request(product: dict[str, Any], datasheet_text: str | None, page_text: str | None, *,
+                  model: str = DEFAULT_MODEL) -> dict[str, Any]:
     """The keyword arguments of `client.beta.messages.create` for one product.
 
-    One synchronous Messages request per product, structured output (`output_config.format`),
-    adaptive thinking at medium effort, and the server-side refusal fallback.
+    One synchronous Messages request per product with structured output (`output_config.format`).
+    Adaptive thinking at medium effort and the server-side refusal fallback are added only for
+    models that accept them (not Haiku 4.5, the default).
     """
     datasheet, _ = scrub_commercial_lines(datasheet_text)
     page, _ = scrub_commercial_lines(page_text)
@@ -201,16 +227,21 @@ def build_request(product: dict[str, Any], datasheet_text: str | None, page_text
         content += "\n\nDATASHEET TEXT\n" + datasheet
     if page:
         content += "\n\nMANUFACTURER PAGE TEXT\n" + page
-    return {
-        "model": MODEL,
+    model = check_model_id(model)
+    request: dict[str, Any] = {
+        "model": model,
         "max_tokens": MAX_TOKENS,
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": content}],
-        "thinking": {"type": "adaptive"},
-        "output_config": {"effort": EFFORT, "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
-        "betas": [FALLBACK_BETA],
-        "fallbacks": "default",
+        "output_config": {"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
     }
+    if supports_adaptive_thinking(model):
+        request["thinking"] = {"type": "adaptive"}
+        request["output_config"]["effort"] = EFFORT
+    if supports_fallbacks(model):
+        request["betas"] = [FALLBACK_BETA]
+        request["fallbacks"] = "default"
+    return request
 
 
 def parse_message(message: Any) -> dict[str, Any]:
