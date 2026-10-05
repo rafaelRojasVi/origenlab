@@ -17,8 +17,10 @@ import {
   WRITE_DISABLED_REASON,
   fmtInt,
 } from "../ui";
+import { useAuthSession } from "../../context/AuthSessionContext";
 import { useResource } from "../useResource";
 import { DataHealth } from "./DataHealth";
+import { MailRulesPanel } from "./MailRulesPanel";
 
 const QUEUE_LABEL: Record<string, { label: string; action: string; blocking: boolean }> = {
   canonical_undetermined: { label: "Revisión canónica indeterminada", action: "Anular o reemplazar la revisión duplicada", blocking: true },
@@ -51,12 +53,14 @@ export function blockingCount(queue: { items: WorkQueueItem[]; counts?: Record<s
   return queue.items.filter((i) => i.kind !== "pending_evidence").length;
 }
 
-type Tab = "crm" | "not_imported" | "evidence" | "data";
+type Tab = "crm" | "not_imported" | "evidence" | "data" | "mail_rules";
 
 export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
   const [queue, reloadQueue] = useResource(fetchWorkQueue);
   const [review, reloadReview] = useResource(fetchReview);
   const [tab, setTab] = useState<Tab>("crm");
+  const { session } = useAuthSession();
+  const isAdmin = session.kind === "signed_in" && session.operator.role === "admin";
   return (
     <div className="space-y-3">
       <PageHeader
@@ -81,9 +85,12 @@ export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string
               review.kind === "ready" ? review.data.open_assertions.reduce((n, a) => n + a.count, 0) : undefined,
           },
           { value: "data", label: "Estado de los datos" },
+          ...(isAdmin ? [{ value: "mail_rules" as Tab, label: "Acciones automáticas" }] : []),
         ]}
       />
-      {tab === "data" ? (
+      {tab === "mail_rules" && isAdmin ? (
+        <MailRulesPanel />
+      ) : tab === "data" ? (
         <DataHealth navigate={navigate} />
       ) : tab === "crm" ? (
         <ResourceGate state={queue} reload={reloadQueue} skeleton={<Skeleton rows={5} />}>

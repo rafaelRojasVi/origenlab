@@ -368,6 +368,8 @@ describe("no write path in the CRM workspace", () => {
   //  - the CRM authoring client (crmAuthoringApi.ts) POSTs to CRM authoring commands.
   const DRAFT_CLIENT = "./marketing/marketingApi.ts";
   const CRM_AUTHORING_CLIENT = "./authoring/crmAuthoringApi.ts";
+  //  - the email → cases client (mailRules.ts) POSTs to the two admin-only email-rules commands.
+  const MAIL_RULES_CLIENT = "./mailRules.ts";
 
   it("never issues a non-GET request or references a command route", () => {
     const sources = import.meta.glob(["./**/*.ts", "./**/*.tsx", "!./**/*.test.tsx", "!./**/*.test.ts"], {
@@ -378,7 +380,7 @@ describe("no write path in the CRM workspace", () => {
     expect(Object.keys(sources).length).toBeGreaterThan(5);
     expect(Object.keys(sources)).toContain(DRAFT_CLIENT);
     for (const [f, src] of Object.entries(sources)) {
-      if (f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT) continue;
+      if (f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);
       expect(src, f).not.toMatch(/\/operations\//);
