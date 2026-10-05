@@ -15,7 +15,12 @@ Stdout: counts only. Files in `--out` (mode 600, never inside the repository):
   missing.csv             V1 id, folder, direction, date - no subject, no address.
   missing_message_ids.txt RFC 822 Message-IDs V1 has and comms.message lacks (a Message-ID carries a
                           domain, so it stays out of stdout and out of missing.csv).
-  extra_message_ids.txt   Message-IDs in comms.message since the window that V1 does not have.
+  extra_message_ids.txt   Message-IDs in comms.message that no V1 row of the window carries.
+
+The V2 side is read from `--since` minus 2 days (a Date header and Gmail's internal date can differ),
+while V1 rows start exactly at `--since`. So `extra_in_v2` may include boundary rows: mail that
+arrived in the 2 days before go-live, or whose V1 Date header falls before `--since`. Treat an
+extra as real only if its message arrived after go-live; the rest is margin, not a defect.
 
 Sent from the Gmail web UI: such a message starts as an autosaved draft, and history mode skips
 drafts. If one is never captured it appears as `missing_sent`. V1 has no direction column, only the
@@ -122,6 +127,8 @@ def extra_ids(v1_rows: Iterable[V1Row], v2_ids: set[str]) -> list[str]:
 
 
 def read_v2_ids(conn, since: datetime) -> set[str]:
+    """Normalized Message-IDs of the contacto@ mailbox from `since - 2 days` (a deliberate margin:
+    the V2 window starts early, so extras at the boundary are expected)."""
     with conn.transaction(), conn.cursor() as cur:
         cur.execute("set transaction read only")
         cur.execute(
@@ -188,7 +195,7 @@ def main() -> int:
     write_ids(args.out, "extra_message_ids.txt", extra)
     split = missing_by_direction(missing)
     print(f"v1_rows={len(v1_rows)} " + " ".join(f"{k}={v}" for k, v in sorted({**counts, **split}.items()))
-          + f" extra_in_v2={len(extra)} detail={path.parent}")
+          + f" extra_in_v2={len(extra)} (v2 window starts 2 days before --since; boundary extras are margin) detail={path.parent}")
     return 1 if missing else 0
 
 
