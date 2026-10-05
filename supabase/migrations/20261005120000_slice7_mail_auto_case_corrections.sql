@@ -15,7 +15,9 @@
 --    move out of `won`, `lost` and `abandoned` — "never revived; reopening is a new case". That rule
 --    stays for every ordinary write. The one exception is a correction: a transaction that has set
 --    `origenlab.case_stage_correction` to the case's id may move it from `won` or `lost` back to the
---    exact stage the latest `opportunity.staged` event says it came from, and to nothing else. The
+--    exact stage the latest `opportunity.staged` event says it came from, and to nothing else —
+--    and only when that event is the machine's (`actor_kind = 'worker'`): a case a person closed
+--    is never revived, declaration or not. The
 --    command that does it (`correct_case_stage`, API) clears `closed_at`, `close_reason` and the won
 --    pair in the same UPDATE, so `opportunity_closed_shape` and `opportunity_won_shape` hold, and
 --    writes `opportunity.stage_corrected`. `abandoned` is not correctable here: it is the stage an
@@ -83,6 +85,7 @@ set search_path = pg_catalog
 as $$
 declare
   v_came_from text;
+  v_actor text;
 begin
   if tg_op = 'INSERT' then
     if new.stage <> 'lead' then
@@ -109,7 +112,7 @@ begin
        and coalesce(current_setting('origenlab.case_stage_correction', true), '') = old.id::text
        and new.stage not in ('won', 'lost', 'abandoned')
     then
-      select e.payload ->> 'from_stage' into v_came_from
+      select e.payload ->> 'from_stage', e.actor_kind into v_came_from, v_actor
         from crm.domain_event e
        where e.aggregate_kind = 'opportunity'
          and e.aggregate_id = old.id
@@ -117,6 +120,12 @@ begin
          and e.payload ->> 'to_stage' = old.stage
        order by e.seq desc
        limit 1;
+      if v_actor is distinct from 'worker' then
+        raise exception
+          'crm.opportunity %: only a stage the email rules set (a worker event) is corrected; a person closed this one',
+          old.id
+          using errcode = 'P0001';
+      end if;
       if v_came_from is not null and v_came_from = new.stage then
         return new;
       end if;
@@ -141,6 +150,6 @@ end
 $$;
 
 comment on function crm.opportunity_stage_guard() is
-  'WORKFLOWS.md §1.1 — a case opens at `lead`, moves only along the transition table, and is never revived once terminal; the single exception is a declared correction (origenlab.case_stage_correction = the case id) returning `won`/`lost` to the stage its latest opportunity.staged event came from. SECURITY INVOKER.';
+  'WORKFLOWS.md §1.1 — a case opens at `lead`, moves only along the transition table, and is never revived once terminal; the single exception is a declared correction (origenlab.case_stage_correction = the case id) returning `won`/`lost` to the stage its latest opportunity.staged event came from, when that event is a worker (email rules) event. SECURITY INVOKER.';
 
 reset role;

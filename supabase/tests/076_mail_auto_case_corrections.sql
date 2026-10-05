@@ -12,7 +12,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
-select plan(13);
+select plan(14);
 
 -- ── fixtures ───────────────────────────────────────────────────────────────────────────────
 
@@ -22,7 +22,8 @@ insert into platform.operator (id, auth_user_id, email_norm, display_name, role,
 insert into crm.opportunity (id, title, stage, owner_operator_id) values
   ('76000000-0000-4000-8000-0000000000b1', 'Caso perdido por el sistema', 'lead', '76000000-0000-4000-8000-000000000001'),
   ('76000000-0000-4000-8000-0000000000b2', 'Caso abandonado', 'lead', '76000000-0000-4000-8000-000000000001'),
-  ('76000000-0000-4000-8000-0000000000b3', 'Otro caso', 'lead', '76000000-0000-4000-8000-000000000001');
+  ('76000000-0000-4000-8000-0000000000b3', 'Otro caso', 'lead', '76000000-0000-4000-8000-000000000001'),
+  ('76000000-0000-4000-8000-0000000000b4', 'Caso cerrado por una persona', 'lead', '76000000-0000-4000-8000-000000000001');
 
 update crm.opportunity set stage = 'qualifying' where id = '76000000-0000-4000-8000-0000000000b1';
 update crm.opportunity set stage = 'lost', closed_at = now(), close_reason = 'otro proveedor'
@@ -37,6 +38,12 @@ update crm.opportunity set stage = 'abandoned', closed_at = now(), close_reason 
 insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind) values
   ('opportunity', '76000000-0000-4000-8000-0000000000b2', 1, 'opportunity.staged', 1,
    '{"from_stage": "lead", "to_stage": "abandoned"}'::jsonb, 'worker');
+
+update crm.opportunity set stage = 'lost', closed_at = now(), close_reason = 'el cliente compró a otro'
+ where id = '76000000-0000-4000-8000-0000000000b4';
+insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id) values
+  ('opportunity', '76000000-0000-4000-8000-0000000000b4', 1, 'opportunity.staged', 1,
+   '{"from_stage": "lead", "to_stage": "lost"}'::jsonb, 'operator', '76000000-0000-4000-8000-000000000001');
 
 -- ── 1. vocabulary ──────────────────────────────────────────────────────────────────────────
 
@@ -78,6 +85,9 @@ select lives_ok($$ update crm.opportunity set stage = 'qualifying', closed_at = 
 do $$ begin perform set_config('origenlab.case_stage_correction', '76000000-0000-4000-8000-0000000000b2', true); end $$;
 select throws_ok($$ update crm.opportunity set stage = 'lead', closed_at = null, close_reason = null where id = '76000000-0000-4000-8000-0000000000b2' $$,
   'P0001', null, 'stage: abandoned is never corrected — it is what an undo uses to discard a case');
+do $$ begin perform set_config('origenlab.case_stage_correction', '76000000-0000-4000-8000-0000000000b4', true); end $$;
+select throws_ok($$ update crm.opportunity set stage = 'lead', closed_at = null, close_reason = null where id = '76000000-0000-4000-8000-0000000000b4' $$,
+  'P0001', null, 'stage: a case a person closed is never revived, even with the declaration');
 do $$ begin perform set_config('origenlab.case_stage_correction', '', true); end $$;
 
 select is((select stage from crm.opportunity where id = '76000000-0000-4000-8000-0000000000b1'), 'qualifying',
