@@ -129,7 +129,32 @@ export function notifyIfSessionRefused(status: number): void {
   }
 }
 
-export async function fetchJsonGet<T>(url: string): Promise<T> {
+/**
+ * Reads shared while in flight. Two parts of the dashboard asking for the same URL at the same
+ * time (four pages read the pipeline; a page and its drawer often overlap) make one request: the
+ * API is ~180 ms per round trip from its database, and every request also re-checks the
+ * session. The first caller gets the parsed answer, every later one its own copy, so no caller
+ * can change what another sees.
+ *
+ * Sharing never crosses a write: {@link noteWrite} (called around every command and whenever the
+ * remembered answers are dropped) ends it, so a read started after a command never reuses an
+ * answer requested before it. `getWriteGeneration` lets `useResource` apply the same rule to the
+ * answers it remembers.
+ */
+const inFlightGets = new Map<string, Promise<unknown>>();
+let writeGeneration = 0;
+
+export function getWriteGeneration(): number {
+  return writeGeneration;
+}
+
+/** A write began or ended (or the session changed): no later read reuses an earlier answer. */
+export function noteWrite(): void {
+  writeGeneration += 1;
+  inFlightGets.clear();
+}
+
+async function requestJson(url: string): Promise<unknown> {
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
@@ -140,7 +165,21 @@ export async function fetchJsonGet<T>(url: string): Promise<T> {
     const text = await res.text().catch(() => "");
     throw new OperatorApiError(text || res.statusText || `HTTP ${res.status}`, res.status);
   }
-  return res.json() as Promise<T>;
+  return res.json();
+}
+
+export async function fetchJsonGet<T>(url: string): Promise<T> {
+  const pending = inFlightGets.get(url);
+  if (pending !== undefined) {
+    return structuredClone(await pending) as T;
+  }
+  const request = requestJson(url);
+  inFlightGets.set(url, request);
+  const settle = () => {
+    if (inFlightGets.get(url) === request) inFlightGets.delete(url);
+  };
+  request.then(settle, settle);
+  return (await request) as T;
 }
 
 export function fetchHealth(): Promise<HealthResponse> {

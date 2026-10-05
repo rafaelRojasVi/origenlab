@@ -1,7 +1,8 @@
 import "@testing-library/jest-dom";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { noteWrite } from "../api/operatorClient";
 import { OperatorApiError } from "../api/operatorClient";
 import type { AuthSessionState } from "../api/authClient";
 import { AuthSessionContext } from "../context/AuthSessionContext";
@@ -48,12 +49,32 @@ function controllableLoader() {
   };
 }
 
-function Probe({ load }: { load: () => Promise<string> }) {
-  const [state] = useResource(load);
-  return <p data-testid="probe">{state.kind === "ready" ? `ready:${state.data}` : state.kind}</p>;
+function Probe({ load, freshMs = 0 }: { load: () => Promise<string>; freshMs?: number }) {
+  const [state, reload] = useResource(load, [], { freshMs });
+  return (
+    <>
+      <p data-testid="probe">{state.kind === "ready" ? `ready:${state.data}` : state.kind}</p>
+      <button type="button" onClick={reload}>
+        reload
+      </button>
+    </>
+  );
 }
 
-afterEach(() => clearResourceCache());
+/** A loader that counts its calls and answers `v<n>` at once. */
+function countingLoader() {
+  const calls = { n: 0 };
+  const load = () => {
+    calls.n += 1;
+    return Promise.resolve(`v${calls.n}`);
+  };
+  return { load, calls };
+}
+
+afterEach(() => {
+  clearResourceCache();
+  vi.useRealTimers();
+});
 
 describe("useResource page memory", () => {
   it("shows the last loaded data at once when the page is opened again, then refreshes it", async () => {
@@ -125,5 +146,86 @@ describe("useResource page memory", () => {
     loader.reset();
     render(withSession(signedIn("op-a"), <Probe load={loader.load} />));
     expect(screen.getByTestId("probe")).toHaveTextContent("loading");
+  });
+});
+
+describe("useResource freshness window", () => {
+  it("shows a recent answer again without asking the API", async () => {
+    const loader = countingLoader();
+    const first = render(withSession(signedIn("op-a"), <Probe load={loader.load} freshMs={30_000} />));
+    await act(async () => {});
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:v1");
+    first.unmount();
+
+    render(withSession(signedIn("op-a"), <Probe load={loader.load} freshMs={30_000} />));
+    await act(async () => {});
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:v1");
+    expect(loader.calls.n).toBe(1);
+  });
+
+  it("asks again once the window has passed, showing the old answer meanwhile", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const loader = countingLoader();
+    const first = render(withSession(signedIn("op-a"), <Probe load={loader.load} freshMs={30_000} />));
+    await act(async () => {});
+    first.unmount();
+
+    vi.setSystemTime(Date.now() + 30_001);
+    render(withSession(signedIn("op-a"), <Probe load={loader.load} freshMs={30_000} />));
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:v1");
+    await act(async () => {});
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:v2");
+    expect(loader.calls.n).toBe(2);
+  });
+
+  it("uses the default window of 30 seconds when the read does not set one", async () => {
+    const loader = countingLoader();
+    function DefaultProbe() {
+      const [state] = useResource(loader.load);
+      return <p data-testid="probe">{state.kind === "ready" ? `ready:${state.data}` : state.kind}</p>;
+    }
+    const first = render(withSession(signedIn("op-a"), <DefaultProbe />));
+    await act(async () => {});
+    first.unmount();
+    render(withSession(signedIn("op-a"), <DefaultProbe />));
+    await act(async () => {});
+    expect(loader.calls.n).toBe(1);
+  });
+
+  it("reload always asks, inside the window too", async () => {
+    const loader = countingLoader();
+    render(withSession(signedIn("op-a"), <Probe load={loader.load} freshMs={30_000} />));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "reload" }));
+    await act(async () => {});
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:v2");
+    expect(loader.calls.n).toBe(2);
+  });
+
+  it("a write ends every window: the next visit asks again", async () => {
+    const loader = countingLoader();
+    const first = render(withSession(signedIn("op-a"), <Probe load={loader.load} freshMs={30_000} />));
+    await act(async () => {});
+    first.unmount();
+
+    noteWrite();
+    render(withSession(signedIn("op-a"), <Probe load={loader.load} freshMs={30_000} />));
+    await act(async () => {});
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:v2");
+    expect(loader.calls.n).toBe(2);
+  });
+
+  it("an answer requested before a write is never treated as fresh", async () => {
+    const loader = controllableLoader();
+    const first = render(withSession(signedIn("op-a"), <Probe load={loader.load} freshMs={30_000} />));
+    noteWrite(); // a command lands while the read is in flight
+    await act(async () => loader.pending.resolve("before-write"));
+    first.unmount();
+
+    loader.reset();
+    render(withSession(signedIn("op-a"), <Probe load={loader.load} freshMs={30_000} />));
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:before-write");
+    await act(async () => loader.pending.resolve("after-write"));
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:after-write");
   });
 });

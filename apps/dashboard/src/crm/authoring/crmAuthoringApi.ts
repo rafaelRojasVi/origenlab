@@ -5,7 +5,7 @@
  * `src/test/noWritePolicy.test.ts`. No other dashboard module may name these paths.
  */
 
-import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
+import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, noteWrite, operatorApiUrl } from "../../api/operatorClient";
 
 /* ── command paths ─────────────────────────────────────────────────────── */
 
@@ -290,6 +290,16 @@ function newIdempotencyKey(): string {
 }
 
 async function postCommand<T>(path: string, body: unknown, idempotencyKey: string): Promise<T> {
+  // A write: no read that starts from here on may reuse an answer requested before it.
+  noteWrite();
+  try {
+    return await sendCommand<T>(path, body, idempotencyKey);
+  } finally {
+    noteWrite();
+  }
+}
+
+async function sendCommand<T>(path: string, body: unknown, idempotencyKey: string): Promise<T> {
   const res = await fetch(operatorApiUrl(path), {
     method: "POST",
     credentials: "include",
