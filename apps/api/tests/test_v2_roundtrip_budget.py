@@ -57,15 +57,21 @@ SNAPSHOT = Path(__file__).parent / "fixtures" / "v2_roundtrip_reads.json"
 
 #: Query-phase round trips per request, measured with a warm pool. May only go down.
 BUDGET: dict[str, int] = {
-    "session_check": 5,
-    "workspace_overview": 15,
-    "workspace_pipeline": 10,
-    "workspace_marketing": 25,
-    "workspace_marketing_audience": 33,
-    "workspace_equipment_interests": 24,
-    "cockpit_opportunities_page": 11,
-    "contacts_page": 11,
-    "crm_create_person": 13,
+    # name: round trips      # before the latency work (afb6d7d8), same seed and app
+    "session_check": 1,                     # 5
+    "workspace_overview": 2,                # 15
+    "workspace_pipeline": 2,                # 10
+    "workspace_marketing": 2,               # 25
+    "workspace_marketing_audience": 2,      # 33
+    "workspace_equipment_interests": 2,     # 24
+    "cockpit_opportunities_page": 2,        # 11
+    "contacts_page": 2,                     # 11
+    "crm_create_person": 8,                 # 13
+    "marketing_campaign_thumbnail": 2,      # 14
+    "workspace_person_suggestions": 5,      # 12 (and it now carries the People count)
+    "cockpit_kpis": 2,                      # 17
+    "cockpit_work_queue": 2,                # 11
+    "organizations_page": 2,                # 12
 }
 
 #: What each budget line requests.
@@ -80,6 +86,13 @@ REQUESTS: dict[str, tuple[str, str, dict[str, Any] | None]] = {
     "contacts_page": ("GET", "/v2/contacts?limit=20", None),
     "crm_create_person": ("POST", "/v2/commands/create-person",
                           {"display_name": "Persona Medida Ficticia", "note": "Medición de latencia"}),
+    # Beyond the dashboard's heaviest pages: a Marketing thumbnail (one per card), the People
+    # suggestions, the cockpit KPIs and work queue, and the organizations list with its facets.
+    "marketing_campaign_thumbnail": ("GET", "/v2/workspace/marketing/campaigns/{camp_b}", None),
+    "workspace_person_suggestions": ("GET", "/v2/workspace/person-suggestions", None),
+    "cockpit_kpis": ("GET", "/v2/cockpit/kpis", None),
+    "cockpit_work_queue": ("GET", "/v2/cockpit/work-queue?limit=50", None),
+    "organizations_page": ("GET", "/v2/organizations?limit=20", None),
 }
 
 #: The reads whose answers must not move when their round trips do.
@@ -356,8 +369,9 @@ class SignedInApp:
         get_settings.cache_clear()
 
 
-def measure(client: TestClient, proxy: RoundTripProxy, name: str) -> tuple[Measurement, Any]:
+def measure(client: TestClient, proxy: RoundTripProxy, name: str, world: dict[str, str]) -> tuple[Measurement, Any]:
     method, path, body = REQUESTS[name]
+    path = path.format(**world)
     headers = {"Idempotency-Key": f"roundtrip-{uuid.uuid4().hex}"} if method == "POST" else {}
     with proxy.measure() as m:
         response = client.request(method, path, json=body, headers=headers)
@@ -418,10 +432,14 @@ def test_heavy_reads_answer_what_they_answered_before(monkeypatch, reads_db, rea
 # ----------------------------------------------------------------------------- the budget
 
 
+def test_every_request_has_a_budget() -> None:
+    assert set(BUDGET) == set(REQUESTS)
+
+
 @pytest.mark.parametrize("name", list(BUDGET))
 def test_round_trips_stay_within_budget(name, monkeypatch, budget_db, budget_world, proxy) -> None:
     with SignedInApp(monkeypatch, budget_db, proxy, budget_world["profile"]) as client:
-        m, response = measure(client, proxy, name)
+        m, response = measure(client, proxy, name, budget_world)
     assert response.status_code == 200, response.text
     report = os.environ.get("ORIGENLAB_V2_RTT_REPORT")
     if report:

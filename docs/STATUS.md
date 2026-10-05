@@ -27,7 +27,7 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
+Last verified: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed; §2.7.49 added 2026-10-05 from its branch's own validation, nothing deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
 hosting and GitHub facts of §2.4, §2.7.40, §2.8, §3.1 and §3.3 — read from the GitHub API, the
 public DNS and HTTP edge, the repository, and (later the same day) the Render API, the FastAPI
 Cloud CLI and the Cloudflare DNS table, all read-only, with nothing deployed, provisioned,
@@ -1831,6 +1831,20 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Schema | none: `organization.confirmed` and `contact_point.updated` were already in `domain_event_type_check` |
 | Evidence | after merging `main` (#633): `apps/api/scripts/validate.sh` with disposable-cluster DSNs exported **3418 passed**, 120 skipped, 0 failed (skips: V1 Alembic-head `ORIGENLAB_TEST_POSTGRES_URL` tests and the TLS-server tests; no V2 DSN skip); dashboard `npm run validate` **536 passed** (44 files) + build; proxy `npm run validate` **345 passed** (5 files); public-repo hygiene passed; no customer name in the branch diff; gitleaks not installed locally (CI runs it) |
 | Not done | Worker not deployed (the two new proxy paths); the suggestions file not uploaded as a Render secret file and `ORIGENLAB_V2_ORG_SUGGESTIONS_FILE` unset, API not redeployed; the owner's manual check (confirm two institutions, apply suggestions to two, create two people) not run |
+
+### 2.7.49 V2 latency: one database round trip per read, 2026-10-05 — built, not deployed
+
+| | |
+|---|---|
+| Why | The Render API (Oregon) reaches Supabase (São Paulo) through the Supavisor session pooler: ≈180 ms per database round trip, and each `/v2` request made 10–33 of them (measured below), one after another. Query execution was never the cost |
+| Measured | `apps/api/tests/test_v2_roundtrip_budget.py` counts the round trips of each request on the wire (a loopback proxy parsing the PostgreSQL frontend protocol: simple queries, Syncs, Flushes not after a Sync), through the real app signed in with a shared-account profile, against a disposable cluster with a synthetic seed. The budgets may only go down. A normalised snapshot of 15 read answers, recorded before the change, proves the answers did not move (one field added, below) |
+| Pool | no `check=` (an empty query before every checkout); a connection that died idle is detected on its first round trip and that round trip — and nothing after it — is replayed once on a fresh connection. `min_size == max_size == ORIGENLAB_V2_POOL_SIZE` (default 4), so it never shrinks; TCP keepalives; `prepare_threshold=None` (auto-prepare cost a round trip, then `DEALLOCATE ALL` on rollbacks) |
+| Reads | `v2/read_transaction.py`: `begin transaction read only` + `set local statement_timeout` travel with the first statement; independent statements and the final `rollback` share one pipeline. Still refused by the server on a write (25006), still transaction-local. Session check, overview, pipeline, marketing, audience inputs (+ holds, one transaction), cockpit KPIs / work queue / paged lists, contacts / organizations pages, campaign thumbnails: one round trip each. `current_database()` read from the connection |
+| API change | `GET /v2/workspace/person-suggestions` also answers `registered_persons` (the overview's `persons` count); additive, no proxy change |
+| Dashboard | `useResource`: 30 s freshness window (per-call `freshMs`; `reload()` always asks); `fetchJsonGet` shares one in-flight request per URL; any command ends both (`noteWrite`). People takes its count from the suggestions answer, no longer the overview. Marketing thumbnails are read when their card nears the viewport (IntersectionObserver, loads at once without it) |
+| Round trips, before → after | session check 5 → 1 · overview 15 → 2 · pipeline 10 → 2 · marketing 25 → 2 · marketing/audience 33 → 2 · equipment-interests 24 → 2 · cockpit opportunities page 11 → 2 · contacts page 11 → 2 · create-person 13 → 8 · campaign thumbnail 14 → 2 · person-suggestions 12 → 5 · cockpit KPIs 17 → 2 · work queue 11 → 2 · organizations page 12 → 2 (each figure includes the session check). At ≈180 ms each, a page read goes from 1.8–5.9 s of waiting to ≈0.36 s |
+| Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs exported **3455 passed**, 120 skipped (the same 120 as §2.7.48: V1 Alembic-head and TLS-server tests; no V2 DSN skip), 0 failed — including `test_v2_roundtrip_budget.py` (14 budget lines + the 15-answer snapshot), `test_v2_read_transaction.py` and the pool retry tests (fakes, and a real `pg_terminate_backend`); dashboard `npm run validate` **550 passed** (45 files) + build; public-repo hygiene passed; the dashboard proxy is unchanged |
+| Not done | Not deployed. Real latency to be read after deploy from Render's `INFO: METHOD /path status Nms` lines (§2.7.45). Not changed: the command write path (BEGIN and `set local` are still two round trips; −2 per command is possible) and the session check sharing a checkout with the page read (each is one round trip now, so a shared checkout saves nothing, and one shared round trip would read page data before the operator is authorised) |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 
