@@ -21,7 +21,7 @@ import unicodedata
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from origenlab_api.v2.catalog.keys import refuse_labdelivery
 
@@ -41,6 +41,8 @@ class PlanItem(TypedDict):
     action: Action
     key: str
     fields: dict[str, Any]
+    #: Optional provenance kept in the plan only, never written: {"input": file_sha256, "ref": row reference}.
+    source: NotRequired[dict[str, Any]]
 
 
 class PlanInput(TypedDict):
@@ -55,7 +57,7 @@ class Plan(TypedDict, total=False):
     inputs: list[PlanInput]
     items: list[PlanItem]
     counts: dict[str, int]
-    conflicts: list[str]
+    conflicts: list[dict[str, Any]]
 
 
 # ------------------------------------------------------------------ hashing and serialisation
@@ -128,29 +130,38 @@ def norm_name(name: str) -> str:
 
 # ------------------------------------------------------------------ building and loading
 
+def _item_body(item: Mapping[str, Any]) -> str:
+    return canonical_json({"action": item["action"], "key": item["key"], "fields": item["fields"]})
+
+
 def build_plan(importer: str, inputs: Sequence[PlanInput], items: Iterable[PlanItem],
                extra_counts: Mapping[str, int] | None = None) -> Plan:
     """Order the items by action, merge exact duplicates, keep the first of conflicting ones.
 
-    Two items with one key and the same fields are one item (`duplicates_merged`). Two with one
-    key and different fields keep the first in input order and are reported by key only
-    (`conflicting_duplicates`, `conflicts`) — the values never enter the report.
+    Two items with one key and the same action and fields are one item (`duplicates_merged`).
+    Two with one key and different fields keep the first in input order; `conflicts` records,
+    per key, the `source` (input file hash and row reference) that was kept and those dropped —
+    never the values. Importers plan their inputs in file-hash order, so the winner does not
+    depend on the order of the command-line flags.
     """
     seen: dict[str, PlanItem] = {}
     merged = 0
-    conflicts: list[str] = []
+    conflicts: dict[str, dict[str, Any]] = {}
     for item in items:
         if item["action"] not in ACTION_ORDER:
             raise PlanRefused(f"unknown plan action {item['action']!r}")
         key = item["key"]
         if key in seen:
-            if canonical_json(seen[key]) == canonical_json(item):
+            if _item_body(seen[key]) == _item_body(item):
                 merged += 1
             else:
-                if key not in conflicts:
-                    conflicts.append(key)
+                entry = conflicts.setdefault(key, {"key": key, "kept": seen[key].get("source"), "dropped": []})
+                entry["dropped"].append(item.get("source"))
             continue
-        seen[key] = {"action": item["action"], "key": key, "fields": dict(item["fields"])}
+        kept: PlanItem = {"action": item["action"], "key": key, "fields": dict(item["fields"])}
+        if item.get("source") is not None:
+            kept["source"] = dict(item["source"])  # type: ignore[typeddict-unknown-key]
+        seen[key] = kept
     ordered = sorted(seen.values(), key=lambda i: (ACTION_ORDER.index(i["action"]), i["key"]))
     counts: dict[str, int] = {a: 0 for a in ACTION_ORDER}
     for item in ordered:
@@ -161,7 +172,7 @@ def build_plan(importer: str, inputs: Sequence[PlanInput], items: Iterable[PlanI
     for k, v in (extra_counts or {}).items():
         counts[k] = int(v)
     plan: Plan = {"importer": importer, "version": PLAN_VERSION, "inputs": list(inputs), "items": ordered,
-                  "counts": counts, "conflicts": sorted(conflicts)}
+                  "counts": counts, "conflicts": [conflicts[k] for k in sorted(conflicts)]}
     # Round-trip through JSON so the plan in memory is exactly the plan on disk (Decimal → str).
     return json.loads(plan_bytes(plan))
 
@@ -208,6 +219,12 @@ def refuse_labdelivery_in_plan(plan: Plan) -> None:
 
 
 # ------------------------------------------------------------------ verify
+
+#: Verify statuses. Only `missing` and `different` are mismatches (exit 13): `present_different`
+#: is a row this plan did not write that already held other values (an operator's terms, an earlier
+#: observation) — apply reports it the same way and never overwrites it — and `superseded_later`
+#: is a value this plan wrote that someone set again afterwards.
+MISMATCH_STATUSES = ("missing", "different")
 
 def _same(planned: Any, actual: Any) -> bool:
     if planned is None or actual is None:

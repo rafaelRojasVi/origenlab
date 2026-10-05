@@ -13,8 +13,29 @@ Subcommands and exit codes (the shape of `hosted_data_load.py`):
     rollback  --target-dsn --admin-dsn --plan --plan-sha256 --out --confirm-delete-loaded-rows
               [--allow-cleanroom-production]
 
-    0 done · 2 bad arguments · 11 refused (nothing written) · 12 apply/rollback failed (rolled back)
+    0 done · 2 bad arguments · 11 refused · 12 apply/rollback failed (rolled back)
     · 13 verify found a missing or different row
+
+    A refusal before the manifest is written writes nothing. Once the manifest has committed, a
+    refusal (11) or failure (12) of the catalog transaction rolls back every catalog row and event
+    but **the manifest stays**: the message and `apply-refused.json` / `apply-failed.json` say so
+    (`manifest_kept`); a rerun reuses it and rollback removes it. A connection or query error
+    outside the apply and rollback transactions (operator lookup, manifest, preflight, verify) is
+    a refusal (11) reported by error class only.
+
+**Outcomes and statuses.** apply reports each item as `inserted`, `already_present`,
+`present_different` (a row this plan did not write already holds other values — an operator's
+supplier terms, an earlier observation under the same key; never overwritten) or
+`kept_later_value` (a cost parameter this plan set was set again later; never reverted). verify
+uses the same words — `present`, `present_different`, `superseded_later` — so the two agree, and
+exits 13 only for `missing` or `different` (a row this plan wrote that no longer says what it
+wrote). A rerun of apply therefore never fights an operator, and verify never fails forever on a
+row the import was not allowed to change.
+
+**The runtime login is proven, not assumed.** Before the manifest and again inside the catalog
+transaction, `--target-dsn` must be session and current user `origenlab_api` with no elevated
+attribute and no membership in owner, migrator, `postgres` or any elevated role (the probe of
+`v2/remote_database.py`, 7fab57eb); an admin DSN given as `--target-dsn` is refused (11).
 
 **Targets.** Every DSN must name a literal loopback IP (`v2/identity.py:is_loopback_dsn` and
 `settings.assert_v2_target_is_local`; a host *name*, `localhost` included, is refused) — so a
@@ -33,8 +54,9 @@ plan_sha256`) in its own short transaction first, because the runtime role holds
 a failed apply, reuses it. Its `source_record.migration_manifest_recorded` event is appended in the
 runtime transaction, with the rows it describes. Rollback runs as `origenlab_owner`.
 
-**Plans never carry local paths**, and `--out` is refused inside this repository (it is public).
-Nothing here prints a value from a plan: only counts, statuses and item keys.
+**Plans never carry local paths**, and `--out` is refused inside this repository or any other git
+checkout. Nothing here prints a value from a plan or a local path: only counts, statuses, item keys
+and file basenames.
 """
 from __future__ import annotations
 
@@ -54,6 +76,7 @@ from origenlab_api.settings import V2TargetRefused, assert_v2_target_is_local
 from origenlab_api.v2.catalog import importing
 from origenlab_api.v2.catalog.keys import LabdeliveryRefused
 from origenlab_api.v2.identity import OperatorIdentity, is_loopback_dsn
+from origenlab_api.v2.remote_database import PRIVILEGED_ROLES
 
 import _actions
 
@@ -69,6 +92,7 @@ CLEANROOM_DB = "origenlab_clean"
 ADVISORY_LOCK_KEY = int.from_bytes(hashlib.sha256(b"origenlab:catalog_import").digest()[:8], "big", signed=True)
 #: Operators who may load catalog data: the roles the catalog commands accept (`Deciding`).
 WRITING_ROLES = ("sales", "admin")
+RUNTIME_ROLE = "origenlab_api"
 _SECRET_IN_URI = re.compile(r"(://[^:/@\s]+):[^@\s]*@")
 
 
@@ -78,6 +102,10 @@ class Refused(Exception):
 
 def redact(text: str) -> str:
     return _SECRET_IN_URI.sub(r"\1:***@", text)
+
+
+def _basename(exc: OSError) -> str:
+    return Path(exc.filename).name if exc.filename else "an input"
 
 
 def say(value: Any) -> None:
@@ -129,11 +157,17 @@ def writable_mode(target_dsn: str, allow_cleanroom: bool) -> str:
 
 # ------------------------------------------------------------------ output (outside the repository)
 
+def _git_checkout(path: Path) -> bool:
+    """Whether `path` or any ancestor holds a `.git` (a repository or a worktree)."""
+    return any((p / ".git").exists() for p in (path, *path.parents))
+
+
 def prepare_out(out: Path) -> Path:
+    """The output directory, created 0700 — never inside this or any other git checkout."""
     resolved = Path(out).expanduser().resolve()
     repo = REPO.resolve()
-    if resolved == repo or repo in resolved.parents:
-        raise Refused(f"--out {resolved} is inside the repository; reports and plans hold private data")
+    if resolved == repo or repo in resolved.parents or _git_checkout(resolved):
+        raise Refused(f"--out {resolved.name!r} is inside a git checkout; reports and plans hold private data")
     resolved.mkdir(parents=True, exist_ok=True, mode=0o700)
     return resolved
 
@@ -143,7 +177,7 @@ def write_new(directory: Path, name: str, data: bytes) -> Path:
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
-        raise Refused(f"{path} exists; every plan is written to a new place") from None
+        raise Refused(f"{path.name} exists in --out; every plan is written to a new place") from None
     with os.fdopen(fd, "wb") as fh:
         fh.write(data)
     return path
@@ -179,6 +213,39 @@ def _assert_reached(cur: Any, dsn: str, mode: str | None) -> None:
         raise Refused(f"{reached!r} is not a disposable database")
     if mode == "cleanroom" and reached != CLEANROOM_DB:
         raise Refused(f"{reached!r} is not the clean room")
+
+
+_RUNTIME_PROBE = """
+select current_user::text, session_user::text,
+       r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.rolreplication,
+       array(select m.rolname::text from pg_roles m
+              where m.oid <> r.oid and pg_has_role(current_user, m.oid, 'MEMBER')
+                and (m.rolname = any(%s::text[]) or m.rolsuper or m.rolbypassrls
+                     or m.rolcreaterole or m.rolcreatedb or m.rolreplication)
+              order by 1)
+  from pg_roles r where r.rolname = current_user
+"""
+
+
+def assert_runtime_login(cur: Any) -> None:
+    """`--target-dsn` is the restricted runtime login, as `v2/remote_database.py` proves it (7fab57eb).
+
+    Session and current user `origenlab_api`, no elevated attribute, and no membership in the
+    owner, migrator or `postgres` roles or in any role holding an elevated attribute — otherwise
+    the grants and RLS the import is meant to run under would not be the ones it runs under.
+    """
+    row = cur.execute(_RUNTIME_PROBE, (list(PRIVILEGED_ROLES),)).fetchone()
+    if row is None:
+        raise Refused("--target-dsn: the session role is not visible in pg_roles")
+    current, session, *attributes, memberships = row
+    if current != RUNTIME_ROLE or session != RUNTIME_ROLE:
+        raise Refused(f"--target-dsn must log in as {RUNTIME_ROLE}, not {session!r} (acting as {current!r})")
+    held = [name for name, value in zip(("SUPERUSER", "BYPASSRLS", "CREATEROLE", "CREATEDB", "REPLICATION"),
+                                        attributes, strict=True) if value]
+    if held:
+        raise Refused(f"--target-dsn: {RUNTIME_ROLE} holds {', '.join(held)}")
+    if memberships:
+        raise Refused(f"--target-dsn: {RUNTIME_ROLE} is a member of {', '.join(memberships)}")
 
 
 def read_operator(admin_dsn: str, email: str, mode: str) -> OperatorIdentity:
@@ -231,7 +298,7 @@ def find_manifest(cur: Any, plan_sha: str) -> str | None:
 # ------------------------------------------------------------------ the subcommands
 
 def _load(args: argparse.Namespace, importer: str) -> tuple[importing.Plan, str]:
-    data = Path(args.plan).read_bytes()
+    data = Path(args.plan).read_bytes()  # an OSError is reported by basename in main()
     try:
         plan = importing.load_plan(data, args.plan_sha256, importer=importer)
         importing.refuse_labdelivery_in_plan(plan)
@@ -243,12 +310,14 @@ def _load(args: argparse.Namespace, importer: str) -> tuple[importing.Plan, str]
 
 
 def _counts(results: Iterable[tuple[str, str]]) -> dict[str, Any]:
+    """Outcomes per action: inserted, already_present, present_different, kept_later_value."""
     by_action: dict[str, dict[str, int]] = {}
     for action, outcome in results:
-        per = by_action.setdefault(action, {"inserted": 0, "already_present": 0})
-        per[outcome] += 1
-    return {"inserted": sum(v["inserted"] for v in by_action.values()),
-            "already_present": sum(v["already_present"] for v in by_action.values()),
+        per = by_action.setdefault(action, {})
+        per[outcome] = per.get(outcome, 0) + 1
+    total = lambda outcome: sum(v.get(outcome, 0) for v in by_action.values())  # noqa: E731
+    return {"inserted": total("inserted"), "already_present": total("already_present"),
+            "present_different": total("present_different"), "kept_later_value": total("kept_later_value"),
             "by_action": by_action}
 
 
@@ -265,6 +334,7 @@ def cmd_apply(args: argparse.Namespace, importer: str, print_keys: bool) -> int:
     with _connect(args.target_dsn, options="-c default_transaction_read_only=on") as conn:
         cur = conn.cursor()
         _assert_reached(cur, args.target_dsn, mode)
+        assert_runtime_login(cur)
         _actions.preflight(cur, plan)
         conn.rollback()
 
@@ -276,6 +346,7 @@ def cmd_apply(args: argparse.Namespace, importer: str, print_keys: bool) -> int:
         with _connect(args.target_dsn) as conn:
             cur = conn.cursor()
             _assert_reached(cur, args.target_dsn, mode)
+            assert_runtime_login(cur)
             cur.execute("set local statement_timeout = '30min'")
             cur.execute("set local lock_timeout = '30s'")
             cur.execute("select pg_advisory_xact_lock(%s)", (ADVISORY_LOCK_KEY,))
@@ -286,16 +357,24 @@ def cmd_apply(args: argparse.Namespace, importer: str, print_keys: bool) -> int:
                 keys.append({"key": item["key"], "outcome": outcome})
             events = ctx.events + _actions.record_manifest_event(ctx, plan, plan_sha)
             conn.commit()
-    except _actions.ImportRefused as exc:
-        return refuse(str(exc))
+    except (Refused, _actions.ImportRefused) as exc:
+        # The manifest committed before this transaction: say so, and say how it is reused or removed.
+        write_report(out, "apply-refused.json", {"refused": str(exc), "plan_sha256": plan_sha,
+                                                 "manifest_source_record_id": manifest_id, "manifest_kept": True,
+                                                 "exit_code": EXIT_REFUSED})
+        print(f"refused (catalog rows rolled back; manifest {manifest_id} stays — a rerun reuses it, "
+              f"rollback removes it): {redact(str(exc))}", file=sys.stderr)
+        return EXIT_REFUSED
     except Exception as exc:  # noqa: BLE001 - reported by class and SQLSTATE only, never by message
         sqlstate = getattr(getattr(exc, "diag", None), "sqlstate", None) or getattr(exc, "sqlstate", None)
         constraint = getattr(getattr(exc, "diag", None), "constraint_name", None)
         write_report(out, "apply-failed.json", {"error": type(exc).__name__, "sqlstate": sqlstate,
                                                 "constraint": constraint, "plan_sha256": plan_sha,
-                                                "manifest_source_record_id": manifest_id})
-        print(f"apply failed and was rolled back: {type(exc).__name__} sqlstate={sqlstate} "
-              f"constraint={constraint}", file=sys.stderr)
+                                                "manifest_source_record_id": manifest_id, "manifest_kept": True,
+                                                "exit_code": EXIT_APPLY_FAILED})
+        print(f"apply failed; catalog rows rolled back, manifest {manifest_id} stays (a rerun reuses it, "
+              f"rollback removes it): {type(exc).__name__} sqlstate={sqlstate} constraint={constraint}",
+              file=sys.stderr)
         return EXIT_APPLY_FAILED
 
     report = {"importer": importer, "plan_sha256": plan_sha, "target_database": dbname(args.target_dsn),
@@ -335,10 +414,12 @@ def cmd_verify(args: argparse.Namespace, importer: str, print_keys: bool) -> int
         conn.rollback()
     counts = _status_counts(rows)
     mismatched = [{"action": r["action"], "key": r["key"], "status": r["status"], "fields": r["diffs"]}
-                  for r in rows if r["status"] != "present"]
+                  for r in rows if r["status"] in importing.MISMATCH_STATUSES]
+    noted = [{"action": r["action"], "key": r["key"], "status": r["status"], "fields": r["diffs"]}
+             for r in rows if r["status"] not in importing.MISMATCH_STATUSES and r["status"] != "present"]
     write_report(out, "verify-report.json", {"importer": importer, "plan_sha256": plan_sha,
                                              "target_database": dbname(args.target_dsn), "counts": counts,
-                                             "mismatched": mismatched,
+                                             "mismatched": mismatched, "not_written_by_this_plan": noted,
                                              "checked_at": datetime.now(UTC).isoformat()})
     summary: dict[str, Any] = {"importer": importer, "plan_sha256": plan_sha, "counts": counts,
                                "mismatched_keys": [m["key"] for m in mismatched][:50]}
@@ -413,17 +494,19 @@ def _plan_and_write(args: argparse.Namespace, importer: str, make_plan: Callable
                     importing.Plan], print_keys: bool) -> int:
     out = prepare_out(args.out)
     if (out / "plan.json").exists():
-        raise Refused(f"{out / 'plan.json'} exists; every plan is written to a new place")
+        raise Refused("plan.json exists in --out; every plan is written to a new place")
     try:
         plan = make_plan(args)
         importing.refuse_labdelivery_in_plan(plan)
     except LabdeliveryRefused as exc:
         raise Refused(str(exc)) from None
-    except (ValueError, OSError) as exc:
+    except OSError as exc:
+        raise Refused(f"cannot read {_basename(exc)}: {exc.strerror or type(exc).__name__}") from None
+    except ValueError as exc:
         raise Refused(f"cannot plan: {exc}") from None
     data = importing.plan_bytes(plan)
     path = write_new(out, "plan.json", data)
-    summary: dict[str, Any] = {"importer": importer, "plan": str(path), "plan_sha256": importing.sha256_bytes(data),
+    summary: dict[str, Any] = {"importer": importer, "plan": path.name, "plan_sha256": importing.sha256_bytes(data),
                                "counts": plan["counts"]}
     if print_keys:
         summary["keys"] = [i["key"] for i in plan["items"]]
@@ -465,6 +548,8 @@ def main(argv: list[str] | None, *, importer: str, description: str,
     p.add_argument("--allow-cleanroom-production", action="store_true")
 
     args = ap.parse_args(argv)
+    import psycopg
+
     try:
         if args.command == "plan":
             return _plan_and_write(args, importer, make_plan, print_keys)
@@ -475,3 +560,11 @@ def main(argv: list[str] | None, *, importer: str, description: str,
         return cmd_rollback(args, importer, print_keys)
     except (Refused, _actions.ImportRefused) as exc:
         return refuse(str(exc))
+    except psycopg.Error as exc:
+        # A connection or query outside the apply/rollback transactions (operator, manifest,
+        # preflight, verify): nothing of this step was written. Class only — a server message can
+        # carry a DSN, a role or a value.
+        sqlstate = getattr(getattr(exc, "diag", None), "sqlstate", None)
+        return refuse(f"database error before any catalog write: {type(exc).__name__} sqlstate={sqlstate}")
+    except OSError as exc:
+        return refuse(f"cannot read {_basename(exc)}: {exc.strerror or type(exc).__name__}")

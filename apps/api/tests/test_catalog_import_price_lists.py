@@ -177,7 +177,9 @@ def _plan(tmp_path: Path) -> dict:
 def test_plan_shape_and_counts(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     assert plan["importer"] == "price_lists" and plan["version"] == 1
-    assert [i["kind"] for i in plan["inputs"]] == ["ohaus", "adam", "loser"]
+    assert sorted(i["kind"] for i in plan["inputs"]) == ["adam", "loser", "ohaus"]
+    # Inputs are planned in file-hash order, so which duplicate wins never depends on flag order.
+    assert [i["file_sha256"] for i in plan["inputs"]] == sorted(i["file_sha256"] for i in plan["inputs"])
     assert set(plan["inputs"][0]) == {"path_sha256", "file_sha256", "kind"}
     counts = plan["counts"]
     assert counts["create_org"] == 3  # OHAUS, Adam Equipment, Löser Messtechnik
@@ -212,13 +214,39 @@ def test_money_is_serialised_as_strings(tmp_path: Path) -> None:
 
 
 def test_conflicting_duplicate_keeps_first_and_counts() -> None:
-    a = {"action": "create_org", "key": "org:acme", "fields": {"name": "ACME"}}
-    b = {"action": "create_org", "key": "org:acme", "fields": {"name": "Acme"}}
-    plan = importing.build_plan("t", [], [a, dict(a), b])
+    a = {"action": "create_org", "key": "org:acme", "fields": {"name": "ACME"}, "source": {"input": "a", "ref": "1"}}
+    same = {**a, "source": {"input": "b", "ref": "2"}}
+    b = {"action": "create_org", "key": "org:acme", "fields": {"name": "Acme"}, "source": {"input": "c", "ref": "3"}}
+    plan = importing.build_plan("t", [], [a, same, b])
     assert plan["counts"]["create_org"] == 1
     assert plan["counts"]["duplicates_merged"] == 1 and plan["counts"]["conflicting_duplicates"] == 1
-    assert plan["conflicts"] == ["org:acme"]
+    assert plan["conflicts"] == [{"key": "org:acme", "kept": {"input": "a", "ref": "1"},
+                                  "dropped": [{"input": "c", "ref": "3"}]}]
     assert plan["items"][0]["fields"]["name"] == "ACME"
+
+
+def test_duplicate_winner_does_not_depend_on_flag_order(tmp_path: Path) -> None:
+    first, second = tmp_path / "first.txt", tmp_path / "second.txt"
+    first.write_text("1 Osmometer ficticio ACME-1 100,00 €\n", encoding="utf-8")
+    second.write_text("1 Osmometer ficticio ACME-1 200,00 €\n", encoding="utf-8")
+    one = ipl.build_price_list_plan([("loser", first, "2024-01-01"), ("loser", second, "2024-01-01")])
+    two = ipl.build_price_list_plan([("loser", second, "2024-01-01"), ("loser", first, "2024-01-01")])
+    assert importing.plan_sha256(one) == importing.plan_sha256(two)
+    [conflict] = one["conflicts"]
+    winner = min(importing.input_record(p, "loser")["file_sha256"] for p in (first, second))
+    assert conflict["key"].startswith("obs:") and conflict["kept"] == {"input": winner, "ref": "1"}
+
+
+def test_ohaus_rows_carry_their_material_id(tmp_path: Path) -> None:
+    rows = ipl.parse_ohaus_xlsx(_ohaus_workbook(tmp_path / "acme.xlsx", OHAUS_ROWS))
+    assert rows[0]["source_ref"] == "10000001"
+
+
+@pytest.mark.parametrize("discount", [1, 1.0, 25, -0.1])
+def test_ohaus_discount_must_be_a_fraction_below_one(tmp_path: Path, discount: float) -> None:
+    row = ("Balances", "Acme Family", "10000009", "Compact Scale, ACME-9", 1000, discount, 750.0, None, None)
+    with pytest.raises(ValueError, match="10000009"):
+        ipl.parse_ohaus_xlsx(_ohaus_workbook(tmp_path / "acme.xlsx", [row]))
 
 
 def test_load_plan_refuses_a_mismatched_sha(tmp_path: Path) -> None:
@@ -294,6 +322,30 @@ def test_out_dir_inside_the_repository_refused(tmp_path: Path) -> None:
     ohaus = _ohaus_workbook(tmp_path / "acme.xlsx", OHAUS_ROWS)
     assert ipl.main(["plan", "--ohaus", str(ohaus), "--out", str(inside)]) == _common.EXIT_REFUSED
     assert not inside.exists()
+
+
+def test_out_dir_inside_any_git_checkout_refused(tmp_path: Path) -> None:
+    (tmp_path / "other-repo" / ".git").mkdir(parents=True)
+    inside = tmp_path / "other-repo" / "reports"
+    ohaus = _ohaus_workbook(tmp_path / "acme.xlsx", OHAUS_ROWS)
+    assert ipl.main(["plan", "--ohaus", str(ohaus), "--out", str(inside)]) == _common.EXIT_REFUSED
+    assert not inside.exists()
+
+
+def test_messages_never_print_local_paths(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    missing = tmp_path / "private" / "absent-list.xlsx"
+    assert ipl.main(["plan", "--ohaus", str(missing), "--out", str(tmp_path / "o")]) == _common.EXIT_REFUSED
+    printed = capsys.readouterr()
+    assert str(tmp_path) not in printed.out + printed.err and "absent-list.xlsx" in printed.err
+    ohaus = _ohaus_workbook(tmp_path / "acme.xlsx", OHAUS_ROWS)
+    assert ipl.main(["plan", "--ohaus", str(ohaus), "--out", str(tmp_path / "o2")]) == 0
+    assert ipl.main(["plan", "--ohaus", str(ohaus), "--out", str(tmp_path / "o2")]) == _common.EXIT_REFUSED
+    plan = tmp_path / "o2" / "plan.json"
+    assert ipl.main(["verify", "--target-dsn", LOOPBACK_API, "--plan", str(tmp_path / "nope.json"),
+                     "--plan-sha256", "0" * 64, "--out", str(tmp_path / "v")]) == _common.EXIT_REFUSED
+    printed = capsys.readouterr()
+    assert str(tmp_path) not in printed.out + printed.err and "plan.json" in printed.out
+    assert plan.exists()
 
 
 def test_plan_command_writes_plan_and_prints_its_sha(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

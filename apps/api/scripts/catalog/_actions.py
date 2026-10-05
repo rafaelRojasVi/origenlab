@@ -9,15 +9,21 @@ Shared by every catalog importer (`_common.py` drives it). The SQL mirrors the c
   `content_origin = 'import'`, and **every event payload names it** (`origin_source_record_id`).
   That payload is how a rollback finds the products, terms and parameters it loaded — tables
   with no provenance column — and it never matches a row by name or key;
-* an existing row is never touched: a match is `already_present`, and a rerun inserts nothing;
+* an existing row is never touched: a match is `already_present` (or `present_different` when a
+  row this plan did not write holds other values), and a rerun inserts nothing; a cost parameter
+  this manifest already set is never set again (`kept_later_value` if someone changed it since);
 * events carry no command receipt (an import is not an HTTP command), only the operator.
 
 No event payload carries a price, a discount or a parameter value.
+
+Rollback refuses (and lists) a loaded row that changed or is referenced since the apply, a
+non-loaded stream (a pre-existing product or supplier) with events after the import's — deleting
+them would leave a gap in its `seq` — and any event on the manifest other than its own
+`source_record.migration_manifest_recorded`.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Any
 
 from origenlab_api.v2.catalog import importing
@@ -58,6 +64,17 @@ def _event(ctx: Context, aggregate_kind: str, aggregate_id: str, event_type: str
                           payload={**payload, "origin_source_record_id": ctx.manifest_id},
                           operator=ctx.operator, receipt_id=None)
     ctx.events += 1
+
+
+def _manifest_event(ctx: Context, event_type: str, aggregate_kind: str, aggregate_id: str) -> str | None:
+    """This manifest's event of `event_type` on one aggregate, if any."""
+    if ctx.manifest_id is None:
+        return None
+    ctx.cur.execute("select id::text from crm.domain_event where aggregate_kind = %s and aggregate_id = %s::uuid "
+                    "and event_type = %s and payload->>'origin_source_record_id' = %s limit 1",
+                    (aggregate_kind, aggregate_id, event_type, ctx.manifest_id))
+    row = ctx.cur.fetchone()
+    return None if row is None else row[0]
 
 
 # ------------------------------------------------------------------ organizations
@@ -168,7 +185,8 @@ def _find_observation(ctx: Context, item: importing.PlanItem) -> dict[str, Any] 
     if supplier is None or product is None:
         return None
     ctx.cur.execute(
-        f"select id::text as id, price, currency, list_price, discount_pct, is_stale from catalog.supplier_product "
+        f"select id::text as id, price, currency, list_price, discount_pct, is_stale, "
+        f"origin_source_record_id::text as origin from catalog.supplier_product "
         f"where supplier_organization_id = %s::uuid and product_id = %s::uuid and as_of = {_AS_OF_SQL} "
         f"and price_kind = %s and min_qty is null",
         (supplier, product, fields["as_of"], fields["price_kind"]))
@@ -195,7 +213,10 @@ def _apply_add_observation(ctx: Context, item: importing.PlanItem) -> str:
          fields.get("source_document"), ctx.manifest_id, ctx.operator.operator_id))
     row = _row(ctx.cur)
     if row is None:
-        return "already_present"
+        # An observation with this key exists. Never overwritten (append-only); one this plan did not
+        # write with other values is reported, as verify reports it.
+        status, _ = _verify_add_observation(ctx, item)[:2]
+        return "present_different" if status == "present_different" else "already_present"
     _event(ctx, "product", product, "product.cost_recorded",
            {"supplier_product_id": row["id"], "supplier_organization_id": supplier,
             "price_kind": fields["price_kind"], "currency": fields["currency"]})
@@ -205,6 +226,8 @@ def _apply_add_observation(ctx: Context, item: importing.PlanItem) -> str:
 def _verify_add_observation(ctx: Context, item: importing.PlanItem) -> tuple[str, list[str], str | None]:
     row = _find_observation(ctx, item)
     status, diffs = importing.compare(item["fields"], row, _OBSERVATION_FIELDS)
+    if status == "different" and (ctx.manifest_id is None or row["origin"] != ctx.manifest_id):
+        status = "present_different"
     return status, diffs, None if row is None else row["id"]
 
 
@@ -225,7 +248,9 @@ def _apply_set_terms(ctx: Context, item: importing.PlanItem) -> str:
         (supplier, fields["currency"], fields.get("origin_country"), fields["route"], bool(fields["map_enforced"]),
          ctx.operator.operator_id))
     if _row(ctx.cur) is None:
-        return "already_present"
+        # Existing terms are the operator's and are never changed by an import.
+        status = _verify_set_terms(ctx, item)[0]
+        return "present_different" if status == "present_different" else "already_present"
     _event(ctx, "organization", supplier, "organization.supplier_terms_set",
            {"route": fields["route"], "currency": fields["currency"], "note": None})
     return "inserted"
@@ -235,10 +260,13 @@ def _verify_set_terms(ctx: Context, item: importing.PlanItem) -> tuple[str, list
     supplier = ctx.ids.get(item["fields"]["supplier"])
     row = None
     if supplier is not None:
-        ctx.cur.execute("select currency, route, map_enforced from catalog.supplier_terms "
+        ctx.cur.execute("select currency, route, map_enforced, version from catalog.supplier_terms "
                         "where supplier_organization_id = %s::uuid", (supplier,))
         row = _row(ctx.cur)
     status, diffs = importing.compare(item["fields"], row, _TERMS_FIELDS)
+    if status == "different" and (row["version"] > 1 or _manifest_event(
+            ctx, "organization.supplier_terms_set", "organization", supplier) is None):
+        status = "present_different"  # not written by this plan, or changed by an operator since
     return status, diffs, None if row is None else supplier
 
 
@@ -251,14 +279,31 @@ def _current_parameter(ctx: Context, key: str) -> dict[str, Any] | None:
     return _row(ctx.cur)
 
 
+def _parameter_set_by_manifest(ctx: Context, key: str) -> str | None:
+    """The cost_parameter row this manifest set for `key`, found by its event."""
+    if ctx.manifest_id is None:
+        return None
+    ctx.cur.execute("select aggregate_id::text from crm.domain_event where event_type = 'cost_parameter.set' "
+                    "and payload->>'origin_source_record_id' = %s and payload->>'key' = %s "
+                    "order by seq limit 1", (ctx.manifest_id, key))
+    row = ctx.cur.fetchone()
+    return None if row is None else row[0]
+
+
 def _apply_set_cost_parameter(ctx: Context, item: importing.PlanItem) -> str:
-    """set-cost-parameter's SQL: the key's advisory lock, a wall-clock valid_from, the event without the value."""
+    """set-cost-parameter's SQL: the key's advisory lock, a wall-clock valid_from, the event without the value.
+
+    A key this manifest already set is never set again: `already_present` if its row is still the
+    current one, `kept_later_value` if someone set the key afterwards — a rerun must not revert an
+    operator's later decision.
+    """
     fields = item["fields"]
     key = fields["key"]
     ctx.cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"catalog.cost_parameter:{key}",))
-    current = _current_parameter(ctx, key)
-    if current is not None and current["value_numeric"] == Decimal(fields["value"]):
-        return "already_present"
+    mine = _parameter_set_by_manifest(ctx, key)
+    if mine is not None:
+        current = _current_parameter(ctx, key)
+        return "already_present" if current is not None and current["id"] == mine else "kept_later_value"
     ctx.cur.execute(
         "insert into catalog.cost_parameter (key, value_numeric, valid_from, set_by_operator_id, reason) "
         "values (%s, %s::numeric, clock_timestamp(), %s::uuid, %s) returning id::text as id",
@@ -269,10 +314,15 @@ def _apply_set_cost_parameter(ctx: Context, item: importing.PlanItem) -> str:
 
 
 def _verify_set_cost_parameter(ctx: Context, item: importing.PlanItem) -> tuple[str, list[str], str | None]:
-    current = _current_parameter(ctx, item["fields"]["key"])
-    actual = None if current is None else {"value": current["value_numeric"]}
-    status, diffs = importing.compare(item["fields"], actual, ("value",))
-    return status, diffs, None if current is None else current["id"]
+    key = item["fields"]["key"]
+    mine = _parameter_set_by_manifest(ctx, key)
+    if mine is None:
+        return "missing", [], None
+    current = _current_parameter(ctx, key)
+    if current is None or current["id"] != mine:
+        return "superseded_later", [], mine
+    status, diffs = importing.compare(item["fields"], {"value": current["value_numeric"]}, ("value",))
+    return status, diffs, mine
 
 
 _APPLY = {"create_org": _apply_create_org, "create_product": _apply_create_product,
@@ -334,7 +384,8 @@ def collect_owned(cur: Any, manifest_id: str) -> dict[str, list[str]]:
     """Every row whose provenance is this manifest — by its column or by its own events, never by name."""
     cur.execute("select id::text, event_type, aggregate_id::text from crm.domain_event "
                 "where payload->>'origin_source_record_id' = %s "
-                "   or (aggregate_kind = 'source_record' and aggregate_id = %s::uuid)", (manifest_id, manifest_id))
+                "   or (aggregate_kind = 'source_record' and aggregate_id = %s::uuid "
+                "       and event_type = 'source_record.migration_manifest_recorded')", (manifest_id, manifest_id))
     events = cur.fetchall()
 
     def created_by(event_type: str) -> list[str]:
@@ -364,7 +415,8 @@ def _fk_references(cur: Any, tables: list[str]) -> list[tuple[str, str, str]]:
     """(referencing table, column, referenced table) for every single-column foreign key into `tables`."""
     cur.execute(
         """
-        select format('%%I.%%I', rn.nspname, rc.relname), a.attname, format('%%I.%%I', tn.nspname, tc.relname)
+        select format('%%I.%%I', rn.nspname, rc.relname), format('%%I', a.attname),
+               format('%%I.%%I', tn.nspname, tc.relname)
           from pg_constraint c
           join pg_class rc on rc.oid = c.conrelid join pg_namespace rn on rn.oid = rc.relnamespace
           join pg_class tc on tc.oid = c.confrelid join pg_namespace tn on tn.oid = tc.relnamespace
@@ -416,6 +468,26 @@ def _references(cur: Any, owned: dict[str, list[str]], targets: dict[str, list[s
     return found
 
 
+def _later_events_on_other_streams(cur: Any, owned: dict[str, list[str]]) -> list[dict[str, str]]:
+    """Streams this import appended to but did not create (a pre-existing product or supplier) that
+    have events after the import's: deleting the import's events would leave a gap in their seq."""
+    mine = owned.get("crm.domain_event", [])
+    if not mine:
+        return []
+    cur.execute(
+        """
+        select distinct e.aggregate_kind, e.aggregate_id::text
+          from crm.domain_event e
+          join crm.domain_event later
+            on later.aggregate_kind = e.aggregate_kind and later.aggregate_id = e.aggregate_id
+           and later.seq > e.seq and later.id::text <> all(%s)
+         where e.id::text = any(%s)
+        """,
+        (mine, mine))
+    return [{"table": kind, "id": agg, "reason": "its event stream has later events than the import's"}
+            for kind, agg in cur.fetchall()]
+
+
 def rollback_blockers(cur: Any, owned: dict[str, list[str]], verified: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Why the loaded rows may not be deleted: changed, referenced, or not as verify finds them.
 
@@ -441,6 +513,7 @@ def rollback_blockers(cur: Any, owned: dict[str, list[str]], verified: list[dict
         blockers += [{"table": "catalog.cost_parameter", "id": r[0], "reason": "a later value was set"}
                      for r in cur.fetchall()]
     blockers += _references(cur, owned, owned)
+    blockers += _later_events_on_other_streams(cur, owned)
 
     owned_ids = {i for ids in owned.values() for i in ids}
     for row in verified:

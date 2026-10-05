@@ -57,7 +57,7 @@ _SIX = Decimal("0.000001")
 _EFFECTIVE = re.compile(r"effective\s+([A-Za-z]+\s+\d{1,2},\s*\d{4})", re.IGNORECASE)
 _CURRENCY = re.compile(r"\b(USD|EUR|CLP)\b")
 _EURO = r"\d{1,3}(?:\.\d{3})*,\d{2}"
-_LOSER_LINE = re.compile(rf"^\s*\d+\s+(?P<desc>.+?)\s+(?P<item>Typ\s+\S+|\S+)\s+(?:€\s*)?(?P<price>{_EURO})\s*(?:€|EUR)?\s*$")
+_LOSER_LINE = re.compile(rf"^\s*(?P<pos>\d+)\s+(?P<desc>.+?)\s+(?P<item>Typ\s+\S+|\S+)\s+(?:€\s*)?(?P<price>{_EURO})\s*(?:€|EUR)?\s*$")
 _ORTOALRESA_LINE = re.compile(
     r"^\s*(?P<code>(?:CE|RT|RE)[\s-]?\d[\w.\-/]*)\s+(?P<desc>.+?)\s+"
     r"(?P<price>\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\s*(?:€|EUR)?\s*$")
@@ -77,6 +77,8 @@ class Row(TypedDict):
     as_of: str
     is_stale: bool
     price_kind: str
+    #: The row's own reference in its list (Material ID, product ID, position, code): plan provenance only.
+    source_ref: str | None
 
 
 # ------------------------------------------------------------------ values
@@ -94,12 +96,19 @@ def _euro(text: str) -> Decimal:
     return Decimal(text.replace(".", "").replace(",", ".")).quantize(_SIX)
 
 
-def _fraction(value: Any) -> Decimal | None:
-    """A discount as a fraction of 1; a sheet that prints 25 for 25 % is read as 0.25."""
+def _fraction(value: Any, ref: str) -> Decimal | None:
+    """The OHAUS "Discount %" cell: a fraction of the list price in [0, 1) (0.25 is 25 %).
+
+    That is how the dealer workbook stores it (a percent-formatted cell). Anything else — 1 (which
+    would be either 100 % or a mis-typed 1 %), 25, a negative — is refused with the row's Material
+    ID rather than guessed; `catalog.supplier_product.discount_pct` holds [0, 1) as well.
+    """
     number = _money(value)
     if number is None:
         return None
-    return (number / 100).quantize(_SIX) if number >= 1 else number
+    if not Decimal(0) <= number < 1:
+        raise ValueError(f"Material ID {ref}: the discount is not a fraction in [0, 1)")
+    return number
 
 
 def _as_of(value: str | None, what: str) -> str:
@@ -181,8 +190,8 @@ def parse_ohaus_xlsx(path: Path, *, as_of: str | None = None, org: str = DEFAULT
         family = " / ".join(x for x in (_text(cell(category)), _text(cell(family_idx))) if x) or None
         out.append(Row(manufacturer=org, supplier=org, model_number=model, name=material, family=family,
                        list_price=_money(cell(col["list"])), cost=_money(cell(col["net"])), map_price=None,
-                       discount_pct=_fraction(cell(col["discount"])), currency=currency, as_of=as_of,
-                       is_stale=False, price_kind="dealer_net"))
+                       discount_pct=_fraction(cell(col["discount"]), material_id), currency=currency, as_of=as_of,
+                       is_stale=False, price_kind="dealer_net", source_ref=material_id))
     return out
 
 
@@ -193,6 +202,7 @@ def parse_adam_xlsx(path: Path, *, as_of: str | None = None, org: str = DEFAULT_
         "list": lambda c: c.lower() == "precio de lista", "map": lambda c: c.lower() == "precio map",
         "dealer": lambda c: c.lower() == "precio del distribuidor"})
     as_of = _as_of(as_of, "adam")
+    id_idx = next((i for i, c in enumerate(rows[header_at]) if _text(c).lower() == "id del producto"), None)
     out: list[Row] = []
     for row in rows[header_at + 1:]:
         cell = lambda i: row[i] if i < len(row) else None  # noqa: E731
@@ -203,7 +213,7 @@ def parse_adam_xlsx(path: Path, *, as_of: str | None = None, org: str = DEFAULT_
         out.append(Row(manufacturer=org, supplier=org, model_number=sku, name=f"{family or ''} {sku}".strip(),
                        family=family, list_price=_money(cell(col["list"])), cost=_money(cell(col["dealer"])),
                        map_price=_money(cell(col["map"])), discount_pct=None, currency="USD", as_of=as_of,
-                       is_stale=False, price_kind="dealer_net"))
+                       is_stale=False, price_kind="dealer_net", source_ref=(_text(cell(id_idx)) if id_idx is not None else "") or sku))
     return out
 
 
@@ -218,7 +228,8 @@ def parse_loser_text(text: str, *, as_of: str | None = None, org: str = DEFAULT_
             continue
         out.append(Row(manufacturer=org, supplier=org, model_number=re.sub(r"\s+", " ", m["item"]),
                        name=m["desc"].strip(), family=None, list_price=None, cost=_euro(m["price"]), map_price=None,
-                       discount_pct=None, currency="EUR", as_of=as_of, is_stale=False, price_kind="dealer_net"))
+                       discount_pct=None, currency="EUR", as_of=as_of, is_stale=False, price_kind="dealer_net",
+                       source_ref=m["pos"]))
     return out
 
 
@@ -231,7 +242,8 @@ def parse_ortoalresa_text(text: str, *, as_of: str | None = None, org: str = DEF
             continue
         out.append(Row(manufacturer=org, supplier=org, model_number=re.sub(r"\s+", " ", m["code"]),
                        name=m["desc"].strip(), family=None, list_price=_euro(m["price"]), cost=None, map_price=None,
-                       discount_pct=None, currency="EUR", as_of=as_of, is_stale=True, price_kind="list"))
+                       discount_pct=None, currency="EUR", as_of=as_of, is_stale=True, price_kind="list",
+                       source_ref=re.sub(r"\s+", " ", m["code"])))
     return out
 
 
@@ -246,7 +258,7 @@ def _org_key(name: str) -> str:
 
 
 def plan_items(rows: list[Row], *, org_ids: dict[str, str] | None = None,
-               skipped: Counter[str] | None = None) -> list[importing.PlanItem]:
+               skipped: Counter[str] | None = None, input_sha256: str | None = None) -> list[importing.PlanItem]:
     """Organizations, products and observations for parsed rows; rows without a price are counted, not planned."""
     ids = {importing.norm_name(k): v for k, v in (org_ids or {}).items()}
     skipped = skipped if skipped is not None else Counter()
@@ -273,8 +285,9 @@ def plan_items(rows: list[Row], *, org_ids: dict[str, str] | None = None,
             skipped["rows_without_model"] += 1
             continue
         maker, supplier = org(r["manufacturer"]), org(r["supplier"])
+        source = {"input": input_sha256, "ref": r.get("source_ref")}
         product = f"product:{importing.norm_name(r['manufacturer'])}|{key}"
-        items.append({"action": "create_product", "key": product,
+        items.append({"action": "create_product", "key": product, "source": source,
                       "fields": {"manufacturer": maker, "model_number": r["model_number"], "name": r["name"],
                                  "description": r["family"]}})
         observations = [(r["price_kind"], price, r["discount_pct"])]
@@ -283,6 +296,7 @@ def plan_items(rows: list[Row], *, org_ids: dict[str, str] | None = None,
         for kind, amount, discount in observations:
             items.append({"action": "add_observation",
                           "key": f"obs:{importing.norm_name(r['supplier'])}|{key}|{r['as_of']}|{kind}",
+                          "source": source,
                           "fields": {"supplier": supplier, "product": product, "as_of": r["as_of"],
                                      "price_kind": kind, "price": amount, "currency": r["currency"],
                                      "list_price": r["list_price"], "discount_pct": discount,
@@ -305,10 +319,14 @@ def build_price_list_plan(inputs: list[tuple[str, Path, str | None]], *, org_nam
     names = {**DEFAULT_ORG, **(org_names or {})}
     records, items = [], []
     skipped: Counter[str] = Counter()
+    # Planned in file-hash order: which of two conflicting rows wins never depends on flag order.
+    hashed = []
     for kind, path, as_of in inputs:
         if kind not in KINDS:
             raise ValueError(f"unknown price list kind {kind!r}")
-        path = Path(path)
+        hashed.append((importing.input_record(Path(path), kind), kind, Path(path), as_of))
+    hashed.sort(key=lambda h: (h[0]["file_sha256"], h[1]))
+    for record, kind, path, as_of in hashed:
         first_page, text = _read_input(kind, path)
         refuse_labdelivery(str(path.resolve()), path.name, first_page)
         if kind == "ohaus":
@@ -319,8 +337,8 @@ def build_price_list_plan(inputs: list[tuple[str, Path, str | None]], *, org_nam
             rows = parse_loser_text(text or "", as_of=as_of, org=names[kind])
         else:
             rows = parse_ortoalresa_text(text or "", as_of=as_of, org=names[kind])
-        records.append(importing.input_record(path, kind))
-        items += plan_items(rows, org_ids=org_ids, skipped=skipped)
+        records.append(record)
+        items += plan_items(rows, org_ids=org_ids, skipped=skipped, input_sha256=record["file_sha256"])
         if kind == "adam" and rows:
             items.append({"action": "set_terms", "key": f"terms:{importing.norm_name(names[kind])}",
                           "fields": {"supplier": _org_key(names[kind]), "currency": "USD", "route": adam_route,

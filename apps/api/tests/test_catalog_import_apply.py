@@ -148,7 +148,7 @@ def test_apply_skips_an_existing_organization_by_normalised_name(disposable_data
     plan, sha = _loser_plan(tmp_path, "n", [("Osmometer", "ACME-4", "10,00")], maker)
     assert ipl.main(_argv("apply", dsn, plan, sha, tmp_path / "apply", operator)) == 0
     report = _report(tmp_path / "apply", "apply-report.json")
-    assert report["by_action"]["create_org"] == {"inserted": 0, "already_present": 1}
+    assert report["by_action"]["create_org"] == {"already_present": 1}  # only outcomes that occurred
     [(owner_org,)] = _owner(dsn, "select manufacturer_organization_id::text from catalog.product "
                                  "where model_key = 'ACME4' and manufacturer_organization_id = %s", (existing,))
     assert owner_org == existing
@@ -378,3 +378,153 @@ def test_cost_parameter_plan_has_no_path(tmp_path) -> None:
                                              "reason": "prueba"}])
     text = plan.read_text(encoding="utf-8")
     assert str(tmp_path) not in text and "np.json" not in text
+
+
+# ------------------------------------------------------------------ fix round 1
+
+@needs_db
+def test_admin_login_as_target_refused(disposable_database, operator, tmp_path) -> None:
+    dsn = disposable_database
+    plan, sha = _loser_plan(tmp_path, "adm", [("Osmometer", "ACME-20", "10,00")], _maker("Admin"))
+    argv = _argv("apply", dsn, plan, sha, tmp_path / "a", operator)
+    argv[argv.index("--target-dsn") + 1] = dsn  # the maintenance login, not origenlab_api
+    assert ipl.main(argv) == _common.EXIT_REFUSED
+    assert _manifest_id(dsn, sha) is None
+
+
+@needs_db
+def test_database_errors_outside_the_apply_are_refusals(disposable_database, operator, tmp_path,
+                                                        capsys: pytest.CaptureFixture[str]) -> None:
+    dsn = disposable_database
+    plan, sha = _loser_plan(tmp_path, "pw", [("Osmometer", "ACME-21", "10,00")], _maker("Password"))
+    bad_admin = dsn.replace("postgres:", "postgres_nobody:", 1).replace("://postgres@", "://postgres_nobody@")
+    argv = _argv("apply", dsn, plan, sha, tmp_path / "a", operator)
+    argv[argv.index("--admin-dsn") + 1] = bad_admin
+    assert ipl.main(argv) == _common.EXIT_REFUSED
+    printed = capsys.readouterr()
+    assert "Traceback" not in printed.err and "OperationalError" in printed.err
+
+
+@needs_db
+def test_apply_failure_after_the_manifest_says_it_stays(disposable_database, operator, tmp_path,
+                                                        capsys: pytest.CaptureFixture[str]) -> None:
+    dsn = disposable_database
+    good, _ = _loser_plan(tmp_path, "bad", [("Osmometer", "ACME-22", "10,00")], _maker("Broken"))
+    plan = json.loads(good.read_text(encoding="utf-8"))
+    for item in plan["items"]:
+        if item["action"] == "add_observation":
+            item["fields"]["price_kind"] = "not_a_kind"
+    path = tmp_path / "broken-plan.json"
+    path.write_bytes(importing.plan_bytes(plan))
+    sha = importing.sha256_bytes(path.read_bytes())
+    assert ipl.main(_argv("apply", dsn, path, sha, tmp_path / "a", operator)) == _common.EXIT_APPLY_FAILED
+    assert "manifest" in capsys.readouterr().err
+    failed = _report(tmp_path / "a", "apply-failed.json")
+    assert failed["manifest_kept"] is True and failed["manifest_source_record_id"] == _manifest_id(dsn, sha)
+    assert _owner(dsn, "select count(*) from catalog.product where model_key = 'ACME22'") == [(0,)]
+
+
+def _product_with_cost(dsn: str, operator: OperatorIdentity, maker: str, model: str, price: str) -> tuple[str, str]:
+    from origenlab_api.v2.catalog.routes import CreateProductBody
+
+    org = _owner(dsn, "insert into crm.organization (kind, name, confirmation) values ('supplier', %s, "
+                      "'machine_proposed') returning id::text", (maker,))[0][0]
+    product = _catalog_command(dsn, operator, "create-product",
+                               CreateProductBody(manufacturer_organization_id=org, model_number=model))["product_id"]
+    _catalog_command(dsn, operator, "record-supplier-cost", RecordSupplierCostBody(
+        product_id=product, supplier_organization_id=org, as_of="2024-01-01T00:00:00Z", price=price,
+        currency="EUR", price_kind="dealer_net"))
+    return org, product
+
+
+@needs_db
+def test_preexisting_different_observation_is_present_different(disposable_database, operator, tmp_path) -> None:
+    dsn = disposable_database
+    maker = _maker("Differ")
+    _product_with_cost(dsn, operator, maker, "ACME-23", "999")
+    plan, sha = _loser_plan(tmp_path, "dif", [("Osmometer", "ACME-23", "10,00")], maker)
+    assert ipl.main(_argv("apply", dsn, plan, sha, tmp_path / "a", operator)) == 0
+    assert _report(tmp_path / "a", "apply-report.json")["by_action"]["add_observation"]["present_different"] == 1
+    assert ipl.main(_argv("verify", dsn, plan, sha, tmp_path / "v")) == 0
+    assert _report(tmp_path / "v", "verify-report.json")["counts"] == {"present": 2, "present_different": 1}
+
+
+@needs_db
+def test_preexisting_different_terms_are_present_different(disposable_database, operator, tmp_path) -> None:
+    from origenlab_api.v2.catalog.routes import SetSupplierTermsBody
+
+    dsn = disposable_database
+    maker = _maker("TermsDiffer")
+    org = _owner(dsn, "insert into crm.organization (kind, name, confirmation) values ('supplier', %s, "
+                      "'machine_proposed') returning id::text", (maker,))[0][0]
+    _catalog_command(dsn, operator, "set-supplier-terms", SetSupplierTermsBody(
+        supplier_organization_id=org, currency="USD", route="domestic", map_enforced=False))
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["SKU", "Nombre", "Precio de lista", "Precio MAP", "Precio del distribuidor"])
+    ws.append(["ACME 24e", "Balanzas ficticias", "$100.00", "", "$60.00"])
+    wb.save(tmp_path / "adam.xlsx")
+    out = tmp_path / "t"
+    assert ipl.main(["plan", "--adam", str(tmp_path / "adam.xlsx"), "--as-of", "adam=2026-08-20", "--org-name",
+                     f"adam={maker}", "--out", str(out)]) == 0
+    plan, sha = out / "plan.json", importing.sha256_bytes((out / "plan.json").read_bytes())
+    assert ipl.main(_argv("apply", dsn, plan, sha, tmp_path / "a", operator)) == 0
+    assert _report(tmp_path / "a", "apply-report.json")["by_action"]["set_terms"] == {"present_different": 1}
+    assert ipl.main(_argv("verify", dsn, plan, sha, tmp_path / "v")) == 0
+    assert _owner(dsn, "select route, map_enforced from catalog.supplier_terms where supplier_organization_id = %s",
+                  (org,)) == [("domestic", False)]
+
+
+@needs_db
+def test_rollback_refused_when_a_preexisting_product_has_later_events(disposable_database, operator,
+                                                                      tmp_path) -> None:
+    dsn = disposable_database
+    maker = _maker("Later")
+    org, product = _product_with_cost(dsn, operator, maker, "ACME-25", "50")
+    plan, sha = _loser_plan(tmp_path, "lat", [("Osmometer", "ACME-25", "10,00")], maker)
+    # The loaded observation lands on another day than the pre-existing one, so it is inserted.
+    data = plan.read_text(encoding="utf-8").replace("2024-01-01", "2024-02-01")
+    plan.write_text(data, encoding="utf-8")
+    sha = importing.sha256_bytes(plan.read_bytes())
+    assert ipl.main(_argv("apply", dsn, plan, sha, tmp_path / "a", operator)) == 0
+    _catalog_command(dsn, operator, "record-supplier-cost", RecordSupplierCostBody(
+        product_id=product, supplier_organization_id=org, as_of="2024-03-01T00:00:00Z", price="55",
+        currency="EUR", price_kind="dealer_net"))
+    assert ipl.main(_argv("rollback", dsn, plan, sha, tmp_path / "r", None,
+                          "--confirm-delete-loaded-rows")) == _common.EXIT_REFUSED
+    blockers = _report(tmp_path / "r", "rollback-report.json")["blockers"]
+    assert any(b["id"] == product and "later" in b["reason"] for b in blockers)
+
+
+@needs_db
+def test_rollback_refused_when_the_manifest_has_other_events(disposable_database, operator, tmp_path) -> None:
+    dsn = disposable_database
+    plan, sha = _loser_plan(tmp_path, "mev", [("Osmometer", "ACME-26", "10,00")], _maker("ManifestEvent"))
+    assert ipl.main(_argv("apply", dsn, plan, sha, tmp_path / "a", operator)) == 0
+    manifest = _manifest_id(dsn, sha)
+    _owner(dsn, "insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, "
+                "payload, actor_kind, actor_operator_id) values ('source_record', %s, 2, 'source_record.review_noted', "
+                "1, '{}', 'operator', %s)", (manifest, operator.operator_id))
+    assert ipl.main(_argv("rollback", dsn, plan, sha, tmp_path / "r", None,
+                          "--confirm-delete-loaded-rows")) == _common.EXIT_REFUSED
+    assert _manifest_id(dsn, sha) == manifest
+
+
+@needs_db
+def test_cost_parameter_rerun_keeps_a_later_operator_value(disposable_database, operator, tmp_path) -> None:
+    from origenlab_api.v2.catalog.routes import SetCostParameterBody
+
+    dsn = disposable_database
+    plan, sha = _params_plan(tmp_path, "later", [{"key": "default_markup_spare_part", "value": 0.3,
+                                                  "unit": "fraction", "reason": "valor de prueba"}])
+    assert icp.main(_argv("apply", dsn, plan, sha, tmp_path / "a1", operator)) == 0
+    _catalog_command(dsn, operator, "set-cost-parameter", SetCostParameterBody(
+        key="default_markup_spare_part", value="0.45", reason="cambio del operador"))
+    assert icp.main(_argv("apply", dsn, plan, sha, tmp_path / "a2", operator)) == 0
+    report = _report(tmp_path / "a2", "apply-report.json")
+    assert report["inserted"] == 0 and report["by_action"]["set_cost_parameter"] == {"kept_later_value": 1}
+    [(current,)] = _owner(dsn, "select value_numeric from catalog.cost_parameter where key = "
+                               "'default_markup_spare_part' order by valid_from desc limit 1")
+    assert current == Decimal("0.450000")
+    assert icp.main(_argv("verify", dsn, plan, sha, tmp_path / "v")) == 0
+    assert _report(tmp_path / "v", "verify-report.json")["counts"] == {"superseded_later": 1}
