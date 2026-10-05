@@ -27,8 +27,10 @@ from origenlab_api.v2.catalog.keys import refuse_labdelivery
 
 PLAN_VERSION = 1
 #: Dependency order: an item may only reference items of an earlier action.
-ACTION_ORDER = ("create_org", "create_product", "add_observation", "set_terms", "set_cost_parameter")
-Action = Literal["create_org", "create_product", "add_observation", "set_terms", "set_cost_parameter"]
+ACTION_ORDER = ("create_org", "create_product", "add_observation", "set_terms", "set_cost_parameter",
+                "add_quote_document")
+Action = Literal["create_org", "create_product", "add_observation", "set_terms", "set_cost_parameter",
+                 "add_quote_document"]
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _NON_ALNUM = re.compile(r"[\W_]+")
 
@@ -231,7 +233,8 @@ def refuse_labdelivery_in_plan(plan: Plan) -> None:
 #: Verify statuses. Only `missing` and `different` are mismatches (exit 13): `present_different`
 #: is a row this plan did not write that already held other values (an operator's terms, an earlier
 #: observation) — apply reports it the same way and never overwrites it — and `superseded_later`
-#: is a value this plan wrote that someone set again afterwards.
+#: is a value this plan wrote that someone set again afterwards; `reviewed_later` is a quote
+#: document whose disputed line an operator reviewed (review-document-line) after the import.
 MISMATCH_STATUSES = ("missing", "different")
 
 def _same(planned: Any, actual: Any) -> bool:

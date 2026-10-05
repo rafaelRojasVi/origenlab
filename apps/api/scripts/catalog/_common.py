@@ -26,8 +26,9 @@ Subcommands and exit codes (the shape of `hosted_data_load.py`):
 **Outcomes and statuses.** apply reports each item as `inserted`, `already_present`,
 `present_different` (a row this plan did not write already holds other values — an operator's
 supplier terms, an earlier observation under the same key; never overwritten) or
-`kept_later_value` (a cost parameter this plan set was set again later; never reverted). verify
-uses the same words — `present`, `present_different`, `superseded_later` — so the two agree, and
+`kept_later_value` (a cost parameter this plan set was set again later, or a quote document line
+it wrote was reviewed since; never reverted). verify uses the same words — `present`,
+`present_different`, `superseded_later`, `reviewed_later` — so the two agree, and
 exits 13 only for `missing` or `different` (a row this plan wrote that no longer says what it
 wrote). A rerun of apply therefore never fights an operator, and verify never fails forever on a
 row the import was not allowed to change.
@@ -52,7 +53,10 @@ running API. `--admin-dsn` is the owner-capable maintenance login. It records th
 plan_sha256`) in its own short transaction first, because the runtime role holds no INSERT on
 `evidence.source_record` (Slice 0 grants). The manifest is idempotent: a rerun, or a rerun after
 a failed apply, reuses it. Its `source_record.migration_manifest_recorded` event is appended in the
-runtime transaction, with the rows it describes. Rollback runs as `origenlab_owner`.
+runtime transaction, with the rows it describes. The quote-history importer's documents (also
+`evidence.source_record`) are recorded in the manifest's transaction for the same reason, their
+payload naming the manifest; their lines are written by the runtime role. Rollback runs as
+`origenlab_owner`.
 
 **Plans never carry local paths**, and `--out` is refused inside this repository or any other git
 checkout. Nothing here prints a value from a plan or a local path: only counts, statuses, item keys
@@ -266,8 +270,13 @@ def read_operator(admin_dsn: str, email: str, mode: str) -> OperatorIdentity:
     return identity
 
 
-def record_manifest(admin_dsn: str, plan: importing.Plan, plan_sha: str, mode: str) -> tuple[str, bool]:
-    """The manifest row for this plan (created if absent), as the owner, in its own transaction."""
+def record_manifest(admin_dsn: str, plan: importing.Plan, plan_sha: str, mode: str) -> tuple[str, bool, set[str]]:
+    """The manifest row for this plan (created if absent), as the owner, in its own transaction.
+
+    The same transaction records the plan's other evidence records the runtime role may not insert
+    (`_actions.record_owner_evidence`: the quote documents), each naming the manifest; it returns
+    the keys of those it created.
+    """
     dedupe = importing.manifest_dedupe_key(plan_sha)
     payload = importing.canonical_json(importing.manifest_payload(plan, plan_sha))
     with _connect(admin_dsn) as conn:
@@ -285,8 +294,9 @@ def record_manifest(admin_dsn: str, plan: importing.Plan, plan_sha: str, mode: s
                               (dedupe, plan_sha)).fetchone()
             if row is None:
                 raise Refused(f"{dedupe} exists but is not this plan's manifest")
+        evidence_created = _actions.record_owner_evidence(cur, plan, row[0])
         conn.commit()
-    return row[0], created
+    return row[0], created, evidence_created
 
 
 def find_manifest(cur: Any, plan_sha: str) -> str | None:
@@ -338,7 +348,7 @@ def cmd_apply(args: argparse.Namespace, importer: str, print_keys: bool) -> int:
         _actions.preflight(cur, plan)
         conn.rollback()
 
-    manifest_id, manifest_created = record_manifest(args.admin_dsn, plan, plan_sha, mode)
+    manifest_id, manifest_created, evidence_created = record_manifest(args.admin_dsn, plan, plan_sha, mode)
     started = datetime.now(UTC).isoformat()
     results: list[tuple[str, str]] = []
     keys: list[dict[str, str]] = []
@@ -350,7 +360,8 @@ def cmd_apply(args: argparse.Namespace, importer: str, print_keys: bool) -> int:
             cur.execute("set local statement_timeout = '30min'")
             cur.execute("set local lock_timeout = '30s'")
             cur.execute("select pg_advisory_xact_lock(%s)", (ADVISORY_LOCK_KEY,))
-            ctx = _actions.Context(cur=cur, operator=operator, manifest_id=manifest_id)
+            ctx = _actions.Context(cur=cur, operator=operator, manifest_id=manifest_id,
+                                   evidence_created=evidence_created)
             for item in plan["items"]:
                 outcome = _actions.apply_item(ctx, item)
                 results.append((item["action"], outcome))

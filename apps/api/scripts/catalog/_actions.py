@@ -16,6 +16,13 @@ Shared by every catalog importer (`_common.py` drives it). The SQL mirrors the c
 
 No event payload carries a price, a discount or a parameter value.
 
+Quote documents (`add_quote_document`, the quote-history importer) are evidence, not catalog rows:
+the document is an `evidence.source_record` the owner inserts with the manifest
+(`record_owner_evidence`), its payload naming the manifest; its lines are inserted here by the
+runtime role. They carry no domain event (the vocabulary has none for them). A document under the
+same dedupe key that this manifest did not write is never touched, and a line an operator reviewed
+since (review-document-line) is kept (`kept_later_value`; verify says `reviewed_later`).
+
 Rollback refuses (and lists) a loaded row that changed or is referenced since the apply, a
 non-loaded stream (a pre-existing product or supplier) with events after the import's — deleting
 them would leave a gap in its `seq` — and any event on the manifest other than its own
@@ -48,6 +55,8 @@ class Context:
     #: plan key → database id, filled as items are applied or verified (orgs, products).
     ids: dict[str, str] = field(default_factory=dict)
     events: int = 0
+    #: Keys of the evidence records `record_owner_evidence` created in this apply (quote documents).
+    evidence_created: set[str] = field(default_factory=set)
     _orgs: list[tuple[str, str, str, str | None]] | None = None
 
 
@@ -325,12 +334,119 @@ def _verify_set_cost_parameter(ctx: Context, item: importing.PlanItem) -> tuple[
     return status, diffs, mine
 
 
+# ------------------------------------------------------------------ quote documents and their lines
+
+#: What a document line says, as written; the review fields are the operator's.
+_LINE_FIELDS = ("item_label", "parent_item", "kind", "brand", "model", "model_key", "description", "qty",
+                "unit_price", "line_total", "currency", "optional", "extractor", "check_status")
+#: The columns review-document-line may change (the review guard's list, less the review fields).
+_REVIEWABLE = ("qty", "unit_price", "line_total", "optional", "check_status")
+_QUOTE_DOCUMENT = "quote_document"
+
+
+def record_owner_evidence(cur: Any, plan: importing.Plan, manifest_id: str) -> set[str]:
+    """The plan's quote documents as `evidence.source_record` rows, as the owner, in the manifest's
+    transaction — the runtime role may not insert them. Each payload names the manifest
+    (`origin_source_record_id`), which is how verify and rollback know this plan wrote it; a
+    document already present under its dedupe key is left as it is. Returns the keys created."""
+    created: set[str] = set()
+    for item in plan.get("items", []):
+        if item["action"] != "add_quote_document":
+            continue
+        fields = item["fields"]
+        if fields["dedupe_key"] != item["key"] or not item["key"].startswith(f"{_QUOTE_DOCUMENT}:"):
+            raise ImportRefused(f"{item['key']}: not a quote document key")
+        payload = importing.canonical_json({**fields["payload"], "origin_source_record_id": manifest_id})
+        cur.execute("insert into evidence.source_record (kind, dedupe_key, payload, payload_sha256, review_status) "
+                    "values (%s, %s, %s::jsonb, %s, 'pending') on conflict (dedupe_key) do nothing returning id",
+                    (_QUOTE_DOCUMENT, fields["dedupe_key"], payload, fields["file_sha256"]))
+        if cur.fetchone() is not None:
+            created.add(item["key"])
+    return created
+
+
+def _find_quote_document(ctx: Context, item: importing.PlanItem, *, lock: bool = False) -> dict[str, Any] | None:
+    ctx.cur.execute("select id::text as id, kind, payload, payload_sha256 from evidence.source_record "
+                    "where dedupe_key = %s" + (" for no key update" if lock else ""), (item["fields"]["dedupe_key"],))
+    return _row(ctx.cur)
+
+
+def _is_mine(ctx: Context, row: dict[str, Any]) -> bool:
+    return ctx.manifest_id is not None and (row["payload"] or {}).get("origin_source_record_id") == ctx.manifest_id
+
+
+def _quote_document_status(ctx: Context, item: importing.PlanItem,
+                           row: dict[str, Any]) -> tuple[str, list[str], str | None]:
+    """present · reviewed_later (an operator reviewed a line since) · missing (this plan's document,
+    its lines not written yet) · different (this plan's, changed) · present_different (not this plan's)."""
+    fields = item["fields"]
+    mine = _is_mine(ctx, row)
+    payload = {k: v for k, v in (row["payload"] or {}).items() if k != "origin_source_record_id"}
+    diffs = [name for name, same in (("kind", row["kind"] == _QUOTE_DOCUMENT),
+                                     ("payload_sha256", row["payload_sha256"] == fields["file_sha256"]),
+                                     ("payload", importing.canonical_json(payload)
+                                      == importing.canonical_json(fields["payload"]))) if not same]
+    ctx.cur.execute(f"select line_no, {', '.join(_LINE_FIELDS)} from evidence.document_line "  # noqa: S608
+                    f"where source_record_id = %s::uuid order by line_no", (row["id"],))
+    actual = {r[0]: dict(zip(_LINE_FIELDS, r[1:], strict=True)) for r in ctx.cur.fetchall()}
+    if mine and not diffs and not actual and fields["lines"]:
+        return "missing", ["lines"], None
+    reviewed = False
+    if set(actual) != {line["line_no"] for line in fields["lines"]}:
+        diffs.append("lines")
+    else:
+        for planned in fields["lines"]:
+            got = actual[planned["line_no"]]
+            names: tuple[str, ...] = _LINE_FIELDS
+            if got["check_status"] == "reviewed" and planned["check_status"] == "disputed":
+                reviewed = True
+                names = tuple(f for f in _LINE_FIELDS if f not in _REVIEWABLE)
+            diffs += [f"line {planned['line_no']}.{f}" for f in importing.compare(planned, got, names)[1]]
+    if diffs:
+        return ("different" if mine else "present_different"), diffs, row["id"]
+    return ("reviewed_later" if reviewed else "present"), [], row["id"]
+
+
+def _apply_add_quote_document(ctx: Context, item: importing.PlanItem) -> str:
+    """Write the lines of a document this manifest recorded, once; never touch any other document.
+
+    The record is locked as review-document-line locks it (record, then its lines), so a review
+    and an import of one document take turns.
+    """
+    row = _find_quote_document(ctx, item, lock=True)
+    if row is None:
+        raise ImportRefused(f"{item['key']}: its evidence record was not recorded with the manifest")
+    if not _is_mine(ctx, row):
+        status = _quote_document_status(ctx, item, row)[0]
+        return "present_different" if status == "present_different" else "already_present"
+    ctx.cur.execute("select count(*) from evidence.document_line where source_record_id = %s::uuid", (row["id"],))
+    if ctx.cur.fetchone()[0] == 0 and item["fields"]["lines"]:
+        ctx.cur.executemany(
+            f"insert into evidence.document_line (source_record_id, line_no, {', '.join(_LINE_FIELDS)}) "
+            f"values (%s::uuid, %s, {', '.join(['%s'] * len(_LINE_FIELDS))})",
+            [(row["id"], line["line_no"], *(line[f] for f in _LINE_FIELDS)) for line in item["fields"]["lines"]])
+        return "inserted"
+    status = _quote_document_status(ctx, item, row)[0]
+    if status == "reviewed_later":
+        return "kept_later_value"
+    if status == "present":
+        return "inserted" if item["key"] in ctx.evidence_created else "already_present"
+    return "present_different"
+
+
+def _verify_add_quote_document(ctx: Context, item: importing.PlanItem) -> tuple[str, list[str], str | None]:
+    row = _find_quote_document(ctx, item)
+    if row is None:
+        return "missing", [], None
+    return _quote_document_status(ctx, item, row)
+
+
 _APPLY = {"create_org": _apply_create_org, "create_product": _apply_create_product,
           "add_observation": _apply_add_observation, "set_terms": _apply_set_terms,
-          "set_cost_parameter": _apply_set_cost_parameter}
+          "set_cost_parameter": _apply_set_cost_parameter, "add_quote_document": _apply_add_quote_document}
 _VERIFY = {"create_org": _verify_create_org, "create_product": _verify_create_product,
            "add_observation": _verify_add_observation, "set_terms": _verify_set_terms,
-           "set_cost_parameter": _verify_set_cost_parameter}
+           "set_cost_parameter": _verify_set_cost_parameter, "add_quote_document": _verify_add_quote_document}
 
 
 def apply_item(ctx: Context, item: importing.PlanItem) -> str:
@@ -373,6 +489,7 @@ OWNED_TABLES = (
     ("catalog.cost_parameter", "id"),
     ("catalog.product", "id"),
     ("crm.organization", "id"),
+    ("evidence.document_line", "id"),
     ("evidence.source_record", "id"),
 )
 #: Mutable tables: a row with a later version or update time changed after the apply.
@@ -396,6 +513,11 @@ def collect_owned(cur: Any, manifest_id: str) -> dict[str, list[str]]:
     cur.execute("select id::text from catalog.supplier_product where origin_source_record_id = %s::uuid",
                 (manifest_id,))
     observations = sorted(r[0] for r in cur.fetchall())
+    cur.execute("select id::text from evidence.source_record where kind = 'quote_document' "
+                "and payload->>'origin_source_record_id' = %s", (manifest_id,))
+    documents = sorted(r[0] for r in cur.fetchall())
+    cur.execute("select id::text from evidence.document_line where source_record_id::text = any(%s)", (documents,))
+    lines = sorted(r[0] for r in cur.fetchall())
     return {
         "crm.domain_event": sorted(e[0] for e in events),
         "catalog.supplier_product": observations,
@@ -403,7 +525,8 @@ def collect_owned(cur: Any, manifest_id: str) -> dict[str, list[str]]:
         "catalog.cost_parameter": created_by("cost_parameter.set"),
         "catalog.product": created_by("product.created"),
         "crm.organization": orgs,
-        "evidence.source_record": [manifest_id],
+        "evidence.document_line": lines,
+        "evidence.source_record": [manifest_id, *documents],
     }
 
 
@@ -511,6 +634,19 @@ def rollback_blockers(cur: Any, owned: dict[str, list[str]], verified: list[dict
                     "(select 1 from catalog.cost_parameter later where later.key = mine.key "
                     " and later.valid_from > mine.valid_from and later.id::text <> all(%s))", (params, params))
         blockers += [{"table": "catalog.cost_parameter", "id": r[0], "reason": "a later value was set"}
+                     for r in cur.fetchall()]
+    lines = owned.get("evidence.document_line", [])
+    if lines:
+        cur.execute("select id::text, check_status, updated_at <> created_at from evidence.document_line "
+                    "where id::text = any(%s) for update", (lines,))
+        blockers += [{"table": "evidence.document_line", "id": i, "reason": "reviewed since the apply"}
+                     for i, status, touched in cur.fetchall() if status == "reviewed" or touched]
+    records = owned.get("evidence.source_record", [])
+    if records:
+        cur.execute("select id::text from evidence.source_record where id::text = any(%s) and (updated_at <> created_at "
+                    "or is_quarantined or superseded_by_source_record_id is not null "
+                    "or (kind = 'quote_document' and review_status <> 'pending')) for update", (records,))
+        blockers += [{"table": "evidence.source_record", "id": r[0], "reason": "changed since the apply"}
                      for r in cur.fetchall()]
     blockers += _references(cur, owned, owned)
     blockers += _later_events_on_other_streams(cur, owned)
