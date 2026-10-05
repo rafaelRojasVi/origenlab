@@ -238,13 +238,13 @@ def _handle_create_person(
         receipt_id=receipt_id,
     )
 
-    # Optional email contact point
+    # Optional email contact point: a new row, or the ownerless one the CRM already holds.
+    email_contact_point_id: str | None = None
+    email_claimed = False
     if email:
         value_norm = _normalize_contact_value("email", email)
-        _create_contact_point(
-            self, cur, operator, receipt_id,
-            kind="email", value_norm=value_norm, value_display=value_norm,
-            person_id=person_id, organization_id=None, usage="personal",
+        email_contact_point_id, email_claimed = _attach_person_email(
+            self, cur, operator, receipt_id, person_id=person_id, value_norm=value_norm,
         )
 
     # Optional phone contact point
@@ -280,7 +280,77 @@ def _handle_create_person(
         )
 
     # Bump person version so the create returns version=1 (already 1 from default)
-    return {"ok": True, "person_id": person_id, "version": person["version"]}
+    return {
+        "ok": True, "person_id": person_id, "version": person["version"],
+        "email_contact_point_id": email_contact_point_id, "email_claimed": email_claimed,
+    }
+
+
+def _attach_person_email(
+    self: "V2CrmAuthoringRepository",
+    cur: Any,
+    operator: OperatorIdentity,
+    receipt_id: str,
+    *,
+    person_id: str,
+    value_norm: str,
+) -> tuple[str, bool]:
+    """The new person's email contact point, and whether an existing row was claimed.
+
+    `crm.contact_point` holds one row per address, globally (`contact_point_kind_value_key`), and
+    the historical import left quote recipients there with no owner. An ownerless row is claimed —
+    `unattributed` becomes `personal`; `individual_owner_unknown` becomes `work` and keeps the
+    institution that operates it — so the person and the evidence share one row. Another person's
+    address, a shared mailbox and a deactivated address are refused by name, never a 500.
+    """
+    cur.execute(
+        """
+        select id::text as id, person_id::text as person_id,
+               organization_id::text as organization_id, usage, status
+          from crm.contact_point
+         where kind = 'email' and value_norm = %s
+           for update
+        """,
+        (value_norm,),
+    )
+    existing = _one(cur)
+    if existing is None:
+        cp_id = _create_contact_point(
+            self, cur, operator, receipt_id,
+            kind="email", value_norm=value_norm, value_display=value_norm,
+            person_id=person_id, organization_id=None, usage="personal",
+        )
+        return cp_id, False
+    if existing["person_id"] is not None:
+        raise CommandRefused(409, "contact_point_taken", "this email address belongs to another person")
+    if existing["usage"] == "shared_mailbox":
+        raise CommandRefused(409, "shared_mailbox", "this email address is a shared mailbox, not a person's")
+    if existing["status"] != "active":
+        raise CommandRefused(409, "contact_point_inactive", "this email address is deactivated in the CRM")
+
+    usage = "work" if existing["organization_id"] else "personal"
+    cur.execute(
+        """
+        update crm.contact_point
+           set person_id = %s::uuid, usage = %s, confirmation = 'confirmed',
+               version = version + 1, updated_at = now()
+         where id = %s::uuid and person_id is null
+        """,
+        (person_id, usage, existing["id"]),
+    )
+    self._append_event(
+        cur,
+        aggregate_kind="contact_point",
+        aggregate_id=existing["id"],
+        event_type="contact_point.updated",
+        payload={
+            "kind": "email", "contact_point_id": existing["id"], "claimed_by_person_id": person_id,
+            "usage": usage, "previous_usage": existing["usage"],
+        },
+        operator=operator,
+        receipt_id=receipt_id,
+    )
+    return existing["id"], True
 
 
 def _live_organization_active(
