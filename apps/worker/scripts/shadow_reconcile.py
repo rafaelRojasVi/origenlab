@@ -29,6 +29,9 @@ Sent) is `sent`, an inbox folder is `received`, anything else (archive, unclassi
 Rows without a Message-ID have no direction split of their own beyond the same folder rule. Read
 `missing_sent` first: it is the signal that web-UI sends are not arriving. Exit 1 while anything
 is unexplained.
+
+A V1 row whose `date_iso` is missing or unparseable is `undated`: printed, and exit 1 (it cannot be
+placed against go-live). A `date_iso` without an offset is read as UTC.
 """
 
 from __future__ import annotations
@@ -41,7 +44,7 @@ import sys
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from origenlab_worker.capture import SKIPPED_INTAKE, normalize_rfc822_id
@@ -78,23 +81,35 @@ def direction_of(folder: str | None) -> str:
     return "received"
 
 
-def read_v1_rows(sqlite_path: Path, since: datetime) -> list[V1Row]:
-    """V1 rows from contacto@'s Gmail lanes whose Date header is at or after `since`."""
+def read_v1_rows(sqlite_path: Path, since: datetime) -> tuple[list[V1Row], int]:
+    """`(rows, undated)`: V1 rows from contacto@'s Gmail lanes whose Date header is at or after
+    `since`, and how many rows have no usable Date header at all.
+
+    A Date without an offset is read as UTC. A missing or unparseable one cannot be placed against
+    go-live, so it is counted as `undated` instead of silently leaving the gate; `main` prints it
+    and exits 1.
+    """
     conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
     try:
         rows = conn.execute(
             "select id, folder, message_id, date_iso from emails "
-            "where source_file like ? and date_iso >= ?",
-            (V1_SOURCE_LIKE, (since - timedelta(days=1)).date().isoformat()),
+            "where source_file like ?",  # dates are judged in Python: no SQL string compare can place one
+            (V1_SOURCE_LIKE,),
         ).fetchall()
     finally:
         conn.close()
-    out = []
+    out: list[V1Row] = []
+    undated = 0
     for email_id, folder, message_id, date_iso in rows:
         when = _parse(date_iso)
-        if when is not None and when.tzinfo is not None and when >= since:
+        if when is None:
+            undated += 1
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when >= since:
             out.append(V1Row(int(email_id), folder or "", message_id, date_iso))
-    return out
+    return out, undated
 
 
 def reconcile(v1_rows: Iterable[V1Row], v2_ids: set[str]) -> tuple[Counter[str], list[V1Row]]:
@@ -184,7 +199,7 @@ def main() -> int:
     if since is None or since.tzinfo is None:
         raise SystemExit("--since must be ISO 8601 with an offset, e.g. 2026-10-12T15:00:00Z")
     _private_dir(args.out)  # refuse a path inside the repository before touching anything
-    v1_rows = read_v1_rows(args.sqlite.expanduser(), since)
+    v1_rows, undated = read_v1_rows(args.sqlite.expanduser(), since)
     with open_worker_db(config_from_env(os.environ).database) as db:
         v2_ids = read_v2_ids(db.connection, since)
     counts, missing = reconcile(v1_rows, v2_ids)
@@ -194,9 +209,9 @@ def main() -> int:
               sorted({n for r in missing if (n := normalize_rfc822_id(r.message_id))}))
     write_ids(args.out, "extra_message_ids.txt", extra)
     split = missing_by_direction(missing)
-    print(f"v1_rows={len(v1_rows)} " + " ".join(f"{k}={v}" for k, v in sorted({**counts, **split}.items()))
+    print(f"v1_rows={len(v1_rows)} undated={undated} " + " ".join(f"{k}={v}" for k, v in sorted({**counts, **split}.items()))
           + f" extra_in_v2={len(extra)} (v2 window starts 2 days before --since; boundary extras are margin) detail={path.parent}")
-    return 1 if missing else 0
+    return 1 if missing or undated else 0
 
 
 if __name__ == "__main__":

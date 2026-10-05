@@ -33,7 +33,8 @@ def test_only_contacto_gmail_rows_since_go_live_are_read(tmp_path: Path) -> None
         (3, "gmail:otra@example.invalid/INBOX", "INBOX", "<c@x.invalid>", "2026-10-13T10:00:00-03:00"),  # other box
         (4, f"gmail:{MAILBOX}/[Gmail]/Enviados", "[Gmail]/Enviados", "<d@x.invalid>", "2026-10-13T10:00:00-03:00"),
     ])
-    assert [row.email_id for row in shadow.read_v1_rows(path, SINCE)] == [1, 4]
+    rows, undated = shadow.read_v1_rows(path, SINCE)
+    assert ([row.email_id for row in rows], undated) == ([1, 4], 0)
 
 
 def test_every_v1_row_is_present_explained_or_missing() -> None:
@@ -75,3 +76,39 @@ def test_extra_ids_are_in_v2_only_and_the_id_files_are_private(tmp_path: Path) -
     assert oct(path.stat().st_mode & 0o777) == "0o600" and path.read_text() == "z@x.invalid\n"
     with pytest.raises(SystemExit):
         shadow.write_ids(shadow.REPO_ROOT / "apps", "x.txt", [])
+
+
+def test_a_naive_date_is_read_as_utc_and_an_undated_row_is_counted(tmp_path: Path) -> None:
+    mine = f"gmail:{MAILBOX}/INBOX"
+    path = v1_sqlite(tmp_path, [
+        (1, mine, "INBOX", "<a@x.invalid>", "2026-10-12T15:30:00"),    # naive, 15:30Z: after go-live
+        (2, mine, "INBOX", "<b@x.invalid>", "2026-10-12T14:30:00"),    # naive, 14:30Z: before
+        (3, mine, "INBOX", "<c@x.invalid>", None),                      # no date
+        (4, mine, "INBOX", "<d@x.invalid>", ""),                        # empty
+        (5, mine, "INBOX", "<e@x.invalid>", "not a date"),              # unparseable
+        (6, mine, "INBOX", "<f@x.invalid>", "2026-10-01 garbage"),      # unparseable, sorts early
+        (7, "gmail:otra@example.invalid/INBOX", "INBOX", "<g@x.invalid>", None),  # other mailbox
+    ])
+    rows, undated = shadow.read_v1_rows(path, SINCE)
+    assert ([row.email_id for row in rows], undated) == ([1], 4)
+
+
+def test_an_undated_row_makes_the_exit_code_one(tmp_path: Path, monkeypatch, capsys) -> None:
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    path = v1_sqlite(tmp_path, [(1, f"gmail:{MAILBOX}/INBOX", "INBOX", "<a@x.invalid>", None)])
+
+    @contextmanager
+    def fake_db(_target):
+        yield SimpleNamespace(connection=None)
+
+    import origenlab_worker.cli as cli
+    import origenlab_worker.database as database
+    monkeypatch.setattr(cli, "config_from_env", lambda *_a, **_k: SimpleNamespace(database=None))
+    monkeypatch.setattr(database, "open_worker_db", fake_db)
+    monkeypatch.setattr(shadow, "read_v2_ids", lambda *_a: set())
+    monkeypatch.setattr("sys.argv", ["x", "--sqlite", str(path), "--since", "2026-10-12T15:00:00Z",
+                                     "--out", str(tmp_path / "out")])
+    assert shadow.main() == 1
+    assert "undated=1" in capsys.readouterr().out
