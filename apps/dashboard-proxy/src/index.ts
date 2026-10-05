@@ -1,5 +1,9 @@
 import {
   AUTH_PROFILE_MAX_BYTES,
+  CATALOG_COMMAND_MAX_BYTES,
+  CATALOG_UPLOAD_MAX_BYTES,
+  isAllowedCatalogCommandPostPath,
+  isAllowedCatalogUploadPostPath,
   CRM_AUTHORING_MAX_BYTES,
   isAllowedAuthPostPath,
   isAllowedAuthProfilePostPath,
@@ -122,6 +126,41 @@ export function marketingCommandRefusal(request: Request): { status: number; cod
 }
 
 /**
+ * The CSRF and replay guard for the catalog commands: the same Origin, Sec-Fetch-Site and
+ * Idempotency-Key checks as `marketingCommandRefusal`, with the body rules of each kind. The nine
+ * JSON commands need `application/json` and at most `CATALOG_COMMAND_MAX_BYTES`; the image upload
+ * needs `multipart/form-data` with a `boundary=` parameter and at most `CATALOG_UPLOAD_MAX_BYTES`.
+ * The two never swap: multipart to a JSON command and JSON to the upload are both 415.
+ */
+export function catalogCommandRefusal(request: Request): { status: number; code: string } | null {
+  if (!isAllowedOrigin(request.headers.get("Origin"))) {
+    return { status: 403, code: "origin_not_allowed" };
+  }
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (site !== null && site !== "same-origin" && site !== "same-site") {
+    return { status: 403, code: "cross_site_request" };
+  }
+  const upstreamPath = stripApiPrefix(new URL(request.url).pathname) ?? "";
+  const upload = isAllowedCatalogUploadPostPath(upstreamPath);
+  const rawType = (request.headers.get("Content-Type") || "").trim();
+  const typeOk = upload
+    ? /^multipart\/form-data;\s*boundary=\S/i.test(rawType)
+    : rawType.split(";")[0].trim().toLowerCase() === "application/json";
+  if (!typeOk) {
+    return { status: 415, code: "unsupported_media_type" };
+  }
+  if (!IDEMPOTENCY_KEY_RE.test(request.headers.get(IDEMPOTENCY_KEY_HEADER) || "")) {
+    return { status: 400, code: "idempotency_key_required" };
+  }
+  const length = Number(request.headers.get("Content-Length") || "0");
+  const limit = upload ? CATALOG_UPLOAD_MAX_BYTES : CATALOG_COMMAND_MAX_BYTES;
+  if (!Number.isFinite(length) || length > limit) {
+    return { status: 413, code: "payload_too_large" };
+  }
+  return null;
+}
+
+/**
  * The CSRF guard for the sign-in POSTs (logout, profile select, profile clear), checked before
  * anything is forwarded. A cross-site page can neither send an allowed `Origin` nor a cross-site
  * `Sec-Fetch-Site` past this, so it cannot sign someone out, switch their profile, or drive PIN
@@ -181,6 +220,12 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
         return jsonError(request, refusal.status, refusal.code);
       }
     }
+    if (isAllowedCatalogCommandPostPath(upstreamPath) || isAllowedCatalogUploadPostPath(upstreamPath)) {
+      const refusal = catalogCommandRefusal(request);
+      if (refusal) {
+        return jsonError(request, refusal.status, refusal.code);
+      }
+    }
     if (isAllowedAuthPostPath(upstreamPath)) {
       const refusal = authCommandRefusal(request);
       if (refusal) {
@@ -228,6 +273,20 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     body !== undefined &&
     isAllowedCrmAuthoringCommandPostPath(upstreamPath as string) &&
     body.byteLength > CRM_AUTHORING_MAX_BYTES
+  ) {
+    return jsonError(request, 413, "payload_too_large");
+  }
+  if (
+    body !== undefined &&
+    isAllowedCatalogCommandPostPath(upstreamPath as string) &&
+    body.byteLength > CATALOG_COMMAND_MAX_BYTES
+  ) {
+    return jsonError(request, 413, "payload_too_large");
+  }
+  if (
+    body !== undefined &&
+    isAllowedCatalogUploadPostPath(upstreamPath as string) &&
+    body.byteLength > CATALOG_UPLOAD_MAX_BYTES
   ) {
     return jsonError(request, 413, "payload_too_large");
   }

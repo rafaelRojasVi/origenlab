@@ -115,6 +115,17 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // operator-session rule; no address, subject or institution. Nothing under it is reachable.
   /^\/v2\/workspace\/mail-quote-numbers$/,
   /^\/v2\/cockpit\/work-queue$/,
+  // Catalog 1a reads (`apps/api` v2/catalog/routes.py): products, one product, a supplier's
+  // terms, cost parameters, FX, price history (`?model_key=&limit=`) and a short-lived signed
+  // image URL (JSON, never image bytes). Exact paths, GET-only upstream; named one by one so
+  // nothing else under `/v2/catalog` is reachable until it is reviewed and listed.
+  /^\/v2\/catalog\/products$/,
+  /^\/v2\/catalog\/products\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /^\/v2\/catalog\/suppliers\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/terms$/,
+  /^\/v2\/catalog\/parameters$/,
+  /^\/v2\/catalog\/fx$/,
+  /^\/v2\/catalog\/price-history$/,
+  /^\/v2\/catalog\/images\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/url$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to
   // these paths only.
@@ -250,6 +261,47 @@ export function isAllowedCrmAuthoringCommandPostPath(pathname: string): boolean 
 }
 
 /**
+ * Catalog commands (JSON): create and update a product, confirm its content, record a supplier
+ * cost, set supplier terms and cost parameters, record an FX rate, review a document line and
+ * update a product image's metadata. Nine exact paths under `/v2/commands/`. Every request here
+ * must pass `catalogCommandRefusal` in index.ts: an allowed `Origin`, no cross-site
+ * `Sec-Fetch-Site`, a JSON body within `CATALOG_COMMAND_MAX_BYTES` and a well-formed
+ * `Idempotency-Key`. Roles are enforced upstream.
+ */
+export const CATALOG_COMMAND_POST_PATHS: readonly RegExp[] = [
+  /^\/v2\/commands\/create-product$/,
+  /^\/v2\/commands\/update-product$/,
+  /^\/v2\/commands\/confirm-product-content$/,
+  /^\/v2\/commands\/record-supplier-cost$/,
+  /^\/v2\/commands\/set-supplier-terms$/,
+  /^\/v2\/commands\/set-cost-parameter$/,
+  /^\/v2\/commands\/record-fx-rate$/,
+  /^\/v2\/commands\/update-product-image$/,
+  /^\/v2\/commands\/review-document-line$/,
+];
+
+/** 64 KiB: enough for any catalog JSON body. */
+export const CATALOG_COMMAND_MAX_BYTES = 65_536;
+
+/**
+ * The one multipart POST: a product image. The API caps the file at 8 MiB and refuses oversize
+ * bodies itself; the Worker's limit is the file plus 64 KiB of form overhead (defence in depth).
+ */
+export const CATALOG_UPLOAD_POST_PATHS: readonly RegExp[] = [/^\/v2\/commands\/add-product-image$/];
+
+export const CATALOG_UPLOAD_MAX_BYTES = 8_388_608 + 65_536;
+
+export function isAllowedCatalogCommandPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return CATALOG_COMMAND_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
+export function isAllowedCatalogUploadPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return CATALOG_UPLOAD_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
+/**
  * Sign-out. Clears the session cookie upstream (and records the logout); listed apart from
  * the commercial commands so it can never inherit their headers or be mistaken for one.
  */
@@ -283,6 +335,8 @@ export function isAllowedPostPath(pathname: string): boolean {
   return (
     isAllowedMarketingCommandPostPath(pathname) ||
     isAllowedCrmAuthoringCommandPostPath(pathname) ||
+    isAllowedCatalogCommandPostPath(pathname) ||
+    isAllowedCatalogUploadPostPath(pathname) ||
     isAllowedAuthPostPath(pathname)
   );
 }
