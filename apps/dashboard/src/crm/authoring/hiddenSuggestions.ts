@@ -28,13 +28,15 @@ function writeHidden(refs: Set<string>): void {
 
 export function useHiddenSuggestions(): [Set<string>, (ref: string) => void] {
   const [hidden, setHidden] = useState<Set<string>>(readHidden);
-  const hide = useCallback((ref: string) => {
-    setHidden((prev) => {
-      const next = new Set(prev);
+  const hide = useCallback(
+    (ref: string) => {
+      // The updater stays pure: compute from the current state, then set and write.
+      const next = new Set(hidden);
       next.add(ref);
+      setHidden(next);
       writeHidden(next);
-      return next;
-    });
-  }, []);
+    },
+    [hidden],
+  );
   return [hidden, hide];
 }

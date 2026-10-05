@@ -5,7 +5,7 @@
  * belongs to a person. «Ocultar» hides it in this browser only.
  */
 import { useRef, useState } from "react";
-import { Badge, fmtDate } from "../ui";
+import { Badge, Section, fmtDate } from "../ui";
 import { createPerson, newIdempotencyKey, refusalOf, type PersonSuggestion } from "./crmAuthoringApi";
 import { useHiddenSuggestions } from "./hiddenSuggestions";
 
@@ -20,7 +20,9 @@ export function personRefusalText(code: string, message: string): string {
     case "archived_subject":
       return "La institución está archivada.";
     default:
-      return `${code}: ${message}`;
+      // The API's own text is not Spanish; the code stays for support.
+      void message;
+      return `No se pudo crear la persona (código ${code}).`;
   }
 }
 
@@ -34,13 +36,17 @@ export function PersonSuggestionList({
   mayAuthor,
   showOrganization,
   onCreated,
+  hiddenState,
 }: {
   items: PersonSuggestion[];
   mayAuthor: boolean;
   showOrganization: boolean;
   onCreated: () => void;
+  /** Lets a parent share one hidden-set with the list (the card title counts the visible ones). */
+  hiddenState?: [Set<string>, (ref: string) => void];
 }) {
-  const [hidden, hide] = useHiddenSuggestions();
+  const own = useHiddenSuggestions();
+  const [hidden, hide] = hiddenState ?? own;
   const visible = items.filter((s) => !hidden.has(s.suggestion_ref));
   return (
     <div>
@@ -94,6 +100,7 @@ function SuggestionItem({
         keyRef.current,
       );
       onCreated();
+      setBusy(false);
     } catch (err) {
       const r = refusalOf(err);
       setError(personRefusalText(r?.code ?? "error", r?.message ?? String(err)));
@@ -133,5 +140,30 @@ function SuggestionItem({
       </button>
       {error ? <p className="w-full text-[11px] text-bad">{error}</p> : null}
     </li>
+  );
+}
+
+/** The card's section: the title counts only what is still visible after «Ocultar». */
+export function PersonSuggestionsCardSection({
+  items,
+  mayAuthor,
+  onCreated,
+}: {
+  items: PersonSuggestion[];
+  mayAuthor: boolean;
+  onCreated: () => void;
+}) {
+  const hiddenState = useHiddenSuggestions();
+  const visible = items.filter((s) => !hiddenState[0].has(s.suggestion_ref)).length;
+  return (
+    <Section title={`Personas sugeridas (${visible})`}>
+      <PersonSuggestionList
+        items={items}
+        mayAuthor={mayAuthor}
+        showOrganization={false}
+        onCreated={onCreated}
+        hiddenState={hiddenState}
+      />
+    </Section>
   );
 }

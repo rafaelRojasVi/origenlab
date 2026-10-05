@@ -14,6 +14,7 @@ import { clearResourceCache } from "../useResource";
 import type { OrganizationAuthoringResponse, PersonSuggestion } from "./crmAuthoringApi";
 import { HIDDEN_SUGGESTIONS_KEY } from "./hiddenSuggestions";
 import { OrgAuthoringSection } from "./OrgAuthoringSection";
+import { PersonSuggestionList } from "./PersonSuggestionList";
 
 const UNI = "0a000000-0000-4000-8000-00000000000a";
 const ANA: PersonSuggestion = {
@@ -184,5 +185,128 @@ describe("institution card", () => {
     fireEvent.click(screen.getByRole("button", { name: "Crear persona" }));
     await waitFor(() => expect(posts(calls)).toHaveLength(1));
     expect(posts(calls)[0]).toMatchObject({ path: "/v2/commands/create-person", body: { email: ANA.email, organization_id: UNI } });
+  });
+});
+
+/** A stub where create-person answers `create` and the suggestions read can be made to fail. */
+function stubRefusing(create: { status: number; body: unknown } | "pending", opts: { suggestions?: "loading" | "empty" | "fail" } = {}) {
+  const calls: { path: string; method: string; body: unknown }[] = [];
+  let release: (r: Response) => void = () => undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
+      const method = (init?.method ?? "GET").toUpperCase();
+      calls.push({ path: url.pathname, method, body: init?.body ? JSON.parse(String(init.body)) : null });
+      const json = (b: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } }));
+      if (method !== "GET") {
+        if (create === "pending") return new Promise<Response>((r) => { release = r; });
+        return json(create.body, create.status);
+      }
+      const p = url.pathname;
+      if (p.endsWith("/v2/workspace/person-suggestions")) {
+        if (opts.suggestions === "loading") return new Promise<Response>(() => undefined);
+        if (opts.suggestions === "fail") return json({ detail: "boom" }, 500);
+        if (opts.suggestions === "empty") return json({ items: [], total: 0 });
+        return json({ items: [ANA, GIS], total: 2 });
+      }
+      if (p.endsWith(`/v2/workspace/organizations/${UNI}/authoring`)) return json({ ...card(), person_suggestions: [ANA, GIS] });
+      if (p.endsWith("/v2/workspace/overview")) return json({ entities: [], opportunities_by_stage: {}, organizations_by_confirmation: {}, contact_points_linked: { organization: 0, person: 0 }, assertions: [], drive_archive: { configured: false, documents: 0, revisions_with_drive_file: 0, revisions_total: 0 } });
+      if (p.endsWith("/v2/workspace/pipeline")) return json({ items: [], drive_configured: false });
+      if (p.includes("/v2/contacts")) return json({ items: [], total: 0 });
+      if (p.endsWith("/v2/workspace/equipment-interests")) return json({ by_contact_point: [], by_address_ref: [], by_organization: [] });
+      return Promise.resolve(new Response("{}", { status: 404 }));
+    }),
+  );
+  return { calls, release: (r: Response) => release(r) };
+}
+
+const refusal = (code: string) => ({ status: 409, body: { detail: { code, message: "texto del API" } } });
+const anaRow = (list: HTMLElement) => within(list).getByText("Ana Pérez Soto").closest("li")!;
+
+describe("refusals", () => {
+  it.each([
+    ["contact_point_taken", "Esa dirección ya es de otra persona del CRM."],
+    ["shared_mailbox", "Esa dirección es un buzón compartido, no una persona."],
+    ["contact_point_inactive", "Esa dirección fue desactivada en el CRM."],
+  ])("%s shows its Spanish message, keeps the suggestion and re-enables the button", async (code, text) => {
+    stubRefusing(refusal(code));
+    render(withRole("sales", <PeoplePage navigate={() => undefined} />));
+    const list = await screen.findByRole("list", { name: "Personas sugeridas" });
+    fireEvent.click(within(anaRow(list)).getByRole("button", { name: "Crear persona" }));
+    expect(await within(anaRow(list)).findByText(text)).toBeInTheDocument();
+    expect(within(anaRow(list)).getByRole("button", { name: "Crear persona" })).toBeEnabled();
+  });
+
+  it("an unknown code gets a Spanish fallback that keeps the code for support", async () => {
+    stubRefusing({ status: 422, body: { detail: { code: "codigo_raro", message: "raw english text" } } });
+    render(withRole("sales", <PeoplePage navigate={() => undefined} />));
+    const list = await screen.findByRole("list", { name: "Personas sugeridas" });
+    fireEvent.click(within(anaRow(list)).getByRole("button", { name: "Crear persona" }));
+    expect(await within(anaRow(list)).findByText("No se pudo crear la persona (código codigo_raro).")).toBeInTheDocument();
+    expect(screen.queryByText(/raw english text/)).toBeNull();
+  });
+
+  it("a double click sends exactly one create-person", async () => {
+    const { calls, release } = stubRefusing("pending");
+    render(withRole("sales", <PeoplePage navigate={() => undefined} />));
+    const list = await screen.findByRole("list", { name: "Personas sugeridas" });
+    const button = within(anaRow(list)).getByRole("button", { name: "Crear persona" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(posts(calls)).toHaveLength(1));
+    release(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await waitFor(() => expect(posts(calls)).toHaveLength(1));
+  });
+
+  it("after a successful create the row is not stuck on the busy mark when the reload does not remove it", async () => {
+    stubRefusing({ status: 200, body: { ok: true } });
+    const onCreated = vi.fn();
+    render(withRole("sales", <PersonSuggestionList items={[ANA]} mayAuthor showOrganization onCreated={onCreated} />));
+    fireEvent.click(screen.getByRole("button", { name: "Crear persona" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "Crear persona" })).toBeEnabled();
+  });
+});
+
+describe("section states", () => {
+  it("shows a loading state", async () => {
+    stubRefusing(refusal("x"), { suggestions: "loading" });
+    render(withRole("sales", <PeoplePage navigate={() => undefined} />));
+    expect(await screen.findByText("Personas sugeridas")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Personas sugeridas" })).toBeNull();
+    expect(screen.queryByText("Sin personas sugeridas.")).toBeNull();
+  });
+
+  it("shows an empty state", async () => {
+    stubRefusing(refusal("x"), { suggestions: "empty" });
+    render(withRole("sales", <PeoplePage navigate={() => undefined} />));
+    expect(await screen.findByText("Sin personas sugeridas.")).toBeInTheDocument();
+  });
+
+  it("shows an error state with a reload that recovers", async () => {
+    stubRefusing(refusal("x"), { suggestions: "fail" });
+    render(withRole("sales", <PeoplePage navigate={() => undefined} />));
+    expect(await screen.findByText("No se pudo leer el CRM")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Reintentar" }).length).toBeGreaterThan(0);
+  });
+});
+
+describe("institution card", () => {
+  it("a viewer gets no create button and no write", async () => {
+    const { calls } = stubRefusing(refusal("x"));
+    render(withRole("viewer", <OrgAuthoringSection organizationId={UNI} mayAuthor={false} admin={false} />));
+    expect(await screen.findByText("Personas sugeridas (2)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Crear persona" })).toBeNull();
+    fireEvent.click(screen.getAllByRole("button", { name: "Ocultar" })[0]);
+    expect(posts(calls)).toEqual([]);
+  });
+
+  it("the title counts only the visible suggestions", async () => {
+    stubRefusing(refusal("x"));
+    render(withRole("sales", <OrgAuthoringSection organizationId={UNI} mayAuthor admin={false} />));
+    expect(await screen.findByText("Personas sugeridas (2)")).toBeInTheDocument();
+    fireEvent.click(within(anaRow(screen.getByRole("list", { name: "Personas sugeridas" }))).getByRole("button", { name: "Ocultar" }));
+    expect(screen.getByText("Personas sugeridas (1)")).toBeInTheDocument();
   });
 });
