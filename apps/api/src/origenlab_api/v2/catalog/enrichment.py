@@ -12,11 +12,15 @@ caller left in the dict cannot reach the request.
 
 **What is kept of the answer: only what the source says.**
 
-* Every number in a Spanish text, a spec, a weight or a dimension must appear in the source text
-  sent (the product data plus the scrubbed datasheet and page). A decimal comma for a decimal
-  point is the same number; a unit conversion (mm → cm, lb → kg) is a new number and is
-  rejected. A rejected spec is dropped alone; a rejected dimension drops all three.
-* `origin_country` is kept only with a quote that appears verbatim in the source.
+* Every number in a Spanish text or a spec must appear in the source text sent (the product
+  data plus the scrubbed datasheet and page). A decimal comma for a decimal point is the same
+  number. A rejected spec is dropped alone.
+* A weight is kept only if the source writes that number directly followed by kilograms
+  (`2,5 kg`); «2.5 L» or «2.5 lb» does not state a weight in kg. A dimension is kept only if
+  the source writes it with `cm` (or as `A x B x C cm`), or ten times it with `mm` — the one
+  conversion allowed, because the columns are in cm. One rejected dimension drops all three.
+* No origin country is asked for or kept (review ruling I2): the source cannot prove which
+  country it names, and the column's check would accept any two letters.
 * An image URL is kept only if it is https on the manufacturer's domain (or a subdomain), was in
   the source text verbatim, and names no credentials, port or IP literal.
 * Every string of the answer passes the Labdelivery refusal (spec S5); one hit refuses the item.
@@ -82,13 +86,16 @@ MAX_SOURCE_CHARS = 200_000
 PRODUCT_KEYS = ("brand", "model_number", "name", "product_kind", "category_es")
 
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
-_COUNTRY = re.compile(r"^[A-Z]{2}$")
+_NUM = r"(?<![\d.,])(\d+(?:[.,]\d+)*)"
+_KG = re.compile(_NUM + r"\s*(?:kgs?|kilo(?:gram(?:me)?s?|gramos?)?)(?!\w)", re.IGNORECASE)
+_SINGLE_LENGTH = re.compile(_NUM + r"\s*(cm|mm)(?!\w)", re.IGNORECASE)
+_TRIPLE_LENGTH = re.compile(_NUM + r"\s*(?:cm|mm)?\s*[x×*]\s*" + _NUM + r"\s*(?:cm|mm)?\s*[x×*]\s*" + _NUM
+                            + r"\s*(cm|mm)(?!\w)", re.IGNORECASE)
 _COMMERCIAL = re.compile(
     r"[$€£¥]|\b(?:usd|eur|clp|gbp|chf|prices?|pricing|precios?|costs?|costos?|costes?|discounts?|descuentos?|"
     r"dcto|tarifas?|quotes?|quotation|cotizaci[oó]n(?:es)?|presupuestos?|neto|net price|iva|vat)\b",
     re.IGNORECASE,
 )
-_SPACES = re.compile(r"\s+")
 
 
 class EnrichmentRefused(ValueError):
@@ -106,7 +113,6 @@ class EnrichmentResult:
     length_cm: Decimal | None = None
     width_cm: Decimal | None = None
     height_cm: Decimal | None = None
-    origin_country: str | None = None
     #: (url, source) with source `manufacturer_site` or `datasheet`.
     images: list[tuple[str, str]] = field(default_factory=list)
     #: {field, reason} — never the rejected value.
@@ -116,8 +122,7 @@ class EnrichmentResult:
         """The catalog.product columns this result proposes (None = no proposal)."""
         return {"name_es": self.name_es, "description_es": self.description_es, "category_es": self.category_es,
                 "product_kind": self.product_kind, "specs": self.specs or None, "weight_kg": self.weight_kg,
-                "length_cm": self.length_cm, "width_cm": self.width_cm, "height_cm": self.height_cm,
-                "origin_country": self.origin_country}
+                "length_cm": self.length_cm, "width_cm": self.width_cm, "height_cm": self.height_cm}
 
 
 # ------------------------------------------------------------------ the request
@@ -168,10 +173,9 @@ Rules — the answer is checked automatically, and anything that breaks a rule i
 - Use only facts stated in the text you are given. Do not add facts from memory.
 - Copy every number exactly as the source writes it (a decimal comma instead of a decimal point is \
 fine). Never convert units, round, add or derive numbers. If a value is not stated, leave it out.
-- weight_kg only when the source states the weight in kilograms; dims only when it states all three \
-dimensions in centimetres; otherwise null.
-- origin_country (ISO 3166-1 alpha-2) only when the source states it; then origin_country_quote is \
-the exact words of the source that state it. Otherwise both are null.
+- weight_kg only when the source writes the weight in kilograms (copy that number); otherwise null.
+- dims only when the source states all three dimensions in centimetres (copy them) or millimetres \
+(divide by 10 — the only conversion allowed); otherwise null.
 - images: only URLs of product images that appear verbatim in the given text, with found_in saying \
 whether they came from the datasheet or the page. Otherwise an empty list.
 - product_kind is one of: equipment, accessory, consumable, spare_part, service — or null.
@@ -187,8 +191,7 @@ def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
 OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["name_es", "description_es", "category_es", "product_kind", "specs", "weight_kg", "dims",
-                 "origin_country", "origin_country_quote", "images"],
+    "required": ["name_es", "description_es", "category_es", "product_kind", "specs", "weight_kg", "dims", "images"],
     "properties": {
         "name_es": _nullable({"type": "string"}),
         "description_es": _nullable({"type": "string"}),
@@ -203,8 +206,6 @@ OUTPUT_SCHEMA: dict[str, Any] = {
             "type": "object", "additionalProperties": False, "required": ["length_cm", "width_cm", "height_cm"],
             "properties": {"length_cm": {"type": "number"}, "width_cm": {"type": "number"},
                            "height_cm": {"type": "number"}}}),
-        "origin_country": _nullable({"type": "string"}),
-        "origin_country_quote": _nullable({"type": "string"}),
         "images": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["url", "found_in"],
             "properties": {"url": {"type": "string"}, "found_in": {"type": "string", "enum": ["datasheet", "page"]}}}},
@@ -270,44 +271,74 @@ def _swap(token: str) -> str:
 
 
 def _decimals(token: str) -> set[Decimal]:
-    """The values a number as written may mean: a lone separator either way, thousands separators dropped."""
-    out: set[Decimal] = set()
-    candidates = [token.replace(",", "."), token.replace(",", ""), token.replace(".", "").replace(",", ".")]
-    for c in candidates:
-        if c.count(".") <= 1:
-            try:
-                out.add(Decimal(c))
-            except InvalidOperation:
-                pass
-    return out
+    """The values a number as written may mean.
+
+    One separator followed by exactly three digits is ambiguous (`1,500` is 1.5 or 1500); any
+    other single separator is a decimal one (`2,5` is only 2.5). With several separators, the
+    last is the decimal one if it differs from the others, else they are all thousands.
+    """
+    seps = re.findall(r"[.,]", token)
+    digits = re.split(r"[.,]", token)
+    try:
+        if not seps:
+            return {Decimal(token)}
+        if len(seps) == 1:
+            whole, frac = digits
+            out = {Decimal(f"{whole}.{frac}")}
+            if len(frac) == 3:
+                out.add(Decimal(whole + frac))
+            return out
+        if seps[-1] != seps[0] and len(set(seps[:-1])) == 1:
+            return {Decimal("".join(digits[:-1]) + "." + digits[-1])}
+        if len(set(seps)) == 1:
+            return {Decimal("".join(digits))}
+    except InvalidOperation:
+        pass
+    return set()
+
+
+def _value_set(pattern: re.Pattern[str], text: str, groups: tuple[int, ...]) -> dict[str, set[Decimal]]:
+    """Unit (lower case) → the values the source writes with it."""
+    found: dict[str, set[Decimal]] = {}
+    for m in pattern.finditer(text):
+        unit = m.group(m.lastindex).lower() if pattern is not _KG else "kg"
+        for g in groups:
+            found.setdefault(unit, set()).update(_decimals(m.group(g)))
+    return found
+
+
+def _as_decimal(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        number = Decimal(str(value))
+    except InvalidOperation:
+        return None
+    return number if number.is_finite() and number >= 0 else None
 
 
 class _Source:
     def __init__(self, text: str) -> None:
         self.text = text or ""
         self.tokens = set(_NUMBER.findall(self.text))
-        self.values: set[Decimal] = set()
-        for token in self.tokens:
-            self.values |= _decimals(token)
-        self.folded = _SPACES.sub(" ", self.text).casefold()
+        self.kg = _value_set(_KG, self.text, (1,)).get("kg", set())
+        lengths = _value_set(_SINGLE_LENGTH, self.text, (1,))
+        for unit, values in _value_set(_TRIPLE_LENGTH, self.text, (1, 2, 3)).items():
+            lengths.setdefault(unit, set()).update(values)
+        self.cm, self.mm = lengths.get("cm", set()), lengths.get("mm", set())
 
     def states_numbers_in(self, text: str) -> bool:
         return all(t in self.tokens or _swap(t) in self.tokens for t in _NUMBER.findall(text))
 
-    def states_value(self, value: Any) -> Decimal | None:
-        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-            return None
-        try:
-            number = Decimal(str(value))
-        except InvalidOperation:
-            return None
-        if not number.is_finite() or number < 0:
-            return None
-        return number if number in self.values else None
+    def states_kg(self, value: Any) -> Decimal | None:
+        number = _as_decimal(value)
+        return number if number is not None and number in self.kg else None
 
-    def quotes(self, text: str) -> bool:
-        quote = _SPACES.sub(" ", text).strip().casefold()
-        return bool(quote) and quote in self.folded
+    def states_cm(self, value: Any) -> Decimal | None:
+        number = _as_decimal(value)
+        if number is None:
+            return None
+        return number if number in self.cm or number * 10 in self.mm else None
 
 
 def host_allowed(host: str | None, domains: tuple[str, ...] | list[str]) -> bool:
@@ -426,27 +457,18 @@ def validate_response(raw: dict[str, Any], *, source_text: str = "",
         result.specs.append({"label_es": label, "value": value, "unit": unit, "source": "machine"})
 
     if raw.get("weight_kg") is not None:
-        result.weight_kg = src.states_value(raw["weight_kg"])
+        result.weight_kg = src.states_kg(raw["weight_kg"])
         if result.weight_kg is None:
-            reject("weight_kg", "number_not_in_source")
+            reject("weight_kg", "not_stated_in_kg")
 
     dims = raw.get("dims")
     if dims is not None:
-        values = [src.states_value(dims.get(k)) if isinstance(dims, dict) else None
+        values = [src.states_cm(dims.get(k)) if isinstance(dims, dict) else None
                   for k in ("length_cm", "width_cm", "height_cm")]
         if all(v is not None for v in values):
             result.length_cm, result.width_cm, result.height_cm = values
         else:
-            reject("dims", "number_not_in_source")
-
-    country, quote = raw.get("origin_country"), raw.get("origin_country_quote")
-    if country is not None:
-        if not isinstance(country, str) or not _COUNTRY.match(country):
-            reject("origin_country", "not_iso_alpha2")
-        elif not isinstance(quote, str) or not src.quotes(quote):
-            reject("origin_country", "not_quoted_from_source")
-        else:
-            result.origin_country = country
+            reject("dims", "not_stated_in_cm_or_mm")
 
     images = raw.get("images") or []
     if not isinstance(images, list):

@@ -49,10 +49,11 @@ import os
 import re
 import socket
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from ipaddress import ip_address
+from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -82,9 +83,12 @@ EXIT_ITEM_FAILED = _common.EXIT_APPLY_FAILED
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 500
 IMAGE_TIMEOUT_S = 20.0
+#: Wall-clock ceiling for one whole download, however slowly the bytes trickle in.
+IMAGE_DEADLINE_S = 60.0
+_NAT64 = ip_network("64:ff9b::/96")
 _DOMAIN = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _CONTENT_FIELDS = ("name_es", "description_es", "category_es", "product_kind", "specs", "weight_kg", "length_cm",
-                   "width_cm", "height_cm", "origin_country")
+                   "width_cm", "height_cm")
 _CASTS = {"specs": "::jsonb", "weight_kg": "::numeric", "length_cm": "::numeric", "width_cm": "::numeric",
           "height_cm": "::numeric"}
 
@@ -139,15 +143,39 @@ def parse_domains(values: list[str] | None) -> Domains:
 Resolver = Callable[..., list[tuple[Any, ...]]]
 
 
+def _public(address: str) -> bool:
+    """Whether an address is one an image may be fetched from.
+
+    Global, not multicast; an IPv4-mapped IPv6 address is refused outright; a NAT64
+    (`64:ff9b::/96`) or 6to4 address is judged by the IPv4 address it embeds.
+    """
+    ip = ip_address(address.split("%", 1)[0])
+    if isinstance(ip, IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return False
+        if ip in _NAT64:
+            return _public(str(IPv4Address(int(ip) & 0xFFFFFFFF)))
+        if ip.sixtofour is not None and not _public(str(ip.sixtofour)):
+            return False
+    return ip.is_global and not ip.is_multicast
+
+
 def fetch_image(url: str, domains: tuple[str, ...], *, client: httpx.Client,
-                resolve: Resolver = socket.getaddrinfo, timeout: float = IMAGE_TIMEOUT_S) -> tuple[bytes, str]:
+                resolve: Resolver = socket.getaddrinfo, timeout: float = IMAGE_TIMEOUT_S,
+                deadline_s: float = IMAGE_DEADLINE_S, clock: Callable[[], float] = time.monotonic) -> tuple[bytes, str]:
     """The bytes and content type of one manufacturer image, or `ImageFetchRefused`.
 
-    https on a manufacturer domain (or subdomain) only; every address the host resolves to must
-    be public (no private, loopback, link-local, reserved or multicast address); no redirect is
-    followed; a timeout; the body is streamed and cut at 8 MiB; the declared type and the magic
-    bytes must agree (`check_image`).
+    - https on a manufacturer domain (or subdomain) only;
+    - the host is resolved **once**; every address must be public (`_public`), and the request
+      goes to the first of them — the URL carries that IP, the Host header and TLS SNI carry the
+      name (so the certificate is still checked against the name), and no second lookup can
+      rebind it;
+    - no redirect is followed; a per-operation timeout and a wall-clock deadline for the whole
+      download; `Accept-Encoding: identity` and raw bytes, so nothing is decompressed;
+    - the body is streamed and cut at 8 MiB; the declared type and the magic bytes must agree
+      (`check_image`).
     """
+    started = clock()
     problem = enrichment.image_url_problem(url, domains)
     if problem is not None:
         raise ImageFetchRefused(problem)
@@ -156,17 +184,17 @@ def fetch_image(url: str, domains: tuple[str, ...], *, client: httpx.Client,
         infos = resolve(host, 443, 0, socket.SOCK_STREAM)
     except (OSError, UnicodeError):
         raise ImageFetchRefused("unresolvable") from None
-    addresses = {info[4][0] for info in infos}
+    addresses = sorted({str(info[4][0]) for info in infos})
     if not addresses:
         raise ImageFetchRefused("unresolvable")
-    for address in addresses:
-        ip = ip_address(str(address).split("%", 1)[0])
-        if not ip.is_global or ip.is_multicast:
-            raise ImageFetchRefused("non_public_address")
+    if not all(_public(a) for a in addresses):
+        raise ImageFetchRefused("non_public_address")
+    pinned = httpx.URL(url).copy_with(host=addresses[0].split("%", 1)[0])
+    headers = {"Host": host, "Accept": "image/jpeg, image/png, image/webp", "Accept-Encoding": "identity"}
     data = bytearray()
     try:
-        with client.stream("GET", url, follow_redirects=False, timeout=timeout,
-                           headers={"Accept": "image/jpeg, image/png, image/webp"}) as response:
+        with client.stream("GET", pinned, headers=headers, follow_redirects=False, timeout=timeout,
+                           extensions={"sni_hostname": host}) as response:
             if response.is_redirect or 300 <= response.status_code < 400:
                 raise ImageFetchRefused("redirect")
             if response.status_code != 200:
@@ -174,13 +202,17 @@ def fetch_image(url: str, domains: tuple[str, ...], *, client: httpx.Client,
             declared_length = response.headers.get("content-length", "")
             if declared_length.isdigit() and int(declared_length) > MAX_IMAGE_BYTES:
                 raise ImageFetchRefused("too_large")
-            for chunk in response.iter_bytes():
+            for chunk in response.iter_raw():
                 data += chunk
                 if len(data) > MAX_IMAGE_BYTES:
                     raise ImageFetchRefused("too_large")
+                if clock() - started > deadline_s:
+                    raise ImageFetchRefused("deadline")
             declared = response.headers.get("content-type")
     except httpx.HTTPError as exc:
         raise ImageFetchRefused(type(exc).__name__) from None
+    if clock() - started > deadline_s:
+        raise ImageFetchRefused("deadline")
     try:
         return bytes(data), check_image(bytes(data), declared)
     except ImageRefused:
@@ -192,11 +224,24 @@ def _real_http_client() -> httpx.Client:
     return httpx.Client(timeout=httpx.Timeout(IMAGE_TIMEOUT_S, connect=5.0), follow_redirects=False, trust_env=False)
 
 
-def _storage_from_env() -> CatalogStorage | None:
+def _storage_from_env(*, allow_remote: bool) -> CatalogStorage | None:
+    """The catalog Storage of the environment, or None. A non-loopback host needs `--allow-remote-storage`.
+
+    The database target is loopback-only; uploading into a hosted bucket is a separate decision
+    the operator states explicitly.
+    """
     url, key = os.environ.get("ORIGENLAB_V2_STORAGE_URL"), os.environ.get("ORIGENLAB_V2_STORAGE_SECRET_KEY")
     if not (url and key):
         return None
     from origenlab_api.v2.catalog.storage import SupabaseStorage
+
+    try:
+        loopback = ip_address(urlsplit(url.strip()).hostname or "").is_loopback
+    except ValueError:
+        loopback = False
+    if not loopback and not allow_remote:
+        raise _common.Refused("ORIGENLAB_V2_STORAGE_URL is not a loopback address; uploading product images to a "
+                              "remote bucket needs --allow-remote-storage")
 
     try:
         return SupabaseStorage(url, key, httpx.Client(timeout=httpx.Timeout(30.0, connect=5.0)))
@@ -218,7 +263,7 @@ def _anthropic_client() -> Any:
 
 _SELECT = """
 select p.id::text as id, p.model_number, p.model_key, p.name, p.product_kind, p.category_es, p.name_es,
-       p.description_es, p.specs, p.weight_kg, p.length_cm, p.width_cm, p.height_cm, p.origin_country,
+       p.description_es, p.specs, p.weight_kg, p.length_cm, p.width_cm, p.height_cm,
        p.content_origin, p.content_confirmed_at, p.version, m.name as brand
   from catalog.product p
   join crm.organization m on m.id = p.manufacturer_organization_id
@@ -426,6 +471,8 @@ def _parser() -> argparse.ArgumentParser:
     mode.add_argument("--apply", action="store_true", help="write proposals into a disposable database")
     ap.add_argument("--allow-cleanroom-production", action="store_true",
                     help=f"with --apply, write into {_common.CLEANROOM_DB} instead of a disposable database")
+    ap.add_argument("--allow-remote-storage", action="store_true",
+                    help="with --apply, upload images to a non-loopback ORIGENLAB_V2_STORAGE_URL")
     return ap
 
 
@@ -448,7 +495,7 @@ def main(argv: list[str] | None = None, *, client: Any = None, storage: CatalogS
         if client is None:
             client = _anthropic_client()
         if args.apply and storage is None:
-            storage = _storage_from_env()
+            storage = _storage_from_env(allow_remote=args.allow_remote_storage)
         http = http or _real_http_client()
         resolve = resolve or socket.getaddrinfo
 
@@ -470,6 +517,7 @@ def main(argv: list[str] | None = None, *, client: Any = None, storage: CatalogS
     started = datetime.now(UTC).isoformat()
     items: list[dict[str, Any]] = []
     failed = False
+    refused: str | None = None
     conn = None
     try:
         if args.apply:
@@ -479,48 +527,64 @@ def main(argv: list[str] | None = None, *, client: Any = None, storage: CatalogS
             _common.assert_runtime_login(cur)
             conn.commit()
         for product in products:
-            domains_here = domains.for_brand(product["brand"])
             item: dict[str, Any] = {"model_key": product["model_key"], "product_id": product["id"]}
-            outcome, result, detail = propose(client, product, args.source_dir, domains_here, args.model)
-            if detail:
-                item["detail"] = detail
-            if result is not None:
-                item["rejected"] = result.rejected
-                item["proposal"] = _jsonable({**{k: v for k, v in result.product_fields().items() if v is not None},
-                                              "images": [{"url": u, "source": s} for u, s in result.images]})
-            if outcome == "api_error":
+            try:
+                _process(item, product, args, client, domains, storage, http, resolve, conn, operator)
+            except _common.Refused:
+                raise
+            except psycopg.Error as exc:
+                sqlstate = getattr(getattr(exc, "diag", None), "sqlstate", None)
+                item.update(outcome="failed", detail=f"{type(exc).__name__} sqlstate={sqlstate}")
+                if conn is not None and conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                    conn.rollback()
+            except Exception as exc:  # noqa: BLE001 - one product's failure is reported by class, the run goes on
+                item.update(outcome="failed", detail=type(exc).__name__)
+            if item["outcome"] in ("failed", "api_error"):
                 failed = True
-            if outcome == "proposed" and args.apply:
-                assert conn is not None  # noqa: S101
-                stored, image_refusals = _download(result, product, domains_here, storage, http, resolve)
-                item["images_refused"] = image_refusals
-                try:
-                    with conn.transaction():
-                        outcome, changed, added = _write_item(conn.cursor(), operator, product,
-                                                              result.product_fields(), stored)
-                    item["changed"], item["images_added"] = changed, added
-                except psycopg.Error as exc:
-                    failed = True
-                    outcome = "failed"
-                    item["detail"] = f"{type(exc).__name__} sqlstate={getattr(getattr(exc, 'diag', None), 'sqlstate', None)}"
-            item["outcome"] = outcome
             items.append(item)
     except _common.Refused as exc:
-        return _common.refuse(str(exc))
+        refused = str(exc)
+    except psycopg.Error as exc:
+        refused = f"database error: {type(exc).__name__} sqlstate={getattr(getattr(exc, 'diag', None), 'sqlstate', None)}"
     finally:
         if conn is not None:
             conn.close()
-
-    counts: dict[str, int] = {}
-    for item in items:
-        counts[item["outcome"]] = counts.get(item["outcome"], 0) + 1
-    report = {"tool": "enrich_products", "mode": "apply" if args.apply else "dry_run", "model": args.model,
-              "target_database": _common.dbname(args.target_dsn), "select": select_mode, "operator_id":
-              operator.operator_id, "started_at": started, "finished_at": datetime.now(UTC).isoformat(),
-              "counts": counts, "items": items}
-    _common.write_report(out, "enrich-report.json", report)
+        counts: dict[str, int] = {}
+        for done in items:
+            counts[done["outcome"]] = counts.get(done["outcome"], 0) + 1
+        report = {"tool": "enrich_products", "mode": "apply" if args.apply else "dry_run", "model": args.model,
+                  "target_database": _common.dbname(args.target_dsn), "select": select_mode,
+                  "operator_id": operator.operator_id, "started_at": started,
+                  "finished_at": datetime.now(UTC).isoformat(), "selected": len(products), "counts": counts,
+                  "items": items}
+        if refused is not None:
+            report["refused"] = refused
+        _common.write_report(out, "enrich-report.json", report)
+    if refused is not None:
+        return _common.refuse(f"{refused} (report written; products before this point were committed)")
     _common.say({"mode": report["mode"], "selected": len(products), "counts": counts})
     return EXIT_ITEM_FAILED if failed else EXIT_OK
+
+
+def _process(item: dict[str, Any], product: dict[str, Any], args: argparse.Namespace, client: Any, domains: Domains,
+             storage: CatalogStorage | None, http: httpx.Client, resolve: Resolver, conn: Any,
+             operator: OperatorIdentity) -> None:
+    """Propose, and with --apply download and write, one product; fills `item` (outcome last)."""
+    domains_here = domains.for_brand(product["brand"])
+    outcome, result, detail = propose(client, product, args.source_dir, domains_here, args.model)
+    if detail:
+        item["detail"] = detail
+    if result is not None:
+        item["rejected"] = result.rejected
+        item["proposal"] = _jsonable({**{k: v for k, v in result.product_fields().items() if v is not None},
+                                      "images": [{"url": u, "source": s} for u, s in result.images]})
+    if outcome == "proposed" and args.apply:
+        stored, image_refusals = _download(result, product, domains_here, storage, http, resolve)
+        item["images_refused"] = image_refusals
+        with conn.transaction():
+            outcome, changed, added = _write_item(conn.cursor(), operator, product, result.product_fields(), stored)
+        item["changed"], item["images_added"] = changed, added
+    item["outcome"] = outcome
 
 
 if __name__ == "__main__":

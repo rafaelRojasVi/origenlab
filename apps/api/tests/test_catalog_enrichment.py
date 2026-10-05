@@ -54,8 +54,6 @@ def _raw(**overrides) -> dict:
                   {"label_es": "Frecuencia", "value": "40", "unit": "kHz"}],
         "weight_kg": 3.2,
         "dims": {"length_cm": 30, "width_cm": 18, "height_cm": 22},
-        "origin_country": "DE",
-        "origin_country_quote": "Made in Germany",
         "images": [{"url": "https://media.acme.example/img/sonic-100.png", "found_in": "page"}],
     }
     raw.update(overrides)
@@ -118,7 +116,6 @@ def test_validator_keeps_what_the_source_states() -> None:
     assert result.name_es == "Baño ultrasónico SONIC-100 de 2,5 L"
     assert result.weight_kg == Decimal("3.2")
     assert (result.length_cm, result.width_cm, result.height_cm) == (Decimal("30"), Decimal("18"), Decimal("22"))
-    assert result.origin_country == "DE"
     assert [s["value"] for s in result.specs] == ["2.5", "40"]
     assert all(s["source"] == "machine" for s in result.specs)
     assert result.images == [("https://media.acme.example/img/sonic-100.png", "manufacturer_site")]
@@ -147,9 +144,34 @@ def test_validator_rejects_a_description_with_an_invented_number() -> None:
     assert "description_es" in {r["field"] for r in result.rejected}
 
 
-def test_validator_rejects_a_country_the_source_does_not_quote() -> None:
-    result = _validate(_raw(origin_country="CN", origin_country_quote="Made in China"))
-    assert result.origin_country is None
+def test_origin_country_is_not_part_of_this_tool() -> None:
+    """Ruling I2: a country cannot be verified from the source, so it is never asked for or kept."""
+    assert "origin_country" not in enrichment.OUTPUT_SCHEMA["properties"]
+    assert "origin_country" not in json.dumps(enrichment.build_request(_product(), DATASHEET, None))
+    result = _validate(_raw(origin_country="DE", origin_country_quote="Made in Germany"))
+    assert "origin_country" not in result.product_fields()
+    assert not hasattr(result, "origin_country")
+
+
+def test_weight_needs_its_number_next_to_kg_in_the_source() -> None:
+    for line in ("Capacity: 2.5 L", "Weight: 2.5 lb", "Weight 2.5", "2.5 kgf force"):
+        source = f"ACME SONIC-100\n{line}\n"
+        result = _validate(_raw(weight_kg=2.5, dims=None), source=source)
+        assert result.weight_kg is None, line
+        assert "weight_kg" in {r["field"] for r in result.rejected}
+    for line in ("Weight: 2.5 kg", "Peso 2,5 kg", "net weight 2.5kg", "2.5 kilograms"):
+        assert _validate(_raw(weight_kg=2.5, dims=None), source=f"ACME\n{line}\n").weight_kg == Decimal("2.5"), line
+
+
+def test_dimensions_need_cm_or_mm_next_to_their_numbers() -> None:
+    dims = {"length_cm": 30, "width_cm": 18, "height_cm": 22}
+    ok = ("30 x 18 x 22 cm", "300 x 180 x 220 mm", "L 30 cm, W 18 cm, H 22 cm", "30×18×22cm")
+    for line in ok:
+        result = _validate(_raw(weight_kg=None, dims=dims), source=f"ACME\n{line}\n")
+        assert (result.length_cm, result.width_cm, result.height_cm) == (30, 18, 22), line
+    for line in ("30 x 18 x 22 in", "30 x 18 x 22", "Capacity 30 L, 18 kHz, 22 W", "30 x 18 x 22 m"):
+        result = _validate(_raw(weight_kg=None, dims=dims), source=f"ACME\n{line}\n")
+        assert result.length_cm is None, line
 
 
 def test_validator_enforces_lengths_kinds_and_spec_count() -> None:
@@ -207,7 +229,7 @@ def _client(handler) -> httpx.Client:
 
 
 def test_fetch_image_downloads_a_png_from_the_manufacturer() -> None:
-    client = _client(lambda req: httpx.Response(200, headers={"content-type": "image/png"}, content=PNG))
+    client = _client(lambda req: httpx.Response(200, headers={"content-type": "image/png"}, stream=httpx.ByteStream(PNG)))
     data, ctype = ep.fetch_image("https://media.acme.example/a.png", ("acme.example",), client=client,
                                  resolve=_resolver("93.184.216.34"))
     assert data == PNG and ctype == "image/png"
@@ -234,10 +256,10 @@ def test_fetch_image_refuses_redirects_http_and_foreign_hosts() -> None:
 
 def test_fetch_image_caps_the_stream_and_checks_magic_bytes() -> None:
     big = _client(lambda req: httpx.Response(200, headers={"content-type": "image/png"},
-                                             content=PNG + b"\x00" * (8 * 1024 * 1024)))
+                                             stream=httpx.ByteStream(PNG + b"\x00" * (8 * 1024 * 1024))))
     with pytest.raises(ep.ImageFetchRefused):
         ep.fetch_image("https://acme.example/a.png", ("acme.example",), client=big, resolve=_resolver("93.184.216.34"))
-    html = _client(lambda req: httpx.Response(200, headers={"content-type": "image/png"}, content=b"<html>hi</html>"))
+    html = _client(lambda req: httpx.Response(200, headers={"content-type": "image/png"}, stream=httpx.ByteStream(b"<html>hi</html>")))
     with pytest.raises(ep.ImageFetchRefused):
         ep.fetch_image("https://acme.example/a.png", ("acme.example",), client=html, resolve=_resolver("93.184.216.34"))
 
@@ -413,7 +435,7 @@ def test_apply_writes_machine_content_an_event_and_a_proposed_image(disposable_d
     model = f"APL-{uuid.uuid4().hex[:4].upper()}"
     _, [pid] = _make_products(dsn, model)
     storage = FakeStorage()
-    http = _client(lambda req: httpx.Response(200, headers={"content-type": "image/png"}, content=PNG))
+    http = _client(lambda req: httpx.Response(200, headers={"content-type": "image/png"}, stream=httpx.ByteStream(PNG)))
     rc = ep.main(_argv(dsn, operator_email, tmp_path, f"model_keys:{model}", "--source-dir",
                        str(_source_dir(tmp_path, model)), "--manufacturer-domain", "acme.example", "--apply"),
                  client=_fake_client({model: _answer(model)}), storage=storage, http=http,
@@ -483,3 +505,184 @@ def test_a_labdelivery_item_is_refused_and_the_others_go_on(disposable_database,
     outcomes = {i["model_key"]: i["outcome"] for i in report["items"]}
     assert outcomes[bad.replace("-", "")] == "refused_labdelivery"
     assert outcomes[good.replace("-", "")] == "updated"
+
+
+# ------------------------------------------------------------------ fix round 1: downloads
+
+def test_fetch_image_pins_the_connection_to_the_checked_address() -> None:
+    seen = {}
+    calls = []
+
+    def resolve(host, port, *args, **kwargs):
+        calls.append(host)
+        # A rebinding resolver: the second answer would be private. There must be no second lookup.
+        ip = "93.184.216.34" if len(calls) == 1 else "127.0.0.1"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(host=request.url.host, header=request.headers["host"],
+                    sni=request.extensions.get("sni_hostname"), encoding=request.headers.get("accept-encoding"))
+        return httpx.Response(200, headers={"content-type": "image/png"}, stream=httpx.ByteStream(PNG))
+
+    data, _ = ep.fetch_image("https://media.acme.example/a.png", ("acme.example",), client=_client(handler),
+                             resolve=resolve)
+    assert data == PNG and calls == ["media.acme.example"]
+    assert seen == {"host": "93.184.216.34", "header": "media.acme.example", "sni": "media.acme.example",
+                    "encoding": "identity"}
+
+
+def test_fetch_image_has_a_wall_clock_deadline() -> None:
+    ticks = iter([0.0, 0.0, 100.0, 100.0, 100.0])
+    client = _client(lambda req: httpx.Response(200, headers={"content-type": "image/png"}, stream=httpx.ByteStream(PNG)))
+    with pytest.raises(ep.ImageFetchRefused, match="deadline"):
+        ep.fetch_image("https://acme.example/a.png", ("acme.example",), client=client,
+                       resolve=_resolver("93.184.216.34"), clock=lambda: next(ticks))
+
+
+def test_fetch_image_does_not_decompress() -> None:
+    import gzip
+
+    client = _client(lambda req: httpx.Response(200, headers={"content-type": "image/png", "content-encoding": "gzip"},
+                                                stream=httpx.ByteStream(gzip.compress(PNG))))
+    with pytest.raises(ep.ImageFetchRefused, match="not_an_image"):
+        ep.fetch_image("https://acme.example/a.png", ("acme.example",), client=client,
+                       resolve=_resolver("93.184.216.34"))
+
+
+@pytest.mark.parametrize("ip", ["::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:93.184.216.34",
+                                "64:ff9b::a00:1", "64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe", "2002:a00:1::1"])
+def test_fetch_image_refuses_ipv4_embedded_in_ipv6(ip) -> None:
+    with pytest.raises(ep.ImageFetchRefused, match="non_public_address"):
+        ep.fetch_image("https://acme.example/a.png", ("acme.example",),
+                       client=_client(lambda r: pytest.fail("no request")), resolve=_resolver(ip))
+
+
+def test_nat64_of_a_public_address_is_allowed() -> None:
+    client = _client(lambda req: httpx.Response(200, headers={"content-type": "image/png"}, stream=httpx.ByteStream(PNG)))
+    data, _ = ep.fetch_image("https://acme.example/a.png", ("acme.example",), client=client,
+                             resolve=_resolver("64:ff9b::5db8:d822"))
+    assert data == PNG
+
+
+# ------------------------------------------------------------------ fix round 1: storage target
+
+def test_apply_refuses_a_remote_storage_url_without_the_flag(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("ORIGENLAB_V2_STORAGE_URL", "https://abcdefgh.supabase.co")
+    monkeypatch.setenv("ORIGENLAB_V2_STORAGE_SECRET_KEY", "sb_secret_TESTONLY")
+    local = "postgresql://origenlab_api:pw@127.0.0.1:1/origenlab_test_0123abcd"
+    argv = ["--target-dsn", local, "--operator-email", "x@example.test", "--select", "all-missing",
+            "--out", str(tmp_path / "o"), "--apply"]
+    assert ep.main(argv, client=_fail_client()) == ep.EXIT_REFUSED
+    err = capsys.readouterr().err
+    assert "--allow-remote-storage" in err and "sb_secret" not in err  # refused before any database access
+    with pytest.raises(ep._common.Refused, match="allow-remote-storage"):
+        ep._storage_from_env(allow_remote=False)
+    assert ep._storage_from_env(allow_remote=True) is not None
+    monkeypatch.setenv("ORIGENLAB_V2_STORAGE_URL", "http://127.0.0.1:54321")
+    assert ep._storage_from_env(allow_remote=False) is not None
+
+
+# ------------------------------------------------------------------ fix round 1: failures mid-run
+
+class _BrokenStorage(FakeStorage):
+    def __init__(self, broken_for: str) -> None:
+        super().__init__()
+        self.broken_for = broken_for
+
+    def put_if_absent(self, path, data, content_type):
+        if self.broken_for in path:
+            from origenlab_api.v2.catalog.storage import StorageUnavailable
+            raise StorageUnavailable("storage upload answered HTTP 503")
+        super().put_if_absent(path, data, content_type)
+
+
+def _two(dsn, tmp_path, prefix):
+    a, b = f"{prefix}A-{uuid.uuid4().hex[:4].upper()}", f"{prefix}B-{uuid.uuid4().hex[:4].upper()}"
+    _, ids = _make_products(dsn, a, b)
+    return (a, b), ids
+
+
+def _run(dsn, email, tmp_path, models, out, **kwargs):
+    argv = ["--target-dsn", runtime_dsn(dsn), "--operator-email", email, "--select",
+            f"model_keys:{','.join(models)}", "--out", str(out), "--source-dir", str(_source_dir(tmp_path, *models)),
+            "--manufacturer-domain", "acme.example", "--apply"]
+    return ep.main(argv, client=_fake_client({m: _answer(m) for m in models}),
+                   http=_client(lambda req: httpx.Response(200, headers={"content-type": "image/png"}, stream=httpx.ByteStream(PNG))),
+                   resolve=_resolver("93.184.216.34"), **kwargs)
+
+
+def _report_items(out):
+    report = json.loads((out / "enrich-report.json").read_text(encoding="utf-8"))
+    return report, {i["model_key"]: i for i in report["items"]}
+
+
+@needs_db
+def test_a_storage_failure_fails_only_its_item(disposable_database, operator_email, tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-SECRETKEYVALUE")
+    dsn = disposable_database
+    (a, b), (a_id, b_id) = _two(dsn, tmp_path, "STO")
+    out = tmp_path / "storage"
+    assert _run(dsn, operator_email, tmp_path, (a, b), out, storage=_BrokenStorage(a_id)) == ep.EXIT_ITEM_FAILED
+    _, items = _report_items(out)
+    assert items[a.replace("-", "")]["outcome"] == "failed"
+    assert items[a.replace("-", "")]["detail"] == "StorageUnavailable"
+    assert items[b.replace("-", "")]["outcome"] == "updated"
+    assert _state(dsn, a_id)[2] == "import" and _state(dsn, b_id)[2] == "machine"
+
+
+@needs_db
+def test_a_source_read_failure_fails_only_its_item(disposable_database, operator_email, tmp_path,
+                                                   monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-SECRETKEYVALUE")
+    dsn = disposable_database
+    (a, b), (a_id, b_id) = _two(dsn, tmp_path, "SRC")
+    real = ep._read_source
+
+    def broken(directory, key, kind):
+        if key == a.replace("-", ""):
+            raise PermissionError(13, "Permission denied", str(directory / f"{key}.{kind}.txt"))
+        return real(directory, key, kind)
+
+    monkeypatch.setattr(ep, "_read_source", broken)
+    out = tmp_path / "source"
+    assert _run(dsn, operator_email, tmp_path, (a, b), out, storage=FakeStorage()) == ep.EXIT_ITEM_FAILED
+    _, items = _report_items(out)
+    assert items[a.replace("-", "")] ["outcome"] == "failed"
+    assert items[a.replace("-", "")]["detail"] == "PermissionError"
+    assert items[b.replace("-", "")]["outcome"] == "updated"
+    assert _state(dsn, b_id)[2] == "machine"
+
+
+@needs_db
+def test_a_refusal_mid_run_still_writes_the_report(disposable_database, operator_email, tmp_path,
+                                                   monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-SECRETKEYVALUE")
+    dsn = disposable_database
+    (a, b), (a_id, _) = _two(dsn, tmp_path, "REF")
+    real = ep.propose
+
+    def refusing(client, product, *args, **kwargs):
+        if product["model_key"] == b.replace("-", ""):
+            raise ep._common.Refused("the target stopped being what it was")
+        return real(client, product, *args, **kwargs)
+
+    monkeypatch.setattr(ep, "propose", refusing)
+    out = tmp_path / "refused"
+    assert _run(dsn, operator_email, tmp_path, (a, b), out, storage=FakeStorage()) == ep.EXIT_REFUSED
+    report, items = _report_items(out)
+    assert report["refused"] == "the target stopped being what it was"
+    assert items[a.replace("-", "")]["outcome"] == "updated" and b.replace("-", "") not in items
+
+
+@needs_db
+def test_origin_country_is_never_written(disposable_database, operator_email, tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-SECRETKEYVALUE")
+    dsn = disposable_database
+    model = f"CTY-{uuid.uuid4().hex[:4].upper()}"
+    _, [pid] = _make_products(dsn, model)
+    answers = {model: _answer(model, origin_country="DE", origin_country_quote="Made in Germany")}
+    argv = ["--target-dsn", runtime_dsn(dsn), "--operator-email", operator_email, "--select", f"model_keys:{model}",
+            "--out", str(tmp_path / "cty"), "--source-dir", str(_source_dir(tmp_path, model)), "--apply"]
+    assert ep.main(argv, client=_fake_client(answers), storage=FakeStorage()) == ep.EXIT_OK
+    assert _owner(dsn, "select content_origin, origin_country from catalog.product where id = %s",
+                  (pid,)) == [("machine", None)]
