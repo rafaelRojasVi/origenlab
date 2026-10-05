@@ -57,6 +57,7 @@ export const CAMPAIGN_COMMAND_PATHS = {
   plan: "/v2/commands/set-campaign-planning",
   block: "/v2/commands/block-campaign",
   unblock: "/v2/commands/unblock-campaign",
+  testSend: "/v2/commands/send-campaign-test",
 } as const;
 
 export const fetchTaxonomy = () => fetchJsonGet<EquipmentTaxonomy>(operatorApiUrl(MARKETING_PATHS.taxonomy));
@@ -270,4 +271,26 @@ export function refusalOf(err: unknown): { code: string; message: string } | nul
     /* not JSON */
   }
   return { code: `http_${err.status}`, message: err.message };
+}
+
+export type TestSendTarget = { campaign_id: string } | { v1_lane_key: string };
+export interface TestSendResult { status: "sent"; to: string; subject: string; gmail_message_id: string; sent_at: string }
+export interface TestSendHistory {
+  tests: {
+    at: string;
+    by: string | null;
+    to: string;
+    status: "sent" | "failed";
+    error: string | null;
+    /** Google's HTTP status and error code, e.g. `HTTP 403 PERMISSION_DENIED/dailyLimitExceeded`. */
+    error_detail?: string | null;
+  }[];
+  remaining: { hour: number; day: number };
+}
+/** Admin-only «Enviar prueba»: the campaign's own email to ONE address, from the shared account. */
+export function sendCampaignTest(target: TestSendTarget, to: string, idempotencyKey: string = newIdempotencyKey()) {
+  return postCommand<TestSendResult>(CAMPAIGN_COMMAND_PATHS.testSend, { ...target, to }, idempotencyKey);
+}
+export function fetchTestSendHistory(target: TestSendTarget): Promise<TestSendHistory> {
+  return fetchJsonGet<TestSendHistory>(operatorApiUrl("/v2/workspace/marketing/test-send-history", target));
 }

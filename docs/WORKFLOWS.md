@@ -668,7 +668,12 @@ labels or answers a mailbox; synchronizing Gmail replies automatically is **not 
   its domain); W12 cannot lift either. A snapshot is never permission:
   `outbound.marketing_contact_refusals(recipient)` evaluates §2 clauses 4-6 against today's
   controls and holds, so a recipient frozen before its «BAJA» is refused. It is the contract every
-  future send step must call; no send path exists yet.
+  future campaign send step must call. The one send path that exists — the admin-only test send
+  «Enviar prueba» (`POST /v2/commands/send-campaign-test`, one campaign email to one address) —
+  has no campaign recipient, so it checks the address refusals itself, live, before it records or
+  sends anything: an address-scope `block` for purpose `all` or `marketing` (every unsubscribe is
+  one) or an unresolved «BAJA» held for review refuses the test with 422
+  `test_recipient_blocked`.
 
 **[OPEN]** automatic Gmail reply synchronization, and a `List-Unsubscribe` header with a one-click
 endpoint on FastAPI for when a send path exists.

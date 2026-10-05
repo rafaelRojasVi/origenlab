@@ -1804,6 +1804,19 @@ The Cyber OrigenLab campaign (5–9 Oct 2026) is sent by the old V1 lane (the ti
 | Evidence | `apps/api/scripts/validate.sh` with disposable-database DSNs (`disposable_test_cluster.sh`): **3,182 passed**, 120 skipped, 0 failed; 13 new API tests (four identifier and classification refusals against PostgreSQL, the four-command race, the same-day close, the flag name, the session switch × 3) each failed before the change. Dashboard `npm run validate`: **451 passed** + build; six new gate and parser tests failed without the change. Public-repo hygiene check passed |
 | Not done | nothing deployed; the switch is still unset on Render. Turning authoring on is setting `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true` on the Render service after this merges ([`OPERATIONS.md`](OPERATIONS.md) §1.2 step 8) |
 
+### 2.7.47 «Enviar prueba»: an admin-only test send of a campaign's email, 2026-10-04 — built, not deployed
+
+An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V1-lane cards such as Cyber) to an address they choose, from `contacto@origenlab.cl`, subject prefixed `[PRUEBA]`, before the real send.
+
+| | |
+|---|---|
+| API | `v2/gmail_send.py` (gmail.send-only client; token file `{client_id, client_secret, refresh_token, address}`, address must be `contacto@origenlab.cl`), `v2/campaign_test_send.py` (admin-only command, 10/h and 30/24h across all operators from `platform.command_receipt`, two-phase receipt, history), `POST /v2/commands/send-campaign-test` (429 detail carries `next_allowed_at`), `GET /v2/workspace/marketing/test-send-history`. The recipient is one plain ASCII mailbox (no name, comment, encoded word or group; alphabetic TLD; ≤ 254) and the built `To` must parse back to exactly it; an address-scope block for purpose `all`/`marketing` (every unsubscribe) or an unresolved «BAJA» held for review is refused with 422 `test_recipient_blocked` before any receipt (WORKFLOWS.md §W10). A failed send keeps Google's HTTP status and error code as `error_detail` (never its message text, the recipient or a token). Mounted by `_mount_campaign_test_send` only when `ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED` is true and `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE` holds a valid token; a bad token leaves the feature off with a warning. The `gmail_send` write guard allows only the client, the command and the mount; `gmail.googleapis.com` may appear only in the client |
+| Proxy | the POST (4 KiB body) and the history GET, by exact path |
+| Dashboard | `TestSendPanel` on V2 campaigns with HTML and on V1-lane cards; admin only, the API's address rule, history (a failure shows its `error_detail`) and remaining allowance |
+| Authorization | `apps/api/scripts/gmail_send_authorize.py`: one-time local OAuth as `contacto@`, refuses any other account, writes the token file mode 600. Procedure: `apps/api/README.md` «Campaign test sends» |
+| Evidence | after merging `main` (#631, #632): `apps/api/scripts/validate.sh` **2911 passed**, 502 skipped; the full API suite against a fresh disposable cluster (`disposable_test_cluster.sh`) **3293 passed**, 120 skipped, 0 failed, no skip for a missing `ORIGENLAB_V2_*TEST_DSN`; dashboard `npm run validate` **498 passed** + build; proxy `npm run validate` **337 passed**. The script's `token_payload` is unit-tested; the OAuth flow was never run and no real email was sent |
+| Not done | token not authorized; Render secret file and both variables not set; API and Worker not redeployed |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

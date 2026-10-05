@@ -1,10 +1,11 @@
 """Audience freeze — a draft campaign's content and audience become one immutable snapshot.
 
 WORKFLOWS.md §W4 step 2 (`freeze_audience`), and nothing after it. A freeze approves nothing,
-reserves nothing and sends nothing: there is no send command, no Gmail client and no route to
-one anywhere in `apps/api`. What it produces is a record — who would be written to, who would
-not and why, on what evidence, with which content and under which policy — that can never be
-edited. A changed draft or audience is a new campaign (create-campaign-draft with
+reserves nothing and sends nothing: there is no campaign send command in `apps/api` (the one
+route that sends is the admin-only test send «Enviar prueba», one campaign email to one
+address, and it reads no snapshot). What it produces is a record — who would be written to,
+who would not and why, on what evidence, with which content and under which policy — that can
+never be edited. A changed draft or audience is a new campaign (create-campaign-draft with
 `duplicated_from_campaign_id`) and a new freeze; the database refuses to rewrite a frozen one
 (`20260927180000_slice5_campaign_audience_freeze.sql`).
 

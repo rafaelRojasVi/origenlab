@@ -126,3 +126,8 @@ def test_marketing_carries_the_email_when_the_content_directory_holds_it(tmp_pat
 def test_marketing_has_no_email_without_a_content_directory() -> None:
     c = _client().get("/v2/workspace/marketing", headers=HEADERS).json()["v1_lane_campaigns"][0]
     assert c["html"] is None
+
+
+def test_marketing_says_the_test_send_is_off_when_unset() -> None:
+    body = _client().get("/v2/workspace/marketing", headers=HEADERS).json()
+    assert body["test_send"] == {"enabled": False, "per_hour": 10, "per_day": 30, "sender": "contacto@origenlab.cl"}

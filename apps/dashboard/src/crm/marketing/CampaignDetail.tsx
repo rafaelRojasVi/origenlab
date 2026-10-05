@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import type { CampaignSummary, TotalKey } from "../crmTypes";
+import type { CampaignSummary, MarketingResponse, TotalKey } from "../crmTypes";
 import { Badge, Panel, ResourceGate, Segmented, Skeleton, fmtInt } from "../ui";
 import { useResource } from "../useResource";
 import { PLANNING_LABEL, fmtLongDay, relativeDay, santiagoTime, todayInSantiago } from "./calendar";
@@ -9,6 +9,7 @@ import { CampaignReplies } from "./CampaignReplies";
 import { FILTER_TOTALS, NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, neverSent, repliesUnknown } from "./campaignTotals";
 import { CampaignHoldPanel } from "./CampaignHolds";
 import { EmailFrame } from "./EmailFrame";
+import { TestSendPanel } from "./TestSendPanel";
 import { useMayAuthorCampaigns } from "./authoring";
 import { fetchCampaignArchive, newIdempotencyKey, refusalOf, setCampaignPlanning } from "./marketingApi";
 import type { CampaignArchive, CampaignContentRecord, EquipmentTaxonomy } from "./marketingTypes";
@@ -84,6 +85,7 @@ type PreviewMode = "desktop" | "mobile" | "raw";
 export function CampaignDetail({
   summary,
   planningEnabled,
+  testSend,
   taxonomy = null,
   initialTab = "resumen",
   initialTotal = "audience",
@@ -93,6 +95,7 @@ export function CampaignDetail({
 }: {
   summary: CampaignSummary;
   planningEnabled: boolean;
+  testSend?: MarketingResponse["test_send"];
   taxonomy?: EquipmentTaxonomy | null;
   initialTab?: DetailTab;
   initialTotal?: TotalKey;
@@ -150,6 +153,11 @@ export function CampaignDetail({
           >
             {summary.status === "draft" ? "Editar borrador" : "Abrir campaña"}
           </button>
+        ) : null}
+        {summary.has_html ? (
+          <div className="w-full">
+            <TestSendPanel target={{ campaign_id: summary.campaign_id }} config={testSend} />
+          </div>
         ) : null}
       </header>
       <div className="max-w-full overflow-x-auto">

@@ -74,6 +74,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // Campaign safety blocks (WORKFLOWS.md §W13): every active block and each target's version.
   // Reasons and operators are withheld from a viewer upstream.
   /^\/v2\/workspace\/marketing\/campaign-blocks$/,
+  // Test send history: a read-only record of test emails sent for a campaign. GET only.
+  /^\/v2\/workspace\/marketing\/test-send-history$/,
   // CRM card reads (`apps/api` v2/crm_workspace_routes.py): the supplier directory with its
   // machine candidates, and the observed equipment interests per line, institution and
   // destination. Two literal paths, GET-only upstream; addresses are masked for a `viewer`
@@ -145,6 +147,8 @@ export const MARKETING_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/dismiss-unsubscribe-review$/,
   /^\/v2\/commands\/block-campaign$/,
   /^\/v2\/commands\/unblock-campaign$/,
+  // The only sending path: one test, one address, admin-only upstream.
+  /^\/v2\/commands\/send-campaign-test$/,
 ];
 
 /** Larger than the API's 512 kB HTML limit plus the freeze's 5,000 decisions of 500 characters. */
@@ -165,12 +169,15 @@ export const CAMPAIGN_BLOCK_MAX_BYTES = 16_384;
 
 const CAMPAIGN_BLOCK_PATH_RE = /^\/v2\/commands\/(?:block|unblock)-campaign$/;
 
+const TEST_SEND_PATH_RE = /^\/v2\/commands\/send-campaign-test$/;
+
 /** The body limit for one marketing command path. */
 export function marketingCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
   if (CAMPAIGN_PLANNING_PATH_RE.test(pathOnly)) return CAMPAIGN_PLANNING_MAX_BYTES;
   if (UNSUBSCRIBE_REVIEW_PATH_RE.test(pathOnly)) return UNSUBSCRIBE_REVIEW_MAX_BYTES;
   if (CAMPAIGN_BLOCK_PATH_RE.test(pathOnly)) return CAMPAIGN_BLOCK_MAX_BYTES;
+  if (TEST_SEND_PATH_RE.test(pathOnly)) return 4_096;
   return MARKETING_COMMAND_MAX_BYTES;
 }
 

@@ -21,6 +21,7 @@ from origenlab_api.v2.campaign_blocks import redact_for_viewer
 from origenlab_api.v2.campaign_calendar import campaign_lines
 from origenlab_api.v2.campaign_history import TOTALS, RecipientQuery
 from origenlab_api.v2.campaign_planning import PLANNING_TIME_ZONE
+from origenlab_api.v2.campaign_test_send import SENDER_ADDRESS, TEST_SENDS_PER_DAY, TEST_SENDS_PER_HOUR
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.contact_redaction import ContactRedactingRoute
@@ -195,6 +196,12 @@ def get_marketing(operator: Operator, repo: Repo, request: Request) -> Any:
     body["v1_lane_campaigns"] = [
         v1_campaign_as_dict(c, load_v1_lane_html(c.key, content_dir)) for c in load_v1_lane_campaigns()
     ]
+    body["test_send"] = {
+        "enabled": bool(getattr(request.app.state, "campaign_test_send_enabled", False)),
+        "per_hour": TEST_SENDS_PER_HOUR,
+        "per_day": TEST_SENDS_PER_DAY,
+        "sender": SENDER_ADDRESS,
+    }
     return _holds_for(operator, body)
 
 
