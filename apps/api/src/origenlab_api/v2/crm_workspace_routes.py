@@ -445,6 +445,13 @@ def get_mail_sync(_: Operator, repo: Repo) -> Any:
     return repo.mail_sync()
 
 
+@workspace_router.get("/mail-quote-numbers")
+def get_mail_quote_numbers(_: Operator, repo: Repo) -> Any:
+    """Quote numbers already seen in the captured Gmail (the 500 newest), for the Resumen's
+    quote-number box: number, first sighting, message count. No client data."""
+    return repo.mail_quote_numbers()
+
+
 #: The process's exchange-rate cache, unless the app supplies its own (tests do).
 _FX_RATES = FxRates()
 
