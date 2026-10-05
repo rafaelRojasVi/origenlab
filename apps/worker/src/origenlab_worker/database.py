@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 WORKER_ROLE = "origenlab_worker"
 APP_NAME = "origenlab-worker-gmail-sync"
 LOCK_NAME = "origenlab-worker:gmail-sync"
+LOCK_ACQUIRED, LOCK_HELD, LOCK_STUCK = "acquired", "held", "stuck"
 #: A lock holder idle this long is a dead run whose session outlived it (spec §11.1): a live run
 #: issues a statement every few seconds.
 STALE_LOCK_AFTER = timedelta(minutes=30)
@@ -299,8 +300,8 @@ values ('gmail_message', %s, %s, %s, 'pending')
 on conflict (dedupe_key) do nothing
 returning id::text
 """
-_STALE_HOLDERS = """
-select l.pid
+_OLD_HOLDERS = """
+select l.pid, a.state
   from pg_locks l
   join pg_stat_activity a on a.pid = l.pid
  cross join (select hashtextextended(%s, 0) as key) k
@@ -310,7 +311,6 @@ select l.pid
    and l.database = (select oid from pg_database where datname = current_database())
    and l.pid <> pg_backend_pid()
    and a.usename = current_user
-   and a.state = 'idle'
    and a.state_change < now() - make_interval(secs => %s)
 """
 
@@ -333,25 +333,35 @@ class WorkerDb:
 
     # ------------------------------------------------------------------ the run lock
 
-    def try_lock(self, stale_after: timedelta = STALE_LOCK_AFTER) -> bool:
-        """One run at a time, whatever Render does on overlap (spec §6).
+    def try_lock(self, stale_after: timedelta = STALE_LOCK_AFTER) -> str:
+        """One run at a time, whatever Render does on overlap (spec §6): `LOCK_ACQUIRED`,
+        `LOCK_HELD` (another live run) or `LOCK_STUCK`.
 
         A session-level advisory lock survives every per-message commit and dies with the session.
-        If the holder is a session left idle past `stale_after` — a killed run whose pooled server
+        If the holder is a session left *idle* past `stale_after` — a killed run whose pooled server
         session was not reset — it is terminated (a role may end its own sessions) and the lock taken.
+
+        A holder of this role and database that is past `stale_after` in any other state
+        (`idle in transaction`, `active`) is never ended — it may be mid-write — but it will not
+        free itself either, so it is reported as `LOCK_STUCK` and the run fails loudly instead of
+        answering `locked` forever. A live run is never in such a state that long: its statements
+        time out at 30 s and it issues one every few seconds.
         """
         with self._conn.cursor() as cur:
             cur.execute("select pg_try_advisory_lock(hashtextextended(%s, 0))", (LOCK_NAME,))
             if cur.fetchone()[0]:
-                return True
-            cur.execute(_STALE_HOLDERS, (LOCK_NAME, stale_after.total_seconds()))
-            stale = [row[0] for row in cur.fetchall()]
+                return LOCK_ACQUIRED
+            cur.execute(_OLD_HOLDERS, (LOCK_NAME, stale_after.total_seconds()))
+            holders = cur.fetchall()
+            stale = [pid for pid, state in holders if state == "idle"]
             if not stale:
-                return False
+                return LOCK_STUCK if holders else LOCK_HELD
             for pid in stale:
                 cur.execute("select pg_terminate_backend(%s, 5000)", (pid,))
             cur.execute("select pg_try_advisory_lock(hashtextextended(%s, 0))", (LOCK_NAME,))
-            return bool(cur.fetchone()[0])
+            if cur.fetchone()[0]:
+                return LOCK_ACQUIRED
+            return LOCK_STUCK if len(stale) < len(holders) else LOCK_HELD
 
     # ------------------------------------------------------------------ the mailbox
 
@@ -489,7 +499,7 @@ def open_worker_db(target: WorkerTarget, connect: Callable[..., Any] | None = No
 
 
 __all__ = [
-    "ALLOWED_OUTSIDE_WRITES", "APP_NAME", "LOCK_NAME", "STALE_LOCK_AFTER", "Mailbox", "RecordOutcome",
+    "ALLOWED_OUTSIDE_WRITES", "APP_NAME", "LOCK_ACQUIRED", "LOCK_HELD", "LOCK_NAME", "LOCK_STUCK", "STALE_LOCK_AFTER", "Mailbox", "RecordOutcome",
     "TargetRefused", "WORKER_ROLE", "WorkerDb", "WorkerTarget", "local_test_target", "open_worker_db",
     "remote_worker_target", "verify_worker_connection", "write_ca_file",
 ]

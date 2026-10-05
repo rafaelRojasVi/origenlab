@@ -14,7 +14,7 @@ import pytest
 from dbhelp import owner_rows, seed_mailbox
 from mailfixtures import INTERNAL_MS, MAILBOX, RAW_8BIT, make_raw
 from origenlab_worker.capture import build_capture, unparsed_message
-from origenlab_worker.database import RecordOutcome, local_test_target, open_worker_db
+from origenlab_worker.database import LOCK_ACQUIRED, LOCK_HELD, LOCK_STUCK, RecordOutcome, local_test_target, open_worker_db
 from origenlab_worker.gmail_client import READONLY_SCOPE
 from v2_command_harness import _TEST_DSN, build_disposable_database, needs_worker_db, swap_database, worker_dsn
 
@@ -140,10 +140,10 @@ def test_authorize_takes_the_baseline_once_and_a_re_authorization_resumes(db, ds
 def test_one_run_at_a_time_and_a_dead_runs_session_is_ended(dsn) -> None:
     target = local_test_target(worker_dsn(dsn))
     with open_worker_db(target) as first, open_worker_db(target) as second:
-        assert first.try_lock()
-        assert not second.try_lock()                       # idle, but not for 30 minutes
+        assert first.try_lock() == LOCK_ACQUIRED
+        assert second.try_lock() == LOCK_HELD                       # idle, but not for 30 minutes
         time.sleep(0.2)
-        assert second.try_lock(stale_after=timedelta(0))   # idle past the threshold: ended, lock taken
+        assert second.try_lock(stale_after=timedelta(0)) == LOCK_ACQUIRED   # idle past the threshold: ended, lock taken
         with pytest.raises(psycopg.OperationalError):
             first.connection.execute("select 1")
 
@@ -171,13 +171,14 @@ def test_authorize_on_a_missing_mailbox_is_a_lookup_error_without_the_id(db) -> 
 def test_a_holder_that_is_not_idle_is_not_ended(dsn) -> None:
     target = local_test_target(worker_dsn(dsn))
     with open_worker_db(target) as first, open_worker_db(target) as second:
-        assert first.try_lock()
+        assert first.try_lock() == LOCK_ACQUIRED
         first.connection.execute("select 1")
         busy = threading.Thread(target=lambda: first.connection.execute("select pg_sleep(1.5)"))
         busy.start()
         time.sleep(0.4)
         try:
-            assert not second.try_lock(stale_after=timedelta(0))
+            assert second.try_lock() == LOCK_HELD  # younger than the default threshold: simply held
+            assert second.try_lock(stale_after=timedelta(0)) == LOCK_STUCK  # busy, past it: reported, not ended
         finally:
             busy.join()
         first.connection.execute("select 1")  # still alive
@@ -186,11 +187,13 @@ def test_a_holder_that_is_not_idle_is_not_ended(dsn) -> None:
 def test_a_holder_inside_an_open_transaction_is_not_ended(dsn) -> None:
     target = local_test_target(worker_dsn(dsn))
     with open_worker_db(target) as first, open_worker_db(target) as second:
-        assert first.try_lock()
+        assert first.try_lock() == LOCK_ACQUIRED
         with first.connection.transaction():
             first.connection.execute("select 1")
             time.sleep(0.2)
-            assert not second.try_lock(stale_after=timedelta(0))
+            assert second.try_lock() == LOCK_HELD
+            # `idle in transaction` past the threshold is never ended, and never frees itself:
+            assert second.try_lock(stale_after=timedelta(0)) == LOCK_STUCK
         first.connection.execute("select 1")
 
 
@@ -205,7 +208,7 @@ def test_a_holder_of_another_role_is_never_ended(dsn) -> None:
         owner.execute("set role origenlab_owner")
         assert owner.execute(_lock_key_sql()).fetchone()[0]
         time.sleep(0.2)
-        assert not worker.try_lock(stale_after=timedelta(0))
+        assert worker.try_lock(stale_after=timedelta(0)) == LOCK_HELD  # another role's lock is invisible to it
         owner.execute("select 1")  # still alive
 
 
@@ -222,11 +225,11 @@ def test_a_stale_holder_in_another_database_is_not_ended(dsn) -> None:
             time.sleep(0.2)
             target = local_test_target(worker_dsn(dsn))
             with open_worker_db(target) as holder, open_worker_db(target) as worker:
-                assert holder.try_lock()
+                assert holder.try_lock() == LOCK_ACQUIRED
                 with holder.connection.transaction():  # busy: the only real holder here
                     holder.connection.execute("select 1")
                     # the idle foreign session holds the same key in its own database
-                    assert not worker.try_lock(stale_after=timedelta(0))
+                    assert worker.try_lock(stale_after=timedelta(0)) == LOCK_STUCK
                 foreign.execute("select 1")  # not terminated
         finally:
             foreign.close()

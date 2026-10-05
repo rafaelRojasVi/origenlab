@@ -178,6 +178,12 @@ def test_another_run_holding_the_lock_is_a_quiet_exit() -> None:
     assert (report.mode, report.exit_code, gmail.calls, gmail.after_calls) == ("locked", EXIT_OK, [], [])
 
 
+def test_a_stuck_lock_holder_fails_the_run_loudly() -> None:
+    gmail = FakeGmail()
+    report = run(FakeDb(locked_by_other="stuck"), gmail)
+    assert (report.mode, report.exit_code, report.error, gmail.calls) == ("locked", EXIT_FAILED, "locked_by_stuck_session", [])
+
+
 def test_the_pause_switch_and_an_unauthorized_mailbox_touch_nothing() -> None:
     for kwargs, mode in (({"enabled": False}, "paused"), ({}, "not_authorized")):
         db = FakeDb(state="unauthorized") if mode == "not_authorized" else FakeDb()

@@ -28,7 +28,7 @@ LAST_SYNC = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
 
 class FakeDb:
     def __init__(self, *, state: str = "authorized", history_id: str | None = "100",
-                 last_synced_at: datetime | None = LAST_SYNC, locked_by_other: bool = False, no_mailbox: bool = False) -> None:
+                 last_synced_at: datetime | None = LAST_SYNC, locked_by_other: bool | str = False, no_mailbox: bool = False) -> None:
         self.box = Mailbox("mb-1", MAILBOX, state, history_id, last_synced_at)
         self.locked_by_other = locked_by_other
         self.no_mailbox = no_mailbox
@@ -39,8 +39,11 @@ class FakeDb:
         self.authorized: list[tuple[str, list[str]]] = []
         self.fail_on_record: str | None = None
 
-    def try_lock(self) -> bool:
-        return not self.locked_by_other
+    def try_lock(self) -> str:
+        """`locked_by_other` True is a live holder; "stuck" is a holder that never lets go."""
+        if not self.locked_by_other:
+            return "acquired"
+        return "stuck" if self.locked_by_other == "stuck" else "held"
 
     def mailbox(self, address: str) -> Mailbox | None:
         return self.box if address == self.box.address and not self.no_mailbox else None

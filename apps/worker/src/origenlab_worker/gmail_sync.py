@@ -31,7 +31,7 @@ from origenlab_worker.capture import (
     intake_skip_reason,
     unparsed_message,
 )
-from origenlab_worker.database import Mailbox, RecordOutcome
+from origenlab_worker.database import LOCK_ACQUIRED, LOCK_STUCK, Mailbox, RecordOutcome
 from origenlab_worker.gmail_client import (
     READONLY_SCOPE,
     GmailAuthError,
@@ -57,7 +57,7 @@ EXIT_CONFIG = 3
 
 
 class SyncDb(Protocol):
-    def try_lock(self) -> bool: ...
+    def try_lock(self) -> str: ...  # LOCK_ACQUIRED, LOCK_HELD or LOCK_STUCK
     def mailbox(self, address: str) -> Mailbox | None: ...
     def authorize(self, mailbox_id: str, *, baseline_history_id: str, scopes: list[str]) -> str: ...
     def mark_revoked(self, mailbox_id: str) -> None: ...
@@ -170,7 +170,10 @@ def run_gmail_sync(
     mode = "start"
     mailbox: Mailbox | None = None
     try:
-        if not db.try_lock():
+        lock = db.try_lock()
+        if lock == LOCK_STUCK:  # a holder that will never let go: fail loudly, not `locked` forever
+            return RunReport("locked", EXIT_FAILED, counts, error="locked_by_stuck_session")
+        if lock != LOCK_ACQUIRED:
             return RunReport("locked", EXIT_OK, counts)
         mailbox = db.mailbox(MAILBOX_ADDRESS)
         if mailbox is None:
