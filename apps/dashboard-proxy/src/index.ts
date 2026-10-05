@@ -4,6 +4,7 @@ import {
   isAllowedAuthPostPath,
   isAllowedAuthProfilePostPath,
   isAllowedCrmAuthoringCommandPostPath,
+  isAllowedMailRulesCommandPostPath,
   marketingCommandMaxBytes,
   isAllowedMarketingCommandPostPath,
   isAllowedPostPath,
@@ -175,7 +176,11 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     if (upstreamPath === null || !isAllowedPostPath(upstreamPath)) {
       return jsonError(request, 405, "method_not_allowed");
     }
-    if (isAllowedMarketingCommandPostPath(upstreamPath) || isAllowedCrmAuthoringCommandPostPath(upstreamPath)) {
+    if (
+      isAllowedMarketingCommandPostPath(upstreamPath) ||
+      isAllowedCrmAuthoringCommandPostPath(upstreamPath) ||
+      isAllowedMailRulesCommandPostPath(upstreamPath)
+    ) {
       const refusal = marketingCommandRefusal(request);
       if (refusal) {
         return jsonError(request, refusal.status, refusal.code);
@@ -218,7 +223,8 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   const body = method === "POST" ? await request.arrayBuffer() : undefined;
   if (
     body !== undefined &&
-    isAllowedMarketingCommandPostPath(upstreamPath as string) &&
+    (isAllowedMarketingCommandPostPath(upstreamPath as string) ||
+      isAllowedMailRulesCommandPostPath(upstreamPath as string)) &&
     body.byteLength > marketingCommandMaxBytes(upstreamPath as string)
   ) {
     // A body larger than its declared Content-Length, or one sent without it.
