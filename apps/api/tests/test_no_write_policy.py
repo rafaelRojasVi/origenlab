@@ -23,12 +23,22 @@ _GMAIL_SEND_ALLOWED = frozenset(
     }
 )
 
+# The Gmail API host itself: only the client module may name it, so nothing else can reach Gmail
+# around the client (and its limits, receipts and recipient refusals).
+_GMAIL_API_HOST_ALLOWED = frozenset({"v2/gmail_send.py"})
+
+_ALLOWED_BY_NEEDLE = {
+    "gmail_send": _GMAIL_SEND_ALLOWED,
+    "gmail.googleapis.com": _GMAIL_API_HOST_ALLOWED,
+}
+
 _FORBIDDEN_SUBSTRINGS = (
     "refresh_outbound_safety_memory",
     "05_workspace_gmail_imap_to_sqlite",
     "sync_dashboard_postgres_mirror",
     "alembic",
     "gmail_send",
+    "gmail.googleapis.com",
     "send_inline_html",
     "subprocess",
     "build_equipment_first_operator_queue",
@@ -131,7 +141,7 @@ def test_origenlab_api_source_has_no_mutation_script_imports() -> None:
     for path in _API_SRC.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         for needle in _FORBIDDEN_SUBSTRINGS:
-            if needle == "gmail_send" and path.relative_to(_API_SRC).as_posix() in _GMAIL_SEND_ALLOWED:
+            if path.relative_to(_API_SRC).as_posix() in _ALLOWED_BY_NEEDLE.get(needle, frozenset()):
                 continue
             if needle in text:
                 hits.append(f"{path.relative_to(_API_SRC)}: {needle}")
