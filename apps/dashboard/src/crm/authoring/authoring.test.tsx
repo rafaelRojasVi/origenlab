@@ -64,6 +64,8 @@ function expectNoWriteAffordance() {
     "Desvincular",
     "Crear contacto",
     "Guardar",
+    "Confirmar institución",
+    "Aplicar",
   ];
   const offending = screen.queryAllByRole("button").filter((b) => {
     const text = (b.textContent ?? "").trim();

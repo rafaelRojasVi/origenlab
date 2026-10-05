@@ -1,5 +1,5 @@
 /**
- * CRM authoring client: all 27 CRM commands and 3 authoring reads.
+ * CRM authoring client: the 29 CRM authoring commands and 4 authoring reads.
  *
  * This module owns EVERY `/v2/commands/<crm-authoring command>` path string — pinned by
  * `src/test/noWritePolicy.test.ts`. No other dashboard module may name these paths.
@@ -28,6 +28,7 @@ export const CRM_COMMAND_PATHS = {
   updateOrganization: "/v2/commands/update-organization",
   archiveOrganization: "/v2/commands/archive-organization",
   restoreOrganization: "/v2/commands/restore-organization",
+  confirmOrganizationRecord: "/v2/commands/confirm-organization-record",
   addOrganizationIdentifier: "/v2/commands/add-organization-identifier",
   removeOrganizationIdentifier: "/v2/commands/remove-organization-identifier",
   addOrganizationDomain: "/v2/commands/add-organization-domain",
@@ -189,6 +190,31 @@ export interface OrgReferences {
   catalog_products: number;
 }
 
+/** One web source behind a suggestion (`v2/org_web_suggestions.py`). */
+export interface WebSuggestionSource {
+  url: string;
+  shows: string | null;
+}
+
+/** Web-researched facts about one institution, from the reviewed secret file. Never applied by itself. */
+export interface OrgWebSuggestion {
+  display_name: string | null;
+  legal_name: string | null;
+  /** Normal form `12345678-5`. */
+  rut: string | null;
+  /** `directory`: seen only in a directory — the card asks for an SII check first. */
+  rut_source: "official" | "directory" | null;
+  website: string | null;
+  email_domain: string | null;
+  /** The CRM's open `kind` vocabulary, as written (e.g. `universidad`). */
+  type: string | null;
+  city: string | null;
+  region: string | null;
+  confidence: "high" | "medium" | "low" | "not_found";
+  sources: WebSuggestionSource[];
+  notes: string | null;
+}
+
 export interface OrganizationAuthoringResponse {
   organization: {
     id: string;
@@ -202,6 +228,9 @@ export interface OrganizationAuthoringResponse {
     version: number;
     merged_into_organization_id: string | null;
     created_at: string | null;
+    confirmed_by_operator_id?: string | null;
+    confirmed_by_name?: string | null;
+    confirmed_at?: string | null;
   };
   identifiers: IdentifierRow[];
   domains: DomainRow[];
@@ -213,6 +242,7 @@ export interface OrganizationAuthoringResponse {
   references: OrgReferences;
   removal: { allowed: false; reasons: string[] };
   authoring: { enabled: boolean; may_author: boolean; may_archive: boolean };
+  web_suggestions?: OrgWebSuggestion | null;
 }
 
 export interface MergePreviewResponse {
@@ -459,6 +489,21 @@ export function restoreOrganization(
   idempotencyKey: string = newIdempotencyKey(),
 ): Promise<CommandReceipt> {
   return postCommand<CommandReceipt>(CRM_COMMAND_PATHS.restoreOrganization, body, idempotencyKey);
+}
+
+/**
+ * «Confirmar institución»: machine_proposed → confirmed, the operator recorded. An institution
+ * already confirmed answers `already_confirmed: true` — never an error.
+ */
+export function confirmOrganizationRecord(
+  body: { organization_id: string; expected_version: number; note?: string },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<CommandReceipt & { already_confirmed?: boolean }> {
+  return postCommand<CommandReceipt & { already_confirmed?: boolean }>(
+    CRM_COMMAND_PATHS.confirmOrganizationRecord,
+    body,
+    idempotencyKey,
+  );
 }
 
 export function addOrganizationIdentifier(

@@ -42,7 +42,7 @@ describe("dashboard read-only policy", () => {
   //    it as a permanent unsubscribe; an admin dismisses a false positive), and the admin-only
   //    *block* / *unblock*, which place or lift a campaign safety block that only refuses. None
   //    approves, schedules or sends anything, and none lifts a confirmed unsubscribe.
-  //  - crmAuthoringApi.ts's POST to the 28 CRM authoring commands: freeform create/update/archive
+  //  - crmAuthoringApi.ts's POST to the 29 CRM authoring commands: freeform create/update/archive
   //    of person/organization/contact_point, affiliations, product lines, supplier candidates,
   //    and notes. All go through the API's Deciding role check (sales or admin).
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
@@ -74,6 +74,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/update-organization",
     "/v2/commands/archive-organization",
     "/v2/commands/restore-organization",
+    "/v2/commands/confirm-organization-record",
     "/v2/commands/add-organization-identifier",
     "/v2/commands/remove-organization-identifier",
     "/v2/commands/add-organization-domain",

@@ -174,6 +174,7 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
                 onSelectLine={openLine}
                 mayAuthor={mayAuthor}
                 admin={admin}
+                onChanged={reload}
               />
             </>
           );
@@ -278,6 +279,7 @@ function OrgDrawer({
   onSelectLine,
   mayAuthor = false,
   admin = false,
+  onChanged,
 }: {
   org: V2Organization | null;
   cases: OpportunityCardData[];
@@ -285,6 +287,7 @@ function OrgDrawer({
   navigate: (s: CrmSection, id?: string) => void;
   mayAuthor?: boolean;
   admin?: boolean;
+  onChanged?: () => void;
 } & InterestProps) {
   if (!org) return null;
   const roles: [string, number][] = [
@@ -350,7 +353,7 @@ function OrgDrawer({
         </p>
       </Section>
       {mayAuthor || admin ? (
-        <OrgAuthoringSection organizationId={org.organization_id} mayAuthor={mayAuthor} admin={admin} />
+        <OrgAuthoringSection organizationId={org.organization_id} mayAuthor={mayAuthor} admin={admin} onChanged={onChanged} />
       ) : null}
       <p className="font-mono text-[10px] text-ink-faint">organization {org.organization_id}</p>
     </Drawer>
