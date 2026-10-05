@@ -274,6 +274,9 @@ def _is_alive(conn: Any) -> bool:
     ``FATAL`` notice, a read error, or a status that is not ``OK``. Anything harmless (a
     notice, a parameter status, a ``NOTIFY`` — still delivered later — or a TLS record) leaves
     it alive.
+
+    The socket is watched with ``select.poll``, never ``select.select``: that refuses any
+    descriptor ≥ 1024, and would call every connection dead in a process holding that many.
     """
     if _is_dead(conn):
         return False
@@ -286,13 +289,14 @@ def _is_alive(conn: Any) -> bool:
 
     conn.add_notice_handler(note)
     try:
+        poller = select.poll()
+        poller.register(pgconn.socket, select.POLLIN)
         for _ in range(_PROBE_READS):
-            readable, _, _ = select.select([pgconn.socket], [], [], 0)
-            if not readable:
+            if not poller.poll(0):  # readable, hung up or in error: libpq's read tells which
                 break
             pgconn.consume_input()
             pgconn.is_busy()  # parses what was read: an error sent while idle reaches `note`
-    except (OSError, ValueError, psycopg.OperationalError):
+    except (OSError, psycopg.OperationalError):
         return False
     finally:
         conn.remove_notice_handler(note)

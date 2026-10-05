@@ -428,6 +428,25 @@ def test_the_checkout_probe_keeps_a_connection_with_a_harmless_message() -> None
     assert inner.ready == [spare]
 
 
+def test_the_checkout_probe_works_where_select_select_cannot(monkeypatch) -> None:
+    """`select.select` refuses a descriptor ≥ 1024 with ValueError. In a process holding that
+    many, a probe built on it would call every pooled connection dead on every checkout."""
+    import select
+
+    def refuses(*args: Any, **kwargs: Any) -> Any:
+        raise ValueError("filedescriptor out of range in select()")
+
+    monkeypatch.setattr(select, "select", refuses)
+    quiet, chatty, closed, fresh = (_RetryConn(n) for n in ("quiet", "chatty", "closed", "fresh"))
+    chatty.pgconn.server_says(b"S...application_name")
+    closed.pgconn.server_closes()
+    pool, inner = _retry_pool(quiet, chatty, closed, fresh)
+    for expected in ("quiet", "chatty", "fresh"):
+        with pool.connect(DSN) as conn:
+            assert conn.cursor().execute("select 1").fetchone() == (expected, "select 1")
+    assert inner.returned == [quiet, chatty, closed, fresh], "only the closed one was discarded"
+
+
 def test_the_checkout_probe_gives_up_after_size_plus_one_candidates() -> None:
     """After an outage every idle connection may be dead: the probe tries `size + 1`, hands the
     last out unprobed, and the first-round-trip retry is the backstop."""
