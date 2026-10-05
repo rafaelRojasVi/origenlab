@@ -517,11 +517,27 @@ uv run python scripts/build_org_suggestions.py \
 ```
 
 The script refuses an output inside the repository, validates with the API's own validator,
-writes mode 0600 and prints counts only. Review the file (lower `confidence` or null a field the
-research's «Requieren decisión humana» list questions), upload it as the secret file
-`org-suggestions.json`, and set `ORIGENLAB_V2_ORG_SUGGESTIONS_FILE=/etc/secrets/org-suggestions.json`.
-Then redeploy the API, and deploy the Worker for the two new proxy paths.
-Unset or broken → the card shows no suggestions and the API logs a warning; nothing else changes.
+creates the file mode 0600 and prints counts only. It drops a free-mail `email_domain`
+(`gmail.com`, `hotmail.com`, …) and counts it as `domain_dropped_free_mail`; the API's loader
+also reads such a domain as `null` rather than rejecting the file. Review the file (lower
+`confidence` or null a field the research's «Requieren decisión humana» list questions). After
+**any hand edit, and before upload**, re-validate it:
+
+```bash
+uv run python scripts/build_org_suggestions.py --check <path>/org-suggestions.json   # exit 0 valid, 1 not
+```
+
+Operator order:
+
+1. Deploy the Worker first (`apps/dashboard-proxy`): the two new paths are harmless without the
+   API (unknown paths answer 404).
+2. Upload the file as the Render secret file `org-suggestions.json` and set
+   `ORIGENLAB_V2_ORG_SUGGESTIONS_FILE=/etc/secrets/org-suggestions.json`.
+3. The API redeploys (the variable change does), and the card shows the suggestions.
+
+Unset → the card shows no suggestions and nothing is logged. Set but missing, oversized,
+unparsable or invalid → no suggestions and one warning naming the exception class and the first
+field error, never a value. Nothing else changes.
 Nothing is applied automatically: every «Aplicar» is an authoring command with its receipt.
 
 ### Remote production smoke
