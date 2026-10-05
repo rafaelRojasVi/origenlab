@@ -75,7 +75,10 @@ export function knownQuoteNumbers(
   for (const f of folders) for (const n of f.quote_numbers) add(n, f.organization_name ?? f.case_key, "Drive");
   for (const m of mail) {
     const year = santiagoYear(m.first_seen_at);
-    const parsed = year === null ? null : parseQuoteNumber(m.quote_number, year);
+    // The capture drops the series' leading zero: «CN012395-….pdf» arrives as «CN12395»
+    // (correlative 01239, revision 5). Every OrigenLab number is 0xxxx, so restore the zero.
+    const token = m.quote_number.replace(/^(CN|COT)?\s*-?\s*([1-9]\d{4,})/i, (_, p: string | undefined, d: string) => `${p ?? ""}0${d}`);
+    const parsed = year === null ? null : parseQuoteNumber(token, year);
     if (!parsed || parsed.year === 0) continue;
     const same = [...byNumber.values()].find((e) => e.year === parsed.year && e.correlative === parsed.correlative);
     if (same) {
