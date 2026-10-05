@@ -199,7 +199,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     app.include_router(v2_router)
     app.include_router(cockpit_router)
     from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository, load_drive_ledgers
-    from origenlab_api.v2.crm_workspace_routes import workspace_router
+    from origenlab_api.v2.crm_workspace_routes import build_fx_rates, workspace_router
 
     ledgers = [p.strip() for p in (settings.v2_drive_archive_ledgers or "").split(",") if p.strip()]
     app.state.crm_workspace = CrmWorkspaceRepository(
@@ -210,6 +210,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     )
     app.state.v1_lane_content_dir = settings.v2_v1_lane_content_dir
     app.state.org_suggestions_file = settings.v2_org_suggestions_file
+    app.state.fx_rates = build_fx_rates(connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms)
     app.include_router(workspace_router)
     # Email → cases (spec 2026-10-05): the admin dry run mounts with the reads; apply and undo
     # mount with the case commands in `_mount_v2_command_boundary`.
@@ -246,6 +247,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     _mount_profile_login(app, settings, profile_login, dsn)
     _mount_v2_command_boundary(app, settings, dsn, connect)
     _mount_crm_authoring(app, settings, dsn, connect)
+    _mount_catalog(app, settings, dsn, connect)
     _mount_campaign_drafts(app, settings, dsn, connect)
     _mount_audience_freeze(app, settings, dsn, connect)
     _mount_campaign_planning(app, settings, dsn, connect)
@@ -361,6 +363,71 @@ def _mount_crm_authoring(app: FastAPI, settings: Settings, dsn: str, connect: An
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(crm_authoring_router)
+
+
+def _mount_catalog(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
+    """Mount the catalog reads and commands only behind ``ORIGENLAB_V2_QUOTING_ENABLED``; off, they are a 404."""
+    app.state.quoting_enabled = settings.quoting_configured()
+    if not app.state.quoting_enabled:
+        return
+
+    from origenlab_api.v2.catalog.commands import V2CatalogRepository
+    from origenlab_api.v2.catalog.reads import V2CatalogReads
+    from origenlab_api.v2.catalog.routes import catalog_command_router, catalog_read_router
+
+    app.state.catalog_reads = V2CatalogReads(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.state.catalog_repository = V2CatalogRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.state.catalog_fx = _build_catalog_fx(settings, app.state.catalog_reads, connect, dsn)
+    app.state.catalog_storage = _build_catalog_storage(settings)
+    app.include_router(catalog_read_router)
+    app.include_router(catalog_command_router)
+
+
+def _build_catalog_storage(settings: Settings) -> Any:
+    """The private `catalog` bucket, or None (image routes then answer 503 `storage_unavailable`).
+
+    A configuration that would expose the key (plain http to a remote host, a legacy JWT key) is
+    refused here and logged without the key; the rest of the API still starts.
+    """
+    if not settings.catalog_storage_configured():
+        return None
+
+    import httpx
+
+    from origenlab_api.v2.catalog.storage import SupabaseStorage
+
+    assert settings.v2_storage_url is not None and settings.v2_storage_secret_key is not None  # noqa: S101
+    client = httpx.Client(timeout=httpx.Timeout(30.0, connect=5.0))
+    try:
+        return SupabaseStorage(settings.v2_storage_url, settings.v2_storage_secret_key.get_secret_value(), client)
+    except ValueError as exc:
+        client.close()
+        logging.getLogger(__name__).warning("catalog image storage disabled: %s", exc)
+        return None
+
+
+def _build_catalog_fx(settings: Settings, reads: Any, connect: Any, dsn: str) -> Any:
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+
+    import httpx
+
+    from origenlab_api.v2.catalog.fx import BdeProvider, FxCacheWriter, MindicadorProvider, PricingFx, quiet_http_logs
+
+    quiet_http_logs()
+    client = httpx.Client(timeout=5.0)
+    password = settings.v2_bde_password.get_secret_value() if settings.v2_bde_password else None
+    providers: list[Any] = [
+        BdeProvider(settings.v2_bde_user, password, client,
+                    {"USD": settings.v2_bde_series_usd, "EUR": settings.v2_bde_series_eur}),
+        MindicadorProvider(client),
+    ]
+    return PricingFx(reads, FxCacheWriter(connect, dsn, settings.v2_statement_timeout_ms), providers,
+                     lambda: dt.datetime.now(ZoneInfo("America/Santiago")).date())
 
 
 def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:

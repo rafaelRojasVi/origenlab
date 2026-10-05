@@ -1,6 +1,8 @@
 /** Browser origins allowed to call the dashboard API proxy. */
 
 import {
+  isAllowedCatalogCommandPostPath,
+  isAllowedCatalogUploadPostPath,
   isAllowedMarketingCommandPostPath,
   isAllowedPostPath,
   stripApiPrefix,
@@ -59,7 +61,10 @@ export function applyCorsHeaders(request: Request, headers: Headers): void {
   );
 
   const commercialCommand =
-    upstreamPath !== null && isAllowedMarketingCommandPostPath(upstreamPath);
+    upstreamPath !== null &&
+    (isAllowedMarketingCommandPostPath(upstreamPath) ||
+      isAllowedCatalogCommandPostPath(upstreamPath) ||
+      isAllowedCatalogUploadPostPath(upstreamPath));
 
   headers.set(
     "Access-Control-Allow-Headers",

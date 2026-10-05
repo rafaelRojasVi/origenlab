@@ -729,3 +729,86 @@ describe("email → cases rules (admin only upstream)", () => {
     }
   });
 });
+
+describe("Catalog 1a", () => {
+  const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+  const GET_PATHS = [
+    "/v2/catalog/products",
+    `/v2/catalog/products/${uuid}`,
+    `/v2/catalog/suppliers/${uuid}/terms`,
+    "/v2/catalog/parameters",
+    "/v2/catalog/fx",
+    "/v2/catalog/price-history",
+    `/v2/catalog/images/${uuid}/url`,
+  ];
+  const JSON_COMMANDS = [
+    "create-product",
+    "update-product",
+    "confirm-product-content",
+    "record-supplier-cost",
+    "set-supplier-terms",
+    "set-cost-parameter",
+    "record-fx-rate",
+    "update-product-image",
+    "review-document-line",
+  ].map((name) => `/v2/commands/${name}`);
+  const UPLOAD = "/v2/commands/add-product-image";
+
+  it("allows each catalog GET, with a query string, and never as a POST", () => {
+    for (const path of GET_PATHS) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(`${path}?model_key=x&limit=5`), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("refuses catalog GET neighbours: uppercase uuid, trailing slash, extra segment, wrong shape", () => {
+    for (const path of [
+      `/v2/catalog/products/${uuid.toUpperCase()}`,
+      `/v2/catalog/products/${uuid}/`,
+      `/v2/catalog/products/${uuid}/extra`,
+      "/v2/catalog/products/",
+      "/v2/catalog/products/not-a-uuid",
+      "/v2/catalog",
+      "/v2/catalog/",
+      "/v2/catalog/fx/",
+      "/v2/catalog/fx/extra",
+      "/v2/catalog/parameters/extra",
+      "/v2/catalog/price-history/extra",
+      `/v2/catalog/suppliers/${uuid}`,
+      `/v2/catalog/suppliers/${uuid}/terms/`,
+      `/v2/catalog/suppliers/${uuid.toUpperCase()}/terms`,
+      `/v2/catalog/images/${uuid}`,
+      `/v2/catalog/images/${uuid}/url/`,
+      `/v2/catalog/images/${uuid.toUpperCase()}/url`,
+      `/v2/catalog/images/${uuid}/bytes`,
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
+  it("allows the nine JSON commands and the upload as exact POST paths, never as GET", () => {
+    for (const path of [...JSON_COMMANDS, UPLOAD]) {
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedPostPath(`${path}?x=1`), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
+  it("refuses command neighbours", () => {
+    for (const path of [
+      "/v2/commands/create-product/",
+      "/v2/commands/Create-Product",
+      "/v2/commands/create-product/extra",
+      "/v2/commands/create-products",
+      "/v2/commands/add-product-image/",
+      "/v2/commands/add-product-image/extra",
+      "/v2/commands/Add-Product-Image",
+      "/v2/commands/delete-product",
+      "/v2/commands/delete-product-image",
+      "/v2/catalog/products",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+});

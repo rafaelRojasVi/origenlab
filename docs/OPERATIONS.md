@@ -2043,3 +2043,120 @@ one state that can send the same message twice.
   default is annually and immediately on any suspected exposure.
 - If a secret is ever committed, treat it as compromised: rotate first, then
   clean history.
+
+## 14. Catalog and quoting inputs (catalog 1a)
+
+Built 2026-10-05, **not applied to any hosted project and not deployed**
+([`STATUS.md`](STATUS.md) §2.7.51). Everything below that touches a database targets a
+disposable cluster or the local clean room; hosted loading is not available
+(§14.5).
+
+### 14.1 Switch and exchange-rate credentials
+
+- **`ORIGENLAB_V2_QUOTING_ENABLED`** (default `false`) mounts `/v2/catalog/*` and the catalog
+  commands; off, they answer 404. It needs a V2 database. Turn it on only after the catalog
+  migrations are applied to that database.
+- **Banco Central (BDE) credentials**: `ORIGENLAB_V2_BDE_USER`, `ORIGENLAB_V2_BDE_PASSWORD`,
+  `ORIGENLAB_V2_BDE_SERIES_USD` (default `F073.TCO.PRE.Z.D`) and `ORIGENLAB_V2_BDE_SERIES_EUR`
+  (default empty: the euro series is not confirmed from an official source, so BDE declines EUR
+  and mindicador answers). Without a user and password, mindicador is the only source.
+- **The BDE web service takes the user and password in the URL query string.** No proxy, load
+  balancer, CDN or access log between the API and `si3.bcentral.cl` may record that URL, and
+  none must be added without checking. The API silences its own HTTP client's request logging
+  (`quiet_http_logs`); that is the only guard. The BDE response format has not been verified
+  against the live service; the first real call is an owner check (a wrong parse falls back to
+  mindicador, never to a guessed rate).
+
+### 14.2 Owner steps: the `catalog` Storage bucket
+
+Product images need these, in the Supabase Dashboard, by the owner. Nothing here is automated.
+
+1. Create a **private** bucket named exactly `catalog` (not public; no storage policies).
+2. Create a **dedicated `sb_secret_` key** for FastAPI's Storage use (ARCHITECTURE §7, §13). Do not reuse the Gmail capture's S3 key. Never a legacy JWT service-role key.
+3. Set `ORIGENLAB_V2_STORAGE_URL` (`https://<project-ref>.supabase.co`) and
+   `ORIGENLAB_V2_STORAGE_SECRET_KEY` in the API's server environment only.
+4. **Back up Storage separately.** Database backups do not contain Storage objects (§10): add
+   the `catalog` bucket to the independent bucket backup and its restore drill. A product image
+   is addressed by content hash, so a restored bucket is verifiable against
+   `catalog.product_image.sha256`.
+
+Until 1-3 are done, the image routes answer 503 `storage_unavailable` and the rest of the
+catalog works.
+
+### 14.3 The importers
+
+Four private importers and one parameter importer live in `apps/api/scripts/catalog/`:
+`import_price_lists.py`, `import_supplier_documents.py`, `import_quote_history.py`,
+`import_cost_parameters.py`. Their inputs are **private files outside the repository** (price
+lists, supplier documents, costing sheets, the quote-economics study's extractions); plans and
+reports go to a directory outside any git checkout (`--out` inside one is refused). Nothing they
+print is a price, a client name or a local path: counts, statuses, item keys and basenames only.
+
+Every importer has the same four subcommands (run from `apps/api`; arguments differ only in
+`plan`):
+
+1. **plan** (no database): `uv run python scripts/catalog/<importer>.py plan --out <dir> <inputs>`
+   writes `plan.json` and prints its sha256. **Always run plan first and read its counts**
+   (items by outcome, skipped by reason, withheld strings, disputed lines) before anything
+   else. A malformed input refuses the whole plan, naming the file and field.
+2. **apply**: `… apply --target-dsn <origenlab_api login> --admin-dsn <owner-capable login>
+   --operator-email <operator> --plan <dir>/plan.json --plan-sha256 <sha> --out <dir>`.
+   Both DSNs must name a literal loopback IP and one database: a disposable
+   `origenlab_test_<8 hex>` database, or `origenlab_clean` with `--allow-cleanroom-production`.
+   The target login is proven to be `origenlab_api` with no elevated membership. A rerun writes
+   nothing new; a row an operator has since changed is reported `present_different` or
+   `kept_later_value` and is never overwritten.
+3. **verify** (read-only): `… verify --target-dsn … --plan … --plan-sha256 … --out …`. Exit 13
+   means a row this plan wrote is missing or different.
+4. **rollback**: `… rollback --target-dsn … --admin-dsn … --plan … --plan-sha256 … --out …
+   --confirm-delete-loaded-rows` removes what the plan wrote, as `origenlab_owner`. Rollback
+   deletes rows, and the manifest of a failed apply stays until rollback removes it.
+
+Exit codes: 0 done, 2 bad arguments, 11 refused, 12 apply or rollback failed (rolled back),
+13 verify found a difference.
+
+Order for a first load into a disposable database or the clean room: cost parameters, price
+lists, supplier documents and costing sheets, then quote history. Rehearse in a disposable
+database before the clean room.
+
+**Cost parameters** (`import_cost_parameters.py`) read `{"parameters": [{"key", "value",
+"unit", "reason"}]}`, validate exactly as `set-cost-parameter` does and write by its SQL, so each
+becomes a new append-only row with the operator and a `cost_parameter.set` event naming the key.
+A key whose current value already equals the planned one is skipped. The first apply always
+writes a row per key, even where the value equals what the previous run left.
+
+**Monthly carrier fuel surcharge.** `dhl_fuel_surcharge_pct` changes monthly. An operator sets it
+each month with `POST /v2/commands/set-cost-parameter` (key `dhl_fuel_surcharge_pct`, a fraction,
+and a reason such as the month). The old value stays in the history.
+
+### 14.4 The enrichment tool
+
+`apps/api/scripts/catalog/enrich_products.py` proposes Spanish content and manufacturer images
+with Claude (`uv sync --extra enrich`; `ANTHROPIC_API_KEY` in the environment, never printed).
+Sources are text files the operator extracted by model key
+(`<MODEL_KEY>.datasheet.txt`, `<MODEL_KEY>.page.txt`).
+
+1. **Dry-run first.** Without `--apply` nothing is written and no image is downloaded; the
+   answers are validated and written to `<out>/enrich-report.json`. Read the report.
+2. **Measure about 20 products before the full run.** The default `--limit` is 20 (maximum
+   500). Run `--select quoted --limit 20`, check the cost and the quality of the proposals,
+   then widen. Each product is one synchronous request; a run of hundreds takes a long time
+   and costs real money.
+3. **Apply** with `--apply` into a disposable database, or the clean room with
+   `--allow-cleanroom-production`. The database target is loopback-only; hosted is refused.
+4. **`--allow-remote-storage`.** Images are stored through the `catalog` bucket named by
+   `ORIGENLAB_V2_STORAGE_URL`. The tool refuses a non-loopback Storage URL unless this flag is
+   given, because uploading into the hosted bucket is a separate decision from the database
+   target. Give it only when the owner has created the bucket (§14.2) and means to upload
+   real manufacturer images there. Without a Storage configuration the tool writes content
+   only.
+5. What apply writes is a proposal: `content_origin = machine`, images `proposed`. An
+   operator confirms each in the dashboard (WORKFLOWS W8a). Exit codes: 0 done, 2 bad
+   arguments, 11 refused before any write, 12 at least one item failed (that item rolled back).
+
+### 14.5 Hosted loading
+
+None of the importers or the enrichment tool can target a hosted database. Their targets are
+loopback-only by design. Loading catalog data into the hosted project waits for the authorised
+Supavisor route of PR #623; until then the clean room is the only populated target, and the
+hosted project receives the schema only after the owner applies the two catalog migrations.

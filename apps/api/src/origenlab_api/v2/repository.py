@@ -1366,7 +1366,7 @@ class V2Repository(OperatorLookup):
     EVIDENCE_SOURCE_KINDS: tuple[str, ...] = (
         "workbook_import", "chilecompra_notice", "migration_manifest",
         "v1_parse_failure", "v1_evidence_edge", "v1_supplier_candidate",
-        "v1_historical_quote_candidate", "gmail_message", "drive_file",
+        "v1_historical_quote_candidate", "gmail_message", "drive_file", "quote_document",
     )
 
     #: `evidence.assertion.kind` values whose `value_norm` is a contact or postal address.

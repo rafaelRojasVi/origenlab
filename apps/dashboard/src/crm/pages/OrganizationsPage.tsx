@@ -106,10 +106,16 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
           onChange={setSegment}
           options={[
             { value: "customers", label: "Clientes" },
-            { value: "suppliers", label: "Proveedores" },
             { value: "others", label: "Otras" },
           ]}
         />
+        <button
+          type="button"
+          onClick={() => navigate("proveedores")}
+          className="text-xs font-medium text-brand-700 hover:underline"
+        >
+          Proveedores →
+        </button>
         <Segmented
           label="Alcance"
           value={scope}
@@ -133,7 +139,6 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
                   ...(page.facets
                     ? [
                         { label: "Clientes", value: fmtInt(page.facets.customers) },
-                        { label: "Proveedores", value: fmtInt(page.facets.suppliers) },
                         { label: "Todas", value: fmtInt(page.facets.all) },
                       ]
                     : []),

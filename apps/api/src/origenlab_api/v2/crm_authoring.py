@@ -23,6 +23,7 @@ import psycopg
 from origenlab_api.v2.command_core import CommandTransaction, json_payload
 from origenlab_api.v2.commands import (
     CommandRefused,
+    as_uuid,
     normalize_email,
     normalize_organization_name,
 )
@@ -2294,6 +2295,14 @@ def _handle_add_note(
     subject_kind = fields["subject_kind"]
     subject_id = fields["subject_id"]
     body = fields["body"]
+
+    # A product note needs a product to hang on: the catalog is the only subject checked here,
+    # so the person/organization/opportunity behaviour stays exactly as it was.
+    if subject_kind == "product":
+        cur.execute("select 1 from catalog.product where id = %s::uuid",
+                    (as_uuid(subject_id, "subject_id"),))
+        if cur.fetchone() is None:
+            raise CommandRefused(404, "product_not_found", "no such product")
 
     # revision_no = 1 notes have root_note_id = NULL (schema constraint note_revision_shape).
     # Revisions point back to the root via root_note_id; the revise-note handler resolves the

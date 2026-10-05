@@ -121,9 +121,28 @@ insert into expected values
     ('crm', 'note', 'origenlab_worker', 'S', null, 'S'),
     -- crm.organization_product_line: api may INSERT and close (column-level UPDATE); worker reads.
     ('crm', 'organization_product_line', 'origenlab_api', 'SI', array['valid_to', 'unlinked_by_operator_id', 'note', 'updated_at'], 'SIU'),
-    ('crm', 'organization_product_line', 'origenlab_worker', 'S', null, 'S');
+    ('crm', 'organization_product_line', 'origenlab_worker', 'S', null, 'S'),
+    -- 20261005134832: catalog.product_image — api inserts and edits order, caption and status
+    -- (column-level UPDATE; the image itself is never rewritten); the worker holds nothing.
+    ('catalog', 'product_image', 'origenlab_api', 'SI', array['sort_order', 'caption_es', 'status', 'version', 'updated_at'], 'SIU'),
+    ('catalog', 'product_image', 'origenlab_worker', '', null, ''),
+    -- catalog.supplier_terms — api inserts and edits the terms (column-level UPDATE, never the
+    -- supplier key or created_at); the worker holds nothing.
+    ('catalog', 'supplier_terms', 'origenlab_api', 'SI', array['currency', 'origin_country', 'route', 'incoterm', 'default_discount_pct', 'packing_pct', 'map_enforced', 'default_lead_time_es', 'notes', 'version', 'updated_by_operator_id', 'updated_at'], 'SIU'),
+    ('catalog', 'supplier_terms', 'origenlab_worker', '', null, ''),
+    -- 20261005140628: catalog.fx_rate and catalog.cost_parameter — append-only history: api reads
+    -- and inserts, never updates; the worker holds nothing.
+    ('catalog', 'fx_rate', 'origenlab_api', 'SI', null, 'SI'),
+    ('catalog', 'fx_rate', 'origenlab_worker', '', null, ''),
+    ('catalog', 'cost_parameter', 'origenlab_api', 'SI', null, 'SI'),
+    ('catalog', 'cost_parameter', 'origenlab_worker', '', null, ''),
+    -- evidence.document_line — api inserts lines and reviews a disputed one (column-level UPDATE of
+    -- the money, the optional flag and the review fields; never the line's identity); the worker
+    -- holds nothing.
+    ('evidence', 'document_line', 'origenlab_api', 'SI', array['qty', 'unit_price', 'line_total', 'optional', 'check_status', 'reviewed_by_operator_id', 'reviewed_at', 'review_note', 'updated_at'], 'SIU'),
+    ('evidence', 'document_line', 'origenlab_worker', '', null, '');
 
-select is((select count(*)::int from expected), 90, 'the matrix covers all 45 tables for both runtime roles');
+select is((select count(*)::int from expected), 100, 'the matrix covers all 50 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

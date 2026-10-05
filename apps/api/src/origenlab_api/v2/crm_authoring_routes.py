@@ -307,7 +307,7 @@ class AddNoteBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    subject_kind: Annotated[str, Field(pattern="^(person|organization|opportunity)$")]
+    subject_kind: Annotated[str, Field(pattern="^(person|organization|opportunity|product)$")]
     subject_id: str
     body: Annotated[str, _BODY]
 

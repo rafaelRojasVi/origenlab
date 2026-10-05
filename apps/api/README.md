@@ -153,6 +153,15 @@ Responses include `X-Request-ID` plus read-only timing headers `Server-Timing` /
 | POST | `/operations/customer-quotes/{quote_id}/drive-workspace` | CRM-Q1: idempotent Drive provisioning retry (expected_version) |
 | GET | `/operations/customer-quotes` | Global durable customer-quote list across all sales opportunities (Cotizaciones) |
 | POST | `/operations/sales-opportunities/manual` | Create a manually-initiated durable sales opportunity (no PR3 source); Idempotency-Key |
+| GET | `/v2/catalog/products`, `/v2/catalog/products/{id}` | Catalog 1a: product search and detail with current cost, price history and notes (costs redacted for `viewer`); only mounted with `ORIGENLAB_V2_QUOTING_ENABLED=true` |
+| GET | `/v2/catalog/price-history`, `/v2/catalog/suppliers/{organization_id}/terms` | Catalog 1a: quoted-price history by `model_key`; supplier terms |
+| GET | `/v2/catalog/fx`, `/v2/catalog/parameters` | Catalog 1a: Banco Central rate for a currency and day (BDE, else mindicador; stored in `catalog.fx_rate`); costing parameters (not for `viewer`) |
+| GET | `/v2/catalog/images/{image_id}/url` | Catalog 1a: signed URL (10 minutes) for a product image; 503 `storage_unavailable` without Storage configuration |
+| POST | `/v2/commands/create-product`, `update-product`, `confirm-product-content`, `record-supplier-cost`, `set-supplier-terms`, `set-cost-parameter`, `record-fx-rate`, `review-document-line`, `update-product-image` | Catalog 1a commands (`sales` and `admin`); `Idempotency-Key`, `expected_version` on changes, one domain event each |
+| POST | `/v2/commands/add-product-image` | Catalog 1a: multipart image upload through FastAPI into the private `catalog` bucket (content-hash path, magic bytes checked, size capped) |
+| GET | `/v2/workspace/fx` | Resumen exchange rates; falls back to the newest stored `catalog.fx_rate` when every source fails; a successful mindicador fetch writes USD and EUR through (findic is shown, never stored) |
+
+**Catalog 1a environment** (all optional; owner steps in [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md) §14): `ORIGENLAB_V2_QUOTING_ENABLED` (default `false`), `ORIGENLAB_V2_BDE_USER`, `ORIGENLAB_V2_BDE_PASSWORD` (travels in the BDE URL query: no proxy or access log may record it), `ORIGENLAB_V2_BDE_SERIES_USD`, `ORIGENLAB_V2_BDE_SERIES_EUR`, `ORIGENLAB_V2_STORAGE_URL`, `ORIGENLAB_V2_STORAGE_SECRET_KEY` (a dedicated `sb_secret_` key, Storage API only). Private importers and the enrichment tool: `scripts/catalog/` (plan / apply / verify / rollback; dry-run first).
 
 **Warm cases read-model boundary:** production serves `api.v_warm_case` through `PostgresWarmCaseRepository` when `ORIGENLAB_API_BACKEND=postgres`. Remote contract checks live in `scripts/remote_response_audit.py` (`require_warm_cases_contract`).
 

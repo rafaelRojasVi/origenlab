@@ -98,6 +98,12 @@ union all select 'outbound.campaign_content', count(*)::text from outbound.campa
 union all select 'outbound.campaign_content_message', count(*)::text from outbound.campaign_content_message
 union all select 'crm.note', count(*)::text from crm.note
 union all select 'crm.organization_product_line', count(*)::text from crm.organization_product_line
+
+union all select 'catalog.product_image', count(*)::text from catalog.product_image
+union all select 'catalog.supplier_terms', count(*)::text from catalog.supplier_terms
+union all select 'catalog.fx_rate', count(*)::text from catalog.fx_rate
+union all select 'catalog.cost_parameter', count(*)::text from catalog.cost_parameter
+union all select 'evidence.document_line', count(*)::text from evidence.document_line
 ;
 
 commit;
