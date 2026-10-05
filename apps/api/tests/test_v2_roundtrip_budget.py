@@ -112,6 +112,10 @@ SNAPSHOT_READS: dict[str, str] = {
     "campaign_blocks": "/v2/workspace/marketing/campaign-blocks",
     "suppressions": "/v2/workspace/marketing/suppressions",
     "review": "/v2/workspace/review",
+    "cockpit_work_queue": "/v2/cockpit/work-queue?limit=50",
+    "cockpit_quotations": "/v2/cockpit/quotations?limit=20",
+    "marketing_campaign_draft": "/v2/workspace/marketing/campaigns/{camp_b}",
+    "marketing_campaign_archived": "/v2/workspace/marketing/campaigns/{camp_a}",
 }
 
 
@@ -417,7 +421,7 @@ def test_heavy_reads_answer_what_they_answered_before(monkeypatch, reads_db, rea
     with SignedInApp(monkeypatch, reads_db, proxy, reads_world["profile"]) as client:
         answers = {}
         for name, path in SNAPSHOT_READS.items():
-            response = client.get(path)
+            response = client.get(path.format(**reads_world))
             assert response.status_code == 200, (name, response.text)
             answers[name] = response.json()
     got = normalise(answers, reads_world)

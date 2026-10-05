@@ -152,6 +152,64 @@
   "offset": 500,
   "total": 3
  },
+ "cockpit_quotations": {
+  "items": [
+   {
+    "created_at": "<timestamp>",
+    "has_conflict": false,
+    "latest_pdf_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "latest_sent_at": "<timestamp>",
+    "number_origin": "printed_historical",
+    "opportunity_id": "<case>",
+    "opportunity_title": "Cotización 01024-26",
+    "organization_id": "<uni>",
+    "organization_name": "Universidad Ficticia del Sur",
+    "quote_id": "<quote>",
+    "quote_number": "01024-26",
+    "sent_revision_count": 1
+   }
+  ],
+  "limit": 20,
+  "offset": 0,
+  "total": 1
+ },
+ "cockpit_work_queue": {
+  "items": [
+   {
+    "age_days": 0,
+    "kind": "pending_evidence",
+    "label": "gmail_message",
+    "next_action": "Review the evidence record",
+    "reason": "Source record awaiting review",
+    "subject_ids": {
+     "source_record_id": "<sr>"
+    }
+   },
+   {
+    "age_days": 0,
+    "kind": "case_without_institution",
+    "label": "Consulta centrífuga sin institución",
+    "next_action": "Set or confirm the requesting institution",
+    "reason": "Lead-stage case has no requesting institution",
+    "subject_ids": {
+     "opportunity_id": "<lead>"
+    }
+   },
+   {
+    "age_days": 0,
+    "kind": "pending_evidence",
+    "label": "gmail_message",
+    "next_action": "Review the evidence record",
+    "reason": "Source record awaiting review",
+    "subject_ids": {
+     "source_record_id": "<sr2>"
+    }
+   }
+  ],
+  "limit": 50,
+  "offset": 0,
+  "total": 3
+ },
  "contacts": {
   "items": [
    {
@@ -1067,6 +1125,74 @@
    ],
    "unique_destinations": 3
   }
+ },
+ "marketing_campaign_archived": {
+  "audience_criteria": null,
+  "audience_frozen_at": null,
+  "audience_policy_version": null,
+  "audience_sha256": null,
+  "body_html": null,
+  "campaign_id": "<camp_a>",
+  "content_sha256": null,
+  "created_at": "<timestamp>",
+  "created_by": null,
+  "database": "<database>",
+  "has_text": false,
+  "hold": {
+   "all_campaigns": {
+    "block": null,
+    "block_version": 0,
+    "blocked": false
+   },
+   "block": null,
+   "block_version": 0,
+   "effect": "Mientras el bloqueo esté activo se rechaza congelar la audiencia, aprobar, activar, registrar una prueba en seco, reservar destinatarios y crear o despachar envíos. El bloqueo no envía, no encola, no toca Gmail ni modifica la audiencia congelada. Sólo un administrador lo levanta, con un motivo; no vence.",
+   "expires": false,
+   "held": false,
+   "refusals": []
+  },
+  "max_sends": 500,
+  "name": "Campaña Ficticia Archivada",
+  "preheader": null,
+  "recontact_interval_days": null,
+  "status": "archived",
+  "subject": null,
+  "updated_at": "<timestamp>",
+  "version": 1
+ },
+ "marketing_campaign_draft": {
+  "audience_criteria": null,
+  "audience_frozen_at": null,
+  "audience_policy_version": null,
+  "audience_sha256": null,
+  "body_html": "<html><body><p>Hola</p></body></html>",
+  "campaign_id": "<camp_b>",
+  "content_sha256": null,
+  "created_at": "<timestamp>",
+  "created_by": null,
+  "database": "<database>",
+  "has_text": false,
+  "hold": {
+   "all_campaigns": {
+    "block": null,
+    "block_version": 0,
+    "blocked": false
+   },
+   "block": null,
+   "block_version": 0,
+   "effect": "Mientras el bloqueo esté activo se rechaza congelar la audiencia, aprobar, activar, registrar una prueba en seco, reservar destinatarios y crear o despachar envíos. El bloqueo no envía, no encola, no toca Gmail ni modifica la audiencia congelada. Sólo un administrador lo levanta, con un motivo; no vence.",
+   "expires": false,
+   "held": false,
+   "refusals": []
+  },
+  "max_sends": 100,
+  "name": "Borrador Ficticio",
+  "preheader": null,
+  "recontact_interval_days": 180,
+  "status": "draft",
+  "subject": "Ofertas de laboratorio",
+  "updated_at": "<timestamp>",
+  "version": 1
  },
  "organizations": {
   "facets": {
