@@ -140,9 +140,25 @@ def test_cross_check_single_source_on_either_side() -> None:
     assert template_only[0].template_total == Decimal("500000") and template_only[0].ai_total is None
 
 
-def test_cross_check_a_different_model_is_not_the_same_line() -> None:
-    checked = cross_check([_ai("1", "ACME-1", "1234000")], [TemplateLine("1", "ACME-2", Decimal("1234000"))])
+def test_cross_check_a_different_model_and_item_is_not_the_same_line() -> None:
+    checked = cross_check([_ai("1", "ACME-1", "1234000")], [TemplateLine("2", "ACME-2", Decimal("1234000"))])
     assert sorted(c.check_status for c in checked) == ["single_source", "single_source"]
+
+
+def test_cross_check_verified_by_model_and_total_records_its_reason() -> None:
+    [line] = cross_check([_ai("4", "ACME-1", "1234000")], [TemplateLine("9", "ACME-1", Decimal("1234000"))])
+    assert (line.check_status, line.reason) == ("verified", "model_total_match")
+
+
+def test_cross_check_same_item_and_total_is_verified_even_when_the_models_differ() -> None:
+    [line] = cross_check([_ai("1", "ACME-1", "1234000")], [TemplateLine("1", "1234567", Decimal("1234000"))])
+    assert (line.check_status, line.reason) == ("verified", "item_total_match")
+
+
+def test_cross_check_same_item_other_total_and_other_model_stays_apart() -> None:
+    checked = cross_check([_ai("1", "ACME-1", "1234000")], [TemplateLine("1", "ACME-2", Decimal("1000"))])
+    assert sorted(c.check_status for c in checked) == ["single_source", "single_source"]
+    assert all(c.reason is None for c in checked)
 
 
 def test_cross_check_prefers_an_equal_total_and_uses_each_template_line_once() -> None:

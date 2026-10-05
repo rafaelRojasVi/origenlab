@@ -5,8 +5,9 @@ per PDF) and the PDF's text (`pdftotext -layout`). The text is parsed here deter
 the two OrigenLab layouts, into `TemplateLine`s — item label, model, line total — and each AI line
 is checked against them:
 
-* `verified` — a template line with the same total whose model key matches (or which prints no
-  model), or failing that the same item label and no model;
+* `verified` — a template line with the same total and the same model key (`model_total_match`),
+  or failing that the same item label (`item_total_match`, even when REF and model differ — owner
+  ruling 2026-10-05), or failing that a template line with neither (`total_match`);
 * `disputed` — the same model, or the same item label, but another total;
 * `single_source` — only one side has the line (also an AI line with no total).
 
@@ -73,6 +74,9 @@ class CheckedLine:
     ai_total: Decimal | None
     template_total: Decimal | None
     check_status: CheckStatus
+    #: Why a verified line matched: `model_total_match`, `item_total_match` (same item label and
+    #: total, whatever REF and model say) or `total_match` (a bare template line); None otherwise.
+    reason: str | None = None
 
 
 # ------------------------------------------------------------------ parsing the text
@@ -226,34 +230,33 @@ def cross_check(ai_lines: list[dict[str, Any]], template_lines: list[TemplateLin
            _total(a.get("line_total"))) for a in ai_lines]
     tl = [(_item(t.item_label), model_key(t.model), t.line_total) for t in template_lines]
     unused = list(range(len(tl)))
-    match: dict[int, tuple[int, CheckStatus]] = {}
-
-    def take(i: int, accept) -> bool:
-        for j in unused:
-            if accept(ai[i], tl[j]):
-                unused.remove(j)
-                match[i] = (j, "verified" if ai[i][2] == tl[j][2] else "disputed")
-                return True
-        return False
+    match: dict[int, tuple[int, CheckStatus, str | None]] = {}
 
     same_total = lambda a, t: a[2] == t[2]  # noqa: E731
+    #: (accept, why a verified pair matched). Verified passes first, then the disputed ones.
     passes = [
-        lambda a, t: same_total(a, t) and a[1] is not None and t[1] == a[1],
-        lambda a, t: same_total(a, t) and t[1] is None and a[0] is not None and t[0] == a[0],
-        lambda a, t: same_total(a, t) and t[1] is None and t[0] is None,
-        lambda a, t: a[1] is not None and t[1] == a[1],
-        lambda a, t: a[0] is not None and t[0] == a[0] and (t[1] is None or t[1] == a[1]),
+        (lambda a, t: same_total(a, t) and a[1] is not None and t[1] == a[1], "model_total_match"),
+        (lambda a, t: same_total(a, t) and a[0] is not None and t[0] == a[0], "item_total_match"),
+        (lambda a, t: same_total(a, t) and t[1] is None and t[0] is None, "total_match"),
+        (lambda a, t: a[1] is not None and t[1] == a[1], None),
+        (lambda a, t: a[0] is not None and t[0] == a[0] and (t[1] is None or t[1] == a[1]), None),
     ]
-    for accept in passes:
+    for accept, reason in passes:
         for i in range(len(ai)):
-            if i not in match and ai[i][2] is not None:
-                take(i, accept)
+            if i in match or ai[i][2] is None:
+                continue
+            for j in unused:
+                if accept(ai[i], tl[j]):
+                    unused.remove(j)
+                    verified = ai[i][2] == tl[j][2]
+                    match[i] = (j, "verified" if verified else "disputed", reason if verified else None)
+                    break
 
     out = []
     for i, a in enumerate(ai_lines):
         if i in match:
-            j, status = match[i]
-            out.append(CheckedLine(i, j, ai[i][0], a.get("model"), ai[i][2], tl[j][2], status))
+            j, status, why = match[i]
+            out.append(CheckedLine(i, j, ai[i][0], a.get("model"), ai[i][2], tl[j][2], status, why))
         else:
             out.append(CheckedLine(i, None, ai[i][0], a.get("model"), ai[i][2], None, "single_source"))
     for j in unused:

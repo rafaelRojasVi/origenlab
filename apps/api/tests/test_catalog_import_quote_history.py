@@ -185,22 +185,38 @@ def test_a_date_in_another_format_is_refused_naming_the_file_and_field(tmp_path,
     assert not (tmp_path / "out" / "plan.json").exists()
 
 
-def test_excluded_reseller_letterhead_is_refused(tmp_path, capsys) -> None:
+def test_excluded_reseller_letterhead_is_skipped(tmp_path) -> None:
     sha = _sha()
     _write_doc(tmp_path / "in", _extraction(sha, [_line("1", "ACME-1", 1000)]),
                _docx_text([("1", "ACME-1", "1.000")], letterhead="Juan Andrés Tejeda — equipos"))
-    assert _plan(tmp_path / "in", tmp_path / "out") == _common.EXIT_REFUSED
-    err = capsys.readouterr().err
-    assert "Labdelivery" in err and f"{sha}.txt" in err
-    assert not (tmp_path / "out" / "plan.json").exists()
+    assert _plan(tmp_path / "in", tmp_path / "out") == 0
+    plan, _ = _load(tmp_path / "out")
+    assert plan["items"] == [] and plan["counts"]["skipped_labdelivery_letterhead"] == 1
 
 
-def test_excluded_reseller_footer_is_refused_too(tmp_path, capsys) -> None:
-    sha = _sha()
-    _write_doc(tmp_path / "in", _extraction(sha, [_line("1", "ACME-1", 1000)]),
+def test_a_reseller_text_is_skipped_and_the_clean_one_planned(tmp_path, capsys) -> None:
+    dirty, clean = _sha(), _sha()
+    _write_doc(tmp_path / "in", _extraction(dirty, [_line("1", "ACME-1", 1000)]),
                _docx_text([("1", "ACME-1", "1.000")]) + "Fono: (00) 00000000 www.labdelivery.example\n")
-    assert _plan(tmp_path / "in", tmp_path / "out") == _common.EXIT_REFUSED
-    assert f"{sha}.txt" in capsys.readouterr().err
+    _write_doc(tmp_path / "in", _extraction(clean, [_line("1", "ACME-2", 2000)]), _docx_text([("1", "ACME-2", "2.000")]))
+    assert _plan(tmp_path / "in", tmp_path / "out") == 0
+    plan, _ = _load(tmp_path / "out")
+    assert [i["key"] for i in plan["items"]] == [f"quote_document:{clean}"]
+    assert plan["counts"]["skipped_labdelivery_letterhead"] == 1
+    assert [s["reason"] for s in plan["skipped"]] == ["labdelivery_letterhead"]
+    assert dirty not in (tmp_path / "out" / "plan.json").read_text(encoding="utf-8").replace(
+        plan["skipped"][0]["path_sha256"], "")
+
+
+def test_item_and_total_matches_are_counted_by_reason(tmp_path) -> None:
+    sha = _sha()
+    _write_doc(tmp_path / "in", _extraction(sha, [_line("1", "ACME-1", 1000), _line("2", "ACME-2", 2000)]),
+               _docx_text([("1", "ACME-1", "1.000"), ("2", "9999", "2.000")]))
+    assert _plan(tmp_path / "in", tmp_path / "out") == 0
+    plan, _ = _load(tmp_path / "out")
+    assert [ln["check_status"] for ln in plan["items"][0]["fields"]["lines"]] == ["verified", "verified"]
+    assert plan["counts"]["verified_model_total_match"] == 1
+    assert plan["counts"]["verified_item_total_match"] == 1
 
 
 def test_excluded_reseller_in_a_written_string_is_refused(tmp_path) -> None:

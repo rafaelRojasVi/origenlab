@@ -32,9 +32,11 @@ item labels) that names the client, or holds an e-mail address or a phone number
 
 Refusals (exit 11, naming the file's basename and the field): a malformed extraction, a date that
 is neither ISO nor `DD-MM-YYYY` / `DD/MM/YYYY`, an extraction whose `sha256` is not its file name,
-a missing text file, and anything of Labdelivery origin — the path, the JSON, the full layout text
-(the letterhead) and every string the plan would write. A document the extraction says OrigenLab
-did not issue is skipped and counted. A document already present (by `dedupe_key`) is never
+a missing text file, and anything of Labdelivery origin in a path, the extraction JSON or a string
+the plan would write. A layout text that carries Labdelivery letterhead or footer is skipped and
+counted (`skipped_labdelivery_letterhead`), never written; so is a document the extraction says
+OrigenLab did not issue. Verified lines are counted by why they matched (`verified_<reason>`;
+`evidence.document_line` has no column for it). A document already present (by `dedupe_key`) is never
 touched; apply reports it `already_present`, or `present_different` when it says something else.
 
 **Who writes what** (the Task 11 split): the runtime role `origenlab_api` holds no INSERT on
@@ -65,7 +67,12 @@ from origenlab_api.v2.catalog.history_check import (  # noqa: E402
     parse_template_lines,
     quote_document_payload,
 )
-from origenlab_api.v2.catalog.keys import LabdeliveryRefused, model_key, refuse_labdelivery  # noqa: E402
+from origenlab_api.v2.catalog.keys import (  # noqa: E402
+    LabdeliveryRefused,
+    is_labdelivery,
+    model_key,
+    refuse_labdelivery,
+)
 
 import _common  # noqa: E402
 
@@ -204,6 +211,8 @@ def _document(name: str, input_sha256: str, extraction: dict[str, Any], text: st
         line = lines[c.ai_index]
         line["check_status"] = c.check_status
         counts[f"lines_{c.check_status}"] += 1
+        if c.reason is not None:
+            counts[f"verified_{c.reason}"] += 1
         if c.check_status == "disputed":
             disputed.append({"quote_number": payload["printed_quote_number"] or "", "line": str(line["line_no"]),
                              "ai_total": _plain(c.ai_total), "template_total": _plain(c.template_total)})
@@ -226,7 +235,9 @@ def build_quote_history_plan(extractions: list[Path], text_dir: Path) -> tuple[i
     skipped: list[dict[str, str]] = []
     counts: Counter[str] = Counter({k: 0 for k in (
         "lines", "lines_verified", "lines_disputed", "lines_single_source", "template_only_lines",
-        "strings_withheld", "documents_without_date", "skipped_not_origenlab_quote")})
+        "verified_model_total_match", "verified_item_total_match", "verified_total_match",
+        "strings_withheld", "documents_without_date", "skipped_not_origenlab_quote",
+        "skipped_labdelivery_letterhead")})
     for record, path in hashed:
         name = path.name
         raw = path.read_text(encoding="utf-8")
@@ -244,8 +255,14 @@ def build_quote_history_plan(extractions: list[Path], text_dir: Path) -> tuple[i
         if not text_path.is_file():
             raise _fail(name, "text", "no layout text for this document in --texts")
         text = text_path.read_text(encoding="utf-8")
-        _refuse_labdelivery(text_path.name, str(text_path.resolve()), text_path.name, text)
+        _refuse_labdelivery(text_path.name, str(text_path.resolve()), text_path.name)
         records += [record, importing.input_record(text_path, "quote_text")]
+        if is_labdelivery(text):
+            # Labdelivery letterhead or footer in the document itself: skipped, never written
+            # (owner ruling 2026-10-05); a written string of Labdelivery origin still refuses.
+            counts["skipped_labdelivery_letterhead"] += 1
+            skipped.append({"path_sha256": record["path_sha256"], "reason": "labdelivery_letterhead"})
+            continue
         issued = extraction.get("is_origenlab_issued_quote")
         if issued is False:
             counts["skipped_not_origenlab_quote"] += 1
