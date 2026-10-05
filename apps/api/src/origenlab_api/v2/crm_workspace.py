@@ -45,6 +45,7 @@ from origenlab_api.v2.campaign_history import (
     replies_state,
 )
 from origenlab_api.v2.marketing_audience import address_ref, addresses_in
+from origenlab_api.v2.person_suggestions import read_person_suggestions
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
 
 GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
@@ -1619,6 +1620,7 @@ class CrmWorkspaceRepository:
                 "evidence_assertions": ref_row[4],
                 "catalog_products": ref_row[5],
             }
+            person_suggestions = [s for s in read_person_suggestions(cur) if s["organization_id"] == org_id]
 
         reasons: list[str] = []
         if refs["opportunities"]:
@@ -1650,8 +1652,15 @@ class CrmWorkspaceRepository:
             "notes": notes,
             "references": refs,
             "removal": {"allowed": False, "reasons": reasons},
+            "person_suggestions": person_suggestions,
             "authoring": None,  # injected by the route from request.app.state
         }
+
+    def person_suggestions(self) -> dict[str, Any]:
+        """People the quote emails name and the CRM does not hold yet (`person_suggestions.py`)."""
+        with self._read() as cur:
+            items = read_person_suggestions(cur)
+        return {"items": items, "total": len(items)}
 
     # -- review queue: what the CRM itself cannot show
 

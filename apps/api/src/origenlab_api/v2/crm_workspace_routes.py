@@ -154,6 +154,12 @@ def get_organization_authoring(
     return body
 
 
+@workspace_router.get("/person-suggestions")
+def get_person_suggestions(_: Operator, repo: Repo) -> Any:
+    """People the quote emails name and the CRM does not hold yet. A read: nothing is created."""
+    return repo.person_suggestions()
+
+
 @workspace_router.get("/equipment-interests")
 def get_equipment_interests(_: Operator, repo: Repo) -> Any:
     """Evidenced equipment interest per line, institution and destination, for the CRM cards.
