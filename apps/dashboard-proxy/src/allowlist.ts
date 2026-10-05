@@ -291,6 +291,13 @@ export const CATALOG_UPLOAD_POST_PATHS: readonly RegExp[] = [/^\/v2\/commands\/a
 
 export const CATALOG_UPLOAD_MAX_BYTES = 8_388_608 + 65_536;
 
+/** The body limit for one catalog command path: the upload's, or the JSON commands'. */
+export function catalogCommandMaxBytes(pathname: string): number {
+  return CATALOG_UPLOAD_POST_PATHS.some((pattern) => pattern.test(pathname.split("?")[0]))
+    ? CATALOG_UPLOAD_MAX_BYTES
+    : CATALOG_COMMAND_MAX_BYTES;
+}
+
 export function isAllowedCatalogCommandPostPath(pathname: string): boolean {
   const pathOnly = pathname.split("?")[0];
   return CATALOG_COMMAND_POST_PATHS.some((pattern) => pattern.test(pathOnly));

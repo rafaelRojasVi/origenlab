@@ -99,7 +99,7 @@ Worker also refuses, before forwarding: a missing or unlisted `Origin` (403
 `origin_not_allowed`), `Sec-Fetch-Site: cross-site` (403 `cross_site_request`), any
 `Content-Type` other than `application/json` (415 — a cross-site form cannot send one without
 a preflight, which is answered only for listed origins), a body over 3.5 MB (4 KB for `set-campaign-planning`, 16 KB for the two block commands) declared or actual
-(413). CORS advertises `POST` and `Idempotency-Key` only on these paths.
+(413). CORS advertises `POST` on every listed POST path and `Idempotency-Key` on the marketing and catalog command paths.
 
 **Idempotency.** `Idempotency-Key` is required and must match `^[A-Za-z0-9._:-]{8,128}$` (400
 `idempotency_key_required`); it is forwarded byte-for-byte. Upstream the key is one
@@ -136,7 +136,8 @@ Ten exact POST paths, all under `/v2/commands/`, each behind `catalogCommandRefu
 an allowed `Origin` (403 `origin_not_allowed`), no cross-site `Sec-Fetch-Site` (403
 `cross_site_request`), the right `Content-Type` (415), a well-formed `Idempotency-Key` (400) and a
 body within the limit, declared or actual (413). CORS advertises `POST` and `Idempotency-Key` on
-these paths only.
+these paths. The upload's multipart type needs no preflight, so its CSRF protection rests on the
+required `Idempotency-Key` (a custom header, which forces one) plus the Origin and Sec-Fetch-Site checks.
 
 - Nine JSON commands (`create-product`, `update-product`, `confirm-product-content`,
   `record-supplier-cost`, `set-supplier-terms`, `set-cost-parameter`, `record-fx-rate`,

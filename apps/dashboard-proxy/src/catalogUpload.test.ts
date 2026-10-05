@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CATALOG_COMMAND_MAX_BYTES, CATALOG_UPLOAD_MAX_BYTES } from "./allowlist";
+import { CATALOG_COMMAND_MAX_BYTES, CATALOG_UPLOAD_MAX_BYTES, catalogCommandMaxBytes } from "./allowlist";
 import { handleRequest } from "./index";
 import type { ProxyEnv } from "./proxy";
 
@@ -44,6 +44,11 @@ describe("catalog upload guard", () => {
     expect(CATALOG_UPLOAD_MAX_BYTES).toBe(8_388_608 + 65_536);
   });
 
+  it("catalogCommandMaxBytes picks the limit by path", () => {
+    expect(catalogCommandMaxBytes("/v2/commands/add-product-image")).toBe(CATALOG_UPLOAD_MAX_BYTES);
+    expect(catalogCommandMaxBytes("/v2/commands/create-product")).toBe(CATALOG_COMMAND_MAX_BYTES);
+  });
+
   it("forwards a multipart upload with its Content-Type byte-identical", async () => {
     const fetchMock = stubUpstream();
     const res = await handleRequest(
@@ -54,6 +59,27 @@ describe("catalog upload guard", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const sent = fetchMock.mock.calls[0][0] as Request;
     expect(sent.headers.get("Content-Type")).toBe(MULTIPART);
+  });
+
+  it("matches the multipart type case-insensitively and forwards Idempotency-Key upstream", async () => {
+    const fetchMock = stubUpstream();
+    const res = await handleRequest(
+      post(UPLOAD, { ...GOOD, "Content-Type": "Multipart/Form-Data; Boundary=x" }, "--x\r\n"),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    const sent = fetchMock.mock.calls[0][0] as Request;
+    expect(sent.headers.get("Idempotency-Key")).toBe(GOOD["Idempotency-Key"]);
+  });
+
+  it("refuses a boundary that is not the first parameter with 415", async () => {
+    const fetchMock = stubUpstream();
+    const res = await handleRequest(
+      post(UPLOAD, { ...GOOD, "Content-Type": "multipart/form-data; charset=utf-8; boundary=x" }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(415);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("refuses JSON sent to the upload path with 415", async () => {
