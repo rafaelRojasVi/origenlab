@@ -6,6 +6,7 @@ import { FOLLOW_UP_AFTER_DAYS, STALE_AFTER_DAYS, groupFollowUps, type FollowUpIt
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
 import { Badge, ExternalLink, PageHeader, Panel, ResourceGate, fmtDate, type Tone } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
+import { QuoteNumberBox } from "../QuoteNumberBox";
 import { SANTIAGO, WEEKDAYS, todayInSantiago } from "../marketing/calendar";
 
 type Navigate = (s: CrmSection, id?: string) => void;
@@ -24,6 +25,7 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
         subtitle="A quién hacer seguimiento hoy, y el tipo de cambio del día."
         actions={<Clock />}
       />
+      <QuoteNumberBox pipeline={pipeline} />
       <FxSection state={fx} reload={reloadFx} />
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => <FollowUpsBody items={p.items} navigate={navigate} />}
@@ -402,10 +404,12 @@ function Clock() {
     const id = window.setInterval(() => setNow(new Date()), 30_000);
     return () => window.clearInterval(id);
   }, []);
-  const day = CLOCK_DAY.format(now);
+  // «Domingo, 4 de octubre»: only the first letter up, as Spanish writes it.
+  const formatted = CLOCK_DAY.format(now);
+  const day = formatted.charAt(0).toUpperCase() + formatted.slice(1);
   return (
     <p data-testid="resumen-clock" className="text-right text-xs text-ink-muted" title="Hora de Santiago">
-      <span className="font-medium capitalize text-ink">{day}</span>
+      <span className="font-medium text-ink">{day}</span>
       <span className="ml-2 tabular-nums">{CLOCK_TIME.format(now)}</span>
     </p>
   );

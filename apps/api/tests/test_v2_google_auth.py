@@ -312,6 +312,20 @@ def test_a_valid_origenlab_operator_gets_a_session(monkeypatch) -> None:
     assert h.client.get("/v2/contacts").status_code == 200
 
 
+@pytest.mark.parametrize("switch", [None, "false", "true"])
+def test_the_session_says_whether_crm_authoring_is_mounted(monkeypatch, switch) -> None:
+    """The dashboard offers CRM writes only when the API has the commands; the session says so."""
+    if switch is None:
+        monkeypatch.delenv("ORIGENLAB_V2_CRM_AUTHORING_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("ORIGENLAB_V2_CRM_AUTHORING_ENABLED", switch)
+    h = _Harness(monkeypatch)
+    assert h.sign_in().status_code == 303
+    body = h.client.get("/auth/session").json()
+    assert body["crm_authoring_enabled"] is (switch == "true")
+    assert body["crm_authoring_enabled"] is h.app.state.crm_authoring_enabled
+
+
 def test_signing_in_reads_the_operator_and_writes_nothing(monkeypatch) -> None:
     h = _Harness(monkeypatch)
     h.sign_in()

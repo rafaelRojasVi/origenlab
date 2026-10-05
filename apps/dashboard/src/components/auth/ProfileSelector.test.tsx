@@ -75,6 +75,15 @@ describe("parsing the shared sign-in answers", () => {
     });
   });
 
+  it("reads whether CRM authoring is mounted, and anything but true as off", () => {
+    const parse = (value: unknown) =>
+      parseAuthSessionResponse(200, { ...SIGNED_IN_AS_CARLA, crm_authoring_enabled: value });
+    expect(parse(true)).toMatchObject({ kind: "signed_in", crmAuthoringEnabled: true });
+    for (const value of [false, "true", 1, null, undefined]) {
+      expect(parse(value)).toMatchObject({ kind: "signed_in", crmAuthoringEnabled: false });
+    }
+  });
+
   it("keeps only well-formed profile cards", () => {
     expect(
       parseProfilesResponse(200, { profiles: [{ id: "a", display_name: "A", role_label: "Ventas" }, { id: "b" }, 7] }),

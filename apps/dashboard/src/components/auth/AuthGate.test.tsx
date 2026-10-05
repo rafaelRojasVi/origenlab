@@ -70,6 +70,7 @@ describe("parseAuthSessionResponse", () => {
       },
       profile: null,
       canSwitchProfile: false,
+      crmAuthoringEnabled: false,
     });
   });
 

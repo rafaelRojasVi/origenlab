@@ -147,7 +147,7 @@ def _app(role: str = "sales", repo: Any = None, authoring_enabled: bool = False)
     app = FastAPI()
     app.state.v2_identity = _Identity(role, _FAKE_OP)
     app.state.crm_workspace = repo or _FakeRepo()
-    app.state.v2_crm_authoring_enabled = authoring_enabled
+    app.state.crm_authoring_enabled = authoring_enabled
     app.include_router(workspace_router)
     return app
 
@@ -261,6 +261,33 @@ def test_providers_has_lines_and_authoring() -> None:
     assert "lines" in body
     assert "authoring" in body
     assert "enabled" in body["authoring"]
+
+
+def test_reads_report_the_switch_that_main_sets() -> None:
+    """The reads must answer from the flag `_mount_crm_authoring` writes, not one only tests set.
+
+    They once read `app.state.v2_crm_authoring_enabled`, which nothing in the app assigns, so
+    every read reported authoring off while all 28 commands were mounted.
+    """
+    from origenlab_api import main
+    from origenlab_api.settings import Settings
+
+    loopback = "postgresql://origenlab_api:pw@127.0.0.1:54332/origenlab_dev"
+
+    def never_connects(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("a read-shape test must not open a connection")
+
+    app = FastAPI()
+    app.state.v2_identity = _Identity("sales", _FAKE_OP)
+    app.state.crm_workspace = _FakeRepo()
+    settings = Settings(_env_file=None, v2_database_url=loopback, v2_crm_authoring_enabled=True)
+    main._mount_crm_authoring(app, settings, loopback, never_connects)
+    app.include_router(workspace_router)
+    client = TestClient(app)
+
+    assert client.get("/v2/workspace/providers").json()["authoring"]["enabled"] is True
+    person = client.get("/v2/workspace/people/00000000-0000-4000-8001-000000000001").json()
+    assert person["authoring"] == {"enabled": True, "may_author": True, "may_archive": False}
 
 
 # ─────────────────────────────────── merge preview (in-process) ───────────────
@@ -574,7 +601,7 @@ def test_person_authoring_viewer_no_raw_at(disposable_database, world, repo_dsn)
     app = FastAPI()
     app.state.v2_identity = _Identity("viewer", world["op"])
     app.state.crm_workspace = CrmWorkspaceRepository(psycopg.connect, repo_dsn)
-    app.state.v2_crm_authoring_enabled = False
+    app.state.crm_authoring_enabled = False
     app.include_router(workspace_router)
     client = TestClient(app)
 
@@ -595,7 +622,7 @@ def test_person_authoring_sales_sees_addresses(disposable_database, world, repo_
     app = FastAPI()
     app.state.v2_identity = _Identity("sales", world["op"])
     app.state.crm_workspace = CrmWorkspaceRepository(psycopg.connect, repo_dsn)
-    app.state.v2_crm_authoring_enabled = False
+    app.state.crm_authoring_enabled = False
     app.include_router(workspace_router)
     client = TestClient(app)
 
@@ -646,7 +673,7 @@ def test_merge_preview_with_db(disposable_database, world, repo_dsn) -> None:
     app = FastAPI()
     app.state.v2_identity = _Identity("sales", world["op"])
     app.state.crm_workspace = CrmWorkspaceRepository(psycopg.connect, repo_dsn)
-    app.state.v2_crm_authoring_enabled = False
+    app.state.crm_authoring_enabled = False
     app.include_router(workspace_router)
     client = TestClient(app)
 

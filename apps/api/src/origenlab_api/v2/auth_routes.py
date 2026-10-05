@@ -403,6 +403,9 @@ def current_session(request: Request) -> JSONResponse:
                      "role_label": ROLE_LABELS.get(operator.role, "Perfil")}
                     if profile_session else None),
         "can_switch_profile": profile_session,
+        # Whether the 28 CRM authoring commands are mounted. Off, every one of them is a 404,
+        # so the dashboard must not offer an editor whose save cannot land.
+        "crm_authoring_enabled": bool(getattr(request.app.state, "crm_authoring_enabled", False)),
         **options,
     })
 

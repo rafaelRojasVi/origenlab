@@ -75,7 +75,7 @@ def get_providers(_: Operator, repo: Repo, request: Request) -> Any:
     body = repo.providers()
     body["directory"] = supplier_directory(load_taxonomy(), body["on_cases"], body["candidates"])
     body["authoring"] = {
-        "enabled": bool(getattr(request.app.state, "v2_crm_authoring_enabled", False)),
+        "enabled": bool(getattr(request.app.state, "crm_authoring_enabled", False)),
     }
     return body
 
@@ -124,7 +124,7 @@ def get_person_authoring(person_id: UUID, operator: Operator, repo: Repo, reques
     body = repo.person_authoring(str(person_id))
     if body is None:
         raise HTTPException(status_code=404, detail="no such person")
-    enabled = bool(getattr(request.app.state, "v2_crm_authoring_enabled", False))
+    enabled = bool(getattr(request.app.state, "crm_authoring_enabled", False))
     body["authoring"] = {
         "enabled": enabled,
         "may_author": enabled and getattr(operator, "role", None) in ("sales", "admin"),
@@ -141,7 +141,7 @@ def get_organization_authoring(
     body = repo.organization_authoring(str(organization_id))
     if body is None:
         raise HTTPException(status_code=404, detail="no such organization")
-    enabled = bool(getattr(request.app.state, "v2_crm_authoring_enabled", False))
+    enabled = bool(getattr(request.app.state, "crm_authoring_enabled", False))
     body["authoring"] = {
         "enabled": enabled,
         "may_author": enabled and getattr(operator, "role", None) in ("sales", "admin"),
