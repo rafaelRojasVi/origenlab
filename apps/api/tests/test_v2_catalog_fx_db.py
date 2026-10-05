@@ -31,7 +31,7 @@ def test_miss_fills_cache_idempotently_and_second_call_is_stored(disposable_data
     reads = V2CatalogReads(psycopg.connect, dsn)
     fx = PricingFx(reads, writer, [_P()], lambda: dt.date(2026, 10, 5))
     assert fx.rate("USD", dt.date(2026, 10, 2))["clp_per_unit"] == D("952.5")
-    writer({"rate_date": dt.date(2026, 10, 2), "currency": "USD", "clp_per_unit": D("1"), "provider": "mindicador"})
+    writer([{"rate_date": dt.date(2026, 10, 2), "currency": "USD", "clp_per_unit": D("1"), "provider": "mindicador"}])
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("select count(*) from catalog.fx_rate where currency = 'USD'")
         assert cur.fetchone()[0] == 2

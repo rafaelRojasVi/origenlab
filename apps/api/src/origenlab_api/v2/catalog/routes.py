@@ -64,7 +64,7 @@ def fx_rate(request: Request, operator: Operator, currency: Literal["USD", "EUR"
     # Public Banco Central data: every active role may read it.
     fx = request.app.state.catalog_fx
     try:
-        quote = fx.rate(currency, date or dt.date.today())
+        quote = fx.rate(currency, date or fx.today())
     except FxUnavailable:
         raise HTTPException(503, detail={"code": "fx_unavailable",
                                          "message": "exchange rate unavailable"}) from None

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
 from origenlab_api.errors import register_exception_handlers
-from origenlab_api.v2.catalog.fx import BdeProvider, FxUnavailable, MindicadorProvider, PricingFx
+from origenlab_api.v2.catalog.fx import BdeProvider, FxUnavailable, MindicadorProvider, PricingFx, quiet_http_logs
 from origenlab_api.v2.catalog.routes import catalog_read_router
 from origenlab_api.v2.identity import LocalDevIdentity, OperatorIdentity, OperatorLookup
 
@@ -33,8 +33,8 @@ class _Writer:
     def __init__(self):
         self.rows = []
 
-    def __call__(self, row):
-        self.rows.append(row)
+    def __call__(self, rows):
+        self.rows.extend(rows)
 
 
 class _Provider:
@@ -109,7 +109,7 @@ def test_future_date_is_clamped_to_today():
 
 
 def test_writer_failure_does_not_fail_the_read():
-    def boom(row):
+    def boom(rows):
         raise RuntimeError("db down")
 
     fx = PricingFx(_Reads({}), boom, [_Provider({date(2026, 10, 1): D("4")})], _today)
@@ -193,3 +193,46 @@ def test_route_503_envelope_when_unavailable():
 def test_route_422(q):
     fx = PricingFx(_Reads({}), _Writer(), [], _today)
     assert _client(fx).get(f"/v2/catalog/fx?{q}", headers=H).status_code == 422
+
+
+def test_bde_non_dict_series_is_empty():
+    assert BdeProvider.parse({"Series": None}) == {} and BdeProvider.parse({"Series": []}) == {}
+    assert BdeProvider.parse(None) == {}
+
+
+@pytest.mark.parametrize("body", [{"Series": None}, {"Series": []}])
+def test_bde_malformed_body_falls_through_and_never_500(body):
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)))
+    bde = BdeProvider("u", "p", client, {"USD": "S"})
+    mind = _Provider({date(2026, 10, 1): D("9")}, "mindicador")
+    assert PricingFx(_Reads({}), _Writer(), [bde, mind], _today).rate("USD", date(2026, 10, 1))["provider"] == "mindicador"
+    r = _client(PricingFx(_Reads({}), _Writer(), [bde], _today)).get(
+        "/v2/catalog/fx?currency=USD&date=2026-10-01", headers=H)
+    assert r.status_code == 503
+
+
+def test_cache_fill_failure_is_logged_without_values(caplog):
+    def boom(rows):
+        raise RuntimeError("secret-detail")
+
+    with caplog.at_level("WARNING"):
+        PricingFx(_Reads({}), boom, [_Provider({date(2026, 10, 1): D("4.321")}, "mindicador")], _today).rate(
+            "USD", date(2026, 10, 1))
+    text = caplog.text
+    assert "USD" in text and "mindicador" in text and "2026-10-01" in text
+    assert "4.321" not in text and "secret-detail" not in text
+
+
+def test_http_error_path_never_logs_the_password(caplog):
+    quiet_http_logs()  # what main does where the provider is built
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    bde = BdeProvider("someuser", "hunter2-pass", client, {"USD": "S"})
+    with caplog.at_level("DEBUG"):
+        with pytest.raises(FxUnavailable):
+            PricingFx(_Reads({}), _Writer(), [bde], _today).rate("USD", date(2026, 10, 1))
+    assert "hunter2-pass" not in caplog.text and "someuser" not in caplog.text and "pass=" not in caplog.text
+
+
+def test_route_default_date_uses_service_clock():
+    fx = PricingFx(_Reads({("USD", date(2026, 10, 5)): D("1")}), _Writer(), [], _today)
+    assert _client(fx).get("/v2/catalog/fx?currency=USD", headers=H).json()["as_of"] == "2026-10-05"

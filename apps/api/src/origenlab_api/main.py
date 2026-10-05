@@ -381,8 +381,9 @@ def _build_catalog_fx(settings: Settings, reads: Any, connect: Any, dsn: str) ->
 
     import httpx
 
-    from origenlab_api.v2.catalog.fx import BdeProvider, FxCacheWriter, MindicadorProvider, PricingFx
+    from origenlab_api.v2.catalog.fx import BdeProvider, FxCacheWriter, MindicadorProvider, PricingFx, quiet_http_logs
 
+    quiet_http_logs()
     client = httpx.Client(timeout=5.0)
     password = settings.v2_bde_password.get_secret_value() if settings.v2_bde_password else None
     providers: list[Any] = [

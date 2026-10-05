@@ -8,18 +8,26 @@ domain event, no operator). Never returns a rate dated after the requested day.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
 import httpx
 
+log = logging.getLogger(__name__)
 FX_TIMEOUT_SECONDS = 5.0
 FX_WINDOW_DAYS = 7
 CURRENCIES = ("USD", "EUR")
 BDE_URL = "https://si3.bcentral.cl/SieteRestWS/SieteRestWS.ashx"
 MINDICADOR_URL = "https://mindicador.cl/api"
 _MINDICADOR_KEY = {"USD": "dolar", "EUR": "euro"}
+
+
+def quiet_http_logs() -> None:
+    """The BDE request carries credentials in its query string; keep request URLs out of the logs."""
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 class FxUnavailable(RuntimeError):
@@ -85,7 +93,8 @@ class BdeProvider:
     @staticmethod
     def parse(payload: Any) -> dict[dt.date, Decimal]:
         out: dict[dt.date, Decimal] = {}
-        obs = (payload or {}).get("Series", {}).get("Obs") if isinstance(payload, dict) else None
+        series = payload.get("Series") if isinstance(payload, dict) else None
+        obs = series.get("Obs") if isinstance(series, dict) else None
         for item in obs if isinstance(obs, list) else []:
             try:
                 day = dt.datetime.strptime(item["indexDateString"], "%d-%m-%Y").date()
@@ -108,7 +117,7 @@ class BdeProvider:
 
 
 class PricingFx:
-    def __init__(self, reads: Any, writer: Callable[[dict], None], providers: list[FxProvider],
+    def __init__(self, reads: Any, writer: Callable[[list[dict]], None], providers: list[FxProvider],
                  today: Callable[[], dt.date]) -> None:
         self._reads, self._writer, self._providers, self._today = reads, writer, providers, today
 
@@ -123,6 +132,9 @@ class PricingFx:
         return {"currency": currency, "clp_per_unit": Decimal(str(row["clp_per_unit"])), "as_of": day,
                 "source": row["source"], "provider": row["provider"]}
 
+    def today(self) -> dt.date:
+        return self._today()
+
     def rate(self, currency: str, on: dt.date) -> dict:
         on = min(on, self._today())
         stored = self._stored(currency, on)
@@ -132,17 +144,20 @@ class PricingFx:
         for provider in self._providers:
             try:
                 days = provider.observed(currency, start, on)
-            except (httpx.HTTPError, ValueError, KeyError):
+            except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                # Never log the exception text or URL: the BDE request carries credentials.
+                log.warning("fx provider %s failed for %s: %s", provider.name, currency, type(exc).__name__)
                 continue
             days = {d: v for d, v in days.items() if start <= d <= on}
             if not days:
                 continue
+            rows = [{"rate_date": d, "currency": currency, "clp_per_unit": days[d], "provider": provider.name}
+                    for d in sorted(days)]
             try:
-                for d in sorted(days):
-                    self._writer({"rate_date": d, "currency": currency, "clp_per_unit": days[d],
-                                  "provider": provider.name})
+                self._writer(rows)
             except Exception:  # a cache fill must not fail the read
-                pass
+                log.warning("fx cache fill failed: %s %s..%s via %s", currency, min(days), max(days),
+                            provider.name)
             latest = max(days)
             return {"currency": currency, "clp_per_unit": days[latest], "as_of": latest,
                     "source": "bcentral", "provider": provider.name}
@@ -155,12 +170,12 @@ class FxCacheWriter:
     def __init__(self, connect: Any, dsn: str, statement_timeout_ms: int = 30_000) -> None:
         self._connect, self._dsn, self._timeout = connect, dsn, statement_timeout_ms
 
-    def __call__(self, row: dict) -> None:
+    def __call__(self, rows: list[dict]) -> None:
         with self._connect(self._dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
                 cur.execute(f"set local statement_timeout = {int(self._timeout)}")
-                cur.execute(
+                cur.executemany(
                     "insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider) "
                     "values (%(rate_date)s, %(currency)s, %(clp_per_unit)s, 'bcentral', %(provider)s) "
-                    "on conflict (rate_date, currency, provider) where source = 'bcentral' do nothing", row)
+                    "on conflict (rate_date, currency, provider) where source = 'bcentral' do nothing", rows)
             conn.commit()
