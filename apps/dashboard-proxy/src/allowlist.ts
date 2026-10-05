@@ -87,6 +87,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/workspace\/people\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /^\/v2\/workspace\/people\/merge-preview$/,
   /^\/v2\/workspace\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/authoring$/,
+  // People the quote emails name and the CRM does not hold yet. A read: nothing is created until
+  // an operator sends `create-person`. Addresses masked for a `viewer` upstream.
+  /^\/v2\/workspace\/person-suggestions$/,
   // The rest of the CRM workspace (dashboard `#/crm/*`): four literal read paths and the one
   // cockpit read the CRM's review screen uses. Upstream each is GET-only, resolves the operator
   // from the dashboard session cookie (401 without one), and masks every email and phone for a
@@ -180,7 +183,8 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
  * CRM authoring commands: freeform create/update/archive/restore/merge of person/organization/
  * contact_point, classification and product-line links, supplier-candidate resolution, and
  * notes (add, revise, archive), and the explicit restore of a soft-removed organization domain.
- * Twenty-eight exact paths under `/v2/commands/`. None is
+ * Twenty-nine exact paths under `/v2/commands/`, `confirm-organization-record` (the card's
+ * «Confirmar institución», a record-level confirm that needs no assertion) among them. None is
  * evidence-bound, and none of the evidence-bound commands (create-organization, confirm-
  * organization, attach-contact-address, attribute-sender-organization, confirm-person-from-
  * evidence, the six case commands, apply-unsubscribe-replies, preview) is listed here — they
@@ -205,6 +209,7 @@ export const CRM_AUTHORING_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/update-organization$/,
   /^\/v2\/commands\/archive-organization$/,
   /^\/v2\/commands\/restore-organization$/,
+  /^\/v2\/commands\/confirm-organization-record$/,
   /^\/v2\/commands\/add-organization-identifier$/,
   /^\/v2\/commands\/remove-organization-identifier$/,
   /^\/v2\/commands\/add-organization-domain$/,

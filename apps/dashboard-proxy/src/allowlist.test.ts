@@ -460,7 +460,7 @@ describe("V2 durable read boundary allowlist", () => {
 });
 
 describe("CRM authoring command POST allowlist", () => {
-  const ALL_28_AUTHORING_PATHS = [
+  const ALL_AUTHORING_PATHS = [
     "/v2/commands/create-person",
     "/v2/commands/update-person",
     "/v2/commands/archive-person",
@@ -475,6 +475,7 @@ describe("CRM authoring command POST allowlist", () => {
     "/v2/commands/update-organization",
     "/v2/commands/archive-organization",
     "/v2/commands/restore-organization",
+    "/v2/commands/confirm-organization-record",
     "/v2/commands/add-organization-identifier",
     "/v2/commands/remove-organization-identifier",
     "/v2/commands/add-organization-domain",
@@ -491,18 +492,18 @@ describe("CRM authoring command POST allowlist", () => {
     "/v2/commands/archive-note",
   ];
 
-  it("isAllowedCrmAuthoringCommandPostPath allows all 28 exact paths", async () => {
+  it("isAllowedCrmAuthoringCommandPostPath allows all 29 exact paths", async () => {
     const { isAllowedCrmAuthoringCommandPostPath } = await import("./allowlist");
-    for (const path of ALL_28_AUTHORING_PATHS) {
+    for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedCrmAuthoringCommandPostPath(path), path).toBe(true);
     }
     // Query string is stripped: path still matches
     expect(isAllowedCrmAuthoringCommandPostPath("/v2/commands/create-person?x=1")).toBe(true);
   });
 
-  it("isAllowedPostPath admits all 28 authoring paths", async () => {
+  it("isAllowedPostPath admits all 29 authoring paths", async () => {
     const { isAllowedPostPath } = await import("./allowlist");
-    for (const path of ALL_28_AUTHORING_PATHS) {
+    for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedPostPath(path), path).toBe(true);
     }
   });
@@ -526,9 +527,41 @@ describe("CRM authoring command POST allowlist", () => {
     }
   });
 
-  it("none of the 28 authoring command paths are GET-readable", async () => {
+  it("none of the 29 authoring command paths are GET-readable", async () => {
     const { isAllowedUpstreamPath } = await import("./allowlist");
-    for (const path of ALL_28_AUTHORING_PATHS) {
+    for (const path of ALL_AUTHORING_PATHS) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+});
+
+describe("CRM part A: confirm an institution, suggested people", () => {
+  it("confirm-organization-record is an exact authoring POST; the evidence-bound confirm-organization stays refused", async () => {
+    const { isAllowedCrmAuthoringCommandPostPath, isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedCrmAuthoringCommandPostPath("/v2/commands/confirm-organization-record")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/commands/confirm-organization-record")).toBe(false);
+    for (const path of [
+      "/v2/commands/confirm-organization",
+      "/v2/commands/confirm-organization-record/",
+      "/v2/commands/confirm-organization-records",
+      "/v2/commands/Confirm-Organization-Record",
+      "/v2/commands/confirm-organization-record/extra",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("forwards GET /v2/workspace/person-suggestions by its exact path, never as a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/person-suggestions")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/workspace/person-suggestions?x=1")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/person-suggestions")).toBe(false);
+    for (const path of [
+      "/v2/workspace/person-suggestions/",
+      "/v2/workspace/person-suggestions/extra",
+      "/v2/workspace/person-suggestion",
+      "/v2/workspace/Person-Suggestions",
+    ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
     }
   });
