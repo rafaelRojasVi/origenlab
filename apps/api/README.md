@@ -502,6 +502,28 @@ CI runs the same thing as the `db-test` job in `api.yml` (also on `supabase/migr
 
 CI `./scripts/validate.sh` mirrors the build step with a no-dev import smoke before pytest.
 
+### CRM web suggestions (secret file)
+
+The institution card's «Sugerencias de la web» reads `ORIGENLAB_V2_ORG_SUGGESTIONS_FILE`: a
+reviewed JSON of web-researched facts per institution (`v2/org_web_suggestions.py`). It names
+customers, so it never enters this repository: it is built outside it and uploaded as a Render
+secret file.
+
+```bash
+cd apps/api
+uv run python scripts/build_org_suggestions.py \
+  --in  ~/data/origenlab-v2-migration/audits/org-enrichment-20261004/suggestions.json \
+  --out ~/data/origenlab-v2-migration/audits/org-enrichment-20261004/org-suggestions.json
+```
+
+The script refuses an output inside the repository, validates with the API's own validator,
+writes mode 0600 and prints counts only. Review the file (lower `confidence` or null a field the
+research's «Requieren decisión humana» list questions), upload it as the secret file
+`org-suggestions.json`, and set `ORIGENLAB_V2_ORG_SUGGESTIONS_FILE=/etc/secrets/org-suggestions.json`.
+Then redeploy the API, and deploy the Worker for the two new proxy paths.
+Unset or broken → the card shows no suggestions and the API logs a warning; nothing else changes.
+Nothing is applied automatically: every «Aplicar» is an authoring command with its receipt.
+
 ### Remote production smoke
 
 `./scripts/remote_smoke.sh` checks a deployed API (default `https://api.origenlab.cl`) behind Cloudflare Access. It does not send `ORIGENLAB_API_AUTH_TOKEN`; use it for Access/protection checks, not full token-auth private-route readiness.
