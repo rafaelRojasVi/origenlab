@@ -1,8 +1,11 @@
 /**
  * NoteList + NoteForm — reusable for person, organization and opportunity subjects.
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
+import { CommandErrorNotice } from "../CommandErrorNotice";
+import { useCommandKey } from "../commandKey";
+import { isStaleRefusal, refusalFromError, refusalText, type Refusal } from "../commandRefusal";
 import {
   Badge,
   ConfirmDialog,
@@ -14,8 +17,6 @@ import {
 import {
   addNote,
   archiveNote,
-  newIdempotencyKey,
-  refusalOf,
   reviseNote,
   type NoteRow,
 } from "./crmAuthoringApi";
@@ -34,9 +35,11 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
   const myId = session.kind === "signed_in" ? session.operator.operatorId : null;
   const admin = isAdmin(session);
   const [adding, setAdding] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
+  // The chain being revised, not the revision: if another operator revises it meanwhile,
+  // «Cargar versión actual» brings the new latest revision under the same open form.
+  const [editRoot, setEditRoot] = useState<string | null>(null);
   const [archiveId, setArchiveId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Refusal | null>(null);
   const [historyOpen, setHistoryOpen] = useState<Set<string>>(new Set());
 
   // Group notes by root_note_id to get revision chains.
@@ -96,7 +99,7 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
             const canArchive = n.status === "active" && (admin || myId === n.author_operator_id);
             return (
               <li
-                key={n.id}
+                key={n.root_note_id}
                 className={`rounded-md border p-3 text-xs ${n.status === "archived" ? "border-line bg-canvas-sunken/60 opacity-60" : "border-line bg-canvas-raised"}`}
               >
                 <div className="flex flex-wrap items-start gap-2">
@@ -111,24 +114,25 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
                     </Badge>
                   ) : null}
                 </div>
-                {editId === n.id ? (
+                {editRoot === n.root_note_id ? (
                   <NoteForm
                     mode="revise"
                     noteId={n.id}
                     expectedVersion={n.version}
                     initialBody={n.body}
-                    onDone={() => { setEditId(null); onRefresh(); }}
-                    onCancel={() => setEditId(null)}
+                    onDone={() => { setEditRoot(null); onRefresh(); }}
+                    onCancel={() => setEditRoot(null)}
+                    onReload={onRefresh}
                   />
                 ) : (
                   <p className="mt-2 whitespace-pre-wrap break-words text-ink">{n.body}</p>
                 )}
-                {error && archiveId === n.id ? <p className="mt-1 text-[11px] text-bad">{error}</p> : null}
+                {error && archiveId === n.id ? <p className="mt-1 text-[11px] text-bad">{refusalText(error)}</p> : null}
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {canEdit && editId !== n.id ? (
+                  {canEdit && editRoot !== n.root_note_id ? (
                     <button
                       type="button"
-                      onClick={() => setEditId(n.id)}
+                      onClick={() => setEditRoot(n.root_note_id)}
                       className="text-[11px] font-medium text-brand-700 hover:underline"
                     >
                       Editar
@@ -181,7 +185,8 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
           requireReason
           reasonLabel="Motivo del archivo"
           confirmLabel="Archivar nota"
-          error={error}
+          error={error ? refusalText(error) : null}
+          onReload={isStaleRefusal(error) ? () => { setError(null); onRefresh(); } : undefined}
           onCancel={() => { setArchiveId(null); setError(null); }}
           onConfirm={async (reason) => {
             try {
@@ -190,8 +195,7 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
               setError(null);
               onRefresh();
             } catch (err) {
-              const r = refusalOf(err);
-              setError(r ? `${r.code}: ${r.message}` : String(err));
+              setError(refusalFromError(err));
             }
           }}
         />
@@ -215,6 +219,8 @@ interface NoteFormReviseProps {
   initialBody?: string;
   onDone: () => void;
   onCancel: () => void;
+  /** Re-read the note; the typed text stays and the next save revises the latest revision. */
+  onReload?: () => void;
 }
 
 type NoteFormProps = NoteFormAddProps | NoteFormReviseProps;
@@ -222,8 +228,9 @@ type NoteFormProps = NoteFormAddProps | NoteFormReviseProps;
 export function NoteForm(props: NoteFormProps) {
   const [body, setBody] = useState(props.mode === "revise" ? (props.initialBody ?? "") : "");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const idempotencyKeyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
+  const onReload = props.mode === "revise" ? props.onReload : undefined;
 
   async function submit() {
     if (!body.trim()) return;
@@ -231,25 +238,18 @@ export function NoteForm(props: NoteFormProps) {
     setError(null);
     try {
       if (props.mode === "add") {
-        await addNote(
-          { subject_kind: props.subjectKind, subject_id: props.subjectId, body: body.trim() },
-          idempotencyKeyRef.current,
-        );
+        const request = { subject_kind: props.subjectKind, subject_id: props.subjectId, body: body.trim() };
+        await addNote(request, key.keyFor(request));
       } else {
-        await reviseNote(
-          { note_id: props.noteId, expected_version: props.expectedVersion, body: body.trim() },
-          idempotencyKeyRef.current,
-        );
+        const request = { note_id: props.noteId, expected_version: props.expectedVersion, body: body.trim() };
+        await reviseNote(request, key.keyFor(request));
       }
+      key.settle();
       props.onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      if (r?.code === "stale_version") {
-        setError("Otro operador modificó este registro; recarga y vuelve a intentar.");
-      } else {
-        setError(r ? `${r.code}: ${r.message}` : String(err));
-      }
-      // Keep the same key so a retry replays.
+      // An unanswered attempt keeps its key, so resending the same note replays it.
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -272,7 +272,7 @@ export function NoteForm(props: NoteFormProps) {
       {body.length > 7500 ? (
         <p className="text-[11px] text-warn">{body.length}/8000 caracteres</p>
       ) : null}
-      {error ? <p className="text-[11px] text-bad">{error}</p> : null}
+      <CommandErrorNotice refusal={error} onReload={onReload ? () => { setError(null); onReload(); } : undefined} />
       <div className="flex flex-wrap gap-2">
         <button
           type="button"

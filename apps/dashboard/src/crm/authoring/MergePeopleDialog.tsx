@@ -2,15 +2,13 @@
  * MergePeopleDialog — admin-only merge of two CRM persons.
  * Fetches the merge preview, shows moves + conflicts, requires confirmation.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
+import { ReloadButton } from "../CommandErrorNotice";
+import { useCommandKey } from "../commandKey";
+import { isStaleRefusal, refusalFromError, refusalText, type Refusal } from "../commandRefusal";
 import { FormField, ResourceGate, Skeleton, TextInput } from "../ui";
 import { useResource } from "../useResource";
-import {
-  fetchMergePreview,
-  mergePeople,
-  newIdempotencyKey,
-  refusalOf,
-} from "./crmAuthoringApi";
+import { fetchMergePreview, mergePeople } from "./crmAuthoringApi";
 
 interface Props {
   loserId: string;
@@ -18,9 +16,11 @@ interface Props {
   loserVersion: number;
   onDone: () => void;
   onCancel: () => void;
+  /** Re-read the person being merged (its version); the preview is re-read with it. */
+  onReload?: () => void;
 }
 
-export function MergePeopleDialog({ loserId, loserName, loserVersion, onDone, onCancel }: Props) {
+export function MergePeopleDialog({ loserId, loserName, loserVersion, onDone, onCancel, onReload }: Props) {
   const [winnerId, setWinnerId] = useState("");
 
   return (
@@ -55,6 +55,7 @@ export function MergePeopleDialog({ loserId, loserName, loserVersion, onDone, on
             winnerId={winnerId}
             onDone={onDone}
             onCancel={onCancel}
+            onReload={onReload}
           />
         ) : (
           <div className="mt-4 flex justify-end gap-2">
@@ -79,6 +80,7 @@ function MergePreviewPanel({
   winnerId,
   onDone,
   onCancel,
+  onReload,
 }: {
   loserId: string;
   loserName: string;
@@ -86,14 +88,22 @@ function MergePreviewPanel({
   winnerId: string;
   onDone: () => void;
   onCancel: () => void;
+  onReload?: () => void;
 }) {
   const load = useCallback(() => fetchMergePreview(loserId, winnerId), [loserId, winnerId]);
   const [state, reload] = useResource(load, [loserId, winnerId]);
   const [note, setNote] = useState("");
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
+  // A moved version or a changed preview: read both again; the note stays.
+  const reloadable = isStaleRefusal(error) || error?.code === "preview_changed";
+  const reloadAll = () => {
+    setError(null);
+    reload();
+    onReload?.();
+  };
 
   return (
     <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={3} />}>
@@ -140,7 +150,17 @@ function MergePreviewPanel({
                 <strong>{preview.winner.display_name}</strong>.
               </span>
             </label>
-            {error ? <p className="text-[11px] text-bad">{error}</p> : null}
+            {error ? (
+              <p role="alert" className="text-[11px] text-bad">
+                {refusalText(error)}
+                {reloadable ? (
+                  <>
+                    {" "}
+                    <ReloadButton onReload={reloadAll} />
+                  </>
+                ) : null}
+              </p>
+            ) : null}
             <div className="flex flex-wrap justify-end gap-2">
               <button
                 type="button"
@@ -157,29 +177,22 @@ function MergePreviewPanel({
                   if (!canSubmit) return;
                   setBusy(true);
                   setError(null);
+                  const body = {
+                    loser_person_id: loserId,
+                    winner_person_id: winnerId,
+                    expected_loser_version: loserVersion,
+                    expected_winner_version: preview.winner.version,
+                    expected_preview_sha256: preview.preview_sha256,
+                    confirmed: true as const,
+                    note: note.trim(),
+                  };
                   try {
-                    await mergePeople(
-                      {
-                        loser_person_id: loserId,
-                        winner_person_id: winnerId,
-                        expected_loser_version: loserVersion,
-                        expected_winner_version: preview.winner.version,
-                        expected_preview_sha256: preview.preview_sha256,
-                        confirmed: true,
-                        note: note.trim(),
-                      },
-                      keyRef.current,
-                    );
+                    await mergePeople(body, key.keyFor(body));
+                    key.settle();
                     onDone();
                   } catch (err) {
-                    const r = refusalOf(err);
-                    if (r?.code === "stale_version") {
-                      setError("Otro operador modificó este registro; recarga y vuelve a intentar.");
-                    } else if (r?.code === "preview_changed") {
-                      setError("La vista previa cambió antes de confirmar; recarga y revisa.");
-                    } else {
-                      setError(r ? `${r.code}: ${r.message}` : String(err));
-                    }
+                    key.settle(err);
+                    setError(refusalFromError(err));
                     setBusy(false);
                   }
                 }}

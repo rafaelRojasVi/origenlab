@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { newIdempotencyKey, useCommandKey } from "../commandKey";
+import { isNotEnabledRefusal, refusalFromError, refusalText } from "../commandRefusal";
 import { Badge, Segmented, fmtDate } from "../ui";
 import { AuthorOnlyNotice } from "./AuthorOnlyNotice";
 import { useMayAuthorCampaigns } from "./authoring";
 import { EmailFrame } from "./EmailFrame";
 import { TEMPLATES, renderTemplate, type TemplateId } from "./emailTemplates";
-import { createCampaignDraft, refusalOf, saveCampaignDraft, type DraftFields } from "./marketingApi";
+import { createCampaignDraft, saveCampaignDraft, type DraftFields } from "./marketingApi";
 import type { CampaignContent, EquipmentTaxonomy } from "./marketingTypes";
 
 /**
@@ -24,6 +26,15 @@ export interface EditorSeed {
 }
 
 const EMPTY: DraftFields = { name: "", subject: "", preheader: "", body_html: "", max_sends: 0, recontact_interval_days: 0 };
+
+/**
+ * The editor cannot read the stored draft again by itself (its fields seed it once), so a moved
+ * version says how to keep the work instead of offering «Cargar versión actual».
+ */
+const EDITOR_WORDS: Readonly<Record<string, string>> = {
+  stale_version:
+    "Otro operador guardó este borrador mientras lo editabas. Copia tus cambios y vuelve a abrir el borrador para cargar la versión actual.",
+};
 
 function fieldsOf(c: CampaignContent): DraftFields {
   return {
@@ -130,6 +141,12 @@ function CampaignEditorForm({
   const [template, setTemplate] = useState<TemplateId>("producto");
   const [brandId, setBrandId] = useState<string>(taxonomy?.brands[0]?.id ?? "");
   const [modelId, setModelId] = useState<string>("");
+  // Creating this draft is one intent: every attempt until one succeeds carries the same key, so
+  // a create whose answer was lost is replayed, never stored twice — even if the copy was edited
+  // in between (the API then refuses the different body instead of creating a second draft).
+  const createKey = useRef(newIdempotencyKey());
+  // Saving a stored draft: the same key only to resend the identical save.
+  const saveKey = useCommandKey();
 
   const readOnly = persistence.kind === "read_only";
   const dirty = !same(fields, baseline);
@@ -161,11 +178,18 @@ function CampaignEditorForm({
   const save = useCallback(async () => {
     setSaving(true);
     setError(null);
+    const stored = persistence.kind === "saved" ? persistence : null;
     try {
-      const result =
-        persistence.kind === "saved"
-          ? await saveCampaignDraft(persistence.campaignId, persistence.version, fields)
-          : await createCampaignDraft(fields, seed.duplicateOf?.campaign_id ?? null);
+      const result = stored
+        ? await saveCampaignDraft(
+            stored.campaignId,
+            stored.version,
+            fields,
+            saveKey.keyFor({ campaignId: stored.campaignId, version: stored.version, fields }),
+          )
+        : await createCampaignDraft(fields, seed.duplicateOf?.campaign_id ?? null, createKey.current);
+      if (stored) saveKey.settle();
+      else createKey.current = newIdempotencyKey();
       setBaseline(fields);
       setPersistence({
         kind: "saved", campaignId: result.campaign_id, version: result.version, savedAt: result.saved_at,
@@ -173,18 +197,17 @@ function CampaignEditorForm({
       });
       onSaved(result.campaign_id);
     } catch (err) {
-      const r = refusalOf(err);
+      if (stored) saveKey.settle(err);
+      const r = refusalFromError(err);
       setError(
-        r?.code === "path_not_allowed" || r?.code === "http_404"
+        isNotEnabledRefusal(r)
           ? "El guardado no está disponible en este entorno. El borrador sigue sólo en esta pestaña."
-          : r?.code === "stale_version"
-            ? `${r.message}`
-            : r?.message ?? (err instanceof Error ? err.message : String(err)),
+          : refusalText(r, { overrides: EDITOR_WORDS }),
       );
     } finally {
       setSaving(false);
     }
-  }, [persistence, fields, seed.duplicateOf, onSaved]);
+  }, [persistence, fields, seed.duplicateOf, onSaved, saveKey]);
 
   const applyTemplate = () => {
     if (!taxonomy) return;

@@ -22,7 +22,13 @@ import { Badge, EmptyState, Panel, ResourceGate, Segmented, Skeleton, StatLine, 
 import { useResource } from "../useResource";
 import { AuthorOnlyNotice } from "./AuthorOnlyNotice";
 import { useMayAuthorCampaigns } from "./authoring";
-import { fetchFreezePreview, fetchFrozenRecipients, freezeCampaignAudience, refusalOf } from "./marketingApi";
+import { isNotEnabledRefusal, refusalFromError, refusalText } from "../commandRefusal";
+import { fetchFreezePreview, fetchFrozenRecipients, freezeCampaignAudience } from "./marketingApi";
+
+/** This screen cannot re-read the draft; a moved version sends the operator back to the criteria. */
+const FREEZE_WORDS: Readonly<Record<string, string>> = {
+  stale_version: "El borrador cambió después de la vista previa. Vuelve a los criterios y revisa la audiencia otra vez.",
+};
 import type {
   CampaignContent,
   EquipmentTaxonomy,
@@ -171,7 +177,7 @@ function FreezeFlow({
       setAcknowledged(false);
       setStep("review");
     } catch (err) {
-      setError(refusalOf(err)?.message ?? (err instanceof Error ? err.message : String(err)));
+      setError(refusalText(err, { fallback: "No se pudo calcular la vista previa", overrides: FREEZE_WORDS }));
     } finally {
       setBusy(false);
     }
@@ -222,11 +228,11 @@ function FreezeFlow({
       setStep("done");
       onFrozen(out);
     } catch (err) {
-      const refusal = refusalOf(err);
+      const refusal = refusalFromError(err);
       setError(
-        refusal?.code === "path_not_allowed" || refusal?.code === "http_404" || refusal?.code === "http_405"
+        isNotEnabledRefusal(refusal)
           ? "El congelamiento no está habilitado en este entorno."
-          : refusal?.message ?? (err instanceof Error ? err.message : String(err)),
+          : refusalText(refusal, { fallback: "No se pudo congelar la audiencia", overrides: FREEZE_WORDS }),
       );
     } finally {
       setBusy(false);

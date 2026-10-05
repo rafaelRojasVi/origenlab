@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
+import { refusalText } from "../commandRefusal";
 import { useResource } from "../useResource";
 import { Badge, EmptyState, Panel, ResourceGate, Skeleton, StatLine, fmtDate, fmtInt } from "../ui";
 import {
   dismissUnsubscribeReview,
   fetchSuppressions,
   newIdempotencyKey,
-  refusalOf,
   resolveUnsubscribeReview,
 } from "./marketingApi";
 import type { PendingUnsubscribeReview, SuppressionsResponse } from "./marketingTypes";
@@ -69,8 +69,7 @@ function ReviewActions({
       setMode(null);
       onDone();
     } catch (err) {
-      const refusal = refusalOf(err);
-      setError(refusal ? `${refusal.code}: ${refusal.message}` : "No se pudo registrar la decisión.");
+      setError(refusalText(err, { fallback: "No se pudo registrar la decisión" }));
     } finally {
       setBusy(false);
     }

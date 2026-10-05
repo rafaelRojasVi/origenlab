@@ -4,26 +4,23 @@
  * address and the institution; the suggestion is gone on the next read because the address then
  * belongs to a person. «Ocultar» hides it in this browser only.
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
+import { useCommandKey } from "../commandKey";
+import { refusalFromError, refusalText } from "../commandRefusal";
 import { Badge, Section, fmtDate } from "../ui";
-import { createPerson, newIdempotencyKey, refusalOf, type PersonSuggestion } from "./crmAuthoringApi";
+import { createPerson, type PersonSuggestion } from "./crmAuthoringApi";
 import { useHiddenSuggestions } from "./hiddenSuggestions";
 
+/**
+ * A create-person refusal in the operator's words (`commandRefusal.REFUSAL_MESSAGES`). The API's
+ * own text is not Spanish; an unknown code keeps the code for support.
+ */
 export function personRefusalText(code: string, message: string): string {
-  switch (code) {
-    case "contact_point_taken":
-      return "Esa dirección ya es de otra persona del CRM.";
-    case "shared_mailbox":
-      return "Esa dirección es un buzón compartido, no una persona.";
-    case "contact_point_inactive":
-      return "Esa dirección fue desactivada en el CRM.";
-    case "archived_subject":
-      return "La institución está archivada.";
-    default:
-      // The API's own text is not Spanish; the code stays for support.
-      void message;
-      return `No se pudo crear la persona (código ${code}).`;
-  }
+  void message;
+  return refusalText(
+    { status: 0, code, message: "", details: {} },
+    { fallback: "No se pudo crear la persona", overrides: { archived_subject: "La institución está archivada." } },
+  );
 }
 
 export function personSuggestionNote(s: PersonSuggestion): string {
@@ -88,22 +85,22 @@ function SuggestionItem({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // One key per suggestion: a lost answer retried is a replay, never a second person.
-  const keyRef = useRef(newIdempotencyKey());
+  // A lost answer retried is a replay under the same key, never a second person.
+  const key = useCommandKey();
 
   async function create() {
     setBusy(true);
     setError(null);
+    const body = { display_name: s.display_name, email: s.email, organization_id: s.organization_id, note: personSuggestionNote(s) };
     try {
-      await createPerson(
-        { display_name: s.display_name, email: s.email, organization_id: s.organization_id, note: personSuggestionNote(s) },
-        keyRef.current,
-      );
+      await createPerson(body, key.keyFor(body));
+      key.settle();
       onCreated();
       setBusy(false);
     } catch (err) {
-      const r = refusalOf(err);
-      setError(personRefusalText(r?.code ?? "error", r?.message ?? String(err)));
+      key.settle(err);
+      const r = refusalFromError(err);
+      setError(personRefusalText(r.code, r.message));
       setBusy(false);
     }
   }

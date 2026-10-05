@@ -3,7 +3,10 @@
  * Loads fetchPersonAuthoring and renders edit, contact points, affiliations, notes,
  * references, archive/restore, and merge.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
+import { CommandErrorNotice } from "../CommandErrorNotice";
+import { useCommandKey } from "../commandKey";
+import { isStaleRefusal, refusalFromError, refusalText, type Refusal } from "../commandRefusal";
 import {
   Badge,
   ConfirmDialog,
@@ -20,8 +23,6 @@ import {
   archivePerson,
   fetchPersonAuthoring,
   linkPersonOrganization,
-  newIdempotencyKey,
-  refusalOf,
   restorePerson,
   unlinkPersonOrganization,
   updatePerson,
@@ -46,7 +47,7 @@ export function PersonDrawer({ personId, onClose, mayAuthor }: Props) {
   const [state, reload] = useResource(load, [personId]);
   const [showArchive, setShowArchive] = useState(false);
   const [showMerge, setShowMerge] = useState(false);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<Refusal | null>(null);
 
   return (
     <Drawer
@@ -108,8 +109,8 @@ function PersonDrawerBody({
   setShowArchive: (v: boolean) => void;
   showMerge: boolean;
   setShowMerge: (v: boolean) => void;
-  archiveError: string | null;
-  setArchiveError: (v: string | null) => void;
+  archiveError: Refusal | null;
+  setArchiveError: (v: Refusal | null) => void;
   onClose: () => void;
 }) {
   const { person, contact_points, affiliations, notes, references, removal } = data;
@@ -145,6 +146,7 @@ function PersonDrawerBody({
             person={person}
             onDone={() => { setEditing(false); onRefresh(); }}
             onCancel={() => setEditing(false)}
+            onReload={onRefresh}
           />
         ) : (
           <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
@@ -220,7 +222,7 @@ function PersonDrawerBody({
                 Archivar persona…
               </button>
             ) : (
-              <RestoreButton personId={personId} version={person.version} onDone={onRefresh} />
+              <RestoreButton personId={personId} version={person.version} onDone={onRefresh} onReload={onRefresh} />
             )}
             {person.status === "active" && !person.merged_into_person_id ? (
               <button
@@ -246,7 +248,8 @@ function PersonDrawerBody({
           requireReason
           reasonLabel="Motivo del archivo"
           confirmLabel="Archivar persona"
-          error={archiveError}
+          error={archiveError ? refusalText(archiveError) : null}
+          onReload={isStaleRefusal(archiveError) ? () => { setArchiveError(null); onRefresh(); } : undefined}
           onCancel={() => { setShowArchive(false); setArchiveError(null); }}
           onConfirm={async (reason) => {
             try {
@@ -255,8 +258,7 @@ function PersonDrawerBody({
               setArchiveError(null);
               onRefresh();
             } catch (err) {
-              const r = refusalOf(err);
-              setArchiveError(r ? `${r.code}: ${r.message}` : String(err));
+              setArchiveError(refusalFromError(err));
             }
           }}
         />
@@ -269,6 +271,7 @@ function PersonDrawerBody({
           loserVersion={person.version}
           onDone={() => { setShowMerge(false); onClose(); }}
           onCancel={() => setShowMerge(false)}
+          onReload={onRefresh}
         />
       ) : null}
 
@@ -290,10 +293,13 @@ function EditPersonForm({
   person,
   onDone,
   onCancel,
+  onReload,
 }: {
   person: PersonAuthoringResponse["person"];
   onDone: () => void;
   onCancel: () => void;
+  /** Re-read the person; the typed values stay, the next save carries the new version. */
+  onReload: () => void;
 }) {
   const [displayName, setDisplayName] = useState(person.display_name);
   const [givenName, setGivenName] = useState(person.given_name ?? "");
@@ -301,34 +307,29 @@ function EditPersonForm({
   const [title, setTitle] = useState(person.title ?? "");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
 
   async function submit() {
     if (!displayName.trim() || !note.trim()) return;
     setBusy(true);
     setError(null);
+    const body = {
+      person_id: person.id,
+      expected_version: person.version,
+      display_name: displayName.trim(),
+      given_name: givenName.trim() || null,
+      family_name: familyName.trim() || null,
+      title: title.trim() || null,
+      note: note.trim(),
+    };
     try {
-      await updatePerson(
-        {
-          person_id: person.id,
-          expected_version: person.version,
-          display_name: displayName.trim(),
-          given_name: givenName.trim() || null,
-          family_name: familyName.trim() || null,
-          title: title.trim() || null,
-          note: note.trim(),
-        },
-        keyRef.current,
-      );
+      await updatePerson(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      if (r?.code === "stale_version") {
-        setError("Otro operador modificó este registro; recarga y vuelve a intentar.");
-      } else {
-        setError(r ? `${r.code}: ${r.message}` : String(err));
-      }
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -350,7 +351,11 @@ function EditPersonForm({
       <FormField label="Nota del cambio" required>
         <TextInput value={note} onChange={setNote} placeholder="Motivo" disabled={busy} maxLength={2000} />
       </FormField>
-      {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
+      <CommandErrorNotice
+        refusal={error}
+        onReload={() => { setError(null); onReload(); }}
+        className="col-span-full text-[11px] text-bad"
+      />
       <div className="col-span-full flex flex-wrap gap-2">
         <button
           type="button"
@@ -368,12 +373,22 @@ function EditPersonForm({
   );
 }
 
-function RestoreButton({ personId, version, onDone }: { personId: string; version: number; onDone: () => void }) {
+function RestoreButton({
+  personId,
+  version,
+  onDone,
+  onReload,
+}: {
+  personId: string;
+  version: number;
+  onDone: () => void;
+  onReload: () => void;
+}) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Refusal | null>(null);
   const [note, setNote] = useState("");
   const [open, setOpen] = useState(false);
-  const keyRef = useRef(newIdempotencyKey());
+  const key = useCommandKey();
   return (
     <>
       <button
@@ -388,7 +403,7 @@ function RestoreButton({ personId, version, onDone }: { personId: string; versio
           <FormField label="Nota de restauración" required>
             <TextInput value={note} onChange={setNote} placeholder="Motivo" disabled={busy} maxLength={2000} />
           </FormField>
-          {error ? <p className="text-[11px] text-bad">{error}</p> : null}
+          <CommandErrorNotice refusal={error} onReload={() => { setError(null); onReload(); }} />
           <div className="flex gap-2">
             <button
               type="button"
@@ -396,13 +411,15 @@ function RestoreButton({ personId, version, onDone }: { personId: string; versio
                 if (!note.trim()) return;
                 setBusy(true);
                 setError(null);
+                const body = { person_id: personId, expected_version: version, note: note.trim() };
                 try {
-                  await restorePerson({ person_id: personId, expected_version: version, note: note.trim() }, keyRef.current);
+                  await restorePerson(body, key.keyFor(body));
+                  key.settle();
                   setOpen(false);
                   onDone();
                 } catch (err) {
-                  const r = refusalOf(err);
-                  setError(r ? `${r.code}: ${r.message}` : String(err));
+                  key.settle(err);
+                  setError(refusalFromError(err));
                   setBusy(false);
                 }
               }}
@@ -436,7 +453,7 @@ function AffiliationSection({
 }) {
   const [adding, setAdding] = useState(false);
   const [unlinkId, setUnlinkId] = useState<string | null>(null);
-  const [unlinkError, setUnlinkError] = useState<string | null>(null);
+  const [unlinkError, setUnlinkError] = useState<Refusal | null>(null);
   const active = affiliations.filter((a) => !a.valid_to);
   const unlinkTarget = unlinkId ? affiliations.find((a) => a.id === unlinkId) ?? null : null;
   return (
@@ -460,6 +477,7 @@ function AffiliationSection({
           personVersion={personVersion}
           onDone={() => { setAdding(false); onRefresh(); }}
           onCancel={() => setAdding(false)}
+          onReload={onRefresh}
         />
       )}
       {active.length === 0 && !adding ? (
@@ -500,7 +518,8 @@ function AffiliationSection({
           requireReason
           reasonLabel="Motivo"
           confirmLabel="Desvincular"
-          error={unlinkError}
+          error={unlinkError ? refusalText(unlinkError) : null}
+          onReload={isStaleRefusal(unlinkError) ? () => { setUnlinkError(null); onRefresh(); } : undefined}
           onCancel={() => { setUnlinkId(null); setUnlinkError(null); }}
           onConfirm={async (reason) => {
             try {
@@ -514,8 +533,7 @@ function AffiliationSection({
               setUnlinkError(null);
               onRefresh();
             } catch (err) {
-              const r = refusalOf(err);
-              setUnlinkError(r ? `${r.code}: ${r.message}` : String(err));
+              setUnlinkError(refusalFromError(err));
             }
           }}
         />
@@ -529,42 +547,39 @@ function AddAffiliationForm({
   personVersion,
   onDone,
   onCancel,
+  onReload,
 }: {
   personId: string;
   personVersion: number;
   onDone: () => void;
   onCancel: () => void;
+  onReload: () => void;
 }) {
   const [orgId, setOrgId] = useState("");
   const [roleTitle, setRoleTitle] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
 
   async function submit() {
     if (!orgId.trim() || !note.trim()) return;
     setBusy(true);
     setError(null);
+    const body = {
+      person_id: personId,
+      expected_version: personVersion,
+      organization_id: orgId.trim(),
+      role_title: roleTitle.trim() || null,
+      note: note.trim(),
+    };
     try {
-      await linkPersonOrganization(
-        {
-          person_id: personId,
-          expected_version: personVersion,
-          organization_id: orgId.trim(),
-          role_title: roleTitle.trim() || null,
-          note: note.trim(),
-        },
-        keyRef.current,
-      );
+      await linkPersonOrganization(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      if (r?.code === "stale_version") {
-        setError("Otro operador modificó este registro; recarga y vuelve a intentar.");
-      } else {
-        setError(r ? `${r.code}: ${r.message}` : String(err));
-      }
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -580,7 +595,11 @@ function AddAffiliationForm({
       <FormField label="Nota de registro" required>
         <TextInput value={note} onChange={setNote} placeholder="Fuente o motivo" disabled={busy} maxLength={2000} />
       </FormField>
-      {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
+      <CommandErrorNotice
+        refusal={error}
+        onReload={() => { setError(null); onReload(); }}
+        className="col-span-full text-[11px] text-bad"
+      />
       <div className="col-span-full flex flex-wrap gap-2">
         <button
           type="button"

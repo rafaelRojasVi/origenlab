@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { ReloadButton } from "./CommandErrorNotice";
 import type { Provenance } from "./crmTypes";
 import type { ResourceState } from "./useResource";
 
@@ -615,7 +616,9 @@ export function SelectInput({
  *
  * The caller passes `lines` — concrete sentences about exactly what will change — and whether
  * a `reason` is required (adds a mandatory textarea). Submit is blocked until the confirm
- * checkbox is checked (and reason filled when required).
+ * checkbox is checked (and reason filled when required). `onReload`, passed with the error of a
+ * stale version, adds «Cargar versión actual»: the dialog and its reason stay while the record is
+ * read again.
  */
 export function ConfirmDialog({
   title,
@@ -626,6 +629,7 @@ export function ConfirmDialog({
   cancelLabel = "Cancelar",
   busy = false,
   error,
+  onReload,
   onConfirm,
   onCancel,
 }: {
@@ -637,6 +641,7 @@ export function ConfirmDialog({
   cancelLabel?: string;
   busy?: boolean;
   error?: string | null;
+  onReload?: () => void;
   onConfirm: (reason: string) => void;
   onCancel: () => void;
 }) {
@@ -689,7 +694,17 @@ export function ConfirmDialog({
           />
           <span>Entiendo las consecuencias y confirmo esta acción.</span>
         </label>
-        {error ? <p className="mt-2 text-[11px] text-bad">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="mt-2 text-[11px] text-bad">
+            {error}
+            {onReload ? (
+              <>
+                {" "}
+                <ReloadButton onReload={onReload} />
+              </>
+            ) : null}
+          </p>
+        ) : null}
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button
             type="button"

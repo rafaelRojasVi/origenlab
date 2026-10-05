@@ -1,13 +1,14 @@
 /**
  * CandidateReview — confirm or reject a supplier candidate assertion.
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
+import { CommandErrorNotice } from "../CommandErrorNotice";
+import { useCommandKey } from "../commandKey";
+import { refusalFromError, type Refusal } from "../commandRefusal";
 import { FormField, SelectInput, TextInput } from "../ui";
 import {
   PRODUCT_LINES,
   confirmSupplierCandidate,
-  newIdempotencyKey,
-  refusalOf,
   rejectSupplierCandidate,
   type ProductLineId,
 } from "./crmAuthoringApi";
@@ -38,9 +39,9 @@ export function ConfirmCandidateForm({ assertionId, domain, tradeName, onDone, o
   const [selectedLines, setSelectedLines] = useState<Set<ProductLineId>>(new Set());
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Refusal | null>(null);
   const [confirmed, setConfirmed] = useState(false);
-  const keyRef = useRef(newIdempotencyKey());
+  const key = useCommandKey();
 
   function toggleLine(line: ProductLineId) {
     setSelectedLines((prev) => {
@@ -61,22 +62,21 @@ export function ConfirmCandidateForm({ assertionId, domain, tradeName, onDone, o
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
+    const body = {
+      assertion_id: assertionId,
+      organization_id: mode === "existing" ? orgId.trim() : null,
+      new_organization: mode === "new" ? { name: newName.trim(), kind: newKind } : null,
+      classification,
+      product_lines: selectedLines.size > 0 ? [...selectedLines] : undefined,
+      note: note.trim(),
+    };
     try {
-      await confirmSupplierCandidate(
-        {
-          assertion_id: assertionId,
-          organization_id: mode === "existing" ? orgId.trim() : null,
-          new_organization: mode === "new" ? { name: newName.trim(), kind: newKind } : null,
-          classification,
-          product_lines: selectedLines.size > 0 ? [...selectedLines] : undefined,
-          note: note.trim(),
-        },
-        keyRef.current,
-      );
+      await confirmSupplierCandidate(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      setError(r ? `${r.code}: ${r.message}` : String(err));
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -171,7 +171,7 @@ export function ConfirmCandidateForm({ assertionId, domain, tradeName, onDone, o
             <span>Confirmo que este candidato es un proveedor o fabricante legítimo.</span>
           </label>
 
-          {error ? <p className="text-[11px] text-bad">{error}</p> : null}
+          <CommandErrorNotice refusal={error} />
 
           <div className="flex flex-wrap justify-end gap-2">
             <button
@@ -209,8 +209,8 @@ export function RejectCandidateForm({ assertionId, domain, tradeName, onDone, on
   const [note, setNote] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
 
   const canSubmit = confirmed && note.trim().length > 0 && !busy;
 
@@ -218,12 +218,14 @@ export function RejectCandidateForm({ assertionId, domain, tradeName, onDone, on
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
+    const body = { assertion_id: assertionId, note: note.trim() };
     try {
-      await rejectSupplierCandidate({ assertion_id: assertionId, note: note.trim() }, keyRef.current);
+      await rejectSupplierCandidate(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      setError(r ? `${r.code}: ${r.message}` : String(err));
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -249,7 +251,7 @@ export function RejectCandidateForm({ assertionId, domain, tradeName, onDone, on
             <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} disabled={busy} className="mt-0.5 shrink-0" />
             <span>Confirmo el rechazo de este candidato.</span>
           </label>
-          {error ? <p className="text-[11px] text-bad">{error}</p> : null}
+          <CommandErrorNotice refusal={error} />
           <div className="flex flex-wrap justify-end gap-2">
             <button
               type="button"

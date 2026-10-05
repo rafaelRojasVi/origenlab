@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { CampaignSummary, MarketingResponse, TotalKey } from "../crmTypes";
 import { Badge, Panel, ResourceGate, Segmented, Skeleton, fmtInt } from "../ui";
+import { refusalText } from "../commandRefusal";
 import { useResource } from "../useResource";
 import { PLANNING_LABEL, fmtLongDay, relativeDay, santiagoTime, todayInSantiago } from "./calendar";
 import { CampaignAudit } from "./CampaignAudit";
@@ -11,8 +12,19 @@ import { CampaignHoldPanel } from "./CampaignHolds";
 import { EmailFrame } from "./EmailFrame";
 import { TestSendPanel } from "./TestSendPanel";
 import { useMayAuthorCampaigns } from "./authoring";
-import { fetchCampaignArchive, newIdempotencyKey, refusalOf, setCampaignPlanning } from "./marketingApi";
+import { fetchCampaignArchive, newIdempotencyKey, setCampaignPlanning } from "./marketingApi";
 import type { CampaignArchive, CampaignContentRecord, EquipmentTaxonomy } from "./marketingTypes";
+
+/** What the planning command refuses, in the operator's words (the API's text is English). */
+const PLANNING_WORDS: Readonly<Record<string, string>> = {
+  stale_planning_version:
+    "Otro operador cambió la planificación mientras la editabas. Vuelve a abrir la campaña para ver la actual.",
+  campaign_not_plannable: "Sólo se planifica un borrador o una campaña con la audiencia congelada.",
+  time_without_date: "Una hora planificada necesita un día.",
+  planned_in_past: "Ese día ya pasó (hora de Santiago); elige uno futuro.",
+  planned_too_far: "Ese día está demasiado lejos para planificarlo.",
+  planned_time_nonexistent: "Esa hora no existe ese día en Santiago (cambio de hora); elige otra.",
+};
 
 export type DetailTab = "resumen" | "html" | "destinatarios" | "respuestas" | "auditoria";
 
@@ -576,8 +588,7 @@ function PlanningEditor({
       setMessage({ tone: "good", text: r.planned_for_date ? "Planificación guardada. No se programó ningún envío." : "Planificación eliminada." });
       onSaved();
     } catch (err) {
-      const refusal = refusalOf(err);
-      setMessage({ tone: "bad", text: refusal?.message ?? String(err) });
+      setMessage({ tone: "bad", text: refusalText(err, { fallback: "No se pudo guardar la planificación", overrides: PLANNING_WORDS }) });
     } finally {
       setBusy(false);
     }

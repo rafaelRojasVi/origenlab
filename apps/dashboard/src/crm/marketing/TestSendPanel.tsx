@@ -1,6 +1,6 @@
 import { useCallback, useId, useState } from "react";
-import { OperatorApiError } from "../../api/operatorClient";
 import { useAuthSession } from "../../context/AuthSessionContext";
+import { REFUSAL_MESSAGES, refusalFromError, refusalText } from "../commandRefusal";
 import { fmtDate } from "../ui";
 import { useResource } from "../useResource";
 import { fetchTestSendHistory, sendCampaignTest, type TestSendHistory, type TestSendTarget } from "./marketingApi";
@@ -25,27 +25,20 @@ const HOUR_SANTIAGO = new Intl.DateTimeFormat("es-CL", {
 });
 
 function errorText(err: unknown): string {
-  if (err instanceof OperatorApiError) {
-    let detail: { message?: string; next_allowed_at?: string } | undefined;
-    try {
-      detail = JSON.parse(err.message)?.detail;
-    } catch {
-      /* not JSON */
+  const refusal = refusalFromError(err);
+  if (refusal.status === 429) {
+    const next = refusal.details.next_allowed_at;
+    const at = typeof next === "string" ? new Date(next) : null;
+    if (at && !Number.isNaN(at.getTime())) {
+      return `Límite de pruebas alcanzado. La próxima se puede enviar a las ${HOUR_SANTIAGO.format(at)}.`;
     }
-    if (err.status === 429) {
-      const at = detail?.next_allowed_at ? new Date(detail.next_allowed_at) : null;
-      if (at && !Number.isNaN(at.getTime())) {
-        return `Límite de pruebas alcanzado. La próxima se puede enviar a las ${HOUR_SANTIAGO.format(at)}.`;
-      }
-      return "Límite de pruebas alcanzado. Intenta más tarde.";
-    }
-    if (err.status === 403) return "Sólo un perfil de administración puede enviar pruebas.";
-    try {
-      if (detail?.message) return String(detail.message);
-    } catch {
-      /* not JSON */
-    }
+    return "Límite de pruebas alcanzado. Intenta más tarde.";
   }
+  if (refusal.status === 403) return "Sólo un perfil de administración puede enviar pruebas.";
+  // A busy service, a lost connection, a refused key: the shared sentences.
+  if (refusal.code in REFUSAL_MESSAGES) return refusalText(refusal);
+  // The test-send command words its own refusals in Spanish (`gmail_send.FAILURE_MESSAGE_ES`).
+  if (refusal.status > 0 && refusal.message) return refusal.message;
   return "No se pudo enviar la prueba.";
 }
 

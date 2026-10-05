@@ -5,7 +5,8 @@
  */
 import { useRef, useState } from "react";
 import { Badge, Section } from "../ui";
-import { refusalOf, type OrganizationAuthoringResponse, type OrgWebSuggestion } from "./crmAuthoringApi";
+import { refusalFromError } from "../commandRefusal";
+import { type OrganizationAuthoringResponse, type OrgWebSuggestion } from "./crmAuthoringApi";
 import {
   CONFIDENCE_LABEL,
   FIELD_LABEL,
@@ -60,8 +61,8 @@ export function WebSuggestionsSection({
       remember(await applyField(row, org.id, currentVersion(), note));
       onRefresh();
     } catch (err) {
-      const r = refusalOf(err);
-      setMessage({ tone: "bad", text: `${row.label}: ${refusalText(r?.code ?? "error", r?.message ?? String(err))}` });
+      const r = refusalFromError(err);
+      setMessage({ tone: "bad", text: `${row.label}: ${refusalText(r.code, r.message)}` });
     } finally {
       setBusy(null);
     }

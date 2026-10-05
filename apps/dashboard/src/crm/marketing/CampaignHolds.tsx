@@ -1,9 +1,22 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
+import { ReloadButton } from "../CommandErrorNotice";
+import { useCommandKey } from "../commandKey";
+import { isStaleRefusal, refusalFromError, refusalText, type Refusal } from "../commandRefusal";
 import { Badge, Panel } from "../ui";
 import { useResource } from "../useResource";
 import { fmtLongDay, santiagoDay, santiagoTime } from "./calendar";
-import { blockCampaign, fetchCampaignBlocks, newIdempotencyKey, refusalOf, unblockCampaign } from "./marketingApi";
+import { blockCampaign, fetchCampaignBlocks, unblockCampaign } from "./marketingApi";
 import type { CampaignBlock, CampaignHoldsResponse } from "./marketingTypes";
+
+/** What the block commands refuse, in the operator's words (the API's text is English). */
+const BLOCK_WORDS: Readonly<Record<string, string>> = {
+  stale_block_version:
+    "Otro administrador bloqueó o desbloqueó esta campaña mientras decidías. Carga la versión actual; tu motivo sigue en el formulario.",
+  stale_version: "Otro administrador cambió este bloqueo mientras decidías. Carga la versión actual; tu motivo sigue en el formulario.",
+  already_blocked: "Esa campaña ya tiene un bloqueo activo.",
+  block_already_lifted: "Ese bloqueo ya fue levantado.",
+  role_may_not_block: "Sólo un perfil de administración activo bloquea o levanta un bloqueo.",
+};
 
 /**
  * Campaign safety blocks (WORKFLOWS.md §W13). Every role sees whether a campaign is held; sales
@@ -42,19 +55,23 @@ function DecisionForm({
   submitLabel,
   testId,
   onSubmit,
+  onReload,
 }: {
   label: string;
   confirmText: string;
   submitLabel: string;
   testId: string;
   onSubmit: (reason: string, key: string) => Promise<void>;
+  /** Re-read the holds after a stale version; the form and its reason stay. */
+  onReload: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const key = useRef<{ for: string; key: string } | null>(null);
+  const [error, setError] = useState<Refusal | null>(null);
+  // One key per intended decision: resent only while the same reason's answer is missing.
+  const key = useCommandKey();
   if (!open) {
     return (
       <button
@@ -75,16 +92,17 @@ function DecisionForm({
       onSubmit={async (e) => {
         e.preventDefault();
         if (!clean || !confirmed) return;
-        if (!key.current || key.current.for !== clean) key.current = { for: clean, key: newIdempotencyKey() };
         setBusy(true);
         setError(null);
         try {
-          await onSubmit(clean, key.current.key);
+          await onSubmit(clean, key.keyFor(clean));
+          key.settle();
           setOpen(false);
           setReason("");
           setConfirmed(false);
         } catch (err) {
-          setError(refusalOf(err)?.message ?? String(err));
+          key.settle(err);
+          setError(refusalFromError(err));
         } finally {
           setBusy(false);
         }
@@ -120,16 +138,23 @@ function DecisionForm({
       </div>
       {error ? (
         <p role="alert" className="text-[11px] text-bad">
-          {error}
+          {refusalText(error, { fallback: "No se pudo registrar la decisión", overrides: BLOCK_WORDS })}
+          {isStaleRefusal(error) || error.code === "stale_block_version" ? (
+            <>
+              {" "}
+              <ReloadButton onReload={() => { setError(null); onReload(); }} />
+            </>
+          ) : null}
         </p>
       ) : null}
     </form>
   );
 }
 
-function LiftForm({ b, onDone }: { b: CampaignBlock; onDone: () => void }) {
+function LiftForm({ b, onDone, onReload }: { b: CampaignBlock; onDone: () => void; onReload: () => void }) {
   return (
     <DecisionForm
+      onReload={onReload}
       label="Levantar bloqueo"
       testId={`unblock-${b.block_id}`}
       submitLabel="Levantar bloqueo"
@@ -174,10 +199,11 @@ export function HoldsBanner({ onChanged }: { onChanged?: () => void }) {
         {global ? (
           <div className="space-y-1.5">
             <BlockLine b={global} />
-            {h.may_decide ? <LiftForm b={global} onDone={done} /> : null}
+            {h.may_decide ? <LiftForm b={global} onDone={done} onReload={reload} /> : null}
           </div>
         ) : h.may_decide ? (
           <DecisionForm
+            onReload={reload}
             label="Bloquear todas las campañas"
             testId="block-all"
             submitLabel="Bloquear todas"
@@ -197,7 +223,7 @@ export function HoldsBanner({ onChanged }: { onChanged?: () => void }) {
             <p className="text-[11px] text-ink-faint">
               Registrada por la migración: la campaña vive en el registro V1 y no tiene fila en este CRM.
             </p>
-            {h.may_decide ? <LiftForm b={b} onDone={done} /> : null}
+            {h.may_decide ? <LiftForm b={b} onDone={done} onReload={reload} /> : null}
           </div>
         ))}
       </div>
@@ -247,9 +273,10 @@ export function CampaignHoldPanel({ campaignId, onChanged }: { campaignId: strin
       <p className="text-[11px] text-ink-faint">{EFFECT_SHORT}</p>
       {h.may_decide ? (
         block ? (
-          <LiftForm b={block} onDone={done} />
+          <LiftForm b={block} onDone={done} onReload={reload} />
         ) : (
           <DecisionForm
+            onReload={reload}
             label="Bloquear campaña"
             testId="block-campaign"
             submitLabel="Bloquear campaña"

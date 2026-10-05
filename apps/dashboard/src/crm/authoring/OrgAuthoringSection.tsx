@@ -3,7 +3,10 @@
  * Fetches fetchOrganizationAuthoring and renders edit, identifiers, domains,
  * classifications, product lines, contact points, people, notes, references.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
+import { CommandErrorNotice } from "../CommandErrorNotice";
+import { useCommandKey } from "../commandKey";
+import { isStaleRefusal, refusalFromError, refusalText as commandRefusalText, type Refusal } from "../commandRefusal";
 import {
   Badge,
   ConfirmDialog,
@@ -24,9 +27,7 @@ import {
   confirmOrganizationRecord,
   fetchOrganizationAuthoring,
   linkOrganizationProductLine,
-  newIdempotencyKey,
   PRODUCT_LINES,
-  refusalOf,
   removeOrganizationClassification,
   removeOrganizationDomain,
   restoreOrganizationDomain,
@@ -97,7 +98,7 @@ function OrgAuthoringBody({
   const { organization, identifiers, domains, classifications, product_lines, contact_points, people, notes, references, removal } = data;
   const [editing, setEditing] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<Refusal | null>(null);
 
   return (
     <>
@@ -152,6 +153,7 @@ function OrgAuthoringBody({
             org={organization}
             onDone={() => { setEditing(false); onRefresh(); }}
             onCancel={() => setEditing(false)}
+            onReload={onRefresh}
           />
         ) : (
           <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
@@ -273,7 +275,7 @@ function OrgAuthoringBody({
                 Archivar organización…
               </button>
             ) : (
-              <RestoreOrgButton orgId={organizationId} version={organization.version} onDone={onRefresh} />
+              <RestoreOrgButton orgId={organizationId} version={organization.version} onDone={onRefresh} onReload={onRefresh} />
             )}
           </div>
         </Section>
@@ -289,7 +291,8 @@ function OrgAuthoringBody({
           requireReason
           reasonLabel="Motivo del archivo"
           confirmLabel="Archivar organización"
-          error={archiveError}
+          error={archiveError ? commandRefusalText(archiveError) : null}
+          onReload={isStaleRefusal(archiveError) ? () => { setArchiveError(null); onRefresh(); } : undefined}
           onCancel={() => { setShowArchive(false); setArchiveError(null); }}
           onConfirm={async (reason) => {
             try {
@@ -298,8 +301,7 @@ function OrgAuthoringBody({
               setArchiveError(null);
               onRefresh();
             } catch (err) {
-              const r = refusalOf(err);
-              setArchiveError(r ? `${r.code}: ${r.message}` : String(err));
+              setArchiveError(refusalFromError(err));
             }
           }}
         />
@@ -323,7 +325,7 @@ function ConfirmationBar({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const key = useCommandKey();
 
   if (organization.confirmation === "confirmed") {
     return (
@@ -340,15 +342,15 @@ function ConfirmationBar({
   async function confirm() {
     setBusy(true);
     setError(null);
+    const body = { organization_id: organization.id, expected_version: organization.version };
     try {
-      await confirmOrganizationRecord(
-        { organization_id: organization.id, expected_version: organization.version },
-        keyRef.current,
-      );
+      await confirmOrganizationRecord(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      setError(refusalText(r?.code ?? "error", r?.message ?? String(err)));
+      key.settle(err);
+      const r = refusalFromError(err);
+      setError(refusalText(r.code, r.message));
     } finally {
       setBusy(false);
     }
@@ -377,37 +379,41 @@ function EditOrgForm({
   org,
   onDone,
   onCancel,
+  onReload,
 }: {
   org: OrganizationAuthoringResponse["organization"];
   onDone: () => void;
   onCancel: () => void;
+  /** Re-read the institution; the typed values stay, the next save carries the new version. */
+  onReload: () => void;
 }) {
   const [name, setName] = useState(org.name);
   const [legalName, setLegalName] = useState(org.legal_name ?? "");
   const [kind, setKind] = useState(org.kind);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
 
   async function submit() {
     if (!name.trim() || !note.trim()) return;
     setBusy(true);
     setError(null);
+    const body = {
+      organization_id: org.id,
+      expected_version: org.version,
+      name: name.trim(),
+      legal_name: legalName.trim() || null,
+      kind: kind,
+      note: note.trim(),
+    };
     try {
-      await updateOrganization({
-        organization_id: org.id,
-        expected_version: org.version,
-        name: name.trim(),
-        legal_name: legalName.trim() || null,
-        kind: kind,
-        note: note.trim(),
-      }, keyRef.current);
+      await updateOrganization(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      if (r?.code === "stale_version") setError("Otro operador modificó este registro; recarga y vuelve a intentar.");
-      else setError(r ? `${r.code}: ${r.message}` : String(err));
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -438,7 +444,11 @@ function EditOrgForm({
       <FormField label="Nota del cambio" required>
         <TextInput value={note} onChange={setNote} placeholder="Motivo" disabled={busy} maxLength={2000} />
       </FormField>
-      {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
+      <CommandErrorNotice
+        refusal={error}
+        onReload={() => { setError(null); onReload(); }}
+        className="col-span-full text-[11px] text-bad"
+      />
       <div className="col-span-full flex flex-wrap gap-2">
         <button type="button" onClick={submit} disabled={busy || !name.trim() || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">
           {busy ? "…" : "Guardar"}
@@ -451,12 +461,22 @@ function EditOrgForm({
   );
 }
 
-function RestoreOrgButton({ orgId, version, onDone }: { orgId: string; version: number; onDone: () => void }) {
+function RestoreOrgButton({
+  orgId,
+  version,
+  onDone,
+  onReload,
+}: {
+  orgId: string;
+  version: number;
+  onDone: () => void;
+  onReload: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} className="h-7 rounded-md border border-good/40 bg-good-bg px-3 text-xs font-medium text-good hover:bg-good/10">
@@ -467,18 +487,21 @@ function RestoreOrgButton({ orgId, version, onDone }: { orgId: string; version: 
           <FormField label="Nota de restauración" required>
             <TextInput value={note} onChange={setNote} placeholder="Motivo" disabled={busy} maxLength={2000} />
           </FormField>
-          {error ? <p className="text-[11px] text-bad">{error}</p> : null}
+          <CommandErrorNotice refusal={error} onReload={() => { setError(null); onReload(); }} />
           <div className="flex gap-2">
             <button type="button" onClick={async () => {
               if (!note.trim()) return;
               setBusy(true);
+              setError(null);
+              const body = { organization_id: orgId, expected_version: version, note: note.trim() };
               try {
-                await restoreOrganization({ organization_id: orgId, expected_version: version, note: note.trim() }, keyRef.current);
+                await restoreOrganization(body, key.keyFor(body));
+                key.settle();
                 setOpen(false);
                 onDone();
               } catch (err) {
-                const r = refusalOf(err);
-                setError(r ? `${r.code}: ${r.message}` : String(err));
+                key.settle(err);
+                setError(refusalFromError(err));
                 setBusy(false);
               }
             }} disabled={busy || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">
@@ -509,7 +532,7 @@ function IdentifierSection({
 }) {
   const [adding, setAdding] = useState(false);
   const [removeId, setRemoveId] = useState<string | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<Refusal | null>(null);
   const active = identifiers.filter((i) => !i.removed_at);
   const removeTarget = removeId ? identifiers.find((i) => i.id === removeId) ?? null : null;
   return (
@@ -529,6 +552,7 @@ function IdentifierSection({
           orgVersion={orgVersion}
           onDone={() => { setAdding(false); onRefresh(); }}
           onCancel={() => setAdding(false)}
+          onReload={onRefresh}
         />
       )}
       {active.length === 0 && !adding ? (
@@ -558,7 +582,8 @@ function IdentifierSection({
           requireReason
           reasonLabel="Motivo"
           confirmLabel="Eliminar"
-          error={removeError}
+          error={removeError ? commandRefusalText(removeError) : null}
+          onReload={isStaleRefusal(removeError) ? () => { setRemoveError(null); onRefresh(); } : undefined}
           onCancel={() => { setRemoveId(null); setRemoveError(null); }}
           onConfirm={async (reason) => {
             try {
@@ -567,8 +592,7 @@ function IdentifierSection({
               setRemoveError(null);
               onRefresh();
             } catch (err) {
-              const r = refusalOf(err);
-              setRemoveError(r ? `${r.code}: ${r.message}` : String(err));
+              setRemoveError(refusalFromError(err));
             }
           }}
         />
@@ -577,27 +601,31 @@ function IdentifierSection({
   );
 }
 
-function AddIdentifierForm({ organizationId, orgVersion, onDone, onCancel }: {
+function AddIdentifierForm({ organizationId, orgVersion, onDone, onCancel, onReload }: {
   organizationId: string;
   orgVersion: number;
   onDone: () => void;
   onCancel: () => void;
+  onReload: () => void;
 }) {
   const [scheme, setScheme] = useState("rut");
   const [value, setValue] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
   async function submit() {
     if (!value.trim() || !note.trim()) return;
     setBusy(true);
+    setError(null);
+    const body = { organization_id: organizationId, expected_version: orgVersion, scheme, value: value.trim(), note: note.trim() };
     try {
-      await addOrganizationIdentifier({ organization_id: organizationId, expected_version: orgVersion, scheme, value: value.trim(), note: note.trim() }, keyRef.current);
+      await addOrganizationIdentifier(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      setError(r ? `${r.code}: ${r.message}` : String(err));
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -612,7 +640,11 @@ function AddIdentifierForm({ organizationId, orgVersion, onDone, onCancel }: {
       <FormField label="Nota" required>
         <TextInput value={note} onChange={setNote} placeholder="Fuente" disabled={busy} maxLength={2000} />
       </FormField>
-      {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
+      <CommandErrorNotice
+        refusal={error}
+        onReload={() => { setError(null); onReload(); }}
+        className="col-span-full text-[11px] text-bad"
+      />
       <div className="col-span-full flex gap-2">
         <button type="button" onClick={submit} disabled={busy || !value.trim() || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">{busy ? "…" : "Agregar"}</button>
         <button type="button" onClick={onCancel} className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken">Cancelar</button>
@@ -630,9 +662,9 @@ function DomainSection({ domains, organizationId, orgVersion, mayAuthor, onRefre
 }) {
   const [adding, setAdding] = useState(false);
   const [removeId, setRemoveId] = useState<string | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<Refusal | null>(null);
   const [restoreId, setRestoreId] = useState<string | null>(null);
-  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreError, setRestoreError] = useState<Refusal | null>(null);
   const active = domains.filter((d) => !d.removed_at);
   // Soft-removed rows stay on the organization; an operator may bring one back on the same
   // row (never a duplicate), and only here — a domain is never restored onto another organization.
@@ -644,7 +676,7 @@ function DomainSection({ domains, organizationId, orgVersion, mayAuthor, onRefre
       mayAuthor ? <button type="button" onClick={() => setAdding(true)} className="h-6 rounded-md border border-line bg-canvas-raised px-2.5 text-[11px] font-medium text-ink hover:bg-canvas-sunken">Agregar</button> : null
     }>
       {adding && (
-        <AddDomainForm organizationId={organizationId} orgVersion={orgVersion} onDone={() => { setAdding(false); onRefresh(); }} onCancel={() => setAdding(false)} />
+        <AddDomainForm organizationId={organizationId} orgVersion={orgVersion} onDone={() => { setAdding(false); onRefresh(); }} onCancel={() => setAdding(false)} onReload={onRefresh} />
       )}
       {active.length === 0 && !adding ? <p className="text-xs text-ink-faint">Sin dominios.</p> : (
         <ul className="divide-y divide-line rounded-md border border-line">
@@ -695,7 +727,8 @@ function DomainSection({ domains, organizationId, orgVersion, mayAuthor, onRefre
           requireReason
           reasonLabel="Motivo"
           confirmLabel="Restaurar"
-          error={restoreError}
+          error={restoreError ? commandRefusalText(restoreError) : null}
+          onReload={isStaleRefusal(restoreError) ? () => { setRestoreError(null); onRefresh(); } : undefined}
           onCancel={() => { setRestoreId(null); setRestoreError(null); }}
           onConfirm={async (reason) => {
             try {
@@ -704,8 +737,7 @@ function DomainSection({ domains, organizationId, orgVersion, mayAuthor, onRefre
               setRestoreError(null);
               onRefresh();
             } catch (err) {
-              const r = refusalOf(err);
-              setRestoreError(r ? `${r.code}: ${r.message}` : String(err));
+              setRestoreError(refusalFromError(err));
             }
           }}
         />
@@ -717,7 +749,8 @@ function DomainSection({ domains, organizationId, orgVersion, mayAuthor, onRefre
           requireReason
           reasonLabel="Motivo"
           confirmLabel="Eliminar"
-          error={removeError}
+          error={removeError ? commandRefusalText(removeError) : null}
+          onReload={isStaleRefusal(removeError) ? () => { setRemoveError(null); onRefresh(); } : undefined}
           onCancel={() => { setRemoveId(null); setRemoveError(null); }}
           onConfirm={async (reason) => {
             try {
@@ -726,8 +759,7 @@ function DomainSection({ domains, organizationId, orgVersion, mayAuthor, onRefre
               setRemoveError(null);
               onRefresh();
             } catch (err) {
-              const r = refusalOf(err);
-              setRemoveError(r ? `${r.code}: ${r.message}` : String(err));
+              setRemoveError(refusalFromError(err));
             }
           }}
         />
@@ -736,21 +768,24 @@ function DomainSection({ domains, organizationId, orgVersion, mayAuthor, onRefre
   );
 }
 
-function AddDomainForm({ organizationId, orgVersion, onDone, onCancel }: { organizationId: string; orgVersion: number; onDone: () => void; onCancel: () => void; }) {
+function AddDomainForm({ organizationId, orgVersion, onDone, onCancel, onReload }: { organizationId: string; orgVersion: number; onDone: () => void; onCancel: () => void; onReload: () => void; }) {
   const [domain, setDomain] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
   async function submit() {
     if (!domain.trim() || !note.trim()) return;
     setBusy(true);
+    setError(null);
+    const body = { organization_id: organizationId, expected_version: orgVersion, domain: domain.trim(), note: note.trim() };
     try {
-      await addOrganizationDomain({ organization_id: organizationId, expected_version: orgVersion, domain: domain.trim(), note: note.trim() }, keyRef.current);
+      await addOrganizationDomain(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      setError(r ? `${r.code}: ${r.message}` : String(err));
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -762,7 +797,11 @@ function AddDomainForm({ organizationId, orgVersion, onDone, onCancel }: { organ
       <FormField label="Nota" required>
         <TextInput value={note} onChange={setNote} placeholder="Fuente" disabled={busy} maxLength={2000} />
       </FormField>
-      {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
+      <CommandErrorNotice
+        refusal={error}
+        onReload={() => { setError(null); onReload(); }}
+        className="col-span-full text-[11px] text-bad"
+      />
       <div className="col-span-full flex gap-2">
         <button type="button" onClick={submit} disabled={busy || !domain.trim() || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">{busy ? "…" : "Agregar"}</button>
         <button type="button" onClick={onCancel} className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken">Cancelar</button>
@@ -780,7 +819,7 @@ function ClassificationSection({ classifications, organizationId, orgVersion, ma
 }) {
   const [adding, setAdding] = useState(false);
   const [removeId, setRemoveId] = useState<string | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<Refusal | null>(null);
   const active = classifications.filter((c) => !c.valid_to);
   const removeTarget = removeId ? classifications.find((c) => c.id === removeId) ?? null : null;
   return (
@@ -788,7 +827,7 @@ function ClassificationSection({ classifications, organizationId, orgVersion, ma
       mayAuthor ? <button type="button" onClick={() => setAdding(true)} className="h-6 rounded-md border border-line bg-canvas-raised px-2.5 text-[11px] font-medium text-ink hover:bg-canvas-sunken">Agregar</button> : null
     }>
       {adding && (
-        <AddClassificationForm organizationId={organizationId} orgVersion={orgVersion} onDone={() => { setAdding(false); onRefresh(); }} onCancel={() => setAdding(false)} />
+        <AddClassificationForm organizationId={organizationId} orgVersion={orgVersion} onDone={() => { setAdding(false); onRefresh(); }} onCancel={() => setAdding(false)} onReload={onRefresh} />
       )}
       {active.length === 0 && !adding ? <p className="text-xs text-ink-faint">Sin clasificaciones activas.</p> : (
         <ul className="divide-y divide-line rounded-md border border-line">
@@ -808,7 +847,8 @@ function ClassificationSection({ classifications, organizationId, orgVersion, ma
           requireReason
           reasonLabel="Motivo"
           confirmLabel="Cerrar"
-          error={removeError}
+          error={removeError ? commandRefusalText(removeError) : null}
+          onReload={isStaleRefusal(removeError) ? () => { setRemoveError(null); onRefresh(); } : undefined}
           onCancel={() => { setRemoveId(null); setRemoveError(null); }}
           onConfirm={async (reason) => {
             try {
@@ -817,8 +857,7 @@ function ClassificationSection({ classifications, organizationId, orgVersion, ma
               setRemoveError(null);
               onRefresh();
             } catch (err) {
-              const r = refusalOf(err);
-              setRemoveError(r ? `${r.code}: ${r.message}` : String(err));
+              setRemoveError(refusalFromError(err));
             }
           }}
         />
@@ -827,21 +866,24 @@ function ClassificationSection({ classifications, organizationId, orgVersion, ma
   );
 }
 
-function AddClassificationForm({ organizationId, orgVersion, onDone, onCancel }: { organizationId: string; orgVersion: number; onDone: () => void; onCancel: () => void; }) {
+function AddClassificationForm({ organizationId, orgVersion, onDone, onCancel, onReload }: { organizationId: string; orgVersion: number; onDone: () => void; onCancel: () => void; onReload: () => void; }) {
   const [role, setRole] = useState("customer");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
   async function submit() {
     if (!note.trim()) return;
     setBusy(true);
+    setError(null);
+    const body = { organization_id: organizationId, expected_version: orgVersion, role, note: note.trim() };
     try {
-      await addOrganizationClassification({ organization_id: organizationId, expected_version: orgVersion, role, note: note.trim() }, keyRef.current);
+      await addOrganizationClassification(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      setError(r ? `${r.code}: ${r.message}` : String(err));
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -860,7 +902,11 @@ function AddClassificationForm({ organizationId, orgVersion, onDone, onCancel }:
       <FormField label="Nota" required>
         <TextInput value={note} onChange={setNote} placeholder="Motivo" disabled={busy} maxLength={2000} />
       </FormField>
-      {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
+      <CommandErrorNotice
+        refusal={error}
+        onReload={() => { setError(null); onReload(); }}
+        className="col-span-full text-[11px] text-bad"
+      />
       <div className="col-span-full flex gap-2">
         <button type="button" onClick={submit} disabled={busy || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">{busy ? "…" : "Agregar"}</button>
         <button type="button" onClick={onCancel} className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken">Cancelar</button>
@@ -878,11 +924,12 @@ function ProductLineSection({ productLines, organizationId, orgVersion, mayAutho
 }) {
   const [addingLine, setAddingLine] = useState<string | null>(null);
   const [unlinkId, setUnlinkId] = useState<string | null>(null);
-  const [unlinkError, setUnlinkError] = useState<string | null>(null);
+  const [unlinkError, setUnlinkError] = useState<Refusal | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [addError, setAddError] = useState<Refusal | null>(null);
+  // This section stays mounted across links: the key must turn over after each answer.
+  const key = useCommandKey();
   const active = productLines.filter((p) => !p.valid_to);
   const activeIds = new Set(active.map((p) => p.line_id));
   const unlinkTarget = unlinkId ? productLines.find((p) => p.id === unlinkId) ?? null : null;
@@ -890,14 +937,18 @@ function ProductLineSection({ productLines, organizationId, orgVersion, mayAutho
   async function doLink() {
     if (!addingLine || !note.trim()) return;
     setBusy(true);
+    setAddError(null);
+    const body = { organization_id: organizationId, expected_version: orgVersion, line_id: addingLine, note: note.trim() };
     try {
-      await linkOrganizationProductLine({ organization_id: organizationId, expected_version: orgVersion, line_id: addingLine, note: note.trim() }, keyRef.current);
+      await linkOrganizationProductLine(body, key.keyFor(body));
+      key.settle();
       setAddingLine(null);
       setNote("");
       onRefresh();
     } catch (err) {
-      const r = refusalOf(err);
-      setAddError(r ? `${r.code}: ${r.message}` : String(err));
+      key.settle(err);
+      setAddError(refusalFromError(err));
+    } finally {
       setBusy(false);
     }
   }
@@ -928,7 +979,7 @@ function ProductLineSection({ productLines, organizationId, orgVersion, mayAutho
           <FormField label="Nota" required>
             <TextInput value={note} onChange={setNote} placeholder="Motivo" disabled={busy} maxLength={2000} />
           </FormField>
-          {addError ? <p className="text-[11px] text-bad">{addError}</p> : null}
+          <CommandErrorNotice refusal={addError} onReload={() => { setAddError(null); onRefresh(); }} />
           <div className="flex gap-2">
             <button type="button" onClick={doLink} disabled={busy || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">{busy ? "…" : "Vincular"}</button>
             <button type="button" onClick={() => setAddingLine(null)} className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken">Cancelar</button>
@@ -942,7 +993,8 @@ function ProductLineSection({ productLines, organizationId, orgVersion, mayAutho
           requireReason
           reasonLabel="Motivo"
           confirmLabel="Desvincular"
-          error={unlinkError}
+          error={unlinkError ? commandRefusalText(unlinkError) : null}
+          onReload={isStaleRefusal(unlinkError) ? () => { setUnlinkError(null); onRefresh(); } : undefined}
           onCancel={() => { setUnlinkId(null); setUnlinkError(null); }}
           onConfirm={async (reason) => {
             try {
@@ -951,8 +1003,7 @@ function ProductLineSection({ productLines, organizationId, orgVersion, mayAutho
               setUnlinkError(null);
               onRefresh();
             } catch (err) {
-              const r = refusalOf(err);
-              setUnlinkError(r ? `${r.code}: ${r.message}` : String(err));
+              setUnlinkError(refusalFromError(err));
             }
           }}
         />

@@ -1,7 +1,10 @@
 /**
  * ContactPointList — list, add, edit and deactivate contact points on a person or organization.
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
+import { CommandErrorNotice } from "../CommandErrorNotice";
+import { useCommandKey } from "../commandKey";
+import { isStaleRefusal, refusalFromError, refusalText, type Refusal } from "../commandRefusal";
 import {
   Badge,
   ConfirmDialog,
@@ -14,8 +17,6 @@ import {
 import {
   addContactPoint,
   deactivateContactPoint,
-  newIdempotencyKey,
-  refusalOf,
   updateContactPoint,
   type ContactPointRow,
 } from "./crmAuthoringApi";
@@ -42,7 +43,7 @@ export function ContactPointList({ contactPoints, ownerId, ownerVersion, subject
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [deactivateId, setDeactivateId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Refusal | null>(null);
 
   const active = contactPoints.filter((c) => c.status === "active");
   const inactive = contactPoints.filter((c) => c.status === "inactive");
@@ -70,6 +71,7 @@ export function ContactPointList({ contactPoints, ownerId, ownerVersion, subject
           subjectKind={subjectKind}
           onDone={() => { setAdding(false); onRefresh(); }}
           onCancel={() => setAdding(false)}
+          onReload={onRefresh}
         />
       )}
       {active.length === 0 && !adding ? (
@@ -86,6 +88,7 @@ export function ContactPointList({ contactPoints, ownerId, ownerVersion, subject
               onDeactivate={() => { setDeactivateId(cp.id); setError(null); }}
               onEditDone={() => { setEditId(null); onRefresh(); }}
               onEditCancel={() => setEditId(null)}
+              onReload={onRefresh}
             />
           ))}
         </ul>
@@ -106,6 +109,7 @@ export function ContactPointList({ contactPoints, ownerId, ownerVersion, subject
                 onDeactivate={() => undefined}
                 onEditDone={() => undefined}
                 onEditCancel={() => undefined}
+                onReload={onRefresh}
               />
             ))}
           </ul>
@@ -121,7 +125,8 @@ export function ContactPointList({ contactPoints, ownerId, ownerVersion, subject
           requireReason
           reasonLabel="Motivo"
           confirmLabel="Desactivar"
-          error={error}
+          error={error ? refusalText(error) : null}
+          onReload={isStaleRefusal(error) ? () => { setError(null); onRefresh(); } : undefined}
           onCancel={() => { setDeactivateId(null); setError(null); }}
           onConfirm={async (reason) => {
             try {
@@ -134,8 +139,7 @@ export function ContactPointList({ contactPoints, ownerId, ownerVersion, subject
               setError(null);
               onRefresh();
             } catch (err) {
-              const r = refusalOf(err);
-              setError(r ? `${r.code}: ${r.message}` : String(err));
+              setError(refusalFromError(err));
             }
           }}
         />
@@ -152,6 +156,7 @@ function ContactPointItem({
   onDeactivate,
   onEditDone,
   onEditCancel,
+  onReload,
 }: {
   cp: ContactPointRow;
   mayAuthor: boolean;
@@ -160,6 +165,7 @@ function ContactPointItem({
   onDeactivate: () => void;
   onEditDone: () => void;
   onEditCancel: () => void;
+  onReload: () => void;
 }) {
   const masked = isMaskedAddress(cp.value_display) || isMaskedAddress(cp.value_norm);
   return (
@@ -179,6 +185,7 @@ function ContactPointItem({
           cp={cp}
           onDone={onEditDone}
           onCancel={onEditCancel}
+          onReload={onReload}
         />
       ) : (
         mayAuthor && cp.status === "active" && !masked ? (
@@ -210,45 +217,42 @@ function AddContactPointForm({
   subjectKind: _subjectKind,
   onDone,
   onCancel,
+  onReload,
 }: {
   ownerId: string;
   ownerVersion: number;
   subjectKind: "person" | "organization";
   onDone: () => void;
   onCancel: () => void;
+  onReload: () => void;
 }) {
   const [kind, setKind] = useState<"email" | "phone">("email");
   const [value, setValue] = useState("");
   const [usage, setUsage] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
 
   async function submit() {
     if (!value.trim() || !note.trim()) return;
     setBusy(true);
     setError(null);
+    const body = {
+      person_id: ownerId,
+      expected_version: ownerVersion,
+      kind,
+      value: value.trim(),
+      usage: usage || null,
+      note: note.trim(),
+    };
     try {
-      await addContactPoint(
-        {
-          person_id: ownerId,
-          expected_version: ownerVersion,
-          kind,
-          value: value.trim(),
-          usage: usage || null,
-          note: note.trim(),
-        },
-        keyRef.current,
-      );
+      await addContactPoint(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      if (r?.code === "stale_version") {
-        setError("Otro operador modificó este registro; recarga y vuelve a intentar.");
-      } else {
-        setError(r ? `${r.code}: ${r.message}` : String(err));
-      }
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -275,7 +279,11 @@ function AddContactPointForm({
       <FormField label="Nota de registro" required>
         <TextInput value={note} onChange={setNote} placeholder="Motivo o fuente" disabled={busy} maxLength={2000} />
       </FormField>
-      {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
+      <CommandErrorNotice
+        refusal={error}
+        onReload={() => { setError(null); onReload(); }}
+        className="col-span-full text-[11px] text-bad"
+      />
       <div className="col-span-full flex flex-wrap gap-2">
         <button
           type="button"
@@ -302,41 +310,38 @@ function EditContactPointForm({
   cp,
   onDone,
   onCancel,
+  onReload,
 }: {
   cp: ContactPointRow;
   onDone: () => void;
   onCancel: () => void;
+  onReload: () => void;
 }) {
   const [usage, setUsage] = useState(cp.usage ?? "");
   const [display, setDisplay] = useState(cp.value_display ?? "");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
 
   async function submit() {
     if (!note.trim()) return;
     setBusy(true);
     setError(null);
+    const body = {
+      contact_point_id: cp.id,
+      expected_version: cp.version,
+      usage: usage || null,
+      value_display: display || null,
+      note: note.trim(),
+    };
     try {
-      await updateContactPoint(
-        {
-          contact_point_id: cp.id,
-          expected_version: cp.version,
-          usage: usage || null,
-          value_display: display || null,
-          note: note.trim(),
-        },
-        keyRef.current,
-      );
+      await updateContactPoint(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      if (r?.code === "stale_version") {
-        setError("Otro operador modificó este registro; recarga y vuelve a intentar.");
-      } else {
-        setError(r ? `${r.code}: ${r.message}` : String(err));
-      }
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -352,7 +357,11 @@ function EditContactPointForm({
       <FormField label="Nota de cambio" required>
         <TextInput value={note} onChange={setNote} placeholder="Motivo del cambio" disabled={busy} maxLength={2000} />
       </FormField>
-      {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
+      <CommandErrorNotice
+        refusal={error}
+        onReload={() => { setError(null); onReload(); }}
+        className="col-span-full text-[11px] text-bad"
+      />
       <div className="col-span-full flex flex-wrap gap-2">
         <button
           type="button"

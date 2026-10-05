@@ -2,9 +2,12 @@
  * NewOrganizationForm — modal form for register-organization command.
  * Used for both generic organizations and provider registration.
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
+import { CommandErrorNotice } from "../CommandErrorNotice";
+import { useCommandKey } from "../commandKey";
+import { refusalFromError, type Refusal } from "../commandRefusal";
 import { FormField, SelectInput, TextInput } from "../ui";
-import { PRODUCT_LINES, newIdempotencyKey, refusalOf, registerOrganization, type ProductLineId } from "./crmAuthoringApi";
+import { PRODUCT_LINES, registerOrganization, type ProductLineId } from "./crmAuthoringApi";
 
 const KIND_OPTIONS = [
   { value: "company", label: "Empresa" },
@@ -53,8 +56,8 @@ export function NewOrganizationForm({ forcedClassification, onDone, onCancel }: 
   const [selectedLines, setSelectedLines] = useState<Set<ProductLineId>>(new Set());
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
 
   function toggleLine(line: ProductLineId) {
     setSelectedLines((prev) => {
@@ -69,23 +72,22 @@ export function NewOrganizationForm({ forcedClassification, onDone, onCancel }: 
     if (!name.trim() || !note.trim()) return;
     setBusy(true);
     setError(null);
+    const body = {
+      name: name.trim(),
+      legal_name: legalName.trim() || null,
+      kind,
+      classification: (forcedClassification ?? classification) || null,
+      domain: domain.trim() || null,
+      product_lines: selectedLines.size > 0 ? [...selectedLines] : undefined,
+      note: note.trim(),
+    };
     try {
-      await registerOrganization(
-        {
-          name: name.trim(),
-          legal_name: legalName.trim() || null,
-          kind,
-          classification: (forcedClassification ?? classification) || null,
-          domain: domain.trim() || null,
-          product_lines: selectedLines.size > 0 ? [...selectedLines] : undefined,
-          note: note.trim(),
-        },
-        keyRef.current,
-      );
+      await registerOrganization(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      setError(r ? `${r.code}: ${r.message}` : String(err));
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -159,7 +161,7 @@ export function NewOrganizationForm({ forcedClassification, onDone, onCancel }: 
             <TextInput value={note} onChange={setNote} placeholder="Fuente o motivo" required disabled={busy} maxLength={2000} />
           </FormField>
         </div>
-        {error ? <p className="mt-2 text-[11px] text-bad">{error}</p> : null}
+        <CommandErrorNotice refusal={error} className="mt-2 text-[11px] text-bad" />
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button
             type="button"

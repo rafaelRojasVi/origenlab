@@ -11,11 +11,11 @@
  * confirm-organization-record. Each step is its own command and receipt; the first refusal stops
  * the run and is named, and what was applied before it stays applied.
  */
+import { refusalFromError, refusalText as sharedRefusalText } from "../commandRefusal";
 import {
   addOrganizationDomain,
   addOrganizationIdentifier,
   confirmOrganizationRecord,
-  refusalOf,
   updateOrganization,
   type CommandReceipt,
   type OrganizationAuthoringResponse,
@@ -127,8 +127,8 @@ export async function applyAllAndConfirm(args: {
       version = await applyField(row, args.organizationId, version, args.note);
       applied.push(row.field);
     } catch (err) {
-      const r = refusalOf(err);
-      return { ok: false, applied, failed: row.field, code: r?.code ?? "error", message: r?.message ?? String(err), version };
+      const r = refusalFromError(err);
+      return { ok: false, applied, failed: row.field, code: r.code, message: r.message, version };
     }
   }
   if (args.alreadyConfirmed) return { ok: true, applied, confirmed: false, alreadyConfirmed: true, version };
@@ -136,8 +136,8 @@ export async function applyAllAndConfirm(args: {
   try {
     receipt = await confirmOrganizationRecord({ organization_id: args.organizationId, expected_version: version, note: args.note });
   } catch (err) {
-    const r = refusalOf(err);
-    return { ok: false, applied, failed: "confirm", code: r?.code ?? "error", message: r?.message ?? String(err), version };
+    const r = refusalFromError(err);
+    return { ok: false, applied, failed: "confirm", code: r.code, message: r.message, version };
   }
   // Another operator may have confirmed it meanwhile: the answer says so, and that is not «confirmed by this run».
   const already = receipt.already_confirmed === true;
@@ -150,24 +150,16 @@ export async function applyAllAndConfirm(args: {
   };
 }
 
-/** A refusal in the operator's words. */
+/** How the institution card says the codes it meets; every other code comes from the shared table. */
+const CARD_WORDS: Readonly<Record<string, string>> = {
+  stale_version: "Otro operador modificó esta institución; recarga y vuelve a intentar.",
+  identifier_taken: "Ese RUT ya está registrado en otra institución.",
+  identifier_already_present: "Ese RUT ya está en esta institución.",
+  invalid_domain: "El dominio sugerido no es válido.",
+  archived_subject: "La institución está archivada.",
+};
+
+/** A refusal in the operator's words (`commandRefusal.REFUSAL_MESSAGES`, then the card's own). */
 export function refusalText(code: string, _message?: string): string {
-  switch (code) {
-    case "stale_version":
-      return "Otro operador modificó esta institución; recarga y vuelve a intentar.";
-    case "identifier_taken":
-      return "Ese RUT ya está registrado en otra institución.";
-    case "identifier_already_present":
-      return "Ese RUT ya está en esta institución.";
-    case "domain_already_present":
-      return "Ese dominio ya está en esta institución.";
-    case "exclusive_domain_taken":
-      return "Otra institución tiene ese dominio como exclusivo.";
-    case "invalid_domain":
-      return "El dominio sugerido no es válido.";
-    case "archived_subject":
-      return "La institución está archivada.";
-    default:
-      return `No se pudo aplicar (código ${code}).`;
-  }
+  return sharedRefusalText({ status: 0, code, message: "", details: {} }, { fallback: "No se pudo aplicar", overrides: CARD_WORDS });
 }

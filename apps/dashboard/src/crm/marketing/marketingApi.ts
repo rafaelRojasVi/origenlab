@@ -12,6 +12,7 @@
  */
 
 import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
+import { newIdempotencyKey } from "../commandKey";
 import type {
   AudienceQuery,
   AudienceResponse,
@@ -125,12 +126,6 @@ export interface DraftFields {
   body_html: string;
   max_sends: number;
   recontact_interval_days: number;
-}
-
-function newIdempotencyKey(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 /** The single mutating request of this module. */
@@ -255,23 +250,6 @@ export function unblockCampaign(
 }
 
 export { newIdempotencyKey };
-
-/** The API's refusal `{detail: {code, message}}`, when the error carries one. */
-export function refusalOf(err: unknown): { code: string; message: string } | null {
-  if (!(err instanceof OperatorApiError)) return null;
-  if (err.message.includes("path_not_allowed")) return { code: "path_not_allowed", message: err.message };
-  try {
-    const parsed = JSON.parse(err.message) as { detail?: unknown };
-    const d = parsed.detail;
-    if (d && typeof d === "object" && "code" in d && "message" in d) {
-      return { code: String((d as { code: unknown }).code), message: String((d as { message: unknown }).message) };
-    }
-    if (typeof d === "string") return { code: `http_${err.status}`, message: d };
-  } catch {
-    /* not JSON */
-  }
-  return { code: `http_${err.status}`, message: err.message };
-}
 
 export type TestSendTarget = { campaign_id: string } | { v1_lane_key: string };
 export interface TestSendResult { status: "sent"; to: string; subject: string; gmail_message_id: string; sent_at: string }

@@ -1,9 +1,12 @@
 /**
  * NewPersonForm — modal form for create-person command.
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
+import { CommandErrorNotice } from "../CommandErrorNotice";
+import { useCommandKey } from "../commandKey";
+import { refusalFromError, type Refusal } from "../commandRefusal";
 import { FormField, SelectInput, TextInput } from "../ui";
-import { createPerson, newIdempotencyKey, refusalOf } from "./crmAuthoringApi";
+import { createPerson } from "./crmAuthoringApi";
 
 interface Props {
   onDone: () => void;
@@ -22,32 +25,31 @@ export function NewPersonForm({ onDone, onCancel, organizationOptions = [] }: Pr
   const [roleTitle, setRoleTitle] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const keyRef = useRef(newIdempotencyKey());
+  const [error, setError] = useState<Refusal | null>(null);
+  const key = useCommandKey();
 
   async function submit() {
     if (!displayName.trim() || !note.trim()) return;
     setBusy(true);
     setError(null);
+    const body = {
+      display_name: displayName.trim(),
+      given_name: givenName.trim() || null,
+      family_name: familyName.trim() || null,
+      title: title.trim() || null,
+      email: email.trim() || null,
+      phone: phone.trim() || null,
+      organization_id: orgId || null,
+      role_title: roleTitle.trim() || null,
+      note: note.trim(),
+    };
     try {
-      await createPerson(
-        {
-          display_name: displayName.trim(),
-          given_name: givenName.trim() || null,
-          family_name: familyName.trim() || null,
-          title: title.trim() || null,
-          email: email.trim() || null,
-          phone: phone.trim() || null,
-          organization_id: orgId || null,
-          role_title: roleTitle.trim() || null,
-          note: note.trim(),
-        },
-        keyRef.current,
-      );
+      await createPerson(body, key.keyFor(body));
+      key.settle();
       onDone();
     } catch (err) {
-      const r = refusalOf(err);
-      setError(r ? `${r.code}: ${r.message}` : String(err));
+      key.settle(err);
+      setError(refusalFromError(err));
       setBusy(false);
     }
   }
@@ -109,7 +111,7 @@ export function NewPersonForm({ onDone, onCancel, organizationOptions = [] }: Pr
             <TextInput id="new-person-note" value={note} onChange={setNote} placeholder="Fuente o motivo" required disabled={busy} maxLength={2000} />
           </FormField>
         </div>
-        {error ? <p className="mt-2 text-[11px] text-bad">{error}</p> : null}
+        <CommandErrorNotice refusal={error} className="mt-2 text-[11px] text-bad" />
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button
             type="button"
