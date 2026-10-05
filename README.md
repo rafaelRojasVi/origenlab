@@ -83,6 +83,7 @@ Two debounced cron loops keep ingest and publish separate: Gmail → SQLite (~3 
 | **Operator API** | [`apps/api/`](apps/api/) | FastAPI `:8001` | Durable CRM commands under `/operations/*` only (+ tender annex import) |
 | **Dashboard** | [`apps/dashboard/`](apps/dashboard/) | React, Vite `:5173` | Via allowlisted API commands only |
 | **Dashboard proxy** | [`apps/dashboard-proxy/`](apps/dashboard-proxy/) | Cloudflare Worker | Trust boundary — strict method+path allowlist |
+| **Worker** | [`apps/worker/`](apps/worker/) | Python 3.12, `uv`, Render Cron Job | Writes V2 `comms.*` and pending `evidence.*` only (Gmail capture) |
 
 **Default ports:** API `:8001` · Dashboard `:5173` · Web `:4321`
 

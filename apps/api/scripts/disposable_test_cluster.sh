@@ -3,10 +3,12 @@
 #
 # The V2 command and read tests (tests/v2_command_harness.py) skip unless two connections exist:
 # ORIGENLAB_V2_TEST_DSN, a maintenance login that may create a database and SET ROLE
-# origenlab_owner, and ORIGENLAB_V2_API_TEST_DSN, the real origenlab_api login. This script
-# starts a fresh `supabase/postgres` container, applies supabase/roles.sql as `postgres` (a
-# non-superuser, the way the CLI and CI do), gives `postgres` and `origenlab_api` random
-# passwords that live only as long as the container, and writes both DSNs to an env file.
+# origenlab_owner, and ORIGENLAB_V2_API_TEST_DSN, the real origenlab_api login; apps/worker's
+# database tests also need ORIGENLAB_V2_WORKER_TEST_DSN, the real origenlab_worker login. This
+# script starts a fresh `supabase/postgres` container, applies supabase/roles.sql as `postgres` (a
+# non-superuser, the way the CLI and CI do), gives `postgres`, `origenlab_api` and
+# `origenlab_worker` random passwords that live only as long as the container, and writes the
+# three DSNs to an env file.
 #
 # The cluster holds no data: its `postgres` database carries the migrated schema, empty, and the
 # suite creates and drops its own origenlab_test_<hex> databases beside it.
@@ -54,16 +56,18 @@ pull_image() {
 }
 
 up() {
-  local env_file="$1" name pg_pw api_pw port
+  local env_file="$1" name pg_pw api_pw worker_pw port
   [[ -n "$env_file" ]] || die "usage: up <env-file>"
   name="origenlab_apitest_$(openssl rand -hex 4)"
   pg_pw="$(secret)"
   api_pw="$(secret)"
+  worker_pw="$(secret)"
   # Workflow commands are read from the step's own output, so a caller must never capture this
   # script's stdout in Actions; the container name is also written to the env file.
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
     echo "::add-mask::$pg_pw"
     echo "::add-mask::$api_pw"
+    echo "::add-mask::$worker_pw"
   fi
 
   pull_image
@@ -91,6 +95,7 @@ up() {
   docker exec -i "$name" psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q >/dev/null <<SQL
 alter role postgres password '$pg_pw';
 alter role origenlab_api password '$api_pw';
+alter role origenlab_worker password '$worker_pw';
 SQL
 
   # The read-boundary tests (test_v2_read_boundary.py) read the maintenance connection's own
@@ -106,6 +111,7 @@ SQL
   cat > "$env_file" <<ENV
 ORIGENLAB_V2_TEST_DSN=postgresql://postgres:$pg_pw@127.0.0.1:$port/postgres
 ORIGENLAB_V2_API_TEST_DSN=postgresql://origenlab_api:$api_pw@127.0.0.1:$port/postgres
+ORIGENLAB_V2_WORKER_TEST_DSN=postgresql://origenlab_worker:$worker_pw@127.0.0.1:$port/postgres
 OL_TEST_CLUSTER=$name
 ENV
   trap - ERR

@@ -181,7 +181,8 @@ class CockpitRepository:
     # --------------------------------------------------------------- work queue
 
     def work_queue(self, limit: int, offset: int) -> dict[str, Any]:
-        """Typed work items ordered by age (oldest first) then kind."""
+        """Typed work items: every blocker kind first, ``pending_evidence`` last, each group oldest
+        first, then by kind (a steady Gmail inflow must not push a blocker off the page)."""
         with self._read() as cur:
             cur.execute("""
                 with items as (
@@ -302,43 +303,44 @@ class CockpitRepository:
                 )
                 select kind, reason, next_action, subject_ids, age_days, label
                 from items
-                order by sort_at, kind
+                order by (kind = 'pending_evidence'), sort_at, kind
                 limit %s offset %s
             """, (limit, offset))
             columns = [d[0] for d in cur.description]
             rows = cur.fetchall()
             items = [dict(zip(columns, r, strict=True)) for r in rows]
 
-            # total (count all branches without limit/offset)
+            # Per kind, over the whole queue (the page holds at most `limit` rows).
             cur.execute("""
-                select
-                  (select count(*) from evidence.source_record where review_status='pending' and not is_quarantined)
-                + (select count(*) from evidence.assertion where kind='document_reference' and resolution='unresolved')
-                + (select count(*) from (
+                select 'pending_evidence', count(*) from evidence.source_record
+                 where review_status = 'pending' and not is_quarantined
+                union all
+                select 'unresolved_document', count(*) from evidence.assertion
+                 where kind = 'document_reference' and resolution = 'unresolved'
+                union all
+                select 'canonical_undetermined', count(*) from (
                     select quote_id from crm.quote_revision
-                    where status <> 'void' and superseded_by_revision_no is null
-                    group by quote_id having count(*) > 1
-                  ) sub)
-                + (select count(*) from (
-                    select quote_number from crm.quote where number_origin='printed_historical'
-                    group by quote_number having count(distinct opportunity_id) > 1
-                  ) sub2)
-                + (select count(*) from crm.opportunity op
-                    where op.stage='lead' and op.organization_id is null
-                      and not exists (
-                        select 1 from crm.opportunity_organization oo
-                         where oo.opportunity_id=op.id and oo.role='requesting_institution' and oo.valid_to is null
-                      ))
-                + (select count(*) from crm.opportunity op
-                    where op.stage in ('quoting','negotiating') and op.closed_at is null
-                      and not exists (
-                        select 1 from crm.quote q
-                        join crm.quote_revision qr on qr.quote_id=q.id
-                        where q.opportunity_id=op.id and qr.status='sent' and qr.superseded_by_revision_no is null
-                      ))
-                as total
+                     where status <> 'void' and superseded_by_revision_no is null
+                     group by quote_id having count(*) > 1) s1
+                union all
+                select 'shared_printed_number', count(*) from (
+                    select quote_number from crm.quote where number_origin = 'printed_historical'
+                     group by quote_number having count(distinct opportunity_id) > 1) s2
+                union all
+                select 'case_without_institution', count(*) from crm.opportunity op
+                 where op.stage = 'lead' and op.organization_id is null
+                   and not exists (select 1 from crm.opportunity_organization oo
+                                    where oo.opportunity_id = op.id and oo.role = 'requesting_institution'
+                                      and oo.valid_to is null)
+                union all
+                select 'case_without_quote', count(*) from crm.opportunity op
+                 where op.stage in ('quoting', 'negotiating') and op.closed_at is null
+                   and not exists (select 1 from crm.quote q join crm.quote_revision qr on qr.quote_id = q.id
+                                    where q.opportunity_id = op.id and qr.status = 'sent'
+                                      and qr.superseded_by_revision_no is null)
             """)
-            total = int(cur.fetchone()[0])
+            counts = {kind: int(n) for kind, n in cur.fetchall()}
+            total = sum(counts.values())
 
         # convert jsonb to dict
         for item in items:
@@ -346,7 +348,7 @@ class CockpitRepository:
                 item["subject_ids"] = json.loads(item["subject_ids"])
             if item["age_days"] is not None:
                 item["age_days"] = int(item["age_days"])
-        return {"items": items, "total": total, "limit": limit, "offset": offset}
+        return {"items": items, "total": total, "counts": counts, "limit": limit, "offset": offset}
 
     # -------------------------------------------------------------- opportunities
 

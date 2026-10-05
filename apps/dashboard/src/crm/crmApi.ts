@@ -9,6 +9,7 @@
 import { fetchJsonGet, operatorApiUrl } from "../api/operatorClient";
 import type {
   DriveArchiveResponse,
+  MailSyncStatus,
   MarketingResponse,
   PipelineResponse,
   EquipmentInterestsResponse,
@@ -28,6 +29,7 @@ export const WORKSPACE_PATHS = {
   drive: "/v2/workspace/drive",
   review: "/v2/workspace/review",
   fx: "/v2/workspace/fx",
+  mailSync: "/v2/workspace/mail-sync",
   workQueue: "/v2/cockpit/work-queue",
 } as const;
 
@@ -40,5 +42,6 @@ export const fetchMarketing = () => fetchJsonGet<MarketingResponse>(operatorApiU
 export const fetchDriveArchive = () => fetchJsonGet<DriveArchiveResponse>(operatorApiUrl(WORKSPACE_PATHS.drive));
 export const fetchFx = () => fetchJsonGet<FxResponse>(operatorApiUrl(WORKSPACE_PATHS.fx));
 export const fetchReview = () => fetchJsonGet<ReviewResponse>(operatorApiUrl(WORKSPACE_PATHS.review));
+export const fetchMailSync = () => fetchJsonGet<MailSyncStatus>(operatorApiUrl(WORKSPACE_PATHS.mailSync));
 export const fetchWorkQueue = () =>
   fetchJsonGet<WorkQueueResponse>(operatorApiUrl(WORKSPACE_PATHS.workQueue, { limit: 200 }));

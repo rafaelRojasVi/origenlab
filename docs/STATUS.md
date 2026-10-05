@@ -27,7 +27,7 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
+Last verified: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed; §2.7.49 added 2026-10-04 from the branch's own validation, nothing deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
 hosting and GitHub facts of §2.4, §2.7.40, §2.8, §3.1 and §3.3 — read from the GitHub API, the
 public DNS and HTTP edge, the repository, and (later the same day) the Render API, the FastAPI
 Cloud CLI and the Cloudflare DNS table, all read-only, with nothing deployed, provisioned,
@@ -59,7 +59,7 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | 1 — Auth / `platform.*` | **PARTIAL — built locally, schema applied to `origenlab_clean`** | Shared Workspace sign-in with PIN-verified operator profiles and revocable sessions: four `platform` tables, API, proxy and dashboard (§2.7.38). The eight sign-in migrations were **applied to `origenlab_clean` on 2026-09-30** from canonical `main` (§2.7.39); the four tables are **empty** — no principal, profile, PIN or Google identity has been provisioned. Not applied to any hosted database, not deployed. Supabase Auth itself not started |
 | 2 — CRM identity + V1 row migration | NOT STARTED | |
 | 3 — Quotes, lines, FX, snapshot, PDF | **SCHEMA ONLY** | The three commercial-case tables — `crm.opportunity_organization`, `crm.opportunity_interest`, `crm.opportunity_evidence` — were built locally on 2026-09-22 and are **empty** (§2.7.16). No command, no quote work, nothing wired |
-| 4 — Evidence, comms, shadow Gmail, catalog, notices | NOT STARTED | |
+| 4 — Evidence, comms, shadow Gmail, catalog, notices | **PARTIAL — 4a Gmail capture built, not deployed** | §2.7.49. Catalog and notices not started |
 | 5 — Wave 1A load, send functions, reconciler | NOT STARTED | |
 | 6 — Sender handoff | NOT STARTED | |
 | 7 — Rollback window | NOT STARTED | |
@@ -191,9 +191,7 @@ Every gate below was run on this date, at `origin/main` @ `3c8dbf78` plus this b
 
 ### 2.2 What does not exist yet in V2
 
-- **`apps/worker`** — named in [`ARCHITECTURE.md`](ARCHITECTURE.md) §1–§2 as the owner of
-  Gmail sync, MIME parsing, PDF rendering, ChileCompra fetching and the single
-  send path. Not created.
+- **`apps/worker`** — created for the Gmail capture (§2.7.49); PDF rendering, ChileCompra fetching and the send path are still not built.
 - ~~**Any application code touching the seven schemas.**~~ **No longer true as of
   2026-09-21** — `apps/api` now carries a read-only `/v2/*` boundary over them (§2.7.2).
   There is still **no write path**: every durable V2 write is a migration tool, never an
@@ -1831,6 +1829,19 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Schema | none: `organization.confirmed` and `contact_point.updated` were already in `domain_event_type_check` |
 | Evidence | after merging `main` (#633): `apps/api/scripts/validate.sh` with disposable-cluster DSNs exported **3418 passed**, 120 skipped, 0 failed (skips: V1 Alembic-head `ORIGENLAB_TEST_POSTGRES_URL` tests and the TLS-server tests; no V2 DSN skip); dashboard `npm run validate` **536 passed** (44 files) + build; proxy `npm run validate` **345 passed** (5 files); public-repo hygiene passed; no customer name in the branch diff; gitleaks not installed locally (CI runs it) |
 | Not done | Worker not deployed (the two new proxy paths); the suggestions file not uploaded as a Render secret file and `ORIGENLAB_V2_ORG_SUGGESTIONS_FILE` unset, API not redeployed; the owner's manual check (confirm two institutions, apply suggestions to two, create two people) not run |
+
+### 2.7.49 Gmail capture into hosted V2 (Phase 4a), 2026-10-04 — built, not deployed
+
+| | |
+|---|---|
+| What | `apps/worker` (new; Python 3.12, uv; package `origenlab_worker`): `origenlab-worker gmail-sync [--init] [--dry-run]` captures contacto@ Inbox and Sent into `comms.message` (+ participants, attachment metadata, the `.eml` in the private bucket `mail`) and `pending` `gmail_message` evidence with the 21 keys of the staged records; drafts, spam and trash skipped; a draft sent later and a message moved out of spam are captured (history also lists `labelAdded`; a message that gained `SENT` or `INBOX` is read again); campaign copies kept as messages without evidence (R1, owner-approved 2026-10-04); one transaction per message, the cursor after the window, which in history mode is the profile `historyId` read before the list |
+| Reuse | V1 `classify_intake_folder`, `_require_stageable_gmail_payload`, `walk_attachments`, `recipients_header`, `date_iso_from_msg`, `message_from_bytes`, `classify_send_direction`, through `origenlab_worker/v1_reuse.py` (uv path dependency on `apps/email-pipeline`). The build therefore installs email-pipeline's OCR stack (about 650 MB venv) that the worker never imports (run-time RSS about 36 MB for a normal message; it grows with the message, see the Render row); slice 8 moves the seam |
+| Safety | `gmail.readonly` re-checked on every token refresh; `origenlab_worker` over `verify-full`; on every connect a probe of role, grants and policies that refuses any role membership, a port other than 5432 (6543 by name), any `crm.*`/`outbound.*` write other than `INSERT` on `outbound.campaign_reply` (the designed 4c reply-proposal lane, which 4a never writes; column-level grants, `TRIGGER` and view/matview writes included), and any executable `SECURITY DEFINER` function (extension-owned, trigger and no-`USAGE`-schema functions not counted; nothing skipped by schema name); a session advisory lock (a holder past 30 minutes that is not idle is reported as `locked_by_stuck_session`, exit 1, never ended); one JSON log line with no subject, address, id or exception text — its `error` is a Storage code, a Gmail kind, a database class with its SQLSTATE, or a class name; a paused cron opens no database session; no secret reaches a `repr` |
+| API, proxy, dashboard | `GET /v2/workspace/mail-sync` (state and last sync; no address) listed by the proxy; banner «Sincronización de correo detenida / atrasada»; the work queue lists every other kind before pending evidence and returns per-kind `counts`, which Revisión shows as each group's total |
+| Render | `render.yaml` declares the cron `origenlab-gmail-sync` (`*/10 * * * *`, Oregon, Standard, root `apps/worker`) — **not created** on Render; `buildFilter` also rebuilds it when `apps/email-pipeline/**` or `render.yaml` change, and `UV_PYTHON_DOWNLOADS=never` is its one plain (non-secret) value. Sizing: Standard stays. A message near `MAX_RAW_BYTES` (50 MiB) peaks at about 451 MB RSS and one around 24 MiB at about 238 MB, so Starter (512 MB) risks an out-of-memory kill that stalls every run on that message; downsizing is safe only if `MAX_RAW_BYTES` is lowered to match |
+| Docs | ARCHITECTURE §7 (the one Storage S3 key) and §8 (D1: a Render Cron Job until a queue exists); OPERATIONS §8 (runbook: exit codes, run modes, counters, StorageConflict recovery, owner checks), §11, §13; MIGRATION §5.1 (Gmail coverage proven from go-live) |
+| Evidence | `apps/worker/scripts/validate.sh`: **318 passed, 1 skipped** (the skip: this cluster has no extension-owned `SECURITY DEFINER` function the worker can execute — the first hosted `--init --dry-run` is that proof); worker suite on a disposable cluster (`apps/api/scripts/disposable_test_cluster.sh`): **318 passed, 1 skipped** (the same one; no DSN skip, the end-to-end test included); `apps/api/scripts/validate.sh` with the cluster DSNs: **3432 passed**, 120 skipped, 0 failed (skips: V1 Alembic-head `ORIGENLAB_TEST_POSTGRES_URL` tests and the TLS-server tests, as in §2.7.48; no V2 DSN skip); `apps/dashboard` `npm run validate`: **543 passed** (45 files) + build; `apps/dashboard-proxy` `npm run validate`: **351 passed** (5 files); public-repo hygiene check: passed |
+| Not done | the owner's setup (OPERATIONS.md §8.7, with its prerequisite that the fase-1 hosted load has created the `comms.mailbox` row): Google client and consent, the `origenlab_worker` password, bucket and S3 key, the cron service, `--init --dry-run` then `--init`, the switch. Owner checks open: Render's cron overlap behaviour; S3 keys on Pro covering every bucket; a project upload limit of at least 60 MB; whether Supavisor session mode releases advisory locks on disconnect; `payload_parity.py` showing 0 differences on the 92 staged records before go-live. The shadow week has not started and must confirm that mail sent from the Gmail web UI (an autosaved draft) is captured, by either route the code handles (a new `messageAdded`, or the draft id gaining `SENT`). Cron plan decided: keep `standard` (a message at the cap peaks at about 451 MB RSS, over Starter's 512 MB margin). Known limit (R7): label removals and other label changes after capture are not tracked |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 

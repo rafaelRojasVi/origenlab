@@ -62,3 +62,39 @@ describe("Revisión → Estado de los datos", () => {
     expect(screen.getByText("Enlaces de Drive guardados en el CRM")).toBeInTheDocument();
   });
 });
+
+describe("Revisión → Bloqueos del CRM", () => {
+  it("shows the queue's true count for a kind when the page holds only part of it", async () => {
+    const evidence = [0, 1].map((i) => ({
+      kind: "pending_evidence", reason: "r", next_action: "n",
+      subject_ids: { source_record_id: `00000000-0000-4000-8000-00000000000${i}` }, age_days: 1, label: "gmail_message",
+    }));
+    respond({
+      "/v2/cockpit/work-queue": { items: evidence, total: 412, counts: { pending_evidence: 412 }, limit: 200, offset: 0 },
+      "/v2/workspace/review": { archived_not_in_crm: [], open_assertions: [], ambiguous_organizations: [], drive_configured: true },
+    });
+    render(<ReviewPage navigate={() => undefined} />);
+    expect(await screen.findByText("· 412")).toBeInTheDocument();
+    expect(screen.getByText(/se muestran los 2 más antiguos/)).toBeInTheDocument();
+  });
+
+  it("counts only the blocking kinds in the tab badge, not the Gmail evidence", async () => {
+    const item = (kind: string, i: number) => ({
+      kind, reason: "r", next_action: "n", subject_ids: { id: `00000000-0000-4000-8000-00000000000${i}` },
+      age_days: 1, label: null,
+    });
+    respond({
+      "/v2/cockpit/work-queue": {
+        items: [item("shared_printed_number", 1), item("case_without_institution", 2), item("pending_evidence", 3)],
+        total: 414, counts: { shared_printed_number: 1, case_without_institution: 1, pending_evidence: 412 },
+        limit: 200, offset: 0,
+      },
+      "/v2/workspace/review": { archived_not_in_crm: [], open_assertions: [], ambiguous_organizations: [], drive_configured: true },
+    });
+    render(<ReviewPage navigate={() => undefined} />);
+    const tab = await screen.findByRole("button", { name: /Bloqueos del CRM/ });
+    await screen.findByText("Número impreso compartido");
+    expect(tab).toHaveTextContent(/Bloqueos del CRM\s*·?\s*2$/);
+    expect(tab).not.toHaveTextContent("414");
+  });
+});

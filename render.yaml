@@ -85,3 +85,54 @@ services:
       - type: rewrite
         source: /*
         destination: /index.html
+
+  # Phase 4a — Gmail capture (docs/OPERATIONS.md §8; docs/ARCHITECTURE.md §8, amendment D1). A cron
+  # job, not a long-running worker: every 10 minutes it captures new contacto@ mail into the hosted
+  # V2 database as origenlab_worker and exits. Gmail is read with gmail.readonly only; no crm.* or
+  # outbound.* row is ever written. Every value below is a Render secret the owner sets; the
+  # capture stays paused until ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED=true.
+  - type: cron
+    name: origenlab-gmail-sync
+    runtime: python
+    region: oregon
+    plan: standard
+    rootDir: apps/worker
+    schedule: "*/10 * * * *"
+    buildCommand: uv sync --frozen --no-dev
+    startCommand: uv run --no-sync origenlab-worker gmail-sync
+    # The cron imports V1's parser from apps/email-pipeline (v1_reuse), so a change there rebuilds it
+    # too; paths are relative to the repository root, not rootDir.
+    buildFilter:
+      paths:
+        - apps/worker/**
+        - apps/email-pipeline/**
+        - render.yaml
+    envVars:
+      # Not a secret: use the image's Python, never download one at build or run time.
+      - key: UV_PYTHON_DOWNLOADS
+        value: never
+      # The interpreter apps/worker/.python-version pins, in case Render does not read that file.
+      - key: PYTHON_VERSION
+        value: 3.12.13
+      - key: ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED
+        sync: false
+      - key: ORIGENLAB_WORKER_DATABASE_URL
+        sync: false
+      - key: ORIGENLAB_WORKER_DATABASE_EXPECTED_HOST
+        sync: false
+      - key: ORIGENLAB_WORKER_DATABASE_CA_PEM
+        sync: false
+      - key: ORIGENLAB_WORKER_GMAIL_CLIENT_ID
+        sync: false
+      - key: ORIGENLAB_WORKER_GMAIL_CLIENT_SECRET
+        sync: false
+      - key: ORIGENLAB_WORKER_GMAIL_REFRESH_TOKEN
+        sync: false
+      - key: ORIGENLAB_WORKER_STORAGE_S3_ENDPOINT
+        sync: false
+      - key: ORIGENLAB_WORKER_STORAGE_S3_REGION
+        sync: false
+      - key: ORIGENLAB_WORKER_STORAGE_S3_ACCESS_KEY_ID
+        sync: false
+      - key: ORIGENLAB_WORKER_STORAGE_S3_SECRET_ACCESS_KEY
+        sync: false

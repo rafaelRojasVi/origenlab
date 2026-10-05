@@ -92,9 +92,7 @@ def test_kpi_response_fields() -> None:
 
 
 def test_work_queue_response_fields() -> None:
-    model = WorkQueueResponse.model_fields
-    assert "items" in model
-    assert "total" in model
+    assert {"items", "total", "counts", "limit", "offset"} <= set(WorkQueueResponse.model_fields)
 
 
 def test_work_item_kinds_closed() -> None:
@@ -493,6 +491,24 @@ def test_db_work_queue_returns_a_paginated_dict(world) -> None:
         assert item["kind"] in WORK_ITEM_KINDS
         assert "subject_ids" in item
         assert isinstance(item["subject_ids"], dict)
+
+
+@needs_db
+def test_db_work_queue_lists_every_other_kind_before_pending_evidence(world) -> None:
+    """A steady Gmail inflow must never push a blocker off the 200-row page the dashboard reads.
+    The world's source record is older than its assertion and its opportunity, so oldest-first
+    put `pending_evidence` first."""
+    import psycopg
+
+    from origenlab_api.v2.cockpit_repository import CockpitRepository
+
+    result = CockpitRepository(psycopg.connect, runtime_dsn(world["dsn"])).work_queue(limit=200, offset=0)
+    kinds = [item["kind"] for item in result["items"]]
+    assert "pending_evidence" in kinds and kinds[0] != "pending_evidence"
+    first = kinds.index("pending_evidence")
+    assert all(kind == "pending_evidence" for kind in kinds[first:])
+    assert set(result["counts"]) == WORK_ITEM_KINDS
+    assert result["counts"]["pending_evidence"] >= 1 and result["total"] == sum(result["counts"].values())
 
 
 # ──────────────────────────────────── opportunities ─────────────────────────

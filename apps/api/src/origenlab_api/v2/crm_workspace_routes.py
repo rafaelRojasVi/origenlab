@@ -439,6 +439,12 @@ def get_review(_: Operator, repo: Repo) -> Any:
     return repo.review()
 
 
+@workspace_router.get("/mail-sync")
+def get_mail_sync(_: Operator, repo: Repo) -> Any:
+    """Gmail capture status for the dashboard banner (Phase 4a): state and last sync time."""
+    return repo.mail_sync()
+
+
 #: The process's exchange-rate cache, unless the app supplies its own (tests do).
 _FX_RATES = FxRates()
 
