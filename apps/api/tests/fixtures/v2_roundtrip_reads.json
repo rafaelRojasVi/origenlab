@@ -1,0 +1,1525 @@
+{
+ "campaign_blocks": {
+  "active": [
+   {
+    "active": true,
+    "block_id": "<id1>",
+    "campaign_id": null,
+    "legacy_campaign_key": "septiembre18-2026-wave2",
+    "lift_reason": null,
+    "lifted_at": null,
+    "lifted_by": null,
+    "placed_at": "<timestamp>",
+    "placed_by": "Migración",
+    "placed_by_kind": "migrator",
+    "reason": "Retención por incidente del 2026-09-21: la segunda ola de la campaña de septiembre de 2026 queda detenida. Sus 279 candidatos restantes se contuvieron en el registro V1 (estado blocked, incident_hold_september_2026) porque no existía una pausa de campaña. Sólo un comando explícito de un administrador la levanta; no vence.",
+    "reference": "incident_hold_september_2026",
+    "scope": "legacy_campaign",
+    "scope_label": "Campaña del registro V1",
+    "version": 1
+   }
+  ],
+  "all_campaigns": {
+   "block": null,
+   "block_version": 0,
+   "blocked": false
+  },
+  "by_campaign": {
+   "<camp_a>": {
+    "block": null,
+    "block_version": 0,
+    "held": false,
+    "refusals": []
+   },
+   "<camp_b>": {
+    "block": null,
+    "block_version": 0,
+    "held": false,
+    "refusals": []
+   }
+  },
+  "commands_enabled": false,
+  "effect": "Mientras el bloqueo esté activo se rechaza congelar la audiencia, aprobar, activar, registrar una prueba en seco, reservar destinatarios y crear o despachar envíos. El bloqueo no envía, no encola, no toca Gmail ni modifica la audiencia congelada. Sólo un administrador lo levanta, con un motivo; no vence.",
+  "expires": false,
+  "legacy": [
+   {
+    "active": true,
+    "block_id": "<id1>",
+    "campaign_id": null,
+    "legacy_campaign_key": "septiembre18-2026-wave2",
+    "lift_reason": null,
+    "lifted_at": null,
+    "lifted_by": null,
+    "placed_at": "<timestamp>",
+    "placed_by": "Migración",
+    "placed_by_kind": "migrator",
+    "reason": "Retención por incidente del 2026-09-21: la segunda ola de la campaña de septiembre de 2026 queda detenida. Sus 279 candidatos restantes se contuvieron en el registro V1 (estado blocked, incident_hold_september_2026) porque no existía una pausa de campaña. Sólo un comando explícito de un administrador la levanta; no vence.",
+    "reference": "incident_hold_september_2026",
+    "scope": "legacy_campaign",
+    "scope_label": "Campaña del registro V1",
+    "version": 1
+   }
+  ],
+  "may_decide": false,
+  "recently_lifted": [],
+  "storage": {
+   "database": "<database>",
+   "table": "outbound.campaign_block"
+  }
+ },
+ "cockpit_kpis": {
+  "evidence": {
+   "pending_source_records": 2,
+   "revisions_missing_document_entry": 0,
+   "revisions_missing_thread_id": 0,
+   "unresolved_document_references": 0
+  },
+  "opportunities": {
+   "by_stage": {
+    "abandoned": 0,
+    "lead": 1,
+    "lost": 1,
+    "negotiating": 0,
+    "qualified": 0,
+    "qualifying": 0,
+    "quoting": 1,
+    "won": 0
+   },
+   "leads_without_institution": 1
+  },
+  "quotations": {
+   "quotes_with_undetermined_canonical": 0,
+   "sent_historical_revisions": 1,
+   "shared_printed_numbers": 0,
+   "void_historical_revisions": 0
+  }
+ },
+ "cockpit_opportunities": {
+  "items": [
+   {
+    "close_reason": "precio",
+    "closed_at": "<timestamp>",
+    "created_at": "<timestamp>",
+    "has_requesting_institution": true,
+    "interest_count": 0,
+    "opportunity_id": "<lost>",
+    "organization_id": "<lab>",
+    "organization_name": "Laboratorio Ficticio Norte",
+    "quote_count": 0,
+    "sent_revision_count": 0,
+    "stage": "lost",
+    "title": "Balanza analítica",
+    "updated_at": "<timestamp>"
+   },
+   {
+    "close_reason": null,
+    "closed_at": null,
+    "created_at": "<timestamp>",
+    "has_requesting_institution": false,
+    "interest_count": 0,
+    "opportunity_id": "<lead>",
+    "organization_id": null,
+    "organization_name": null,
+    "quote_count": 0,
+    "sent_revision_count": 0,
+    "stage": "lead",
+    "title": "Consulta centrífuga sin institución",
+    "updated_at": "<timestamp>"
+   },
+   {
+    "close_reason": null,
+    "closed_at": null,
+    "created_at": "<timestamp>",
+    "has_requesting_institution": true,
+    "interest_count": 1,
+    "opportunity_id": "<case>",
+    "organization_id": "<uni>",
+    "organization_name": "Universidad Ficticia del Sur",
+    "quote_count": 1,
+    "sent_revision_count": 1,
+    "stage": "quoting",
+    "title": "Cotización 01024-26",
+    "updated_at": "<timestamp>"
+   }
+  ],
+  "limit": 20,
+  "offset": 0,
+  "total": 3
+ },
+ "cockpit_opportunities_past_end": {
+  "items": [],
+  "limit": 20,
+  "offset": 500,
+  "total": 3
+ },
+ "contacts": {
+  "items": [
+   {
+    "address": "ana@uni-ficticia.test",
+    "address_control_count": 1,
+    "case_count": 1,
+    "confirmation": "confirmed",
+    "contact_point_id": "<cp_ana>",
+    "created_at": "<timestamp>",
+    "organization_id": "<uni>",
+    "organization_name": "Universidad Ficticia del Sur",
+    "person_display_name": "Ana Ficticia",
+    "person_id": "<ana>",
+    "usage": "work"
+   },
+   {
+    "address": "compras@lab-ficticio.test",
+    "address_control_count": 0,
+    "case_count": 0,
+    "confirmation": "machine_proposed",
+    "contact_point_id": "<cp_lab>",
+    "created_at": "<timestamp>",
+    "organization_id": "<lab>",
+    "organization_name": "Laboratorio Ficticio Norte",
+    "person_display_name": null,
+    "person_id": null,
+    "usage": "shared_mailbox"
+   },
+   {
+    "address": "baja@uni-ficticia.test",
+    "address_control_count": 1,
+    "case_count": 0,
+    "confirmation": "machine_proposed",
+    "contact_point_id": "<id2>",
+    "created_at": "<timestamp>",
+    "organization_id": null,
+    "organization_name": null,
+    "person_display_name": null,
+    "person_id": null,
+    "usage": "unattributed"
+   },
+   {
+    "address": "suelto@otro-ficticio.test",
+    "address_control_count": 0,
+    "case_count": 0,
+    "confirmation": "machine_proposed",
+    "contact_point_id": "<id3>",
+    "created_at": "<timestamp>",
+    "organization_id": null,
+    "organization_name": null,
+    "person_display_name": null,
+    "person_id": null,
+    "usage": "unattributed"
+   }
+  ],
+  "limit": 20,
+  "offset": 0,
+  "total": 4
+ },
+ "contacts_past_end": {
+  "items": [],
+  "limit": 20,
+  "offset": 500,
+  "total": 4
+ },
+ "equipment_interests": {
+  "institutions": [
+   {
+    "interests": [
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": "machine_proposed",
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": true,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": null,
+       "interest_id": "<id4>",
+       "kind": "crm_interest",
+       "label": "Interés registrado en el caso",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": null
+      }
+     },
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": null,
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": false,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": "COT 01024-26 UP200St.pdf",
+       "interest_id": null,
+       "kind": "quotation_evidence",
+       "label": "Evidencia de cotización (correo enviado)",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": "<sr>"
+      }
+     }
+    ],
+    "name": "Universidad Ficticia del Sur",
+    "organization_id": "<uni>"
+   }
+  ],
+  "lines": [
+   {
+    "address_only": 0,
+    "brand_ids": [
+     "adam-equipment"
+    ],
+    "color": "#7d5310",
+    "crm_people": 0,
+    "family_id": "pesaje-humedad",
+    "institutions": 0,
+    "name": "Pesaje y análisis de humedad"
+   },
+   {
+    "address_only": 0,
+    "brand_ids": [
+     "ika"
+    ],
+    "color": "#6b3f96",
+    "crm_people": 0,
+    "family_id": "dispersion-homogeneizacion",
+    "institutions": 0,
+    "name": "Dispersión y homogeneización"
+   },
+   {
+    "address_only": 2,
+    "brand_ids": [
+     "hielscher"
+    ],
+    "color": "#1d4f7c",
+    "crm_people": 1,
+    "family_id": "sonicacion",
+    "institutions": 1,
+    "name": "Sonicación y procesamiento ultrasónico"
+   },
+   {
+    "address_only": 0,
+    "brand_ids": [
+     "ortoalresa"
+    ],
+    "color": "#115e59",
+    "crm_people": 0,
+    "family_id": "centrifugacion",
+    "institutions": 0,
+    "name": "Centrifugación y separación"
+   },
+   {
+    "address_only": 0,
+    "brand_ids": [
+     "loeser"
+    ],
+    "color": "#15697f",
+    "crm_people": 0,
+    "family_id": "osmometria",
+    "institutions": 0,
+    "name": "Osmometría"
+   },
+   {
+    "address_only": 0,
+    "brand_ids": [
+     "serva"
+    ],
+    "color": "#8f2f4f",
+    "crm_people": 0,
+    "family_id": "electroforesis",
+    "institutions": 0,
+    "name": "Electroforesis"
+   }
+  ],
+  "persons": [
+   {
+    "address": "ana@uni-ficticia.test",
+    "address_ref": "ecb2532a381e26dc482dbe82",
+    "contact_point_id": "<cp_ana>",
+    "display_name": "Ana Ficticia",
+    "interests": [
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": "machine_proposed",
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": true,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": null,
+       "interest_id": "<id4>",
+       "kind": "crm_interest",
+       "label": "Interés registrado en el caso",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": null
+      }
+     },
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": null,
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": false,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": "COT 01024-26 UP200St.pdf",
+       "interest_id": null,
+       "kind": "quotation_evidence",
+       "label": "Evidencia de cotización (correo enviado)",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": "<sr>"
+      }
+     }
+    ],
+    "key": "cp:<cp_ana>",
+    "link": "crm_person",
+    "organization_ids": [
+     "<uni>"
+    ],
+    "person_id": "<ana>"
+   },
+   {
+    "address": "baja@uni-ficticia.test",
+    "address_ref": "ba148223253f652818b6fafe",
+    "contact_point_id": "<id2>",
+    "display_name": null,
+    "interests": [
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": null,
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": false,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": "COT 01024-26 UP200St.pdf",
+       "interest_id": null,
+       "kind": "quotation_evidence",
+       "label": "Evidencia de cotización (correo enviado)",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": "<sr>"
+      }
+     }
+    ],
+    "key": "cp:<id2>",
+    "link": "address_only",
+    "organization_ids": [
+     "<uni>"
+    ],
+    "person_id": null
+   },
+   {
+    "address": "ventas@fabricante-ficticio.test",
+    "address_ref": "eb714cf0c68729341e5867a9",
+    "contact_point_id": null,
+    "display_name": null,
+    "interests": [
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": null,
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": false,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": "COT 01024-26 UP200St.pdf",
+       "interest_id": null,
+       "kind": "quotation_evidence",
+       "label": "Evidencia de cotización (correo enviado)",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": "<sr>"
+      }
+     }
+    ],
+    "key": "addr:eb714cf0c68729341e5867a9",
+    "link": "address_only",
+    "organization_ids": [
+     "<uni>"
+    ],
+    "person_id": null
+   }
+  ]
+ },
+ "marketing": {
+  "campaigns": [
+   {
+    "approved_at": null,
+    "attempt_totals": null,
+    "attempts_without_date": 0,
+    "audience_frozen_at": null,
+    "campaign_id": "<camp_b>",
+    "content_frozen_at": null,
+    "content_sha256": null,
+    "created_at": "<timestamp>",
+    "equipment_lines": [],
+    "first_sent_at": null,
+    "has_html": true,
+    "hold": {
+     "all_campaigns": {
+      "block": null,
+      "block_version": 0,
+      "blocked": false
+     },
+     "block": null,
+     "block_version": 0,
+     "effect": "Mientras el bloqueo esté activo se rechaza congelar la audiencia, aprobar, activar, registrar una prueba en seco, reservar destinatarios y crear o despachar envíos. El bloqueo no envía, no encola, no toca Gmail ni modifica la audiencia congelada. Sólo un administrador lo levanta, con un motivo; no vence.",
+     "expires": false,
+     "held": false,
+     "refusals": []
+    },
+    "html_state": "not_frozen",
+    "last_sent_at": null,
+    "name": "Borrador Ficticio",
+    "origin": "native_v2",
+    "planned_for_at": null,
+    "planned_for_date": null,
+    "planning_version": 0,
+    "preheader": null,
+    "recipients_by_state": {},
+    "replies": {
+     "count": null,
+     "label": "Respuestas no sincronizadas desde Gmail",
+     "state": "not_synced"
+    },
+    "replies_recorded": 0,
+    "send_attempts": [],
+    "send_batches": [],
+    "sender_address": "ventas@origenlab-ficticio.test",
+    "sender_name": "OrigenLab Ficticio",
+    "status": "draft",
+    "subject": "Ofertas de laboratorio",
+    "subject_state": "recorded",
+    "totals": null,
+    "updated_at": "<timestamp>",
+    "version": 1
+   },
+   {
+    "approved_at": null,
+    "attempt_totals": {
+     "accepted": 2,
+     "attempts": 2,
+     "delivery_bounced": 0,
+     "delivery_confirmed": 0,
+     "delivery_pending": 2,
+     "first_accepted_at": "<timestamp>",
+     "last_accepted_at": "<timestamp>",
+     "other": 0,
+     "rejected": 0,
+     "rejected_undated": 0,
+     "with_provider_id": 0
+    },
+    "attempts_without_date": 0,
+    "audience_frozen_at": null,
+    "campaign_id": "<camp_a>",
+    "content_frozen_at": null,
+    "content_sha256": null,
+    "created_at": "<timestamp>",
+    "equipment_lines": [],
+    "first_sent_at": "<timestamp>",
+    "has_html": false,
+    "hold": {
+     "all_campaigns": {
+      "block": null,
+      "block_version": 0,
+      "blocked": false
+     },
+     "block": null,
+     "block_version": 0,
+     "effect": "Mientras el bloqueo esté activo se rechaza congelar la audiencia, aprobar, activar, registrar una prueba en seco, reservar destinatarios y crear o despachar envíos. El bloqueo no envía, no encola, no toca Gmail ni modifica la audiencia congelada. Sólo un administrador lo levanta, con un motivo; no vence.",
+     "expires": false,
+     "held": false,
+     "refusals": []
+    },
+    "html_state": "not_archived",
+    "last_sent_at": "<timestamp>",
+    "name": "Campaña Ficticia Archivada",
+    "origin": "native_v2",
+    "planned_for_at": null,
+    "planned_for_date": null,
+    "planning_version": 0,
+    "preheader": null,
+    "recipients_by_state": {
+     "bounced": 1,
+     "excluded": 1,
+     "sent": 1
+    },
+    "replies": {
+     "count": 1,
+     "label": "Respuestas registradas por lotes aplicados a mano; Gmail no se sincroniza automáticamente.",
+     "state": "partial"
+    },
+    "replies_recorded": 1,
+    "send_attempts": [
+     {
+      "count": 2,
+      "delivery_state": "pending",
+      "submission_state": "accepted"
+     }
+    ],
+    "send_batches": [
+     {
+      "accepted": 1,
+      "day": "2026-09-02",
+      "first_accepted_at": "<timestamp>",
+      "last_accepted_at": "<timestamp>"
+     },
+     {
+      "accepted": 1,
+      "day": "2026-09-03",
+      "first_accepted_at": "<timestamp>",
+      "last_accepted_at": "<timestamp>"
+     }
+    ],
+    "sender_address": "ventas@origenlab-ficticio.test",
+    "sender_name": "OrigenLab Ficticio",
+    "status": "archived",
+    "subject": null,
+    "subject_state": "not_set",
+    "totals": {
+     "audience": 3,
+     "blocked": 1,
+     "bounced": 1,
+     "excluded": 1,
+     "included": 2,
+     "rejected": 0,
+     "responses": 1,
+     "sent": 2,
+     "unsent": 0
+    },
+    "updated_at": "<timestamp>",
+    "version": 1
+   }
+  ],
+  "contact_controls": [
+   {
+    "count": 1,
+    "kind": "block",
+    "scope": "address"
+   },
+   {
+    "count": 1,
+    "kind": "prior_contact",
+    "scope": "address"
+   }
+  ],
+  "holds": {
+   "active": [
+    {
+     "active": true,
+     "block_id": "<id1>",
+     "campaign_id": null,
+     "legacy_campaign_key": "septiembre18-2026-wave2",
+     "lift_reason": null,
+     "lifted_at": null,
+     "lifted_by": null,
+     "placed_at": "<timestamp>",
+     "placed_by": "Migración",
+     "placed_by_kind": "migrator",
+     "reason": "Retención por incidente del 2026-09-21: la segunda ola de la campaña de septiembre de 2026 queda detenida. Sus 279 candidatos restantes se contuvieron en el registro V1 (estado blocked, incident_hold_september_2026) porque no existía una pausa de campaña. Sólo un comando explícito de un administrador la levanta; no vence.",
+     "reference": "incident_hold_september_2026",
+     "scope": "legacy_campaign",
+     "scope_label": "Campaña del registro V1",
+     "version": 1
+    }
+   ],
+   "all_campaigns": {
+    "block": null,
+    "block_version": 0,
+    "blocked": false
+   },
+   "effect": "Mientras el bloqueo esté activo se rechaza congelar la audiencia, aprobar, activar, registrar una prueba en seco, reservar destinatarios y crear o despachar envíos. El bloqueo no envía, no encola, no toca Gmail ni modifica la audiencia congelada. Sólo un administrador lo levanta, con un motivo; no vence.",
+   "expires": false,
+   "legacy": [
+    {
+     "active": true,
+     "block_id": "<id1>",
+     "campaign_id": null,
+     "legacy_campaign_key": "septiembre18-2026-wave2",
+     "lift_reason": null,
+     "lifted_at": null,
+     "lifted_by": null,
+     "placed_at": "<timestamp>",
+     "placed_by": "Migración",
+     "placed_by_kind": "migrator",
+     "reason": "Retención por incidente del 2026-09-21: la segunda ola de la campaña de septiembre de 2026 queda detenida. Sus 279 candidatos restantes se contuvieron en el registro V1 (estado blocked, incident_hold_september_2026) porque no existía una pausa de campaña. Sólo un comando explícito de un administrador la levanta; no vence.",
+     "reference": "incident_hold_september_2026",
+     "scope": "legacy_campaign",
+     "scope_label": "Campaña del registro V1",
+     "version": 1
+    }
+   ],
+   "recently_lifted": []
+  },
+  "replies_note": "Las respuestas a campañas no se han importado; cero no significa sin respuestas.",
+  "storage": {
+   "database": "<database>",
+   "table": "outbound.campaign"
+  }
+ },
+ "marketing_audience": {
+  "campaign_holds": {
+   "all_campaigns": {
+    "block": null,
+    "block_version": 0,
+    "blocked": false
+   },
+   "effect": "Mientras el bloqueo esté activo se rechaza congelar la audiencia, aprobar, activar, registrar una prueba en seco, reservar destinatarios y crear o despachar envíos. El bloqueo no envía, no encola, no toca Gmail ni modifica la audiencia congelada. Sólo un administrador lo levanta, con un motivo; no vence.",
+   "legacy": [
+    {
+     "active": true,
+     "block_id": "<id1>",
+     "campaign_id": null,
+     "legacy_campaign_key": "septiembre18-2026-wave2",
+     "lift_reason": null,
+     "lifted_at": null,
+     "lifted_by": null,
+     "placed_at": "<timestamp>",
+     "placed_by": "Migración",
+     "placed_by_kind": "migrator",
+     "reason": "Retención por incidente del 2026-09-21: la segunda ola de la campaña de septiembre de 2026 queda detenida. Sus 279 candidatos restantes se contuvieron en el registro V1 (estado blocked, incident_hold_september_2026) porque no existía una pausa de campaña. Sólo un comando explícito de un administrador la levanta; no vence.",
+     "reference": "incident_hold_september_2026",
+     "scope": "legacy_campaign",
+     "scope_label": "Campaña del registro V1",
+     "version": 1
+    }
+   ]
+  },
+  "coverage": {
+   "brand_linkage": {
+    "adam-equipment": {
+     "crm": 0,
+     "evidence_only": 0
+    },
+    "hielscher": {
+     "crm": 1,
+     "evidence_only": 1
+    },
+    "ika": {
+     "crm": 0,
+     "evidence_only": 0
+    },
+    "loeser": {
+     "crm": 0,
+     "evidence_only": 0
+    },
+    "ortoalresa": {
+     "crm": 0,
+     "evidence_only": 0
+    },
+    "serva": {
+     "crm": 0,
+     "evidence_only": 0
+    }
+   },
+   "case_titles_with_mentions": 0,
+   "crm_interest_rows": 1,
+   "crm_interests_matched": 1,
+   "crm_interests_unmatched": 0,
+   "quotation_evidence_already_recorded": 0,
+   "quotation_evidence_records": 1,
+   "quotation_evidence_with_mentions": 1,
+   "recipients_without_contact_point": 1,
+   "review_queue": {
+    "organization_name:ambiguous": 1,
+    "supplier_candidate:unresolved": 1
+   }
+  },
+  "institutions": [
+   {
+    "destinations": [
+     {
+      "address": "ana@uni-ficticia.test",
+      "eligibility": {
+       "eligible": true,
+       "notes": [
+        {
+         "code": "prior_contact",
+         "label": "Contacto previo registrado (se respeta el intervalo al congelar la audiencia)"
+        }
+       ],
+       "reasons": []
+      },
+      "key": "cp:<cp_ana>",
+      "via": "recipient_of_case_quotation"
+     },
+     {
+      "address": "baja@uni-ficticia.test",
+      "eligibility": {
+       "eligible": false,
+       "notes": [],
+       "reasons": [
+        {
+         "code": "blocked_address",
+         "label": "Dirección bloqueada"
+        }
+       ]
+      },
+      "key": "cp:<id2>",
+      "via": "recipient_of_case_quotation"
+     },
+     {
+      "address": "ventas@fabricante-ficticio.test",
+      "eligibility": {
+       "eligible": false,
+       "notes": [
+        {
+         "code": "no_contact_point",
+         "label": "Dirección sin punto de contacto en el CRM (identidad sin resolver)"
+        }
+       ],
+       "reasons": [
+        {
+         "code": "supplier",
+         "label": "Proveedor o fabricante"
+        }
+       ]
+      },
+      "key": "addr:eb714cf0c68729341e5867a9",
+      "via": "recipient_of_case_quotation"
+     }
+    ],
+    "interests": [
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": "machine_proposed",
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": true,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": null,
+       "interest_id": "<id4>",
+       "kind": "crm_interest",
+       "label": "Interés registrado en el caso",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": null
+      }
+     },
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": null,
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": false,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": "COT 01024-26 UP200St.pdf",
+       "interest_id": null,
+       "kind": "quotation_evidence",
+       "label": "Evidencia de cotización (correo enviado)",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": "<sr>"
+      }
+     }
+    ],
+    "name": "Universidad Ficticia del Sur",
+    "organization_id": "<uni>",
+    "other_interest_count": 0
+   }
+  ],
+  "persons": [
+   {
+    "address": "ana@uni-ficticia.test",
+    "address_ref": "ecb2532a381e26dc482dbe82",
+    "contact_point_id": "<cp_ana>",
+    "display_name": "Ana Ficticia",
+    "eligibility": {
+     "eligible": true,
+     "notes": [
+      {
+       "code": "prior_contact",
+       "label": "Contacto previo registrado (se respeta el intervalo al congelar la audiencia)"
+      }
+     ],
+     "reasons": []
+    },
+    "interests": [
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": "machine_proposed",
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": true,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": null,
+       "interest_id": "<id4>",
+       "kind": "crm_interest",
+       "label": "Interés registrado en el caso",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": null
+      }
+     },
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": null,
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": false,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": "COT 01024-26 UP200St.pdf",
+       "interest_id": null,
+       "kind": "quotation_evidence",
+       "label": "Evidencia de cotización (correo enviado)",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": "<sr>"
+      }
+     }
+    ],
+    "key": "cp:<cp_ana>",
+    "organization_ids": [
+     "<uni>"
+    ],
+    "other_interest_count": 0,
+    "person_id": "<ana>"
+   },
+   {
+    "address": "baja@uni-ficticia.test",
+    "address_ref": "ba148223253f652818b6fafe",
+    "contact_point_id": "<id2>",
+    "display_name": null,
+    "eligibility": {
+     "eligible": false,
+     "notes": [],
+     "reasons": [
+      {
+       "code": "blocked_address",
+       "label": "Dirección bloqueada"
+      }
+     ]
+    },
+    "interests": [
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": null,
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": false,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": "COT 01024-26 UP200St.pdf",
+       "interest_id": null,
+       "kind": "quotation_evidence",
+       "label": "Evidencia de cotización (correo enviado)",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": "<sr>"
+      }
+     }
+    ],
+    "key": "cp:<id2>",
+    "organization_ids": [
+     "<uni>"
+    ],
+    "other_interest_count": 0,
+    "person_id": null
+   },
+   {
+    "address": "ventas@fabricante-ficticio.test",
+    "address_ref": "eb714cf0c68729341e5867a9",
+    "contact_point_id": null,
+    "display_name": null,
+    "eligibility": {
+     "eligible": false,
+     "notes": [
+      {
+       "code": "no_contact_point",
+       "label": "Dirección sin punto de contacto en el CRM (identidad sin resolver)"
+      }
+     ],
+     "reasons": [
+      {
+       "code": "supplier",
+       "label": "Proveedor o fabricante"
+      }
+     ]
+    },
+    "interests": [
+     {
+      "basis": "requested_quotation",
+      "basis_label": "Pidió cotización",
+      "brand_id": "hielscher",
+      "confirmation": null,
+      "date": "<timestamp>",
+      "family_id": "sonicacion",
+      "matched_term": "UP200St",
+      "matched_text": "up200st",
+      "model_id": "hielscher-up200st",
+      "recorded_in_crm": false,
+      "source": {
+       "case_title": "Cotización 01024-26",
+       "detail": "COT 01024-26 UP200St.pdf",
+       "interest_id": null,
+       "kind": "quotation_evidence",
+       "label": "Evidencia de cotización (correo enviado)",
+       "opportunity_id": "<case>",
+       "quote_numbers": [
+        "01024-26"
+       ],
+       "source_record_id": "<sr>"
+      }
+     }
+    ],
+    "key": "addr:eb714cf0c68729341e5867a9",
+    "organization_ids": [
+     "<uni>"
+    ],
+    "other_interest_count": 0,
+    "person_id": null
+   }
+  ],
+  "sending": {
+   "eligible_unique_destinations": 1,
+   "excluded_by_reason": [
+    {
+     "code": "blocked_address",
+     "count": 1,
+     "label": "Dirección bloqueada"
+    },
+    {
+     "code": "supplier",
+     "count": 1,
+     "label": "Proveedor o fabricante"
+    }
+   ],
+   "unique_destinations": 3
+  }
+ },
+ "organizations": {
+  "facets": {
+   "all": 3,
+   "customers": 2,
+   "others": 0,
+   "suppliers": 1
+  },
+  "items": [
+   {
+    "activity_count": 0,
+    "case_count": 1,
+    "cases_as_end_user_institution": 0,
+    "cases_as_funder": 0,
+    "cases_as_manufacturer": 0,
+    "cases_as_mentioned": 0,
+    "cases_as_purchasing_agent": 0,
+    "cases_as_requesting_institution": 1,
+    "cases_as_supplier": 0,
+    "confirmation": "confirmed",
+    "confirmed_people_count": 0,
+    "contact_point_count": 1,
+    "created_at": "<timestamp>",
+    "interest_count": 1,
+    "kind": "institution",
+    "last_activity_at": null,
+    "name": "Universidad Ficticia del Sur",
+    "open_case_count": 1,
+    "organization_id": "<uni>",
+    "parent_organization_id": null,
+    "quote_count": 1,
+    "relationship_roles": []
+   },
+   {
+    "activity_count": 0,
+    "case_count": 1,
+    "cases_as_end_user_institution": 0,
+    "cases_as_funder": 0,
+    "cases_as_manufacturer": 0,
+    "cases_as_mentioned": 0,
+    "cases_as_purchasing_agent": 0,
+    "cases_as_requesting_institution": 1,
+    "cases_as_supplier": 0,
+    "confirmation": "machine_proposed",
+    "confirmed_people_count": 0,
+    "contact_point_count": 1,
+    "created_at": "<timestamp>",
+    "interest_count": 0,
+    "kind": "institution",
+    "last_activity_at": null,
+    "name": "Laboratorio Ficticio Norte",
+    "open_case_count": 0,
+    "organization_id": "<lab>",
+    "parent_organization_id": null,
+    "quote_count": 0,
+    "relationship_roles": []
+   },
+   {
+    "activity_count": 0,
+    "case_count": 1,
+    "cases_as_end_user_institution": 0,
+    "cases_as_funder": 0,
+    "cases_as_manufacturer": 0,
+    "cases_as_mentioned": 0,
+    "cases_as_purchasing_agent": 0,
+    "cases_as_requesting_institution": 0,
+    "cases_as_supplier": 1,
+    "confirmation": "confirmed",
+    "confirmed_people_count": 0,
+    "contact_point_count": 0,
+    "created_at": "<timestamp>",
+    "interest_count": 1,
+    "kind": "company",
+    "last_activity_at": null,
+    "name": "Fabricante Ficticio Ltda",
+    "open_case_count": 1,
+    "organization_id": "<sup>",
+    "parent_organization_id": null,
+    "quote_count": 1,
+    "relationship_roles": [
+     "supplier"
+    ]
+   }
+  ],
+  "limit": 20,
+  "offset": 0,
+  "total": 3
+ },
+ "overview": {
+  "assertions": [
+   {
+    "count": 1,
+    "kind": "organization_name",
+    "resolution": "ambiguous"
+   },
+   {
+    "count": 1,
+    "kind": "supplier_candidate",
+    "resolution": "unresolved"
+   }
+  ],
+  "contact_points_linked": {
+   "organization": 2,
+   "person": 1
+  },
+  "drive_archive": {
+   "configured": false,
+   "documents": 0,
+   "revisions_total": 1,
+   "revisions_with_drive_file": 0
+  },
+  "entities": [
+   {
+    "count": 3,
+    "key": "opportunities",
+    "note": "Casos comerciales: importación histórica de cotizaciones + casos abiertos a mano.",
+    "provenance": "imported"
+   },
+   {
+    "count": 1,
+    "key": "quotes",
+    "note": "Cotizaciones históricas con número impreso.",
+    "provenance": "imported"
+   },
+   {
+    "count": 1,
+    "key": "quote_revisions",
+    "note": "Revisiones enviadas; cada una con el SHA-256 de su PDF y su correo de Gmail.",
+    "provenance": "imported"
+   },
+   {
+    "count": 3,
+    "key": "organizations",
+    "note": "La mayoría son nombres propuestos por máquina desde un manifiesto de migración; sólo las confirmadas son decisión del operador.",
+    "provenance": "partial"
+   },
+   {
+    "count": 4,
+    "key": "contact_points",
+    "note": "Direcciones de correo importadas sin vínculo a institución ni persona: el manifiesto de origen no trae ese emparejamiento.",
+    "provenance": "partial"
+   },
+   {
+    "count": 1,
+    "key": "persons",
+    "note": "Ninguna persona importada: el volcado V1 commercial.* no existe localmente y ninguna evidencia se ha promovido a persona.",
+    "provenance": "not_imported"
+   },
+   {
+    "count": 0,
+    "key": "affiliations",
+    "note": "Depende de personas; no importado.",
+    "provenance": "not_imported"
+   },
+   {
+    "count": 0,
+    "key": "tasks",
+    "note": "V2 aún no tiene comando para crear tareas; las tareas V1 no se migraron.",
+    "provenance": "no_write_path"
+   },
+   {
+    "count": 0,
+    "key": "activities",
+    "note": "V2 aún no registra actividades; las actividades V1 no se migraron.",
+    "provenance": "no_write_path"
+   },
+   {
+    "count": 1,
+    "key": "messages",
+    "note": "comms.message vacío: no existe el sincronizador de Gmail. Los correos de las cotizaciones están como evidencia (evidence.source_record).",
+    "provenance": "not_imported"
+   },
+   {
+    "count": 0,
+    "key": "products",
+    "note": "El catálogo V2 no se ha cargado.",
+    "provenance": "not_imported"
+   },
+   {
+    "count": 2,
+    "key": "campaigns",
+    "note": "Campañas históricas importadas como registro de envío (archivadas).",
+    "provenance": "imported"
+   },
+   {
+    "count": 1,
+    "key": "campaign_replies",
+    "note": "Las respuestas a campañas no se han importado; cero no significa sin respuestas.",
+    "provenance": "not_imported"
+   },
+   {
+    "count": 0,
+    "key": "drive_links_in_crm",
+    "note": "crm.external_identifier está vacío: los enlaces de Drive viven sólo en los registros locales del archivo de casos.",
+    "provenance": "not_imported"
+   }
+  ],
+  "opportunities_by_stage": {
+   "lead": 1,
+   "lost": 1,
+   "quoting": 1
+  },
+  "organizations_by_confirmation": {
+   "confirmed": 2,
+   "machine_proposed": 1
+  }
+ },
+ "person_suggestions": {
+  "items": [],
+  "total": 0
+ },
+ "pipeline": {
+  "drive_configured": false,
+  "items": [
+   {
+    "attention": [
+     {
+      "blocking": false,
+      "code": "no_quote",
+      "label": "Caso sin cotización registrada"
+     },
+     {
+      "blocking": false,
+      "code": "no_crm_contact",
+      "label": "Sin persona de contacto en el CRM (sólo el destinatario del correo)"
+     }
+    ],
+    "close_reason": "precio",
+    "closed_at": "<timestamp>",
+    "contact": null,
+    "created_at": "<timestamp>",
+    "drive_folder": null,
+    "latest_revision": null,
+    "next_action": {
+     "due_at": null,
+     "source": "suggested",
+     "text": "Caso cerrado — sin acción"
+    },
+    "opportunity_id": "<lost>",
+    "organization": {
+     "confirmation": "machine_proposed",
+     "name": "Laboratorio Ficticio Norte",
+     "organization_id": "<lab>"
+    },
+    "other_organizations": [],
+    "quote_numbers": [],
+    "quotes": [],
+    "revision_count": 0,
+    "stage": "lost",
+    "status": "pending",
+    "title": "Balanza analítica",
+    "updated_at": "<timestamp>"
+   },
+   {
+    "attention": [
+     {
+      "blocking": true,
+      "code": "no_requesting_institution",
+      "label": "Caso sin institución solicitante"
+     },
+     {
+      "blocking": false,
+      "code": "no_quote",
+      "label": "Caso sin cotización registrada"
+     },
+     {
+      "blocking": false,
+      "code": "no_crm_contact",
+      "label": "Sin persona de contacto en el CRM (sólo el destinatario del correo)"
+     }
+    ],
+    "close_reason": null,
+    "closed_at": null,
+    "contact": null,
+    "created_at": "<timestamp>",
+    "drive_folder": null,
+    "latest_revision": null,
+    "next_action": {
+     "due_at": null,
+     "source": "suggested",
+     "text": "Confirmar la institución solicitante"
+    },
+    "opportunity_id": "<lead>",
+    "organization": null,
+    "other_organizations": [],
+    "quote_numbers": [],
+    "quotes": [],
+    "revision_count": 0,
+    "stage": "lead",
+    "status": "blocked",
+    "title": "Consulta centrífuga sin institución",
+    "updated_at": "<timestamp>"
+   },
+   {
+    "attention": [
+     {
+      "blocking": false,
+      "code": "document_not_in_drive",
+      "label": "El PDF de la última revisión no está en el archivo de Drive"
+     },
+     {
+      "blocking": false,
+      "code": "no_gmail_evidence",
+      "label": "Sin correo de Gmail vinculado a la última revisión"
+     }
+    ],
+    "close_reason": null,
+    "closed_at": null,
+    "contact": {
+     "address": null,
+     "name": "Ana Ficticia",
+     "others": 0,
+     "source": "crm_participant"
+    },
+    "created_at": "<timestamp>",
+    "drive_folder": null,
+    "latest_revision": {
+     "document": {
+      "filename": "COT 01024-26 UP200St.pdf",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "drive": null,
+     "gmail": null,
+     "is_active": true,
+     "origin": "historical_import",
+     "quote_number": "01024-26",
+     "revision_id": "<id5>",
+     "revision_no": 1,
+     "sent_at": "<timestamp>",
+     "status": "sent",
+     "superseded_by_revision_no": null
+    },
+    "next_action": {
+     "due_at": null,
+     "source": "suggested",
+     "text": "Hacer seguimiento de 01024-26 (enviada 12-03-2026)"
+    },
+    "opportunity_id": "<case>",
+    "organization": {
+     "confirmation": "confirmed",
+     "name": "Universidad Ficticia del Sur",
+     "organization_id": "<uni>"
+    },
+    "other_organizations": [
+     {
+      "name": "Fabricante Ficticio Ltda",
+      "organization_id": "<sup>",
+      "role": "supplier"
+     }
+    ],
+    "quote_numbers": [
+     "01024-26"
+    ],
+    "quotes": [
+     {
+      "number_origin": "printed_historical",
+      "quote_id": "<quote>",
+      "quote_number": "01024-26",
+      "revisions": [
+       {
+        "document": {
+         "filename": "COT 01024-26 UP200St.pdf",
+         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "drive": null,
+        "gmail": null,
+        "is_active": true,
+        "origin": "historical_import",
+        "quote_number": "01024-26",
+        "revision_id": "<id5>",
+        "revision_no": 1,
+        "sent_at": "<timestamp>",
+        "status": "sent",
+        "superseded_by_revision_no": null
+       }
+      ]
+     }
+    ],
+    "revision_count": 1,
+    "stage": "quoting",
+    "status": "pending",
+    "title": "Cotización 01024-26",
+    "updated_at": "<timestamp>"
+   }
+  ],
+  "total": 3
+ },
+ "review": {
+  "ambiguous_organizations": [
+   {
+    "ambiguity_note": "dos candidatos",
+    "assertion_id": "<id6>",
+    "source_record_id": "<sr2>",
+    "value_norm": "laboratorio ficticio"
+   }
+  ],
+  "archived_not_in_crm": [],
+  "drive_configured": false,
+  "open_assertions": [
+   {
+    "count": 1,
+    "kind": "organization_name",
+    "resolution": "ambiguous"
+   },
+   {
+    "count": 1,
+    "kind": "supplier_candidate",
+    "resolution": "unresolved"
+   }
+  ]
+ },
+ "suppressions": {
+  "apply_enabled": false,
+  "blocks_by_purpose": [
+   {
+    "count": 1,
+    "kind": "block",
+    "purpose": "all"
+   }
+  ],
+  "entries": [],
+  "frozen_campaigns": [],
+  "gmail_sync": {
+   "automatic": false,
+   "label": "Las respuestas de Gmail no se sincronizan automáticamente todavía. Una BAJA queda registrada sólo cuando un operador aplica un lote de respuestas ya descargadas."
+  },
+  "grammar": {
+   "accepted": [
+    "BAJA",
+    "BAJA.",
+    "REMOVER",
+    "REMOVER."
+   ],
+   "rule": "Sólo una respuesta cuyo texto propio es exactamente «BAJA» o «REMOVER» (la palabra de las plantillas V1), en mayúsculas o minúsculas, con o sin un punto final. Cualquier otra redacción queda para revisión humana.",
+   "version": "baja-reply/2026-09-27.v2"
+  },
+  "pending_reviews": [],
+  "permanent": true,
+  "resubscribe_supported": false,
+  "sender_policy": {
+   "rule": "Se suprime una dirección ya conocida, o la del destinatario exacto del correo enviado al que responde. Si no se puede comprobar, la BAJA queda en revisión y esa dirección exacta queda bloqueada para marketing hasta confirmarla. Nunca se crea una persona, contacto ni institución.",
+   "version": "unsubscribe-sender/2026-09-27.v2"
+  },
+  "storage": {
+   "database": "<database>",
+   "table": "outbound.contact_control"
+  },
+  "summary": {
+   "baja_messages": 0,
+   "last_recorded_at": null,
+   "pending_reviews": 0,
+   "unsubscribed_addresses": 0
+  },
+  "truncated": false
+ }
+}
