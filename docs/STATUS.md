@@ -1879,6 +1879,15 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **3508 passed**, 120 skipped (the same V1 Alembic-head and TLS-server skips as §2.7.50; no V2 DSN skip) — 41 planner, 12 database, 5 route, 4 quote-import tests new; `apps/dashboard` `npm run validate`: **558 passed** (46 files) + build; `apps/dashboard-proxy` `npm run validate`: **367 passed** (5 files); pgTAP, all 27 files run with psql on a fresh supabase/postgres 17 database carrying the full chain: **1117 ok**, 1 not ok (100 #22 — the disposable cluster sets role passwords; environmental), new file 076 (14) and 063 #10 retargeted; `cleanroom_verify_tests.sh --static` 13 passed; audit unit tests 339 OK; public-repo hygiene passed. `supabase test db --local` was not run: the CLI stack was held by another worktree |
 | Not done | not run against `origenlab_clean` or hosted; the migration is not applied anywhere; not deployed. Worker-side run (spec §5: inside the 4a cron, `ORIGENLAB_WORKER_AUTO_CASES_ENABLED`), learned rules and the circuit breaker (§4), «Mover», the contact-point-per-sender (§3), the case-timeline «Sistema (correo)» rendering and the Resumen badge (§6), and the golden-set check against the 61 staged records (§8) are **not built**. the spec's §5 is amended in `~/data` (API-run first, worker-run later) |
 
+### 2.7.53 §2.7.51 and §2.7.52 merged, applied to hosted and deployed; event-type union fix, 2026-10-05
+
+| | |
+|---|---|
+| Merged | #642 (catalog 1a) and #643 (email → cases) into `main` at `e628bdce`; Render `origenlab` and `origenlab-dashboard` auto-deployed `e628bdce` |
+| Hosted apply | the three `20261005…` migrations applied to `origenlab-v2` with `psql --single-transaction` as `origenlab_migrator` through the session pooler (`supabase db push` cannot: the CLI login role may not `set role origenlab_owner`, and the migrator has no access to `supabase_migrations`); the owner then inserted the three ledger rows from the SQL Editor — ledger **44**, head `20261005140628` |
+| Defect found after merge | the two catalog migrations, written on a parallel branch, rebuild `crm.domain_event_type_check` from their own list and drop `case_evidence.unlinked` and `opportunity.stage_corrected`, which `20261005120000` had added: «Deshacer» of a rules-engine link and a stage correction are refused (pgTAP 076 #1–2 on `main`). `20261005210000_slice7_domain_event_type_union.sql` rebuilds the CHECK as the union. Local: pgTAP 28 files **1171 PASS**, replay evidence PASS (50 tables, 173 policies), clean-room static 13/13, chain 9/9 |
+| Not done | the corrective migration is not yet applied to hosted (same psql route; ledger becomes 45); the dashboard-proxy Worker is not redeployed, so the catalog and mail-rules paths are still refused at the proxy |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
