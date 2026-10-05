@@ -122,7 +122,7 @@ are owned by [`DATA.md`](DATA.md) §11.
 | Row equality | for every MIGRATE table, V2 count = V1 count, matched by `external_identifier` scheme `v1_*` |
 | Safety set | exactly 8,580 `prior_contact` rows, all `marketing`; 704 address blocks and 91 domain blocks with the per-purpose and flagged-for-review split recorded ([`DATA.md`](DATA.md) §7.3); no `prior_contact` or `cooldown` row with `purpose = all`; **zero** cooldown rows from V1 input |
 | Attempt shape | 1,126 `accepted` (957 `sent_copy_confirmed`, 112 `bounced`, 57 `pending`) and 1 `rejected`; minted id NULL on all |
-| Gmail coverage | every Wave 1A checkpoint message id is either present in `comms.message` after the shadow sync or explicitly recorded as absent from Gmail |
+| Gmail coverage | every Wave 1A checkpoint message id is either present in `comms.message` after the shadow sync or explicitly recorded as absent from Gmail **Phase 4a (owner decision 2026-10-04):** the shadow capture starts at go-live and does not backfill, so 4a proves coverage from go-live forward — every message V1 ingested from contacto@ since go-live is in `comms.message` or explained as draft, spam or trash (`apps/worker/scripts/shadow_reconcile.py`, [`OPERATIONS.md`](OPERATIONS.md) §8.6). The checkpoint ids before go-live are proven by the backfill job that follows 4a. |
 | Quote integrity | every migrated `sent` revision has a `pdf_sha256` and sending evidence; every total recomputes |
 | Idempotency | re-running any loader changes nothing and writes no second event |
 | Fail-closed | any mismatch aborts the loader; no partial state is committed |

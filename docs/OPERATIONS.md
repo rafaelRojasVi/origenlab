@@ -1591,21 +1591,149 @@ ol attempts resolve <attempt-id> --verdict not_dispatched --reason "..."
 ol attempts retry   <attempt-id> --reason "..."
 ```
 
-## 8. Gmail sync recovery
+## 8. Gmail capture (Phase 4a) and its recovery
+
+The capture is the Render Cron Job `origenlab-gmail-sync`: `uv run --no-sync origenlab-worker gmail-sync`
+from `apps/worker`, every 10 minutes ([`ARCHITECTURE.md`](ARCHITECTURE.md) §8). A run reads Gmail
+`history.list` from `comms.mailbox.history_id`, skips drafts, spam and trash, uploads each new
+message's `.eml` to the private bucket `mail`, commits the message (+ participants, attachment
+metadata) and its `pending` `gmail_message` evidence one message at a time, and only then moves
+the cursor. Campaign copies (outbound with `List-Unsubscribe`) are kept as messages without evidence
+(owner-approved 2026-10-04).
+
+The worker's database login can write nothing in `crm.*` or `outbound.*` except `INSERT` on
+`outbound.campaign_reply`, the designed 4c reply-proposal lane (4a never writes it). Every connect
+proves this from the inside and refuses: any role membership; a port other than 5432 (6543 is
+refused by name); any other `crm`/`outbound` write privilege, including column-level grants,
+`TRIGGER`, and view and materialized-view writes; and any `SECURITY DEFINER` function the worker can
+execute (extension-owned and trigger functions and functions in schemas without `USAGE` are not
+counted; nothing is skipped by schema name). **The first hosted `--init --dry-run` is the proof**
+that Supabase's own extension functions do not trip the definer probe; read its log line before
+anything else (§8.7).
+
+### 8.1 Reading a run
+
+One JSON line per run in the cron's Render log — `event`, `mode`, `exit`, the counters below, `error`,
+`elapsed_ms`, `max_rss_mb`. It never carries a subject, an address or a Gmail id; `error` is an error
+class or a refusal code.
+
+**Counters.** `seen` messages listed for the window; `stored` messages written to `comms.message`
+(a dry run: **would** store; `evidence` stays 0); `evidence` pending evidence rows created;
+`bulk_sends` campaign copies — a **subset of `stored`**, kept without evidence; `duplicates` already
+captured, refused by the unique keys; `skipped_draft`/`_spam`/`_trash` never downloaded; `gone`
+deleted from Gmail between the list and the read; `too_large` messages over 50 MiB, kept as
+`parse_failed` rows without an `.eml` but **counted only here, not in `parse_failed`**;
+`parse_failed` messages whose `.eml` is kept and that produced no evidence.
+
+**Modes.** `history` (normal), `resync` (Gmail expired the cursor; the run re-listed from
+`last_synced_at − 1 day`), `init_baseline`, `init_resumed` (an existing cursor kept), `locked`,
+`paused`, `not_authorized`, `wrong_account`, `no_mailbox`, `already_initialized`, `config_refused`,
+`usage` (a bad command line), `failed` (before a mode was known). `history`, `resync` and `init`
+carry the suffix **`_dry_run`** (`history_dry_run`, `resync_dry_run`, `init_dry_run`) when `--dry-run`
+is on; a dry run writes nothing and never moves the cursor. A run that fails mid-way reports the
+stage it reached (`start`, `profile`, `init`).
+
+| `mode`, exit | Meaning | Action |
+|---|---|---|
+| `history`, 0 | normal run | none |
+| `resync`, 0 | Gmail had expired the cursor (about a week); the run re-listed from `last_synced_at − 1 day` and refused what it already had | none |
+| `locked`, 0 | another run holds the lock | none, unless it lasts 30 min (§8.4) |
+| `paused`, 0 | `ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED` is not `true`; **a paused cron opens no database session** | intended? |
+| `not_authorized`, 0 | the mailbox is `unauthorized` or `revoked` | §8.3 |
+| any, 1 | Gmail, the database or Storage failed mid-run; the cursor did not move. `error` is a class: `terminated` (Render's SIGTERM), `interrupted` (Ctrl-C), `StorageConflict` (§8.5), `empty_history_id` (Gmail returned no history id: nothing was captured, retry) | Render e-mails it; the next run retries the same window |
+| any, 2 | `invalid_grant` (consent revoked; the mailbox is now `revoked`), `wrong_account`, `scope_not_readonly` | §8.3 |
+| `usage`, 3 | the command line is not `gmail-sync [--init] [--dry-run]` | fix the cron's command |
+| `resync`, 3, `no_resync_baseline` | the cursor expired and `last_synced_at` is empty: resyncing from "now" would skip mail silently, so the run stops | owner decision: seed `last_synced_at` deliberately, never by guess |
+| `config_refused`, `already_initialized`, `no_mailbox`, 3 | a setting is refused (the code names it), or `--init` was left in the command | fix the setting or the command |
+
+The dashboard says «Sincronización de correo detenida desde HH:MM» when the mailbox is `revoked`
+(or paused after it ran) and «atrasada» when no run completed for 30 minutes.
+
+### 8.2 Pause and resume
+
+- Pause: `ORIGENLAB_WORKER_GMAIL_SYNC_ENABLED=false` on the cron; the next run logs `paused` and opens
+  no database session. The banner turns «atrasada» after 30 minutes — expected.
+- Resume: set it back to `true`. The capture continues from the cursor; after more than about a
+  week Gmail has expired it and the run resyncs by itself.
+- Stop everything: Render → the cron job → Suspend.
+
+### 8.3 Consent revoked, wrong account, rotation
+
+1. From `apps/worker`, as contacto@: `uv run --group bootstrap python scripts/gmail_readonly_authorize.py --client-secrets <client file> --out ~/.config/origenlab-v2/gmail_readonly_token.json`.
+2. Replace `ORIGENLAB_WORKER_GMAIL_REFRESH_TOKEN` (and the client values if the client changed) on the cron.
+3. Set the cron's command to `uv run --no-sync origenlab-worker gmail-sync --init`, Trigger Run
+   (`init_resumed`: the cursor is kept, nothing is skipped), then set the command back.
+
+Database password: `\password origenlab_worker` as the project's `postgres` login, then update
+`ORIGENLAB_WORKER_DATABASE_URL`. S3 key: create a new key, update the two variables, delete the old
+one. Record every rotation (§13).
+
+### 8.4 A stuck lock
+
+`locked` for 30 minutes means a holder session outlived its run; the next run ends a holder idle for
+30 minutes by itself. To look: `select a.pid, a.state, a.state_change from pg_locks l join
+pg_stat_activity a using (pid) where l.locktype = 'advisory' and a.usename = 'origenlab_worker';`
+Whether Supavisor's session mode releases advisory locks on disconnect is an owner check (§8.7);
+the stale-holder rule covers either answer.
+
+### 8.5 StorageConflict: an object with different bytes under the same key
+
+The capture never replaces an object. If `mail/contacto@origenlab.cl/<yyyy>/<mm>/<gmail id>.eml`
+already holds bytes that differ from what Gmail returns for that message, the run raises
+`StorageConflict` (exit 1) and **every later run stops at the same message** — the cursor cannot move
+past it — until someone acts. Gmail's raw bytes for a message never change, so the stored object is
+the anomaly (an interrupted or corrupted upload, or a key reused by hand).
+
+1. Do not delete the object. In the Supabase dashboard (Storage → `mail`) open the key the message
+   maps to, and download it; fetch the same message with `format=raw` and compare SHA-256 and size.
+2. Keep both. Copy the existing object to a quarantine key in the same bucket
+   (`quarantine/<original key>.<first 8 hex of its sha256>`), confirm the copy's hash equals the
+   original's, and record the key, both hashes and the reason in the rotation/incident log (§13).
+3. Only then free the original key (the copy is the preserved evidence). The next run uploads the
+   correct bytes and the window completes. If the stored object is the right one and Gmail's bytes
+   are what changed, stop and treat it as an incident: do not free the key.
+
+### 8.6 Shadow week
+
+Daily during the first week, as the owner, with the cron's environment exported in a shell from the
+password manager (never a file in the repository), from `apps/worker`:
+`uv run python scripts/shadow_reconcile.py --sqlite <V1 emails.sqlite> --since <go-live, UTC> --out <directory outside the repository>`.
+Exit 0: every message V1 ingested from contacto@ since go-live is in `comms.message` or explained
+(draft, spam, trash). Exit 1 lists the rest in `<out>/missing.csv` (V1 id, folder, date — no subject,
+no address); the script splits missing ids into sent and received by V1 folder.
+
+The week must also confirm one thing the code cannot: that mail **sent from the Gmail web UI**
+(composed as an autosaved draft) is captured through a new `messageAdded` with its own id. If Gmail
+only relabels the draft, history mode skips it as `draft` and the Sent side of `missing.csv` will
+show it.
+
+### 8.7 Owner checks around go-live
+
+Before: Render's behaviour when a run is still active at the next schedule (skip or queue; the
+advisory lock covers either); that Storage S3 keys exist on Pro and cover every bucket (the key is
+project-wide); a project upload limit of at least 60 MB; whether Supavisor session mode releases
+advisory locks on disconnect; the first hosted `--init --dry-run` (§8 intro: the definer probe);
+`apps/worker/scripts/payload_parity.py` showing 0 differences on the 92 staged records (or only
+messages since moved or deleted). The cron plan: `render.yaml` says `standard`, but the worker's
+measured peak RSS is about 36 MB, so `starter` may suffice; the owner decides the cost. The build is
+heavy: `apps/worker` installs email-pipeline's OCR stack (onnxruntime, opencv, rapidocr, pymupdf;
+about 650 MB venv) at build time but never imports it at run time. Slice 8 moves that seam.
+
+Deploy order after merge: (1) deploy the Worker (the banner stays silent until then); (2) create the
+Render cron from the `render.yaml` fields, with its secrets; (3) run `--init --dry-run`, then
+`--init`; (4) enable the switch.
+
+### 8.8 Recovery
 
 | Symptom | Action |
 |---|---|
-| Cursor age above threshold | check worker liveness and queue depth before touching the cursor |
-| History id rejected by Gmail (too old) | run a **full label resync**. This is safe: `(mailbox, provider_message_id)` is unique, replays insert with `ON CONFLICT DO NOTHING`, and a resync rewrites nothing |
+| Banner «atrasada» | read the last run's log line (§8.1) before touching anything |
+| History id rejected by Gmail (too old) | automatic: the run logs `resync`. Safe: `(mailbox, provider_message_id)` is unique, replays insert with `ON CONFLICT DO NOTHING`, a resync rewrites nothing |
 | Duplicate-looking messages | expected when RFC 822 ids repeat; identity is the provider id ([`DATA.md`](DATA.md) §6). Do not deduplicate by RFC 822 id |
 | Message missing after a resync | record it as absent; it is evidence, not a failure to repair |
-| Attachment missing in Storage | re-fetch from Gmail; the row keeps its hash |
-
-```bash
-# EXAMPLE — NOT YET IMPLEMENTED
-ol gmail status --mailbox contacto
-ol gmail resync --mailbox contacto --full --reason "history id expired"
-```
+| `.eml` missing in Storage | the row keeps `eml_sha256`; fetch `format=raw` again and upload under the same key |
+| `StorageConflict` | §8.5 |
+| `parse_failed` rows | the `.eml` is kept (except `too_large`); no evidence was created; nothing to repair in 4a |
 
 **Never repair a sync by editing `comms.message` by hand.**
 
@@ -1662,7 +1790,7 @@ Drill procedure:
 | Send flag changed | any write to `outbound.send_control` | **page** — expected changes are still worth seeing |
 | Bounce rate | hard bounces above the agreed rate within a campaign | **page**, and pause the campaign |
 | Block added at volume | an unusual number of new blocks in a window | investigate |
-| Gmail cursor age | above threshold | investigate |
+| Gmail capture late or stopped | dashboard banner when no run completed for 30 min or the mailbox is `revoked`; Render's failure e-mail on any non-zero exit | investigate |
 | Queue depth or oldest message age | above threshold | investigate |
 | Failed migration or failed loader | any | investigate |
 | Restore drill overdue | past cadence | investigate |
@@ -1694,12 +1822,13 @@ one state that can send the same message twice.
   secret store and in the operator's password manager.
 - The dashboard holds **only** the Supabase publishable key, used only for
   sign-in, refresh and MFA. **A project secret key never reaches a browser.**
-- Storage access from FastAPI and the worker uses a current `sb_secret_...`
+- Storage access from FastAPI uses a current `sb_secret_...`
   key from server environment only, and **only for the Storage API**. Treat
   that key as what it is: it resolves to `service_role` and bypasses RLS, so
-  the restriction is a rule of use, not a scope of the key. The API and the
-  worker hold separate keys and rotate them independently. S3 access keys are
-  not issued.
+  the restriction is a rule of use, not a scope of the key. The worker's Gmail
+  capture holds the one Storage S3 access key
+  ([`ARCHITECTURE.md`](ARCHITECTURE.md) §7); it is project-wide and bypasses
+  Storage RLS, so it lives only in that cron's Render environment.
 - **No Supabase secret key or legacy service-role key is used as an
   application-data or database credential**, and no legacy JWT `service_role`
   key is configured anywhere in V2. FastAPI and the worker reach application
@@ -1710,6 +1839,9 @@ one state that can send the same message twice.
 - The Gmail OAuth credential for the production sender is held by the worker
   only. **A V1 Gmail credential is never revoked without written proof that it
   serves no ingestion path** ([`MIGRATION.md`](MIGRATION.md) §7).
+  The Gmail capture holds a separate `gmail.readonly` refresh token from a
+  Workspace Internal OAuth client; every refresh re-checks the scope, so V1's
+  full-scope desktop token cannot stand in for it.
 - Rotation: rotate a key by adding the new one, deploying, then removing the
   old one. Record every rotation. **[OPEN]** rotation cadence; recommended
   default is annually and immediately on any suspected exposure.

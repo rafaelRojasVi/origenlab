@@ -583,19 +583,26 @@ role and no Data-API-facing role is ever inside these predefined roles.
 
 - **All buckets are private. There are zero storage policies and zero public
   paths.**
-- FastAPI and the worker reach Storage with a current **`sb_secret_...`** key
-  from server environment only, and use it **only for the Storage API**. That
+- FastAPI reaches Storage with a current **`sb_secret_...`** key
+  from server environment only, and uses it **only for the Storage API**. That
   is a use restriction, not a scope: the key resolves to `service_role`,
   bypasses RLS, and is kept away from application data solely by the
   unexposed schemas, revoked grants, revoked `EXECUTE` and default privileges
-  of [§6.4](#m-arch-service-role). The API and the worker hold separate,
-  separately rotatable keys; legacy JWT `service_role` keys are not used.
+  of [§6.4](#m-arch-service-role). Legacy JWT `service_role` keys are not used.
   **A secret key never reaches the dashboard, `apps/web`, a browser bundle or
   source control**, and never appears in these documents.
+- **The worker writes Storage with a Storage S3 access key, not a secret key**
+  (owner decision 2026-10-04, Phase 4a). It uploads each captured `.eml` to the
+  private bucket `mail` at `contacto@origenlab.cl/<yyyy>/<mm>/<gmail id>.eml`,
+  never replaces an object, and holds no other Storage credential. Supabase
+  does not scope an S3 key to one bucket and the key bypasses Storage RLS, so —
+  as for the secret key — the restriction is a rule of use: the key lives only
+  in the Gmail capture's Render environment and rotates by
+  [`OPERATIONS.md`](OPERATIONS.md) §13.
 - A browser receives a **signed URL valid for at most 10 minutes**, minted
   only after FastAPI has authorized that specific operator for that specific
   object. Uploads go through FastAPI.
-- S3 access keys are not issued.
+- **Exactly one S3 access key is issued**, to the worker's Gmail capture (above). No browser, dashboard or API process holds one.
 - **Database backups do not include Storage objects.** Buckets are therefore
   backed up **independently**, to separate storage, with their own manifest
   and hashes, and the restore drill covers a bucket restore
@@ -618,6 +625,27 @@ role and no Data-API-facing role is ever inside these predefined roles.
   exceed what that runtime should carry.
 - **There is no SQLite tier, no mirror, no mart and no projection table in
   V2.**
+
+**Phase 4a amendment — owner decision D1, 2026-10-04.** Until a queue exists, Gmail
+sync is not enqueued by `pg_cron` and not run by a long-running worker: it is a
+**Render Cron Job**, `origenlab-gmail-sync`, that runs `origenlab-worker gmail-sync`
+every 10 minutes and exits (`render.yaml`). One run at a time is guaranteed in the
+database, whatever the scheduler does: each run holds a session advisory lock on
+`hashtextextended('origenlab-worker:gmail-sync', 0)`, and a holder idle for 30
+minutes — a killed run whose pooled session survived — is ended by the next run.
+It connects as `origenlab_worker` over the session pooler with `verify-full`
+(§6.3) and, on every connect, refuses a session that could
+write `crm.*` or `outbound.*` beyond the one designed lane: the worker may hold
+`INSERT` on `outbound.campaign_reply` (the 4c reply-proposal lane,
+`supabase/migrations/20260908120100_slice0_outbound_campaign_reply.sql`), which 4a
+never writes. The probe refuses any role membership; any port other than 5432
+(6543 refused by name); any other `crm`/`outbound` write, including column-level
+grants, `TRIGGER`, and view and materialized-view writes; and any `SECURITY DEFINER`
+function the worker can execute (extension-owned and trigger functions and functions
+in schemas without `USAGE` are not counted, and nothing is skipped by schema name).
+When `pgmq` arrives, a queue message triggers the same job code — only the trigger
+changes. PDF rendering, ChileCompra, the send path and the reconciler are not affected
+by this amendment.
 
 ## 9. Observability
 
