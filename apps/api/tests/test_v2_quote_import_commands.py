@@ -334,3 +334,42 @@ def test_minted_numbers_stay_globally_unique(disposable_database, world) -> None
         cur.execute("insert into crm.quote (opportunity_id, quote_number) values (%s, %s)", (first, number))
         with pytest.raises(psycopg.errors.UniqueViolation):
             cur.execute("insert into crm.quote (opportunity_id, quote_number) values (%s, %s)", (second, number))
+
+
+@_needs_db
+def test_a_staged_record_still_needs_the_documents_own_assertion(disposable_database, world) -> None:
+    """A record with assertions (a staged one) missing this document's is refused, as before."""
+    import psycopg
+
+    case_id = _quoting_case(disposable_database, world)
+    with psycopg.connect(disposable_database, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
+        conn.execute("delete from evidence.assertion where id = %s", (world["assertion_b"],))
+    with pytest.raises(CommandRefused) as refused:
+        _record(disposable_database, world, case_id, document_sha256=world["sha_b"])
+    assert refused.value.code == "document_reference_not_staged"
+
+
+@_needs_db
+def test_a_live_capture_without_assertions_records_and_promotes_nothing(disposable_database, world) -> None:
+    """The live Gmail capture writes no assertions; the carried document is the provenance."""
+    import json
+
+    import psycopg
+
+    case_id = _quoting_case(disposable_database, world)
+    with psycopg.connect(disposable_database, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
+        live = conn.execute(
+            "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) "
+            "values ('gmail_message', %s, %s::jsonb, %s) returning id::text",
+            (f"pytest-live:{world['tag']}", json.dumps({"documents": [{"sha256": world["sha_c"]}]}),
+             f"gmail://msg/live{world['tag']}"),
+        ).fetchone()[0]
+    _, quotes = _repos(disposable_database)
+    body = _body(opportunity_id=case_id, origin_source_record_id=live, document_sha256=world["sha_c"],
+                 quote_number=world["number"], printed_quote_numbers=[world["number"]])
+    result = _run(quotes, validated_quote_import, RECORD_HISTORICAL_QUOTATION, body, world)
+    assert result["assertion_id"] is None
+    assert _count(disposable_database, "select count(*) from crm.quote_revision where pdf_sha256 = %s",
+                  world["sha_c"]) == 1

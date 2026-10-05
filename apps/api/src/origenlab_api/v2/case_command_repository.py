@@ -23,10 +23,12 @@ Five rules hold here, each structural rather than remembered:
    candidate. Every subject is a UUID an operator sent. The one lookup that could look like
    inference — does this institution hold a supplier relationship? — does not decide anything;
    it decides whether the operator must justify themselves.
-5. **No machine writes.** Every row inserted here is `confirmation = 'confirmed'` with the
-   deciding operator named, and `CommandTransaction._append_event` has no way to write an
-   `actor_kind` other than `'operator'`. `machine_proposed` is a state this module can read
-   and confirm, never one it can create.
+5. **No machine writes of its own.** Every row inserted here is `confirmation = 'confirmed'`
+   with the deciding operator named. `CommandTransaction._append_event` writes `actor_kind =
+   'operator'` unless the email → cases executor (`mail_rules_repository.py`) runs these same
+   handlers for a rule an admin applied: then the events are `'worker'` and carry the rule and
+   its reasons, and the rows still name that admin. `machine_proposed` is a state this module
+   can read and confirm, never one it can create.
 
 **What it never touches.** `outbound.*` appears nowhere in this file — no campaign, no
 recipient, no contact control, no send, no consent. Neither does `crm.person`,

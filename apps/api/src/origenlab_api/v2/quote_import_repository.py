@@ -14,7 +14,8 @@ Built on `command_core.CommandTransaction`: one read-write transaction, one rece
 
 Refused, with nothing written: a case that is not at `quoting`/`negotiating` or has no
 requesting institution; an evidence record that is missing, quarantined, or does not carry the
-document; a document already recorded on any quote; a number V2 minted; a printed number that is
+document; a staged record without the document's `document_reference` assertion (a record the
+live Gmail capture wrote carries no assertions at all, and for it step 4 is skipped); a document already recorded on any quote; a number V2 minted; a printed number that is
 already a quote on another case, unless the reason for accepting that collision is given.
 """
 
@@ -118,13 +119,20 @@ class V2QuoteImportRepository(CommandTransaction):
             (record["id"], document_reference_value(fields["document_sha256"])),
         )
         assertion = self._row(cur)
-        if assertion is None:
+        # A message the live Gmail capture (Phase 4a) recorded has no staged assertions: the
+        # capture writes the evidence record and nothing else. For it, the document carried by
+        # the record (checked above) is the provenance, and there is no assertion to promote.
+        # Every staged record — the historical import's — still needs its assertion.
+        live_capture = record["kind"] == "gmail_message" and assertion is None and not self._has_assertions(
+            cur, record["id"]
+        )
+        if assertion is None and not live_capture:
             raise CommandRefused(
                 409,
                 "document_reference_not_staged",
                 "the evidence record has no document_reference assertion for this document",
             )
-        if assertion["resolution"] != "unresolved":
+        if assertion is not None and assertion["resolution"] != "unresolved":
             raise CommandRefused(
                 409,
                 "document_reference_already_resolved",
@@ -276,6 +284,9 @@ class V2QuoteImportRepository(CommandTransaction):
                 operator=operator, receipt_id=receipt_id,
             ))
 
+        if assertion is None:
+            return self._recorded(case, quote, revision, revision_no, prior, None, created, events, fields)
+
         cur.execute(
             """
             update evidence.assertion
@@ -294,6 +305,14 @@ class V2QuoteImportRepository(CommandTransaction):
             operator=operator, receipt_id=receipt_id,
         ))
 
+        return self._recorded(case, quote, revision, revision_no, prior, assertion["id"], created, events, fields)
+
+    @staticmethod
+    def _recorded(
+        case: dict[str, Any], quote: dict[str, Any], revision: dict[str, Any], revision_no: int,
+        prior: dict[str, Any] | None, assertion_id: str | None, created: list[str], events: list[str],
+        fields: dict[str, Any],
+    ) -> dict[str, Any]:
         return {
             "command": RECORD_HISTORICAL_QUOTATION,
             "opportunity_id": case["id"],
@@ -303,10 +322,15 @@ class V2QuoteImportRepository(CommandTransaction):
             "revision_no": revision_no,
             "quote_revision_version": int(revision["version"]),
             "superseded_revision_id": prior["id"] if prior else None,
-            "assertion_id": assertion["id"],
+            "assertion_id": assertion_id,
             "created": created,
             "event_ids": events,
         }
+
+    def _has_assertions(self, cur: Any, source_record_id: str) -> bool:
+        """Whether the record carries any assertion at all — a staged record always does."""
+        cur.execute("select 1 from evidence.assertion where source_record_id = %s limit 1", (source_record_id,))
+        return cur.fetchone() is not None
 
     def _void_historical_quote_revision(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str

@@ -211,6 +211,16 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     app.state.v1_lane_content_dir = settings.v2_v1_lane_content_dir
     app.state.org_suggestions_file = settings.v2_org_suggestions_file
     app.include_router(workspace_router)
+    # Email → cases (spec 2026-10-05): the admin dry run mounts with the reads; apply and undo
+    # mount with the case commands in `_mount_v2_command_boundary`.
+    from origenlab_api.v2.mail_rules_repository import MailRulesRepository
+    from origenlab_api.v2.mail_rules_routes import mail_rules_preview_router
+
+    app.state.mail_rules_repository = MailRulesRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms,
+        commands_enabled=settings.v2_commands_configured(),
+    )
+    app.include_router(mail_rules_preview_router)
     if settings.v2_import_review_plan_dir:
         from origenlab_api.v2.quote_import_review import QuoteImportReviewRepository, load_plan
         from origenlab_api.v2.quote_import_review_routes import import_review_router
@@ -502,6 +512,9 @@ def _mount_v2_command_boundary(
     )
     app.include_router(command_router)
     app.include_router(case_command_router)
+    from origenlab_api.v2.mail_rules_routes import mail_rules_command_router
+
+    app.include_router(mail_rules_command_router)
 
 
 app = create_app()
