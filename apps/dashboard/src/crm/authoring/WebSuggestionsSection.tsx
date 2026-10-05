@@ -3,7 +3,7 @@
  * suggestion's confidence and its sources; «Aplicar» per field, «Aplicar todo y confirmar» for a
  * high-confidence suggestion. Nothing is applied without a click (`webSuggestions.ts`).
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Badge, Section } from "../ui";
 import { refusalOf, type OrganizationAuthoringResponse, type OrgWebSuggestion } from "./crmAuthoringApi";
 import {
@@ -45,12 +45,19 @@ export function WebSuggestionsSection({
   const note = suggestionNote(suggestion);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
+  // The version the last successful command returned, valid until the card reloads with another
+  // one: a quick second click must not send the loaded (now stale) version.
+  const known = useRef<{ loaded: number; version: number } | null>(null);
+  const currentVersion = () => (known.current && known.current.loaded === org.version ? known.current.version : org.version);
+  const remember = (version: number) => {
+    known.current = { loaded: org.version, version };
+  };
 
   async function applyOne(row: SuggestionRow) {
     setBusy(row.field);
     setMessage(null);
     try {
-      await applyField(row, org.id, org.version, note);
+      remember(await applyField(row, org.id, currentVersion(), note));
       onRefresh();
     } catch (err) {
       const r = refusalOf(err);
@@ -65,14 +72,20 @@ export function WebSuggestionsSection({
     setMessage(null);
     const outcome = await applyAllAndConfirm({
       organizationId: org.id,
-      version: org.version,
+      version: currentVersion(),
       alreadyConfirmed: org.confirmation === "confirmed",
       plan,
       note,
     });
     setBusy(null);
+    if (outcome.applied.length > 0 || outcome.ok) remember(outcome.version);
     if (outcome.ok) {
-      setMessage({ tone: "good", text: outcome.confirmed ? "Sugerencias aplicadas e institución confirmada." : "Sugerencias aplicadas." });
+      const text = outcome.confirmed
+        ? "Sugerencias aplicadas e institución confirmada."
+        : outcome.alreadyConfirmed && org.confirmation !== "confirmed"
+          ? "Sugerencias aplicadas. La institución ya estaba confirmada."
+          : "Sugerencias aplicadas.";
+      setMessage({ tone: "good", text });
     } else {
       const where = outcome.failed === "confirm" ? "la confirmación" : FIELD_LABEL[outcome.failed];
       const done = outcome.applied.length ? ` Ya aplicado: ${outcome.applied.map((f) => FIELD_LABEL[f]).join(", ")}.` : "";

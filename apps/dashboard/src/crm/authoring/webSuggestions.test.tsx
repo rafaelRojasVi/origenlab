@@ -11,7 +11,7 @@ import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { clearResourceCache } from "../useResource";
 import type { OrganizationAuthoringResponse, OrgWebSuggestion } from "./crmAuthoringApi";
 import { OrgAuthoringSection } from "./OrgAuthoringSection";
-import { applyAllPlan, rutKey, suggestionRows } from "./webSuggestions";
+import { applyAllPlan, refusalText, rutKey, suggestionRows } from "./webSuggestions";
 
 const ORG_ID = "0c000000-0000-4000-8000-00000000000c";
 
@@ -75,7 +75,12 @@ function fixture(
 type Answer = { status: number; body: unknown };
 
 /** GETs answer `card`; POSTs answer the queued answers in order, then receipts with version + 1. */
-function stubApi(card: OrganizationAuthoringResponse, answers: Answer[] = []) {
+function stubApi(
+  card: OrganizationAuthoringResponse,
+  answers: Answer[] = [],
+  /** Called after every POST the stub answers 200, so the next card read shows what was applied. */
+  applied?: (path: string, body: Record<string, unknown>, version: number) => void,
+) {
   const posts: { path: string; body: Record<string, unknown> }[] = [];
   let version = card.organization.version;
   vi.stubGlobal(
@@ -87,8 +92,18 @@ function stubApi(card: OrganizationAuthoringResponse, answers: Answer[] = []) {
       if ((init?.method ?? "GET").toUpperCase() !== "GET") {
         posts.push({ path: url.pathname, body: JSON.parse(String(init?.body ?? "null")) });
         const next = answers.shift();
-        if (next) return reply(next.status, next.body);
+        const path = url.pathname.replace("/v2/commands/", "");
+        const body = posts[posts.length - 1].body;
+        if (next) {
+          const answered = (next.body as { version?: number }).version;
+          if (next.status === 200 && typeof answered === "number") {
+            version = answered;
+            applied?.(path, body, answered);
+          }
+          return reply(next.status, next.body);
+        }
         version += 1;
+        applied?.(path, body, version);
         return reply(200, { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "rcpt", version });
       }
       if (url.pathname.endsWith(`/v2/workspace/organizations/${ORG_ID}/authoring`)) return reply(200, card);
@@ -235,5 +250,88 @@ describe("«Sugerencias de la web»", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Aplicar Tipo" }));
     expect(await screen.findByText("Tipo: Otro operador modificó esta institución; recarga y vuelve a intentar.")).toBeInTheDocument();
     expect(posts).toHaveLength(1);
+  });
+});
+
+describe("review fixes", () => {
+  it("an unknown refusal code is said in Spanish, never as a raw code and English message", () => {
+    expect(refusalText("something_new", "some english detail")).toBe("No se pudo aplicar (código something_new).");
+  });
+
+  it("a second «Aplicar» before the card reloads uses the version the first one returned", async () => {
+    // GETs keep the old card (the reload has not landed): the second click must not reuse version 3.
+    const posts = stubApi(fixture());
+    render(withRole("sales", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor admin={false} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Aplicar Tipo" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    fireEvent.click(await screen.findByRole("button", { name: "Aplicar Dominio de correo" }));
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts.map((p) => p.body.expected_version)).toEqual([3, 4]);
+  });
+
+  it("«Aplicar todo y confirmar» on an institution another operator already confirmed says so", async () => {
+    const posts = stubApi(fixture(), [
+      { status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "r1", version: 4 } },
+      { status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "r2", version: 5 } },
+      { status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "r3", version: 6 } },
+      { status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "r4", version: 7 } },
+      { status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "r5", version: 8 } },
+      { status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "r6", version: 8, already_confirmed: true } },
+    ]);
+    render(withRole("sales", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor admin={false} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Aplicar todo y confirmar" }));
+    expect(await screen.findByText("Sugerencias aplicadas. La institución ya estaba confirmada.")).toBeInTheDocument();
+    expect(screen.queryByText("Sugerencias aplicadas e institución confirmada.")).toBeNull();
+    expect(posts).toHaveLength(6);
+  });
+
+  it("«Confirmar institución» answering already_confirmed is a success, not an error", async () => {
+    const posts = stubApi(fixture({}, null), [
+      { status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "r1", version: 3, already_confirmed: true } },
+    ]);
+    render(withRole("sales", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor admin={false} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmar institución" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirmar institución" })).not.toBeDisabled());
+    expect(screen.queryByText(/already_confirmed|No se pudo/)).toBeNull();
+    expect(document.querySelector(".text-bad")).toBeNull();
+  });
+
+  it("a second «Aplicar todo» after a refusal skips what is now applied and sends only the rest", async () => {
+    const card = fixture();
+    const ok = (version: number) => ({
+      status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: `r${version}`, version },
+    });
+    const posts = stubApi(
+      card,
+      [ok(4), ok(5), ok(6), { status: 409, body: { detail: { code: "stale_version", message: "x" } } }],
+      (path, body, version) => {
+        card.organization.version = version;
+        if (path === "update-organization") {
+          if (body.name) card.organization.name = String(body.name);
+          if (body.legal_name) card.organization.legal_name = String(body.legal_name);
+          if (body.kind) card.organization.kind = String(body.kind);
+        }
+        if (path === "add-organization-identifier") {
+          card.identifiers = [{ id: "i1", scheme: "rut", value_norm: "12345678-5", removed_at: null, remove_reason: null }];
+        }
+        if (path === "add-organization-domain") {
+          card.domains = [{ id: "d1", domain_norm: "ficticia.example", scope: "shared", removed_at: null, remove_reason: null }];
+        }
+      },
+    );
+    render(withRole("sales", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor admin={false} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Aplicar todo y confirmar" }));
+    expect(await screen.findByText(/Se detuvo en RUT: Otro operador modificó/)).toBeInTheDocument();
+    expect(posts).toHaveLength(4);
+    // The reload landed: name, legal name and type are applied now (card version 6).
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Aplicar Nombre" })).toBeNull());
+    fireEvent.click(await screen.findByRole("button", { name: "Aplicar todo y confirmar" }));
+    await waitFor(() => expect(posts).toHaveLength(7));
+    expect(posts.slice(4).map((p) => [p.path.replace("/v2/commands/", ""), p.body.expected_version])).toEqual([
+      ["add-organization-identifier", 6],
+      ["add-organization-domain", 7],
+      ["confirm-organization-record", 8],
+    ]);
   });
 });

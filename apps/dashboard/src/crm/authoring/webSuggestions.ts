@@ -110,8 +110,8 @@ export async function applyField(row: SuggestionRow, organizationId: string, ver
 }
 
 export type ApplyAllOutcome =
-  | { ok: true; applied: SuggestionField[]; confirmed: boolean }
-  | { ok: false; applied: SuggestionField[]; failed: SuggestionField | "confirm"; code: string; message: string };
+  | { ok: true; applied: SuggestionField[]; confirmed: boolean; alreadyConfirmed: boolean; version: number }
+  | { ok: false; applied: SuggestionField[]; failed: SuggestionField | "confirm"; code: string; message: string; version: number };
 
 export async function applyAllAndConfirm(args: {
   organizationId: string;
@@ -128,21 +128,30 @@ export async function applyAllAndConfirm(args: {
       applied.push(row.field);
     } catch (err) {
       const r = refusalOf(err);
-      return { ok: false, applied, failed: row.field, code: r?.code ?? "error", message: r?.message ?? String(err) };
+      return { ok: false, applied, failed: row.field, code: r?.code ?? "error", message: r?.message ?? String(err), version };
     }
   }
-  if (args.alreadyConfirmed) return { ok: true, applied, confirmed: false };
+  if (args.alreadyConfirmed) return { ok: true, applied, confirmed: false, alreadyConfirmed: true, version };
+  let receipt: Awaited<ReturnType<typeof confirmOrganizationRecord>>;
   try {
-    await confirmOrganizationRecord({ organization_id: args.organizationId, expected_version: version, note: args.note });
+    receipt = await confirmOrganizationRecord({ organization_id: args.organizationId, expected_version: version, note: args.note });
   } catch (err) {
     const r = refusalOf(err);
-    return { ok: false, applied, failed: "confirm", code: r?.code ?? "error", message: r?.message ?? String(err) };
+    return { ok: false, applied, failed: "confirm", code: r?.code ?? "error", message: r?.message ?? String(err), version };
   }
-  return { ok: true, applied, confirmed: true };
+  // Another operator may have confirmed it meanwhile: the answer says so, and that is not «confirmed by this run».
+  const already = receipt.already_confirmed === true;
+  return {
+    ok: true,
+    applied,
+    confirmed: !already,
+    alreadyConfirmed: already,
+    version: typeof receipt.version === "number" ? receipt.version : version,
+  };
 }
 
 /** A refusal in the operator's words. */
-export function refusalText(code: string, message: string): string {
+export function refusalText(code: string, _message?: string): string {
   switch (code) {
     case "stale_version":
       return "Otro operador modificó esta institución; recarga y vuelve a intentar.";
@@ -159,6 +168,6 @@ export function refusalText(code: string, message: string): string {
     case "archived_subject":
       return "La institución está archivada.";
     default:
-      return `${code}: ${message}`;
+      return `No se pudo aplicar (código ${code}).`;
   }
 }
