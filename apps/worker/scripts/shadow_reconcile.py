@@ -1,0 +1,196 @@
+"""Shadow week (spec §7.3): every message V1 captured from contacto@ since go-live is in
+`comms.message`, or is explained.
+
+    cd apps/worker
+    set -a; . <the cron's environment, from your password manager, outside the repository>; set +a
+    uv run python scripts/shadow_reconcile.py \
+        --sqlite ~/data/origenlab-email/sqlite/emails.sqlite \
+        --since 2026-10-12T15:00:00Z \
+        --out ~/data/origenlab-v2-migration/audits/gmail-shadow-2026-10-19
+
+Reads V1's SQLite read-only (`mode=ro`; V1's cron keeps writing it) and `comms.message` as
+`origenlab_worker` inside a read-only transaction. Matches by normalized RFC 822 Message-ID.
+
+Stdout: counts only. Files in `--out` (mode 600, never inside the repository):
+  missing.csv             V1 id, folder, direction, date - no subject, no address.
+  missing_message_ids.txt RFC 822 Message-IDs V1 has and comms.message lacks (a Message-ID carries a
+                          domain, so it stays out of stdout and out of missing.csv).
+  extra_message_ids.txt   Message-IDs in comms.message since the window that V1 does not have.
+
+Sent from the Gmail web UI: such a message starts as an autosaved draft, and history mode skips
+drafts. If one is never captured it appears as `missing_sent`. V1 has no direction column, only the
+`folder` it ingested, so the split is by folder: a folder matching V1's sent markers (Enviados,
+Sent) is `sent`, an inbox folder is `received`, anything else (archive, unclassified) is `other`.
+Rows without a Message-ID have no direction split of their own beyond the same folder rule. Read
+`missing_sent` first: it is the signal that web-UI sends are not arriving. Exit 1 while anything
+is unexplained.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import os
+import sqlite3
+import sys
+from collections import Counter
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from origenlab_worker.capture import SKIPPED_INTAKE, normalize_rfc822_id
+from origenlab_worker.gmail_sync import MAILBOX_ADDRESS
+from origenlab_worker.v1_reuse import classify_intake_folder
+
+V1_SOURCE_LIKE = f"gmail:{MAILBOX_ADDRESS}/%"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+_SENT_MARKERS = ("enviados", "sent")
+
+
+@dataclass(frozen=True)
+class V1Row:
+    email_id: int
+    folder: str
+    message_id: str | None
+    date_iso: str | None
+
+
+def _parse(value: str | None) -> datetime | None:
+    try:
+        return datetime.fromisoformat((value or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def direction_of(folder: str | None) -> str:
+    """`sent`, `received` or `other`, from V1's folder (V1 stores no direction)."""
+    if classify_intake_folder(folder) != "primary_evidence":
+        return "other"
+    low = (folder or "").lower()
+    if any(marker in low for marker in _SENT_MARKERS):
+        return "sent"
+    return "received"
+
+
+def read_v1_rows(sqlite_path: Path, since: datetime) -> list[V1Row]:
+    """V1 rows from contacto@'s Gmail lanes whose Date header is at or after `since`."""
+    conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "select id, folder, message_id, date_iso from emails "
+            "where source_file like ? and date_iso >= ?",
+            (V1_SOURCE_LIKE, (since - timedelta(days=1)).date().isoformat()),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for email_id, folder, message_id, date_iso in rows:
+        when = _parse(date_iso)
+        if when is not None and when.tzinfo is not None and when >= since:
+            out.append(V1Row(int(email_id), folder or "", message_id, date_iso))
+    return out
+
+
+def reconcile(v1_rows: Iterable[V1Row], v2_ids: set[str]) -> tuple[Counter[str], list[V1Row]]:
+    """`present`, `explained_<draft|spam|trash>`, `no_message_id` or `missing` per V1 row."""
+    counts: Counter[str] = Counter()
+    missing: list[V1Row] = []
+    for row in v1_rows:
+        norm = normalize_rfc822_id(row.message_id)
+        if norm is None:
+            counts["no_message_id"] += 1
+            missing.append(row)
+        elif norm in v2_ids:
+            counts["present"] += 1
+        elif (reason := SKIPPED_INTAKE.get(classify_intake_folder(row.folder))) is not None:
+            counts[f"explained_{reason}"] += 1
+        else:
+            counts["missing"] += 1
+            missing.append(row)
+    return counts, missing
+
+
+def missing_by_direction(missing: Iterable[V1Row]) -> Counter[str]:
+    return Counter(f"missing_{direction_of(row.folder)}" for row in missing)
+
+
+def extra_ids(v1_rows: Iterable[V1Row], v2_ids: set[str]) -> list[str]:
+    """Message-IDs in `comms.message` that no V1 row of the window carries."""
+    known = {n for n in (normalize_rfc822_id(r.message_id) for r in v1_rows) if n}
+    return sorted(v2_ids - known)
+
+
+def read_v2_ids(conn, since: datetime) -> set[str]:
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute("set transaction read only")
+        cur.execute(
+            """
+            select m.rfc822_message_id_norm
+              from comms.message m join comms.mailbox b on b.id = m.mailbox_id
+             where b.address_norm = %s and m.rfc822_message_id_norm is not null
+               and m.internal_date >= %s
+            """,
+            (MAILBOX_ADDRESS, since - timedelta(days=2)),
+        )
+        return {row[0] for row in cur.fetchall()}
+
+
+def _private_dir(out_dir: Path) -> Path:
+    out_dir = out_dir.expanduser().resolve()
+    if out_dir == REPO_ROOT or REPO_ROOT in out_dir.parents:
+        raise SystemExit("--out must be outside the repository")
+    out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return out_dir
+
+
+def _private_file(path: Path):
+    return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", newline="", encoding="utf-8")
+
+
+def write_missing(out_dir: Path, rows: list[V1Row]) -> Path:
+    path = _private_dir(out_dir) / "missing.csv"
+    with _private_file(path) as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["v1_email_id", "folder", "direction", "date_iso"])
+        writer.writerows((r.email_id, r.folder, direction_of(r.folder), r.date_iso) for r in rows)
+    return path
+
+
+def write_ids(out_dir: Path, name: str, ids: Iterable[str]) -> Path:
+    path = _private_dir(out_dir) / name
+    with _private_file(path) as fh:
+        fh.writelines(f"{i}\n" for i in ids)
+    return path
+
+
+def main() -> int:
+    from origenlab_worker.cli import config_from_env
+    from origenlab_worker.database import open_worker_db
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sqlite", required=True, type=Path)
+    parser.add_argument("--since", required=True, help="go-live, ISO 8601 with offset (the --init run's time)")
+    parser.add_argument("--out", required=True, type=Path)
+    args = parser.parse_args()
+    since = _parse(args.since)
+    if since is None or since.tzinfo is None:
+        raise SystemExit("--since must be ISO 8601 with an offset, e.g. 2026-10-12T15:00:00Z")
+    _private_dir(args.out)  # refuse a path inside the repository before touching anything
+    v1_rows = read_v1_rows(args.sqlite.expanduser(), since)
+    with open_worker_db(config_from_env(os.environ).database) as db:
+        v2_ids = read_v2_ids(db.connection, since)
+    counts, missing = reconcile(v1_rows, v2_ids)
+    extra = extra_ids(v1_rows, v2_ids)
+    path = write_missing(args.out, missing)
+    write_ids(args.out, "missing_message_ids.txt",
+              sorted({n for r in missing if (n := normalize_rfc822_id(r.message_id))}))
+    write_ids(args.out, "extra_message_ids.txt", extra)
+    split = missing_by_direction(missing)
+    print(f"v1_rows={len(v1_rows)} " + " ".join(f"{k}={v}" for k, v in sorted({**counts, **split}.items()))
+          + f" extra_in_v2={len(extra)} detail={path.parent}")
+    return 1 if missing else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
