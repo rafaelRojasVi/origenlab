@@ -37,12 +37,12 @@
   ],
   "probes": {
     "migrations.count": {
-      "expect": 44,
+      "expect": 45,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20261005140628",
-      "why": "slice7_catalog_pricing_inputs_document_lines, the newest migration — pricing exchange rates, costing parameters (seeded) and quote-document lines as durable evidence, after 20261005134832's product content, images, supplier observations, supplier terms and notes on products."
+      "expect": "20261005210000",
+      "why": "slice7_domain_event_type_union, the newest migration — restores case_evidence.unlinked and opportunity.stage_corrected to crm.domain_event_type_check after the catalog 1a migrations rebuilt it without them."
     },
 
     "source_record.total": {
