@@ -110,6 +110,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // captured mailbox. Same GET-only, operator-session rule as the reads above; it carries no
   // address and no message. Nothing under it is reachable.
   /^\/v2\/workspace\/mail-sync$/,
+  // Quote numbers already seen in the captured Gmail (number, first sighting, message count), so
+  // the Resumen's quote-number box never suggests a number already sent. Same GET-only,
+  // operator-session rule; no address, subject or institution. Nothing under it is reachable.
+  /^\/v2\/workspace\/mail-quote-numbers$/,
   /^\/v2\/cockpit\/work-queue$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to

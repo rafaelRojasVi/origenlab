@@ -87,6 +87,7 @@ describe("allowlist", () => {
       "/v2/workspace/review",
       "/v2/workspace/fx",
       "/v2/workspace/mail-sync",
+      "/v2/workspace/mail-quote-numbers",
       "/v2/cockpit/work-queue",
     ]) {
       expect(isAllowedUpstreamPath(path)).toBe(true);
@@ -111,6 +112,9 @@ describe("allowlist", () => {
       "/v2/workspace/fx/usd",
       "/v2/workspace/mail-sync/",
       "/v2/workspace/mail-sync/contacto",
+      "/v2/workspace/mail-quote-numbers/",
+      "/v2/workspace/mail-quote-numbers/CN09901",
+      "/v2/workspace/mail-quote-numbersx",
       "/v2/cockpit",
       "/v2/cockpit/work-queue/",
       "/v2/cockpit/work-queue/1",
