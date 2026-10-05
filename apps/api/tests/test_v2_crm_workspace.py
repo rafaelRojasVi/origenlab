@@ -336,6 +336,7 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/people/merge-preview",
         "/v2/workspace/organizations/{organization_id}/authoring",
         "/v2/workspace/person-suggestions",
+        "/v2/workspace/mail-sync",
         "/v2/workspace/marketing",
         "/v2/workspace/marketing/taxonomy",
         "/v2/workspace/marketing/audience",

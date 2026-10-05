@@ -35,6 +35,7 @@ PROXIED_READS = (
     "/v2/workspace/drive",
     "/v2/workspace/review",
     "/v2/workspace/person-suggestions",
+    "/v2/workspace/mail-sync",
     "/v2/cockpit/work-queue",
 )
 ADDRESS = "compras@cliente-ficticio.example"
@@ -72,7 +73,7 @@ class _Workspace:
     def _body(self) -> dict[str, Any]:
         return {"items": [{"contact": ADDRESS, "phone": PHONE}]}
 
-    overview = pipeline = drive_archive = review = person_suggestions = _body
+    overview = pipeline = drive_archive = review = person_suggestions = mail_sync = _body
 
     # The providers and marketing routes post-process these keys; empty lists keep the
     # address-bearing `items` the only content to mask.

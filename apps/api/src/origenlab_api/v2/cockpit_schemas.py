@@ -162,10 +162,13 @@ class WorkQueueItem(BaseModel):
 
 
 class WorkQueueResponse(BaseModel):
-    """Paginated work queue.  Items are ordered: oldest first within each kind."""
+    """Paginated work queue: every other kind first, then pending evidence; oldest first within."""
 
     items: list[WorkQueueItem]
     total: int
+    counts: dict[str, int] = Field(
+        default_factory=dict, description="Items per kind across the whole queue, not just this page."
+    )
     limit: int
     offset: int
 

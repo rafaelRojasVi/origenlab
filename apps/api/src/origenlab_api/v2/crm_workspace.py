@@ -52,6 +52,33 @@ GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
 DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/{}"
 DRIVE_FILE_URL = "https://drive.google.com/file/d/{}/view"
 
+#: The one mailbox Phase 4a captures, and when its capture counts as late (OPERATIONS.md §8).
+MAIL_SYNC_MAILBOX = "contacto@origenlab.cl"
+MAIL_SYNC_LATE_MINUTES = 30
+
+
+def mail_sync_state(
+    authorization_state: str | None, last_synced_at: datetime | None, minutes_since_sync: int | None
+) -> dict[str, Any]:
+    """`ok`, `late` (authorized, no completed run for 30 min), `stopped` (revoked, or paused after
+    it ran), `not_started` (before go-live) or `not_configured` (no mailbox row)."""
+    if authorization_state is None:
+        state = "not_configured"
+    elif authorization_state == "authorized":
+        late = minutes_since_sync is None or minutes_since_sync > MAIL_SYNC_LATE_MINUTES
+        state = "late" if late else "ok"
+    elif authorization_state == "revoked" or last_synced_at is not None:
+        state = "stopped"
+    else:
+        state = "not_started"
+    return {
+        "state": state,
+        "authorization_state": authorization_state,
+        "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
+        "minutes_since_sync": minutes_since_sync,
+        "late_after_minutes": MAIL_SYNC_LATE_MINUTES,
+    }
+
 # Per-entity provenance: what a count of zero (or a partial count) means. ``imported`` = a
 # migration or command has written it and the count is the real state; ``partial`` = rows exist
 # but a known part is missing; ``not_imported`` = no import has been built or run, so zero says
@@ -1660,6 +1687,21 @@ class CrmWorkspaceRepository:
         with self._read() as cur:
             items = safe_person_suggestions(cur)
         return {"items": items, "total": len(items)}
+
+    def mail_sync(self) -> dict[str, Any]:
+        """Whether the Gmail capture is running. Its age is measured by the database clock, never
+        an address, a subject or a message."""
+        with self._read() as cur:
+            cur.execute(
+                """
+                select authorization_state, last_synced_at,
+                       floor(extract(epoch from now() - last_synced_at) / 60)::int
+                  from comms.mailbox where address_norm = %s
+                """,
+                (MAIL_SYNC_MAILBOX,),
+            )
+            row = cur.fetchone()
+        return mail_sync_state(*(row or (None, None, None)))
 
     # -- review queue: what the CRM itself cannot show
 
