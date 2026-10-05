@@ -3,6 +3,8 @@ login: one message per transaction, idempotent on every unique key, the mailbox,
 
 from __future__ import annotations
 
+import dataclasses
+import threading
 import time
 from datetime import timedelta
 
@@ -14,7 +16,7 @@ from mailfixtures import INTERNAL_MS, MAILBOX, RAW_8BIT, make_raw
 from origenlab_worker.capture import build_capture, unparsed_message
 from origenlab_worker.database import RecordOutcome, local_test_target, open_worker_db
 from origenlab_worker.gmail_client import READONLY_SCOPE
-from v2_command_harness import build_disposable_database, needs_worker_db, worker_dsn
+from v2_command_harness import _TEST_DSN, build_disposable_database, needs_worker_db, swap_database, worker_dsn
 
 pytestmark = needs_worker_db
 
@@ -63,11 +65,21 @@ def test_a_capture_is_one_message_its_people_its_attachment_and_pending_evidence
               c.payload["raw_sha256"])]
 
 
+def test_the_stored_payload_is_the_captures_all_21_keys(db, dsn, mailbox_id) -> None:
+    c = capture("w1")
+    stored = owner_rows(dsn, "select payload from evidence.source_record where dedupe_key = 'gmail_message:w1'")[0][0]
+    assert len(c.payload) == 21
+    assert stored == c.payload
+
+
 def test_recording_the_same_message_again_writes_nothing(db, dsn, mailbox_id) -> None:
     c = capture("w2")
     record(db, mailbox_id, c)
     assert record(db, mailbox_id, c) == RecordOutcome(new_message=False, evidence_created=False)
     assert owner_rows(dsn, "select count(*) from comms.message where provider_message_id = 'w2'") == [(1,)]
+    assert owner_rows(dsn, "select (select count(*) from comms.message_participant p where p.message_id = m.id), "
+                           "(select count(*) from comms.attachment a where a.message_id = m.id) "
+                           "from comms.message m where m.provider_message_id = 'w2'") == [(len(c.participants), len(c.attachments))]
     assert owner_rows(dsn, "select count(*) from evidence.source_record where dedupe_key = 'gmail_message:w2'") == [(1,)]
 
 
@@ -75,6 +87,10 @@ def test_a_campaign_copy_is_a_message_without_evidence(db, dsn, mailbox_id) -> N
     raw = make_raw(frm=f"OrigenLab <{MAILBOX}>", to="x@cliente.invalid", list_unsubscribe=True)
     assert record(db, mailbox_id, capture("w3", raw, ("SENT",)), raw) == RecordOutcome(True, False)
     assert owner_rows(dsn, "select direction from comms.message where provider_message_id = 'w3'") == [("outbound",)]
+    c = capture("w3", raw, ("SENT",))
+    assert owner_rows(dsn, "select count(*) from comms.message_participant p join comms.message m on m.id = p.message_id "
+                           "where m.provider_message_id = 'w3'") == [(len(c.participants),)]
+    assert len(c.participants) >= 2
     assert owner_rows(dsn, "select count(*) from evidence.source_record where dedupe_key = 'gmail_message:w3'") == [(0,)]
 
 
@@ -130,3 +146,90 @@ def test_one_run_at_a_time_and_a_dead_runs_session_is_ended(dsn) -> None:
         assert second.try_lock(stale_after=timedelta(0))   # idle past the threshold: ended, lock taken
         with pytest.raises(psycopg.OperationalError):
             first.connection.execute("select 1")
+
+
+def test_a_failure_partway_through_a_message_leaves_nothing_and_the_connection_works(db, dsn, mailbox_id) -> None:
+    """One transaction per message: the message and participants inserted before the evidence
+    row fails (payload not an object) are rolled back, and the same session records the next."""
+    bad = dataclasses.replace(capture("w7"), payload=[])
+    with pytest.raises(psycopg.errors.CheckViolation):
+        db.record(bad, mailbox_id=mailbox_id, eml_path="mail/x/w7.eml", eml_sha256="a" * 64, size_bytes=1)
+    assert not db.message_exists(mailbox_id, "w7")
+    assert owner_rows(dsn, "select count(*) from comms.message_participant p join comms.message m on m.id = p.message_id "
+                           "where m.provider_message_id = 'w7'") == [(0,)]
+    assert record(db, mailbox_id, capture("w8")) == RecordOutcome(True, True)
+
+
+def test_authorize_on_a_missing_mailbox_is_a_lookup_error_without_the_id(db) -> None:
+    missing = "00000000-0000-0000-0000-000000000000"
+    with pytest.raises(LookupError) as raised:
+        db.authorize(missing, baseline_history_id="1", scopes=[READONLY_SCOPE])
+    assert str(raised.value) == "mailbox_not_found"
+    assert missing not in str(raised.value)
+
+
+def test_a_holder_that_is_not_idle_is_not_ended(dsn) -> None:
+    target = local_test_target(worker_dsn(dsn))
+    with open_worker_db(target) as first, open_worker_db(target) as second:
+        assert first.try_lock()
+        first.connection.execute("select 1")
+        busy = threading.Thread(target=lambda: first.connection.execute("select pg_sleep(1.5)"))
+        busy.start()
+        time.sleep(0.4)
+        try:
+            assert not second.try_lock(stale_after=timedelta(0))
+        finally:
+            busy.join()
+        first.connection.execute("select 1")  # still alive
+
+
+def test_a_holder_inside_an_open_transaction_is_not_ended(dsn) -> None:
+    target = local_test_target(worker_dsn(dsn))
+    with open_worker_db(target) as first, open_worker_db(target) as second:
+        assert first.try_lock()
+        with first.connection.transaction():
+            first.connection.execute("select 1")
+            time.sleep(0.2)
+            assert not second.try_lock(stale_after=timedelta(0))
+        first.connection.execute("select 1")
+
+
+def _lock_key_sql() -> str:
+    from origenlab_worker.database import LOCK_NAME
+    return f"select pg_try_advisory_lock(hashtextextended('{LOCK_NAME}', 0))"
+
+
+def test_a_holder_of_another_role_is_never_ended(dsn) -> None:
+    target = local_test_target(worker_dsn(dsn))
+    with psycopg.connect(dsn, autocommit=True) as owner, open_worker_db(target) as worker:
+        owner.execute("set role origenlab_owner")
+        assert owner.execute(_lock_key_sql()).fetchone()[0]
+        time.sleep(0.2)
+        assert not worker.try_lock(stale_after=timedelta(0))
+        owner.execute("select 1")  # still alive
+
+
+def test_a_stale_holder_in_another_database_is_not_ended(dsn) -> None:
+    import uuid
+
+    other = f"origenlab_test_{uuid.uuid4().hex[:8]}"
+    with psycopg.connect(_TEST_DSN, autocommit=True) as admin:
+        admin.execute(f"create database {other}")
+    try:
+        foreign = psycopg.connect(swap_database(worker_dsn(dsn), other), autocommit=True)
+        try:
+            assert foreign.execute(_lock_key_sql()).fetchone()[0]
+            time.sleep(0.2)
+            target = local_test_target(worker_dsn(dsn))
+            with open_worker_db(target) as holder, open_worker_db(target) as worker:
+                assert holder.try_lock()
+                with holder.connection.transaction():  # busy: the only real holder here
+                    holder.connection.execute("select 1")
+                    # the idle foreign session holds the same key in its own database
+                    assert not worker.try_lock(stale_after=timedelta(0))
+                foreign.execute("select 1")  # not terminated
+        finally:
+            foreign.close()
+    finally:
+        with psycopg.connect(_TEST_DSN, autocommit=True) as admin:
+            admin.execute(f"drop database {other} with (force)")

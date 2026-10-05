@@ -22,8 +22,8 @@ import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
-from ipaddress import ip_address
 from datetime import datetime, timedelta
+from ipaddress import ip_address
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlsplit
 
@@ -307,11 +307,13 @@ select l.pid
  where l.locktype = 'advisory' and l.granted and l.objsubid = 1
    and l.classid = ((k.key >> 32) & 4294967295)::oid
    and l.objid = (k.key & 4294967295)::oid
+   and l.database = (select oid from pg_database where datname = current_database())
    and l.pid <> pg_backend_pid()
    and a.usename = current_user
    and a.state = 'idle'
    and a.state_change < now() - make_interval(secs => %s)
 """
+
 
 class WorkerDb:
     def __init__(self, conn: Any, statement_timeout_ms: int = 30_000) -> None:
@@ -368,7 +370,10 @@ class WorkerDb:
         exists — after a pause or a re-consent the capture continues from it, nothing is skipped."""
         with self._tx() as cur:
             cur.execute("select history_id from comms.mailbox where id = %s for update", (mailbox_id,))
-            (current,) = cur.fetchone()
+            found = cur.fetchone()
+            if found is None:
+                raise LookupError("mailbox_not_found")
+            (current,) = found
             cur.execute(
                 """
                 update comms.mailbox
