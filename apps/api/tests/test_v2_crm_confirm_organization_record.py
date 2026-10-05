@@ -126,6 +126,31 @@ def test_the_same_key_twice_confirms_once(disposable_database, operator) -> None
 
 
 @needs_db
+def test_a_merged_institution_is_refused_and_nothing_is_written(disposable_database, operator) -> None:
+    survivor, loser = _org(disposable_database), _org(disposable_database)
+    _owner(disposable_database, "update crm.organization set merged_into_organization_id = %s where id = %s",
+           (survivor, loser))
+    before = _state(disposable_database, loser)
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, operator, {"organization_id": loser, "expected_version": before[2]})
+    assert (exc.value.status_code, exc.value.code) == (409, "organization_merged")
+    assert _state(disposable_database, loser) == before
+    assert _confirmed_events(disposable_database, loser) == []
+
+
+@needs_db
+def test_the_same_key_replays_the_already_confirmed_no_op_with_the_same_body(disposable_database, operator) -> None:
+    org = _org(disposable_database)
+    _run(disposable_database, operator, {"organization_id": org, "expected_version": 1})
+    key = uuid.uuid4().hex
+    first = _run(disposable_database, operator, {"organization_id": org, "expected_version": 1}, key)
+    second = _run(disposable_database, operator, {"organization_id": org, "expected_version": 1}, key)
+    assert first["already_confirmed"] is True and second["replayed"] is True
+    assert {k: v for k, v in second.items() if k != "replayed"} == {k: v for k, v in first.items() if k != "replayed"}
+    assert len(_confirmed_events(disposable_database, org)) == 1
+
+
+@needs_db
 def test_the_card_read_says_who_confirmed_and_when(disposable_database, operator) -> None:
     org = _org(disposable_database)
     _run(disposable_database, operator, {"organization_id": org, "expected_version": 1})
