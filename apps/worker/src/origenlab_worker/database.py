@@ -17,6 +17,7 @@ from __future__ import annotations
 import atexit
 import os
 import re
+import shutil
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
@@ -30,7 +31,7 @@ from origenlab_worker.errors import ConfigRefused
 WORKER_ROLE = "origenlab_worker"
 APP_NAME = "origenlab-worker-gmail-sync"
 TRANSACTION_POOLER_PORT = 6543
-PRIVILEGED_ROLES = ("origenlab_owner", "origenlab_migrator", "origenlab_api", "postgres")
+SESSION_PORT = 5432
 DISPOSABLE_DB = re.compile(r"origenlab_test_[0-9a-f]{8}")
 KEEPALIVES = {"keepalives": "1", "keepalives_idle": "15", "keepalives_interval": "5", "keepalives_count": "3"}
 _WORKER_LOGIN = re.compile(r"^origenlab_worker(\.[a-z0-9]{1,63})?$")
@@ -64,7 +65,7 @@ class TargetRefused(ConfigRefused):
 
 @dataclass(frozen=True)
 class WorkerTarget:
-    dsn: str
+    dsn: str = field(repr=False)  # carries the password
     database: str
     remote: bool
     connect_options: dict[str, str] = field(default_factory=dict)
@@ -73,20 +74,28 @@ class WorkerTarget:
 def write_ca_file(pem: str) -> str:
     """The Supabase CA from its environment value to a private temporary file; its path."""
     text = (pem or "").strip()
-    if "-----BEGIN CERTIFICATE-----" not in text:
+    if "-----BEGIN CERTIFICATE-----" not in text or "-----END CERTIFICATE-----" not in text:
         raise TargetRefused("ca_pem_missing")
     if "PRIVATE KEY-----" in text:
         raise TargetRefused("ca_pem_has_private_key")
-    fd, path = tempfile.mkstemp(prefix="origenlab-worker-ca-", suffix=".pem")  # mode 600
-    with os.fdopen(fd, "w", encoding="ascii", errors="strict") as fh:
-        fh.write(text + "\n")
-    atexit.register(_unlink, path)
+    try:
+        data = (text + "\n").encode("ascii")
+    except UnicodeEncodeError:
+        raise TargetRefused("ca_pem_not_ascii") from None
+    directory = tempfile.mkdtemp(prefix="origenlab-worker-ca-")  # mode 700
+    atexit.register(shutil.rmtree, directory, True)  # registered first: a failed write leaves nothing
+    path = os.path.join(directory, "ca.pem")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
     return path
 
 
-def _unlink(path: str) -> None:
-    with suppress(OSError):
-        os.unlink(path)
+def _validated_ca_file(ca_file: str | None) -> str:
+    raw = (ca_file or "").strip()
+    if not raw or raw == "system" or not os.path.isabs(raw) or not os.path.isfile(raw):
+        raise TargetRefused("ca_file_invalid")
+    return raw
 
 
 def remote_worker_target(url: str, *, expected_host: str | None, ca_file: str) -> WorkerTarget:
@@ -103,6 +112,8 @@ def remote_worker_target(url: str, *, expected_host: str | None, ca_file: str) -
         raise TargetRefused("database_url_has_options")
     if "," in parts.netloc:
         raise TargetRefused("database_url_multiple_hosts")
+    if parts.netloc.count("@") > 1:  # Python and libpq disagree on which part is the host
+        raise TargetRefused("database_url_multiple_at")
     host = (parts.hostname or "").rstrip(".")
     try:
         ip_address(host)
@@ -118,22 +129,27 @@ def remote_worker_target(url: str, *, expected_host: str | None, ca_file: str) -
         raise TargetRefused("database_port_invalid") from None
     if port == TRANSACTION_POOLER_PORT:
         raise TargetRefused("transaction_pooler_refused")
+    if port != SESSION_PORT:  # no port at all would let libpq fall back to PGPORT
+        raise TargetRefused("database_port_invalid")
     if not _WORKER_LOGIN.match(unquote(parts.username or "")):
         raise TargetRefused("login_not_worker")
     database = unquote(parts.path.lstrip("/"))
     if not database or "/" in database or database in ("template0", "template1"):
         raise TargetRefused("database_name_invalid")
+    ca = _validated_ca_file(ca_file)
     return WorkerTarget(
         dsn=raw,
         database=database,
         remote=True,
-        connect_options={"sslmode": "verify-full", "sslrootcert": ca_file, "connect_timeout": "10", **KEEPALIVES},
+        connect_options={"sslmode": "verify-full", "sslrootcert": ca, "connect_timeout": "10", **KEEPALIVES},
     )
 
 
 def local_test_target(dsn: str) -> WorkerTarget:
     """Tests only: a loopback `origenlab_test_<hex>` database the suite created and will drop."""
     parts = urlsplit(dsn)
+    if parts.query or parts.fragment:
+        raise TargetRefused("database_url_has_options")
     if parts.hostname not in _LOOPBACK:
         raise TargetRefused("not_loopback")
     database = unquote(parts.path.lstrip("/"))
@@ -150,8 +166,6 @@ select current_user::text,
          select m.rolname::text from pg_roles m
          where m.oid <> r.oid
            and pg_has_role(current_user, m.oid, 'MEMBER')
-           and (m.rolname = any(%s::text[]) or m.rolsuper or m.rolbypassrls
-                or m.rolcreaterole or m.rolcreatedb or m.rolreplication)
          order by 1
        )
 from pg_roles r where r.rolname = current_user
@@ -164,16 +178,27 @@ select schemaname::text, tablename::text, policyname::text
 """
 
 # Table-level or column-level: has_any_column_privilege is true for either, so a column grant
-# cannot slip past a check that only looks at the table.
+# cannot slip past a check that only looks at the table. Views and materialized views count for
+# the DML verbs (a view can be written through); TRIGGER lets the holder run code at the owner's
+# next write.
 _WRITE_PROBE = """
 select n.nspname || '.' || c.relname, p.privilege
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
- cross join (values ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE')) as p(privilege)
- where n.nspname in ('crm', 'outbound') and c.relkind in ('r', 'p')
+ cross join (values ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('TRIGGER')) as p(privilege)
+ where n.nspname in ('crm', 'outbound') and c.relkind in ('r', 'p', 'v', 'm')
    and (case when p.privilege in ('INSERT', 'UPDATE')
              then has_any_column_privilege(c.oid, p.privilege)
              else has_table_privilege(c.oid, p.privilege) end)
  order by 1, 2
+"""
+
+# A SECURITY DEFINER function runs with its owner's rights, whatever the worker's own grants are.
+_DEFINER_PROBE = """
+select n.nspname || '.' || p.proname
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where p.prosecdef and n.nspname not in ('pg_catalog', 'information_schema')
+   and has_function_privilege(p.oid, 'EXECUTE')
+ order by 1
 """
 
 #: The one write the schema grants the worker outside its own schemas: it proposes 4c reply
@@ -191,7 +216,7 @@ def verify_worker_connection(conn: Any, target: WorkerTarget) -> None:
             raise TargetRefused("connection_not_verify_full")
     with conn.transaction(), conn.cursor() as cur:
         cur.execute("set transaction read only")
-        cur.execute(_ROLE_PROBE, (list(PRIVILEGED_ROLES),))
+        cur.execute(_ROLE_PROBE)
         row = cur.fetchone()
         if row is None:
             raise TargetRefused("role_not_visible")
@@ -214,6 +239,9 @@ def verify_worker_connection(conn: Any, target: WorkerTarget) -> None:
         cur.execute(_WRITE_PROBE)
         if set(cur.fetchall()) - ALLOWED_OUTSIDE_WRITES:
             raise TargetRefused("worker_can_write_crm_or_outbound")
+        cur.execute(_DEFINER_PROBE)
+        if cur.fetchall():
+            raise TargetRefused("worker_can_execute_security_definer")
 
 
 class WorkerDb:
@@ -250,6 +278,6 @@ def open_worker_db(target: WorkerTarget, connect: Callable[..., Any] | None = No
 
 
 __all__ = [
-    "ALLOWED_OUTSIDE_WRITES", "APP_NAME", "TargetRefused", "WorkerDb", "WorkerTarget", "local_test_target",
+    "ALLOWED_OUTSIDE_WRITES", "APP_NAME", "TargetRefused", "WORKER_ROLE", "WorkerDb", "WorkerTarget", "local_test_target",
     "open_worker_db", "remote_worker_target", "verify_worker_connection", "write_ca_file",
 ]
