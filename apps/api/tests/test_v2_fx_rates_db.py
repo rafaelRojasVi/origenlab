@@ -54,8 +54,10 @@ def test_empty_store_then_write_through_then_stored_fallback(disposable_database
         "euro": {"fecha": "2026-10-03T03:00:00.000Z", "valor": 1100.5},
         "uf": {"fecha": "2026-10-03T03:00:00.000Z", "valor": 40000.0},
     }
-    _fx(dsn, (("mindicador.cl", lambda: body),)).current()
-    _fx(dsn, (("mindicador.cl", lambda: body),)).current()  # same day again: conflict, nothing new
+    for _ in range(2):  # the same day twice: the second is a conflict, nothing new
+        fx = _fx(dsn, (("mindicador.cl", lambda: body),))
+        fx.current()
+        assert fx.wait_for_write_through(10)
     rows = _owner(dsn, "select currency, rate_date, clp_per_unit, source, provider from catalog.fx_rate "
                        "order by currency")
     assert rows == [("EUR", dt.date(2026, 10, 3), D("1100.500000"), "bcentral", "mindicador"),

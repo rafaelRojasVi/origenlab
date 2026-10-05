@@ -348,7 +348,9 @@ def test_a_mindicador_fetch_writes_usd_and_eur_through_once() -> None:
     fx = FxRates(fetch=_Fetch(_body()), clock=clock, store_writer=writer)
     fx.current()
     clock.now += 3599
+    fx.wait_for_write_through(5)
     fx.current()  # served from memory: no second write
+    fx.wait_for_write_through(5)
     assert writer.calls == [[
         {"rate_date": dt.date(2026, 1, 15), "currency": "USD", "clp_per_unit": Decimal("950.5"),
          "provider": "mindicador"},
@@ -373,6 +375,7 @@ def test_a_failing_write_through_changes_nothing_and_is_logged(caplog: pytest.Lo
                  store_writer=_Writer(error=RuntimeError("deadlock detected")))
     with caplog.at_level("WARNING", logger="origenlab_api.v2.fx_rates"):
         assert fx.current() == plain
+        assert fx.wait_for_write_through(5)
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert len(warnings) == 1 and "RuntimeError" in warnings[0].getMessage()
 
@@ -404,3 +407,81 @@ def test_route_says_503_not_500_when_the_store_read_fails() -> None:
     fx = FxRates(fetch=_down(), clock=_Clock(), wall_clock=lambda: _WALL,
                  store_reader=_Store(error=RuntimeError("pool timeout")))
     assert _app(VIEWER, fx).get("/v2/workspace/fx").status_code == 503
+
+
+# ──────────────────────────────────────────────────── fix round 1 (review) ──
+
+import threading  # noqa: E402
+
+
+def test_a_stored_read_is_made_once_per_retry_window(caplog: pytest.LogCaptureFixture) -> None:
+    clock = _Clock()
+    store = _Store(error=RuntimeError('relation "catalog.fx_rate" does not exist'))
+    fx = FxRates(fetch=_down(), clock=clock, wall_clock=lambda: _WALL, store_reader=store)
+    with caplog.at_level("WARNING", logger="origenlab_api.v2.fx_rates"):
+        for _ in range(3):
+            with pytest.raises(FxUnavailable):
+                fx.current()
+            clock.now += 10
+    assert len(store.asked) == 1  # one currency asked, then the failure was remembered
+    stored_logs = [r for r in caplog.records if "stored-rate read" in r.getMessage()]
+    assert len(stored_logs) == 1
+
+
+def test_a_stored_answer_is_reused_inside_the_window_and_read_again_after_it() -> None:
+    clock = _Clock()
+    store = _Store(_row("USD", "2026-10-02", "952.5"))
+    fx = FxRates(fetch=_down(), clock=clock, wall_clock=lambda: _WALL, store_reader=store)
+    first = fx.current()
+    clock.now += 10
+    assert fx.current() == first
+    clock.now += 10
+    assert fx.current() == first
+    assert len(store.asked) == 2  # USD and EUR, once
+    clock.now += 61
+    fx.current()
+    assert len(store.asked) == 4
+
+
+class _BlockingWriter:
+    def __init__(self) -> None:
+        self.release = threading.Event()
+        self.entered = threading.Event()
+        self.calls = 0
+
+    def __call__(self, rows: list[dict[str, Any]]) -> None:
+        self.calls += 1
+        self.entered.set()
+        self.release.wait(10)
+
+
+def test_the_answer_never_waits_on_the_write_through() -> None:
+    writer = _BlockingWriter()
+    fx = FxRates(fetch=_Fetch(_body()), clock=_Clock(), store_writer=writer)
+    out = fx.current()  # returns while the writer is still blocked
+    assert out["stale"] is False and out["source"] == "mindicador.cl"
+    assert writer.entered.wait(5)
+    assert not writer.release.is_set()
+    writer.release.set()
+    assert fx.wait_for_write_through(5)
+    assert writer.calls == 1
+
+
+def test_rows_that_cannot_be_stored_never_fail_the_answer(caplog: pytest.LogCaptureFixture) -> None:
+    import origenlab_api.v2.fx_rates as module
+
+    writer = _Writer()
+
+    def boom(source: str, rates: list[dict[str, Any]]) -> Any:
+        raise ValueError("bad figure")
+
+    fx = FxRates(fetch=_Fetch(_body()), clock=_Clock(), store_writer=writer)
+    original, module._rows_to_store = module._rows_to_store, boom
+    try:
+        with caplog.at_level("WARNING", logger="origenlab_api.v2.fx_rates"):
+            assert fx.current()["stale"] is False
+            assert fx.wait_for_write_through(5)
+    finally:
+        module._rows_to_store = original
+    assert writer.calls == []
+    assert any("write-through" in r.getMessage() and "ValueError" in r.getMessage() for r in caplog.records)

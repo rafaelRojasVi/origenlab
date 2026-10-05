@@ -150,9 +150,13 @@ class FxRates:
         self._failed_at: float | None = None
         self._store_reader = store_reader
         self._store_writer = store_writer
+        # (clock time, answer or None): the last stored-rate read, reused for the retry window so
+        # an outage costs one database read (and at most one WARNING) a minute, not one a request.
+        self._stored_cache: tuple[float, dict[str, Any] | None] | None = None
+        self._write_thread: threading.Thread | None = None
 
     def current(self) -> dict[str, Any]:
-        to_store: list[dict[str, Any]] | None = None
+        fetched: tuple[str, list[dict[str, Any]]] | None = None
         with self._lock:
             now = self._clock()
             if self._figures is not None and now - self._fetched_at < FX_CACHE_SECONDS:
@@ -177,29 +181,57 @@ class FxRates:
                         "fetched_at": datetime.fromtimestamp(self._wall_clock(), tz=timezone.utc).isoformat(),
                     }
                     answer = {**self._figures, "stale": False}
-                    to_store = _rows_to_store(name, rates)
+                    fetched = (name, rates)
                     break
                 else:
                     self._failed_at = now
                     answer = self._in_memory()
+            if answer is None and self._stored_cache is not None:
+                read_at, cached = self._stored_cache
+                if now - read_at < FX_RETRY_AFTER_FAILURE_SECONDS:
+                    if cached is None:
+                        raise FxUnavailable("exchange rates unavailable")
+                    return cached
         # Outside the lock: the database never holds up another request, and no HTTP call is open.
-        if to_store:
-            self._write_through(to_store)
+        if fetched is not None:
+            self._start_write_through(*fetched)
         if answer is not None:
             return answer
         stored = self._stored()
+        with self._lock:
+            self._stored_cache = (now, stored)
         if stored is None:
             raise FxUnavailable("exchange rates unavailable")
         return stored
 
+    def _start_write_through(self, source: str, rates: list[dict[str, Any]]) -> None:
+        """Write the fetched USD and EUR in a short daemon thread: the request that triggered the
+        hourly refresh answers without waiting on the database."""
+        if self._store_writer is None or source not in _STORED_PROVIDER:
+            return
+        thread = threading.Thread(target=self._write_through, args=(source, rates),
+                                  name="fx-write-through", daemon=True)
+        self._write_thread = thread
+        thread.start()
+
+    def wait_for_write_through(self, timeout: float) -> bool:
+        """Block until the last write-through has finished (tests); True when none is running."""
+        thread = self._write_thread
+        if thread is not None:
+            thread.join(timeout)
+            return not thread.is_alive()
+        return True
+
     def _in_memory(self) -> dict[str, Any] | None:
         return None if self._figures is None else {**self._figures, "stale": True}
 
-    def _write_through(self, rows: list[dict[str, Any]]) -> None:
+    def _write_through(self, source: str, rates: list[dict[str, Any]]) -> None:
         if self._store_writer is None:
             return
         try:
-            self._store_writer(rows)
+            rows = _rows_to_store(source, rates)
+            if rows:
+                self._store_writer(rows)
         except Exception as exc:  # noqa: BLE001 — a failed write never changes the answer
             # The type only: a driver's message may name the database host.
             logger.warning("fx write-through to catalog.fx_rate failed: %s", type(exc).__name__)
