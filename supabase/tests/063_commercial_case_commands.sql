@@ -85,8 +85,8 @@ select throws_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, 
   values ('opportunity_interest', '20000000-0000-4000-8000-0000000000c2', 3, 'case_interest.withdrawn', 1, '{}'::jsonb, 'operator', '20000000-0000-4000-8000-000000000001') $$,
   '23514', null, 'domain_event: no command withdraws an interest, so no event type says one did');
 select throws_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
-  values ('opportunity_evidence', '20000000-0000-4000-8000-0000000000c3', 2, 'case_evidence.unlinked', 1, '{}'::jsonb, 'operator', '20000000-0000-4000-8000-000000000001') $$,
-  '23514', null, 'domain_event: no command unlinks evidence, so no event type says one did');
+  values ('opportunity_evidence', '20000000-0000-4000-8000-0000000000c3', 2, 'case_evidence.relinked', 1, '{}'::jsonb, 'operator', '20000000-0000-4000-8000-000000000001') $$,
+  '23514', null, 'domain_event: no command re-opens an unlinked link, so no event type says one did (case_evidence.unlinked arrived with 20261005120000, see 076)');
 
 -- The older vocabulary survived this migration's rewrite of the CHECK. Regression: the list is
 -- retyped in full every time it grows, and the one added on 2026-09-22 is easy to drop.

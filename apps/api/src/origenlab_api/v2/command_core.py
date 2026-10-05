@@ -190,10 +190,19 @@ class CommandTransaction:
         makes one of them fail rather than letting both claim the same position in the
         stream — an audit trail with a duplicated position is not an audit trail.
 
-        `actor_kind` is `'operator'` and there is no parameter for anything else. No machine
-        writes through this boundary, and a column that cannot say `'worker'` cannot be
-        misread later as evidence that one did.
+        `actor_kind` is `'operator'`, with one exception that is not a parameter: an
+        operator identity marked `acts_as_system` by the email → cases executor
+        (`mail_rules_repository.py`, spec 2026-10-05 §2). Its events are the machine's —
+        `'worker'`, no `actor_operator_id` (the CHECK `domain_event_actor_shape` demands
+        exactly that) — while `command_receipt_id` still leads to the receipt of the operator
+        who applied the rules. `event_attribution`, when set, is merged into the payload under
+        `attribution`, so every event says which rule acted and why, or which action an undo
+        reverses. No request field reaches either.
         """
+        system = bool(getattr(operator, "acts_as_system", False))
+        attribution = getattr(operator, "event_attribution", None)
+        if attribution:
+            payload = {**payload, "attribution": dict(attribution)}
         cur.execute(
             """
             insert into crm.domain_event
@@ -205,7 +214,7 @@ class CommandTransaction:
                    from crm.domain_event
                   where aggregate_kind = %(aggregate_kind)s and aggregate_id = %(aggregate_id)s),
                 %(event_type)s, 1, %(payload)s::jsonb,
-                'operator', %(operator_id)s, %(receipt_id)s
+                %(actor_kind)s, %(operator_id)s, %(receipt_id)s
             )
             returning id::text as id
             """,
@@ -214,7 +223,8 @@ class CommandTransaction:
                 "aggregate_id": aggregate_id,
                 "event_type": event_type,
                 "payload": json_payload(payload),
-                "operator_id": operator.operator_id,
+                "actor_kind": "worker" if system else "operator",
+                "operator_id": None if system else operator.operator_id,
                 "receipt_id": receipt_id,
             },
         )

@@ -114,6 +114,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // the Resumen's quote-number box never suggests a number already sent. Same GET-only,
   // operator-session rule; no address, subject or institution. Nothing under it is reachable.
   /^\/v2\/workspace\/mail-quote-numbers$/,
+  // Email → cases dry run (spec 2026-10-05): what the rules would do, with their reasons, and the
+  // actions already applied. Admin only upstream (403 for sales and viewer); writes nothing.
+  /^\/v2\/workspace\/mail-rules\/preview$/,
   /^\/v2\/cockpit\/work-queue$/,
   // Catalog 1a reads (`apps/api` v2/catalog/routes.py): products, one product, a supplier's
   // terms, cost parameters, FX, price history (`?model_key=&limit=`) and a short-lived signed
@@ -190,9 +193,30 @@ const CAMPAIGN_BLOCK_PATH_RE = /^\/v2\/commands\/(?:block|unblock)-campaign$/;
 
 const TEST_SEND_PATH_RE = /^\/v2\/commands\/send-campaign-test$/;
 
-/** The body limit for one marketing command path. */
+/**
+ * Email → cases commands (spec 2026-10-05): apply the rules' `auto` actions, or undo one applied
+ * action. Two exact paths. Upstream both are admin-only, need an `Idempotency-Key`, and the apply
+ * re-plans on the server — the browser never sends an action, at most the evidence ids to limit
+ * the run to. The case commands the rules call (`open-commercial-case`, `advance-case-stage`, …)
+ * stay unreachable from the browser. Same Origin / JSON / key guard as the marketing commands.
+ */
+export const MAIL_RULES_COMMAND_POST_PATHS: readonly RegExp[] = [
+  /^\/v2\/commands\/apply-mail-rules$/,
+  /^\/v2\/commands\/undo-mail-rule-action$/,
+];
+
+/** At most 2,000 evidence ids, or a receipt id and a note. */
+export const MAIL_RULES_MAX_BYTES = 131_072;
+
+export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return MAIL_RULES_COMMAND_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
+/** The body limit for one marketing (or email-rules) command path. */
 export function marketingCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
+  if (isAllowedMailRulesCommandPostPath(pathOnly)) return MAIL_RULES_MAX_BYTES;
   if (CAMPAIGN_PLANNING_PATH_RE.test(pathOnly)) return CAMPAIGN_PLANNING_MAX_BYTES;
   if (UNSUBSCRIBE_REVIEW_PATH_RE.test(pathOnly)) return UNSUBSCRIBE_REVIEW_MAX_BYTES;
   if (CAMPAIGN_BLOCK_PATH_RE.test(pathOnly)) return CAMPAIGN_BLOCK_MAX_BYTES;
@@ -342,6 +366,7 @@ export function isAllowedPostPath(pathname: string): boolean {
   return (
     isAllowedMarketingCommandPostPath(pathname) ||
     isAllowedCrmAuthoringCommandPostPath(pathname) ||
+    isAllowedMailRulesCommandPostPath(pathname) ||
     isAllowedCatalogCommandPostPath(pathname) ||
     isAllowedCatalogUploadPostPath(pathname) ||
     isAllowedAuthPostPath(pathname)

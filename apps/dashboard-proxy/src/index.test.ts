@@ -1239,3 +1239,63 @@ describe("CRM authoring commands", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 });
+
+describe("Email → cases rules commands and dry run", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const APPLY = "https://proxy.test/api/v2/commands/apply-mail-rules";
+  const UNDO = "https://proxy.test/api/v2/commands/undo-mail-rule-action";
+  const post = (url: string, extra: Record<string, string> = {}, body = "{}") =>
+    requestWithOrigin(url, {
+      method: "POST",
+      body,
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "mail-rules-key-0001",
+        "Sec-Fetch-Site": "same-origin",
+        Cookie: "__Host-origenlab_session=s1; CF_Authorization=leak",
+        ...extra,
+      },
+    });
+
+  it.each([APPLY, UNDO])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(post(url), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe(new URL(url).pathname.replace(/^\/api/, ""));
+    expect(upstream.headers.get("Idempotency-Key")).toBe("mail-rules-key-0001");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+  });
+
+  it.each([
+    ["a cross-site fetch", post(APPLY, { "Sec-Fetch-Site": "cross-site" }), 403, "cross_site_request"],
+    ["a form post", post(UNDO, { "Content-Type": "application/x-www-form-urlencoded" }), 415, "unsupported_media_type"],
+    ["no key", post(APPLY, { "Idempotency-Key": "" }), 400, "idempotency_key_required"],
+    ["a declared body over 128 kB", post(APPLY, { "Content-Length": "131073" }), 413, "payload_too_large"],
+  ])("refuses %s before anything is forwarded", async (_label, req, status, code) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: { code } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body over 128 kB even when Content-Length understates it", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(post(APPLY, {}, JSON.stringify({ evidence_ids: ["x".repeat(140_000)] })), TEST_ENV);
+    expect(res.status).toBe(413);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("forwards the dry run as GET and refuses a write to it", async () => {
+    stubUpstreamFetch(JSON.stringify({ actions: [], applied: [] }));
+    const path = "https://proxy.test/api/v2/workspace/mail-rules/preview";
+    expect((await handleRequest(requestWithOrigin(path, { method: "GET" }), TEST_ENV)).status).toBe(200);
+    const write = await handleRequest(post(path), TEST_ENV);
+    expect(write.status).toBe(405);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+});

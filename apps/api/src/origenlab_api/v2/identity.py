@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import ipaddress
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
@@ -103,6 +103,13 @@ class OperatorIdentity:
     #: `platform.operator.version` as read, when the reader selected it (bumped by trigger on
     #: every role, status or address change).
     version: int | None = None
+    #: Set only by the email → cases executor (`mail_rules_repository.py`): the events of an
+    #: action a rule took are the machine's (`actor_kind = 'worker'`, no operator on the event),
+    #: while the rows and the receipt still name the operator who pressed «Aplicar».
+    acts_as_system: bool = field(default=False, compare=False)
+    #: Merged into every event payload under `attribution` (the rule, its reasons, the email, or
+    #: the receipt an undo reverses). Never set by a request.
+    event_attribution: Any = field(default=None, compare=False, hash=False)
 
     @property
     def is_active(self) -> bool:

@@ -89,7 +89,7 @@ second lifecycle.
 | Table group | Sole writer |
 |---|---|
 | `crm.*` (except the two quote columns below) | FastAPI commands as `origenlab_api` |
-| `crm.opportunity.stage` | FastAPI commands **only** — no timer, cron job, queue worker, classifier or import may close a case ([`DOMAIN.md`](DOMAIN.md) §3.4) |
+| `crm.opportunity.stage` | FastAPI commands **only** — no timer, cron job, queue worker, classifier or import may close a case ([`DOMAIN.md`](DOMAIN.md) §3.4). The one machine path is the email → cases rules, run **inside the API** when an admin presses «Aplicar»: recorded as `worker` events with `payload.attribution`, rows naming the admin who applied, every action undoable ([`DOMAIN.md`](DOMAIN.md) §3.6.6) |
 | `crm.quote_revision.pdf_sha256`, sent-evidence ids | the worker, through `crm.record_quote_pdf` — one privileged function, those columns only ([§6.2](#m-arch-definer)) |
 | `comms.*` | the worker's Gmail sync; FastAPI only for participant resolution |
 | `outbound.send_attempt`, `outbound.contact_control` | the send/reconcile functions, the NDR handlers, the Wave 1A loader, admin commands — **never direct DML from a runtime role** |

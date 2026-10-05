@@ -696,6 +696,40 @@ describe("V1 surfaces are refused on the browser boundary", () => {
   });
 });
 
+describe("email → cases rules (admin only upstream)", () => {
+  it("allows the dry run as an exact GET and the two commands as exact POSTs", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/mail-rules/preview")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/mail-rules/preview")).toBe(false);
+    for (const path of ["/v2/commands/apply-mail-rules", "/v2/commands/undo-mail-rule-action"]) {
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(marketingCommandMaxBytes(path)).toBe(131_072);
+    }
+  });
+
+  it("refuses every neighbour of the three paths", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of [
+      "/v2/workspace/mail-rules",
+      "/v2/workspace/mail-rules/",
+      "/v2/workspace/mail-rules/preview/",
+      "/v2/workspace/mail-rules/apply",
+      "/v2/commands/apply-mail-rules/",
+      "/v2/commands/apply-mail-rules-all",
+      "/v2/commands/undo-mail-rule-action/x",
+      "/v2/commands/APPLY-MAIL-RULES",
+      // The case commands the rules call stay unreachable from the browser.
+      "/v2/commands/open-commercial-case",
+      "/v2/commands/advance-case-stage",
+      "/v2/commands/link-case-evidence",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+});
+
 describe("Catalog 1a", () => {
   const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
   const GET_PATHS = [

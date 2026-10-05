@@ -623,6 +623,36 @@ name. Optimistic concurrency stays a boundary contract rather than a trigger:
 every case command reads `version`, shows it to the operator and writes back
 under `WHERE version = %s`.
 
+#### 3.6.6 Email → cases: the machine records, a person corrects
+
+**[V2 DECISION]**, owner-approved 2026-10-05 (spec `2026-10-05-gmail-auto-cases-design.md`).
+
+For the rule-backed actions R1–R6 only — link an email to its case, open a
+case with its quote (and an institution «por confirmar», `machine_proposed`,
+for an unknown domain), move a case to `won` on a purchase order or to `lost`
+on «otro proveedor» — the system records instead of proposing. Everything
+else (R7, R8) stays a proposal in Revisión.
+
+- **Who acts.** The rules run in the API when an admin presses «Aplicar» on
+  the previewed actions. Their events are `crm.domain_event.actor_kind =
+  'worker'`, with no `actor_operator_id`, and `payload.attribution` naming the
+  rule, its reasons, the email and the admin who applied them. The row
+  columns that require an operator (`owner_operator_id`,
+  `linked_by_operator_id`, `confirmed_by_operator_id`,
+  `created_by_operator_id`) name that admin, and so does the command receipt.
+- **What they read.** Live Phase 4a captures only — never a staged
+  historical record, never a rejected one.
+- **Every action is undoable**, by a person, as a new event
+  (`attribution.undoes_receipt_id`); nothing is deleted. A link is unlinked
+  (`case_evidence.unlinked`); a created case is abandoned as
+  `discarded_by_correction` with its quote revision voided; an institution «por
+  confirmar» is archived and its domain removed unless another open case uses
+  it; a `won`/`lost` the rules set is corrected back to the stage it came from
+  (`opportunity.stage_corrected`) — the one exception to "a terminal case is
+  never revived", allowed by the stage guard only for a terminal stage whose
+  latest `opportunity.staged` event is a worker event. A case a person closed
+  is never revived.
+
 ## 4. Products, manufacturers and suppliers
 
 - A **manufacturer** is an organization holding the `manufacturer` relationship.

@@ -45,7 +45,11 @@ describe("dashboard read-only policy", () => {
   //  - crmAuthoringApi.ts's POST to the 29 CRM authoring commands: freeform create/update/archive
   //    of person/organization/contact_point, affiliations, product lines, supplier candidates,
   //    and notes. All go through the API's Deciding role check (sales or admin).
+  //  - mailRules.ts's POST to the two admin-only email → cases commands: apply the rules'
+  //    automatic actions (re-planned upstream; the browser sends no action) and undo one.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
+  const MAIL_RULES_FILE = "../crm/mailRules.ts";
+  const MAIL_RULES_PATHS = ["/v2/commands/apply-mail-rules", "/v2/commands/undo-mail-rule-action"];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
   const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";
@@ -92,7 +96,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/archive-note",
   ];
 
-  it("allows only the logout POST, the campaign-command POST, and the CRM authoring POST", () => {
+  it("allows only the logout POST, the campaign-command POST, the CRM authoring POST and the email-rules POST", () => {
     const hits: string[] = [];
     for (const [path, text] of entries) {
       if (!MUTATION_METHOD.test(text) && !FORBIDDEN_FETCH.test(text)) continue;
@@ -115,6 +119,17 @@ describe("dashboard read-only policy", () => {
         const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
         if (JSON.stringify(commandPaths) !== JSON.stringify([...CRM_AUTHORING_PATHS].sort())) {
           hits.push(`${path} (CRM authoring paths mismatch: found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
+      if (path === MAIL_RULES_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...MAIL_RULES_PATHS].sort())) {
+          hits.push(`${path} (email-rules paths mismatch: found ${commandPaths.join(", ")})`);
         }
         continue;
       }
@@ -151,9 +166,9 @@ describe("dashboard read-only policy", () => {
     expect(hits).toEqual([]);
   });
 
-  it("names no V2 command outside the campaign client and the CRM authoring client", () => {
+  it("names no V2 command outside the campaign, CRM authoring and email-rules clients", () => {
     const hits = entries
-      .filter(([path, text]) => path !== CAMPAIGN_DRAFT_FILE && path !== CRM_AUTHORING_FILE && /\/v2\/commands\//.test(text))
+      .filter(([path, text]) => path !== CAMPAIGN_DRAFT_FILE && path !== CRM_AUTHORING_FILE && path !== MAIL_RULES_FILE && /\/v2\/commands\//.test(text))
       .map(([path]) => path);
     expect(hits).toEqual([]);
   });
