@@ -117,3 +117,16 @@ def test_missing_product_and_terms_are_404_in_the_production_envelope() -> None:
 
 def test_unauthenticated_is_refused() -> None:
     assert _client().get("/v2/catalog/parameters").status_code == 401
+
+
+def test_parameters_are_forbidden_to_viewer_in_the_production_envelope() -> None:
+    r = _client("viewer").get("/v2/catalog/parameters", headers=HEADERS)
+    assert r.status_code == 403
+    err = r.json()["error"]
+    assert err["code"] == "forbidden" and err["details"]["code"] == "role_may_not_view_costs"
+
+
+@pytest.mark.parametrize("role", ["sales", "admin"])
+def test_parameters_readable_by_sales_and_admin(role) -> None:
+    r = _client(role).get("/v2/catalog/parameters", headers=HEADERS)
+    assert r.status_code == 200 and r.json() == {"current": {}, "history": []}

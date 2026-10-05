@@ -159,3 +159,13 @@ def test_stored_fx_latest_on_or_before_prefers_newest_manual(disposable_database
     assert got["clp_per_unit"] == "1010.000000" and got["source"] == "manual" and got["rate_date"] == "2026-04-01"
     assert reads.stored_fx("EUR", dt.date(2026, 3, 31)) is None
     assert reads.stored_fx("USD", dt.date(2026, 4, 5)) is None
+
+
+@needs_db
+def test_total_is_correct_when_offset_is_past_the_end(disposable_database):
+    dsn = disposable_database
+    mfr = _org(dsn)
+    for n in range(3):
+        _seed_product(dsn, model=f"OFF-{n}", name="o", name_es="Fuera de rango", manufacturer=mfr)
+    out = _reads(dsn).search_products("fuera de rango", None, None, 2, 5)
+    assert out["items"] == [] and out["total"] == 3

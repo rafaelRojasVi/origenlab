@@ -47,4 +47,8 @@ def supplier_terms(organization_id: UUID, request: Request, operator: Operator) 
 
 @catalog_read_router.get("/parameters")
 def parameters(request: Request, operator: Operator) -> dict:
+    # Costing parameters are commercial configuration as a whole; a viewer gets no redacted copy.
+    if operator.role == "viewer":
+        raise HTTPException(403, detail={"code": "role_may_not_view_costs",
+                                         "message": "this role may not view cost parameters"})
     return redact_costs(_reads(request).parameters(), operator.role)

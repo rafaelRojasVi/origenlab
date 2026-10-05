@@ -16,15 +16,23 @@ from origenlab_api.v2.catalog.keys import model_key
 
 _PRODUCT_COLUMNS_SKIPPED = {"search_tsv"}
 
-_SEARCH_SQL = """
+_SEARCH_WHERE = """ where p.active
+   and (%(q)s::text is null
+        or p.model_key like '%%' || %(qkey)s || '%%'
+        or p.search_tsv @@ websearch_to_tsquery('spanish', %(q)s))
+   and (%(supplier)s::uuid is null or exists (select 1 from catalog.supplier_product x
+                                               where x.product_id = p.id and x.supplier_organization_id = %(supplier)s))
+   and (%(kind)s::text is null or p.product_kind = %(kind)s)
+"""
+
+_SEARCH_SQL_TEMPLATE = """
 select p.id, p.model_number, p.model_key, p.name, p.name_es, p.category_es, p.product_kind, p.content_origin,
        (p.content_confirmed_at is not null) as confirmed,
        m.id as manufacturer_id, m.name as manufacturer_name,
        (select i.id from catalog.product_image i where i.product_id = p.id and i.status <> 'hidden'
          order by i.sort_order, i.created_at limit 1) as primary_image_id,
        c.id as cost_id, c.price, c.currency, c.price_kind, c.as_of, c.is_stale,
-       s.id as supplier_id, s.name as supplier_name,
-       count(*) over () as total
+       s.id as supplier_id, s.name as supplier_name
   from catalog.product p
   join crm.organization m on m.id = p.manufacturer_organization_id
   left join lateral (
@@ -35,16 +43,16 @@ select p.id, p.model_number, p.model_key, p.name, p.name_es, p.category_es, p.pr
                  sp.id desc
         limit 1) c on true
   left join crm.organization s on s.id = c.supplier_organization_id
- where p.active
-   and (%(q)s::text is null
-        or p.model_key like '%%' || %(qkey)s || '%%'
-        or p.search_tsv @@ websearch_to_tsquery('spanish', %(q)s))
-   and (%(supplier)s::uuid is null or exists (select 1 from catalog.supplier_product x
-                                               where x.product_id = p.id and x.supplier_organization_id = %(supplier)s))
-   and (%(kind)s::text is null or p.product_kind = %(kind)s)
+ {where}
  order by (p.model_key = %(qkey)s) desc, p.model_key, p.id
  limit %(limit)s offset %(offset)s
 """
+
+
+_SEARCH_SQL = _SEARCH_SQL_TEMPLATE.replace(" {where}", _SEARCH_WHERE.rstrip("\n"))
+_COUNT_SQL = (
+    "select count(*) from catalog.product p " + _SEARCH_WHERE
+)
 
 
 def _plain(value: Any) -> Any:
@@ -98,6 +106,8 @@ class V2CatalogReads:
         with self._read() as cur:
             cur.execute(_SEARCH_SQL, params)
             rows = self._rows(cur)
+            cur.execute(_COUNT_SQL, {k: v for k, v in params.items() if k not in ("limit", "offset")})
+            total = cur.fetchone()[0]
         items = []
         for r in rows:
             cost = None
@@ -113,7 +123,6 @@ class V2CatalogReads:
                 "content_origin": r["content_origin"], "confirmed": r["confirmed"],
                 "primary_image_id": r["primary_image_id"], "current_cost": cost,
             }))
-        total = rows[0]["total"] if rows else 0
         return {"items": items, "total": total, "limit": limit, "offset": offset}
 
     def product_detail(self, product_id: uuid.UUID) -> dict[str, Any] | None:
