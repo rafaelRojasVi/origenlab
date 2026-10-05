@@ -30,6 +30,8 @@ import {
 } from "../interests/EquipmentInterests";
 import type { ResourceState } from "../useResource";
 import { useMayAuthorCrm } from "../authoring/authoring";
+import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
+import { PersonSuggestionList } from "../authoring/PersonSuggestionList";
 import { NewPersonForm } from "../authoring/NewPersonForm";
 import { PersonDrawer } from "../authoring/PersonDrawer";
 
@@ -63,6 +65,7 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
   const mayAuthor = useMayAuthorCrm();
   const [showNewPerson, setShowNewPerson] = useState(false);
   const [openPersonId, setOpenPersonId] = useState<string | null>(null);
+  const [suggestions, reloadSuggestions] = useResource(fetchPersonSuggestions);
 
   return (
     <div className="space-y-4">
@@ -104,6 +107,28 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
           )
         }
       </ResourceGate>
+
+      <Panel
+        title="Personas sugeridas"
+        note="Nombradas en los correos de cotización y aún no registradas en el CRM"
+      >
+        <div className="p-3">
+          <ResourceGate state={suggestions} reload={reloadSuggestions} skeleton={<Skeleton rows={3} />}>
+            {(data) => (
+              <PersonSuggestionList
+                items={data.items}
+                mayAuthor={mayAuthor}
+                showOrganization
+                onCreated={() => {
+                  reloadSuggestions();
+                  reloadContacts();
+                  reloadOverview();
+                }}
+              />
+            )}
+          </ResourceGate>
+        </div>
+      </Panel>
 
       <EquipmentLineStrip state={interests} onSelectLine={setLine} />
 

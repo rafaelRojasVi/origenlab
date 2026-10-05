@@ -1,4 +1,4 @@
-"""The seven CRM reads the dashboard proxy lists, behind a production-configured API.
+"""The eight CRM reads the dashboard proxy lists, behind a production-configured API.
 
 `apps/dashboard-proxy/src/allowlist.ts` names exactly these paths. The Worker forwards only the
 dashboard session cookie and adds `X-OriginLab-Operator-Email` from Cloudflare Access; it does
@@ -34,6 +34,7 @@ PROXIED_READS = (
     "/v2/workspace/marketing",
     "/v2/workspace/drive",
     "/v2/workspace/review",
+    "/v2/workspace/person-suggestions",
     "/v2/cockpit/work-queue",
 )
 ADDRESS = "compras@cliente-ficticio.example"
@@ -71,7 +72,7 @@ class _Workspace:
     def _body(self) -> dict[str, Any]:
         return {"items": [{"contact": ADDRESS, "phone": PHONE}]}
 
-    overview = pipeline = drive_archive = review = _body
+    overview = pipeline = drive_archive = review = person_suggestions = _body
 
     # The providers and marketing routes post-process these keys; empty lists keep the
     # address-bearing `items` the only content to mask.

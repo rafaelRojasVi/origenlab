@@ -209,6 +209,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         statement_timeout_ms=settings.v2_statement_timeout_ms,
     )
     app.state.v1_lane_content_dir = settings.v2_v1_lane_content_dir
+    app.state.org_suggestions_file = settings.v2_org_suggestions_file
     app.include_router(workspace_router)
     if settings.v2_import_review_plan_dir:
         from origenlab_api.v2.quote_import_review import QuoteImportReviewRepository, load_plan
@@ -333,7 +334,7 @@ def _mount_campaign_blocks(app: FastAPI, settings: Settings, dsn: str, connect: 
 
 
 def _mount_crm_authoring(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
-    """Mount the 28 CRM authoring commands only behind their own switch.
+    """Mount the 29 CRM authoring commands only behind their own switch.
 
     Both a DSN and ``ORIGENLAB_V2_CRM_AUTHORING_ENABLED`` are required: reading the CRM and
     writing freeform people/organizations into it are separate permissions.  Off, every

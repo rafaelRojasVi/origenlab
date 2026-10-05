@@ -45,6 +45,7 @@ from origenlab_api.v2.campaign_history import (
     replies_state,
 )
 from origenlab_api.v2.marketing_audience import address_ref, addresses_in
+from origenlab_api.v2.person_suggestions import safe_person_suggestions
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
 
 GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
@@ -1468,8 +1469,15 @@ class CrmWorkspaceRepository:
                 """
                 select o.id::text, o.name, o.legal_name, o.kind, o.status,
                        o.archived_at::text, o.archive_reason, o.confirmation,
-                       o.version, o.merged_into_organization_id::text, o.created_at::text
-                  from crm.organization o where o.id = %s::uuid
+                       o.version, o.merged_into_organization_id::text, o.created_at::text,
+                       o.confirmed_by_operator_id::text as confirmed_by_operator_id,
+                       cop.display_name as confirmed_by_name,
+                       (select max(e.recorded_at)::text from crm.domain_event e
+                         where e.aggregate_kind = 'organization' and e.aggregate_id = o.id
+                           and e.event_type = 'organization.confirmed') as confirmed_at
+                  from crm.organization o
+                  left join platform.operator cop on cop.id = o.confirmed_by_operator_id
+                 where o.id = %s::uuid
                 """,
                 (org_id,),
             )
@@ -1611,6 +1619,7 @@ class CrmWorkspaceRepository:
                 "evidence_assertions": ref_row[4],
                 "catalog_products": ref_row[5],
             }
+            person_suggestions = [s for s in safe_person_suggestions(cur) if s["organization_id"] == org_id]
 
         reasons: list[str] = []
         if refs["opportunities"]:
@@ -1642,8 +1651,15 @@ class CrmWorkspaceRepository:
             "notes": notes,
             "references": refs,
             "removal": {"allowed": False, "reasons": reasons},
+            "person_suggestions": person_suggestions,
             "authoring": None,  # injected by the route from request.app.state
         }
+
+    def person_suggestions(self) -> dict[str, Any]:
+        """People the quote emails name and the CRM does not hold yet (`person_suggestions.py`)."""
+        with self._read() as cur:
+            items = safe_person_suggestions(cur)
+        return {"items": items, "total": len(items)}
 
     # -- review queue: what the CRM itself cannot show
 

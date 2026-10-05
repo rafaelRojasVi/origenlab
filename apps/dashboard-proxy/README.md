@@ -37,18 +37,19 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/auth/logout` | Clears the dashboard session cookie and records the logout in `platform.auth_event`; writes no commercial state. Requires an allowed `Origin` and no cross-site `Sec-Fetch-Site` |
 | `/auth/profile/select`, `/auth/profile/clear` | Choose an operator profile with its PIN (verified by the API, never here), or return to the profile screen. Allowed `Origin`, no cross-site `Sec-Fetch-Site`, `Content-Type: application/json`, body ≤ 1 KiB. The API's local-only `/auth/dev/*` is never reachable |
 | `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning,resolve-unsubscribe-review,dismiss-unsubscribe-review,block-campaign,unblock-campaign}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends; a block only refuses |
-| `/v2/commands/<name>` for the 28 CRM-authoring commands (person, organization, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not listed. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
+| `/v2/commands/<name>` for the 29 CRM-authoring commands (person, organization — `confirm-organization-record` included —, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not listed. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
 ## CRM card reads
 
-Two exact GET paths (`src/allowlist.ts`), nothing under or beside them:
+Three exact GET paths (`src/allowlist.ts`), nothing under or beside them:
 
 | Method | Upstream path | Upstream behaviour |
 |---|---|---|
 | GET | `/v2/workspace/providers` | the six catalogue brands as the supplier directory, then the machine-detected candidates (hints only, never promoted) |
 | GET | `/v2/workspace/equipment-interests` | observed equipment interests per line, institution and destination; CRM people apart from address-only evidence |
+| GET | `/v2/workspace/person-suggestions` | people the quote emails name and the CRM does not hold yet (name, address, institution, quotes, last date); addresses masked for `viewer`; creates nothing |
 
 Same guarantees as every V2 read: the session cookie is the only cookie forwarded, the
 browser-sent operator header is dropped and nothing replaces it (identity is the session cookie), addresses are

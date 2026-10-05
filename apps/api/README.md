@@ -502,6 +502,44 @@ CI runs the same thing as the `db-test` job in `api.yml` (also on `supabase/migr
 
 CI `./scripts/validate.sh` mirrors the build step with a no-dev import smoke before pytest.
 
+### CRM web suggestions (secret file)
+
+The institution card's «Sugerencias de la web» reads `ORIGENLAB_V2_ORG_SUGGESTIONS_FILE`: a
+reviewed JSON of web-researched facts per institution (`v2/org_web_suggestions.py`). It names
+customers, so it never enters this repository: it is built outside it and uploaded as a Render
+secret file.
+
+```bash
+cd apps/api
+uv run python scripts/build_org_suggestions.py \
+  --in  ~/data/origenlab-v2-migration/audits/org-enrichment-20261004/suggestions.json \
+  --out ~/data/origenlab-v2-migration/audits/org-enrichment-20261004/org-suggestions.json
+```
+
+The script refuses an output inside the repository, validates with the API's own validator,
+creates the file mode 0600 and prints counts only. It drops a free-mail `email_domain`
+(`gmail.com`, `hotmail.com`, …) and counts it as `domain_dropped_free_mail`; the API's loader
+also reads such a domain as `null` rather than rejecting the file. Review the file (lower
+`confidence` or null a field the research's «Requieren decisión humana» list questions). After
+**any hand edit, and before upload**, re-validate it:
+
+```bash
+uv run python scripts/build_org_suggestions.py --check <path>/org-suggestions.json   # exit 0 valid, 1 not
+```
+
+Operator order:
+
+1. Deploy the Worker first (`apps/dashboard-proxy`): the two new paths are harmless without the
+   API (unknown paths answer 404).
+2. Upload the file as the Render secret file `org-suggestions.json` and set
+   `ORIGENLAB_V2_ORG_SUGGESTIONS_FILE=/etc/secrets/org-suggestions.json`.
+3. The API redeploys (the variable change does), and the card shows the suggestions.
+
+Unset → the card shows no suggestions and nothing is logged. Set but missing, oversized,
+unparsable or invalid → no suggestions and one warning naming the exception class and the first
+field error, never a value. Nothing else changes.
+Nothing is applied automatically: every «Aplicar» is an authoring command with its receipt.
+
 ### Remote production smoke
 
 `./scripts/remote_smoke.sh` checks a deployed API (default `https://api.origenlab.cl`) behind Cloudflare Access. It does not send `ORIGENLAB_API_AUTH_TOKEN`; use it for Access/protection checks, not full token-auth private-route readiness.
