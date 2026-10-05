@@ -30,6 +30,7 @@ or in which order.
 
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import Any, Iterator, Sequence
 
@@ -39,6 +40,8 @@ import psycopg
 Statement = tuple[str, Any]
 
 _IDLE = psycopg.pq.TransactionStatus.IDLE
+
+logger = logging.getLogger(__name__)
 
 
 class ReadTransactionEnded(RuntimeError):
@@ -105,7 +108,13 @@ class ReadSession:
                 self._state = "closed"
 
     def close(self) -> None:
-        """End the transaction if a final batch did not, and hand the connection back as found."""
+        """End the transaction if a final batch did not, and hand the connection back as found.
+
+        Never raises: it runs on the way out of every read, often while another exception is
+        propagating, and a failure here must not replace that one. A read-only transaction
+        that cannot be rolled back has nothing to undo; the connection is closed instead, and
+        the pool replaces it.
+        """
         conn = self._conn
         self._state = "closed"
         if conn.closed:
@@ -113,8 +122,14 @@ class ReadSession:
         try:
             if conn.info.transaction_status != _IDLE:
                 conn.rollback()
-        finally:
             conn.autocommit = False
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.warning("V2 read: could not end a read transaction cleanly; closing its connection",
+                           exc_info=True)
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 - already broken; the pool discards it
+                pass
 
 
 class SessionCursor:
@@ -128,7 +143,16 @@ class SessionCursor:
         self.session._send([(self._cursor, (query, params))])
         return self
 
+    #: Statement-sending methods that would bypass the session — in autocommit, outside the
+    #: read-only transaction — if they reached the underlying cursor.
+    _REFUSED = frozenset({"executemany", "stream", "copy"})
+
     def __getattr__(self, name: str) -> Any:
+        if name in self._REFUSED:
+            raise AttributeError(
+                f"SessionCursor.{name} is not supported: inside a read transaction every statement "
+                "goes through execute() or ReadSession.batch(), so it runs read-only"
+            )
         return getattr(self._cursor, name)
 
     def __iter__(self) -> Iterator[Any]:

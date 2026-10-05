@@ -128,3 +128,65 @@ def test_the_database_label_is_what_the_server_calls_it() -> None:
     with read_transaction(_connect(), _API_DSN, 5000) as session:
         (server_says,) = session.final("select current_database()").fetchone()
         assert session.database == server_says
+
+
+# ------------------------------------------------------------------- without a database
+
+
+class _FakeConn:
+    """Just what a ReadSession touches; `rollback` can be made to fail."""
+
+    closed = False
+
+    def __init__(self, *, rollback_fails: bool = False) -> None:
+        from types import SimpleNamespace
+
+        import psycopg
+
+        self.autocommit = False
+        self.rollback_fails = rollback_fails
+        self.closed_by_session = False
+        self.info = SimpleNamespace(transaction_status=psycopg.pq.TransactionStatus.INTRANS, dbname="fake")
+
+    def cursor(self):  # type: ignore[no-untyped-def]
+        from unittest.mock import MagicMock
+
+        return MagicMock()
+
+    def rollback(self) -> None:
+        import psycopg
+
+        if self.rollback_fails:
+            raise psycopg.OperationalError("the connection is lost")
+
+    def close(self) -> None:
+        self.closed_by_session = True
+
+
+def _fake_connect(conn: _FakeConn):  # type: ignore[no-untyped-def]
+    from contextlib import nullcontext
+
+    return lambda dsn, autocommit=False: nullcontext(conn)
+
+
+@pytest.mark.parametrize("name", ["executemany", "stream", "copy"])
+def test_a_session_cursor_refuses_what_would_bypass_the_read_only_transaction(name) -> None:
+    conn = _FakeConn()
+    with read_transaction(_fake_connect(conn), "unused", 5000) as session:
+        with pytest.raises(AttributeError, match="not supported"):
+            getattr(session.cursor(), name)
+
+
+def test_a_failed_rollback_never_replaces_the_error_that_ended_the_read() -> None:
+    conn = _FakeConn(rollback_fails=True)
+    with pytest.raises(RuntimeError, match="the caller's own failure"):
+        with read_transaction(_fake_connect(conn), "unused", 5000):
+            raise RuntimeError("the caller's own failure")
+    assert conn.closed_by_session, "a connection that could not be reset is closed for the pool to drop"
+
+
+def test_a_failed_rollback_after_a_successful_read_does_not_fail_the_read() -> None:
+    conn = _FakeConn(rollback_fails=True)
+    with read_transaction(_fake_connect(conn), "unused", 5000) as session:
+        assert session.database == "fake"
+    assert conn.closed_by_session
