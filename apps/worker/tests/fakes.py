@@ -104,6 +104,7 @@ class FakeGmail:
     after_calls: list[int] = field(default_factory=list)
     raw_calls: list[str] = field(default_factory=list)
     label_calls: int = 0
+    window_id: str | None = None  # the historyId history() answers with, when it differs from `current`
 
     def profile(self) -> Profile:
         self.calls.append("profile")
@@ -120,7 +121,7 @@ class FakeGmail:
             if number == self.revoke_on_page:
                 raise GmailAuthError(self.auth_kind)
             ids.update(dict.fromkeys(page))
-        return HistoryWindow(tuple(ids), self.current)
+        return HistoryWindow(tuple(ids), self.window_id or self.current)
 
     def messages_after(self, epoch_seconds: int) -> list[str]:
         self.after_calls.append(epoch_seconds)

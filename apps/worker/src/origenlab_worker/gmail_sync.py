@@ -187,12 +187,14 @@ def run_gmail_sync(
         if profile.email_address != mailbox.address:
             return RunReport("wrong_account", EXIT_AUTH, counts)
         message_ids: list[str] | None = None
+        # The new cursor is the profile read *before* any list, in history mode too: mail added while
+        # the history pages are read is replayed next run and refused as a duplicate, never skipped.
         cursor = profile.history_id
         if mailbox.history_id is not None:
             mode = "history"
             try:
                 window = gmail.history(mailbox.history_id)
-                message_ids, cursor = list(window.message_ids), window.history_id
+                message_ids = list(window.message_ids)
             except HistoryExpired:
                 pass
         if message_ids is None:
@@ -313,8 +315,9 @@ def _capture_one(message_id: str, *, db: SyncDb, gmail: GmailSource, store: EmlS
     try:
         store.put_if_absent(key, raw.raw)
     except StorageTooLarge:
-        unparsed("too_large", None, None, len(raw.raw))
-        return
+        # Gmail's own size is under the cap (checked above), so Storage's limit is what is wrong:
+        # a bucket limit set too low must fail loudly and hold the cursor, not strip evidence.
+        raise StorageError("storage_too_large_below_cap") from None
     eml_path = f"{BUCKET}/{key}"
     if capture is None:
         unparsed(reason, eml_path, digest, len(raw.raw))

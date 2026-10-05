@@ -83,18 +83,25 @@ def test_a_mailbox_without_a_cursor_resyncs_instead_of_failing() -> None:
 
 
 def test_a_huge_message_is_recorded_without_its_body_and_the_run_continues() -> None:
-    """Review Focus 3: over the cap it is never downloaded; Storage's own 413 is treated the same."""
+    """Review Focus 3: over the cap (Gmail's own sizeEstimate) it is never downloaded."""
     big = FakeMessage(INBOUND, size=MAX_RAW_BYTES + 1)
-    gmail = gmail_with(big=big, m2=FakeMessage(OUTBOUND, labels=("SENT",)), m3=FakeMessage(INBOUND))
+    gmail = gmail_with(big=big, m2=FakeMessage(OUTBOUND, labels=("SENT",)))
     db = FakeDb()
-    store = FakeStore(too_large={"m3"})
-    report = run(db, gmail, store)
-    assert (report.exit_code, report.counts.too_large, report.counts.stored) == (EXIT_OK, 2, 1)
+    report = run(db, gmail)
+    assert (report.exit_code, report.counts.too_large, report.counts.stored) == (EXIT_OK, 1, 1)
     assert "big" not in gmail.raw_calls
-    for gmail_id in ("big", "m3"):
-        status, row, eml_path, digest = db.messages[gmail_id]
-        assert (status, row.reason, eml_path, digest) == ("parse_failed", "too_large", None, None)
+    status, row, eml_path, digest = db.messages["big"]
+    assert (status, row.reason, eml_path, digest) == ("parse_failed", "too_large", None, None)
     assert db.cursor == ["200"]
+
+
+def test_storage_refusing_a_message_gmail_says_is_under_the_cap_fails_the_run() -> None:
+    """A misconfigured bucket limit must not silently turn evidence into a too_large row."""
+    gmail = gmail_with(m1=FakeMessage(INBOUND), m3=FakeMessage(INBOUND))
+    db = FakeDb()
+    report = run(db, gmail, FakeStore(too_large={"m3"}))
+    assert (report.exit_code, report.error) == (EXIT_FAILED, "storage_too_large_below_cap")
+    assert (list(db.messages), db.cursor, report.counts.too_large) == (["m1"], [], 0)
 
 
 def test_consent_revoked_between_pages_stops_the_run_and_marks_the_mailbox() -> None:
@@ -312,3 +319,13 @@ def test_a_draft_sent_later_is_skipped_on_run_one_and_captured_on_run_two() -> N
     assert (second.counts.stored, second.counts.evidence, list(db.messages)) == (1, 1, ["d1"])
     third = run(db, FakeGmail(pages=[["d1"]], messages={"d1": sent}), store)
     assert (third.counts.duplicates, third.counts.stored) == (1, 0)
+
+
+def test_history_mode_moves_the_cursor_to_the_profile_read_before_the_list() -> None:
+    """A message added while the history pages are read is past the profile id, so the next run
+    replays it as a duplicate instead of starting after it."""
+    gmail = gmail_with(m1=FakeMessage(INBOUND))
+    gmail.window_id = "260"  # history() answered later than the profile (200)
+    db = FakeDb()
+    assert run(db, gmail).mode == "history"
+    assert db.cursor == ["200"]
