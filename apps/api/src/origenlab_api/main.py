@@ -370,8 +370,28 @@ def _mount_catalog(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> 
     app.state.catalog_repository = V2CatalogRepository(
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
+    app.state.catalog_fx = _build_catalog_fx(settings, app.state.catalog_reads, connect, dsn)
     app.include_router(catalog_read_router)
     app.include_router(catalog_command_router)
+
+
+def _build_catalog_fx(settings: Settings, reads: Any, connect: Any, dsn: str) -> Any:
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+
+    import httpx
+
+    from origenlab_api.v2.catalog.fx import BdeProvider, FxCacheWriter, MindicadorProvider, PricingFx
+
+    client = httpx.Client(timeout=5.0)
+    password = settings.v2_bde_password.get_secret_value() if settings.v2_bde_password else None
+    providers: list[Any] = [
+        BdeProvider(settings.v2_bde_user, password, client,
+                    {"USD": settings.v2_bde_series_usd, "EUR": settings.v2_bde_series_eur}),
+        MindicadorProvider(client),
+    ]
+    return PricingFx(reads, FxCacheWriter(connect, dsn, settings.v2_statement_timeout_ms), providers,
+                     lambda: dt.datetime.now(ZoneInfo("America/Santiago")).date())
 
 
 def _mount_campaign_drafts(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:

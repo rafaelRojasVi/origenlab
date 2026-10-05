@@ -8,6 +8,7 @@ with `extra="forbid"`; the handlers live in `commands.V2CatalogRepository`.
 """
 from __future__ import annotations
 
+import datetime as dt
 from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -16,6 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
+from origenlab_api.v2.catalog.fx import FxUnavailable
 from origenlab_api.v2.catalog.keys import PARAMETER_KEYS, PRODUCT_KINDS
 from origenlab_api.v2.catalog.reads import V2CatalogReads
 from origenlab_api.v2.catalog.redaction import redact_costs
@@ -54,6 +56,19 @@ def supplier_terms(organization_id: UUID, request: Request, operator: Operator) 
     if found is None:
         raise HTTPException(404, detail={"code": "supplier_terms_not_found", "message": "supplier terms not found"})
     return redact_costs(found, operator.role)
+
+
+@catalog_read_router.get("/fx")
+def fx_rate(request: Request, operator: Operator, currency: Literal["USD", "EUR"],
+            date: dt.date | None = None) -> dict:
+    # Public Banco Central data: every active role may read it.
+    fx = request.app.state.catalog_fx
+    try:
+        quote = fx.rate(currency, date or dt.date.today())
+    except FxUnavailable:
+        raise HTTPException(503, detail={"code": "fx_unavailable",
+                                         "message": "exchange rate unavailable"}) from None
+    return {**quote, "clp_per_unit": str(quote["clp_per_unit"]), "as_of": quote["as_of"].isoformat()}
 
 
 @catalog_read_router.get("/parameters")
