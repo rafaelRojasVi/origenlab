@@ -454,9 +454,6 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     if signal is not None:
         return signal
 
-    if thread_cases:
-        return _link_rule(e, "R1", thread_cases, "mismo hilo de Gmail que un correo ya vinculado", None)
-
     keyed: dict[tuple[int, int], str] = {}
     for doc in e.documents:
         for token in doc.cn_tokens:
@@ -469,6 +466,16 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
         for c in ix.by_quote_key.get(key, []):
             exact[c.id] = c
             matched_key = key
+
+    if thread_cases:
+        thread_ids = {c.id for c in thread_cases}
+        if exact and not set(exact) <= thread_ids:
+            # The thread says one case, the quote number another: never guess between them.
+            return PlannedAction(e.id, "R1", PROPOSAL, (
+                "el hilo de Gmail apunta a un caso y el número de cotización del adjunto a otro: un humano elige",),
+                quote_number=canonical_quote_number(matched_key) if matched_key else None,
+                candidates=tuple(sorted(thread_ids | set(exact))))
+        return _link_rule(e, "R1", thread_cases, "mismo hilo de Gmail que un correo ya vinculado", None)
     if exact and matched_key is not None:
         number = canonical_quote_number(matched_key)
         return _link_rule(e, "R2", list(exact.values()), f"el número {number} ya es una cotización del caso", number)

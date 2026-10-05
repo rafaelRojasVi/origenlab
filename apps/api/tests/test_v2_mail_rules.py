@@ -459,3 +459,14 @@ def test_cn12395_and_cn01239_are_the_same_quote_in_one_pass() -> None:
     ), cases=(), organizations=(org(),)))
     assert (first.mode, first.quote_number) == ("auto", "01239-26")
     assert (second.mode, second.quote_number) == ("proposal", "01239-26")
+
+
+def test_r1_defers_to_a_quote_number_that_belongs_to_another_case() -> None:
+    # Golden-set finding: a thread linked to one case carried the quote of a sibling case.
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", sender="x@cliente.test", thread_id="t-1"),),
+        cases=(case(thread_ids=("t-1",)), case(id="c-2", quotes=(quote("01239-26"),))),
+        organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode) == ("R1", "proposal")
+    assert set(action.candidates) == {"c-1", "c-2"}
