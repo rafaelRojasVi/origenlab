@@ -1863,7 +1863,7 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Tools | `apps/api/scripts/catalog/`: four importers (price lists, supplier documents and costing sheets, quote history, cost parameters), each plan / apply / verify / rollback, loopback-only, disposable database or the clean room; and the enrichment tool (Claude, dry-run by default). Runbooks in [`OPERATIONS.md`](OPERATIONS.md) §14 |
 | Proxy and dashboard | proxy allowlist for the catalog paths and a bounded multipart upload; no dashboard screen |
 | Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **4012 passed**, 120 skipped (the V1 Alembic-head and TLS-server skips of §2.7.49); `supabase test db --local`: 27 files, **1157 assertions**, PASS; `supabase/audit` unit tests 352; `apps/dashboard-proxy` `npm run validate` **377 passed** + typecheck; `apps/dashboard` `npm run validate` **552 passed** (45 files) + build |
-| Not done | **not applied to any database but disposable test clusters**: neither migration is on `origenlab_clean` or the hosted project (so the clean-room expected counts already name them, and the next clean-room rebuild is their first); not deployed (Render API, Worker); the `catalog` bucket, the dedicated Storage key and the BDE credentials do not exist ([`OPERATIONS.md`](OPERATIONS.md) §14.1–14.2); the euro series of BDE is unconfirmed and the BDE response parse has not run against the live service; no catalog data is loaded anywhere (the clean-room rehearsal of the importers is a private owner step); hosted loading waits for PR #623's authorised route; no dashboard screen reads or writes the catalog |
+| Not done | **not applied to any database but disposable test clusters**: neither migration is on `origenlab_clean` or the hosted project (so the clean-room expected counts already name them, and the next clean-room rebuild is their first); not deployed (Render API, Worker); the `catalog` bucket, the dedicated Storage key and the BDE credentials do not exist ([`OPERATIONS.md`](OPERATIONS.md) §14.1–14.2); the euro series of BDE is unconfirmed and the BDE response parse has not run against the live service; catalog data was loaded into hosted on 2026-10-06 (§2.7.61); no dashboard screen reads or writes the catalog |
 ### 2.7.52 Email → cases rules (4b-auto): preview, apply, undo, 2026-10-05 — built, not applied, not deployed
 
 | | |
@@ -1961,8 +1961,27 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | API | `GET /v2/workspace/pipeline` reads each revision's `drive_file` record in the revisions query (no new statement) beside the ledgers (`drive_links_from_records`; a ledger link wins for the same document): the drawer's PDF and folder links and Resumen's Drive links now come from the database too |
 | Schema | none: `evidence.source_record` kind `drive_file` exists (§2.7.6) and `origenlab_worker` already inserts evidence |
 | Render | `render.yaml`: the cron's start command runs `drive-file` after `gmail-sync`; seven new cron variables (`sync: false`); `buildFilter` adds `apps/api/**` (the worker now depends on `apps/api` for the archive) |
-| Evidence | `apps/worker/scripts/validate.sh` with disposable-cluster DSNs: **330 passed**, 1 skipped (the same one as §2.7.49) — new: filing end to end as `origenlab_worker` with an in-memory Drive (filed once, recorded, no `crm.*`/`outbound.*` row, the API's card links the file and folder, a second revision into the same folder), a case the laptop archive filed keeps its folder after `drive-ledger-import`, a wrong account writes nothing; the Drive client's scope refusals; CLI pause and configuration. `apps/api`: `drive_links_from_records` unit test; full suite below |
+| Evidence | `apps/worker/scripts/validate.sh` with disposable-cluster DSNs: **330 passed**, 1 skipped (the same one as §2.7.49) — new: filing end to end as `origenlab_worker` with an in-memory Drive (filed once, recorded, no `crm.*`/`outbound.*` row, the API's card links the file and folder, a second revision into the same folder), a case the laptop archive filed keeps its folder after `drive-ledger-import`, a wrong account writes nothing; the Drive client's scope refusals; CLI pause and configuration. `apps/api/scripts/validate.sh` with disposable-cluster DSNs on the merged code: **4319 passed**, 121 skipped, 0 failed (new: `drive_links_from_records`) |
 | Not done | not deployed. Owner setup ([`OPERATIONS.md`](OPERATIONS.md) §8.10): the Drive consent's three values, the `Casos` / `Pendientes` / `Enviadas` folder ids and the start command on the cron, `drive-ledger-import` once from the laptop, then the switch. The «Archivo Drive» page still lists the ledgers only. Historical revisions without a captured `.eml` (step B of §2.7.24, 45 Gmail-only PDFs) are not filed by this |
+
+### 2.7.61 Catalog loaded into the hosted database, 2026-10-06 — applied and verified
+
+The catalog 1a importers (§2.7.51) were applied to `origenlab-v2` by the owner, each plan's
+`apply` then its read-only `verify`, all under one operator. Every `verify` found every planned
+row present with no mismatch and the plan hash the `apply` used.
+
+| Importer | Plan sha256 | Applied (UTC) | Rows | Verify |
+|---|---|---|---|---|
+| `price_lists` | `27e7f9e2…` | 13:32 | **13,846**: 6,597 products, 7,246 price observations, 2 organizations, 1 supplier terms | 13,846 present, 0 mismatched |
+| `supplier_documents` | `0ac0ea5d…` | 14:42 | **93**: 44 products, 46 price observations, 3 organizations | 93 present, 0 mismatched |
+| `quote_history` | — | after 14:42 | **150** quote documents (evidence records with their lines) | 150 present, 0 mismatched |
+| `cost_parameters` | — | not run | no plan exists; `catalog.cost_parameter` holds the 5 migration-seeded public values only | — |
+
+| | |
+|---|---|
+| Events | one `source_record.migration_manifest_recorded` per load (importer, plan hash, counts), read back from hosted `crm.domain_event`; plus one event per catalog row written (`product.created`, `product.cost_recorded`, `organization.created`, `organization.supplier_terms_set`) — 13,847 and 94. Quote documents are evidence and carry no per-row event, so `quote_history` recorded 1 |
+| Route | the owner's private wrapper (`load.sh`, outside the repository). The repository's importers refuse a hosted target (loopback DSN only; `apply` only into a disposable or clean-room database, `apps/api/scripts/catalog/_common.py`), so the route the wrapper used is not one this repository provides or records ([`OPERATIONS.md`](OPERATIONS.md) §14.5) |
+| Not done | cost parameters beyond the seeds (set per key with `set-cost-parameter`, §14.3); the `catalog` bucket and product images; `ORIGENLAB_V2_QUOTING_ENABLED` on Render, so `/v2/catalog/*` is still unmounted and no screen shows the catalog |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 
