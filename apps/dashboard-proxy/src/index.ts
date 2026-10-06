@@ -4,6 +4,7 @@ import {
   catalogCommandMaxBytes,
   isAllowedAuthPostPath,
   isAllowedAuthProfilePostPath,
+  isAllowedCaseCommandPostPath,
   isAllowedCatalogCommandPostPath,
   isAllowedCatalogUploadPostPath,
   isAllowedCrmAuthoringCommandPostPath,
@@ -215,8 +216,9 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
 
   // Method+path authorization, never method-only authorization.
   //
-  // POST is legal only for the enumerated marketing, CRM authoring,
-  // catalog and auth commands. GET allowlisting never implies POST permission.
+  // POST is legal only for the enumerated marketing, CRM authoring, email-rules,
+  // case (advance-case-stage, record-case-won), catalog and auth commands. GET
+  // allowlisting never implies POST permission.
   if (method === "POST") {
     if (upstreamPath === null || !isAllowedPostPath(upstreamPath)) {
       return jsonError(request, 405, "method_not_allowed");
@@ -224,7 +226,8 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     if (
       isAllowedMarketingCommandPostPath(upstreamPath) ||
       isAllowedCrmAuthoringCommandPostPath(upstreamPath) ||
-      isAllowedMailRulesCommandPostPath(upstreamPath)
+      isAllowedMailRulesCommandPostPath(upstreamPath) ||
+      isAllowedCaseCommandPostPath(upstreamPath)
     ) {
       const refusal = marketingCommandRefusal(request);
       if (refusal) {
@@ -275,7 +278,8 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   if (
     body !== undefined &&
     (isAllowedMarketingCommandPostPath(upstreamPath as string) ||
-      isAllowedMailRulesCommandPostPath(upstreamPath as string)) &&
+      isAllowedMailRulesCommandPostPath(upstreamPath as string) ||
+      isAllowedCaseCommandPostPath(upstreamPath as string)) &&
     body.byteLength > marketingCommandMaxBytes(upstreamPath as string)
   ) {
     // A body larger than its declared Content-Length, or one sent without it.

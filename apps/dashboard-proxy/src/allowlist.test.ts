@@ -446,19 +446,19 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("keeps the twelve evidence-bound V2 command routes unreachable through this Worker", async () => {
+  it("lets exactly two case commands through and keeps the other ten evidence-bound routes unreachable", async () => {
     // The command boundary EXISTS in apps/api: POST /v2/commands/* records durable human
-    // decisions -- six about staged evidence (including confirm-person-from-evidence), and six
-    // about a commercial case, which include opening one, naming who is asking, and moving it
-    // through its stages. Building that boundary and letting a browser reach it are two separate
-    // decisions, and only the first has been taken. Until the second is taken deliberately, the
-    // Worker forwards neither the method nor the path -- so the operator workspace stays a
-    // preview by construction rather than by discipline.
+    // decisions -- six about staged evidence (including confirm-person-from-evidence), and seven
+    // about a commercial case. Building that boundary and letting a browser reach it are two
+    // separate decisions. The second has been taken for exactly two case commands, the ones the
+    // case drawer uses: advance-case-stage («Cambiar etapa») and record-case-won («Marcar
+    // ganada»). Every other one stays refused, as POST and as GET.
     //
     // The list is written out in full on purpose. A route added to apps/api and forgotten
     // here would be forgotten silently; a route added here that does not exist costs one
     // redundant assertion, which is the cheaper mistake.
-    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const { CASE_COMMAND_POST_PATHS, isAllowedCaseCommandPostPath, isAllowedPostPath, isAllowedUpstreamPath } =
+      await import("./allowlist");
     for (const path of [
       // evidence review
       "/v2/commands/keep-evidence-pending",
@@ -467,16 +467,41 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/attach-contact-address",
       "/v2/commands/attribute-sender-organization",
       "/v2/commands/confirm-person-from-evidence",
-      // the commercial case
+      // the commercial case, minus the two the drawer uses
       "/v2/commands/open-commercial-case",
       "/v2/commands/link-case-evidence",
       "/v2/commands/add-case-organization",
       "/v2/commands/set-case-organization-role",
       "/v2/commands/record-case-interest",
-      "/v2/commands/advance-case-stage",
     ]) {
-      expect(isAllowedPostPath(path)).toBe(false);
-      expect(isAllowedUpstreamPath(path)).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+    const allowed = ["/v2/commands/advance-case-stage", "/v2/commands/record-case-won"];
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(2);
+    for (const path of allowed) {
+      expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(true);
+      // A command is never a read.
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
+  it("matches the two case command paths exactly, never a neighbour", async () => {
+    const { isAllowedPostPath, marketingCommandMaxBytes } = await import("./allowlist");
+    expect(marketingCommandMaxBytes("/v2/commands/advance-case-stage")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/record-case-won")).toBe(16_384);
+    for (const path of [
+      "/v2/commands/advance-case-stage/",
+      "/v2/commands/advance-case-stage-all",
+      "/v2/commands/record-case-won/x",
+      "/v2/commands/record-case-lost",
+      "/v2/commands/record-case-wonder",
+      "/v2/commands/RECORD-CASE-WON",
+      "/v2/commands/correct-case-stage",
+      "/v2/commands/unlink-case-evidence",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
     }
   });
 });
@@ -570,6 +595,24 @@ describe("CRM part A: confirm an institution, suggested people", () => {
       "/v2/commands/confirm-organization-record/extra",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("forwards GET of one case's notes by its exact path, never as a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${uuid}/notes`)).toBe(true);
+    expect(isAllowedPostPath(`/v2/workspace/opportunities/${uuid}/notes`)).toBe(false);
+    for (const p of [
+      `/v2/workspace/opportunities/${uuid}`,
+      `/v2/workspace/opportunities/${uuid}/notes/`,
+      `/v2/workspace/opportunities/${uuid}/notes/x`,
+      `/v2/workspace/opportunities/${uuid}/events`,
+      `/v2/workspace/opportunities/${uuid.toUpperCase()}/notes`,
+      "/v2/workspace/opportunities/not-a-uuid/notes",
+      "/v2/workspace/opportunities",
+    ]) {
+      expect(isAllowedUpstreamPath(p), p).toBe(false);
     }
   });
 
@@ -719,9 +762,9 @@ describe("email → cases rules (admin only upstream)", () => {
       "/v2/commands/apply-mail-rules-all",
       "/v2/commands/undo-mail-rule-action/x",
       "/v2/commands/APPLY-MAIL-RULES",
-      // The case commands the rules call stay unreachable from the browser.
+      // The case commands the rules call stay unreachable from the browser, except the two the
+      // case drawer uses (advance-case-stage, record-case-won), which have their own list.
       "/v2/commands/open-commercial-case",
-      "/v2/commands/advance-case-stage",
       "/v2/commands/link-case-evidence",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);

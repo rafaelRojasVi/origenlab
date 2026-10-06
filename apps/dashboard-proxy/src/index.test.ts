@@ -1299,3 +1299,72 @@ describe("Email → cases rules commands and dry run", () => {
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Case drawer commands (advance-case-stage, record-case-won)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const ADVANCE = "https://proxy.test/api/v2/commands/advance-case-stage";
+  const WON = "https://proxy.test/api/v2/commands/record-case-won";
+  const post = (url: string, extra: Record<string, string> = {}, body = "{}") =>
+    requestWithOrigin(url, {
+      method: "POST",
+      body,
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "case-command-key-0001",
+        "Sec-Fetch-Site": "same-origin",
+        Cookie: "__Host-origenlab_session=s1; CF_Authorization=leak",
+        ...extra,
+      },
+    });
+
+  it.each([ADVANCE, WON])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(post(url), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(upstream.method).toBe("POST");
+    expect(new URL(upstream.url).pathname).toBe(new URL(url).pathname.replace(/^\/api/, ""));
+    expect(upstream.headers.get("Idempotency-Key")).toBe("case-command-key-0001");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+  });
+
+  it.each([
+    ["a cross-site fetch", post(WON, { "Sec-Fetch-Site": "cross-site" }), 403, "cross_site_request"],
+    ["a form post", post(ADVANCE, { "Content-Type": "application/x-www-form-urlencoded" }), 415, "unsupported_media_type"],
+    ["no key", post(WON, { "Idempotency-Key": "" }), 400, "idempotency_key_required"],
+    ["a declared body over 16 kB", post(ADVANCE, { "Content-Length": "16385" }), 413, "payload_too_large"],
+  ])("refuses %s before anything is forwarded", async (_label, req, status, code) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: { code } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body over 16 kB even when Content-Length understates it", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(post(WON, {}, JSON.stringify({ note: "x".repeat(20_000) })), TEST_ENV);
+    expect(res.status).toBe(413);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it.each(["open-commercial-case", "link-case-evidence", "add-case-organization", "set-case-organization-role", "record-case-interest"])(
+    "still refuses POST /v2/commands/%s",
+    async (name) => {
+      stubUpstreamFetch();
+      const res = await handleRequest(post(`https://proxy.test/api/v2/commands/${name}`), TEST_ENV);
+      expect(res.status).toBe(405);
+      expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    },
+  );
+
+  it("never forwards a case command as GET", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(requestWithOrigin(WON, { method: "GET" }), TEST_ENV);
+    expect(res.status).toBe(403);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});

@@ -40,8 +40,9 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/auth/logout` | Clears the dashboard session cookie and records the logout in `platform.auth_event`; writes no commercial state. Requires an allowed `Origin` and no cross-site `Sec-Fetch-Site` |
 | `/auth/profile/select`, `/auth/profile/clear` | Choose an operator profile with its PIN (verified by the API, never here), or return to the profile screen. Allowed `Origin`, no cross-site `Sec-Fetch-Site`, `Content-Type: application/json`, body ≤ 1 KiB. The API's local-only `/auth/dev/*` is never reachable |
 | `/v2/commands/{create-campaign-draft,save-campaign-draft,freeze-campaign-audience,set-campaign-planning,resolve-unsubscribe-review,dismiss-unsubscribe-review,block-campaign,unblock-campaign}` | CRM Marketing — see *Marketing commands* below. Nothing here approves, schedules or sends; a block only refuses |
-| `/v2/commands/apply-mail-rules`, `/v2/commands/undo-mail-rule-action` | Email → cases: apply the previewed automatic actions — the browser sends `(evidence_id, rule_id)` pairs, at most ten per request, and upstream re-plans and refuses any pair it no longer yields, or undo one applied action with a note. **Admin only** upstream; mounted only behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Same Origin / JSON / `Idempotency-Key` guard as the marketing commands, body ≤ 128 KiB. The case commands the rules call stay unlisted |
-| `/v2/commands/<name>` for the 29 CRM-authoring commands (person, organization — `confirm-organization-record` included —, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not listed. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
+| `/v2/commands/apply-mail-rules`, `/v2/commands/undo-mail-rule-action` | Email → cases: apply the previewed automatic actions — the browser sends `(evidence_id, rule_id)` pairs, at most ten per request, and upstream re-plans and refuses any pair it no longer yields, or undo one applied action with a note. **Admin only** upstream; mounted only behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Same Origin / JSON / `Idempotency-Key` guard as the marketing commands, body ≤ 128 KiB. The other case commands the rules call stay unlisted |
+| `/v2/commands/advance-case-stage`, `/v2/commands/record-case-won` | The case drawer's «Cambiar etapa» and «Marcar ganada» (`CASE_COMMAND_POST_PATHS`). Upstream: active `sales`/`admin` operator, `Idempotency-Key`, the case version shown, a note; mounted only behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Same Origin / JSON / key guard as the marketing commands, body ≤ 16 KiB. The other five case commands (`open-commercial-case`, `link-case-evidence`, `add-case-organization`, `set-case-organization-role`, `record-case-interest`) stay refused |
+| `/v2/commands/<name>` for the 29 CRM-authoring commands (person, organization — `confirm-organization-record` included —, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not in this list. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
 | `/v2/commands/{create-product,update-product,confirm-product-content,record-supplier-cost,set-supplier-terms,set-cost-parameter,record-fx-rate,update-product-image,review-document-line}` | Catalog commands: 9 exact paths, JSON, body ≤ 64 KiB — see *Catalog 1a* below |
 | `/v2/commands/add-product-image` | Catalog image upload: the one multipart POST, body ≤ 8 MiB + 64 KiB — see *Catalog 1a* below |
 
@@ -49,13 +50,14 @@ All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return *
 
 ## CRM card reads
 
-Three exact GET paths (`src/allowlist.ts`), nothing under or beside them:
+Four exact GET paths (`src/allowlist.ts`), nothing under or beside them:
 
 | Method | Upstream path | Upstream behaviour |
 |---|---|---|
 | GET | `/v2/workspace/providers` | the six catalogue brands as the supplier directory, then the machine-detected candidates (hints only, never promoted) |
 | GET | `/v2/workspace/equipment-interests` | observed equipment interests per line, institution and destination; CRM people apart from address-only evidence |
 | GET | `/v2/workspace/person-suggestions` | people the quote emails name and the CRM does not hold yet (name, address, institution, quotes, last date); addresses masked for `viewer`; creates nothing |
+| GET | `/v2/workspace/opportunities/<uuid>/notes` | the notes on one case, for the case drawer's «Registrar seguimiento» (same shape as person/organization notes); writing one is `add-note` |
 
 Same guarantees as every V2 read: the session cookie is the only cookie forwarded, the
 browser-sent operator header is dropped and nothing replaces it (identity is the session cookie), addresses are
