@@ -1916,10 +1916,11 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 
 | | |
 |---|---|
-| Merged | #645 (contact name with a comma) at `83a5a1f`; #647 (case writes part B, carrying #646's part A commits, so #646 closed as merged with it) at `855e5ec`. Render auto-deploys `origenlab` and `origenlab-dashboard` from `main`: **the live `855e5ec` deploy and the two env flags are not verified in this entry** |
+| Merged | #645 (contact name with a comma) at `83a5a1f`; #647 (case writes part B, carrying #646's part A commits, so #646 closed as merged with it) at `855e5ec`. Render `origenlab` (API) and `origenlab-dashboard` both live on `855e5ec` (deploys finished 12:11:51 and 12:09:27 UTC, read with the Render CLI) |
 | Hosted apply | `20261006120000_slice7_historical_current_revision_choice.sql` applied to `origenlab-v2` with `psql -X --no-psqlrc -v ON_ERROR_STOP=1 --single-transaction` as `origenlab_migrator` through the session pooler (`sslmode=verify-full`); the owner inserted the ledger row from the SQL Editor — ledger **46**, head `20261006120000`. `pg_get_constraintdef` of `quote_revision_supersession_forward` returns the `historical_import` exception. `20261005210000` (§2.7.53's corrective migration) was already in the ledger |
 | Proxy | `origenlab-dashboard-proxy` deployed from `main` with `wrangler deploy` (validate 424 passed; version `352906e6`), route `dashboard.origenlab.cl/api*`, secrets unchanged. This also ships the paths §2.7.53 listed as still refused at the proxy (catalog, mail rules) and part A's `advance-case-stage` / `record-case-won` / case notes |
-| Not done | Render: confirm both services run `855e5ec` and the API has `ORIGENLAB_V2_COMMANDS_ENABLED=true` and `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true` (the drawer actions are off without them). No operator has yet exercised the drawer actions on hosted |
+| Switches | `GET /auth/session` through the deployed proxy, as an admin: `case_commands_enabled: true` and `crm_authoring_enabled: true`, i.e. `ORIGENLAB_V2_COMMANDS_ENABLED` and `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` are on |
+| Not done | no operator has yet exercised the drawer actions on hosted |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 
