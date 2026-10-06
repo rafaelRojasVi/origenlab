@@ -1940,6 +1940,18 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Limits | only threads already tied to a case count: an email on a brand-new thread (a follow-up written as a fresh message) is not seen until it is linked. Inbound/outbound only — no body is read |
 | Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **4142 passed**, 120 skipped (the usual V1 Alembic-head and TLS skips; no V2 DSN skip) — new: `last_contacts` unit test, an end-to-end pipeline test on PostgreSQL 17; the pipeline statement budget is 9 (2 setup + 7 data, still one round trip); `apps/dashboard` `npm run validate`: **593 passed** (49 files) + build, the full suite twice more under load after the `AuthGate` fix |
 
+### 2.7.59 Email → cases R1/R2 run automatically, with a stop switch, 2026-10-06 — built, not deployed
+
+| | |
+|---|---|
+| What | Rules R1 (same Gmail thread as an email already on exactly one open case) and R2 (a quote number held by exactly one open case) now link new email by themselves while an admin has switched the automatic run on. R3–R6 (open a case, register an institution, win, lose) still wait for «Aplicar». Owner-approved 2026-10-06; [`DOMAIN.md`](DOMAIN.md) §3.6.6 records it |
+| API | `v2/mail_rules_auto.py`: a daemon thread started with the API where `ORIGENLAB_V2_COMMANDS_ENABLED` mounts the commands, every `ORIGENLAB_V2_AUTO_MAIL_RULES_INTERVAL_SECONDS` (default 300; **0** never starts it). Each pass re-plans and applies the `auto` R1/R2 actions (at most 100) through `MailRulesRepository.apply_planned` — the same receipt key, per-email advisory lock and system attribution as «Aplicar», plus `attribution.trigger = 'automatic'` — on behalf of the admin who switched it on; if that operator is no longer an active admin the pass does nothing and the tab says why. New admin-only `POST /v2/commands/set-auto-mail-rules` {`enabled`, `note`}: one `set_auto_mail_rules` receipt per flip; the newest is the state; none = off; flipping to the current state is 409 `auto_mail_rules_unchanged`. `GET /v2/workspace/mail-rules/preview` gains `automatic` (switch, who and when, timer, this process's last pass); applied rows gain `automatic` |
+| Schema | none: the switch is `platform.command_receipt` rows, which `origenlab_api` already inserts |
+| Proxy | `MAIL_RULES_COMMAND_POST_PATHS` + `set-auto-mail-rules` (same Origin / JSON / key guard, ≤ 128 KiB) |
+| Dashboard | Revisión → «Acciones automáticas» gains «Vincular correos automáticamente»: Activo / Detenido / Activo, sin actuar, who switched it and why, the last pass, «Activar» / «Detener» with a required reason. Applied rows say «automática, a nombre de …»; «Deshacer» works the same |
+| Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **API_COUNT** — new: one database test (off by default; only an admin switches, with a note; R1 and R2 linked and R4 left; nothing twice; undo; off stops the next link; a demoted admin stops the run until another admin switches it on), route tests, timer tests; `apps/dashboard` `npm run validate` **597 passed** (49 files) + build; `apps/dashboard-proxy` `npm run validate` **426 passed** (6 files) + typecheck |
+| Not done | not deployed. To ship: merge → Render auto-deploys the API and the dashboard → the owner deploys the dashboard-proxy Worker (until then «Activar» is refused at the proxy) → an admin switches it on in Revisión. Runbook: [`OPERATIONS.md`](OPERATIONS.md) §8.9 |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

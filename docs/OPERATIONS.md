@@ -1933,6 +1933,25 @@ moves that seam.
 
 **Never repair a sync by editing `comms.message` by hand.**
 
+### 8.9 Automatic email → case links (R1/R2)
+
+The API applies rules R1 (same Gmail thread) and R2 (same quote number) by itself, every
+`ORIGENLAB_V2_AUTO_MAIL_RULES_INTERVAL_SECONDS` (default 300), while an admin has switched it on
+([`DOMAIN.md`](DOMAIN.md) §3.6.6; `apps/api/src/origenlab_api/v2/mail_rules_auto.py`).
+
+- **On / off:** Revisión → «Acciones automáticas» → «Vincular correos automáticamente» →
+  «Activar» / «Detener», with a reason. Off until an admin turns it on. The newest
+  `set_auto_mail_rules` receipt is the state; it survives restarts and deploys.
+- **Hard stop** (dashboard unreachable): set `ORIGENLAB_V2_AUTO_MAIL_RULES_INTERVAL_SECONDS=0` on
+  the API and redeploy; the timer is never started. `ORIGENLAB_V2_COMMANDS_ENABLED=false` also
+  removes it, with every other command.
+- **A wrong link:** «Deshacer» on the row in «Acciones aplicadas» (marked «automática»). An undone
+  email is never linked again by the rules.
+- **«Activo, sin actuar»:** the admin who switched it on is no longer an active admin; another
+  admin switches it on in their own name.
+- The tab's «Última pasada» line is this API process's memory: it is empty for up to one interval
+  after a deploy.
+
 ## 9. Emergency shutdown
 
 In order, fastest first:

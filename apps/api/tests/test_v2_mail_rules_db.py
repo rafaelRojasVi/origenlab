@@ -414,3 +414,102 @@ def test_a_stage_a_person_set_afterwards_is_not_corrected_and_the_refusal_is_a_4
         repo.undo(_operator(world["admin"]), r6["command_receipt_id"], "deshacer")
     assert (refused.value.status_code, refused.value.code) == (409, "stage_correction_refused")
     assert _one(db, "select stage from crm.opportunity where id = %s", r3["case_id"])[0] == "lost"
+
+
+# ─────────────────────────────────────────────── the automatic run (mail_rules_auto.py) ──
+#
+# One test, last in this module: the switch is one row-set for the whole database, so its
+# "never switched on" start can be observed only once, and other tests' leftover emails may be
+# acted on by a pass — the assertions name this test's own emails only.
+
+
+def test_the_automatic_run_links_r1_and_r2_only_while_switched_on_and_stays_undoable(db, world) -> None:
+    from origenlab_api.v2.commands import CommandRefused
+    from origenlab_api.v2.mail_rules_auto import AutoMailRules
+
+    repo = _repo(db)
+    auto = AutoMailRules(repo, interval_seconds=60)
+    admin = _operator(world["admin"])
+
+    # Never switched on: off, and a pass writes nothing.
+    assert auto.state()["enabled"] is False and auto.state()["changed_by"] is None
+    before = _counts(db)
+    assert auto.run_once()["skipped"] == "off"
+    assert _counts(db) == before
+
+    # A case to link to, opened the manual way (R3 is never automatic).
+    case_id = _apply_only(db, world, world["e_known"])["case_id"]
+    serial = world["number"][1:-3]
+    with _owner(db) as conn:
+        reply = _mail(conn, thread=world["t1"], direction_hint=None, sender=f"compras@{world['client_domain']}",
+                      recipients="contacto@origenlab.cl", subject="RE: Cotización")
+        by_number = _mail(conn, thread=f"thread-n-{world['tag']}", direction_hint=None,
+                          sender=f"jefa@{world['client_domain']}", recipients="contacto@origenlab.cl",
+                          subject="Consulta", documents=[_doc(f"CN{serial}5-copia.pdf", [f"CN{serial}5"])])
+    planned = {a["evidence_id"]: (a["rule_id"], a["mode"]) for a in repo.preview()["actions"]}
+    assert planned[reply] == ("R1", "auto") and planned[by_number] == ("R2", "auto")
+    assert planned[world["e_new"]] == ("R4", "auto")
+
+    # Only an admin switches it, with a note; switching to the current state is refused.
+    sales = _operator(world["admin"], role="sales")
+    with pytest.raises(CommandRefused) as refused:
+        auto.set_enabled(sales, True, "x", "auto-sales")
+    assert refused.value.status_code == 403
+    with pytest.raises(CommandRefused):
+        auto.set_enabled(admin, True, " ", "auto-blank")
+    on = auto.set_enabled(admin, True, "probado en vista previa", f"auto-on-{world['tag']}")
+    assert on["enabled"] is True
+    assert auto.set_enabled(admin, True, "probado en vista previa", f"auto-on-{world['tag']}")["replayed"] is True
+    with pytest.raises(CommandRefused) as unchanged:
+        auto.set_enabled(admin, True, "otra vez", f"auto-on2-{world['tag']}")
+    assert unchanged.value.code == "auto_mail_rules_unchanged"
+    state = auto.state()
+    assert (state["enabled"], state["changed_by"], state["note"], state["rules"]) == (
+        True, "Admin Ficticio", "probado en vista previa", ["R1", "R2"])
+
+    # One pass: R1 and R2 are linked, as the system, on behalf of the admin; R4 waits for a person.
+    result = auto.run_once()
+    assert result["skipped"] is None and result["applied"] >= 2, result
+    links = _one(db, "select array_agg(source_record_id::text order by source_record_id) from crm.opportunity_evidence "
+                     "where opportunity_id = %s and unlinked_at is null and source_record_id in (%s, %s)",
+                 case_id, reply, by_number)[0]
+    assert sorted(links) == sorted([reply, by_number])
+    assert _one(db, "select count(*) from crm.opportunity where origin_source_record_id = %s", world["e_new"])[0] == 0
+    assert _action(repo.preview(), world["e_new"])["mode"] == "auto"
+    applied = {a["evidence_id"]: a for a in repo.applied()}
+    assert applied[reply]["automatic"] is True and applied[reply]["applied_by"] == "Admin Ficticio"
+    assert _one(db, "select bool_and(actor_kind = 'worker'), bool_and(payload -> 'attribution' ->> 'trigger' = 'automatic') "
+                    "from crm.domain_event where command_receipt_id = %s", applied[reply]["receipt_id"]) == (True, True)
+    assert auto.last_run()["applied"] == result["applied"]
+    assert auto.run_once()["applied"] == 0  # nothing twice
+
+    # Undo works exactly as for an action an admin applied.
+    repo.undo(admin, applied[by_number]["receipt_id"], "era otra cotización")
+    assert _one(db, "select unlinked_at is not null from crm.opportunity_evidence where source_record_id = %s",
+                by_number)[0] is True
+    assert auto.run_once()["applied"] == 0  # an undone action never comes back
+
+    # Off: the next reply waits.
+    auto.set_enabled(admin, False, "pausa", f"auto-off-{world['tag']}")
+    with _owner(db) as conn:
+        later = _mail(conn, thread=world["t1"], direction_hint=None, sender=f"compras@{world['client_domain']}",
+                      recipients="contacto@origenlab.cl", subject="RE: RE: Cotización")
+    assert auto.run_once()["skipped"] == "off"
+    assert _action(repo.preview(), later)["rule_id"] == "R1"
+
+    # On again, then the admin who switched it on loses the role: the run stops and says why,
+    # and another admin may switch it on in their own name.
+    auto.set_enabled(admin, True, "seguimos", f"auto-on3-{world['tag']}")
+    with _owner(db) as conn:
+        conn.execute("update platform.operator set role = 'sales' where id = %s", (world["admin"],))
+        other = conn.execute(
+            "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+            "values (gen_random_uuid(), %s, 'Otra Admin', 'admin', 'active') returning id::text",
+            (f"otra-auto-{world['tag']}@example.test",)).fetchone()[0]
+    assert auto.run_once()["skipped"] == "operator_not_admin"
+    assert "ya no es un administrador activo" in auto.state()["blocked"]
+    auto.set_enabled(_operator(other), True, "la retomo yo", f"auto-on4-{world['tag']}")
+    assert auto.run_once()["skipped"] is None
+    assert _one(db, "select operator_id::text from platform.command_receipt "
+                    "where command_name = 'apply_mail_rule' and response_body ->> 'evidence_id' = %s", later)[0] == other
+    auto.set_enabled(_operator(other), False, "fin de la prueba", f"auto-off2-{world['tag']}")

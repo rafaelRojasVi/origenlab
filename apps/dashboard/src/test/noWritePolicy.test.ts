@@ -54,7 +54,11 @@ describe("dashboard read-only policy", () => {
   //    evidence, institution, interest) is named.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const MAIL_RULES_FILE = "../crm/mailRules.ts";
-  const MAIL_RULES_PATHS = ["/v2/commands/apply-mail-rules", "/v2/commands/undo-mail-rule-action"];
+  const MAIL_RULES_PATHS = [
+    "/v2/commands/apply-mail-rules",
+    "/v2/commands/undo-mail-rule-action",
+    "/v2/commands/set-auto-mail-rules",
+  ];
   const CASE_COMMANDS_FILE = "../crm/caseCommands.ts";
   const CASE_COMMAND_PATHS = [
     "/v2/commands/advance-case-stage",

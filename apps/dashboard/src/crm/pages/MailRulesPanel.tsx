@@ -6,8 +6,10 @@ import {
   applyMailRules,
   fetchMailRulesPreview,
   refusalMessage,
+  setAutoMailRules,
   undoMailRuleAction,
   type AppliedMailAction,
+  type AutoMailRulesState,
   type ApplyMailRulesResult,
   type MailRuleMode,
   type PlannedMailAction,
@@ -118,12 +120,115 @@ function AdminPanel() {
               ) : null}
               {result ? <ApplyResult result={result} /> : null}
             </Panel>
+            {p.automatic ? <AutoSwitch state={p.automatic} onChanged={reload} /> : null}
             {showPlan ? <Plan actions={p.actions} /> : null}
             <Applied items={p.applied} onUndone={reload} />
           </div>
         );
       }}
     </ResourceGate>
+  );
+}
+
+function lastRunLine(state: AutoMailRulesState): string {
+  const run = state.last_run;
+  if (!run) return "Todavía no ha pasado desde que se inició el servidor.";
+  const when = fmtDate(run.at);
+  if (run.skipped === "off") return `Última pasada ${when}: detenida, no hizo nada.`;
+  if (run.skipped) return `Última pasada ${when}: no actuó.`;
+  const parts = [`${run.applied} vinculado${run.applied === 1 ? "" : "s"}`];
+  if (run.refused) parts.push(`${run.refused} rechazado${run.refused === 1 ? "" : "s"}`);
+  if (run.pending) parts.push(`${run.pending} para la próxima pasada`);
+  return `Última pasada ${when}: ${parts.join(" · ")}.`;
+}
+
+/**
+ * The stop switch for the automatic run. On, every few minutes the server links each new email
+ * that R1 (same Gmail thread) or R2 (same quote number) ties to exactly one open case, on behalf
+ * of the admin who switched it on. Everything else still waits for «Aplicar». A note is required
+ * both ways.
+ */
+function AutoSwitch({ state, onChanged }: { state: AutoMailRulesState; onChanged: () => void }) {
+  const inputId = useId();
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const acting = state.enabled && !state.blocked && state.timer_running;
+  const target = !state.enabled || Boolean(state.blocked);
+  const minutes = Math.max(1, Math.round(state.interval_seconds / 60));
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await setAutoMailRules(target, note.trim());
+      setOpen(false);
+      setNote("");
+      onChanged();
+    } catch (err) {
+      setError(refusalMessage(err, "No se pudo cambiar."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Panel
+      title="Vincular correos automáticamente"
+      note={`${state.rules.join(" y ")} · cada ${minutes} min`}
+      bodyClassName="space-y-2 px-3 py-3"
+    >
+      <div className="flex flex-wrap items-center gap-2" data-testid="auto-mail-rules">
+        <Badge tone={acting ? "good" : state.enabled ? "warn" : "neutral"}>
+          {acting ? "Activo" : state.enabled ? "Activo, sin actuar" : "Detenido"}
+        </Badge>
+        <span className="text-xs text-ink-muted">
+          {state.changed_by
+            ? `${state.enabled ? "Activado" : "Detenido"} por ${state.changed_by} · ${fmtDate(state.changed_at)}${state.note ? ` · «${state.note}»` : ""}`
+            : "Nunca se ha activado."}
+        </span>
+        <span className="flex-1" />
+        {open ? null : (
+          <button type="button" className={target ? PRIMARY : BUTTON} onClick={() => setOpen(true)}>
+            {target ? "Activar" : "Detener"}
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-ink-muted">
+        Activo, el sistema vincula solo cada correo nuevo del mismo hilo de Gmail (R1) o con el número de una cotización
+        (R2) de exactamente un caso abierto, a nombre de quien lo activó. Abrir casos, ganar o perder siguen esperando
+        «Aplicar». Todo se puede deshacer abajo.
+      </p>
+      {state.blocked ? <p className="text-xs text-warn">{state.blocked}</p> : null}
+      {!state.timer_running ? (
+        <p className="text-[11px] text-ink-faint">El temporizador está apagado en el servidor; el interruptor no actuará.</p>
+      ) : (
+        <p className="text-[11px] text-ink-faint">{lastRunLine(state)}</p>
+      )}
+      {open ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor={inputId} className="text-[11px] font-medium text-ink">
+            Motivo
+          </label>
+          <input
+            id={inputId}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            className="h-8 min-w-0 flex-1 rounded-md border border-line bg-canvas-raised px-2 text-[13px] text-ink focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+          />
+          <button type="button" className={PRIMARY} disabled={busy || !note.trim()} onClick={() => void submit()}>
+            {target ? "Activar" : "Detener"}
+          </button>
+          <button type="button" className={BUTTON} onClick={() => setOpen(false)}>
+            Cancelar
+          </button>
+        </div>
+      ) : null}
+      {error ? (
+        <p role="alert" className="text-xs text-bad">
+          {error}
+        </p>
+      ) : null}
+    </Panel>
   );
 }
 
@@ -222,7 +327,8 @@ function AppliedRow({ item, onUndone }: { item: AppliedMailAction; onUndone: () 
         <span className="font-medium text-ink">{item.case_title ?? item.organization_name ?? "—"}</span>
         {item.quote_number ? <span className="tabular-nums text-ink-muted">{item.quote_number}</span> : null}
         <span className="text-ink-faint">
-          {item.label} · {fmtDate(item.applied_at)} · aplicada por {item.applied_by ?? "—"}
+          {item.label} · {fmtDate(item.applied_at)} ·{" "}
+          {item.automatic ? `automática, a nombre de ${item.applied_by ?? "—"}` : `aplicada por ${item.applied_by ?? "—"}`}
         </span>
         <span className="flex-1" />
         {item.undone ? (

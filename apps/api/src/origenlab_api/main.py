@@ -41,9 +41,16 @@ async def _app_lifespan(app: FastAPI):  # type: ignore[type-arg]
     pool = getattr(app.state, "v2_pool", None)
     if pool is not None:
         pool.open()
+    # The automatic R1/R2 timer (`v2/mail_rules_auto.py`): present only where the case commands
+    # are mounted, and idle until an admin switches it on.
+    runner = getattr(app.state, "auto_mail_rules_runner", None)
+    if runner is not None:
+        runner.start()
     try:
         yield
     finally:
+        if runner is not None:
+            runner.stop()
         if pool is not None:
             pool.close()
 
@@ -582,8 +589,14 @@ def _mount_v2_command_boundary(
     )
     app.include_router(command_router)
     app.include_router(case_command_router)
+    from origenlab_api.v2.mail_rules_auto import AutoMailRules, AutoMailRulesRunner
     from origenlab_api.v2.mail_rules_routes import mail_rules_command_router
 
+    app.state.auto_mail_rules = AutoMailRules(
+        app.state.mail_rules_repository,
+        interval_seconds=settings.v2_auto_mail_rules_interval_seconds,
+    )
+    app.state.auto_mail_rules_runner = AutoMailRulesRunner(app.state.auto_mail_rules)
     app.include_router(mail_rules_command_router)
 
 

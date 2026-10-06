@@ -336,6 +336,7 @@ class MailRulesRepository(V2CaseCommandRepository):
                     "label": SYSTEM_LABEL,
                     **{k: body.get(k) for k in ("evidence_id", "rule_id", "reasons", "case_id", "case_title",
                                                 "organization_id", "organization_name", "quote_number")},
+                    "automatic": body.get("trigger") == "automatic",
                     "undone": r["undo_receipt_id"] is not None,
                     "undone_at": r["undone_at"].isoformat() if r["undone_at"] else None,
                     "undone_by": r["undone_by"],
@@ -365,26 +366,35 @@ class MailRulesRepository(V2CaseCommandRepository):
                 refused.append({"evidence_id": evidence_id, "rule_id": rule_id, "code": "plan_changed",
                                 "message": f"las reglas ya no proponen {rule_id} automática para este correo; ahora: {now}"})
                 continue
-            try:
-                applied.append(self._apply_action(operator, action))
-            except CommandRefused as exc:
-                refused.append({"evidence_id": action.evidence_id, "rule_id": action.rule_id,
-                                "code": exc.code, "message": exc.message})
-            except Exception as exc:  # a constraint the handlers did not anticipate
-                if not _is_database_error(exc):
-                    raise
-                refused.append({"evidence_id": action.evidence_id, "rule_id": action.rule_id,
-                                "code": "database_refused",
-                                "message": str(exc).splitlines()[0] if str(exc) else type(exc).__name__})
+            outcome = self.apply_planned(operator, action)
+            (refused if "code" in outcome else applied).append(outcome)
         return {"applied": applied, "refused": refused}
 
-    def _apply_action(self, operator: OperatorIdentity, action: PlannedAction) -> dict[str, Any]:
+    def apply_planned(self, operator: OperatorIdentity, action: PlannedAction, *,
+                      automatic: bool = False) -> dict[str, Any]:
+        """Apply one action the rules just planned: its response, or a refusal carrying `code`.
+        «Aplicar» and the automatic run (`mail_rules_auto.py`) both come through here."""
+        try:
+            return self._apply_action(operator, action, automatic=automatic)
+        except CommandRefused as exc:
+            return {"evidence_id": action.evidence_id, "rule_id": action.rule_id,
+                    "code": exc.code, "message": exc.message}
+        except Exception as exc:  # a constraint the handlers did not anticipate
+            if not _is_database_error(exc):
+                raise
+            return {"evidence_id": action.evidence_id, "rule_id": action.rule_id,
+                    "code": "database_refused",
+                    "message": str(exc).splitlines()[0] if str(exc) else type(exc).__name__}
+
+    def _apply_action(self, operator: OperatorIdentity, action: PlannedAction, *,
+                      automatic: bool = False) -> dict[str, Any]:
         key = f"mail-rule:{action.evidence_id}:{action.rule_id}"
         digest = _digest({"evidence_id": action.evidence_id, "rule_id": action.rule_id})
+        trigger = "automatic" if automatic else "manual"
         system = replace(operator, acts_as_system=True, event_attribution={
             "source": "mail_rules", "label": SYSTEM_LABEL, "rule_id": action.rule_id,
             "evidence_id": action.evidence_id, "reasons": list(action.reasons),
-            "applied_by_operator_id": operator.operator_id,
+            "applied_by_operator_id": operator.operator_id, "trigger": trigger,
         })
         with self._write() as cur:
             # One apply per email, whoever presses: the lock serialises two concurrent runs, and the
@@ -425,6 +435,7 @@ class MailRulesRepository(V2CaseCommandRepository):
                 "from_stage": ctx.get("from_stage"),
                 "created": created,
                 "steps": results,
+                "trigger": trigger,
                 "idempotency_key": key,
                 "command_receipt_id": receipt_id,
                 "replayed": False,

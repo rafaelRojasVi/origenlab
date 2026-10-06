@@ -774,7 +774,7 @@ describe("email → cases rules (admin only upstream)", () => {
     const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");
     expect(isAllowedUpstreamPath("/v2/workspace/mail-rules/preview")).toBe(true);
     expect(isAllowedPostPath("/v2/workspace/mail-rules/preview")).toBe(false);
-    for (const path of ["/v2/commands/apply-mail-rules", "/v2/commands/undo-mail-rule-action"]) {
+    for (const path of ["/v2/commands/apply-mail-rules", "/v2/commands/undo-mail-rule-action", "/v2/commands/set-auto-mail-rules"]) {
       expect(isAllowedPostPath(path), path).toBe(true);
       expect(isAllowedUpstreamPath(path), path).toBe(false);
       expect(marketingCommandMaxBytes(path)).toBe(131_072);
@@ -791,6 +791,9 @@ describe("email → cases rules (admin only upstream)", () => {
       "/v2/commands/apply-mail-rules/",
       "/v2/commands/apply-mail-rules-all",
       "/v2/commands/undo-mail-rule-action/x",
+      "/v2/commands/set-auto-mail-rules/",
+      "/v2/commands/set-auto-mail-rules-all",
+      "/v2/commands/auto-mail-rules",
       "/v2/commands/APPLY-MAIL-RULES",
       // The case commands the rules call stay unreachable from the browser, except the four the
       // case drawer uses (CASE_COMMAND_POST_PATHS), which have their own list.

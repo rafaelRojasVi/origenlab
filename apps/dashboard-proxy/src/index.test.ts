@@ -1247,6 +1247,7 @@ describe("Email → cases rules commands and dry run", () => {
 
   const APPLY = "https://proxy.test/api/v2/commands/apply-mail-rules";
   const UNDO = "https://proxy.test/api/v2/commands/undo-mail-rule-action";
+  const SWITCH = "https://proxy.test/api/v2/commands/set-auto-mail-rules";
   const post = (url: string, extra: Record<string, string> = {}, body = "{}") =>
     requestWithOrigin(url, {
       method: "POST",
@@ -1260,7 +1261,7 @@ describe("Email → cases rules commands and dry run", () => {
       },
     });
 
-  it.each([APPLY, UNDO])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
+  it.each([APPLY, UNDO, SWITCH])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
     stubUpstreamFetch();
     const res = await handleRequest(post(url), TEST_ENV);
     expect(res.status).toBe(200);
@@ -1274,6 +1275,7 @@ describe("Email → cases rules commands and dry run", () => {
     ["a cross-site fetch", post(APPLY, { "Sec-Fetch-Site": "cross-site" }), 403, "cross_site_request"],
     ["a form post", post(UNDO, { "Content-Type": "application/x-www-form-urlencoded" }), 415, "unsupported_media_type"],
     ["no key", post(APPLY, { "Idempotency-Key": "" }), 400, "idempotency_key_required"],
+    ["a switch without a key", post(SWITCH, { "Idempotency-Key": "" }), 400, "idempotency_key_required"],
     ["a declared body over 128 kB", post(APPLY, { "Content-Length": "131073" }), 413, "payload_too_large"],
   ])("refuses %s before anything is forwarded", async (_label, req, status, code) => {
     stubUpstreamFetch();
