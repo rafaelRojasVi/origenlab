@@ -27,7 +27,7 @@ export function parseQuoteFilename(filename: string | null | undefined): { compa
 
 /** A subject that names a campaign or a process, not what the client asked for. */
 const NOT_A_PRODUCT =
-  /\||campaña|cyber|origenlab|labdelivery|presentaci[oó]n|inscripci[oó]n|proveedor|documentos|factura|orden de compra|^oc\b|^consulta$|^informaci[oó]n$|^quote$|^cotizar$|equipos? (e insumos )?para (su )?laboratorio/i;
+  /\||campaña|cyber|origenlab|labdelivery|presentaci[oó]n|inscripci[oó]n|proveedor|documentos|factura|orden de compra|^oc\b|^consulta$|^informaci[oó]n$|^quote$|^cotizar$|equipos?\s*(?:\/|e)?\s*(?:insumos\s+)?para\s+(?:su|el|el\s+su)?\s*laboratorio|suministros?\s+de\s+equipos|especial\b|newsletter/i;
 
 /**
  * What the quote is for, as a short label: «Balanzas Ohaus», «Pipetas pasteur», «UP400St».
@@ -44,7 +44,10 @@ export function quoteProduct(card: OpportunityCardData): string | null {
   // «Corteva Solicitud de cotización de insumos» → «insumos»: what follows the word is the product.
   const after = subject.match(/cotizaci[oó]n(?:es)?\s*(?:(?:de|por|para|del)\s+)?[:-]?\s*(.*)$/i);
   if (after) subject = after[1];
-  subject = subject.replace(/^\s*solicitud(?:\s+de)?\s+/i, "").trim();
+  subject = subject
+    .replace(/^[\s—–\-·:|]+/, "")
+    .replace(/^\s*(?:solicitud|contacto|consulta)(?:\s+(?:de|por))?\s+/i, "")
+    .trim();
   const fromSubject = subject.length >= 3 && !NOT_A_PRODUCT.test(subject) && /[a-záéíóúñ]/i.test(subject) ? subject : null;
   const label = fromSubject ? fromSubject.charAt(0).toUpperCase() + fromSubject.slice(1) : null;
   if (label && model && !label.toLowerCase().includes(model.toLowerCase())) return `${label} · ${model}`;

@@ -59,5 +59,10 @@ describe("quoteProduct", () => {
     expect(quoteProduct(withQuote("Re: Campaña de Invierno | Renueve su Ultrasonido", "CN01239-Ana-UP200St.pdf"))).toBe("UP200St");
     expect(quoteProduct(withQuote("Re: Inscripción Proveedor", "CN01239-Ana Pérez.pdf"))).toBeNull();
     expect(quoteProduct(withQuote(null, null))).toBeNull();
+    // Campaign subjects a client replied to, seen in real cases.
+    expect(quoteProduct(withQuote("Solicitud de cotización — Especial septiembre", "CN01220-Ana-UP100H.pdf"))).toBe("UP100H");
+    expect(quoteProduct(withQuote("RE: EQUIPOS/INSUMOS PARA SU LABORATORIO - ORIGENLAB", "CN01168A-Ana - Instituto-T18.pdf"))).toBe("T18");
+    expect(quoteProduct(withQuote("Suministros de equipos para el laboratorio", null))).toBeNull();
+    expect(quoteProduct(withQuote("Re: Contacto Sonicador Ultrasonido Hielscher", "CN01187-Ana-UP400St.pdf"))).toBe("Sonicador Ultrasonido Hielscher · UP400St");
   });
 });
