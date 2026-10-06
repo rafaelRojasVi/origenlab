@@ -1,10 +1,11 @@
 /**
- * The four commercial-case commands the case drawer may send: «Cambiar etapa»
+ * The four commercial-case commands the case drawer may send: «Cambiar estado»
  * (`advance-case-stage`), «Marcar ganada» (`record-case-won`), «Elegir revisión vigente»
  * (`resolve-current-revision`) and «Registrar cotización» / «Nueva revisión»
- * (`record-case-quotation`).
+ * (`record-case-quotation`) — plus the three W11 task commands behind «En pausa hasta…»
+ * (`create-task`), «Retomar ahora» (`cancel-task`) and «Hecho» (`complete-task`).
  *
- * This module owns all four `/v2/commands/<case command>` path strings — pinned by
+ * This module owns all seven `/v2/commands/<…>` path strings — pinned by
  * `src/test/noWritePolicy.test.ts`. No other dashboard module may name them, and no other case
  * command (opening a case, linking evidence, naming an institution, recording an interest) is
  * reachable from the browser: the Worker refuses them (`CASE_COMMAND_POST_PATHS`).
@@ -25,6 +26,9 @@ export const CASE_COMMAND_PATHS = {
   recordWon: "/v2/commands/record-case-won",
   resolveCurrentRevision: "/v2/commands/resolve-current-revision",
   recordQuotation: "/v2/commands/record-case-quotation",
+  createTask: "/v2/commands/create-task",
+  completeTask: "/v2/commands/complete-task",
+  cancelTask: "/v2/commands/cancel-task",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -186,19 +190,130 @@ export interface RecordCaseQuotationBody {
 export const recordCaseQuotation = (body: RecordCaseQuotationBody, idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.recordQuotation, body, idempotencyKey);
 
-/** One step of «Marcar ganada», as the operator is told about it. */
+/* ── tasks (W11): «En pausa hasta…», «Retomar ahora» ───────────────────────── */
+
+export interface CreateTaskBody {
+  opportunity_id: string;
+  title: string;
+  /** ISO 8601 with a zone; the API refuses a naive one. */
+  due_at: string;
+  note: string;
+}
+
+export interface TaskCommandBody {
+  task_id: string;
+  task_version: number;
+  note: string;
+}
+
+export const createTask = (body: CreateTaskBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.createTask, body, idempotencyKey);
+
+export const completeTask = (body: TaskCommandBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.completeTask, body, idempotencyKey);
+
+export const cancelTask = (body: TaskCommandBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.cancelTask, body, idempotencyKey);
+
+/* ── multi-step flows ──────────────────────────────────────────────────────── */
+
+/** One recorded step of a flow, as the operator is told about it. */
 export interface WonStep {
   label: string;
   receipt: CaseCommandReceipt;
 }
 
+/** A flow refused part-way: `done` are the steps that stayed recorded. */
 export class WonFlowError extends Error {
   constructor(
     public readonly done: WonStep[],
     public readonly cause: unknown,
   ) {
-    super("won flow refused");
+    super("case flow refused");
     this.name = "WonFlowError";
+  }
+}
+
+/**
+ * The stages a case walks through to get from `from` to `to`, one `advance-case-stage` each
+ * (shortest path over `STAGE_TRANSITIONS`, never through a terminal stage). `[]` when it is
+ * already there; `null` when no path exists (a closed case, or `won`, which is «Marcar ganada»).
+ */
+export function stagePath(from: string, to: string): string[] | null {
+  if (from === to) return [];
+  if (to === "won" || TERMINAL_STAGES.has(from)) return null;
+  const prev = new Map<string, string>([[from, ""]]);
+  const queue = [from];
+  while (queue.length) {
+    const at = queue.shift() as string;
+    for (const next of STAGE_TRANSITIONS[at] ?? []) {
+      if (next === "won" || prev.has(next)) continue;
+      prev.set(next, at);
+      if (next === to) {
+        const path = [next];
+        for (let p = at; p !== from; p = prev.get(p) as string) path.unshift(p);
+        return path;
+      }
+      if (!TERMINAL_STAGES.has(next)) queue.push(next);
+    }
+  }
+  return null;
+}
+
+/**
+ * Move a case to `to` in as many `advance-case-stage` steps as `stagePath` needs, each against
+ * the version the previous one returned. `keys[i]` is step i's key, kept across a retry so a
+ * step is never recorded twice. A refusal part-way leaves the earlier steps recorded and says
+ * so in `WonFlowError.done`.
+ */
+export async function moveCase(
+  card: Pick<OpportunityCardData, "opportunity_id" | "stage"> & { version: number },
+  to: string,
+  note: string,
+  closeReason: string | null,
+  keys: string[] = [],
+): Promise<WonStep[]> {
+  const path = stagePath(card.stage, to);
+  if (path === null) throw new WonFlowError([], new Error("no stage path"));
+  const done: WonStep[] = [];
+  let version = card.version;
+  try {
+    for (const [i, stage] of path.entries()) {
+      const closing = CLOSING_STAGES.has(stage);
+      const receipt = await advanceCaseStage(
+        {
+          opportunity_id: card.opportunity_id,
+          opportunity_version: version,
+          stage,
+          close_reason: closing ? closeReason : null,
+          note,
+        },
+        keys[i],
+      );
+      done.push({ label: `Estado → ${STAGE_LABEL[stage] ?? stage}`, receipt });
+      version = receipt.opportunity_version;
+    }
+    return done;
+  } catch (err) {
+    throw new WonFlowError(done, err);
+  }
+}
+
+/** «Retomar ahora»: cancel each open task that keeps the case paused, one key per task. */
+export async function resumeCase(
+  tasks: { task_id: string; version: number }[],
+  note: string,
+  keys: Record<string, string> = {},
+): Promise<WonStep[]> {
+  const done: WonStep[] = [];
+  try {
+    for (const t of tasks) {
+      const receipt = await cancelTask({ task_id: t.task_id, task_version: t.version, note }, keys[t.task_id]);
+      done.push({ label: "Pausa retomada", receipt });
+    }
+    return done;
+  } catch (err) {
+    throw new WonFlowError(done, err);
   }
 }
 
@@ -260,7 +375,7 @@ const REFUSAL_ES: Record<string, string> = {
   closing_a_case_needs_a_motive: "Para cerrar el caso como perdido o abandonado escribe el motivo.",
   close_reason_is_only_for_a_closing_stage: "El motivo de cierre sólo se usa al cerrar el caso.",
   won_requires_a_quote: "Un caso se gana contra una revisión de cotización: usa «Marcar ganada».",
-  case_not_negotiating: "Un caso se marca ganado desde «Negociando».",
+  case_not_negotiating: "Un caso se marca ganado desde «Conversación».",
   quote_revision_not_on_case: "Esa revisión no pertenece a este caso.",
   quote_revision_not_current: "Sólo se gana contra una revisión enviada y vigente (no reemplazada).",
   case_not_found: "El caso ya no existe.",
@@ -275,7 +390,7 @@ const REFUSAL_ES: Record<string, string> = {
   number_on_other_opportunity: "Ese número de cotización ya pertenece a otro caso.",
   number_is_a_minted_quote: "Ese número lo generó el sistema para otra cotización; no se puede reutilizar.",
   document_already_recorded: "Ese documento ya está registrado como revisión de una cotización.",
-  case_not_quoting: "Una cotización se registra en un caso en «Cotizando» o «Negociando».",
+  case_not_quoting: "Una cotización se registra en un caso «Enviada» o en «Conversación».",
   case_has_no_requesting_institution: "El caso necesita una institución solicitante confirmada para registrar una cotización.",
   superseded_revision_not_on_case: "La revisión a reemplazar no pertenece a esa cotización de este caso.",
   superseded_document_not_on_this_quote: "La revisión a reemplazar no pertenece a esa cotización.",
@@ -289,6 +404,9 @@ const REFUSAL_ES: Record<string, string> = {
   archived_subject: "La institución está archivada.",
   organization_merged: "La institución fue fusionada con otra; ábrela desde su ficha.",
   path_not_allowed: "Esta acción no está habilitada en este entorno.",
+  task_not_found: "Esa tarea ya no existe.",
+  task_version_conflict: "Otra persona cambió esa tarea mientras la veías. Se recargó: vuelve a intentarlo.",
+  task_is_not_open: "Esa tarea ya estaba cerrada.",
 };
 
 /** The refusal code of an API or Worker error envelope (`{detail: {code}}` / `{error: {code}}`). */
@@ -310,7 +428,13 @@ export function caseRefusalCode(err: unknown): string | null {
 /** A refusal that means "what you saw is out of date": the drawer refetches before a retry. */
 export function isStaleRefusal(err: unknown): boolean {
   const code = caseRefusalCode(err);
-  return code === "case_version_conflict" || code === "stale_version" || code === "case_is_closed";
+  return (
+    code === "case_version_conflict" ||
+    code === "stale_version" ||
+    code === "case_is_closed" ||
+    code === "task_version_conflict" ||
+    code === "task_is_not_open"
+  );
 }
 
 /** The API's refusal as a sentence an operator can act on; never an English stack of codes. */

@@ -148,7 +148,19 @@ export interface OpportunityCardData {
   last_contact?: { outbound: MailTouch | null; inbound: MailTouch | null };
   attention: Attention[];
   status: "blocked" | "pending" | "ok";
-  next_action: { text: string; source: "suggested"; due_at: string | null };
+  /** Open `crm.task` rows (W11), earliest due first. Absent from an older API. */
+  open_tasks?: OpenTask[];
+  /** The earliest open task (`source: "task"`), or a deterministic suggestion. */
+  next_action: { text: string; source: "suggested" | "task"; due_at: string | null };
+}
+
+export interface OpenTask {
+  task_id: string;
+  title: string;
+  /** ISO 8601, UTC. */
+  due_at: string;
+  version: number;
+  owner: string | null;
 }
 
 export interface PipelineResponse {

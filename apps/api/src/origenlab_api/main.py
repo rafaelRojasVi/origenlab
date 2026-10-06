@@ -587,8 +587,16 @@ def _mount_v2_command_boundary(
     app.state.v2_case_command_repository = V2CaseCommandRepository(
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
+    # The W11 task commands («En pausa hasta…», «Retomar ahora»): same database, role and switch.
+    from origenlab_api.v2.task_command_repository import V2TaskCommandRepository
+    from origenlab_api.v2.task_command_routes import task_command_router
+
+    app.state.v2_task_command_repository = V2TaskCommandRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
     app.include_router(command_router)
     app.include_router(case_command_router)
+    app.include_router(task_command_router)
     from origenlab_api.v2.mail_rules_auto import AutoMailRules, AutoMailRulesRunner
     from origenlab_api.v2.mail_rules_routes import mail_rules_command_router
 

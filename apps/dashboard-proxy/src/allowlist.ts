@@ -38,8 +38,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   //
   // Nine case commands exist upstream under `POST /v2/commands/*`; this read list names
   // none of them. Four -- advance-case-stage, record-case-won, resolve-current-revision and
-  // record-case-quotation -- are reachable as POSTs through `CASE_COMMAND_POST_PATHS` below;
-  // the other five stay refused. Widening either
+  // record-case-quotation -- are reachable as POSTs through `CASE_COMMAND_POST_PATHS` below
+  // (with the three W11 task commands); the other five stay refused. Widening either
   // list is a separate, deliberate decision with its own review.
   /^\/v2\/cases$/,
   /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
@@ -226,10 +226,11 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
 /**
  * Commercial-case commands the case drawer uses: «Cambiar etapa» (`advance-case-stage`),
  * «Marcar ganada» (`record-case-won`), «Elegir revisión vigente» (`resolve-current-revision`)
- * and «Registrar cotización» / «Nueva revisión» (`record-case-quotation`). Four exact paths, and
- * only four. Upstream each needs an
+ * and «Registrar cotización» / «Nueva revisión» (`record-case-quotation`), plus the three W11
+ * task commands behind «En pausa hasta…» (`create-task`), «Retomar ahora» (`cancel-task`) and
+ * «Hecho» (`complete-task`). Seven exact paths, and only seven. Upstream each needs an
  * active `sales` or `admin` operator (from the verified session, never the body), an
- * `Idempotency-Key`, the case version the operator was shown and a note, and mounts only behind
+ * `Idempotency-Key`, the case (or task) version the operator was shown and a note, and mounts only behind
  * `ORIGENLAB_V2_COMMANDS_ENABLED`. The other five case commands -- open-commercial-case,
  * link-case-evidence, add-case-organization, set-case-organization-role, record-case-interest --
  * stay refused here until reviewed on their own. Same Origin / JSON / key guard as the
@@ -240,6 +241,9 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/record-case-won$/,
   /^\/v2\/commands\/resolve-current-revision$/,
   /^\/v2\/commands\/record-case-quotation$/,
+  /^\/v2\/commands\/create-task$/,
+  /^\/v2\/commands\/complete-task$/,
+  /^\/v2\/commands\/cancel-task$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */

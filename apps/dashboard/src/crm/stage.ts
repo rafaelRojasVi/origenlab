@@ -3,15 +3,29 @@ import type { Tone } from "./ui";
 
 export const STAGE_ORDER = ["lead", "qualifying", "qualified", "quoting", "negotiating", "won", "lost", "abandoned"] as const;
 
+/**
+ * The operator's six states, over the eight stages the API keeps (`STAGE_TRANSITIONS`):
+ *
+ * | State | Stage(s) |
+ * |---|---|
+ * | Solicitada | `lead`, `qualifying` |
+ * | En estudio | `qualified` |
+ * | Enviada | `quoting` |
+ * | Conversación | `negotiating` |
+ * | Ganada | `won` |
+ * | Perdida | `lost`, `abandoned` |
+ *
+ * «En pausa» is not a stage: an open case whose earliest open task is due later (`pausedUntil`).
+ */
 export const STAGE_LABEL: Record<string, string> = {
-  lead: "Lead",
-  qualifying: "Calificando",
-  qualified: "Calificada",
-  quoting: "Cotizando",
-  negotiating: "Negociando",
+  lead: "Solicitada",
+  qualifying: "Solicitada · calificando",
+  qualified: "En estudio",
+  quoting: "Enviada",
+  negotiating: "Conversación",
   won: "Ganada",
   lost: "Perdida",
-  abandoned: "Abandonada",
+  abandoned: "Perdida · sin respuesta",
 };
 
 export const STAGE_TONE: Record<string, Tone> = {
@@ -25,13 +39,62 @@ export const STAGE_TONE: Record<string, Tone> = {
   abandoned: "neutral",
 };
 
-/** Board columns: open stages each get one, closed stages share one. */
-export const BOARD_COLUMNS: { key: string; label: string; stages: string[] }[] = [
-  { key: "lead", label: "Lead", stages: ["lead", "qualifying"] },
-  { key: "qualified", label: "Calificada", stages: ["qualified"] },
-  { key: "quoting", label: "Cotizando", stages: ["quoting"] },
-  { key: "negotiating", label: "Negociando", stages: ["negotiating"] },
-  { key: "closed", label: "Cerradas", stages: ["won", "lost", "abandoned"] },
+export type BoardColumnKey = "solicitada" | "estudio" | "enviada" | "conversacion" | "pausa" | "ganada" | "perdida";
+
+/**
+ * The Tablero's columns, one per state. `target` is the stage a card dropped there moves to;
+ * «En pausa» has none (a drop asks for a date and writes a task), «Ganada» asks for the revision.
+ */
+export const BOARD_COLUMNS: { key: BoardColumnKey; label: string; stages: string[]; target: string | null }[] = [
+  { key: "solicitada", label: "Solicitada", stages: ["lead", "qualifying"], target: "lead" },
+  { key: "estudio", label: "En estudio", stages: ["qualified"], target: "qualified" },
+  { key: "enviada", label: "Enviada", stages: ["quoting"], target: "quoting" },
+  { key: "conversacion", label: "Conversación", stages: ["negotiating"], target: "negotiating" },
+  { key: "pausa", label: "En pausa", stages: [], target: null },
+  { key: "ganada", label: "Ganada", stages: ["won"], target: "won" },
+  { key: "perdida", label: "Perdida", stages: ["lost", "abandoned"], target: "lost" },
+];
+
+/** A case's open tasks that keep it paused: open case, task due after `now`. */
+export function pauseTasks(card: OpportunityCardData, now: Date = new Date()): NonNullable<OpportunityCardData["open_tasks"]> {
+  if (card.closed_at || TERMINAL.has(card.stage)) return [];
+  return (card.open_tasks ?? []).filter((t) => Date.parse(t.due_at) > now.getTime());
+}
+
+/**
+ * «En pausa hasta…»: the case is open and its earliest open task is due after `now` — nothing to
+ * do on it before that day. A task already due (today or overdue) is work, not a pause.
+ */
+export function pausedUntil(card: OpportunityCardData, now: Date = new Date()): string | null {
+  if (card.closed_at || TERMINAL.has(card.stage)) return null;
+  const first = (card.open_tasks ?? [])[0];
+  return first && Date.parse(first.due_at) > now.getTime() ? first.due_at : null;
+}
+
+const TERMINAL: ReadonlySet<string> = new Set(["won", "lost", "abandoned"]);
+
+/** The Tablero column a card sits in. */
+export function boardColumnOf(card: OpportunityCardData, now: Date = new Date()): BoardColumnKey {
+  if (pausedUntil(card, now)) return "pausa";
+  return BOARD_COLUMNS.find((c) => c.stages.includes(card.stage))?.key ?? "solicitada";
+}
+
+/** «Perdida»: one click on a reason. «Sin respuesta» closes as `abandoned`, the rest as `lost`. */
+export const LOST_REASONS: { label: string; stage: "lost" | "abandoned" }[] = [
+  { label: "Sin respuesta", stage: "abandoned" },
+  { label: "Sin presupuesto", stage: "lost" },
+  { label: "Compró a otro proveedor", stage: "lost" },
+  { label: "Precio", stage: "lost" },
+  { label: "Plazo de entrega", stage: "lost" },
+  { label: "Cambió la necesidad", stage: "lost" },
+];
+
+/** «En pausa hasta…»: why the case waits. Becomes the task title «Retomar: <motivo>». */
+export const PAUSE_REASONS: string[] = [
+  "Esperando fondos o proyecto",
+  "Esperando la orden de compra",
+  "Pidió volver a contactar",
+  "Evaluando internamente",
 ];
 
 export const STATUS_LABEL: Record<OpportunityCardData["status"], { label: string; tone: Tone }> = {
@@ -91,7 +154,7 @@ export function stageBasis(card: OpportunityCardData): StageBasis {
   return "crm_record";
 }
 
-export const HISTORICAL_STAGE_LABEL = "Cotización enviada · histórico";
+export const HISTORICAL_STAGE_LABEL = "Enviada · histórico";
 export const HISTORICAL_STAGE_TITLE =
   "Etapa fijada por la importación histórica a partir de una cotización enviada. No confirma el estado comercial actual: nadie lo ha verificado todavía en el CRM.";
 
