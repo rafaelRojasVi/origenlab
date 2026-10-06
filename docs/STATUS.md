@@ -1888,7 +1888,7 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Defect found after merge | the two catalog migrations, written on a parallel branch, rebuild `crm.domain_event_type_check` from their own list and drop `case_evidence.unlinked` and `opportunity.stage_corrected`, which `20261005120000` had added: «Deshacer» of a rules-engine link and a stage correction are refused (pgTAP 076 #1–2 on `main`). `20261005210000_slice7_domain_event_type_union.sql` rebuilds the CHECK as the union. Local: pgTAP 28 files **1171 PASS**, replay evidence PASS (50 tables, 173 policies), clean-room static 13/13, chain 9/9 |
 | Not done | the corrective migration is not yet applied to hosted (same psql route; ledger becomes 45); the dashboard-proxy Worker is not redeployed, so the catalog and mail-rules paths are still refused at the proxy |
 
-### 2.7.54 Case writes part A — the case drawer's actions work, 2026-10-05 — built, not deployed
+### 2.7.54 Case writes part A — the case drawer's actions work, 2026-10-05 — built (merged and deployed: §2.7.56)
 
 | | |
 |---|---|
@@ -1900,7 +1900,7 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **4103 passed**, 120 skipped (the V1 Alembic-head and TLS-server skips of §2.7.49; no V2 DSN skip) — new: 8 database tests for the win and the case-notes read, route/switch/session tests; `apps/dashboard` `npm run validate`: **574 passed** (48 files) + build; `apps/dashboard-proxy` `npm run validate`: **408 passed** (6 files) + typecheck; public-repo hygiene passed |
 | Not done | not deployed. To ship: merge → Render auto-deploys the API and the dashboard → the owner deploys the dashboard-proxy Worker (until then the two commands and the notes read are refused at the proxy and the drawer says so). The actions are live only where `ORIGENLAB_V2_COMMANDS_ENABLED=true` (and, for the note and the institution, `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true`). No rename field in the drawer (rename stays on the institution page); no «Nueva revisión» |
 
-### 2.7.55 Case writes part B — «Elegir revisión vigente», «Registrar cotización», «Nueva revisión», 2026-10-06 — built, not applied, not deployed
+### 2.7.55 Case writes part B — «Elegir revisión vigente», «Registrar cotización», «Nueva revisión», 2026-10-06 — built (merged, applied and deployed: §2.7.56)
 
 | | |
 |---|---|
@@ -1911,6 +1911,15 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Dashboard | `crm/caseCommands.ts` owns the four paths (`noWritePolicy`). «Elegir revisión vigente»: one radio per current revision (number, send date, file), nothing preselected. «Registrar cotización»: pick an unrecorded document from the case's linked messages, type the printed number (the file name's token is shown as a hint, never filled in). «Nueva revisión»: pick the sent, current revision it replaces; the number is that quote's. Refusals in Spanish; every write refetches the pipeline |
 | Evidence | disposable PostgreSQL 17 cluster (`supabase/postgres:17.6.1.165`): `apps/api/scripts/validate.sh` **4139 passed**, 120 skipped (the same V1 Alembic-head and TLS skips as §2.7.54; no V2 DSN skip) — new: 13 database tests (`test_v2_case_quote_commands.py`), boundary/route/switch tests; `apps/dashboard` `npm run validate` **582 passed** (48 files) + build; `apps/dashboard-proxy` `npm run validate` **424 passed** (6 files) + typecheck; pgTAP, all 29 files with psql on the cluster carrying the full chain: **1180 ok**, 1 not ok (100 #22, role passwords set by the disposable cluster — environmental, as §2.7.52); `cleanroom_verify_tests.sh --static` 13 passed; audit unit tests 352 OK; public-repo hygiene passed. `supabase test db --local`, `replay_evidence.sh` and the gap checker against a local audit were not run (no Supabase CLI here); CI's Slice 0 job runs them |
 | Not done | not merged (stacked on #646), the migration is not applied anywhere, not deployed. To ship: merge #646 then this → Render auto-deploys the API and the dashboard → apply `20261006120000` to hosted (same psql route as §2.7.53; ledger + 1) **before** an operator uses «Elegir revisión vigente» on an older revision → the owner deploys the dashboard-proxy Worker. Live only with `ORIGENLAB_V2_COMMANDS_ENABLED=true`. No linking of a new Gmail message from the drawer (the message must already be linked to the case) |
+
+### 2.7.56 §2.7.54 and §2.7.55 merged, applied to hosted, proxy deployed, 2026-10-06
+
+| | |
+|---|---|
+| Merged | #645 (contact name with a comma) at `83a5a1f`; #647 (case writes part B, carrying #646's part A commits, so #646 closed as merged with it) at `855e5ec`. Render auto-deploys `origenlab` and `origenlab-dashboard` from `main`: **the live `855e5ec` deploy and the two env flags are not verified in this entry** |
+| Hosted apply | `20261006120000_slice7_historical_current_revision_choice.sql` applied to `origenlab-v2` with `psql -X --no-psqlrc -v ON_ERROR_STOP=1 --single-transaction` as `origenlab_migrator` through the session pooler (`sslmode=verify-full`); the owner inserted the ledger row from the SQL Editor — ledger **46**, head `20261006120000`. `pg_get_constraintdef` of `quote_revision_supersession_forward` returns the `historical_import` exception. `20261005210000` (§2.7.53's corrective migration) was already in the ledger |
+| Proxy | `origenlab-dashboard-proxy` deployed from `main` with `wrangler deploy` (validate 424 passed; version `352906e6`), route `dashboard.origenlab.cl/api*`, secrets unchanged. This also ships the paths §2.7.53 listed as still refused at the proxy (catalog, mail rules) and part A's `advance-case-stage` / `record-case-won` / case notes |
+| Not done | Render: confirm both services run `855e5ec` and the API has `ORIGENLAB_V2_COMMANDS_ENABLED=true` and `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true` (the drawer actions are off without them). No operator has yet exercised the drawer actions on hosted |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 
