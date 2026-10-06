@@ -7,6 +7,7 @@ import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { mayRunCaseCommands, nextStages, undeterminedQuotes, winnableRevisions } from "../caseCommands";
 import type { OpportunityCardData, PipelineResponse, RevisionCard } from "../crmTypes";
 import { clearResourceCache } from "../useResource";
+import { Toaster } from "../ui";
 import { PipelinePage } from "./PipelinePage";
 
 // Every value below is invented; the repository is public.
@@ -199,7 +200,15 @@ describe("case command helpers", () => {
 
 describe("case drawer actions", () => {
   async function openDrawer(s: AuthSessionState) {
-    render(withSession(s, <PipelinePage initialOpportunityId={CASE} />));
+    render(
+      withSession(
+        s,
+        <>
+          <PipelinePage initialOpportunityId={CASE} />
+          <Toaster />
+        </>,
+      ),
+    );
     return screen.findByRole("dialog");
   }
 
@@ -409,6 +418,79 @@ describe("case drawer actions", () => {
     const post = calls.find((c) => c.method === "POST")!;
     expect(post.path).toBe("/v2/commands/add-note");
     expect(post.body).toEqual({ subject_kind: "opportunity", subject_id: CASE, body: "Llamé al laboratorio." });
+  });
+
+  it("opens the note form once, on the case it was asked on — never by itself on the next drawer", async () => {
+    stubApi({ pipelines: [page([card()])] });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar seguimiento" }));
+    expect(await within(dialog).findByPlaceholderText("Escribe la nota…")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cerrar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // Reopen the same case from its card: the note form stays closed.
+    fireEvent.click(screen.getAllByRole("button", { name: /Universidad Ficticia/ })[0]);
+    const again = await screen.findByRole("dialog");
+    await within(again).findByText(/Notas \(/);
+    expect(within(again).queryByPlaceholderText("Escribe la nota…")).not.toBeInTheDocument();
+  });
+
+  it("keeps the cursor where it is when the pipeline refreshes after a save, and says it is refreshing", async () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const calls = stubApi({
+      pipelines: [page([card()]), page([card({ stage: "negotiating", version: 6 })])],
+      onPost: () => ({ body: receipt("advance_case_stage", "negotiating", 6, "ffffffff-0001") }),
+    });
+    const dialog = await openDrawer(session("sales"));
+    // Hold the second pipeline read so the "refreshing" state is visible.
+    const original = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/v2/workspace/pipeline")) await held;
+        return (original as typeof fetch)(input, init);
+      }),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar etapa" }));
+    const form = within(dialog).getByRole("form", { name: "Cambiar etapa" });
+    const note = within(form).getByLabelText(/^Nota/);
+    fireEvent.change(note, { target: { value: "avanza" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Cambiar etapa" }));
+    expect(await within(dialog).findByTestId("drawer-refreshing")).toHaveTextContent("Actualizando…");
+    const notesButton = within(dialog).getByRole("button", { name: "Agregar nota" });
+    notesButton.focus();
+    release();
+    await waitFor(() => expect(within(dialog).queryByTestId("drawer-refreshing")).not.toBeInTheDocument());
+    expect(document.activeElement).toBe(notesButton);
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(await screen.findByTestId("toaster")).toHaveTextContent("Cambio registrado.");
+  });
+
+  it("lets the operator retry a refused «Marcar ganada», with a new key for the refused step", async () => {
+    const calls = stubApi({
+      pipelines: [page([card({ stage: "negotiating" })])],
+      onPost: (_call, n) =>
+        n === 0
+          ? { status: 503, body: { detail: { code: "database_unavailable", message: "try again" } } }
+          : { body: receipt("record_case_won", "won", 6, "abababab-0001") },
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Marcar ganada" }));
+    const form = within(dialog).getByRole("form", { name: "Marcar ganada" });
+    fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "OC" } });
+    const submit = within(form).getByRole("button", { name: "Marcar ganada" });
+    fireEvent.click(submit);
+    await within(dialog).findByRole("alert");
+    // While a write runs the button cannot be pressed again; after a refusal it can.
+    await waitFor(() => expect(within(form).getByRole("button", { name: "Marcar ganada" })).toBeEnabled());
+    fireEvent.click(within(form).getByRole("button", { name: "Marcar ganada" }));
+    expect(await within(dialog).findByText(/^Ganada: registrado/)).toBeInTheDocument();
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts).toHaveLength(2);
+    expect(posts[0].key).not.toEqual(posts[1].key); // a refusal renews the key of the refused step
   });
 
   function undetermined(over: Partial<OpportunityCardData> = {}) {

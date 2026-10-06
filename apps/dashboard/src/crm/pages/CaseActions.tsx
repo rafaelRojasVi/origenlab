@@ -37,12 +37,17 @@ import type { OpportunityCardData } from "../crmTypes";
 import { useResource } from "../useResource";
 import { crmHash } from "../crmRoute";
 import { STAGE_LABEL } from "../stage";
-import { DisabledAction, FormField, SelectInput, TextInput, TextareaInput, WRITE_DISABLED_REASON, fmtDate } from "../ui";
-
-const PRIMARY =
-  "h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50";
-const SECONDARY =
-  "h-7 rounded-md border border-line bg-canvas-raised px-2.5 text-xs font-medium text-ink hover:bg-canvas-sunken disabled:cursor-not-allowed disabled:opacity-50";
+import {
+  Button,
+  DisabledAction,
+  FormField,
+  SelectInput,
+  TextInput,
+  TextareaInput,
+  WRITE_DISABLED_REASON,
+  fmtDate,
+  toast,
+} from "../ui";
 
 type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision";
 
@@ -101,7 +106,10 @@ export function CaseActions({
   /** Show what happened; close the form unless it was refused; refetch when anything moved. */
   function finished(next: Outcome, refetch: boolean) {
     setOutcome(next);
-    if (next.tone !== "bad") setMode(null);
+    if (next.tone !== "bad") {
+      setMode(null);
+      toast(next.tone === "good" ? "Cambio registrado." : "Registrado en parte: revisa el detalle en el caso.", next.tone);
+    }
     if (refetch) onChanged();
   }
 
@@ -113,23 +121,23 @@ export function CaseActions({
             Cambiar etapa
           </DisabledAction>
         ) : (
-          <button type="button" className={SECONDARY} aria-expanded={mode === "stage"} onClick={() => toggle("stage")}>
+          <Button aria-expanded={mode === "stage"} onClick={() => toggle("stage")}>
             Cambiar etapa
-          </button>
+          </Button>
         )}
         {wonReason ? (
           <DisabledAction id="drawer-won" reason={wonReason}>
             Marcar ganada
           </DisabledAction>
         ) : (
-          <button type="button" className={SECONDARY} aria-expanded={mode === "won"} onClick={() => toggle("won")}>
+          <Button aria-expanded={mode === "won"} onClick={() => toggle("won")}>
             Marcar ganada
-          </button>
+          </Button>
         )}
         {mayAuthor ? (
-          <button type="button" className={SECONDARY} onClick={onFollowUp}>
+          <Button onClick={onFollowUp}>
             Registrar seguimiento
-          </button>
+          </Button>
         ) : (
           <DisabledAction id="drawer-followup" reason={WRITE_DISABLED_REASON}>
             Registrar seguimiento
@@ -140,18 +148,18 @@ export function CaseActions({
             Registrar cotización
           </DisabledAction>
         ) : (
-          <button type="button" className={SECONDARY} aria-expanded={mode === "quotation"} onClick={() => toggle("quotation")}>
+          <Button aria-expanded={mode === "quotation"} onClick={() => toggle("quotation")}>
             Registrar cotización
-          </button>
+          </Button>
         )}
         {revisionReason ? (
           <DisabledAction id="drawer-revision" reason={revisionReason}>
             Nueva revisión
           </DisabledAction>
         ) : (
-          <button type="button" className={SECONDARY} aria-expanded={mode === "revision"} onClick={() => toggle("revision")}>
+          <Button aria-expanded={mode === "revision"} onClick={() => toggle("revision")}>
             Nueva revisión
-          </button>
+          </Button>
         )}
       </div>
 
@@ -168,9 +176,9 @@ export function CaseActions({
               Elegir revisión vigente
             </DisabledAction>
           ) : (
-            <button type="button" className={PRIMARY} aria-expanded={mode === "resolve"} onClick={() => toggle("resolve")}>
+            <Button variant="primary" aria-expanded={mode === "resolve"} onClick={() => toggle("resolve")}>
               Elegir revisión vigente
-            </button>
+            </Button>
           )}
         </div>
       ) : null}
@@ -296,12 +304,12 @@ function StageForm({
         <TextareaInput id="case-stage-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
       </FormField>
       <div className="flex justify-end gap-2">
-        <button type="button" className={SECONDARY} onClick={onCancel} disabled={busy}>
+        <Button onClick={onCancel} disabled={busy}>
           Cancelar
-        </button>
-        <button type="submit" className={PRIMARY} disabled={!ready}>
-          {busy ? "Registrando…" : "Cambiar etapa"}
-        </button>
+        </Button>
+        <Button type="submit" variant="primary" disabled={!ready} busy={busy} busyLabel="Registrando…">
+          Cambiar etapa
+        </Button>
       </div>
     </form>
   );
@@ -321,6 +329,9 @@ function WonForm({
   const [revisionId, setRevisionId] = useState(revisions[0]?.revision_id ?? "");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  // One key per step for this form, reused on a retry so a double press or a lost answer can
+  // never record twice; renewed only after a refusal.
+  const keysRef = useRef({ advance: newCaseCommandKey(), won: newCaseCommandKey() });
   const twoSteps = card.stage === "quoting";
   const chosen = revisions.find((r) => r.revision_id === revisionId) ?? null;
   const ready = chosen !== null && note.trim() !== "" && !busy;
@@ -334,10 +345,13 @@ function WonForm({
         { opportunity_id: card.opportunity_id, stage: card.stage, version: card.version as number },
         { quote_id: chosen.quote_id, revision_no: chosen.revision_no },
         note.trim(),
+        keysRef.current,
       );
       onDone({ tone: "good", lines: steps.map((s, i) => receiptLine(s, i + 1, steps.length)) }, true);
     } catch (err) {
       const done = err instanceof WonFlowError ? err.done : [];
+      // A step already recorded keeps its key (a retry replays it); the refused one gets a new key.
+      keysRef.current = { advance: done.length > 0 ? keysRef.current.advance : newCaseCommandKey(), won: newCaseCommandKey() };
       const total = twoSteps ? 2 : 1;
       if (done.length > 0) {
         // The first step stays recorded: say exactly that, and refetch so the drawer shows it.
@@ -383,12 +397,12 @@ function WonForm({
         <TextareaInput id="case-won-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
       </FormField>
       <div className="flex justify-end gap-2">
-        <button type="button" className={SECONDARY} onClick={onCancel} disabled={busy}>
+        <Button onClick={onCancel} disabled={busy}>
           Cancelar
-        </button>
-        <button type="submit" className={PRIMARY} disabled={!ready}>
-          {busy ? "Registrando…" : "Marcar ganada"}
-        </button>
+        </Button>
+        <Button type="submit" variant="primary" disabled={!ready} busy={busy} busyLabel="Registrando…">
+          {"Marcar ganada"}
+        </Button>
       </div>
     </form>
   );
@@ -492,12 +506,12 @@ function ResolveForm({
         <TextareaInput id="case-resolve-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
       </FormField>
       <div className="flex justify-end gap-2">
-        <button type="button" className={SECONDARY} onClick={onCancel} disabled={busy}>
+        <Button onClick={onCancel} disabled={busy}>
           Cancelar
-        </button>
-        <button type="submit" className={PRIMARY} disabled={!ready}>
-          {busy ? "Registrando…" : "Elegir revisión vigente"}
-        </button>
+        </Button>
+        <Button type="submit" variant="primary" disabled={!ready} busy={busy} busyLabel="Registrando…">
+          {"Elegir revisión vigente"}
+        </Button>
       </div>
     </form>
   );
@@ -645,12 +659,12 @@ function QuotationForm({
         <TextareaInput id="case-quotation-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
       </FormField>
       <div className="flex justify-end gap-2">
-        <button type="button" className={SECONDARY} onClick={onCancel} disabled={busy}>
+        <Button onClick={onCancel} disabled={busy}>
           Cancelar
-        </button>
-        <button type="submit" className={PRIMARY} disabled={!ready}>
-          {busy ? "Registrando…" : title}
-        </button>
+        </Button>
+        <Button type="submit" variant="primary" disabled={!ready} busy={busy} busyLabel="Registrando…">
+          {title}
+        </Button>
       </div>
     </form>
   );
@@ -691,11 +705,14 @@ function ConfirmInstitution({
         «{org.name ?? "Sin nombre"}» está por confirmar: la propuso una regla de correo y ninguna persona la revisó.
       </span>
       {mayAuthor && version !== null ? (
-        <button type="button" className={PRIMARY} onClick={() => void confirm()} disabled={busy}>
-          {busy ? "Confirmando…" : "Confirmar institución"}
-        </button>
+        <Button variant="primary" onClick={() => void confirm()} busy={busy} busyLabel="Confirmando…">
+          Confirmar institución
+        </Button>
       ) : (
-        <DisabledAction id="drawer-confirm-org" reason={WRITE_DISABLED_REASON}>
+        <DisabledAction
+          id="drawer-confirm-org"
+          reason={mayAuthor ? "Falta la versión de la institución; recarga la página e inténtalo de nuevo" : WRITE_DISABLED_REASON}
+        >
           Confirmar institución
         </DisabledAction>
       )}

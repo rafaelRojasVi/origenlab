@@ -1983,6 +1983,17 @@ row present with no mismatch and the plan hash the `apply` used.
 | Route | `--hosted-target --authorize-hosted-connection --authorize-supavisor-session-route` (`apps/api/scripts/catalog/_common.py`, [`OPERATIONS.md`](OPERATIONS.md) §14.5): PR #623's Supavisor session route with `verify-full`; catalog rows written by `origenlab_api.<project ref>`, the manifest by the migrator as `origenlab_owner`; operator named by id. The code ran from an unpushed branch and was reviewed only afterwards, in the PR that merged it (`tests/test_catalog_import_hosted.py`: refusals, login swap, redaction, apply → verify → rollback with both hosted logins mapped onto a disposable database). Rollback on hosted may be refused (exit 12, nothing deleted); the pre-load `pg_dump` is the way back |
 | Not done | cost parameters beyond the seeds (set per key with `set-cost-parameter`, §14.3); the `catalog` bucket and product images; `ORIGENLAB_V2_QUOTING_ENABLED` on Render, so `/v2/catalog/*` is still unmounted and no screen shows the catalog |
 
+### 2.7.62 CRM redesign phase 1: buttons, dialogs and confirmations, 2026-10-06 — built, not deployed
+
+First phase of the Oportunidades/Revisión redesign (owner-approved 2026-10-06: states Solicitada · En estudio · Enviada · Conversación · Ganada · Perdida · En pausa; Enviada → Conversación automatic and undoable; follow-up on day 3 and 14, close suggested at 30). `apps/dashboard` only.
+
+| | |
+|---|---|
+| Shared parts (`crm/ui.tsx`) | `Button` (primary / secondary / danger / quiet; `busy` disables it, shows a spinner and a «…ndo» label, sets `aria-busy`), `Spinner`, `toast()` + `<Toaster/>` mounted once in the CRM shell; `ConfirmDialog` uses them and cannot be dismissed while saving; `Drawer` takes `busy` and shows «Actualizando…» |
+| Fixes | «Registrar seguimiento» opened the note form by itself on every later drawer (the signal now belongs to one case and is dropped on close); the drawer pulled focus back to ✕ after every refresh (`onClose` read through a ref); nothing showed a refresh after a save (`useResource` returns `refreshing`, and a reload keeps the rows on screen while a new read still starts from «loading»); «Archivar nota» could be pressed twice; «Confirmar institución» showed the write-disabled reason when only the version was missing; «Marcar ganada» used a new key on every call (keys now belong to the form and are renewed only after a refusal); «Acciones automáticas» Activar / Detener / Confirmar showed no working state and Cancelar stayed clickable. Case actions, notes and the email-rules tab use `Button` and confirm with a toast. The side-menu note no longer says only Marketing writes |
+| Evidence | `apps/dashboard` `npm run validate`: **605 passed** (49 files) + build — new: the note form opens once on its own case, focus stays put through a refresh and «Actualizando…» shows, a refused win retries with a new key, archive is one press, `Button` busy, toast, `useResource` refreshing and no stale rows on a new read |
+| Not done | the rest of the dashboard's buttons (Marketing, Organizaciones, Personas, Proveedores) still use their own classes; phases 2–5 (states, «Hoy», «Ordenar», interest and Drive on the case) |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

@@ -212,27 +212,35 @@ export async function markCaseWon(
   card: Pick<OpportunityCardData, "opportunity_id" | "stage"> & { version: number },
   revision: { quote_id: string; revision_no: number },
   note: string,
+  /** The form's keys, kept across a retry so a step is never recorded twice. */
+  keys?: { advance: string; won: string },
 ): Promise<WonStep[]> {
   const done: WonStep[] = [];
   let version = card.version;
   try {
     if (card.stage === "quoting") {
-      const moved = await advanceCaseStage({
-        opportunity_id: card.opportunity_id,
-        opportunity_version: version,
-        stage: "negotiating",
-        note,
-      });
+      const moved = await advanceCaseStage(
+        {
+          opportunity_id: card.opportunity_id,
+          opportunity_version: version,
+          stage: "negotiating",
+          note,
+        },
+        keys?.advance,
+      );
       done.push({ label: `Etapa → ${STAGE_LABEL.negotiating}`, receipt: moved });
       version = moved.opportunity_version;
     }
-    const won = await recordCaseWon({
-      opportunity_id: card.opportunity_id,
-      opportunity_version: version,
-      quote_id: revision.quote_id,
-      revision_no: revision.revision_no,
-      note,
-    });
+    const won = await recordCaseWon(
+      {
+        opportunity_id: card.opportunity_id,
+        opportunity_version: version,
+        quote_id: revision.quote_id,
+        revision_no: revision.revision_no,
+        note,
+      },
+      keys?.won,
+    );
     done.push({ label: STAGE_LABEL.won, receipt: won });
     return done;
   } catch (err) {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { MailSyncBanner } from "./MailSyncBanner";
+import { Toaster } from "./ui";
 import { googleLoginUrl } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { REDACTION_NOTICE, contactAddressesRedacted } from "./redaction";
@@ -54,6 +55,7 @@ export function CrmApp({ route }: { route: ShellRoute }) {
           </div>
         </main>
       </div>
+      <Toaster />
     </div>
   );
 }
@@ -288,8 +290,7 @@ function SideNav({
         </div>
       ))}
       <p className="mt-6 px-2 text-[10px] leading-4 text-ink-faint">
-        Las únicas escrituras son de Marketing — borradores, congelar una audiencia y la planificación
-        interna — donde el entorno las habilita. Todo lo demás es de lectura, y nada se envía.
+        Cada cambio queda registrado con quién lo hizo y cuándo.
       </p>
     </nav>
   );

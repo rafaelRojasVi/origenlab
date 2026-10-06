@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCaseNotes, fetchPipeline } from "../crmApi";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
@@ -39,7 +39,7 @@ type StatusFilter = "all" | "blocked" | "pending" | "ok";
 type View = "cards" | "board";
 
 export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: string | null }) {
-  const [state, reload] = useResource(fetchPipeline);
+  const [state, reload, refreshing] = useResource(fetchPipeline);
   return (
     <div className="space-y-3">
       <PageHeader
@@ -54,6 +54,7 @@ export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: 
             driveConfigured={data.drive_configured}
             initialId={initialOpportunityId ?? null}
             onChanged={reload}
+            refreshing={refreshing}
           />
         )}
       </ResourceGate>
@@ -66,12 +67,15 @@ function Pipeline({
   driveConfigured,
   initialId,
   onChanged,
+  refreshing = false,
 }: {
   items: OpportunityCardData[];
   driveConfigured: boolean;
   initialId: string | null;
   /** Refetch the pipeline after a write from the drawer. */
   onChanged: () => void;
+  /** A refetch is running behind the cards on screen. */
+  refreshing?: boolean;
 }) {
   const [status, setStatus] = useState<StatusFilter>("all");
   const [view, setView] = useState<View>("cards");
@@ -161,7 +165,7 @@ function Pipeline({
         <Board cards={visible} onOpen={setOpenId} />
       )}
 
-      <OpportunityDrawer card={open} onClose={() => setOpenId(null)} onChanged={onChanged} />
+      <OpportunityDrawer card={open} onClose={() => setOpenId(null)} onChanged={onChanged} refreshing={refreshing} />
     </>
   );
 }
@@ -366,14 +370,24 @@ function OpportunityDrawer({
   card,
   onClose,
   onChanged,
+  refreshing = false,
 }: {
   card: OpportunityCardData | null;
   onClose: () => void;
   onChanged: () => void;
+  refreshing?: boolean;
 }) {
   const mayAuthor = useMayAuthorCrm();
-  const [followUp, setFollowUp] = useState(0);
+  // «Registrar seguimiento» opens the note form of *this* case once. The signal belongs to the
+  // case it was pressed on and is dropped when the drawer closes or another case opens, so the
+  // form never pops open by itself on the next case.
+  const [followUp, setFollowUp] = useState<{ id: string; n: number } | null>(null);
+  const caseId = card?.opportunity_id ?? null;
+  useEffect(() => {
+    setFollowUp((f) => (f && f.id === caseId ? f : null));
+  }, [caseId]);
   if (!card) return null;
+  const openSignal = followUp && followUp.id === card.opportunity_id ? followUp.n : 0;
   const status = STATUS_LABEL[card.status];
   const stage = stageDisplay(card);
   const historical = stageBasis(card) === "historical_import";
@@ -381,6 +395,7 @@ function OpportunityDrawer({
     <Drawer
       open
       onClose={onClose}
+      busy={refreshing}
       title={card.organization?.name ?? "Sin institución"}
       subtitle={
         <span className="flex flex-wrap items-center gap-1.5">
@@ -499,10 +514,16 @@ function OpportunityDrawer({
       </Section>
 
       <Section title="Acciones">
-        <CaseActions card={card} onChanged={onChanged} onFollowUp={() => setFollowUp((n) => n + 1)} />
+        <CaseActions
+          card={card}
+          onChanged={onChanged}
+          onFollowUp={() =>
+            setFollowUp((f) => ({ id: card.opportunity_id, n: (f && f.id === card.opportunity_id ? f.n : 0) + 1 }))
+          }
+        />
       </Section>
 
-      <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={followUp} />
+      <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={openSignal} />
 
       <p className="font-mono text-[10px] text-ink-faint">opportunity {card.opportunity_id}</p>
     </Drawer>
