@@ -20,6 +20,7 @@ import type {
   WorkspaceOverview,
 } from "./crmTypes";
 import type { FxResponse } from "./fx";
+import type { NoteRow } from "./authoring/crmAuthoringApi";
 
 export const WORKSPACE_PATHS = {
   overview: "/v2/workspace/overview",
@@ -33,10 +34,14 @@ export const WORKSPACE_PATHS = {
   mailSync: "/v2/workspace/mail-sync",
   mailQuoteNumbers: "/v2/workspace/mail-quote-numbers",
   workQueue: "/v2/cockpit/work-queue",
+  caseNotes: (opportunityId: string) => `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/notes`,
 } as const;
 
 export const fetchOverview = () => fetchJsonGet<WorkspaceOverview>(operatorApiUrl(WORKSPACE_PATHS.overview));
 export const fetchPipeline = () => fetchJsonGet<PipelineResponse>(operatorApiUrl(WORKSPACE_PATHS.pipeline));
+/** The notes on one case, for the drawer's «Registrar seguimiento». Writing one is `add-note`. */
+export const fetchCaseNotes = (opportunityId: string) =>
+  fetchJsonGet<{ opportunity_id: string; notes: NoteRow[] }>(operatorApiUrl(WORKSPACE_PATHS.caseNotes(opportunityId)));
 export const fetchProviders = () => fetchJsonGet<ProvidersResponse>(operatorApiUrl(WORKSPACE_PATHS.providers));
 export const fetchEquipmentInterests = () =>
   fetchJsonGet<EquipmentInterestsResponse>(operatorApiUrl(WORKSPACE_PATHS.equipmentInterests));

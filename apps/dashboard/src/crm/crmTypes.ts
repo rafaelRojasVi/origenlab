@@ -85,11 +85,19 @@ export interface OpportunityCardData {
   opportunity_id: string;
   title: string;
   stage: string;
+  /** The case version a case command compares against. Absent from an older API. */
+  version?: number | null;
   created_at: string | null;
   updated_at: string | null;
   closed_at: string | null;
   close_reason: string | null;
-  organization: { organization_id: string; name: string | null; confirmation: string | null } | null;
+  organization: {
+    organization_id: string;
+    name: string | null;
+    confirmation: string | null;
+    /** The organization version «Confirmar institución» compares against. */
+    version?: number | null;
+  } | null;
   other_organizations: { organization_id: string; name: string; role: string }[];
   contact: {
     source: "crm_participant" | "gmail_recipient";
