@@ -165,3 +165,24 @@ def test_hosted_refuses_the_migrator_as_runtime(disposable_database, posing_as_h
     assert ipl.main(_argv("apply", plan, sha, tmp_path / "o", *AUTH, "--operator-email", "x@example.test")) \
         in (_common.EXIT_REFUSED,)
     assert "abcdefghijklmnopqrst" not in capsys.readouterr().err
+
+
+@needs_db
+def test_hosted_apply_by_profile_operator_id(disposable_database, posing_as_hosted, tmp_path) -> None:
+    """A shared-login profile operator has no email: it is named by id, and recorded as the actor."""
+    [(op_id,)] = _owner(disposable_database,
+                        "insert into platform.operator (auth_user_id, display_name, role, status, sign_in_kind) "
+                        "values (gen_random_uuid(), 'Perfil Prueba', 'admin', 'active', 'shared_profile') "
+                        "returning id::text")
+    plan, sha = _fake_plan(tmp_path)
+    assert ipl.main(_argv("apply", plan, sha, tmp_path / "a", *AUTH, "--operator-id", op_id)) == 0
+    assert _report(tmp_path / "a", "apply-report.json")["operator_id"] == op_id
+
+
+def test_operator_email_and_id_are_exclusive(tmp_path, capsys) -> None:
+    plan, sha = _fake_plan(tmp_path)
+    argv = _argv("apply", plan, sha, tmp_path / "o", "--target-dsn", "postgresql://u@127.0.0.1:1/origenlab_test_0000000a",
+                 "--admin-dsn", "postgresql://u@127.0.0.1:1/origenlab_test_0000000a",
+                 "--operator-email", "a@example.test", "--operator-id", str(uuid.uuid4()))
+    assert ipl.main(argv) == _common.EXIT_REFUSED
+    assert "exactly one of --operator-email and --operator-id" in capsys.readouterr().err
