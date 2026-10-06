@@ -1980,7 +1980,7 @@ row present with no mismatch and the plan hash the `apply` used.
 | | |
 |---|---|
 | Events | one `source_record.migration_manifest_recorded` per load (importer, plan hash, counts), read back from hosted `crm.domain_event`; plus one event per catalog row written (`product.created`, `product.cost_recorded`, `organization.created`, `organization.supplier_terms_set`) — 13,847 and 94. Quote documents are evidence and carry no per-row event, so `quote_history` recorded 1 |
-| Route | the owner's private wrapper (`load.sh`, outside the repository). The repository's importers refuse a hosted target (loopback DSN only; `apply` only into a disposable or clean-room database, `apps/api/scripts/catalog/_common.py`), so the route the wrapper used is not one this repository provides or records ([`OPERATIONS.md`](OPERATIONS.md) §14.5) |
+| Route | `--hosted-target --authorize-hosted-connection --authorize-supavisor-session-route` (`apps/api/scripts/catalog/_common.py`, [`OPERATIONS.md`](OPERATIONS.md) §14.5): PR #623's Supavisor session route with `verify-full`; catalog rows written by `origenlab_api.<project ref>`, the manifest by the migrator as `origenlab_owner`; operator named by id. The code ran from an unpushed branch and was reviewed only afterwards, in the PR that merged it (`tests/test_catalog_import_hosted.py`: refusals, login swap, redaction, apply → verify → rollback with both hosted logins mapped onto a disposable database). Rollback on hosted may be refused (exit 12, nothing deleted); the pre-load `pg_dump` is the way back |
 | Not done | cost parameters beyond the seeds (set per key with `set-cost-parameter`, §14.3); the `catalog` bucket and product images; `ORIGENLAB_V2_QUOTING_ENABLED` on Render, so `/v2/catalog/*` is still unmounted and no screen shows the catalog |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
@@ -2099,3 +2099,4 @@ proven there.
 - **Two independent migration systems.** V1 is Alembic under
   `apps/email-pipeline/alembic/versions/`; V2 is the Supabase CLI under
   `supabase/migrations/`. They do not communicate.
+
