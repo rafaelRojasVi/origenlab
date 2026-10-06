@@ -142,6 +142,20 @@ class _FakeRepo:
     def providers(self) -> dict[str, Any]:
         return {"on_cases": [], "candidates": [], "lines": []}
 
+    def opportunity_notes(self, opportunity_id: str) -> dict[str, Any] | None:
+        if opportunity_id == "00000000-0000-4000-8000-000000000003":
+            return None
+        return {
+            "opportunity_id": opportunity_id,
+            "notes": [
+                {"id": str(uuid.uuid4()), "root_note_id": None, "revision_no": 1,
+                 "body": "Llamé al laboratorio; esperan la orden de compra.",
+                 "author_operator_id": _FAKE_OP, "author_name": "Sales",
+                 "created_at": "2026-10-01T00:00:00Z", "status": "active", "archived_at": None,
+                 "archive_reason": None, "version": 1, "is_latest": True},
+            ],
+        }
+
 
 def _app(role: str = "sales", repo: Any = None, authoring_enabled: bool = False) -> FastAPI:
     app = FastAPI()
@@ -261,6 +275,34 @@ def test_providers_has_lines_and_authoring() -> None:
     assert "lines" in body
     assert "authoring" in body
     assert "enabled" in body["authoring"]
+
+
+@pytest.mark.parametrize("role", ["viewer", "sales", "admin"])
+def test_case_notes_read_in_the_note_shape_for_every_role(role: str) -> None:
+    """«Registrar seguimiento» reads the case's notes; reading them is anyone's, writing is not."""
+    client = TestClient(_app(role))
+    case_id = "00000000-0000-4000-8001-000000000009"
+    r = client.get(f"/v2/workspace/opportunities/{case_id}/notes")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["opportunity_id"] == case_id
+    assert set(body["notes"][0]) == {
+        "id", "root_note_id", "revision_no", "body", "author_operator_id", "author_name",
+        "created_at", "status", "archived_at", "archive_reason", "version", "is_latest",
+    }
+
+
+def test_case_notes_of_a_missing_case_are_404_and_a_bad_id_422() -> None:
+    client = TestClient(_app("sales"))
+    assert client.get("/v2/workspace/opportunities/00000000-0000-4000-8000-000000000003/notes").status_code == 404
+    assert client.get("/v2/workspace/opportunities/not-a-uuid/notes").status_code == 422
+
+
+def test_case_notes_need_an_operator() -> None:
+    app = _app("sales")
+    app.state.v2_identity = _RefusingIdentity()
+    r = TestClient(app).get("/v2/workspace/opportunities/00000000-0000-4000-8001-000000000009/notes")
+    assert r.status_code == 401
 
 
 def test_reads_report_the_switch_that_main_sets() -> None:

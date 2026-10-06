@@ -263,3 +263,23 @@ def test_the_same_key_replays_instead_of_winning_twice(db, world) -> None:
         _won(db, world, case_id, version + 1, quote_id, 2)
     assert excinfo.value.code == "case_is_closed"
 
+
+def test_a_follow_up_note_on_the_case_is_read_back_by_the_drawer(db, world) -> None:
+    """«Registrar seguimiento» is `add-note` on the opportunity; the drawer reads it back."""
+    import psycopg
+
+    from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    case_id, _ = _case_at(db, world, "quoting")
+    fields = {"subject_kind": "opportunity", "subject_id": case_id, "body": "Llamé; piden plazo de entrega."}
+    added = V2CrmAuthoringRepository(psycopg.connect, runtime_dsn(db)).execute(
+        command_name="add-note", operator=_operator(world), fields=fields,
+        idempotency_key=f"pytest-note-{world['tag']}", digest="d" * 64,
+    )
+    reads = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db))
+    body = reads.opportunity_notes(case_id)
+    assert body is not None and body["opportunity_id"] == case_id
+    assert [(n["id"], n["body"], n["author_name"], n["is_latest"]) for n in body["notes"]] == [
+        (added["note_id"], "Llamé; piden plazo de entrega.", "Vendedora Ficticia", True)]
+    assert reads.opportunity_notes(str(uuid.uuid4())) is None
