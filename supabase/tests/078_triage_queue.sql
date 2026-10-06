@@ -1,14 +1,14 @@
 -- Slice 4 — the worker's Procrastinate queue and the triage assertion kinds, proven in the database.
 --
--- Companions: 20261006180000_slice4_procrastinate_triage_queue.sql and
--- 20261006180100_slice4_triage_assertion_kinds.sql. The `procrastinate` schema is infrastructure
+-- Companions: 20261006180000_slice4_procrastinate_triage_queue.sql,
+-- 20261006180100_slice4_triage_assertion_kinds.sql and 20261006180200_slice4_triage_review.sql. The `procrastinate` schema is infrastructure
 -- outside the seven application schemas, so the inventory, grant-boundary, RLS and definer suites
 -- (010, 030, 040, 050, 070) do not see it; this file holds it to the same rules by itself:
 -- owned by origenlab_owner, reachable by origenlab_worker only, RLS on every table, no SECURITY
 -- DEFINER, every function's search_path pinned. Everything below is rolled back.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(36);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -134,6 +134,54 @@ select lives_ok($$ insert into evidence.assertion (source_record_id, kind, value
 select throws_ok($$ insert into evidence.assertion (source_record_id, kind, value_norm)
   values ('78000000-0000-4000-8000-000000000001', 'lead_status', 'warm') $$,
   '23514', null, 'the vocabulary stays closed');
+reset role;
+
+-- ── evidence.triage_review: a person's verdict, append-only ─────────────────────────────────
+set role origenlab_owner;
+insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status) values
+  ('78000000-0000-4000-8000-000000000099', gen_random_uuid(), 'revisora@example.invalid', 'Revisora', 'sales', 'active');
+insert into evidence.assertion (id, source_record_id, kind, value_norm, value) values
+  ('78000000-0000-4000-8000-000000000010', '78000000-0000-4000-8000-000000000001', 'message_triage', 'triage:v9', '{}');
+
+select has_table('evidence', 'triage_review', 'evidence.triage_review exists');
+select lives_ok($$ insert into evidence.triage_review (assertion_id, verdict, reviewed_by_operator_id)
+  values ('78000000-0000-4000-8000-000000000010', 'approved', '78000000-0000-4000-8000-000000000099') $$,
+  'an approval needs no correction and no note');
+select lives_ok($$ insert into evidence.triage_review (assertion_id, verdict, corrected, note, reviewed_by_operator_id)
+  values ('78000000-0000-4000-8000-000000000010', 'corrected', '{"stage": "negotiating", "class": "quote_followup"}',
+          'respondió sobre la cotización', '78000000-0000-4000-8000-000000000099') $$,
+  'a correction carries the corrected fields and a note');
+select throws_ok($$ insert into evidence.triage_review (assertion_id, verdict, reviewed_by_operator_id)
+  values ('78000000-0000-4000-8000-000000000010', 'maybe', '78000000-0000-4000-8000-000000000099') $$,
+  '23514', null, 'the verdict vocabulary is closed');
+select throws_ok($$ insert into evidence.triage_review (assertion_id, verdict, reviewed_by_operator_id)
+  values ('78000000-0000-4000-8000-000000000010', 'corrected', '78000000-0000-4000-8000-000000000099') $$,
+  '23514', null, 'a correction without corrected fields is refused');
+select throws_ok($$ insert into evidence.triage_review (assertion_id, verdict, corrected, reviewed_by_operator_id)
+  values ('78000000-0000-4000-8000-000000000010', 'rejected', '{"stage": "won"}', '78000000-0000-4000-8000-000000000099') $$,
+  '23514', null, 'only a correction carries corrected fields');
+select throws_ok($$ insert into evidence.triage_review (assertion_id, verdict, corrected, reviewed_by_operator_id)
+  values ('78000000-0000-4000-8000-000000000010', 'corrected', '{"price": 1}', '78000000-0000-4000-8000-000000000099') $$,
+  '23514', null, 'corrected holds only class, stage, intent or products');
+select throws_ok($$ insert into evidence.triage_review (assertion_id, verdict, note, reviewed_by_operator_id)
+  values ('78000000-0000-4000-8000-000000000010', 'rejected', '   ', '78000000-0000-4000-8000-000000000099') $$,
+  '23514', null, 'a note is never blank');
+reset role;
+select ok(has_table_privilege('origenlab_api', 'evidence.triage_review', 'INSERT')
+          and not has_table_privilege('origenlab_api', 'evidence.triage_review', 'UPDATE')
+          and not has_table_privilege('origenlab_api', 'evidence.triage_review', 'DELETE'),
+  'the API records verdicts and can never rewrite or delete one');
+select ok(has_table_privilege('origenlab_worker', 'evidence.triage_review', 'SELECT')
+          and not has_table_privilege('origenlab_worker', 'evidence.triage_review', 'INSERT'),
+  'the worker reads verdicts and never writes one');
+select is(
+  pg_temp.query_as('origenlab_worker', $$ select count(*)::text from evidence.triage_review
+    where assertion_id = '78000000-0000-4000-8000-000000000010' $$),
+  '2', 'the worker reads both verdicts through its select policy');
+set role origenlab_owner;
+select lives_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
+  values ('assertion', '78000000-0000-4000-8000-000000000010', 1, 'assertion.triage_reviewed', 1, '{"verdict": "approved"}', 'operator', '78000000-0000-4000-8000-000000000099') $$,
+  'assertion.triage_reviewed is an event type of the assertion aggregate');
 reset role;
 
 select * from finish();
