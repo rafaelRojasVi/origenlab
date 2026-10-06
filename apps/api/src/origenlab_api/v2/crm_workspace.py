@@ -1746,6 +1746,79 @@ class CrmWorkspaceRepository:
             notes = self._rows(cur)
         return {"opportunity_id": opportunity_id, "notes": notes}
 
+    def opportunity_mail_documents(self, opportunity_id: str) -> dict[str, Any] | None:
+        """The Gmail messages linked to one case and the documents each carries.
+
+        What «Registrar cotización» / «Nueva revisión» pick from: a quote already sent is recorded
+        from a message already linked to the case, and names one document that message carries.
+        Each document says whether it is already a quote revision (anywhere — one document is
+        one revision), so the drawer can show it as recorded instead of offering it again.
+        `cn_tokens` are the capture's quote-number readings of the file name, a hint the operator
+        confirms, never a number recorded on its own. `None` when the case does not exist.
+        """
+        with self._read() as cur:
+            cur.execute("select 1 from crm.opportunity where id = %s::uuid", (opportunity_id,))
+            if cur.fetchone() is None:
+                return None
+            cur.execute(
+                """
+                select distinct on (s.id)
+                       s.id::text as source_record_id, s.payload->>'subject_raw' as subject,
+                       s.payload->>'sent_at' as sent_at,
+                       case when jsonb_typeof(s.payload->'documents') = 'array'
+                            then s.payload->'documents' else '[]'::jsonb end as documents
+                  from crm.opportunity_evidence e
+                  join evidence.source_record s on s.id = e.source_record_id
+                 where e.opportunity_id = %s::uuid and e.unlinked_at is null
+                   and s.kind = 'gmail_message' and not s.is_quarantined
+                 order by s.id
+                """,
+                (opportunity_id,),
+            )
+            rows = self._rows(cur)
+            shas = sorted({
+                str(d.get("sha256")).lower()
+                for r in rows for d in (r["documents"] or [])
+                if isinstance(d, dict) and d.get("sha256")
+            })
+            recorded: dict[str, dict[str, Any]] = {}
+            if shas:
+                cur.execute(
+                    """
+                    select r.pdf_sha256, q.quote_number, r.revision_no,
+                           q.opportunity_id::text as opportunity_id
+                      from crm.quote_revision r join crm.quote q on q.id = r.quote_id
+                     where r.pdf_sha256 = any(%s)
+                    """,
+                    (shas,),
+                )
+                recorded = {r["pdf_sha256"]: r for r in self._rows(cur)}
+        messages = []
+        for r in sorted(rows, key=lambda m: str(m["sent_at"] or ""), reverse=True):
+            documents = []
+            for d in r["documents"] or []:
+                if not isinstance(d, dict) or not d.get("sha256"):
+                    continue
+                sha = str(d["sha256"]).lower()
+                hit = recorded.get(sha)
+                documents.append({
+                    "sha256": sha,
+                    "filename": d.get("filename"),
+                    "cn_tokens": list(d.get("cn_tokens") or []),
+                    "recorded": (
+                        {"quote_number": hit["quote_number"], "revision_no": hit["revision_no"],
+                         "on_this_case": hit["opportunity_id"] == opportunity_id}
+                        if hit else None
+                    ),
+                })
+            messages.append({
+                "source_record_id": r["source_record_id"],
+                "subject": r["subject"],
+                "sent_at": r["sent_at"],
+                "documents": documents,
+            })
+        return {"opportunity_id": opportunity_id, "messages": messages}
+
     def person_suggestions(self) -> dict[str, Any]:
         """People the quote emails name and the CRM does not hold yet (`person_suggestions.py`)."""
         with self._read() as cur:

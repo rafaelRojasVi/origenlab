@@ -9,11 +9,13 @@
 | `POST /v2/commands/record-case-interest` | what the case is seeking |
 | `POST /v2/commands/advance-case-stage` | the case moved, and the rules for moving it were met |
 | `POST /v2/commands/record-case-won` | the case was won, against this sent, current quote revision |
+| `POST /v2/commands/resolve-current-revision` | of this quote's current revisions, this one is the current one |
+| `POST /v2/commands/record-case-quotation` | this quote was already sent on this case, by this Gmail message |
 
 **Why a third router.** `routes.py` is the read boundary and a test over its own methods
 asserts it has no POST; `command_routes.py` is the evidence-review write path. This is the
 case write path, and it is separate for the same reason those two are: "what can write to
-`crm.opportunity*`?" should have a one-file answer, and adding seven routes to a module whose
+`crm.opportunity*`?" should have a one-file answer, and adding nine routes to a module whose
 docstring says *four evidence-review commands* would have made that answer a paragraph.
 
 All three mount together behind the same switch. `ORIGENLAB_V2_COMMANDS_ENABLED` is what
@@ -26,10 +28,11 @@ version of it the operator was shown; and a non-blank `note` saying why. Three o
 are in the request and the fourth is not — the operator comes from the verified identity,
 never from the body, so a caller cannot decide *as* somebody else.
 
-**The dashboard reaches two of these routes, and only two.** `apps/dashboard-proxy` lists
-`advance-case-stage` and `record-case-won` by name (`CASE_COMMAND_POST_PATHS`), behind the same
-Origin / JSON / `Idempotency-Key` guard as the other browser commands: they back the case
-drawer's «Cambiar etapa» and «Marcar ganada». The other five — opening a case, linking
+**The dashboard reaches four of these routes, and only four.** `apps/dashboard-proxy` lists
+`advance-case-stage`, `record-case-won`, `resolve-current-revision` and `record-case-quotation`
+by name (`CASE_COMMAND_POST_PATHS`), behind the same Origin / JSON / `Idempotency-Key` guard as
+the other browser commands: they back the case drawer's «Cambiar etapa», «Marcar ganada»,
+«Elegir revisión vigente» and «Registrar cotización» / «Nueva revisión». The other five — opening a case, linking
 evidence, naming an institution or its part, recording an interest — stay refused at the
 Worker; a test in its suite names every case command path and asserts exactly that split, so
 widening it is a reviewed change rather than an accident.
@@ -48,14 +51,18 @@ from origenlab_api.v2.case_commands import (
     LINK_CASE_EVIDENCE,
     OPEN_COMMERCIAL_CASE,
     RECORD_CASE_INTEREST,
+    RECORD_CASE_QUOTATION,
     RECORD_CASE_WON,
+    RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
     LinkCaseEvidenceBody,
     OpenCommercialCaseBody,
     RecordCaseInterestBody,
+    RecordCaseQuotationBody,
     RecordCaseWonBody,
+    ResolveCurrentRevisionBody,
     SetCaseOrganizationRoleBody,
     validated_case,
 )
@@ -279,6 +286,55 @@ def record_case_won(
     """
     return _run(
         command_name=RECORD_CASE_WON,
+        body=body,
+        repo=repo,
+        operator=operator,
+        idempotency_key=idempotency_key,
+    )
+
+
+@case_command_router.post("/resolve-current-revision")
+def resolve_current_revision(
+    body: ResolveCurrentRevisionBody,
+    operator: Deciding,
+    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Settle «Hay más de una revisión vigente»: name the quote revision that is the current one.
+
+    Every other current revision of that quote is superseded by the chosen one in one
+    transaction — `superseded_by_revision_no` + `superseded_at` and a `quote_revision.superseded`
+    event each — and the case version advances. Nothing is voided or deleted. The chosen revision
+    must be `sent` and not superseded (409 `quote_revision_not_current`); a quote with one current
+    revision has nothing to resolve (409 `nothing_to_resolve`); a quote on another case is a 404.
+    """
+    return _run(
+        command_name=RESOLVE_CURRENT_REVISION,
+        body=body,
+        repo=repo,
+        operator=operator,
+        idempotency_key=idempotency_key,
+    )
+
+
+@case_command_router.post("/record-case-quotation")
+def record_case_quotation(
+    body: RecordCaseQuotationBody,
+    operator: Deciding,
+    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Record a quote already sent on this case: its printed number, its document, the message.
+
+    The message is a Gmail evidence record already linked to the case (404 `message_not_on_case`
+    otherwise), and it must carry the document. The quote and its `sent` revision are written by
+    the same writer the historical import and the email → cases rules R3/R4 use
+    (`case_quotation.py`), so the same refusals hold — among them a printed number that is
+    already a quote on another case (409 `number_on_other_opportunity`). With
+    `supersedes_revision_no` it is «Nueva revisión» of the case's quote with that number.
+    """
+    return _run(
+        command_name=RECORD_CASE_QUOTATION,
         body=body,
         repo=repo,
         operator=operator,

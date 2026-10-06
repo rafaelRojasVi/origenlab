@@ -36,7 +36,9 @@ from origenlab_api.v2.case_commands import (
     LINK_CASE_EVIDENCE,
     OPEN_COMMERCIAL_CASE,
     RECORD_CASE_INTEREST,
+    RECORD_CASE_QUOTATION,
     RECORD_CASE_WON,
+    RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
     STAGE_TRANSITIONS,
     AddCaseOrganizationBody,
@@ -44,7 +46,9 @@ from origenlab_api.v2.case_commands import (
     LinkCaseEvidenceBody,
     OpenCommercialCaseBody,
     RecordCaseInterestBody,
+    RecordCaseQuotationBody,
     RecordCaseWonBody,
+    ResolveCurrentRevisionBody,
     SetCaseOrganizationRoleBody,
     stage_transition_allowed,
     validated_case,
@@ -57,6 +61,7 @@ CASE_ID = "aaaaaaaa-1111-4111-8111-111111111111"
 RECORD_ID = "bbbbbbbb-2222-4222-8222-222222222222"
 ORGANIZATION_ID = "cccccccc-3333-4333-8333-333333333333"
 QUOTE_ID = "eeeeeeee-5555-4555-8555-555555555555"
+DOCUMENT_SHA = "ab" * 32
 
 #: Every case route, with a body that would be accepted if the caller were allowed to decide.
 #: Used by the authorization and header tests, so a route added without one of the four
@@ -132,6 +137,29 @@ ROUTES: tuple[tuple[str, str, dict], ...] = (
             "note": "porque sí",
         },
     ),
+    (
+        "/v2/commands/resolve-current-revision",
+        RESOLVE_CURRENT_REVISION,
+        {
+            "opportunity_id": CASE_ID,
+            "opportunity_version": 1,
+            "quote_id": QUOTE_ID,
+            "revision_no": 1,
+            "note": "porque sí",
+        },
+    ),
+    (
+        "/v2/commands/record-case-quotation",
+        RECORD_CASE_QUOTATION,
+        {
+            "opportunity_id": CASE_ID,
+            "opportunity_version": 1,
+            "quote_number": "01239-26",
+            "source_record_id": RECORD_ID,
+            "document_sha256": DOCUMENT_SHA,
+            "note": "porque sí",
+        },
+    ),
 )
 
 
@@ -194,7 +222,7 @@ def _headers(key: str | None = "key-1") -> dict[str, str]:
 def test_every_case_command_has_a_route_and_every_route_a_command() -> None:
     """The vocabulary and the surface are the same list, counted from both ends."""
     assert {command for _, command, _ in ROUTES} == set(CASE_COMMAND_NAMES)
-    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 7
+    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 9
 
 
 def test_the_case_router_exposes_nothing_but_post() -> None:
@@ -308,6 +336,8 @@ def test_no_case_request_can_carry_an_amount() -> None:
         RecordCaseInterestBody,
         AdvanceCaseStageBody,
         RecordCaseWonBody,
+        ResolveCurrentRevisionBody,
+        RecordCaseQuotationBody,
     ):
         for name in body_type.model_fields:
             assert not (set(name.split("_")) & money), f"{body_type.__name__}.{name}"
@@ -327,6 +357,8 @@ def test_no_case_request_can_carry_a_marketing_field() -> None:
         RecordCaseInterestBody,
         AdvanceCaseStageBody,
         RecordCaseWonBody,
+        ResolveCurrentRevisionBody,
+        RecordCaseQuotationBody,
     ):
         for name in body_type.model_fields:
             assert not (set(name.split("_")) & marketing), f"{body_type.__name__}.{name}"
@@ -508,13 +540,16 @@ def test_a_refused_win_reaches_the_operator_as_its_own_status_and_code() -> None
         (404, "quote_revision_not_on_case"),
     ):
         repo = _FakeCaseRepo(raises=CommandRefused(status, code, "no"))
-        path, _command, body = ROUTES[-1]
+        path, _command, body = next(r for r in ROUTES if r[1] == RECORD_CASE_WON)
         response = _client(repo).post(path, json=body, headers=_headers())
         assert response.status_code == status
         assert response.json()["detail"] == {"code": code, "message": "no"}
 
 
-@pytest.mark.parametrize("path", ["/v2/commands/advance-case-stage", "/v2/commands/record-case-won"])
+@pytest.mark.parametrize("path", [
+    "/v2/commands/advance-case-stage", "/v2/commands/record-case-won",
+    "/v2/commands/resolve-current-revision", "/v2/commands/record-case-quotation",
+])
 def test_the_case_commands_the_dashboard_uses_are_404_without_their_switch(
     monkeypatch, path: str
 ) -> None:
@@ -542,6 +577,56 @@ def test_the_case_commands_the_dashboard_uses_are_404_without_their_switch(
         assert path in set(app.openapi()["paths"])
     finally:
         get_settings.cache_clear()
+
+
+def test_choosing_the_current_revision_names_it_by_quote_and_number() -> None:
+    body = ResolveCurrentRevisionBody(
+        opportunity_id=CASE_ID, opportunity_version=4, quote_id=QUOTE_ID, revision_no=1,
+        note="la firmada es la vigente",
+    )
+    assert validated_case(RESOLVE_CURRENT_REVISION, body) == {
+        "note": "la firmada es la vigente", "opportunity_id": CASE_ID, "opportunity_version": 4,
+        "quote_id": QUOTE_ID, "revision_no": 1,
+    }
+    # It names one revision; it cannot name the ones it supersedes, void one, or carry a stage.
+    assert set(ResolveCurrentRevisionBody.model_fields) == {
+        "opportunity_id", "opportunity_version", "quote_id", "revision_no", "note",
+    }
+
+
+def test_recording_a_sent_quote_names_the_number_the_message_and_the_document() -> None:
+    body = RecordCaseQuotationBody(
+        opportunity_id=CASE_ID, opportunity_version=2, quote_number=" 01239-26 ",
+        source_record_id=RECORD_ID, document_sha256=DOCUMENT_SHA.upper(), note="enviada por Gmail",
+    )
+    assert validated_case(RECORD_CASE_QUOTATION, body) == {
+        "note": "enviada por Gmail", "opportunity_id": CASE_ID, "opportunity_version": 2,
+        "quote_number": "01239-26", "source_record_id": RECORD_ID, "document_sha256": DOCUMENT_SHA,
+        "supersedes_revision_no": None,
+    }
+    good = {"opportunity_id": CASE_ID, "opportunity_version": 2, "quote_number": "01239-26",
+            "source_record_id": RECORD_ID, "document_sha256": DOCUMENT_SHA, "note": "x"}
+    for bad in ({"quote_number": "01239 26"}, {"document_sha256": "z" * 64},
+                {"supersedes_revision_no": 0}, {"grand_total": 100}, {"number_on_other_opportunity_reason": "x"}):
+        with pytest.raises(Exception):
+            RecordCaseQuotationBody(**{**good, **bad})
+    with pytest.raises(CommandRefused) as excinfo:
+        validated_case(RECORD_CASE_QUOTATION, RecordCaseQuotationBody(**{**good, "source_record_id": "msg-1"}))
+    assert excinfo.value.code == "malformed_identifier"
+
+
+def test_a_refused_quote_act_reaches_the_operator_as_its_own_status_and_code() -> None:
+    for command, status, code in (
+        (RESOLVE_CURRENT_REVISION, 409, "nothing_to_resolve"),
+        (RESOLVE_CURRENT_REVISION, 404, "quote_not_on_case"),
+        (RECORD_CASE_QUOTATION, 409, "number_on_other_opportunity"),
+        (RECORD_CASE_QUOTATION, 404, "message_not_on_case"),
+    ):
+        repo = _FakeCaseRepo(raises=CommandRefused(status, code, "no"))
+        path, _command, body = next(r for r in ROUTES if r[1] == command)
+        response = _client(repo).post(path, json=body, headers=_headers())
+        assert response.status_code == status
+        assert response.json()["detail"] == {"code": code, "message": "no"}
 
 
 def test_closing_a_case_needs_a_motive_and_nothing_else_may_carry_one() -> None:

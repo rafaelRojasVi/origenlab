@@ -32,10 +32,14 @@ Five rules hold here, each structural rather than remembered:
 
 **What it never touches.** `outbound.*` appears nowhere in this file — no campaign, no
 recipient, no contact control, no send, no consent. Neither does `crm.person`,
-`crm.organization_relationship`, `crm.quote`, `crm.task` or `crm.activity`. A
+`crm.organization_relationship`, `crm.task` or `crm.activity`. A
 database-backed test counts all of them before and after every command and asserts they did
-not move. The seventh command, `record_case_won`, must *read* the quote revision it names; that
-read lives in `case_won.py` (shared with the email → cases rules), which writes no quote row.
+not move. Three commands reach a quote, each through the module that owns it:
+`record_case_won` *reads* the revision it names (`case_won.py`, shared with the email → cases
+rules) and writes no quote row; `resolve_current_revision` supersedes revisions that exist and
+creates none; `record_case_quotation` records an already-sent quote through the one writer the
+historical import and rules R3/R4 use (`case_quotation.py`) — no SQL of its own touches
+`crm.quote`.
 
 The role is `origenlab_api`, with no membership in `origenlab_owner`, so RLS and the per-verb
 grants constrain these writes exactly as they will in production.
@@ -52,17 +56,21 @@ from origenlab_api.v2.case_commands import (
     OPEN_COMMERCIAL_CASE,
     OPENING_STAGE,
     RECORD_CASE_INTEREST,
+    RECORD_CASE_QUOTATION,
     RECORD_CASE_WON,
     REQUESTING_INSTITUTION,
+    RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
     STAGES_REQUIRING_A_REQUESTING_INSTITUTION,
     SUPPLIER_RELATIONSHIP_ROLES,
     TERMINAL_STAGES,
     stage_transition_allowed,
 )
+from origenlab_api.v2.case_quotation import record_case_quotation
 from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
+from origenlab_api.v2.current_revision import resolve_current_revision
 from origenlab_api.v2.identity import OperatorIdentity
 
 #: The evidence-link subject columns, paired with the table each one points at and the name
@@ -77,7 +85,7 @@ EVIDENCE_SUBJECTS: tuple[tuple[str, str, str], ...] = (
 
 
 class V2CaseCommandRepository(CommandTransaction):
-    """The seven commercial-case commands, each in one transaction."""
+    """The nine commercial-case commands, each in one transaction."""
 
     # ------------------------------------------------------------------ shared reads
 
@@ -1023,6 +1031,30 @@ class V2CaseCommandRepository(CommandTransaction):
             "event_ids": events,
         }
 
+    # ------------------------------------------------- the quote on the case
+    #
+    # `resolve_current_revision` and `record_case_quotation` change the case's quotes, not its
+    # row; they call this so the version the operator was shown is spent all the same.
+
+    def bump_case_version(self, cur: Any, case: dict[str, Any]) -> int:
+        """The case changed: its quotes did. The version the operator was shown is spent.
+
+        A quote decision is a decision about the case, so a second operator who was shown the
+        case before it must re-read it rather than decide against a picture that is gone.
+        """
+        cur.execute(
+            """
+            update crm.opportunity set version = version + 1, updated_at = now()
+             where id = %s and version = %s
+            """,
+            (case["id"], int(case["version"])),
+        )
+        if cur.rowcount != 1:
+            raise CommandRefused(
+                409, "case_version_conflict", "this case changed while the command ran; re-read it"
+            )
+        return int(case["version"]) + 1
+
     _HANDLERS = {
         OPEN_COMMERCIAL_CASE: _open_commercial_case,
         LINK_CASE_EVIDENCE: _link_case_evidence,
@@ -1032,4 +1064,8 @@ class V2CaseCommandRepository(CommandTransaction):
         ADVANCE_CASE_STAGE: _advance_case_stage,
         # The one writer of a win, shared with the email → cases rules (`case_won.py`).
         RECORD_CASE_WON: record_case_won,
+        # The quote acts, each in the module that owns the quote SQL (`current_revision.py`,
+        # `case_quotation.py`), as `record_case_won` is: no quote SQL lives in this module.
+        RESOLVE_CURRENT_REVISION: resolve_current_revision,
+        RECORD_CASE_QUOTATION: record_case_quotation,
     }

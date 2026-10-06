@@ -1,4 +1,4 @@
-"""The seven commercial-case commands — their requests, their refusals, their vocabulary.
+"""The nine commercial-case commands — their requests, their refusals, their vocabulary.
 
 A *caso comercial* is `crm.opportunity` and nothing else ([`docs/DOMAIN.md`](../../../../../docs/DOMAIN.md)
 §3.6): no case table, no case identifier, no second lifecycle. These commands are how a human
@@ -14,11 +14,17 @@ sign.
 | `record_case_interest` | this is what the case is seeking |
 | `advance_case_stage` | the case moved, and the rules for moving it were met |
 | `record_case_won` | the case was won, against this sent, current quote revision |
+| `resolve_current_revision` | of this quote's current revisions, this one is the current one |
+| `record_case_quotation` | this quote, printing this number, was already sent on this case, by this message |
 
-**Seven, and deliberately only seven.** There is no command that closes an evidence link, no
+**Nine, and deliberately only nine.** There is no command that closes an evidence link, no
 command that withdraws an interest, no command that creates a person or a participant, no
-command that opens a `crm.organization_relationship`, no command that writes a quote and no
-send. `record_case_won` *names* a quote revision that already exists; it creates none. Every
+command that opens a `crm.organization_relationship`, no command that drafts, prices or sends a
+quote. `record_case_won` *names* a quote revision that already exists; it creates none.
+`resolve_current_revision` supersedes revisions that exist; it creates none either.
+`record_case_quotation` records a quote that was **already sent** from Gmail — the printed
+number, the document, the message — through the same writer the historical import and the
+email → cases rules use (`case_quotation.py`); it carries no amount and drafts nothing. Every
 absence is a column that exists and stays unwritten until the act that writes it has been
 designed — the same rule the schema migration stated about event types: a capability nothing
 exercises is a promise, not a contract.
@@ -45,6 +51,7 @@ missing any of them is refused before a database connection is opened.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
@@ -62,6 +69,8 @@ ADVANCE_CASE_STAGE = "advance_case_stage"
 #: Also the step name the email → cases rules use (R5, `mail_rules.py`): one writer of a win,
 #: whether a person presses «Marcar ganada» or a rule reads a purchase order.
 RECORD_CASE_WON = "record_case_won"
+RESOLVE_CURRENT_REVISION = "resolve_current_revision"
+RECORD_CASE_QUOTATION = "record_case_quotation"
 
 CASE_COMMAND_NAMES: tuple[str, ...] = (
     OPEN_COMMERCIAL_CASE,
@@ -71,6 +80,8 @@ CASE_COMMAND_NAMES: tuple[str, ...] = (
     RECORD_CASE_INTEREST,
     ADVANCE_CASE_STAGE,
     RECORD_CASE_WON,
+    RESOLVE_CURRENT_REVISION,
+    RECORD_CASE_QUOTATION,
 )
 
 #: The one stage a case is won from (`STAGE_TRANSITIONS`: only `negotiating` leads to `won`).
@@ -378,6 +389,55 @@ class RecordCaseWonBody(_CaseBody):
     revision_no: Annotated[int, Field(ge=1)]
 
 
+class ResolveCurrentRevisionBody(_CaseBody):
+    """Of this quote's current revisions, this one is the current one.
+
+    A case card says «Hay más de una revisión vigente» when a quote on it has two or more
+    revisions that are neither void nor superseded — the historical import records a
+    supersession only when the owner named one. `quote_id` + `revision_no` name the revision the
+    operator chose; every *other* current revision of that quote is then superseded by it, in
+    one transaction. Nothing is voided and nothing is deleted: a superseded revision stays
+    `sent` forever (`WORKFLOWS.md` §1.2), and supersession is recorded once.
+    """
+
+    quote_id: str
+    revision_no: Annotated[int, Field(ge=1)]
+
+
+class RecordCaseQuotationBody(_CaseBody):
+    """A quote already sent on this case: its printed number, its document, the message.
+
+    `source_record_id` is a Gmail message already linked to this case — the evidence that the
+    quote was sent — and `document_sha256` is one document that message carries. `quote_number`
+    is the number printed on that document, as the operator reads it; it becomes a
+    `printed_historical` quote, never a minted one. A number that is already a quote on another
+    case is refused: deciding which case a shared printed number belongs to is a different act.
+
+    `supersedes_revision_no` makes it «Nueva revisión»: a new revision of this case's quote with
+    that number, replacing the named revision (which stays `sent`, superseded). Without it, a
+    document under a number the case already has is a second current revision, and the card
+    asks the operator to choose.
+
+    No amount, no currency, no line: the document was never parsed for them, and `extra="forbid"`
+    refuses a caller who guesses a field name.
+    """
+
+    quote_number: Annotated[str, Field(min_length=1, max_length=32)]
+    source_record_id: str
+    document_sha256: Annotated[str, Field(min_length=64, max_length=64)]
+    supersedes_revision_no: Annotated[int, Field(ge=1)] | None = None
+
+    @model_validator(mode="after")
+    def _shapes(self) -> RecordCaseQuotationBody:
+        from origenlab_api.v2.quote_import_commands import QUOTE_NUMBER_SHAPE
+
+        if not QUOTE_NUMBER_SHAPE.match(self.quote_number.strip()):
+            raise ValueError("quote_number does not have the shape crm.quote accepts")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.document_sha256.strip().lower()):
+            raise ValueError("document_sha256 must be a SHA-256 hex digest")
+        return self
+
+
 CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     OPEN_COMMERCIAL_CASE: OpenCommercialCaseBody,
     LINK_CASE_EVIDENCE: LinkCaseEvidenceBody,
@@ -386,6 +446,8 @@ CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     RECORD_CASE_INTEREST: RecordCaseInterestBody,
     ADVANCE_CASE_STAGE: AdvanceCaseStageBody,
     RECORD_CASE_WON: RecordCaseWonBody,
+    RESOLVE_CURRENT_REVISION: ResolveCurrentRevisionBody,
+    RECORD_CASE_QUOTATION: RecordCaseQuotationBody,
 }
 
 
@@ -475,9 +537,16 @@ def validated_case(command_name: str, body: DecisionBody) -> dict[str, Any]:
         fields["quantity_unit"] = body.quantity_unit.strip() if body.quantity_unit else None
     elif isinstance(body, AdvanceCaseStageBody):
         fields.update(validated_stage(body))
-    elif isinstance(body, RecordCaseWonBody):
+    elif isinstance(body, (RecordCaseWonBody, ResolveCurrentRevisionBody)):
         fields["quote_id"] = as_uuid(body.quote_id, "quote_id")
         fields["revision_no"] = int(body.revision_no)
+    elif isinstance(body, RecordCaseQuotationBody):
+        fields["quote_number"] = body.quote_number.strip()
+        fields["source_record_id"] = as_uuid(body.source_record_id, "source_record_id")
+        fields["document_sha256"] = body.document_sha256.strip().lower()
+        fields["supersedes_revision_no"] = (
+            int(body.supersedes_revision_no) if body.supersedes_revision_no is not None else None
+        )
     return fields
 
 

@@ -156,6 +156,19 @@ class _FakeRepo:
             ],
         }
 
+    def opportunity_mail_documents(self, opportunity_id: str) -> dict[str, Any] | None:
+        if opportunity_id == "00000000-0000-4000-8000-000000000003":
+            return None
+        return {
+            "opportunity_id": opportunity_id,
+            "messages": [
+                {"source_record_id": str(uuid.uuid4()), "subject": "Cotización equipo",
+                 "sent_at": "2026-10-01T12:00:00+00:00",
+                 "documents": [{"sha256": "ab" * 32, "filename": "CN01239.pdf",
+                                "cn_tokens": ["CN01239"], "recorded": None}]},
+            ],
+        }
+
 
 def _app(role: str = "sales", repo: Any = None, authoring_enabled: bool = False) -> FastAPI:
     app = FastAPI()
@@ -303,6 +316,30 @@ def test_case_notes_need_an_operator() -> None:
     app.state.v2_identity = _RefusingIdentity()
     r = TestClient(app).get("/v2/workspace/opportunities/00000000-0000-4000-8001-000000000009/notes")
     assert r.status_code == 401
+
+
+@pytest.mark.parametrize("role", ["viewer", "sales", "admin"])
+def test_case_mail_documents_read_for_every_role(role: str) -> None:
+    """«Registrar cotización» picks from the case's linked messages; reading them is anyone's."""
+    client = TestClient(_app(role))
+    case_id = "00000000-0000-4000-8001-000000000009"
+    r = client.get(f"/v2/workspace/opportunities/{case_id}/mail-documents")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["opportunity_id"] == case_id
+    assert set(body["messages"][0]) == {"source_record_id", "subject", "sent_at", "documents"}
+    assert set(body["messages"][0]["documents"][0]) == {"sha256", "filename", "cn_tokens", "recorded"}
+
+
+def test_case_mail_documents_of_a_missing_case_are_404_a_bad_id_422_and_need_an_operator() -> None:
+    client = TestClient(_app("sales"))
+    assert client.get(
+        "/v2/workspace/opportunities/00000000-0000-4000-8000-000000000003/mail-documents").status_code == 404
+    assert client.get("/v2/workspace/opportunities/not-a-uuid/mail-documents").status_code == 422
+    app = _app("sales")
+    app.state.v2_identity = _RefusingIdentity()
+    assert TestClient(app).get(
+        "/v2/workspace/opportunities/00000000-0000-4000-8001-000000000009/mail-documents").status_code == 401
 
 
 def test_reads_report_the_switch_that_main_sets() -> None:
