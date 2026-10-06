@@ -75,9 +75,10 @@ function card(id: string, org: string, sentAt: string, quoteNumber: string): Opp
   };
 }
 
+// Andino is a decided case (in «Conversación»); Valle is still the historical import's trace.
 const PIPELINE = {
   items: [
-    card("11111111-1111-4111-8111-111111111111", "Laboratorio Andino", "2026-03-20T12:00:00Z", "01020-26"),
+    { ...card("11111111-1111-4111-8111-111111111111", "Laboratorio Andino", "2026-03-20T12:00:00Z", "01020-26"), stage: "negotiating" },
     card("22222222-2222-4222-8222-222222222222", "Universidad del Valle", "2026-02-10T12:00:00Z", "01001-26"),
   ],
   total: 2,
@@ -232,57 +233,52 @@ describe("Resumen", () => {
     expect(screen.getByTestId("fx-result")).toHaveTextContent("$1.312.813");
   });
 
-  it("groups open quotes by days since sent, each row linking to its case, PDF and email", async () => {
+  it("puts a decided case in the 3 · 14 · 30 rhythm, linking to its case and email, and counts the historical ones apart", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     const navigate = vi.fn();
     render(<OverviewPage navigate={navigate} />);
-    const followUp = await screen.findByTestId("followups-follow_up");
-    expect(within(followUp).getByText("Laboratorio Andino")).toBeInTheDocument();
-    expect(within(followUp).getByText("01020-26")).toBeInTheDocument();
-    expect(within(followUp).getByText("hace 11 días")).toBeInTheDocument();
-    expect(within(followUp).getByRole("link", { name: /PDF/ })).toHaveAttribute("href", "https://drive.google.com/file/d/file-1/view");
-    expect(within(followUp).getByRole("link", { name: /Correo/ })).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/gm1");
-    fireEvent.click(within(followUp).getByRole("button", { name: /Laboratorio Andino/ }));
+    expect(await screen.findByRole("heading", { name: "Hoy" })).toBeInTheDocument();
+    const followUps = await screen.findByTestId("today-followups");
+    const first = within(followUps).getByTestId("today-rhythm-primero");
+    expect(first).toHaveTextContent("Primer seguimiento 1");
+    expect(first).toHaveTextContent("11días");
+    expect(within(first).getByRole("link", { name: /Escribir/ })).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/gm1");
+    fireEvent.click(within(first).getByRole("button", { name: "Laboratorio Andino" }));
     expect(navigate).toHaveBeenCalledWith("oportunidades", "11111111-1111-4111-8111-111111111111");
-
-    expect(within(screen.getByTestId("followups-older")).getByText("Universidad del Valle")).toBeInTheDocument();
+    // Valle is not chased here: it is decided in bulk first.
+    expect(within(followUps).queryByText("Universidad del Valle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("today-historical")).toHaveTextContent("1 caso por decidir");
+    expect(within(screen.getByTestId("today-stats")).getByText("seguimientos").previousSibling).toHaveTextContent("1");
   });
 
-  it("ages a case from a follow-up email and says when the client answered", async () => {
+  it("lists today's tasks and the clients who answered", async () => {
     const [andino, valle] = PIPELINE.items;
-    const touch = (at: string, id: string) => ({ at, subject: "Re: cotización", url: `https://mail.google.com/mail/u/0/#all/${id}` });
     respond({
       "/v2/workspace/fx": FX,
       "/v2/workspace/pipeline": {
         ...PIPELINE,
         items: [
-          // Quote 20 Mar, our follow-up 29 Mar: «esta semana», from the email.
-          { ...andino, last_contact: { outbound: touch("2026-03-29T12:00:00Z", "out1"), inbound: null } },
-          // Quote 10 Feb, the client answered 25 Mar: still «más de un mes», but our move.
-          { ...valle, last_contact: { outbound: null, inbound: touch("2026-03-25T12:00:00Z", "in1") } },
+          {
+            ...andino,
+            open_tasks: [{ task_id: "t-1", title: "Llamar por la balanza", due_at: "2026-03-30T12:00:00Z", version: 1, owner: "Ventas" }],
+          },
+          {
+            ...valle,
+            stage: "negotiating",
+            last_contact: { outbound: null, inbound: { at: "2026-03-25T12:00:00Z", subject: "Re: cotización", url: "https://mail.google.com/mail/u/0/#all/in1" } },
+          },
         ],
       },
     });
     render(<OverviewPage navigate={() => undefined} />);
-    const thisWeek = await screen.findByTestId("followups-this_week");
-    expect(within(thisWeek).getByText("Laboratorio Andino")).toBeInTheDocument();
-    const days = within(thisWeek).getByTestId("followup-days");
-    expect(days).toHaveTextContent("hace 2 díasdesde tu correo");
-    expect(days.getAttribute("title")).toMatch(/^Último correo enviado el .+ \(cotización enviada el .+\)$/);
-    expect(within(thisWeek).getByRole("link", { name: /Último correo/ })).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/out1");
-    expect(within(thisWeek).queryByTestId("followup-replied")).not.toBeInTheDocument();
-
-    const older = screen.getByTestId("followups-older");
-    expect(within(older).getByTestId("followup-replied")).toHaveTextContent("Respondió · te toca");
-    expect(within(older).getByRole("link", { name: /Respuesta del cliente/ })).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/in1");
-  });
-
-  it("says plainly when nothing was sent this week and how far the data reaches", async () => {
-    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
-    render(<OverviewPage navigate={() => undefined} />);
-    expect(await screen.findByTestId("followups-this_week")).toHaveTextContent(/Ninguna cotización enviada en los últimos 7 días/);
-    expect(screen.getByTestId("data-freshness")).toHaveTextContent(/Datos hasta el 20.+2026/);
-    expect(screen.getByTestId("data-freshness")).toHaveTextContent("2 casos con cotización abierta");
+    const task = await screen.findByTestId("today-task-t-1");
+    expect(task).toHaveTextContent("Llamar por la balanza");
+    expect(task).toHaveTextContent("Atrasada 1 día");
+    const replies = screen.getByText("Te toca responder").closest("section") as HTMLElement;
+    expect(within(replies).getByText("Universidad del Valle")).toBeInTheDocument();
+    expect(within(replies).getByRole("link", { name: /Abrir respuesta/ })).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/in1");
+    // A case with an open task is planned: it is not also a follow-up.
+    expect(screen.getByTestId("today-followups")).toHaveTextContent("Ningún seguimiento pendiente.");
   });
 
   it("keeps the follow-ups when the exchange rate cannot be read", async () => {

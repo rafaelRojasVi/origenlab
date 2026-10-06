@@ -16,7 +16,7 @@ export interface CrmNavItem {
 }
 
 export const CRM_NAV: CrmNavItem[] = [
-  { id: "resumen", label: "Resumen", group: "comercial" },
+  { id: "resumen", label: "Hoy", group: "comercial" },
   { id: "oportunidades", label: "Oportunidades", group: "comercial" },
   { id: "organizaciones", label: "Organizaciones", group: "comercial" },
   { id: "personas", label: "Personas", group: "comercial" },
