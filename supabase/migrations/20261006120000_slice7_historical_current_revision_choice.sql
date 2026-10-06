@@ -103,3 +103,5 @@ $$;
 
 comment on function crm.quote_revision_historical_guard() is
   'A historical_import revision is immutable except supersession (once, and only by a current revision) and sent → void; never deleted. SECURITY INVOKER.';
+
+reset role;
