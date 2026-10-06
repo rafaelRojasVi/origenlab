@@ -226,7 +226,7 @@ class AutoMailRulesRunner:
         while not self._stop.wait(self._auto.interval_seconds):
             try:
                 result = self._auto.run_once()
-            except Exception:  # noqa: BLE001 - the timer must outlive one bad pass
+            except Exception:  # the timer must outlive one bad pass
                 logger.exception("auto mail rules: the pass failed")
                 continue
             if result["applied"] or result["refused"]:
