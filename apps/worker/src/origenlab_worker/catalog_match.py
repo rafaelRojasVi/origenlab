@@ -84,15 +84,22 @@ select id::text, model_number, model_key, coalesce(name_es, name)
  order by model_key, id
  limit %s
 """
-# An OR query over the words (each is [a-z0-9]{4,}, so nothing in it is tsquery syntax).
+# An OR query over the words (each is [a-z0-9]{4,}, so nothing in it is tsquery syntax), kept only
+# when at least two of the words match the product: on the real catalog (2026-10-06 evaluation) a
+# single shared word («balanza», «humedad») ranked accessories above the asked-for equipment.
 _BY_TEXT = """
-select id::text, model_number, model_key, coalesce(name_es, name),
-       ts_rank(search_tsv, q) as rank
-  from catalog.product, to_tsquery('spanish', %s) q
- where search_tsv @@ q
- order by rank desc, id
+select id, model_number, model_key, name, hits from (
+  select p.id::text as id, p.model_number, p.model_key, coalesce(p.name_es, p.name) as name,
+         ts_rank(p.search_tsv, q) as rank,
+         (select count(*) from unnest(%s::text[]) w where p.search_tsv @@ to_tsquery('spanish', w)) as hits
+    from catalog.product p, to_tsquery('spanish', %s) q
+   where p.search_tsv @@ q
+) x
+ where hits >= %s
+ order by hits desc, rank desc, id
  limit %s
 """
+MIN_TEXT_HITS = 2
 
 
 def match_products(cur: Any, subject: str, body: str) -> list[ProductCandidate]:
@@ -105,11 +112,11 @@ def match_products(cur: Any, subject: str, body: str) -> list[ProductCandidate]:
     if found:
         return found
     words = search_words(subject, body)
-    if not words:
+    if len(words) < MIN_TEXT_HITS:
         return []
-    cur.execute(_BY_TEXT, (" | ".join(words), 5))
-    for pid, number, key, name, rank in cur.fetchall():
-        found.append(ProductCandidate(pid, number, key, name, "text", str(round(float(rank) * 1000))))
+    cur.execute(_BY_TEXT, (words, " | ".join(words), MIN_TEXT_HITS, 5))
+    for pid, number, key, name, hits in cur.fetchall():
+        found.append(ProductCandidate(pid, number, key, name, "text", f"{hits}_words"))
     return found
 
 

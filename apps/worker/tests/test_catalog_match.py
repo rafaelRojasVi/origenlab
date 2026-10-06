@@ -44,7 +44,14 @@ def test_an_exact_model_match_skips_the_full_text_query() -> None:
 
 
 def test_without_a_model_match_the_full_text_index_is_asked_with_an_or_query() -> None:
-    cur = _Cur([], [("p2", None, None, "Agitador magnético", 0.25)])
+    cur = _Cur([], [("p2", None, None, "Agitador magnético", 2)])
     found = match_products(cur, "Agitador magnético", "con calefacción")
-    assert [(c.product_id, c.how, c.evidence) for c in found] == [("p2", "text", "250")]
-    assert cur.calls[-1][0] == "agitador | magnetico | calefaccion"
+    assert [(c.product_id, c.how, c.evidence) for c in found] == [("p2", "text", "2_words")]
+    words, query, min_hits, _limit = cur.calls[-1]
+    assert words == ["agitador", "magnetico", "calefaccion"] and query == "agitador | magnetico | calefaccion"
+    assert min_hits == 2
+
+
+def test_a_single_word_never_asks_the_full_text_index() -> None:
+    cur = _Cur([], [("p3", None, None, "Cubierta antipolvo para balanzas", 1)])
+    assert match_products(cur, "Balanza", "") == [] and cur.calls == []

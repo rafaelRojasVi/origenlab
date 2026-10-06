@@ -8,6 +8,11 @@ Order of the checks, first match wins:
 2. **bounce** — a delivery report (`multipart/report`, mailer-daemon, «Undeliverable» …).
 3. **auto_reply** — RFC 3834 `Auto-Submitted`, `X-Autoreply`, out-of-office subjects.
 4. **calendar** — an invitation (`text/calendar`).
+   **unsubscribe** — a «BAJA» / «REMOVER» reply: the API's W10 grammar (`unsubscribe_replies`)
+   on the body, or the bare word as the whole subject. The API records the unsubscribe; the
+   model never reads it.
+   **tender_notice** — a tender alert (Wherex, Mercado Público): a lead for the procurement
+   pipeline, structured already, so not for the model.
 5. Business signals, in this order, **before** the bulk and notification checks, because a
    purchase order or a quotation from a portal often arrives from a no-reply sender:
    **purchase_order**, **lost**, **quote_followup** (a CN quote number), **quote_request**.
@@ -36,15 +41,19 @@ from origenlab_api.v2.mail_rules import (
     QUOTE_REQUEST_WORDS,
     fold,
 )
+from origenlab_api.v2.unsubscribe_replies import classify_reply
 from origenlab_worker.mail_text import MailText
 
 #: Bumped whenever a rule changes what it decides. The proposal is stored per version
 #: (`value_norm = triage:v<N>`), so a new version re-triages every message beside the old reading.
 TRIAGE_VERSION = 1
 
-NOISE_CLASSES: tuple[str, ...] = ("bounce", "auto_reply", "calendar", "bulk", "notification", "empty")
+NOISE_CLASSES: tuple[str, ...] = ("bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification",
+                                   "empty")
+#: Business, but settled without the model: tender alerts go to the procurement pipeline.
+ROUTED_CLASSES: tuple[str, ...] = ("tender_notice",)
 SIGNAL_CLASSES: tuple[str, ...] = ("purchase_order", "lost", "quote_followup", "quote_request")
-CLASSES: tuple[str, ...] = ("outbound", *NOISE_CLASSES, *SIGNAL_CLASSES, "business_other")
+CLASSES: tuple[str, ...] = ("outbound", *NOISE_CLASSES, *ROUTED_CLASSES, *SIGNAL_CLASSES, "business_other")
 
 #: The classes the model reads after the rules: a person wrote, and either a business signal
 #: was found or nothing explains the message.
@@ -54,13 +63,19 @@ _BOUNCE_SENDERS = re.compile(r"^(?:mailer-daemon|postmaster|mail-daemon|bounce[s
 _BOUNCE_SUBJECTS: tuple[str, ...] = (
     "undeliverable", "delivery status notification", "mail delivery failed", "returned mail",
     "delivery has failed", "no se puede entregar", "no se pudo entregar", "entrega fallida",
-    "mensaje no entregado", "failure notice",
+    "mensaje no entregado", "failure notice", "undelivered mail", "returned to sender",
+    "mail delivery subsystem",
 )
 _AUTO_REPLY_SUBJECTS: tuple[str, ...] = (
     "respuesta automatica", "automatic reply", "auto reply", "autoreply", "auto-reply",
     "out of office", "out of the office", "fuera de la oficina", "fuera de oficina",
     "acuse de recibo", "read receipt", "leido:",
 )
+#: Absence notices start with the word; anywhere else «ausencia» can be a real subject.
+_AUTO_REPLY_PREFIXES: tuple[str, ...] = ("ausencia", "ausente", "estare fuera", "estoy fuera")
+_UNSUBSCRIBE_SUBJECTS: frozenset[str] = frozenset({"baja", "remover", "unsubscribe", "remove"})
+_TENDER_DOMAINS: frozenset[str] = frozenset({"wherex.com", "mercadopublico.cl", "chilecompra.cl"})
+_TENDER_SUBJECTS: tuple[str, ...] = ("nueva licitacion", "licitacion publicada", "nueva oportunidad de negocio")
 _NOTIFICATION_SENDERS = re.compile(
     # Deliberately narrow: info@, ventas@ or soporte@ at an institution is often a person asking.
     r"^(?:no[\-_.]?reply|do[\-_.]?not[\-_.]?reply|notifica(?:tion|cion|ciones)s?|alerts?|news(?:letter)?|"
@@ -157,9 +172,22 @@ def classify(item: TriageInput) -> RuleVerdict:
         return verdict("auto_reply", reason)
     if (phrase := _contains_any(subject, _AUTO_REPLY_SUBJECTS)) is not None:
         return verdict("auto_reply", f"subject:{phrase}")
+    if subject.startswith(_AUTO_REPLY_PREFIXES):
+        return verdict("auto_reply", "subject:absence_prefix")
 
     if "text/calendar" in mail.content_types or "application/ics" in mail.content_types:
         return verdict("calendar", "mime:text/calendar")
+
+    if subject.strip(" .!") in _UNSUBSCRIBE_SUBJECTS:
+        return verdict("unsubscribe", "subject:baja_word")
+    if mail.body and classify_reply(mail.body).accepted:
+        return verdict("unsubscribe", "body:baja_grammar")
+
+    if (domain in _TENDER_DOMAINS or (domain or "").endswith(tuple("." + d for d in _TENDER_DOMAINS))) \
+            and _contains_any(subject, _TENDER_SUBJECTS + ("licitacion",)):
+        return verdict("tender_notice", "sender:tender_platform")
+    if _contains_any(subject, _TENDER_SUBJECTS) is not None:
+        return verdict("tender_notice", "subject:tender_alert")
 
     text = f"{subject}\n{body}"
     quote_numbers = tuple(dict.fromkeys(m.group(1) for src in (subject, body, *names)
@@ -172,7 +200,7 @@ def classify(item: TriageInput) -> RuleVerdict:
     quote_word_subject = _contains_any(subject, QUOTE_REQUEST_WORDS)
     quote_word_body = _contains_any(body, QUOTE_REQUEST_WORDS)
     signals = {
-        "purchase_order": bool(po_phrase or po_file),
+        "purchase_order": bool(po_phrase or po_file or PURCHASE_ORDER_NUMBER.search(subject)),
         "lost": bool(lost),
         "quote_number": bool(quote_numbers),
         "quote_word": bool(quote_word_subject or quote_word_body),
@@ -180,8 +208,10 @@ def classify(item: TriageInput) -> RuleVerdict:
     }
     extra = {"quote_numbers": quote_numbers, "purchase_order_numbers": po_numbers, "signals": signals}
 
-    if po_phrase or po_file:
-        return verdict("purchase_order", "attachment:oc" if po_file else "text:purchase_order_phrase", **extra)
+    po_in_subject = bool(PURCHASE_ORDER_NUMBER.search(subject))
+    if po_phrase or po_file or po_in_subject:
+        reason = "attachment:oc" if po_file else "text:purchase_order_phrase" if po_phrase else "subject:oc_number"
+        return verdict("purchase_order", reason, **extra)
     if lost:
         return verdict("lost", "text:lost_phrase", **extra)
     if quote_numbers:
@@ -204,5 +234,5 @@ def classify(item: TriageInput) -> RuleVerdict:
     return verdict("business_other", "person:unclassified", **extra)
 
 
-__all__ = ["CLASSES", "NEEDS_MODEL", "NOISE_CLASSES", "SIGNAL_CLASSES", "TRIAGE_VERSION", "RuleVerdict",
+__all__ = ["CLASSES", "NEEDS_MODEL", "NOISE_CLASSES", "ROUTED_CLASSES", "SIGNAL_CLASSES", "TRIAGE_VERSION", "RuleVerdict",
            "TriageInput", "classify"]

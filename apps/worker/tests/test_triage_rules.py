@@ -20,8 +20,9 @@ def cls(m: MailText, *, direction: str = "inbound", labels: tuple[str, ...] = ("
 
 
 def test_every_class_is_either_noise_a_signal_or_for_the_model() -> None:
-    assert set(CLASSES) == {"outbound", *NOISE_CLASSES, "purchase_order", "lost", "quote_followup",
-                            "quote_request", "business_other"}
+    assert set(CLASSES) == {"outbound", *NOISE_CLASSES, "tender_notice", "purchase_order", "lost",
+                            "quote_followup", "quote_request", "business_other"}
+    assert "tender_notice" not in NEEDS_MODEL
     assert not NEEDS_MODEL & {"outbound", *NOISE_CLASSES}
 
 
@@ -109,3 +110,20 @@ def test_free_mail_and_domain_are_reported_and_reasons_never_carry_text() -> Non
     v = classify(TriageInput("inbound", (), mail(sender="ana@gmail.com", subject="Solicitud de cotización")))
     assert v.free_mail and v.sender_domain == "gmail.com"
     assert v.reasons == ("subject:quote_word",)
+
+
+# Cases found in the 2026-10-06 evaluation on real captured mail (STATUS §2.7.69).
+
+@pytest.mark.parametrize("m,expected", [
+    (mail(subject="REMOVER", body=""), "unsubscribe"),
+    (mail(subject="Re: Cyber OrigenLab", body="BAJA"), "unsubscribe"),
+    (mail(subject="Re: Cyber OrigenLab", body="Por favor la baja del equipo antiguo y cotizar uno nuevo"),
+     "quote_request"),
+    (mail(subject="Ausencia Pre y Post natal Re: Cyber OrigenLab"), "auto_reply"),
+    (mail(subject="Consulta sobre ausencia de stock"), "business_other"),
+    (mail(sender="no-reply@tmes.scanner.invalid", subject="Undelivered Mail Returned to Sender"), "bounce"),
+    (mail(sender="system@wherex.com", subject="Wherex – Nueva Licitación de Ejemplo [Lic - 1]"), "tender_notice"),
+    (mail(subject="RE: Anulación OC 4600154766 Lab. Ejemplo"), "purchase_order"),
+])
+def test_real_mail_cases(m: MailText, expected: str) -> None:
+    assert cls(m) == expected
