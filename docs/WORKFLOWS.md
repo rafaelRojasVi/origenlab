@@ -60,10 +60,11 @@ stray `UPDATE` still meets the rule.
 **`lost` and `abandoned` are reachable from `lead`**, which the shipped
 `opportunity_organization_required_from_qualified` CHECK accidentally
 prevented for a case with no institution — corrected in the same migration
-([`DOMAIN.md`](DOMAIN.md) §3.6.5). **`won` is not reachable from the command
-boundary at all**: a case is won against a specific quote revision, and no V2
-command creates a quote, so `advance_case_stage` refuses it by name
-(`won_requires_a_quote`) rather than letting it end in a constraint violation.
+([`DOMAIN.md`](DOMAIN.md) §3.6.5). **`won` is not reachable through
+`advance_case_stage`**: a case is won against a specific quote revision, which
+that request cannot name, so it refuses `won` by name (`won_requires_a_quote`)
+rather than letting it end in a constraint violation. `record_case_won` is the
+command that names the revision (step 7 below).
 
 **`abandoned` requires an operator and a motive** ([`DOMAIN.md`](DOMAIN.md)
 §3.4, 2026-09-22). `abandon_opportunity(opportunity, reason)` is an operator
@@ -84,7 +85,11 @@ warning, never stored as a state.
   attachment hash matches).
 - **Supersession is a fact, not a status.** When a newer revision is approved,
   the previous `approved` or `sent` revision gains `superseded_by_revision_no`
-  and `superseded_at`. **A sent revision stays `sent` forever.**
+  and `superseded_at`. **A sent revision stays `sent` forever.** A
+  `historical_import` revision may instead be superseded by a lower-numbered
+  current revision of its quote, when an operator names the current one
+  (`resolve_current_revision`, §W2 step 8): its number is import order, not
+  send order.
 
 ### 1.3 Campaign status
 
@@ -328,6 +333,9 @@ participant, so steps 3–5 above remain unimplemented.
 | 4 | operator · `set_case_organization_role` | the row is current and belongs to this case | a `machine_proposed` row is confirmed in place; **or** the current row is closed (`valid_to`) and a new part is opened, both in one transaction | `case_organization.role_confirmed`, or `case_organization.ended` + `case_organization.added` | already confirmed in that part → `case_organization_role_unchanged`; taking the requester away from a case at `qualified` or later → refused |
 | 5 | operator · `record_case_interest` | ≥1 of product, manufacturer, model text; product and manufacturer agree; quantity > 0 | `crm.opportunity_interest` row, `confirmed` | `case_interest.added` | a manufacturer the catalogue contradicts → refused; a price field → 422 (the request forbids unknown fields) |
 | 6 | operator · `advance_case_stage` | the transition is in §1.1; from `qualified` on, a human-confirmed requesting institution exists; `lost`/`abandoned` carry a motive | `stage`, `closed_at`, `close_reason`, `version + 1` | `opportunity.staged` (+ `opportunity.closed`) | `stage_transition_not_allowed`, `stage_requires_a_confirmed_requesting_institution`, `closing_a_case_needs_a_motive`, `won_requires_a_quote`, `case_is_closed` |
+| 7 | operator · `record_case_won` | the case is at `negotiating`; the named revision (`quote_id` + `revision_no`) is on this case, `sent` and not superseded | `stage = won`, `won_quote_id`, `won_revision_no`, `closed_at`, `version + 1` | `opportunity.staged` + `opportunity.closed` | `case_not_negotiating`, `quote_revision_not_on_case` (404), `quote_revision_not_current`, `case_version_conflict`, `case_is_closed` |
+| 8 | operator · `resolve_current_revision` | the case is open; the quote is on it; the named revision is `sent` and not superseded; the quote has another current revision, each `sent`/`approved` and (if V2-authored) numbered below the chosen one | every other current revision of the quote gains `superseded_by_revision_no` = the chosen one and `superseded_at`; nothing is voided; case `version + 1` | `quote_revision.superseded` per revision | `quote_not_on_case` / `quote_revision_not_on_case` (404), `quote_revision_not_current`, `nothing_to_resolve`, `revision_cannot_be_superseded`, `case_version_conflict`, `case_is_closed` |
+| 9 | operator · `record_case_quotation` | the case is open, at `quoting`/`negotiating`, with a requesting institution; the Gmail message is linked to the case, carries the document and records `sent_at`; the number is not a quote on another case; with `supersedes_revision_no`, that revision of the same number is on this case | through the shared writer (`case_quotation.py`): the `printed_historical` `crm.quote` if new, one `sent` `historical_import` revision; the replaced revision superseded; case `version + 1` | `quote.created`, `quote_revision.historical_recorded` (+ `quote_revision.superseded`) | `message_not_on_case` (404), `not_a_gmail_message`, `source_record_does_not_carry_document`, `message_has_no_sent_at`, `number_on_other_opportunity`, `number_is_a_minted_quote`, `document_already_recorded`, `case_not_quoting`, `case_version_conflict` |
 
 Every command carries the case it is about, the `version` of it the operator
 was shown, a non-blank reason and an `Idempotency-Key`; the operator comes from

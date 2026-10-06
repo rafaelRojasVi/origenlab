@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
-import { fetchPipeline } from "../crmApi";
+import { useCallback, useMemo, useState } from "react";
+import { fetchCaseNotes, fetchPipeline } from "../crmApi";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
+import { CaseActions } from "./CaseActions";
 import {
   BOARD_COLUMNS,
   ORIGIN_LABEL,
@@ -47,7 +48,14 @@ export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: 
         actions={<DisabledAction id="pipeline-new-disabled" reason={WRITE_DISABLED_REASON}>Nueva oportunidad</DisabledAction>}
       />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} cards />}>
-        {(data) => <Pipeline items={data.items} driveConfigured={data.drive_configured} initialId={initialOpportunityId ?? null} />}
+        {(data) => (
+          <Pipeline
+            items={data.items}
+            driveConfigured={data.drive_configured}
+            initialId={initialOpportunityId ?? null}
+            onChanged={reload}
+          />
+        )}
       </ResourceGate>
     </div>
   );
@@ -57,10 +65,13 @@ function Pipeline({
   items,
   driveConfigured,
   initialId,
+  onChanged,
 }: {
   items: OpportunityCardData[];
   driveConfigured: boolean;
   initialId: string | null;
+  /** Refetch the pipeline after a write from the drawer. */
+  onChanged: () => void;
 }) {
   const [status, setStatus] = useState<StatusFilter>("all");
   const [view, setView] = useState<View>("cards");
@@ -150,7 +161,7 @@ function Pipeline({
         <Board cards={visible} onOpen={setOpenId} />
       )}
 
-      <OpportunityDrawer card={open} onClose={() => setOpenId(null)} />
+      <OpportunityDrawer card={open} onClose={() => setOpenId(null)} onChanged={onChanged} />
     </>
   );
 }
@@ -386,8 +397,17 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
   );
 }
 
-function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null; onClose: () => void }) {
+function OpportunityDrawer({
+  card,
+  onClose,
+  onChanged,
+}: {
+  card: OpportunityCardData | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
   const mayAuthor = useMayAuthorCrm();
+  const [followUp, setFollowUp] = useState(0);
   if (!card) return null;
   const status = STATUS_LABEL[card.status];
   const stage = stageDisplay(card);
@@ -514,23 +534,36 @@ function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null
       </Section>
 
       <Section title="Acciones">
-        <div className="flex flex-wrap gap-2">
-          <DisabledAction id="drawer-advance" reason={WRITE_DISABLED_REASON}>Avanzar etapa</DisabledAction>
-          <DisabledAction id="drawer-followup" reason={WRITE_DISABLED_REASON}>Registrar seguimiento</DisabledAction>
-          <DisabledAction id="drawer-revision" reason={WRITE_DISABLED_REASON}>Nueva revisión</DisabledAction>
-        </div>
+        <CaseActions card={card} onChanged={onChanged} onFollowUp={() => setFollowUp((n) => n + 1)} />
       </Section>
 
-      <NoteList
-        notes={[]}
-        subjectKind="opportunity"
-        subjectId={card.opportunity_id}
-        mayAuthor={mayAuthor}
-        onRefresh={() => undefined}
-      />
+      <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={followUp} />
 
       <p className="font-mono text-[10px] text-ink-faint">opportunity {card.opportunity_id}</p>
     </Drawer>
   );
 }
 
+/** The case's notes, read from the API and re-read after «Registrar seguimiento». */
+function CaseNotes({ opportunityId, mayAuthor, openSignal }: { opportunityId: string; mayAuthor: boolean; openSignal: number }) {
+  const load = useCallback(() => fetchCaseNotes(opportunityId), [opportunityId]);
+  const [state, reload] = useResource(load, [opportunityId]);
+  return (
+    <>
+      <NoteList
+        notes={state.kind === "ready" ? state.data.notes : []}
+        subjectKind="opportunity"
+        subjectId={opportunityId}
+        mayAuthor={mayAuthor}
+        onRefresh={reload}
+        openSignal={openSignal}
+      />
+      {state.kind === "loading" ? <p className="-mt-2 text-[11px] text-ink-faint">Cargando notas…</p> : null}
+      {state.kind !== "ready" && state.kind !== "loading" ? (
+        <p className="-mt-2 text-[11px] text-warn" data-testid="case-notes-unavailable">
+          No se pudieron leer las notas de este caso{state.kind === "unavailable" ? " (no habilitado en este entorno)" : ""}.
+        </p>
+      ) : null}
+    </>
+  );
+}

@@ -213,6 +213,22 @@ def test_card_carries_quote_revision_gmail_and_drive(tmp_path: Path) -> None:
     assert "_recipients" not in card["latest_revision"]
 
 
+def test_card_carries_the_versions_the_drawer_actions_compare_against() -> None:
+    """«Cambiar etapa» / «Marcar ganada» send the case version; «Confirmar institución» the
+    organization's. Both come from the card, so the drawer never guesses one."""
+    card = compose_pipeline(
+        [_opp("o1", version=4, organization_version=2, organization_confirmation="machine_proposed")],
+        [], [], [], {}, [], {},
+    )[0]
+    assert card["version"] == 4
+    assert card["organization"] == {
+        "organization_id": "org-1",
+        "name": "Institución Ejemplo",
+        "confirmation": "machine_proposed",
+        "version": 2,
+    }
+
+
 def test_two_active_revisions_block_the_case() -> None:
     cards = compose_pipeline(
         [_opp("o1")],
@@ -336,6 +352,8 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/people/merge-preview",
         "/v2/workspace/organizations/{organization_id}/authoring",
         "/v2/workspace/person-suggestions",
+        "/v2/workspace/opportunities/{opportunity_id}/notes",
+        "/v2/workspace/opportunities/{opportunity_id}/mail-documents",
         "/v2/workspace/mail-sync",
         "/v2/workspace/mail-quote-numbers",
         "/v2/workspace/marketing",

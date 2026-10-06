@@ -47,9 +47,21 @@ describe("dashboard read-only policy", () => {
   //    and notes. All go through the API's Deciding role check (sales or admin).
   //  - mailRules.ts's POST to the two admin-only email → cases commands: apply the rules'
   //    automatic actions (re-planned upstream; the browser sends no action) and undo one.
+  //  - caseCommands.ts's POST to exactly four commercial-case commands, the case drawer's
+  //    «Cambiar etapa» (advance-case-stage), «Marcar ganada» (record-case-won), «Elegir revisión
+  //    vigente» (resolve-current-revision) and «Registrar cotización» / «Nueva revisión»
+  //    (record-case-quotation). Sales or admin upstream; no other case command (open, link
+  //    evidence, institution, interest) is named.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const MAIL_RULES_FILE = "../crm/mailRules.ts";
   const MAIL_RULES_PATHS = ["/v2/commands/apply-mail-rules", "/v2/commands/undo-mail-rule-action"];
+  const CASE_COMMANDS_FILE = "../crm/caseCommands.ts";
+  const CASE_COMMAND_PATHS = [
+    "/v2/commands/advance-case-stage",
+    "/v2/commands/record-case-won",
+    "/v2/commands/resolve-current-revision",
+    "/v2/commands/record-case-quotation",
+  ];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
   const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";
@@ -96,7 +108,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/archive-note",
   ];
 
-  it("allows only the logout POST, the campaign-command POST, the CRM authoring POST and the email-rules POST", () => {
+  it("allows only the logout POST, the campaign-command POST, the CRM authoring POST, the email-rules POST and the case-command POST", () => {
     const hits: string[] = [];
     for (const [path, text] of entries) {
       if (!MUTATION_METHOD.test(text) && !FORBIDDEN_FETCH.test(text)) continue;
@@ -133,6 +145,17 @@ describe("dashboard read-only policy", () => {
         }
         continue;
       }
+      if (path === CASE_COMMANDS_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...CASE_COMMAND_PATHS].sort())) {
+          hits.push(`${path} (case command paths mismatch: found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
       if (path !== AUTH_LOGOUT_FILE) {
         hits.push(`${path} (unsanctioned mutation module)`);
         continue;
@@ -166,9 +189,10 @@ describe("dashboard read-only policy", () => {
     expect(hits).toEqual([]);
   });
 
-  it("names no V2 command outside the campaign, CRM authoring and email-rules clients", () => {
+  it("names no V2 command outside the campaign, CRM authoring, email-rules and case-command clients", () => {
+    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE]);
     const hits = entries
-      .filter(([path, text]) => path !== CAMPAIGN_DRAFT_FILE && path !== CRM_AUTHORING_FILE && path !== MAIL_RULES_FILE && /\/v2\/commands\//.test(text))
+      .filter(([path, text]) => !owners.has(path) && /\/v2\/commands\//.test(text))
       .map(([path]) => path);
     expect(hits).toEqual([]);
   });

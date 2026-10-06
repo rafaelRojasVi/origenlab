@@ -68,6 +68,28 @@ export interface RevisionCard {
   quote_number: string;
 }
 
+/** `GET /v2/workspace/opportunities/{id}/mail-documents` — what «Registrar cotización» picks from. */
+export interface CaseMailDocument {
+  sha256: string;
+  filename: string | null;
+  /** The capture's quote-number readings of the file name: a hint, never a recorded number. */
+  cn_tokens: string[];
+  /** Already a quote revision (anywhere: one document is one revision), or null. */
+  recorded: { quote_number: string; revision_no: number; on_this_case: boolean } | null;
+}
+
+export interface CaseMailMessage {
+  source_record_id: string;
+  subject: string | null;
+  sent_at: string | null;
+  documents: CaseMailDocument[];
+}
+
+export interface CaseMailDocumentsResponse {
+  opportunity_id: string;
+  messages: CaseMailMessage[];
+}
+
 export interface QuoteCard {
   quote_id: string;
   quote_number: string;
@@ -85,11 +107,19 @@ export interface OpportunityCardData {
   opportunity_id: string;
   title: string;
   stage: string;
+  /** The case version a case command compares against. Absent from an older API. */
+  version?: number | null;
   created_at: string | null;
   updated_at: string | null;
   closed_at: string | null;
   close_reason: string | null;
-  organization: { organization_id: string; name: string | null; confirmation: string | null } | null;
+  organization: {
+    organization_id: string;
+    name: string | null;
+    confirmation: string | null;
+    /** The organization version «Confirmar institución» compares against. */
+    version?: number | null;
+  } | null;
   other_organizations: { organization_id: string; name: string; role: string }[];
   contact: {
     source: "crm_participant" | "gmail_recipient";

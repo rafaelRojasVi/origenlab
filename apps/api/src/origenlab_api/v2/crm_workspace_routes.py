@@ -155,6 +155,26 @@ def get_organization_authoring(
     return body
 
 
+@workspace_router.get("/opportunities/{opportunity_id}/notes")
+def get_opportunity_notes(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
+    """The notes on one case, for the case drawer's «Registrar seguimiento». A read only:
+    writing one is `add-note` with `subject_kind = 'opportunity'` (CRM authoring)."""
+    body = repo.opportunity_notes(str(opportunity_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    return body
+
+
+@workspace_router.get("/opportunities/{opportunity_id}/mail-documents")
+def get_opportunity_mail_documents(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
+    """The Gmail messages linked to one case and the documents they carry, for the case drawer's
+    «Registrar cotización». A read only: recording one is `record-case-quotation`."""
+    body = repo.opportunity_mail_documents(str(opportunity_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    return body
+
+
 @workspace_router.get("/person-suggestions")
 def get_person_suggestions(_: Operator, repo: Repo) -> Any:
     """People the quote emails name and the CRM does not hold yet. A read: nothing is created."""

@@ -355,7 +355,14 @@ serial really was printed for two different clients). Its revisions carry
 of the message that carried it are required; totals, approval, party snapshot and currency may
 be absent because nobody parsed them. A historical revision is immutable; its only moves are a
 supersession (the owner's canonical version) and `sent → void`, the append-only rollback. It is
-written only by the `record_historical_quotation` command.
+written only by one writer (`apps/api` `v2/case_quotation.py`), reached by three commands: the
+import's `record_historical_quotation`, the email → cases rules R3/R4, and an operator's
+`record_case_quotation` («Registrar cotización» — a quote already sent, from a Gmail message
+already linked to the case). Because its revision number is the order the documents were
+recorded, not the order they were sent, a historical revision may be superseded by a
+lower-numbered revision of its quote — only ever by a current one, never by itself (migration
+`20261006120000`); that is how an operator settles «more than one current revision» with
+`resolve_current_revision`. Every V2-authored revision keeps the forward rule.
 
 <a id="m-dom-case"></a>
 ### 3.6 The commercial case

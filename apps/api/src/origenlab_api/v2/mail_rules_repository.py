@@ -4,9 +4,10 @@
 the **existing** command handlers — `open_commercial_case`, `add_case_organization`,
 `advance_case_stage`, `link_case_evidence` (`case_command_repository.py`),
 `record_historical_quotation` / `void_historical_quote_revision` (`quote_import_repository.py`),
-`archive-organization` (`crm_authoring.py`) — plus the four small handlers below that had no
-equivalent: an institution «por confirmar», a win against a quote revision, and the two inverses
-(unlink an evidence link, correct a terminal stage).
+`archive-organization` (`crm_authoring.py`), `record_case_won` (`case_won.py`, the same writer
+a person reaches through `POST /v2/commands/record-case-won`) — plus the three small handlers
+below that had no equivalent: an institution «por confirmar» and the two inverses (unlink an
+evidence link, correct a terminal stage).
 
 **One action, one transaction, one receipt.** Every step of an action — a case, its institution,
 three stage moves and a quote, say — runs inside one transaction under one
@@ -43,12 +44,14 @@ from origenlab_api.v2.case_commands import (
     ADVANCE_CASE_STAGE,
     LINK_CASE_EVIDENCE,
     OPEN_COMMERCIAL_CASE,
+    RECORD_CASE_WON,
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
     LinkCaseEvidenceBody,
     OpenCommercialCaseBody,
     validated_case,
 )
+from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import DEFAULT_COMMAND_TIMEOUT_MS
 from origenlab_api.v2.commands import CommandRefused, as_uuid
 from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
@@ -84,7 +87,6 @@ DISCARDED_BY_CORRECTION = "discarded_by_correction"
 APPLIED_LIST_LIMIT = 200
 
 REGISTER_MAIL_ORGANIZATION = "register_mail_organization"
-RECORD_CASE_WON = "record_case_won"
 UNLINK_CASE_EVIDENCE = "unlink_case_evidence"
 CORRECT_CASE_STAGE = "correct_case_stage"
 ARCHIVE_ORGANIZATION = "archive-organization"
@@ -602,7 +604,7 @@ class MailRulesRepository(V2CaseCommandRepository):
             return self._authoring._HANDLERS[command](self._authoring, cur, operator, dict(inputs), receipt_id)
         local: dict[str, Callable[..., dict[str, Any]]] = {
             REGISTER_MAIL_ORGANIZATION: MailRulesRepository._register_mail_organization,
-            RECORD_CASE_WON: MailRulesRepository._record_case_won,
+            RECORD_CASE_WON: record_case_won,
             UNLINK_CASE_EVIDENCE: MailRulesRepository._unlink_case_evidence,
             CORRECT_CASE_STAGE: MailRulesRepository._correct_case_stage,
         }
@@ -610,7 +612,7 @@ class MailRulesRepository(V2CaseCommandRepository):
             raise CommandRefused(500, "unknown_step", f"no handler for step '{command}'")
         return local[command](self, cur, operator, dict(inputs), receipt_id)
 
-    # ------------------------------------------------------------------ the four new handlers
+    # ------------------------------------------------------------------ the three new handlers
 
     def _register_mail_organization(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                                     receipt_id: str) -> dict[str, Any]:
@@ -654,60 +656,6 @@ class MailRulesRepository(V2CaseCommandRepository):
         ))
         return {"command": REGISTER_MAIL_ORGANIZATION, "organization_id": org["id"],
                 "organization_version": int(org["version"]), "event_ids": events}
-
-    def _record_case_won(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
-                         receipt_id: str) -> dict[str, Any]:
-        """`negotiating` → `won`, against one sent, current revision of a quote on this case.
-        `advance_case_stage` refuses `won` because it has no quote to name; this names one."""
-        case = self._live_case(cur, as_uuid(fields["opportunity_id"], "opportunity_id"),
-                               int(fields["opportunity_version"]))
-        if case["stage"] != "negotiating":
-            raise CommandRefused(409, "case_not_negotiating",
-                                 f"a case is won from 'negotiating'; this one is at '{case['stage']}'")
-        cur.execute(
-            """
-            select r.id::text as id, r.quote_id::text as quote_id, r.revision_no, r.status,
-                   r.superseded_by_revision_no, q.opportunity_id::text as opportunity_id, q.quote_number
-              from crm.quote_revision r join crm.quote q on q.id = r.quote_id
-             where r.id = %s
-            """,
-            (as_uuid(fields["quote_revision_id"], "quote_revision_id"),),
-        )
-        rev = self._row(cur)
-        if rev is None or rev["opportunity_id"] != case["id"]:
-            raise CommandRefused(404, "quote_revision_not_on_case", "that quote revision is not on this case")
-        if rev["status"] != "sent" or rev["superseded_by_revision_no"] is not None:
-            raise CommandRefused(409, "quote_revision_not_current", "only a sent, current revision is won")
-        cur.execute(
-            """
-            update crm.opportunity
-               set stage = 'won', won_quote_id = %s, won_revision_no = %s, closed_at = now(),
-                   version = version + 1, updated_at = now()
-             where id = %s and version = %s
-            """,
-            (rev["quote_id"], rev["revision_no"], case["id"], int(case["version"])),
-        )
-        if cur.rowcount != 1:
-            raise CommandRefused(409, "case_version_conflict", "this case changed while the command ran")
-        cur.execute("set constraints all immediate")
-        po = fields.get("purchase_order")
-        events = [
-            self._append_event(cur, aggregate_kind="opportunity", aggregate_id=case["id"],
-                               event_type="opportunity.staged",
-                               payload={"from_stage": "negotiating", "to_stage": "won", "note": fields["note"]},
-                               operator=operator, receipt_id=receipt_id),
-            self._append_event(cur, aggregate_kind="opportunity", aggregate_id=case["id"],
-                               event_type="opportunity.closed",
-                               payload={"stage": "won", "won_quote_id": rev["quote_id"],
-                                        "won_revision_no": int(rev["revision_no"]),
-                                        "quote_number": rev["quote_number"], "purchase_order": po,
-                                        "note": fields["note"]},
-                               operator=operator, receipt_id=receipt_id),
-        ]
-        return {"command": RECORD_CASE_WON, "opportunity_id": case["id"],
-                "opportunity_version": int(case["version"]) + 1, "stage": "won",
-                "won_quote_id": rev["quote_id"], "won_revision_no": int(rev["revision_no"]),
-                "event_ids": events}
 
     def _unlink_case_evidence(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                               receipt_id: str) -> dict[str, Any]:

@@ -184,7 +184,8 @@ describe("PipelinePage", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Institución sin confirmar")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Abrir PDF r1 en Drive (enlace de registro local)")).toHaveAttribute("href", "https://drive.google.com/file/d/f1/view");
-    for (const name of ["Avanzar etapa", "Registrar seguimiento", "Nueva revisión"]) {
+    // No signed-in session here: every case action stays disabled (CaseActions.test.tsx covers the rest).
+    for (const name of ["Cambiar etapa", "Marcar ganada", "Registrar seguimiento", "Nueva revisión", "Confirmar institución"]) {
       expect(within(dialog).getByRole("button", { name })).toBeDisabled();
     }
     expect(screen.getByRole("button", { name: "Nueva oportunidad" })).toBeDisabled();
@@ -363,13 +364,15 @@ describe("dashboard shell", () => {
 });
 
 describe("no write path in the CRM workspace", () => {
-  // Two exceptions, pinned by src/test/noWritePolicy.test.ts:
+  // Four exceptions, pinned by src/test/noWritePolicy.test.ts:
   //  - the campaign-draft client (marketingApi.ts) POSTs to campaign commands.
   //  - the CRM authoring client (crmAuthoringApi.ts) POSTs to CRM authoring commands.
   const DRAFT_CLIENT = "./marketing/marketingApi.ts";
   const CRM_AUTHORING_CLIENT = "./authoring/crmAuthoringApi.ts";
   //  - the email → cases client (mailRules.ts) POSTs to the two admin-only email-rules commands.
   const MAIL_RULES_CLIENT = "./mailRules.ts";
+  //  - the case-command client (caseCommands.ts) POSTs to advance-case-stage and record-case-won.
+  const CASE_COMMANDS_CLIENT = "./caseCommands.ts";
 
   it("never issues a non-GET request or references a command route", () => {
     const sources = import.meta.glob(["./**/*.ts", "./**/*.tsx", "!./**/*.test.tsx", "!./**/*.test.ts"], {
@@ -380,7 +383,7 @@ describe("no write path in the CRM workspace", () => {
     expect(Object.keys(sources).length).toBeGreaterThan(5);
     expect(Object.keys(sources)).toContain(DRAFT_CLIENT);
     for (const [f, src] of Object.entries(sources)) {
-      if (f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT) continue;
+      if (f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT || f === CASE_COMMANDS_CLIENT) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);
       expect(src, f).not.toMatch(/\/operations\//);

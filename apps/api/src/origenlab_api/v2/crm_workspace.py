@@ -197,9 +197,9 @@ _OVERVIEW_COUNTS_SQL: str = "select " + ",\n       ".join(
 
 # SQL constants extracted from pipeline() so each is a named, testable unit.
 _SQL_PIPELINE_OPPS = """
-    select op.id::text as opportunity_id, op.title, op.stage,
+    select op.id::text as opportunity_id, op.title, op.stage, op.version,
            op.organization_id::text as organization_id, o.name as organization_name,
-           o.confirmation as organization_confirmation,
+           o.confirmation as organization_confirmation, o.version as organization_version,
            op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason
       from crm.opportunity op
       left join crm.organization o on o.id = op.organization_id
@@ -207,7 +207,7 @@ _SQL_PIPELINE_OPPS = """
 """
 _SQL_PIPELINE_CASE_ORGS = """
     select oo.opportunity_id::text, oo.organization_id::text, oo.role,
-           o.name, oo.confirmation
+           o.name, oo.confirmation, o.version as organization_version
       from crm.opportunity_organization oo
       join crm.organization o on o.id = oo.organization_id
      where oo.valid_to is null
@@ -505,12 +505,15 @@ def compose_pipeline(
                 "organization_id": opp["organization_id"],
                 "name": opp.get("organization_name"),
                 "confirmation": opp.get("organization_confirmation"),
+                # The compare-and-set token «Confirmar institución» sends back.
+                "version": opp.get("organization_version"),
             }
         elif requesting:
             organization = {
                 "organization_id": requesting[0]["organization_id"],
                 "name": requesting[0]["name"],
                 "confirmation": requesting[0].get("confirmation"),
+                "version": requesting[0].get("organization_version"),
             }
         if organization is None:
             attention.append("no_requesting_institution")
@@ -555,6 +558,8 @@ def compose_pipeline(
                 "opportunity_id": oid,
                 "title": opp["title"],
                 "stage": opp["stage"],
+                # The version a case command compares against («Cambiar etapa», «Marcar ganada»).
+                "version": opp.get("version"),
                 "created_at": opp.get("created_at"),
                 "updated_at": opp.get("updated_at"),
                 "closed_at": opp.get("closed_at"),
@@ -1716,6 +1721,108 @@ class CrmWorkspaceRepository:
             "person_suggestions": person_suggestions,
             "authoring": None,  # injected by the route from request.app.state
         }
+
+    def opportunity_notes(self, opportunity_id: str) -> dict[str, Any] | None:
+        """The notes on one case («Registrar seguimiento»), in the person/organization note shape.
+
+        `None` when the case does not exist, so the route answers 404 rather than an empty list
+        that would look like a case nobody has written about.
+        """
+        with self._read() as cur:
+            cur.execute("select 1 from crm.opportunity where id = %s::uuid", (opportunity_id,))
+            if cur.fetchone() is None:
+                return None
+            cur.execute(
+                """
+                select n.id::text, n.root_note_id::text, n.revision_no, n.body,
+                       n.author_operator_id::text, op.display_name as author_name,
+                       n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
+                       n.version,
+                       not exists (
+                         select 1 from crm.note n2 where n2.revision_of_note_id = n.id
+                       ) as is_latest
+                  from crm.note n
+                  left join platform.operator op on op.id = n.author_operator_id
+                 where n.subject_kind = 'opportunity' and n.subject_id = %s::uuid
+                 order by coalesce(n.root_note_id, n.id), n.revision_no
+                """,
+                (opportunity_id,),
+            )
+            notes = self._rows(cur)
+        return {"opportunity_id": opportunity_id, "notes": notes}
+
+    def opportunity_mail_documents(self, opportunity_id: str) -> dict[str, Any] | None:
+        """The Gmail messages linked to one case and the documents each carries.
+
+        What «Registrar cotización» / «Nueva revisión» pick from: a quote already sent is recorded
+        from a message already linked to the case, and names one document that message carries.
+        Each document says whether it is already a quote revision (anywhere — one document is
+        one revision), so the drawer can show it as recorded instead of offering it again.
+        `cn_tokens` are the capture's quote-number readings of the file name, a hint the operator
+        confirms, never a number recorded on its own. `None` when the case does not exist.
+        """
+        with self._read() as cur:
+            cur.execute("select 1 from crm.opportunity where id = %s::uuid", (opportunity_id,))
+            if cur.fetchone() is None:
+                return None
+            cur.execute(
+                """
+                select distinct on (s.id)
+                       s.id::text as source_record_id, s.payload->>'subject_raw' as subject,
+                       s.payload->>'sent_at' as sent_at,
+                       case when jsonb_typeof(s.payload->'documents') = 'array'
+                            then s.payload->'documents' else '[]'::jsonb end as documents
+                  from crm.opportunity_evidence e
+                  join evidence.source_record s on s.id = e.source_record_id
+                 where e.opportunity_id = %s::uuid and e.unlinked_at is null
+                   and s.kind = 'gmail_message' and not s.is_quarantined
+                 order by s.id
+                """,
+                (opportunity_id,),
+            )
+            rows = self._rows(cur)
+            shas = sorted({
+                str(d.get("sha256")).lower()
+                for r in rows for d in (r["documents"] or [])
+                if isinstance(d, dict) and d.get("sha256")
+            })
+            recorded: dict[str, dict[str, Any]] = {}
+            if shas:
+                cur.execute(
+                    """
+                    select r.pdf_sha256, q.quote_number, r.revision_no,
+                           q.opportunity_id::text as opportunity_id
+                      from crm.quote_revision r join crm.quote q on q.id = r.quote_id
+                     where r.pdf_sha256 = any(%s)
+                    """,
+                    (shas,),
+                )
+                recorded = {r["pdf_sha256"]: r for r in self._rows(cur)}
+        messages = []
+        for r in sorted(rows, key=lambda m: str(m["sent_at"] or ""), reverse=True):
+            documents = []
+            for d in r["documents"] or []:
+                if not isinstance(d, dict) or not d.get("sha256"):
+                    continue
+                sha = str(d["sha256"]).lower()
+                hit = recorded.get(sha)
+                documents.append({
+                    "sha256": sha,
+                    "filename": d.get("filename"),
+                    "cn_tokens": list(d.get("cn_tokens") or []),
+                    "recorded": (
+                        {"quote_number": hit["quote_number"], "revision_no": hit["revision_no"],
+                         "on_this_case": hit["opportunity_id"] == opportunity_id}
+                        if hit else None
+                    ),
+                })
+            messages.append({
+                "source_record_id": r["source_record_id"],
+                "subject": r["subject"],
+                "sent_at": r["sent_at"],
+                "documents": documents,
+            })
+        return {"opportunity_id": opportunity_id, "messages": messages}
 
     def person_suggestions(self) -> dict[str, Any]:
         """People the quote emails name and the CRM does not hold yet (`person_suggestions.py`)."""
