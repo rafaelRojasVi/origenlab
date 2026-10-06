@@ -29,6 +29,8 @@ import {
   useMayRunCaseCommands,
 } from "../caseCommands";
 import { contactLine, displayName, quoteProduct } from "../caseDisplay";
+import { composeInSharedMailbox, inSharedMailbox } from "../gmailLinks";
+import { isMaskedAddress } from "../redaction";
 import type { CrmSection } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
 import {
@@ -386,7 +388,7 @@ function ReplyRow({
       <div className="flex shrink-0 gap-2">
         {reply.url ? (
           <a
-            href={reply.url}
+            href={inSharedMailbox(reply.url) ?? undefined}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex h-8 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong"
@@ -500,7 +502,12 @@ function FollowUpRow({
   const f = followUp;
   const product = quoteProduct(f.card);
   const contact = contactLine(f.card);
-  const write = f.card.last_contact?.outbound?.url ?? f.card.latest_revision?.gmail?.url ?? null;
+  // Reply on the case's own thread: the email stays in it, so the system sees the follow-up and
+  // restarts the count. With no thread to reply on, a new email from the shared mailbox.
+  const thread = inSharedMailbox(f.card.last_contact?.outbound?.url ?? f.card.latest_revision?.gmail?.url);
+  const quote = f.card.latest_revision?.quote_number ?? f.card.quote_numbers[0] ?? "";
+  const to = f.card.contact?.address && !isMaskedAddress(f.card.contact.address) ? f.card.contact.address : null;
+  const write = thread ?? composeInSharedMailbox(to, `Seguimiento cotización N° ${quote}`.trim());
   return (
     <li
       className={`crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 border-l-4 px-4 py-2.5 ${LIGHT[tone].bar}`}
@@ -531,16 +538,18 @@ function FollowUpRow({
         </p>
       </div>
       <div className="flex shrink-0 flex-wrap gap-2">
-        {write ? (
-          <a
-            href={write}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex h-8 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong"
-          >
-            Escribir ↗
-          </a>
-        ) : null}
+        <a
+          href={write}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={thread ? "Abre el hilo de la cotización en Gmail: responde ahí y el seguimiento se registra solo" : "Abre un correo nuevo en Gmail"}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-brand-600/40 bg-brand-50 px-3 text-xs font-semibold text-brand-700 hover:border-brand-600"
+        >
+          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <path d="M2.5 4h11v8h-11zM2.5 4.5 8 8.5l5.5-4" strokeLinejoin="round" />
+          </svg>
+          {thread ? "Responder en Gmail ↗" : "Nuevo correo ↗"}
+        </a>
         {f.task && mayDecide ? <TaskRowButtons due={f.task} now={now} onChanged={onChanged} /> : null}
         {f.rhythm === "cerrar" && mayDecide ? (
           <Button variant="danger" onClick={() => onClose(f.card)}>

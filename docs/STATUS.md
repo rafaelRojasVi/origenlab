@@ -2057,7 +2057,8 @@ From a design critique of the shipped screens rendered with invented data (`apps
 | Traffic light | «Seguimientos» is green from day 3, yellow from day 14 and red from day 30 since OrigenLab's last touch: a coloured stripe, day chip and group header on each row, and a legend |
 | Product | `quoteProduct` reads what the quote is for from the quote email's subject («Cotización Balanzas Ohaus» → «Balanzas Ohaus»), adding the model the PDF name ends with («Sonicador · UP400St»). Campaign, supplier-form and empty subjects fall back to the model. Shown on every Tablero card (closed ones too) and on each «Seguimientos» row |
 | Menu | On wide screens the section list folds into a rail of icons («Contraer menú»); the choice is kept in the browser. «Oportunidades» uses the full screen width |
-| Evidence | `apps/dashboard` `npm run validate`: **625 passed** + build |
+| Gmail | Every follow-up row has «Responder en Gmail»: it opens the case's thread, so the reply stays in it and the count restarts once the email is captured. A case with no thread gets «Nuevo correo» (compose, addressed when the address is not masked). Every Gmail link (cards, Hoy, the drawer, «Decidir casos») now opens `contacto@origenlab.cl` (`authuser`) instead of the API's `mail/u/0`, which opened whichever account the browser lists first |
+| Evidence | `apps/dashboard` `npm run validate`: **627 passed** + build |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 

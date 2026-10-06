@@ -15,6 +15,7 @@
  *   the drawer, whose «Cambiar estado» does the same without a mouse.
  */
 import { Fragment, useMemo, useState, type DragEvent, type MouseEvent } from "react";
+import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData } from "../crmTypes";
 import { ageTone, contactLine, conversation, daysSince, displayName, quoteProduct } from "../caseDisplay";
 import { AGE_BUCKETS, BOARD_COLUMNS, ageBucket, boardColumnOf, pausedUntil, type BoardColumnKey } from "../stage";
@@ -260,7 +261,7 @@ export function BoardCard({
   const product = quoteProduct(card);
   const line = cardLine(card, at);
   const driveUrl = latest?.drive?.file_url ?? card.drive_folder?.url ?? null;
-  const gmailUrl = latest?.gmail?.url ?? null;
+  const gmailUrl = inSharedMailbox(latest?.gmail?.url);
   const pending = card.attention.filter((a) => !a.blocking).length;
   const isDragging = drag?.current === card.opportunity_id;
   const open = (e: MouseEvent) => {
