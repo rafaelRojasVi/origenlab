@@ -560,7 +560,10 @@ def _mount_v2_command_boundary(
     every command path is a 404, which is the right answer for a surface that does not exist
     rather than a 503 for one that does but will not talk.
     """
-    if not settings.v2_commands_configured():
+    # Read by `/auth/session` as `case_commands_enabled`: the dashboard offers «Cambiar etapa» and
+    # «Marcar ganada» only when the routes behind them are mounted.
+    app.state.case_commands_enabled = settings.v2_commands_configured()
+    if not app.state.case_commands_enabled:
         return
 
     from origenlab_api.v2.case_command_repository import V2CaseCommandRepository

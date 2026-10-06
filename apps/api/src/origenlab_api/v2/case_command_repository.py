@@ -34,7 +34,8 @@ Five rules hold here, each structural rather than remembered:
 recipient, no contact control, no send, no consent. Neither does `crm.person`,
 `crm.organization_relationship`, `crm.quote`, `crm.task` or `crm.activity`. A
 database-backed test counts all of them before and after every command and asserts they did
-not move.
+not move. The seventh command, `record_case_won`, must *read* the quote revision it names; that
+read lives in `case_won.py` (shared with the email → cases rules), which writes no quote row.
 
 The role is `origenlab_api`, with no membership in `origenlab_owner`, so RLS and the per-verb
 grants constrain these writes exactly as they will in production.
@@ -51,6 +52,7 @@ from origenlab_api.v2.case_commands import (
     OPEN_COMMERCIAL_CASE,
     OPENING_STAGE,
     RECORD_CASE_INTEREST,
+    RECORD_CASE_WON,
     REQUESTING_INSTITUTION,
     SET_CASE_ORGANIZATION_ROLE,
     STAGES_REQUIRING_A_REQUESTING_INSTITUTION,
@@ -58,6 +60,7 @@ from origenlab_api.v2.case_commands import (
     TERMINAL_STAGES,
     stage_transition_allowed,
 )
+from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
@@ -74,7 +77,7 @@ EVIDENCE_SUBJECTS: tuple[tuple[str, str, str], ...] = (
 
 
 class V2CaseCommandRepository(CommandTransaction):
-    """The six commercial-case commands, each in one transaction."""
+    """The seven commercial-case commands, each in one transaction."""
 
     # ------------------------------------------------------------------ shared reads
 
@@ -1027,4 +1030,6 @@ class V2CaseCommandRepository(CommandTransaction):
         SET_CASE_ORGANIZATION_ROLE: _set_case_organization_role,
         RECORD_CASE_INTEREST: _record_case_interest,
         ADVANCE_CASE_STAGE: _advance_case_stage,
+        # The one writer of a win, shared with the email → cases rules (`case_won.py`).
+        RECORD_CASE_WON: record_case_won,
     }

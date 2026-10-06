@@ -8,11 +8,12 @@
 | `POST /v2/commands/set-case-organization-role` | an institution's part is confirmed, or it is this other part now |
 | `POST /v2/commands/record-case-interest` | what the case is seeking |
 | `POST /v2/commands/advance-case-stage` | the case moved, and the rules for moving it were met |
+| `POST /v2/commands/record-case-won` | the case was won, against this sent, current quote revision |
 
 **Why a third router.** `routes.py` is the read boundary and a test over its own methods
 asserts it has no POST; `command_routes.py` is the evidence-review write path. This is the
 case write path, and it is separate for the same reason those two are: "what can write to
-`crm.opportunity*`?" should have a one-file answer, and adding six routes to a module whose
+`crm.opportunity*`?" should have a one-file answer, and adding seven routes to a module whose
 docstring says *four evidence-review commands* would have made that answer a paragraph.
 
 All three mount together behind the same switch. `ORIGENLAB_V2_COMMANDS_ENABLED` is what
@@ -25,11 +26,13 @@ version of it the operator was shown; and a non-blank `note` saying why. Three o
 are in the request and the fourth is not — the operator comes from the verified identity,
 never from the body, so a caller cannot decide *as* somebody else.
 
-**The dashboard cannot reach these routes, deliberately.** `apps/dashboard-proxy` allows no
-case-command POST (only the three Marketing commands under `/v2`); every button in the operator workspace is
-still `disabled`. Building the boundary and letting a browser through it are two decisions,
-and only the first has been taken. A test in the Worker's suite names all eleven command
-paths and keeps the second one from happening by accident.
+**The dashboard reaches two of these routes, and only two.** `apps/dashboard-proxy` lists
+`advance-case-stage` and `record-case-won` by name (`CASE_COMMAND_POST_PATHS`), behind the same
+Origin / JSON / `Idempotency-Key` guard as the other browser commands: they back the case
+drawer's «Cambiar etapa» and «Marcar ganada». The other five — opening a case, linking
+evidence, naming an institution or its part, recording an interest — stay refused at the
+Worker; a test in its suite names every case command path and asserts exactly that split, so
+widening it is a reviewed change rather than an accident.
 """
 
 from __future__ import annotations
@@ -45,12 +48,14 @@ from origenlab_api.v2.case_commands import (
     LINK_CASE_EVIDENCE,
     OPEN_COMMERCIAL_CASE,
     RECORD_CASE_INTEREST,
+    RECORD_CASE_WON,
     SET_CASE_ORGANIZATION_ROLE,
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
     LinkCaseEvidenceBody,
     OpenCommercialCaseBody,
     RecordCaseInterestBody,
+    RecordCaseWonBody,
     SetCaseOrganizationRoleBody,
     validated_case,
 )
@@ -242,14 +247,38 @@ def advance_case_stage(
     sentence an operator can act on.
 
     `lost` and `abandoned` need a motive and nothing else may carry one. `won` is refused
-    outright — a case is won against a specific quote revision, and no command in V2 creates a
-    quote — because saying so is more useful than a constraint violation at the end.
+    outright — a case is won against a specific quote revision, which this request cannot name;
+    that is `record-case-won` — because saying so is more useful than a constraint violation.
 
     A terminal case is never revived here or anywhere: the boundary refuses it, and so does a
     trigger on `crm.opportunity`.
     """
     return _run(
         command_name=ADVANCE_CASE_STAGE,
+        body=body,
+        repo=repo,
+        operator=operator,
+        idempotency_key=idempotency_key,
+    )
+
+
+@case_command_router.post("/record-case-won")
+def record_case_won(
+    body: RecordCaseWonBody,
+    operator: Deciding,
+    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Record that the case was won, against one sent, current quote revision on it.
+
+    The case must be at `negotiating` — the one stage `won` follows — and the request names the
+    revision as `quote_id` + `revision_no`. A revision on another case is a 404; one that is not
+    `sent`, or that a later revision replaced, is a 409. The writer is the same one the email →
+    cases rules use for a purchase order (`case_won.py`), but here every event is the operator's:
+    the identity comes from the verified session and is never marked as the system.
+    """
+    return _run(
+        command_name=RECORD_CASE_WON,
         body=body,
         repo=repo,
         operator=operator,
