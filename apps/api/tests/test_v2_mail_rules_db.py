@@ -7,6 +7,7 @@ Runs in a disposable `origenlab_test_<hex>` (tests/v2_command_harness.py) as the
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import uuid
 
@@ -84,11 +85,16 @@ def _doc(filename, cn_tokens=()):
             "cn_tokens": list(cn_tokens)}
 
 
+_SERIALS = itertools.count(1000 + (uuid.uuid4().int % 300) * 10, 10)
+
+
 @pytest.fixture
 def world(db):
     """An admin, a known client, a supplier and five fresh emails on two threads."""
     tag = uuid.uuid4().hex[:8]
-    serial = int(tag[:4], 16) % 8000 + 1000  # a correlative nobody else in this database uses
+    # A correlative nobody else in this module's database uses: each world takes serial..serial+3,
+    # so worlds are 10 apart (a random pick collided between tests often enough to flake).
+    serial = next(_SERIALS)
     w: dict[str, str] = {"tag": tag, "client_domain": f"cliente-{tag}.test", "new_domain": f"nuevo-{tag}.test"}
     w["number"] = f"0{serial}-26"
     token = f"CN{serial}5"  # «CN0<serial>5.pdf» captured without its leading zero, revision 5
