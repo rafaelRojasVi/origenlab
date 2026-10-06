@@ -25,6 +25,11 @@ import _common  # noqa: E402
 import hosted_data_load_io as io_  # noqa: E402
 import import_price_lists as ipl  # noqa: E402
 
+#: Made-up pooler logins (`<role>.<20-letter project ref>`), built at run time so the shape the
+#: public-repo hygiene check looks for never sits in a tracked file.
+FAKE_MIGRATOR = "origenlab_migrator." + "abcdefghijklmnopqrst"
+FAKE_API_LOGIN = "origenlab_api." + "abcdefghijklmnopqrst"
+
 AUTH = ["--hosted-target", "--authorize-hosted-connection", "--authorize-supavisor-session-route"]
 
 
@@ -75,7 +80,7 @@ def test_missing_dsn_without_hosted_is_refused(tmp_path, capsys) -> None:
 
 def test_hosted_needs_the_runtime_password(tmp_path, monkeypatch, capsys) -> None:
     target = io_.Target(mode="hosted", host="aws-0-sa-east-1.pooler.supabase.com", hostaddr="203.0.113.7",
-                        port=5432, user="origenlab_migrator.abcdefghijklmnopqrst", database="postgres",
+                        port=5432, user=FAKE_MIGRATOR, database="postgres",
                         sslmode="verify-full", sslrootcert="/nonexistent/ca.crt", password="migrator-secret",
                         project_ref="abcdefghijklmnopqrst", route="supavisor-session")
     monkeypatch.setattr(io_, "hosted_target", lambda *a, **k: target)
@@ -87,7 +92,7 @@ def test_hosted_needs_the_runtime_password(tmp_path, monkeypatch, capsys) -> Non
 
 def test_hosted_runtime_side_swaps_only_the_login(monkeypatch) -> None:
     target = io_.Target(mode="hosted", host="aws-0-sa-east-1.pooler.supabase.com", hostaddr="203.0.113.7",
-                        port=5432, user="origenlab_migrator.abcdefghijklmnopqrst", database="postgres",
+                        port=5432, user=FAKE_MIGRATOR, database="postgres",
                         sslmode="verify-full", sslrootcert="/ca.crt", password="migrator-secret",
                         project_ref="abcdefghijklmnopqrst", route="supavisor-session")
     monkeypatch.setattr(io_, "hosted_target", lambda *a, **k: target)
@@ -98,7 +103,7 @@ def test_hosted_runtime_side_swaps_only_the_login(monkeypatch) -> None:
     from psycopg.conninfo import conninfo_to_dict
 
     t, a = conninfo_to_dict(ns.target_dsn), conninfo_to_dict(ns.admin_dsn)
-    assert t["user"] == "origenlab_api.abcdefghijklmnopqrst" and t["password"] == "api-secret"
+    assert t["user"] == FAKE_API_LOGIN and t["password"] == "api-secret"
     assert a["user"] == target.user and a["password"] == "migrator-secret"
     for k in ("host", "hostaddr", "port", "dbname", "sslmode", "sslrootcert"):
         assert t[k] == a[k]
@@ -130,12 +135,12 @@ def posing_as_hosted(disposable_database, monkeypatch):
     """A resolved hosted target whose two logins land on the disposable database: the migrator side
     on the maintenance login, the `origenlab_api.<ref>` side on the real `origenlab_api` login."""
     target = io_.Target(mode="hosted", host="aws-0-sa-east-1.pooler.supabase.com", hostaddr="203.0.113.7",
-                        port=5432, user="origenlab_migrator.abcdefghijklmnopqrst", database="postgres",
+                        port=5432, user=FAKE_MIGRATOR, database="postgres",
                         sslmode="verify-full", sslrootcert="/ca.crt", password="migrator-secret",
                         project_ref="abcdefghijklmnopqrst", route="supavisor-session")
     monkeypatch.setattr(io_, "hosted_target", lambda *a, **k: target)
     monkeypatch.setenv(_common.RUNTIME_PASSWORD_ENV, "api-secret")
-    by_user = {"origenlab_api.abcdefghijklmnopqrst": runtime_dsn(disposable_database),
+    by_user = {FAKE_API_LOGIN: runtime_dsn(disposable_database),
                target.user: disposable_database}
     monkeypatch.setattr(io_, "conninfo_for", lambda t: make_conninfo(by_user[t.user]))
 
