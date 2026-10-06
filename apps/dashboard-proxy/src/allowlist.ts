@@ -202,8 +202,8 @@ const CAMPAIGN_BLOCK_PATH_RE = /^\/v2\/commands\/(?:block|unblock)-campaign$/;
 const TEST_SEND_PATH_RE = /^\/v2\/commands\/send-campaign-test$/;
 
 /**
- * Email → cases commands (spec 2026-10-05): apply the rules' `auto` actions, or undo one applied
- * action. Two exact paths. Upstream both are admin-only, need an `Idempotency-Key`, and the apply
+ * Email → cases commands (spec 2026-10-05): apply the rules' `auto` actions, undo one applied
+ * action, or switch the automatic R1/R2 run on or off (`set-auto-mail-rules`). Three exact paths. Upstream all three are admin-only, need an `Idempotency-Key`, and the apply
  * re-plans on the server — the browser never sends an action, at most the evidence ids to limit
  * the run to. The case commands the rules call stay unreachable from the browser except the two
  * the case drawer uses (`CASE_COMMAND_POST_PATHS`). Same
@@ -212,6 +212,7 @@ const TEST_SEND_PATH_RE = /^\/v2\/commands\/send-campaign-test$/;
 export const MAIL_RULES_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/apply-mail-rules$/,
   /^\/v2\/commands\/undo-mail-rule-action$/,
+  /^\/v2\/commands\/set-auto-mail-rules$/,
 ];
 
 /** At most 2,000 evidence ids, or a receipt id and a note. */

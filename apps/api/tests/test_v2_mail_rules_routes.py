@@ -14,6 +14,7 @@ HEADERS = {OPERATOR_EMAIL_HEADER: "op@example.test"}
 PREVIEW = "/v2/workspace/mail-rules/preview"
 APPLY = "/v2/commands/apply-mail-rules"
 UNDO = "/v2/commands/undo-mail-rule-action"
+SWITCH = "/v2/commands/set-auto-mail-rules"
 RECEIPT = "00000000-0000-4000-8000-0000000000aa"
 
 
@@ -47,13 +48,27 @@ class _FakeRepo:
         return {"undoes_receipt_id": receipt_id}
 
 
-def _client(repo, role="admin"):
+class _FakeAuto:
+    def __init__(self):
+        self.calls = []
+
+    def state(self):
+        return {"enabled": False, "rules": ["R1", "R2"]}
+
+    def set_enabled(self, operator, enabled, note, key):
+        self.calls.append(("switch", operator.operator_id, enabled, note, key))
+        return {"enabled": enabled}
+
+
+def _client(repo, role="admin", auto=None):
     from origenlab_api.v2.mail_rules_routes import mail_rules_command_router, mail_rules_preview_router
 
     app = FastAPI()
     app.include_router(mail_rules_preview_router)
     app.include_router(mail_rules_command_router)
     app.state.mail_rules_repository = repo
+    if auto is not None:
+        app.state.auto_mail_rules = auto
     app.state.v2_identity = LocalDevIdentity(LOOPBACK, _Lookup(_operator(role)))
     return TestClient(app)
 
@@ -70,6 +85,30 @@ def test_only_an_admin_previews_applies_or_undoes(role) -> None:
     assert client.post(APPLY, json={"actions": [PAIR]}, headers=KEY).status_code == 403
     assert client.post(UNDO, json={"receipt_id": RECEIPT, "note": "x"}, headers=KEY).status_code == 403
     assert repo.calls == []
+
+
+@pytest.mark.parametrize("role", ["sales", "viewer"])
+def test_only_an_admin_switches_the_automatic_run(role) -> None:
+    auto = _FakeAuto()
+    client = _client(_FakeRepo(), role, auto)
+    assert client.post(SWITCH, json={"enabled": True, "note": "x"}, headers=KEY).status_code == 403
+    assert auto.calls == []
+
+
+def test_an_admin_switches_the_automatic_run_with_a_note_and_a_key() -> None:
+    auto = _FakeAuto()
+    client = _client(_FakeRepo(), auto=auto)
+    assert client.get(PREVIEW, headers=HEADERS).json()["automatic"] == {"enabled": False, "rules": ["R1", "R2"]}
+    assert client.post(SWITCH, json={"enabled": True, "note": " "}, headers=KEY).status_code == 422
+    assert client.post(SWITCH, json={"enabled": True, "note": "probado"}, headers=HEADERS).status_code == 400
+    assert client.post(SWITCH, json={"enabled": "si", "note": "x", "rules": ["R3"]}, headers=KEY).status_code == 422
+    assert client.post(SWITCH, json={"enabled": True, "note": "probado"}, headers=KEY).json() == {"enabled": True}
+    assert auto.calls == [("switch", "00000000-0000-4000-8000-000000000001", True, "probado", "k-12345678")]
+
+
+def test_the_preview_says_null_automatic_where_the_commands_are_not_mounted() -> None:
+    client = _client(_FakeRepo())
+    assert client.get(PREVIEW, headers=HEADERS).json()["automatic"] is None
 
 
 def test_an_admin_previews_applies_and_undoes() -> None:
@@ -105,8 +144,10 @@ def test_preview_mounts_with_v2_and_apply_only_with_commands(monkeypatch) -> Non
     monkeypatch.setenv("ORIGENLAB_DEV_LOGIN_ENABLED", "true")
     monkeypatch.setenv("ORIGENLAB_V2_COMMANDS_ENABLED", "false")
     paths = set(create_app().openapi()["paths"])
-    assert PREVIEW in paths and APPLY not in paths and UNDO not in paths
+    assert PREVIEW in paths and APPLY not in paths and UNDO not in paths and SWITCH not in paths
     monkeypatch.setenv("ORIGENLAB_V2_COMMANDS_ENABLED", "true")
     get_settings.cache_clear()
-    paths = set(create_app().openapi()["paths"])
-    assert {PREVIEW, APPLY, UNDO} <= paths
+    app = create_app()
+    paths = set(app.openapi()["paths"])
+    assert {PREVIEW, APPLY, UNDO, SWITCH} <= paths
+    assert app.state.auto_mail_rules.interval_seconds == 300

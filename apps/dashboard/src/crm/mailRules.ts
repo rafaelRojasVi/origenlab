@@ -12,6 +12,7 @@ export const MAIL_RULES_PATHS = {
   preview: "/v2/workspace/mail-rules/preview",
   apply: "/v2/commands/apply-mail-rules",
   undo: "/v2/commands/undo-mail-rule-action",
+  setAuto: "/v2/commands/set-auto-mail-rules",
 } as const;
 
 export type MailRuleMode = "auto" | "proposal" | "none";
@@ -47,10 +48,36 @@ export interface AppliedMailAction {
   organization_id: string | null;
   organization_name: string | null;
   quote_number: string | null;
+  /** Applied by the automatic run (R1/R2), not by someone pressing «Aplicar». */
+  automatic?: boolean;
   undone: boolean;
   undone_at: string | null;
   undone_by: string | null;
   undo_note: string | null;
+}
+
+/** The last automatic pass this API process ran. */
+export interface AutoMailRulesRun {
+  at: string;
+  applied: number;
+  refused: number;
+  pending: number;
+  /** "off" | "operator_not_admin" when the pass did nothing. */
+  skipped: string | null;
+}
+
+/** The automatic R1/R2 run: the switch, who set it, the timer. */
+export interface AutoMailRulesState {
+  enabled: boolean;
+  changed_at: string | null;
+  changed_by: string | null;
+  note: string | null;
+  rules: string[];
+  interval_seconds: number;
+  timer_running: boolean;
+  /** Why an «on» switch is not acting (the admin who set it is no longer one). */
+  blocked: string | null;
+  last_run: AutoMailRulesRun | null;
 }
 
 export interface MailRulesPreview {
@@ -61,6 +88,8 @@ export interface MailRulesPreview {
   counts: Record<string, Partial<Record<MailRuleMode, number>>>;
   actions: PlannedMailAction[];
   applied: AppliedMailAction[];
+  /** Absent or null where the commands are not mounted. */
+  automatic?: AutoMailRulesState | null;
 }
 
 export interface MailRulePair {
@@ -117,6 +146,10 @@ export const applyMailRules = (actions: MailRulePair[]) =>
 
 export const undoMailRuleAction = (receiptId: string, note: string) =>
   postJson<{ undoes_receipt_id: string }>(MAIL_RULES_PATHS.undo, { receipt_id: receiptId, note });
+
+/** Switch the automatic R1/R2 run on or off; a note says why. */
+export const setAutoMailRules = (enabled: boolean, note: string) =>
+  postJson<{ enabled: boolean }>(MAIL_RULES_PATHS.setAuto, { enabled, note });
 
 /** The API's `detail.message` when there is one, else a fixed sentence. */
 export function refusalMessage(err: unknown, fallback: string): string {

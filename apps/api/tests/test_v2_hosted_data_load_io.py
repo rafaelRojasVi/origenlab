@@ -5,6 +5,10 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+#: A made-up pooler login (`<role>.<20-letter project ref>`), built at run time so the shape
+#: the public-repo hygiene check looks for never sits in a tracked file.
+FAKE_POOLER_USER = "origenlab_migrator." + "abcdefghijklmnopqrst"
+
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 try:
@@ -121,7 +125,7 @@ def test_connect_target_assumes_the_hosted_login_only_for_a_local_target(monkeyp
 def _full_hosted():
     t = _hosted()
     t.project_ref = "abcdefghijklmnopqrst"
-    t.user = "origenlab_migrator.abcdefghijklmnopqrst"
+    t.user = FAKE_POOLER_USER
     return t
 
 
@@ -448,7 +452,7 @@ def test_redact_masks_a_quoted_password_whole():
 def test_redact_masks_hosted_shapes_before_the_target_is_known():
     """I5: an error raised before the target resolves is redacted by shape alone."""
     s = ('connection to server at "aws-0-sa-east-1.pooler.supabase.com" (1.2.3.4), port 5432 failed: '
-         'FATAL: password authentication failed for user "origenlab_migrator.abcdefghijklmnopqrst"')
+         f'FATAL: password authentication failed for user "{FAKE_POOLER_USER}"')
     r = io_.redact(s)
     for leak in ("pooler.supabase.com", "1.2.3.4", "abcdefghijklmnopqrst"):
         assert leak not in r

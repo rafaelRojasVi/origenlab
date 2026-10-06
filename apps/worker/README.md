@@ -1,6 +1,6 @@
 # apps/worker — the V2 worker
 
-Python 3.12, uv. One job today, **Gmail capture** (Phase 4a): new mail in contacto@origenlab.cl →
+Python 3.12, uv. Two jobs today. **Gmail capture** (Phase 4a): new mail in contacto@origenlab.cl →
 `comms.message` (+ participants, attachment metadata, the `.eml` in the private `mail` bucket) and
 `pending` `gmail_message` evidence in the hosted V2 database, every 10 minutes as a Render Cron Job.
 It writes as `origenlab_worker` only and reads Gmail with `gmail.readonly` only. It writes nothing in
@@ -20,9 +20,22 @@ Exit 0 done or nothing to do · 1 failed · 2 Gmail authorization · 3 configura
 rotation and recovery: [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md) §8. State:
 [`docs/STATUS.md`](../../docs/STATUS.md) §2.7.49.
 
+**Drive filing**, right after each capture in the same cron:
+
+    origenlab-worker drive-file [--dry-run] [--limit N]
+    origenlab-worker drive-ledger-import <archive_links.jsonl>... [--dry-run]   # owner, once
+
+Every quote revision recorded from a captured email gets its PDF put in its case's folder under
+`Cotizaciones/Casos` in contacto@'s Drive (the case archive's rules, `origenlab_api.v2.quote_case_archive`;
+the Drive port is `drive_client.py`, plain HTTPS, exactly the `drive` scope) and an
+`evidence.source_record` of kind `drive_file` saying where — read by the API for the case card. No
+`crm.*` row, no rename, move or delete in Drive. Paused until `ORIGENLAB_WORKER_DRIVE_FILING_ENABLED=true`;
+setup in [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md) §8.10.
+
 V1 reuse: `src/origenlab_worker/v1_reuse.py` is the only import of `origenlab_email_pipeline`;
 before slice 8 deletes V1, those functions move here and only that file changes. The build pulls
-email-pipeline's OCR stack (about 650 MB) that the worker never imports at run time.
+email-pipeline's OCR stack (about 650 MB) that the worker never imports at run time. The case
+archive comes from `apps/api` (a uv path dependency, so the cron also installs the API's packages).
 
 ## Tests
 

@@ -9,6 +9,10 @@ from types import SimpleNamespace
 import psycopg
 import pytest
 
+#: A made-up pooler login (`<role>.<20-letter project ref>`), built at run time so the shape
+#: the public-repo hygiene check looks for never sits in a tracked file.
+FAKE_POOLER_USER = "origenlab_migrator." + "abcdefghijklmnopqrst"
+
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 _TESTS = Path(__file__).resolve().parent
 
@@ -727,7 +731,7 @@ def test_apply_refuses_when_a_planned_table_is_no_longer_empty(tmp_path, monkeyp
 # ---- final review: unexpected errors are redacted and mapped (I5); verify outcomes (M2) ----------
 
 _HOSTED_ERR = ('connection to server at "aws-0-sa-east-1.pooler.supabase.com" (1.2.3.4), port 5432 failed: '
-               'FATAL: password authentication failed for user "origenlab_migrator.abcdefghijklmnopqrst"')
+               f'FATAL: password authentication failed for user "{FAKE_POOLER_USER}"')
 
 
 @pytest.mark.parametrize(("cmd", "code"), [("plan", 11), ("apply", 11), ("rollback", 11), ("verify", 14)])
@@ -747,7 +751,7 @@ def test_connect_failure_is_redacted_and_mapped(tmp_path, monkeypatch, capsys, c
     assert cli.main([cmd, "--out", str(tmp_path), *extra, *AUTH]) == code
     cap = capsys.readouterr()
     text = cap.out + cap.err
-    for leak in ("pooler.supabase.com", "1.2.3.4", "origenlab_migrator.abcdefghijklmnopqrst", "abcdefghijklmnopqrst",
+    for leak in ("pooler.supabase.com", "1.2.3.4", FAKE_POOLER_USER, "abcdefghijklmnopqrst",
                  "Traceback"):
         assert leak not in text
     assert "OperationalError" in text
