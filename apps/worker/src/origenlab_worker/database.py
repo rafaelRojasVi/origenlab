@@ -224,41 +224,135 @@ select n.nspname || '.' || p.proname
 ALLOWED_OUTSIDE_WRITES: frozenset[tuple[str, str]] = frozenset({("outbound.campaign_reply", "INSERT")})
 
 
-def verify_worker_connection(conn: Any, target: WorkerTarget) -> None:
-    """Prove the session is the worker and nothing more; raise :class:`TargetRefused` otherwise."""
+#: What the mail triage reads and writes (`triage.py`): the captured message and its evidence, the
+#: catalog it matches products against, and INSERT on evidence.assertion for its proposals.
+TRIAGE_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = (
+    ("comms.message", "SELECT"), ("evidence.source_record", "SELECT"),
+    ("evidence.assertion", "SELECT"), ("evidence.assertion", "INSERT"), ("catalog.product", "SELECT"),
+)
+TRIAGE_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset(
+    {
+        ("comms", "message", "origenlab_worker_select"),
+        ("evidence", "source_record", "origenlab_worker_select"),
+        ("evidence", "assertion", "origenlab_worker_select"),
+        ("evidence", "assertion", "origenlab_worker_insert"),
+        ("catalog", "product", "origenlab_worker_select"),
+    }
+)
+#: The Procrastinate queue (supabase/migrations/20261006180000): every table, every verb, and one
+#: named policy per verb.
+QUEUE_TABLES: tuple[str, ...] = ("procrastinate_jobs", "procrastinate_events", "procrastinate_periodic_defers",
+                                 "procrastinate_workers")
+QUEUE_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = tuple(
+    (f"procrastinate.{t}", verb) for t in QUEUE_TABLES for verb in ("SELECT", "INSERT", "UPDATE", "DELETE")
+)
+QUEUE_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset(
+    ("procrastinate", t, f"origenlab_worker_{verb}") for t in QUEUE_TABLES
+    for verb in ("select", "insert", "update", "delete")
+)
+
+# A table that does not exist answers false, not an error: the refusal is `worker_grant_missing`.
+_PRIVILEGE_PROBE = "select coalesce(has_table_privilege(to_regclass(%s), %s), false)"
+
+
+@dataclass(frozen=True)
+class _Observed:
+    privileges: tuple[bool, ...]
+    policies: frozenset[tuple[str, str, str]]
+    writes: frozenset[tuple[str, str]]
+    definers: tuple[str, ...]
+
+
+def _judge_role(role_row: Any, target: WorkerTarget) -> None:
+    """Who the session is — judged before anything else is probed: a wrong session stops here."""
+    if role_row is None:
+        raise TargetRefused("role_not_visible")
+    user, database, *attributes, memberships = role_row
+    if user != WORKER_ROLE:
+        raise TargetRefused("not_worker_role")
+    if database != target.database:
+        raise TargetRefused("database_differs")
+    if any(attributes):
+        raise TargetRefused("worker_role_elevated")
+    if memberships:
+        raise TargetRefused("worker_role_member_of_privileged_role")
+
+
+def _judge_reach(seen: _Observed, required_policies: frozenset[tuple[str, str, str]]) -> None:
+    """What the session can do, in a fixed order; raises :class:`TargetRefused`."""
+    if not all(seen.privileges):
+        raise TargetRefused("worker_grant_missing")
+    if not required_policies <= seen.policies:
+        raise TargetRefused("worker_policy_missing")
+    if seen.writes - ALLOWED_OUTSIDE_WRITES:
+        raise TargetRefused("worker_can_write_crm_or_outbound")
+    if seen.definers:
+        raise TargetRefused("worker_can_execute_security_definer")
+
+
+def _check_tls(conn: Any, target: WorkerTarget) -> None:
     if target.remote:
         if not getattr(conn.pgconn, "ssl_in_use", False):
             raise TargetRefused("connection_not_tls")
         if conn.info.get_parameters().get("sslmode") != "verify-full":
             raise TargetRefused("connection_not_verify_full")
+
+
+def verify_worker_connection(
+    conn: Any,
+    target: WorkerTarget,
+    *,
+    privileges: tuple[tuple[str, str], ...] = REQUIRED_PRIVILEGES,
+    policies: frozenset[tuple[str, str, str]] = REQUIRED_POLICIES,
+) -> None:
+    """Prove the session is the worker and nothing more; raise :class:`TargetRefused` otherwise.
+
+    `privileges` and `policies` are what the job about to run needs (the Gmail capture's by
+    default; the triage and the queue pass their own). The role, crm/outbound-write and definer
+    refusals are the same for every job."""
+    _check_tls(conn, target)
     with conn.transaction(), conn.cursor() as cur:
         cur.execute("set transaction read only")
         cur.execute(_ROLE_PROBE)
-        row = cur.fetchone()
-        if row is None:
-            raise TargetRefused("role_not_visible")
-        user, database, *attributes, memberships = row
-        if user != WORKER_ROLE:
-            raise TargetRefused("not_worker_role")
-        if database != target.database:
-            raise TargetRefused("database_differs")
-        if any(attributes):
-            raise TargetRefused("worker_role_elevated")
-        if memberships:
-            raise TargetRefused("worker_role_member_of_privileged_role")
-        for table, privilege in REQUIRED_PRIVILEGES:
-            cur.execute("select has_table_privilege(%s, %s)", (table, privilege))
-            if not cur.fetchone()[0]:
-                raise TargetRefused("worker_grant_missing")
+        _judge_role(cur.fetchone(), target)
+        held = []
+        for table, privilege in privileges:
+            cur.execute(_PRIVILEGE_PROBE, (table, privilege))
+            held.append(bool(cur.fetchone()[0]))
         cur.execute(_POLICY_PROBE, (WORKER_ROLE,))
-        if not REQUIRED_POLICIES <= set(cur.fetchall()):
-            raise TargetRefused("worker_policy_missing")
+        found = frozenset(cur.fetchall())
         cur.execute(_WRITE_PROBE)
-        if set(cur.fetchall()) - ALLOWED_OUTSIDE_WRITES:
-            raise TargetRefused("worker_can_write_crm_or_outbound")
+        writes = frozenset(cur.fetchall())
         cur.execute(_DEFINER_PROBE)
-        if cur.fetchall():
-            raise TargetRefused("worker_can_execute_security_definer")
+        definers = tuple(r[0] for r in cur.fetchall())
+    _judge_reach(_Observed(tuple(held), found, writes, definers), policies)
+
+
+async def averify_worker_connection(
+    conn: Any,
+    target: WorkerTarget,
+    *,
+    privileges: tuple[tuple[str, str], ...],
+    policies: frozenset[tuple[str, str, str]],
+) -> None:
+    """:func:`verify_worker_connection` for a psycopg `AsyncConnection` — the queue pool runs it on
+    every connection it opens, before Procrastinate issues a statement."""
+    _check_tls(conn, target)
+    async with conn.transaction(), conn.cursor() as cur:
+        await cur.execute("set transaction read only")
+        await cur.execute(_ROLE_PROBE)
+        _judge_role(await cur.fetchone(), target)
+        held = []
+        for table, privilege in privileges:
+            await cur.execute(_PRIVILEGE_PROBE, (table, privilege))
+            held.append(bool((await cur.fetchone())[0]))
+        await cur.execute(_POLICY_PROBE, (WORKER_ROLE,))
+        found = frozenset(await cur.fetchall())
+        await cur.execute(_WRITE_PROBE)
+        writes = frozenset(await cur.fetchall())
+        await cur.execute(_DEFINER_PROBE)
+        definers = tuple(r[0] for r in await cur.fetchall())
+    _judge_reach(_Observed(tuple(held), found, writes, definers), policies)
 
 
 @dataclass(frozen=True)
@@ -482,6 +576,30 @@ class WorkerDb:
 
 
 @contextmanager
+def open_verified_connection(
+    target: WorkerTarget,
+    *,
+    application_name: str,
+    privileges: tuple[tuple[str, str], ...],
+    policies: frozenset[tuple[str, str, str]],
+    connect: Callable[..., Any] | None = None,
+) -> Iterator[Any]:
+    """One autocommit connection verified for the given requirements; closed on exit."""
+    if connect is None:
+        import psycopg
+
+        connect = psycopg.connect
+    conn = connect(target.dsn, autocommit=True, application_name=application_name, **target.connect_options)
+    try:
+        verify_worker_connection(conn, target, privileges=privileges, policies=policies)
+        yield conn
+    finally:
+        with suppress(Exception):
+            conn.execute("select pg_advisory_unlock_all()")
+        conn.close()
+
+
+@contextmanager
 def open_worker_db(target: WorkerTarget, connect: Callable[..., Any] | None = None) -> Iterator[WorkerDb]:
     """One autocommit connection (each write opens its own transaction), verified before use."""
     if connect is None:
@@ -499,6 +617,8 @@ def open_worker_db(target: WorkerTarget, connect: Callable[..., Any] | None = No
 
 
 __all__ = [
+    "QUEUE_REQUIRED_POLICIES", "QUEUE_REQUIRED_PRIVILEGES", "QUEUE_TABLES", "TRIAGE_REQUIRED_POLICIES",
+    "TRIAGE_REQUIRED_PRIVILEGES", "averify_worker_connection", "open_verified_connection",
     "ALLOWED_OUTSIDE_WRITES", "APP_NAME", "LOCK_ACQUIRED", "LOCK_HELD", "LOCK_NAME", "LOCK_STUCK", "STALE_LOCK_AFTER", "Mailbox", "RecordOutcome",
     "TargetRefused", "WORKER_ROLE", "WorkerDb", "WorkerTarget", "local_test_target", "open_worker_db",
     "remote_worker_target", "verify_worker_connection", "write_ca_file",
