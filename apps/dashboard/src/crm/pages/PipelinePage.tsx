@@ -21,7 +21,6 @@ import {
 } from "../stage";
 import {
   Badge,
-  DisabledAction,
   Drawer,
   EmptyState,
   ExternalLink,
@@ -33,7 +32,6 @@ import {
   Segmented,
   Skeleton,
   StatLine,
-  WRITE_DISABLED_REASON,
   fmtDate,
   initials,
   LocalDriveLink,
@@ -53,7 +51,6 @@ export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: 
       <PageHeader
         title="Oportunidades"
         subtitle="Casos comerciales del CRM con sus cotizaciones, revisiones, documentos y evidencia de Gmail y Drive."
-        actions={<DisabledAction id="pipeline-new-disabled" reason={WRITE_DISABLED_REASON}>Nueva oportunidad</DisabledAction>}
       />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} cards />}>
         {(data) => (

@@ -58,6 +58,16 @@ const COLUMN_DOT: Record<BoardColumnKey, string> = {
 
 const DRAG_TYPE = "text/plain";
 
+const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
+
+/** «24 sept», with the year only when it is not this one («12 may 2025»). */
+export function shortDate(iso: string | null | undefined, now: Date): string {
+  const d = iso ? new Date(iso) : null;
+  if (!d || Number.isNaN(d.getTime())) return "—";
+  const base = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  return d.getFullYear() === now.getFullYear() ? base : `${base} ${d.getFullYear()}`;
+}
+
 const sentAt = (c: OpportunityCardData) => c.latest_revision?.sent_at ?? "";
 
 export function sortCards(cards: OpportunityCardData[], sort: BoardSort, now: Date): OpportunityCardData[] {
@@ -102,7 +112,8 @@ export function Board({
   const byDate = sort === "recent" || sort === "oldest";
   return (
     <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
-      <div className="grid min-w-[88rem] grid-cols-7 gap-3">
+      {/* Five working columns share the width; Ganada and Perdida are narrower, with compact cards. */}
+      <div className="grid min-w-[72rem] grid-cols-[repeat(5,minmax(10rem,1fr))_repeat(2,minmax(8.5rem,0.75fr))] gap-3">
         {BOARD_COLUMNS.map((col) => {
           const inCol = sortCards(
             cards.filter((c) => boardColumnOf(c, at) === col.key),
@@ -165,7 +176,14 @@ export function Board({
                             <span aria-hidden="true" className="h-px flex-1 bg-line-strong" />
                           </p>
                         ) : null}
-                        <BoardCard card={c} onOpen={onOpen} now={at} drag={drag} index={i} />
+                        <BoardCard
+                          card={c}
+                          onOpen={onOpen}
+                          now={at}
+                          drag={drag}
+                          index={i}
+                          compact={col.key === "ganada" || col.key === "perdida"}
+                        />
                       </Fragment>
                     );
                   })
@@ -223,12 +241,15 @@ export function BoardCard({
   now,
   drag = null,
   index = 0,
+  compact = false,
 }: {
   card: OpportunityCardData;
   onOpen: (id: string) => void;
   now?: Date;
   drag?: DragHook | null;
   index?: number;
+  /** A closed case: the name, the quote and how it ended — nothing to act on. */
+  compact?: boolean;
 }) {
   const at = now ?? new Date();
   const latest = card.latest_revision;
@@ -268,22 +289,22 @@ export function BoardCard({
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-[13px] font-semibold leading-5 text-ink">
+          <h3 className="line-clamp-2 text-[13px] [overflow-wrap:anywhere] font-semibold leading-[1.15rem] text-ink">
             <button
               type="button"
               onClick={() => onOpen(card.opportunity_id)}
               aria-haspopup="dialog"
               title={sub ? `En el CRM: ${sub}` : undefined}
-              className="max-w-full truncate rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+              className="rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
             >
               {name}
             </button>
           </h3>
-          {contact ? <p className="truncate text-[11px] leading-4 text-ink-muted">{contact}</p> : null}
+          {contact && !compact ? <p className="truncate text-[11px] leading-4 text-ink-muted">{contact}</p> : null}
         </div>
         {days != null ? (
           <span
-            className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${BADGE_TONE[ageTone(days)]}`}
+            className={`shrink-0 rounded px-1 py-px text-[10.5px] font-semibold tabular-nums ${BADGE_TONE[ageTone(days)]}`}
             title={`Cotización enviada hace ${days} días`}
             data-testid="board-age"
           >
@@ -295,57 +316,59 @@ export function BoardCard({
         {latest ? (
           <>
             <span className="font-semibold text-ink">{latest.quote_number}</span>
-            {card.quote_numbers.length > 1 ? <span className="text-ink-faint"> +{card.quote_numbers.length - 1}</span> : null} · r
-            {latest.revision_no} · {fmtDate(latest.sent_at)}
+            {card.quote_numbers.length > 1 ? <span className="text-ink-faint"> +{card.quote_numbers.length - 1}</span> : null} ·{" "}
+            {shortDate(latest.sent_at, at)}
           </>
         ) : (
           <span className="text-ink-faint">Sin cotización</span>
         )}
       </p>
-      {model ? (
+      {model && !compact ? (
         <span className="mt-1.5 inline-block rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] leading-4 text-brand-700">
           {model}
         </span>
       ) : null}
-      <p className={`mt-1.5 truncate text-[11px] font-medium leading-4 ${LINE_TONE[line.tone] ?? LINE_TONE.neutral}`} data-testid="board-status-line">
+      <p className={`mt-1.5 line-clamp-2 text-[11px] font-medium leading-4 ${LINE_TONE[line.tone] ?? LINE_TONE.neutral}`} data-testid="board-status-line">
         {line.text}
       </p>
-      <div className="mt-2 flex items-center gap-1 border-t border-line pt-1.5 text-[11px]">
-        {driveUrl ? (
-          <a
-            href={driveUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-ink-muted hover:bg-canvas-sunken hover:text-brand-700"
-            aria-label={`PDF en Drive de ${name}`}
-          >
-            <DriveIcon />
-            Drive
-          </a>
-        ) : (
-          <span className="inline-flex h-6 items-center gap-1 px-1.5 text-ink-faint" title="El PDF todavía no está archivado en Drive">
-            <DriveIcon />
-            sin Drive
-          </span>
-        )}
-        {gmailUrl ? (
-          <a
-            href={gmailUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-ink-muted hover:bg-canvas-sunken hover:text-brand-700"
-            aria-label={`Correo de la cotización de ${name}`}
-          >
-            <MailIcon />
-            Gmail
-          </a>
-        ) : null}
-        {pending > 0 ? (
-          <span className="ml-auto rounded-full bg-warn-bg px-1.5 text-[10px] font-semibold text-warn" title={card.attention.map((a) => a.label).join(" · ")}>
-            {pending} pendiente{pending > 1 ? "s" : ""}
-          </span>
-        ) : null}
-      </div>
+      {compact ? null : (
+        <div className="mt-2 flex items-center gap-1 border-t border-line pt-1.5 text-[11px]">
+          {driveUrl ? (
+            <a
+              href={driveUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-ink-muted hover:bg-canvas-sunken hover:text-brand-700"
+              aria-label={`PDF en Drive de ${name}`}
+            >
+              <DriveIcon />
+              Drive
+            </a>
+          ) : (
+            <span className="inline-flex h-6 items-center gap-1 whitespace-nowrap px-1.5 text-ink-faint" title="El PDF todavía no está archivado en Drive">
+              <DriveIcon />
+              sin Drive
+            </span>
+          )}
+          {gmailUrl ? (
+            <a
+              href={gmailUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-ink-muted hover:bg-canvas-sunken hover:text-brand-700"
+              aria-label={`Correo de la cotización de ${name}`}
+            >
+              <MailIcon />
+              Gmail
+            </a>
+          ) : null}
+          {pending > 0 ? (
+            <span className="ml-auto rounded-full bg-warn-bg px-1.5 text-[10px] font-semibold text-warn" title={card.attention.map((a) => a.label).join(" · ")}>
+              {pending} pendiente{pending > 1 ? "s" : ""}
+            </span>
+          ) : null}
+        </div>
+      )}
     </article>
   );
 }

@@ -190,7 +190,6 @@ describe("PipelinePage", () => {
     for (const name of ["Cambiar estado", "Marcar ganada", "Registrar seguimiento", "Nueva revisión", "Confirmar institución"]) {
       expect(within(dialog).getByRole("button", { name })).toBeDisabled();
     }
-    expect(screen.getByRole("button", { name: "Nueva oportunidad" })).toBeDisabled();
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
