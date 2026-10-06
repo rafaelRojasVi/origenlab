@@ -115,6 +115,7 @@ export function TodayBody({
           <TasksPanel tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} />
           <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onClose={setClosing} />
+          <PeoplePanel mayAuthor={mayAuthor} navigate={navigate} />
         </div>
         <aside className="min-w-0 space-y-4">
           {historical > 0 ? (
@@ -131,9 +132,8 @@ export function TodayBody({
             </section>
           ) : null}
           <OrgsPanel orgs={orgs} navigate={navigate} mayAuthor={mayAuthor} onChanged={onChanged} />
-          <PeoplePanel mayAuthor={mayAuthor} navigate={navigate} />
           {blocked.length > 0 ? (
-            <Panel title="Bloqueados" aside={<Badge tone="bad">{blocked.length}</Badge>} bodyClassName="divide-y divide-line">
+            <Panel title="Bloqueados" aside={<Badge tone="bad" glyph={false}>{blocked.length}</Badge>} bodyClassName="divide-y divide-line">
               {blocked.map((c) => (
                 <div key={c.opportunity_id} className="px-3 py-2">
                   <CaseLink card={c} navigate={navigate} />
@@ -194,7 +194,7 @@ function TasksPanel({
   now: Date;
 }) {
   return (
-    <Panel title="Tareas de hoy" aside={<Badge tone={tasks.length ? "warn" : "good"}>{tasks.length}</Badge>} bodyClassName="divide-y divide-line">
+    <Panel title="Tareas de hoy" aside={<Badge tone={tasks.length ? "warn" : "good"} glyph={false}>{tasks.length}</Badge>} bodyClassName="divide-y divide-line">
       {tasks.length === 0 ? (
         <p className="px-4 py-4 text-xs text-ink-muted" data-testid="today-no-tasks">
           Nada vence hoy. Las tareas nacen de «Decidir casos», de «En pausa hasta…» y de los seguimientos.
@@ -265,7 +265,7 @@ function TaskRow({
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-task-${task.task_id}`}
     >
-      <div className="min-w-0 flex-1">
+      <div className="min-w-[12rem] flex-1">
         <p className="text-[13px] text-ink">{task.title}</p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-ink-muted">
           <span className={overdueDays > 0 ? "font-medium text-bad" : "font-medium text-warn"}>
@@ -303,7 +303,7 @@ function RepliesPanel({
   onChanged: () => void;
 }) {
   return (
-    <Panel title="Te toca responder" aside={<Badge tone={replies.length ? "warn" : "good"}>{replies.length}</Badge>} bodyClassName="divide-y divide-line">
+    <Panel title="Te toca responder" aside={<Badge tone={replies.length ? "warn" : "good"} glyph={false}>{replies.length}</Badge>} bodyClassName="divide-y divide-line">
       {replies.length === 0 ? (
         <p className="px-4 py-4 text-xs text-ink-muted">Ningún cliente espera respuesta.</p>
       ) : (
@@ -353,7 +353,7 @@ function ReplyRow({
 
   return (
     <div className="crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5" style={{ "--i": Math.min(index, 10) } as CSSProperties}>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-[12rem] flex-1">
         <CaseLink card={card} navigate={navigate} />
         <p className="mt-0.5 truncate text-[11px] text-ink-muted">
           <span className="font-medium text-warn">Respondió el {fmtDate(reply.at)}</span> · {quoteOf(card)}
@@ -398,7 +398,7 @@ function FollowUpsPanel({
     <section className="crm-rise overflow-hidden rounded-xl border border-line bg-canvas-raised" data-testid="today-followups">
       <header className="flex flex-wrap items-baseline gap-x-2 border-b border-line px-4 py-2.5">
         <h2 className="text-[14px] font-semibold text-ink">Seguimientos</h2>
-        <Badge tone={followUps.length ? "info" : "good"}>{followUps.length}</Badge>
+        <Badge tone={followUps.length ? "info" : "good"} glyph={false}>{followUps.length}</Badge>
         <span className="ml-auto text-[11px] text-ink-faint">Día 3 · 14 · 30. Un correo tuyo en el hilo reinicia el conteo.</span>
       </header>
       {followUps.length === 0 ? (
@@ -425,7 +425,7 @@ function FollowUpsPanel({
                       <span className="text-sm font-bold tabular-nums">{f.days}</span>
                       <span className="text-[8px] font-semibold uppercase">días</span>
                     </span>
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-[12rem] flex-1">
                       <CaseLink card={f.card} navigate={navigate} />
                       <p className="truncate text-[11px] text-ink-muted">
                         {quoteOf(f.card)}
@@ -476,7 +476,7 @@ function OrgsPanel({
 }) {
   if (orgs.length === 0) return null;
   return (
-    <Panel title="Instituciones por confirmar" aside={<Badge tone="warn">{orgs.length}</Badge>} bodyClassName="divide-y divide-line">
+    <Panel title="Instituciones por confirmar" aside={<Badge tone="warn" glyph={false}>{orgs.length}</Badge>} bodyClassName="divide-y divide-line">
       <p className="px-3 py-2 text-[11px] text-ink-faint">Las propuso una regla del correo; nadie las ha revisado.</p>
       {orgs.map((o) => (
         <OrgRow key={o.organization_id} org={o} navigate={navigate} mayAuthor={mayAuthor} onChanged={onChanged} />
@@ -507,7 +507,7 @@ function OrgRow({ org, navigate, mayAuthor, onChanged }: { org: OrgToConfirm; na
 
   return (
     <div className="flex items-center gap-2 px-3 py-2">
-      <div className="min-w-0 flex-1">
+      <div className="min-w-[12rem] flex-1">
         <button
           type="button"
           onClick={() => navigate("organizaciones", org.organization_id)}
@@ -532,7 +532,7 @@ function OrgRow({ org, navigate, mayAuthor, onChanged }: { org: OrgToConfirm; na
 function PeoplePanel({ mayAuthor, navigate }: { mayAuthor: boolean; navigate: Navigate }) {
   const [state, reload] = useResource(fetchPersonSuggestions);
   return (
-    <Panel title="Personas por agregar" aside={state.kind === "ready" ? <Badge>{state.data.total}</Badge> : null}>
+    <Panel title="Personas por agregar" aside={state.kind === "ready" ? <Badge glyph={false}>{state.data.total}</Badge> : null}>
       <div className="p-3">
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={2} />}>
           {(data) => (

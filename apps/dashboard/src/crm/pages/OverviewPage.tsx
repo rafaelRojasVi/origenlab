@@ -25,10 +25,8 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
         subtitle="Tareas, respuestas por contestar, seguimientos y lo que falta agregar."
         actions={<Clock />}
       />
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
-        <QuoteNumberBox pipeline={pipeline} />
-        <FxSection state={fx} reload={reloadFx} />
-      </div>
+      <QuoteNumberBox pipeline={pipeline} />
+      <FxSection state={fx} reload={reloadFx} />
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => <TodayBody items={p.items} navigate={navigate} onChanged={reloadPipeline} refreshing={refreshing} />}
       </ResourceGate>

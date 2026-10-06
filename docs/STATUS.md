@@ -2032,6 +2032,20 @@ Second phase of the redesign in §2.7.62. No migration: `crm.task`, its grants a
 | Evidence | `apps/dashboard` `npm run validate`: **617 passed** + build — new: today lists (tasks due, rhythm, replies, institutions), «Hecho», «+1 semana», «Pasar a Conversación», «Cerrar sin respuesta», viewer sees no write button |
 | Not done | automatic Enviada → Conversación from the email rules (still one click here); the labdelivery mailbox; «Ordenar», interests and Drive on the case (phases 4–5) |
 
+### 2.7.66 Design review fixes on Hoy and the Tablero, 2026-10-06 — built, not deployed
+
+From a design critique of the shipped screens rendered with invented data (`apps/dashboard` only).
+
+| Finding | Fix |
+|---|---|
+| «Hoy»: the quote-number box squeezed beside the exchange rates, its «¿Ya existe este número?» field spilling over the dólar card | The two are stacked full width again, as on Resumen |
+| Tablero: seven columns wider than the screen, Ganada and Perdida off to the right; names cut to «Aeroservicios N…» | Five working columns share the width and Ganada / Perdida are narrower with compact cards (name, quote, how it ended); names wrap to two lines; dates drop the year when it is this one («24 sept») |
+| «Hoy» on a phone: rows squeezed the case name to «C…» beside the buttons | The text keeps 12rem and the buttons wrap below |
+| Count badges carried a «!» glyph that read as an error | Plain counts |
+| «Personas por agregar» unreadable in the narrow aside | Moved to the main column |
+| Oportunidades: a disabled «Nueva oportunidad» with «Escritura desactivada…» under it | Removed (opening a case from the browser is not a command the proxy allows) |
+| Evidence | `apps/dashboard` `npm run validate`: **618 passed** + build |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

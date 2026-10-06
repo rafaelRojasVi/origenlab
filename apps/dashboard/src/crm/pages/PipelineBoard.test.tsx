@@ -96,7 +96,7 @@ describe("Tablero", () => {
     expect(within(b).getByRole("button", { name: /^Universidad Ficticia \d+$/ })).toBeInTheDocument();
     expect(b).toHaveTextContent("Persona Ficticia");
     expect(within(b).getByTestId("board-age")).toHaveTextContent("16 d");
-    expect(b).toHaveTextContent("01239-26 · r1 · 20 sept 2026");
+    expect(b).toHaveTextContent("01239-26 · 20 sept");
     expect(within(b).getByTestId("board-status-line")).toHaveTextContent("Sin respuesta · 16 d");
     expect(within(b).getByRole("link", { name: /Correo de la cotización/ })).toHaveAttribute("href", "https://mail.example.cl/m");
     expect(b).toHaveTextContent("sin Drive");
@@ -232,6 +232,16 @@ describe("states", () => {
     expect(boardColumnOf(card({ stage: "qualifying" }), NOW)).toBe("solicitada");
     expect(boardColumnOf(card({ stage: "abandoned", closed_at: "2026-10-01T00:00:00Z" }), NOW)).toBe("perdida");
     expect(boardColumnOf(card({ open_tasks: [task] }), NOW)).toBe("pausa");
+  });
+
+  it("keeps closed cases compact, and writes the year only when it is not this one", () => {
+    const won = card({ stage: "won", closed_at: "2026-10-01T00:00:00Z" }, "2025-11-03T12:00:00Z");
+    render(<Board cards={[won]} onOpen={() => undefined} now={NOW} />);
+    const b = screen.getByTestId(`board-card-${won.opportunity_id}`);
+    expect(b).toHaveTextContent("01239-26 · 3 nov 2025");
+    expect(b).not.toHaveTextContent("Persona Ficticia");
+    expect(within(b).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(b).getByTestId("board-status-line")).toHaveTextContent("Ganada");
   });
 });
 
