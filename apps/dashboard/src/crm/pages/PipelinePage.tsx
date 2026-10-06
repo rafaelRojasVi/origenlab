@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCaseNotes, fetchPipeline } from "../crmApi";
+import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
@@ -442,7 +443,7 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
           <span className="text-warn">PDF no archivado en Drive</span>
         )}
         {rev.gmail ? (
-          <ExternalLink href={rev.gmail.url} label={`Abrir correo de r${rev.revision_no} en Gmail`}>
+          <ExternalLink href={inSharedMailbox(rev.gmail.url) ?? rev.gmail.url} label={`Abrir correo de r${rev.revision_no} en Gmail`}>
             Correo en Gmail
           </ExternalLink>
         ) : (

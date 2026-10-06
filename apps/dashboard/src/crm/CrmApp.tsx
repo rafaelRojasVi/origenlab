@@ -19,8 +19,30 @@ import { ReviewPage } from "./pages/ReviewPage";
  * The dashboard: one shell, one navigation, one sign-in. The eight CRM sections over the V2
  * durable core are the whole navigation.
  */
+const NAV_COLLAPSED_KEY = "crm.nav.collapsed";
+
+function readCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(NAV_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function CrmApp({ route }: { route: ShellRoute }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  // On a wide screen the section list can fold into a rail of icons, so the Tablero gets the room.
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((v) => {
+      try {
+        window.localStorage.setItem(NAV_COLLAPSED_KEY, v ? "0" : "1");
+      } catch {
+        /* the choice just won't be remembered */
+      }
+      return !v;
+    });
+  }, []);
   const navigate = useCallback((section: CrmSection, id?: string | null) => {
     window.location.hash = crmHash(section, id);
     window.scrollTo?.({ top: 0 });
@@ -45,10 +67,11 @@ export function CrmApp({ route }: { route: ShellRoute }) {
       >
         Saltar al contenido
       </a>
-      <TopBar onMenu={() => setMenuOpen((v) => !v)} menuOpen={menuOpen} />
+      <TopBar onMenu={() => setMenuOpen((v) => !v)} menuOpen={menuOpen} wide={route.section === "oportunidades"} />
       <MailSyncBanner refreshKey={routeKey} />
-      <div className="mx-auto flex w-full max-w-[1600px]">
-        <SideNav route={route} navigate={navigate} open={menuOpen} />
+      {/* The Tablero uses the whole screen; reading pages keep a comfortable line length. */}
+      <div className={`mx-auto flex w-full ${route.section === "oportunidades" ? "max-w-none" : "max-w-[1600px]"}`}>
+        <SideNav route={route} navigate={navigate} open={menuOpen} collapsed={collapsed} onToggle={toggleCollapsed} />
         <main id="crm-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pb-10 pt-4 focus:outline-none sm:px-6">
           <div key={routeKey} className="animate-fade-in-up">
             <Section section={route.section} id={route.id} navigate={navigate} />
@@ -125,11 +148,11 @@ function QuickLinks() {
   );
 }
 
-export function TopBar({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boolean }) {
+export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void; menuOpen: boolean; wide?: boolean }) {
   const { session, signOut, switchProfile } = useAuthSession();
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-canvas-raised/95 backdrop-blur-sm">
-      <div className="mx-auto flex h-12 max-w-[1600px] items-center gap-3 px-4 sm:px-6">
+      <div className={`mx-auto flex h-12 items-center gap-3 px-4 sm:px-6 ${wide ? "max-w-none" : "max-w-[1600px]"}`}>
         <button
           type="button"
           onClick={onMenu}
@@ -255,10 +278,15 @@ function SideNav({
   route,
   navigate,
   open,
+  collapsed,
+  onToggle,
 }: {
   route: ShellRoute;
   navigate: (s: CrmSection) => void;
   open: boolean;
+  /** Wide screens only: the rail of icons. The phone menu always shows the names. */
+  collapsed: boolean;
+  onToggle: () => void;
 }) {
   const groups = ["comercial", "archivo", "control"] as const;
   const activeCrm = route.section;
@@ -266,17 +294,36 @@ function SideNav({
     <nav
       id="crm-sidenav"
       aria-label="Secciones del panel"
-      className={`${open ? "block" : "hidden"} fixed inset-x-0 top-12 z-20 max-h-[calc(100vh-3rem)] overflow-y-auto border-b border-line bg-canvas-raised px-3 pb-3 pt-2 shadow-lg lg:sticky lg:top-12 lg:block lg:h-[calc(100vh-3rem)] lg:w-56 lg:shrink-0 lg:border-b-0 lg:border-r lg:bg-transparent lg:px-3 lg:pt-4 lg:shadow-none`}
+      className={`${open ? "block" : "hidden"} fixed inset-x-0 top-12 z-20 max-h-[calc(100vh-3rem)] overflow-y-auto border-b border-line bg-canvas-raised px-3 pb-3 pt-2 shadow-lg lg:sticky lg:top-12 lg:block lg:h-[calc(100vh-3rem)] lg:shrink-0 lg:border-b-0 lg:border-r lg:bg-transparent lg:pt-3 lg:shadow-none lg:transition-[width] lg:duration-150 ${
+        collapsed ? "lg:w-14 lg:px-2" : "lg:w-52 lg:px-3"
+      }`}
     >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-pressed={collapsed}
+        title={collapsed ? "Mostrar los nombres" : "Ocultar los nombres"}
+        className={`mb-2 hidden h-7 items-center gap-1.5 rounded-md text-[11px] text-ink-faint hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:flex ${
+          collapsed ? "w-10 justify-center" : "w-full px-2"
+        }`}
+      >
+        <svg viewBox="0 0 16 16" className={`h-3.5 w-3.5 transition-transform ${collapsed ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+          <path d="M10 3.5 5.5 8l4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className={collapsed ? "sr-only" : ""}>{collapsed ? "Expandir menú" : "Contraer menú"}</span>
+      </button>
       {groups.map((g) => (
-        <div key={g} className="mb-4">
-          <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">{CRM_GROUP_LABEL[g]}</p>
+        <div key={g} className={collapsed ? "mb-4 lg:mb-2 lg:border-t lg:border-line lg:pt-2 lg:first-of-type:border-t-0" : "mb-4"}>
+          <p className={`px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint ${collapsed ? "lg:sr-only" : ""}`}>{CRM_GROUP_LABEL[g]}</p>
           <ul className="space-y-px">
             {CRM_NAV.filter((n) => n.group === g).map((n) => (
               <li key={n.id}>
                 <NavLink
                   href={`#/crm/${n.id}`}
                   current={n.id === activeCrm}
+                  collapsed={collapsed}
+                  icon={NAV_ICON[n.id]}
+                  title={collapsed ? n.label : undefined}
                   onClick={(e) => {
                     e.preventDefault();
                     navigate(n.id);
@@ -289,24 +336,49 @@ function SideNav({
           </ul>
         </div>
       ))}
-      <p className="mt-6 px-2 text-[10px] leading-4 text-ink-faint">
+      <p className={`mt-6 px-2 text-[10px] leading-4 text-ink-faint ${collapsed ? "lg:hidden" : ""}`}>
         Cada cambio queda registrado con quién lo hizo y cuándo.
       </p>
     </nav>
   );
 }
 
+/** 16 px line icons for the sections, drawn here: the dashboard ships no icon library. */
+const ICON_PATHS: Record<CrmSection, string> = {
+  resumen: "M3 6.5h10M5.5 2.5v2M10.5 2.5v2M3.5 4.5h9a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1ZM6 10l1.5 1.5L10.5 8.5",
+  oportunidades: "M2.5 3.5h3v9h-3zM6.5 3.5h3v6h-3zM10.5 3.5h3v4h-3z",
+  organizaciones: "M3 13.5V4l5-2 5 2v9.5M2 13.5h12M6 6.5h1M9 6.5h1M6 9h1M9 9h1M7 13.5v-2h2v2",
+  personas: "M6 7.5a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5ZM2 13c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5M11 3.5a2 2 0 0 1 0 4M12 9.7c1.1.5 1.8 1.6 2 3.3",
+  proveedores: "M2 5.5h8v6H2zM10 7.5h2.5l1.5 2v2h-4M4.5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2ZM11.5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z",
+  drive: "M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z",
+  marketing: "M2.5 6.5v3h2l5 3v-9l-5 3zM11.5 6a2.5 2.5 0 0 1 0 4",
+  revision: "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM10.5 10.5 14 14M5 7l1.5 1.5L9.5 5.5",
+};
+
+const NAV_ICON: Record<CrmSection, ReactNode> = Object.fromEntries(
+  Object.entries(ICON_PATHS).map(([id, d]) => [
+    id,
+    <svg key={id} viewBox="0 0 16 16" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>,
+  ]),
+) as Record<CrmSection, ReactNode>;
+
 function NavLink({
   href,
   current,
   onClick,
   title,
+  icon = null,
+  collapsed = false,
   children,
 }: {
   href: string;
   current: boolean;
   onClick?: (e: MouseEvent<HTMLAnchorElement>) => void;
   title?: string;
+  icon?: ReactNode;
+  collapsed?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -315,14 +387,14 @@ function NavLink({
       title={title}
       aria-current={current ? "page" : undefined}
       onClick={onClick}
-      className={`flex h-8 items-center rounded-md px-2 text-[13px] transition-colors ${
+      className={`flex h-8 items-center gap-2 rounded-md px-2 text-[13px] transition-colors ${collapsed ? "lg:w-10 lg:justify-center lg:px-0" : ""} ${
         current
           ? "bg-canvas-raised font-semibold text-ink shadow-[0_1px_2px_rgb(24_24_27/0.08)] ring-1 ring-line lg:bg-canvas-raised"
           : "text-ink-muted hover:bg-canvas-sunken hover:text-ink"
       }`}
     >
-      <span aria-hidden="true" className={`mr-2 h-3.5 w-0.5 shrink-0 rounded-full ${current ? "bg-brand-600" : "bg-transparent"}`} />
-      {children}
+      <span className={current ? "text-brand-700" : ""}>{icon}</span>
+      <span className={`truncate ${collapsed ? "lg:sr-only" : ""}`}>{children}</span>
     </a>
   );
 }

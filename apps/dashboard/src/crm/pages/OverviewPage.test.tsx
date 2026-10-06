@@ -242,7 +242,11 @@ describe("Resumen", () => {
     const first = within(followUps).getByTestId("today-rhythm-primero");
     expect(first).toHaveTextContent("Primer seguimiento 1");
     expect(first).toHaveTextContent("11días");
-    expect(within(first).getByRole("link", { name: /Escribir/ })).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/gm1");
+    // The thread, opened as the shared mailbox — not as whichever account the browser lists first.
+    expect(within(first).getByRole("link", { name: /Responder en Gmail/ })).toHaveAttribute(
+      "href",
+      "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/gm1",
+    );
     fireEvent.click(within(first).getByRole("button", { name: "Laboratorio Andino" }));
     expect(navigate).toHaveBeenCalledWith("oportunidades", "11111111-1111-4111-8111-111111111111");
     // Valle is not chased here: it is decided in bulk first.
@@ -276,7 +280,7 @@ describe("Resumen", () => {
     expect(task).toHaveTextContent("Atrasada 1 día");
     const replies = screen.getByText("Te toca responder").closest("section") as HTMLElement;
     expect(within(replies).getByText("Universidad del Valle")).toBeInTheDocument();
-    expect(within(replies).getByRole("link", { name: /Abrir respuesta/ })).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/in1");
+    expect(within(replies).getByRole("link", { name: /Abrir respuesta/ })).toHaveAttribute("href", "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/in1");
     // A case with an open task is planned: it is not also a follow-up.
     expect(screen.getByTestId("today-followups")).toHaveTextContent("Ningún seguimiento pendiente.");
   });

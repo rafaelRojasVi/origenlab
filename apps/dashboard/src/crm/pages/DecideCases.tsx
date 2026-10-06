@@ -11,6 +11,7 @@
  * rest go on.
  */
 import { useMemo, useRef, useState } from "react";
+import { inSharedMailbox } from "../gmailLinks";
 import {
   caseRefusalText,
   createTask,
@@ -279,7 +280,7 @@ export function DecideCases({
                   </td>
                   <td className="px-2 py-2">
                     {conv.url ? (
-                      <a href={conv.url} target="_blank" rel="noopener noreferrer" className="text-brand-700 hover:underline">
+                      <a href={inSharedMailbox(conv.url) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-brand-700 hover:underline">
                         {conv.text}
                       </a>
                     ) : (

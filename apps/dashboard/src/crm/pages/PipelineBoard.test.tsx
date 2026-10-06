@@ -243,5 +243,14 @@ describe("states", () => {
     expect(within(b).queryByRole("link")).not.toBeInTheDocument();
     expect(within(b).getByTestId("board-status-line")).toHaveTextContent("Ganada");
   });
-});
 
+  it("shows what each quote is for, open or closed", () => {
+    const open = card();
+    (open.latest_revision as RevisionCard).gmail = { source_record_id: "s", message_id: "m", thread_id: "t", url: "https://mail.example.cl/m", subject: "Cotización pipetas pasteur" };
+    const lost = card({ stage: "abandoned", closed_at: "2026-10-01T00:00:00Z", close_reason: "Sin respuesta" });
+    (lost.latest_revision as RevisionCard).document = { sha256: "b".repeat(64), filename: "CN01239-Persona Ficticia - Universidad Ficticia-UP400St.pdf" };
+    render(<Board cards={[open, lost]} onOpen={() => undefined} now={NOW} />);
+    expect(within(screen.getByTestId(`board-card-${open.opportunity_id}`)).getByTestId("board-product")).toHaveTextContent("Pipetas pasteur");
+    expect(within(screen.getByTestId(`board-card-${lost.opportunity_id}`)).getByTestId("board-product")).toHaveTextContent("UP400St");
+  });
+});

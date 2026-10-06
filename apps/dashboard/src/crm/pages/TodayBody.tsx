@@ -2,12 +2,13 @@
  * The body of «Hoy» (`OverviewPage`): the lists `today.ts` computes from the pipeline, each row
  * with the one action it needs.
  *
- * - **Tareas de hoy** — «Hecho» completes the task; «+1 semana» writes the same task a week later
- *   and cancels this one.
- * - **Te toca responder** — the client's email, and «Pasar a Conversación» when the case is still
- *   «Enviada».
- * - **Seguimientos** (3 · 14 · 30 days) — the case's email to answer on; at 30 days, «Cerrar sin
- *   respuesta» opens the «Perdida» form with that reason chosen.
+ * - **Te toca responder** — first: a client is waiting. The client's email, and «Pasar a
+ *   Conversación» when the case is still «Enviada».
+ * - **Seguimientos** — one list, a traffic light by the 3 · 14 · 30-day rhythm (green, yellow,
+ *   red), each row with what the quote is for and the email to write on. A row a «Seguimiento …»
+ *   task put there carries «Hecho» (completes it) and «+1 semana» (writes it a week later and
+ *   cancels this one); a red row offers «Cerrar sin respuesta», the «Perdida» form with that reason.
+ * - **Otras tareas** — the due tasks that are not follow-ups («Retomar: …»), same two buttons.
  * - Aside: the historical cases still to decide, the institutions to confirm, the people the quote
  *   emails name, and the blocked cases.
  *
@@ -27,7 +28,9 @@ import {
   newCaseCommandKey,
   useMayRunCaseCommands,
 } from "../caseCommands";
-import { contactLine, displayName } from "../caseDisplay";
+import { contactLine, displayName, quoteProduct } from "../caseDisplay";
+import { composeInSharedMailbox, inSharedMailbox } from "../gmailLinks";
+import { isMaskedAddress } from "../redaction";
 import type { CrmSection } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
 import {
@@ -104,17 +107,17 @@ export function TodayBody({
   return (
     <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="flex flex-wrap gap-2" data-testid="today-stats">
-        <Stat label="tareas para hoy" value={tasks.length} tone="text-ink" />
         <Stat label="te toca responder" value={replies.length} tone="text-warn" />
         <Stat label="seguimientos" value={followUps.length} tone="text-brand-700" />
+        <Stat label="otras tareas" value={tasks.length} tone="text-ink" />
         <Stat label="por decidir" value={historical} tone="text-info" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
-          <TasksPanel tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} />
-          <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onClose={setClosing} />
+          <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
+          <TasksPanel tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <PeoplePanel mayAuthor={mayAuthor} navigate={navigate} />
         </div>
         <aside className="min-w-0 space-y-4">
@@ -194,10 +197,10 @@ function TasksPanel({
   now: Date;
 }) {
   return (
-    <Panel title="Tareas de hoy" aside={<Badge tone={tasks.length ? "warn" : "good"} glyph={false}>{tasks.length}</Badge>} bodyClassName="divide-y divide-line">
+    <Panel title="Otras tareas de hoy" aside={<Badge tone={tasks.length ? "warn" : "good"} glyph={false}>{tasks.length}</Badge>} bodyClassName="divide-y divide-line">
       {tasks.length === 0 ? (
-        <p className="px-4 py-4 text-xs text-ink-muted" data-testid="today-no-tasks">
-          Nada vence hoy. Las tareas nacen de «Decidir casos», de «En pausa hasta…» y de los seguimientos.
+        <p className="px-4 py-3 text-xs text-ink-muted" data-testid="today-no-tasks">
+          Nada más vence hoy. Los seguimientos programados están arriba, en «Seguimientos».
         </p>
       ) : (
         tasks.map((t, i) => <TaskRow key={t.task.task_id} due={t} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={now} />)
@@ -222,6 +225,37 @@ function TaskRow({
   now: Date;
 }) {
   const { card, task, overdueDays } = due;
+  const actions = useTaskActions(due, now, onChanged);
+
+  return (
+    <div
+      className="crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5"
+      style={{ "--i": Math.min(index, 10) } as CSSProperties}
+      data-testid={`today-task-${task.task_id}`}
+    >
+      <div className="min-w-[12rem] flex-1">
+        <p className="text-[13px] text-ink">{task.title}</p>
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-ink-muted">
+          <span className={overdueDays > 0 ? "font-medium text-bad" : "font-medium text-warn"}>
+            {dueText(overdueDays)}
+          </span>
+          <span aria-hidden="true">·</span>
+          <CaseLink card={card} navigate={navigate} />
+        </p>
+      </div>
+      {mayDecide ? (
+        <div className="flex shrink-0 gap-2">
+          <TaskButtons actions={actions} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+/** «Hecho» and «+1 semana» for a due task — shared by «Seguimientos» and «Otras tareas». */
+function useTaskActions(due: DueTask, now: Date, onChanged: () => void) {
+  const { card, task } = due;
   const [busy, setBusy] = useState<null | "done" | "snooze">(null);
   const keys = useRef({ done: newCaseCommandKey(), create: newCaseCommandKey(), cancel: newCaseCommandKey() });
 
@@ -259,34 +293,25 @@ function TaskRow({
     }
   }
 
+  return { busy, done, snooze };
+}
+
+function TaskButtons({ actions }: { actions: ReturnType<typeof useTaskActions> }) {
+  const { busy, done, snooze } = actions;
   return (
-    <div
-      className="crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5"
-      style={{ "--i": Math.min(index, 10) } as CSSProperties}
-      data-testid={`today-task-${task.task_id}`}
-    >
-      <div className="min-w-[12rem] flex-1">
-        <p className="text-[13px] text-ink">{task.title}</p>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-ink-muted">
-          <span className={overdueDays > 0 ? "font-medium text-bad" : "font-medium text-warn"}>
-            {overdueDays === 0 ? "Vence hoy" : overdueDays === 1 ? "Atrasada 1 día" : `Atrasada ${overdueDays} días`}
-          </span>
-          <span aria-hidden="true">·</span>
-          <CaseLink card={card} navigate={navigate} />
-        </p>
-      </div>
-      {mayDecide ? (
-        <div className="flex shrink-0 gap-2">
-          <Button onClick={() => void snooze()} busy={busy === "snooze"} busyLabel="Posponiendo…" disabled={busy !== null}>
-            +1 semana
-          </Button>
-          <Button variant="primary" onClick={() => void done()} busy={busy === "done"} busyLabel="Guardando…" disabled={busy !== null}>
-            Hecho
-          </Button>
-        </div>
-      ) : null}
-    </div>
+    <>
+      <Button onClick={() => void snooze()} busy={busy === "snooze"} busyLabel="Posponiendo…" disabled={busy !== null}>
+        +1 semana
+      </Button>
+      <Button variant="primary" onClick={() => void done()} busy={busy === "done"} busyLabel="Guardando…" disabled={busy !== null}>
+        Hecho
+      </Button>
+    </>
   );
+}
+
+function dueText(overdueDays: number): string {
+  return overdueDays === 0 ? "Vence hoy" : overdueDays === 1 ? "Atrasada 1 día" : `Atrasada ${overdueDays} días`;
 }
 
 /* ───────────────────────────────────────────────────────────── replies ── */
@@ -363,7 +388,7 @@ function ReplyRow({
       <div className="flex shrink-0 gap-2">
         {reply.url ? (
           <a
-            href={reply.url}
+            href={inSharedMailbox(reply.url) ?? undefined}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex h-8 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong"
@@ -383,23 +408,41 @@ function ReplyRow({
 
 /* ─────────────────────────────────────────────────────────── follow-ups ── */
 
+const LIGHT = {
+  good: { bar: "border-l-good", chip: "bg-good-bg text-good", head: "bg-good-bg/50 text-good", dot: "bg-good" },
+  warn: { bar: "border-l-warn", chip: "bg-warn-bg text-warn", head: "bg-warn-bg/50 text-warn", dot: "bg-warn" },
+  bad: { bar: "border-l-bad", chip: "bg-bad-bg text-bad", head: "bg-bad-bg/50 text-bad", dot: "bg-bad" },
+} as const;
+
 function FollowUpsPanel({
   followUps,
   navigate,
   mayDecide,
+  onChanged,
   onClose,
+  now,
 }: {
   followUps: FollowUp[];
   navigate: Navigate;
   mayDecide: boolean;
+  onChanged: () => void;
   onClose: (c: OpportunityCardData) => void;
+  now: Date;
 }) {
   return (
     <section className="crm-rise overflow-hidden rounded-xl border border-line bg-canvas-raised" data-testid="today-followups">
-      <header className="flex flex-wrap items-baseline gap-x-2 border-b border-line px-4 py-2.5">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-2.5">
         <h2 className="text-[14px] font-semibold text-ink">Seguimientos</h2>
         <Badge tone={followUps.length ? "info" : "good"} glyph={false}>{followUps.length}</Badge>
-        <span className="ml-auto text-[11px] text-ink-faint">Día 3 · 14 · 30. Un correo tuyo en el hilo reinicia el conteo.</span>
+        <span className="ml-auto flex flex-wrap items-center gap-x-3 text-[11px] text-ink-faint">
+          {RHYTHM.map((r) => (
+            <span key={r.key} className="inline-flex items-center gap-1">
+              <span aria-hidden="true" className={`h-2 w-2 rounded-full ${LIGHT[r.tone].dot}`} />
+              día {r.from}+
+            </span>
+          ))}
+          <span>· un correo tuyo reinicia el conteo</span>
+        </span>
       </header>
       {followUps.length === 0 ? (
         <p className="px-4 py-4 text-xs text-ink-muted">Ningún seguimiento pendiente.</p>
@@ -409,48 +452,24 @@ function FollowUpsPanel({
           if (rows.length === 0) return null;
           return (
             <div key={r.key} data-testid={`today-rhythm-${r.key}`}>
-              <p className="flex items-center gap-2 bg-canvas-sunken/60 px-4 py-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+              <p className={`flex items-center gap-2 px-4 py-1 text-[10px] font-semibold uppercase tracking-wider ${LIGHT[r.tone].head}`}>
+                <span aria-hidden="true" className={`h-2 w-2 rounded-full ${LIGHT[r.tone].dot}`} />
                 {r.label} <span className="tabular-nums">{rows.length}</span>
-                <span className="font-normal normal-case tracking-normal">· {r.hint}</span>
+                <span className="font-normal normal-case tracking-normal text-ink-muted">· {r.hint}</span>
               </p>
               <ul className="divide-y divide-line">
-                {rows.map((f) => (
-                  <li key={f.card.opportunity_id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5">
-                    <span
-                      className={`flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg leading-none ${
-                        f.rhythm === "cerrar" ? "bg-bad-bg text-bad" : f.rhythm === "segundo" ? "bg-warn-bg text-warn" : "bg-info-bg text-info"
-                      }`}
-                      title={f.byEmail ? "Días desde tu último correo" : "Días desde la cotización"}
-                    >
-                      <span className="text-sm font-bold tabular-nums">{f.days}</span>
-                      <span className="text-[8px] font-semibold uppercase">días</span>
-                    </span>
-                    <div className="min-w-[12rem] flex-1">
-                      <CaseLink card={f.card} navigate={navigate} />
-                      <p className="truncate text-[11px] text-ink-muted">
-                        {quoteOf(f.card)}
-                        {f.byEmail ? " · desde tu último correo" : ""}
-                        {contactLine(f.card) ? ` · ${contactLine(f.card)}` : ""}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 gap-2">
-                      {f.card.latest_revision?.gmail?.url ? (
-                        <a
-                          href={f.card.latest_revision.gmail.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex h-8 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong"
-                        >
-                          Escribir ↗
-                        </a>
-                      ) : null}
-                      {f.rhythm === "cerrar" && mayDecide ? (
-                        <Button variant="danger" onClick={() => onClose(f.card)}>
-                          Cerrar sin respuesta
-                        </Button>
-                      ) : null}
-                    </div>
-                  </li>
+                {rows.map((f, i) => (
+                  <FollowUpRow
+                    key={f.card.opportunity_id}
+                    followUp={f}
+                    tone={r.tone}
+                    index={i}
+                    navigate={navigate}
+                    mayDecide={mayDecide}
+                    onChanged={onChanged}
+                    onClose={onClose}
+                    now={now}
+                  />
                 ))}
               </ul>
             </div>
@@ -459,6 +478,92 @@ function FollowUpsPanel({
       )}
     </section>
   );
+}
+
+function FollowUpRow({
+  followUp,
+  tone,
+  index,
+  navigate,
+  mayDecide,
+  onChanged,
+  onClose,
+  now,
+}: {
+  followUp: FollowUp;
+  tone: keyof typeof LIGHT;
+  index: number;
+  navigate: Navigate;
+  mayDecide: boolean;
+  onChanged: () => void;
+  onClose: (c: OpportunityCardData) => void;
+  now: Date;
+}) {
+  const f = followUp;
+  const product = quoteProduct(f.card);
+  const contact = contactLine(f.card);
+  // Reply on the case's own thread: the email stays in it, so the system sees the follow-up and
+  // restarts the count. With no thread to reply on, a new email from the shared mailbox.
+  const thread = inSharedMailbox(f.card.last_contact?.outbound?.url ?? f.card.latest_revision?.gmail?.url);
+  const quote = f.card.latest_revision?.quote_number ?? f.card.quote_numbers[0] ?? "";
+  const to = f.card.contact?.address && !isMaskedAddress(f.card.contact.address) ? f.card.contact.address : null;
+  const write = thread ?? composeInSharedMailbox(to, `Seguimiento cotización N° ${quote}`.trim());
+  return (
+    <li
+      className={`crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 border-l-4 px-4 py-2.5 ${LIGHT[tone].bar}`}
+      style={{ "--i": Math.min(index, 10) } as CSSProperties}
+      data-testid={f.task ? `today-task-${f.task.task.task_id}` : `today-followup-${f.card.opportunity_id}`}
+    >
+      <span
+        className={`flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg leading-none ${LIGHT[tone].chip}`}
+        title={f.byEmail ? "Días desde tu último correo" : "Días desde la cotización"}
+      >
+        <span className="text-sm font-bold tabular-nums">{f.days}</span>
+        <span className="text-[8px] font-semibold uppercase">días</span>
+      </span>
+      <div className="min-w-[12rem] flex-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+          <CaseLink card={f.card} navigate={navigate} />
+          {product ? (
+            <span className="max-w-[16rem] truncate rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] leading-4 text-brand-700" data-testid="today-product">
+              {product}
+            </span>
+          ) : null}
+        </div>
+        <p className="truncate text-[11px] text-ink-muted">
+          {f.task ? <span className={f.task.overdueDays > 0 ? "font-medium text-bad" : "font-medium text-warn"}>Programado · {dueText(f.task.overdueDays)} · </span> : null}
+          {quoteOf(f.card)}
+          {f.byEmail ? " · desde tu último correo" : ""}
+          {contact ? ` · ${contact}` : ""}
+        </p>
+      </div>
+      <div className="flex shrink-0 flex-wrap gap-2">
+        <a
+          href={write}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={thread ? "Abre el hilo de la cotización en Gmail: responde ahí y el seguimiento se registra solo" : "Abre un correo nuevo en Gmail"}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-brand-600/40 bg-brand-50 px-3 text-xs font-semibold text-brand-700 hover:border-brand-600"
+        >
+          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <path d="M2.5 4h11v8h-11zM2.5 4.5 8 8.5l5.5-4" strokeLinejoin="round" />
+          </svg>
+          {thread ? "Responder en Gmail ↗" : "Nuevo correo ↗"}
+        </a>
+        {f.task && mayDecide ? <TaskRowButtons due={f.task} now={now} onChanged={onChanged} /> : null}
+        {f.rhythm === "cerrar" && mayDecide ? (
+          <Button variant="danger" onClick={() => onClose(f.card)}>
+            Cerrar sin respuesta
+          </Button>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function TaskRowButtons({ due, now, onChanged }: { due: DueTask; now: Date; onChanged: () => void }) {
+  const actions = useTaskActions(due, now, onChanged);
+  return <TaskButtons actions={actions} />;
 }
 
 /* ─────────────────────────────────────────────────────────────── aside ── */
