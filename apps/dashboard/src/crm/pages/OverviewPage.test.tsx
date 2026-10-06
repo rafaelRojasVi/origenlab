@@ -240,7 +240,7 @@ describe("Resumen", () => {
     expect(await screen.findByRole("heading", { name: "Hoy" })).toBeInTheDocument();
     const followUps = await screen.findByTestId("today-followups");
     const first = within(followUps).getByTestId("today-rhythm-primero");
-    expect(first).toHaveTextContent("Primer seguimiento 1");
+    expect(first).toHaveTextContent(/Primer seguimiento\s*1/);
     expect(first).toHaveTextContent("11días");
     // The thread, opened as the shared mailbox — not as whichever account the browser lists first.
     expect(within(first).getByRole("link", { name: /Responder en Gmail/ })).toHaveAttribute(

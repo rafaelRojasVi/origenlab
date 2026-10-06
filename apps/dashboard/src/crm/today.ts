@@ -6,9 +6,10 @@
  * - **Seguimientos**: one list, coloured like a traffic light by the 3 · 14 · 30-day rhythm counted
  *   from OrigenLab's last touch (the quote, or a later email it sent): green from day 3 (first
  *   follow-up), yellow from day 14 (second), red from day 30 (close?). A case whose «Seguimiento …»
- *   task is due today is in it too, whatever its age, carrying that task; a case with any other
- *   open task is already planned and is left out, and so is a case whose stage is only the
- *   historical import's trace — those are decided in bulk («Decidir casos»).
+ *   task is due today carries that task — from day 3, so a quote sent today is not chased today —
+ *   and the task counts as done once OrigenLab writes on the thread on or after its day (no
+ *   «Hecho» needed). A case with any other open task is already planned and is left out, and so
+ *   is an undecided case whose stage is only the historical import's trace («Decidir casos»).
  * - **Otras tareas**: the open `crm.task` rows due by the end of today that are not follow-ups
  *   («Retomar: …», a call), overdue first.
  * - **Instituciones por confirmar**: the machine-proposed institutions of open cases.
@@ -103,28 +104,39 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
   for (const card of cards) {
     if (!isOpenCase(card)) continue;
     const open = card.open_tasks ?? [];
-    // The earliest follow-up task due today, if any: the case was scheduled for one.
+    const email = card.last_contact?.outbound?.at ?? null;
+    // A follow-up task is done once OrigenLab writes on the case's thread on or after its day:
+    // nobody has to press «Hecho» — the email the sync captures is the proof.
+    const written = (t: OpenTask) => email !== null && Date.parse(email) >= startOfLocalDay(Date.parse(t.due_at));
+    const pending = open.filter((t) => !(isFollowUpTask(t) && written(t)));
+    // A case «Decidir casos» scheduled is decided, even if its stage still reads historical.
+    const decided = open.some(isFollowUpTask);
     let task: DueTask | null = null;
-    for (const t of [...open].sort((a, b) => a.due_at.localeCompare(b.due_at))) {
+    for (const t of [...pending].sort((a, b) => a.due_at.localeCompare(b.due_at))) {
       const overdueDays = isFollowUpTask(t) ? dueToday(t, now) : null;
       if (overdueDays !== null) {
         task = { card, task: t, overdueDays };
         break;
       }
     }
-    if (!task && (open.length > 0 || stageBasis(card) === "historical_import")) continue;
+    if (!task && (pending.length > 0 || (!decided && stageBasis(card) === "historical_import"))) continue;
     const sent = card.latest_revision?.sent_at ?? null;
     if (!sent && !task) continue;
     if (!task && conversation(card, now).kind === "replied") continue;
-    const email = card.last_contact?.outbound?.at ?? null;
     const byEmail = email !== null && (!sent || Date.parse(email) > Date.parse(sent));
     const touch = byEmail ? (email as string) : sent;
     const days = touch ? Math.max(0, Math.floor((now.getTime() - Date.parse(touch)) / DAY_MS)) : 0;
-    if (!task && days < RHYTHM[0].from) continue;
+    // Day 3 first, task or not: a quote that went out today is not chased today.
+    if (days < RHYTHM[0].from) continue;
     const rhythm = days >= RHYTHM[2].from ? "cerrar" : days >= RHYTHM[1].from ? "segundo" : "primero";
     out.push({ card, days, rhythm, byEmail, task });
   }
   return out.sort((a, b) => b.days - a.days);
+}
+
+function startOfLocalDay(t: number): number {
+  const d = new Date(t);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
 export interface OrgToConfirm {
