@@ -90,6 +90,13 @@ export interface CaseMailDocumentsResponse {
   messages: CaseMailMessage[];
 }
 
+/** One email on a case's thread, as «último contacto» shows it. */
+export interface MailTouch {
+  at: string;
+  subject: string | null;
+  url: string | null;
+}
+
 export interface QuoteCard {
   quote_id: string;
   quote_number: string;
@@ -134,6 +141,11 @@ export interface OpportunityCardData {
   revision_count: number;
   latest_revision: RevisionCard | null;
   drive_folder: { source: "archive_ledger"; folder_id: string; url: string } | null;
+  /**
+   * «Último contacto»: the newest email OrigenLab sent and the newest it received on the case's
+   * Gmail threads. Optional so an older API (and old test fixtures) still parse.
+   */
+  last_contact?: { outbound: MailTouch | null; inbound: MailTouch | null };
   attention: Attention[];
   status: "blocked" | "pending" | "ok";
   next_action: { text: string; source: "suggested"; due_at: string | null };

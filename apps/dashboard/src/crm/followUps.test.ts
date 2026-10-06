@@ -102,3 +102,40 @@ describe("groupFollowUps", () => {
     expect(out.thisWeek[0].days).toBe(0);
   });
 });
+
+describe("último contacto", () => {
+  const touch = (at: string) => ({ at, subject: "Re: cotización", url: `https://mail.example.invalid/${at}` });
+
+  it("ages a case from a follow-up email sent after the quote", () => {
+    const followedUp = card("2001", "2026-02-20T15:00:00Z", {
+      last_contact: { outbound: touch("2026-03-27T15:00:00Z"), inbound: null },
+    });
+    const out = groupFollowUps([followedUp], NOW);
+    expect(out.older).toEqual([]);
+    expect(out.thisWeek.map((i) => [i.card.opportunity_id, i.days, i.lastTouch, i.lastTouchAt, i.replied])).toEqual([
+      ["2001", 4, "email", "2026-03-27T15:00:00Z", false],
+    ]);
+  });
+
+  it("ignores an email older than the quote", () => {
+    const c = card("2002", "2026-03-20T15:00:00Z", { last_contact: { outbound: touch("2026-03-01T15:00:00Z"), inbound: null } });
+    const [item] = groupFollowUps([c], NOW).followUp;
+    expect([item.lastTouch, item.days]).toEqual(["quote", 11]);
+  });
+
+  it("marks a client who wrote after the last touch, and puts them first", () => {
+    const waiting = card("2003", "2026-03-10T15:00:00Z");
+    const answered = card("2004", "2026-03-20T15:00:00Z", {
+      last_contact: { outbound: null, inbound: touch("2026-03-25T15:00:00Z") },
+    });
+    const answeredBefore = card("2005", "2026-03-15T15:00:00Z", {
+      last_contact: { outbound: touch("2026-03-22T15:00:00Z"), inbound: touch("2026-03-18T15:00:00Z") },
+    });
+    const out = groupFollowUps([waiting, answeredBefore, answered], NOW);
+    expect(out.followUp.map((i) => [i.card.opportunity_id, i.replied])).toEqual([
+      ["2004", true],
+      ["2003", false],
+      ["2005", false],
+    ]);
+  });
+});

@@ -215,14 +215,14 @@ const GROUPS: { key: GroupKey; title: string; hint: string; tone: Tone; empty: s
   {
     key: "follow_up",
     title: "Hacer seguimiento",
-    hint: `Enviadas hace ${FOLLOW_UP_AFTER_DAYS + 1} a ${STALE_AFTER_DAYS} días`,
+    hint: `Último contacto hace ${FOLLOW_UP_AFTER_DAYS + 1} a ${STALE_AFTER_DAYS} días`,
     tone: "warn",
     empty: `Nada pendiente entre ${FOLLOW_UP_AFTER_DAYS + 1} y ${STALE_AFTER_DAYS} días.`,
   },
   {
     key: "this_week",
     title: "Esta semana",
-    hint: `Enviadas hace ${FOLLOW_UP_AFTER_DAYS} días o menos`,
+    hint: `Último contacto hace ${FOLLOW_UP_AFTER_DAYS} días o menos`,
     tone: "neutral",
     empty: `Ninguna cotización enviada en los últimos ${FOLLOW_UP_AFTER_DAYS} días.`,
   },
@@ -332,7 +332,13 @@ function FollowUpGroup({ group, items, navigate }: { group: (typeof GROUPS)[numb
 }
 
 function FollowUpRow({ item, index, navigate }: { item: FollowUpItem; index: number; navigate: Navigate }) {
-  const { card, days } = item;
+  const { card, days, replied } = item;
+  const inbound = card.last_contact?.inbound ?? null;
+  const outbound = card.last_contact?.outbound ?? null;
+  const touch =
+    item.lastTouch === "email"
+      ? `Último correo enviado el ${fmtDate(item.lastTouchAt)} (cotización enviada el ${fmtDate(item.sentAt)})`
+      : `Cotización enviada el ${fmtDate(item.sentAt)}; sin correos de seguimiento después`;
   const latest = card.latest_revision;
   const number = latest?.quote_number ?? card.quote_numbers[0] ?? "";
   const institution = card.organization?.name ?? "Sin institución";
@@ -350,13 +356,22 @@ function FollowUpRow({ item, index, navigate }: { item: FollowUpItem; index: num
       >
         <span className="block truncate text-[13px] font-medium text-ink">{institution}</span>
         {contact ? <span className="block truncate text-[11px] text-ink-muted">{contact}</span> : null}
+        {replied && inbound ? (
+          <span className="mt-0.5 inline-flex" data-testid="followup-replied">
+            <Badge tone="info" title={`Respuesta del ${fmtDate(inbound.at)}${inbound.subject ? ` · ${inbound.subject}` : ""}`}>
+              Respondió · te toca
+            </Badge>
+          </span>
+        ) : null}
       </button>
       {/* On a phone, days and links share the line under the institution; columns from `sm` up. */}
       <span
         className="col-start-2 row-start-2 text-[11px] tabular-nums text-ink-muted sm:col-start-3 sm:row-start-1 sm:text-right sm:text-xs"
-        title={`Enviada el ${fmtDate(item.sentAt)}`}
+        title={touch}
+        data-testid="followup-days"
       >
         {daysAgo(days)}
+        {item.lastTouch === "email" ? <span className="block text-[10px] text-ink-faint">desde tu correo</span> : null}
       </span>
       <span className="col-start-3 row-start-2 flex items-center justify-end gap-3 text-[12px] sm:col-start-4 sm:row-start-1">
         {latest?.drive ? (
@@ -367,6 +382,15 @@ function FollowUpRow({ item, index, navigate }: { item: FollowUpItem; index: num
         {latest?.gmail ? (
           <ExternalLink href={latest.gmail.url} label={`Correo de ${number} en Gmail`}>
             Correo
+          </ExternalLink>
+        ) : null}
+        {replied && inbound?.url ? (
+          <ExternalLink href={inbound.url} label={`Respuesta del cliente sobre ${number} en Gmail`}>
+            Respuesta
+          </ExternalLink>
+        ) : item.lastTouch === "email" && outbound?.url ? (
+          <ExternalLink href={outbound.url} label={`Último correo sobre ${number} en Gmail`}>
+            Seguimiento
           </ExternalLink>
         ) : null}
       </span>

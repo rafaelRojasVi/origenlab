@@ -19,6 +19,7 @@ from origenlab_api.v2.crm_workspace import (
     DriveLedgerError,
     compose_drive_archive,
     compose_pipeline,
+    last_contacts,
     load_drive_ledgers,
 )
 from origenlab_api.v2.crm_workspace_routes import workspace_router
@@ -227,6 +228,45 @@ def test_card_carries_the_versions_the_drawer_actions_compare_against() -> None:
         "confirmation": "machine_proposed",
         "version": 2,
     }
+
+
+def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None:
+    """«Último contacto»: the newest email OrigenLab sent and the newest it received."""
+    rows = [
+        # Ours, by the capture's direction; then a later one, by the sender's domain.
+        {"opportunity_id": "o1", "sent_at": "2026-09-01T10:00:00-03:00", "subject": "Cotización",
+         "gmail_message_id": "m1", "sender": "Ventas <contacto@origenlab.cl>", "direction_hint": None,
+         "comms_direction": "outbound"},
+        {"opportunity_id": "o1", "sent_at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
+         "gmail_message_id": "m3", "sender": "contacto@origenlab.cl", "direction_hint": None,
+         "comms_direction": None},
+        # The client's reply, staged with no capture row.
+        {"opportunity_id": "o1", "sent_at": "2026-09-10T09:00:00Z", "subject": "Re: Cotización",
+         "gmail_message_id": "m2", "sender": "Persona <persona@ejemplo.invalid>", "direction_hint": None,
+         "comms_direction": None},
+        # The same message reached through a second thread of the case: counted once.
+        {"opportunity_id": "o1", "sent_at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
+         "gmail_message_id": "m3", "sender": "contacto@origenlab.cl", "direction_hint": None,
+         "comms_direction": None},
+        # A staged record of ours carries `direction_hint`; a date that is not a date is skipped.
+        {"opportunity_id": "o2", "sent_at": "2026-08-01T12:00:00+00:00", "subject": None,
+         "gmail_message_id": "m4", "sender": None, "direction_hint": "sent", "comms_direction": None},
+        {"opportunity_id": "o2", "sent_at": "ayer", "subject": None, "gmail_message_id": "m5",
+         "sender": "persona@ejemplo.invalid", "direction_hint": None, "comms_direction": None},
+    ]
+    out = last_contacts(rows)
+    assert out["o1"] == {
+        "outbound": {"at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
+                     "url": "https://mail.google.com/mail/u/0/#all/m3"},
+        "inbound": {"at": "2026-09-10T09:00:00+00:00", "subject": "Re: Cotización",
+                    "url": "https://mail.google.com/mail/u/0/#all/m2"},
+    }
+    assert out["o2"]["outbound"]["at"] == "2026-08-01T12:00:00+00:00"
+    assert out["o2"]["inbound"] is None
+
+    cards = compose_pipeline([_opp("o1"), _opp("o3")], [], [], [], {}, [], {}, out)
+    assert cards[0]["last_contact"] == out["o1"]
+    assert cards[1]["last_contact"] == {"outbound": None, "inbound": None}
 
 
 def test_two_active_revisions_block_the_case() -> None:

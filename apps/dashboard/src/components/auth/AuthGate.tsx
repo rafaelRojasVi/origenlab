@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import {
   clearProfile,
   devPrincipalSignIn,
@@ -51,8 +51,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   // A 401 from any CRM request means the session or the selected profile no longer holds
   // (signed out elsewhere, role/PIN/status changed). Re-ask the API rather than show stale data.
+  // A layout effect, not a passive one: the listener must exist in the same commit that shows the
+  // dashboard, or a 401 from a request the first render starts can arrive before it and be lost.
   const signedIn = session.kind === "signed_in";
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!signedIn || typeof window === "undefined") return undefined;
     const onRefused = () => void refresh();
     window.addEventListener(SESSION_REFUSED_EVENT, onRefused);

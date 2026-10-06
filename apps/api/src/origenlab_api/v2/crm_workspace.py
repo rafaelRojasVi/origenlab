@@ -45,6 +45,7 @@ from origenlab_api.v2.campaign_history import (
     read_totals,
     replies_state,
 )
+from origenlab_api.v2.mail_rules import mail_direction
 from origenlab_api.v2.marketing_audience import address_ref, addresses_in
 from origenlab_api.v2.person_suggestions import safe_person_suggestions
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
@@ -233,6 +234,40 @@ _SQL_PIPELINE_SOURCES = """
      where sr.id in (select origin_source_record_id from crm.quote_revision
                       where origin_source_record_id is not null)
 """
+# Every captured or staged Gmail message on a thread tied to a case — the thread of an email
+# linked to it (an evidence link a person or rule R1/R2 made) or of the email a quote revision
+# was recorded from — with what «último contacto» needs: when, which way, the subject and the
+# message id. Direction is decided in Python by `mail_rules.mail_direction`, the same rule the
+# email → cases planner uses; `sent_at` stays text and is parsed there, so one malformed date
+# drops one message instead of failing the read.
+_SQL_PIPELINE_CONTACT = """
+    with case_threads as (
+        select oe.opportunity_id, sr.payload->>'gmail_thread_id' as thread_id
+          from crm.opportunity_evidence oe
+          join evidence.source_record sr on sr.id = oe.source_record_id
+         where oe.unlinked_at is null and sr.kind = 'gmail_message'
+           and sr.payload->>'gmail_thread_id' is not null
+        union
+        select q.opportunity_id, sr.payload->>'gmail_thread_id'
+          from crm.quote_revision qr
+          join crm.quote q on q.id = qr.quote_id
+          join evidence.source_record sr on sr.id = qr.origin_source_record_id
+         where sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' is not null
+    )
+    select ct.opportunity_id::text as opportunity_id,
+           sr.payload->>'sent_at' as sent_at,
+           sr.payload->>'subject_raw' as subject,
+           sr.payload->>'gmail_message_id' as gmail_message_id,
+           sr.payload->>'sender' as sender,
+           sr.payload->>'direction_hint' as direction_hint,
+           (select cm.direction from comms.message cm
+             where cm.provider_message_id = sr.payload->>'gmail_message_id'
+             order by cm.created_at limit 1) as comms_direction
+      from case_threads ct
+      join evidence.source_record sr
+        on sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = ct.thread_id
+     where not sr.is_quarantined and sr.review_status <> 'rejected'
+"""
 _SQL_PIPELINE_PARTICIPANTS = """
     select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary
       from crm.opportunity_participant p
@@ -406,6 +441,39 @@ def _first_address(recipients: str | None) -> tuple[str | None, int]:
     return (f"{name} <{addr}>" if name else addr), len(pairs)
 
 
+def _aware(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per case, the newest email OrigenLab sent and the newest one it received on its threads.
+
+    Pure, so it is tested without a database. A message without a usable `sent_at` is skipped;
+    one message reached through two of the case's threads counts once.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    best: dict[tuple[str, str], datetime] = {}
+    for row in rows:
+        at = _aware(row.get("sent_at"))
+        if at is None:
+            continue
+        direction = mail_direction(row.get("sender"), row.get("direction_hint"), row.get("comms_direction"))
+        key = (row["opportunity_id"], direction)
+        if key in best and best[key] >= at:
+            continue
+        best[key] = at
+        out.setdefault(row["opportunity_id"], {"outbound": None, "inbound": None})[direction] = {
+            "at": at.isoformat(),
+            "subject": row.get("subject"),
+            "url": gmail_url(row.get("gmail_message_id")),
+        }
+    return out
+
+
 def _sort_key_sent(rev: Mapping[str, Any]) -> tuple[str, int]:
     return (str(rev.get("sent_at") or ""), int(rev.get("revision_no") or 0))
 
@@ -418,6 +486,7 @@ def compose_pipeline(
     sources: Mapping[str, Mapping[str, Any]],
     participants: list[Mapping[str, Any]],
     drive: Mapping[str, DriveLink],
+    contacts: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
@@ -578,6 +647,9 @@ def compose_pipeline(
                     {k: v for k, v in latest.items() if not k.startswith("_")} if latest else None
                 ),
                 "drive_folder": drive_folder,
+                # «Último contacto»: the newest email each way on the case's Gmail threads
+                # (`last_contacts`); null for a case with no captured thread.
+                "last_contact": (contacts or {}).get(oid) or {"outbound": None, "inbound": None},
                 "attention": [
                     {"code": c, "label": ATTENTION_LABELS_ES[c], "blocking": c in BLOCKING_CODES}
                     for c in ordered
@@ -786,13 +858,14 @@ class CrmWorkspaceRepository:
                 setup.execute("set transaction read only")
                 setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
 
-            # 6 data queries in 1 RTT via psycopg pipeline mode.
+            # 7 data queries in 1 RTT via psycopg pipeline mode.
             cur_opps = conn.cursor()
             cur_case_orgs = conn.cursor()
             cur_quotes = conn.cursor()
             cur_revisions = conn.cursor()
             cur_sources = conn.cursor()
             cur_participants = conn.cursor()
+            cur_contact = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -800,6 +873,7 @@ class CrmWorkspaceRepository:
                 cur_revisions.execute(_SQL_PIPELINE_REVISIONS)
                 cur_sources.execute(_SQL_PIPELINE_SOURCES)
                 cur_participants.execute(_SQL_PIPELINE_PARTICIPANTS)
+                cur_contact.execute(_SQL_PIPELINE_CONTACT)
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -816,8 +890,11 @@ class CrmWorkspaceRepository:
                 ]
                 sources[row["source_record_id"]] = row
             participants = self._rows(cur_participants)
+            contacts = last_contacts(self._rows(cur_contact))
             conn.rollback()
-        cards = compose_pipeline(opps, case_orgs, quotes, revisions, sources, participants, self._drive)
+        cards = compose_pipeline(
+            opps, case_orgs, quotes, revisions, sources, participants, self._drive, contacts
+        )
         return {
             "items": cards,
             "total": len(cards),

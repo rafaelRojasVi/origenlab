@@ -248,6 +248,35 @@ describe("Resumen", () => {
     expect(within(screen.getByTestId("followups-older")).getByText("Universidad del Valle")).toBeInTheDocument();
   });
 
+  it("ages a case from a follow-up email and says when the client answered", async () => {
+    const [andino, valle] = PIPELINE.items;
+    const touch = (at: string, id: string) => ({ at, subject: "Re: cotización", url: `https://mail.google.com/mail/u/0/#all/${id}` });
+    respond({
+      "/v2/workspace/fx": FX,
+      "/v2/workspace/pipeline": {
+        ...PIPELINE,
+        items: [
+          // Quote 20 Mar, our follow-up 29 Mar: «esta semana», from the email.
+          { ...andino, last_contact: { outbound: touch("2026-03-29T12:00:00Z", "out1"), inbound: null } },
+          // Quote 10 Feb, the client answered 25 Mar: still «más de un mes», but our move.
+          { ...valle, last_contact: { outbound: null, inbound: touch("2026-03-25T12:00:00Z", "in1") } },
+        ],
+      },
+    });
+    render(<OverviewPage navigate={() => undefined} />);
+    const thisWeek = await screen.findByTestId("followups-this_week");
+    expect(within(thisWeek).getByText("Laboratorio Andino")).toBeInTheDocument();
+    const days = within(thisWeek).getByTestId("followup-days");
+    expect(days).toHaveTextContent("hace 2 díasdesde tu correo");
+    expect(days.getAttribute("title")).toMatch(/^Último correo enviado el .+ \(cotización enviada el .+\)$/);
+    expect(within(thisWeek).getByRole("link", { name: /Último correo/ })).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/out1");
+    expect(within(thisWeek).queryByTestId("followup-replied")).not.toBeInTheDocument();
+
+    const older = screen.getByTestId("followups-older");
+    expect(within(older).getByTestId("followup-replied")).toHaveTextContent("Respondió · te toca");
+    expect(within(older).getByRole("link", { name: /Respuesta del cliente/ })).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/in1");
+  });
+
   it("says plainly when nothing was sent this week and how far the data reaches", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
