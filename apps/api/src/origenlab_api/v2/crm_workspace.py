@@ -29,6 +29,7 @@ from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from email.utils import getaddresses
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -397,8 +398,12 @@ def gmail_url(message_id: str | None) -> str | None:
 def _first_address(recipients: str | None) -> tuple[str | None, int]:
     if not recipients:
         return None, 0
-    parts = [p.strip() for p in recipients.replace(";", ",").split(",") if p.strip()]
-    return (parts[0] if parts else None), len(parts)
+    # `getaddresses`, not a split on commas: «"Ruiz, Ana" <ana@…>» is one address, not two.
+    pairs = [(name, addr) for name, addr in getaddresses([recipients.replace(";", ",")]) if addr]
+    if not pairs:
+        return None, 0
+    name, addr = pairs[0]
+    return (f"{name} <{addr}>" if name else addr), len(pairs)
 
 
 def _sort_key_sent(rev: Mapping[str, Any]) -> tuple[str, int]:
