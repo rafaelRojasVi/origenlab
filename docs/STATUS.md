@@ -2017,6 +2017,21 @@ Second phase of the redesign in §2.7.62. No migration: `crm.task`, its grants a
 | «Decidir casos» | From the notice «N de M casos muestran «Enviada · histórico»» (sales/admin): every historical case with a proposed decision — the client wrote after the quote → Conversación; 45+ days without an answer → Perdida · Sin respuesta; otherwise a follow-up task due now. Each row can be changed (En pausa with date and reason, Ganada against the newest sent revision) or left out; «Aplicar N decisiones» runs the existing commands one case at a time and reports each. A case with an open task no longer counts as historical (`stageBasis`) |
 | Evidence | `apps/dashboard` `npm run validate`: **619 passed** + build |
 
+### 2.7.65 CRM redesign phase 3: «Hoy» replaces Resumen, 2026-10-06 — built, not deployed
+
+`apps/dashboard` only: no API, proxy or schema change. The first page (route `resumen`, menu «Hoy»).
+
+| | |
+|---|---|
+| Top | Next quote number and the day's dólar / euro / UF with the converter, side by side (unchanged components) |
+| Tareas de hoy | Open `crm.task` rows due by tonight, overdue first; «Hecho» = `complete-task`; «+1 semana» = the same task a week later (`create-task`) then `cancel-task` of this one |
+| Te toca responder | Open cases whose client wrote after OrigenLab's last email; «Abrir respuesta» (Gmail) and, for a case still «Enviada», «Pasar a Conversación» (`advance-case-stage` → `negotiating`, note «El cliente respondió el …») |
+| Seguimientos | The 3 · 14 · 30-day rhythm counted from OrigenLab's last touch (quote or later email): primer seguimiento (3–13), segundo (14–29), «¿Cerrar?» (30+) with «Cerrar sin respuesta» (the «Perdida» form with «Sin respuesta» chosen). Cases with an open task, a reply, or a stage that is only the historical import's trace are left out |
+| Aside | Cases still to decide (link to «Decidir casos»), machine-proposed institutions of open cases with «Confirmar» (`confirm-organization`), «Personas por agregar» (the existing person suggestions, first five), blocked cases, link to Revisión for the email actions |
+| Removed | `crm/followUps.ts` and its test: the old «Hacer seguimiento / Esta semana / Más de un mes» grouping is replaced by `crm/today.ts` |
+| Evidence | `apps/dashboard` `npm run validate`: **617 passed** + build — new: today lists (tasks due, rhythm, replies, institutions), «Hecho», «+1 semana», «Pasar a Conversación», «Cerrar sin respuesta», viewer sees no write button |
+| Not done | automatic Enviada → Conversación from the email rules (still one click here); the labdelivery mailbox; «Ordenar», interests and Drive on the case (phases 4–5) |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

@@ -84,12 +84,15 @@ export function CaseMoveForm({
   onCancel,
   onDone,
   now,
+  initialReason = null,
 }: {
   card: OpportunityCardData;
   target: MoveTarget;
   onCancel: () => void;
   onDone: (o: MoveOutcome, refetch: boolean) => void;
   now?: Date;
+  /** A reason chip chosen up front («Cerrar sin respuesta» from «Hoy»). */
+  initialReason?: string | null;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const from = boardColumnOf(card, at);
@@ -104,7 +107,7 @@ export function CaseMoveForm({
         : (column?.target ?? null);
   const steps = stageTarget ? (stagePath(card.stage, stageTarget) ?? []) : [];
 
-  const [reason, setReason] = useState<string | null>(null);
+  const [reason, setReason] = useState<string | null>(initialReason);
   const [detail, setDetail] = useState("");
   const [day, setDay] = useState(isoDay(at, 14));
   const [note, setNote] = useState(
