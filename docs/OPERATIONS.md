@@ -2216,7 +2216,22 @@ Sources are text files the operator extracted by model key
 
 ### 14.5 Hosted loading
 
-None of the importers or the enrichment tool can target a hosted database. Their targets are
-loopback-only by design. Loading catalog data into the hosted project waits for the authorised
-Supavisor route of PR #623; until then the clean room is the only populated target, and the
-hosted project receives the schema only after the owner applies the two catalog migrations.
+The importers in this repository still refuse a hosted target: every DSN must name a literal
+loopback address, and `apply` writes only into a disposable `origenlab_test_<8 hex>` database or,
+with `--allow-cleanroom-production`, the clean room (`apps/api/scripts/catalog/_common.py`). The
+2026-10-06 hosted load was run by the owner's private wrapper (`load.sh`, outside the repository);
+how it reached the hosted project is not recorded here. The steps it followed are this section's:
+`plan`, read its counts, `apply` with `--plan-sha256`, then `verify` with the same plan and hash.
+
+Loaded on 2026-10-06: `price_lists`, `supplier_documents`, `quote_history`, each verified with no
+mismatch ([`STATUS.md`](STATUS.md) §2.7.61). `cost_parameters` has no plan; the five seeded
+values stand until an operator sets more (§14.3). Each load records one
+`source_record.migration_manifest_recorded` event with its importer, plan hash and counts; to
+see what a database already holds:
+
+```sql
+select recorded_at, payload->>'importer', payload->>'plan_sha256'
+  from crm.domain_event
+ where event_type = 'source_record.migration_manifest_recorded'
+ order by recorded_at;
+```
