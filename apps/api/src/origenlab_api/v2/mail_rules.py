@@ -280,6 +280,21 @@ def domain_of(address: str) -> str:
     return address.rpartition("@")[2].strip().lower()
 
 
+def mail_direction(sender: str | None, direction_hint: Any, comms_direction: str | None) -> str:
+    """Whether a captured email was sent by OrigenLab (`outbound`) or to it (`inbound`).
+
+    The capture's `comms.message.direction` when there is one; else the staged record's
+    `direction_hint` (only ever set on mail OrigenLab sent); else the sender's domain. One rule,
+    used by the email → cases planner and by the case cards' «último contacto».
+    """
+    if comms_direction in ("outbound", "inbound"):
+        return comms_direction
+    if direction_hint:
+        return "outbound"
+    found = addresses([sender])
+    return "outbound" if found and domain_of(found[0]) in OWN_DOMAINS else "inbound"
+
+
 def _is_pdf(doc: MailDocument) -> bool:
     return (doc.filename or "").lower().endswith(".pdf") and bool(doc.sha256)
 
@@ -723,5 +738,5 @@ __all__ = [
     "OWN_DOMAINS", "PROPOSAL", "PURCHASE_ORDER_NUMBER", "PURCHASE_ORDER_PHRASES", "QUOTE_REQUEST_WORDS",
     "RULE_IDS", "SYSTEM_LABEL", "CaseQuote", "CaseState", "MailDocument", "MailEvidence", "Organization",
     "PlannedAction", "QuoteRevision", "Snapshot", "addresses", "canonical_quote_number", "domain_of", "fold",
-    "gmail_quote_key", "plan", "quote_key", "santiago_year",
+    "gmail_quote_key", "mail_direction", "plan", "quote_key", "santiago_year",
 ]

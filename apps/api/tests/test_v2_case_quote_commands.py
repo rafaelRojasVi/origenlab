@@ -355,3 +355,40 @@ def test_resolve_replays_with_the_same_key(db, world) -> None:
     again = _resolve(db, world, case_id, quote_id, 2, version=version, key=key)
     assert again["replayed"] is True and again["superseded_revision_nos"] == first["superseded_revision_nos"]
     assert _events(db) == events
+
+
+# ─────────────────────────────────────────────────────────────── «Último contacto» ──
+
+
+def test_last_contact_reads_the_newest_email_each_way_on_the_case_threads(db, world) -> None:
+    """A follow-up sent on a thread tied to the case is its last contact, linked or not."""
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    thread = f"thread-{world['tag']}"
+    with _owner(db) as conn, conn.cursor() as cur:
+        cur.execute(
+            "update evidence.source_record set payload = payload || jsonb_build_object("
+            "'gmail_thread_id', %s::text, 'gmail_message_id', %s::text, 'sender', 'contacto@origenlab.cl') "
+            "where id = %s",
+            (thread, f"m0-{world['tag']}", world["record_id"]),
+        )
+        for mid, sent, sender in (
+            (f"m1-{world['tag']}", "2026-09-28T10:00:00-03:00", "Persona <persona@ejemplo.invalid>"),
+            (f"m2-{world['tag']}", "2026-10-02T10:00:00-03:00", "Ventas <contacto@origenlab.cl>"),
+        ):
+            cur.execute(
+                "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) "
+                "values ('gmail_message', %s, %s::jsonb, %s)",
+                (f"pytest-lc:{mid}", json.dumps({"gmail_thread_id": thread, "gmail_message_id": mid,
+                                                   "sent_at": sent, "sender": sender,
+                                                   "subject_raw": f"Re: {world['tag']}"}),
+                 f"gmail://msg/{mid}"),
+            )
+    case_id = _case_at(db, world, stop_at="lead")  # linked to the thread through its origin email
+    pipeline = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db)).pipeline()
+    card = next(c for c in pipeline["items"] if c["opportunity_id"] == case_id)
+    assert card["last_contact"]["outbound"]["at"] == "2026-10-02T10:00:00-03:00"
+    assert card["last_contact"]["outbound"]["url"].endswith(f"m2-{world['tag']}")
+    assert card["last_contact"]["inbound"]["at"] == "2026-09-28T10:00:00-03:00"

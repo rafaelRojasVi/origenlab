@@ -1930,6 +1930,16 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Not built | a per-column total in CLP: the pipeline read carries no amounts, and historical revisions hold no parsed totals |
 | Evidence | `apps/dashboard` `npm run validate`: **589 passed** (49 files) + build; new `PipelineBoard.test.tsx` (7) |
 
+### 2.7.58 «Último contacto»: Resumen ages a case from the last email OrigenLab sent, 2026-10-06 — built, not deployed
+
+| | |
+|---|---|
+| What | A follow-up sent from contacto@ on a case's Gmail thread now resets that case's clock in Resumen, with nobody recording it. A case is aged from the newer of its latest quote sent and the newest **outbound** email on its threads; a client who wrote after that is marked «Respondió · te toca» and listed first in its group. Read-side only: no schema, no write, no rule change |
+| API | `GET /v2/workspace/pipeline` cards gain `last_contact` {`outbound`, `inbound`}: each the newest `gmail_message` evidence (`at`, `subject`, Gmail `url`) on a thread tied to the case — the thread of an email linked to it (`crm.opportunity_evidence`, by a person or rules R1/R2) or of the email a quote revision was recorded from. Quarantined and rejected records are skipped. Direction is `mail_rules.mail_direction`, now shared with the email → cases planner (capture direction, else `direction_hint`, else the sender's domain). One more query in the pipeline's single pipelined round trip |
+| Dashboard | `followUps.ts` ages from the last touch and flags replies; each Resumen row says «desde tu correo» when the email reset it, links «Seguimiento» (our last email) or «Respuesta» (theirs), and its tooltip names both dates. Also: `AuthGate` attaches its 401 listener in a layout effect, so a refusal right after the dashboard mounts is never lost (the `ProfileSelector` mid-session test failed under load because of exactly that gap) |
+| Limits | only threads already tied to a case count: an email on a brand-new thread (a follow-up written as a fresh message) is not seen until it is linked. Inbound/outbound only — no body is read |
+| Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **4142 passed**, 120 skipped (the usual V1 Alembic-head and TLS skips; no V2 DSN skip) — new: `last_contacts` unit test, an end-to-end pipeline test on PostgreSQL 17; the pipeline statement budget is 9 (2 setup + 7 data, still one round trip); `apps/dashboard` `npm run validate`: **593 passed** (49 files) + build, the full suite twice more under load after the `AuthGate` fix |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

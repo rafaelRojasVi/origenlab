@@ -58,7 +58,6 @@ from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.mail_rules import (
     AUTO,
-    OWN_DOMAINS,
     SYSTEM_LABEL,
     CaseQuote,
     CaseState,
@@ -68,8 +67,7 @@ from origenlab_api.v2.mail_rules import (
     PlannedAction,
     QuoteRevision,
     Snapshot,
-    addresses,
-    domain_of,
+    mail_direction,
     plan,
 )
 from origenlab_api.v2.quote_import_commands import (
@@ -170,12 +168,7 @@ select distinct response_body ->> 'evidence_id'
 
 
 def _direction(payload: dict[str, Any], comms_direction: str | None) -> str:
-    if comms_direction in ("outbound", "inbound"):
-        return comms_direction
-    if payload.get("direction_hint"):
-        return "outbound"
-    sender = addresses([payload.get("sender")])
-    return "outbound" if sender and domain_of(sender[0]) in OWN_DOMAINS else "inbound"
+    return mail_direction(payload.get("sender"), payload.get("direction_hint"), comms_direction)
 
 
 def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
