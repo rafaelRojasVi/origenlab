@@ -327,17 +327,23 @@ def assert_runtime_login(cur: Any) -> None:
         raise Refused(f"--target-dsn: {RUNTIME_ROLE} is a member of {', '.join(memberships)}")
 
 
-def read_operator(admin_dsn: str, email: str, mode: str) -> OperatorIdentity:
-    """The operator recorded as actor and creator: registered, active, and allowed to write the catalog."""
+def read_operator(admin_dsn: str, email: str | None, mode: str, operator_id: str | None = None) -> OperatorIdentity:
+    """The operator recorded as actor and creator: registered, active, and allowed to write the catalog.
+
+    Found by email, or by id for a shared-login profile operator, which has no email."""
     with _connect(admin_dsn, options="-c default_transaction_read_only=on") as conn:
         cur = conn.cursor()
         _assert_reached(cur, admin_dsn, mode)
         cur.execute("set local role origenlab_owner")
-        row = cur.execute("select id::text, email_norm, display_name, role, status from platform.operator "
-                          "where email_norm = %s", (email.strip().lower(),)).fetchone()
+        if operator_id:
+            row = cur.execute("select id::text, email_norm, display_name, role, status from platform.operator "
+                              "where id = %s::uuid", (operator_id,)).fetchone()
+        else:
+            row = cur.execute("select id::text, email_norm, display_name, role, status from platform.operator "
+                              "where email_norm = %s", ((email or "").strip().lower(),)).fetchone()
         conn.rollback()
     if row is None:
-        raise Refused("--operator-email names no registered operator")
+        raise Refused("--operator-email / --operator-id names no registered operator")
     identity = OperatorIdentity(operator_id=row[0], email_norm=row[1], display_name=row[2], role=row[3],
                                 status=row[4])
     if identity.status != "active" or identity.role not in WRITING_ROLES:
@@ -410,7 +416,12 @@ def cmd_apply(args: argparse.Namespace, importer: str, print_keys: bool) -> int:
     mode = check_targets(args, admin=True, writes=True)
     out = prepare_out(args.out)
     plan, plan_sha = _load(args, importer)
-    operator = read_operator(args.admin_dsn, args.operator_email, mode)
+    if bool(args.operator_email) == bool(args.operator_id):
+        raise Refused("give exactly one of --operator-email and --operator-id")
+    if args.operator_id and not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                                             args.operator_id):
+        raise Refused("--operator-id is not a UUID")
+    operator = read_operator(args.admin_dsn, args.operator_email, mode, args.operator_id)
 
     # Everything the apply would refuse, found before the manifest is written.
     with _connect(args.target_dsn, options="-c default_transaction_read_only=on") as conn:
@@ -619,7 +630,8 @@ def main(argv: list[str] | None, *, importer: str, description: str,
 
     p = sub.add_parser("apply", help="load the plan in one transaction as origenlab_api")
     common(p, admin=True)
-    p.add_argument("--operator-email", required=True, help="the operator recorded as actor and creator")
+    p.add_argument("--operator-email", help="the operator recorded as actor and creator")
+    p.add_argument("--operator-id", help="the operator's UUID instead (a shared-login profile has no email)")
     p.add_argument("--allow-cleanroom-production", action="store_true",
                    help=f"write into {CLEANROOM_DB} (loopback) instead of a disposable database")
 
