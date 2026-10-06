@@ -55,9 +55,9 @@ select is(
     where n.nspname = 'procrastinate'
       and not coalesce(p.proconfig @> array['search_path=procrastinate, pg_catalog'], false)),
   0, 'every queue function pins search_path = procrastinate, pg_catalog');
-select ok(
-  (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'procrastinate') >= 20,
-  'the vendored functions are present');
+select is(
+  (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'procrastinate'),
+  18, 'the eighteen vendored Procrastinate 3.10 functions are present');
 
 -- ── RLS ─────────────────────────────────────────────────────────────────────────────────────
 select is(
@@ -122,6 +122,9 @@ select is(
   '42501: permission denied for schema procrastinate', 'origenlab_api cannot read the queue');
 
 -- ── the triage assertion kinds ──────────────────────────────────────────────────────────────
+-- pgTAP is reachable as the owner only through this transaction-scoped USAGE grant (rolled back
+-- with everything else), as in 091_catalog_1a.sql.
+grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
 insert into evidence.source_record (id, kind, dedupe_key, payload, review_status)
 values ('78000000-0000-4000-8000-000000000001', 'gmail_message', 'gmail_message:pgtap-078', '{}'::jsonb, 'pending');
