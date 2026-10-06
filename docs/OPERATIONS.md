@@ -1993,6 +1993,66 @@ links it. Nothing is renamed, moved or deleted in Drive, and no CRM row is writt
 | `attachment_not_in_eml`, `eml_hash_mismatch` | the stored email does not hold that PDF: leave it, file by hand |
 | `drive_http_*`, `storage_*` | transient: the next run retries |
 
+### 8.11 Mail triage (`origenlab-mail-triage`)
+
+The Render **Background Worker** `origenlab-mail-triage` runs `origenlab-worker triage-worker`: a
+Procrastinate worker on queue `triage`, whose jobs live in the `procrastinate` schema of the same
+database ([`ARCHITECTURE.md`](ARCHITECTURE.md) §8, D2). It never touches Gmail and never writes
+`crm.*`. Every minute its periodic sweep finds captured messages of the last 14 days without a
+reading of the current version and defers one `triage_message` job each. A job:
+
+1. reads the message's `.eml` from the `mail` bucket (read only);
+2. runs the cheap rules (`triage_rules.py`): our own mail, bounces, automatic replies, invitations,
+   bulk and no-reply mail stop here; purchase orders, lost signals, CN follow-ups, quote requests
+   and any other person go on;
+3. matches product candidates in `catalog.product` (exact model number, then the Spanish
+   full-text index);
+4. only for the classes that go on, and only when the model stage is enabled, asks Claude for the
+   products, the lead status, the urgency and a Spanish summary (`triage_model.py`);
+5. records one `evidence.assertion` of kind `message_triage` (`value_norm = triage:v1`) and one
+   `product_mention` per product, all `unresolved`, all `on conflict do nothing`.
+
+**First-time setup (owner, once):**
+
+1. Apply `20261006180000_slice4_procrastinate_triage_queue.sql` and
+   `20261006180100_slice4_triage_assertion_kinds.sql` to the hosted project through the reviewed
+   migration path (§4). The worker refuses to start without the queue's grants and policies
+   (`worker_grant_missing`, `worker_policy_missing`).
+2. Render → New → Background Worker from this repository, or sync the `render.yaml` blueprint
+   (service `origenlab-mail-triage`, plan starter). Copy the database and Storage values from the
+   cron `origenlab-gmail-sync` (`ORIGENLAB_WORKER_DATABASE_*`, `ORIGENLAB_WORKER_STORAGE_S3_*`).
+   No Gmail or Drive credential belongs on this service.
+3. Without the model first: `ORIGENLAB_WORKER_TRIAGE_ENABLED=true`, leave
+   `ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED` unset. Every reading then says `model_state: off`. Check
+   the log lines (`"event": "triage_sweep"`, `"event": "triage_message"`) and the classes.
+4. The model: `ORIGENLAB_WORKER_ANTHROPIC_API_KEY` (a key for this worker alone) and
+   `ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED=true`. `ORIGENLAB_WORKER_TRIAGE_MODEL` overrides the
+   default `claude-opus-5-5` (for example `claude-haiku-4-5`, cheaper and without effort or the
+   refusal fallback).
+
+**Backfill or smoke test without the queue:** with the same environment on a laptop,
+`uv run origenlab-worker triage-once --dry-run` counts what is pending;
+`triage-once --since-days 60 --limit 500` triages it in one pass and prints the counts by class
+and by model state.
+
+**Pause:** `ORIGENLAB_WORKER_TRIAGE_ENABLED=false` — the worker idles and logs `paused` hourly
+(Render restarts a worker that exits). Model only: `ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED=false`.
+Stop everything: Render → the worker → Suspend. Waiting jobs stay in `procrastinate_jobs`; deleting
+them loses nothing, because the next sweep re-enqueues whatever has no reading.
+
+**Re-triage after a rule change:** bump `TRIAGE_VERSION` in `triage_rules.py`. New readings are
+stored beside the old ones (`triage:v2`), never over them.
+
+| Log value | Meaning / action |
+|---|---|
+| `model_state: ran` | the model read the message |
+| `model_state: off` / `not_needed` | the model stage is disabled / the rules settled it |
+| `model_state: model_refused`, `truncated`, `not_json`, `closed_value_unknown`, `summary_missing` | the answer was unusable; recorded, not retried |
+| `model_state: api_error_4xx` | a permanent API refusal (bad request, key revoked); recorded, not retried — check the key |
+| a job failing with `ModelUnavailable` | network, 429 or 5xx: retried 5 times over about 17 minutes, then re-enqueued by the sweep |
+| `outcome: storage_error` | the `.eml` could not be read; nothing written, the next sweep retries |
+| `worker_*` refusal at start | the session is not exactly `origenlab_worker` with the queue and triage grants: fix the role, never widen it |
+
 ## 9. Emergency shutdown
 
 In order, fastest first:
