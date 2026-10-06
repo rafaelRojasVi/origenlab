@@ -1,6 +1,7 @@
 /**
  * The case drawer's «Acciones»: change stage, mark won, register a follow-up, confirm the
- * institution. Every write goes through its owning client (`caseCommands.ts` for the two case
+ * institution, choose the current revision of a quote, register a quote already sent and a new
+ * revision of one. Every write goes through its owning client (`caseCommands.ts` for the four case
  * commands, `crmAuthoringApi.ts` for the institution and the note) and is followed by a refetch
  * of the pipeline, so stage, version and notes on screen are what the API recorded.
  *
@@ -8,7 +9,8 @@
  * (`sales`/`admin`); otherwise each action stays a `DisabledAction` with its reason. The API
  * remains the authority: a refusal is shown in Spanish, never swallowed.
  */
-import { useRef, useState, type FormEvent } from "react";
+import { useCallback, useRef, useState, type FormEvent } from "react";
+import { fetchCaseMailDocuments } from "../crmApi";
 import { confirmOrganizationRecord } from "../authoring/crmAuthoringApi";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import {
@@ -19,24 +21,30 @@ import {
   isStaleRefusal,
   markCaseWon,
   mayBeWonFrom,
+  mayCarryAQuote,
   newCaseCommandKey,
   nextStages,
+  recordCaseQuotation,
+  resolveCurrentRevision,
+  undeterminedQuotes,
   useMayRunCaseCommands,
   winnableRevisions,
   WonFlowError,
+  type UndeterminedQuote,
   type WonStep,
 } from "../caseCommands";
 import type { OpportunityCardData } from "../crmTypes";
+import { useResource } from "../useResource";
 import { crmHash } from "../crmRoute";
 import { STAGE_LABEL } from "../stage";
-import { DisabledAction, FormField, SelectInput, TextareaInput, WRITE_DISABLED_REASON, fmtDate } from "../ui";
+import { DisabledAction, FormField, SelectInput, TextInput, TextareaInput, WRITE_DISABLED_REASON, fmtDate } from "../ui";
 
 const PRIMARY =
   "h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50";
 const SECONDARY =
   "h-7 rounded-md border border-line bg-canvas-raised px-2.5 text-xs font-medium text-ink hover:bg-canvas-sunken disabled:cursor-not-allowed disabled:opacity-50";
 
-type Mode = null | "stage" | "won";
+type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision";
 
 interface Outcome {
   tone: "good" | "bad" | "warn";
@@ -63,6 +71,7 @@ export function CaseActions({
   const hasVersion = typeof card.version === "number";
   const stages = nextStages(card.stage);
   const revisions = winnableRevisions(card);
+  const undetermined = undeterminedQuotes(card);
 
   const decideReason = !mayDecide
     ? WRITE_DISABLED_REASON
@@ -79,6 +88,16 @@ export function CaseActions({
         ? "No hay una revisión enviada y vigente"
         : null);
 
+  const quoteReason =
+    decideReason ?? (!mayCarryAQuote(card.stage) ? "Se registra en un caso en «Cotizando» o «Negociando»" : null);
+  const revisionReason =
+    quoteReason ?? (revisions.length === 0 ? "No hay una revisión enviada y vigente que reemplazar" : null);
+
+  function toggle(next: Exclude<Mode, null>) {
+    setOutcome(null);
+    setMode(mode === next ? null : next);
+  }
+
   /** Show what happened; close the form unless it was refused; refetch when anything moved. */
   function finished(next: Outcome, refetch: boolean) {
     setOutcome(next);
@@ -94,7 +113,7 @@ export function CaseActions({
             Cambiar etapa
           </DisabledAction>
         ) : (
-          <button type="button" className={SECONDARY} aria-expanded={mode === "stage"} onClick={() => { setOutcome(null); setMode(mode === "stage" ? null : "stage"); }}>
+          <button type="button" className={SECONDARY} aria-expanded={mode === "stage"} onClick={() => toggle("stage")}>
             Cambiar etapa
           </button>
         )}
@@ -103,7 +122,7 @@ export function CaseActions({
             Marcar ganada
           </DisabledAction>
         ) : (
-          <button type="button" className={SECONDARY} aria-expanded={mode === "won"} onClick={() => { setOutcome(null); setMode(mode === "won" ? null : "won"); }}>
+          <button type="button" className={SECONDARY} aria-expanded={mode === "won"} onClick={() => toggle("won")}>
             Marcar ganada
           </button>
         )}
@@ -116,10 +135,45 @@ export function CaseActions({
             Registrar seguimiento
           </DisabledAction>
         )}
-        <DisabledAction id="drawer-revision" reason={WRITE_DISABLED_REASON}>
-          Nueva revisión
-        </DisabledAction>
+        {quoteReason ? (
+          <DisabledAction id="drawer-quotation" reason={quoteReason}>
+            Registrar cotización
+          </DisabledAction>
+        ) : (
+          <button type="button" className={SECONDARY} aria-expanded={mode === "quotation"} onClick={() => toggle("quotation")}>
+            Registrar cotización
+          </button>
+        )}
+        {revisionReason ? (
+          <DisabledAction id="drawer-revision" reason={revisionReason}>
+            Nueva revisión
+          </DisabledAction>
+        ) : (
+          <button type="button" className={SECONDARY} aria-expanded={mode === "revision"} onClick={() => toggle("revision")}>
+            Nueva revisión
+          </button>
+        )}
       </div>
+
+      {undetermined.length > 0 ? (
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-md border border-warn/40 bg-warn-bg/40 px-3 py-2 text-xs"
+          data-testid="case-undetermined-revision"
+        >
+          <span className="text-ink-muted">
+            Hay más de una revisión vigente de {undetermined.map((q) => q.quote_number).join(", ")}: elige cuál es la vigente.
+          </span>
+          {decideReason ? (
+            <DisabledAction id="drawer-resolve" reason={decideReason}>
+              Elegir revisión vigente
+            </DisabledAction>
+          ) : (
+            <button type="button" className={PRIMARY} aria-expanded={mode === "resolve"} onClick={() => toggle("resolve")}>
+              Elegir revisión vigente
+            </button>
+          )}
+        </div>
+      ) : null}
 
       {card.organization?.confirmation === "machine_proposed" ? (
         <ConfirmInstitution card={card} mayAuthor={mayAuthor} onDone={finished} />
@@ -130,6 +184,18 @@ export function CaseActions({
       ) : null}
       {mode === "won" && hasVersion ? (
         <WonForm card={card} revisions={revisions} onCancel={() => setMode(null)} onDone={finished} />
+      ) : null}
+      {mode === "resolve" && hasVersion && undetermined.length > 0 ? (
+        <ResolveForm card={card} quotes={undetermined} onCancel={() => setMode(null)} onDone={finished} />
+      ) : null}
+      {(mode === "quotation" || mode === "revision") && hasVersion ? (
+        <QuotationForm
+          key={mode}
+          card={card}
+          replaceable={mode === "revision" ? revisions : null}
+          onCancel={() => setMode(null)}
+          onDone={finished}
+        />
       ) : null}
 
       {outcome ? (
@@ -195,7 +261,7 @@ function StageForm({
       onDone(
         {
           tone: "good",
-          lines: [receiptLine({ label: `Etapa → ${STAGE_LABEL[receipt.stage] ?? receipt.stage}`, receipt }, 1, 1)],
+          lines: [receiptLine({ label: `Etapa → ${STAGE_LABEL[receipt.stage ?? stage] ?? receipt.stage ?? stage}`, receipt }, 1, 1)],
         },
         true,
       );
@@ -322,6 +388,268 @@ function WonForm({
         </button>
         <button type="submit" className={PRIMARY} disabled={!ready}>
           {busy ? "Registrando…" : "Marcar ganada"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function revisionLabel(r: { quote_number: string; revision_no: number; sent_at: string | null; document?: { filename: string | null } | null }) {
+  const sent = r.sent_at ? ` · enviada ${fmtDate(r.sent_at)}` : "";
+  const file = r.document?.filename ? ` · ${r.document.filename}` : "";
+  return `${r.quote_number} r${r.revision_no}${sent}${file}`;
+}
+
+function ResolveForm({
+  card,
+  quotes,
+  onCancel,
+  onDone,
+}: {
+  card: OpportunityCardData;
+  quotes: UndeterminedQuote[];
+  onCancel: () => void;
+  onDone: (o: Outcome, refetch: boolean) => void;
+}) {
+  const [quoteId, setQuoteId] = useState(quotes[0].quote_id);
+  const quote = quotes.find((q) => q.quote_id === quoteId) ?? quotes[0];
+  const [revisionNo, setRevisionNo] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const keyRef = useRef(newCaseCommandKey());
+  const chosen = quote.revisions.find((r) => String(r.revision_no) === revisionNo) ?? null;
+  const ready = chosen !== null && note.trim() !== "" && !busy;
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!chosen || !ready) return;
+    setBusy(true);
+    try {
+      const receipt = await resolveCurrentRevision(
+        {
+          opportunity_id: card.opportunity_id,
+          opportunity_version: card.version as number,
+          quote_id: quote.quote_id,
+          revision_no: chosen.revision_no,
+          note: note.trim(),
+        },
+        keyRef.current,
+      );
+      const replaced = (receipt.superseded_revision_nos as number[] | undefined) ?? [];
+      onDone(
+        {
+          tone: "good",
+          lines: [
+            receiptLine({ label: `Revisión vigente → ${quote.quote_number} r${chosen.revision_no}`, receipt }, 1, 1),
+            ...(replaced.length ? [`Quedan reemplazadas: ${replaced.map((n) => `r${n}`).join(", ")}.`] : []),
+          ],
+        },
+        true,
+      );
+    } catch (err) {
+      keyRef.current = newCaseCommandKey();
+      onDone({ tone: "bad", lines: [caseRefusalText(err)] }, isStaleRefusal(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={(e) => void submit(e)} className="space-y-2 rounded-md border border-line p-3" aria-label="Elegir revisión vigente">
+      <p className="text-[11px] text-ink-muted">
+        Las otras revisiones vigentes de la cotización quedan reemplazadas por la elegida. Ninguna se anula ni se borra: siguen
+        visibles como enviadas.
+      </p>
+      {quotes.length > 1 ? (
+        <FormField label="Cotización" htmlFor="case-resolve-quote" required>
+          <SelectInput
+            id="case-resolve-quote"
+            value={quoteId}
+            onChange={(v) => {
+              setQuoteId(v);
+              setRevisionNo("");
+            }}
+            options={quotes.map((q) => ({ value: q.quote_id, label: `${q.quote_number} (${q.revisions.length} vigentes)` }))}
+          />
+        </FormField>
+      ) : null}
+      <fieldset className="space-y-1">
+        <legend className="text-xs font-medium text-ink">Revisión vigente de {quote.quote_number}</legend>
+        {quote.revisions.map((r) => (
+          <label key={r.revision_id} className="flex items-center gap-2 text-xs text-ink">
+            <input
+              type="radio"
+              name="case-resolve-revision"
+              value={String(r.revision_no)}
+              checked={revisionNo === String(r.revision_no)}
+              onChange={() => setRevisionNo(String(r.revision_no))}
+            />
+            {revisionLabel(r)}
+          </label>
+        ))}
+      </fieldset>
+      <FormField label="Nota" htmlFor="case-resolve-note" required hint="Por qué ésta es la vigente; queda en la auditoría.">
+        <TextareaInput id="case-resolve-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
+      </FormField>
+      <div className="flex justify-end gap-2">
+        <button type="button" className={SECONDARY} onClick={onCancel} disabled={busy}>
+          Cancelar
+        </button>
+        <button type="submit" className={PRIMARY} disabled={!ready}>
+          {busy ? "Registrando…" : "Elegir revisión vigente"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * «Registrar cotización» (a new quote number on the case) and «Nueva revisión» (`replaceable` set:
+ * a new document for a quote the case already has, replacing the revision the operator names).
+ * Both record a quote that was already sent: the document comes from a Gmail message already
+ * linked to the case, and the number is the one printed on it.
+ */
+function QuotationForm({
+  card,
+  replaceable,
+  onCancel,
+  onDone,
+}: {
+  card: OpportunityCardData;
+  replaceable: ReturnType<typeof winnableRevisions> | null;
+  onCancel: () => void;
+  onDone: (o: Outcome, refetch: boolean) => void;
+}) {
+  const load = useCallback(() => fetchCaseMailDocuments(card.opportunity_id), [card.opportunity_id]);
+  const [state] = useResource(load, [card.opportunity_id]);
+  const [docKey, setDocKey] = useState("");
+  const [typedNumber, setTypedNumber] = useState("");
+  const [replacedId, setReplacedId] = useState(replaceable?.[0]?.revision_id ?? "");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const keyRef = useRef(newCaseCommandKey());
+  const isRevision = replaceable !== null;
+  const title = isRevision ? "Nueva revisión" : "Registrar cotización";
+
+  const options =
+    state.kind === "ready"
+      ? state.data.messages.flatMap((m) =>
+          m.documents
+            .filter((d) => d.recorded === null)
+            .map((d) => ({ key: `${m.source_record_id}|${d.sha256}`, message: m, document: d })),
+        )
+      : [];
+  const picked = options.find((o) => o.key === docKey) ?? null;
+  const replaced = replaceable?.find((r) => r.revision_id === replacedId) ?? null;
+  const quoteNumber = isRevision ? (replaced?.quote_number ?? "") : typedNumber.trim();
+  const ready = picked !== null && quoteNumber !== "" && note.trim() !== "" && !busy && (!isRevision || replaced !== null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!picked || !ready) return;
+    setBusy(true);
+    try {
+      const receipt = await recordCaseQuotation(
+        {
+          opportunity_id: card.opportunity_id,
+          opportunity_version: card.version as number,
+          quote_number: quoteNumber,
+          source_record_id: picked.message.source_record_id,
+          document_sha256: picked.document.sha256,
+          supersedes_revision_no: replaced ? replaced.revision_no : null,
+          note: note.trim(),
+        },
+        keyRef.current,
+      );
+      const no = receipt.revision_no as number | undefined;
+      onDone(
+        {
+          tone: "good",
+          lines: [
+            receiptLine({ label: `Cotización ${quoteNumber}${no ? ` r${no}` : ""}`, receipt }, 1, 1),
+            ...(replaced ? [`Reemplaza a ${replaced.quote_number} r${replaced.revision_no}.`] : []),
+          ],
+        },
+        true,
+      );
+    } catch (err) {
+      keyRef.current = newCaseCommandKey();
+      onDone({ tone: "bad", lines: [caseRefusalText(err)] }, isStaleRefusal(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={(e) => void submit(e)} className="space-y-2 rounded-md border border-line p-3" aria-label={title}>
+      <p className="text-[11px] text-ink-muted">
+        Registra una cotización que ya se envió: el PDF de un correo de Gmail vinculado a este caso y el número impreso en él.
+      </p>
+      {isRevision ? (
+        <FormField label="Revisión que reemplaza" htmlFor="case-quotation-replaces" required>
+          <SelectInput
+            id="case-quotation-replaces"
+            value={replacedId}
+            onChange={setReplacedId}
+            options={(replaceable ?? []).map((r) => ({ value: r.revision_id, label: revisionLabel(r) }))}
+          />
+        </FormField>
+      ) : null}
+      {state.kind === "loading" ? (
+        <p className="text-xs text-ink-muted">Cargando los correos del caso…</p>
+      ) : state.kind !== "ready" ? (
+        <p role="alert" className="text-xs text-bad">
+          No se pudieron leer los correos del caso.
+        </p>
+      ) : options.length === 0 ? (
+        <p className="text-xs text-ink-muted" data-testid="case-quotation-no-documents">
+          No hay documentos sin registrar en los correos vinculados a este caso. Vincula primero el correo que envió la cotización.
+        </p>
+      ) : (
+        <FormField label="Documento enviado" htmlFor="case-quotation-document" required hint="Del correo vinculado que lo envió.">
+          <SelectInput
+            id="case-quotation-document"
+            value={docKey}
+            onChange={setDocKey}
+            options={[
+              { value: "", label: "Elige un documento…" },
+              ...options.map((o) => ({
+                value: o.key,
+                label: `${o.document.filename ?? o.document.sha256.slice(0, 12)} · ${o.message.subject ?? "(sin asunto)"}${
+                  o.message.sent_at ? ` · ${fmtDate(o.message.sent_at)}` : ""
+                }`,
+              })),
+            ]}
+          />
+        </FormField>
+      )}
+      {isRevision ? (
+        <p className="text-xs text-ink">
+          Número: <strong>{quoteNumber || "—"}</strong>
+        </p>
+      ) : (
+        <FormField
+          label="Número de cotización"
+          htmlFor="case-quotation-number"
+          required
+          hint={
+            picked && picked.document.cn_tokens.length
+              ? `El impreso en el PDF. El nombre del archivo dice ${picked.document.cn_tokens.join(", ")}.`
+              : "El impreso en el PDF, por ejemplo 01239-26."
+          }
+        >
+          <TextInput id="case-quotation-number" value={typedNumber} onChange={setTypedNumber} maxLength={32} />
+        </FormField>
+      )}
+      <FormField label="Nota" htmlFor="case-quotation-note" required hint="Queda en la auditoría de la cotización.">
+        <TextareaInput id="case-quotation-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
+      </FormField>
+      <div className="flex justify-end gap-2">
+        <button type="button" className={SECONDARY} onClick={onCancel} disabled={busy}>
+          Cancelar
+        </button>
+        <button type="submit" className={PRIMARY} disabled={!ready}>
+          {busy ? "Registrando…" : title}
         </button>
       </div>
     </form>

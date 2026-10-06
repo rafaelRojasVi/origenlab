@@ -47,14 +47,21 @@ describe("dashboard read-only policy", () => {
   //    and notes. All go through the API's Deciding role check (sales or admin).
   //  - mailRules.ts's POST to the two admin-only email → cases commands: apply the rules'
   //    automatic actions (re-planned upstream; the browser sends no action) and undo one.
-  //  - caseCommands.ts's POST to exactly two commercial-case commands, the case drawer's
-  //    «Cambiar etapa» (advance-case-stage) and «Marcar ganada» (record-case-won). Sales or admin
-  //    upstream; no other case command (open, link evidence, institution, interest) is named.
+  //  - caseCommands.ts's POST to exactly four commercial-case commands, the case drawer's
+  //    «Cambiar etapa» (advance-case-stage), «Marcar ganada» (record-case-won), «Elegir revisión
+  //    vigente» (resolve-current-revision) and «Registrar cotización» / «Nueva revisión»
+  //    (record-case-quotation). Sales or admin upstream; no other case command (open, link
+  //    evidence, institution, interest) is named.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const MAIL_RULES_FILE = "../crm/mailRules.ts";
   const MAIL_RULES_PATHS = ["/v2/commands/apply-mail-rules", "/v2/commands/undo-mail-rule-action"];
   const CASE_COMMANDS_FILE = "../crm/caseCommands.ts";
-  const CASE_COMMAND_PATHS = ["/v2/commands/advance-case-stage", "/v2/commands/record-case-won"];
+  const CASE_COMMAND_PATHS = [
+    "/v2/commands/advance-case-stage",
+    "/v2/commands/record-case-won",
+    "/v2/commands/resolve-current-revision",
+    "/v2/commands/record-case-quotation",
+  ];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
   const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";

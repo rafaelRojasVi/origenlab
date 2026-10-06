@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
-import { mayRunCaseCommands, nextStages, winnableRevisions } from "../caseCommands";
+import { mayRunCaseCommands, nextStages, undeterminedQuotes, winnableRevisions } from "../caseCommands";
 import type { OpportunityCardData, PipelineResponse, RevisionCard } from "../crmTypes";
 import { clearResourceCache } from "../useResource";
 import { PipelinePage } from "./PipelinePage";
@@ -13,6 +13,29 @@ import { PipelinePage } from "./PipelinePage";
 const CASE = "11111111-1111-4111-8111-111111111111";
 const ORG = "33333333-3333-4333-8333-333333333333";
 const QUOTE = "44444444-4444-4444-8444-444444444444";
+const MESSAGE = "55555555-5555-4555-8555-555555555555";
+const SHA_NEW = "a".repeat(64);
+const SHA_RECORDED = "b".repeat(64);
+
+const MAIL_DOCUMENTS = {
+  opportunity_id: CASE,
+  messages: [
+    {
+      source_record_id: MESSAGE,
+      subject: "Cotización equipo ficticio",
+      sent_at: "2026-09-25T15:00:00+00:00",
+      documents: [
+        { sha256: SHA_NEW, filename: "CN01239.pdf", cn_tokens: ["CN01239"], recorded: null },
+        {
+          sha256: SHA_RECORDED,
+          filename: "CN00001.pdf",
+          cn_tokens: ["CN00001"],
+          recorded: { quote_number: "00001-26", revision_no: 2, on_this_case: true },
+        },
+      ],
+    },
+  ],
+};
 
 function rev(no: number, over: Partial<RevisionCard> = {}): RevisionCard {
   return {
@@ -84,10 +107,12 @@ type Handler = (call: Call, n: number) => { status?: number; body: unknown } | u
 function stubApi({
   pipelines,
   notes = { opportunity_id: CASE, notes: [] },
+  mailDocuments = MAIL_DOCUMENTS,
   onPost = () => undefined,
 }: {
   pipelines: PipelineResponse[];
   notes?: unknown;
+  mailDocuments?: unknown;
   onPost?: Handler;
 }) {
   const calls: Call[] = [];
@@ -112,6 +137,7 @@ function stubApi({
         return json(pipelines[i]);
       }
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/notes`) return json(notes);
+      if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/mail-documents`) return json(mailDocuments);
       if (call.method === "POST") {
         const answer = onPost(call, posts++);
         if (answer) return json(answer.body, answer.status ?? 200);
@@ -155,6 +181,13 @@ describe("case command helpers", () => {
     expect(winnableRevisions(c).map((r) => [r.quote_id, r.revision_no])).toEqual([[QUOTE, 2]]);
   });
 
+  it("finds the quotes with more than one current revision", () => {
+    expect(undeterminedQuotes(card())).toEqual([]);
+    const c = card();
+    c.quotes[0].revisions = [rev(1), rev(2), rev(3, { status: "void", is_active: false })];
+    expect(undeterminedQuotes(c).map((q) => [q.quote_id, q.revisions.map((r) => r.revision_no)])).toEqual([[QUOTE, [1, 2]]]);
+  });
+
   it("needs the switch and a deciding role", () => {
     expect(mayRunCaseCommands(session("sales"))).toBe(true);
     expect(mayRunCaseCommands(session("admin"))).toBe(true);
@@ -182,7 +215,7 @@ describe("case drawer actions", () => {
   it("keeps every write disabled for a viewer", async () => {
     stubApi({ pipelines: [page([card()])] });
     const dialog = await openDrawer(session("viewer"));
-    for (const name of ["Cambiar etapa", "Marcar ganada", "Registrar seguimiento", "Nueva revisión"]) {
+    for (const name of ["Cambiar etapa", "Marcar ganada", "Registrar seguimiento", "Registrar cotización", "Nueva revisión"]) {
       expect(within(dialog).getByRole("button", { name })).toBeDisabled();
     }
   });
@@ -376,5 +409,159 @@ describe("case drawer actions", () => {
     const post = calls.find((c) => c.method === "POST")!;
     expect(post.path).toBe("/v2/commands/add-note");
     expect(post.body).toEqual({ subject_kind: "opportunity", subject_id: CASE, body: "Llamé al laboratorio." });
+  });
+
+  function undetermined(over: Partial<OpportunityCardData> = {}) {
+    const revisions = [rev(1, { document: { sha256: "c".repeat(64), filename: "CN00001-a.pdf" } }), rev(2)];
+    return card({
+      quotes: [{ quote_id: QUOTE, quote_number: "00001-26", number_origin: "printed_historical", revisions }],
+      latest_revision: revisions[1],
+      attention: [
+        { code: "canonical_undetermined", label: "Hay más de una revisión vigente: no se sabe cuál es la canónica", blocking: true },
+      ],
+      status: "blocked",
+      ...over,
+    });
+  }
+
+  it("offers «Elegir revisión vigente» on a blocked case and sends the chosen revision", async () => {
+    const calls = stubApi({
+      pipelines: [page([undetermined()]), page([card({ version: 6 })])],
+      onPost: (call) =>
+        call.path === "/v2/commands/resolve-current-revision"
+          ? {
+              body: {
+                command: "resolve_current_revision", opportunity_id: CASE, opportunity_version: 6, idempotency_key: "k",
+                command_receipt_id: "ffffffff-0001", replayed: false, current_revision_no: 1, superseded_revision_nos: [2],
+              },
+            }
+          : undefined,
+    });
+    const dialog = await openDrawer(session("sales"));
+    const box = within(dialog).getByTestId("case-undetermined-revision");
+    expect(box).toHaveTextContent("Hay más de una revisión vigente de 00001-26");
+    fireEvent.click(within(box).getByRole("button", { name: "Elegir revisión vigente" }));
+    const form = within(dialog).getByRole("form", { name: "Elegir revisión vigente" });
+    const submit = within(form).getByRole("button", { name: "Elegir revisión vigente" });
+    fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "La firmada es la vigente" } });
+    expect(submit).toBeDisabled(); // a revision must be chosen out loud
+    fireEvent.click(within(form).getByLabelText(/00001-26 r1 .* CN00001-a\.pdf/));
+    fireEvent.click(submit);
+
+    const outcome = await within(dialog).findByTestId("case-action-outcome");
+    expect(outcome).toHaveTextContent("Revisión vigente → 00001-26 r1: registrado · recibo ffffffff");
+    expect(outcome).toHaveTextContent("Quedan reemplazadas: r2.");
+    const post = calls.find((c) => c.method === "POST")!;
+    expect(post.path).toBe("/v2/commands/resolve-current-revision");
+    expect(post.key).toBeTruthy();
+    expect(post.body).toEqual({
+      opportunity_id: CASE, opportunity_version: 5, quote_id: QUOTE, revision_no: 1, note: "La firmada es la vigente",
+    });
+    await waitFor(() => expect(calls.filter((c) => c.path === "/v2/workspace/pipeline")).toHaveLength(2));
+    await waitFor(() => expect(within(dialog).queryByTestId("case-undetermined-revision")).not.toBeInTheDocument());
+  });
+
+  it("keeps «Elegir revisión vigente» disabled without the case commands", async () => {
+    stubApi({ pipelines: [page([undetermined()])] });
+    const dialog = await openDrawer(session("sales", { cases: false }));
+    expect(within(dialog).getByRole("button", { name: "Elegir revisión vigente" })).toBeDisabled();
+  });
+
+  it("registers a sent quotation from a linked message's document, never one already recorded", async () => {
+    const calls = stubApi({
+      pipelines: [page([card()])],
+      onPost: (call) =>
+        call.path === "/v2/commands/record-case-quotation"
+          ? {
+              body: {
+                command: "record_case_quotation", opportunity_id: CASE, opportunity_version: 6, idempotency_key: "k",
+                command_receipt_id: "abababab-0001", replayed: false, quote_number: "01239-26", revision_no: 1,
+              },
+            }
+          : undefined,
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar cotización" }));
+    const form = within(dialog).getByRole("form", { name: "Registrar cotización" });
+    const select = await within(form).findByLabelText(/Documento enviado/);
+    const labels = within(select).getAllByRole("option").map((o) => o.textContent);
+    expect(labels).toEqual(["Elige un documento…", expect.stringMatching(/^CN01239\.pdf · Cotización equipo ficticio/)]);
+    fireEvent.change(select, { target: { value: `${MESSAGE}|${SHA_NEW}` } });
+    expect(within(form).getByText(/El nombre del archivo dice CN01239/)).toBeInTheDocument();
+    fireEvent.change(within(form).getByLabelText(/Número de cotización/), { target: { value: " 01239-26 " } });
+    fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "Enviada por Gmail" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Registrar cotización" }));
+
+    expect(await within(dialog).findByText(/Cotización 01239-26 r1: registrado · recibo abababab/)).toBeInTheDocument();
+    const post = calls.find((c) => c.method === "POST")!;
+    expect(post.path).toBe("/v2/commands/record-case-quotation");
+    expect(post.body).toEqual({
+      opportunity_id: CASE, opportunity_version: 5, quote_number: "01239-26", source_record_id: MESSAGE,
+      document_sha256: SHA_NEW, supersedes_revision_no: null, note: "Enviada por Gmail",
+    });
+    await waitFor(() => expect(calls.filter((c) => c.path === "/v2/workspace/pipeline")).toHaveLength(2));
+  });
+
+  it("shows a number that belongs to another case as a Spanish refusal", async () => {
+    stubApi({
+      pipelines: [page([card()])],
+      onPost: () => ({
+        status: 409,
+        body: { detail: { code: "number_on_other_opportunity", message: "this printed number is already a quote on another case" } },
+      }),
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar cotización" }));
+    const form = within(dialog).getByRole("form", { name: "Registrar cotización" });
+    fireEvent.change(await within(form).findByLabelText(/Documento enviado/), { target: { value: `${MESSAGE}|${SHA_NEW}` } });
+    fireEvent.change(within(form).getByLabelText(/Número de cotización/), { target: { value: "01239-26" } });
+    fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "x" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Registrar cotización" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Ese número de cotización ya pertenece a otro caso.");
+    // Refused: the form stays open so the operator can correct the number.
+    expect(within(dialog).getByRole("form", { name: "Registrar cotización" })).toBeInTheDocument();
+  });
+
+  it("says so when the linked messages carry no unrecorded document", async () => {
+    stubApi({ pipelines: [page([card()])], mailDocuments: { opportunity_id: CASE, messages: [] } });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar cotización" }));
+    expect(await within(dialog).findByTestId("case-quotation-no-documents")).toBeInTheDocument();
+    const form = within(dialog).getByRole("form", { name: "Registrar cotización" });
+    expect(within(form).getByRole("button", { name: "Registrar cotización" })).toBeDisabled();
+  });
+
+  it("records «Nueva revisión» under the replaced revision's number", async () => {
+    const calls = stubApi({
+      pipelines: [page([card({ stage: "negotiating" })])],
+      onPost: () => ({
+        body: {
+          command: "record_case_quotation", opportunity_id: CASE, opportunity_version: 6, idempotency_key: "k",
+          command_receipt_id: "cdcdcdcd-0001", replayed: false, quote_number: "00001-26", revision_no: 3,
+        },
+      }),
+    });
+    const dialog = await openDrawer(session("admin"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Nueva revisión" }));
+    const form = within(dialog).getByRole("form", { name: "Nueva revisión" });
+    expect(within(form).getByLabelText(/Revisión que reemplaza/)).toHaveValue("rev-2");
+    expect(within(form).queryByLabelText(/Número de cotización/)).not.toBeInTheDocument();
+    fireEvent.change(await within(form).findByLabelText(/Documento enviado/), { target: { value: `${MESSAGE}|${SHA_NEW}` } });
+    fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "Cambió el plazo" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Nueva revisión" }));
+    const outcome = await within(dialog).findByTestId("case-action-outcome");
+    expect(outcome).toHaveTextContent("Cotización 00001-26 r3: registrado · recibo cdcdcdcd");
+    expect(outcome).toHaveTextContent("Reemplaza a 00001-26 r2.");
+    expect(calls.find((c) => c.method === "POST")!.body).toEqual({
+      opportunity_id: CASE, opportunity_version: 5, quote_number: "00001-26", source_record_id: MESSAGE,
+      document_sha256: SHA_NEW, supersedes_revision_no: 2, note: "Cambió el plazo",
+    });
+  });
+
+  it("disables «Registrar cotización» and «Nueva revisión» before «Cotizando»", async () => {
+    stubApi({ pipelines: [page([card({ stage: "qualified" })])] });
+    const dialog = await openDrawer(session("sales"));
+    expect(within(dialog).getByRole("button", { name: "Registrar cotización" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Nueva revisión" })).toBeDisabled();
   });
 });

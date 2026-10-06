@@ -1,14 +1,16 @@
 /**
- * The two commercial-case commands the case drawer may send: «Cambiar etapa»
- * (`advance-case-stage`) and «Marcar ganada» (`record-case-won`).
+ * The four commercial-case commands the case drawer may send: «Cambiar etapa»
+ * (`advance-case-stage`), «Marcar ganada» (`record-case-won`), «Elegir revisión vigente»
+ * (`resolve-current-revision`) and «Registrar cotización» / «Nueva revisión»
+ * (`record-case-quotation`).
  *
- * This module owns both `/v2/commands/<case command>` path strings — pinned by
+ * This module owns all four `/v2/commands/<case command>` path strings — pinned by
  * `src/test/noWritePolicy.test.ts`. No other dashboard module may name them, and no other case
  * command (opening a case, linking evidence, naming an institution, recording an interest) is
  * reachable from the browser: the Worker refuses them (`CASE_COMMAND_POST_PATHS`).
  *
  * Upstream each command needs an active `sales` or `admin` operator (from the session, never the
- * body), an `Idempotency-Key`, the case version the operator was shown and a note; both mount
+ * body), an `Idempotency-Key`, the case version the operator was shown and a note; all mount
  * only behind `ORIGENLAB_V2_COMMANDS_ENABLED`, which `/auth/session` reports as
  * `case_commands_enabled`.
  */
@@ -21,6 +23,8 @@ import { STAGE_LABEL } from "./stage";
 export const CASE_COMMAND_PATHS = {
   advanceStage: "/v2/commands/advance-case-stage",
   recordWon: "/v2/commands/record-case-won",
+  resolveCurrentRevision: "/v2/commands/resolve-current-revision",
+  recordQuotation: "/v2/commands/record-case-quotation",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -62,6 +66,25 @@ export function winnableRevisions(card: OpportunityCardData): (RevisionCard & { 
   return out.sort((a, b) => (b.sent_at ?? "").localeCompare(a.sent_at ?? "") || b.revision_no - a.revision_no);
 }
 
+/** A quote whose current revision is undetermined: two or more revisions neither void nor replaced. */
+export interface UndeterminedQuote {
+  quote_id: string;
+  quote_number: string;
+  revisions: RevisionCard[];
+}
+
+/** The quotes behind «Hay más de una revisión vigente» (`canonical_undetermined`), as the API counts them. */
+export function undeterminedQuotes(card: OpportunityCardData): UndeterminedQuote[] {
+  return card.quotes
+    .map((q) => ({ quote_id: q.quote_id, quote_number: q.quote_number, revisions: q.revisions.filter((r) => r.is_active) }))
+    .filter((q) => q.revisions.length > 1);
+}
+
+/** Stages at which a quote may be recorded on a case (`STAGES_THAT_MAY_CARRY_A_QUOTE`). */
+export function mayCarryAQuote(stage: string): boolean {
+  return stage === "quoting" || stage === "negotiating";
+}
+
 /* ── gating ───────────────────────────────────────────────────────────────── */
 
 export const ROLES_THAT_DECIDE_CASES: ReadonlySet<string> = new Set(["sales", "admin"]);
@@ -85,7 +108,7 @@ export interface CaseCommandReceipt {
   command: string;
   opportunity_id: string;
   opportunity_version: number;
-  stage: string;
+  stage?: string;
   previous_stage?: string;
   idempotency_key: string;
   command_receipt_id: string;
@@ -135,6 +158,33 @@ export interface RecordCaseWonBody {
 
 export const recordCaseWon = (body: RecordCaseWonBody, idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.recordWon, body, idempotencyKey);
+
+export interface ResolveCurrentRevisionBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  quote_id: string;
+  revision_no: number;
+  note: string;
+}
+
+/** «Elegir revisión vigente»: every other current revision of the quote is superseded by this one. */
+export const resolveCurrentRevision = (body: ResolveCurrentRevisionBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.resolveCurrentRevision, body, idempotencyKey);
+
+export interface RecordCaseQuotationBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  quote_number: string;
+  source_record_id: string;
+  document_sha256: string;
+  /** «Nueva revisión»: the revision of the quote with this number that the document replaces. */
+  supersedes_revision_no?: number | null;
+  note: string;
+}
+
+/** «Registrar cotización» / «Nueva revisión»: a quote already sent, from a Gmail message linked to the case. */
+export const recordCaseQuotation = (body: RecordCaseQuotationBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.recordQuotation, body, idempotencyKey);
 
 /** One step of «Marcar ganada», as the operator is told about it. */
 export interface WonStep {
@@ -206,6 +256,24 @@ const REFUSAL_ES: Record<string, string> = {
   quote_revision_not_on_case: "Esa revisión no pertenece a este caso.",
   quote_revision_not_current: "Sólo se gana contra una revisión enviada y vigente (no reemplazada).",
   case_not_found: "El caso ya no existe.",
+  quote_not_on_case: "Esa cotización no pertenece a este caso.",
+  nothing_to_resolve: "Esa revisión ya es la única vigente de la cotización.",
+  revision_cannot_be_superseded:
+    "Otra revisión vigente no puede quedar reemplazada por la elegida (un borrador, o una revisión posterior creada en el sistema).",
+  message_not_on_case: "Ese correo no está vinculado a este caso.",
+  not_a_gmail_message: "La cotización se registra desde el correo de Gmail que la envió.",
+  source_record_does_not_carry_document: "Ese correo no trae ese documento.",
+  message_has_no_sent_at: "Ese correo no tiene fecha de envío; no sirve como evidencia del envío.",
+  number_on_other_opportunity: "Ese número de cotización ya pertenece a otro caso.",
+  number_is_a_minted_quote: "Ese número lo generó el sistema para otra cotización; no se puede reutilizar.",
+  document_already_recorded: "Ese documento ya está registrado como revisión de una cotización.",
+  case_not_quoting: "Una cotización se registra en un caso en «Cotizando» o «Negociando».",
+  case_has_no_requesting_institution: "El caso necesita una institución solicitante confirmada para registrar una cotización.",
+  superseded_revision_not_on_case: "La revisión a reemplazar no pertenece a esa cotización de este caso.",
+  superseded_document_not_on_this_quote: "La revisión a reemplazar no pertenece a esa cotización.",
+  already_superseded: "La revisión a reemplazar ya fue reemplazada por otra.",
+  superseded_revision_not_sent: "Sólo se reemplaza una revisión enviada.",
+  source_record_quarantined: "Ese correo está en cuarentena.",
   role_may_not_decide: "Tu perfil no puede decidir casos; se necesita ventas o administración.",
   idempotency_key_reused: "La solicitud se repitió con otro contenido; vuelve a intentarlo.",
   command_in_progress: "La misma acción todavía se está registrando; espera un momento.",
