@@ -37,12 +37,12 @@
   ],
   "probes": {
     "migrations.count": {
-      "expect": 46,
+      "expect": 48,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20261006120000",
-      "why": "slice7_historical_current_revision_choice, the newest migration — a historical_import revision may be superseded by any current revision of its quote (the operator's «Elegir revisión vigente»), with crm.quote_revision_historical_guard replaced in place to require the superseding revision be current."
+      "expect": "20261006180100",
+      "why": "slice4_triage_assertion_kinds, the newest migration — evidence.assertion gains the message_triage and product_mention kinds the mail-triage worker proposes; the migration before it, 20261006180000, adds the worker's Procrastinate queue in its own procrastinate schema, outside the seven application schemas (docs/ARCHITECTURE.md §8, D2)."
     },
 
     "source_record.total": {
