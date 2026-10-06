@@ -372,3 +372,11 @@ def test_workspace_routes_require_an_operator() -> None:
     for path in ("overview", "pipeline", "providers", "marketing", "drive", "review"):
         assert client.get(f"/v2/workspace/{path}").status_code == 401
         assert client.post(f"/v2/workspace/{path}").status_code == 405
+
+
+def test_first_address_keeps_a_quoted_display_name_with_a_comma_whole() -> None:
+    from origenlab_api.v2.crm_workspace import _first_address
+
+    assert _first_address('"Ruiz, Ana" <ana@example.cl>, otro@example.cl') == ("Ruiz, Ana <ana@example.cl>", 2)
+    assert _first_address("uno@example.cl; dos@example.cl") == ("uno@example.cl", 2)
+    assert _first_address(None) == (None, 0)
