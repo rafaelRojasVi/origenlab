@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from origenlab_api.v2.case_commands import CASE_STAGES, stage_transition_allowed
 from origenlab_api.v2.catalog.enrichment import (
     FALLBACK_BETA,
     check_model_id,
@@ -41,10 +42,9 @@ INTENTS: tuple[str, ...] = (
     "quote_request", "purchase_order", "quote_followup", "negotiation", "lost", "technical_question",
     "service_or_repair", "supplier_offer", "logistics", "administrative", "not_commercial",
 )
-LEAD_STATUSES: tuple[str, ...] = (
-    "new_request", "waiting_for_our_quote", "quote_under_review", "negotiating", "won", "lost",
-    "not_a_lead", "unclear",
-)
+#: The CRM's own stage keys (`crm.opportunity.stage`, the Tablero's columns), plus two answers for
+#: mail that is not a case or cannot be placed. One vocabulary from the email to the Kanban.
+STAGE_ANSWERS: tuple[str, ...] = (*CASE_STAGES, "not_a_case", "unclear")
 URGENCIES: tuple[str, ...] = ("high", "normal", "low")
 
 SYSTEM_PROMPT = """You read one email received by OrigenLab, a Chilean company that sells and \
@@ -57,12 +57,18 @@ describe it.
 
 Answer with:
 - intent: what the sender wants from OrigenLab.
-- lead_status: where this commercial conversation stands after this email. new_request = a first \
-request for a quotation; waiting_for_our_quote = they are waiting for OrigenLab to quote; \
-quote_under_review = OrigenLab already quoted and they are reviewing or asking about it; \
-negotiating = price, terms or delivery are being discussed; won = they confirm a purchase or send \
-a purchase order; lost = they bought elsewhere or cancelled; not_a_lead = not a sales \
-conversation; unclear = cannot tell.
+- stage: where this sales case stands after this email, as OrigenLab's board names it. \
+lead = «Solicitada», a customer asks for a quotation or information and nobody has qualified it; \
+qualifying = «Solicitada · calificando», OrigenLab is asking the customer for details; \
+qualified = «En estudio», the request is clear and OrigenLab is preparing the quotation; \
+quoting = «Enviada», OrigenLab sent the quotation and the customer has not answered about it; \
+negotiating = «Conversación», the customer answered about the quotation (questions, price, terms, \
+delivery, a new version); won = «Ganada», the customer confirms the purchase or sends a purchase \
+order; lost = «Perdida», they bought elsewhere, cancelled or declined; abandoned = «Perdida · sin \
+respuesta», only when the email itself says the case is dropped. not_a_case = the email is not \
+about a customer buying from OrigenLab (a supplier offering or quoting to OrigenLab, logistics, \
+administration, spam); unclear = cannot tell. CONTEXT.linked_cases lists the cases this email \
+thread already belongs to, with their current stage: judge the move from there.
 - urgency: high only if the sender states a deadline within about a week or calls it urgent.
 - products: every product, consumable or service they ask about, as they wrote it, with brand, \
 model and quantity only when the email states them (otherwise null). If one of the CATALOG \
@@ -81,11 +87,11 @@ def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
 OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["intent", "lead_status", "urgency", "products", "requester_organization", "summary_es",
+    "required": ["intent", "stage", "urgency", "products", "requester_organization", "summary_es",
                  "needs_reply"],
     "properties": {
         "intent": {"type": "string", "enum": list(INTENTS)},
-        "lead_status": {"type": "string", "enum": list(LEAD_STATUSES)},
+        "stage": {"type": "string", "enum": list(STAGE_ANSWERS)},
         "urgency": {"type": "string", "enum": list(URGENCIES)},
         "products": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
@@ -125,7 +131,7 @@ class ModelProduct:
 class ModelReading:
     model: str
     intent: str
-    lead_status: str
+    stage: str
     urgency: str
     products: tuple[ModelProduct, ...]
     requester_organization: str | None
@@ -133,10 +139,14 @@ class ModelReading:
     needs_reply: bool
     input_tokens: int | None = None
     output_tokens: int | None = None
+    #: The linked cases' current stages, and whether moving each to `stage` is a legal transition
+    #: (`case_commands.STAGE_TRANSITIONS`). Empty when the thread is not on a case yet.
+    linked_cases: tuple[dict[str, Any], ...] = ()
 
     def as_json(self) -> dict[str, Any]:
         return {
-            "model": self.model, "intent": self.intent, "lead_status": self.lead_status,
+            "model": self.model, "intent": self.intent, "stage": self.stage,
+            "linked_cases": list(self.linked_cases),
             "urgency": self.urgency, "requester_organization": self.requester_organization,
             "summary_es": self.summary_es, "needs_reply": self.needs_reply,
             "products": [p.__dict__ for p in self.products],
@@ -144,7 +154,17 @@ class ModelReading:
         }
 
 
-def user_content(mail: MailText, verdict: RuleVerdict, candidates: Sequence[ProductCandidate]) -> str:
+@dataclass(frozen=True)
+class LinkedCase:
+    """A case the email's Gmail thread is already linked to (`crm.opportunity_evidence`)."""
+
+    opportunity_id: str
+    title: str | None
+    stage: str
+
+
+def user_content(mail: MailText, verdict: RuleVerdict, candidates: Sequence[ProductCandidate],
+                 cases: Sequence[LinkedCase] = ()) -> str:
     """The volatile part of the request, after the cached system prompt."""
     catalog = [{"id": c.product_id, "model": c.model_number, "name": c.name} for c in candidates]
     context = {
@@ -154,6 +174,7 @@ def user_content(mail: MailText, verdict: RuleVerdict, candidates: Sequence[Prod
         "attachment_names": list(mail.attachment_names),
         "quote_numbers_seen": list(verdict.quote_numbers),
         "body_truncated": mail.body_truncated,
+        "linked_cases": [{"title": c.title, "stage": c.stage} for c in cases],
     }
     return (
         "CONTEXT\n" + json.dumps(context, ensure_ascii=False)
@@ -163,7 +184,7 @@ def user_content(mail: MailText, verdict: RuleVerdict, candidates: Sequence[Prod
 
 
 def build_request(mail: MailText, verdict: RuleVerdict, candidates: Sequence[ProductCandidate], *,
-                  model: str = DEFAULT_MODEL) -> dict[str, Any]:
+                  model: str = DEFAULT_MODEL, cases: Sequence[LinkedCase] = ()) -> dict[str, Any]:
     """The keyword arguments of `client.beta.messages.create` for one message."""
     model = check_model_id(model)
     request: dict[str, Any] = {
@@ -172,7 +193,7 @@ def build_request(mail: MailText, verdict: RuleVerdict, candidates: Sequence[Pro
         # The system prompt is identical for every message: cache it. A prefix shorter than the
         # model's minimum is simply not cached — never an error.
         "system": [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-        "messages": [{"role": "user", "content": user_content(mail, verdict, candidates)}],
+        "messages": [{"role": "user", "content": user_content(mail, verdict, candidates, cases)}],
         "output_config": {"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
     }
     if supports_adaptive_thinking(model):
@@ -205,7 +226,8 @@ def _short(value: Any, limit: int) -> str | None:
     return value[:limit] if value else None
 
 
-def parse_reading(message: Any, *, model: str, candidates: Sequence[ProductCandidate]) -> ModelReading:
+def parse_reading(message: Any, *, model: str, candidates: Sequence[ProductCandidate],
+                  cases: Sequence[LinkedCase] = ()) -> ModelReading:
     """The validated answer, or :class:`ModelRefused`. Checks `stop_reason` before the content."""
     text = _text(message)  # ModelRefused is a ValueError: read the text outside the JSON guard
     try:
@@ -214,7 +236,7 @@ def parse_reading(message: Any, *, model: str, candidates: Sequence[ProductCandi
         raise ModelRefused("not_json") from None
     if not isinstance(raw, dict):
         raise ModelRefused("not_an_object")
-    if raw.get("intent") not in INTENTS or raw.get("lead_status") not in LEAD_STATUSES \
+    if raw.get("intent") not in INTENTS or raw.get("stage") not in STAGE_ANSWERS \
             or raw.get("urgency") not in URGENCIES:
         raise ModelRefused("closed_value_unknown")
     if not isinstance(raw.get("needs_reply"), bool) or not isinstance(raw.get("products"), list):
@@ -239,8 +261,14 @@ def parse_reading(message: Any, *, model: str, candidates: Sequence[ProductCandi
     if summary is None:
         raise ModelRefused("summary_missing")
     usage = getattr(message, "usage", None)
+    stage = raw["stage"]
+    linked = tuple(
+        {"opportunity_id": c.opportunity_id, "current_stage": c.stage,
+         "transition_allowed": stage in CASE_STAGES and stage_transition_allowed(c.stage, stage)}
+        for c in cases
+    )
     return ModelReading(
-        model=model, intent=raw["intent"], lead_status=raw["lead_status"], urgency=raw["urgency"],
+        model=model, intent=raw["intent"], stage=stage, urgency=raw["urgency"], linked_cases=linked,
         products=tuple(products), requester_organization=_short(raw.get("requester_organization"), 200),
         summary_es=summary, needs_reply=raw["needs_reply"],
         input_tokens=getattr(usage, "input_tokens", None), output_tokens=getattr(usage, "output_tokens", None),
@@ -259,6 +287,6 @@ def anthropic_reader(api_key: str, *, timeout_s: float = 60.0, max_retries: int 
     return read
 
 
-__all__ = ["DEFAULT_MODEL", "INTENTS", "LEAD_STATUSES", "OUTPUT_SCHEMA", "SYSTEM_PROMPT", "URGENCIES",
+__all__ = ["DEFAULT_MODEL", "INTENTS", "STAGE_ANSWERS", "LinkedCase", "OUTPUT_SCHEMA", "SYSTEM_PROMPT", "URGENCIES",
            "ModelProduct", "ModelReader", "ModelReading", "ModelRefused", "anthropic_reader", "build_request",
            "parse_reading", "user_content"]

@@ -225,10 +225,12 @@ ALLOWED_OUTSIDE_WRITES: frozenset[tuple[str, str]] = frozenset({("outbound.campa
 
 
 #: What the mail triage reads and writes (`triage.py`): the captured message and its evidence, the
-#: catalog it matches products against, and INSERT on evidence.assertion for its proposals.
+#: catalog it matches products against, the cases the thread is linked to (read only), and INSERT
+#: on evidence.assertion for its proposals.
 TRIAGE_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = (
     ("comms.message", "SELECT"), ("evidence.source_record", "SELECT"),
     ("evidence.assertion", "SELECT"), ("evidence.assertion", "INSERT"), ("catalog.product", "SELECT"),
+    ("crm.opportunity", "SELECT"), ("crm.opportunity_evidence", "SELECT"),
 )
 TRIAGE_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset(
     {
@@ -237,6 +239,8 @@ TRIAGE_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset(
         ("evidence", "assertion", "origenlab_worker_select"),
         ("evidence", "assertion", "origenlab_worker_insert"),
         ("catalog", "product", "origenlab_worker_select"),
+        ("crm", "opportunity", "origenlab_worker_select"),
+        ("crm", "opportunity_evidence", "origenlab_worker_select"),
     }
 )
 #: The Procrastinate queue (supabase/migrations/20261006180000): every table, every verb, and one

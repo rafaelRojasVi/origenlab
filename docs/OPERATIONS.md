@@ -2008,7 +2008,12 @@ reading of the current version and defers one `triage_message` job each. A job:
 3. matches product candidates in `catalog.product` (exact model number, then the Spanish
    full-text index);
 4. only for the classes that go on, and only when the model stage is enabled, asks Claude for the
-   products, the lead status, the urgency and a Spanish summary (`triage_model.py`);
+   products, the urgency, a Spanish summary and the **stage** the case is in after this email — in
+   the CRM's own keys, the Tablero's columns (`lead` «Solicitada» … `negotiating` «Conversación»,
+   `won`, `lost`), or `not_a_case` / `unclear` — given the cases the email's Gmail thread is already
+   linked to and their current stage. Each proposed move is checked against the API's transition
+   table (`transition_allowed`); nothing moves a case: the stage stays an operator's
+   «Cambiar estado» (`triage_model.py`);
 5. records one `evidence.assertion` of kind `message_triage` (`value_norm = triage:v1`) and one
    `product_mention` per product, all `unresolved`, all `on conflict do nothing`.
 

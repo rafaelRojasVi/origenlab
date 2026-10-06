@@ -26,7 +26,7 @@ PATH = "mail/contacto@origenlab.cl/2026/10/g1.eml"
 
 class FakeDb:
     def __init__(self, *, direction="inbound", labels=("INBOX",), done=False, candidates=()) -> None:
-        self.msg = PendingMessage("sr-1", "m-1", direction, labels, PATH)
+        self.msg = PendingMessage("sr-1", "m-1", direction, labels, PATH, "t-1")
         self.done = done
         self._candidates = list(candidates)
         self.recorded: list[tuple[str, dict, list]] = []
@@ -36,6 +36,12 @@ class FakeDb:
 
     def candidates(self, mail):
         return self._candidates
+
+    def linked_cases(self, thread_id):
+        from origenlab_worker.triage_model import LinkedCase
+
+        self.thread_asked = thread_id
+        return [LinkedCase("o-1", "Caso", "quoting")] if thread_id == "t-1" else []
 
     def record(self, sid, reading, mentions):
         self.recorded.append((sid, reading, list(mentions)))
@@ -65,7 +71,7 @@ class Reader:
                                content=[SimpleNamespace(type="text", text=json.dumps(self.payload))])
 
 
-READING = {"intent": "quote_request", "lead_status": "new_request", "urgency": "high",
+READING = {"intent": "quote_request", "stage": "lead", "urgency": "high",
            "products": [{"description": "Homogeneizador", "brand": None, "model": "UP200Ht", "quantity": 1,
                          "catalog_product_id": "p-1"}],
            "requester_organization": "Universidad Ejemplo", "summary_es": "Pide cotizar.", "needs_reply": True}
@@ -78,7 +84,7 @@ def test_a_quote_request_is_read_by_the_model_and_recorded_with_its_products() -
     assert (result.outcome, result.triage_class, result.model, result.mentions) == \
         ("recorded", "quote_request", "ran", 1)
     sid, value, mentions = db.recorded[0]
-    assert sid == "sr-1" and value["class"] == "quote_request" and value["reading"]["lead_status"] == "new_request"
+    assert sid == "sr-1" and value["class"] == "quote_request" and value["reading"]["stage"] == "lead"
     assert mentions == [("UP200HT", {"triage_version": 1, "source": "model", "description": "Homogeneizador",
                                      "brand": None, "model": "UP200Ht", "quantity": 1, "catalog_product_id": "p-1"})]
     assert len(reader.requests) == 1
@@ -148,7 +154,7 @@ def test_which_api_errors_are_permanent(status, permanent) -> None:
 def test_mentions_are_deduplicated_and_fall_back_to_the_folded_description() -> None:
     from origenlab_worker.triage_model import ModelProduct, ModelReading
 
-    reading = ModelReading(model="m", intent="quote_request", lead_status="new_request", urgency="normal",
+    reading = ModelReading(model="m", intent="quote_request", stage="lead", urgency="normal",
                            products=(ModelProduct("Baño termorregulado", None, None, 1, None),
                                      ModelProduct("Homogeneizador", None, "UP-200Ht", 1, None),
                                      ModelProduct("Homogeneizador", None, "UP200HT", 2, None)),
@@ -158,3 +164,20 @@ def test_mentions_are_deduplicated_and_fall_back_to_the_folded_description() -> 
 
 def test_the_reading_is_stored_under_the_versioned_value_norm() -> None:
     assert VALUE_NORM == "triage:v1"
+
+
+def test_the_threads_cases_are_read_sent_to_the_model_and_stored_with_the_legality_of_the_move() -> None:
+    db, reader = FakeDb(candidates=[CAND]), Reader({**READING, "stage": "negotiating"})
+    triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
+    assert db.thread_asked == "t-1"
+    assert '"stage": "quoting"' in reader.requests[0]["messages"][0]["content"]
+    value = db.recorded[0][1]
+    assert value["linked_cases"] == [{"opportunity_id": "o-1", "stage": "quoting"}]
+    assert value["reading"]["linked_cases"] == [{"opportunity_id": "o-1", "current_stage": "quoting",
+                                                 "transition_allowed": True}]
+
+
+def test_noise_does_not_look_up_cases() -> None:
+    db = FakeDb()
+    triage_one(db, FakeStore(make_raw(subject="Respuesta automática: hola")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert not hasattr(db, "thread_asked")

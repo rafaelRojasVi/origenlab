@@ -321,6 +321,23 @@ def test_rejected_and_staged_records_are_never_planned(db, world) -> None:
     assert world["e_known"] in planned
 
 
+def test_a_triage_reading_does_not_hide_a_live_email_but_another_assertion_still_does(db, world) -> None:
+    pdf = lambda: [_doc(f"CN0{uuid.uuid4().int % 8000 + 1000}.pdf", [f"CN0{uuid.uuid4().int % 8000 + 1000}"])]  # noqa: E731
+    with _owner(db) as conn:
+        triaged = _mail(conn, thread=f"t-tr-{world['tag']}", direction_hint="external", sender="contacto@origenlab.cl",
+                        recipients=f"x@{world['client_domain']}", subject="Cotización", documents=pdf())
+        other = _mail(conn, thread=f"t-ot-{world['tag']}", direction_hint="external", sender="contacto@origenlab.cl",
+                      recipients=f"x@{world['client_domain']}", subject="Cotización", documents=pdf())
+        with conn.cursor() as cur:
+            cur.execute("insert into evidence.assertion (source_record_id, kind, value_norm, value) values "
+                        "(%s, 'message_triage', 'triage:v1', '{}'), (%s, 'product_mention', 'UP200HT', '{}')",
+                        (triaged, triaged))
+            cur.execute("insert into evidence.assertion (source_record_id, kind, value_norm) "
+                        "values (%s, 'organization_name', 'Ejemplo')", (other,))
+    planned = {a["evidence_id"] for a in _repo(db).preview()["actions"]}
+    assert triaged in planned and other not in planned
+
+
 def test_apply_takes_only_previewed_pairs_and_refuses_a_changed_plan(db, world) -> None:
     repo = _repo(db)
     op = _operator(world["admin"])

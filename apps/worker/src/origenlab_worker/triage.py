@@ -30,7 +30,14 @@ from origenlab_worker.catalog_match import ProductCandidate, match_products, mod
 from origenlab_worker.drive_filing import storage_key
 from origenlab_worker.mail_text import MailText, parse_mail
 from origenlab_worker.storage import StorageError
-from origenlab_worker.triage_model import ModelReader, ModelReading, ModelRefused, build_request, parse_reading
+from origenlab_worker.triage_model import (
+    LinkedCase,
+    ModelReader,
+    ModelReading,
+    ModelRefused,
+    build_request,
+    parse_reading,
+)
 from origenlab_worker.triage_rules import TRIAGE_VERSION, RuleVerdict, TriageInput, classify
 
 VALUE_NORM = f"triage:v{TRIAGE_VERSION}"
@@ -52,6 +59,7 @@ class PendingMessage:
     direction: str
     labels: tuple[str, ...]
     eml_storage_path: str | None
+    thread_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,12 +90,21 @@ select sr.id::text
  limit %s
 """
 _ONE = """
-select sr.id::text, m.id::text, m.direction, m.labels, m.eml_storage_path,
+select sr.id::text, m.id::text, m.direction, m.labels, m.eml_storage_path, m.provider_thread_id,
        exists (select 1 from evidence.assertion a
                 where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s)
   from evidence.source_record sr
   join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
  where sr.id = %s and sr.kind = 'gmail_message'
+"""
+_LINKED_CASES = """
+select distinct o.id::text, o.title, o.stage
+  from crm.opportunity_evidence oe
+  join evidence.source_record sr on sr.id = oe.source_record_id
+  join crm.opportunity o on o.id = oe.opportunity_id
+ where oe.unlinked_at is null and sr.payload ->> 'gmail_thread_id' = %s
+ order by 1
+ limit 5
 """
 _INSERT_ASSERTION = """
 insert into evidence.assertion (source_record_id, kind, value_norm, value)
@@ -120,8 +137,17 @@ class TriageDb:
             row = cur.fetchone()
         if row is None:
             return None
-        sr, mid, direction, labels, path, done = row
-        return PendingMessage(sr, mid, direction, tuple(labels or ()), path), bool(done)
+        sr, mid, direction, labels, path, thread, done = row
+        return PendingMessage(sr, mid, direction, tuple(labels or ()), path, thread), bool(done)
+
+    def linked_cases(self, thread_id: str | None) -> list[LinkedCase]:
+        """The open and closed cases any email of this Gmail thread is linked to — the API's own
+        thread rule (R1, `mail_rules_repository._LINKS_SQL`), read-only."""
+        if not thread_id:
+            return []
+        with self._tx() as cur:
+            cur.execute(_LINKED_CASES, (thread_id,))
+            return [LinkedCase(oid, title, stage) for oid, title, stage in cur.fetchall()]
 
     def candidates(self, mail: MailText) -> list[ProductCandidate]:
         with self._tx() as cur:
@@ -167,7 +193,8 @@ def mentions_for(reading: ModelReading | None, candidates: Sequence[ProductCandi
 
 
 def reading_value(verdict: RuleVerdict, mail: MailText, candidates: Sequence[ProductCandidate],
-                  model_state: str, reading: ModelReading | None, elapsed_ms: int) -> dict[str, Any]:
+                  model_state: str, reading: ModelReading | None, elapsed_ms: int,
+                  cases: Sequence[LinkedCase] = ()) -> dict[str, Any]:
     value: dict[str, Any] = {
         "triage_version": TRIAGE_VERSION,
         "class": verdict.triage_class,
@@ -181,6 +208,7 @@ def reading_value(verdict: RuleVerdict, mail: MailText, candidates: Sequence[Pro
         "attachment_count": len(mail.attachment_names),
         "body_chars": len(mail.body),
         "candidates": [_candidate_json(c) for c in candidates],
+        "linked_cases": [{"opportunity_id": c.opportunity_id, "stage": c.stage} for c in cases],
         "model_state": model_state,
         "elapsed_ms": elapsed_ms,
     }
@@ -211,6 +239,7 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
 
     verdict = classify(TriageInput(direction=message.direction, labels=message.labels, mail=mail))
     candidates = db.candidates(mail) if verdict.needs_model or verdict.signals.get("quote_word") else []
+    cases = db.linked_cases(message.thread_id) if verdict.needs_model else []
 
     reading: ModelReading | None = None
     if not verdict.needs_model:
@@ -218,7 +247,7 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     elif settings.reader is None:
         state = "off"
     else:
-        request = build_request(mail, verdict, candidates, model=settings.model)
+        request = build_request(mail, verdict, candidates, model=settings.model, cases=cases)
         try:
             answer = settings.reader(request)
         except Exception as exc:  # noqa: BLE001 - reported by class and status only, never message text
@@ -227,13 +256,13 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
             answer, state = None, f"api_error_{getattr(exc, 'status_code', 0)}"
         if answer is not None:
             try:
-                reading = parse_reading(answer, model=settings.model, candidates=candidates)
+                reading = parse_reading(answer, model=settings.model, candidates=candidates, cases=cases)
                 state = "ran"
             except ModelRefused as exc:
                 state = str(exc)
 
     mentions = mentions_for(reading, candidates)
-    value = reading_value(verdict, mail, candidates, state, reading, int((clock() - started) * 1000))
+    value = reading_value(verdict, mail, candidates, state, reading, int((clock() - started) * 1000), cases)
     written = db.record(message.source_record_id, value, mentions)
     return TriageResult("recorded", verdict.triage_class, state, written)
 

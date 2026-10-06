@@ -134,8 +134,10 @@ def test_an_exact_model_number_becomes_a_product_mention(dsn, target, mailbox_id
 def test_the_full_text_query_runs_on_the_real_index(target) -> None:
     from origenlab_worker.catalog_match import match_products
 
-    with triage_conn(target) as conn, conn.cursor() as cur:
-        assert isinstance(match_products(cur, "Agitador orbital", "con calefacción para laboratorio"), list)
+    with triage_conn(target) as conn:
+        with conn.cursor() as cur:
+            assert isinstance(match_products(cur, "Agitador orbital", "con calefacción para laboratorio"), list)
+        assert TriageDb(conn).linked_cases(f"no-such-thread-{uuid.uuid4().hex}") == []
 
 
 def test_a_job_deferred_through_the_real_connector_lands_in_the_queue(dsn, target) -> None:

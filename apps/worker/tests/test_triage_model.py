@@ -13,6 +13,8 @@ from origenlab_worker.triage_model import (
     DEFAULT_MODEL,
     OUTPUT_SCHEMA,
     SYSTEM_PROMPT,
+    STAGE_ANSWERS,
+    LinkedCase,
     ModelRefused,
     build_request,
     parse_reading,
@@ -31,7 +33,7 @@ def answer(payload: dict | str, stop: str = "end_turn") -> SimpleNamespace:
                            usage=SimpleNamespace(input_tokens=900, output_tokens=120))
 
 
-GOOD = {"intent": "quote_request", "lead_status": "new_request", "urgency": "normal",
+GOOD = {"intent": "quote_request", "stage": "lead", "urgency": "normal",
         "products": [{"description": "Homogeneizador ultrasónico", "brand": "Hielscher", "model": "UP200Ht",
                       "quantity": 2, "catalog_product_id": "p-1"}],
         "requester_organization": None, "summary_es": "Pide cotizar dos homogeneizadores.", "needs_reply": True}
@@ -66,7 +68,7 @@ def test_an_invalid_model_id_is_refused() -> None:
 
 def test_a_good_answer_is_kept_with_its_usage() -> None:
     r = parse_reading(answer(GOOD), model=DEFAULT_MODEL, candidates=CANDIDATES)
-    assert (r.intent, r.lead_status, r.needs_reply) == ("quote_request", "new_request", True)
+    assert (r.intent, r.stage, r.needs_reply) == ("quote_request", "lead", True)
     assert r.products[0].catalog_product_id == "p-1" and r.products[0].quantity == 2
     assert r.as_json()["usage"] == {"input_tokens": 900, "output_tokens": 120}
 
@@ -87,10 +89,34 @@ def test_odd_quantities_become_null_and_blank_products_are_skipped() -> None:
     (answer(GOOD, stop="refusal"), "model_refused"),
     (answer(GOOD, stop="max_tokens"), "truncated"),
     (answer("not json"), "not_json"),
-    (answer({**GOOD, "lead_status": "maybe"}), "closed_value_unknown"),
+    (answer({**GOOD, "stage": "maybe"}), "closed_value_unknown"),
     (answer({**GOOD, "summary_es": " "}), "summary_missing"),
     (SimpleNamespace(stop_reason="end_turn", content=[]), "no_text"),
 ])
 def test_unusable_answers_are_refused_by_code(msg, code) -> None:
     with pytest.raises(ModelRefused, match=code):
         parse_reading(msg, model=DEFAULT_MODEL, candidates=CANDIDATES)
+
+
+def test_the_stage_vocabulary_is_the_crms_and_the_board_names_are_in_the_prompt() -> None:
+    from origenlab_api.v2.case_commands import CASE_STAGES
+
+    assert STAGE_ANSWERS == (*CASE_STAGES, "not_a_case", "unclear")
+    assert OUTPUT_SCHEMA["properties"]["stage"]["enum"] == list(STAGE_ANSWERS)
+    for label in ("Solicitada", "En estudio", "Enviada", "Conversación", "Ganada", "Perdida"):
+        assert label in SYSTEM_PROMPT
+
+
+def test_linked_cases_reach_the_model_and_each_proposed_move_is_checked_against_the_transition_table() -> None:
+    cases = [LinkedCase("o-1", "Balanzas Lab", "quoting"), LinkedCase("o-2", "Otra", "won")]
+    req = build_request(MAIL, VERDICT, CANDIDATES, cases=cases)
+    assert '"linked_cases": [{"title": "Balanzas Lab", "stage": "quoting"}' in req["messages"][0]["content"]
+    r = parse_reading(answer({**GOOD, "stage": "negotiating"}), model=DEFAULT_MODEL, candidates=CANDIDATES, cases=cases)
+    assert r.linked_cases == (
+        {"opportunity_id": "o-1", "current_stage": "quoting", "transition_allowed": True},
+        {"opportunity_id": "o-2", "current_stage": "won", "transition_allowed": False},
+    )
+    jump = parse_reading(answer({**GOOD, "stage": "won"}), model=DEFAULT_MODEL, candidates=CANDIDATES, cases=cases[:1])
+    assert jump.linked_cases[0]["transition_allowed"] is False  # quoting → won skips Conversación
+    none = parse_reading(answer({**GOOD, "stage": "not_a_case"}), model=DEFAULT_MODEL, candidates=CANDIDATES, cases=cases[:1])
+    assert none.linked_cases[0]["transition_allowed"] is False
