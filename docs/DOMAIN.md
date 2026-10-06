@@ -811,11 +811,11 @@ list is decided, these rows are reclassified by the migration that introduces it
 | 13 | A case at `lead` has had no activity for eleven months | it is still `lead`. The dashboard shows *sin actividad hace 334 días*, computed at read time. Closing it is `abandon_opportunity(case, reason)` by an operator; without that act no row changes and no event exists (§3.4) |
 | 14 | A distributor that supplies OrigenLab asks to buy a unit for its own laboratory | the distributor's `supplier` relationship is untouched. `set_requesting_institution` is refused until the operator supplies a justification; with it, one `opportunity_organization(distributor, role=requesting_institution, confirmation=confirmed, confirmed_by=O)` carries `supplier_exception_reason`, and the triple can never be rewritten. The case card shows *proveedor registrado* **and** *solicitante — excepción justificada*. No marketing permission and no `prospect` relationship follow |
 
-## 7. Table inventory — the reviewed 50-table foundation
+## 7. Table inventory — the reviewed 51-table foundation
 
-Seven private schemas. **50 application tables** — 33 reviewed after the
+Seven private schemas. **51 application tables** — 33 reviewed after the
 external CRM benchmark, the three of §7.1, the one of §7.2, the four of
-§7.3, the four of §7.4 and the five of §7.5 — the current
+§7.3, the four of §7.4, the five of §7.5 and the one of §7.6 — the current
 reviewed foundation
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §13), not a permanent budget: a table
 is added only when a relational invariant proves it necessary, removed when
@@ -1021,8 +1021,20 @@ Domain events added: `product.updated`, `product.content_confirmed`, `product.im
 `fx_rate` and `cost_parameter`. An event names a cost parameter's key and never its value, and a
 product cost event carries no price.
 
-Counts by schema: `crm` 21, `comms` 4, `outbound` 9, `evidence` 3,
-`catalog` 6, `procurement` 1, `platform` 6 — **50**.
+### 7.6 Mail triage review — built 2026-10-06
+
+The mail triage (ARCHITECTURE.md §8, D2) proposes a reading of each captured email as an
+`evidence.assertion` of kind `message_triage`; a person decides what it was worth.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 55 | `evidence.triage_review` | a person's verdict on one mail-triage reading | append-only (no UPDATE or DELETE grant); `verdict ∈ {approved, corrected, rejected}`; `corrected` is non-empty exactly for `corrected` and holds only `class`, `stage`, `intent`, `products`; a note is never blank; the latest row per assertion is its current verdict |
+
+Domain event added: `assertion.triage_reviewed` (aggregate `assertion`). A verdict moves no case:
+«Aprobar» on a stage suggestion runs `advance-case-stage` afterwards, which records its own event.
+
+Counts by schema: `crm` 21, `comms` 4, `outbound` 9, `evidence` 4,
+`catalog` 6, `procurement` 1, `platform` 6 — **51**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

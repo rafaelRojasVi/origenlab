@@ -2045,6 +2045,17 @@ and by model state.
 Stop everything: Render → the worker → Suspend. Waiting jobs stay in `procrastinate_jobs`; deleting
 them loses nothing, because the next sweep re-enqueues whatever has no reading.
 
+**Review (every operator, daily):** Revisión → «Correos (sugerencias)» lists the readings the
+model was asked for — never the noise — with the email, the products, the suggested stage and the
+stage of the case the Gmail thread is on. «Aprobar» records the verdict and, when the thread is on
+exactly one case and the board can walk there, moves it to the suggested stage («Aprobar y pasar a
+…»); «Ganada» is never moved this way (it needs «Marcar ganada» with its revision). «Corregir»
+records the right class, stage, intent or products (and moves the case when a stage is chosen);
+«Rechazar» records that the reading was wrong. A note is optional and is what makes a correction
+useful later. Every verdict is kept (`evidence.triage_review`, append-only; a second verdict
+supersedes the first without rewriting it). `scripts/triage_eval.py` measures the triage against
+them before a rule change.
+
 **Re-triage after a rule change:** bump `TRIAGE_VERSION` in `triage_rules.py`. New readings are
 stored beside the old ones (`triage:v2`), never over them.
 
