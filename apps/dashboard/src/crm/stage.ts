@@ -102,3 +102,50 @@ export function stageDisplay(card: OpportunityCardData): { label: string; tone: 
   return { label: STAGE_LABEL[card.stage] ?? card.stage, tone: STAGE_TONE[card.stage] ?? "neutral" };
 }
 
+
+/* ── the Tablero (board) ─────────────────────────────────────────────────── */
+
+/** Age of a card's latest sent revision, for grouping a long board column. Newest first. */
+export const AGE_BUCKETS = [
+  { key: "d30", label: "Últimos 30 días", maxDays: 30 },
+  { key: "d90", label: "31–90 días", maxDays: 90 },
+  { key: "d180", label: "91–180 días", maxDays: 180 },
+  { key: "d365", label: "181–365 días", maxDays: 365 },
+  { key: "older", label: "Más de un año", maxDays: Number.POSITIVE_INFINITY },
+  { key: "none", label: "Sin revisión enviada", maxDays: Number.NaN },
+] as const;
+
+export type AgeBucketKey = (typeof AGE_BUCKETS)[number]["key"];
+
+/** Which `AGE_BUCKETS` entry a revision sent at `sentAt` falls in, seen from `now`. */
+export function ageBucket(sentAt: string | null | undefined, now: Date = new Date()): AgeBucketKey {
+  const t = sentAt ? Date.parse(sentAt) : Number.NaN;
+  if (Number.isNaN(t)) return "none";
+  const days = Math.max(0, (now.getTime() - t) / 86_400_000);
+  for (const b of AGE_BUCKETS) if (days <= b.maxDays) return b.key;
+  return "older";
+}
+
+/**
+ * One compact status line for a board card, replacing the row of chips the card view shows.
+ * The column already says the stage, so the line says only what an operator must still do:
+ * the blocking reason when there is one, otherwise the gaps («sin Drive», «sin Gmail»,
+ * «sin contacto») — and whether the stage is only the historical import's trace.
+ */
+export function boardStatusLine(card: OpportunityCardData): { text: string; tone: Tone } {
+  const blocking = card.attention.find((a) => a.blocking);
+  if (blocking) return { text: blocking.label, tone: "bad" };
+  const parts: string[] = [];
+  if (stageBasis(card) === "historical_import") parts.push("histórico");
+  const latest = card.latest_revision;
+  if (!latest) parts.push("sin cotización");
+  else {
+    if (!card.drive_folder) parts.push("sin Drive");
+    if (!latest.gmail) parts.push("sin Gmail");
+  }
+  if (!card.contact) parts.push("sin contacto");
+  if (parts.length === 0 || (parts.length === 1 && parts[0] === "histórico")) {
+    return { text: parts.length ? "histórico · al día" : "Al día", tone: parts.length ? "neutral" : "good" };
+  }
+  return { text: parts.join(" · "), tone: card.status === "ok" ? "neutral" : "warn" };
+}
