@@ -87,6 +87,20 @@ describe("today lists", () => {
     expect(repliesToAnswer([d5, replied], NOW).map((r) => r.card.opportunity_id)).toEqual([replied.opportunity_id]);
   });
 
+  it("puts a case whose «Seguimiento …» task is due in the follow-ups, coloured by its age, never among the other tasks", () => {
+    const fu = (id: string, due: string) => ({ task_id: id, title: "Seguimiento de 01239-26", due_at: due, version: 1, owner: null });
+    const fresh = card({ open_tasks: [fu("f1", "2026-10-06T12:00:00Z")] }, "2026-10-05T12:00:00Z");
+    const old = card({ stage: "quoting", open_tasks: [fu("f2", "2026-10-04T12:00:00Z")] }, "2026-08-27T12:00:00Z");
+    const later = card({ open_tasks: [fu("f3", "2026-10-20T12:00:00Z")] }, "2026-08-27T12:00:00Z");
+    const resume = card({ open_tasks: [task("r", "2026-10-06T12:00:00Z")] }, "2026-08-27T12:00:00Z");
+    const out = followUpsDue([fresh, old, later, resume], NOW);
+    expect(out.map((f) => [f.card.opportunity_id, f.rhythm, f.task?.task.task_id, f.task?.overdueDays])).toEqual([
+      [old.opportunity_id, "cerrar", "f2", 2],
+      [fresh.opportunity_id, "primero", "f1", 0],
+    ]);
+    expect(tasksDue([fresh, old, later, resume], NOW).map((t) => t.task.task_id)).toEqual(["r"]);
+  });
+
   it("groups the machine-proposed institutions of open cases", () => {
     const org = { organization_id: "o-1", name: "ejemplo.cl", confirmation: "machine_proposed", version: 3 };
     const out = organizationsToConfirm([card({ organization: org }), card({ organization: org }), card()]);
@@ -196,6 +210,20 @@ describe("Hoy actions", () => {
       stage: "abandoned",
       close_reason: "Sin respuesta",
     });
+  });
+
+  it("shows a scheduled follow-up in «Seguimientos» with what the quote is for and its task's buttons", async () => {
+    const calls = stub();
+    const c = card({ open_tasks: [{ task_id: "s1", title: "Seguimiento de 01239-26", due_at: "2026-10-06T12:00:00Z", version: 3, owner: null }] }, "2026-09-01T12:00:00Z");
+    (c.latest_revision as RevisionCard).gmail = { source_record_id: "s", message_id: "m", thread_id: "t", url: "https://mail.example.cl/m", subject: "Cotización Balanzas Ohaus" };
+    const onChanged = renderToday([c]);
+    const row = within(screen.getByTestId("today-rhythm-cerrar")).getByTestId("today-task-s1");
+    expect(row).toHaveTextContent("Programado · Vence hoy");
+    expect(within(row).getByTestId("today-product")).toHaveTextContent("Balanzas Ohaus");
+    expect(screen.getByTestId("today-no-tasks")).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "Hecho" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    expect(calls.find((x) => x.path === "/v2/commands/complete-task")?.body).toEqual({ task_id: "s1", task_version: 3, note: "Hecho desde «Hoy»." });
   });
 
   it("shows the lists to a viewer without any button that writes", () => {

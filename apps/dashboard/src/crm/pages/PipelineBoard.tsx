@@ -6,8 +6,9 @@
  *   page. `sort` orders them (newest quote, oldest, «respondieron primero», institution); by date,
  *   a thin divider marks each age band («Últimos 30 días», «31–90 días»…) without hiding a card.
  * - A card leads with a readable institution name, the contact and the days since the quote went
- *   out (coloured by the follow-up rhythm: 3 · 14 · 30 days), then the quote, the model the PDF
- *   names, where the conversation stands, and direct links to the PDF in Drive and the email.
+ *   out (coloured by the follow-up rhythm: 3 · 14 · 30 days), then the quote, what it is for
+ *   (`quoteProduct`: the email subject's product, the PDF's model), where the conversation
+ *   stands, and direct links to the PDF in Drive and the email.
  * - With `onMove` (the operator may decide cases), a card can be dragged to another column. The
  *   board writes nothing itself: it says which card went where, and the page asks for what the
  *   move needs (a reason, a date, the revision) before anything is recorded. A click still opens
@@ -15,7 +16,7 @@
  */
 import { Fragment, useMemo, useState, type DragEvent, type MouseEvent } from "react";
 import type { OpportunityCardData } from "../crmTypes";
-import { ageTone, contactLine, conversation, daysSince, displayName, parseQuoteFilename } from "../caseDisplay";
+import { ageTone, contactLine, conversation, daysSince, displayName, quoteProduct } from "../caseDisplay";
 import { AGE_BUCKETS, BOARD_COLUMNS, ageBucket, boardColumnOf, pausedUntil, type BoardColumnKey } from "../stage";
 import { fmtDate, type Tone } from "../ui";
 
@@ -256,7 +257,7 @@ export function BoardCard({
   const { name, sub } = displayName(card);
   const contact = contactLine(card);
   const days = card.closed_at ? null : daysSince(latest?.sent_at, at);
-  const model = parseQuoteFilename(latest?.document?.filename).model;
+  const product = quoteProduct(card);
   const line = cardLine(card, at);
   const driveUrl = latest?.drive?.file_url ?? card.drive_folder?.url ?? null;
   const gmailUrl = latest?.gmail?.url ?? null;
@@ -323,9 +324,13 @@ export function BoardCard({
           <span className="text-ink-faint">Sin cotización</span>
         )}
       </p>
-      {model && !compact ? (
-        <span className="mt-1.5 inline-block rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] leading-4 text-brand-700">
-          {model}
+      {product ? (
+        <span
+          className="mt-1.5 inline-block max-w-full truncate rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px align-top text-[10.5px] leading-4 text-brand-700"
+          title={`Cotización por: ${product}`}
+          data-testid="board-product"
+        >
+          {product}
         </span>
       ) : null}
       <p className={`mt-1.5 line-clamp-2 text-[11px] font-medium leading-4 ${LINE_TONE[line.tone] ?? LINE_TONE.neutral}`} data-testid="board-status-line">
@@ -363,7 +368,7 @@ export function BoardCard({
             </a>
           ) : null}
           {pending > 0 ? (
-            <span className="ml-auto rounded-full bg-warn-bg px-1.5 text-[10px] font-semibold text-warn" title={card.attention.map((a) => a.label).join(" · ")}>
+            <span className="ml-auto whitespace-nowrap rounded-full bg-warn-bg px-1.5 text-[10px] font-semibold text-warn" title={card.attention.map((a) => a.label).join(" · ")}>
               {pending} pendiente{pending > 1 ? "s" : ""}
             </span>
           ) : null}

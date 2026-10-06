@@ -2,12 +2,15 @@
  * «Hoy»: what the open cases ask of an operator today, read from the pipeline cards. Pure — every
  * list here is computed in the browser from data the cards already carry, and nothing is stored.
  *
- * - **Tareas de hoy**: open `crm.task` rows due by the end of today (overdue first).
  * - **Te toca responder**: the client wrote after OrigenLab's last email on the case.
- * - **Seguimientos**: the 3 · 14 · 30-day rhythm, counted from OrigenLab's last touch (the quote,
- *   or a later email it sent): day 3 a first follow-up, day 14 a second, day 30 suggests closing.
- *   A case with an open task is already planned and is left out; so is a case whose stage is only
- *   the historical import's trace — those are decided in bulk («Decidir casos»).
+ * - **Seguimientos**: one list, coloured like a traffic light by the 3 · 14 · 30-day rhythm counted
+ *   from OrigenLab's last touch (the quote, or a later email it sent): green from day 3 (first
+ *   follow-up), yellow from day 14 (second), red from day 30 (close?). A case whose «Seguimiento …»
+ *   task is due today is in it too, whatever its age, carrying that task; a case with any other
+ *   open task is already planned and is left out, and so is a case whose stage is only the
+ *   historical import's trace — those are decided in bulk («Decidir casos»).
+ * - **Otras tareas**: the open `crm.task` rows due by the end of today that are not follow-ups
+ *   («Retomar: …», a call), overdue first.
  * - **Instituciones por confirmar**: the machine-proposed institutions of open cases.
  */
 import { conversation } from "./caseDisplay";
@@ -33,16 +36,27 @@ export interface DueTask {
   overdueDays: number;
 }
 
-export function tasksDue(cards: OpportunityCardData[], now: Date): DueTask[] {
-  const end = endOfDay(now).getTime();
+/** «Seguimiento de 01239-26»: the task «Decidir casos» and «+1 semana» write for a follow-up. */
+export function isFollowUpTask(task: OpenTask): boolean {
+  return /^\s*seguimiento\b/i.test(task.title);
+}
+
+function dueToday(task: OpenTask, now: Date): number | null {
+  const due = Date.parse(task.due_at);
+  if (Number.isNaN(due) || due > endOfDay(now).getTime()) return null;
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return Math.max(0, Math.ceil((startOfToday - due) / DAY_MS));
+}
+
+/** Open tasks due by tonight that are not follow-ups — those live in «Seguimientos». */
+export function tasksDue(cards: OpportunityCardData[], now: Date): DueTask[] {
   const out: DueTask[] = [];
   for (const card of cards) {
     if (!isOpenCase(card)) continue;
     for (const task of card.open_tasks ?? []) {
-      const due = Date.parse(task.due_at);
-      if (Number.isNaN(due) || due > end) continue;
-      out.push({ card, task, overdueDays: Math.max(0, Math.ceil((startOfToday - due) / DAY_MS)) });
+      if (isFollowUpTask(task)) continue;
+      const overdueDays = dueToday(task, now);
+      if (overdueDays !== null) out.push({ card, task, overdueDays });
     }
   }
   return out.sort((a, b) => a.task.due_at.localeCompare(b.task.due_at));
@@ -66,10 +80,11 @@ export function repliesToAnswer(cards: OpportunityCardData[], now: Date): Reply[
 
 export type Rhythm = "primero" | "segundo" | "cerrar";
 
-export const RHYTHM: { key: Rhythm; label: string; from: number; hint: string }[] = [
-  { key: "primero", label: "Primer seguimiento", from: 3, hint: "3 a 13 días sin respuesta" },
-  { key: "segundo", label: "Segundo seguimiento", from: 14, hint: "14 a 29 días sin respuesta" },
-  { key: "cerrar", label: "¿Cerrar?", from: 30, hint: "30 días o más: casi nunca vuelve" },
+/** The traffic light: green, yellow, red. */
+export const RHYTHM: { key: Rhythm; label: string; from: number; hint: string; tone: "good" | "warn" | "bad" }[] = [
+  { key: "primero", label: "Primer seguimiento", from: 3, hint: "hasta 13 días sin respuesta", tone: "good" },
+  { key: "segundo", label: "Segundo seguimiento", from: 14, hint: "14 a 29 días sin respuesta", tone: "warn" },
+  { key: "cerrar", label: "¿Cerrar?", from: 30, hint: "30 días o más: casi nunca vuelve", tone: "bad" },
 ];
 
 export interface FollowUp {
@@ -79,23 +94,35 @@ export interface FollowUp {
   rhythm: Rhythm;
   /** The last touch was a follow-up email, not the quote itself. */
   byEmail: boolean;
+  /** The «Seguimiento …» task due today that put the case here, if one did. */
+  task: DueTask | null;
 }
 
 export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[] {
   const out: FollowUp[] = [];
   for (const card of cards) {
-    if (!isOpenCase(card) || stageBasis(card) === "historical_import") continue;
-    if ((card.open_tasks ?? []).length > 0) continue;
+    if (!isOpenCase(card)) continue;
+    const open = card.open_tasks ?? [];
+    // The earliest follow-up task due today, if any: the case was scheduled for one.
+    let task: DueTask | null = null;
+    for (const t of [...open].sort((a, b) => a.due_at.localeCompare(b.due_at))) {
+      const overdueDays = isFollowUpTask(t) ? dueToday(t, now) : null;
+      if (overdueDays !== null) {
+        task = { card, task: t, overdueDays };
+        break;
+      }
+    }
+    if (!task && (open.length > 0 || stageBasis(card) === "historical_import")) continue;
     const sent = card.latest_revision?.sent_at ?? null;
-    if (!sent) continue;
-    if (conversation(card, now).kind === "replied") continue;
+    if (!sent && !task) continue;
+    if (!task && conversation(card, now).kind === "replied") continue;
     const email = card.last_contact?.outbound?.at ?? null;
-    const byEmail = email !== null && Date.parse(email) > Date.parse(sent);
+    const byEmail = email !== null && (!sent || Date.parse(email) > Date.parse(sent));
     const touch = byEmail ? (email as string) : sent;
-    const days = Math.max(0, Math.floor((now.getTime() - Date.parse(touch)) / DAY_MS));
-    if (days < RHYTHM[0].from) continue;
+    const days = touch ? Math.max(0, Math.floor((now.getTime() - Date.parse(touch)) / DAY_MS)) : 0;
+    if (!task && days < RHYTHM[0].from) continue;
     const rhythm = days >= RHYTHM[2].from ? "cerrar" : days >= RHYTHM[1].from ? "segundo" : "primero";
-    out.push({ card, days, rhythm, byEmail });
+    out.push({ card, days, rhythm, byEmail, task });
   }
   return out.sort((a, b) => b.days - a.days);
 }

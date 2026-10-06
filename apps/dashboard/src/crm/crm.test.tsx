@@ -349,6 +349,18 @@ describe("dashboard shell", () => {
     ]);
   });
 
+  it("folds the section names into a rail of icons, and remembers it", async () => {
+    window.localStorage.removeItem("crm.nav.collapsed");
+    signedInAt(`#/crm/oportunidades`);
+    const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
+    const toggle = within(nav).getByRole("button", { name: "Contraer menú" });
+    fireEvent.click(toggle);
+    expect(within(nav).getByRole("button", { name: "Expandir menú" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(nav).getByRole("link", { name: "Oportunidades" })).toHaveAttribute("title", "Oportunidades");
+    expect(window.localStorage.getItem("crm.nav.collapsed")).toBe("1");
+    window.localStorage.removeItem("crm.nav.collapsed");
+  });
+
   it("opens the case an old ?opportunity= bookmark selected", async () => {
     signedInAt(`#/ventas?opportunity=${CASE}`);
     await waitFor(() => expect(window.location.hash).toBe(`#/crm/oportunidades/${CASE}`));

@@ -2046,6 +2046,19 @@ From a design critique of the shipped screens rendered with invented data (`apps
 | Oportunidades: a disabled «Nueva oportunidad» with «Escritura desactivada…» under it | Removed (opening a case from the browser is not a command the proxy allows) |
 | Evidence | `apps/dashboard` `npm run validate`: **618 passed** + build |
 
+### 2.7.67 «Hoy» as one traffic-light follow-up list, the product on every card, a foldable menu, 2026-10-06 — built, not deployed
+
+`apps/dashboard` only: no API, proxy or schema change.
+
+| Change | What it does |
+|---|---|
+| «Hoy» order | «Te toca responder» first, then «Seguimientos», then «Otras tareas de hoy» |
+| One follow-up list | A case whose «Seguimiento …» task is due today («Decidir casos», «+1 semana») now sits in «Seguimientos» with its «Hecho» / «+1 semana» buttons and «Programado · Vence hoy». It used to be a second list, «Tareas de hoy», that hid those cases from «Seguimientos». «Otras tareas de hoy» keeps only the other due tasks («Retomar: …», a call) |
+| Traffic light | «Seguimientos» is green from day 3, yellow from day 14 and red from day 30 since OrigenLab's last touch: a coloured stripe, day chip and group header on each row, and a legend |
+| Product | `quoteProduct` reads what the quote is for from the quote email's subject («Cotización Balanzas Ohaus» → «Balanzas Ohaus»), adding the model the PDF name ends with («Sonicador · UP400St»). Campaign, supplier-form and empty subjects fall back to the model. Shown on every Tablero card (closed ones too) and on each «Seguimientos» row |
+| Menu | On wide screens the section list folds into a rail of icons («Contraer menú»); the choice is kept in the browser. «Oportunidades» uses the full screen width |
+| Evidence | `apps/dashboard` `npm run validate`: **625 passed** + build |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

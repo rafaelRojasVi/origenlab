@@ -1,7 +1,7 @@
 /**
  * What a case card shows, read from data the card already carries — never stored, never sent
  * back: a readable institution name when the CRM only knows a domain or a slug, the equipment
- * model printed in the quote's file name, the days since the quote went out and where the
+ * model printed in the quote's file name, what the quote is for, the days since the quote went out and where the
  * conversation stands («respondió», «seguimiento», «sin respuesta»).
  */
 import type { OpportunityCardData } from "./crmTypes";
@@ -23,6 +23,32 @@ export function parseQuoteFilename(filename: string | null | undefined): { compa
     .map((p) => p.trim())
     .filter(Boolean);
   return { company: parts.length > 1 ? parts[parts.length - 1] : null, model };
+}
+
+/** A subject that names a campaign or a process, not what the client asked for. */
+const NOT_A_PRODUCT =
+  /\||campaña|cyber|origenlab|labdelivery|presentaci[oó]n|inscripci[oó]n|proveedor|documentos|factura|orden de compra|^oc\b|^consulta$|^informaci[oó]n$|^quote$|^cotizar$|equipos? (e insumos )?para (su )?laboratorio/i;
+
+/**
+ * What the quote is for, as a short label: «Balanzas Ohaus», «Pipetas pasteur», «UP400St».
+ * The quote email's subject names the product more often than the PDF does («Cotización
+ * Balanzas Ohaus»); the model the file name ends with is added when the subject leaves it out.
+ * A subject that is a campaign, a reply chain or a supplier form is not read as a product.
+ */
+export function quoteProduct(card: OpportunityCardData): string | null {
+  const latest = card.latest_revision;
+  const model = parseQuoteFilename(latest?.document?.filename ?? latest?.drive?.original_filename).model;
+  let subject = latest?.gmail?.subject?.trim() ?? "";
+  for (let i = 0; i < 4; i += 1) subject = subject.replace(/^\s*(?:re|rv|fw|fwd|reenviar|respuesta)\s*:\s*/i, "");
+  subject = subject.replace(/^\s*urgente\s*[:!-]?\s*/i, "").replace(/\s*[-–]\s*(?:origenlab|labdelivery).*$/i, "");
+  // «Corteva Solicitud de cotización de insumos» → «insumos»: what follows the word is the product.
+  const after = subject.match(/cotizaci[oó]n(?:es)?\s*(?:(?:de|por|para|del)\s+)?[:-]?\s*(.*)$/i);
+  if (after) subject = after[1];
+  subject = subject.replace(/^\s*solicitud(?:\s+de)?\s+/i, "").trim();
+  const fromSubject = subject.length >= 3 && !NOT_A_PRODUCT.test(subject) && /[a-záéíóúñ]/i.test(subject) ? subject : null;
+  const label = fromSubject ? fromSubject.charAt(0).toUpperCase() + fromSubject.slice(1) : null;
+  if (label && model && !label.toLowerCase().includes(model.toLowerCase())) return `${label} · ${model}`;
+  return label ?? model;
 }
 
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
