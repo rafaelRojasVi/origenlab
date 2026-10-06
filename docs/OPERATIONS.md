@@ -2216,18 +2216,29 @@ Sources are text files the operator extracted by model key
 
 ### 14.5 Hosted loading
 
-The importers in this repository still refuse a hosted target: every DSN must name a literal
-loopback address, and `apply` writes only into a disposable `origenlab_test_<8 hex>` database or,
-with `--allow-cleanroom-production`, the clean room (`apps/api/scripts/catalog/_common.py`). The
-2026-10-06 hosted load was run by the owner's private wrapper (`load.sh`, outside the repository);
-how it reached the hosted project is not recorded here. The steps it followed are this section's:
-`plan`, read its counts, `apply` with `--plan-sha256`, then `verify` with the same plan and hash.
+The four importers (`import_cost_parameters`, `import_price_lists`, `import_supplier_documents`,
+`import_quote_history`) take a hosted mode for `apply`, `verify` and `rollback`: `--hosted-target
+--authorize-hosted-connection --authorize-supavisor-session-route` in place of the two DSNs
+(`apps/api/scripts/catalog/_common.py`). It reuses PR #623's route: the target file
+`supabase/.audit/hosted_target.env` (Supavisor session mode, `verify-full` with the Supabase CA,
+address pinned), the migrator login for the manifest (`SET LOCAL ROLE origenlab_owner`), and the
+same host with the login `origenlab_api.<project ref>` for the catalog rows, its password read from
+`ORIGENLAB_API_DB_PASSWORD` (the secret Render holds). A missing flag, an `--authorize-*` flag
+without `--hosted-target`, a DSN given alongside, or a missing password is a refusal before any
+connection. Without the flags the loopback-only rules are unchanged. Printed lines are redacted of
+host, logins, address and passwords. The enrichment tool stays loopback-only.
 
-Loaded on 2026-10-06: `price_lists`, `supplier_documents`, `quote_history`, each verified with no
-mismatch ([`STATUS.md`](STATUS.md) §2.7.61). `cost_parameters` has no plan; the five seeded
-values stand until an operator sets more (§14.3). Each load records one
-`source_record.migration_manifest_recorded` event with its importer, plan hash and counts; to
-see what a database already holds:
+Each load: `plan` (local, no database), read its counts, `apply` with `--plan-sha256`, then `verify`
+with the same plan and hash (exit 0). Name the operator with `--operator-email`, or with
+`--operator-id` for a shared-login profile, which has no email. **Take a `pg_dump` before the first
+apply:** rollback needs `session_replication_role`, which the hosted migrator may be refused; it
+then fails closed (exit 12, nothing deleted), and a hosted mistake is undone from that dump.
+
+Loaded on 2026-10-06 through this route: `price_lists`, `supplier_documents`, `quote_history`, each
+verified with no mismatch ([`STATUS.md`](STATUS.md) §2.7.61). `cost_parameters` has no plan; the
+five seeded values stand until an operator sets more (§14.3). Each load records one
+`source_record.migration_manifest_recorded` event with its importer, plan hash and counts; to see
+what a database already holds:
 
 ```sql
 select recorded_at, payload->>'importer', payload->>'plan_sha256'
