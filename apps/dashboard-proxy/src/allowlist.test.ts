@@ -483,8 +483,12 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/record-case-won",
       "/v2/commands/resolve-current-revision",
       "/v2/commands/record-case-quotation",
+      // W11 tasks: «En pausa hasta…», «Hecho», «Retomar ahora».
+      "/v2/commands/create-task",
+      "/v2/commands/complete-task",
+      "/v2/commands/cancel-task",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(4);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(7);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -499,6 +503,7 @@ describe("V2 durable read boundary allowlist", () => {
     expect(marketingCommandMaxBytes("/v2/commands/record-case-won")).toBe(16_384);
     expect(marketingCommandMaxBytes("/v2/commands/resolve-current-revision")).toBe(16_384);
     expect(marketingCommandMaxBytes("/v2/commands/record-case-quotation")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/create-task")).toBe(16_384);
     for (const path of [
       "/v2/commands/advance-case-stage/",
       "/v2/commands/advance-case-stage-all",
@@ -514,6 +519,11 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/record-historical-quotation",
       "/v2/commands/void-historical-quote-revision",
       "/v2/commands/RECORD-CASE-QUOTATION",
+      "/v2/commands/create-task/",
+      "/v2/commands/create-tasks",
+      "/v2/commands/delete-task",
+      "/v2/commands/update-task",
+      "/v2/commands/cancel-task/x",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
     }

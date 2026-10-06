@@ -3,15 +3,20 @@ import { fetchCaseNotes, fetchPipeline } from "../crmApi";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
-import { CaseActions } from "./CaseActions";
+import { CaseActions, type Mode } from "./CaseActions";
+import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
 import { Board } from "./PipelineBoard";
+import { useMayRunCaseCommands } from "../caseCommands";
 import {
+  HISTORICAL_STAGE_LABEL,
   ORIGIN_LABEL,
   STATUS_LABEL,
   byLatestSent,
   matchesQuery,
+  pausedUntil,
   stageBasis,
   stageDisplay,
+  type BoardColumnKey,
 } from "../stage";
 import {
   Badge,
@@ -19,6 +24,7 @@ import {
   Drawer,
   EmptyState,
   ExternalLink,
+  Modal,
   PageHeader,
   ResourceGate,
   SearchInput,
@@ -31,6 +37,7 @@ import {
   initials,
   LocalDriveLink,
   SuggestedTag,
+  toast,
 } from "../ui";
 import { useResource } from "../useResource";
 import { splitAddress } from "../address";
@@ -81,6 +88,29 @@ function Pipeline({
   const [view, setView] = useState<View>("cards");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(initialId);
+  // A drawer opened by a drop on «Ganada» arrives with «Marcar ganada» open.
+  const [openWith, setOpenWith] = useState<{ mode: Exclude<Mode, null>; target?: MoveTarget } | null>(null);
+  const [moving, setMoving] = useState<{ id: string; to: MoveTarget } | null>(null);
+  const mayDecide = useMayRunCaseCommands();
+
+  function open(id: string | null, withForm: typeof openWith = null) {
+    setOpenWith(withForm);
+    setOpenId(id);
+  }
+
+  /** A card dropped on another Tablero column: ask for what the move needs, or say why not. */
+  function onMove(card: OpportunityCardData, to: BoardColumnKey) {
+    if (to === "ganada") {
+      open(card.opportunity_id, { mode: "won" });
+      return;
+    }
+    const refusal = moveRefusal(card, to);
+    if (refusal) {
+      toast(refusal, "warn");
+      return;
+    }
+    setMoving({ id: card.opportunity_id, to });
+  }
 
   const counts = useMemo(() => {
     const c = { all: items.length, blocked: 0, pending: 0, ok: 0 };
@@ -96,7 +126,9 @@ function Pipeline({
   const revisions = items.reduce((n, i) => n + i.revision_count, 0);
   const withDrive = items.filter((i) => i.drive_folder).length;
   const historical = items.filter((i) => stageBasis(i) === "historical_import").length;
-  const open = items.find((i) => i.opportunity_id === openId) ?? null;
+  const paused = items.filter((i) => pausedUntil(i)).length;
+  const openCard = items.find((i) => i.opportunity_id === openId) ?? null;
+  const movingCard = moving ? (items.find((i) => i.opportunity_id === moving.id) ?? null) : null;
 
   if (items.length === 0) {
     return <EmptyState title="Sin oportunidades en el CRM">El CRM no tiene casos comerciales todavía.</EmptyState>;
@@ -110,13 +142,13 @@ function Pipeline({
           { label: "Cotizaciones", value: quotes },
           { label: "Revisiones", value: revisions },
           { label: "Con carpeta Drive", value: `${withDrive}/${items.length}` },
+          { label: "En pausa", value: paused },
           { label: "Bloqueadas", value: counts.blocked, tone: counts.blocked ? "bad" : undefined },
         ]}
       />
       {historical > 0 ? (
         <p className="rounded-md border border-line bg-canvas-sunken/70 px-3 py-2 text-xs leading-5 text-ink-muted" data-testid="historical-stage-notice">
-          <strong className="font-semibold text-ink">{historical} de {items.length}</strong> oportunidades muestran «Cotización enviada ·
-          histórico»: la importación histórica fijó su etapa porque encontró la cotización enviada. Eso es un hecho del pasado, no el
+          <strong className="font-semibold text-ink">{historical} de {items.length}</strong> oportunidades muestran «{HISTORICAL_STAGE_LABEL}»: la importación histórica fijó su etapa porque encontró la cotización enviada. Eso es un hecho del pasado, no el
           estado comercial actual, que nadie ha verificado todavía. Los enlaces de Drive vienen del registro local del archivo, no de
           una consulta en vivo.
         </p>
@@ -158,14 +190,39 @@ function Pipeline({
       ) : view === "cards" ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {visible.map((card, i) => (
-            <OpportunityCard key={card.opportunity_id} card={card} index={i} onOpen={setOpenId} />
+            <OpportunityCard key={card.opportunity_id} card={card} index={i} onOpen={(id) => open(id)} />
           ))}
         </div>
       ) : (
-        <Board cards={visible} onOpen={setOpenId} />
+        <Board cards={visible} onOpen={(id) => open(id)} onMove={mayDecide ? onMove : undefined} />
       )}
 
-      <OpportunityDrawer card={open} onClose={() => setOpenId(null)} onChanged={onChanged} refreshing={refreshing} />
+      <OpportunityDrawer
+        card={openCard}
+        onClose={() => open(null)}
+        onChanged={onChanged}
+        refreshing={refreshing}
+        initial={openWith}
+      />
+      {moving && movingCard ? (
+        <Modal title={`Mover a «${COLUMN_LABEL[moving.to]}»`} onClose={() => setMoving(null)}>
+          <p className="mb-3 truncate text-[13px] font-medium text-ink">{movingCard.organization?.name ?? movingCard.title}</p>
+          <CaseMoveForm
+            card={movingCard}
+            target={moving.to}
+            onCancel={() => setMoving(null)}
+            onDone={(o, refetch) => {
+              if (refetch) onChanged();
+              if (o.tone === "bad") {
+                toast(o.lines.join(" "), "bad");
+                return;
+              }
+              setMoving(null);
+              toast(o.tone === "good" ? `Movido a «${COLUMN_LABEL[moving.to]}».` : o.lines.join(" "), o.tone);
+            }}
+          />
+        </Modal>
+      ) : null}
     </>
   );
 }
@@ -371,11 +428,13 @@ function OpportunityDrawer({
   onClose,
   onChanged,
   refreshing = false,
+  initial = null,
 }: {
   card: OpportunityCardData | null;
   onClose: () => void;
   onChanged: () => void;
   refreshing?: boolean;
+  initial?: { mode: Exclude<Mode, null>; target?: MoveTarget } | null;
 }) {
   const mayAuthor = useMayAuthorCrm();
   // «Registrar seguimiento» opens the note form of *this* case once. The signal belongs to the
@@ -421,10 +480,21 @@ function OpportunityDrawer({
         <span className="text-[11px] text-ink-faint">Actualizada {fmtDate(card.updated_at)}</span>
       </div>
 
-      <Section title="Siguiente paso sugerido" aside={<SuggestedTag />}>
-        <p className="text-[13px] text-ink">{card.next_action.text}</p>
-        <p className="mt-0.5 text-[11px] text-ink-faint">Sugerido a partir del estado del caso — el CRM no tiene tareas registradas.</p>
-      </Section>
+      {card.next_action.source === "task" ? (
+        <Section title="Próxima tarea">
+          <p className="text-[13px] text-ink">{card.next_action.text}</p>
+          <p className="mt-0.5 text-[11px] text-ink-faint">
+            Para el {fmtDate(card.next_action.due_at)}
+            {card.open_tasks?.[0]?.owner ? ` · ${card.open_tasks[0].owner}` : ""}
+            {(card.open_tasks?.length ?? 0) > 1 ? ` · ${(card.open_tasks?.length ?? 0) - 1} más` : ""}
+          </p>
+        </Section>
+      ) : (
+        <Section title="Siguiente paso sugerido" aside={<SuggestedTag />}>
+          <p className="text-[13px] text-ink">{card.next_action.text}</p>
+          <p className="mt-0.5 text-[11px] text-ink-faint">Sugerido a partir del estado del caso — el caso no tiene tareas abiertas.</p>
+        </Section>
+      )}
 
       {card.attention.length > 0 ? (
         <Section title="Bloqueos y pendientes">
@@ -516,6 +586,7 @@ function OpportunityDrawer({
       <Section title="Acciones">
         <CaseActions
           card={card}
+          initial={initial}
           onChanged={onChanged}
           onFollowUp={() =>
             setFollowUp((f) => ({ id: card.opportunity_id, n: (f && f.id === card.opportunity_id ? f.n : 0) + 1 }))

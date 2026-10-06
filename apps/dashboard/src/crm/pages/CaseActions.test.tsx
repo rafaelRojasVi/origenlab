@@ -17,6 +17,7 @@ const QUOTE = "44444444-4444-4444-8444-444444444444";
 const MESSAGE = "55555555-5555-4555-8555-555555555555";
 const SHA_NEW = "a".repeat(64);
 const SHA_RECORDED = "b".repeat(64);
+const TASK = "66666666-6666-4666-8666-666666666666";
 
 const MAIL_DOCUMENTS = {
   opportunity_id: CASE,
@@ -212,10 +213,10 @@ describe("case drawer actions", () => {
     return screen.findByRole("dialog");
   }
 
-  it("keeps «Cambiar etapa» and «Marcar ganada» disabled when the case commands are off", async () => {
+  it("keeps «Cambiar estado» and «Marcar ganada» disabled when the case commands are off", async () => {
     stubApi({ pipelines: [page([card()])] });
     const dialog = await openDrawer(session("sales", { cases: false }));
-    expect(within(dialog).getByRole("button", { name: "Cambiar etapa" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cambiar estado" })).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "Marcar ganada" })).toBeDisabled();
     // add-note is a CRM authoring command: its own switch is on, so the follow-up is offered.
     expect(within(dialog).getByRole("button", { name: "Registrar seguimiento" })).toBeEnabled();
@@ -224,30 +225,37 @@ describe("case drawer actions", () => {
   it("keeps every write disabled for a viewer", async () => {
     stubApi({ pipelines: [page([card()])] });
     const dialog = await openDrawer(session("viewer"));
-    for (const name of ["Cambiar etapa", "Marcar ganada", "Registrar seguimiento", "Registrar cotización", "Nueva revisión"]) {
+    for (const name of ["Cambiar estado", "Marcar ganada", "Registrar seguimiento", "Registrar cotización", "Nueva revisión"]) {
       expect(within(dialog).getByRole("button", { name })).toBeDisabled();
     }
   });
 
-  it("changes stage with the shown version and refetches the pipeline", async () => {
+  it("closes a case as «Perdida» with one click on a reason, with the shown version", async () => {
     const calls = stubApi({
       pipelines: [page([card()]), page([card({ stage: "lost", version: 6, closed_at: "2026-10-05T00:00:00Z" })])],
       onPost: (call) =>
         call.path === "/v2/commands/advance-case-stage" ? { body: receipt("advance_case_stage", "lost", 6, "aaaaaaaa-0001") } : undefined,
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar etapa" }));
-    const form = within(dialog).getByRole("form", { name: "Cambiar etapa" });
-    const options = within(form).getAllByRole("option").map((o) => o.textContent);
-    expect(options).toEqual(["Negociando", "Calificada", "Abandonada", "Perdida"]);
-    fireEvent.change(within(form).getByLabelText(/Nueva etapa/), { target: { value: "lost" } });
-    const submit = within(form).getByRole("button", { name: "Cambiar etapa" });
-    fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "Compraron a otro proveedor" } });
-    expect(submit).toBeDisabled(); // closing needs a motive
-    fireEvent.change(within(form).getByLabelText(/Motivo de cierre/), { target: { value: "precio" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
+    const picker = within(dialog).getByRole("group", { name: "Nuevo estado" });
+    // Every state but the one the case is in; «Ganada» is «Marcar ganada».
+    expect(within(picker).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "Solicitada",
+      "En estudio",
+      "Conversación",
+      "En pausa",
+      "Perdida",
+    ]);
+    fireEvent.click(within(picker).getByRole("button", { name: "Perdida" }));
+    const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
+    const submit = within(form).getByRole("button", { name: "Marcar perdida" });
+    expect(submit).toBeDisabled(); // a reason first
+    fireEvent.click(within(form).getByRole("button", { name: "Precio" }));
+    fireEvent.change(within(form).getByLabelText(/Detalle/), { target: { value: "eligieron otra marca" } });
     fireEvent.click(submit);
 
-    expect(await within(dialog).findByText(/Etapa → Perdida: registrado/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/Estado → Perdida: registrado/)).toBeInTheDocument();
     const post = calls.find((c) => c.method === "POST")!;
     expect(post.path).toBe("/v2/commands/advance-case-stage");
     expect(post.key).toBeTruthy();
@@ -255,11 +263,49 @@ describe("case drawer actions", () => {
       opportunity_id: CASE,
       opportunity_version: 5,
       stage: "lost",
-      close_reason: "precio",
-      note: "Compraron a otro proveedor",
+      close_reason: "Precio: eligieron otra marca",
+      note: "Precio: eligieron otra marca",
     });
     await waitFor(() => expect(calls.filter((c) => c.path === "/v2/workspace/pipeline")).toHaveLength(2));
-    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cambiar etapa" })).toBeDisabled());
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cambiar estado" })).toBeDisabled());
+  });
+
+  it("closes «Sin respuesta» as abandoned", async () => {
+    const calls = stubApi({
+      pipelines: [page([card()])],
+      onPost: () => ({ body: receipt("advance_case_stage", "abandoned", 6, "aaaaaaaa-0002") }),
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Perdida" }));
+    const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
+    fireEvent.click(within(form).getByRole("button", { name: "Sin respuesta" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Marcar perdida" }));
+    await within(dialog).findByText(/Estado → Perdida · sin respuesta: registrado/);
+    expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ stage: "abandoned", close_reason: "Sin respuesta" });
+  });
+
+  it("walks a case back from «Enviada» to «Solicitada» one stage at a time", async () => {
+    const versions = [6, 7, 8];
+    const calls = stubApi({
+      pipelines: [page([card()])],
+      onPost: (call, i) => ({ body: receipt("advance_case_stage", String(call.body?.stage), versions[i], `0000000${i}-0001`) }),
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Solicitada" }));
+    const form = within(dialog).getByRole("form", { name: "Mover a «Solicitada»" });
+    expect(within(form).getByTestId("case-move-steps")).toHaveTextContent("3 pasos");
+    expect(within(form).getByLabelText(/^Nota/)).toHaveValue("Movido de «Enviada» a «Solicitada».");
+    fireEvent.click(within(form).getByRole("button", { name: "Mover" }));
+    await within(dialog).findByText(/3\/3 · Estado → Solicitada: registrado/);
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts.map((c) => [c.body?.stage, c.body?.opportunity_version])).toEqual([
+      ["qualified", 5],
+      ["qualifying", 6],
+      ["lead", 7],
+    ]);
+    expect(new Set(posts.map((c) => c.key)).size).toBe(3);
   });
 
   it("shows a stale-version refusal in Spanish and refetches", async () => {
@@ -271,13 +317,51 @@ describe("case drawer actions", () => {
       }),
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar etapa" }));
-    const form = within(dialog).getByRole("form", { name: "Cambiar etapa" });
-    fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "avanza" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Cambiar etapa" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Conversación" }));
+    const form = within(dialog).getByRole("form", { name: "Mover a «Conversación»" });
+    fireEvent.click(within(form).getByRole("button", { name: "Mover" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Otra persona cambió este caso");
     expect(within(dialog).queryByText(/this case changed/)).not.toBeInTheDocument();
     await waitFor(() => expect(calls.filter((c) => c.path === "/v2/workspace/pipeline")).toHaveLength(2));
+  });
+
+  it("pauses a case until a date with a reason, as a task, and resumes it", async () => {
+    const paused = card({
+      open_tasks: [{ task_id: TASK, title: "Retomar: Esperando fondos o proyecto", due_at: "2099-11-02T12:00:00Z", version: 1, owner: "Ventas" }],
+      next_action: { text: "Retomar: Esperando fondos o proyecto", source: "task", due_at: "2099-11-02T12:00:00Z" },
+    });
+    const calls = stubApi({
+      pipelines: [page([card()]), page([paused]), page([card()])],
+      onPost: (call) =>
+        call.path === "/v2/commands/create-task"
+          ? { body: { command: "create_task", task_id: TASK, task_version: 1, opportunity_id: CASE, command_receipt_id: "9999aaaa-1", replayed: false } }
+          : { body: { command: "cancel_task", task_id: TASK, task_version: 2, opportunity_id: CASE, command_receipt_id: "9999bbbb-1", replayed: false } },
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "En pausa" }));
+    const form = within(dialog).getByRole("form", { name: "Mover a «En pausa»" });
+    fireEvent.change(within(form).getByLabelText(/Retomar el/), { target: { value: "2099-11-02" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Esperando fondos o proyecto" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Pausar" }));
+
+    const banner = await within(dialog).findByTestId("case-paused");
+    expect(banner).toHaveTextContent("En pausa hasta 02 nov 2099");
+    const create = calls.find((c) => c.path === "/v2/commands/create-task")!;
+    expect(create.body).toEqual({
+      opportunity_id: CASE,
+      title: "Retomar: Esperando fondos o proyecto",
+      due_at: new Date("2099-11-02T09:00:00").toISOString(),
+      note: "Esperando fondos o proyecto",
+    });
+    // The stage never moved.
+    expect(calls.some((c) => c.path === "/v2/commands/advance-case-stage")).toBe(false);
+
+    fireEvent.click(within(banner).getByRole("button", { name: "Retomar ahora" }));
+    await waitFor(() => expect(within(dialog).queryByTestId("case-paused")).not.toBeInTheDocument());
+    const cancel = calls.find((c) => c.path === "/v2/commands/cancel-task")!;
+    expect(cancel.body).toEqual({ task_id: TASK, task_version: 1, note: "Retomado antes de la fecha." });
   });
 
   it("marks a quoting case won in two steps, each with its receipt", async () => {
@@ -299,7 +383,7 @@ describe("case drawer actions", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Marcar ganada" }));
 
     const outcome = await within(dialog).findByTestId("case-action-outcome");
-    expect(outcome).toHaveTextContent("1/2 · Etapa → Negociando: registrado · recibo bbbbbbbb");
+    expect(outcome).toHaveTextContent("1/2 · Etapa → Conversación: registrado · recibo bbbbbbbb");
     expect(outcome).toHaveTextContent("2/2 · Ganada: registrado · recibo cccccccc");
     const posts = calls.filter((c) => c.method === "POST");
     expect(posts.map((c) => c.path)).toEqual(["/v2/commands/advance-case-stage", "/v2/commands/record-case-won"]);
@@ -345,17 +429,17 @@ describe("case drawer actions", () => {
     fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "OC" } });
     fireEvent.click(within(form).getByRole("button", { name: "Marcar ganada" }));
     const outcome = await within(dialog).findByTestId("case-action-outcome");
-    expect(outcome).toHaveTextContent("1/2 · Etapa → Negociando: registrado");
+    expect(outcome).toHaveTextContent("1/2 · Etapa → Conversación: registrado");
     expect(outcome).toHaveTextContent("2/2 · Ganada: no se registró — Sólo se gana contra una revisión enviada y vigente");
-    expect(outcome).toHaveTextContent("El caso quedó en «Negociando».");
+    expect(outcome).toHaveTextContent("El caso quedó en «Conversación».");
   });
 
   it("disables «Marcar ganada» without a sent, current revision or outside quoting/negotiating", async () => {
     stubApi({ pipelines: [page([card({ stage: "qualified" })])] });
     const dialog = await openDrawer(session("sales"));
     expect(within(dialog).getByRole("button", { name: "Marcar ganada" })).toBeDisabled();
-    expect(within(dialog).getByText("Se marca ganada desde «Cotizando» o «Negociando»")).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Cambiar etapa" })).toBeEnabled();
+    expect(within(dialog).getByText("Se marca ganada desde «Enviada» o «Conversación»")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cambiar estado" })).toBeEnabled();
   });
 
   it("confirms an institution «por confirmar» with its version, then refetches", async () => {
@@ -454,11 +538,10 @@ describe("case drawer actions", () => {
         return (original as typeof fetch)(input, init);
       }),
     );
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar etapa" }));
-    const form = within(dialog).getByRole("form", { name: "Cambiar etapa" });
-    const note = within(form).getByLabelText(/^Nota/);
-    fireEvent.change(note, { target: { value: "avanza" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Cambiar etapa" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Conversación" }));
+    const form = within(dialog).getByRole("form", { name: "Mover a «Conversación»" });
+    fireEvent.click(within(form).getByRole("button", { name: "Mover" }));
     expect(await within(dialog).findByTestId("drawer-refreshing")).toHaveTextContent("Actualizando…");
     const notesButton = within(dialog).getByRole("button", { name: "Agregar nota" });
     notesButton.focus();
@@ -640,10 +723,75 @@ describe("case drawer actions", () => {
     });
   });
 
-  it("disables «Registrar cotización» and «Nueva revisión» before «Cotizando»", async () => {
+  it("disables «Registrar cotización» and «Nueva revisión» before «Enviada»", async () => {
     stubApi({ pipelines: [page([card({ stage: "qualified" })])] });
     const dialog = await openDrawer(session("sales"));
     expect(within(dialog).getByRole("button", { name: "Registrar cotización" })).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "Nueva revisión" })).toBeDisabled();
   });
 });
+
+describe("Tablero drag and drop", () => {
+  function drag() {
+    const data: Record<string, string> = {};
+    return {
+      setData: (k: string, v: string) => {
+        data[k] = v;
+      },
+      getData: (k: string) => data[k] ?? "",
+      effectAllowed: "",
+      dropEffect: "",
+    };
+  }
+
+  async function board(s: AuthSessionState) {
+    render(
+      withSession(
+        s,
+        <>
+          <PipelinePage />
+          <Toaster />
+        </>,
+      ),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Tablero" }));
+    return screen.getByTestId(`board-card-${CASE}`);
+  }
+
+  it("asks for the reason when a card is dropped on «Perdida», then records it", async () => {
+    const calls = stubApi({
+      pipelines: [page([card()]), page([card({ stage: "abandoned", version: 6, closed_at: "2026-10-05T00:00:00Z" })])],
+      onPost: () => ({ body: receipt("advance_case_stage", "abandoned", 6, "abababab-0001") }),
+    });
+    const b = await board(session("sales"));
+    const dataTransfer = drag();
+    fireEvent.dragStart(b, { dataTransfer });
+    fireEvent.drop(screen.getByRole("region", { name: "Perdida" }), { dataTransfer });
+    const modal = screen.getByRole("dialog", { name: "Mover a «Perdida»" });
+    // Nothing is recorded by the drop itself.
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    fireEvent.click(within(modal).getByRole("button", { name: "Sin respuesta" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Marcar perdida" }));
+    expect(await screen.findByTestId("toaster")).toHaveTextContent("Movido a «Perdida».");
+    expect(screen.queryByRole("dialog", { name: "Mover a «Perdida»" })).not.toBeInTheDocument();
+    expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ stage: "abandoned", opportunity_version: 5 });
+    await waitFor(() => expect(screen.getByTestId("board-count-perdida")).toHaveTextContent("1"));
+  });
+
+  it("opens «Marcar ganada» when a card is dropped on «Ganada»", async () => {
+    stubApi({ pipelines: [page([card()])] });
+    const b = await board(session("sales"));
+    const dataTransfer = drag();
+    fireEvent.dragStart(b, { dataTransfer });
+    fireEvent.drop(screen.getByRole("region", { name: "Ganada" }), { dataTransfer });
+    const drawer = await screen.findByRole("dialog", { name: "Universidad Ficticia" });
+    expect(within(drawer).getByRole("form", { name: "Marcar ganada" })).toBeInTheDocument();
+  });
+
+  it("does not let a viewer drag", async () => {
+    stubApi({ pipelines: [page([card()])] });
+    const b = await board(session("viewer"));
+    expect(b).toHaveAttribute("draggable", "false");
+  });
+});
+

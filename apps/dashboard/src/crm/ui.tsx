@@ -592,6 +592,101 @@ export function Drawer({
   );
 }
 
+/**
+ * A small centred dialog for one decision (the Tablero's «Mover a…», «Perdida», «En pausa»).
+ * Escape and the backdrop close it unless `busy`; focus goes to its first field and comes back.
+ */
+export function Modal({
+  title,
+  onClose,
+  busy = false,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  busy?: boolean;
+  children: ReactNode;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const first = boxRef.current?.querySelector<HTMLElement>("input, textarea, select, button:not([data-modal-close])");
+    first?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busyRef.current) onCloseRef.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previous?.focus?.();
+    };
+  }, []);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
+      <div className="absolute inset-0 bg-ink/30" onClick={busy ? undefined : onClose} aria-hidden="true" />
+      <div
+        ref={boxRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="relative w-full max-w-md min-w-0 rounded-xl border border-line bg-canvas-raised p-5 shadow-xl"
+      >
+        <div className="mb-3 flex items-start gap-3">
+          <h2 className="min-w-0 flex-1 text-base font-semibold text-ink">{title}</h2>
+          <button
+            type="button"
+            data-modal-close
+            onClick={onClose}
+            disabled={busy}
+            aria-label="Cerrar"
+            className="h-7 w-7 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink disabled:opacity-50"
+          >
+            ✕
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** A row of one-click choices (a reason, a state). `aria-pressed` marks the chosen one. */
+export function ChoiceChips({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: string[];
+  value: string | null;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div role="group" aria-label={label} className="flex flex-wrap gap-1.5">
+      {options.map((o) => (
+        <button
+          key={o}
+          type="button"
+          aria-pressed={value === o}
+          onClick={() => onChange(o)}
+          className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+            value === o
+              ? "border-brand-700 bg-brand-700 text-white"
+              : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-brand-700"
+          }`}
+        >
+          {o}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
     <section>
@@ -661,6 +756,7 @@ const INPUT_CLS =
 
 export function TextInput({
   id,
+  type = "text",
   value,
   onChange,
   placeholder,
@@ -669,6 +765,7 @@ export function TextInput({
   maxLength,
 }: {
   id?: string;
+  type?: "text" | "date";
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -679,7 +776,7 @@ export function TextInput({
   return (
     <input
       id={id}
-      type="text"
+      type={type}
       value={value}
       onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
       placeholder={placeholder}

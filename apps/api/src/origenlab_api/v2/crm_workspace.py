@@ -228,6 +228,15 @@ _SQL_PIPELINE_REVISIONS = """
       left join evidence.source_record d
              on d.dedupe_key = 'drive_file:' || qr.pdf_sha256 and d.kind = 'drive_file'
 """
+# Open follow-ups (`crm.task`, W11) with their owner's name; `due_at` as ISO text.
+_SQL_PIPELINE_TASKS = """
+    select t.id::text as task_id, t.opportunity_id::text, t.title,
+           to_char(t.due_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as due_at,
+           t.version, o.display_name as owner_display_name
+      from crm.task t
+      join platform.operator o on o.id = t.owner_operator_id
+     where t.status = 'open'
+"""
 _SQL_PIPELINE_SOURCES = """
     select sr.id::text as source_record_id,
            sr.payload->>'gmail_message_id' as gmail_message_id,
@@ -523,6 +532,7 @@ def compose_pipeline(
     participants: list[Mapping[str, Any]],
     drive: Mapping[str, DriveLink],
     contacts: Mapping[str, Mapping[str, Any]] | None = None,
+    tasks: list[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
@@ -542,6 +552,13 @@ def compose_pipeline(
         quotes_by_opp[row["opportunity_id"]].append(row)
         if row.get("number_origin") == "printed_historical":
             opps_by_number[row["quote_number"]].add(row["opportunity_id"])
+
+    tasks_by_opp: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in sorted(tasks or [], key=lambda r: (str(r["due_at"]), r["task_id"])):
+        tasks_by_opp[row["opportunity_id"]].append({
+            "task_id": row["task_id"], "title": row["title"], "due_at": row["due_at"],
+            "version": row["version"], "owner": row.get("owner_display_name"),
+        })
 
     cards: list[dict[str, Any]] = []
     for opp in opportunities:
@@ -691,10 +708,22 @@ def compose_pipeline(
                     for c in ordered
                 ],
                 "status": "blocked" if blocked else ("pending" if any(c != "no_crm_contact" for c in ordered) else "ok"),
-                "next_action": suggest_next_action(opp, blocked, latest),
+                # Open `crm.task` rows (W11), earliest due first. A case whose earliest open task
+                # is due after today is «En pausa hasta…» on the dashboard.
+                "open_tasks": tasks_by_opp.get(oid, []),
+                "next_action": task_next_action(tasks_by_opp.get(oid, []))
+                or suggest_next_action(opp, blocked, latest),
             }
         )
     return cards
+
+
+def task_next_action(open_tasks: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """The earliest open task, when the case has one: a stored next action beats a suggestion."""
+    if not open_tasks:
+        return None
+    first = open_tasks[0]
+    return {"text": first["title"], "source": "task", "due_at": first["due_at"]}
 
 
 def suggest_next_action(
@@ -894,7 +923,7 @@ class CrmWorkspaceRepository:
                 setup.execute("set transaction read only")
                 setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
 
-            # 7 data queries in 1 RTT via psycopg pipeline mode.
+            # 8 data queries in 1 RTT via psycopg pipeline mode.
             cur_opps = conn.cursor()
             cur_case_orgs = conn.cursor()
             cur_quotes = conn.cursor()
@@ -902,6 +931,7 @@ class CrmWorkspaceRepository:
             cur_sources = conn.cursor()
             cur_participants = conn.cursor()
             cur_contact = conn.cursor()
+            cur_tasks = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -910,6 +940,7 @@ class CrmWorkspaceRepository:
                 cur_sources.execute(_SQL_PIPELINE_SOURCES)
                 cur_participants.execute(_SQL_PIPELINE_PARTICIPANTS)
                 cur_contact.execute(_SQL_PIPELINE_CONTACT)
+                cur_tasks.execute(_SQL_PIPELINE_TASKS)
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -927,10 +958,11 @@ class CrmWorkspaceRepository:
                 sources[row["source_record_id"]] = row
             participants = self._rows(cur_participants)
             contacts = last_contacts(self._rows(cur_contact))
+            tasks = self._rows(cur_tasks)
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
-            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts
+            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks
         )
         return {
             "items": cards,

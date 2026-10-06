@@ -2,7 +2,8 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
-import { ageBucket, boardStatusLine } from "../stage";
+import { stagePath } from "../caseCommands";
+import { ageBucket, boardColumnOf, boardStatusLine, pausedUntil } from "../stage";
 import { Board, GROUP_AFTER } from "./PipelineBoard";
 
 // Every value below is invented; the repository is public.
@@ -86,14 +87,16 @@ describe("Tablero", () => {
     const lead = card({ stage: "lead" }, null);
     const quoting = card();
     render(<Board cards={[lead, quoting]} onOpen={() => undefined} now={NOW} />);
-    expect(screen.getByTestId("board-count-lead")).toHaveTextContent("1");
-    expect(screen.getByTestId("board-count-quoting")).toHaveTextContent("1");
-    expect(screen.getByTestId("board-count-closed")).toHaveTextContent("0");
+    expect(screen.getByTestId("board-count-solicitada")).toHaveTextContent("1");
+    expect(screen.getByTestId("board-count-enviada")).toHaveTextContent("1");
+    for (const key of ["estudio", "conversacion", "pausa", "ganada", "perdida"]) {
+      expect(screen.getByTestId(`board-count-${key}`)).toHaveTextContent("0");
+    }
     const b = screen.getByTestId(`board-card-${quoting.opportunity_id}`);
     expect(b.textContent).toMatch(/^Universidad Ficticia \d+01239-26 · r1 · 20 sept 2026histórico · sin Drive$/);
     // No repeated chips on a board card: one status line, nothing else.
     expect(within(b).getAllByTestId("board-status-line")).toHaveLength(1);
-    expect(b).not.toHaveTextContent("Cotización enviada · histórico");
+    expect(b).not.toHaveTextContent("Enviada · histórico");
     expect(b).not.toHaveTextContent("Pendiente");
     expect(b).not.toHaveTextContent("Drive: falta");
   });
@@ -110,8 +113,8 @@ describe("Tablero", () => {
 
   it("scrolls each column on its own", () => {
     render(<Board cards={[card()]} onOpen={() => undefined} now={NOW} />);
-    expect(screen.getByTestId("board-column-quoting").className).toMatch(/overflow-y-auto/);
-    expect(screen.getByTestId("board-column-quoting").className).toMatch(/max-h-/);
+    expect(screen.getByTestId("board-column-enviada").className).toMatch(/overflow-y-auto/);
+    expect(screen.getByTestId("board-column-enviada").className).toMatch(/max-h-/);
   });
 
   it("groups a long column by the age of the last revision, newest group open", () => {
@@ -119,8 +122,8 @@ describe("Tablero", () => {
     const old = Array.from({ length: GROUP_AFTER }, () => card({}, "2025-01-10T12:00:00Z"));
     const none = card({}, null);
     render(<Board cards={[...old, none, ...recent]} onOpen={() => undefined} now={NOW} />);
-    expect(screen.getByTestId("board-count-quoting")).toHaveTextContent(String(3 + GROUP_AFTER + 1));
-    const groups = within(screen.getByTestId("board-column-quoting")).getAllByRole("group");
+    expect(screen.getByTestId("board-count-enviada")).toHaveTextContent(String(3 + GROUP_AFTER + 1));
+    const groups = within(screen.getByTestId("board-column-enviada")).getAllByRole("group");
     expect(groups.map((g) => g.getAttribute("data-testid"))).toEqual(["board-age-d30", "board-age-older", "board-age-none"]);
     expect(groups.map((g) => g.hasAttribute("open"))).toEqual([true, false, false]);
     expect(screen.getByTestId("board-age-d30")).toHaveTextContent("Últimos 30 días3");
@@ -129,6 +132,76 @@ describe("Tablero", () => {
 
   it("does not group a short column", () => {
     render(<Board cards={[card(), card({}, "2024-01-01T00:00:00Z")]} onOpen={() => undefined} now={NOW} />);
-    expect(within(screen.getByTestId("board-column-quoting")).queryAllByRole("group")).toHaveLength(0);
+    expect(within(screen.getByTestId("board-column-enviada")).queryAllByRole("group")).toHaveLength(0);
+  });
+
+  it("puts a case with a later open task under «En pausa», and a due one back in its column", () => {
+    const later = card({
+      open_tasks: [{ task_id: "t1", title: "Retomar: Esperando la orden de compra", due_at: "2026-11-02T12:00:00Z", version: 1, owner: null }],
+      next_action: { text: "Retomar: Esperando la orden de compra", source: "task", due_at: "2026-11-02T12:00:00Z" },
+    });
+    const due = card({
+      open_tasks: [{ task_id: "t2", title: "Llamar", due_at: "2026-10-01T12:00:00Z", version: 1, owner: null }],
+    });
+    render(<Board cards={[later, due]} onOpen={() => undefined} now={NOW} />);
+    expect(screen.getByTestId("board-count-pausa")).toHaveTextContent("1");
+    expect(screen.getByTestId("board-count-enviada")).toHaveTextContent("1");
+    const b = screen.getByTestId(`board-card-${later.opportunity_id}`);
+    expect(within(b).getByTestId("board-status-line")).toHaveTextContent("Hasta 02 nov 2026 · Retomar: Esperando la orden de compra");
+    expect(b).toHaveAttribute("title", "Próxima tarea: Retomar: Esperando la orden de compra");
+  });
+
+  it("is read-only without onMove, and reports a drop on another column with it", () => {
+    const c = card();
+    const { unmount } = render(<Board cards={[c]} onOpen={() => undefined} now={NOW} />);
+    expect(screen.getByTestId(`board-card-${c.opportunity_id}`)).toHaveAttribute("draggable", "false");
+    unmount();
+
+    const onMove = vi.fn();
+    render(<Board cards={[c]} onOpen={() => undefined} onMove={onMove} now={NOW} />);
+    const b = screen.getByTestId(`board-card-${c.opportunity_id}`);
+    expect(b).toHaveAttribute("draggable", "true");
+    const data: Record<string, string> = {};
+    const dataTransfer = {
+      setData: (k: string, v: string) => {
+        data[k] = v;
+      },
+      getData: (k: string) => data[k] ?? "",
+      effectAllowed: "",
+      dropEffect: "",
+    };
+    fireEvent.dragStart(b, { dataTransfer });
+    // Its own column takes no drop.
+    fireEvent.drop(screen.getByRole("region", { name: "Enviada" }), { dataTransfer });
+    expect(onMove).not.toHaveBeenCalled();
+    fireEvent.dragStart(b, { dataTransfer });
+    const target = screen.getByRole("region", { name: "Perdida" });
+    fireEvent.dragOver(target, { dataTransfer });
+    expect(target).toHaveAttribute("data-drop-target", "true");
+    fireEvent.drop(target, { dataTransfer });
+    expect(onMove).toHaveBeenCalledWith(c, "perdida");
   });
 });
+
+describe("states", () => {
+  it("walks the stage table one step at a time, never through «won» or a closed stage", () => {
+    expect(stagePath("quoting", "negotiating")).toEqual(["negotiating"]);
+    expect(stagePath("lead", "quoting")).toEqual(["qualifying", "qualified", "quoting"]);
+    expect(stagePath("quoting", "lead")).toEqual(["qualified", "qualifying", "lead"]);
+    expect(stagePath("negotiating", "lost")).toEqual(["lost"]);
+    expect(stagePath("quoting", "quoting")).toEqual([]);
+    expect(stagePath("quoting", "won")).toBeNull();
+    expect(stagePath("lost", "lead")).toBeNull();
+  });
+
+  it("pauses only an open case, and only until its earliest task", () => {
+    const task = { task_id: "t", title: "Retomar", due_at: "2026-11-02T12:00:00Z", version: 1, owner: null };
+    expect(pausedUntil(card({ open_tasks: [task] }), NOW)).toBe("2026-11-02T12:00:00Z");
+    expect(pausedUntil(card({ open_tasks: [task], stage: "lost", closed_at: "2026-10-01T00:00:00Z" }), NOW)).toBeNull();
+    expect(pausedUntil(card({ open_tasks: [{ ...task, due_at: "2026-10-06T11:00:00Z" }] }), NOW)).toBeNull();
+    expect(boardColumnOf(card({ stage: "qualifying" }), NOW)).toBe("solicitada");
+    expect(boardColumnOf(card({ stage: "abandoned", closed_at: "2026-10-01T00:00:00Z" }), NOW)).toBe("perdida");
+    expect(boardColumnOf(card({ open_tasks: [task] }), NOW)).toBe("pausa");
+  });
+});
+
