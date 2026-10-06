@@ -87,18 +87,33 @@ describe("today lists", () => {
     expect(repliesToAnswer([d5, replied], NOW).map((r) => r.card.opportunity_id)).toEqual([replied.opportunity_id]);
   });
 
-  it("puts a case whose «Seguimiento …» task is due in the follow-ups, coloured by its age, never among the other tasks", () => {
+  it("puts a case whose «Seguimiento …» task is due in the follow-ups from day 3, never among the other tasks", () => {
     const fu = (id: string, due: string) => ({ task_id: id, title: "Seguimiento de 01239-26", due_at: due, version: 1, owner: null });
     const fresh = card({ open_tasks: [fu("f1", "2026-10-06T12:00:00Z")] }, "2026-10-05T12:00:00Z");
     const old = card({ stage: "quoting", open_tasks: [fu("f2", "2026-10-04T12:00:00Z")] }, "2026-08-27T12:00:00Z");
     const later = card({ open_tasks: [fu("f3", "2026-10-20T12:00:00Z")] }, "2026-08-27T12:00:00Z");
     const resume = card({ open_tasks: [task("r", "2026-10-06T12:00:00Z")] }, "2026-08-27T12:00:00Z");
     const out = followUpsDue([fresh, old, later, resume], NOW);
-    expect(out.map((f) => [f.card.opportunity_id, f.rhythm, f.task?.task.task_id, f.task?.overdueDays])).toEqual([
-      [old.opportunity_id, "cerrar", "f2", 2],
-      [fresh.opportunity_id, "primero", "f1", 0],
-    ]);
+    // The quote sent yesterday is not chased yet, task or not.
+    expect(out.map((f) => [f.card.opportunity_id, f.rhythm, f.task?.task.task_id])).toEqual([[old.opportunity_id, "cerrar", "f2"]]);
     expect(tasksDue([fresh, old, later, resume], NOW).map((t) => t.task.task_id)).toEqual(["r"]);
+  });
+
+  it("counts a follow-up task as done once OrigenLab writes on the thread that day, without «Hecho»", () => {
+    const fu = { task_id: "w", title: "Seguimiento de 01239-26", due_at: "2026-10-06T12:00:00Z", version: 1, owner: null };
+    const written = card(
+      { open_tasks: [fu], last_contact: { outbound: { at: "2026-10-06T13:30:00Z", subject: "Re", url: null }, inbound: null } },
+      "2026-08-27T12:00:00Z",
+    );
+    const notYet = card(
+      { open_tasks: [{ ...fu, task_id: "n" }], last_contact: { outbound: { at: "2026-09-10T13:30:00Z", subject: "Re", url: null }, inbound: null } },
+      "2026-08-27T12:00:00Z",
+    );
+    const out = followUpsDue([written, notYet], NOW);
+    expect(out.map((f) => f.card.opportunity_id)).toEqual([notYet.opportunity_id]);
+    // Three days after that email, the case is back on the rhythm by itself.
+    const later = new Date("2026-10-09T15:00:00Z");
+    expect(followUpsDue([written], later).map((f) => [f.rhythm, f.task])).toEqual([["primero", null]]);
   });
 
   it("groups the machine-proposed institutions of open cases", () => {
@@ -201,7 +216,8 @@ describe("Hoy actions", () => {
     const c = card({}, "2026-08-20T12:00:00Z");
     renderToday([c]);
     const rhythm = screen.getByTestId("today-rhythm-cerrar");
-    fireEvent.click(within(rhythm).getByRole("button", { name: "Cerrar sin respuesta" }));
+    fireEvent.click(within(rhythm).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(rhythm).getByRole("menuitem", { name: "Cerrar sin respuesta" }));
     const modal = screen.getByRole("dialog", { name: "Cerrar sin respuesta" });
     expect(within(modal).getByRole("button", { name: "Sin respuesta" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(within(modal).getByRole("button", { name: "Marcar perdida" }));
@@ -212,16 +228,20 @@ describe("Hoy actions", () => {
     });
   });
 
-  it("shows a scheduled follow-up in «Seguimientos» with what the quote is for and its task's buttons", async () => {
+  it("shows a scheduled follow-up with what the quote is for, one reply button and the task behind «⋯»", async () => {
     const calls = stub();
     const c = card({ open_tasks: [{ task_id: "s1", title: "Seguimiento de 01239-26", due_at: "2026-10-06T12:00:00Z", version: 3, owner: null }] }, "2026-09-01T12:00:00Z");
     (c.latest_revision as RevisionCard).gmail = { source_record_id: "s", message_id: "m", thread_id: "t", url: "https://mail.example.cl/m", subject: "Cotización Balanzas Ohaus" };
     const onChanged = renderToday([c]);
     const row = within(screen.getByTestId("today-rhythm-cerrar")).getByTestId("today-task-s1");
-    expect(row).toHaveTextContent("Programado · Vence hoy");
     expect(within(row).getByTestId("today-product")).toHaveTextContent("Balanzas Ohaus");
+    expect(within(row).getByRole("link", { name: /Responder en Gmail/ })).toHaveAttribute(
+      "href",
+      "https://mail.example.cl/m",
+    );
     expect(screen.getByTestId("today-no-tasks")).toBeInTheDocument();
-    fireEvent.click(within(row).getByRole("button", { name: "Hecho" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(row).getByRole("menuitem", { name: "Ya le escribí" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(calls.find((x) => x.path === "/v2/commands/complete-task")?.body).toEqual({ task_id: "s1", task_version: 3, note: "Hecho desde «Hoy»." });
   });
@@ -232,5 +252,23 @@ describe("Hoy actions", () => {
     expect(screen.getByTestId("today-task-v")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Hecho" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cerrar sin respuesta" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Más opciones" })).not.toBeInTheDocument();
+  });
+
+  it("puts off an unscheduled follow-up a week by writing it a «Seguimiento …» task", async () => {
+    const calls = stub();
+    const c = card({}, "2026-09-25T12:00:00Z");
+    renderToday([c]);
+    const row = screen.getByTestId(`today-followup-${c.opportunity_id}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
+    expect(within(row).queryByRole("menuitem", { name: "Ya le escribí" })).not.toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("menuitem", { name: "Recordar en 1 semana" }));
+    expect(await screen.findByTestId("toaster")).toHaveTextContent(/Te lo recuerdo el 13 oct 2026/);
+    expect(calls.filter((x) => x.path.startsWith("/v2/commands/")).map((x) => x.path)).toEqual(["/v2/commands/create-task"]);
+    expect(calls.find((x) => x.path === "/v2/commands/create-task")?.body).toMatchObject({
+      opportunity_id: c.opportunity_id,
+      title: "Seguimiento de 01239-26",
+      due_at: "2026-10-13T15:00:00.000Z",
+    });
   });
 });

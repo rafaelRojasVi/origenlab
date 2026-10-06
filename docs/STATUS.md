@@ -2060,6 +2060,17 @@ From a design critique of the shipped screens rendered with invented data (`apps
 | Gmail | Every follow-up row has «Responder en Gmail»: it opens the case's thread, so the reply stays in it and the count restarts once the email is captured. A case with no thread gets «Nuevo correo» (compose, addressed when the address is not masked). Every Gmail link (cards, Hoy, the drawer, «Decidir casos») now opens `contacto@origenlab.cl` (`authuser`) instead of the API's `mail/u/0`, which opened whichever account the browser lists first |
 | Evidence | `apps/dashboard` `npm run validate`: **627 passed** + build |
 
+### 2.7.68 «Seguimientos» simpler, and a written follow-up clears itself, 2026-10-06 — built, not deployed
+
+`apps/dashboard` only: no API, proxy or schema change.
+
+| Change | What it does |
+|---|---|
+| Row | Days (a round chip in the traffic-light colour), the case, what the quote is for, the quote number and who. One button, «Responder en Gmail» (icon only on a phone); the rest behind «⋯»: «Recordar en 1 semana» (any row: writes a «Seguimiento …» task a week out, cancelling the due one), «Ya le escribí» (a row a task put there) and «Cerrar sin respuesta». Five rows per colour before «Ver N más» |
+| No «Hecho» needed | A «Seguimiento …» task counts as done once OrigenLab's email on the case's thread is dated on or after the task's day: the row leaves «Hoy» when the sync captures the reply, and the case comes back on the rhythm three days later if the client stays silent. The task itself stays open in the CRM until someone completes it |
+| Day 3 first | A scheduled follow-up waits for day 3 like any other: a quote sent today or yesterday is not chased today |
+| Evidence | `apps/dashboard` `npm run validate`: **629 passed** + build |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
