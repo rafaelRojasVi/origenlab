@@ -36,9 +36,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/cases$/,
   // Commercial cases: the list and one case. Read-only, like everything above it.
   //
-  // Seven case commands exist upstream under `POST /v2/commands/*`; this read list names
-  // none of them. Two -- advance-case-stage and record-case-won -- are reachable as POSTs
-  // through `CASE_COMMAND_POST_PATHS` below; the other five stay refused. Widening either
+  // Nine case commands exist upstream under `POST /v2/commands/*`; this read list names
+  // none of them. Four -- advance-case-stage, record-case-won, resolve-current-revision and
+  // record-case-quotation -- are reachable as POSTs through `CASE_COMMAND_POST_PATHS` below;
+  // the other five stay refused. Widening either
   // list is a separate, deliberate decision with its own review.
   /^\/v2\/cases$/,
   /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
@@ -95,6 +96,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // the literal `/notes` tail, so nothing else under `/v2/workspace/opportunities` is reachable.
   // Writing a note is `add-note` (CRM authoring), never this path.
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/notes$/,
+  // The Gmail messages linked to one case and the documents they carry, for «Registrar
+  // cotización» / «Nueva revisión». GET-only, operator session required, the same UUID-shaped
+  // segment and a literal `/mail-documents` tail. Recording a quote is `record-case-quotation`.
+  /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/mail-documents$/,
   // The rest of the CRM workspace (dashboard `#/crm/*`): four literal read paths and the one
   // cockpit read the CRM's review screen uses. Upstream each is GET-only, resolves the operator
   // from the dashboard session cookie (401 without one), and masks every email and phone for a
@@ -201,7 +206,7 @@ const TEST_SEND_PATH_RE = /^\/v2\/commands\/send-campaign-test$/;
  * action. Two exact paths. Upstream both are admin-only, need an `Idempotency-Key`, and the apply
  * re-plans on the server — the browser never sends an action, at most the evidence ids to limit
  * the run to. The case commands the rules call stay unreachable from the browser except the two
- * the case drawer uses (`CASE_COMMAND_POST_PATHS`: advance-case-stage, record-case-won). Same
+ * the case drawer uses (`CASE_COMMAND_POST_PATHS`). Same
  * Origin / JSON / key guard as the marketing commands.
  */
 export const MAIL_RULES_COMMAND_POST_PATHS: readonly RegExp[] = [
@@ -218,8 +223,10 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
 }
 
 /**
- * Commercial-case commands the case drawer uses: «Cambiar etapa» (`advance-case-stage`) and
- * «Marcar ganada» (`record-case-won`). Two exact paths, and only two. Upstream each needs an
+ * Commercial-case commands the case drawer uses: «Cambiar etapa» (`advance-case-stage`),
+ * «Marcar ganada» (`record-case-won`), «Elegir revisión vigente» (`resolve-current-revision`)
+ * and «Registrar cotización» / «Nueva revisión» (`record-case-quotation`). Four exact paths, and
+ * only four. Upstream each needs an
  * active `sales` or `admin` operator (from the verified session, never the body), an
  * `Idempotency-Key`, the case version the operator was shown and a note, and mounts only behind
  * `ORIGENLAB_V2_COMMANDS_ENABLED`. The other five case commands -- open-commercial-case,
@@ -230,9 +237,11 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
 export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/advance-case-stage$/,
   /^\/v2\/commands\/record-case-won$/,
+  /^\/v2\/commands\/resolve-current-revision$/,
+  /^\/v2\/commands\/record-case-quotation$/,
 ];
 
-/** A case command is a UUID, a version, a stage or a revision, and two short texts. */
+/** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */
 export const CASE_COMMAND_MAX_BYTES = 16_384;
 
 export function isAllowedCaseCommandPostPath(pathname: string): boolean {
@@ -265,7 +274,7 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
  * «Confirmar institución», a record-level confirm that needs no assertion) among them. None is
  * evidence-bound, and none of the evidence-bound commands (create-organization, confirm-
  * organization, attach-contact-address, attribute-sender-organization, confirm-person-from-
- * evidence, the case commands, apply-unsubscribe-replies, preview) is listed here — the two case
+ * evidence, the case commands, apply-unsubscribe-replies, preview) is listed here — the four case
  * commands the drawer uses have their own list (`CASE_COMMAND_POST_PATHS`); the rest stay
  * refused on the browser boundary until reviewed separately.
  *

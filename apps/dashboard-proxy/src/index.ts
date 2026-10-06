@@ -217,7 +217,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   // Method+path authorization, never method-only authorization.
   //
   // POST is legal only for the enumerated marketing, CRM authoring, email-rules,
-  // case (advance-case-stage, record-case-won), catalog and auth commands. GET
+  // case (`CASE_COMMAND_POST_PATHS`), catalog and auth commands. GET
   // allowlisting never implies POST permission.
   if (method === "POST") {
     if (upstreamPath === null || !isAllowedPostPath(upstreamPath)) {

@@ -27,6 +27,7 @@ const READS = [
   "/v2/workspace/review",
   "/v2/workspace/person-suggestions",
   "/v2/workspace/opportunities/96301691-af05-41ea-82e3-05f5fae40837/notes",
+  "/v2/workspace/opportunities/96301691-af05-41ea-82e3-05f5fae40837/mail-documents",
   "/v2/workspace/mail-sync",
   "/v2/workspace/mail-quote-numbers",
   "/v2/cockpit/work-queue",

@@ -446,13 +446,14 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("lets exactly two case commands through and keeps the other ten evidence-bound routes unreachable", async () => {
+  it("lets exactly four case commands through and keeps the other ten evidence-bound routes unreachable", async () => {
     // The command boundary EXISTS in apps/api: POST /v2/commands/* records durable human
-    // decisions -- six about staged evidence (including confirm-person-from-evidence), and seven
+    // decisions -- six about staged evidence (including confirm-person-from-evidence), and nine
     // about a commercial case. Building that boundary and letting a browser reach it are two
-    // separate decisions. The second has been taken for exactly two case commands, the ones the
-    // case drawer uses: advance-case-stage («Cambiar etapa») and record-case-won («Marcar
-    // ganada»). Every other one stays refused, as POST and as GET.
+    // separate decisions. The second has been taken for exactly four case commands, the ones the
+    // case drawer uses: advance-case-stage («Cambiar etapa»), record-case-won («Marcar
+    // ganada»), resolve-current-revision («Elegir revisión vigente») and record-case-quotation
+    // («Registrar cotización», «Nueva revisión»). Every other one stays refused, as POST and as GET.
     //
     // The list is written out in full on purpose. A route added to apps/api and forgotten
     // here would be forgotten silently; a route added here that does not exist costs one
@@ -467,7 +468,7 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/attach-contact-address",
       "/v2/commands/attribute-sender-organization",
       "/v2/commands/confirm-person-from-evidence",
-      // the commercial case, minus the two the drawer uses
+      // the commercial case, minus the four the drawer uses
       "/v2/commands/open-commercial-case",
       "/v2/commands/link-case-evidence",
       "/v2/commands/add-case-organization",
@@ -477,8 +478,13 @@ describe("V2 durable read boundary allowlist", () => {
       expect(isAllowedPostPath(path), path).toBe(false);
       expect(isAllowedUpstreamPath(path), path).toBe(false);
     }
-    const allowed = ["/v2/commands/advance-case-stage", "/v2/commands/record-case-won"];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(2);
+    const allowed = [
+      "/v2/commands/advance-case-stage",
+      "/v2/commands/record-case-won",
+      "/v2/commands/resolve-current-revision",
+      "/v2/commands/record-case-quotation",
+    ];
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(4);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -487,10 +493,12 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("matches the two case command paths exactly, never a neighbour", async () => {
+  it("matches the four case command paths exactly, never a neighbour", async () => {
     const { isAllowedPostPath, marketingCommandMaxBytes } = await import("./allowlist");
     expect(marketingCommandMaxBytes("/v2/commands/advance-case-stage")).toBe(16_384);
     expect(marketingCommandMaxBytes("/v2/commands/record-case-won")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/resolve-current-revision")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/record-case-quotation")).toBe(16_384);
     for (const path of [
       "/v2/commands/advance-case-stage/",
       "/v2/commands/advance-case-stage-all",
@@ -500,6 +508,12 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/RECORD-CASE-WON",
       "/v2/commands/correct-case-stage",
       "/v2/commands/unlink-case-evidence",
+      "/v2/commands/resolve-current-revision/",
+      "/v2/commands/resolve-current-revisions",
+      "/v2/commands/record-case-quotation/x",
+      "/v2/commands/record-historical-quotation",
+      "/v2/commands/void-historical-quote-revision",
+      "/v2/commands/RECORD-CASE-QUOTATION",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
     }
@@ -611,6 +625,22 @@ describe("CRM part A: confirm an institution, suggested people", () => {
       `/v2/workspace/opportunities/${uuid.toUpperCase()}/notes`,
       "/v2/workspace/opportunities/not-a-uuid/notes",
       "/v2/workspace/opportunities",
+    ]) {
+      expect(isAllowedUpstreamPath(p), p).toBe(false);
+    }
+  });
+
+  it("forwards GET of one case's mail documents by its exact path, never as a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${uuid}/mail-documents`)).toBe(true);
+    expect(isAllowedPostPath(`/v2/workspace/opportunities/${uuid}/mail-documents`)).toBe(false);
+    for (const p of [
+      `/v2/workspace/opportunities/${uuid}/mail-documents/`,
+      `/v2/workspace/opportunities/${uuid}/mail-documents/x`,
+      `/v2/workspace/opportunities/${uuid}/mail`,
+      `/v2/workspace/opportunities/${uuid.toUpperCase()}/mail-documents`,
+      "/v2/workspace/opportunities/not-a-uuid/mail-documents",
     ]) {
       expect(isAllowedUpstreamPath(p), p).toBe(false);
     }
@@ -762,8 +792,8 @@ describe("email → cases rules (admin only upstream)", () => {
       "/v2/commands/apply-mail-rules-all",
       "/v2/commands/undo-mail-rule-action/x",
       "/v2/commands/APPLY-MAIL-RULES",
-      // The case commands the rules call stay unreachable from the browser, except the two the
-      // case drawer uses (advance-case-stage, record-case-won), which have their own list.
+      // The case commands the rules call stay unreachable from the browser, except the four the
+      // case drawer uses (CASE_COMMAND_POST_PATHS), which have their own list.
       "/v2/commands/open-commercial-case",
       "/v2/commands/link-case-evidence",
     ]) {

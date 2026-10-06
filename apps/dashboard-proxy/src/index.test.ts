@@ -1300,13 +1300,15 @@ describe("Email → cases rules commands and dry run", () => {
   });
 });
 
-describe("Case drawer commands (advance-case-stage, record-case-won)", () => {
+describe("Case drawer commands (advance-case-stage, record-case-won, resolve-current-revision, record-case-quotation)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   const ADVANCE = "https://proxy.test/api/v2/commands/advance-case-stage";
   const WON = "https://proxy.test/api/v2/commands/record-case-won";
+  const RESOLVE = "https://proxy.test/api/v2/commands/resolve-current-revision";
+  const QUOTATION = "https://proxy.test/api/v2/commands/record-case-quotation";
   const post = (url: string, extra: Record<string, string> = {}, body = "{}") =>
     requestWithOrigin(url, {
       method: "POST",
@@ -1320,7 +1322,7 @@ describe("Case drawer commands (advance-case-stage, record-case-won)", () => {
       },
     });
 
-  it.each([ADVANCE, WON])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
+  it.each([ADVANCE, WON, RESOLVE, QUOTATION])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
     stubUpstreamFetch();
     const res = await handleRequest(post(url), TEST_ENV);
     expect(res.status).toBe(200);
@@ -1336,6 +1338,9 @@ describe("Case drawer commands (advance-case-stage, record-case-won)", () => {
     ["a form post", post(ADVANCE, { "Content-Type": "application/x-www-form-urlencoded" }), 415, "unsupported_media_type"],
     ["no key", post(WON, { "Idempotency-Key": "" }), 400, "idempotency_key_required"],
     ["a declared body over 16 kB", post(ADVANCE, { "Content-Length": "16385" }), 413, "payload_too_large"],
+    ["a cross-site resolve", post(RESOLVE, { "Sec-Fetch-Site": "cross-site" }), 403, "cross_site_request"],
+    ["a quotation without a key", post(QUOTATION, { "Idempotency-Key": "" }), 400, "idempotency_key_required"],
+    ["a quotation as a form post", post(QUOTATION, { "Content-Type": "text/plain" }), 415, "unsupported_media_type"],
   ])("refuses %s before anything is forwarded", async (_label, req, status, code) => {
     stubUpstreamFetch();
     const res = await handleRequest(req, TEST_ENV);
@@ -1351,7 +1356,15 @@ describe("Case drawer commands (advance-case-stage, record-case-won)", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it.each(["open-commercial-case", "link-case-evidence", "add-case-organization", "set-case-organization-role", "record-case-interest"])(
+  it.each([
+    "open-commercial-case",
+    "link-case-evidence",
+    "add-case-organization",
+    "set-case-organization-role",
+    "record-case-interest",
+    "record-historical-quotation",
+    "void-historical-quote-revision",
+  ])(
     "still refuses POST /v2/commands/%s",
     async (name) => {
       stubUpstreamFetch();
@@ -1361,9 +1374,9 @@ describe("Case drawer commands (advance-case-stage, record-case-won)", () => {
     },
   );
 
-  it("never forwards a case command as GET", async () => {
+  it.each([WON, RESOLVE, QUOTATION])("never forwards %s as GET", async (url) => {
     stubUpstreamFetch();
-    const res = await handleRequest(requestWithOrigin(WON, { method: "GET" }), TEST_ENV);
+    const res = await handleRequest(requestWithOrigin(url, { method: "GET" }), TEST_ENV);
     expect(res.status).toBe(403);
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
