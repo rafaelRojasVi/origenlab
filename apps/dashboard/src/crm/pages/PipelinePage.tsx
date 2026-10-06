@@ -5,7 +5,8 @@ import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
 import { CaseActions, type Mode } from "./CaseActions";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
-import { Board } from "./PipelineBoard";
+import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
+import { DecideCases } from "./DecideCases";
 import { useMayRunCaseCommands } from "../caseCommands";
 import {
   HISTORICAL_STAGE_LABEL,
@@ -85,12 +86,14 @@ function Pipeline({
   refreshing?: boolean;
 }) {
   const [status, setStatus] = useState<StatusFilter>("all");
-  const [view, setView] = useState<View>("cards");
+  const [view, setView] = useState<View>("board");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(initialId);
   // A drawer opened by a drop on «Ganada» arrives with «Marcar ganada» open.
   const [openWith, setOpenWith] = useState<{ mode: Exclude<Mode, null>; target?: MoveTarget } | null>(null);
   const [moving, setMoving] = useState<{ id: string; to: MoveTarget } | null>(null);
+  const [sort, setSort] = useState<BoardSort>("recent");
+  const [deciding, setDeciding] = useState(false);
   const mayDecide = useMayRunCaseCommands();
 
   function open(id: string | null, withForm: typeof openWith = null) {
@@ -125,7 +128,8 @@ function Pipeline({
   const quotes = items.reduce((n, i) => n + i.quotes.length, 0);
   const revisions = items.reduce((n, i) => n + i.revision_count, 0);
   const withDrive = items.filter((i) => i.drive_folder).length;
-  const historical = items.filter((i) => stageBasis(i) === "historical_import").length;
+  const historicalCards = useMemo(() => items.filter((i) => stageBasis(i) === "historical_import"), [items]);
+  const historical = historicalCards.length;
   const paused = items.filter((i) => pausedUntil(i)).length;
   const openCard = items.find((i) => i.opportunity_id === openId) ?? null;
   const movingCard = moving ? (items.find((i) => i.opportunity_id === moving.id) ?? null) : null;
@@ -146,12 +150,28 @@ function Pipeline({
           { label: "Bloqueadas", value: counts.blocked, tone: counts.blocked ? "bad" : undefined },
         ]}
       />
-      {historical > 0 ? (
-        <p className="rounded-md border border-line bg-canvas-sunken/70 px-3 py-2 text-xs leading-5 text-ink-muted" data-testid="historical-stage-notice">
-          <strong className="font-semibold text-ink">{historical} de {items.length}</strong> oportunidades muestran «{HISTORICAL_STAGE_LABEL}»: la importación histórica fijó su etapa porque encontró la cotización enviada. Eso es un hecho del pasado, no el
-          estado comercial actual, que nadie ha verificado todavía. Los enlaces de Drive vienen del registro local del archivo, no de
-          una consulta en vivo.
-        </p>
+      {historical > 0 && !deciding ? (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-warn/30 bg-warn-bg/50 px-3 py-2.5 text-xs leading-5 text-ink-muted"
+          data-testid="historical-stage-notice"
+        >
+          <p className="min-w-0 flex-1">
+            <strong className="font-semibold text-ink">
+              {historical} de {items.length}
+            </strong>{" "}
+            casos muestran «{HISTORICAL_STAGE_LABEL}»: la importación encontró la cotización enviada, pero nadie ha decidido en qué
+            están hoy.
+          </p>
+          {mayDecide ? (
+            <button
+              type="button"
+              onClick={() => setDeciding(true)}
+              className="inline-flex h-8 shrink-0 items-center rounded-md bg-brand-700 px-3 text-xs font-medium text-white hover:bg-brand-900"
+            >
+              Decidir {historical} casos
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {!driveConfigured ? (
         <p className="rounded-md border border-line bg-canvas-sunken/70 px-3 py-2 text-xs text-ink-muted">
@@ -172,7 +192,23 @@ function Pipeline({
         />
         <SearchInput value={q} onChange={setQ} label="Buscar oportunidades" placeholder="Institución, número, contacto…" />
         <span className="text-xs text-ink-faint tabular-nums">{visible.length} resultados</span>
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {view === "board" ? (
+            <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+              Ordenar
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as BoardSort)}
+                className="h-8 rounded-md border border-line bg-canvas-raised px-2 text-xs text-ink focus:border-brand-600 focus:outline-none"
+              >
+                {(Object.keys(BOARD_SORT_LABEL) as BoardSort[]).map((k) => (
+                  <option key={k} value={k}>
+                    {BOARD_SORT_LABEL[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <Segmented
             label="Vista"
             value={view}
@@ -185,7 +221,9 @@ function Pipeline({
         </div>
       </div>
 
-      {visible.length === 0 ? (
+      {deciding ? (
+        <DecideCases cards={historicalCards} onApplied={onChanged} onClose={() => setDeciding(false)} />
+      ) : visible.length === 0 ? (
         <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado o la búsqueda.</EmptyState>
       ) : view === "cards" ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
@@ -194,7 +232,7 @@ function Pipeline({
           ))}
         </div>
       ) : (
-        <Board cards={visible} onOpen={(id) => open(id)} onMove={mayDecide ? onMove : undefined} />
+        <Board cards={visible} onOpen={(id) => open(id)} onMove={mayDecide ? onMove : undefined} sort={sort} />
       )}
 
       <OpportunityDrawer

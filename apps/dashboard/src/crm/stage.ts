@@ -136,8 +136,9 @@ export function byLatestSent(a: OpportunityCardData, b: OpportunityCardData): nu
  * Whether a card's stage is a verified commercial status or only the trace of the historical
  * import. The importer set `quoting` on every case whose quotation it found sent; that says
  * "a quotation was sent on this date", not "this deal is being quoted today". A stage counts as
- * historical while the case is open, sits in `quoting`, and every revision it holds came from
- * the historical import — no operator has recorded anything that would confirm it since.
+ * historical while the case is open, sits in `quoting`, has no open task, and every revision it
+ * holds came from the historical import — no operator has recorded anything that would confirm it
+ * since.
  */
 export type StageBasis = "historical_import" | "crm_record";
 
@@ -146,6 +147,8 @@ export function stageBasis(card: OpportunityCardData): StageBasis {
   if (
     !card.closed_at &&
     card.stage === "quoting" &&
+    // A task an operator wrote (a follow-up, a pause) is a decision about the case's present.
+    (card.open_tasks ?? []).length === 0 &&
     revisions.length > 0 &&
     revisions.every((r) => r.origin === "historical_import")
   ) {

@@ -8,6 +8,7 @@ import { mayRunCaseCommands, nextStages, undeterminedQuotes, winnableRevisions }
 import type { OpportunityCardData, PipelineResponse, RevisionCard } from "../crmTypes";
 import { clearResourceCache } from "../useResource";
 import { Toaster } from "../ui";
+import { DecideCases, proposeDecision } from "./DecideCases";
 import { PipelinePage } from "./PipelinePage";
 
 // Every value below is invented; the repository is public.
@@ -792,6 +793,78 @@ describe("Tablero drag and drop", () => {
     stubApi({ pipelines: [page([card()])] });
     const b = await board(session("viewer"));
     expect(b).toHaveAttribute("draggable", "false");
+  });
+});
+
+describe("Decidir casos", () => {
+  const NOW = new Date("2026-10-06T12:00:00Z");
+  const sentAt = (iso: string) => {
+    const r = rev(2, { sent_at: iso });
+    return { latest_revision: r, quotes: [{ quote_id: QUOTE, quote_number: "00001-26", number_origin: "printed_historical", revisions: [r] }] };
+  };
+  const replied = card({
+    opportunity_id: "aaaaaaaa-0000-4000-8000-000000000001",
+    ...sentAt("2026-09-20T12:00:00Z"),
+    last_contact: { outbound: null, inbound: { at: "2026-09-25T12:00:00Z", subject: "Re", url: null } },
+  });
+  const silent = card({ opportunity_id: "aaaaaaaa-0000-4000-8000-000000000002", ...sentAt("2026-07-01T12:00:00Z") });
+  const recent = card({ opportunity_id: "aaaaaaaa-0000-4000-8000-000000000003", ...sentAt("2026-10-01T12:00:00Z") });
+
+  it("proposes Conversación after a reply, Perdida after 45 silent days, a follow-up otherwise", () => {
+    expect(proposeDecision(replied, NOW)).toEqual({ decision: "conversacion", why: "Respondió 25 sept" });
+    expect(proposeDecision(silent, NOW).decision).toBe("perdida");
+    expect(proposeDecision(silent, NOW).why).toBe("97 días sin respuesta");
+    expect(proposeDecision(recent, NOW)).toEqual({ decision: "seguir", why: "Enviada hace 5 días" });
+  });
+
+  it("applies every decision with its own command, and lets the operator change or leave out a row", async () => {
+    const calls = stubApi({
+      pipelines: [page([replied, silent, recent])],
+      onPost: (call) => ({
+        body: { ...receipt("x", String(call.body?.stage ?? ""), 9, `rcpt-${calls.length}`), task_id: "t", task_version: 1 },
+      }),
+    });
+    render(
+      withSession(
+        session("sales"),
+        <>
+          <DecideCases cards={[replied, silent, recent]} onApplied={() => undefined} onClose={() => undefined} now={NOW} />
+          <Toaster />
+        </>,
+      ),
+    );
+    const decide = screen.getByTestId("decide-cases");
+    expect(within(decide).getByRole("heading")).toHaveTextContent("Decidir 3 casos históricos");
+    const pressed = (id: string) =>
+      within(screen.getByTestId(`decide-row-${id}`))
+        .getAllByRole("button")
+        .filter((b) => b.getAttribute("aria-pressed") === "true")
+        .map((b) => b.textContent);
+    expect(pressed(replied.opportunity_id)).toEqual(["Conversación"]);
+    expect(pressed(silent.opportunity_id)).toEqual(["Perdida"]);
+    expect(pressed(recent.opportunity_id)).toEqual(["Seguimiento"]);
+    // The recent one waits for funds instead; the silent one is left for later.
+    fireEvent.click(within(screen.getByTestId(`decide-row-${recent.opportunity_id}`)).getByRole("button", { name: "En pausa" }));
+    fireEvent.click(within(screen.getByTestId(`decide-row-${silent.opportunity_id}`)).getByRole("checkbox"));
+    fireEvent.click(within(decide).getByRole("button", { name: "Aplicar 2 decisiones" }));
+
+    expect(await screen.findByTestId("toaster")).toHaveTextContent("2 casos decididos.");
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts.map((c) => c.path)).toEqual(["/v2/commands/advance-case-stage", "/v2/commands/create-task"]);
+    expect(posts[0].body).toMatchObject({ opportunity_id: replied.opportunity_id, stage: "negotiating" });
+    expect(posts[1].body).toMatchObject({ opportunity_id: recent.opportunity_id, title: "Retomar: Pidió volver a contactar" });
+  });
+
+  it("is opened from the notice on Oportunidades, for a deciding role only", async () => {
+    stubApi({ pipelines: [page([replied, silent, recent])] });
+    const { unmount } = render(withSession(session("viewer"), <PipelinePage />));
+    expect(await screen.findByTestId("historical-stage-notice")).toHaveTextContent("3 de 3");
+    expect(screen.queryByRole("button", { name: "Decidir 3 casos" })).not.toBeInTheDocument();
+    unmount();
+    render(withSession(session("sales"), <PipelinePage />));
+    fireEvent.click(await screen.findByRole("button", { name: "Decidir 3 casos" }));
+    expect(screen.getByTestId("decide-cases")).toBeInTheDocument();
+    expect(screen.queryByTestId("historical-stage-notice")).not.toBeInTheDocument();
   });
 });
 
