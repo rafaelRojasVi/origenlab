@@ -4,8 +4,8 @@ import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
 import { CaseActions } from "./CaseActions";
+import { Board } from "./PipelineBoard";
 import {
-  BOARD_COLUMNS,
   ORIGIN_LABEL,
   STATUS_LABEL,
   byLatestSent,
@@ -166,35 +166,6 @@ function Pipeline({
   );
 }
 
-function Board({ cards, onOpen }: { cards: OpportunityCardData[]; onOpen: (id: string) => void }) {
-  return (
-    <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
-      <div className="grid min-w-[64rem] grid-cols-5 gap-3">
-        {BOARD_COLUMNS.map((col) => {
-          const inCol = cards.filter((c) => col.stages.includes(c.stage));
-          return (
-            <section key={col.key} aria-label={col.label} className="min-w-0">
-              <header className="mb-1.5 flex items-center gap-1.5 px-0.5">
-                <h2 className="text-[13px] font-semibold text-ink">{col.label}</h2>
-                <span className="rounded-full bg-canvas-sunken px-1.5 py-px text-[11px] tabular-nums text-ink-muted">{inCol.length}</span>
-              </header>
-              <div className="flex min-h-44 flex-col gap-1.5 rounded-lg bg-canvas-sunken/70 p-1.5">
-                {inCol.length === 0 ? (
-                  <p className="rounded-md border border-dashed border-line-strong px-2 py-3 text-center text-[11px] text-ink-faint">
-                    Sin oportunidades
-                  </p>
-                ) : (
-                  inCol.map((c, i) => <OpportunityCard key={c.opportunity_id} card={c} index={i} onOpen={onOpen} compact />)
-                )}
-              </div>
-            </section>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function Dot({ ok }: { ok: boolean }) {
   return <span aria-hidden="true" className={`inline-block h-1.5 w-1.5 rounded-full ${ok ? "bg-good" : "bg-line-strong"}`} />;
 }
@@ -203,12 +174,10 @@ export function OpportunityCard({
   card,
   index,
   onOpen,
-  compact = false,
 }: {
   card: OpportunityCardData;
   index: number;
   onOpen: (id: string) => void;
-  compact?: boolean;
 }) {
   const latest = card.latest_revision;
   const blocking = card.attention.find((a) => a.blocking);
@@ -227,7 +196,7 @@ export function OpportunityCard({
     >
       <div className="flex items-center gap-1.5">
         <span className="min-w-0 truncate text-xs font-semibold tracking-wide text-ink tabular-nums" title={numbers.join(", ")}>
-          {numbers.length ? numbers[0] : compact ? "—" : "Sin cotización"}
+          {numbers.length ? numbers[0] : "Sin cotización"}
           {numbers.length > 1 ? <span className="font-normal text-ink-faint"> +{numbers.length - 1}</span> : null}
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
@@ -247,7 +216,7 @@ export function OpportunityCard({
         <span className="block truncate text-[13px] font-semibold leading-5 text-ink">
           {card.organization?.name ?? <span className="text-bad">Sin institución</span>}
         </span>
-        {!compact ? <span className="block truncate text-xs leading-4 text-ink-muted">{card.title}</span> : null}
+        <span className="block truncate text-xs leading-4 text-ink-muted">{card.title}</span>
       </button>
 
       <dl className="mt-2 grid grid-cols-[auto_1fr] items-center gap-x-2.5 gap-y-1 text-[11px] leading-4">
@@ -277,14 +246,10 @@ export function OpportunityCard({
             <span className="inline-flex rounded border border-dashed border-line-strong px-1 text-ink-muted">Sin revisión</span>
           )}
         </dd>
-        {!compact ? (
-          <>
-            <dt className="text-ink-faint">Documento</dt>
-            <dd className="min-w-0 truncate text-ink-muted" title={latest?.document?.filename ?? undefined}>
-              {latest?.document?.filename ?? (latest?.document ? "PDF sin nombre" : "—")}
-            </dd>
-          </>
-        ) : null}
+        <dt className="text-ink-faint">Documento</dt>
+        <dd className="min-w-0 truncate text-ink-muted" title={latest?.document?.filename ?? undefined}>
+          {latest?.document?.filename ?? (latest?.document ? "PDF sin nombre" : "—")}
+        </dd>
         <dt className="text-ink-faint">Evidencia</dt>
         <dd className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
           {card.drive_folder ? (

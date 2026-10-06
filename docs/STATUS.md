@@ -1922,6 +1922,14 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Switches | `GET /auth/session` through the deployed proxy, as an admin: `case_commands_enabled: true` and `crm_authoring_enabled: true`, i.e. `ORIGENLAB_V2_COMMANDS_ENABLED` and `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` are on |
 | Not done | no operator has yet exercised the drawer actions on hosted |
 
+### 2.7.57 Oportunidades «Tablero» readable with one crowded column, 2026-10-06 — built, not deployed
+
+| | |
+|---|---|
+| What | `apps/dashboard` only (`crm/pages/PipelineBoard.tsx`). Each board column scrolls on its own (`max-h-[70vh]`) and shows its count; a column with more than 8 cases is grouped by the age of its latest sent revision (≤ 30 / 90 / 180 / 365 days, older, none), newest group open and the rest collapsed. A board card leads with the client, then quote number · revision · send date, then **one** status line (the blocking reason, else «histórico», «sin Drive», «sin Gmail», «sin contacto», «sin cotización») instead of the stage/status chips and the Drive/Gmail row; the full suggestion is the card's tooltip. The «Tarjetas» view is unchanged. No API or proxy change |
+| Not built | a per-column total in CLP: the pipeline read carries no amounts, and historical revisions hold no parsed totals |
+| Evidence | `apps/dashboard` `npm run validate`: **589 passed** (49 files) + build; new `PipelineBoard.test.tsx` (7) |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
