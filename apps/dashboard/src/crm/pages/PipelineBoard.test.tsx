@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { stagePath } from "../caseCommands";
 import { ageBucket, boardColumnOf, boardStatusLine, pausedUntil } from "../stage";
-import { Board, GROUP_AFTER } from "./PipelineBoard";
+import { Board, sortCards } from "./PipelineBoard";
 
 // Every value below is invented; the repository is public.
 const NOW = new Date("2026-10-06T12:00:00Z");
@@ -83,7 +83,7 @@ describe("board helpers", () => {
 });
 
 describe("Tablero", () => {
-  it("counts every column and leads each card with the client and the quote number", () => {
+  it("counts every column and leads each card with the institution, the contact, the age and the quote", () => {
     const lead = card({ stage: "lead" }, null);
     const quoting = card();
     render(<Board cards={[lead, quoting]} onOpen={() => undefined} now={NOW} />);
@@ -93,12 +93,27 @@ describe("Tablero", () => {
       expect(screen.getByTestId(`board-count-${key}`)).toHaveTextContent("0");
     }
     const b = screen.getByTestId(`board-card-${quoting.opportunity_id}`);
-    expect(b.textContent).toMatch(/^Universidad Ficticia \d+01239-26 · r1 · 20 sept 2026histórico · sin Drive$/);
-    // No repeated chips on a board card: one status line, nothing else.
-    expect(within(b).getAllByTestId("board-status-line")).toHaveLength(1);
-    expect(b).not.toHaveTextContent("Enviada · histórico");
-    expect(b).not.toHaveTextContent("Pendiente");
-    expect(b).not.toHaveTextContent("Drive: falta");
+    expect(within(b).getByRole("button", { name: /^Universidad Ficticia \d+$/ })).toBeInTheDocument();
+    expect(b).toHaveTextContent("Persona Ficticia");
+    expect(within(b).getByTestId("board-age")).toHaveTextContent("16 d");
+    expect(b).toHaveTextContent("01239-26 · r1 · 20 sept 2026");
+    expect(within(b).getByTestId("board-status-line")).toHaveTextContent("Sin respuesta · 16 d");
+    expect(within(b).getByRole("link", { name: /Correo de la cotización/ })).toHaveAttribute("href", "https://mail.example.cl/m");
+    expect(b).toHaveTextContent("sin Drive");
+    expect(b).not.toHaveTextContent("histórico");
+  });
+
+  it("says when the client replied after the quote, and leads with a readable name for a domain", () => {
+    const c = card({
+      organization: { organization_id: "o", name: "ejemplo.cl", confirmation: "machine_proposed", version: 1 },
+      last_contact: { outbound: null, inbound: { at: "2026-10-02T15:00:00Z", subject: "Re: cotización", url: null } },
+    });
+    c.latest_revision = rev("2026-09-20T12:00:00Z", { document: { sha256: "a", filename: "CN01239-Ana Ficticia – Laboratorio Ejemplo-UP400St.pdf" } });
+    render(<Board cards={[c]} onOpen={() => undefined} now={NOW} />);
+    const b = screen.getByTestId(`board-card-${c.opportunity_id}`);
+    expect(within(b).getByRole("button", { name: "Laboratorio Ejemplo" })).toHaveAttribute("title", "En el CRM: ejemplo.cl");
+    expect(b).toHaveTextContent("UP400St");
+    expect(within(b).getByTestId("board-status-line")).toHaveTextContent(/^Respondió 02 oct · te toca$/);
   });
 
   it("shows the whole suggestion as the card's tooltip and opens the case", () => {
@@ -109,6 +124,10 @@ describe("Tablero", () => {
     expect(b).toHaveAttribute("title", `Sugerencia: ${c.next_action.text}`);
     fireEvent.click(b);
     expect(onOpen).toHaveBeenCalledWith(c.opportunity_id);
+    // A link on the card opens its target, not the drawer.
+    onOpen.mockClear();
+    fireEvent.click(within(b).getByRole("link", { name: /Correo/ }));
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("scrolls each column on its own", () => {
@@ -117,22 +136,33 @@ describe("Tablero", () => {
     expect(screen.getByTestId("board-column-enviada").className).toMatch(/max-h-/);
   });
 
-  it("groups a long column by the age of the last revision, newest group open", () => {
+  it("shows every card of a long column, newest first, with a thin divider per age band", () => {
     const recent = Array.from({ length: 3 }, () => card({}, "2026-09-25T12:00:00Z"));
-    const old = Array.from({ length: GROUP_AFTER }, () => card({}, "2025-01-10T12:00:00Z"));
+    const old = Array.from({ length: 8 }, () => card({}, "2025-01-10T12:00:00Z"));
     const none = card({}, null);
     render(<Board cards={[...old, none, ...recent]} onOpen={() => undefined} now={NOW} />);
-    expect(screen.getByTestId("board-count-enviada")).toHaveTextContent(String(3 + GROUP_AFTER + 1));
-    const groups = within(screen.getByTestId("board-column-enviada")).getAllByRole("group");
-    expect(groups.map((g) => g.getAttribute("data-testid"))).toEqual(["board-age-d30", "board-age-older", "board-age-none"]);
-    expect(groups.map((g) => g.hasAttribute("open"))).toEqual([true, false, false]);
-    expect(screen.getByTestId("board-age-d30")).toHaveTextContent("Últimos 30 días3");
-    expect(screen.getByTestId("board-age-older")).toHaveTextContent(`Más de un año${GROUP_AFTER}`);
+    const column = screen.getByTestId("board-column-enviada");
+    expect(screen.getByTestId("board-count-enviada")).toHaveTextContent("12");
+    expect(within(column).getAllByRole("article")).toHaveLength(12);
+    expect(within(column).queryAllByRole("group")).toHaveLength(0);
+    expect(
+      within(column)
+        .getAllByText(/Últimos 30 días|Más de un año/)
+        .map((e) => e.textContent),
+    ).toEqual(["Últimos 30 días", "Más de un año"]);
   });
 
-  it("does not group a short column", () => {
-    render(<Board cards={[card(), card({}, "2024-01-01T00:00:00Z")]} onOpen={() => undefined} now={NOW} />);
-    expect(within(screen.getByTestId("board-column-enviada")).queryAllByRole("group")).toHaveLength(0);
+  it("sorts by date either way, by who replied, or by name", () => {
+    const a = card({}, "2026-09-01T12:00:00Z");
+    const b = card(
+      { last_contact: { outbound: null, inbound: { at: "2026-10-01T12:00:00Z", subject: null, url: null } } },
+      "2026-08-01T12:00:00Z",
+    );
+    const c = card({}, "2026-10-01T12:00:00Z");
+    const ids = (xs: OpportunityCardData[]) => xs.map((x) => x.opportunity_id);
+    expect(ids(sortCards([a, b, c], "recent", NOW))).toEqual(ids([c, a, b]));
+    expect(ids(sortCards([a, b, c], "oldest", NOW))).toEqual(ids([b, a, c]));
+    expect(ids(sortCards([a, b, c], "replied", NOW))[0]).toBe(b.opportunity_id);
   });
 
   it("puts a case with a later open task under «En pausa», and a due one back in its column", () => {

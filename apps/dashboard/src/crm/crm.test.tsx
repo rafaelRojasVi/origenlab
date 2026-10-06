@@ -167,6 +167,8 @@ describe("PipelinePage", () => {
     };
     const calls = respond({ "/v2/workspace/pipeline": pipeline });
     render(<PipelinePage />);
+    // The Tablero is the default view; the card list is one click away.
+    fireEvent.click(await screen.findByRole("button", { name: "Tarjetas" }));
     const first = await screen.findByTestId("opportunity-card-11111111-1111-4111-8111-111111111111");
     expect(within(first).getByText("00001-26")).toBeInTheDocument();
     expect(within(first).getByText(/Persona Ejemplo/)).toBeInTheDocument();
@@ -358,7 +360,7 @@ describe("dashboard shell", () => {
     const other = "22222222-2222-4222-8222-222222222222";
     signedInAt(`#/casos?id=${other}`);
     await waitFor(() => expect(window.location.hash).toBe(`#/crm/oportunidades/${other}`));
-    expect(await screen.findByTestId(`opportunity-card-${CASE}`)).toBeInTheDocument();
+    expect(await screen.findByTestId(`board-card-${CASE}`)).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

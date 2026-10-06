@@ -2006,6 +2006,17 @@ Second phase of the redesign in §2.7.62. No migration: `crm.task`, its grants a
 | Evidence | `apps/api` `scripts/validate.sh`: **4349 passed**, 121 skipped (task commands against PostgreSQL: written with their event, the case never moves, a closed case takes none, stale version and second close refused, a refusal writes nothing, replay writes once). `apps/dashboard-proxy` `npm run validate`: 426 passed. `apps/dashboard` `npm run validate`: **615 passed** + build |
 | Not done | «Nueva solicitud» (opening a case from the browser stays refused at the proxy); phase 3 «Hoy» (today's tasks, institutions and people to add, the day-3/14/30 follow-up rhythm, automatic Enviada → Conversación) |
 
+### 2.7.64 Tablero cards redesigned and «Decidir casos» for the historical stage, 2026-10-06 — built, not deployed
+
+`apps/dashboard` only, after the owner's review of §2.7.63 in production.
+
+| | |
+|---|---|
+| Cards (`PipelineBoard.tsx`, `caseDisplay.ts`) | A readable institution name when the CRM only holds a domain or a slug (from the quote title or the PDF's file name; the CRM name stays in the tooltip), the contact, a «N d» badge for days since the quote was sent (coloured by the 3 · 14 · 30 rhythm), quote · revision · date, the model the PDF's name prints (`UP400St`, `T10`…), one line on where the case stands (paused until, blocker, «Respondió 02 oct · te toca», «Seguimiento …», «Sin respuesta · N d») and direct Drive / Gmail links. Cards rise in, lift on hover and tilt while dragged (off under reduced motion). No more «histórico» on every card |
+| Tablero | All cards shown — the collapsed age groups are gone; «Ordenar»: más recientes, más antiguas, respondieron primero, institución; by date, thin dividers mark the age bands. The Tablero is now the default view |
+| «Decidir casos» | From the notice «N de M casos muestran «Enviada · histórico»» (sales/admin): every historical case with a proposed decision — the client wrote after the quote → Conversación; 45+ days without an answer → Perdida · Sin respuesta; otherwise a follow-up task due now. Each row can be changed (En pausa with date and reason, Ganada against the newest sent revision) or left out; «Aplicar N decisiones» runs the existing commands one case at a time and reports each. A case with an open task no longer counts as historical (`stageBasis`) |
+| Evidence | `apps/dashboard` `npm run validate`: **619 passed** + build |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
