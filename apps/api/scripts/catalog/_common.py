@@ -40,11 +40,23 @@ attribute and no membership in owner, migrator, `postgres` or any elevated role 
 
 **Targets.** Every DSN must name a literal loopback IP (`v2/identity.py:is_loopback_dsn` and
 `settings.assert_v2_target_is_local`; a host *name*, `localhost` included, is refused) — so a
-hosted project is refused outright: hosted loading waits for PR #623's authorised Supavisor route.
+hosted project is never reached through a DSN; it takes `--hosted-target` (below).
 apply and rollback write only into a disposable `origenlab_test_<8 hex>` database, or into the
 clean room `origenlab_clean` when `--allow-cleanroom-production` is given (then both DSNs must name
 it and the server must say it is it — the checks of `quote_crm_import_production.py:271-274`).
 `--target-dsn` and `--admin-dsn` must name one host, port and database.
+
+**Hosted (`--hosted-target`).** The one exception to the loopback rule, and it takes no DSN:
+`--hosted-target --authorize-hosted-connection --authorize-supavisor-session-route` (all three, or
+refused) resolves the hosted project from PR #623's target file (`supabase/.audit/hosted_target.env`,
+`olaudit.target_hosted.resolve`: Supavisor session route only, `verify-full` with the Supabase CA,
+the address pinned after it is proven global). The admin side is that file's login (the migrator,
+`SET LOCAL ROLE origenlab_owner` as everywhere here); the target side is the **same host, port,
+database and CA** with the login swapped for `origenlab_api.<project ref>` and the password read
+from `ORIGENLAB_API_DB_PASSWORD` — never from a command line. The runtime-login proof below runs
+unchanged. Every printed line is redacted of the target's host, logins, address and passwords.
+Rollback sets `session_replication_role`, which the hosted migrator may not be allowed to: if
+so it fails closed (12, nothing deleted) and a hosted mistake is undone from the pre-load dump.
 
 **Who writes what.** `--target-dsn` is the `origenlab_api` login: the catalog rows and their
 domain events are written by it, in **one** transaction, under the same grants and RLS as the
@@ -104,7 +116,15 @@ class Refused(Exception):
     """A guard failed; nothing was written by the step that raised it."""
 
 
+#: Values of the resolved hosted target that no printed line may carry (set by `resolve_hosted`).
+_SECRETS: list[str] = []
+HOSTED_DATABASE = "postgres"
+RUNTIME_PASSWORD_ENV = "ORIGENLAB_API_DB_PASSWORD"
+
+
 def redact(text: str) -> str:
+    for value in sorted({v for v in _SECRETS if v}, key=len, reverse=True):
+        text = text.replace(value, "***")
     return _SECRET_IN_URI.sub(r"\1:***@", text)
 
 
@@ -124,14 +144,67 @@ def refuse(message: str) -> int:
 # ------------------------------------------------------------------ targets (pure)
 
 def dbname(dsn: str) -> str:
+    if "://" not in dsn:  # a key=value conninfo (hosted mode builds only these)
+        from psycopg.conninfo import conninfo_to_dict
+
+        return str(conninfo_to_dict(dsn).get("dbname", ""))
     return urlsplit(dsn).path.lstrip("/")
+
+
+def resolve_hosted(args: argparse.Namespace, environ: Any = None) -> None:
+    """Fill `args.target_dsn` / `args.admin_dsn` from the hosted target file, or `Refused`."""
+    import dataclasses
+
+    if not (args.authorize_hosted_connection and args.authorize_supavisor_session_route):
+        raise Refused("--hosted-target needs --authorize-hosted-connection and "
+                      "--authorize-supavisor-session-route")
+    if args.target_dsn or getattr(args, "admin_dsn", None) or getattr(args, "allow_cleanroom_production", False):
+        raise Refused("--hosted-target takes no --target-dsn, --admin-dsn or --allow-cleanroom-production")
+    environ = os.environ if environ is None else environ
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import hosted_data_load_io as io_
+    from olaudit.target import TargetError
+
+    try:
+        admin = io_.hosted_target(io_.REPO_ROOT, environ, Path(args.target_file))
+    except TargetError as exc:
+        raise Refused(f"hosted target: {io_.redact(str(exc))}") from None
+    _SECRETS.extend(io_.target_secrets(admin))
+    if admin.mode != "hosted":
+        raise Refused("--hosted-target resolves only a hosted target (the local scratch switch is not taken)")
+    if admin.database != HOSTED_DATABASE:
+        raise Refused(f"the hosted target must name the {HOSTED_DATABASE!r} database")
+    password = environ.get(RUNTIME_PASSWORD_ENV, "")
+    if not password:
+        raise Refused(f"{RUNTIME_PASSWORD_ENV} is not set; the {RUNTIME_ROLE} password is read only from it")
+    runtime = dataclasses.replace(admin, user=f"{RUNTIME_ROLE}.{admin.project_ref}", password=password)
+    _SECRETS.extend(io_.target_secrets(runtime))
+    target_info, admin_info = io_.conninfo_for(runtime), io_.conninfo_for(admin)
+    args.target_dsn, args.admin_dsn, args.hosted = target_info, admin_info, True
+
+
+def check_targets(args: argparse.Namespace, *, admin: bool, writes: bool) -> str | None:
+    """Every target guard of a subcommand; returns the write mode (`hosted` when hosted)."""
+    if getattr(args, "hosted_target", False):
+        resolve_hosted(args)
+        return "hosted"
+    if (getattr(args, "authorize_hosted_connection", False)
+            or getattr(args, "authorize_supavisor_session_route", False)):
+        raise Refused("the --authorize-* flags only go with --hosted-target")
+    if not args.target_dsn or (admin and not args.admin_dsn):
+        raise Refused("--target-dsn" + (" and --admin-dsn are" if admin else " is") + " required")
+    check_local_dsn(args.target_dsn, "--target-dsn")
+    if admin:
+        check_local_dsn(args.admin_dsn, "--admin-dsn")
+        check_pair(args.target_dsn, args.admin_dsn)
+    return writable_mode(args.target_dsn, args.allow_cleanroom_production) if writes else None
 
 
 def check_local_dsn(dsn: str, flag: str) -> None:
     """A literal loopback IP and nothing a hosted provider would need, or `Refused`."""
     if not is_loopback_dsn(dsn):
         raise Refused(f"{flag} must name a literal loopback IP address; hosted and named hosts are refused "
-                      "(hosted loading waits for the authorised route of PR #623)")
+                      "(a hosted project takes --hosted-target instead)")
     try:
         assert_v2_target_is_local(dsn)
     except V2TargetRefused as exc:
@@ -205,7 +278,9 @@ def write_report(directory: Path, name: str, value: Any) -> Path:
 def _connect(dsn: str, **kwargs: Any) -> Any:
     import psycopg
 
-    return psycopg.connect(dsn, application_name="catalog_import", **kwargs)
+    if "application_name" not in dsn:  # a hosted conninfo already names itself
+        kwargs.setdefault("application_name", "catalog_import")
+    return psycopg.connect(dsn, **kwargs)
 
 
 def _assert_reached(cur: Any, dsn: str, mode: str | None) -> None:
@@ -332,10 +407,7 @@ def _counts(results: Iterable[tuple[str, str]]) -> dict[str, Any]:
 
 
 def cmd_apply(args: argparse.Namespace, importer: str, print_keys: bool) -> int:
-    check_local_dsn(args.target_dsn, "--target-dsn")
-    check_local_dsn(args.admin_dsn, "--admin-dsn")
-    check_pair(args.target_dsn, args.admin_dsn)
-    mode = writable_mode(args.target_dsn, args.allow_cleanroom_production)
+    mode = check_targets(args, admin=True, writes=True)
     out = prepare_out(args.out)
     plan, plan_sha = _load(args, importer)
     operator = read_operator(args.admin_dsn, args.operator_email, mode)
@@ -415,7 +487,7 @@ def _status_counts(rows: Iterable[dict[str, Any]]) -> dict[str, int]:
 
 
 def cmd_verify(args: argparse.Namespace, importer: str, print_keys: bool) -> int:
-    check_local_dsn(args.target_dsn, "--target-dsn")
+    check_targets(args, admin=False, writes=False)
     out = prepare_out(args.out)
     plan, plan_sha = _load(args, importer)
     with _connect(args.target_dsn, options="-c default_transaction_read_only=on") as conn:
@@ -443,10 +515,7 @@ def cmd_verify(args: argparse.Namespace, importer: str, print_keys: bool) -> int
 def cmd_rollback(args: argparse.Namespace, importer: str, print_keys: bool) -> int:
     if not args.confirm_delete_loaded_rows:
         raise Refused("rollback deletes the rows this plan loaded; it needs --confirm-delete-loaded-rows")
-    check_local_dsn(args.target_dsn, "--target-dsn")
-    check_local_dsn(args.admin_dsn, "--admin-dsn")
-    check_pair(args.target_dsn, args.admin_dsn)
-    mode = writable_mode(args.target_dsn, args.allow_cleanroom_production)
+    mode = check_targets(args, admin=True, writes=True)
     out = prepare_out(args.out)
     plan, plan_sha = _load(args, importer)
 
@@ -536,10 +605,14 @@ def main(argv: list[str] | None, *, importer: str, description: str,
     add_plan_arguments(p)
 
     def common(p: argparse.ArgumentParser, *, admin: bool) -> None:
-        p.add_argument("--target-dsn", required=True, help="the origenlab_api login of a loopback database")
+        p.add_argument("--target-dsn", help="the origenlab_api login of a loopback database")
         if admin:
-            p.add_argument("--admin-dsn", required=True,
-                           help="the owner-capable maintenance login of the same database")
+            p.add_argument("--admin-dsn", help="the owner-capable maintenance login of the same database")
+        p.add_argument("--hosted-target", action="store_true",
+                       help="the hosted project of the target file instead of a DSN (see the module docstring)")
+        p.add_argument("--target-file", default="supabase/.audit/hosted_target.env", help=argparse.SUPPRESS)
+        p.add_argument("--authorize-hosted-connection", action="store_true")
+        p.add_argument("--authorize-supavisor-session-route", action="store_true")
         p.add_argument("--plan", type=Path, required=True)
         p.add_argument("--plan-sha256", required=True)
         p.add_argument("--out", type=Path, required=True, help="a directory outside the repository")

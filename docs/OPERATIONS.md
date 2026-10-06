@@ -2156,7 +2156,18 @@ Sources are text files the operator extracted by model key
 
 ### 14.5 Hosted loading
 
-None of the importers or the enrichment tool can target a hosted database. Their targets are
-loopback-only by design. Loading catalog data into the hosted project waits for the authorised
-Supavisor route of PR #623; until then the clean room is the only populated target, and the
-hosted project receives the schema only after the owner applies the two catalog migrations.
+The four importers (`import_cost_parameters`, `import_price_lists`, `import_supplier_documents`,
+`import_quote_history`) take a hosted mode for `apply`, `verify` and `rollback`: `--hosted-target
+--authorize-hosted-connection --authorize-supavisor-session-route` in place of the two DSNs. It
+reuses PR #623's route: the target file `supabase/.audit/hosted_target.env` (Supavisor session
+mode, `verify-full` with the Supabase CA, address pinned), the migrator login for the manifest
+(`SET LOCAL ROLE origenlab_owner`), and the same host with the login `origenlab_api.<project ref>`
+for the catalog rows, its password read from `ORIGENLAB_API_DB_PASSWORD` (the secret Render holds).
+A missing flag, a DSN given alongside, or a missing password is a refusal before any connection.
+Printed lines are redacted of host, logins, address and passwords.
+
+Order on hosted: cost parameters → price lists → supplier documents → quote history, each `plan`
+(local, no database) → `apply` → `verify` (exit 0). Take a `pg_dump` before the first apply:
+rollback needs `session_replication_role`, which the hosted migrator may be refused, in which case
+it fails closed (exit 12, nothing deleted) and the dump is the way back. The enrichment tool stays
+loopback-only.

@@ -2046,3 +2046,12 @@ proven there.
 - **Two independent migration systems.** V1 is Alembic under
   `apps/email-pipeline/alembic/versions/`; V2 is the Supabase CLI under
   `supabase/migrations/`. They do not communicate.
+
+### 2.7.58 Catalog importers can target hosted, 2026-10-06 — built, not run against hosted
+
+`apps/api/scripts/catalog/_common.py` gains `--hosted-target` with the two `--authorize-*` flags of
+PR #623 ([`OPERATIONS.md`](OPERATIONS.md) §14.5). Catalog rows are written by `origenlab_api` over
+the Supavisor session route; the manifest by the migrator as `origenlab_owner`. Without the flags
+the loopback-only rules are unchanged. `tests/test_catalog_import_hosted.py`: refusals, login
+swap, redaction, and a full apply → verify → rollback with both hosted logins mapped onto a
+disposable database. Hosted `catalog.*` is still **empty**: the load is a separate, owner-run step.
