@@ -542,3 +542,57 @@ describe("organization domain restore", () => {
     expect(posts).toEqual([]);
   });
 });
+
+// ── archiving a note: one press, one archive ──────────────────────────────────
+
+describe("NoteList archive", () => {
+  it("cannot archive the same note twice while the first press is saving", async () => {
+    let release: (r: Response) => void = () => undefined;
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (init?.method === "POST") {
+          posts.push(url);
+          return new Promise<Response>((resolve) => {
+            release = resolve;
+          });
+        }
+        return Promise.resolve(new Response("{}", { status: 404 }));
+      }),
+    );
+    const { NoteList } = await import("./NoteList");
+    const refreshed = vi.fn();
+    render(
+      withRole(
+        "admin",
+        <NoteList
+          notes={[
+            {
+              id: "n1", root_note_id: "n1", revision_no: 1, body: "Nota ficticia", author_operator_id: "op-1",
+              author_name: "Operadora Ficticia", created_at: "2026-10-01T00:00:00Z", status: "active", archived_at: null,
+              archive_reason: null, version: 1, is_latest: true,
+            },
+          ]}
+          subjectKind="opportunity"
+          subjectId="00000000-0000-4000-8000-000000000001"
+          mayAuthor
+          onRefresh={refreshed}
+        />,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Archivar" }));
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.change(within(dialog).getByLabelText(/Motivo del archivo/), { target: { value: "duplicada" } });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Archivar nota" }));
+    const busy = await within(dialog).findByRole("button", { name: "Guardando…" });
+    expect(busy).toBeDisabled();
+    fireEvent.click(busy);
+    expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeDisabled();
+    release(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await waitFor(() => expect(refreshed).toHaveBeenCalledTimes(1));
+    expect(posts).toHaveLength(1);
+  });
+});
