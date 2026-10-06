@@ -21,6 +21,7 @@ import { useAuthSession } from "../../context/AuthSessionContext";
 import { useResource } from "../useResource";
 import { DataHealth } from "./DataHealth";
 import { MailRulesPanel } from "./MailRulesPanel";
+import { TriagePanel } from "./TriagePanel";
 
 const QUEUE_LABEL: Record<string, { label: string; action: string; blocking: boolean }> = {
   canonical_undetermined: { label: "Revisión canónica indeterminada", action: "Anular o reemplazar la revisión duplicada", blocking: true },
@@ -53,7 +54,7 @@ export function blockingCount(queue: { items: WorkQueueItem[]; counts?: Record<s
   return queue.items.filter((i) => i.kind !== "pending_evidence").length;
 }
 
-type Tab = "crm" | "not_imported" | "evidence" | "data" | "mail_rules";
+type Tab = "crm" | "triage" | "not_imported" | "evidence" | "data" | "mail_rules";
 
 export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
   const [queue, reloadQueue] = useResource(fetchWorkQueue);
@@ -73,6 +74,7 @@ export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string
         onChange={setTab}
         options={[
           { value: "crm", label: "Bloqueos del CRM", count: queue.kind === "ready" ? blockingCount(queue.data) : undefined },
+          { value: "triage", label: "Correos (sugerencias)" },
           {
             value: "not_imported",
             label: "No importadas",
@@ -88,7 +90,9 @@ export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string
           ...(isAdmin ? [{ value: "mail_rules" as Tab, label: "Acciones automáticas" }] : []),
         ]}
       />
-      {tab === "mail_rules" && isAdmin ? (
+      {tab === "triage" ? (
+        <TriagePanel />
+      ) : tab === "mail_rules" && isAdmin ? (
         <MailRulesPanel />
       ) : tab === "data" ? (
         <DataHealth navigate={navigate} />

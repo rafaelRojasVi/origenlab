@@ -13,6 +13,8 @@ export const MAIL_RULES_PATHS = {
   apply: "/v2/commands/apply-mail-rules",
   undo: "/v2/commands/undo-mail-rule-action",
   setAuto: "/v2/commands/set-auto-mail-rules",
+  /** A person's verdict on one mail-triage suggestion (`apps/api` v2/triage_review.py). */
+  reviewTriage: "/v2/commands/review-triage",
 } as const;
 
 export type MailRuleMode = "auto" | "proposal" | "none";
@@ -165,4 +167,19 @@ export function refusalMessage(err: unknown, fallback: string): string {
     if (err.status === 404) return "Las acciones automáticas no están habilitadas en este entorno.";
   }
   return fallback;
+}
+
+/** One verdict on one mail-triage suggestion: approve, correct (with the right answer) or reject. */
+export interface ReviewTriageInput {
+  assertion_id: string;
+  verdict: "approved" | "corrected" | "rejected";
+  corrected?: object;
+  note?: string;
+}
+
+export function reviewTriage(input: ReviewTriageInput): Promise<{ review_id: string }> {
+  const body: Record<string, unknown> = { assertion_id: input.assertion_id, verdict: input.verdict };
+  if (input.verdict === "corrected") body.corrected = input.corrected ?? {};
+  if (input.note && input.note.trim()) body.note = input.note.trim();
+  return postJson<{ review_id: string }>(MAIL_RULES_PATHS.reviewTriage, body);
 }

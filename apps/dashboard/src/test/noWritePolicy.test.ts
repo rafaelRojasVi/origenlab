@@ -46,7 +46,8 @@ describe("dashboard read-only policy", () => {
   //    of person/organization/contact_point, affiliations, product lines, supplier candidates,
   //    and notes. All go through the API's Deciding role check (sales or admin).
   //  - mailRules.ts's POST to the two admin-only email → cases commands: apply the rules'
-  //    automatic actions (re-planned upstream; the browser sends no action) and undo one.
+  //    automatic actions (re-planned upstream; the browser sends no action) and undo one, and the
+  //    mail-triage verdict (review-triage: approve, correct or reject a suggestion; sales or admin).
   //  - caseCommands.ts's POST to exactly four commercial-case commands and the three W11 task
   //    commands (create/complete/cancel-task, «En pausa hasta…» / «Retomar ahora»), the case drawer's
   //    «Cambiar etapa» (advance-case-stage), «Marcar ganada» (record-case-won), «Elegir revisión
@@ -59,6 +60,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/apply-mail-rules",
     "/v2/commands/undo-mail-rule-action",
     "/v2/commands/set-auto-mail-rules",
+    "/v2/commands/review-triage",
   ];
   const CASE_COMMANDS_FILE = "../crm/caseCommands.ts";
   const CASE_COMMAND_PATHS = [
