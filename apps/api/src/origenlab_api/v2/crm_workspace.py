@@ -217,11 +217,16 @@ _SQL_PIPELINE_QUOTES = """
     select q.id::text as quote_id, q.opportunity_id::text, q.quote_number, q.number_origin
       from crm.quote q
 """
+# `drive_record`: where the worker's Drive filing (apps/worker `drive_filing.py`) or the imported
+# laptop ledger put this revision's PDF — an `evidence.source_record` of kind `drive_file`, keyed
+# by the document's SHA-256.
 _SQL_PIPELINE_REVISIONS = """
     select qr.id::text as revision_id, qr.quote_id::text, qr.revision_no, qr.status,
            qr.origin, qr.sent_at::text, qr.pdf_sha256, qr.superseded_by_revision_no,
-           qr.origin_source_record_id::text
+           qr.origin_source_record_id::text, d.payload as drive_record
       from crm.quote_revision qr
+      left join evidence.source_record d
+             on d.dedupe_key = 'drive_file:' || qr.pdf_sha256 and d.kind = 'drive_file'
 """
 _SQL_PIPELINE_SOURCES = """
     select sr.id::text as source_record_id,
@@ -378,6 +383,37 @@ def _add(index: dict[str, DriveLink], link: DriveLink, where: str) -> None:
             f"{where}: document {link.document_sha256[:12]} is archived as two different Drive files"
         )
     index.setdefault(link.document_sha256, link)
+
+
+def drive_links_from_records(revisions: Iterable[Mapping[str, Any]],
+                             ledgers: Mapping[str, DriveLink]) -> dict[str, DriveLink]:
+    """The ledgers' links plus every revision's `drive_file` record (`_SQL_PIPELINE_REVISIONS`).
+    A ledger link wins for the same document: both name the file the archiver verified."""
+    out = dict(ledgers)
+    for r in revisions:
+        rec = r.get("drive_record")
+        if isinstance(rec, str):
+            rec = json.loads(rec)
+        sha = (r.get("pdf_sha256") or "").lower()
+        if not rec or not sha or sha in out or not rec.get("drive_file_id"):
+            continue
+        file_id = str(rec["drive_file_id"])
+        out[sha] = DriveLink(
+            document_sha256=sha,
+            file_id=file_id,
+            file_url=rec.get("drive_web_view_link") or DRIVE_FILE_URL.format(file_id),
+            folder_id=rec.get("drive_folder_id"),
+            case_key=rec.get("case_key"),
+            quote_number=rec.get("quote_number"),
+            revision=rec.get("revision"),
+            original_filename=rec.get("original_filename") or rec.get("file_name"),
+            archive_status="archived_verified",
+            ledger_crm_status=None,
+            lifecycle=None,
+            gmail_message_id=rec.get("gmail_message_id"),
+            ledger="crm",
+        )
+    return out
 
 
 def load_drive_ledgers(paths: Iterable[str | Path]) -> dict[str, DriveLink]:
@@ -892,13 +928,14 @@ class CrmWorkspaceRepository:
             participants = self._rows(cur_participants)
             contacts = last_contacts(self._rows(cur_contact))
             conn.rollback()
+        drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
-            opps, case_orgs, quotes, revisions, sources, participants, self._drive, contacts
+            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts
         )
         return {
             "items": cards,
             "total": len(cards),
-            "drive_configured": self.drive_configured,
+            "drive_configured": self.drive_configured or bool(drive),
         }
 
     # -- providers

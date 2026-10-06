@@ -62,7 +62,7 @@ with the operator's JWT.
 | `apps/web` (Astro, static) | the public marketing site | touch operator, CRM or outbound data |
 | `apps/dashboard` (React) | presentation, operator interaction | hold truth, compute money, call the database, hold a secret |
 | `apps/api` (FastAPI) | **the only business command boundary**: authentication checks, validation, idempotency, transactions, domain events, signed-URL minting | ingest mail, call Gmail, render PDFs, run long jobs |
-| `apps/worker` (Python) | Gmail sync and the single send path, MIME parsing, PDF rendering, ChileCompra fetching, LLM classification, reconciliation | write `crm.*` — except `quote_revision.pdf_sha256` and sent-evidence ids, and only through `crm.record_quote_pdf` ([§6.2](#m-arch-definer)) |
+| `apps/worker` (Python) | Gmail sync and the single send path, MIME parsing, PDF rendering, filing recorded quote PDFs in the case's Drive folder (recorded as `drive_file` evidence), ChileCompra fetching, LLM classification, reconciliation | write `crm.*` — except `quote_revision.pdf_sha256` and sent-evidence ids, and only through `crm.record_quote_pdf` ([§6.2](#m-arch-definer)) |
 | PostgreSQL | every durable fact; the closed list of privileged send functions; the constraints that make the invariants true | store bodies, attachments or PDFs; hold a browser identity; authorize a human |
 | Storage | `.eml`, attachment bytes, quotation PDFs, dry-run reports | be public; be the authority for a fact |
 
@@ -89,7 +89,7 @@ second lifecycle.
 | Table group | Sole writer |
 |---|---|
 | `crm.*` (except the two quote columns below) | FastAPI commands as `origenlab_api` |
-| `crm.opportunity.stage` | FastAPI commands **only** — no timer, cron job, queue worker, classifier or import may close a case ([`DOMAIN.md`](DOMAIN.md) §3.4). The one machine path is the email → cases rules, run **inside the API** when an admin presses «Aplicar»: recorded as `worker` events with `payload.attribution`, rows naming the admin who applied, every action undoable ([`DOMAIN.md`](DOMAIN.md) §3.6.6) |
+| `crm.opportunity.stage` | FastAPI commands **only** — no timer, cron job, queue worker, classifier or import may close a case ([`DOMAIN.md`](DOMAIN.md) §3.4). The one machine path is the email → cases rules, run **inside the API** when an admin presses «Aplicar» (and, for the R1/R2 *links* only, on the API's own timer while an admin has switched it on — never a stage move): recorded as `worker` events with `payload.attribution`, rows naming the admin who applied, every action undoable ([`DOMAIN.md`](DOMAIN.md) §3.6.6) |
 | `crm.quote_revision.pdf_sha256`, sent-evidence ids | the worker, through `crm.record_quote_pdf` — one privileged function, those columns only ([§6.2](#m-arch-definer)) |
 | `comms.*` | the worker's Gmail sync; FastAPI only for participant resolution |
 | `outbound.send_attempt`, `outbound.contact_control` | the send/reconcile functions, the NDR handlers, the Wave 1A loader, admin commands — **never direct DML from a runtime role** |

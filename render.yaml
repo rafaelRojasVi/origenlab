@@ -99,13 +99,17 @@ services:
     rootDir: apps/worker
     schedule: "*/10 * * * *"
     buildCommand: uv sync --frozen --no-dev
-    startCommand: uv run --no-sync origenlab-worker gmail-sync
-    # The cron imports V1's parser from apps/email-pipeline (v1_reuse), so a change there rebuilds it
-    # too; paths are relative to the repository root, not rootDir.
+    # Capture, then file the recorded quote PDFs in Drive (paused until
+    # ORIGENLAB_WORKER_DRIVE_FILING_ENABLED=true; docs/OPERATIONS.md §8.10).
+    startCommand: uv run --no-sync origenlab-worker gmail-sync && uv run --no-sync origenlab-worker drive-file
+    # The cron imports V1's parser from apps/email-pipeline (v1_reuse) and the case archive from
+    # apps/api (quote_case_archive), so a change there rebuilds it too; paths are relative to the
+    # repository root, not rootDir.
     buildFilter:
       paths:
         - apps/worker/**
         - apps/email-pipeline/**
+        - apps/api/**
         - render.yaml
     envVars:
       # Not a secret: use the image's Python, never download one at build or run time.
@@ -135,4 +139,18 @@ services:
       - key: ORIGENLAB_WORKER_STORAGE_S3_ACCESS_KEY_ID
         sync: false
       - key: ORIGENLAB_WORKER_STORAGE_S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: ORIGENLAB_WORKER_DRIVE_FILING_ENABLED
+        sync: false
+      - key: ORIGENLAB_WORKER_DRIVE_CLIENT_ID
+        sync: false
+      - key: ORIGENLAB_WORKER_DRIVE_CLIENT_SECRET
+        sync: false
+      - key: ORIGENLAB_WORKER_DRIVE_REFRESH_TOKEN
+        sync: false
+      - key: ORIGENLAB_WORKER_DRIVE_CASOS_FOLDER_ID
+        sync: false
+      - key: ORIGENLAB_WORKER_DRIVE_PROTECTED_FOLDER_IDS
+        sync: false
+      - key: ORIGENLAB_WORKER_DRIVE_EXPECTED_PRINCIPAL
         sync: false

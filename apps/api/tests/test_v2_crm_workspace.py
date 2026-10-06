@@ -438,3 +438,30 @@ def test_first_address_keeps_a_quoted_display_name_with_a_comma_whole() -> None:
     assert _first_address('"Ruiz, Ana" <ana@example.cl>, otro@example.cl') == ("Ruiz, Ana <ana@example.cl>", 2)
     assert _first_address("uno@example.cl; dos@example.cl") == ("uno@example.cl", 2)
     assert _first_address(None) == (None, 0)
+
+
+def test_drive_file_records_link_revisions_and_a_ledger_link_wins() -> None:
+    """The worker's `drive_file` records (apps/worker drive_filing.py) reach the cards through the
+    revisions read; a document the laptop ledger also names keeps the ledger's link."""
+    from origenlab_api.v2.crm_workspace import DriveLink, drive_links_from_records
+
+    sha_a, sha_b, sha_c = "a" * 64, "b" * 64, "c" * 64
+    ledger = {sha_b: DriveLink(document_sha256=sha_b, file_id="ledger-file", file_url="https://drive.example/l",
+                               folder_id="lf", case_key="k", quote_number="01244-26", revision=1,
+                               original_filename="viejo.pdf", archive_status="archived_verified",
+                               ledger_crm_status=None, lifecycle=None, gmail_message_id=None, ledger="run-1")}
+    revisions = [
+        {"pdf_sha256": sha_a, "drive_record": json.dumps({
+            "drive_file_id": "f-a", "drive_folder_id": "folder-a", "case_key": "case-1",
+            "file_name": "01250-26 r1 — Cliente.pdf", "quote_number": "01250-26", "revision": 1})},
+        {"pdf_sha256": sha_b, "drive_record": {"drive_file_id": "other", "drive_folder_id": "x"}},
+        {"pdf_sha256": sha_c, "drive_record": None},
+        {"pdf_sha256": None, "drive_record": {"drive_file_id": "orphan"}},
+    ]
+    links = drive_links_from_records(revisions, ledger)
+    assert set(links) == {sha_a, sha_b}
+    assert links[sha_b].file_id == "ledger-file"
+    a = links[sha_a].as_dict()
+    assert (a["file_id"], a["folder_id"], a["original_filename"]) == ("f-a", "folder-a", "01250-26 r1 — Cliente.pdf")
+    assert a["file_url"] == "https://drive.google.com/file/d/f-a/view"
+    assert a["folder_url"] == "https://drive.google.com/drive/folders/folder-a"

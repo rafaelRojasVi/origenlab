@@ -9,9 +9,8 @@ on:
     paths:
       - "apps/worker/**"
       - "apps/email-pipeline/**"
-      - "apps/api/tests/v2_command_harness.py"
-      - "apps/api/tests/protected_databases.py"
-      - "apps/api/scripts/disposable_test_cluster.sh"
+      # The worker depends on apps/api (the case archive) and shares its test harness.
+      - "apps/api/**"
       - "supabase/migrations/**"
       - "supabase/roles.sql"
       - "render.yaml"
@@ -20,9 +19,8 @@ on:
     paths:
       - "apps/worker/**"
       - "apps/email-pipeline/**"
-      - "apps/api/tests/v2_command_harness.py"
-      - "apps/api/tests/protected_databases.py"
-      - "apps/api/scripts/disposable_test_cluster.sh"
+      # The worker depends on apps/api (the case archive) and shares its test harness.
+      - "apps/api/**"
       - "supabase/migrations/**"
       - "supabase/roles.sql"
       - "render.yaml"

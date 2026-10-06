@@ -10,6 +10,8 @@ uv run --no-sync python - <<'PY'
 import boto3
 import psycopg
 import origenlab_worker.v1_reuse
+import origenlab_worker.drive_filing
+import origenlab_worker.cli
 print("ok: apps/worker no-dev runtime imports")
 PY
 

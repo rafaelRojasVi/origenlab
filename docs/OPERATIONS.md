@@ -1952,6 +1952,47 @@ The API applies rules R1 (same Gmail thread) and R2 (same quote number) by itsel
 - The tab's «Última pasada» line is this API process's memory: it is empty for up to one interval
   after a deploy.
 
+### 8.10 Quote PDFs filed in Drive (`drive-file`)
+
+Right after each capture, the cron runs `origenlab-worker drive-file`
+(`apps/worker/src/origenlab_worker/drive_filing.py`): every quote revision recorded from a
+captured email — «Registrar cotización», «Nueva revisión», or rules R3/R4 — gets its PDF put in
+`Cotizaciones/Casos/<case folder>` in contacto@'s Drive, with the layout, names, double
+verification and legacy-folder refusal of the 2026-09-26 case archive (STATUS §2.7.24). Each
+filed document is recorded as an `evidence.source_record` of kind `drive_file`; the case card
+links it. Nothing is renamed, moved or deleted in Drive, and no CRM row is written.
+
+**First-time setup (owner, once):**
+
+1. The Drive consent: the values in `~/secrets/origenlab-drive-credentials.json` (the file the case
+   archive used; else run `apps/api/scripts/authorize_drive_user.py --expected-email
+   contacto@origenlab.cl`). Its `client_id`, `client_secret` and `refresh_token` become
+   `ORIGENLAB_WORKER_DRIVE_CLIENT_ID`, `_CLIENT_SECRET`, `_REFRESH_TOKEN` on the cron
+   `origenlab-gmail-sync`. The token must carry exactly the `drive` scope; anything wider is
+   refused (`scope_not_drive`).
+2. `ORIGENLAB_WORKER_DRIVE_CASOS_FOLDER_ID` = the id of `Cotizaciones/Casos` (from its Drive URL);
+   `ORIGENLAB_WORKER_DRIVE_PROTECTED_FOLDER_IDS` = the ids of `Pendientes` and `Enviadas`, comma
+   separated.
+3. The cron's **Start Command**: `uv run --no-sync origenlab-worker gmail-sync && uv run --no-sync
+   origenlab-worker drive-file` (`render.yaml` declares it; a service created by hand keeps its
+   own until changed).
+4. Once, from the laptop, record the case archive's existing links so earlier revisions keep their
+   folders: `uv run origenlab-worker drive-ledger-import <…>/archive_links.jsonl --dry-run`, then
+   without `--dry-run`, with the cron's database values in the environment.
+5. `ORIGENLAB_WORKER_DRIVE_FILING_ENABLED=true`. The next run's log line (`"event":
+   "drive_file"`) reports `filed`, `reused` and `refused` with stable codes.
+
+**Pause:** `ORIGENLAB_WORKER_DRIVE_FILING_ENABLED=false` — the step logs `paused`, opens nothing.
+
+| Refusal code | Meaning / action |
+|---|---|
+| `scope_not_drive`, `invalid_grant` (exit 2) | the consent is wrong or revoked: redo step 1 |
+| `wrong_account` | the token is not contacto@: redo step 1 with the right account |
+| `casos_invalid` | the folder id is not the tagged `Casos` root: check step 2 |
+| `case_name_taken`, `case_key_conflict`, `document_filed_elsewhere` | Drive disagrees with the CRM about a case: look at the case's folder by hand; nothing was written |
+| `attachment_not_in_eml`, `eml_hash_mismatch` | the stored email does not hold that PDF: leave it, file by hand |
+| `drive_http_*`, `storage_*` | transient: the next run retries |
+
 ## 9. Emergency shutdown
 
 In order, fastest first:

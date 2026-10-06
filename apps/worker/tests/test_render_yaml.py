@@ -21,6 +21,13 @@ SECRET_KEYS = (
     "ORIGENLAB_WORKER_STORAGE_S3_REGION",
     "ORIGENLAB_WORKER_STORAGE_S3_ACCESS_KEY_ID",
     "ORIGENLAB_WORKER_STORAGE_S3_SECRET_ACCESS_KEY",
+    "ORIGENLAB_WORKER_DRIVE_FILING_ENABLED",
+    "ORIGENLAB_WORKER_DRIVE_CLIENT_ID",
+    "ORIGENLAB_WORKER_DRIVE_CLIENT_SECRET",
+    "ORIGENLAB_WORKER_DRIVE_REFRESH_TOKEN",
+    "ORIGENLAB_WORKER_DRIVE_CASOS_FOLDER_ID",
+    "ORIGENLAB_WORKER_DRIVE_PROTECTED_FOLDER_IDS",
+    "ORIGENLAB_WORKER_DRIVE_EXPECTED_PRINCIPAL",
 )
 
 
@@ -39,7 +46,8 @@ def test_the_cron_service_runs_the_worker_every_ten_minutes() -> None:
     service = _service()
     for line in ('schedule: "*/10 * * * *"', "runtime: python", "rootDir: apps/worker",
                  "buildCommand: uv sync --frozen --no-dev",
-                 "startCommand: uv run --no-sync origenlab-worker gmail-sync"):
+                 "startCommand: uv run --no-sync origenlab-worker gmail-sync "
+                 "&& uv run --no-sync origenlab-worker drive-file"):
         assert line in service, line
     assert "--init" not in service and "--dry-run" not in service
 
@@ -56,7 +64,8 @@ def test_a_change_to_the_imported_v1_code_rebuilds_the_cron() -> None:
     service = _service()
     match = re.search(r"buildFilter:\n\s+paths:\n((?:\s+- \S+\n)+)", service + "\n")
     assert match is not None
-    assert set(re.findall(r"- (\S+)", match.group(1))) == {"apps/worker/**", "apps/email-pipeline/**", "render.yaml"}
+    assert set(re.findall(r"- (\S+)", match.group(1))) == {"apps/worker/**", "apps/email-pipeline/**", "apps/api/**",
+                                                         "render.yaml"}
 
 
 def test_the_cron_keys_are_exactly_the_names_the_code_reads() -> None:
