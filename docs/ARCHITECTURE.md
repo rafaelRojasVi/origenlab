@@ -656,9 +656,12 @@ write `crm.*` or `outbound.*` beyond the one designed lane: the worker may hold
 `supabase/migrations/20260908120100_slice0_outbound_campaign_reply.sql`), which 4a
 never writes. The probe refuses any role membership; any port other than 5432
 (6543 refused by name); any other `crm`/`outbound` write, including column-level
-grants, `TRIGGER`, and view and materialized-view writes; and any `SECURITY DEFINER`
-function the worker can execute (extension-owned and trigger functions and functions
-in schemas without `USAGE` are not counted, and nothing is skipped by schema name).
+grants, `TRIGGER`, and view and materialized-view writes; and any executable
+`SECURITY DEFINER` other than the closed-list `outbound.add_contact_control`. That one
+exception does not grant direct DML: its body independently proves the exact hard-bounce
+evidence before it writes an address-scoped global block. Extension-owned and trigger
+functions and functions in schemas without `USAGE` are not counted; nothing is skipped
+by schema name.
 When `pgmq` arrives, a queue message triggers the same job code — only the trigger
 changes. PDF rendering, ChileCompra, the send path and the reconciler are not affected
 by this amendment.

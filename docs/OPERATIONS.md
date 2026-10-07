@@ -1602,11 +1602,13 @@ metadata) and its `pending` `gmail_message` evidence one message at a time, and 
 the cursor. Campaign copies (outbound with `List-Unsubscribe`) are kept as messages without evidence
 (owner-approved 2026-10-04).
 
-The worker's database login can write nothing in `crm.*` or `outbound.*` except `INSERT` on
-`outbound.campaign_reply`, the designed 4c reply-proposal lane (4a never writes it). Every connect
-proves this from the inside and refuses: any role membership; a port other than 5432 (6543 is
-refused by name); any other `crm`/`outbound` write privilege, including column-level grants,
-`TRIGGER`, and view and materialized-view writes; and any `SECURITY DEFINER` function the worker can
+The worker's database login has no direct write in `crm.*` or `outbound.*` except `INSERT` on
+`outbound.campaign_reply`, the designed 4c reply-proposal lane (4a never writes it). It may EXECUTE
+exactly one closed-list privileged function, `outbound.add_contact_control`, whose worker branch
+accepts only proven single-recipient Batch-A no-such-user evidence. Every connect proves this from
+the inside and refuses: any role membership; a port other than 5432 (6543 is refused by name); any
+other `crm`/`outbound` write privilege, including column-level grants, `TRIGGER`, and view and
+materialized-view writes; and any other `SECURITY DEFINER` function the worker can
 execute (extension-owned and trigger functions and functions in schemas without `USAGE` are not
 counted; nothing is skipped by schema name). **The first hosted `--init --dry-run` is the proof**
 that Supabase's own extension functions do not trip the definer probe; read its log line before
@@ -1721,7 +1723,7 @@ runs on every connect and its code names the check, not the object. To see what 
 project's `postgres` login:
 
 ```sql
--- executable SECURITY DEFINER functions (expected: no rows)
+-- executable SECURITY DEFINER functions (expected: outbound.add_contact_control only)
 select n.nspname || '.' || p.proname
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
  where p.prosecdef and n.nspname not in ('pg_catalog', 'information_schema')

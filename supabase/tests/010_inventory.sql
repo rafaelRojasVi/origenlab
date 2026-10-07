@@ -82,7 +82,7 @@ select is(
 -- platform.begin_pin_attempt and platform.finish_pin_attempt (the PIN attempt, 20260929100000,
 -- which replaced 20260928194000's platform.record_pin_attempt). Every other function is INVOKER.
 select is(
-  (select array_agg(n.nspname || '.' || p.proname order by 1)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  (select array_agg(n.nspname || '.' || p.proname order by n.nspname || '.' || p.proname)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and p.prosecdef),
   '{outbound.add_contact_control,platform.begin_pin_attempt,platform.finish_pin_attempt}', 'the only SECURITY DEFINER functions are the closed-list outbound.add_contact_control, platform.begin_pin_attempt and platform.finish_pin_attempt');
@@ -111,6 +111,7 @@ select set_eq(
         'outbound.campaign_planning_absent_at_insert',
         'outbound.unsubscribe_permanent',
         'outbound.add_contact_control',
+        'outbound.add_unsubscribe_contact_control',
         'outbound.marketing_contact_refusals',
         'outbound.archived_campaign_immutable',
         'outbound.campaign_content_immutable',
@@ -124,7 +125,7 @@ select set_eq(
         'platform.auth_event_actor_guard', 'platform.hmac_sha256',
         'platform.begin_pin_attempt', 'platform.finish_pin_attempt',
         'evidence.document_line_review_guard'],
-  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the three W10 unsubscribe functions, the three campaign-block functions, the archived-campaign guard, the campaign-content-archive guard, the note guard, the three sign-in version guards, the session guard, the audit-actor guard, the HMAC helper, the two PIN-attempt definers and the document-line review guard exist');
+  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the four W10/contact-control functions, the three campaign-block functions, the archived-campaign guard, the campaign-content-archive guard, the note guard, the three sign-in version guards, the session guard, the audit-actor guard, the HMAC helper, the two PIN-attempt definers and the document-line review guard exist');
 
 -- `public` holds nothing.
 select is(

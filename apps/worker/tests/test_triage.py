@@ -25,14 +25,20 @@ PATH = "mail/contacto@origenlab.cl/2026/10/g1.eml"
 
 
 class FakeDb:
-    def __init__(self, *, direction="inbound", labels=("INBOX",), done=False, candidates=()) -> None:
+    def __init__(self, *, direction="inbound", labels=("INBOX",), done=False, done_class="business_other",
+                 delivery_done=False, candidates=()) -> None:
         self.msg = PendingMessage("sr-1", "m-1", direction, labels, PATH, "t-1")
         self.done = done
+        self.done_class = done_class
+        self.delivery_done = delivery_done
         self._candidates = list(candidates)
         self.recorded: list[tuple[str, dict, list]] = []
+        self.delivery_failures = []
 
     def load(self, sid):
-        return (self.msg, self.done) if sid == "sr-1" else None
+        if sid != "sr-1":
+            return None
+        return self.msg, self.done, self.done_class if self.done else None, self.delivery_done
 
     def candidates(self, mail):
         return self._candidates
@@ -46,6 +52,10 @@ class FakeDb:
     def record(self, sid, reading, mentions):
         self.recorded.append((sid, reading, list(mentions)))
         return len(mentions)
+
+    def record_delivery_failure(self, sid, analysis):
+        self.delivery_failures.append((sid, analysis))
+        return len(analysis.auto_block_addresses)
 
 
 class FakeStore:
@@ -117,6 +127,22 @@ def test_an_already_triaged_or_missing_message_writes_nothing() -> None:
     assert triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL)).outcome == "already_triaged"
     assert triage_one(db, FakeStore(make_raw()), "other", ModelSettings(None, DEFAULT_MODEL)).outcome == "not_found"
     assert db.recorded == []
+
+
+def test_a_previously_triaged_bounce_gets_delivery_analysis_without_retriaging_other_mail() -> None:
+    raw = (
+        b"From: Mail Delivery Subsystem <mailer-daemon@googlemail.invalid>\r\n"
+        b"To: contacto@origenlab.cl\r\n"
+        b"Subject: Delivery Status Notification (Failure)\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n\r\n"
+        b"Final-Recipient: rfc822; dead@cliente.invalid\r\n"
+        b"Status: 5.1.1\r\n550 5.1.1 User unknown; address does not exist.\r\n"
+    )
+    db = FakeDb(done=True, done_class="bounce", delivery_done=False)
+    result = triage_one(db, FakeStore(raw), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert (result.outcome, result.triage_class, result.model) == ("recorded", "bounce", "not_needed")
+    assert db.recorded == []
+    assert db.delivery_failures[0][1].auto_block_addresses == ("dead@cliente.invalid",)
 
 
 def test_a_storage_failure_writes_nothing_so_the_sweep_retries() -> None:

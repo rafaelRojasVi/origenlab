@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from email.message import EmailMessage
 
 import psycopg
 import pytest
@@ -54,6 +55,18 @@ class Store:
 
     def get(self, key: str) -> bytes:
         return self.objects[key]
+
+
+def ndr_raw(body: str, *, failed: str | None = None) -> bytes:
+    msg = EmailMessage()
+    msg["From"] = "Mail Delivery Subsystem <mailer-daemon@googlemail.invalid>"
+    msg["To"] = MAILBOX
+    msg["Subject"] = "Delivery Status Notification (Failure)"
+    msg["Message-ID"] = f"<ndr-{uuid.uuid4().hex}@googlemail.invalid>"
+    if failed:
+        msg["X-Failed-Recipients"] = failed
+    msg.set_content(body)
+    return msg.as_bytes()
 
 
 def capture(target, mailbox_id, store: Store, gmail_id: str, raw: bytes) -> str:
@@ -110,6 +123,71 @@ def test_a_captured_request_is_pending_then_recorded_once(dsn, target, mailbox_i
     assert rows == [("message_triage", VALUE_NORM, "unresolved", "quote_request", "off")]
     assert owner_rows(dsn, "select review_status from evidence.source_record where id = %s", (sid,)) == [("pending",)]
     assert business_rows(dsn) == before  # nothing in crm.* or outbound.*
+
+
+def test_a_clear_no_such_user_bounce_becomes_a_global_block(dsn, target, mailbox_id) -> None:
+    address = f"dead-{uuid.uuid4().hex[:8]}@cliente.invalid"
+    store = Store()
+    raw = ndr_raw(
+        f"Final-Recipient: rfc822; {address}\n"
+        "Action: failed\nStatus: 5.1.1\n"
+        "Diagnostic-Code: smtp; 550 5.1.1 User unknown; address does not exist.\n"
+    )
+    gid = capture(target, mailbox_id, store, f"tr-{uuid.uuid4().hex[:8]}", raw)
+    sid = source_record(dsn, gid)
+
+    with triage_conn(target) as conn:
+        result = triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL))
+
+    assert (result.outcome, result.triage_class) == ("recorded", "bounce")
+    assert owner_rows(
+        dsn,
+        "select kind, value_norm, value->>'reason_code', value->>'batch', "
+        "value->'auto_block_addresses'->>0 from evidence.assertion "
+        "where source_record_id = %s and kind = 'delivery_failure'",
+        (sid,),
+    ) == [("delivery_failure", "delivery:v1", "bounce_no_such_user", "A", address)]
+    assert owner_rows(
+        dsn,
+        "select kind, purpose, reason, source, origin_source_record_id::text "
+        "from outbound.contact_control where scope = 'address' and value_norm = %s",
+        (address,),
+    ) == [("block", "all", "invalid_address", "ndr_handler", sid)]
+    assert owner_rows(
+        dsn,
+        "select actor_kind, payload->>'reason_code' from crm.domain_event "
+        "where aggregate_kind = 'contact_control' and aggregate_id = "
+        "(select id from outbound.contact_control where scope='address' and value_norm=%s and kind='block' and purpose='all')",
+        (address,),
+    ) == [("worker", "bounce_no_such_user")]
+
+
+def test_an_spf_policy_rejection_is_evidence_only(dsn, target, mailbox_id) -> None:
+    address = f"spf-{uuid.uuid4().hex[:8]}@cliente.invalid"
+    store = Store()
+    raw = ndr_raw(
+        f"Final-Recipient: rfc822; {address}\n"
+        "Action: failed\nStatus: 5.7.1\n"
+        "Diagnostic-Code: smtp; 554 5.7.1 Message rejected by policy; SPF no valido; access denied.\n"
+    )
+    gid = capture(target, mailbox_id, store, f"tr-{uuid.uuid4().hex[:8]}", raw)
+    sid = source_record(dsn, gid)
+
+    with triage_conn(target) as conn:
+        result = triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL))
+
+    assert result.triage_class == "bounce"
+    assert owner_rows(
+        dsn,
+        "select value->>'reason_code', value->>'batch', jsonb_array_length(value->'auto_block_addresses') "
+        "from evidence.assertion where source_record_id = %s and kind = 'delivery_failure'",
+        (sid,),
+    ) == [("bounce_access_denied", "D", 0)]
+    assert owner_rows(
+        dsn,
+        "select count(*) from outbound.contact_control where scope='address' and value_norm=%s",
+        (address,),
+    ) == [(0,)]
 
 
 def test_an_exact_model_number_becomes_a_product_mention(dsn, target, mailbox_id) -> None:
