@@ -85,6 +85,23 @@ def _doc(filename, cn_tokens=()):
             "cn_tokens": list(cn_tokens)}
 
 
+def _requester_check(conn, source_record_id, *, organization_id=None, organization_name=None):
+    matched = organization_id is not None
+    value = {
+        "requester_version": 1,
+        "status": "matched" if matched else "none",
+        "how": "exact_name_in_body",
+    }
+    if matched:
+        value["organization_id"] = organization_id
+        value["organization_name"] = organization_name
+    conn.execute(
+        "insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+        "values (%s, 'message_triage', 'requester:v1', %s::jsonb)",
+        (source_record_id, json.dumps(value)),
+    )
+
+
 _SERIALS = itertools.count(1000 + (uuid.uuid4().int % 300) * 10, 10)
 
 
@@ -257,6 +274,9 @@ def test_r7_free_mail_request_is_visible_as_solicitada_without_false_institution
             sender="Irina Example <irina@gmail.com>", recipients="contacto@origenlab.cl",
             subject="Solicitud de cotización de productos",
         )
+        # The API waits for the worker's deterministic body check before opening a free-mail RFQ.
+        assert _action(_repo(db).preview(), request)["mode"] == "proposal"
+        _requester_check(conn, request)
     r7 = _apply_only(db, world, request)
     assert r7["rule_id"] == "R7"
     assert _one(db, "select stage, organization_id from crm.opportunity where id = %s", r7["case_id"]) == (
@@ -264,6 +284,25 @@ def test_r7_free_mail_request_is_visible_as_solicitada_without_false_institution
     _repo(db).undo(_operator(world["admin"]), r7["command_receipt_id"], "prueba de reversión")
     assert _one(db, "select stage, close_reason from crm.opportunity where id = %s", r7["case_id"]) == (
         "abandoned", "discarded_by_correction")
+
+
+def test_r7_free_mail_exact_requester_identity_moves_directly_to_en_estudio(db, world) -> None:
+    with _owner(db) as conn:
+        request = _mail(
+            conn, thread=f"t-free-known-{world['tag']}", direction_hint=None,
+            sender="Irina Example <irina@gmail.com>", recipients="contacto@origenlab.cl",
+            subject="Solicitud de cotización de productos",
+        )
+        client_name = conn.execute(
+            "select name from crm.organization where id = %s", (world["client"],)
+        ).fetchone()[0]
+        _requester_check(
+            conn, request, organization_id=world["client"], organization_name=client_name
+        )
+    r7 = _apply_only(db, world, request)
+    assert r7["rule_id"] == "R7"
+    assert _one(db, "select stage, organization_id::text from crm.opportunity where id = %s", r7["case_id"]) == (
+        "qualified", world["client"])
 
 
 def test_r1_link_r5_win_and_their_undo(db, world) -> None:
@@ -530,6 +569,7 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
         fresh_rfq = _mail(conn, thread=f"thread-rfq-{world['tag']}", direction_hint=None,
                           sender="persona@gmail.com", recipients="contacto@origenlab.cl",
                           subject="Solicitud de cotización de reactivos")
+        _requester_check(conn, fresh_rfq)
     planned = {a["evidence_id"]: (a["rule_id"], a["mode"]) for a in repo.preview()["actions"]}
     assert planned[reply] == ("R1", "auto") and planned[by_number] == ("R2", "auto")
     assert planned[fresh_rfq] == ("R7", "auto")
