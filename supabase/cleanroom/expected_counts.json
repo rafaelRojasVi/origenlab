@@ -37,12 +37,12 @@
   ],
   "probes": {
     "migrations.count": {
-      "expect": 49,
+      "expect": 50,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20261006180200",
-      "why": "slice4_triage_review, the newest migration — evidence.triage_review (DOMAIN.md §7 #55), a person's append-only verdict on each mail-triage reading, and the assertion.triage_reviewed event; before it 20261006180100 adds the message_triage and product_mention assertion kinds and 20261006180000 the worker's Procrastinate queue in its own procrastinate schema (docs/ARCHITECTURE.md §8, D2)."
+      "expect": "20261007160000",
+      "why": "slice4_hard_bounce_contact_control, the newest migration — adds delivery_failure evidence and the worker-only hard-bounce branch of outbound.add_contact_control while retaining the W10 unsubscribe body as a private INVOKER helper; before it 20261006180200 adds triage review, 20261006180100 the message_triage/product_mention assertion kinds and 20261006180000 the worker queue."
     },
 
     "source_record.total": {
