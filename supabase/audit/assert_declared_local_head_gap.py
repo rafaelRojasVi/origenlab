@@ -95,7 +95,7 @@ POST_SLICE0_FUNCTIONS = {
     # the send-time contract (both INVOKER) and the closed-list writer below.
     "outbound.unsubscribe_permanent",
     "outbound.marketing_contact_refusals",
-    "outbound.add_contact_control",
+    "outbound.add_contact_control",\n    "outbound.add_unsubscribe_contact_control",
     # 20260928100000_slice5_campaign_block.sql — the block's lifecycle guard,
     # the campaign-level refusals and their enforcement trigger (all INVOKER).
     "outbound.campaign_block_guard",
