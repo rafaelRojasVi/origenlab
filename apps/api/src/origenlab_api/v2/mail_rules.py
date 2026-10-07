@@ -128,6 +128,13 @@ class MailEvidence:
     #: V1 `classify_send_direction` on outbound mail (`customer_quote_candidate`, `ambiguous`,
     #: `supplier_rfq`, `internal_only`); None on inbound.
     direction_hint: str | None = None
+    #: The worker's deterministic requester:v1 check has run. Free/unknown senders wait for this
+    #: before R7 opens a case, so identity evidence cannot lose a race with the API timer.
+    requester_checked: bool = False
+    #: A unique, exact active CRM organization name found in the cleaned message body. This is
+    #: evidence, not a fuzzy/model guess; the planner still verifies the id against its snapshot.
+    requester_organization_id: str | None = None
+    requester_organization_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -825,7 +832,15 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
     if not _is_quote_request(e):
         return PlannedAction(e.id, "R8", NONE, ("ninguna regla aplica: queda en Revisión",))
 
-    orgs = [] if d in FREE_MAIL_DOMAINS else ix.by_domain.get(d, [])
+    domain_orgs = [] if d in FREE_MAIL_DOMAINS else ix.by_domain.get(d, [])
+    requester = ix.orgs.get(e.requester_organization_id or "")
+    if requester is not None and requester.is_supplier:
+        requester = None
+    if requester is not None and domain_orgs and requester.id not in {o.id for o in domain_orgs}:
+        return PlannedAction(e.id, "R7", PROPOSAL, (
+            f"la firma identifica «{requester.name}», pero el dominio {d} pertenece a otra institución: un humano elige",),
+            candidates=tuple(sorted({requester.id, *(o.id for o in domain_orgs)})))
+    orgs = [requester] if requester is not None else domain_orgs
     if len(orgs) >= 2:
         return PlannedAction(e.id, "R7", PROPOSAL, (
             f"solicitud de cotización desde {d}, dominio de {len(orgs)} instituciones: un humano elige",),
@@ -833,7 +848,9 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
 
     if len(orgs) == 1:
         o = orgs[0]
-        reasons = [f"solicitud de cotización de «{o.name}»", "remitente de una institución conocida"]
+        how = ("institución identificada exactamente en el cuerpo del correo"
+               if requester is not None else "remitente de una institución conocida")
+        reasons = [f"solicitud de cotización de «{o.name}»", how]
         note = _note("R7", reasons)
         title = _request_case_title(e, o)
         commands = (
@@ -851,6 +868,10 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
             organization_name=o.name, commands=commands,
         )
 
+    if not e.requester_checked:
+        return PlannedAction(e.id, "R7", PROPOSAL, (
+            "solicitud de cotización: esperando la comprobación determinística de institución en el cuerpo",
+        ))
     reason = (f"solicitud de cotización desde correo gratuito ({d})"
               if d in FREE_MAIL_DOMAINS else f"solicitud de cotización desde dominio no reconocido ({d})")
     note = _note("R7", [reason, "se abre caso sin inventar institución solicitante"])
