@@ -60,7 +60,7 @@
       "expect": "outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb),platform.begin_pin_attempt(uuid,uuid),platform.finish_pin_attempt(uuid,uuid,uuid,bytea)",
       "why": "the closed list (ARCHITECTURE.md §6.2), by signature. A fourth definer is a new privileged path and must be reviewed as one; a missing one means a migration was not applied."
     },
-    "functions.security_definer_misconfigured": { "expect": 0, "why": "each definer is owned by origenlab_owner, pins search_path to pg_catalog, is executable by origenlab_api and by neither origenlab_worker nor origenlab_migrator. Any deviation counts once per function." },
+    "functions.security_definer_misconfigured": { "expect": 0, "why": "each definer is owned by origenlab_owner and pins search_path to pg_catalog. All are executable by origenlab_api; only outbound.add_contact_control is also executable by origenlab_worker, for its hard-bounce-only branch. None is executable by origenlab_migrator. Any deviation counts once per function." },
     "functions.not_owned_by_origenlab_owner": { "expect": 0, "why": "a function owned by another role is outside the chain's ownership model." },
     "functions.record_pin_attempt_present": { "expect": 0, "why": "20260929100000 dropped platform.record_pin_attempt: called directly as origenlab_api it cleared both failure counters with no PIN (docs/STATUS.md §2.7.38). Its presence means that migration did not run." },
 
