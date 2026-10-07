@@ -3,13 +3,14 @@
 Python 3.12, uv. Two jobs today. **Gmail capture** (Phase 4a): new mail in contacto@origenlab.cl →
 `comms.message` (+ participants, attachment metadata, the `.eml` in the private `mail` bucket) and
 `pending` `gmail_message` evidence in the hosted V2 database, every 10 minutes as a Render Cron Job.
-It writes as `origenlab_worker` only and reads Gmail with `gmail.readonly` only. It writes nothing in
-`crm.*` or `outbound.*` except `INSERT` on `outbound.campaign_reply`, the designed 4c reply-proposal
-lane (`supabase/migrations/20260908120100_slice0_outbound_campaign_reply.sql`), which 4a never writes.
-On every connect the worker refuses a session with any role membership, a port other than 5432
-(6543 by name), any other `crm`/`outbound` write (column-level grants, `TRIGGER`, view and
-materialized-view writes included), or an executable `SECURITY DEFINER` function (extension-owned and
-trigger functions and schemas without `USAGE` are not counted; nothing is skipped by schema name).
+It writes as `origenlab_worker` only and reads Gmail with `gmail.readonly` only. Direct table writes
+outside the worker's own evidence/comms lanes remain limited to `INSERT` on
+`outbound.campaign_reply`, the designed 4c reply-proposal lane. The worker may additionally EXECUTE
+exactly one closed-list privileged function, `outbound.add_contact_control`; that function accepts
+the worker only for a proven single-recipient Batch-A no-such-user bounce and writes the global
+`invalid_address` block itself. On every connect the worker refuses any role membership, a port other
+than 5432 (6543 by name), any other `crm`/`outbound` write (column-level grants, `TRIGGER`, view and
+materialized-view writes included), or any other executable `SECURITY DEFINER` function.
 
     origenlab-worker gmail-sync [--init] [--dry-run]
 
@@ -41,7 +42,8 @@ Every minute a periodic sweep defers one job per captured message without a read
 reads the `.eml` from Storage, settles machine mail with cheap rules (`triage_rules.py`), matches
 catalog products (`catalog_match.py`), asks Claude only when a person wrote something commercial
 (`triage_model.py`), and records `message_triage` / `product_mention` `evidence.assertion`
-proposals. The queue lives in the `procrastinate` schema of the V2 database
+proposals. A bounce also gets a versioned `delivery_failure` assertion; only an explicit single-recipient
+Batch-A no-such-user result may invoke the global hard-bounce block. The queue lives in the `procrastinate` schema of the V2 database
 (`supabase/migrations/20261006180000`); Procrastinate is pinned to the vendored version. Setup,
 pause and log codes: [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md) §8.11.
 
