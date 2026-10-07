@@ -87,6 +87,23 @@ describe("today lists", () => {
     expect(repliesToAnswer([d5, replied], NOW).map((r) => r.card.opportunity_id)).toEqual([replied.opportunity_id]);
   });
 
+  it("leaves a reply out of «Te toca responder» once a task was scheduled after it, until the client writes again", () => {
+    const inbound = (at: string) => ({ outbound: null, inbound: { at, subject: null, url: null } });
+    const scheduled = (created: string) => ({ ...task("p", "2026-10-26T12:00:00Z"), created_at: created });
+    // «Gracias, le aviso» (30 sept), then «En pausa» / «No requiere respuesta» (2 oct): answered.
+    const answered = card({ open_tasks: [scheduled("2026-10-02T12:00:00Z")], last_contact: inbound("2026-09-30T12:00:00Z") }, "2026-09-25T12:00:00Z");
+    // The client wrote again after the pause: a new question, back on the list.
+    const again = card({ open_tasks: [scheduled("2026-10-02T12:00:00Z")], last_contact: inbound("2026-10-04T12:00:00Z") }, "2026-09-25T12:00:00Z");
+    // A task scheduled before the client's email does not answer it, even if it is due later.
+    const before = card({ open_tasks: [scheduled("2026-09-26T12:00:00Z")], last_contact: inbound("2026-09-30T12:00:00Z") }, "2026-09-25T12:00:00Z");
+    // An older API without `created_at`: a case «En pausa» counts as answered.
+    const olderApi = card({ open_tasks: [task("q", "2026-10-26T12:00:00Z")], last_contact: inbound("2026-09-30T12:00:00Z") }, "2026-09-25T12:00:00Z");
+    expect(repliesToAnswer([answered, again, before, olderApi], NOW).map((r) => r.card.opportunity_id)).toEqual([
+      again.opportunity_id,
+      before.opportunity_id,
+    ]);
+  });
+
   it("puts a case whose «Seguimiento …» task is due in the follow-ups from day 3, never among the other tasks", () => {
     const fu = (id: string, due: string) => ({ task_id: id, title: "Seguimiento de 01239-26", due_at: due, version: 1, owner: null });
     const fresh = card({ open_tasks: [fu("f1", "2026-10-06T12:00:00Z")] }, "2026-10-05T12:00:00Z");
@@ -198,7 +215,6 @@ describe("Hoy actions", () => {
     const calls = stub();
     const c = card({
       stage: "quoting",
-      open_tasks: [task("x", "2026-12-01T12:00:00Z")],
       last_contact: { outbound: null, inbound: { at: "2026-10-03T12:00:00Z", subject: "Re", url: "https://mail.example.cl/in" } },
     });
     renderToday([c]);
@@ -209,6 +225,23 @@ describe("Hoy actions", () => {
       opportunity_version: 4,
       stage: "negotiating",
     });
+  });
+
+  it("takes a «gracias, le aviso» off «Te toca responder» with a follow-up a week out", async () => {
+    const calls = stub();
+    const c = card({
+      stage: "quoting",
+      last_contact: { outbound: null, inbound: { at: "2026-10-03T12:00:00Z", subject: "Re", url: "https://mail.example.cl/in" } },
+    });
+    const onChanged = renderToday([c]);
+    fireEvent.click(screen.getByRole("button", { name: "No requiere respuesta" }));
+    expect(await screen.findByTestId("toaster")).toHaveTextContent("Listo. Te lo recuerdo el");
+    expect(calls.find((x) => x.path === "/v2/commands/create-task")?.body).toMatchObject({
+      opportunity_id: c.opportunity_id,
+      title: `Seguimiento de ${c.latest_revision?.quote_number}`,
+      due_at: "2026-10-13T15:00:00.000Z",
+    });
+    expect(onChanged).toHaveBeenCalled();
   });
 
   it("closes a 30-day silent case as «Sin respuesta» from the rhythm", async () => {

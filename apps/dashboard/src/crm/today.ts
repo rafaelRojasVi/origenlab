@@ -2,7 +2,9 @@
  * «Hoy»: what the open cases ask of an operator today, read from the pipeline cards. Pure — every
  * list here is computed in the browser from data the cards already carry, and nothing is stored.
  *
- * - **Te toca responder**: the client wrote after OrigenLab's last email on the case.
+ * - **Te toca responder**: the client wrote after OrigenLab's last email on the case, and nobody has
+ *   scheduled a task on the case since («No requiere respuesta», «En pausa»): a task set after the
+ *   client's email is the operator's answer to it. A newer email from the client brings it back.
  * - **Seguimientos**: one list, coloured like a traffic light by the 3 · 14 · 30-day rhythm counted
  *   from OrigenLab's last touch (the quote, or a later email it sent): green from day 3 (first
  *   follow-up), yellow from day 14 (second), red from day 30 (close?). A case whose «Seguimiento …»
@@ -16,7 +18,7 @@
  */
 import { conversation } from "./caseDisplay";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
-import { stageBasis } from "./stage";
+import { pausedUntil, stageBasis } from "./stage";
 
 const DAY_MS = 86_400_000;
 const CLOSED = new Set(["won", "lost", "abandoned"]);
@@ -74,9 +76,22 @@ export function repliesToAnswer(cards: OpportunityCardData[], now: Date): Reply[
   for (const card of cards) {
     if (!isOpenCase(card)) continue;
     const conv = conversation(card, now);
-    if (conv.kind === "replied" && conv.at) out.push({ card, at: conv.at, url: conv.url });
+    if (conv.kind !== "replied" || !conv.at) continue;
+    if (answeredByTask(card, conv.at, now)) continue;
+    out.push({ card, at: conv.at, url: conv.url });
   }
   return out.sort((a, b) => b.at.localeCompare(a.at));
+}
+
+/**
+ * The operator already decided what the client's email at `at` needs («gracias, le aviso» needs
+ * nothing): a task on the case was scheduled after it. An older API sends no `created_at`; then a
+ * case «En pausa» counts as decided.
+ */
+function answeredByTask(card: OpportunityCardData, at: string, now: Date): boolean {
+  const open = card.open_tasks ?? [];
+  if (open.some((t) => t.created_at && Date.parse(t.created_at) > Date.parse(at))) return true;
+  return open.every((t) => !t.created_at) && pausedUntil(card, now) !== null;
 }
 
 export type Rhythm = "primero" | "segundo" | "cerrar";

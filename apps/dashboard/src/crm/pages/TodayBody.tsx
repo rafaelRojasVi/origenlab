@@ -2,8 +2,10 @@
  * The body of «Hoy» (`OverviewPage`): the lists `today.ts` computes from the pipeline, each row
  * with the one action it needs.
  *
- * - **Te toca responder** — first: a client is waiting. The client's email, and «Pasar a
- *   Conversación» when the case is still «Enviada».
+ * - **Te toca responder** — first: a client is waiting. The client's email, «Pasar a
+ *   Conversación» when the case is still «Enviada», and «No requiere respuesta» for a «gracias, le
+ *   aviso»: it schedules a «Seguimiento …» a week out, which takes the row off the list until the
+ *   client writes again (`today.ts`).
  * - **Seguimientos** — one list, a traffic light by the 3 · 14 · 30-day rhythm (green, yellow,
  *   red), five rows per colour before «Ver N más». A row is the days, the case, what the quote is
  *   for, the quote number and who, and one button: «Responder en Gmail» on the case's thread (the
@@ -116,7 +118,7 @@ export function TodayBody({
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
-          <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} />
+          <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
           <TasksPanel tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <PeoplePanel mayAuthor={mayAuthor} navigate={navigate} />
@@ -322,18 +324,20 @@ function RepliesPanel({
   navigate,
   mayDecide,
   onChanged,
+  now,
 }: {
   replies: Reply[];
   navigate: Navigate;
   mayDecide: boolean;
   onChanged: () => void;
+  now: Date;
 }) {
   return (
     <Panel title="Te toca responder" aside={<Badge tone={replies.length ? "warn" : "good"} glyph={false}>{replies.length}</Badge>} bodyClassName="divide-y divide-line">
       {replies.length === 0 ? (
         <p className="px-4 py-4 text-xs text-ink-muted">Ningún cliente espera respuesta.</p>
       ) : (
-        replies.map((r, i) => <ReplyRow key={r.card.opportunity_id} reply={r} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} />)
+        replies.map((r, i) => <ReplyRow key={r.card.opportunity_id} reply={r} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={now} />)
       )}
     </Panel>
   );
@@ -345,20 +349,47 @@ function ReplyRow({
   navigate,
   mayDecide,
   onChanged,
+  now,
 }: {
   reply: Reply;
   index: number;
   navigate: Navigate;
   mayDecide: boolean;
   onChanged: () => void;
+  now: Date;
 }) {
   const { card } = reply;
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<null | "move" | "skip">(null);
   const keys = useRef([newCaseCommandKey()]);
+  const skipKey = useRef(newCaseCommandKey());
   const canMove = mayDecide && card.stage === "quoting" && typeof card.version === "number";
 
+  async function noAnswerNeeded() {
+    setBusy("skip");
+    const next = new Date(now.getTime() + WEEK_MS);
+    const quote = card.latest_revision?.quote_number ?? card.quote_numbers[0] ?? "";
+    try {
+      await createTask(
+        {
+          opportunity_id: card.opportunity_id,
+          title: `Seguimiento de ${quote}`.trim(),
+          due_at: next.toISOString(),
+          note: `El cliente escribió el ${fmtDate(reply.at)}; no requiere respuesta.`,
+        },
+        skipKey.current,
+      );
+      toast(`Listo. Te lo recuerdo el ${fmtDate(next.toISOString())}.`);
+      onChanged();
+    } catch (err) {
+      skipKey.current = newCaseCommandKey();
+      toast(caseRefusalText(err), "bad");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function toConversation() {
-    setBusy(true);
+    setBusy("move");
     try {
       await moveCase(
         { opportunity_id: card.opportunity_id, stage: card.stage, version: card.version as number },
@@ -373,7 +404,7 @@ function ReplyRow({
       keys.current = [newCaseCommandKey()];
       toast(caseRefusalText(err), "bad");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
@@ -397,8 +428,26 @@ function ReplyRow({
             Abrir respuesta ↗
           </a>
         ) : null}
+        {mayDecide ? (
+          <Button
+            variant="secondary"
+            onClick={() => void noAnswerNeeded()}
+            busy={busy === "skip"}
+            busyLabel="Guardando…"
+            disabled={busy !== null}
+            title="Un «gracias, le aviso»: sale de la lista y vuelve como seguimiento en una semana"
+          >
+            No requiere respuesta
+          </Button>
+        ) : null}
         {canMove ? (
-          <Button variant="primary" onClick={() => void toConversation()} busy={busy} busyLabel="Moviendo…">
+          <Button
+            variant="primary"
+            onClick={() => void toConversation()}
+            busy={busy === "move"}
+            busyLabel="Moviendo…"
+            disabled={busy !== null}
+          >
             Pasar a Conversación
           </Button>
         ) : null}

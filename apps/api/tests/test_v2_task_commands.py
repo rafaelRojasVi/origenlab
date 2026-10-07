@@ -138,12 +138,13 @@ def test_the_card_names_its_earliest_open_task_as_the_next_action() -> None:
         {"task_id": "t2", "opportunity_id": "o1", "title": "Llamar", "due_at": "2026-12-01T12:00:00Z",
          "version": 1, "owner_display_name": "Ventas"},
         {"task_id": "t1", "opportunity_id": "o1", "title": "Retomar: fondos", "due_at": "2026-11-02T12:00:00Z",
-         "version": 2, "owner_display_name": "Ventas"},
+         "version": 2, "owner_display_name": "Ventas", "created_at": "2026-10-01T09:00:00Z"},
     ]
     card = compose_pipeline([opp], [], [], [], {}, [], {}, None, tasks)[0]
     assert [t["task_id"] for t in card["open_tasks"]] == ["t1", "t2"]
     assert card["open_tasks"][0] == {"task_id": "t1", "title": "Retomar: fondos",
-                                     "due_at": "2026-11-02T12:00:00Z", "version": 2, "owner": "Ventas"}
+                                     "due_at": "2026-11-02T12:00:00Z", "version": 2, "owner": "Ventas",
+                                     "created_at": "2026-10-01T09:00:00Z"}
     assert card["next_action"] == {"text": "Retomar: fondos", "source": "task", "due_at": "2026-11-02T12:00:00Z"}
     bare = compose_pipeline([opp], [], [], [], {}, [], {})[0]
     assert bare["open_tasks"] == [] and bare["next_action"]["source"] == "suggested"

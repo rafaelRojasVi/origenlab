@@ -2085,6 +2085,17 @@ From a design critique of the shipped screens rendered with invented data (`apps
 | Review | `20261006180200_slice4_triage_review.sql` — `evidence.triage_review` (DOMAIN.md §7 #55, append-only verdicts: approved / corrected with the corrected fields / rejected, optional note) and the `assertion.triage_reviewed` event; inventory **51 tables, 176 policies, 159 foreign keys**, migrations **49**, head `20261006180200`. API `v2/triage_review.py`: `GET /v2/workspace/triage-readings` (any operator; only readings the model was asked for) and `POST /v2/commands/review-triage` (sales/admin, receipt + event; moves no case). Proxy: one exact GET and one exact POST. Dashboard: Revisión → «Correos (sugerencias)» — «Aprobar» also walks the thread's one case to the suggested stage through `advance-case-stage` (`moveCase`), «Corregir» with a stage likewise, «Rechazar» with a note. Evidence, 2026-10-06, locally with Docker: `supabase test db --local` **1217 assertions, 30 files, PASS** (078: 36), `verify_direct_logins.sh`, `replay_evidence.sh`, `evidence_tool_failure_tests.sh`, `audit_failure_tests.sh` (80/80), `cleanroom_verify_tests.sh --chain`, `db lint` (incl. `procrastinate`) and `db advisors --fail-on warn` all pass; worker on a disposable cluster **438 passed** (1 pre-existing skip, no DSN skip); API on a disposable cluster **4357 passed**, 121 skipped (V1 Alembic and TLS, no V2 DSN skip); proxy 427; dashboard 634 + build |
 | Not done | not applied to any database; not deployed. To ship: merge → apply the three migrations to hosted (§4) → create the worker from `render.yaml` with the cron's database and Storage values → `ORIGENLAB_WORKER_TRIAGE_ENABLED=true` (rules only) → the Anthropic key and `ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED=true`. Runbook: [`OPERATIONS.md`](OPERATIONS.md) §8.11. Dashboard review: see «Review» above |
 
+### 2.7.70 «Te toca responder» stops at a decided reply, and «No requiere respuesta», 2026-10-06 — built, not deployed
+
+`apps/api` read + `apps/dashboard`: no command, proxy or schema change.
+
+| Change | What it does |
+|---|---|
+| API | `GET /v2/workspace/pipeline` card `open_tasks[]` gains `created_at` (ISO UTC, `crm.task.created_at`) — same eighth query, one more column |
+| Rule | A client email stays in «Te toca responder» only until a task is scheduled on the case after it («En pausa», «Recordar…», «No requiere respuesta»): that task is the operator's answer. A newer email from the client puts the case back. A task scheduled before the email does not hide it. Without `created_at` (older API) a case «En pausa» counts as answered |
+| Button | «No requiere respuesta» on each reply row (sales/admin): `create-task` «Seguimiento de N» a week out, note naming the client's email date. The row leaves the list and comes back as a follow-up on that day |
+| Evidence | `apps/dashboard` `npm run validate`: **631 passed** + build; `apps/api` `scripts/validate.sh`: **3811 passed**, 659 skipped |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
