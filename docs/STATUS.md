@@ -2133,6 +2133,18 @@ were already allowlisted by the proxy (§2.7.51).
 | Already stuck | a case paused before this fix keeps its due task: pause it again (it replaces both), or close the due task from «Hoy» |
 | Evidence | `apps/dashboard` `npm run validate`: **649 passed** + build; new `CaseActions.test.tsx` case |
 
+### 2.7.74 «Agregar como persona del CRM»: a quote recipient becomes the case's contact, 2026-10-07 — built, not deployed
+
+`apps/api`, `apps/dashboard-proxy`, `apps/dashboard`. No migration: `crm.opportunity_participant`, its grants and RLS, and the `participant.added` event type already existed.
+
+| | |
+|---|---|
+| Problem | A case whose only contact is the quote's Gmail recipient showed «Sin persona de contacto en el CRM» with no way to fix it from the case: `create-person` could register the person, but no command put a person on a case ([`WORKFLOWS.md`](WORKFLOWS.md) §W2 step 3 was unimplemented) |
+| Command | `POST /v2/commands/add-case-participant` — the 30th CRM-authoring command (`crm_authoring.py`): a CRM person, named by `person_id` or by an `email` they already hold, takes a role (default `quote_recipient`) on an open case at the version shown. Writes one confirmed `crm.opportunity_participant` row (with the contact point when reached by email) and one `participant.added` event. Refuses by name: `no_crm_person_for_address`, `case_version_conflict`, `case_is_closed`, `participant_already_on_case`, `participant_role_has_a_primary`, `contact_point_other_institution`. It never creates a person |
+| Dashboard | the case drawer's «Contacto» row shows «Agregar como persona del CRM» to sales/admin when the contact is an unmasked Gmail recipient. The dialog links the CRM person who holds the address, or creates the person (name from the mail header, the case's institution as affiliation) and then links them |
+| Proxy | `add-case-participant` added to `CRM_AUTHORING_COMMAND_POST_PATHS` |
+| Evidence | `apps/api` CRM-authoring tests incl. two new database-backed tests against a local PostgreSQL 16 emulation of the CI cluster; `apps/dashboard` `npm run validate` (new `addCaseContact.test.tsx`); `apps/dashboard-proxy` `npm run validate`: 427 passed |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

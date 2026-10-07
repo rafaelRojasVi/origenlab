@@ -1,5 +1,5 @@
 /**
- * CRM authoring client: the 29 CRM authoring commands and 4 authoring reads.
+ * CRM authoring client: the 30 CRM authoring commands and 4 authoring reads.
  *
  * This module owns EVERY `/v2/commands/<crm-authoring command>` path string — pinned by
  * `src/test/noWritePolicy.test.ts`. No other dashboard module may name these paths.
@@ -23,6 +23,8 @@ export const CRM_COMMAND_PATHS = {
   // affiliations
   linkPersonOrganization: "/v2/commands/link-person-organization",
   unlinkPersonOrganization: "/v2/commands/unlink-person-organization",
+  // case participant
+  addCaseParticipant: "/v2/commands/add-case-participant",
   // organization
   registerOrganization: "/v2/commands/register-organization",
   updateOrganization: "/v2/commands/update-organization",
@@ -464,6 +466,27 @@ export function unlinkPersonOrganization(
   idempotencyKey: string = newIdempotencyKey(),
 ): Promise<CommandReceipt> {
   return postCommand<CommandReceipt>(CRM_COMMAND_PATHS.unlinkPersonOrganization, body, idempotencyKey);
+}
+
+/* ── case participant ────────────────────────────────────────────────────── */
+
+export type ParticipantRole =
+  | "end_user" | "technical" | "purchasing" | "finance" | "approver" | "quote_recipient" | "signatory" | "other";
+
+/** A CRM person holds this role on this case. Name the person by id, or by an address they hold. */
+export function addCaseParticipant(
+  body: {
+    opportunity_id: string;
+    opportunity_version: number;
+    person_id?: string;
+    email?: string;
+    role?: ParticipantRole;
+    is_primary?: boolean | null;
+    note: string;
+  },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<CommandReceipt> {
+  return postCommand<CommandReceipt>(CRM_COMMAND_PATHS.addCaseParticipant, body, idempotencyKey);
 }
 
 /* ── organization commands ───────────────────────────────────────────────── */

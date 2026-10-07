@@ -2285,6 +2285,155 @@ def _handle_reject_supplier_candidate(
     return {"ok": True, "assertion_id": assertion_id, "resolution": "rejected"}
 
 
+#: `crm.opportunity_participant.role`, exactly as its CHECK spells it (`DOMAIN.md` §3.3).
+PARTICIPANT_ROLES: frozenset[str] = frozenset({
+    "end_user", "technical", "purchasing", "finance", "approver", "quote_recipient", "signatory",
+    "other",
+})
+
+
+def _handle_add_case_participant(
+    self: "V2CrmAuthoringRepository",
+    cur: Any,
+    operator: OperatorIdentity,
+    fields: dict[str, Any],
+    receipt_id: str,
+) -> dict[str, Any]:
+    """A CRM person holds this role on this case (`WORKFLOWS.md` §W2 step 3, `add_participant`).
+
+    The person is named by `person_id`, or by `email` — the address the case's quote went to —
+    which must already be a contact point of a CRM person: this command links, it never creates
+    a person (that is `create-person`). Reached by email, the participant row carries that
+    contact point too, so a later quote recipient snapshot has its channel.
+
+    Refused by name: a closed case, a stale case version, a person already current in that role
+    on the case, a second current primary for the role, and a contact point tied to another
+    institution (`DOMAIN.md` §3.3 consistency). `is_primary` left unset means «primary if the role
+    has none yet». The case row is not written, as for `record_case_interest`.
+    """
+    opportunity_id = as_uuid(fields["opportunity_id"], "opportunity_id")
+    role = fields["role"]
+    if role not in PARTICIPANT_ROLES:
+        raise CommandRefused(422, "invalid_participant_role", f"role must be one of {sorted(PARTICIPANT_ROLES)}")
+
+    cur.execute(
+        """
+        select id::text as id, version, closed_at, stage,
+               organization_id::text as organization_id
+          from crm.opportunity
+         where id = %s::uuid
+           for update
+        """,
+        (opportunity_id,),
+    )
+    case = _one(cur)
+    if case is None:
+        raise CommandRefused(404, "case_not_found", "no such commercial case")
+    if int(case["version"]) != int(fields["opportunity_version"]):
+        raise CommandRefused(
+            409, "case_version_conflict",
+            "this case changed since it was shown to you; re-read it and decide again",
+        )
+    if case["closed_at"] is not None:
+        raise CommandRefused(409, "case_is_closed", f"this case ended at stage '{case['stage']}'")
+
+    contact_point_id: str | None = None
+    if fields.get("person_id"):
+        person = _live_person(cur, as_uuid(fields["person_id"], "person_id"))
+    else:
+        value_norm = _normalize_contact_value("email", fields["email"])
+        cur.execute(
+            """
+            select id::text as id, person_id::text as person_id,
+                   organization_id::text as organization_id, status
+              from crm.contact_point
+             where kind = 'email' and value_norm = %s
+            """,
+            (value_norm,),
+        )
+        cp = _one(cur)
+        if cp is None or cp["person_id"] is None:
+            raise CommandRefused(
+                404, "no_crm_person_for_address",
+                "no CRM person holds this email address yet; create the person first",
+            )
+        person = _live_person(cur, cp["person_id"])
+        if cp["status"] == "active":
+            contact_point_id = cp["id"]
+            if cp["organization_id"] and case["organization_id"]:
+                cur.execute(
+                    """
+                    with recursive up as (
+                        select id, parent_organization_id from crm.organization where id = %s::uuid
+                        union
+                        select o.id, o.parent_organization_id
+                          from crm.organization o join up on o.id = up.parent_organization_id
+                    )
+                    select 1 from up where id = %s::uuid
+                    """,
+                    (case["organization_id"], cp["organization_id"]),
+                )
+                if cur.fetchone() is None:
+                    raise CommandRefused(
+                        409, "contact_point_other_institution",
+                        "this address belongs to another institution than the case's",
+                    )
+
+    cur.execute(
+        """
+        select is_primary, person_id::text as person_id
+          from crm.opportunity_participant
+         where opportunity_id = %s::uuid and role = %s and valid_to is null
+        """,
+        (opportunity_id, role),
+    )
+    current = [dict(zip([d[0] for d in cur.description], r, strict=True)) for r in cur.fetchall()]
+    if any(r["person_id"] == person["id"] for r in current):
+        raise CommandRefused(
+            409, "participant_already_on_case", "this person already holds that role on this case",
+        )
+    has_primary = any(r["is_primary"] for r in current)
+    is_primary = fields.get("is_primary")
+    if is_primary is None:
+        is_primary = not has_primary
+    elif is_primary and has_primary:
+        raise CommandRefused(
+            409, "participant_role_has_a_primary",
+            "another person is already the primary for that role on this case",
+        )
+
+    cur.execute(
+        """
+        insert into crm.opportunity_participant
+            (opportunity_id, person_id, contact_point_id, role, is_primary, valid_from,
+             confirmation, confirmed_by_operator_id, note)
+        values (%s::uuid, %s::uuid, %s::uuid, %s, %s, current_date, 'confirmed', %s::uuid, %s)
+        returning id::text as id
+        """,
+        (opportunity_id, person["id"], contact_point_id, role, is_primary,
+         operator.operator_id, fields["note"]),
+    )
+    participant_id = _one(cur)["id"]
+    self._append_event(
+        cur,
+        aggregate_kind="opportunity_participant",
+        aggregate_id=participant_id,
+        event_type="participant.added",
+        payload={
+            "opportunity_id": opportunity_id, "person_id": person["id"],
+            "contact_point_id": contact_point_id, "role": role, "is_primary": is_primary,
+            "note": fields["note"],
+        },
+        operator=operator,
+        receipt_id=receipt_id,
+    )
+    return {
+        "ok": True, "participant_id": participant_id, "person_id": person["id"],
+        "contact_point_id": contact_point_id, "is_primary": is_primary,
+        "opportunity_version": int(case["version"]),
+    }
+
+
 def _handle_add_note(
     self: "V2CrmAuthoringRepository",
     cur: Any,
@@ -2443,7 +2592,7 @@ def _handle_archive_note(
 # ─────────────────────────────────────────────────────────────────────────── repository ──
 
 class V2CrmAuthoringRepository(CommandTransaction):
-    """29 CRM authoring commands, each in one transaction."""
+    """30 CRM authoring commands, each in one transaction."""
 
     _restore_domain_row = _restore_domain_row
 
@@ -2458,6 +2607,7 @@ class V2CrmAuthoringRepository(CommandTransaction):
         "deactivate-contact-point": _handle_deactivate_contact_point,
         "link-person-organization": _handle_link_person_organization,
         "unlink-person-organization": _handle_unlink_person_organization,
+        "add-case-participant": _handle_add_case_participant,
         "register-organization": _handle_register_organization,
         "update-organization": _handle_update_organization,
         "archive-organization": _handle_archive_organization,

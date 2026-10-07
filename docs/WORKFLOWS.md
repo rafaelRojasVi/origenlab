@@ -322,8 +322,9 @@ involved; the opportunity row names no person and no channel.
 The commercial-case tables ([`DOMAIN.md`](DOMAIN.md) §3.6) and their commands
 both exist as of 2026-09-22. The steps above describe the participant-centred
 path, which has no command boundary; the path below does, and it is the one a
-case actually takes. `crm.person` is empty and no command creates a
-participant, so steps 3–5 above remain unimplemented.
+case actually takes. Step 3 exists as `add-case-participant` (a CRM person, named by
+id or by an address they hold, takes a role on an open case; it never creates the
+person). Steps 4–5 remain unimplemented.
 
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|

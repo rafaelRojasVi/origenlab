@@ -135,6 +135,8 @@ export interface OpportunityCardData {
     others: number;
     /** Fingerprint of the bare address; joins the card to its equipment interests when masked. */
     address_ref?: string | null;
+    /** The CRM person, when `source` is `crm_participant`. Absent from an older API. */
+    person_id?: string | null;
   } | null;
   quotes: QuoteCard[];
   quote_numbers: string[];

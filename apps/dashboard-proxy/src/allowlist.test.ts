@@ -542,6 +542,7 @@ describe("CRM authoring command POST allowlist", () => {
     "/v2/commands/deactivate-contact-point",
     "/v2/commands/link-person-organization",
     "/v2/commands/unlink-person-organization",
+    "/v2/commands/add-case-participant",
     "/v2/commands/register-organization",
     "/v2/commands/update-organization",
     "/v2/commands/archive-organization",
@@ -563,7 +564,7 @@ describe("CRM authoring command POST allowlist", () => {
     "/v2/commands/archive-note",
   ];
 
-  it("isAllowedCrmAuthoringCommandPostPath allows all 29 exact paths", async () => {
+  it("isAllowedCrmAuthoringCommandPostPath allows all 30 exact paths", async () => {
     const { isAllowedCrmAuthoringCommandPostPath } = await import("./allowlist");
     for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedCrmAuthoringCommandPostPath(path), path).toBe(true);
@@ -572,7 +573,7 @@ describe("CRM authoring command POST allowlist", () => {
     expect(isAllowedCrmAuthoringCommandPostPath("/v2/commands/create-person?x=1")).toBe(true);
   });
 
-  it("isAllowedPostPath admits all 29 authoring paths", async () => {
+  it("isAllowedPostPath admits all 30 authoring paths", async () => {
     const { isAllowedPostPath } = await import("./allowlist");
     for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -598,7 +599,7 @@ describe("CRM authoring command POST allowlist", () => {
     }
   });
 
-  it("none of the 29 authoring command paths are GET-readable", async () => {
+  it("none of the 30 authoring command paths are GET-readable", async () => {
     const { isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);

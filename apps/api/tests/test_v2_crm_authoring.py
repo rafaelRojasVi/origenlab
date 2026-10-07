@@ -2,7 +2,7 @@
 
 Covers: body validation, role checks (viewer 403 incl. forged header escalation attempt),
 admin-only gates, missing Idempotency-Key (400), replay (replayed=true, no second handler call),
-product-line closed list, no `delete from` in the module source, all 29 route shapes present,
+product-line closed list, no `delete from` in the module source, all 30 route shapes present,
 switch off-by-default, mount test, and per-command shape validation.
 
 **No database, no network.**  Every handler call goes to a _FakeRepo that captures its args.
@@ -27,6 +27,7 @@ from origenlab_api.v2.crm_authoring import (
     normalize_phone,
 )
 from origenlab_api.v2.crm_authoring_routes import (
+    AddCaseParticipantBody,
     AddNoteBody,
     ArchiveNoteBody,
     ArchiveOrganizationBody,
@@ -70,6 +71,7 @@ ALL_ROUTES = {
     "/v2/commands/deactivate-contact-point",
     "/v2/commands/link-person-organization",
     "/v2/commands/unlink-person-organization",
+    "/v2/commands/add-case-participant",
     "/v2/commands/register-organization",
     "/v2/commands/update-organization",
     "/v2/commands/archive-organization",
@@ -261,14 +263,26 @@ def test_merge_people_requires_confirmed_true() -> None:
     MergePeopleBody(**kw, confirmed=True)  # ok
 
 
+def test_add_case_participant_names_exactly_one_subject() -> None:
+    base = {"opportunity_id": str(uuid.uuid4()), "opportunity_version": 1, "note": "r"}
+    with pytest.raises(ValidationError):
+        AddCaseParticipantBody(**base)
+    with pytest.raises(ValidationError):
+        AddCaseParticipantBody(**base, person_id=str(uuid.uuid4()), email="a@example.test")
+    with pytest.raises(ValidationError):
+        AddCaseParticipantBody(**base, email="a@example.test", role="owner")
+    body = AddCaseParticipantBody(**base, email="a@example.test")
+    assert body.role == "quote_recipient" and body.is_primary is None
+
+
 def test_archive_person_forbids_extra() -> None:
     with pytest.raises(ValidationError):
         ArchivePersonBody(person_id=str(uuid.uuid4()), expected_version=1, note="r", extra="bad")
 
 
-# ──────────────────────────────────────────────────────────────────── 29 routes ──
+# ──────────────────────────────────────────────────────────────────── 30 routes ──
 
-def test_the_router_exposes_exactly_29_posts() -> None:
+def test_the_router_exposes_exactly_30_posts() -> None:
     routes = set(r.path for r in crm_authoring_router.routes)
     assert routes == ALL_ROUTES
     # All are POST
@@ -320,6 +334,8 @@ def _minimal_body(path: str) -> dict:
         return {"person_id": pid, "expected_version": 1, "organization_id": oid, "note": note}
     if path == "/v2/commands/unlink-person-organization":
         return {"person_id": pid, "expected_version": 1, "affiliation_id": pid, "note": note}
+    if path == "/v2/commands/add-case-participant":
+        return {"opportunity_id": oid, "opportunity_version": 1, "person_id": pid, "note": note}
     if path == "/v2/commands/register-organization":
         return {"name": "Test Corp", "kind": "unknown", "note": note}
     if path == "/v2/commands/update-organization":

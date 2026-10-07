@@ -1458,3 +1458,94 @@ def test_closing_a_classification_on_its_first_day_is_refused_by_name(disposable
         "relationship_id": added["relationship_id"], "valid_to": "2026-10-05", "note": "next day",
     })
     assert closed["version"] == added["version"] + 1
+
+
+# ───────────────────────────────────────────────────── case participants ──
+
+
+def _seed_case(dsn, world, *, title):
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "insert into crm.opportunity (title, stage, owner_operator_id, origin_source_record_id)"
+            " values (%s, 'lead', %s, %s::uuid) returning id::text, version",
+            (title, world["sales"].operator_id, world["source_id"]),
+        )
+        return cur.fetchone()
+
+
+def _participants(dsn, case_id):
+    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select person_id::text, contact_point_id::text, role, is_primary, confirmation"
+            " from crm.opportunity_participant where opportunity_id = %s::uuid and valid_to is null"
+            " order by created_at",
+            (case_id,),
+        )
+        return cur.fetchall()
+
+
+@needs_db
+def test_add_case_participant_by_email_links_the_person_and_their_address(disposable_database, world):
+    tag = world["tag"]
+    case_id, version = _seed_case(disposable_database, world, title=f"Sonicador {tag}")
+    out = _run(disposable_database, world["sales"], "add-case-participant", {
+        "opportunity_id": case_id, "opportunity_version": version,
+        "email": f"SEEDED-{tag}@example.test",
+        "role": "quote_recipient", "note": "destinatario de la cotización",
+    })
+    assert out["person_id"] == world["person_id"]
+    assert out["contact_point_id"] == world["cp_id"]
+    assert out["is_primary"] is True
+    assert _participants(disposable_database, case_id) == [
+        (world["person_id"], world["cp_id"], "quote_recipient", True, "confirmed"),
+    ]
+    assert _event_types(disposable_database, "opportunity_participant", out["participant_id"]) == [
+        "participant.added",
+    ]
+
+    # The same person in the same role again is refused by name and writes nothing.
+    with pytest.raises(CommandRefused) as exc:
+        _run(disposable_database, world["sales"], "add-case-participant", {
+            "opportunity_id": case_id, "opportunity_version": version,
+            "person_id": world["person_id"], "role": "quote_recipient", "note": "otra vez",
+        })
+    assert exc.value.code == "participant_already_on_case"
+    assert len(_participants(disposable_database, case_id)) == 1
+
+
+@needs_db
+def test_add_case_participant_refusals(disposable_database, world):
+    tag = world["tag"]
+    case_id, version = _seed_case(disposable_database, world, title=f"Centrífuga {tag}")
+
+    def attempt(**fields):
+        with pytest.raises(CommandRefused) as exc:
+            _run(disposable_database, world["sales"], "add-case-participant", {
+                "opportunity_id": case_id, "opportunity_version": version,
+                "role": "quote_recipient", "note": "prueba", **fields,
+            })
+        return exc.value.code
+
+    assert attempt(email=f"nobody-{tag}@example.test") == "no_crm_person_for_address"
+    assert attempt(person_id=world["person_id"], opportunity_version=version + 1) == "case_version_conflict"
+    assert attempt(person_id=str(uuid.uuid4())) == "person_not_found"
+    assert _participants(disposable_database, case_id) == []
+
+    # A second person may hold the role, but not as a second primary.
+    first = _run(disposable_database, world["sales"], "create-person", {
+        "display_name": f"Primera {tag}", "note": "prueba",
+    })["person_id"]
+    second = _run(disposable_database, world["sales"], "create-person", {
+        "display_name": f"Segunda {tag}", "note": "prueba",
+    })["person_id"]
+    _run(disposable_database, world["sales"], "add-case-participant", {
+        "opportunity_id": case_id, "opportunity_version": version,
+        "person_id": first, "role": "quote_recipient", "note": "prueba",
+    })
+    assert attempt(person_id=second, is_primary=True) == "participant_role_has_a_primary"
+    out = _run(disposable_database, world["sales"], "add-case-participant", {
+        "opportunity_id": case_id, "opportunity_version": version,
+        "person_id": second, "role": "quote_recipient", "note": "prueba",
+    })
+    assert out["is_primary"] is False

@@ -1,7 +1,7 @@
 """CRM freeform authoring command boundary — `POST /v2/commands/<crm-command>`.
 
 Mounted only when `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true` **and** a V2 DSN is set
-(default off).  All 29 routes require:
+(default off).  All 30 routes require:
 - An active operator with role `sales` or `admin` (viewer → 403 `role_may_not_decide`).
 - An `Idempotency-Key` header (absent → 400).
 - A JSON body whose shape is enforced by Pydantic with `extra="forbid"`.
@@ -21,7 +21,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
 from origenlab_api.v2.command_routes import Deciding, IdempotencyKey, _detail
@@ -184,6 +184,26 @@ class UnlinkPersonOrganizationBody(_Base):
     expected_version: int
     affiliation_id: str
     valid_to: Annotated[str | None, Field(default=None)] = None
+
+
+class AddCaseParticipantBody(_Base):
+    """add-case-participant: exactly one of person_id and email names the CRM person."""
+
+    opportunity_id: str
+    opportunity_version: Annotated[int, Field(ge=1)]
+    person_id: Annotated[str | None, Field(default=None)] = None
+    email: Annotated[str | None, Field(default=None, min_length=3, max_length=500)] = None
+    role: Annotated[
+        str,
+        Field(pattern="^(end_user|technical|purchasing|finance|approver|quote_recipient|signatory|other)$"),
+    ] = "quote_recipient"
+    is_primary: bool | None = None
+
+    @model_validator(mode="after")
+    def _one_subject(self) -> "AddCaseParticipantBody":
+        if (self.person_id is None) == (self.email is None):
+            raise ValueError("name the person with exactly one of person_id and email")
+        return self
 
 
 class RegisterOrganizationBody(_Base):
@@ -447,6 +467,18 @@ def link_person_organization(
     idempotency_key: IdempotencyKey = None,
 ) -> dict[str, Any]:
     return _run(command_name="link-person-organization", body=body,
+                fields=body.model_dump(), repo=repo,
+                operator=operator, idempotency_key=idempotency_key)
+
+
+@crm_authoring_router.post("/add-case-participant")
+def add_case_participant(
+    body: AddCaseParticipantBody,
+    operator: Deciding,
+    repo: CrmAuthoringRepo,
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    return _run(command_name="add-case-participant", body=body,
                 fields=body.model_dump(), repo=repo,
                 operator=operator, idempotency_key=idempotency_key)
 

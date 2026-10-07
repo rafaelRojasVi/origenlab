@@ -306,6 +306,7 @@ export const CRM_AUTHORING_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/deactivate-contact-point$/,
   /^\/v2\/commands\/link-person-organization$/,
   /^\/v2\/commands\/unlink-person-organization$/,
+  /^\/v2\/commands\/add-case-participant$/,
   /^\/v2\/commands\/register-organization$/,
   /^\/v2\/commands\/update-organization$/,
   /^\/v2\/commands\/archive-organization$/,

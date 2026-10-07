@@ -4,6 +4,8 @@ import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
+import { AddCaseContactDialog } from "../authoring/AddCaseContactDialog";
+import { isMaskedAddress } from "../redaction";
 import { CaseActions, type Mode } from "./CaseActions";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
 import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
@@ -477,9 +479,12 @@ function OpportunityDrawer({
   // case it was pressed on and is dropped when the drawer closes or another case opens, so the
   // form never pops open by itself on the next case.
   const [followUp, setFollowUp] = useState<{ id: string; n: number } | null>(null);
+  // «Agregar al CRM» belongs to the case it was opened on, like the follow-up signal.
+  const [addingContact, setAddingContact] = useState<string | null>(null);
   const caseId = card?.opportunity_id ?? null;
   useEffect(() => {
     setFollowUp((f) => (f && f.id === caseId ? f : null));
+    setAddingContact((a) => (a === caseId ? a : null));
   }, [caseId]);
   if (!card) return null;
   const openSignal = followUp && followUp.id === card.opportunity_id ? followUp.n : 0;
@@ -566,6 +571,19 @@ function OpportunityDrawer({
                     ? "Destinatario del correo de la cotización (evidencia de Gmail) — no es una persona registrada en el CRM"
                     : "Participante registrado en el CRM"}
                 </span>
+                {card.contact.source === "gmail_recipient" &&
+                mayAuthor &&
+                card.contact.address &&
+                !isMaskedAddress(card.contact.address) &&
+                card.version != null ? (
+                  <button
+                    type="button"
+                    onClick={() => setAddingContact(card.opportunity_id)}
+                    className="mt-1 h-7 rounded-md border border-line bg-canvas-raised px-2 text-[11px] font-medium text-ink hover:border-brand-600/40 hover:text-brand-700"
+                  >
+                    Agregar como persona del CRM
+                  </button>
+                ) : null}
               </>
             ) : (
               <span className="text-ink-faint">Sin contacto</span>
@@ -633,6 +651,22 @@ function OpportunityDrawer({
       <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={openSignal} />
 
       <p className="font-mono text-[10px] text-ink-faint">opportunity {card.opportunity_id}</p>
+
+      {addingContact === card.opportunity_id && card.contact?.address && card.version != null ? (
+        <AddCaseContactDialog
+          opportunityId={card.opportunity_id}
+          opportunityVersion={card.version}
+          address={card.contact.address}
+          organization={card.organization ? { organization_id: card.organization.organization_id, name: card.organization.name } : null}
+          quoteNumber={card.latest_revision?.quote_number ?? card.quote_numbers[0] ?? null}
+          onCancel={() => setAddingContact(null)}
+          onDone={({ created, name }) => {
+            setAddingContact(null);
+            toast(created ? `${name} creada en el CRM y agregada al caso` : `${name} agregada al caso`);
+            onChanged();
+          }}
+        />
+      ) : null}
     </Drawer>
   );
 }
