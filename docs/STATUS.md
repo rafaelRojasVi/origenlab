@@ -2133,6 +2133,21 @@ were already allowlisted by the proxy (§2.7.51).
 | Already stuck | a case paused before this fix keeps its due task: pause it again (it replaces both), or close the due task from «Hoy» |
 | Evidence | `apps/dashboard` `npm run validate`: **649 passed** + build; new `CaseActions.test.tsx` case |
 
+### 2.7.74 Catalog: every supplier in the filter, products by kind, Soviquim — built, not deployed; three lists loaded
+
+`apps/api`, `apps/dashboard-proxy`, `apps/dashboard`. No schema change.
+
+| | |
+|---|---|
+| Loaded to hosted 2026-10-07 (owner-run `load.sh`, verify clean) | Hielscher lab list 2026 (58 observations, 49 new products; 9 already there from the supplier documents), Löser 2024 and Ortoalresa 2019 (335 products). `catalog.product` 6,641 → **7,025**. Plans built with the converter of the day, before this PR |
+| Defect found | the Löser parser required a thousands dot (`1.234,00`); the 2024 list prints `1234,00`, so its **7 instruments** (positions 1–7: osmometers, cryometer) were skipped on hosted. Fixed (`_EURO`), with a test |
+| Supplier list | `GET /v2/catalog/suppliers` (any role; names and active-product counts by kind, no cost): every organization with a cost observation. Proxy allowlists the exact path. The «Proveedor» filter lists all of them with their count, not only those the current page named |
+| Kinds | the importers now set `product_kind` (and Soviquim's `category_es`): OHAUS by family (spare parts, weights/accessories/clamps, else equipment), ADAM by family, Löser by position, Ortoalresa CE = equipment / RT·RE = accessory, Hielscher UP* = equipment, Soviquim by FAMILIA (EQUIPOS → equipment, attachments → accessory, everything else → consumable). Applying a plan to a product already present fills a kind or category **only where none is stored** (version + 1, `product.updated` event); an operator's value is never overwritten. The «Tipo» select became tabs — Todos · Equipos · Accesorios · Repuestos · Insumos — with counts for the chosen supplier; «Consumible» reads «Insumo» |
+| New lists | `--hielscher <xlsx>` (the multi-sheet lab list, one row per reference) and `--soviquim-text` (the 218-page distributor catalogue via `pdftotext -layout`, CLP, ~3,430 products; the brand goes into the description, not one organization per brand spelling) |
+| Rehearsal | a disposable database replaying the hosted 06-10 and 07-10 plans, then the four kind-carrying plans (OHAUS+ADAM, Hielscher, Löser+Ortoalresa, Soviquim): 14 apply/verify steps exit 0, no mismatched key; 10,429 products, **0 unclassified**; the 7 Löser instruments inserted |
+| Evidence | `apps/api` `scripts/validate.sh` with the disposable cluster: **4,369 passed**; `apps/dashboard-proxy` `npm run validate` **427 passed**; `apps/dashboard` `npm run validate` **650 passed** + build |
+| Not done | the four plans are not applied to hosted (owner-run after merge); products from supplier documents and quote history stay unclassified; reclassifying bumps product versions, so rolling back the 06-10 manifests is refused afterwards (restore the pre-catalog dump instead) |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

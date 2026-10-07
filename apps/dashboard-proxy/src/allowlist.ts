@@ -130,12 +130,13 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // reads; GET-only upstream through the contact-redacting route. Nothing under it is reachable.
   /^\/v2\/workspace\/triage-readings$/,
   /^\/v2\/cockpit\/work-queue$/,
-  // Catalog 1a reads (`apps/api` v2/catalog/routes.py): products, one product, a supplier's
-  // terms, cost parameters, FX, price history (`?model_key=&limit=`) and a short-lived signed
+  // Catalog 1a reads (`apps/api` v2/catalog/routes.py): products, one product, the supplier list
+  // (names and product counts by kind, no costs), a supplier's terms, cost parameters, FX, price history (`?model_key=&limit=`) and a short-lived signed
   // image URL (JSON, never image bytes). Exact paths, GET-only upstream; named one by one so
   // nothing else under `/v2/catalog` is reachable until it is reviewed and listed.
   /^\/v2\/catalog\/products$/,
   /^\/v2\/catalog\/products\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /^\/v2\/catalog\/suppliers$/,
   /^\/v2\/catalog\/suppliers\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/terms$/,
   /^\/v2\/catalog\/parameters$/,
   /^\/v2\/catalog\/fx$/,

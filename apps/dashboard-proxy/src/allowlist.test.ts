@@ -838,6 +838,7 @@ describe("Catalog 1a", () => {
   const GET_PATHS = [
     "/v2/catalog/products",
     `/v2/catalog/products/${uuid}`,
+    "/v2/catalog/suppliers",
     `/v2/catalog/suppliers/${uuid}/terms`,
     "/v2/catalog/parameters",
     "/v2/catalog/fx",
@@ -879,6 +880,7 @@ describe("Catalog 1a", () => {
       "/v2/catalog/parameters/extra",
       "/v2/catalog/price-history/extra",
       `/v2/catalog/suppliers/${uuid}`,
+      "/v2/catalog/suppliers/",
       `/v2/catalog/suppliers/${uuid}/terms/`,
       `/v2/catalog/suppliers/${uuid.toUpperCase()}/terms`,
       `/v2/catalog/images/${uuid}`,

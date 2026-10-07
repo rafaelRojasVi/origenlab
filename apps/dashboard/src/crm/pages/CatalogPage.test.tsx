@@ -128,6 +128,16 @@ function stub(routes: Routes = {}) {
       if (path === "/v2/catalog/products") {
         return Promise.resolve(routes.products?.() ?? json({ items: [item()], total: 1, limit: 50, offset: 0 }));
       }
+      if (path === "/v2/catalog/suppliers") {
+        return Promise.resolve(
+          json({
+            items: [
+              { ...SUPPLIER, products: 3, by_kind: { equipment: 2, consumable: 1 } },
+              { id: "00000000-0000-4000-8000-0000000000b2", display_name: "Otro Proveedor", products: 5, by_kind: { consumable: 5 } },
+            ],
+          }),
+        );
+      }
       if (path === `/v2/catalog/products/${PRODUCT_ID}`) return Promise.resolve(routes.product?.() ?? json(detail()));
       if (path === "/v2/catalog/price-history") return Promise.resolve(json(HISTORY));
       if (path === "/v2/catalog/fx") {
@@ -202,18 +212,30 @@ describe("Catálogo list", () => {
     const searched = urls.find((u) => u.searchParams.get("q") === "xb 100") as URL;
     expect(searched.searchParams.get("offset")).toBe("0");
     expect(searched.searchParams.has("supplier")).toBe(false);
-    fireEvent.change(screen.getByRole("combobox", { name: /Tipo/ }), { target: { value: "consumable" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Insumos/ }));
     await waitFor(() => expect(urls.some((u) => u.searchParams.get("kind") === "consumable")).toBe(true));
   });
 
-  it("offers the suppliers the list has named as a filter", async () => {
+  it("offers every supplier from the supplier list, with its product count, as a filter", async () => {
     const urls = stub();
     renderCatalog();
     await screen.findByTestId("catalog-row");
     const select = screen.getByRole("combobox", { name: /Proveedor/ });
-    await waitFor(() => expect(within(select).getByRole("option", { name: "Proveedor Ejemplo" })).toBeInTheDocument());
+    await waitFor(() => expect(within(select).getByRole("option", { name: "Proveedor Ejemplo (3)" })).toBeInTheDocument());
+    // a supplier none of the shown products comes from is listed too
+    expect(within(select).getByRole("option", { name: "Otro Proveedor (5)" })).toBeInTheDocument();
     fireEvent.change(select, { target: { value: SUPPLIER.id } });
     await waitFor(() => expect(urls.some((u) => u.searchParams.get("supplier") === SUPPLIER.id)).toBe(true));
+  });
+
+  it("counts each kind tab for the chosen supplier, or for all of them", async () => {
+    stub();
+    renderCatalog();
+    await screen.findByTestId("catalog-row");
+    expect(await screen.findByRole("button", { name: /Insumos\s*6/ })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: /Proveedor/ }), { target: { value: SUPPLIER.id } });
+    expect(await screen.findByRole("button", { name: /Insumos\s*1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Equipos\s*2/ })).toBeInTheDocument();
   });
 
   it("shows a viewer no cost column and no costing parameters, because the API sends no price", async () => {
