@@ -362,10 +362,19 @@ def test_r7_a_quote_request_from_a_known_institution_opens_an_en_estudio_case() 
     ]
 
 
-def test_r7_free_mail_quote_request_opens_solicitada_without_inventing_an_institution() -> None:
-    action = only(Snapshot(
+def test_r7_free_mail_waits_for_requester_check_then_opens_solicitada_without_inventing_an_institution() -> None:
+    pending = only(Snapshot(
         evidence=(mail(direction="inbound", sender="Irina Example <irina@gmail.com>", thread_id="t-irina",
                        subject="Solicitud de cotización de productos", documents=()),),
+        cases=(), organizations=(org(),),
+    ))
+    assert (pending.rule_id, pending.mode) == ("R7", "proposal")
+    assert any("esperando" in reason for reason in pending.reasons)
+
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", sender="Irina Example <irina@gmail.com>", thread_id="t-irina",
+                       subject="Solicitud de cotización de productos", documents=(),
+                       requester_checked=True),),
         cases=(), organizations=(org(),),
     ))
     assert (action.rule_id, action.mode) == ("R7", "auto")
@@ -376,10 +385,32 @@ def test_r7_free_mail_quote_request_opens_solicitada_without_inventing_an_instit
     assert any("sin institución" in reason for reason in action.reasons)
 
 
-def test_r7_unknown_domain_quote_request_also_opens_solicitada_without_guessing_identity() -> None:
+def test_r7_free_mail_uses_a_unique_exact_requester_identity_from_the_worker() -> None:
+    action = only(Snapshot(
+        evidence=(mail(
+            direction="inbound",
+            sender="Irina Example <irina@gmail.com>",
+            thread_id="t-irina",
+            subject="Solicitud de cotización de productos",
+            documents=(),
+            requester_checked=True,
+            requester_organization_id="o-1",
+            requester_organization_name="Cliente Ficticio",
+        ),),
+        cases=(),
+        organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode, action.organization_id) == ("R7", "auto", "o-1")
+    assert [c["command"] for c in action.commands] == [
+        "open_commercial_case", "add_case_organization", "advance_case_stage", "advance_case_stage",
+    ]
+    assert action.commands[-1]["inputs"]["stage"] == "qualified"
+
+
+def test_r7_unknown_domain_quote_request_opens_solicitada_after_requester_check_without_guessing_identity() -> None:
     action = only(Snapshot(
         evidence=(mail(direction="inbound", sender="compras@nuevo.test", thread_id="t-new",
-                       subject="RFQ centrífuga", documents=()),),
+                       subject="RFQ centrífuga", documents=(), requester_checked=True),),
         cases=(), organizations=(org(),),
     ))
     assert (action.rule_id, action.mode) == ("R7", "auto")
