@@ -96,7 +96,7 @@ begin
 
   v_source_id := (p_evidence->>'source_record_id')::uuid;
 
-  -- The privileged boundary re-proves the worker's proposal from canonical evidence. A caller
+  -- The privileged boundary re-proves the worker's proposal against canonical evidence. A caller
   -- cannot obtain a global block merely by passing an address and saying "hard bounce".
   if not exists (
     select 1
