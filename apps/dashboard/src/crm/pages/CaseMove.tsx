@@ -147,8 +147,17 @@ export function CaseMoveForm({
     try {
       if (target === "pausa") {
         const text = detail.trim() ? `${reason}: ${detail.trim()}` : (reason as string);
-        // A new date replaces the old pause: the earliest open task is what the board reads.
-        done.push(...(await resumeCase(paused, `Nueva pausa hasta ${fmtDate(morningOf(day))}.`, cancelKeys())));
+        // The pause replaces every open task: the board reads the earliest one, so a follow-up
+        // already due (today or overdue) would keep the case out of «En pausa». A later pause is
+        // replaced by the new date the same way.
+        const until = fmtDate(morningOf(day));
+        const due = (card.open_tasks ?? []).filter((t) => !paused.some((p) => p.task_id === t.task_id));
+        const keys = cancelKeys();
+        for (const t of due) {
+          const receipt = await cancelTask({ task_id: t.task_id, task_version: t.version, note: `Reemplazada por la pausa hasta ${until}.` }, keys[t.task_id]);
+          done.push({ label: "Tarea reemplazada por la pausa", receipt });
+        }
+        done.push(...(await resumeCase(paused, `Nueva pausa hasta ${until}.`, keys)));
         const receipt = await createTask(
           { opportunity_id: card.opportunity_id, title: `Retomar: ${reason}`, due_at: morningOf(day), note: text },
           keysRef.current.create,

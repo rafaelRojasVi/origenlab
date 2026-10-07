@@ -365,6 +365,35 @@ describe("case drawer actions", () => {
     expect(cancel.body).toEqual({ task_id: TASK, task_version: 1, note: "Retomado antes de la fecha." });
   });
 
+  it("pausing replaces a follow-up already due, so the case really goes to «En pausa»", async () => {
+    const DUE = "77777777-0000-4000-8000-0000000000d1";
+    const withDue = card({
+      open_tasks: [{ task_id: DUE, title: "Seguimiento de 01239-26", due_at: "2020-01-01T12:00:00Z", version: 2, owner: "Ventas" }],
+    });
+    const calls = stubApi({
+      pipelines: [page([withDue]), page([card()])],
+      onPost: (call) =>
+        call.path === "/v2/commands/create-task"
+          ? { body: { command: "create_task", task_id: TASK, task_version: 1, opportunity_id: CASE, command_receipt_id: "9999aaaa-2", replayed: false } }
+          : { body: { command: "cancel_task", task_id: DUE, task_version: 3, opportunity_id: CASE, command_receipt_id: "9999bbbb-2", replayed: false } },
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "En pausa" }));
+    const form = within(dialog).getByRole("form", { name: "Mover a «En pausa»" });
+    fireEvent.change(within(form).getByLabelText(/Retomar el/), { target: { value: "2099-11-02" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Esperando fondos o proyecto" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Pausar" }));
+    await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/create-task")).toBe(true));
+    const posts = calls.filter((c) => c.path.startsWith("/v2/commands/")).map((c) => c.path);
+    expect(posts).toEqual(["/v2/commands/cancel-task", "/v2/commands/create-task"]);
+    expect(calls.find((c) => c.path === "/v2/commands/cancel-task")!.body).toEqual({
+      task_id: DUE,
+      task_version: 2,
+      note: "Reemplazada por la pausa hasta 02 nov 2099.",
+    });
+  });
+
   it("marks a quoting case won in two steps, each with its receipt", async () => {
     const calls = stubApi({
       pipelines: [page([card()]), page([card({ stage: "won", version: 7, closed_at: "2026-10-05T00:00:00Z" })])],
