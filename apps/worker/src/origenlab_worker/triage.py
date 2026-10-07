@@ -9,9 +9,10 @@ Writes, all `on conflict do nothing`, in one transaction per message:
 * one `product_mention` assertion per product named — by the model when it ran, otherwise by an
   exact model-number match in the catalog.
 
-Never writes `crm.*` or `outbound.*`, never resolves an assertion, never changes a source record's
-review status: an operator (or the API's mail rules) decides what a reading means. Re-running the
-same version for the same message adds nothing; a message whose reading exists is skipped.
+The worker never writes `crm.*` or `outbound.*` directly. For a bounce it also records a versioned
+`delivery_failure` assertion and only a conservative Batch-A single-recipient no-such-user result
+may call the closed-list contact-control writer. Ordinary already-triaged mail is not re-read; old
+bounce readings are backfilled independently.
 
 The body is read for this one call and never stored. What is stored are short machine reasons,
 the catalog ids, and the model's own summary and product descriptions.
@@ -26,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from origenlab_api.v2.mail_rules import fold
+from origenlab_worker.bounce import BounceAnalysis, DELIVERY_FAILURE_VALUE_NORM, analyze_bounce
 from origenlab_worker.catalog_match import ProductCandidate, match_products, model_key
 from origenlab_worker.drive_filing import storage_key
 from origenlab_worker.mail_text import MailText, parse_mail
@@ -144,17 +146,18 @@ class TriageDb:
 
     def pending(self, *, since_days: int, limit: int) -> list[str]:
         with self._tx() as cur:
-            cur.execute(_PENDING, (since_days, VALUE_NORM, limit))
+            cur.execute(_PENDING, (since_days, VALUE_NORM, VALUE_NORM, DELIVERY_FAILURE_VALUE_NORM, limit))
             return [row[0] for row in cur.fetchall()]
 
-    def load(self, source_record_id: str) -> tuple[PendingMessage, bool] | None:
+    def load(self, source_record_id: str) -> tuple[PendingMessage, bool, str | None, bool] | None:
         with self._tx() as cur:
-            cur.execute(_ONE, (VALUE_NORM, source_record_id))
+            cur.execute(_ONE, (VALUE_NORM, VALUE_NORM, DELIVERY_FAILURE_VALUE_NORM, source_record_id))
             row = cur.fetchone()
         if row is None:
             return None
-        sr, mid, direction, labels, path, thread, done = row
-        return PendingMessage(sr, mid, direction, tuple(labels or ()), path, thread), bool(done)
+        sr, mid, direction, labels, path, thread, done, triage_class, delivery_done = row
+        return (PendingMessage(sr, mid, direction, tuple(labels or ()), path, thread), bool(done),
+                triage_class, bool(delivery_done))
 
     def linked_cases(self, thread_id: str | None) -> list[LinkedCase]:
         """The open and closed cases any email of this Gmail thread is linked to — the API's own
@@ -271,8 +274,8 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     loaded = db.load(source_record_id)
     if loaded is None:
         return TriageResult("not_found")
-    message, done = loaded
-    if done:
+    message, done, existing_class, delivery_done = loaded
+    if done and not (existing_class == "bounce" and not delivery_done):
         return TriageResult("already_triaged")
     if not message.eml_storage_path:
         return TriageResult("no_eml")
@@ -319,6 +322,8 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     mentions = mentions_for(reading, candidates)
     value = reading_value(verdict, mail, candidates, state, reading, int((clock() - started) * 1000), cases)
     written = db.record(message.source_record_id, value, mentions)
+    if verdict.triage_class == "bounce":
+        db.record_delivery_failure(message.source_record_id, analyze_bounce(raw))
     return TriageResult("recorded", verdict.triage_class, state, written)
 
 
