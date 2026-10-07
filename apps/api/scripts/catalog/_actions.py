@@ -160,17 +160,38 @@ def _apply_create_product(ctx: Context, item: importing.PlanItem) -> str:
     found = _find_product(ctx, maker_id, fields["model_number"])
     if found is not None:
         ctx.ids[item["key"]] = found
+        _classify_if_unset(ctx, found, fields)
         return "already_present"
     ctx.cur.execute(
-        "insert into catalog.product (manufacturer_organization_id, model_number, name, description, "
-        "content_origin, created_by_operator_id) values (%s::uuid, %s, %s, %s, 'import', %s::uuid) "
+        "insert into catalog.product (manufacturer_organization_id, model_number, name, description, product_kind, "
+        "category_es, content_origin, created_by_operator_id) values (%s::uuid, %s, %s, %s, %s, %s, 'import', %s::uuid) "
         "returning id::text as id",
-        (maker_id, fields["model_number"], fields.get("name"), fields.get("description"), ctx.operator.operator_id))
+        (maker_id, fields["model_number"], fields.get("name"), fields.get("description"), fields.get("product_kind"),
+         fields.get("category_es"), ctx.operator.operator_id))
     product_id = _row(ctx.cur)["id"]
     ctx.ids[item["key"]] = product_id
     _event(ctx, "product", product_id, "product.created",
            {"model_number": fields["model_number"], "content_origin": "import"})
     return "inserted"
+
+
+def _classify_if_unset(ctx: Context, product_id: str, fields: dict[str, Any]) -> None:
+    """A product loaded before its list carried a kind gets it now — only where none is stored, so an
+    operator's (or an earlier list's) kind or category is never overwritten. Recorded as an event."""
+    kind, category = fields.get("product_kind"), fields.get("category_es")
+    if kind is None and category is None:
+        return
+    ctx.cur.execute(
+        "update catalog.product set product_kind = coalesce(product_kind, %s), category_es = coalesce(category_es, %s), "
+        "version = version + 1, updated_at = now() "
+        "where id = %s::uuid and ((product_kind is null and %s::text is not null) "
+        "or (category_es is null and %s::text is not null)) returning product_kind, category_es",
+        (kind, category, product_id, kind, category))
+    row = _row(ctx.cur)
+    if row is not None:
+        _event(ctx, "product", product_id, "product.updated",
+               {"changed": ["product_kind", "category_es"], "product_kind": row["product_kind"],
+                "category_es": row["category_es"], "content_origin": "import"})
 
 
 def _verify_create_product(ctx: Context, item: importing.PlanItem) -> tuple[str, list[str], str | None]:

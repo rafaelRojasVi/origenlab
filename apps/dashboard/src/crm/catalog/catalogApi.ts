@@ -11,6 +11,7 @@ import { fmtDate } from "../ui";
 
 export const CATALOG_PATHS = {
   products: "/v2/catalog/products",
+  suppliers: "/v2/catalog/suppliers",
   product: (id: string) => `/v2/catalog/products/${encodeURIComponent(id)}`,
   priceHistory: "/v2/catalog/price-history",
   fx: "/v2/catalog/fx",
@@ -25,7 +26,7 @@ export type ProductKind = (typeof PRODUCT_KINDS)[number];
 export const KIND_LABEL: Record<string, string> = {
   equipment: "Equipo",
   accessory: "Accesorio",
-  consumable: "Consumible",
+  consumable: "Insumo",
   spare_part: "Repuesto",
   service: "Servicio",
 };
@@ -40,6 +41,22 @@ export const PRICE_KIND_LABEL: Record<string, string> = {
   costing_sheet: "Hoja de costeo",
   negotiated: "Negociado",
 };
+
+/** The kind tabs of the product list, plural, in the order an operator scans them (no «Servicio»: none is loaded). */
+export const KIND_TABS: { value: ProductKind; label: string }[] = [
+  { value: "equipment", label: "Equipos" },
+  { value: "accessory", label: "Accesorios" },
+  { value: "spare_part", label: "Repuestos" },
+  { value: "consumable", label: "Insumos" },
+];
+
+/** One supplier of `GET /v2/catalog/suppliers`: its active products, in total and by kind (`unclassified` when unset). */
+export interface SupplierSummary {
+  id: string;
+  display_name: string;
+  products: number;
+  by_kind: Record<string, number>;
+}
 
 export interface NamedRef {
   id: string;
@@ -202,6 +219,8 @@ export const fetchProducts = (query: ProductQuery) =>
       offset: query.offset,
     }),
   );
+export const fetchSuppliers = () =>
+  fetchJsonGet<{ items: SupplierSummary[] }>(operatorApiUrl(CATALOG_PATHS.suppliers));
 export const fetchProduct = (id: string) => fetchJsonGet<ProductDetail>(operatorApiUrl(CATALOG_PATHS.product(id)));
 export const fetchPriceHistory = (modelKey: string) =>
   fetchJsonGet<PriceHistory>(operatorApiUrl(CATALOG_PATHS.priceHistory, { model_key: modelKey }));

@@ -9,24 +9,25 @@
  * viewer role: a column or block appears only when its figures came back, never on the role alone.
  * There is no write here.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import {
   KIND_LABEL,
+  KIND_TABS,
   PRICE_KIND_LABEL,
-  PRODUCT_KINDS,
   fetchCatalogFx,
   fetchCostParameters,
   fetchImageUrl,
   fetchPriceHistory,
   fetchProduct,
   fetchProducts,
+  fetchSuppliers,
   fmtDay,
   fmtMoney,
   fmtPct,
   hasPrice,
   type CostObservation,
-  type NamedRef,
+  type SupplierSummary,
   type ProductDetail,
   type ProductListItem,
   type ProductPage,
@@ -110,7 +111,9 @@ function ProductsView({ openId, navigate }: { openId: string | null; navigate: N
     [debounced, supplier, kind, offset],
   );
   const [state, reload] = useResource(load, [load]);
-  const suppliers = useSuppliersSeen(state);
+  const [suppliersState] = useResource(fetchSuppliers, []);
+  const suppliers = suppliersState.kind === "ready" ? suppliersState.data.items : [];
+  const kindCounts = countsByKind(suppliers, supplier);
 
   return (
     <>
@@ -123,21 +126,19 @@ function ProductsView({ openId, navigate }: { openId: string | null; navigate: N
               value={supplier}
               onChange={filterBy(setSupplier)}
               placeholder="Todos"
-              options={suppliers.map((s) => ({ value: s.id, label: s.display_name }))}
+              options={suppliers.map((s) => ({ value: s.id, label: `${s.display_name} (${fmtInt(s.products)})` }))}
             />
           </span>
         </label>
-        <label className="flex items-center gap-1.5 text-xs text-ink-muted">
-          Tipo
-          <span className="w-40">
-            <SelectInput
-              value={kind}
-              onChange={filterBy(setKind)}
-              placeholder="Todos"
-              options={PRODUCT_KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))}
-            />
-          </span>
-        </label>
+<Segmented
+          label="Tipo de producto"
+          value={kind}
+          onChange={filterBy(setKind)}
+          options={[
+            { value: "", label: "Todos", count: kindCounts.all },
+            ...KIND_TABS.map((t) => ({ value: t.value, label: t.label, count: kindCounts[t.value] ?? 0 })),
+          ]}
+        />
       </div>
       {state.kind === "unavailable" ? (
         <NotEnabled />
@@ -152,22 +153,17 @@ function ProductsView({ openId, navigate }: { openId: string | null; navigate: N
 }
 
 /**
- * The suppliers the list has shown so far, for the filter. The catalog API has no supplier list of
- * its own; the first unfiltered page already names the few the importers created.
+ * Products per kind for the tabs: of the chosen supplier, or of every supplier when none is. A
+ * product two suppliers list counts under each, so «Todos» across suppliers is an upper bound.
  */
-function useSuppliersSeen(state: ResourceState<ProductPage>): NamedRef[] {
-  const [seen, setSeen] = useState<Map<string, NamedRef>>(() => new Map());
-  useEffect(() => {
-    if (state.kind !== "ready") return;
-    const found = state.data.items.map((i) => i.current_cost?.supplier).filter((s): s is NamedRef => !!s?.id);
-    if (found.every((s) => seen.has(s.id))) return;
-    setSeen((prev) => {
-      const next = new Map(prev);
-      for (const s of found) next.set(s.id, s);
-      return next;
-    });
-  }, [state, seen]);
-  return useMemo(() => [...seen.values()].sort((a, b) => a.display_name.localeCompare(b.display_name, "es")), [seen]);
+function countsByKind(suppliers: SupplierSummary[], supplierId: string): Record<string, number> {
+  const counts: Record<string, number> = { all: 0 };
+  for (const s of suppliers) {
+    if (supplierId && s.id !== supplierId) continue;
+    counts.all += s.products;
+    for (const [k, n] of Object.entries(s.by_kind)) counts[k] = (counts[k] ?? 0) + n;
+  }
+  return counts;
 }
 
 function NotEnabled() {
