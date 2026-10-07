@@ -169,14 +169,16 @@ def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
         task_queue.CONTEXT.target = config.database
         task_queue.CONTEXT.store_factory = lambda: S3EmlStore(config.storage.client())
         task_queue.CONTEXT.model = config.model
-        app = task_queue.app.with_connector(task_queue.connector_for(config.database))
         line["model"] = config.model_name if config.model_enabled else "off"
         _emit(dict(line), started)
 
         async def serve() -> None:
-            async with app.open_async():
-                await app.run_worker_async(queues=[task_queue.QUEUE], concurrency=WORKER_CONCURRENCY,
-                                           install_signal_handlers=True, delete_jobs="successful")
+            # replace_connector, not with_connector: the periodic sweep defers through the task's
+            # own app, so a copy would leave every sweep in the module's in-memory connector.
+            with task_queue.app.replace_connector(task_queue.connector_for(config.database)) as app:
+                async with app.open_async():
+                    await app.run_worker_async(queues=[task_queue.QUEUE], concurrency=WORKER_CONCURRENCY,
+                                               install_signal_handlers=True, delete_jobs="successful")
 
         asyncio.run(serve())
         line["mode"] = "stopped"
