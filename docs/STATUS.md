@@ -2071,6 +2071,17 @@ From a design critique of the shipped screens rendered with invented data (`apps
 | Day 3 first | A scheduled follow-up waits for day 3 like any other: a quote sent today or yesterday is not chased today |
 | Evidence | `apps/dashboard` `npm run validate`: **629 passed** + build |
 
+### 2.7.69 «Te toca responder» stops at a decided reply, and «No requiere respuesta», 2026-10-06 — built, not deployed
+
+`apps/api` read + `apps/dashboard`: no command, proxy or schema change.
+
+| Change | What it does |
+|---|---|
+| API | `GET /v2/workspace/pipeline` card `open_tasks[]` gains `created_at` (ISO UTC, `crm.task.created_at`) — same eighth query, one more column |
+| Rule | A client email stays in «Te toca responder» only until a task is scheduled on the case after it («En pausa», «Recordar…», «No requiere respuesta»): that task is the operator's answer. A newer email from the client puts the case back. A task scheduled before the email does not hide it. Without `created_at` (older API) a case «En pausa» counts as answered |
+| Button | «No requiere respuesta» on each reply row (sales/admin): `create-task` «Seguimiento de N» a week out, note naming the client's email date. The row leaves the list and comes back as a follow-up on that day |
+| Evidence | `apps/dashboard` `npm run validate`: **631 passed** + build; `apps/api` `scripts/validate.sh`: **3811 passed**, 659 skipped |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work

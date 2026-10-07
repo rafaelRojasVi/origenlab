@@ -161,6 +161,8 @@ export interface OpenTask {
   due_at: string;
   version: number;
   owner: string | null;
+  /** ISO 8601, UTC: when the task was scheduled. Absent from an older API. */
+  created_at?: string | null;
 }
 
 export interface PipelineResponse {

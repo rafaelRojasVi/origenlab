@@ -228,10 +228,12 @@ _SQL_PIPELINE_REVISIONS = """
       left join evidence.source_record d
              on d.dedupe_key = 'drive_file:' || qr.pdf_sha256 and d.kind = 'drive_file'
 """
-# Open follow-ups (`crm.task`, W11) with their owner's name; `due_at` as ISO text.
+# Open follow-ups (`crm.task`, W11) with their owner's name; `due_at` and `created_at` as ISO text.
+# `created_at` tells «Hoy» whether a task was scheduled after the client's last email.
 _SQL_PIPELINE_TASKS = """
     select t.id::text as task_id, t.opportunity_id::text, t.title,
            to_char(t.due_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as due_at,
+           to_char(t.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
            t.version, o.display_name as owner_display_name
       from crm.task t
       join platform.operator o on o.id = t.owner_operator_id
@@ -558,6 +560,7 @@ def compose_pipeline(
         tasks_by_opp[row["opportunity_id"]].append({
             "task_id": row["task_id"], "title": row["title"], "due_at": row["due_at"],
             "version": row["version"], "owner": row.get("owner_display_name"),
+            "created_at": row.get("created_at"),
         })
 
     cards: list[dict[str, Any]] = []
