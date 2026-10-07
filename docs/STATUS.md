@@ -2122,6 +2122,17 @@ were already allowlisted by the proxy (§2.7.51).
 | Evidence | `apps/dashboard` `npm run validate`: **648 passed** (53 files) + build; new `CatalogPage.test.tsx` (11) with invented values only, `shellRoute.test.ts` +2 assertions |
 | Not done | not deployed; `ORIGENLAB_V2_QUOTING_ENABLED` not set on Render, so the screen shows «no habilitado» until it is |
 
+### 2.7.73 «En pausa» replaces a follow-up already due, 2026-10-07 — built, not deployed
+
+`apps/dashboard` only.
+
+| | |
+|---|---|
+| Problem | The Tablero puts a case under «En pausa» when its **earliest** open task is due later. Pausing cancelled only the later tasks (an earlier pause) and wrote «Retomar: …»; a follow-up already due (today or overdue, e.g. «Seguimiento de N») stayed open and first, so the case stayed in its stage column although the pause was recorded |
+| Fix | «Pausar» (`CaseMoveForm`) cancels every open task — the due ones with the note «Reemplazada por la pausa hasta …», each with its receipt — before writing the «Retomar» task |
+| Already stuck | a case paused before this fix keeps its due task: pause it again (it replaces both), or close the due task from «Hoy» |
+| Evidence | `apps/dashboard` `npm run validate`: **649 passed** + build; new `CaseActions.test.tsx` case |
+
 ### 2.8 Hosted phase — frozen 2026-09-21
 
 **State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
