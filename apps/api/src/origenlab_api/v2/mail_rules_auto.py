@@ -1,4 +1,4 @@
-"""Email → cases, automatically: R1 and R2 applied on a timer, with a stop switch.
+"""Email → cases, automatically: safe intake/link rules applied on a timer, with a stop switch.
 
 Owner-approved 2026-10-06 (docs/DOMAIN.md §3.6.6). The rules engine is unchanged
 (`mail_rules.py` plans, `mail_rules_repository.py` applies); this module only decides **when** it
@@ -6,9 +6,10 @@ applies, and **which** rules may apply without a person pressing «Aplicar»:
 
 | Rule | Automatic | Why |
 |---|---|---|
-| R1 | yes | same Gmail thread as an email already linked to exactly one open case: a link, nothing else |
-| R2 | yes | the email names a quote number held by exactly one open case: a link, nothing else |
-| R3–R6 | no | they create cases, quotes and institutions or close a case: previewed and applied by an admin |
+| R1 | yes | same Gmail thread as one open case; a new sent CN PDF may also record the quote when the requester is already resolved |
+| R2 | yes | the email names a quote number held by exactly one open case: link only |
+| R7 | yes | an explicit inbound RFQ opens a lead; free-mail never invents an institution |
+| R3–R6 | no | recipient-domain case creation and terminal win/loss actions still wait for an admin |
 
 **The switch.** An admin turns the automatic run on or off in Revisión → «Acciones automáticas»
 (`POST /v2/commands/set-auto-mail-rules`). Each flip is one `platform.command_receipt`
@@ -46,8 +47,9 @@ from origenlab_api.v2.mail_rules import AUTO
 
 logger = logging.getLogger(__name__)
 
-#: The only rules the timer applies. Everything else waits for an admin.
-AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2"})
+#: Safe intake/link rules the timer applies. Terminal actions (R5/R6) and recipient-domain
+#: creation (R3/R4) still wait for an admin.
+AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R7"})
 SWITCH_COMMAND = "set_auto_mail_rules"
 DEFAULT_INTERVAL_SECONDS = 300
 #: At most this many actions per pass; the next pass takes the rest.
@@ -169,7 +171,7 @@ class AutoMailRules:
     # ------------------------------------------------------------------ one pass
 
     def run_once(self) -> dict[str, Any]:
-        """Apply every automatic R1/R2 action the rules plan now, if the switch is on."""
+        """Apply every safe automatic R1/R2/R7 action the rules plan now, if the switch is on."""
         started = datetime.now(UTC)
         with self._repo._read() as cur:
             switch = read_switch(cur)
