@@ -623,7 +623,7 @@ def open_worker_db(target: WorkerTarget, connect: Callable[..., Any] | None = No
 __all__ = [
     "QUEUE_REQUIRED_POLICIES", "QUEUE_REQUIRED_PRIVILEGES", "QUEUE_TABLES", "TRIAGE_REQUIRED_POLICIES",
     "TRIAGE_REQUIRED_PRIVILEGES", "averify_worker_connection", "open_verified_connection",
-    "ALLOWED_OUTSIDE_WRITES", "APP_NAME", "LOCK_ACQUIRED", "LOCK_HELD", "LOCK_NAME", "LOCK_STUCK", "STALE_LOCK_AFTER", "Mailbox", "RecordOutcome",
+    "ALLOWED_OUTSIDE_WRITES", "ALLOWED_WORKER_DEFINERS", "APP_NAME", "LOCK_ACQUIRED", "LOCK_HELD", "LOCK_NAME", "LOCK_STUCK", "STALE_LOCK_AFTER", "Mailbox", "RecordOutcome",
     "TargetRefused", "WORKER_ROLE", "WorkerDb", "WorkerTarget", "local_test_target", "open_worker_db",
     "remote_worker_target", "verify_worker_connection", "write_ca_file",
 ]
