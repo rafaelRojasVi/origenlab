@@ -11,11 +11,13 @@ from mailfixtures import make_raw
 from origenlab_worker.catalog_match import ProductCandidate
 from origenlab_worker.storage import StorageError
 from origenlab_worker.triage import (
+    REQUESTER_VALUE_NORM,
     VALUE_NORM,
     ModelSettings,
     ModelUnavailable,
     PendingMessage,
     is_permanent_api_error,
+    match_requester_organization,
     mentions_for,
     triage_one,
 )
@@ -26,19 +28,22 @@ PATH = "mail/contacto@origenlab.cl/2026/10/g1.eml"
 
 class FakeDb:
     def __init__(self, *, direction="inbound", labels=("INBOX",), done=False, done_class="business_other",
-                 delivery_done=False, candidates=()) -> None:
+                 delivery_done=False, requester_done=False, candidates=(), requester=None) -> None:
         self.msg = PendingMessage("sr-1", "m-1", direction, labels, PATH, "t-1")
         self.done = done
         self.done_class = done_class
         self.delivery_done = delivery_done
+        self.requester_done = requester_done
         self._candidates = list(candidates)
-        self.recorded: list[tuple[str, dict, list]] = []
+        self._requester = requester or {"requester_version": 1, "status": "none", "how": "exact_name_in_body"}
+        self.recorded: list[tuple[str, dict, list, dict | None]] = []
+        self.requesters: list[tuple[str, dict]] = []
         self.delivery_failures = []
 
     def load(self, sid):
         if sid != "sr-1":
             return None
-        return self.msg, self.done, self.done_class if self.done else None, self.delivery_done
+        return self.msg, self.done, self.done_class if self.done else None, self.delivery_done, self.requester_done
 
     def candidates(self, mail):
         return self._candidates
@@ -49,8 +54,15 @@ class FakeDb:
         self.thread_asked = thread_id
         return [LinkedCase("o-1", "Caso", "quoting")] if thread_id == "t-1" else []
 
-    def record(self, sid, reading, mentions):
-        self.recorded.append((sid, reading, list(mentions)))
+    def requester_match(self, body):
+        self.requester_body = body
+        return self._requester
+
+    def record_requester(self, sid, requester):
+        self.requesters.append((sid, requester))
+
+    def record(self, sid, reading, mentions, requester=None):
+        self.recorded.append((sid, reading, list(mentions), requester))
         return len(mentions)
 
     def record_delivery_failure(self, sid, analysis):
@@ -93,8 +105,9 @@ def test_a_quote_request_is_read_by_the_model_and_recorded_with_its_products() -
     result = triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
     assert (result.outcome, result.triage_class, result.model, result.mentions) == \
         ("recorded", "quote_request", "ran", 1)
-    sid, value, mentions = db.recorded[0]
+    sid, value, mentions, requester = db.recorded[0]
     assert sid == "sr-1" and value["class"] == "quote_request" and value["reading"]["stage"] == "lead"
+    assert requester["status"] == "none"
     assert mentions == [("UP200HT", {"triage_version": 1, "source": "model", "description": "Homogeneizador",
                                      "brand": None, "model": "UP200Ht", "quantity": 1, "catalog_product_id": "p-1"})]
     assert len(reader.requests) == 1
@@ -117,8 +130,9 @@ def test_with_the_model_off_the_rules_and_exact_catalog_matches_are_still_record
     db = FakeDb(candidates=[CAND])
     result = triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
     assert result.model == "off"
-    _, value, mentions = db.recorded[0]
+    _, value, mentions, requester = db.recorded[0]
     assert "reading" not in value and value["candidates"][0]["product_id"] == "p-1"
+    assert requester["status"] == "none"
     assert [m[0] for m in mentions] == ["UP200HT"] and mentions[0][1]["source"] == "catalog_model_key"
 
 
@@ -143,6 +157,43 @@ def test_a_previously_triaged_bounce_gets_delivery_analysis_without_retriaging_o
     assert (result.outcome, result.triage_class, result.model) == ("recorded", "bounce", "not_needed")
     assert db.recorded == []
     assert db.delivery_failures[0][1].auto_block_addresses == ("dead@cliente.invalid",)
+
+
+def test_requester_match_is_exact_unique_and_ignores_short_generic_names() -> None:
+    organizations = [
+        ("o-pucv", "Pontificia Universidad Católica de Valparaíso"),
+        ("o-short", "PUCV"),
+        ("o-other", "Universidad Ejemplo"),
+    ]
+    matched = match_requester_organization(
+        "Saludos\nLaboratorio de Ecofisiología\nPontificia Universidad Católica de Valparaíso",
+        organizations,
+    )
+    assert matched == {
+        "requester_version": 1,
+        "status": "matched",
+        "organization_id": "o-pucv",
+        "organization_name": "Pontificia Universidad Católica de Valparaíso",
+        "how": "exact_name_in_body",
+    }
+    assert match_requester_organization("Escribo desde otra institución.", organizations)["status"] == "none"
+    ambiguous = match_requester_organization(
+        "Pontificia Universidad Católica de Valparaíso y Universidad Ejemplo", organizations
+    )
+    assert ambiguous["status"] == "ambiguous"
+
+
+def test_a_previously_triaged_quote_request_backfills_requester_without_model() -> None:
+    requester = {
+        "requester_version": 1, "status": "matched", "organization_id": "o-pucv",
+        "organization_name": "Pontificia Universidad Católica de Valparaíso", "how": "exact_name_in_body",
+    }
+    db = FakeDb(done=True, done_class="quote_request", requester_done=False, requester=requester)
+    reader = Reader(READING)
+    result = triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
+    assert (result.outcome, result.triage_class, result.model) == ("recorded", "quote_request", "not_needed")
+    assert db.requesters == [("sr-1", requester)]
+    assert db.recorded == [] and reader.requests == []
 
 
 def test_a_storage_failure_writes_nothing_so_the_sweep_retries() -> None:
@@ -190,6 +241,7 @@ def test_mentions_are_deduplicated_and_fall_back_to_the_folded_description() -> 
 
 def test_the_reading_is_stored_under_the_versioned_value_norm() -> None:
     assert VALUE_NORM == "triage:v1"
+    assert REQUESTER_VALUE_NORM == "requester:v1"
 
 
 def test_the_threads_cases_are_read_sent_to_the_model_and_stored_with_the_legality_of_the_move() -> None:

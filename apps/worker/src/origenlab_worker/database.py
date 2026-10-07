@@ -234,6 +234,7 @@ ALLOWED_WORKER_DEFINERS: frozenset[str] = frozenset({"outbound.add_contact_contr
 TRIAGE_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = (
     ("comms.message", "SELECT"), ("evidence.source_record", "SELECT"),
     ("evidence.assertion", "SELECT"), ("evidence.assertion", "INSERT"), ("catalog.product", "SELECT"),
+    ("crm.organization", "SELECT"), ("crm.organization_relationship", "SELECT"),
     ("crm.opportunity", "SELECT"), ("crm.opportunity_evidence", "SELECT"),
 )
 TRIAGE_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset(
@@ -243,6 +244,8 @@ TRIAGE_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset(
         ("evidence", "assertion", "origenlab_worker_select"),
         ("evidence", "assertion", "origenlab_worker_insert"),
         ("catalog", "product", "origenlab_worker_select"),
+        ("crm", "organization", "origenlab_worker_select"),
+        ("crm", "organization_relationship", "origenlab_worker_select"),
         ("crm", "opportunity", "origenlab_worker_select"),
         ("crm", "opportunity_evidence", "origenlab_worker_select"),
     }

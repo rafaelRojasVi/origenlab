@@ -8,23 +8,25 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 
 | Rule | When | Mode |
 |---|---|---|
-| R1 | same Gmail thread as an email already linked to exactly one open case | auto: link |
+| R1 | same Gmail thread as an email already linked to exactly one open case | auto: link; a new sent CN PDF on that thread also records the quote when the case has a requester |
 | R2 | a proposed quote number equals a quote on exactly one open case (same year + correlative) | auto: link |
 | R3 | outbound, a NEW CN number in a PDF, recipient domain = one known institution | auto: case + quote |
 | R4 | as R3, recipient domain unknown and neither free-mail, supplier nor ours | auto: institution «por confirmar» + case + quote |
 | R5 | inbound purchase order on a thread linked to one case (with one live quote revision) | auto: link + won |
 | R6 | inbound «otro proveedor» on a thread linked to one open case | auto: link + lost |
-| R7 | inbound quote request from a known institution, no linked thread | proposal |
-| R8 | everything else (free-mail, supplier, campaign thread, Labdelivery, nothing matched) | none |
+| R7 | inbound quote request, no linked thread | auto: open lead; an unambiguous known institution also qualifies it |
+| R8 | everything else (supplier, campaign thread, Labdelivery, nothing matched) | none |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
 email. Otherwise the first rule that matches wins.
 
 **Refusals, structural.** Two or more candidate cases (or institutions, or new numbers) never
-act: the email becomes a proposal naming the candidates. Free-mail and supplier domains never
-create an institution or a case (a free-mail sender can still link through R1/R2). A
-Labdelivery mention or a campaign thread is R8 before any rule runs.
+act: the email becomes a proposal naming the candidates. A free-mail address is never treated as
+an institution, but a clear inbound quote request still opens a real lead with no institution.
+Supplier domains never create a case. A Labdelivery mention or a campaign thread is R8 before
+any rule runs. A sent quote on an existing thread is recorded automatically only when that case
+already has its requesting institution; otherwise it stays a proposal until a person names it.
 
 **Idempotency.** An email that any rule already acted on (`applied_evidence_ids`, read from
 the receipts by the repository) or that a person already linked to a case plans nothing. The
@@ -52,8 +54,8 @@ AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 #: OrigenLab's own domains: never an institution, never a recipient that counts.
 OWN_DOMAINS: frozenset[str] = frozenset({"origenlab.cl"})
 
-#: Free-mail domains. A person writing from one is not an institution; they may only link
-#: through R1/R2.
+#: Free-mail domains. A person writing from one is not an institution. A clear quote request may
+#: still open a lead with no institution; identity is resolved separately.
 FREE_MAIL_DOMAINS: frozenset[str] = frozenset({
     "gmail.com", "googlemail.com", "hotmail.com", "hotmail.cl", "hotmail.es", "outlook.com",
     "outlook.es", "outlook.cl", "live.com", "live.cl", "msn.com", "yahoo.com", "yahoo.es",
@@ -126,6 +128,13 @@ class MailEvidence:
     #: V1 `classify_send_direction` on outbound mail (`customer_quote_candidate`, `ambiguous`,
     #: `supplier_rfq`, `internal_only`); None on inbound.
     direction_hint: str | None = None
+    #: The worker's deterministic requester:v1 check has run. Free/unknown senders wait for this
+    #: before R7 opens a case, so identity evidence cannot lose a race with the API timer.
+    requester_checked: bool = False
+    #: A unique, exact active CRM organization name found in the cleaned message body. This is
+    #: evidence, not a fuzzy/model guess; the planner still verifies the id against its snapshot.
+    requester_organization_id: str | None = None
+    requester_organization_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -490,6 +499,13 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                 "el hilo de Gmail apunta a un caso y el número de cotización del adjunto a otro: un humano elige",),
                 quote_number=canonical_quote_number(matched_key) if matched_key else None,
                 candidates=tuple(sorted(thread_ids | set(exact))))
+        # A sent quote on an already-known customer thread used to be swallowed by R1 as a mere
+        # link. Treat that strong outbound signal as part of R1, but only for one open case whose
+        # requesting institution is already resolved; free-mail must never invent an institution.
+        if len(thread_cases) == 1 and not exact:
+            sent_quote = _thread_sent_quote_rule(e, ix, thread_cases[0])
+            if sent_quote is not None:
+                return sent_quote
         return _link_rule(e, "R1", thread_cases, "mismo hilo de Gmail que un correo ya vinculado", None)
     if exact and matched_key is not None:
         number = canonical_quote_number(matched_key)
@@ -592,6 +608,102 @@ def _signal_rules(e: MailEvidence, cases: list[CaseState], ix: _Index, *,
                          commands=(*link, _advance_step("lost", note, LOST_CLOSE_REASON)),
                          context=context)
 
+
+def _request_case_title(e: MailEvidence, organization: Organization | None = None) -> str:
+    if organization is not None:
+        return f"{organization.name} — solicitud de cotización"
+    subject = " ".join((e.subject or "").split())
+    if subject:
+        return f"Solicitud de cotización — {subject[:120]}"
+    return "Solicitud de cotización"
+
+
+def _is_quote_request(e: MailEvidence) -> bool:
+    subject = fold(e.subject)
+    # A reply/forward with «cotización» is much more likely to belong to an existing case whose
+    # thread link is missing; never open a second case from that weak signal.
+    if subject.startswith(("re:", "rv:", "fw:", "fwd:")):
+        return False
+    # «solicitud» by itself is too broad to create a commercial case automatically.
+    strong = tuple(w for w in QUOTE_REQUEST_WORDS if w != "solicitud")
+    return any(w in subject for w in strong)
+
+
+def _thread_sent_quote_rule(e: MailEvidence, ix: _Index, c: CaseState) -> PlannedAction | None:
+    """R1 upgrade: contacto@ sent one new CN PDF on a thread already belonging to one case.
+
+    This is stronger evidence than a recipient domain (and works for Gmail/Hotmail customers).
+    The case requesting institution must already be resolved before the rule may advance the
+    case or record a quote. With no requester, return a proposal instead of fabricating identity.
+    """
+    sender = _sender(e)
+    if e.direction != "outbound" or sender != CONTACT_SENDER or (e.direction_hint or "") in NOT_CUSTOMER_HINTS:
+        return None
+    if c.closed:
+        return None
+
+    pdf_keys: dict[tuple[int, int], tuple[str, MailDocument]] = {}
+    for doc in sorted(e.documents, key=lambda d: (d.filename or "", d.sha256 or "")):
+        if not _is_pdf(doc):
+            continue
+        for token in doc.cn_tokens:
+            key = gmail_quote_key(token, e.sent_at)
+            if key is not None:
+                pdf_keys.setdefault(key, (token, doc))
+    if not pdf_keys:
+        return None
+    if len(pdf_keys) >= 2:
+        numbers = ", ".join(canonical_quote_number(k) for k in sorted(pdf_keys))
+        return PlannedAction(e.id, "R1", PROPOSAL, (
+            f"el hilo ya pertenece al caso, pero el correo lleva varios números nuevos ({numbers}): un humano decide",),
+            case_id=c.id, case_title=c.title, organization_id=c.organization_id)
+    key, (token, doc) = next(iter(pdf_keys.items()))
+    number = canonical_quote_number(key)
+    if key in ix.by_quote_key or key in ix.claimed_keys:
+        return None
+    elsewhere = [n for n, y in ix.by_correlative.get(key[1], []) if y != key[0]]
+    if elsewhere:
+        return PlannedAction(e.id, "R1", PROPOSAL, (
+            f"el hilo ya pertenece al caso, pero el correlativo de {number} existe como "
+            f"{', '.join(sorted(elsewhere))}: un humano decide",),
+            case_id=c.id, case_title=c.title, organization_id=c.organization_id, quote_number=number)
+    if c.organization_id is None:
+        return PlannedAction(e.id, "R1", PROPOSAL, (
+            f"se envió la cotización {number} en el hilo del caso, pero falta confirmar la institución solicitante",
+            "se vinculará y registrará como «Enviada» cuando una persona nombre la institución",
+        ), case_id=c.id, case_title=c.title, quote_number=number)
+    if c.stage not in ("lead", "qualifying", "qualified", "quoting", "negotiating"):
+        return PlannedAction(e.id, "R1", PROPOSAL, (
+            f"se envió la cotización {number}, pero el caso está en {c.stage}: un humano decide",),
+            case_id=c.id, case_title=c.title, organization_id=c.organization_id, quote_number=number)
+
+    derivation = _derivation(token, e.sent_at)
+    reasons = [
+        "mismo hilo de Gmail que el caso",
+        f"cotización nueva {number} enviada por contacto@ (PDF «{doc.filename}»)",
+    ]
+    note = _note("R1", reasons)
+    to_quoting: dict[str, tuple[str, ...]] = {
+        "lead": ("qualifying", "qualified", "quoting"),
+        "qualifying": ("qualified", "quoting"),
+        "qualified": ("quoting",),
+        "quoting": (),
+        "negotiating": (),
+    }
+    steps: list[dict[str, Any]] = [_link_step(c, e.id, "mentions", note)]
+    steps.extend(_advance_step(stage, note) for stage in to_quoting[c.stage])
+    steps.append({"command": "record_historical_quotation", "inputs": {
+        "opportunity_id": "@case", "quote_number": number, "printed_quote_numbers": [token],
+        "quote_number_derivation": derivation,
+        "document_sha256": doc.sha256, "sent_at": e.sent_at, "origin_source_record_id": e.id,
+        "ledger_decision_id": f"mail-rule:{e.id}", "filename": doc.filename, "note": note,
+    }})
+    ix.claimed_keys[key] = e.id
+    return PlannedAction(
+        e.id, "R1", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+        organization_id=c.organization_id, quote_number=number, commands=tuple(steps),
+        context={"case": c.id, "case_version": c.version, "from_stage": c.stage},
+    )
 
 def _derivation(token: str, sent_at: str | None) -> dict[str, Any]:
     digits = re.sub(r"^(CN|COT)?\s*-?\s*", "", token.strip(), flags=re.IGNORECASE)
@@ -713,24 +825,63 @@ def _case_with_quote_steps(e: MailEvidence, doc: MailDocument, number: str, toke
 
 
 def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAction:
-    """R7 (proposal) or R8."""
+    """R7 opens a real lead for an explicit inbound quote request; identity stays conservative."""
     if not domains:
         return PlannedAction(e.id, "R8", NONE, ("correo interno",))
     d = domains[0]
-    if d in FREE_MAIL_DOMAINS:
-        return PlannedAction(e.id, "R8", NONE, (f"remitente con correo gratuito ({d}): sólo R1/R2 pueden vincularlo",))
-    orgs = ix.by_domain.get(d, [])
-    subject = fold(e.subject)
-    if orgs and any(w in subject for w in QUOTE_REQUEST_WORDS):
-        if len(orgs) == 1:
-            o = orgs[0]
-            return PlannedAction(e.id, "R7", PROPOSAL, (
-                f"solicitud de cotización de «{o.name}» sin hilo vinculado: propuesta «Nuevo caso»",),
-                organization_id=o.id, organization_name=o.name)
+    if not _is_quote_request(e):
+        return PlannedAction(e.id, "R8", NONE, ("ninguna regla aplica: queda en Revisión",))
+
+    domain_orgs = [] if d in FREE_MAIL_DOMAINS else ix.by_domain.get(d, [])
+    requester = ix.orgs.get(e.requester_organization_id or "")
+    if requester is not None and requester.is_supplier:
+        requester = None
+    if requester is not None and domain_orgs and requester.id not in {o.id for o in domain_orgs}:
         return PlannedAction(e.id, "R7", PROPOSAL, (
-            f"solicitud de cotización desde {d}, dominio de {len(orgs)} instituciones",),
+            f"la firma identifica «{requester.name}», pero el dominio {d} pertenece a otra institución: un humano elige",),
+            candidates=tuple(sorted({requester.id, *(o.id for o in domain_orgs)})))
+    orgs = [requester] if requester is not None else domain_orgs
+    if len(orgs) >= 2:
+        return PlannedAction(e.id, "R7", PROPOSAL, (
+            f"solicitud de cotización desde {d}, dominio de {len(orgs)} instituciones: un humano elige",),
             candidates=tuple(sorted(o.id for o in orgs)))
-    return PlannedAction(e.id, "R8", NONE, ("ninguna regla aplica: queda en Revisión",))
+
+    if len(orgs) == 1:
+        o = orgs[0]
+        how = ("institución identificada exactamente en el cuerpo del correo"
+               if requester is not None else "remitente de una institución conocida")
+        reasons = [f"solicitud de cotización de «{o.name}»", how]
+        note = _note("R7", reasons)
+        title = _request_case_title(e, o)
+        commands = (
+            {"command": "open_commercial_case", "inputs": {
+                "title": title, "origin_source_record_id": e.id, "note": note}},
+            {"command": "add_case_organization", "inputs": {
+                "opportunity_id": "@case", "opportunity_version": "@case_version",
+                "organization_id": o.id, "organization_version": o.version,
+                "role": "requesting_institution", "note": note}},
+            _advance_step("qualifying", note),
+            _advance_step("qualified", note),
+        )
+        return PlannedAction(
+            e.id, "R7", AUTO, tuple(reasons), case_title=title, organization_id=o.id,
+            organization_name=o.name, commands=commands,
+        )
+
+    if not e.requester_checked:
+        return PlannedAction(e.id, "R7", PROPOSAL, (
+            "solicitud de cotización: esperando la comprobación determinística de institución en el cuerpo",
+        ))
+    reason = (f"solicitud de cotización desde correo gratuito ({d})"
+              if d in FREE_MAIL_DOMAINS else f"solicitud de cotización desde dominio no reconocido ({d})")
+    note = _note("R7", [reason, "se abre caso sin inventar institución solicitante"])
+    title = _request_case_title(e)
+    return PlannedAction(
+        e.id, "R7", AUTO, (reason, "caso abierto en «Solicitada» sin institución hasta confirmación"),
+        case_title=title,
+        commands=({"command": "open_commercial_case", "inputs": {
+            "title": title, "origin_source_record_id": e.id, "note": note}},),
+    )
 
 
 __all__ = [
