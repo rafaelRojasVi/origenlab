@@ -81,3 +81,22 @@ def test_the_pool_pins_the_queue_search_path_after_verifying(monkeypatch) -> Non
 
 def test_the_module_app_imports_without_a_database() -> None:
     assert isinstance(task_queue.app, procrastinate.App)
+
+
+def test_the_periodic_sweep_defers_into_the_connector_the_cli_swaps_in() -> None:
+    """Regression, 2026-10-07: with `with_connector` the hosted worker ran but its sweep jobs went to
+    the module app's in-memory connector, so nothing was ever triaged."""
+    import asyncio
+
+    from procrastinate import periodic
+
+    real = testing.InMemoryConnector()
+    with task_queue.app.replace_connector(real) as swapped:
+        async def tick() -> None:
+            async with swapped.open_async():
+                deferrer = periodic.PeriodicDeferrer(registry=swapped.periodic_registry)
+                (sweep,) = swapped.periodic_registry.periodic_tasks.values()
+                await deferrer.defer_jobs([(sweep, 1_800_000_000)])
+
+        asyncio.run(tick())
+    assert [j["task_name"] for j in real.jobs.values()] == ["sweep_untriaged"]

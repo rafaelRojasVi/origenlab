@@ -97,7 +97,7 @@ def connector_for(target: WorkerTarget, *, max_size: int = 3) -> procrastinate.P
 
 def build_app(connector: Any | None = None) -> procrastinate.App:
     """The app with both tasks registered. `connector` defaults to an in-memory one (tests, and
-    import time); the CLI replaces it with :func:`connector_for` via `App.with_connector`."""
+    import time); the CLI replaces it with :func:`connector_for` via `App.replace_connector`."""
     app = procrastinate.App(connector=connector or procrastinate_testing.InMemoryConnector())
 
     @app.task(name="triage_message", queue=QUEUE, retry=RETRY, pass_context=False)

@@ -2071,7 +2071,7 @@ From a design critique of the shipped screens rendered with invented data (`apps
 | Day 3 first | A scheduled follow-up waits for day 3 like any other: a quote sent today or yesterday is not chased today |
 | Evidence | `apps/dashboard` `npm run validate`: **629 passed** + build |
 
-### 2.7.69 Mail triage on a Procrastinate queue, 2026-10-06 — built, not applied, not deployed
+### 2.7.69 Mail triage on a Procrastinate queue, 2026-10-06 — built; applied and deployed in §2.7.71
 
 | | |
 |---|---|
@@ -2095,6 +2095,16 @@ From a design critique of the shipped screens rendered with invented data (`apps
 | Rule | A client email stays in «Te toca responder» only until a task is scheduled on the case after it («En pausa», «Recordar…», «No requiere respuesta»): that task is the operator's answer. A newer email from the client puts the case back. A task scheduled before the email does not hide it. Without `created_at` (older API) a case «En pausa» counts as answered |
 | Button | «No requiere respuesta» on each reply row (sales/admin): `create-task` «Seguimiento de N» a week out, note naming the client's email date. The row leaves the list and comes back as a follow-up on that day |
 | Evidence | `apps/dashboard` `npm run validate`: **631 passed** + build; `apps/api` `scripts/validate.sh`: **3811 passed**, 659 skipped |
+
+### 2.7.71 Mail triage and Drive filing switched on in hosted, 2026-10-07 — applied, deployed; one fix to deploy
+
+| | |
+|---|---|
+| Schema | The three §2.7.69 migrations applied to `origenlab-v2` with psql as `origenlab_migrator` over the session pooler; ledger 46 → **49**. `20261006180000` needs `GRANT CREATE ON DATABASE` with grant option, which the migrator lacks: the owner granted it from the SQL Editor (`postgres`), the file ran, and the owner revoked it (`… from origenlab_migrator cascade`); `origenlab_owner` holds no database CREATE afterwards. The other two applied first, on their own, without it |
+| Proxy | `origenlab-dashboard-proxy` redeployed from `main` 3515461 (validate 427 passed; version `53a0040a`), shipping #668's review-tab paths |
+| Worker | Render Background Worker `origenlab-mail-triage` (`srv-db2r5c0m7kps73c0nmo0`) created by hand: `ORIGENLAB_WORKER_TRIAGE_ENABLED=true`, model off. It started (`triage_worker`, `model: off`) and heartbeats, but **never swept**: `triage_cli` built its app with `App.with_connector`, and Procrastinate's periodic deferrer defers through the task's own app — the module's in-memory connector — so `procrastinate_jobs` and `procrastinate_periodic_defers` stayed empty. Fixed here with `replace_connector` and a regression test that fails on the old code; worker validate 395 passed, 45 skipped. Live after merge (the worker auto-deploys from `main`) |
+| Drive | Cron `origenlab-gmail-sync`: start command now `gmail-sync && drive-file`, the seven Drive variables set (consent from the 2026-09-26 archive, exactly the `drive` scope), redeployed. Before that, `drive-ledger-import` recorded the 09-26 archive's two `archive_links.jsonl` (138 documents, 138 inserted). First run 2026-10-07 03:06 UTC: 10 candidates, **7 filed, 3 reused, 0 refused** |
+| Not done | the model (`ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED`, its own Anthropic key) after a few days of rule-only logs; rotate the `postgres` and `origenlab_migrator` passwords and the Drive client secret / refresh token, all of which passed through a chat session |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 
