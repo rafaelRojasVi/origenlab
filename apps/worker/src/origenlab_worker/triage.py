@@ -84,15 +84,31 @@ select sr.id::text
    and m.parse_status = 'parsed'
    and m.eml_storage_path is not null
    and m.internal_date >= now() - make_interval(days => %s)
-   and not exists (select 1 from evidence.assertion a
-                    where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s)
+   and (
+     not exists (select 1 from evidence.assertion a
+                  where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s)
+     or (
+       exists (select 1 from evidence.assertion a
+                where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s
+                  and a.value->>'class' = 'bounce')
+       and not exists (select 1 from evidence.assertion d
+                        where d.source_record_id = sr.id and d.kind = 'delivery_failure'
+                          and d.value_norm = %s)
+     )
+   )
  order by m.internal_date desc
  limit %s
 """
 _ONE = """
 select sr.id::text, m.id::text, m.direction, m.labels, m.eml_storage_path, m.provider_thread_id,
        exists (select 1 from evidence.assertion a
-                where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s)
+                where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s),
+       (select a.value->>'class' from evidence.assertion a
+         where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s
+         limit 1),
+       exists (select 1 from evidence.assertion d
+                where d.source_record_id = sr.id and d.kind = 'delivery_failure'
+                  and d.value_norm = %s)
   from evidence.source_record sr
   join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
  where sr.id = %s and sr.kind = 'gmail_message'
@@ -162,6 +178,38 @@ class TriageDb:
             for norm, value in mentions:
                 cur.execute(_INSERT_ASSERTION, (source_record_id, "product_mention", norm, Jsonb(value)))
             return len(mentions)
+
+    def record_delivery_failure(self, source_record_id: str, analysis: BounceAnalysis) -> int:
+        """Record the versioned NDR observation and apply only its exact Batch-A hard block.
+
+        The assertion and privileged call share one transaction. If the database boundary refuses
+        the proposed block, the assertion rolls back too and the sweep retries instead of silently
+        recording a half-applied safety decision.
+        """
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(
+                _INSERT_ASSERTION,
+                (source_record_id, "delivery_failure", DELIVERY_FAILURE_VALUE_NORM, Jsonb(analysis.as_json())),
+            )
+            for address in analysis.auto_block_addresses:
+                cur.execute(
+                    """select outbound.add_contact_control(
+                           'block', 'all', %s, 'invalid_address', null, null, %s
+                       )""",
+                    (
+                        address,
+                        Jsonb({
+                            "source_record_id": source_record_id,
+                            "triage_value_norm": VALUE_NORM,
+                            "delivery_value_norm": DELIVERY_FAILURE_VALUE_NORM,
+                            "reason_code": analysis.reason_code,
+                        }),
+                    ),
+                )
+                cur.fetchone()
+        return len(analysis.auto_block_addresses)
 
 
 def _candidate_json(c: ProductCandidate) -> dict[str, Any]:
@@ -236,6 +284,13 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
         mail = parse_mail(raw)
     except Exception:  # noqa: BLE001 - a malformed message is recorded as such by the capture; skip it
         return TriageResult("parse_error")
+
+    # Backfill a delivery analysis for a bounce that was already triaged before this slice. Ordinary
+    # messages never re-run, so enabling automatic bounce blocking does not re-spend model calls.
+    if done:
+        analysis = analyze_bounce(raw)
+        db.record_delivery_failure(message.source_record_id, analysis)
+        return TriageResult("recorded", "bounce", "not_needed", 0)
 
     verdict = classify(TriageInput(direction=message.direction, labels=message.labels, mail=mail))
     candidates = db.candidates(mail) if verdict.needs_model or verdict.signals.get("quote_word") else []
