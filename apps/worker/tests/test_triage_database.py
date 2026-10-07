@@ -24,7 +24,7 @@ from origenlab_worker.database import (
     open_verified_connection,
     open_worker_db,
 )
-from origenlab_worker.triage import VALUE_NORM, ModelSettings, TriageDb, triage_one
+from origenlab_worker.triage import REQUESTER_VALUE_NORM, VALUE_NORM, ModelSettings, TriageDb, triage_one
 from origenlab_worker.triage_model import DEFAULT_MODEL
 from v2_command_harness import build_disposable_database, needs_worker_db, worker_dsn
 
@@ -118,11 +118,60 @@ def test_a_captured_request_is_pending_then_recorded_once(dsn, target, mailbox_i
         assert (result.outcome, result.triage_class, result.model) == ("recorded", "quote_request", "off")
         assert sid not in db.pending(since_days=36500, limit=500)
         assert triage_one(db, store, sid, ModelSettings(None, DEFAULT_MODEL)).outcome == "already_triaged"
-    rows = owner_rows(dsn, "select kind, value_norm, resolution, value->>'class', value->>'model_state' "
-                           "from evidence.assertion where source_record_id = %s", (sid,))
-    assert rows == [("message_triage", VALUE_NORM, "unresolved", "quote_request", "off")]
+    rows = owner_rows(
+        dsn,
+        "select kind, value_norm, resolution, value->>'class', value->>'model_state', value->>'status' "
+        "from evidence.assertion where source_record_id = %s order by value_norm",
+        (sid,),
+    )
+    assert rows == [
+        ("message_triage", REQUESTER_VALUE_NORM, "unresolved", None, None, "none"),
+        ("message_triage", VALUE_NORM, "unresolved", "quote_request", "off", None),
+    ]
     assert owner_rows(dsn, "select review_status from evidence.source_record where id = %s", (sid,)) == [("pending",)]
     assert business_rows(dsn) == before  # nothing in crm.* or outbound.*
+
+
+def test_a_previous_quote_request_gets_requester_identity_backfilled_without_retriage(
+    dsn, target, mailbox_id
+) -> None:
+    tag = uuid.uuid4().hex[:8]
+    org_name = f"Pontificia Universidad Ejemplo de Valparaíso {tag}"
+    with owner_conn(dsn) as conn:
+        org_id = conn.execute(
+            "insert into crm.organization (kind, name, confirmation) "
+            "values ('institution', %s, 'confirmed') returning id::text",
+            (org_name,),
+        ).fetchone()[0]
+    store = Store()
+    raw = make_raw(
+        subject="Solicitud de cotización de productos",
+        message_id=f"<{uuid.uuid4().hex}@gmail.invalid>",
+    ).replace(b"Hola,\nadjunto el documento.\n", f"Hola,\n{org_name}\n".encode())
+    gid = capture(target, mailbox_id, store, f"tr-{tag}", raw)
+    sid = source_record(dsn, gid)
+
+    with triage_conn(target) as conn:
+        db = TriageDb(conn)
+        assert triage_one(db, store, sid, ModelSettings(None, DEFAULT_MODEL)).outcome == "recorded"
+    with owner_conn(dsn) as conn:
+        conn.execute(
+            "delete from evidence.assertion where source_record_id = %s and kind = 'message_triage' "
+            "and value_norm = %s",
+            (sid, REQUESTER_VALUE_NORM),
+        )
+    with triage_conn(target) as conn:
+        db = TriageDb(conn)
+        assert sid in db.pending(since_days=36500, limit=500)
+        result = triage_one(db, store, sid, ModelSettings(None, DEFAULT_MODEL))
+        assert (result.outcome, result.triage_class, result.model) == ("recorded", "quote_request", "not_needed")
+    assert owner_rows(
+        dsn,
+        "select value->>'status', value->>'organization_id', value->>'organization_name' "
+        "from evidence.assertion where source_record_id = %s and kind = 'message_triage' "
+        "and value_norm = %s",
+        (sid, REQUESTER_VALUE_NORM),
+    ) == [("matched", org_id, org_name)]
 
 
 def test_a_clear_no_such_user_bounce_becomes_a_global_block(dsn, target, mailbox_id) -> None:
