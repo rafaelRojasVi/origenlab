@@ -111,11 +111,21 @@ def _json(value: Any) -> Any:
 #: triage (`apps/worker` triage.py) adds `message_triage` / `product_mention` rows to live captures;
 #: they must not hide a live email from the rules.
 _EVIDENCE_SQL = """
-select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id
+select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
+       requester.value as requester_match
   from evidence.source_record sr
   join lateral (select cm.direction, cm.provider_thread_id from comms.message cm
                  where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
                  order by cm.created_at limit 1) m on true
+  left join lateral (
+       select a.value
+         from evidence.assertion a
+        where a.source_record_id = sr.id
+          and a.kind = 'message_triage'
+          and a.value_norm = 'requester:v1'
+        order by a.created_at desc
+        limit 1
+  ) requester on true
  where sr.kind = 'gmail_message' and not sr.is_quarantined
    and sr.review_status <> 'rejected'
    and sr.payload ->> 'staging_source_record_sha256' is null
@@ -204,6 +214,8 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
                          cn_tokens=tuple(d.get("cn_tokens") or ()))
             for d in (p.get("documents") or []) if isinstance(d, dict)
         )
+        requester = _json(r.get("requester_match")) or {}
+        requester_matched = requester.get("status") == "matched"
         evidence.append(MailEvidence(
             id=r["id"], thread_id=thread, direction=direction, sender=p.get("sender"),
             recipients=(p.get("recipients") or "",), subject=p.get("subject_raw"),
@@ -211,6 +223,9 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
             linked_case_ids=tuple(sorted(set(linked_cases.get(r["id"], [])))),
             campaign_thread=bool(thread and thread in campaign_threads),
             direction_hint=p.get("direction_hint"),
+            requester_checked=bool(requester),
+            requester_organization_id=(requester.get("organization_id") if requester_matched else None),
+            requester_organization_name=(requester.get("organization_name") if requester_matched else None),
         ))
         display[r["id"]] = {"subject": p.get("subject_raw"), "sent_at": p.get("sent_at"),
                             "direction": direction}
