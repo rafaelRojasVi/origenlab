@@ -43,6 +43,7 @@ from origenlab_worker.triage_model import (
 from origenlab_worker.triage_rules import TRIAGE_VERSION, RuleVerdict, TriageInput, classify
 
 VALUE_NORM = f"triage:v{TRIAGE_VERSION}"
+REQUESTER_VALUE_NORM = "requester:v1"
 #: The periodic sweep looks this far back; `triage-once --since-days` reaches further on purpose.
 DEFAULT_SINCE_DAYS = 14
 
@@ -97,6 +98,14 @@ select sr.id::text
                         where d.source_record_id = sr.id and d.kind = 'delivery_failure'
                           and d.value_norm = %s)
      )
+     or (
+       exists (select 1 from evidence.assertion a
+                where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s
+                  and a.value->>'class' = 'quote_request')
+       and not exists (select 1 from evidence.assertion r
+                        where r.source_record_id = sr.id and r.kind = 'message_triage'
+                          and r.value_norm = %s)
+     )
    )
  order by m.internal_date desc
  limit %s
@@ -110,7 +119,10 @@ select sr.id::text, m.id::text, m.direction, m.labels, m.eml_storage_path, m.pro
          limit 1),
        exists (select 1 from evidence.assertion d
                 where d.source_record_id = sr.id and d.kind = 'delivery_failure'
-                  and d.value_norm = %s)
+                  and d.value_norm = %s),
+       exists (select 1 from evidence.assertion r
+                where r.source_record_id = sr.id and r.kind = 'message_triage'
+                  and r.value_norm = %s)
   from evidence.source_record sr
   join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
  where sr.id = %s and sr.kind = 'gmail_message'
@@ -130,6 +142,22 @@ values (%s, %s, %s, %s)
 on conflict (source_record_id, kind, value_norm) do nothing
 """
 
+_REQUESTER_ORGANIZATIONS = """
+select o.id::text, o.name
+  from crm.organization o
+ where o.status = 'active'
+   and o.confirmation = 'confirmed'
+   and o.merged_into_organization_id is null
+   and not exists (
+       select 1
+         from crm.organization_relationship rel
+        where rel.organization_id = o.id
+          and rel.role in ('supplier', 'manufacturer')
+          and (rel.valid_to is null or rel.valid_to > current_date)
+   )
+ order by length(o.name) desc, o.id
+"""
+
 
 class TriageDb:
     """The triage's reads and writes on one verified `origenlab_worker` connection."""
@@ -146,18 +174,23 @@ class TriageDb:
 
     def pending(self, *, since_days: int, limit: int) -> list[str]:
         with self._tx() as cur:
-            cur.execute(_PENDING, (since_days, VALUE_NORM, VALUE_NORM, DELIVERY_FAILURE_VALUE_NORM, limit))
+            cur.execute(_PENDING, (
+                since_days, VALUE_NORM, VALUE_NORM, DELIVERY_FAILURE_VALUE_NORM,
+                VALUE_NORM, REQUESTER_VALUE_NORM, limit,
+            ))
             return [row[0] for row in cur.fetchall()]
 
-    def load(self, source_record_id: str) -> tuple[PendingMessage, bool, str | None, bool] | None:
+    def load(self, source_record_id: str) -> tuple[PendingMessage, bool, str | None, bool, bool] | None:
         with self._tx() as cur:
-            cur.execute(_ONE, (VALUE_NORM, VALUE_NORM, DELIVERY_FAILURE_VALUE_NORM, source_record_id))
+            cur.execute(_ONE, (
+                VALUE_NORM, VALUE_NORM, DELIVERY_FAILURE_VALUE_NORM, REQUESTER_VALUE_NORM, source_record_id,
+            ))
             row = cur.fetchone()
         if row is None:
             return None
-        sr, mid, direction, labels, path, thread, done, triage_class, delivery_done = row
+        sr, mid, direction, labels, path, thread, done, triage_class, delivery_done, requester_done = row
         return (PendingMessage(sr, mid, direction, tuple(labels or ()), path, thread), bool(done),
-                triage_class, bool(delivery_done))
+                triage_class, bool(delivery_done), bool(requester_done))
 
     def linked_cases(self, thread_id: str | None) -> list[LinkedCase]:
         """The open and closed cases any email of this Gmail thread is linked to — the API's own
@@ -172,12 +205,34 @@ class TriageDb:
         with self._tx() as cur:
             return match_products(cur, mail.subject, mail.body)
 
+    def requester_match(self, body: str) -> dict[str, Any]:
+        """Exact, unique CRM institution name in the cleaned body; no model and no fuzzy match."""
+        with self._tx() as cur:
+            cur.execute(_REQUESTER_ORGANIZATIONS)
+            organizations = [(str(oid), str(name)) for oid, name in cur.fetchall()]
+        return match_requester_organization(body, organizations)
+
+    def record_requester(self, source_record_id: str, requester: dict[str, Any]) -> None:
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(
+                _INSERT_ASSERTION,
+                (source_record_id, "message_triage", REQUESTER_VALUE_NORM, Jsonb(requester)),
+            )
+
     def record(self, source_record_id: str, reading: dict[str, Any],
-               mentions: Sequence[tuple[str, dict[str, Any]]]) -> int:
+               mentions: Sequence[tuple[str, dict[str, Any]]],
+               requester: dict[str, Any] | None = None) -> int:
         from psycopg.types.json import Jsonb
 
         with self._tx() as cur:
             cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", VALUE_NORM, Jsonb(reading)))
+            if requester is not None:
+                cur.execute(
+                    _INSERT_ASSERTION,
+                    (source_record_id, "message_triage", REQUESTER_VALUE_NORM, Jsonb(requester)),
+                )
             for norm, value in mentions:
                 cur.execute(_INSERT_ASSERTION, (source_record_id, "product_mention", norm, Jsonb(value)))
             return len(mentions)
@@ -213,6 +268,43 @@ class TriageDb:
                 )
                 cur.fetchone()
         return len(analysis.auto_block_addresses)
+
+
+def _identity_text(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", fold(text)).split())
+
+
+def match_requester_organization(body: str, organizations: Sequence[tuple[str, str]]) -> dict[str, Any]:
+    """Unique exact organization-name phrase in the cleaned body.
+
+    Short/generic names are intentionally ignored. A second match makes the result ambiguous.
+    Only canonical ids/names are stored; the body itself is never persisted.
+    """
+    haystack = f" {_identity_text(body)} "
+    matches: list[tuple[str, str]] = []
+    for organization_id, name in organizations:
+        needle = _identity_text(name)
+        if len(needle) < 10 or len(needle.split()) < 2:
+            continue
+        if f" {needle} " in haystack:
+            matches.append((organization_id, name))
+    if len(matches) == 1:
+        oid, name = matches[0]
+        return {
+            "requester_version": 1,
+            "status": "matched",
+            "organization_id": oid,
+            "organization_name": name,
+            "how": "exact_name_in_body",
+        }
+    if not matches:
+        return {"requester_version": 1, "status": "none", "how": "exact_name_in_body"}
+    return {
+        "requester_version": 1,
+        "status": "ambiguous",
+        "how": "exact_name_in_body",
+        "candidate_ids": sorted(oid for oid, _name in matches),
+    }
 
 
 def _candidate_json(c: ProductCandidate) -> dict[str, Any]:
@@ -274,8 +366,10 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     loaded = db.load(source_record_id)
     if loaded is None:
         return TriageResult("not_found")
-    message, done, existing_class, delivery_done = loaded
-    if done and not (existing_class == "bounce" and not delivery_done):
+    message, done, existing_class, delivery_done, requester_done = loaded
+    needs_delivery_backfill = done and existing_class == "bounce" and not delivery_done
+    needs_requester_backfill = done and existing_class == "quote_request" and not requester_done
+    if done and not needs_delivery_backfill and not needs_requester_backfill:
         return TriageResult("already_triaged")
     if not message.eml_storage_path:
         return TriageResult("no_eml")
@@ -288,12 +382,15 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     except Exception:  # noqa: BLE001 - a malformed message is recorded as such by the capture; skip it
         return TriageResult("parse_error")
 
-    # Backfill a delivery analysis for a bounce that was already triaged before this slice. Ordinary
-    # messages never re-run, so enabling automatic bounce blocking does not re-spend model calls.
-    if done:
+    # Independent backfills never re-run the model. Hard-bounce evidence keeps triage:v1 exactly;
+    # requester:v1 only reads the cleaned body and a read-only CRM organization list.
+    if needs_delivery_backfill:
         analysis = analyze_bounce(raw)
         db.record_delivery_failure(message.source_record_id, analysis)
         return TriageResult("recorded", "bounce", "not_needed", 0)
+    if needs_requester_backfill:
+        db.record_requester(message.source_record_id, db.requester_match(mail.body))
+        return TriageResult("recorded", "quote_request", "not_needed", 0)
 
     verdict = classify(TriageInput(direction=message.direction, labels=message.labels, mail=mail))
     candidates = db.candidates(mail) if verdict.needs_model or verdict.signals.get("quote_word") else []
@@ -321,7 +418,8 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
 
     mentions = mentions_for(reading, candidates)
     value = reading_value(verdict, mail, candidates, state, reading, int((clock() - started) * 1000), cases)
-    written = db.record(message.source_record_id, value, mentions)
+    requester = db.requester_match(mail.body) if verdict.triage_class == "quote_request" else None
+    written = db.record(message.source_record_id, value, mentions, requester)
     if verdict.triage_class == "bounce":
         db.record_delivery_failure(message.source_record_id, analyze_bounce(raw))
     return TriageResult("recorded", verdict.triage_class, state, written)
@@ -354,5 +452,6 @@ class SweepCounts:
             self.model[result.model] = self.model.get(result.model, 0) + 1
 
 
-__all__ = ["DEFAULT_SINCE_DAYS", "OUTCOMES", "VALUE_NORM", "ModelSettings", "ModelUnavailable", "is_permanent_api_error", "PendingMessage",
-           "SweepCounts", "TriageDb", "TriageResult", "mentions_for", "reading_value", "triage_one"]
+__all__ = ["DEFAULT_SINCE_DAYS", "OUTCOMES", "VALUE_NORM", "REQUESTER_VALUE_NORM", "ModelSettings",
+           "ModelUnavailable", "is_permanent_api_error", "PendingMessage", "SweepCounts", "TriageDb",
+           "TriageResult", "match_requester_organization", "mentions_for", "reading_value", "triage_one"]
