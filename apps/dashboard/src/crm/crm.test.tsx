@@ -336,13 +336,13 @@ describe("dashboard shell", () => {
     window.location.hash = "";
   });
 
-  it("navigates only the eight CRM sections and marks the current one", async () => {
+  it("navigates only the nine CRM sections and marks the current one", async () => {
     signedInAt(`#/crm/oportunidades`);
     const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
       "#/crm/resumen", "#/crm/oportunidades", "#/crm/organizaciones", "#/crm/personas",
-      "#/crm/proveedores", "#/crm/drive", "#/crm/marketing", "#/crm/revision",
+      "#/crm/proveedores", "#/crm/catalogo", "#/crm/drive", "#/crm/marketing", "#/crm/revision",
     ]);
     expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual([
       "Oportunidades",

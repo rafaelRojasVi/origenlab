@@ -5,6 +5,7 @@ export type CrmSection =
   | "organizaciones"
   | "personas"
   | "proveedores"
+  | "catalogo"
   | "drive"
   | "marketing"
   | "revision";
@@ -21,6 +22,7 @@ export const CRM_NAV: CrmNavItem[] = [
   { id: "organizaciones", label: "Organizaciones", group: "comercial" },
   { id: "personas", label: "Personas", group: "comercial" },
   { id: "proveedores", label: "Proveedores", group: "comercial" },
+  { id: "catalogo", label: "Catálogo", group: "comercial" },
   { id: "drive", label: "Archivo Drive", group: "archivo" },
   { id: "marketing", label: "Marketing", group: "archivo" },
   { id: "revision", label: "Revisión", group: "control" },
