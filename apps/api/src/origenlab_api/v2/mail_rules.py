@@ -613,6 +613,10 @@ def _request_case_title(e: MailEvidence, organization: Organization | None = Non
 
 def _is_quote_request(e: MailEvidence) -> bool:
     subject = fold(e.subject)
+    # A reply/forward with «cotización» is much more likely to belong to an existing case whose
+    # thread link is missing; never open a second case from that weak signal.
+    if subject.startswith(("re:", "rv:", "fw:", "fwd:")):
+        return False
     # «solicitud» by itself is too broad to create a commercial case automatically.
     strong = tuple(w for w in QUOTE_REQUEST_WORDS if w != "solicitud")
     return any(w in subject for w in strong)
