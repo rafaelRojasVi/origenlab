@@ -37,12 +37,12 @@
   ],
   "probes": {
     "migrations.count": {
-      "expect": 46,
+      "expect": 49,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20261006120000",
-      "why": "slice7_historical_current_revision_choice, the newest migration — a historical_import revision may be superseded by any current revision of its quote (the operator's «Elegir revisión vigente»), with crm.quote_revision_historical_guard replaced in place to require the superseding revision be current."
+      "expect": "20261006180200",
+      "why": "slice4_triage_review, the newest migration — evidence.triage_review (DOMAIN.md §7 #55), a person's append-only verdict on each mail-triage reading, and the assertion.triage_reviewed event; before it 20261006180100 adds the message_triage and product_mention assertion kinds and 20261006180000 the worker's Procrastinate queue in its own procrastinate schema (docs/ARCHITECTURE.md §8, D2)."
     },
 
     "source_record.total": {
@@ -153,6 +153,7 @@
     "catalog.supplier_terms": { "expect": 0, "why": "slice 7: no supplier terms exist in a fresh build; they are operator decisions." },
     "catalog.fx_rate": { "expect": 0, "why": "slice 7: no exchange rate exists in a fresh build; rates are fetched from Banco Central or entered by an operator." },
     "catalog.cost_parameter": { "expect": 5, "why": "slice 7: migration 20261005140628 seeds only the five public/regulatory costing parameters (iva_rate, duty_rate_general, duty_rate_fta, courier_threshold_usd_fob, insurance_pct_of_fob; valid_from 2026-01-01, no operator). The repository is public, so the other eighteen keys are set per environment by an operator. Fewer means the seed did not run; more means something set a parameter during the build." },
-    "evidence.document_line": { "expect": 0, "why": "slice 7: no quote-document line exists in a fresh build; lines are loaded by a separate extraction step outside the build." }
+    "evidence.document_line": { "expect": 0, "why": "slice 7: no quote-document line exists in a fresh build; lines are loaded by a separate extraction step outside the build." },
+    "evidence.triage_review": { "expect": 0, "why": "slice 4: no triage verdict exists in a fresh build; verdicts are operator decisions in Revisión." }
   }
 }

@@ -125,6 +125,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // Email → cases dry run (spec 2026-10-05): what the rules would do, with their reasons, and the
   // actions already applied. Admin only upstream (403 for sales and viewer); writes nothing.
   /^\/v2\/workspace\/mail-rules\/preview$/,
+  // Mail triage review (`apps/api` v2/triage_review.py): the worker's suggestions for the mail a
+  // person wrote, with their email, products and case stage (`?status=&limit=`). Any operator
+  // reads; GET-only upstream through the contact-redacting route. Nothing under it is reachable.
+  /^\/v2\/workspace\/triage-readings$/,
   /^\/v2\/cockpit\/work-queue$/,
   // Catalog 1a reads (`apps/api` v2/catalog/routes.py): products, one product, a supplier's
   // terms, cost parameters, FX, price history (`?model_key=&limit=`) and a short-lived signed
@@ -203,7 +207,8 @@ const TEST_SEND_PATH_RE = /^\/v2\/commands\/send-campaign-test$/;
 
 /**
  * Email → cases commands (spec 2026-10-05): apply the rules' `auto` actions, undo one applied
- * action, or switch the automatic R1/R2 run on or off (`set-auto-mail-rules`). Three exact paths. Upstream all three are admin-only, need an `Idempotency-Key`, and the apply
+ * action, or switch the automatic R1/R2 run on or off (`set-auto-mail-rules`), plus the mail-triage verdict
+ * (`review-triage`, sales or admin). Four exact paths. Upstream all three are admin-only, need an `Idempotency-Key`, and the apply
  * re-plans on the server — the browser never sends an action, at most the evidence ids to limit
  * the run to. The case commands the rules call stay unreachable from the browser except the two
  * the case drawer uses (`CASE_COMMAND_POST_PATHS`). Same
@@ -213,6 +218,9 @@ export const MAIL_RULES_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/apply-mail-rules$/,
   /^\/v2\/commands\/undo-mail-rule-action$/,
   /^\/v2\/commands\/set-auto-mail-rules$/,
+  // A person's verdict on one mail-triage suggestion (approve, correct, reject; optional note).
+  // `sales` or `admin` upstream, `Idempotency-Key`, append-only; it moves no case.
+  /^\/v2\/commands\/review-triage$/,
 ];
 
 /** At most 2,000 evidence ids, or a receipt id and a note. */
