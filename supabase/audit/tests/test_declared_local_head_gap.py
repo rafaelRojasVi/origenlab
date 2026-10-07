@@ -404,14 +404,14 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_previous_head_count_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 32
-        self.assert_refused(report, "a05.function_count: observed 32, expected 33")
+        a05["summary"]["function_count"] = 33
+        self.assert_refused(report, "a05.function_count: observed 33, expected 34")
 
-    def test_an_undeclared_thirty_fourth_function_is_refused(self):
+    def test_an_undeclared_thirty_fifth_function_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 34
-        self.assert_refused(report, "a05.function_count: observed 34, expected 33")
+        a05["summary"]["function_count"] = 35
+        self.assert_refused(report, "a05.function_count: observed 35, expected 34")
 
     def test_a_fourth_security_definer_function_is_refused(self):
         report = current_head_report()
