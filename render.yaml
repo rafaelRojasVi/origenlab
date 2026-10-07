@@ -154,3 +154,50 @@ services:
         sync: false
       - key: ORIGENLAB_WORKER_DRIVE_EXPECTED_PRINCIPAL
         sync: false
+  # The mail triage (docs/OPERATIONS.md §8.11; docs/ARCHITECTURE.md §8, D2): a Procrastinate worker
+  # on queue `triage` in the V2 database. Every minute its periodic sweep defers new captured mail;
+  # each job reads one message's .eml, runs the cheap rules and the catalog match, asks Claude only
+  # when a person wrote something commercial, and records `message_triage` / `product_mention`
+  # evidence assertions as proposals. Paused (idles) until ORIGENLAB_WORKER_TRIAGE_ENABLED=true;
+  # the model stage stays off until ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED=true.
+  - type: worker
+    name: origenlab-mail-triage
+    runtime: python
+    region: oregon
+    plan: starter
+    rootDir: apps/worker
+    buildCommand: uv sync --frozen --no-dev
+    startCommand: uv run --no-sync origenlab-worker triage-worker
+    buildFilter:
+      paths:
+        - apps/worker/**
+        - apps/email-pipeline/**
+        - apps/api/**
+        - render.yaml
+    envVars:
+      - key: UV_PYTHON_DOWNLOADS
+        value: never
+      - key: PYTHON_VERSION
+        value: 3.12.13
+      - key: ORIGENLAB_WORKER_TRIAGE_ENABLED
+        sync: false
+      - key: ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED
+        sync: false
+      - key: ORIGENLAB_WORKER_TRIAGE_MODEL
+        sync: false
+      - key: ORIGENLAB_WORKER_ANTHROPIC_API_KEY
+        sync: false
+      - key: ORIGENLAB_WORKER_DATABASE_URL
+        sync: false
+      - key: ORIGENLAB_WORKER_DATABASE_EXPECTED_HOST
+        sync: false
+      - key: ORIGENLAB_WORKER_DATABASE_CA_PEM
+        sync: false
+      - key: ORIGENLAB_WORKER_STORAGE_S3_ENDPOINT
+        sync: false
+      - key: ORIGENLAB_WORKER_STORAGE_S3_REGION
+        sync: false
+      - key: ORIGENLAB_WORKER_STORAGE_S3_ACCESS_KEY_ID
+        sync: false
+      - key: ORIGENLAB_WORKER_STORAGE_S3_SECRET_ACCESS_KEY
+        sync: false

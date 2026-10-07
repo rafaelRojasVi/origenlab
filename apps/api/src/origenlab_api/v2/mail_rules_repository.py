@@ -105,9 +105,11 @@ def _json(value: Any) -> Any:
 # ─────────────────────────────────────────────────────────────── the snapshot ──
 
 #: Live Phase 4a captures only — the records the worker writes: a `comms.message` in the same
-#: transaction, no staging hash, no assertions. The staged historical `gmail_message` records are
-#: never acted on (they are read only through `_LINKS_SQL`, for the threads of their cases), and
-#: neither is a record a person rejected.
+#: transaction, no staging hash, no assertions other than the mail triage's own proposals. The
+#: staged historical `gmail_message` records are never acted on (they are read only through
+#: `_LINKS_SQL`, for the threads of their cases), and neither is a record a person rejected. The
+#: triage (`apps/worker` triage.py) adds `message_triage` / `product_mention` rows to live captures;
+#: they must not hide a live email from the rules.
 _EVIDENCE_SQL = """
 select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id
   from evidence.source_record sr
@@ -117,7 +119,8 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id
  where sr.kind = 'gmail_message' and not sr.is_quarantined
    and sr.review_status <> 'rejected'
    and sr.payload ->> 'staging_source_record_sha256' is null
-   and not exists (select 1 from evidence.assertion a where a.source_record_id = sr.id)
+   and not exists (select 1 from evidence.assertion a where a.source_record_id = sr.id
+                     and a.kind not in ('message_triage', 'product_mention'))
  order by sr.id
 """
 _LINKS_SQL = """

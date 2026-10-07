@@ -779,6 +779,23 @@ describe("V1 surfaces are refused on the browser boundary", () => {
   });
 });
 
+describe("mail triage review", () => {
+  it("allows the queue as an exact GET and the verdict as an exact POST, and nothing near them", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/triage-readings")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/workspace/triage-readings?status=reviewed&limit=50")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/triage-readings")).toBe(false);
+    expect(isAllowedPostPath("/v2/commands/review-triage")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/commands/review-triage")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/review-triage")).toBe(131_072);
+    for (const path of ["/v2/workspace/triage-readings/", "/v2/workspace/triage-readings/x", "/v2/workspace/triage",
+                        "/v2/commands/review-triage/", "/v2/commands/review-triage-all", "/v2/commands/REVIEW-TRIAGE"]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+});
+
 describe("email → cases rules (admin only upstream)", () => {
   it("allows the dry run as an exact GET and the two commands as exact POSTs", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");

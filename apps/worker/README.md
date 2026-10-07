@@ -32,6 +32,19 @@ the Drive port is `drive_client.py`, plain HTTPS, exactly the `drive` scope) and
 `crm.*` row, no rename, move or delete in Drive. Paused until `ORIGENLAB_WORKER_DRIVE_FILING_ENABLED=true`;
 setup in [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md) §8.10.
 
+**Mail triage**, a separate Render Background Worker (`origenlab-mail-triage`):
+
+    origenlab-worker triage-worker                                   # Procrastinate, queue `triage`
+    origenlab-worker triage-once [--since-days N] [--limit N] [--dry-run]   # one pass, no queue
+
+Every minute a periodic sweep defers one job per captured message without a reading. Each job
+reads the `.eml` from Storage, settles machine mail with cheap rules (`triage_rules.py`), matches
+catalog products (`catalog_match.py`), asks Claude only when a person wrote something commercial
+(`triage_model.py`), and records `message_triage` / `product_mention` `evidence.assertion`
+proposals. The queue lives in the `procrastinate` schema of the V2 database
+(`supabase/migrations/20261006180000`); Procrastinate is pinned to the vendored version. Setup,
+pause and log codes: [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md) §8.11.
+
 V1 reuse: `src/origenlab_worker/v1_reuse.py` is the only import of `origenlab_email_pipeline`;
 before slice 8 deletes V1, those functions move here and only that file changes. The build pulls
 email-pipeline's OCR stack (about 650 MB) that the worker never imports at run time. The case

@@ -229,6 +229,15 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         commands_enabled=settings.v2_commands_configured(),
     )
     app.include_router(mail_rules_preview_router)
+    # Mail triage review (`v2/triage_review.py`): the queue of the worker's suggestions reads with
+    # the other V2 reads; `review-triage` mounts with the case commands below.
+    from origenlab_api.v2.triage_review import TriageReviewRepository
+    from origenlab_api.v2.triage_review_routes import triage_review_read_router
+
+    app.state.triage_review_repository = TriageReviewRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(triage_review_read_router)
     if settings.v2_import_review_plan_dir:
         from origenlab_api.v2.quote_import_review import QuoteImportReviewRepository, load_plan
         from origenlab_api.v2.quote_import_review_routes import import_review_router
@@ -606,6 +615,9 @@ def _mount_v2_command_boundary(
     )
     app.state.auto_mail_rules_runner = AutoMailRulesRunner(app.state.auto_mail_rules)
     app.include_router(mail_rules_command_router)
+    from origenlab_api.v2.triage_review_routes import triage_review_command_router
+
+    app.include_router(triage_review_command_router)
 
 
 app = create_app()

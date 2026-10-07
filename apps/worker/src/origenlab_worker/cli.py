@@ -52,6 +52,8 @@ from origenlab_worker.gmail_sync import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, RunCo
 #: `drive-file`: the Drive consent is revoked or wrong — the Gmail-auth code's twin.
 EXIT_DRIVE_AUTH = 2
 from origenlab_worker.storage import S3EmlStore, StorageConfig
+from origenlab_worker.triage import DEFAULT_SINCE_DAYS
+from origenlab_worker.triage_cli import run_triage_once, run_triage_worker
 
 ENV_DATABASE_URL = "ORIGENLAB_WORKER_DATABASE_URL"
 ENV_EXPECTED_HOST = "ORIGENLAB_WORKER_DATABASE_EXPECTED_HOST"
@@ -191,6 +193,11 @@ def _parser() -> argparse.ArgumentParser:
     ledger = commands.add_parser("drive-ledger-import", help="owner, once: record the laptop archive's links")
     ledger.add_argument("ledgers", nargs="+", help="archive_links.jsonl files")
     ledger.add_argument("--dry-run", action="store_true", help="count; write nothing")
+    commands.add_parser("triage-worker", help="run the mail-triage queue worker until SIGTERM")
+    once = commands.add_parser("triage-once", help="triage pending messages once, without the queue")
+    once.add_argument("--since-days", type=int, default=DEFAULT_SINCE_DAYS, help="look back this many days")
+    once.add_argument("--limit", type=int, default=200, help="at most this many messages")
+    once.add_argument("--dry-run", action="store_true", help="count pending messages; write nothing")
     return parser
 
 
@@ -284,6 +291,10 @@ def main(
         return run_drive_file(args, env, drive_components, started)
     if args.command == "drive-ledger-import":
         return run_drive_ledger_import(args, env, db_components, started)
+    if args.command == "triage-once":
+        return run_triage_once(args, env, started)
+    if args.command == "triage-worker":  # pragma: no cover - runs until SIGTERM
+        return run_triage_worker(env, started)
     previous = None
     try:
         previous = signal.signal(signal.SIGTERM, _on_sigterm)
