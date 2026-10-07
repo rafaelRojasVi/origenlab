@@ -137,7 +137,8 @@ def test_a_previous_quote_request_gets_requester_identity_backfilled_without_ret
 ) -> None:
     tag = uuid.uuid4().hex[:8]
     org_name = f"Pontificia Universidad Ejemplo de Valparaíso {tag}"
-    with owner_conn(dsn) as conn:
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
         org_id = conn.execute(
             "insert into crm.organization (kind, name, confirmation) "
             "values ('institution', %s, 'confirmed') returning id::text",
@@ -154,7 +155,8 @@ def test_a_previous_quote_request_gets_requester_identity_backfilled_without_ret
     with triage_conn(target) as conn:
         db = TriageDb(conn)
         assert triage_one(db, store, sid, ModelSettings(None, DEFAULT_MODEL)).outcome == "recorded"
-    with owner_conn(dsn) as conn:
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
         conn.execute(
             "delete from evidence.assertion where source_record_id = %s and kind = 'message_triage' "
             "and value_norm = %s",
