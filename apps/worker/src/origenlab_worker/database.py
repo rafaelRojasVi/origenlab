@@ -223,6 +223,10 @@ select n.nspname || '.' || p.proname
 #: supabase/migrations/20260908120100_slice0_outbound_campaign_reply.sql. 4a never writes it.
 ALLOWED_OUTSIDE_WRITES: frozenset[tuple[str, str]] = frozenset({("outbound.campaign_reply", "INSERT")})
 
+#: Closed-list privileged entry points the worker is intentionally allowed to call. Any other
+#: callable SECURITY DEFINER still makes the connection probe fail closed.
+ALLOWED_WORKER_DEFINERS: frozenset[str] = frozenset({"outbound.add_contact_control"})
+
 
 #: What the mail triage reads and writes (`triage.py`): the captured message and its evidence, the
 #: catalog it matches products against, the cases the thread is linked to (read only), and INSERT
@@ -290,7 +294,7 @@ def _judge_reach(seen: _Observed, required_policies: frozenset[tuple[str, str, s
         raise TargetRefused("worker_policy_missing")
     if seen.writes - ALLOWED_OUTSIDE_WRITES:
         raise TargetRefused("worker_can_write_crm_or_outbound")
-    if seen.definers:
+    if set(seen.definers) - ALLOWED_WORKER_DEFINERS:
         raise TargetRefused("worker_can_execute_security_definer")
 
 
