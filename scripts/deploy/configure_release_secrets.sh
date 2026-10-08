@@ -15,8 +15,17 @@ done
 gh auth status >/dev/null
 # The GitHub repository variable selects the release policy; do not trust a
 # shell-only override in the setup helper.
-solo_mode="$(gh variable get OL_RELEASE_SOLO_MODE -R "$repo" 2>/dev/null || true)"
-if [[ "$solo_mode" != "true" ]]; then solo_mode=false; fi
+# Older gh CLIs (including the operator's installed version) have no
+# "gh variable get" subcommand. The REST endpoint is compatible with gh api.
+# Fail closed if the configured GitHub policy cannot be read.
+if ! solo_mode="$(gh api "repos/$repo/actions/variables/OL_RELEASE_SOLO_MODE" --jq .value)"; then
+  echo "Cannot read the OL_RELEASE_SOLO_MODE repository variable; no secrets changed." >&2
+  exit 1
+fi
+if [[ "$solo_mode" != "true" && "$solo_mode" != "false" ]]; then
+  echo "Invalid OL_RELEASE_SOLO_MODE value; expected true or false." >&2
+  exit 1
+fi
 # No production secrets are provisioned unless main has strict CI and a PR
 # policy compatible with the configured owner/collaborator approval mode.
 OL_RELEASE_SOLO_MODE="$solo_mode" python3 "$(dirname "${BASH_SOURCE[0]}")/check_branch_protection.py" --local
