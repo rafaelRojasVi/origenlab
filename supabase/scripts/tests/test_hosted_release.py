@@ -168,10 +168,10 @@ class ProductionGates(unittest.TestCase):
 
     def test_postflight_refuses_missing_worker_heartbeat(self):
         import subprocess
-        fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="SET\\nnot_ready\\nRESET\\n", stderr="")
+        fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="SET\nnot_ready\nRESET\n", stderr="")
         with mock.patch.object(postflight.subprocess, "run", return_value=fake):
             self.assertFalse(postflight.healthy_worker({}))
-        good = subprocess.CompletedProcess(args=[], returncode=0, stdout="SET\\nhealthy\\nRESET\\n", stderr="")
+        good = subprocess.CompletedProcess(args=[], returncode=0, stdout="SET\nhealthy\nRESET\n", stderr="")
         with mock.patch.object(postflight.subprocess, "run", return_value=good):
             self.assertTrue(postflight.healthy_worker({}))
 
