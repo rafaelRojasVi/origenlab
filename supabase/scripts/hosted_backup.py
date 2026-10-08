@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from hosted_env import Refused, database_env
 
-SCHEMAS = ("crm", "comms", "outbound", "evidence", "catalog", "procurement", "platform")
+SCHEMAS = ("crm", "comms", "outbound", "evidence", "catalog", "procurement", "platform",
+           "procrastinate")
 
 def execute(args: list[str], env: dict[str, str] | None = None) -> str:
     p = subprocess.run(args, env=env, capture_output=True, text=True, timeout=600, check=False)
@@ -71,7 +72,7 @@ def run() -> None:
         if output.stat().st_size < 1000:
             raise Refused("Encrypted archive is unexpectedly small")
         print(f"ENCRYPTED BACKUP VERIFIED: {output.name}, {output.stat().st_size} bytes")
-        print(f"App schemas: {len(SCHEMAS)}; table data entries: {sum(' TABLE DATA ' in x for x in contents.splitlines())}")
+        print(f"App and queue schemas: {len(SCHEMAS)}; table data entries: {sum(' TABLE DATA ' in x for x in contents.splitlines())}")
         print("Plaintext backups are never uploaded")
 
 if __name__ == "__main__":
