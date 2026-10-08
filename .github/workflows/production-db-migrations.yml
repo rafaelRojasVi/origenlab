@@ -204,6 +204,7 @@ jobs:
         run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
       - name: Release pinned SHA to worker, cron, API, dashboard
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
         run: python3 scripts/deploy/render_release.py release
