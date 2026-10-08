@@ -55,8 +55,11 @@ def check_current_main(sha: str) -> None:
     req = urllib.request.Request(
         "https://api.github.com/repos/rafaelRojasVi/origenlab/git/ref/heads/main",
         headers={"Accept": "application/vnd.github+json",
-                 "X-GitHub-Api-Version": "2022-11-28"},
+                 "X-GitHub-Api-Version": "2022-11-28",
+                 "Authorization": "Bearer " + os.environ.get("GITHUB_TOKEN", "")},
     )
+    if not os.environ.get("GITHUB_TOKEN"):
+        raise Refused("GitHub read token missing for main commit verification")
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
             ref = json.load(response)
