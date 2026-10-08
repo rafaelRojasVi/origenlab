@@ -25,6 +25,7 @@ render = load(ROOT / "scripts/deploy/render_release.py", "render_release")
 ci = load(ROOT / "scripts/deploy/check_release_ci.py", "check_release_ci")
 activator = load(ROOT / "scripts/deploy/set_render_autodeploy_off.py", "set_render_autodeploy_off")
 protection = load(ROOT / "scripts/deploy/check_branch_protection.py", "check_branch_protection")
+postflight = load(ROOT / "scripts/deploy/verify_workers.py", "verify_workers")
 
 
 class ProductionGates(unittest.TestCase):
@@ -100,6 +101,23 @@ class ProductionGates(unittest.TestCase):
                 protection.validate(rule)
         with self.assertRaises(protection.Unprotected):
             protection.validate({**approved, "rules": approved["rules"][:1]})
+
+    def test_postflight_requires_cron_success_after_deploy(self):
+        self.assertTrue(postflight.after_deploy(
+            "2026-10-08T05:05:00Z", "2026-10-08T05:00:00Z"))
+        self.assertFalse(postflight.after_deploy(
+            "2026-10-08T04:55:00Z", "2026-10-08T05:00:00Z"))
+        self.assertFalse(postflight.after_deploy(None, "2026-10-08T05:00:00Z"))
+        self.assertFalse(postflight.after_deploy("2026-10-08T05:00:00Z", None))
+
+    def test_postflight_refuses_missing_worker_heartbeat(self):
+        import subprocess
+        fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="SET\\nnot_ready\\nRESET\\n", stderr="")
+        with mock.patch.object(postflight.subprocess, "run", return_value=fake):
+            self.assertFalse(postflight.healthy_worker({}))
+        good = subprocess.CompletedProcess(args=[], returncode=0, stdout="SET\\nhealthy\\nRESET\\n", stderr="")
+        with mock.patch.object(postflight.subprocess, "run", return_value=good):
+            self.assertTrue(postflight.healthy_worker({}))
 
     def test_all_four_services(self):
         self.assertEqual(len({r for _, r in render.SERVICES}), 4)
