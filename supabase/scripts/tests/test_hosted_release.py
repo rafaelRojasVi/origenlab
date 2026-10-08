@@ -102,6 +102,62 @@ class ProductionGates(unittest.TestCase):
         with self.assertRaises(protection.Unprotected):
             protection.validate({**approved, "rules": approved["rules"][:1]})
 
+    def test_atomic_migration_command_includes_ddl_and_ledger(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "supabase/migrations"
+            folder.mkdir(parents=True)
+            file = folder / "20261008121212_test.sql"
+            file.write_text("set role origenlab_owner;\\nselect 1;\\nreset role;\\n")
+            executed = []
+            def fake_psql(env, *args):
+                if "--single-transaction" in args:
+                    executed.append(args)
+                    return "SET"
+                sql = args[-1]
+                if "pg_has_role" in sql:
+                    return "origenlab_migrator|postgres|true|170006|true|true|true"
+                if "select version from supabase_migrations.schema_migrations" in sql:
+                    return "20261008121212" if executed else ""
+                raise AssertionError(f"Unrecognized SQL command shape: {args}")
+            with mock.patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main",
+                                              "OL_PROD_BACKUP_VERIFIED": "true"}), \
+                 mock.patch.object(migrations, "ROOT", root), \
+                 mock.patch.object(migrations, "database_env", return_value={}), \
+                 mock.patch.object(migrations, "psql", side_effect=fake_psql):
+                migrations.run("apply")
+            self.assertEqual(len(executed), 1)
+            argv = executed[0]
+            self.assertIn("--single-transaction", argv)
+            self.assertIn("-f", argv)
+            self.assertIn(str(file), argv)
+            self.assertIn("insert into supabase_migrations.schema_migrations", argv[-1])
+            self.assertIn("pg_advisory_xact_lock", argv[argv.index("-c") + 1])
+
+    def test_failed_migration_does_not_run_postcommit_step(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "supabase/migrations"
+            folder.mkdir(parents=True)
+            (folder / "20261008121212_test.sql").write_text(
+                "set role origenlab_owner;\\nselect 1;\\nreset role;\\n")
+            sql_calls = []
+            def fake_psql(env, *args):
+                sql_calls.append(args)
+                if "--single-transaction" in args:
+                    raise migrations.Refused("simulated atomic rollback")
+                if "pg_has_role" in args[-1]:
+                    return "origenlab_migrator|postgres|true|170006|true|true|true"
+                return ""
+            with mock.patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main",
+                                              "OL_PROD_BACKUP_VERIFIED": "true"}), \
+                 mock.patch.object(migrations, "ROOT", root), \
+                 mock.patch.object(migrations, "database_env", return_value={}), \
+                 mock.patch.object(migrations, "psql", side_effect=fake_psql):
+                with self.assertRaises(migrations.Refused):
+                    migrations.run("apply")
+            self.assertEqual(sum("--single-transaction" in x for x in sql_calls), 1)
+
     def test_postflight_requires_cron_success_after_deploy(self):
         self.assertTrue(postflight.after_deploy(
             "2026-10-08T05:05:00Z", "2026-10-08T05:00:00Z"))
