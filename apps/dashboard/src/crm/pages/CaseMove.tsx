@@ -72,6 +72,14 @@ export function moveRefusal(card: OpportunityCardData, target: MoveTarget, now: 
   if (typeof card.version !== "number") return "El API no informó la versión del caso.";
   if (target === "pausa" || target === "perdida") return null;
 
+  const to = BOARD_COLUMNS.find((c) => c.key === target)?.target as string;
+  const inColumn = BOARD_COLUMNS.find((c) => c.key === target)?.stages.includes(card.stage) ?? false;
+  // Resuming a paused case in its current column does not advance its stage.
+  if (inColumn) {
+    return pausedUntil(card, now) ? null : `El caso ya está en «${COLUMN_LABEL[target]}».`;
+  }
+  if (stagePath(card.stage, to) === null) return "Ese cambio no está permitido desde el estado actual.";
+
   // En estudio and later require a human-confirmed requesting institution.
   // Refuse before a multi-step move partially advances the case.
   if (["estudio", "enviada", "conversacion"].includes(target)) {
@@ -88,10 +96,6 @@ export function moveRefusal(card: OpportunityCardData, target: MoveTarget, now: 
       return "Antes de mover este caso, debes confirmar la institución solicitante.";
     }
   }
-  const to = BOARD_COLUMNS.find((c) => c.key === target)?.target as string;
-  const inColumn = BOARD_COLUMNS.find((c) => c.key === target)?.stages.includes(card.stage) ?? false;
-  if (inColumn && !pausedUntil(card, now)) return `El caso ya está en «${COLUMN_LABEL[target]}».`;
-  if (!inColumn && stagePath(card.stage, to) === null) return "Ese cambio no está permitido desde el estado actual.";
   return null;
 }
 
