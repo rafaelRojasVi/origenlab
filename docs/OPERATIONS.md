@@ -2324,3 +2324,32 @@ select recorded_at, payload->>'importer', payload->>'plan_sha256'
  where event_type = 'source_record.migration_manifest_recorded'
  order by recorded_at;
 ```
+
+## 15. Production release contract (PR #679; built, activation blocked)
+
+Schema and code release are one guarded operation: independently approved main merge,
+exact-SHA successful CI, encrypted consistent application/queue snapshot, atomic
+DDL-plus-ledger, sequential pinned mail-worker/API/dashboard rollout, then read-only verification.
+Every SQL file must support the old running worker/API throughout the rollout. Each file
+is atomic; a multi-file batch is a committed prefix, not one transaction. Recovery rolls
+forward from that prefix and never automatically reverses schemas or mutates queue jobs.
+
+The dedicated `origenlab-release` environment admits **only the main branch**, and the
+existing public website `production` environment and `web-deploy.yml` stay separate.
+Repository release and scheduled-backup variables default OFF. Runtime metadata access
+cannot prove that GitHub bypass actors are absent: trusted one-time setup verifies that
+configuration with the owner's CLI; every actual release independently verifies current
+collaborator approval of its exact merged PR, so an unreviewed direct/bypass push cannot
+release production. A single maintainer needs an independent collaborator under this
+policy; an owner self-approval is not substituted for review.
+
+**PR #679 now removes the mutable cron from the release path.** A consolidated
+`mail-worker` (compatible alias `triage-worker`) supervises isolated triage/capture
+processes and a ten-minute capture queue. Its scheduler defaults OFF. The controller
+requires the retained legacy cron suspended and deploys only the three exact-commit
+worker/API/dashboard services. This is built, not live: production still runs the cron.
+Follow the [approved mail-worker cutover](runbooks/MAIL_WORKER_CUTOVER.md) after real
+production-data restoration, protection/secrets gates and explicit rollout approval.
+The architecture closes the cron commit race in code; it does not prove shared-resource
+capacity, real recovery or a successful production rollout. The detailed audit/state
+machine remain in the [production release runbook](runbooks/PRODUCTION_DB_MIGRATIONS.md).
