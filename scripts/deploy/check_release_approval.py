@@ -33,12 +33,21 @@ def get(path):
         raise Refused("Cannot verify production merge review") from error
 
 
-def approved(pr, reviews, sha):
+def approved(pr, reviews, sha, *, solo_mode=False):
     if (not pr.get("merged_at") or pr.get("merge_commit_sha") != sha
             or pr.get("base", {}).get("ref") != "main"
             or pr.get("base", {}).get("repo", {}).get("full_name") != REPOSITORY
             or pr.get("head", {}).get("repo", {}).get("full_name") != REPOSITORY):
         return False
+    # Opt-in single-maintainer repository mode: the repository owner personally
+    # merging their own internal PR is the release authorization. A bot/direct push,
+    # fork PR, another user's merge, or unreviewed auto-merge is not equivalent.
+    # All GitHub Actions checks and migration/backup/release gates remain mandatory.
+    if solo_mode:
+        owner = REPOSITORY.split("/")[0]
+        return (pr.get("user", {}).get("login") == owner
+                and pr.get("merged_by", {}).get("login") == owner
+                and pr.get("head", {}).get("sha") is not None)
     latest = {}
     for review in sorted(reviews, key=lambda x: x.get("id", 0)):
         if review.get("state") in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
@@ -63,8 +72,8 @@ def main():
         reviews = get(f"/pulls/{pr['number']}/reviews?per_page=100")
         if not isinstance(reviews, list) or len(reviews) >= 100:
             raise Refused("Unexpected or truncated PR review history")
-        if approved(pr, reviews, sha):
-            print("Exact production merge has current independent collaborator approval")
+        if approved(pr, reviews, sha, solo_mode=os.environ.get("OL_RELEASE_SOLO_MODE") == "true"):
+            print("Exact production merge approved under configured owner/collaborator policy")
             return
     raise Refused("Pinned SHA is not an independently approved main merge")
 
