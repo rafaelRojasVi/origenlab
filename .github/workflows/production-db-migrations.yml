@@ -1,0 +1,56 @@
+name: production-db-migrations
+
+# Never run production DDL on push, merge or pull_request.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        type: boolean
+        description: "Apply pending main migrations (requires verified backup and production approval)"
+        default: false
+      backup_attested:
+        type: boolean
+        description: "I have verified a recent recoverable production backup (required for apply)"
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: origenlab-production-db-migrations
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Plan or apply protected migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Main branch only
+        shell: bash
+        run: |
+          test "$GITHUB_REF" = refs/heads/main ||
+            { echo "Production migration dispatch must run from main"; exit 1; }
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Preflight and migration plan or apply
+        shell: bash
+        env:
+          OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }}
+          OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }}
+          OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }}
+          OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }}
+          OL_PROD_LEDGER_PASSWORD: ${{ secrets.OL_PROD_LEDGER_PASSWORD }}
+          OL_PROD_BACKUP_ATTESTED: ${{ inputs.backup_attested }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          if [ "$APPLY" = "true" ]; then
+            bash supabase/scripts/hosted_migrations.sh --apply
+          else
+            bash supabase/scripts/hosted_migrations.sh --plan
+          fi
