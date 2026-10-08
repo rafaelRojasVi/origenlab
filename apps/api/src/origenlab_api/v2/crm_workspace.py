@@ -696,6 +696,11 @@ def compose_pipeline(
                 "closed_at": opp.get("closed_at"),
                 "close_reason": opp.get("close_reason"),
                 "organization": organization,
+                # Confirmation of this institution's ROLE on this case, not its
+                # general CRM organization-record confirmation.
+                "requesting_institution_confirmation": (
+                    requesting[0].get("confirmation") if requesting else None
+                ),
                 "other_organizations": [
                     {"organization_id": o["organization_id"], "name": o["name"], "role": o["role"]}
                     for o in orgs_by_opp.get(oid, [])

@@ -1,13 +1,13 @@
 /**
- * The four commercial-case commands the case drawer may send: «Cambiar estado»
+ * The five commercial-case commands the case drawer may send: «Cambiar estado»
  * (`advance-case-stage`), «Marcar ganada» (`record-case-won`), «Elegir revisión vigente»
  * (`resolve-current-revision`) and «Registrar cotización» / «Nueva revisión»
  * (`record-case-quotation`) — plus the three W11 task commands behind «En pausa hasta…»
  * (`create-task`), «Retomar ahora» (`cancel-task`) and «Hecho» (`complete-task`).
  *
- * This module owns all seven `/v2/commands/<…>` path strings — pinned by
+ * This module owns all eight `/v2/commands/<…>` path strings — pinned by
  * `src/test/noWritePolicy.test.ts`. No other dashboard module may name them, and no other case
- * command (opening a case, linking evidence, naming an institution, recording an interest) is
+ * command (opening a case, linking evidence, recording an interest) is
  * reachable from the browser: the Worker refuses them (`CASE_COMMAND_POST_PATHS`).
  *
  * Upstream each command needs an active `sales` or `admin` operator (from the session, never the
@@ -23,6 +23,7 @@ import { STAGE_LABEL } from "./stage";
 
 export const CASE_COMMAND_PATHS = {
   advanceStage: "/v2/commands/advance-case-stage",
+  addCaseOrganization: "/v2/commands/add-case-organization",
   recordWon: "/v2/commands/record-case-won",
   resolveCurrentRevision: "/v2/commands/resolve-current-revision",
   recordQuotation: "/v2/commands/record-case-quotation",
@@ -140,6 +141,22 @@ async function postCaseCommand(path: string, body: unknown, idempotencyKey: stri
   }
   return res.json() as Promise<CaseCommandReceipt>;
 }
+
+export interface AddCaseOrganizationBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  organization_id: string;
+  organization_version: number;
+  role: "requesting_institution";
+  supplier_exception_reason?: string | null;
+  note: string;
+}
+
+/** An explicit operator decision; never infer the requesting institution from email. */
+export const addCaseOrganization = (
+  body: AddCaseOrganizationBody,
+  idempotencyKey: string = newCaseCommandKey(),
+) => postCaseCommand(CASE_COMMAND_PATHS.addCaseOrganization, body, idempotencyKey);
 
 export interface AdvanceCaseStageBody {
   opportunity_id: string;
