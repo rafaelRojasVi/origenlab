@@ -469,7 +469,6 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/confirm-person-from-evidence",
       // the commercial case, minus the six the drawer uses
       "/v2/commands/open-commercial-case",
-      "/v2/commands/link-case-evidence",
       "/v2/commands/record-case-interest",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
@@ -482,12 +481,13 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/record-case-won",
       "/v2/commands/resolve-current-revision",
       "/v2/commands/record-case-quotation",
+      "/v2/commands/link-case-evidence",
       // W11 tasks: «En pausa hasta…», «Hecho», «Retomar ahora».
       "/v2/commands/create-task",
       "/v2/commands/complete-task",
       "/v2/commands/cancel-task",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(9);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(10);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -503,6 +503,7 @@ describe("V2 durable read boundary allowlist", () => {
     expect(marketingCommandMaxBytes("/v2/commands/record-case-won")).toBe(16_384);
     expect(marketingCommandMaxBytes("/v2/commands/resolve-current-revision")).toBe(16_384);
     expect(marketingCommandMaxBytes("/v2/commands/record-case-quotation")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/link-case-evidence")).toBe(16_384);
     expect(marketingCommandMaxBytes("/v2/commands/create-task")).toBe(16_384);
     for (const path of [
       "/v2/commands/advance-case-stage/",
@@ -654,6 +655,19 @@ describe("CRM part A: confirm an institution, suggested people", () => {
     ]) {
       expect(isAllowedUpstreamPath(p), p).toBe(false);
     }
+  });
+
+  it("allows only the UUID-scoped cross-thread quote-candidate read", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    const path = `/v2/workspace/opportunities/${uuid}/quote-candidates`;
+    expect(isAllowedUpstreamPath(path)).toBe(true);
+    expect(isAllowedPostPath(path)).toBe(false);
+    for (const refused of [
+      path + "/", path + "/x",
+      `/v2/workspace/opportunities/${uuid.toUpperCase()}/quote-candidates`,
+      "/v2/workspace/opportunities/not-a-uuid/quote-candidates",
+    ]) expect(isAllowedUpstreamPath(refused)).toBe(false);
   });
 
   it("forwards GET /v2/workspace/person-suggestions by its exact path, never as a POST", async () => {
@@ -825,7 +839,6 @@ describe("email → cases rules (admin only upstream)", () => {
       // The case commands the rules call stay unreachable from the browser, except the four the
       // case drawer uses (CASE_COMMAND_POST_PATHS), which have their own list.
       "/v2/commands/open-commercial-case",
-      "/v2/commands/link-case-evidence",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
       expect(isAllowedUpstreamPath(path), path).toBe(false);
