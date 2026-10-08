@@ -122,11 +122,11 @@ class ProductionGates(unittest.TestCase):
     def test_pending_sql_refuses_transaction_escape(self):
         with tempfile.TemporaryDirectory() as directory:
             f = Path(directory) / "20261008121212_test.sql"
-            safe = "set role origenlab_owner;\\nselect 1;\\nreset role;\\n"
+            safe = "set role origenlab_owner;\nselect 1;\nreset role;\n"
             f.write_text(safe)
             migrations.require_reviewed_owner_transition(f)
-            for forbidden in ("COMMIT;", "ROLLBACK;", "BEGIN;", r"\\i bad.sql"):
-                f.write_text(safe + forbidden + "\\n")
+            for forbidden in ("COMMIT;", "ROLLBACK;", "BEGIN;", r"\i bad.sql"):
+                f.write_text(safe + forbidden + "\n")
                 with self.assertRaises(migrations.Refused):
                     migrations.require_reviewed_owner_transition(f)
 
