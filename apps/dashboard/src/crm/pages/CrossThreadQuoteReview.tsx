@@ -61,7 +61,9 @@ export function CrossThreadQuoteReview({
         y un PDF enviado antes de esta consulta. Ninguna coincidencia se vincula automáticamente.
       </p>
       {state.kind === "loading" ? <p>Buscando evidencia…</p> : null}
-      {state.kind === "error" ? <p role="alert">No se pudieron consultar los otros hilos.</p> : null}
+      {state.kind === "error" || state.kind === "permission" || state.kind === "unavailable" ? (
+        <p role="alert">No se pudieron consultar los otros hilos: {state.message}</p>
+      ) : null}
       {state.kind === "ready" && state.data.candidates.length === 0 ? (
         <p>No se encontraron cotizaciones de otro hilo con evidencia suficiente.</p>
       ) : null}
