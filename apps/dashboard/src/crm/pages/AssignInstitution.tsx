@@ -1,6 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 import { fetchV2Organizations } from "../../api/v2Client";
-import { fetchOrganizationAuthoring } from "../authoring/crmAuthoringApi";
+import { confirmOrganizationRecord, fetchOrganizationAuthoring } from "../authoring/crmAuthoringApi";
 import {
   addCaseOrganization,
   setCaseOrganizationRole,
@@ -31,11 +31,18 @@ export function AssignInstitution({
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selected, setSelected] = useState("");
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    id: string;
+    name: string;
+    version: number;
+  } | null>(null);
+  const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const [supplierReason, setSupplierReason] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const keyRef = useRef(newCaseCommandKey());
+  const confirmKeyRef = useRef(newCaseCommandKey());
 
   async function search(e: FormEvent) {
     e.preventDefault();
@@ -44,6 +51,8 @@ export function AssignInstitution({
     setBusy(true);
     setError(null);
     setSelected("");
+    setPendingConfirmation(null);
+    setConfirmationMessage(null);
     setCandidates([]);
 
     try {
@@ -81,11 +90,12 @@ export function AssignInstitution({
       }
 
       if (org.confirmation !== "confirmed") {
-        setError(
-          "Confirma primero la ficha de esta institución desde Organizaciones.",
-        );
+        // Never silently elevate a machine proposal. Require separate human confirmation.
+        setPendingConfirmation({ id: org.id, name: org.name, version: org.version });
+        setConfirmationMessage(null);
         return;
       }
+      setPendingConfirmation(null);
 
       await addCaseOrganization(
         {
@@ -114,6 +124,34 @@ export function AssignInstitution({
       setError(caseRefusalText(err));
       if (isStaleRefusal(err)) {
         onDone({ tone: "bad", lines: [caseRefusalText(err)] }, true);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmProposedOrganization() {
+    const pending = pendingConfirmation;
+    if (!pending || busy || !note.trim() || selected !== pending.id) return;
+    setBusy(true);
+    setError(null);
+    setConfirmationMessage(null);
+    try {
+      await confirmOrganizationRecord({
+        organization_id: pending.id,
+        expected_version: pending.version,
+        note: note.trim(),
+      }, confirmKeyRef.current);
+      setPendingConfirmation(null);
+      setConfirmationMessage(
+        `Institución «${pending.name}» confirmada. Pulsa «Confirmar asignación» para asociarla al caso.`,
+      );
+    } catch (err) {
+      confirmKeyRef.current = newCaseCommandKey();
+      setError(caseRefusalText(err));
+      if (isStaleRefusal(err)) {
+        setPendingConfirmation(null);
+        setError("La ficha cambió mientras la revisabas. Vuelve a buscar la institución.");
       }
     } finally {
       setBusy(false);
@@ -151,7 +189,12 @@ export function AssignInstitution({
               aria-label="Institución solicitante"
               className="w-full rounded-md border border-line bg-surface px-3 py-2"
               value={selected}
-              onChange={(e) => setSelected(e.target.value)}
+              onChange={(e) => {
+                setSelected(e.target.value);
+                setPendingConfirmation(null);
+                setConfirmationMessage(null);
+                setError(null);
+              }}
               disabled={busy}
             >
               <option value="">Seleccionar institución</option>
@@ -187,11 +230,30 @@ export function AssignInstitution({
               maxLength={2000}
             />
           </FormField>
+          {pendingConfirmation?.id === selected ? (
+            <div className="space-y-2 rounded-md border border-warn/40 p-3" role="status">
+              <p>
+                «{pendingConfirmation.name}» fue propuesta por una regla automática.
+                Revisa la evidencia antes de confirmar la institución.
+                Esta confirmación no asignará todavía el caso.
+              </p>
+              <Button
+                type="button"
+                variant="primary"
+                busy={busy}
+                disabled={!note.trim() || busy}
+                onClick={() => void confirmProposedOrganization()}
+              >
+                Confirmar ficha de institución
+              </Button>
+            </div>
+          ) : null}
+          {confirmationMessage ? <p role="status">{confirmationMessage}</p> : null}
           <Button
             type="submit"
             variant="primary"
             busy={busy}
-            disabled={!selected || !note.trim() || busy}
+            disabled={!selected || !note.trim() || busy || pendingConfirmation?.id === selected}
           >
             Confirmar asignación
           </Button>
