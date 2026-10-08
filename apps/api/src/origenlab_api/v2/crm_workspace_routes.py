@@ -176,12 +176,14 @@ def get_opportunity_mail_documents(opportunity_id: UUID, _: Operator, repo: Repo
 
 
 @workspace_router.get("/opportunities/{opportunity_id}/quote-candidates")
-def get_opportunity_quote_candidates(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
-    """Read-only proposal: exact CN number + shared external participant across Gmail threads.
+def get_opportunity_quote_candidates(opportunity_id: UUID, operator: Operator, repo: Repo) -> Any:
+    """Read-only proposal requiring sales/admin: exact CN plus an external participant.
 
-    This endpoint does not attach messages, merge cases, or record quotations. Each
-    proposal requires a separately reviewed link-case-evidence operator command.
+    A candidate may contain a PDF filename and Gmail link from a different commercial
+    case, so viewers must not receive it. This never merges or records anything.
     """
+    if getattr(operator, "role", None) not in ("sales", "admin"):
+        raise HTTPException(status_code=403, detail="sales or admin required")
     body = repo.opportunity_quote_candidates(str(opportunity_id))
     if body is None:
         raise HTTPException(status_code=404, detail="no such case")
