@@ -20,6 +20,7 @@ def load(path, name):
 migrations = load(SCRIPT_DIR / "hosted_migrations.py", "hosted_migrations")
 render = load(ROOT / "scripts/deploy/render_release.py", "render_release")
 ci = load(ROOT / "scripts/deploy/check_release_ci.py", "check_release_ci")
+activator = load(ROOT / "scripts/deploy/set_render_autodeploy_off.py", "set_render_autodeploy_off")
 
 
 class ProductionGates(unittest.TestCase):
@@ -56,6 +57,16 @@ class ProductionGates(unittest.TestCase):
                            ("ownerId", "other")):
             with self.assertRaises(Exception):
                 render.verify_service(dict(obj, **{key: value}), service_id)
+
+    def test_activation_refuses_another_service_or_account(self):
+        name, service_id = render.SERVICES[0]
+        allowed = dict(id=service_id, ownerId=render.OWNER, repo=render.REPOSITORY,
+                       branch="main", autoDeployTrigger="commit")
+        activator.check_identity(allowed, service_id)
+        with self.assertRaises(Exception):
+            activator.check_identity(dict(allowed, ownerId="untrusted"), service_id)
+        with self.assertRaises(Exception):
+            activator.check_identity(dict(allowed, id="different"), service_id)
 
     def test_all_four_services(self):
         self.assertEqual(len({r for _, r in render.SERVICES}), 4)
