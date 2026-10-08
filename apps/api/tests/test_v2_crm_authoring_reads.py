@@ -156,6 +156,17 @@ class _FakeRepo:
             ],
         }
 
+    def opportunity_quote_candidates(self, opportunity_id: str) -> dict[str, Any] | None:
+        if opportunity_id == "00000000-0000-4000-8000-000000000003":
+            return None
+        return {"opportunity_id": opportunity_id, "candidates": [
+            {"source_record_id": "00000000-0000-4000-8000-000000000010",
+             "quote_token": "CN01259", "filename": "CN01259-ficticio.pdf",
+             "sent_at": "2026-10-07T12:00:00Z", "subject": "Cotización ficticia",
+             "document_sha256": "ab" * 32, "gmail_url": "https://mail.google.com/mail/u/0/#all/abc",
+             "reason": "Número exacto y destinatario externo compartido", "recorded_elsewhere": False},
+        ]}
+
     def opportunity_mail_documents(self, opportunity_id: str) -> dict[str, Any] | None:
         if opportunity_id == "00000000-0000-4000-8000-000000000003":
             return None
@@ -340,6 +351,29 @@ def test_case_mail_documents_of_a_missing_case_are_404_a_bad_id_422_and_need_an_
     app.state.v2_identity = _RefusingIdentity()
     assert TestClient(app).get(
         "/v2/workspace/opportunities/00000000-0000-4000-8001-000000000009/mail-documents").status_code == 401
+
+
+@pytest.mark.parametrize("role", ["viewer", "sales", "admin"])
+def test_cross_thread_quote_candidates_are_read_only_and_scoped(role: str) -> None:
+    client = TestClient(_app(role))
+    case_id = "00000000-0000-4000-8001-000000000009"
+    path = f"/v2/workspace/opportunities/{case_id}/quote-candidates"
+    r = client.get(path)
+    assert r.status_code == 200
+    assert r.json()["candidates"][0]["quote_token"] == "CN01259"
+    assert client.post(path).status_code == 405
+    assert client.get(
+        "/v2/workspace/opportunities/00000000-0000-4000-8000-000000000003/quote-candidates"
+    ).status_code == 404
+    assert client.get("/v2/workspace/opportunities/not-a-uuid/quote-candidates").status_code == 422
+
+
+def test_quote_candidates_require_an_operator() -> None:
+    app = _app("sales")
+    app.state.v2_identity = _RefusingIdentity()
+    assert TestClient(app).get(
+        "/v2/workspace/opportunities/00000000-0000-4000-8001-000000000009/quote-candidates"
+    ).status_code == 401
 
 
 def test_reads_report_the_switch_that_main_sets() -> None:
