@@ -53,8 +53,8 @@ describe("dashboard read-only policy", () => {
   //    «Cambiar etapa» (advance-case-stage), «Marcar ganada» (record-case-won), «Elegir revisión
   //    vigente» (resolve-current-revision) and «Registrar cotización» / «Nueva revisión»
   //    (record-case-quotation), plus audited institution assignment/review commands.
-  //    Sales or admin upstream; opening a case, linking evidence, and recording an interest
-  //    remain outside the browser write boundary.
+  //    Sales or admin upstream. Cross-thread quote evidence can be manually linked after
+  //    review; opening a case and recording an interest remain outside the browser.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const MAIL_RULES_FILE = "../crm/mailRules.ts";
   const MAIL_RULES_PATHS = [
@@ -71,6 +71,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/record-case-won",
     "/v2/commands/resolve-current-revision",
     "/v2/commands/record-case-quotation",
+    "/v2/commands/link-case-evidence",
     "/v2/commands/create-task",
     "/v2/commands/complete-task",
     "/v2/commands/cancel-task",
