@@ -186,3 +186,64 @@ class RealReleaseDatabase(unittest.TestCase):
             toc = archive.extractfile("restore-toc.txt").read().decode()
             for schema in backup.SCHEMAS:
                 self.assertIn("TABLE DATA " + schema, toc)
+
+    def test_reviewed_50_migration_schema_dump_restores(self):
+        # Replay historical admin bootstrap separately: hosted runner deliberately
+        # does not re-run these files as its restricted migrator.
+        repo = Path(__file__).resolve().parents[3]
+        self.sql("DROP SCHEMA crm CASCADE; CREATE SCHEMA extensions", self.env)
+        for role in ("anon", "authenticated", "service_role", "origenlab_api", "origenlab_worker"):
+            self.sql(f"DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{role}') THEN CREATE ROLE {role} NOLOGIN; END IF; END $$", self.env)
+        self.sql("CREATE EXTENSION btree_gist WITH SCHEMA extensions; GRANT USAGE ON SCHEMA extensions TO origenlab_owner, origenlab_api, origenlab_worker", self.env)
+        backup.execute(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", str(repo / "supabase/roles.sql")], self.env)
+        rows = migrations.chain(repo)
+        self.assertEqual(len(rows), 50)
+        for version, name, path in rows:
+            backup.execute(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "--single-transaction", "-f", str(path),
+                            "-c", f"INSERT INTO supabase_migrations.schema_migrations VALUES ('{version}','{name}')"], self.env)
+        self.sql("SET ROLE origenlab_owner; INSERT INTO procrastinate.procrastinate_jobs(queue_name,task_name,status) VALUES ('triage','fixture','failed'); RESET ROLE", self.env)
+        dump = self.root / "reviewed-schema.dump"
+        backup.execute(["pg_dump", "--format=custom", "--role=origenlab_owner",
+                        *(flag for schema in backup.SCHEMAS for flag in ("-n", schema)), "-f", str(dump)], self.env)
+        recovery = "origenlab_test_" + uuid.uuid4().hex[:8]
+        self.sql(f'CREATE DATABASE {recovery}')
+        try:
+            env = dict(self.env, PGDATABASE=recovery)
+            self.sql("CREATE SCHEMA extensions; CREATE EXTENSION btree_gist WITH SCHEMA extensions; GRANT USAGE ON SCHEMA extensions TO origenlab_owner, origenlab_api, origenlab_worker", env)
+            backup.execute(["pg_restore", "--exit-on-error", "--dbname", recovery, str(dump)], env)
+            schemas = ",".join(repr(x) for x in backup.SCHEMAS)
+            counts = f"select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ({schemas}) and c.relkind='r'; select count(*) from pg_constraint c join pg_namespace n on n.oid=c.connamespace where n.nspname in ({schemas})"
+            self.assertEqual(self.sql(counts, self.env), self.sql(counts, env))
+            self.assertEqual(self.sql("select status from procrastinate.procrastinate_jobs where task_name='fixture'", env), "failed")
+            self.assertEqual(self.sql("select count(*) from outbound.send_control where marketing_enabled is false and transactional_enabled is false", env), "1")
+        finally:
+            self.sql(f'DROP DATABASE {recovery} WITH (FORCE)')
+
+    def test_worker_health_sql_handles_bulk_sends_and_real_evidence_gaps(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts/deploy"))
+        import verify_workers
+        self.sql("""CREATE SCHEMA comms AUTHORIZATION origenlab_owner;
+          CREATE SCHEMA evidence AUTHORIZATION origenlab_owner;
+          CREATE SCHEMA procrastinate AUTHORIZATION origenlab_owner;
+          SET ROLE origenlab_owner;
+          CREATE TABLE comms.message(provider_message_id text, parse_status text, eml_storage_path text,
+                                     internal_date timestamptz, direction text);
+          CREATE TABLE evidence.source_record(id int, dedupe_key text, kind text);
+          CREATE TABLE evidence.assertion(source_record_id int, kind text, value_norm text, value jsonb);
+          CREATE TABLE procrastinate.procrastinate_workers(last_heartbeat timestamptz);
+          CREATE TABLE procrastinate.procrastinate_periodic_defers(task_name text, periodic_id text, defer_timestamp bigint);
+          INSERT INTO procrastinate.procrastinate_workers VALUES(now());
+          INSERT INTO procrastinate.procrastinate_periodic_defers VALUES('sweep_untriaged','sweep',extract(epoch from now()));
+          INSERT INTO comms.message VALUES('synthetic','parsed','synthetic',now()-interval '1 hour','outbound');
+          RESET ROLE;""", self.env)
+        self.assertTrue(verify_workers.healthy_worker(self.env))
+        self.sql("SET ROLE origenlab_owner; UPDATE comms.message SET direction='inbound'; RESET ROLE", self.env)
+        self.assertFalse(verify_workers.healthy_worker(self.env))
+        self.sql("SET ROLE origenlab_owner; INSERT INTO evidence.source_record VALUES(1,'gmail_message:synthetic','gmail_message'); INSERT INTO evidence.assertion VALUES(1,'message_triage','triage:v1','{\"class\":\"bounce\"}'); RESET ROLE", self.env)
+        self.assertFalse(verify_workers.healthy_worker(self.env))
+        self.sql("SET ROLE origenlab_owner; INSERT INTO evidence.assertion VALUES(1,'delivery_failure','delivery:v1','{}'); RESET ROLE", self.env)
+        self.assertTrue(verify_workers.healthy_worker(self.env))
+        self.sql("SET ROLE origenlab_owner; UPDATE evidence.assertion SET value='{\"class\":\"quote_request\"}' WHERE value_norm='triage:v1'; RESET ROLE", self.env)
+        self.assertFalse(verify_workers.healthy_worker(self.env))
+        self.sql("SET ROLE origenlab_owner; INSERT INTO evidence.assertion VALUES(1,'message_triage','requester:v1','{}'); RESET ROLE", self.env)
+        self.assertTrue(verify_workers.healthy_worker(self.env))

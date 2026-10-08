@@ -32,6 +32,10 @@ def healthy_worker(env: dict[str, str], since: str | None = None) -> bool:
            left join evidence.source_record sr
              on sr.dedupe_key = 'gmail_message:' || m.provider_message_id and sr.kind = 'gmail_message'
           where m.parse_status = 'parsed'
+            -- Outbound bulk sends intentionally have no evidence source. Capture
+            -- does not persist their List-Unsubscribe marker, so source-less
+            -- outbound mail cannot be classified safely without reading EML.
+            and (sr.id is not null or m.direction = 'inbound')
             and m.eml_storage_path is not null
             and m.internal_date between now() - interval '14 days'
                                     and now() - interval '15 minutes'

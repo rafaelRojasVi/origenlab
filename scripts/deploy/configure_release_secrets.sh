@@ -19,8 +19,19 @@ python3 "$(dirname "${BASH_SOURCE[0]}")/check_branch_protection.py" --local
 # Dedicated unattended release environment; do not weaken the manually-approved
 # production environment used by the public website.
 # Fail closed if branch policy cannot be established; main itself must be protected.
-printf '%s' '{"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false}}' |
+printf '%s' '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' |
   gh api -X PUT "repos/$repo/environments/$env_name" --input - >/dev/null
+policy_rows="$(gh api --paginate "repos/$repo/environments/$env_name/deployment-branch-policies" \
+  --jq '.branch_policies[] | [.name, .type] | @tsv')"
+if [ -n "$policy_rows" ] && [ "$policy_rows" != $'main\tbranch' ]; then
+  echo "Release environment has other branch/tag policies; review them before installing secrets." >&2
+  exit 1
+fi
+if [ -z "$policy_rows" ]; then
+  printf '%s' '{"name":"main","type":"branch"}' |
+    gh api -X POST "repos/$repo/environments/$env_name/deployment-branch-policies" --input - >/dev/null
+fi
+unset policy_rows
 echo "Configuring protected GitHub Environment $env_name for $repo."
 echo "No service deploy or database write is performed by this script."
 
