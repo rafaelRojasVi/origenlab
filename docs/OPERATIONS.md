@@ -2324,3 +2324,30 @@ select recorded_at, payload->>'importer', payload->>'plan_sha256'
  where event_type = 'source_record.migration_manifest_recorded'
  order by recorded_at;
 ```
+
+## 15. Production release contract (PR #679; built, activation blocked)
+
+Schema and code release are one guarded operation: independently approved main merge,
+exact-SHA successful CI, encrypted consistent application/queue snapshot, atomic
+DDL-plus-ledger, sequential worker/cron/API/dashboard rollout, then read-only verification.
+Every SQL file must support the old running worker/API throughout the rollout. Each file
+is atomic; a multi-file batch is a committed prefix, not one transaction. Recovery rolls
+forward from that prefix and never automatically reverses schemas or mutates queue jobs.
+
+The dedicated `origenlab-release` environment admits **only the main branch**, and the
+existing public website `production` environment and `web-deploy.yml` stay separate.
+Repository release and scheduled-backup variables default OFF. Runtime metadata access
+cannot prove that GitHub bypass actors are absent: trusted one-time setup verifies that
+configuration with the owner's CLI; every actual release independently verifies current
+collaborator approval of its exact merged PR, so an unreviewed direct/bypass push cannot
+release production. A single maintainer needs an independent collaborator under this
+policy; an owner self-approval is not substituted for review.
+
+**Activation is blocked while the Render cron still follows mutable main.** Its provider
+cannot pin a commit or cancel its deployment. HEAD prechecks and postchecks detect a
+race but cannot prevent newer cron code from preceding its schema. Before unattended
+activation, adopt and verify an immutable cron release source (or a scheduler with an
+explicit commit/digest contract) in a reviewed change. Do not treat a request to avoid
+merges during release as an enforced deployment guarantee. The operational audit,
+state machine, failure matrix and restore rehearsal are in the reference
+[production release runbook](runbooks/PRODUCTION_DB_MIGRATIONS.md#independent-engineering-audit-2026-10-08).

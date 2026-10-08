@@ -367,6 +367,44 @@ class RegressionGates(unittest.TestCase):
                 render.request("GET","/services/fake","test-only")
             self.assertEqual(call.call_count,3)
 
+    def test_provider_failure_stops_before_downstream_services(self):
+        sha = "a" * 40
+        env = dict(GITHUB_ACTIONS="true",GITHUB_REF="refs/heads/main",RENDER_API_KEY="test-only",OL_RELEASE_SHA=sha)
+        for state, deployed_sha in (("build_failed",sha),("canceled",sha),("unknown",sha),
+                                     ("live",None),("build_in_progress","b"*40)):
+            posts=[]
+            def fake(method,path,token,payload=None):
+                if method == "POST":
+                    posts.append(path)
+                    return {"id":"dep-fixture","commit":{"id":sha},"status":"created"}
+                if path.endswith("/deploys/dep-fixture"):
+                    return {"id":"dep-fixture","commit":{"id":deployed_sha},"status":state}
+                return dict(id=path.rsplit("/",1)[-1],ownerId=render.OWNER,repo=render.REPOSITORY,
+                            branch="main",autoDeployTrigger="off")
+            with self.subTest(state=state), mock.patch.dict(os.environ,env), \
+                 mock.patch.object(render,"request",side_effect=fake), \
+                 mock.patch.object(render,"latest_deploy",return_value=None), \
+                 mock.patch.object(render,"check_current_main"), \
+                 mock.patch.object(render,"verify_api_http"), \
+                 mock.patch.object(render.time,"sleep"):
+                with self.assertRaises(render.Refused):
+                    render.run("release")
+                self.assertEqual(posts,[f"/services/{render.SERVICES[0][1]}/deploys"])
+
+    def test_api_liveness_failure_blocks_dashboard_on_idempotent_rerun(self):
+        sha="a"*40
+        env=dict(GITHUB_ACTIONS="true",GITHUB_REF="refs/heads/main",RENDER_API_KEY="test-only",OL_RELEASE_SHA=sha)
+        def fake(method,path,token,payload=None):
+            self.assertEqual(method,"GET")
+            return dict(id=path.rsplit("/",1)[-1],ownerId=render.OWNER,repo=render.REPOSITORY,
+                        branch="main",autoDeployTrigger="off")
+        with mock.patch.dict(os.environ,env), mock.patch.object(render,"request",side_effect=fake), \
+             mock.patch.object(render,"latest_deploy",return_value={"status":"live","commit":{"id":sha}}), \
+             mock.patch.object(render,"check_current_main"), \
+             mock.patch.object(render,"verify_api_http",side_effect=render.Refused("synthetic readiness failure")):
+            with self.assertRaises(render.Refused):
+                render.run("release")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2265,3 +2265,24 @@ proven there.
   `apps/email-pipeline/alembic/versions/`; V2 is the Supabase CLI under
   `supabase/migrations/`. They do not communicate.
 
+
+### 2.7.75 Production release engineering audit, 2026-10-08 — built; not activated
+
+Measured read-only against PR #679 and production on **2026-10-08**. Supabase project is
+ACTIVE_HEALTHY, PostgreSQL 17.6, **50** ledger versions, head **20261007160000**, and the
+assertion constraint permits `delivery_failure`. The migrator has ledger USAGE/SELECT/INSERT
+and SET access to the owner. The organization subscription is **Pro**; available managed
+recovery points and a production-data restore remain unverified. Four Render services
+still auto-deploy from main; cron is `*/10 * * * *`, latest observed capture success
+13:50:38 UTC. Worker heartbeat and aggregate sweeps are live; 7,979 historical failed
+jobs remain unchanged, and the final aggregate eligibility query returned healthy.
+
+PR #679 now has real PG17 migration rollback/ledger/lock tests, consistent snapshot and
+age-encryption tests, a restoration of the entire currently reviewed **50-migration**
+application/queue schema with synthetic data, strict event/merge/CI provenance checks,
+explicit PG17 tools and read-only postflight. Local verification: **26** offline tests
+and **10** database tests passed. GitHub also reproduced and caught a runner-default
+pg_dump version defect; explicit PG17 PATH selection fixed it. Exact final CI runs are
+linked from PR #679. Nothing merged, deployed, enabled, sent, replayed or deleted in
+production. Activation remains blocked by the mutable-main cron deployment race and
+uncompleted one-time recovery/configuration gates; policy owner is OPERATIONS §15.

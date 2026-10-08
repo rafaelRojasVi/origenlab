@@ -1,77 +1,322 @@
-# OrigenLab V2: production release and database migrations
+# OrigenLab production release: independent engineering audit and runbook
 
-STATUS: DRAFT, NOT YET ACTIVE. No production credentials or infrastructure settings are changed by this PR.
+**2026-10-08 — PR #679. Unattended activation: BLOCKED.** The implementation can
+be reviewed and merged with both automation variables OFF and the four independent
+Render deploy triggers OFF. A merge is not permission to activate or deploy. No
+production mutation, merge, Gmail send, queue replay or deletion was performed in this
+audit. The manually approved public website deployment was not modified.
 
-## Why
+Policy belongs to [OPERATIONS §15](../OPERATIONS.md#15-production-release-contract-pr-679-built-activation-blocked).
+This reference records the implementation, evidence, limits and operator procedure.
 
-Render currently auto-deploys the worker, Gmail cron, API and dashboard independently on every main commit. This allowed application code to precede migration 50, breaking email triage. The permanent change is one release controller responsible for database compatibility and code deployment order.
+## Independent engineering audit, 2026-10-08
 
-## Automated path after one-time activation
+Reviewed the actual branch, PostgreSQL catalog/aggregates, provider service/deploy/log
+responses, main ruleset, workflow job results and decoded CI logs. PR prose was not
+accepted as evidence. Source code commits added during review:
 
-1. Every main commit runs the existing Supabase database CI, even when only application files change. Failed CI does not release production.
-2. Successful main/push CI triggers the release workflow. It checks the exact main SHA and refuses all releases if any of the four Render services still has independent auto-deploy enabled.
-3. PostgreSQL 17 takes a fresh dump of seven OrigenLab application schemas plus the Procrastinate worker queue schema. The runner verifies the custom-format TOC, records the ledger and checksum, and encrypts the archive using an offline age public key. Only ciphertext is uploaded as a GitHub Actions artifact with 30-day retention. No artifact means no migration.
-4. The single, protected migrator login applies each pending reviewed migration as owner and records its ledger entry IN THE SAME DATABASE TRANSACTION. It uses an advisory lock and verifies that the existing hosted ledger is an exact prefix of the reviewed main migration chain.
-5. Render deploys the pinned SHA sequentially: worker, Gmail-sync cron, API, dashboard. Each must reach live with the expected SHA before the next begins. If one fails, downstream deploys stop. A separate read-only postflight confirms all four service SHAs, a recent Procrastinate worker heartbeat, a periodic sweep, no triage/NRD/requester evidence gaps older than 15 minutes (among parseable email in the last 14 days), and a Gmail cron run completed after the active cron deployment; failure marks the release incomplete.
-6. A scheduled workflow takes the same encrypted application-schema backup every day at 06:15 UTC. Manual plan, backup-only and guarded release are also available from GitHub Actions.
+- `a2a47976`: executable atomic migration and consistent encrypted backup tests.
+- `75ffa2f8`: event/review/CI provenance, provider reconciliation and postflight fixes.
+- `ecd6efcc`: explicit installed PG17 binary selection after GitHub reproduced a failure.
+- `5a5fac60`: complete migration-chain restore, actual mail eligibility and main-only environment.
 
-Changes must remain backward-compatible during transition because old application instances can still be active while the schema is migrated.
+Subsequent evidence/TOC updates are in this same PR. Check its final head and Actions
+before merging; previous green runs do not certify a newer commit.
 
-## One-time activation required, NOT per deployment
+### Production observations and incident timeline
 
-1. Protect the main branch using the active [Protect main ruleset](https://github.com/rafaelRojasVi/origenlab/rules/17174991). **Audit found zero required approvals and zero mandatory checks as of 2026-10-08.** Require at least **one independent approving review**, dismissal of stale approvals, and a strict required check for `gitleaks` (the universal PR secret scan). The API, worker, dashboard and full Supabase test suites remain path-filtered on PRs; they are mandatory on **every main-branch production release** via the separate live CI gate. Do not require their path-filtered PR checks universally or unrelated PRs will be permanently blocked. Remove all bypass actors. The new `check_branch_protection.py` refuses to provision GitHub production secrets or release code until all those checks pass. Also require reviewed PRs and passing API, worker, dashboard and Supabase CI checks. Restrict GitHub Environment origenlab-release to main and trusted maintainers. If environment approval reviewers are configured, automatic releases will pause for approval. Unattended releases require appropriate trust in branch protection and workflow reviews.
-2. Review and execute the following ONCE from an authorized Supabase postgres SQL Editor session. It gives the migrator limited access to its version ledger; runtime roles receive no new privileges.
+| Evidence | Independently observed result |
+|---|---|
+| Project | `txgsamojgvkymitcdcpo`, sa-east-1, ACTIVE_HEALTHY, PostgreSQL 17.6.1.166 |
+| Ledger and constraint | 50 versions; head `20261007160000`; `delivery_failure` permitted |
+| Migrator privilege catalog | SET owner; ledger schema USAGE and table SELECT/INSERT |
+| Subscription | Actual organization API reports **Pro**, replacing older Free-plan notes |
+| Worker | Recent heartbeat; aggregate `triage_sweep` events execute each minute |
+| Queue | 7,979 historical failed jobs retained; successful jobs are intentionally deleted |
+| Capture | One authorized mailbox; observed last cursor advance 2026-10-08 13:50:38 UTC |
+| Final worker SQL | Healthy: heartbeat, specific sweep scheduling and no stale eligible triage/bounce/requester gaps |
+| Render | All four services still `autoDeployTrigger=commit`, main; none suspended |
+| Cron | `*/10 * * * *`; command runs Gmail capture **and then** Drive filing using `&&` |
+| Main ruleset | Active Protect main ID 17174991: **0** required approvals, **no** required status checks |
+| Public website | `.github/workflows/web-deploy.yml` unchanged; manually approved `production` environment preserved |
 
-    begin;
-    grant usage on schema supabase_migrations to origenlab_migrator;
-    grant select, insert on table supabase_migrations.schema_migrations to origenlab_migrator;
-    commit;
+**Timeline correction:** migration 50 first entered main in PR **#674**, commit
+`edcc28c7`, at 18:05 UTC October 7. Render's first sampled `CheckViolation` log is
+18:08:14 UTC. PR #678's commit `6b4c602a` is later, 19:40:56 UTC. Thus #678 did
+not originate the schema mismatch; its rollout inherited an already failing contract.
+The underlying cause remains code deployment without the required database migration.
+Sampled failure timestamps and error classes were reviewed without publishing error
+records or email contents. The reported 7.5 MB recovery backup was **not** available
+for independent decryption/restoration in this audit.
 
-   Do not grant this access to origenlab_api, origenlab_worker, PUBLIC, anon, authenticated or service_role. Do not grant ownership or BYPASSRLS. Remove any reliance on a postgres password in GitHub.
-3. Generate an age identity offline on a trusted PC, outside the repository:
+### Prioritized findings
 
-    umask 077
-    mkdir -p ~/.config/origenlab-v2
-    age-keygen -o ~/.config/origenlab-v2/production-backup-age-identity.txt
+| Severity | Finding and evidence | Disposition |
+|---|---|---|
+| Critical | `hosted_migrations.py` generated `end $;` instead of `end $$;`. The existing 14 tests mocked psql and never parsed the guard. | Fixed; real PG17 success/rollback tests execute the actual runner. |
+| Critical | Mutable-main Render cron cannot accept `commitId`; cancellation endpoint also excludes cron. Main can move between GET and POST. A mismatched cron may already run code requiring unapplied schema. | **Unresolved activation blocker.** No provider mutation performed; an immutable release source/scheduler contract needs review and verification. |
+| Critical | Four independent commit triggers still bypass migration ordering. | Activation/merge configuration gate; controller refuses autonomous services. Owner approval needed to turn triggers OFF. |
+| High | Main ruleset permits unapproved merges with no mandatory checks. | Exact-merge independent collaborator approval and CI gates added; actual ruleset still requires owner configuration. |
+| High | Ruleset API omits `bypass_actors` without write access. Original read-only gate interpreted omission as no bypass. | Local bootstrap requires visible empty bypass list; runtime independently proves approval of the exact merged PR, without adding administration credentials to Actions. |
+| High | Transaction regex missed inline COMMIT, commented END, COMMIT AND CHAIN, START/ABORT/PREPARE and psql commands not at line start. | Conservative top-level SQL scanner; comments/literals cannot fake role transitions. First SET owner/last RESET required. |
+| High | Lock guard compared only maximum version, allowing changes to earlier ledger rows during the race. | Exact ordered ledger prefix rechecked under the transaction advisory lock. |
+| High | Dump and ledger originally read separate snapshots. | One exported repeatable-read snapshot spans both; shared advisory lock excludes cooperating DDL. |
+| High | Installed client 17 did not override GitHub runner's default pg_dump. New CI failed the full backup test. | Explicit PG17 PATH in both install jobs; rerun succeeded. |
+| High | Green workflow can contain skipped required jobs; workflow names alone do not prove identity. | Exact SHA/branch/repository/path and individual job checks; missing, failed, cancelled or skipped gates refuse release. All nine CI workflows now run on main. |
+| High | Test and credential-bearing workflows sharing one concurrency group could block/cancel the mandatory push test while release waits for it. | Separate test groups from serialized production releases. |
+| High | Protected-branches-only environment could admit another protected branch. | Setup restricts release environment to literal main branch, rejects other branch/tag policies. Public website environment untouched. |
+| Medium | Scheduled backups originally started production preflight despite first-release hold. | Separate repository `OL_BACKUP_AUTOMATION_ENABLED`, default OFF. Manual plan/backup remain available. |
+| Medium | Deploy/controller/worker checks needed stronger failure reconciliation. | Bounded GET retries, no blind POST retry, all-service pending-deploy precheck, per-service main/config recheck, final SHA reconciliation. |
+| Medium | Heartbeat and periodic defer alone do not prove sweep execution; successful job events are deleted. | Narrow Render aggregate sweep-log check after worker deployment, plus SQL eligibility checks. No message bodies/queue arguments queried. |
+| Medium | Source-less outbound bulk sends intentionally lack evidence. Treating all such records as broken processing produces 3,199 false gaps in the sampled window. | Verifier checks source-bearing mail and missing-source inbound mail; isolated SQL regression covers bulk, bounce and requester cases. Source-less outbound non-bulk loss remains indistinguishable without additional capture metadata. |
+| Medium | API Render healthCheckPath is empty; `/health` returns liveness/configuration, not an authenticated DB journey. | Controller checks API HTTP liveness before dashboard. Authenticated CRM/DB smoke and provider health-check configuration remain activation/operational work. |
+| Medium | A readable dump is not a restore; production roles/platform/object dependencies are outside an application dump. | Entire reviewed 50-migration schema restored in isolation with synthetic queue/data; real production-data restore still required. |
+| Medium | Managed backup entitlement is not proof of an available recovery point; Storage/Drive and RTO remain unproven. | Pro confirmed; actual recovery inventory, object backup and measured recovery duration remain open. |
+| Low | Major action tags can move; backup log claimed verification more strongly than proved. | Release checkout/artifact actions pinned to upstream SHAs; backup output explicitly says restoration not yet proven. |
 
-   Keep the private identity in a secure offline password vault with a second recovery copy, NEVER in GitHub or chat. Store only its printed public age1 recipient in the GitHub origenlab-release environment VARIABLE OL_PROD_BACKUP_AGE_RECIPIENT.
-4. One-time setup can be performed on your trusted laptop with `gh` authenticated and `age-keygen` installed: run `bash scripts/deploy/configure_release_secrets.sh` from a reviewed checkout. It uses the verified local PEM, privately prompts for the rotated migrator password and Render API key, generates an offline age identity (never commits it), and stores release environment secrets via GitHub CLI standard input. It also offers an explicitly confirmed, scoped operation to switch all four Render services to Auto-Deploy OFF without restarting them. If declined, you can turn off each service manually in Render Settings. Safeguard and separately copy its private identity before trusting backup recoverability.
+The SQL scanner is a boundary guard for **reviewed** SQL, not a sandbox for malicious
+owner-role programs. Dollar bodies stay opaque; PostgreSQL rejects their transaction
+termination inside the outer transaction. Top-level ambiguous backslash literals and
+psql commands are refused for manual review. A migration can still make inappropriate
+business changes or override timeout/lock settings: independent review and expand/contract
+compatibility are required. Existing historical admin-only migrations are not blindly
+replayed by the restricted production runner.
 
-   Alternatively configure GitHub origenlab-release ENVIRONMENT SECRETS manually: OL_PROD_POOLER_HOST (copy from Supabase Connect, session pooler port 5432), OL_PROD_PROJECT_REF, OL_PROD_CA_PEM (official root certificate PEM), OL_PROD_MIGRATOR_PASSWORD (rotate if previously exposed), RENDER_API_KEY (protected Render API key). Never store the admin postgres password there. Restrict environment secret access to reviewed main code.
-5. Either accept the setup helper's explicit Render auto-deploy change or, in Render Settings, turn Auto-Deploy OFF (not suspend, not stop) on all four: origenlab-mail-triage, origenlab-gmail-sync, origenlab API, origenlab-dashboard. This is the critical sequencing guarantee. The new workflow refuses deployment if even one remains on commit/checksPass autodeploy. Render's API does **not** accept an explicit `commitId` when deploying cron jobs; the controller checks GitHub main immediately before the cron trigger and verifies the returned commit, refusing a mismatch. If main advances at the exact trigger moment the cron update might still start at the newer commit; avoid merging new changes mid-release and treat this residual Render limitation as an operational hazard.
-6. **First-release HOLD:** after all PR tests and ruleset checks pass, prepare the protected release Environment and turn OFF independent Render auto-deploy. Keep the repository variable `OL_RELEASE_AUTOMATION_ENABLED` absent or explicitly `false`. Merging the reviewed PR with this hold in place will **not** trigger an automatic release; GitHub Actions `workflow_run` skips its production preflight entirely until activation. Manual `release` is also refused while disabled. Backup-only and read-only plan modes remain available.
-7. Merge the reviewed PR. From `main`, run GitHub Actions `production-db-migrations` mode `plan` (schema ledger currently 50) and `backup_only`. Download the encrypted artifact, decrypt it offline and **restore it into an isolated disposable PostgreSQL 17 environment**. Verify table data and the Procrastinate queue. Do not restore into live production.
-8. Only after a successful restore rehearsal, enable the repository variable with `gh variable set OL_RELEASE_AUTOMATION_ENABLED -R rafaelRojasVi/origenlab --body true`. Then trigger the **first controlled release** with `gh workflow run production-db-migrations.yml -R rafaelRojasVi/origenlab --ref main -f mode=release`. Watch all steps, including the post-release worker/cron verifier. Subsequent green pushes to `main` will release automatically. To stop unattended releases without stopping existing production services, set the variable back to `false`.
+## Release state machine
 
-No computer is needed for later merges, unless production repair is required.
+```mermaid
+flowchart TD
+  A[Main candidate] --> B{Holds and provenance}
+  B -->|Disabled or stale| X[Refuse or skip]
+  B -->|Approved| C[Exact SHA CI and provider gates]
+  C --> D[Consistent encrypted backup artifact]
+  D --> E[Atomic migration prefix]
+  E --> F[Sequential Render rollout]
+  F --> G[Read-only postflight]
+  G --> H[Complete]
+  C -->|Failure| X
+  D -->|Failure| X
+  E -->|Failure| Y[Reconcile committed prefix]
+  F -->|Failure| Z[Reconcile partial rollout]
+  G -->|Failure| Z
+```
 
-## Backups and recovery honesty
+| State | Guard/effect | Durable output |
+|---|---|---|
+| Candidate | main must be current; workflow_run must be successful same-repo push/main; manual dispatch must also use main | Pinned full SHA |
+| Hold | Missing/false release flag prevents automatic release and rejects manual release; missing/false backup flag skips schedules | Existing production stays running |
+| Protection/review | Active review/check policy; exact merged PR, final-head independent collaborator approval; no direct push release | Verified provenance |
+| CI | All nine named main-push workflows at exact SHA; required jobs successful; reruns select current attempt | CI evidence |
+| Render preflight | Approved IDs/owner/repository/main; independent deploy OFF; no active deployment | No provider writes |
+| Backup | TLS session pooler, migrator, PG17; one snapshot and ledger; required schemas in TOC; checksums; age encryption; successful artifact upload | Ciphertext artifact, 30-day retention |
+| Migrate | Current main/CI/review/config rechecked; exact ledger prefix; 10s lock and 180s statement bounds | Each file plus ledger row committed together |
+| Worker | Exact commitId, wait <=35m, refuse unknown/error statuses; no automatic rollback | Worker may be new while other services are old |
+| Cron | main rechecked; POST without unsupported commitId; poll and reconcile actual SHA | **Unpinnable provider boundary: activation blocker** |
+| API | Exact commitId; wait live | Old dashboard still active |
+| Dashboard | API `/health` success first; exact commitId; wait live | Coordinated UI revision |
+| Postflight | Same live SHA on all four; recent heartbeat, post-deploy sweep aggregate, eligible evidence age; next successful cron after deploy; final SHA recheck | No writes/duplicate work |
+| Complete | Final result job requires backup, migrate, deploy and verify success | Partial/skipped release cannot report complete |
 
-This encrypted artifact is an independent application-schema logical backup, NOT a complete Supabase backup. It includes the Procrastinate job queue state (after restore, stale worker leases still require operational review) but excludes Supabase Storage objects and platform-managed schemas. A readable TOC is not a tested restore. Daily 30-day GitHub artifact retention is not permanent retention. Keep a separate long-term offsite encrypted archive, Storage backup and real recovery drill.
+The production concurrency group serializes controller runs, not human merges or Render
+manual deploys. It never cancels an in-progress release automatically. New main commits
+are checked before migration and each service. A change during an SQL transaction cannot
+undo already committed schema; compatibility is essential. Disabling the release variable
+blocks new runs/stages; it does not cancel a provider request already accepted.
 
-The existing operations policy requires Supabase Pro daily platform backups and a 24-hour RPO; verify actual plan and backup status. This PR does not provision or charge a Supabase plan. Missing platform backups must be recorded as an outstanding risk.
+## Failure and recovery matrix
 
-Migrations roll forward, never rewind. If the ledger differs from the reviewed main prefix, the job refuses to auto-fix it. A failed SQL file rolls back its ledger insert. A failed Render deployment prevents subsequent services from deploying; review worker queue, cron, API, UI and send controls separately before declaring full business recovery.
+| Failure | Production state | Recovery |
+|---|---|---|
+| Hold, unreviewed/direct push, stale SHA | No DDL/deploy | Fix provenance/configuration; use current approved main. |
+| CI absent/failed/skipped or rerun pending | No DDL/deploy | Diagnose job; rerun CI, then rerun guarded workflow. Never bypass manually. |
+| Backup/encryption/artifact failure | No DDL/deploy; old services live | Verify key recipient, DB permissions/tools, artifact quota; retry backup. Never assert backup verified by hand. |
+| Lock contention | This migration did not run | Inspect competing session; rerun only after contention resolves. No automatic termination. |
+| SQL/ledger insert failure | Current file and ledger roll back; earlier files remain committed | Fix reviewed migration or grant; inspect prefix. Roll forward. |
+| Ledger drift | No guessed reconciliation | Independently investigate applied SQL/ledger, then approve a specific reconciliation. |
+| Migrations succeed, worker build fails | New compatible schema, old code | Diagnose provider build; resume same SHA if still main, otherwise release newer reviewed compatible main. |
+| Main moves before cron POST | Worker may already be new; cron unchanged | Controller stops. Release new current SHA through CI/migrations; no schema rollback. |
+| Main moves during cron POST | Cron may be ahead of migrated SHA; cannot cancel via API | Treat as incident; stop downstream rollout. Compare actual cron SHA and schema requirements; approve roll-forward repair. This is why unattended activation is blocked. |
+| Cron executes during rollout | Old/new instances may overlap against new schema | Backward-compatible changes; existing mailbox/Drive advisory locks and idempotency. Do not replay captured mail. |
+| POST response lost or times out | Provider may have accepted deployment | Never repeat POST blindly. Read service/deploy history and actual SHA/status, then resume. |
+| GET transient 429/5xx/network failure | No duplicate POST | At most three bounded reads; persistent failure stops for reconciliation. |
+| Deploy times out/cancelled/unknown enum | Requested provider deploy may still be running | Inspect history. Do not assume GitHub timeout cancelled Render. No automatic cancel/rollback. |
+| API rollout/readiness fails | Worker/cron may be new; dashboard remains old | Diagnose API/auth/DB; deploy only compatible repaired API before dashboard. |
+| Dashboard fails | New backend, prior dashboard | Maintain old-client compatibility; correct/retry dashboard. |
+| Postflight fails or SHA changes while waiting | Rollout incomplete despite Render live | Inspect aggregate queue/capture/Drive/API health; fix and reverify. No customer sends or queue mutations. |
+| Restore/recovery | Isolated DB includes old queue leases and flags | Keep all restored workers/senders OFF. Review queue/source timestamps, external objects, identities and send controls before approved recovery. |
 
-## Entry points
+Migrations are never automatically reversed. Successful services are idempotently skipped
+on a rerun only when their current live commit is the exact release SHA. API HTTP liveness
+is still checked before the dashboard even when the API deploy is skipped.
 
-Workflow: .github/workflows/production-db-migrations.yml
-Database target: supabase/scripts/hosted_env.py
-Backup: supabase/scripts/hosted_backup.py
-Atomic migrator: supabase/scripts/hosted_migrations.py
-Render controller: scripts/deploy/render_release.py
-Failure tests: supabase/scripts/tests/test_hosted_release.py
-One-time secrets setup and optional Render auto-deploy switch: scripts/deploy/configure_release_secrets.sh and scripts/deploy/set_render_autodeploy_off.py
-Branch-protection gate: scripts/deploy/check_branch_protection.py
-Postrelease queue and cron verification: scripts/deploy/verify_workers.py
-Original policy: docs/OPERATIONS.md sections 3-4
+## Tests and what they prove
 
-Important: the `origenlab-release` GitHub Environment is separate from the existing `production` Environment used by web-deploy. Never weaken existing website deployment approvals. The setup helper creates/reconciles the release Environment with protected-branches-only policy; require main branch protection before unattended runs. This dedicated release Environment must NOT require per-release reviewers, or automatic releases will wait for approval.
+Local: **26** offline tests and **10** actual PostgreSQL 17 tests pass. Local PG17.11 ran
+in the restricted scratch runtime with an OS-identity shim because that runtime cannot
+switch users; GitHub's separate PG17.6 container independently runs these tests normally.
+No production database was a test fixture. Required DB tests fail rather than silently
+skip when CI's fixture/tools are missing.
 
-## Release-engineering audit limits
+Real DB cases cover success/rerun, SQL rollback, ledger-insert rollback, missing ledger
+grants, advisory-lock timeout, one MVCC recovery point, full encrypted bundle checksums,
+age decrypt and isolated restore, replay/dump/restore of all currently reviewed migrations
+with constraints/functions/queue data, and actual verifier SQL for bulk/bounce/requester
+gaps. Fixture data is synthetic. A currently reviewed migration count greater than 50 is
+accepted by the test so future migrations do not deadlock the release contract.
 
-The offline contract tests check CI selection, main branch protection, migration file ordering and guards, Render deployment payloads and fail-closed behaviors. A successful Render `live` deployment proves build/deploy status only, not successful Gmail capture, job queue processing, API `/health` or CRM login. The new postflight verifies queue heartbeat/sweep/evidence-age and cron success, but not end-to-end mail ingestion or API authorization; after the first activation, verify user-facing routes against real production, and add authenticated end-to-end smoke alerts before declaring the system fully self-healing. Data migrations must stay backward-compatible with prior worker/API versions. Deployment retry is safe only after rechecking the pinned SHA and schema ledger. A partial rollout can leave earlier services at new code and later services at old code; never auto-rollback the schema.
+Offline cases cover ledger prefix, owner transitions, transaction escapes, hidden ruleset
+bypasses, approved-merge review identity, stale/fork/non-main events, both hold switches,
+CI identity and skipped jobs, cron payload shape, autonomous services, bounded reads,
+no blind POST retry and timestamp/resource validation of aggregate sweep events.
 
-## Activation safety switch
+GitHub evidence before final head verification:
 
-Repository variable `OL_RELEASE_AUTOMATION_ENABLED` defaults to **disabled if missing**. It is checked for automatic `workflow_run` releases and for explicit manual `release`; daily encrypted `backup_only` and manual `plan` still work when releases are disabled. Configure release-environment secrets and an offline decryption identity, disable Render automatic deploys, merge PR, then run and rehearse encrypted backup restoration BEFORE setting the repository variable true. The setup helper intentionally never enables the switch. Keep `false` for the first merge; setting `true` requires operator authorization and a successful restore drill.
+- Original head `6abed546`: six green workflows; release workflow run **37783183283**
+  ran only 14 mocked offline tests. All five production stages were intentionally skipped.
+- `75ffa2f8`: release run **37788000174**, isolated job **113347641523** failed the
+  PG17-client selection test. Seven other DB cases succeeded; logs independently
+  demonstrate real timeout/rollback execution. This failure was fixed, not ignored.
+- `ecd6efcc`: release run **37788384707**, isolated job **113348956183** and offline
+  job **113348956656** succeeded. Production stages were intentionally skipped.
+- `5a5fac60`: **all nine workflows green**, with no unexpected skipped jobs:
+
+| Workflow | Run ID | Verified job evidence |
+|---|---|---|
+| Release contract | 37789159601 | 24 offline tests; 10 isolated PG17 tests, job 113351597765 |
+| API | 37789159629 | Both jobs pass; DB suite 4,378 passed / 121 explicit skips |
+| Worker | 37789159627 | Both jobs pass; DB suite 452 passed / 1 explicit skip |
+| Supabase | 37789159392 | 1,220 pgTAP assertions in 30 files; 352 audit unit tests; replay/bootstrap/direct-login/advisors steps pass |
+| Dashboard | 37789159594 | test-build passed |
+| Pipeline | 37789159324 | test passed |
+| Proxy | 37789159533 | test passed |
+| Web CI | 37789159807 | build passed; public deployment unchanged |
+| Secret scan | 37789159639 | gitleaks passed |
+
+Production preflight, backup, migrate, deploy, verify and result jobs were **intentionally
+skipped on PR events**. Every executed step in the nine runs succeeded. Test-level skips
+were independently read: API excludes 105 legacy V1/Alembic tests without their separate
+DB, 1 hosted-load developer-container test, 10 empty-fixture read-boundary tests and
+5 disposable TLS tests. Worker excludes 1 extension-owned-definer case because that
+fixture has no such function. None was a missing V2 API/worker test DSN. These skips
+are coverage limitations, not proof of those behaviors. The TLS and production-data
+journey gaps remain explicitly unproven.
+
+The final report/TOC/forward-compatible-test commit must additionally pass head CI;
+exact final run IDs accompany the handoff. Prior green code runs are retained here
+rather than silently attributed to a newer SHA.
+
+Existing API/worker CI also runs real runtime-role integration suites; Supabase CI runs
+migration replay, pgTAP, role/bootstrap/failure checks and advisors. Their result is
+examined separately from these release tests. They do not prove live provider deploys,
+actual offline recovery-key access, production restore duration or authenticated CRM UX.
+
+## Backup recoverability and isolated restore procedure
+
+The dump includes `crm`, `comms`, `outbound`, `evidence`, `catalog`, `procurement`,
+`platform`, `procrastinate`; the ledger is a checksummed text manifest from the **same
+snapshot**. It does not include global role definitions/passwords, Supabase-managed
+Auth/platform services, Storage object bytes, external S3, Google Drive or the API disk.
+A restore requires those dependencies from independent recovery sources.
+
+Only ciphertext is uploaded. The private age identity stays offline, with a second
+protected copy. Plaintext is temporary owner-only runner data; this is cleanup, not a
+claim of physical secure erasure. Encryption/checksums establish integrity and key access
+when decrypted; only actual pg_restore plus validation establishes database restoration.
+GitHub retention is 30 days, not immutable offsite retention. Queue/history growth can
+increase dump duration/storage; monitor backup duration, artifact bytes and restore time.
+
+Pro is confirmed and supplies daily managed-backup entitlement. Available recovery points,
+PITR settings and project-specific successful backup history were not exposed by the
+connected tools and remain unverified. Existing policy is a **24-hour RPO**, daily Pro
+backups required and PITR initially declined; a missed daily run breaks that RPO. RTO is
+not yet measured. Object backups and tested role/credential recovery are still needed.
+
+On an offline/trusted recovery machine, use the actual downloaded encrypted artifact:
+
+```bash
+umask 077
+age -d -i /secure/offline-age-identity.txt -o snapshot.tar snapshot.tar.age
+mkdir recovery-bundle
+tar -tf snapshot.tar
+# Inspect names before extraction; expected five fixed bundle files.
+tar -xf snapshot.tar -C recovery-bundle
+cd recovery-bundle
+sha256sum -c SHA256SUMS.txt
+pg_restore --list origenlab-production-app-schemas.dump > inspected-toc.txt
+```
+
+Create a **fresh isolated** PostgreSQL 17/Supabase-compatible target, with no worker,
+networked cron or sender attached. Bootstrap approved runtime/owner roles from `roles.sql`,
+install `btree_gist` in `extensions`, and grant extension USAGE. Do **not** replay the
+application migrations before restoring: the dump already defines those objects.
+
+```bash
+# Set PGHOST/PGPORT/PGUSER/PGDATABASE only to the disposable recovery instance.
+psql -X -v ON_ERROR_STOP=1 -f /reviewed-checkout/supabase/roles.sql
+psql -X -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA IF NOT EXISTS extensions; CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA extensions; GRANT USAGE ON SCHEMA extensions TO origenlab_owner, origenlab_api, origenlab_worker;'
+pg_restore --exit-on-error --single-transaction --dbname "$PGDATABASE" origenlab-production-app-schemas.dump
+```
+
+Then validate counts, constraints, RLS/grants, critical functions, queue tables and the
+ledger manifest against reviewed files. The ledger text is **not** an executable SQL
+restore; recreate/register it in the isolated target only after that comparison. Do not
+point the production release runner at a restored DB and pretend it is a current ledger.
+Review restored send flags without activating them. Never connect restored queue leases
+or replay failed jobs automatically. Fetch/verify external objects independently, measure
+elapsed recovery time and record the result. Synthetic CI restoration does not replace
+this real production-data/offline-key drill.
+
+## Short one-time procedure
+
+1. Keep repository variables `OL_RELEASE_AUTOMATION_ENABLED=false` and
+   `OL_BACKUP_AUTOMATION_ENABLED=false`. Their actual current values and protected
+   Environment configuration could not be read through the connected GitHub APIs;
+   the owner must confirm them before merge. No value was changed in this review.
+2. Configure strict universal `gitleaks` bound to GitHub Actions integration 15368,
+   at least one independent approving collaborator, stale-review dismissal, no bypass,
+   and default branch main. Leave heavy **PR** checks path-filtered. All **main** CI
+   is mandatory. A sole maintainer needs another collaborator; self-approval cannot
+   satisfy this policy. Do not silently weaken it for convenience.
+3. After explicit owner approval, run reviewed `configure_release_secrets.sh` once
+   with trusted `gh`, age tools and verified CA. It installs only the main-only release
+   environment, never a privileged postgres password, and never enables automation.
+   Copy the private recovery identity to a second protected offline location. With
+   explicit confirmation, turn the four Render auto-deploy triggers OFF without
+   suspending/restarting services. Preserve public website environment approvals.
+4. After final green CI and explicit merge approval, merge this PR **inactive**. Run
+   manual `plan`, then `backup_only` from main. Restore that artifact into an isolated
+   PG17 target using the procedure above; verify actual managed recovery points,
+   objects and role/credential recovery. Manual backup requires no release flag.
+5. **Before unattended activation**, implement/verify a pinned cron release boundary
+   and authenticated API/CRM smoke; approve any required provider configuration.
+   A temporary “no merges during release” rule is not the finished architecture.
+6. Only then, with explicit approval, enable daily backup flag, enable release flag,
+   dispatch first controlled release, and verify every stage and next cron run.
+   Subsequent approved green main merges can use the tested controller. Until step 5
+   is resolved, the current verdict remains **BLOCKED TO ACTIVATE**.
+
+No need to use the personal PC for subsequent normal releases once activation is proven.
+No mail automation/send-control/contact-suppression changes are part of this procedure.
+
+## Provider references and access limits
+
+- [Render create deploy](https://api-docs.render.com/reference/create-deploy): cron
+  excludes commitId; responses 201/202. Actual list rows wrap `deploy`; GET/POST deploy
+  objects use `id`, `commit.id`, `status`, `finishedAt`.
+- [Render cancel deploy](https://api-docs.render.com/reference/cancel-deploy): cron
+  cancellation unsupported. The controller does not assume timeout means cancellation.
+- [Render OpenAPI](https://api-docs.render.com/v1.0/openapi/render-public-api-1.json):
+  11 status values independently checked against controller terminal/in-progress sets;
+  bounded transient GET retries never retry an ambiguous POST.
+- [GitHub rulesets API](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset):
+  metadata read access suffices for policy; bypass actor list requires write visibility.
+- [GitHub workflow_run](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run):
+  default-branch context can obtain secrets despite an unprivileged triggering workflow;
+  verified push/repository/main/SHA provenance and environment restriction are essential.
+- [Supabase backups](https://supabase.com/docs/guides/platform/backups): Pro daily
+  backups, seven-day retention; Storage bytes and custom-role passwords excluded.
+
+Credentials, raw error rows, message bodies and recipient records were not published.
+Gmail access was not needed to validate the deployment contract: mailbox cursor and
+aggregate worker/provider metadata were sufficient. Specific CRM business-rule outcomes
+and the PUCV customer's case were not changed or claimed repaired by this review.

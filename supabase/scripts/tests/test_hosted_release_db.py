@@ -187,7 +187,7 @@ class RealReleaseDatabase(unittest.TestCase):
             for schema in backup.SCHEMAS:
                 self.assertIn("TABLE DATA " + schema, toc)
 
-    def test_reviewed_50_migration_schema_dump_restores(self):
+    def test_reviewed_migration_chain_schema_dump_restores(self):
         # Replay historical admin bootstrap separately: hosted runner deliberately
         # does not re-run these files as its restricted migrator.
         repo = Path(__file__).resolve().parents[3]
@@ -197,7 +197,7 @@ class RealReleaseDatabase(unittest.TestCase):
         self.sql("CREATE EXTENSION btree_gist WITH SCHEMA extensions; GRANT USAGE ON SCHEMA extensions TO origenlab_owner, origenlab_api, origenlab_worker", self.env)
         backup.execute(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", str(repo / "supabase/roles.sql")], self.env)
         rows = migrations.chain(repo)
-        self.assertEqual(len(rows), 50)
+        self.assertGreaterEqual(len(rows), 50)
         for version, name, path in rows:
             backup.execute(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "--single-transaction", "-f", str(path),
                             "-c", f"INSERT INTO supabase_migrations.schema_migrations VALUES ('{version}','{name}')"], self.env)

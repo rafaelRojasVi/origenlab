@@ -113,6 +113,11 @@ def run() -> None:
             if stream.read(5) != b"PGDMP":
                 raise Refused("Custom-format archive header is invalid")
         contents = execute([pg_restore, "--list", str(dump)])
+        missing = [schema for schema in SCHEMAS
+                   if not any(re.search(r"\bSCHEMA - " + re.escape(schema) + r"\s", line)
+                              for line in contents.splitlines())]
+        if missing:
+            raise Refused("Backup is missing required application/queue schemas: " + ", ".join(missing))
         if sum(" TABLE DATA " in line for line in contents.splitlines()) < 25:
             raise Refused("Too few TABLE DATA entries; backup might be partial")
         (private / "restore-toc.txt").write_text(contents, encoding="utf-8")
