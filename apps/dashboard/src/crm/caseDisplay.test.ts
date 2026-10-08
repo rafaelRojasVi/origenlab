@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { quoteProduct } from "./caseDisplay";
+import { displayName, quoteProduct } from "./caseDisplay";
 import type { OpportunityCardData, RevisionCard } from "./crmTypes";
 
 // Every value below is invented; the repository is public.
@@ -40,6 +40,14 @@ function withQuote(subject: string | null, filename: string | null): Opportunity
 }
 
 describe("quoteProduct", () => {
+  it("identifies an unconfirmed request by its subject without inventing an institution", () => {
+    const request = withQuote(null, null);
+    request.latest_revision = null;
+    request.last_contact = { inbound: { at: "2026-10-07T12:00:00Z", subject: "Solicitud de microscopio", url: null }, outbound: null };
+    expect(displayName(request)).toEqual({ name: "Solicitud de microscopio", sub: "Institución por confirmar" });
+    request.last_contact = undefined;
+    expect(displayName(request).name).toBe("Caso");
+  });
   it("reads the product the quote email's subject names", () => {
     expect(quoteProduct(withQuote("Cotización Balanzas Ohaus", "CN01239-Ana Pérez.pdf"))).toBe("Balanzas Ohaus");
     expect(quoteProduct(withQuote("Re: Solicitud cotización porta y cubreobjeto", null))).toBe("Porta y cubreobjeto");

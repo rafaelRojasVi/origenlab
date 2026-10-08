@@ -171,6 +171,31 @@ afterEach(() => {
 });
 
 describe("case command helpers", () => {
+  it("shows an unconfirmed request's email and records an incorrect case as abandoned", async () => {
+    const request = card({ stage: "lead", organization: null, contact: null, quotes: [], latest_revision: null,
+      quote_numbers: [], revision_count: 0, title: "Solicitud de cotización — Balanza ficticia",
+      last_contact: { inbound: { at: "2026-10-07T12:00:00Z", subject: "Solicitud de balanza ficticia",
+        url: "https://mail.google.com/mail/u/0/#all/example1", sender_name: "Persona Ficticia" }, outbound: null } });
+    const calls = stubApi({ pipelines: [page([request])],
+      onPost: () => ({ body: receipt("advance_case_stage", "abandoned", 6, "aaaaaaaa-1234") }) });
+    render(withSession(session("sales"), <PipelinePage initialOpportunityId={CASE} />));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Solicitud de balanza ficticia")).toBeInTheDocument();
+    expect(within(dialog).getByText("Persona Ficticia · nombre en el correo")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "Abrir correo en Gmail" })).toHaveAttribute("href",
+      "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/example1");
+    fireEvent.click(within(dialog).getByRole("button", { name: "No es una solicitud" }));
+    const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    fireEvent.change(within(form).getByLabelText(/Detalle/), { target: { value: "Es una oferta del proveedor" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Cerrar caso incorrecto" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
+    const post = calls.find((c) => c.method === "POST")!;
+    expect(post.path).toBe("/v2/commands/advance-case-stage");
+    expect(post.body).toMatchObject({ opportunity_id: CASE, opportunity_version: 5,
+      stage: "abandoned", close_reason: "No es una solicitud: Es una oferta del proveedor" });
+    expect(post.key).toBeTruthy();
+  });
   it("offers only the moves the stage table allows, never «won»", () => {
     expect(nextStages("quoting")).toEqual(["negotiating", "qualified", "abandoned", "lost"]);
     expect(nextStages("negotiating")).toEqual(["lost", "quoting", "abandoned"]);
@@ -282,7 +307,7 @@ describe("case drawer actions", () => {
     const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
     fireEvent.click(within(form).getByRole("button", { name: "Sin respuesta" }));
     fireEvent.click(within(form).getByRole("button", { name: "Marcar perdida" }));
-    await within(dialog).findByText(/Estado → Perdida · sin respuesta: registrado/);
+    await within(dialog).findByText(/Estado → Cerrada · abandonada: registrado/);
     expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ stage: "abandoned", close_reason: "Sin respuesta" });
   });
 

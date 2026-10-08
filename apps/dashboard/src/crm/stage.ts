@@ -25,7 +25,7 @@ export const STAGE_LABEL: Record<string, string> = {
   negotiating: "Conversación",
   won: "Ganada",
   lost: "Perdida",
-  abandoned: "Perdida · sin respuesta",
+  abandoned: "Cerrada · abandonada",
 };
 
 export const STAGE_TONE: Record<string, Tone> = {
@@ -81,6 +81,7 @@ export function boardColumnOf(card: OpportunityCardData, now: Date = new Date())
 
 /** «Perdida»: one click on a reason. «Sin respuesta» closes as `abandoned`, the rest as `lost`. */
 export const LOST_REASONS: { label: string; stage: "lost" | "abandoned" }[] = [
+  { label: "No es una solicitud", stage: "abandoned" },
   { label: "Sin respuesta", stage: "abandoned" },
   { label: "Sin presupuesto", stage: "lost" },
   { label: "Compró a otro proveedor", stage: "lost" },
@@ -116,6 +117,8 @@ export function matchesQuery(card: OpportunityCardData, q: string): boolean {
     card.organization?.name ?? "",
     card.contact?.address ?? "",
     card.contact?.name ?? "",
+    card.last_contact?.inbound?.sender_name ?? "",
+    card.last_contact?.inbound?.subject ?? "",
     ...card.quote_numbers,
     ...card.other_organizations.map((o) => o.name),
   ]

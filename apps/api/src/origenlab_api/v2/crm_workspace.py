@@ -518,6 +518,12 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
             "subject": row.get("subject"),
             "url": gmail_url(row.get("gmail_message_id")),
         }
+        # Display-header evidence, not an accepted CRM person or institution. Never pass a
+        # bare mailbox as a name: viewer responses must not acquire an unmasked address.
+        sender_names = [name.strip() for name, _ in getaddresses([row.get("sender") or ""])
+                        if name.strip() and "@" not in name]
+        if len(sender_names) == 1:
+            out[row["opportunity_id"]][direction]["sender_name"] = sender_names[0]
     return out
 
 

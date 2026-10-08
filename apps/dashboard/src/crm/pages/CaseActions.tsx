@@ -78,6 +78,7 @@ export function CaseActions({
   const mayAuthor = useMayAuthorCrm();
   const [mode, setMode] = useState<Mode>(initial?.mode ?? null);
   const [target, setTarget] = useState<MoveTarget | null>(initial?.target ?? null);
+  const [initialReason, setInitialReason] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   useEffect(() => {
     if (initial) {
@@ -115,6 +116,7 @@ export function CaseActions({
     quoteReason ?? (revisions.length === 0 ? "No hay una revisión enviada y vigente que reemplazar" : null);
 
   function toggle(next: Exclude<Mode, null>) {
+    setInitialReason(null);
     setOutcome(null);
     setMode(mode === next ? null : next);
   }
@@ -132,6 +134,13 @@ export function CaseActions({
   return (
     <div className="space-y-3" data-testid="case-actions">
       <div className="flex flex-wrap gap-2">
+        {decideReason ? (
+          <DisabledAction id="drawer-not-request" reason={decideReason}>No es una solicitud</DisabledAction>
+        ) : (
+          <Button onClick={() => { setOutcome(null); setMode("stage"); setTarget("perdida"); setInitialReason("No es una solicitud"); }}>
+            No es una solicitud
+          </Button>
+        )}
         {decideReason ? (
           <DisabledAction id="drawer-advance" reason={decideReason}>
             Cambiar estado
@@ -217,9 +226,10 @@ export function CaseActions({
           />
           {target ? (
             <CaseMoveForm
-              key={target}
+              key={`${target}:${initialReason ?? ""}`}
               card={card}
               target={target}
+              initialReason={initialReason}
               onCancel={() => {
                 setTarget(null);
                 setMode(null);

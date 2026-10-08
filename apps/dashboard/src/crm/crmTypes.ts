@@ -92,6 +92,8 @@ export interface CaseMailDocumentsResponse {
 
 /** One email on a case's thread, as «último contacto» shows it. */
 export interface MailTouch {
+  /** Display header evidence; not a confirmed CRM person. Never a mailbox address. */
+  sender_name?: string | null;
   at: string;
   subject: string | null;
   url: string | null;

@@ -545,6 +545,25 @@ function OpportunityDrawer({
         </Section>
       ) : null}
 
+      <Section title="Correos del caso">
+        {card.last_contact?.inbound || card.last_contact?.outbound ? (
+          <ul className="space-y-3 text-xs">
+            {(["inbound", "outbound"] as const).map((direction) => {
+              const mail = card.last_contact?.[direction];
+              if (!mail) return null;
+              const url = inSharedMailbox(mail.url);
+              return <li key={direction}>
+                <p className="text-ink-faint">{direction === "inbound" ? "Último recibido" : "Último enviado"} · {fmtDate(mail.at)}</p>
+                <p className="break-words text-ink">{mail.subject || "Sin asunto"}</p>
+                {mail.sender_name ? <p className="text-ink-muted">{mail.sender_name} · nombre en el correo</p> : null}
+                {url ? <ExternalLink href={url} label="Abrir correo en Gmail">Abrir correo en Gmail</ExternalLink> : <p>Sin enlace de Gmail disponible</p>}
+              </li>;
+            })}
+          </ul>
+        ) : <p className="text-xs text-ink-muted">No hay correos capturados disponibles para este caso.</p>}
+        <p className="mt-2 text-[11px] text-ink-faint">La institución y el contacto aún pueden requerir confirmación. El correo vinculado se conserva como evidencia.</p>
+      </Section>
+
       <Section title="Institución y contacto">
         <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-xs">
           <dt className="text-ink-faint">Solicitante</dt>
