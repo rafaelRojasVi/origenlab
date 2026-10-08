@@ -23,6 +23,44 @@ def healthy_worker(env: dict[str, str]) -> bool:
                where last_heartbeat >= now() - interval '3 minutes')
        and exists (select 1 from procrastinate.procrastinate_periodic_defers
                    where defer_timestamp >= extract(epoch from now()) - 300)
+       and not exists (
+         select 1 from comms.message m
+           join evidence.source_record sr
+             on sr.dedupe_key = 'gmail_message:' || m.provider_message_id
+          where sr.kind = 'gmail_message'
+            and m.parse_status = 'parsed'
+            and m.eml_storage_path is not null
+            and m.internal_date between now() - interval '14 days'
+                                    and now() - interval '15 minutes'
+            and (
+              not exists (
+                select 1 from evidence.assertion a
+                 where a.source_record_id = sr.id
+                   and a.kind = 'message_triage' and a.value_norm = 'triage:v1')
+              or (
+                exists (
+                  select 1 from evidence.assertion a
+                   where a.source_record_id = sr.id
+                     and a.kind = 'message_triage' and a.value_norm = 'triage:v1'
+                     and a.value->>'class' = 'bounce')
+                and not exists (
+                  select 1 from evidence.assertion d
+                   where d.source_record_id = sr.id
+                     and d.kind = 'delivery_failure' and d.value_norm = 'delivery:v1')
+              )
+              or (
+                exists (
+                  select 1 from evidence.assertion a
+                   where a.source_record_id = sr.id
+                     and a.kind = 'message_triage' and a.value_norm = 'triage:v1'
+                     and a.value->>'class' = 'quote_request')
+                and not exists (
+                  select 1 from evidence.assertion r
+                   where r.source_record_id = sr.id
+                     and r.kind = 'message_triage' and r.value_norm = 'requester:v1')
+              )
+            )
+       )
     then 'healthy' else 'not_ready' end;
     reset role;
     """
@@ -62,7 +100,7 @@ def verify() -> None:
         worker_deadline = time.monotonic() + 360
         while True:
             if healthy_worker(env):
-                print("WORKER HEALTHY: fresh Procrastinate heartbeat and periodic sweep", flush=True)
+                print("WORKER HEALTHY: heartbeat, periodic sweep and no stale 14-day triage gaps", flush=True)
                 break
             if time.monotonic() >= worker_deadline:
                 raise Refused("Mail-triage worker has no recent heartbeat or periodic sweep")
