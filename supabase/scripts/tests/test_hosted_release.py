@@ -40,10 +40,11 @@ class ProductionGates(unittest.TestCase):
             p.mkdir(parents=True)
             f = p / "20261007160000_test.sql"
             f.write_text("select 1;")
-            with self.assertRaises(Exception):
-                migrations.chain(Path(directory))
-            f.write_text("set role origenlab_owner;\nselect 1;\nreset role;\n")
             self.assertEqual(len(migrations.chain(Path(directory))), 1)
+            with self.assertRaises(Exception):
+                migrations.require_reviewed_owner_transition(f)
+            f.write_text("set role origenlab_owner;\nselect 1;\nreset role;\n")
+            migrations.require_reviewed_owner_transition(f)
 
     def test_render_autodeploy_gate(self):
         name, service_id = render.SERVICES[0]
