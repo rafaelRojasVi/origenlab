@@ -39,6 +39,8 @@ export const WORKSPACE_PATHS = {
   caseNotes: (opportunityId: string) => `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/notes`,
   caseMailDocuments: (opportunityId: string) =>
     `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/mail-documents`,
+  caseQuoteCandidates: (opportunityId: string) =>
+    `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/quote-candidates`,
 } as const;
 
 export const fetchOverview = () => fetchJsonGet<WorkspaceOverview>(operatorApiUrl(WORKSPACE_PATHS.overview));
@@ -49,6 +51,9 @@ export const fetchCaseNotes = (opportunityId: string) =>
 /** The Gmail messages linked to one case and their documents, for «Registrar cotización». A read only. */
 export const fetchCaseMailDocuments = (opportunityId: string) =>
   fetchJsonGet<CaseMailDocumentsResponse>(operatorApiUrl(WORKSPACE_PATHS.caseMailDocuments(opportunityId)));
+/** Read-only review proposals: no cross-thread link is made by this GET. */
+export const fetchCaseQuoteCandidates = (opportunityId: string) =>
+  fetchJsonGet<CaseQuoteCandidatesResponse>(operatorApiUrl(WORKSPACE_PATHS.caseQuoteCandidates(opportunityId)));
 export const fetchProviders = () => fetchJsonGet<ProvidersResponse>(operatorApiUrl(WORKSPACE_PATHS.providers));
 export const fetchEquipmentInterests = () =>
   fetchJsonGet<EquipmentInterestsResponse>(operatorApiUrl(WORKSPACE_PATHS.equipmentInterests));
