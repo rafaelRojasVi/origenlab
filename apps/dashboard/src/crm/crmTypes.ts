@@ -101,6 +101,7 @@ export interface CrossThreadQuoteCandidate {
   gmail_url: string;
   reason: string;
   recorded_elsewhere: boolean;
+  other_cases_on_quote_thread: { opportunity_id: string; title: string }[];
 }
 
 export interface CaseQuoteCandidatesResponse {
