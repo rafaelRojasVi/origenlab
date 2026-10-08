@@ -3,6 +3,7 @@ import { fetchV2Organizations } from "../../api/v2Client";
 import { fetchOrganizationAuthoring } from "../authoring/crmAuthoringApi";
 import {
   addCaseOrganization,
+  setCaseOrganizationRole,
   caseRefusalText,
   isStaleRefusal,
   newCaseCommandKey,
@@ -30,6 +31,7 @@ export function AssignInstitution({
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selected, setSelected] = useState("");
+  const [supplierReason, setSupplierReason] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +95,9 @@ export function AssignInstitution({
           organization_version: org.version,
           role: "requesting_institution",
           note: note.trim(),
+          ...(supplierReason.trim()
+            ? { supplier_exception_reason: supplierReason.trim() }
+            : {}),
         },
         keyRef.current,
       );
@@ -120,6 +125,9 @@ export function AssignInstitution({
       className="space-y-3 rounded-md border border-line p-3"
       aria-label="Asignar institución solicitante"
     >
+      {(card.pending_institution_mentions?.length ?? 0) > 0 ? (
+        <ReviewMentionedInstitution card={card} onDone={onDone} />
+      ) : null}
       <form onSubmit={(e) => void search(e)} className="space-y-2">
         <FormField label="Buscar institución" htmlFor="assign-institution-search">
           <TextInput
@@ -170,6 +178,15 @@ export function AssignInstitution({
             institución basándote únicamente en el dominio del correo.
           </p>
 
+          <FormField label="Excepción de proveedor (solo si corresponde)" htmlFor="assign-supplier-reason">
+            <TextareaInput
+              id="assign-supplier-reason"
+              value={supplierReason}
+              onChange={setSupplierReason}
+              rows={2}
+              maxLength={2000}
+            />
+          </FormField>
           <Button
             type="submit"
             variant="primary"
@@ -187,5 +204,106 @@ export function AssignInstitution({
         Cancelar
       </Button>
     </section>
+  );
+}
+
+
+/** The automation may only propose "mentioned". A human can make it a requester. */
+function ReviewMentionedInstitution({
+  card,
+  onDone,
+}: {
+  card: OpportunityCardData;
+  onDone: (
+    outcome: { tone: "good" | "bad"; lines: string[] },
+    refetch: boolean,
+  ) => void;
+}) {
+  const mentions = card.pending_institution_mentions ?? [];
+  const [mentionId, setMentionId] = useState("");
+  const [note, setNote] = useState("");
+  const [supplierReason, setSupplierReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const keyRef = useRef(newCaseCommandKey());
+
+  async function confirm(e: FormEvent) {
+    e.preventDefault();
+    const mention = mentions.find(
+      (m) => m.opportunity_organization_id === mentionId,
+    );
+    if (!mention || !note.trim() || busy || card.version == null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await setCaseOrganizationRole(
+        {
+          opportunity_id: card.opportunity_id,
+          opportunity_version: card.version,
+          opportunity_organization_id: mention.opportunity_organization_id,
+          role: "requesting_institution",
+          note: note.trim(),
+          ...(supplierReason.trim()
+            ? { supplier_exception_reason: supplierReason.trim() }
+            : {}),
+        },
+        keyRef.current,
+      );
+      onDone({
+        tone: "good",
+        lines: ["Institución «" + mention.name + "» confirmada como solicitante del caso."],
+      }, true);
+    } catch (err) {
+      keyRef.current = newCaseCommandKey();
+      setError(caseRefusalText(err));
+      if (isStaleRefusal(err)) {
+        onDone({ tone: "bad", lines: [caseRefusalText(err)] }, true);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form
+      className="space-y-3 rounded-md border border-warn/40 p-3"
+      aria-label="Revisar institución mencionada"
+      onSubmit={(e) => void confirm(e)}
+    >
+      <p className="text-xs text-ink-muted">
+        El caso contiene instituciones mencionadas por una regla automática.
+        Aún no está confirmado quién solicita. Revisa la evidencia antes
+        de cambiar el rol de una de ellas.
+      </p>
+      <FormField label="Institución mencionada" htmlFor="mention-requester-selection">
+        <select
+          id="mention-requester-selection"
+          className="w-full rounded-md border border-line bg-surface px-3 py-2"
+          value={mentionId}
+          onChange={(e) => setMentionId(e.target.value)}
+          disabled={busy}
+        >
+          <option value="">Seleccionar institución mencionada</option>
+          {mentions.map((m) => (
+            <option key={m.opportunity_organization_id} value={m.opportunity_organization_id}>
+              {m.name} · {m.organization_id.slice(0, 8)}
+            </option>
+          ))}
+        </select>
+      </FormField>
+      <FormField label="Evidencia de que es solicitante" htmlFor="mention-requester-note">
+        <TextareaInput id="mention-requester-note" value={note}
+          onChange={setNote} rows={2} maxLength={2000} />
+      </FormField>
+      <FormField label="Excepción de proveedor (solo si corresponde)" htmlFor="mention-supplier-reason">
+        <TextareaInput id="mention-supplier-reason" value={supplierReason}
+          onChange={setSupplierReason} rows={2} maxLength={2000} />
+      </FormField>
+      <Button type="submit" variant="primary" disabled={!mentionId || !note.trim() || busy}
+        busy={busy}>
+        Confirmar rol de solicitante
+      </Button>
+      {error ? <p role="alert">{error}</p> : null}
+    </form>
   );
 }
