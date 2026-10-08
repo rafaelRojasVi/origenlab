@@ -9,6 +9,7 @@
 import { fetchJsonGet, operatorApiUrl } from "../api/operatorClient";
 import type {
   CaseMailDocumentsResponse,
+  CaseQuoteCandidatesResponse,
   DriveArchiveResponse,
   MailQuoteNumbersResponse,
   MailSyncStatus,
