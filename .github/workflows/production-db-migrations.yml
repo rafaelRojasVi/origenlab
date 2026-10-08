@@ -220,7 +220,7 @@ jobs:
           OL_PROD_BACKUP_OUT: ${{ runner.temp }}/origenlab-production-snapshot.tar.age
         run: python3 supabase/scripts/hosted_backup.py
       - name: Publish only age-encrypted backup
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: origenlab-encrypted-prod-backup-${{ github.run_id }}
           path: ${{ runner.temp }}/origenlab-production-snapshot.tar.age
