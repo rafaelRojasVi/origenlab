@@ -82,6 +82,24 @@ business changes or override timeout/lock settings: independent review and expan
 compatibility are required. Existing historical admin-only migrations are not blindly
 replayed by the restricted production runner.
 
+
+## Single-maintainer release policy (explicit opt-in, remains inactive by default)
+
+OrigenLab's GitHub account is currently authenticated as repository owner `rafaelRojasVi`. If no independent collaborator is available, requiring another user's PR approval would deadlock every release. The policy supports two distinct modes:
+
+- **Collaborative default:** `OL_RELEASE_SOLO_MODE` absent or false. Protect main requires at least one approving review, dismissal of stale approvals, strict `gitleaks` checks, and no visible bypass actors. Production requires an independent, current review of the exact merged PR.
+- **Solo-owner opt-in:** GitHub **repository variable** `OL_RELEASE_SOLO_MODE=true`. Protect main still requires PRs, dismissal of stale approvals, strict `gitleaks` checks tied to GitHub Actions (integration ID 15368), and no visible bypass actors. The release verifier accepts only an internal PR **authored AND merged by repository owner `rafaelRojasVi`**, with the exact merge commit SHA and main as the target. Direct pushes, bot merges, other authors, forked PRs, skipped/failed CI and stale SHA remain rejected.
+
+To configure the solo mode (only if you are the sole maintainer), from an authenticated and authorized local `gh` CLI:
+
+```bash
+gh variable set OL_RELEASE_SOLO_MODE -R rafaelRojasVi/origenlab --body true
+```
+
+Then, in the [Protect main ruleset](https://github.com/rafaelRojasVi/origenlab/rules/17174991), leave PRs required and stale reviews dismissed, keep zero required approving reviews *only in solo mode*, require the **GitHub Actions `gitleaks`** status check, and enable strict/up-to-date status checks. Verify there are no bypass actors. Configure ruleset changes through an authorized repository administrator; this connected assistant cannot change those settings.
+
+**Selecting solo mode is not release activation.** `OL_RELEASE_AUTOMATION_ENABLED` and `OL_BACKUP_AUTOMATION_ENABLED` remain OFF until a tested encrypted production-data restore and the approved legacy-cron cutover. When a collaborator becomes available, switch back to the collaborative policy and independently reviewed PR merges. Never use a fake second account as a substitute for review.
+
 ## Release state machine
 
 ```mermaid
