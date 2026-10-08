@@ -291,6 +291,22 @@ describe("stage movement requesting-institution prerequisites", () => {
     expect(moveRefusal(request, "estudio")).toBeNull();
   });
 
+  it("allows resuming a paused case in its current stage without revalidating the requester", () => {
+    const request = card({
+      stage: "qualified",
+      organization: null,
+      requesting_institution_confirmation: null,
+      open_tasks: [{
+        task_id: TASK,
+        title: "Retomar",
+        due_at: "2099-01-01T09:00:00Z",
+        version: 1,
+        owner: null,
+      }],
+    });
+    expect(moveRefusal(request, "estudio", new Date("2026-10-08T12:00:00Z"))).toBeNull();
+  });
+
   it("allows closing an unidentified request without an institution", () => {
     const request = card({ stage: "lead", organization: null });
     expect(moveRefusal(request, "perdida")).toBeNull();
