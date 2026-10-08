@@ -17,6 +17,7 @@ on:
       - "scripts/deploy/configure_release_secrets.sh"
       - "scripts/deploy/set_render_autodeploy_off.py"
       - "scripts/deploy/check_branch_protection.py"
+      - "scripts/deploy/verify_workers.py"
       - "docs/runbooks/PRODUCTION_DB_MIGRATIONS.md"
   workflow_dispatch:
     inputs:
@@ -53,7 +54,8 @@ jobs:
           python3 -m py_compile supabase/scripts/hosted_env.py \
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
             scripts/deploy/render_release.py scripts/deploy/check_release_ci.py \
-            scripts/deploy/set_render_autodeploy_off.py scripts/deploy/check_branch_protection.py
+            scripts/deploy/set_render_autodeploy_off.py scripts/deploy/check_branch_protection.py \
+            scripts/deploy/verify_workers.py
           bash -n supabase/scripts/hosted_migrations.sh scripts/deploy/configure_release_secrets.sh
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
 
@@ -93,7 +95,8 @@ jobs:
           python3 -m py_compile supabase/scripts/hosted_env.py \
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
             scripts/deploy/render_release.py scripts/deploy/check_release_ci.py \
-            scripts/deploy/set_render_autodeploy_off.py scripts/deploy/check_branch_protection.py
+            scripts/deploy/set_render_autodeploy_off.py scripts/deploy/check_branch_protection.py \
+            scripts/deploy/verify_workers.py
           bash -n supabase/scripts/hosted_migrations.sh
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
           echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
@@ -213,3 +216,26 @@ jobs:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
         run: python3 scripts/deploy/render_release.py release
+
+  verify:
+    needs: [preflight, deploy]
+    if: needs.preflight.outputs.mode == 'release'
+    name: Verify worker queue and Gmail cron after release
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: origenlab-release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          persist-credentials: false
+      - name: Verify worker heartbeat/sweep and successful cron completion
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }}
+          OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }}
+          OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }}
+          OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }}
+        run: python3 scripts/deploy/verify_workers.py
