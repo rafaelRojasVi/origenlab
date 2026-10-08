@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+from unittest import mock
 import sys
 import tempfile
 import unittest
@@ -77,16 +79,69 @@ class ProductionGates(unittest.TestCase):
             return dict(name=name, event="push", head_sha="a" * 40,
                         status=status, conclusion=conclusion,
                         created_at="2026-10-08T00:00:00Z", run_attempt=1)
-        ok = [item("supabase"), item("secret-scan"), item("worker")]
+        ok = [item("supabase"), item("secret-scan"), item("worker"), item("api"), item("dashboard")]
         self.assertEqual(ci.check_runs(ok)[0], "success")
         self.assertEqual(ci.check_runs(ok + [item("api", status="in_progress")])[0], "pending")
         with self.assertRaises(ci.CIRefused):
             ci.check_runs(ok + [item("dashboard", conclusion="failure")])
-        with self.assertRaises(ci.CIRefused):
-            ci.check_runs([item("supabase")])
+        self.assertEqual(ci.check_runs([item("supabase")])[0], "pending")
         with self.assertRaises(ci.CIRefused):
             ci.check_runs(ok + [item("email-pipeline", conclusion="cancelled")])
 
+
+    def test_pending_sql_refuses_transaction_escape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            f = Path(directory) / "20261008121212_test.sql"
+            safe = "set role origenlab_owner;\\nselect 1;\\nreset role;\\n"
+            f.write_text(safe)
+            migrations.require_reviewed_owner_transition(f)
+            for forbidden in ("COMMIT;", "ROLLBACK;", "BEGIN;", r"\\i bad.sql"):
+                f.write_text(safe + forbidden + "\\n")
+                with self.assertRaises(migrations.Refused):
+                    migrations.require_reviewed_owner_transition(f)
+
+    def test_render_cron_deploy_never_sends_unsupported_commit_id(self):
+        sha = "a" * 40
+        cron = "crn-db1tk02jnfac73eir6fg"
+        def fake_request(method, path, token, payload=None):
+            if method == "GET" and path.startswith("/services/") and "/deploys" not in path:
+                service_id = path.split("/")[-1]
+                return dict(id=service_id, ownerId=render.OWNER,
+                            repo=render.REPOSITORY, branch="main",
+                            autoDeployTrigger="off")
+            if method == "POST" and cron in path:
+                self.assertNotIn("commitId", payload)
+                return dict(id="dep-test", commit=dict(id=sha), status="created")
+            if method == "GET" and path.endswith("/deploys/dep-test"):
+                return dict(id="dep-test", commit=dict(id=sha), status="live")
+            raise AssertionError(f"Unexpected API call {method} {path}")
+        def fake_latest(_, service_id):
+            previous = "b" * 40 if service_id == cron else sha
+            return dict(status="live", commit=dict(id=previous))
+        env = dict(GITHUB_ACTIONS="true", GITHUB_REF="refs/heads/main",
+                   RENDER_API_KEY="test-only", OL_RELEASE_SHA=sha)
+        with mock.patch.dict(os.environ, env), \
+             mock.patch.object(render, "request", side_effect=fake_request), \
+             mock.patch.object(render, "latest_deploy", side_effect=fake_latest), \
+             mock.patch.object(render, "check_current_main") as git_check:
+            render.run("release")
+            git_check.assert_called_once_with(sha)
+
+    def test_render_refuses_auto_deploy_before_any_deployment(self):
+        sha = "a" * 40
+        calls = []
+        def fake_request(method, path, token, payload=None):
+            calls.append((method, path))
+            return dict(id=path.split("/")[-1], ownerId=render.OWNER,
+                        repo=render.REPOSITORY, branch="main",
+                        autoDeployTrigger="commit")
+        env = dict(GITHUB_ACTIONS="true", GITHUB_REF="refs/heads/main",
+                   RENDER_API_KEY="test-only", OL_RELEASE_SHA=sha)
+        with mock.patch.dict(os.environ, env), \
+             mock.patch.object(render, "request", side_effect=fake_request):
+            with self.assertRaises(render.Refused):
+                render.run("release")
+        self.assertEqual([method for method,_ in calls], ["GET"])
 
 
 if __name__ == "__main__":
