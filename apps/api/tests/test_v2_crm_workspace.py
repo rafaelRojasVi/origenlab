@@ -230,6 +230,64 @@ def test_card_carries_the_versions_the_drawer_actions_compare_against() -> None:
     }
 
 
+
+def test_confirmed_requester_is_independent_of_organization_profile_confirmation() -> None:
+    """An unconfirmed organization record does not undo a human-confirmed case role."""
+    role = {
+        "opportunity_organization_id": "relation-1",
+        "opportunity_id": "o1",
+        "organization_id": "org-1",
+        "role": "requesting_institution",
+        "name": "Institución Ejemplo",
+        "confirmation": "confirmed",
+        "organization_version": 2,
+    }
+    card = compose_pipeline(
+        [_opp("o1", organization_confirmation="machine_proposed")],
+        [role], [], [], {}, [], {},
+    )[0]
+    assert card["organization"]["confirmation"] == "machine_proposed"
+    assert card["requesting_institution_confirmation"] == "confirmed"
+
+
+def test_machine_proposed_mention_stays_unassigned_but_can_be_reviewed() -> None:
+    """A machine proposal stays 'mentioned' and carries an exact reviewable row ID."""
+    mention = {
+        "opportunity_organization_id": "relation-2",
+        "opportunity_id": "o1",
+        "organization_id": "org-2",
+        "role": "mentioned",
+        "name": "Institución Mencionada",
+        "confirmation": "machine_proposed",
+        "organization_version": 1,
+    }
+    card = compose_pipeline(
+        [_opp("o1", stage="lead", organization_id=None, organization_name=None)],
+        [mention], [], [], {}, [], {},
+    )[0]
+    assert card["organization"] is None
+    assert card["requesting_institution_confirmation"] is None
+    assert card["pending_institution_mentions"] == [{
+        "opportunity_organization_id": "relation-2",
+        "organization_id": "org-2",
+        "name": "Institución Mencionada",
+    }]
+    assert any(x["code"] == "no_requesting_institution" for x in card["attention"])
+
+
+def test_no_unreviewed_row_id_is_fabricated_for_a_mentioned_institution() -> None:
+    """Older input projections without relationship IDs cannot expose a write target."""
+    card = compose_pipeline(
+        [_opp("o1", stage="lead", organization_id=None, organization_name=None)],
+        [{
+            "opportunity_id": "o1", "organization_id": "org-2",
+            "role": "mentioned", "name": "Institución Mencionada",
+            "confirmation": "machine_proposed",
+        }], [], [], {}, [], {},
+    )[0]
+    assert card["pending_institution_mentions"] == []
+
+
 def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None:
     """«Último contacto»: the newest email OrigenLab sent and the newest it received."""
     rows = [
