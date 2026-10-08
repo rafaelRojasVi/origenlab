@@ -64,7 +64,8 @@ jobs:
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main') ||
+       github.event.workflow_run.head_branch == 'main' &&
+       vars.OL_RELEASE_AUTOMATION_ENABLED == 'true') ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -84,6 +85,7 @@ jobs:
         env:
           EXPECTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           EXECUTION_MODE: ${{ github.event_name == 'schedule' && 'backup_only' || github.event_name == 'workflow_run' && 'release' || inputs.mode }}
+          RELEASE_ENABLED: ${{ vars.OL_RELEASE_AUTOMATION_ENABLED }}
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
@@ -92,6 +94,10 @@ jobs:
             echo "Superseding main commit exists; refuse stale release"; exit 1;
           }
           case "$EXECUTION_MODE" in plan|backup_only|release) ;; *) exit 1 ;; esac
+          if [ "$EXECUTION_MODE" = release ] && [ "$RELEASE_ENABLED" != true ]; then
+            echo "First-release hold is active. Test the encrypted backup restore before enabling automatic releases."
+            exit 1
+          fi
           python3 -m py_compile supabase/scripts/hosted_env.py \
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
             scripts/deploy/render_release.py scripts/deploy/check_release_ci.py \
