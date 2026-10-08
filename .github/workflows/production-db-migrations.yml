@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: origenlab-production-release
@@ -47,7 +48,7 @@ jobs:
           set -euo pipefail
           python3 -m py_compile supabase/scripts/hosted_env.py \
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
-            scripts/deploy/render_release.py
+            scripts/deploy/render_release.py scripts/deploy/check_release_ci.py
           bash -n supabase/scripts/hosted_migrations.sh
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
 
@@ -60,7 +61,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 50
     environment: production
     outputs:
       sha: ${{ steps.provenance.outputs.sha }}
@@ -91,6 +92,12 @@ jobs:
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
           echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
           echo "mode=$EXECUTION_MODE" >> "$GITHUB_OUTPUT"
+      - name: Wait for ALL applicable CI on the pinned main commit
+        if: github.event_name == 'workflow_run'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
+        run: python3 scripts/deploy/check_release_ci.py
       - name: Block any release if independent Render deployments remain enabled
         if: steps.provenance.outputs.mode != 'backup_only'
         env:
