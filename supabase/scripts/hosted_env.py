@@ -20,7 +20,7 @@ def database_env(cert_directory: Path) -> dict[str, str]:
     pem = os.environ.get("OL_PROD_CA_PEM", "")
     if not EXPECTED_HOST.fullmatch(host):
         raise Refused("Expected the reviewed sa-east-1 Supavisor SESSION pooler host")
-    if not EXPECTED_REF.fullmatch(ref):
+    if ref != "txgsamojgvkymitcdcpo":
         raise Refused("Invalid production project reference")
     if not password or not pem.startswith("-----BEGIN CERTIFICATE-----"):
         raise Refused("Missing migrator password or verified CA PEM")
