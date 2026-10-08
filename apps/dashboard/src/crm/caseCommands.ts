@@ -28,6 +28,7 @@ export const CASE_COMMAND_PATHS = {
   recordWon: "/v2/commands/record-case-won",
   resolveCurrentRevision: "/v2/commands/resolve-current-revision",
   recordQuotation: "/v2/commands/record-case-quotation",
+  linkCaseEvidence: "/v2/commands/link-case-evidence",
   createTask: "/v2/commands/create-task",
   completeTask: "/v2/commands/complete-task",
   cancelTask: "/v2/commands/cancel-task",
