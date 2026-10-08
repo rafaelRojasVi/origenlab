@@ -108,6 +108,56 @@ class ProductionGates(unittest.TestCase):
         with self.assertRaises(protection.Unprotected):
             protection.validate({**approved, "rules": approved["rules"][:1]})
 
+    def test_explicit_solo_mode_keeps_checks_and_forbids_hidden_bypasses(self):
+        base = dict(
+            id=protection.RULESET_ID, enforcement="active", target="branch",
+            conditions={"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+            bypass_actors=[],
+            rules=[
+                {"type": "pull_request",
+                 "parameters": {"required_approving_review_count": 0,
+                                "dismiss_stale_reviews_on_push": True}},
+                {"type": "required_status_checks",
+                 "parameters": {"strict_required_status_checks": True,
+                                "required_status_checks": [
+                                    {"context": "gitleaks", "integration_id": 15368}]}}
+            ],
+        )
+        protection.validate(base, solo_mode=True)
+        with self.assertRaises(protection.Unprotected):
+            protection.validate(base, solo_mode=False)
+        with self.assertRaises(protection.Unprotected):
+            protection.validate(dict(base, bypass_actors=[{"actor_id": 10}]), solo_mode=True)
+        with self.assertRaises(protection.Unprotected):
+            protection.validate(dict(base, rules=base["rules"][:1]), solo_mode=True)
+        with self.assertRaises(protection.Unprotected):
+            protection.validate(dict(base, rules=[
+                base["rules"][0],
+                {"type": "required_status_checks", "parameters": {
+                    "strict_required_status_checks": True,
+                    "required_status_checks": [{"context": "gitleaks", "integration_id": 0}]}}
+            ]), solo_mode=True)
+
+    def test_solo_mode_requires_repository_owner_as_author_and_merger(self):
+        approval = load(ROOT / "scripts/deploy/check_release_approval.py", "check_release_approval_solo")
+        sha = "f" * 40
+        owner = approval.REPOSITORY.split("/")[0]
+        pr = dict(merged_at="2026-10-08", merge_commit_sha=sha,
+                  base={"ref": "main", "repo": {"full_name": approval.REPOSITORY}},
+                  head={"sha": "a" * 40, "repo": {"full_name": approval.REPOSITORY}},
+                  user={"login": owner}, merged_by={"login": owner})
+        self.assertTrue(approval.approved(pr, [], sha, solo_mode=True))
+        self.assertFalse(approval.approved(pr, [], sha))
+        for invalid in (
+            dict(pr, user={"login": "other"}),
+            dict(pr, merged_by={"login": "other"}),
+            dict(pr, merge_commit_sha="0" * 40),
+            dict(pr, head={"sha": "a" * 40, "repo": {"full_name": "other/repo"}}),
+            dict(pr, base={"ref": "dev", "repo": {"full_name": approval.REPOSITORY}}),
+            dict(pr, merged_at=None),
+        ):
+            self.assertFalse(approval.approved(invalid, [], sha, solo_mode=True))
+
     def test_atomic_migration_command_includes_ddl_and_ledger(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
