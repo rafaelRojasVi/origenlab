@@ -456,6 +456,9 @@ def test_r7_unregistered_numbered_quote_followup_never_opens_a_second_case() -> 
         "Solicitud de cotización 01259–26",
         "Request for quotation CN01259",
         "Cotización CN01259/26",
+        "Solicitud de cotización 01259-2026",
+        "Compra de productos, cotización N°01259",
+        "Request for quotation No. 01259",
     ):
         for organizations in ((), (org(),)):
             action = only(Snapshot(

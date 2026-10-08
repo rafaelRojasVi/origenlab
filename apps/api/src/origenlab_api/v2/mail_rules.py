@@ -841,7 +841,8 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
     # Do not auto-link, infer identity, or open a second opportunity from this signal.
     numbered_reference = re.search(
         r"(?<![a-z0-9])(?:cn\s*[-#:]?\s*\d{4,6}(?:[-–/]\d{2,4})?"
-        r"|0?\d{4}[-–/]\d{2}(?!\d))", subject,
+        r"|0?\d{4}[-–/](?:\d{4}|\d{2})(?!\d)"
+        r"|(?:cotizacion|quotation)\s*(?:n[°o]?\.?|no\.?|#)\s*\d{4,6}(?!\d))", subject,
     ) or any(doc.cn_tokens for doc in e.documents)
     if numbered_reference:
         return PlannedAction(e.id, "R7", PROPOSAL, (
