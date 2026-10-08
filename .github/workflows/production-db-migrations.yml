@@ -16,6 +16,7 @@ on:
       - "scripts/deploy/check_release_ci.py"
       - "scripts/deploy/configure_release_secrets.sh"
       - "scripts/deploy/set_render_autodeploy_off.py"
+      - "scripts/deploy/check_branch_protection.py"
       - "docs/runbooks/PRODUCTION_DB_MIGRATIONS.md"
   workflow_dispatch:
     inputs:
@@ -52,7 +53,7 @@ jobs:
           python3 -m py_compile supabase/scripts/hosted_env.py \
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
             scripts/deploy/render_release.py scripts/deploy/check_release_ci.py \
-            scripts/deploy/set_render_autodeploy_off.py
+            scripts/deploy/set_render_autodeploy_off.py scripts/deploy/check_branch_protection.py
           bash -n supabase/scripts/hosted_migrations.sh scripts/deploy/configure_release_secrets.sh
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
 
@@ -92,11 +93,15 @@ jobs:
           python3 -m py_compile supabase/scripts/hosted_env.py \
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
             scripts/deploy/render_release.py scripts/deploy/check_release_ci.py \
-            scripts/deploy/set_render_autodeploy_off.py
+            scripts/deploy/set_render_autodeploy_off.py scripts/deploy/check_branch_protection.py
           bash -n supabase/scripts/hosted_migrations.sh
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
           echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
           echo "mode=$EXECUTION_MODE" >> "$GITHUB_OUTPUT"
+      - name: Refuse unreviewed or CI-unprotected main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/deploy/check_branch_protection.py
       - name: Wait for ALL applicable CI on the pinned main commit
         if: steps.provenance.outputs.mode == 'release'
         env:
