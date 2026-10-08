@@ -75,15 +75,15 @@ class ProductionGates(unittest.TestCase):
         self.assertEqual(len({r for _, r in render.SERVICES}), 4)
 
     def test_release_ci_requires_all_applicable_workflows_green(self):
-        def item(name, status="completed", conclusion="success"):
+        def item(name, status="completed", conclusion="success", attempt=1):
             return dict(name=name, event="push", head_sha="a" * 40,
                         status=status, conclusion=conclusion,
-                        created_at="2026-10-08T00:00:00Z", run_attempt=1)
+                        created_at="2026-10-08T00:00:00Z", run_attempt=attempt)
         ok = [item("supabase"), item("secret-scan"), item("worker"), item("api"), item("dashboard")]
         self.assertEqual(ci.check_runs(ok)[0], "success")
-        self.assertEqual(ci.check_runs(ok + [item("api", status="in_progress")])[0], "pending")
+        self.assertEqual(ci.check_runs(ok + [item("api", status="in_progress", attempt=2)])[0], "pending")
         with self.assertRaises(ci.CIRefused):
-            ci.check_runs(ok + [item("dashboard", conclusion="failure")])
+            ci.check_runs(ok + [item("dashboard", conclusion="failure", attempt=2)])
         self.assertEqual(ci.check_runs([item("supabase")])[0], "pending")
         with self.assertRaises(ci.CIRefused):
             ci.check_runs(ok + [item("email-pipeline", conclusion="cancelled")])
