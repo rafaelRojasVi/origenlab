@@ -359,12 +359,16 @@ def test_cross_thread_quote_candidates_are_read_only_and_scoped(role: str) -> No
     case_id = "00000000-0000-4000-8001-000000000009"
     path = f"/v2/workspace/opportunities/{case_id}/quote-candidates"
     r = client.get(path)
-    assert r.status_code == 200
-    assert r.json()["candidates"][0]["quote_token"] == "CN01259"
+    if role == "viewer":
+        assert r.status_code == 403
+        assert "candidates" not in r.json()
+    else:
+        assert r.status_code == 200
+        assert r.json()["candidates"][0]["quote_token"] == "CN01259"
     assert client.post(path).status_code == 405
     assert client.get(
         "/v2/workspace/opportunities/00000000-0000-4000-8000-000000000003/quote-candidates"
-    ).status_code == 404
+    ).status_code == (403 if role == "viewer" else 404)
     assert client.get("/v2/workspace/opportunities/not-a-uuid/quote-candidates").status_code == 422
 
 
