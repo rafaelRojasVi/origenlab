@@ -5,7 +5,7 @@ set -euo pipefail
 umask 077
 
 repo="rafaelRojasVi/origenlab"
-env_name="production"
+env_name="origenlab-release"
 for binary in gh age-keygen openssl; do
   command -v "$binary" >/dev/null 2>&1 || {
     echo "Missing $binary; install it locally before setup. Nothing changed." >&2
@@ -13,6 +13,11 @@ for binary in gh age-keygen openssl; do
   }
 done
 gh auth status >/dev/null
+# Dedicated unattended release environment; do not weaken the manually-approved
+# production environment used by the public website.
+# Fail closed if branch policy cannot be established; main itself must be protected.
+printf '%s' '{"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false}}' |
+  gh api -X PUT "repos/$repo/environments/$env_name" --input - >/dev/null
 echo "Configuring protected GitHub Environment $env_name for $repo."
 echo "This does NOT deploy services, change databases, or disable Render auto-deploy."
 
