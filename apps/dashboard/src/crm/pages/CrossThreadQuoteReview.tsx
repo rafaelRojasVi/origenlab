@@ -4,6 +4,7 @@ import { fetchCaseQuoteCandidates } from "../crmApi";
 import { caseRefusalText, isStaleRefusal, linkCaseQuoteEvidence, newCaseCommandKey } from "../caseCommands";
 import type { OpportunityCardData, CrossThreadQuoteCandidate } from "../crmTypes";
 import { useResource } from "../useResource";
+import { crmHash } from "../crmRoute";
 import { Button, FormField, TextareaInput } from "../ui";
 
 export function CrossThreadQuoteReview({
@@ -22,7 +23,8 @@ export function CrossThreadQuoteReview({
   const key = useRef(newCaseCommandKey());
 
   async function link() {
-    if (!candidate || candidate.recorded_elsewhere || !note.trim() || busy || card.version == null) return;
+    if (!candidate || candidate.recorded_elsewhere || candidate.other_cases_on_quote_thread?.length ||
+      !note.trim() || busy || card.version == null) return;
     setBusy(true);
     setError(null);
     try {
@@ -76,7 +78,19 @@ export function CrossThreadQuoteReview({
             className="text-brand-700 underline">
             Abrir mensaje original en Gmail ↗
           </a>
-          {item.recorded_elsewhere ? (
+          {item.other_cases_on_quote_thread?.length ? (
+            <div className="space-y-1 rounded-md border border-warn/40 p-2" role="status">
+              <strong>Este hilo ya corresponde a otro caso del CRM.</strong>
+              <p>No lo vincules automáticamente con el caso actual; revisa primero
+                cuál debe representar la operación comercial.</p>
+              {item.other_cases_on_quote_thread.map((other) => (
+                <a key={other.opportunity_id} href={crmHash("oportunidades", other.opportunity_id)}
+                  className="block text-brand-700 underline">
+                  Abrir caso original: {other.title}
+                </a>
+              ))}
+            </div>
+          ) : item.recorded_elsewhere ? (
             <p role="alert">
               El PDF ya figura en una revisión del CRM. Revisa la atribución;
               no está permitido registrar otra cotización con el mismo archivo.
