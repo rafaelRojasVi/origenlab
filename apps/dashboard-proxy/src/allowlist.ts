@@ -100,6 +100,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // cotización» / «Nueva revisión». GET-only, operator session required, the same UUID-shaped
   // segment and a literal `/mail-documents` tail. Recording a quote is `record-case-quotation`.
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/mail-documents$/,
+  // Strict read-only candidates for a PDF quoted in a different Gmail thread.
+  // Never links evidence or writes a quote; exact UUID and literal tail only.
+  /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/quote-candidates$/,
   // The rest of the CRM workspace (dashboard `#/crm/*`): four literal read paths and the one
   // cockpit read the CRM's review screen uses. Upstream each is GET-only, resolves the operator
   // from the dashboard session cookie (401 without one), and masks every email and phone for a
@@ -241,8 +244,9 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
  * active `sales` or `admin` operator (from the verified session, never the body), an
  * `Idempotency-Key`, the case (or task) version the operator was shown and a note, and mounts only behind
  * `ORIGENLAB_V2_COMMANDS_ENABLED`. The other three case commands -- open-commercial-case,
- * link-case-evidence, record-case-interest --
- * stay refused here until reviewed on their own. Same Origin / JSON / key guard as the
+ * record-case-interest -- stay refused. The reviewed cross-thread quotation flow
+ * explicitly links an existing Gmail evidence record via link-case-evidence; the
+ * operator must submit a case version, a written note and an idempotency key. Same Origin / JSON / key guard as the
  * marketing commands (`marketingCommandRefusal` in index.ts).
  */
 export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
@@ -252,6 +256,7 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/record-case-won$/,
   /^\/v2\/commands\/resolve-current-revision$/,
   /^\/v2\/commands\/record-case-quotation$/,
+  /^\/v2\/commands\/link-case-evidence$/,
   /^\/v2\/commands\/create-task$/,
   /^\/v2\/commands\/complete-task$/,
   /^\/v2\/commands\/cancel-task$/,
