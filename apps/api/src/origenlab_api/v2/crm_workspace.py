@@ -2072,6 +2072,7 @@ class CrmWorkspaceRepository:
             cur.execute(
                 """select sr.id::text as source_record_id,
                           sr.payload->>'gmail_message_id' as gmail_message_id,
+                          sr.payload->>'gmail_thread_id' as gmail_thread_id,
                           sr.payload->>'sender' as sender,
                           sr.payload->>'recipients' as recipients,
                           sr.payload->>'subject_raw' as subject,
@@ -2094,6 +2095,32 @@ class CrmWorkspaceRepository:
                 (token,),
             )
             possible = self._rows(cur)
+            # A quotation thread may already have its own commercial case. Never
+            # let a follow-up case claim that existing case's PDF merely because
+            # they share a number and contact; show the original case for review.
+            threads = sorted({
+                str(item["gmail_thread_id"])
+                for item in possible if item["gmail_thread_id"]
+            })
+            existing_cases: dict[str, list[dict[str, str]]] = defaultdict(list)
+            if threads:
+                cur.execute(
+                    """select distinct sr.payload->>'gmail_thread_id' as thread_id,
+                              o.id::text as opportunity_id, o.title
+                         from crm.opportunity_evidence oe
+                         join crm.opportunity o on o.id = oe.opportunity_id
+                         join evidence.source_record sr on sr.id = oe.source_record_id
+                        where oe.unlinked_at is null and sr.kind = 'gmail_message'
+                          and not sr.is_quarantined
+                          and sr.payload->>'gmail_thread_id' = any(%s)
+                        order by thread_id, opportunity_id""",
+                    (threads,),
+                )
+                for row in self._rows(cur):
+                    existing_cases[str(row["thread_id"])].append({
+                        "opportunity_id": str(row["opportunity_id"]),
+                        "title": str(row["title"]),
+                    })
         candidates: list[dict[str, Any]] = []
         for candidate in possible:
             if candidate["source_record_id"] in already_linked:
@@ -2136,6 +2163,10 @@ class CrmWorkspaceRepository:
                 "gmail_url": f"https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/{gmail_id}",
                 "reason": "Número de cotización exacto y destinatario externo compartido",
                 "recorded_elsewhere": bool(candidate["recorded"]),
+                "other_cases_on_quote_thread": [
+                    case for case in existing_cases.get(str(candidate["gmail_thread_id"]), [])
+                    if case["opportunity_id"] != opportunity_id
+                ],
             })
         return {"opportunity_id": opportunity_id, "candidates": candidates[:10]}
 
