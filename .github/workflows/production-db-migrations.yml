@@ -6,6 +6,14 @@ on:
     workflows: ["supabase"]
     branches: [main]
     types: [completed]
+  pull_request:
+    paths:
+      - ".github/workflows/production-db-migrations.yml"
+      - "supabase/scripts/hosted_*.py"
+      - "supabase/scripts/hosted_migrations.sh"
+      - "supabase/scripts/tests/test_hosted_release.py"
+      - "scripts/deploy/render_release.py"
+      - "docs/runbooks/PRODUCTION_DB_MIGRATIONS.md"
   workflow_dispatch:
     inputs:
       mode:
@@ -24,6 +32,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  offline-contract:
+    if: github.event_name == 'pull_request'
+    name: Validate proposed release controller without production access
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Syntax and fail-closed unit tests (no credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile supabase/scripts/hosted_env.py \
+            supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
+            scripts/deploy/render_release.py
+          bash -n supabase/scripts/hosted_migrations.sh
+          python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
+
   preflight:
     if: >
       (github.event_name == 'workflow_run' &&
