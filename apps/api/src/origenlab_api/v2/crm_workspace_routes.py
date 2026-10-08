@@ -175,6 +175,19 @@ def get_opportunity_mail_documents(opportunity_id: UUID, _: Operator, repo: Repo
     return body
 
 
+@workspace_router.get("/opportunities/{opportunity_id}/quote-candidates")
+def get_opportunity_quote_candidates(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
+    """Read-only proposal: exact CN number + shared external participant across Gmail threads.
+
+    This endpoint does not attach messages, merge cases, or record quotations. Each
+    proposal requires a separately reviewed link-case-evidence operator command.
+    """
+    body = repo.opportunity_quote_candidates(str(opportunity_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    return body
+
+
 @workspace_router.get("/person-suggestions")
 def get_person_suggestions(_: Operator, repo: Repo) -> Any:
     """People the quote emails name and the CRM does not hold yet. A read: nothing is created."""
