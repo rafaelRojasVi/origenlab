@@ -4,17 +4,10 @@ permissions:
   contents: read
 
 on:
+  # Every main/dev commit must run the database compatibility CI before a production release.
+  # Paths filter removed intentionally: app-only changes also need the migration gate.
   push:
     branches: [main, dev]
-    paths:
-      - "supabase/**"
-      - "docs/ARCHITECTURE.md"
-      - "docs/DOMAIN.md"
-      - "docs/MIGRATION.md"
-      - "docs/OPERATIONS.md"
-      - "docs/README.md"
-      - "scripts/security/check-public-repo-hygiene.sh"
-      - ".github/workflows/supabase.yml"
   pull_request:
     paths:
       - "supabase/**"
