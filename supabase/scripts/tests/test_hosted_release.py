@@ -19,6 +19,7 @@ def load(path, name):
 
 migrations = load(SCRIPT_DIR / "hosted_migrations.py", "hosted_migrations")
 render = load(ROOT / "scripts/deploy/render_release.py", "render_release")
+ci = load(ROOT / "scripts/deploy/check_release_ci.py", "check_release_ci")
 
 
 class ProductionGates(unittest.TestCase):
@@ -58,6 +59,22 @@ class ProductionGates(unittest.TestCase):
 
     def test_all_four_services(self):
         self.assertEqual(len({r for _, r in render.SERVICES}), 4)
+
+    def test_release_ci_requires_all_applicable_workflows_green(self):
+        def item(name, status="completed", conclusion="success"):
+            return dict(name=name, event="push", head_sha="a" * 40,
+                        status=status, conclusion=conclusion,
+                        created_at="2026-10-08T00:00:00Z", run_attempt=1)
+        ok = [item("supabase"), item("secret-scan"), item("worker")]
+        self.assertEqual(ci.check_runs(ok)[0], "success")
+        self.assertEqual(ci.check_runs(ok + [item("api", status="in_progress")])[0], "pending")
+        with self.assertRaises(ci.CIRefused):
+            ci.check_runs(ok + [item("dashboard", conclusion="failure")])
+        with self.assertRaises(ci.CIRefused):
+            ci.check_runs([item("supabase")])
+        with self.assertRaises(ci.CIRefused):
+            ci.check_runs(ok + [item("email-pipeline", conclusion="cancelled")])
+
 
 
 if __name__ == "__main__":
