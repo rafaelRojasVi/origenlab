@@ -108,7 +108,7 @@ class ProductionGates(unittest.TestCase):
             folder = root / "supabase/migrations"
             folder.mkdir(parents=True)
             file = folder / "20261008121212_test.sql"
-            file.write_text("set role origenlab_owner;\\nselect 1;\\nreset role;\\n")
+            file.write_text("set role origenlab_owner;\nselect 1;\nreset role;\n")
             executed = []
             def fake_psql(env, *args):
                 if "--single-transaction" in args:
@@ -140,7 +140,7 @@ class ProductionGates(unittest.TestCase):
             folder = root / "supabase/migrations"
             folder.mkdir(parents=True)
             (folder / "20261008121212_test.sql").write_text(
-                "set role origenlab_owner;\\nselect 1;\\nreset role;\\n")
+                "set role origenlab_owner;\nselect 1;\nreset role;\n")
             sql_calls = []
             def fake_psql(env, *args):
                 sql_calls.append(args)
