@@ -261,7 +261,7 @@ export function BoardCard({
   const product = quoteProduct(card);
   const line = cardLine(card, at);
   const driveUrl = latest?.drive?.file_url ?? card.drive_folder?.url ?? null;
-  const gmailUrl = inSharedMailbox(latest?.gmail?.url);
+  const gmailUrl = inSharedMailbox(latest?.gmail?.url ?? card.last_contact?.inbound?.url ?? card.last_contact?.outbound?.url);
   const pending = card.attention.filter((a) => !a.blocking).length;
   const isDragging = drag?.current === card.opportunity_id;
   const open = (e: MouseEvent) => {

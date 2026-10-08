@@ -27,7 +27,9 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed; §2.7.49 added 2026-10-04 from the branch's own validation, nothing deployed; §2.7.51 added 2026-10-05 from the branch's own validation, nothing applied or deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
+Last verified: **2026-10-08** for §2.7.77 against main `6b4c602a` (read-only production inspection and isolated tests; branch changes not deployed).
+
+Earlier verification: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed; §2.7.49 added 2026-10-04 from the branch's own validation, nothing deployed; §2.7.51 added 2026-10-05 from the branch's own validation, nothing applied or deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
 hosting and GitHub facts of §2.4, §2.7.40, §2.8, §3.1 and §3.3 — read from the GitHub API, the
 public DNS and HTTP edge, the repository, and (later the same day) the Render API, the FastAPI
 Cloud CLI and the Cloudflare DNS table, all read-only, with nothing deployed, provisioned,
@@ -2265,7 +2267,6 @@ proven there.
   `apps/email-pipeline/alembic/versions/`; V2 is the Supabase CLI under
   `supabase/migrations/`. They do not communicate.
 
-
 ### 2.7.75 Production release engineering audit, 2026-10-08 — built; not activated
 
 Measured read-only against PR #679 and production on **2026-10-08**. Supabase project is
@@ -2306,3 +2307,16 @@ Final-head CI evidence is recorded in PR #679. No production config, release, se
 mail automation flag or historical queue job was changed. Approved cutover, actual-data
 restore, authenticated smoke and shared 512 MB capacity observation remain pending.
 See [MAIL_WORKER_CUTOVER.md](runbooks/MAIL_WORKER_CUTOVER.md).
+
+### 2.7.77 CRM request context and false-positive correction, 2026-10-08 — built, not deployed
+
+Read-only production inspection found five `lead` cases, all with active Gmail evidence links and no participant or quote. The reported PUCV request was already linked to one of them; its deterministic `requester:v1` reading was `none`, so its institution remains unresolved. The board and drawer previously hid the useful email context behind «Sin institución» and quote-only links. No production records, automation flags, archived holds, or messages were changed.
+
+- Board: unconfirmed cases display their email subject or case title, the email-header display name when available, and a Gmail link even without a quotation. Header names are evidence, never confirmed CRM identities; bare addresses cannot enter that name field. Search includes inbound subject/name.
+- Drawer: last received/sent subjects, dates, header display names and shared-mailbox Gmail links. No raw body reading, sending, or extra capture work.
+- «No es una solicitud»: explicit confirmation through the existing versioned, idempotent `advance-case-stage` command, closes as `abandoned` with a reason; preserves evidence and history. The generic abandoned label avoids calling a rejected supplier offer «sin respuesta». Existing role/feature gates apply.
+- Planner: multilingual reply prefixes no longer open new cases from RFQ keywords; received English quotations without explicit request wording require review. Explicit requests continue to follow R7. This does not retrospectively close the existing five cases.
+- Archive backlog: retained separately. Historical archive snapshot reasons are not new decisions. No bulk import or hold override was performed.
+- Validation: dashboard 652 tests and production build pass; PostgreSQL 17 isolated database, API case-command boundary/workspace/mail rules: 198 tests pass, including closure without an institution and preservation of the origin link. GitHub Actions results are recorded in the PR after pushing.
+
+Remaining operator work: identify and confirm the requesting institution/contact, then close only individually reviewed false positives. API/dashboard production rollout needs approval and the migration-first deployment cutover remains governed by PR #679.

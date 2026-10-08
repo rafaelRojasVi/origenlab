@@ -178,7 +178,7 @@ export function CaseMoveForm({
         // Nothing is left to follow up on a closed case.
         for (const t of card.open_tasks ?? []) {
           const receipt = await cancelTask(
-            { task_id: t.task_id, task_version: t.version, note: "El caso se cerró como perdido." },
+            { task_id: t.task_id, task_version: t.version, note: "El caso se cerró." },
             cancelKeys()[t.task_id],
           );
           done.push({ label: "Tarea cancelada", receipt });
@@ -231,7 +231,7 @@ export function CaseMoveForm({
         </p>
       ) : target === "perdida" ? (
         <>
-          <FormField label="Motivo" required hint="«Sin respuesta» cierra el caso como abandonado.">
+          <FormField label="Motivo" required hint="«Sin respuesta» y «No es una solicitud» cierran como abandonado; se conserva la evidencia.">
             <ChoiceChips label="Motivo de pérdida" options={LOST_REASONS.map((r) => r.label)} value={reason} onChange={setReason} />
           </FormField>
           <FormField label="Detalle (opcional)" htmlFor="case-lost-detail">
@@ -270,7 +270,7 @@ export function CaseMoveForm({
           Cancelar
         </Button>
         <Button type="submit" variant={target === "perdida" ? "danger" : "primary"} disabled={!ready} busy={busy} busyLabel="Registrando…">
-          {target === "perdida" ? "Marcar perdida" : target === "pausa" ? "Pausar" : "Mover"}
+          {target === "perdida" ? reason === "No es una solicitud" ? "Cerrar caso incorrecto" : "Marcar perdida" : target === "pausa" ? "Pausar" : "Mover"}
         </Button>
       </div>
     </form>

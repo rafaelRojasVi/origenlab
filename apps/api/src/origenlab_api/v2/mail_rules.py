@@ -622,7 +622,7 @@ def _is_quote_request(e: MailEvidence) -> bool:
     subject = fold(e.subject)
     # A reply/forward with «cotización» is much more likely to belong to an existing case whose
     # thread link is missing; never open a second case from that weak signal.
-    if subject.startswith(("re:", "rv:", "fw:", "fwd:")):
+    if re.match(r"^(?:re|rv|fw|fwd|aw|wg|sv|回复|回覆|答复|转发)\s*[:：]", subject):
         return False
     # «solicitud» by itself is too broad to create a commercial case automatically.
     strong = tuple(w for w in QUOTE_REQUEST_WORDS if w != "solicitud")
@@ -831,6 +831,13 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
     d = domains[0]
     if not _is_quote_request(e):
         return PlannedAction(e.id, "R8", NONE, ("ninguna regla aplica: queda en Revisión",))
+    # A supplier may send its quotation on a new thread with no known supplier domain.
+    # A quotation is not itself a customer's request. Preserve it for review rather than
+    # opening a lead from this ambiguous keyword alone (Spanish requests/RFQ still qualify).
+    subject = fold(e.subject)
+    if "quotation" in subject and not any(w in subject for w in ("request", "rfq", "cotiz", "presupuesto", "precio")):
+        return PlannedAction(e.id, "R7", PROPOSAL, (
+            "cotización recibida: no demuestra una solicitud del cliente; requiere revisión",))
 
     domain_orgs = [] if d in FREE_MAIL_DOMAINS else ix.by_domain.get(d, [])
     requester = ix.orgs.get(e.requester_organization_id or "")

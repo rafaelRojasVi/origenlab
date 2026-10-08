@@ -427,6 +427,26 @@ def test_anything_else_is_r8() -> None:
     assert (action.rule_id, action.mode) == ("R8", "none")
 
 
+def test_multilingual_supplier_reply_does_not_open_a_new_request_case() -> None:
+    for subject in ("回复：RFQ – Autoclave", "回覆: Cotización", "AW: RFQ balanza", "Re : Cotización"):
+        action = only(Snapshot(
+            evidence=(mail(direction="inbound", sender="sales@unknown.test", documents=(),
+                           subject=subject, requester_checked=True),), cases=(), organizations=(),
+        ))
+        assert (action.rule_id, action.mode, action.commands) == ("R8", "none", ())
+
+
+def test_received_quotation_requires_review_but_explicit_request_still_opens_case() -> None:
+    for subject, expected in (("Quotation for Vertical Autoclave", "proposal"),
+                              ("Request for quotation for Vertical Autoclave", "auto")):
+        action = only(Snapshot(
+            evidence=(mail(direction="inbound", sender="person@unknown.test", documents=(),
+                           subject=subject, requester_checked=True),), cases=(), organizations=(),
+        ))
+        assert (action.rule_id, action.mode) == ("R7", expected)
+        assert bool(action.commands) == (expected == "auto")
+
+
 # ------------------------------------------------------------------ idempotency, determinism
 
 

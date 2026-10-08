@@ -259,7 +259,7 @@ def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None
         "outbound": {"at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
                      "url": "https://mail.google.com/mail/u/0/#all/m3"},
         "inbound": {"at": "2026-09-10T09:00:00+00:00", "subject": "Re: Cotización",
-                    "url": "https://mail.google.com/mail/u/0/#all/m2"},
+                    "url": "https://mail.google.com/mail/u/0/#all/m2", "sender_name": "Persona"},
     }
     assert out["o2"]["outbound"]["at"] == "2026-08-01T12:00:00+00:00"
     assert out["o2"]["inbound"] is None
@@ -267,6 +267,13 @@ def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None
     cards = compose_pipeline([_opp("o1"), _opp("o3")], [], [], [], {}, [], {}, out)
     assert cards[0]["last_contact"] == out["o1"]
     assert cards[1]["last_contact"] == {"outbound": None, "inbound": None}
+
+
+def test_mail_display_name_never_contains_an_address() -> None:
+    for sender in ('person@example.invalid', '"person@example.invalid" <person@example.invalid>'):
+        touch = last_contacts([{"opportunity_id": "o", "sent_at": "2026-10-01T12:00:00Z",
+                                "sender": sender, "comms_direction": "inbound"}])["o"]["inbound"]
+        assert "sender_name" not in touch
 
 
 def test_two_active_revisions_block_the_case() -> None:
