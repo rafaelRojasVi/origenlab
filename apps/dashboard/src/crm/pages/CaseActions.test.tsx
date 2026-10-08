@@ -694,6 +694,46 @@ describe("case drawer actions", () => {
       .toMatchObject({ organization_version: 4, opportunity_version: 5 });
   });
 
+  it("blocks cross-thread PDF attachment when its Gmail thread already belongs to another case", async () => {
+    const blocked = card({
+      title: "Compra de productos_ cotización N°01259-26",
+      stage: "lead",
+      organization: null,
+      quotes: [],
+      quote_numbers: [],
+      revision_count: 0,
+      latest_revision: null,
+    });
+    const otherId = "22222222-2222-4222-8222-222222222222";
+    const calls = stubApi({
+      pipelines: [page([blocked])],
+      quoteCandidates: {
+        opportunity_id: CASE,
+        candidates: [{
+          source_record_id: MESSAGE,
+          quote_token: "CN01259",
+          filename: "CN01259-ficticio.pdf",
+          subject: "Re: Solicitud de cotización",
+          sent_at: "2026-10-07T14:00:00Z",
+          document_sha256: SHA_NEW,
+          gmail_url: "https://mail.google.com/mail/u/0/#all/abc123",
+          reason: "Número exacto y destinatario externo compartido",
+          recorded_elsewhere: false,
+          other_cases_on_quote_thread: [{ opportunity_id: otherId, title: "Solicitud de productos original" }],
+        }],
+      },
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Buscar cotización enviada en otro hilo" }));
+    const review = await within(dialog).findByRole("region", { name: "Cotización en otro hilo" });
+    expect(within(review).getByText(/Este hilo ya corresponde a otro caso/)).toBeInTheDocument();
+    expect(within(review).getByRole("link", { name: /Abrir caso original/ }))
+      .toHaveAttribute("href", `#/crm/oportunidades/${otherId}`);
+    expect(within(review).queryByRole("button", { name: "Revisar vínculo con este caso" }))
+      .not.toBeInTheDocument();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
   it("only links a cross-thread PDF after the operator reads it and writes a reason", async () => {
     const unassigned = card({
       title: "Compra de productos_ cotización N°01259-26",
