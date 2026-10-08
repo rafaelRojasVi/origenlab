@@ -68,7 +68,10 @@ export function displayName(card: OpportunityCardData): { name: string; sub: str
   const fromTitle = card.title.match(/^Cotizaci[oó]n .*? — (.+)$/)?.[1]?.trim() ?? null;
   const fromFile = parseQuoteFilename(card.latest_revision?.document?.filename).company;
   const better = fromTitle ?? fromFile;
-  if (!org) return { name: better ?? "Sin institución", sub: null };
+  if (!org) return {
+    name: better ?? (card.last_contact?.inbound?.subject?.trim() || card.title.trim() || "Sin institución"),
+    sub: card.last_contact?.inbound?.sender_name || "Institución por confirmar",
+  };
   const looksLikeDomain = DOMAIN.test(org);
   const looksLikeSlug = !/\s/.test(org) && org.length > 6 && better != null && /\s/.test(better);
   if ((looksLikeDomain || looksLikeSlug) && better && better.toLowerCase() !== org.toLowerCase()) return { name: better, sub: org };
