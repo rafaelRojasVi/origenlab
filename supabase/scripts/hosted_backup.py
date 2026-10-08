@@ -17,7 +17,8 @@ SCHEMAS = ("crm", "comms", "outbound", "evidence", "catalog", "procurement", "pl
 def execute(args: list[str], env: dict[str, str] | None = None) -> str:
     p = subprocess.run(args, env=env, capture_output=True, text=True, timeout=600, check=False)
     if p.returncode:
-        raise Refused(f"Backup command {Path(args[0]).name} failed (exit {p.returncode}): {p.stderr[-1200:]}")
+        # No raw stdout/stderr from production commands in public CI logs.
+        raise Refused(f"Backup command {Path(args[0]).name} failed (exit {p.returncode}); details withheld")
     return p.stdout
 
 def run() -> None:
