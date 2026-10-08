@@ -2119,7 +2119,9 @@ class CrmWorkspaceRepository:
             doc = candidate["document"]
             sha = str(doc.get("sha256") or "").lower() if isinstance(doc, dict) else ""
             filename = str(doc.get("filename") or "") if isinstance(doc, dict) else ""
-            if not re.fullmatch(r"[0-9a-f]{64}", sha) or not filename.lower().endswith(".pdf"):
+            if (not re.fullmatch(r"[0-9a-f]{64}", sha)
+                    or not filename.lower().endswith(".pdf")
+                    or doc.get("bytes_hash_verified") is not True):
                 continue
             gmail_id = str(candidate["gmail_message_id"] or "")
             if not re.fullmatch(r"[0-9a-f]+", gmail_id):
@@ -2131,7 +2133,7 @@ class CrmWorkspaceRepository:
                 "quote_token": token,
                 "filename": filename,
                 "document_sha256": sha,
-                "gmail_url": GMAIL_MESSAGE_URL.format(gmail_id),
+                "gmail_url": f"https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/{gmail_id}",
                 "reason": "Número de cotización exacto y destinatario externo compartido",
                 "recorded_elsewhere": bool(candidate["recorded"]),
             })
