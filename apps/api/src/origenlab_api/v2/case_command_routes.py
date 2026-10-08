@@ -28,12 +28,12 @@ version of it the operator was shown; and a non-blank `note` saying why. Three o
 are in the request and the fourth is not — the operator comes from the verified identity,
 never from the body, so a caller cannot decide *as* somebody else.
 
-**The dashboard reaches five of these routes, and only five.** `apps/dashboard-proxy` lists
+**The dashboard reaches six of these routes, and only six.** `apps/dashboard-proxy` lists
 `advance-case-stage`, `record-case-won`, `resolve-current-revision` and `record-case-quotation`
-and `add-case-organization` by name (`CASE_COMMAND_POST_PATHS`), behind the same Origin / JSON / `Idempotency-Key` guard as
+and `add-case-organization` / `set-case-organization-role` by name (`CASE_COMMAND_POST_PATHS`), behind the same Origin / JSON / `Idempotency-Key` guard as
 the other browser commands: they back the case drawer's «Cambiar etapa», «Marcar ganada»,
-«Elegir revisión vigente» and «Registrar cotización» / «Nueva revisión». The other four — opening a case, linking evidence,
-changing an institution's part, recording an interest — stay refused at the
+«Elegir revisión vigente» and «Registrar cotización» / «Nueva revisión». The other three — opening a case, linking evidence, and
+recording an interest — stay refused at the
 Worker; a test in its suite names every case command path and asserts exactly that split, so
 widening it is a reviewed change rather than an accident.
 """
