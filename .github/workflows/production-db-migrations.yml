@@ -64,7 +64,7 @@ jobs:
       github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 50
-    environment: production
+    environment: origenlab-release
     outputs:
       sha: ${{ steps.provenance.outputs.sha }}
       mode: ${{ steps.provenance.outputs.mode }}
@@ -120,7 +120,7 @@ jobs:
     if: needs.preflight.outputs.mode != 'plan'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: production
+    environment: origenlab-release
     steps:
       - uses: actions/checkout@v7
         with:
@@ -163,7 +163,7 @@ jobs:
     if: needs.preflight.outputs.mode == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: production
+    environment: origenlab-release
     steps:
       - uses: actions/checkout@v7
         with:
@@ -188,7 +188,7 @@ jobs:
     if: needs.preflight.outputs.mode == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 150
-    environment: production
+    environment: origenlab-release
     steps:
       - uses: actions/checkout@v7
         with:
