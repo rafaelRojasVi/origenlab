@@ -90,6 +90,24 @@ export interface CaseMailDocumentsResponse {
   messages: CaseMailMessage[];
 }
 
+/** A cross-thread match is ONLY a suggestion until an operator links the evidence. */
+export interface CrossThreadQuoteCandidate {
+  source_record_id: string;
+  subject: string | null;
+  sent_at: string;
+  quote_token: string;
+  filename: string;
+  document_sha256: string;
+  gmail_url: string;
+  reason: string;
+  recorded_elsewhere: boolean;
+}
+
+export interface CaseQuoteCandidatesResponse {
+  opportunity_id: string;
+  candidates: CrossThreadQuoteCandidate[];
+}
+
 /** One email on a case's thread, as «último contacto» shows it. */
 export interface MailTouch {
   /** Display header evidence; not a confirmed CRM person. Never a mailbox address. */
