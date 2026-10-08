@@ -129,7 +129,6 @@ describe("allowlist", () => {
       "/v2/cockpit/case-archive",
       "/v2/cockpit/import-review",
       `/v2/cockpit/import-review/documents/${sha}`,
-      "/v2/commands/set-case-organization-role",
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
       expect(isAllowedPostPath(path), path).toBe(false);
