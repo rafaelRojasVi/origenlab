@@ -13,8 +13,10 @@ import urllib.request
 
 REPOSITORY = "rafaelRojasVi/origenlab"
 RULESET_ID = 17174991
-REQUIRED_CHECKS = frozenset({"gitleaks", "worker-test", "test-build", "test",
-                             "Slice 0 local evidence"})
+# Only require a universally running PR check. Heavy API/worker/dashboard/Supabase
+# workflows remain path-filtered on PRs and are required for every MAIN release.
+# Requiring them on all PRs would deadlock unrelated/docs-only PRs.
+REQUIRED_CHECKS = frozenset({"gitleaks"})
 
 
 class Unprotected(RuntimeError):
