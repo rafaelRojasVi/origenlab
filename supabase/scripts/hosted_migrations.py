@@ -27,7 +27,7 @@ def chain(root: Path) -> list[tuple[str, str, Path]]:
 
 def require_reviewed_owner_transition(file: Path) -> None:
     sql = file.read_text(encoding="utf-8").lower()
-    if not re.search(r"\\bset\\s+role\\s+origenlab_owner\\s*;", sql) or not re.search(r"\\breset\\s+role\\s*;", sql):
+    if not re.search(r"\bset\s+role\s+origenlab_owner\s*;", sql) or not re.search(r"\breset\s+role\s*;", sql):
         raise Refused(f"Pending migration requires an explicitly reviewed owner role transition: {file.name}")
 
 
