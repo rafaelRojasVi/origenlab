@@ -426,6 +426,12 @@ class RegressionGates(unittest.TestCase):
                 row["message"]=json.dumps({**event,**changes})
                 self.assertFalse(postflight.swept_after_deploy("test-only",render.SERVICES[0][1],now,capture=True,revision=sha))
 
+    def test_setup_uses_supported_github_cli_variable_read(self):
+        helper = (ROOT/"scripts/deploy/configure_release_secrets.sh").read_text()
+        self.assertIn('gh api "repos/$repo/actions/variables/OL_RELEASE_SOLO_MODE" --jq .value', helper)
+        self.assertNotIn("gh variable get", helper)
+        self.assertIn('Cannot read the OL_RELEASE_SOLO_MODE repository variable', helper)
+
     def test_readonly_plan_and_backup_do_not_require_cron_cutover(self):
         workflow=(ROOT/".github/workflows/production-db-migrations.yml").read_text()
         section=workflow.split("- name: Block any release if independent Render deployments remain enabled",1)[1].split("- name:",1)[0]
