@@ -620,6 +620,99 @@ describe("case drawer actions", () => {
     );
   });
 
+
+  it("promotes a reviewed machine mention to the requesting role without inventing an organization", async () => {
+    const relation = "77777777-7777-4777-8777-777777777777";
+    const unassigned = card({
+      stage: "lead",
+      organization: null,
+      pending_institution_mentions: [{
+        opportunity_organization_id: relation,
+        organization_id: ORG,
+        name: "Universidad Ficticia",
+      }],
+    });
+    const assigned = card({ stage: "lead", version: 6 });
+    const calls = stubApi({
+      pipelines: [page([unassigned]), page([assigned])],
+      onPost: (call) =>
+        call.path === "/v2/commands/set-case-organization-role"
+          ? { body: receipt("set_case_organization_role", "lead", 6, "aaaaaaaa-0005") }
+          : undefined,
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución solicitante" }));
+    const review = within(dialog).getByRole("form", { name: "Revisar institución mencionada" });
+    const confirm = within(review).getByRole("button", { name: "Confirmar rol de solicitante" });
+    expect(confirm).toBeDisabled();
+
+    fireEvent.change(within(review).getByRole("combobox", { name: "Institución mencionada" }), {
+      target: { value: relation },
+    });
+    fireEvent.change(within(review).getByRole("textbox", { name: "Evidencia de que es solicitante" }), {
+      target: { value: "El correo original identifica expresamente a la institución como solicitante." },
+    });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.path === "/v2/commands/set-case-organization-role")).toBe(true),
+    );
+    const post = calls.find((c) => c.path === "/v2/commands/set-case-organization-role")!;
+    expect(post.method).toBe("POST");
+    expect(post.key).toBeTruthy();
+    expect(post.body).toEqual({
+      opportunity_id: CASE,
+      opportunity_version: 5,
+      opportunity_organization_id: relation,
+      role: "requesting_institution",
+      note: "El correo original identifica expresamente a la institución como solicitante.",
+    });
+    expect(calls.some((c) => c.path === "/v2/commands/add-case-organization")).toBe(false);
+    await waitFor(() =>
+      expect(calls.filter((c) => c.path === "/v2/workspace/pipeline")).toHaveLength(2),
+    );
+  });
+
+  it("passes an explicit supplier exception only when the operator wrote one", async () => {
+    const relation = "77777777-7777-4777-8777-777777777777";
+    const calls = stubApi({
+      pipelines: [page([card({
+        stage: "lead",
+        organization: null,
+        pending_institution_mentions: [{
+          opportunity_organization_id: relation,
+          organization_id: ORG,
+          name: "Universidad Ficticia",
+        }],
+      })])],
+      onPost: (call) =>
+        call.path === "/v2/commands/set-case-organization-role"
+          ? { body: receipt("set_case_organization_role", "lead", 6, "aaaaaaaa-0006") }
+          : undefined,
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución solicitante" }));
+    const review = within(dialog).getByRole("form", { name: "Revisar institución mencionada" });
+    fireEvent.change(within(review).getByRole("combobox", { name: "Institución mencionada" }), {
+      target: { value: relation },
+    });
+    fireEvent.change(within(review).getByRole("textbox", { name: "Evidencia de que es solicitante" }), {
+      target: { value: "Confirmado mediante orden de compra." },
+    });
+    fireEvent.change(within(review).getByRole("textbox", { name: "Excepción de proveedor (solo si corresponde)" }), {
+      target: { value: "También es proveedor, pero en esta compra figura como cliente." },
+    });
+    fireEvent.click(within(review).getByRole("button", { name: "Confirmar rol de solicitante" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.path === "/v2/commands/set-case-organization-role")).toBe(true),
+    );
+    const post = calls.find((c) => c.path === "/v2/commands/set-case-organization-role")!;
+    expect(post.body).toMatchObject({
+      supplier_exception_reason: "También es proveedor, pero en esta compra figura como cliente.",
+    });
+  });
+
   it("prevents a viewer from assigning a requesting institution", async () => {
     const calls = stubApi({
       pipelines: [page([card({ stage: "lead", organization: null })])],
