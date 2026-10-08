@@ -16,7 +16,7 @@ import urllib.request
 
 APPLICABLE = frozenset({"supabase", "secret-scan", "api", "worker", "dashboard",
                          "dashboard-proxy", "email-pipeline", "web"})
-MANDATORY = frozenset({"supabase", "secret-scan"})
+MANDATORY = frozenset({"supabase", "secret-scan", "api", "worker", "dashboard"})
 
 
 class CIRefused(RuntimeError):
@@ -36,7 +36,7 @@ def check_runs(runs: list[dict]) -> tuple[str, str]:
             grouped[name] = run
     missing = MANDATORY - set(grouped)
     if missing:
-        raise CIRefused(f"Required CI did not start: {', '.join(sorted(missing))}")
+        return "pending", "not yet scheduled: " + ", ".join(sorted(missing))
     pending = sorted(k for k,v in grouped.items() if v.get("status") != "completed")
     failed = sorted(k for k,v in grouped.items() if v.get("status") == "completed" and v.get("conclusion") != "success")
     if failed:
