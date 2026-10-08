@@ -36,19 +36,19 @@ jobs:
     timeout-minutes: 10
     environment: production
     outputs:
-      sha: ${{ steps.provenance.outputs.sha }
-      mode: ${{ steps.provenance.outputs.mode }
+      sha: ${{ steps.provenance.outputs.sha }}
+      mode: ${{ steps.provenance.outputs.mode }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
       - name: Verify main SHA, branch and runner syntax
         id: provenance
         shell: bash
         env:
-          EXPECTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }
-          EXECUTION_MODE: ${{ github.event_name == 'schedule' && 'backup_only' || github.event_name == 'workflow_run' && 'release' || inputs.mode }
+          EXPECTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          EXECUTION_MODE: ${{ github.event_name == 'schedule' && 'backup_only' || github.event_name == 'workflow_run' && 'release' || inputs.mode }}
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
@@ -67,16 +67,16 @@ jobs:
       - name: Block any release if independent Render deployments remain enabled
         if: steps.provenance.outputs.mode != 'backup_only'
         env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }
-          OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
         run: python3 scripts/deploy/render_release.py check
       - name: Read-only hosted migration plan
         if: steps.provenance.outputs.mode == 'plan'
         env:
-          OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }
-          OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }
-          OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }
-          OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }
+          OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }}
+          OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }}
+          OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }}
+          OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }}
         run: python3 supabase/scripts/hosted_migrations.py plan
 
   backup:
@@ -88,7 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.preflight.outputs.sha }
+          ref: ${{ needs.preflight.outputs.sha }}
           persist-credentials: false
       - name: Install official PostgreSQL 17 and age tools
         shell: bash
@@ -106,17 +106,17 @@ jobs:
           sudo apt-get install -y -qq postgresql-client-17
       - name: Inspect and encrypt application-schema backup
         env:
-          OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }
-          OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }
-          OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }
-          OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }
-          OL_PROD_BACKUP_AGE_RECIPIENT: ${{ vars.OL_PROD_BACKUP_AGE_RECIPIENT }
+          OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }}
+          OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }}
+          OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }}
+          OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }}
+          OL_PROD_BACKUP_AGE_RECIPIENT: ${{ vars.OL_PROD_BACKUP_AGE_RECIPIENT }}
           OL_PROD_BACKUP_OUT: ${{ runner.temp }}/origenlab-production-snapshot.tar.age
         run: python3 supabase/scripts/hosted_backup.py
       - name: Publish only age-encrypted backup
         uses: actions/upload-artifact@v4
         with:
-          name: origenlab-encrypted-prod-backup-${{ github.run_id }
+          name: origenlab-encrypted-prod-backup-${{ github.run_id }}
           path: ${{ runner.temp }}/origenlab-production-snapshot.tar.age
           if-no-files-found: error
           retention-days: 30
@@ -131,19 +131,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.preflight.outputs.sha }
+          ref: ${{ needs.preflight.outputs.sha }}
           persist-credentials: false
       - name: Refuse superseded commit
         shell: bash
         env:
-          EXPECTED_SHA: ${{ needs.preflight.outputs.sha }
+          EXPECTED_SHA: ${{ needs.preflight.outputs.sha }}
         run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
       - name: Apply protected atomic migrations and ledger
         env:
-          OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }
-          OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }
-          OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }
-          OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }
+          OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }}
+          OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }}
+          OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }}
+          OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }}
           OL_PROD_BACKUP_VERIFIED: "true"
         run: python3 supabase/scripts/hosted_migrations.py apply
 
@@ -156,15 +156,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.preflight.outputs.sha }
+          ref: ${{ needs.preflight.outputs.sha }}
           persist-credentials: false
       - name: Refuse superseded commit
         shell: bash
         env:
-          EXPECTED_SHA: ${{ needs.preflight.outputs.sha }
+          EXPECTED_SHA: ${{ needs.preflight.outputs.sha }}
         run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
       - name: Release pinned SHA to worker, cron, API, dashboard
         env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }
-          OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
         run: python3 scripts/deploy/render_release.py release
