@@ -35,10 +35,10 @@ Changes must remain backward-compatible during transition because old applicatio
     age-keygen -o ~/.config/origenlab-v2/production-backup-age-identity.txt
 
    Keep the private identity in a secure offline password vault with a second recovery copy, NEVER in GitHub or chat. Store only its printed public age1 recipient in the GitHub origenlab-release environment VARIABLE OL_PROD_BACKUP_AGE_RECIPIENT.
-4. One-time setup can be performed on your trusted laptop with `gh` authenticated and `age-keygen` installed: run `bash scripts/deploy/configure_release_secrets.sh` from a reviewed checkout. It uses the verified local PEM, privately prompts for the rotated migrator password and Render API key, generates an offline age identity (never commits it), and stores production environment secrets via GitHub CLI standard input. Safeguard and separately copy its private identity before trusting backup recoverability.
+4. One-time setup can be performed on your trusted laptop with `gh` authenticated and `age-keygen` installed: run `bash scripts/deploy/configure_release_secrets.sh` from a reviewed checkout. It uses the verified local PEM, privately prompts for the rotated migrator password and Render API key, generates an offline age identity (never commits it), and stores release environment secrets via GitHub CLI standard input. It also offers an explicitly confirmed, scoped operation to switch all four Render services to Auto-Deploy OFF without restarting them. If declined, you can turn off each service manually in Render Settings. Safeguard and separately copy its private identity before trusting backup recoverability.
 
    Alternatively configure GitHub origenlab-release ENVIRONMENT SECRETS manually: OL_PROD_POOLER_HOST (copy from Supabase Connect, session pooler port 5432), OL_PROD_PROJECT_REF, OL_PROD_CA_PEM (official root certificate PEM), OL_PROD_MIGRATOR_PASSWORD (rotate if previously exposed), RENDER_API_KEY (protected Render API key). Never store the admin postgres password there. Restrict environment secret access to reviewed main code.
-5. In Render Settings, turn Auto-Deploy OFF (not suspend, not stop) on all four: origenlab-mail-triage, origenlab-gmail-sync, origenlab API, origenlab-dashboard. This is the critical sequencing guarantee. The new workflow refuses deployment if even one remains on commit/checksPass autodeploy.
+5. Either accept the setup helper's explicit Render auto-deploy change or, in Render Settings, turn Auto-Deploy OFF (not suspend, not stop) on all four: origenlab-mail-triage, origenlab-gmail-sync, origenlab API, origenlab-dashboard. This is the critical sequencing guarantee. The new workflow refuses deployment if even one remains on commit/checksPass autodeploy.
 6. After CI passes, merge the reviewed PR. In GitHub Actions, run production-db-migrations mode plan (must find the schema/ledger current at 50), then backup_only. Download and decrypt the age archive offline. Rehearse a restore into a disposable PostgreSQL 17 environment and validate representative data. Only then trust the automatic production-release path.
 
 No computer is needed for later merges, unless production repair is required.
@@ -59,7 +59,7 @@ Backup: supabase/scripts/hosted_backup.py
 Atomic migrator: supabase/scripts/hosted_migrations.py
 Render controller: scripts/deploy/render_release.py
 Failure tests: supabase/scripts/tests/test_hosted_release.py
-One-time secrets setup: scripts/deploy/configure_release_secrets.sh
+One-time secrets setup and optional Render auto-deploy switch: scripts/deploy/configure_release_secrets.sh and scripts/deploy/set_render_autodeploy_off.py
 Original policy: docs/OPERATIONS.md sections 3-4
 
 Important: the `origenlab-release` GitHub Environment is separate from the existing `production` Environment used by web-deploy. Never weaken existing website deployment approvals. The setup helper creates/reconciles the release Environment with protected-branches-only policy; require main branch protection before unattended runs. This dedicated release Environment must NOT require per-release reviewers, or automatic releases will wait for approval.
