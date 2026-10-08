@@ -19,7 +19,7 @@ gh auth status >/dev/null
 printf '%s' '{"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false}}' |
   gh api -X PUT "repos/$repo/environments/$env_name" --input - >/dev/null
 echo "Configuring protected GitHub Environment $env_name for $repo."
-echo "This does NOT deploy services, change databases, or disable Render auto-deploy."
+echo "No service deploy or database write is performed by this script."
 
 cert="$HOME/.config/origenlab-v2/prod-ca-2021.crt"
 test -r "$cert" || { echo "Verified CA certificate not found at $cert" >&2; exit 1; }
@@ -56,11 +56,20 @@ printf '%s' "txgsamojgvkymitcdcpo" | gh secret set OL_PROD_PROJECT_REF -e "$env_
 gh secret set OL_PROD_CA_PEM -e "$env_name" -R "$repo" < "$cert"
 printf '%s' "$migrator_pass" | gh secret set OL_PROD_MIGRATOR_PASSWORD -e "$env_name" -R "$repo"
 printf '%s' "$render_key" | gh secret set RENDER_API_KEY -e "$env_name" -R "$repo"
-unset migrator_pass render_key
+unset migrator_pass
 gh variable set OL_PROD_BACKUP_AGE_RECIPIENT -e "$env_name" -R "$repo" --body "$recipient"
+echo
+echo "To allow migration-first releases, Render must NOT deploy directly on main."
+read -r -p "Type DISABLE to switch all four OrigenLab Render services to auto-deploy OFF (no restart): " answer
+if [[ "$answer" == "DISABLE" ]]; then
+  RENDER_API_KEY="$render_key" python3 "$(dirname "${BASH_SOURCE[0]}")/set_render_autodeploy_off.py" --disable-autodeploy
+else
+  echo "Render auto-deploy settings unchanged. Release CI will refuse to deploy until all four are OFF."
+fi
+unset render_key answer
 echo
 echo "Production environment secrets and public backup recipient configured."
 echo "OFFLINE RECOVERY KEY: $identity"
 echo "Back up this PRIVATE file to a second safe offline location and test decrypting a backup."
 echo "Do not share, upload to GitHub, or remove the private key."
-echo "Next: turn OFF Render independent auto-deploy for all 4 services, then run a GitHub Actions read-only plan."
+echo "Next: after merging reviewed PR, run the GitHub Actions read-only plan and encrypted-backup restore drill."
