@@ -19,7 +19,7 @@ Changes must remain backward-compatible during transition because old applicatio
 
 ## One-time activation required, NOT per deployment
 
-1. Protect the main branch: require reviewed PRs and passing API, worker, dashboard and Supabase CI checks. Restrict GitHub Environment production to main and trusted maintainers. If environment approval reviewers are configured, automatic releases will pause for approval. Unattended releases require appropriate trust in branch protection and workflow reviews.
+1. Protect the main branch: require reviewed PRs and passing API, worker, dashboard and Supabase CI checks. Restrict GitHub Environment origenlab-release to main and trusted maintainers. If environment approval reviewers are configured, automatic releases will pause for approval. Unattended releases require appropriate trust in branch protection and workflow reviews.
 2. Review and execute the following ONCE from an authorized Supabase postgres SQL Editor session. It gives the migrator limited access to its version ledger; runtime roles receive no new privileges.
 
     begin;
@@ -34,10 +34,10 @@ Changes must remain backward-compatible during transition because old applicatio
     mkdir -p ~/.config/origenlab-v2
     age-keygen -o ~/.config/origenlab-v2/production-backup-age-identity.txt
 
-   Keep the private identity in a secure offline password vault with a second recovery copy, NEVER in GitHub or chat. Store only its printed public age1 recipient in the GitHub production environment VARIABLE OL_PROD_BACKUP_AGE_RECIPIENT.
+   Keep the private identity in a secure offline password vault with a second recovery copy, NEVER in GitHub or chat. Store only its printed public age1 recipient in the GitHub origenlab-release environment VARIABLE OL_PROD_BACKUP_AGE_RECIPIENT.
 4. One-time setup can be performed on your trusted laptop with `gh` authenticated and `age-keygen` installed: run `bash scripts/deploy/configure_release_secrets.sh` from a reviewed checkout. It uses the verified local PEM, privately prompts for the rotated migrator password and Render API key, generates an offline age identity (never commits it), and stores production environment secrets via GitHub CLI standard input. Safeguard and separately copy its private identity before trusting backup recoverability.
 
-   Alternatively configure GitHub production ENVIRONMENT SECRETS manually: OL_PROD_POOLER_HOST (copy from Supabase Connect, session pooler port 5432), OL_PROD_PROJECT_REF, OL_PROD_CA_PEM (official root certificate PEM), OL_PROD_MIGRATOR_PASSWORD (rotate if previously exposed), RENDER_API_KEY (protected Render API key). Never store the admin postgres password there. Restrict environment secret access to reviewed main code.
+   Alternatively configure GitHub origenlab-release ENVIRONMENT SECRETS manually: OL_PROD_POOLER_HOST (copy from Supabase Connect, session pooler port 5432), OL_PROD_PROJECT_REF, OL_PROD_CA_PEM (official root certificate PEM), OL_PROD_MIGRATOR_PASSWORD (rotate if previously exposed), RENDER_API_KEY (protected Render API key). Never store the admin postgres password there. Restrict environment secret access to reviewed main code.
 5. In Render Settings, turn Auto-Deploy OFF (not suspend, not stop) on all four: origenlab-mail-triage, origenlab-gmail-sync, origenlab API, origenlab-dashboard. This is the critical sequencing guarantee. The new workflow refuses deployment if even one remains on commit/checksPass autodeploy.
 6. After CI passes, merge the reviewed PR. In GitHub Actions, run production-db-migrations mode plan (must find the schema/ledger current at 50), then backup_only. Download and decrypt the age archive offline. Rehearse a restore into a disposable PostgreSQL 17 environment and validate representative data. Only then trust the automatic production-release path.
 
@@ -61,3 +61,5 @@ Render controller: scripts/deploy/render_release.py
 Failure tests: supabase/scripts/tests/test_hosted_release.py
 One-time secrets setup: scripts/deploy/configure_release_secrets.sh
 Original policy: docs/OPERATIONS.md sections 3-4
+
+Important: the `origenlab-release` GitHub Environment is separate from the existing `production` Environment used by web-deploy. Never weaken existing website deployment approvals. The setup helper creates/reconciles the release Environment with protected-branches-only policy; require main branch protection before unattended runs. This dedicated release Environment must NOT require per-release reviewers, or automatic releases will wait for approval.
