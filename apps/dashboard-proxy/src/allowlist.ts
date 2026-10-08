@@ -290,7 +290,7 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
  * «Confirmar institución», a record-level confirm that needs no assertion) among them. None is
  * evidence-bound, and none of the evidence-bound commands (create-organization, confirm-
  * organization, attach-contact-address, attribute-sender-organization, confirm-person-from-
- * evidence, the case commands, apply-unsubscribe-replies, preview) is listed here — the four case
+ * evidence, the case commands, apply-unsubscribe-replies, preview) is listed here — the six case
  * commands the drawer uses have their own list (`CASE_COMMAND_POST_PATHS`); the rest stay
  * refused on the browser boundary until reviewed separately.
  *
