@@ -13,9 +13,13 @@ for binary in gh age-keygen openssl; do
   }
 done
 gh auth status >/dev/null
-# No production secrets are provisioned unless main already requires a
-# reviewed PR and strict CI. This check must run before creating the Environment.
-python3 "$(dirname "${BASH_SOURCE[0]}")/check_branch_protection.py" --local
+# The GitHub repository variable selects the release policy; do not trust a
+# shell-only override in the setup helper.
+solo_mode="$(gh variable get OL_RELEASE_SOLO_MODE -R "$repo" 2>/dev/null || true)"
+if [[ "$solo_mode" != "true" ]]; then solo_mode=false; fi
+# No production secrets are provisioned unless main has strict CI and a PR
+# policy compatible with the configured owner/collaborator approval mode.
+OL_RELEASE_SOLO_MODE="$solo_mode" python3 "$(dirname "${BASH_SOURCE[0]}")/check_branch_protection.py" --local
 # Dedicated unattended release environment; do not weaken the manually-approved
 # production environment used by the public website.
 # Fail closed if branch policy cannot be established; main itself must be protected.
