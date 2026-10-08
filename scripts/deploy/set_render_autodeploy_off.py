@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
-from render_release import OWNER, REPOSITORY, SERVICES, Refused, request
+from render_release import OWNER, REPOSITORY, ALL_SERVICES, Refused, request
 
 
 def check_identity(service: dict, expected_id: str) -> None:
@@ -23,7 +23,7 @@ def configure(token: str) -> None:
         raise Refused("Missing local Render API key")
     # All identities must be verified before the first mutation.
     verified = []
-    for name, ident in SERVICES:
+    for name, ident in ALL_SERVICES:
         service = request("GET", f"/services/{ident}", token)
         check_identity(service, ident)
         verified.append((name, ident, service.get("autoDeployTrigger")))

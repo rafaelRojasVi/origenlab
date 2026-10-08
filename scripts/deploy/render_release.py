@@ -14,12 +14,17 @@ OWNER = "tea-d88e6719rddc738bdh1g"
 REPOSITORY = "https://github.com/rafaelRojasVi/origenlab"
 SERVICES = (
     ("worker", "srv-db2r5c0m7kps73c0nmo0"),
-    ("gmail-sync", "crn-db1tk02jnfac73eir6fg"),
     ("api", "srv-d88ffpf7f7vs73b5jcf0"),
     ("dashboard", "srv-d891dn5ckfvc7385i8eg"),
 )
 FAILED = {"build_failed", "update_failed", "pre_deploy_failed", "canceled", "deactivated"}
 IN_PROGRESS = {"created", "queued", "build_in_progress", "update_in_progress", "pre_deploy_in_progress"}
+
+
+LEGACY_CRON = ("gmail-sync", "crn-db1tk02jnfac73eir6fg")
+ALL_SERVICES = (*SERVICES, LEGACY_CRON)
+WORKER_COMMAND = "uv run --no-sync origenlab-worker mail-worker"
+WORKER_COMMANDS = {WORKER_COMMAND, "uv run --no-sync origenlab-worker triage-worker"}
 
 
 class Refused(RuntimeError):
@@ -61,8 +66,21 @@ def verify_service(service: dict, service_id: str) -> None:
         raise Refused(f"{service_id} still has independent auto-deploy enabled. Turn it OFF before releases")
 
 
+    expected_state = "suspended" if service_id == LEGACY_CRON[1] else "not_suspended"
+    if service.get("suspended") != expected_state:
+        raise Refused(f"{service_id} must be {expected_state} before release")
+    if service_id == SERVICES[0][1]:
+        command = service.get("serviceDetails", {}).get("envSpecificDetails", {}).get("startCommand")
+        if command not in WORKER_COMMANDS:
+            raise Refused("Worker must use the consolidated mail-worker entrypoint before release")
+
+
+def verify_legacy_cron(token: str) -> None:
+    verify_service(request("GET", f"/services/{LEGACY_CRON[1]}", token), LEGACY_CRON[1])
+
+
 def check_current_main(sha: str) -> None:
-    """Cron cannot pin its commit: insist that GitHub main still names this SHA."""
+    """Refuse stale candidates; every release POST still pins the exact commit."""
     req = urllib.request.Request(
         "https://api.github.com/repos/rafaelRojasVi/origenlab/git/ref/heads/main",
         headers={"Accept": "application/vnd.github+json",
@@ -75,9 +93,9 @@ def check_current_main(sha: str) -> None:
         with urllib.request.urlopen(req, timeout=20) as response:
             ref = json.load(response)
     except (urllib.error.URLError, ValueError) as exc:
-        raise Refused("Could not recheck main before deploying the unpinnable cron job") from exc
+        raise Refused("Could not recheck the current main release candidate") from exc
     if ref.get("object", {}).get("sha") != sha:
-        raise Refused("Main has moved; cannot deploy a cron job at a reliably pinned SHA")
+        raise Refused("Main has moved; stop the stale release candidate")
 
 
 def latest_deploy(token: str, service_id: str) -> dict | None:
@@ -106,7 +124,8 @@ def run(mode: str) -> None:
     if not token or not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise Refused("Missing Render API token or exact reviewed commit SHA")
 
-    # Guard all four first: never perform a partial deploy before discovering one remains autonomous.
+    # No mutation until the legacy scheduler is suspended and all services gated.
+    verify_legacy_cron(token)
     for name, service_id in SERVICES:
         verify_service(request("GET", f"/services/{service_id}", token), service_id)
         latest = latest_deploy(token, service_id)
@@ -120,6 +139,7 @@ def run(mode: str) -> None:
         raise Refused("Usage: render_release.py check|release")
     for name, service_id in SERVICES:
         check_current_main(sha)
+        verify_legacy_cron(token)
         if name == "dashboard":
             verify_api_http()
         verify_service(request("GET", f"/services/{service_id}", token), service_id)
@@ -130,14 +150,7 @@ def run(mode: str) -> None:
         if latest and latest.get("status") in IN_PROGRESS:
             raise Refused(f"{name} already has a pending deployment; refuse to race")
         print(f"Deploy {name} at reviewed commit {sha[:12]}", flush=True)
-        # Render API explicitly forbids commitId for cron jobs. A cron deployment
-        # builds HEAD of the configured branch; refuse if main advanced between
-        # the CI preflight and this step. Other services use an exact commitId.
-        if name == "gmail-sync":
-            check_current_main(sha)
-            payload = {"clearCache": "do_not_clear"}
-        else:
-            payload = {"commitId": sha, "clearCache": "do_not_clear"}
+        payload = {"commitId": sha, "clearCache": "do_not_clear"}
         deploy = request("POST", f"/services/{service_id}/deploys", token, payload)
         # Validate immediately so a racing main push cannot go unnoticed.
         if deploy.get("commit", {}).get("id") not in {None, sha}:
@@ -163,7 +176,7 @@ def run(mode: str) -> None:
             time.sleep(15)
         else:
             raise Refused(f"Render {name} deploy timed out; no further components deployed")
-    print("RELEASE COMPLETE: worker, cron, API, dashboard on one reviewed SHA")
+    print("RELEASE COMPLETE: worker (capture + triage), API, dashboard on one reviewed SHA")
 
 
 if __name__ == "__main__":

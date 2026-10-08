@@ -228,6 +228,7 @@ class RealReleaseDatabase(unittest.TestCase):
           SET ROLE origenlab_owner;
           CREATE TABLE comms.message(provider_message_id text, parse_status text, eml_storage_path text,
                                      internal_date timestamptz, direction text);
+          CREATE TABLE comms.mailbox(authorization_state text, last_synced_at timestamptz);
           CREATE TABLE evidence.source_record(id int, dedupe_key text, kind text);
           CREATE TABLE evidence.assertion(source_record_id int, kind text, value_norm text, value jsonb);
           CREATE TABLE procrastinate.procrastinate_workers(last_heartbeat timestamptz);
@@ -237,6 +238,11 @@ class RealReleaseDatabase(unittest.TestCase):
           INSERT INTO comms.message VALUES('synthetic','parsed','synthetic',now()-interval '1 hour','outbound');
           RESET ROLE;""", self.env)
         self.assertTrue(verify_workers.healthy_worker(self.env))
+        self.assertFalse(verify_workers.healthy_worker(self.env, require_capture=True))
+        self.sql("SET ROLE origenlab_owner; INSERT INTO comms.mailbox VALUES('authorized',now()); INSERT INTO procrastinate.procrastinate_periodic_defers VALUES('capture_mail_cycle','gmail-drive-v1',extract(epoch from now())); RESET ROLE", self.env)
+        self.assertTrue(verify_workers.healthy_worker(self.env, require_capture=True))
+        self.sql("SET ROLE origenlab_owner; UPDATE comms.mailbox SET last_synced_at=now()-interval '1 hour'; RESET ROLE", self.env)
+        self.assertFalse(verify_workers.healthy_worker(self.env, require_capture=True))
         self.sql("SET ROLE origenlab_owner; UPDATE comms.message SET direction='inbound'; RESET ROLE", self.env)
         self.assertFalse(verify_workers.healthy_worker(self.env))
         self.sql("SET ROLE origenlab_owner; INSERT INTO evidence.source_record VALUES(1,'gmail_message:synthetic','gmail_message'); INSERT INTO evidence.assertion VALUES(1,'message_triage','triage:v1','{\"class\":\"bounce\"}'); RESET ROLE", self.env)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only postrelease worker checks: queue heartbeat/sweep + next successful cron run."""
+"""Read-only postrelease worker checks: queue heartbeat/sweep + scheduled capture cycle."""
 from __future__ import annotations
 import os
 import json
@@ -13,12 +13,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "supabase/scripts"))
 from hosted_env import Refused, database_env
-from render_release import OWNER, SERVICES, latest_deploy, request, verify_service
+from render_release import OWNER, SERVICES, latest_deploy, request, verify_service, verify_legacy_cron
 
 
-def healthy_worker(env: dict[str, str], since: str | None = None) -> bool:
+def healthy_worker(env: dict[str, str], since: str | None = None, *, require_capture: bool = False) -> bool:
     # Do not read message bodies, queue arguments, contacts, or email addresses.
     boundary = datetime.fromisoformat(since.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat() if since else "1970-01-01T00:00:00+00:00"
+    capture_guard = f"""
+       and exists (select 1 from procrastinate.procrastinate_periodic_defers
+                   where task_name = 'capture_mail_cycle' and periodic_id = 'gmail-drive-v1'
+                     and defer_timestamp >= extract(epoch from now()) - 900)
+       and exists (select 1 from comms.mailbox
+                   where authorization_state = 'authorized'
+                     and last_synced_at >= greatest(now() - interval '20 minutes', '{boundary}'::timestamptz))
+    """ if require_capture else ""
     query = f"""
     set role origenlab_owner;
     select case when
@@ -68,13 +76,14 @@ def healthy_worker(env: dict[str, str], since: str | None = None) -> bool:
               )
             )
        )
+       {capture_guard}
     then 'healthy' else 'not_ready' end;
     reset role;
     """
     r = subprocess.run(["psql", "-X", "--no-psqlrc", "-At", "-v", "ON_ERROR_STOP=1", "-c", query],
                        env=env, capture_output=True, text=True, check=False, timeout=25)
     if r.returncode:
-        raise Refused("Postrelease worker health query failed")
+        raise Refused("Postrelease worker/capture health query failed")
     return "healthy" in r.stdout.splitlines()
 
 
@@ -86,7 +95,8 @@ def after_deploy(iso: str | None, mark: str | None) -> bool:
     return as_utc(iso) >= as_utc(mark)
 
 
-def swept_after_deploy(token: str, service_id: str, since: str) -> bool:
+def swept_after_deploy(token: str, service_id: str, since: str, *, capture: bool = False,
+                      revision: str | None = None) -> bool:
     """Successful jobs are deleted by the worker, so their events cannot be proof.
 
     Read only the worker's aggregate triage_sweep events, never error details,
@@ -95,10 +105,11 @@ def swept_after_deploy(token: str, service_id: str, since: str) -> bool:
     boundary = datetime.fromisoformat(since.replace("Z", "+00:00")).astimezone(timezone.utc)
     now = datetime.now(timezone.utc)
     from datetime import timedelta
-    boundary = max(boundary, now - timedelta(minutes=5))
+    boundary = max(boundary, now - timedelta(minutes=20 if capture else 5))
+    event_name = "capture_cycle" if capture else "triage_sweep"
     params = urllib.parse.urlencode({"ownerId": OWNER, "resource": service_id,
                                     "startTime": boundary.isoformat(), "endTime": now.isoformat(),
-                                    "text": '"event": "triage_sweep"', "type": "app", "limit": 100})
+                                    "text": f'"event": "{event_name}"', "type": "app", "limit": 100})
     page = request("GET", "/logs?" + params, token)
     if not isinstance(page, dict) or not isinstance(page.get("logs"), list):
         raise Refused("Unexpected aggregate worker log response")
@@ -107,8 +118,13 @@ def swept_after_deploy(token: str, service_id: str, since: str) -> bool:
             labels = {label["name"]:label["value"] for label in row.get("labels", [])}
             event = json.loads(row.get("message", ""))
             if (labels.get("resource") == service_id and after_deploy(row.get("timestamp"), boundary.isoformat())
-                and event.get("event") == "triage_sweep"
-                and all(isinstance(event.get(key), int) and event[key] >= 0 for key in ("found", "deferred"))):
+                and event.get("event") == event_name
+                and (revision is None or event.get("revision") == revision)
+                and ((capture and event.get("outcome") == "success"
+                      and event.get("gmail_mode") in {"history", "resync"}
+                      and event.get("drive_mode") in {"file", "paused"})
+                     or (not capture and all(isinstance(event.get(key), int) and event[key] >= 0
+                                             for key in ("found", "deferred"))))):
                 return True
         except (ValueError, TypeError, KeyError):
             continue
@@ -122,6 +138,7 @@ def verify() -> None:
     sha = os.environ.get("OL_RELEASE_SHA", "")
     if not token or len(sha) != 40:
         raise Refused("Missing scoped Render credentials or pinned SHA")
+    verify_legacy_cron(token)
     services = dict(SERVICES)
     details = {}
     for name, ident in SERVICES:
@@ -135,34 +152,22 @@ def verify() -> None:
         raise Refused("Worker deployment completion timestamp missing")
     with tempfile.TemporaryDirectory(prefix="ol-postflight-", dir=os.environ.get("RUNNER_TEMP")) as d:
         env = database_env(Path(d))
-        worker_deadline = time.monotonic() + 360
+        worker_deadline = time.monotonic() + 1200
         while True:
-            if (healthy_worker(env, details["worker"]["finishedAt"])
-                and swept_after_deploy(token, services["worker"], details["worker"]["finishedAt"])):
-                print("WORKER HEALTHY: heartbeat, periodic sweep and no stale 14-day triage gaps", flush=True)
+            if (healthy_worker(env, details["worker"]["finishedAt"], require_capture=True)
+                and swept_after_deploy(token, services["worker"], details["worker"]["finishedAt"], revision=sha)
+                and swept_after_deploy(token, services["worker"], details["worker"]["finishedAt"], capture=True, revision=sha)):
+                print("WORKER HEALTHY: candidate SHA sweep/capture, fresh cursor, heartbeat, no eligible gaps", flush=True)
                 break
             if time.monotonic() >= worker_deadline:
-                raise Refused("Mail-triage worker has no recent heartbeat or periodic sweep")
+                raise Refused("Worker lacks fresh heartbeat, cursor or candidate-SHA sweep/capture success")
             time.sleep(20)
-    cron_since = details["gmail-sync"].get("finishedAt")
-    if not cron_since or not details["worker"].get("finishedAt"):
-        raise Refused("Deployment completion timestamps missing")
-    cron_deadline = time.monotonic() + 1200
-    while True:
-        cron = request("GET", f"/services/{services['gmail-sync']}", token)
-        verify_service(cron, services["gmail-sync"])
-        completed = cron.get("serviceDetails", {}).get("lastSuccessfulRunAt")
-        if after_deploy(completed, cron_since):
-            print("CRON HEALTHY: successful Gmail-sync run after the currently deployed revision", flush=True)
-            break
-        if time.monotonic() >= cron_deadline:
-            raise Refused("Gmail-sync cron has no verified successful run after deployment")
-        time.sleep(30)
+    verify_legacy_cron(token)
     for name, ident in SERVICES:
         deploy = latest_deploy(token, ident)
         if not deploy or deploy.get("status") != "live" or deploy.get("commit", {}).get("id") != sha:
             raise Refused(f"Service {name} changed during postflight")
-    print("POSTFLIGHT PASSED: worker, periodic sweep, cron and all four SHA-pinned services")
+    print("POSTFLIGHT PASSED: worker, periodic sweep/capture and all three SHA-pinned services")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # OrigenLab production release: independent engineering audit and runbook
 
-**2026-10-08 — PR #679. Unattended activation: BLOCKED.** The implementation can
+**2026-10-08 — PR #679. Unattended activation: BLOCKED pending approved cutover/recovery.** The implementation can
 be reviewed and merged with both automation variables OFF and the four independent
 Render deploy triggers OFF. A merge is not permission to activate or deploy. No
 production mutation, merge, Gmail send, queue replay or deletion was performed in this
@@ -54,7 +54,7 @@ for independent decryption/restoration in this audit.
 | Severity | Finding and evidence | Disposition |
 |---|---|---|
 | Critical | `hosted_migrations.py` generated `end $;` instead of `end $$;`. The existing 14 tests mocked psql and never parsed the guard. | Fixed; real PG17 success/rollback tests execute the actual runner. |
-| Critical | Mutable-main Render cron cannot accept `commitId`; cancellation endpoint also excludes cron. Main can move between GET and POST. A mismatched cron may already run code requiring unapplied schema. | **Unresolved activation blocker.** No provider mutation performed; an immutable release source/scheduler contract needs review and verification. |
+| Critical | Mutable-main Render cron cannot accept `commitId`; cancellation endpoint also excludes cron. Main can move between GET and POST. A mismatched cron may already run code requiring unapplied schema. | **Closed in code by consolidated capture scheduling.** Controller never deploys cron and requires it suspended. Production cutover/verification still pending; see MAIL_WORKER_CUTOVER.md. |
 | Critical | Four independent commit triggers still bypass migration ordering. | Activation/merge configuration gate; controller refuses autonomous services. Owner approval needed to turn triggers OFF. |
 | High | Main ruleset permits unapproved merges with no mandatory checks. | Exact-merge independent collaborator approval and CI gates added; actual ruleset still requires owner configuration. |
 | High | Ruleset API omits `bypass_actors` without write access. Original read-only gate interpreted omission as no bypass. | Local bootstrap requires visible empty bypass list; runtime independently proves approval of the exact merged PR, without adding administration credentials to Actions. |
@@ -107,14 +107,14 @@ flowchart TD
 | Hold | Missing/false release flag prevents automatic release and rejects manual release; missing/false backup flag skips schedules | Existing production stays running |
 | Protection/review | Active review/check policy; exact merged PR, final-head independent collaborator approval; no direct push release | Verified provenance |
 | CI | All nine named main-push workflows at exact SHA; required jobs successful; reruns select current attempt | CI evidence |
-| Render preflight | Approved IDs/owner/repository/main; independent deploy OFF; no active deployment | No provider writes |
+| Render preflight | Approved IDs/owner/repository/main; independent deploy OFF; legacy cron suspended; compatible consolidated entrypoint; no active deployment | No provider writes |
 | Backup | TLS session pooler, migrator, PG17; one snapshot and ledger; required schemas in TOC; checksums; age encryption; successful artifact upload | Ciphertext artifact, 30-day retention |
 | Migrate | Current main/CI/review/config rechecked; exact ledger prefix; 10s lock and 180s statement bounds | Each file plus ledger row committed together |
 | Worker | Exact commitId, wait <=35m, refuse unknown/error statuses; no automatic rollback | Worker may be new while other services are old |
-| Cron | main rechecked; POST without unsupported commitId; poll and reconcile actual SHA | **Unpinnable provider boundary: activation blocker** |
+| Capture | Same pinned worker build; separate supervised process and queue; default OFF; legacy cron must be suspended | Exact-commit scheduling boundary, approved cutover pending |
 | API | Exact commitId; wait live | Old dashboard still active |
 | Dashboard | API `/health` success first; exact commitId; wait live | Coordinated UI revision |
-| Postflight | Same live SHA on all four; recent heartbeat, post-deploy sweep aggregate, eligible evidence age; next successful cron after deploy; final SHA recheck | No writes/duplicate work |
+| Postflight | Same live SHA on three services; candidate-SHA sweep/capture aggregates, fresh mailbox cursor, heartbeat, eligible evidence age; suspended-cron and final SHA rechecks | No writes/duplicate work |
 | Complete | Final result job requires backup, migrate, deploy and verify success | Partial/skipped release cannot report complete |
 
 The production concurrency group serializes controller runs, not human merges or Render
@@ -134,13 +134,13 @@ blocks new runs/stages; it does not cancel a provider request already accepted.
 | SQL/ledger insert failure | Current file and ledger roll back; earlier files remain committed | Fix reviewed migration or grant; inspect prefix. Roll forward. |
 | Ledger drift | No guessed reconciliation | Independently investigate applied SQL/ledger, then approve a specific reconciliation. |
 | Migrations succeed, worker build fails | New compatible schema, old code | Diagnose provider build; resume same SHA if still main, otherwise release newer reviewed compatible main. |
-| Main moves before cron POST | Worker may already be new; cron unchanged | Controller stops. Release new current SHA through CI/migrations; no schema rollback. |
-| Main moves during cron POST | Cron may be ahead of migrated SHA; cannot cancel via API | Treat as incident; stop downstream rollout. Compare actual cron SHA and schema requirements; approve roll-forward repair. This is why unattended activation is blocked. |
-| Cron executes during rollout | Old/new instances may overlap against new schema | Backward-compatible changes; existing mailbox/Drive advisory locks and idempotency. Do not replay captured mail. |
+| Main moves before a pinned service POST | Worker may already be new; downstream unchanged | Controller stops. Release new current SHA through CI/migrations; no schema rollback. |
+| Main moves during a service POST | Request still pins the reviewed SHA; no cron POST exists | Reconcile deployed prefix; release newer reviewed compatible main. |
+| Capture overlaps during worker rollout | Verified cycle lock permits one cycle; queue period is deduplicated | Backward-compatible changes and existing mailbox/Drive idempotency; orphan jobs do not block the next period. Do not replay historical mail. |
 | POST response lost or times out | Provider may have accepted deployment | Never repeat POST blindly. Read service/deploy history and actual SHA/status, then resume. |
 | GET transient 429/5xx/network failure | No duplicate POST | At most three bounded reads; persistent failure stops for reconciliation. |
 | Deploy times out/cancelled/unknown enum | Requested provider deploy may still be running | Inspect history. Do not assume GitHub timeout cancelled Render. No automatic cancel/rollback. |
-| API rollout/readiness fails | Worker/cron may be new; dashboard remains old | Diagnose API/auth/DB; deploy only compatible repaired API before dashboard. |
+| API rollout/readiness fails | Mail worker may be new; dashboard remains old | Diagnose API/auth/DB; deploy only compatible repaired API before dashboard. |
 | Dashboard fails | New backend, prior dashboard | Maintain old-client compatibility; correct/retry dashboard. |
 | Postflight fails or SHA changes while waiting | Rollout incomplete despite Render live | Inspect aggregate queue/capture/Drive/API health; fix and reverify. No customer sends or queue mutations. |
 | Restore/recovery | Isolated DB includes old queue leases and flags | Keep all restored workers/senders OFF. Review queue/source timestamps, external objects, identities and send controls before approved recovery. |
@@ -149,9 +149,28 @@ Migrations are never automatically reversed. Successful services are idempotentl
 on a rerun only when their current live commit is the exact release SHA. API HTTP liveness
 is still checked before the dashboard even when the API deploy is skipped.
 
+## Consolidated scheduler follow-up, 2026-10-08
+
+The owner's approved implementation request closes the unpinnable cron boundary in code.
+`mail-worker` supervises separate triage/capture processes; `triage-worker` is a compatible
+alias. A dedicated ten-minute queue uses whole-cycle session locking, bounded retries
+inside a nine-minute deadline, command timeouts, sanitized output and candidate-SHA logs.
+The scheduler defaults OFF. The controller gates a suspended legacy cron and never deploys
+it; only worker/API/dashboard receive exact commit IDs. Plan/backup remain read-only and
+can run before cutover. No production service or flag was changed.
+
+Real-role tests reproduced a Procrastinate 3.10 RLS-masked UniqueViolation DETAIL bug;
+a narrow connector guard fixes async periodic and triage duplicate conversion without
+changing grants. Tests also cover actual overlap/cancellation, orphaned doing jobs,
+bounded backlog, child crashes, command kill/reaping and independent processing slots.
+Both processes share the existing 512 MB / 0.5 CPU service: full workload capacity is
+not proved by a process-isolation test. The cutover and additional failure/recovery matrix
+are in [MAIL_WORKER_CUTOVER.md](MAIL_WORKER_CUTOVER.md).
+
 ## Tests and what they prove
 
-Local: **26** offline tests and **10** actual PostgreSQL 17 tests pass. Local PG17.11 ran
+Local: **30** offline release tests, **10** actual PostgreSQL 17 release/restore tests,
+and the full worker suite (including new real-role scheduler tests) pass. Local PG17.11 ran
 in the restricted scratch runtime with an OS-identity shim because that runtime cannot
 switch users; GitHub's separate PG17.6 container independently runs these tests normally.
 No production database was a test fixture. Required DB tests fail rather than silently
@@ -166,7 +185,7 @@ accepted by the test so future migrations do not deadlock the release contract.
 
 Offline cases cover ledger prefix, owner transitions, transaction escapes, hidden ruleset
 bypasses, approved-merge review identity, stale/fork/non-main events, both hold switches,
-CI identity and skipped jobs, cron payload shape, autonomous services, bounded reads,
+CI identity and skipped jobs, three exact-commit payloads/no cron POST, suspended-cron gate, autonomous services, bounded reads,
 no blind POST retry and timestamp/resource validation of aggregate sweep events.
 
 GitHub evidence before final head verification:
@@ -287,13 +306,15 @@ this real production-data/offline-key drill.
    manual `plan`, then `backup_only` from main. Restore that artifact into an isolated
    PG17 target using the procedure above; verify actual managed recovery points,
    objects and role/credential recovery. Manual backup requires no release flag.
-5. **Before unattended activation**, implement/verify a pinned cron release boundary
-   and authenticated API/CRM smoke; approve any required provider configuration.
-   A temporary “no merges during release” rule is not the finished architecture.
-6. Only then, with explicit approval, enable daily backup flag, enable release flag,
-   dispatch first controlled release, and verify every stage and next cron run.
-   Subsequent approved green main merges can use the tested controller. Until step 5
-   is resolved, the current verdict remains **BLOCKED TO ACTIVATE**.
+5. Follow the [approved consolidated mail-worker cutover](MAIL_WORKER_CUTOVER.md):
+   stage existing capture settings without deploying, suspend the legacy cron only in
+   the approved handoff window, and release the pinned worker with scheduler enabled.
+   The code closes the mutable-cron race; production has not completed that cutover.
+6. With explicit approval, perform the first controlled release, verify candidate-SHA
+   sweep/capture and cursor checks, authenticated CRM/API behavior and shared-resource
+   capacity. Only then enable unattended releases and daily backup automation.
+   Until approved cutover/recovery/configuration verification is complete, the verdict
+   remains **BLOCKED TO ACTIVATE**.
 
 No need to use the personal PC for subsequent normal releases once activation is proven.
 No mail automation/send-control/contact-suppression changes are part of this procedure.

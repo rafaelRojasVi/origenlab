@@ -168,7 +168,7 @@ jobs:
           OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
         run: python3 scripts/deploy/check_release_ci.py
       - name: Block any release if independent Render deployments remain enabled
-        if: steps.provenance.outputs.mode != 'backup_only'
+        if: steps.provenance.outputs.mode == 'release'
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
@@ -280,7 +280,7 @@ jobs:
         env:
           EXPECTED_SHA: ${{ needs.preflight.outputs.sha }}
         run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
-      - name: Release pinned SHA to worker, cron, API, dashboard
+      - name: Release pinned SHA to mail worker, API, dashboard
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
@@ -290,7 +290,7 @@ jobs:
   verify:
     needs: [preflight, deploy]
     if: needs.preflight.outputs.mode == 'release'
-    name: Verify worker queue and Gmail cron after release
+    name: Verify triage and scheduled capture after release
     runs-on: ubuntu-latest
     timeout-minutes: 35
     environment: origenlab-release
@@ -299,7 +299,7 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.sha }}
           persist-credentials: false
-      - name: Verify worker heartbeat/sweep and successful cron completion
+      - name: Verify worker heartbeat/sweep and successful capture cycle
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}

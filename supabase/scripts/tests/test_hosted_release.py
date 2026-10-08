@@ -28,6 +28,13 @@ protection = load(ROOT / "scripts/deploy/check_branch_protection.py", "check_bra
 postflight = load(ROOT / "scripts/deploy/verify_workers.py", "verify_workers")
 
 
+def approved_service(ident, **changes):
+    return dict(id=ident, ownerId=render.OWNER, repo=render.REPOSITORY,
+                branch="main", autoDeployTrigger="off",
+                suspended="suspended" if ident == render.LEGACY_CRON[1] else "not_suspended",
+                serviceDetails={"envSpecificDetails":{"startCommand":render.WORKER_COMMAND}}, **changes)
+
+
 class ProductionGates(unittest.TestCase):
     def test_ledger_is_exact_prefix(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -55,8 +62,7 @@ class ProductionGates(unittest.TestCase):
 
     def test_render_autodeploy_gate(self):
         name, service_id = render.SERVICES[0]
-        obj = dict(id=service_id, ownerId=render.OWNER,
-                   repo=render.REPOSITORY, branch="main", autoDeployTrigger="off")
+        obj = approved_service(service_id)
         render.verify_service(obj, service_id)
         for key, value in (("autoDeployTrigger", "commit"), ("branch", "other"),
                            ("ownerId", "other")):
@@ -158,7 +164,7 @@ class ProductionGates(unittest.TestCase):
                     migrations.run("apply")
             self.assertEqual(sum("--single-transaction" in x for x in sql_calls), 1)
 
-    def test_postflight_requires_cron_success_after_deploy(self):
+    def test_postflight_requires_success_after_deploy(self):
         self.assertTrue(postflight.after_deploy(
             "2026-10-08T05:05:00Z", "2026-10-08T05:00:00Z"))
         self.assertFalse(postflight.after_deploy(
@@ -175,8 +181,10 @@ class ProductionGates(unittest.TestCase):
         with mock.patch.object(postflight.subprocess, "run", return_value=good):
             self.assertTrue(postflight.healthy_worker({}))
 
-    def test_all_four_services(self):
-        self.assertEqual(len({r for _, r in render.SERVICES}), 4)
+    def test_three_pinned_services_and_legacy_cron_guard(self):
+        self.assertEqual(len({r for _, r in render.SERVICES}), 3)
+        self.assertEqual(len(render.ALL_SERVICES), 4)
+        self.assertNotIn(render.LEGACY_CRON, render.SERVICES)
 
     def test_release_ci_requires_all_applicable_workflows_green(self):
         def item(name, status="completed", conclusion="success", attempt=1):
@@ -204,34 +212,42 @@ class ProductionGates(unittest.TestCase):
                 with self.assertRaises(migrations.Refused):
                     migrations.require_reviewed_owner_transition(f)
 
-    def test_render_cron_deploy_never_sends_unsupported_commit_id(self):
+    def test_every_deploy_is_pinned_and_cron_is_never_deployed(self):
         sha = "a" * 40
-        cron = "crn-db1tk02jnfac73eir6fg"
-        def fake_request(method, path, token, payload=None):
-            if method == "GET" and path.startswith("/services/") and "/deploys" not in path:
-                service_id = path.split("/")[-1]
-                return dict(id=service_id, ownerId=render.OWNER,
-                            repo=render.REPOSITORY, branch="main",
-                            autoDeployTrigger="off")
-            if method == "POST" and cron in path:
-                self.assertNotIn("commitId", payload)
-                return dict(id="dep-test", commit=dict(id=sha), status="created")
-            if method == "GET" and path.endswith("/deploys/dep-test"):
-                return dict(id="dep-test", commit=dict(id=sha), status="live")
-            raise AssertionError(f"Unexpected API call {method} {path}")
-        def fake_latest(_, service_id):
-            previous = "b" * 40 if service_id == cron else sha
-            return dict(status="live", commit=dict(id=previous))
-        env = dict(GITHUB_ACTIONS="true", GITHUB_REF="refs/heads/main",
-                   RENDER_API_KEY="test-only", OL_RELEASE_SHA=sha)
-        with mock.patch.dict(os.environ, env), \
-             mock.patch.object(render, "request", side_effect=fake_request), \
-             mock.patch.object(render, "latest_deploy", side_effect=fake_latest), \
-             mock.patch.object(render, "check_current_main") as git_check, \
-             mock.patch.object(render, "verify_api_http"):
+        posts=[]
+        def fake(method,path,token,payload=None):
+            if method == "POST":
+                posts.append(path)
+                self.assertEqual(payload["commitId"],sha)
+                self.assertNotIn(render.LEGACY_CRON[1],path)
+                return {"id":"dep-fixture","commit":{"id":sha},"status":"created"}
+            if path.endswith("/deploys/dep-fixture"):
+                return {"id":"dep-fixture","commit":{"id":sha},"status":"live"}
+            return approved_service(path.rsplit("/",1)[-1])
+        env=dict(GITHUB_ACTIONS="true",GITHUB_REF="refs/heads/main",RENDER_API_KEY="test-only",OL_RELEASE_SHA=sha)
+        with mock.patch.dict(os.environ,env), mock.patch.object(render,"request",side_effect=fake), \
+             mock.patch.object(render,"latest_deploy",return_value=None), \
+             mock.patch.object(render,"check_current_main"), mock.patch.object(render,"verify_api_http"):
             render.run("release")
-            self.assertEqual(git_check.call_count, 5)
-            git_check.assert_called_with(sha)
+        self.assertEqual(posts,[f"/services/{ident}/deploys" for _,ident in render.SERVICES])
+
+    def test_active_legacy_cron_refuses_before_any_mutation(self):
+        env=dict(GITHUB_ACTIONS="true",GITHUB_REF="refs/heads/main",RENDER_API_KEY="test-only",OL_RELEASE_SHA="a"*40)
+        calls=[]
+        def fake(method,path,token,payload=None):
+            calls.append(method)
+            obj=approved_service(render.LEGACY_CRON[1]); obj["suspended"]="not_suspended"
+            return obj
+        with mock.patch.dict(os.environ,env), mock.patch.object(render,"request",side_effect=fake):
+            with self.assertRaisesRegex(render.Refused,"must be suspended"):
+                render.run("release")
+        self.assertEqual(calls,["GET"])
+
+    def test_unapproved_worker_entrypoint_refuses_before_rollout(self):
+        obj=approved_service(render.SERVICES[0][1])
+        obj["serviceDetails"]["envSpecificDetails"]["startCommand"]="uv run --no-sync origenlab-worker unknown-worker"
+        with self.assertRaisesRegex(render.Refused,"consolidated"):
+            render.verify_service(obj,render.SERVICES[0][1])
 
     def test_render_refuses_auto_deploy_before_any_deployment(self):
         sha = "a" * 40
@@ -325,6 +341,26 @@ class RegressionGates(unittest.TestCase):
         self.assertIn("left join evidence.source_record", query)
         self.assertIn("2026-10-08T12:00:00+00:00", query)
 
+    def test_postflight_rejects_old_revision_locked_or_failed_capture(self):
+        import json
+        from datetime import datetime, timezone
+        now=datetime.now(timezone.utc).isoformat()
+        sha="a"*40
+        event={"event":"capture_cycle","outcome":"success","gmail_mode":"history",
+               "drive_mode":"file","revision":sha}
+        row={"message":json.dumps(event),"timestamp":now,
+             "labels":[{"name":"resource","value":render.SERVICES[0][1]}]}
+        with mock.patch.object(postflight,"request",return_value={"logs":[row]}):
+            self.assertTrue(postflight.swept_after_deploy("test-only",render.SERVICES[0][1],now,capture=True,revision=sha))
+            for changes in ({"revision":"b"*40},{"outcome":"locked"},{"gmail_mode":"paused"}):
+                row["message"]=json.dumps({**event,**changes})
+                self.assertFalse(postflight.swept_after_deploy("test-only",render.SERVICES[0][1],now,capture=True,revision=sha))
+
+    def test_readonly_plan_and_backup_do_not_require_cron_cutover(self):
+        workflow=(ROOT/".github/workflows/production-db-migrations.yml").read_text()
+        section=workflow.split("- name: Block any release if independent Render deployments remain enabled",1)[1].split("- name:",1)[0]
+        self.assertIn("if: steps.provenance.outputs.mode == 'release'",section)
+
     def test_exact_merge_requires_current_independent_collaborator_review(self):
         approval = load(ROOT / "scripts/deploy/check_release_approval.py", "check_release_approval")
         sha = "a" * 40
@@ -379,8 +415,7 @@ class RegressionGates(unittest.TestCase):
                     return {"id":"dep-fixture","commit":{"id":sha},"status":"created"}
                 if path.endswith("/deploys/dep-fixture"):
                     return {"id":"dep-fixture","commit":{"id":deployed_sha},"status":state}
-                return dict(id=path.rsplit("/",1)[-1],ownerId=render.OWNER,repo=render.REPOSITORY,
-                            branch="main",autoDeployTrigger="off")
+                return approved_service(path.rsplit("/",1)[-1])
             with self.subTest(state=state), mock.patch.dict(os.environ,env), \
                  mock.patch.object(render,"request",side_effect=fake), \
                  mock.patch.object(render,"latest_deploy",return_value=None), \
@@ -396,8 +431,7 @@ class RegressionGates(unittest.TestCase):
         env=dict(GITHUB_ACTIONS="true",GITHUB_REF="refs/heads/main",RENDER_API_KEY="test-only",OL_RELEASE_SHA=sha)
         def fake(method,path,token,payload=None):
             self.assertEqual(method,"GET")
-            return dict(id=path.rsplit("/",1)[-1],ownerId=render.OWNER,repo=render.REPOSITORY,
-                        branch="main",autoDeployTrigger="off")
+            return approved_service(path.rsplit("/",1)[-1])
         with mock.patch.dict(os.environ,env), mock.patch.object(render,"request",side_effect=fake), \
              mock.patch.object(render,"latest_deploy",return_value={"status":"live","commit":{"id":sha}}), \
              mock.patch.object(render,"check_current_main"), \

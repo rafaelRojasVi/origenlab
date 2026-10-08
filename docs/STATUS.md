@@ -2286,3 +2286,23 @@ pg_dump version defect; explicit PG17 PATH selection fixed it. Exact final CI ru
 linked from PR #679. Nothing merged, deployed, enabled, sent, replayed or deleted in
 production. Activation remains blocked by the mutable-main cron deployment race and
 uncompleted one-time recovery/configuration gates; policy owner is OPERATIONS §15.
+
+
+### 2.7.76 — Built: consolidated periodic mail capture, not activated (2026-10-08)
+
+PR #679 now supervises capture and triage as separate processes in the existing Render
+worker deployment. Capture runs every ten minutes on a dedicated Procrastinate queue,
+with whole-cycle session lock, bounded in-cycle retries/timeouts and existing Gmail/Drive
+idempotency. The new scheduler flag defaults OFF; the existing start command remains a
+compatible alias. Triage receives no capture OAuth credentials. RLS-masked duplicate-key
+handling was independently reproduced and fixed without widening permissions.
+
+The controller never deploys the cron; it requires the legacy cron suspended and deploys
+worker/API/dashboard at explicit commit IDs. Postflight requires candidate-SHA aggregate
+sweep/capture logs and a fresh mailbox cursor. Read-only plan/backup work before cutover.
+Local isolated PG17 tests include actual worker-role dedupe, overlap/cancellation and
+orphan behavior, plus the full worker suite and ten encrypted release/restore tests.
+Final-head CI evidence is recorded in PR #679. No production config, release, secret,
+mail automation flag or historical queue job was changed. Approved cutover, actual-data
+restore, authenticated smoke and shared 512 MB capacity observation remain pending.
+See [MAIL_WORKER_CUTOVER.md](runbooks/MAIL_WORKER_CUTOVER.md).
