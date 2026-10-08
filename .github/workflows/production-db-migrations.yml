@@ -15,6 +15,7 @@ on:
       - "scripts/deploy/render_release.py"
       - "scripts/deploy/check_release_ci.py"
       - "scripts/deploy/configure_release_secrets.sh"
+      - "scripts/deploy/set_render_autodeploy_off.py"
       - "docs/runbooks/PRODUCTION_DB_MIGRATIONS.md"
   workflow_dispatch:
     inputs:
@@ -50,7 +51,8 @@ jobs:
           set -euo pipefail
           python3 -m py_compile supabase/scripts/hosted_env.py \
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
-            scripts/deploy/render_release.py scripts/deploy/check_release_ci.py
+            scripts/deploy/render_release.py scripts/deploy/check_release_ci.py \
+            scripts/deploy/set_render_autodeploy_off.py
           bash -n supabase/scripts/hosted_migrations.sh scripts/deploy/configure_release_secrets.sh
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
 
@@ -89,7 +91,8 @@ jobs:
           case "$EXECUTION_MODE" in plan|backup_only|release) ;; *) exit 1 ;; esac
           python3 -m py_compile supabase/scripts/hosted_env.py \
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
-            scripts/deploy/render_release.py scripts/deploy/check_release_ci.py
+            scripts/deploy/render_release.py scripts/deploy/check_release_ci.py \
+            scripts/deploy/set_render_autodeploy_off.py
           bash -n supabase/scripts/hosted_migrations.sh
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
           echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
