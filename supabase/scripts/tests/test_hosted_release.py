@@ -10,6 +10,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(ROOT / "scripts/deploy"))
 
 def load(path, name):
     spec = importlib.util.spec_from_file_location(name, path)
