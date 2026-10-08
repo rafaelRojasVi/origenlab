@@ -20,13 +20,16 @@ def chain(root: Path) -> list[tuple[str, str, Path]]:
             raise Refused("Unrecognized migration filename")
         if output and output[-1][0] >= m.group(1):
             raise Refused("Duplicate or unordered migration version")
-        sql = f.read_text(encoding="utf-8").lower()
-        if not re.search(r"\bset\s+role\s+origenlab_owner\s*;", sql) or not re.search(r"\breset\s+role\s*;", sql):
-            raise Refused(f"Missing reviewed owner role transition in {f.name}")
         output.append((m.group(1), m.group(2), f))
     if not output:
         raise Refused("Migration chain empty")
     return output
+
+def require_reviewed_owner_transition(file: Path) -> None:
+    sql = file.read_text(encoding="utf-8").lower()
+    if not re.search(r"\\bset\\s+role\\s+origenlab_owner\\s*;", sql) or not re.search(r"\\breset\\s+role\\s*;", sql):
+        raise Refused(f"Pending migration requires an explicitly reviewed owner role transition: {file.name}")
+
 
 def pending_files(rows: list[tuple[str,str,Path]], versions: list[str]) -> list[tuple[str,str,Path]]:
     if versions != [r[0] for r in rows[:len(versions)]]:
@@ -56,6 +59,10 @@ def run(mode: str) -> None:
             raise Refused("Wrong identity, server version or narrowly scoped ledger grants")
         recorded = psql(env, "-Atc", "select version from supabase_migrations.schema_migrations order by version")
         pending = pending_files(rows, recorded.splitlines() if recorded else [])
+        # Historic ledger includes one admin-only privilege-revocation migration.
+        # Validate owner transitions only for files actually being applied now.
+        for _version, _name, file in pending:
+            require_reviewed_owner_transition(file)
         print(f"Hosted {len(rows)-len(pending)} / reviewed {len(rows)} migrations")
         for v,n,_ in pending:
             print(f"PENDING {v}_{n}")
