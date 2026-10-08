@@ -50,6 +50,28 @@ from origenlab_api.v2.marketing_audience import address_ref, addresses_in
 from origenlab_api.v2.person_suggestions import safe_person_suggestions
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
 
+def _cross_thread_quote_code(title: str) -> str | None:
+    """A single *printed* CN reference, not a fuzzy match or an invented quotation."""
+    matches = {
+        "CN" + match.group(1).zfill(5)
+        for match in re.finditer(
+            r"(?<![A-Za-z0-9])(?:CN)?(0?\d{4})[-–/](\d{2})(?!\d)",
+            title, flags=re.IGNORECASE,
+        )
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _cross_thread_addresses(sender: str | None, recipients: str | None) -> set[str]:
+    """Share a *specific external participant*, not the OrigenLab shared mailbox."""
+    headers = [str(sender or ""), str(recipients or "").replace(";", ",")]
+    return {
+        address.strip().lower()
+        for _, address in getaddresses(headers)
+        if "@" in address and not address.strip().lower().endswith("@origenlab.cl")
+    }
+
+
 GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
 DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/{}"
 DRIVE_FILE_URL = "https://drive.google.com/file/d/{}/view"
@@ -1997,6 +2019,123 @@ class CrmWorkspaceRepository:
                 "documents": documents,
             })
         return {"opportunity_id": opportunity_id, "messages": messages}
+
+    def opportunity_quote_candidates(self, opportunity_id: str) -> dict[str, Any] | None:
+        """Read-only cross-thread proposals. Never link evidence or create a quotation here.
+
+        Require a unique printed number in the existing case, an earlier captured *sent*
+        Gmail PDF with the same exact CN token, and a shared external participant in the
+        linked case evidence. A reused quote number or shared OrigenLab mailbox alone
+        cannot establish identity; the operator still opens both messages and decides.
+        """
+        with self._read() as cur:
+            cur.execute(
+                """select title from crm.opportunity where id = %s::uuid""",
+                (opportunity_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            title = str(row[0])
+            token = _cross_thread_quote_code(title)
+            if token is None:
+                return {"opportunity_id": opportunity_id, "candidates": []}
+            cur.execute(
+                """select sr.id::text as source_record_id,
+                          sr.payload->>'sender' as sender,
+                          sr.payload->>'recipients' as recipients,
+                          sr.payload->>'sent_at' as sent_at
+                     from crm.opportunity_evidence oe
+                     join evidence.source_record sr on sr.id = oe.source_record_id
+                    where oe.opportunity_id = %s::uuid and oe.unlinked_at is null
+                      and sr.kind = 'gmail_message' and not sr.is_quarantined
+                      and sr.review_status <> 'rejected'""",
+                (opportunity_id,),
+            )
+            case_rows = self._rows(cur)
+            participants: set[str] = set()
+            already_linked: set[str] = set()
+            earliest = None
+            for case_row in case_rows:
+                already_linked.add(case_row["source_record_id"])
+                participants.update(_cross_thread_addresses(
+                    case_row["sender"], case_row["recipients"],
+                ))
+                try:
+                    at = datetime.fromisoformat(str(case_row["sent_at"]))
+                    if at.tzinfo is not None and (earliest is None or at < earliest):
+                        earliest = at
+                except (TypeError, ValueError):
+                    pass
+            if not participants or earliest is None:
+                return {"opportunity_id": opportunity_id, "candidates": []}
+            cur.execute(
+                """select sr.id::text as source_record_id,
+                          sr.payload->>'gmail_message_id' as gmail_message_id,
+                          sr.payload->>'sender' as sender,
+                          sr.payload->>'recipients' as recipients,
+                          sr.payload->>'subject_raw' as subject,
+                          sr.payload->>'sent_at' as sent_at,
+                          doc.value as document,
+                          exists (
+                              select 1 from crm.quote_revision qr
+                               where lower(qr.pdf_sha256) = lower(doc.value->>'sha256')
+                          ) as recorded
+                     from evidence.source_record sr
+                     cross join lateral jsonb_array_elements(
+                         case when jsonb_typeof(sr.payload->'documents') = 'array'
+                              then sr.payload->'documents' else '[]'::jsonb end
+                     ) as doc(value)
+                    where sr.kind = 'gmail_message' and not sr.is_quarantined
+                      and sr.review_status <> 'rejected'
+                      and (doc.value->'cn_tokens') ? %s
+                    order by sr.payload->>'sent_at' desc
+                    limit 50""",
+                (token,),
+            )
+            possible = self._rows(cur)
+        candidates: list[dict[str, Any]] = []
+        for candidate in possible:
+            if candidate["source_record_id"] in already_linked:
+                continue
+            # The quote was SENT from the captured OrigenLab mailbox, not received
+            # from a customer or merely mentioned in an unrelated incoming message.
+            sender = str(candidate["sender"] or "")
+            if "contacto@origenlab.cl" not in {
+                addr.lower() for _, addr in getaddresses([sender])
+            }:
+                continue
+            shared = participants & _cross_thread_addresses(
+                candidate["sender"], candidate["recipients"],
+            )
+            if not shared:
+                continue
+            try:
+                at = datetime.fromisoformat(str(candidate["sent_at"]))
+                if at.tzinfo is None or at >= earliest:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            doc = candidate["document"]
+            sha = str(doc.get("sha256") or "").lower() if isinstance(doc, dict) else ""
+            filename = str(doc.get("filename") or "") if isinstance(doc, dict) else ""
+            if not re.fullmatch(r"[0-9a-f]{64}", sha) or not filename.lower().endswith(".pdf"):
+                continue
+            gmail_id = str(candidate["gmail_message_id"] or "")
+            if not re.fullmatch(r"[0-9a-f]+", gmail_id):
+                continue
+            candidates.append({
+                "source_record_id": candidate["source_record_id"],
+                "subject": candidate["subject"],
+                "sent_at": candidate["sent_at"],
+                "quote_token": token,
+                "filename": filename,
+                "document_sha256": sha,
+                "gmail_url": GMAIL_MESSAGE_URL.format(gmail_id),
+                "reason": "Número de cotización exacto y destinatario externo compartido",
+                "recorded_elsewhere": bool(candidate["recorded"]),
+            })
+        return {"opportunity_id": opportunity_id, "candidates": candidates[:10]}
 
     def person_suggestions(self) -> dict[str, Any]:
         """People the quote emails name and the CRM does not hold yet (`person_suggestions.py`)."""
