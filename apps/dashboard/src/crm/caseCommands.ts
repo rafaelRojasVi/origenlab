@@ -177,6 +177,20 @@ export const setCaseOrganizationRole = (
   idempotencyKey: string = newCaseCommandKey(),
 ) => postCaseCommand(CASE_COMMAND_PATHS.setCaseOrganizationRole, body, idempotencyKey);
 
+/** Explicitly reviewed existing Gmail source; never auto-record a quotation or sale. */
+export interface LinkCaseQuoteEvidenceBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  relation: "mentions";
+  source_record_id: string;
+  note: string;
+}
+
+export const linkCaseQuoteEvidence = (
+  body: LinkCaseQuoteEvidenceBody,
+  idempotencyKey: string = newCaseCommandKey(),
+) => postCaseCommand(CASE_COMMAND_PATHS.linkCaseEvidence, body, idempotencyKey);
+
 export interface AdvanceCaseStageBody {
   opportunity_id: string;
   opportunity_version: number;
