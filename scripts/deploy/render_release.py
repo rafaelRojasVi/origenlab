@@ -50,6 +50,22 @@ def verify_service(service: dict, service_id: str) -> None:
         raise Refused(f"{service_id} still has independent auto-deploy enabled. Turn it OFF before releases")
 
 
+def check_current_main(sha: str) -> None:
+    """Cron cannot pin its commit: insist that GitHub main still names this SHA."""
+    req = urllib.request.Request(
+        "https://api.github.com/repos/rafaelRojasVi/origenlab/git/ref/heads/main",
+        headers={"Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            ref = json.load(response)
+    except (urllib.error.URLError, ValueError) as exc:
+        raise Refused("Could not recheck main before deploying the unpinnable cron job") from exc
+    if ref.get("object", {}).get("sha") != sha:
+        raise Refused("Main has moved; cannot deploy a cron job at a reliably pinned SHA")
+
+
 def latest_deploy(token: str, service_id: str) -> dict | None:
     rows = request("GET", f"/services/{service_id}/deploys?limit=1", token)
     if not isinstance(rows, list):
@@ -82,8 +98,18 @@ def run(mode: str) -> None:
         if latest and latest.get("status") in IN_PROGRESS:
             raise Refused(f"{name} already has a pending deployment; refuse to race")
         print(f"Deploy {name} at reviewed commit {sha[:12]}", flush=True)
-        deploy = request("POST", f"/services/{service_id}/deploys", token,
-                         {"commitId": sha, "clearCache": "do_not_clear"})
+        # Render API explicitly forbids commitId for cron jobs. A cron deployment
+        # builds HEAD of the configured branch; refuse if main advanced between
+        # the CI preflight and this step. Other services use an exact commitId.
+        if name == "gmail-sync":
+            check_current_main(sha)
+            payload = {"clearCache": "do_not_clear"}
+        else:
+            payload = {"commitId": sha, "clearCache": "do_not_clear"}
+        deploy = request("POST", f"/services/{service_id}/deploys", token, payload)
+        # Validate immediately so a racing main push cannot go unnoticed.
+        if deploy.get("commit", {}).get("id") not in {None, sha}:
+            raise Refused(f"Render accepted {name} at a different commit; stop immediately")
         deploy_id = deploy.get("id")
         if not isinstance(deploy_id, str) or not deploy_id.startswith("dep-"):
             raise Refused(f"Render returned no deploy ID for {name}")
