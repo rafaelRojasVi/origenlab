@@ -47,7 +47,9 @@ def psql(env: dict[str,str], *args: str) -> str:
     p = subprocess.run(["psql", "-X", "--no-psqlrc", "-v", "ON_ERROR_STOP=1", *args],
                        env=env, capture_output=True, text=True, timeout=240, check=False)
     if p.returncode:
-        raise Refused(f"psql failed (exit {p.returncode}): {p.stderr[-1100:]}")
+        # This repository's Actions logs may be public. PostgreSQL DETAIL text can
+        # contain personal data from a failing row; never copy stderr to CI.
+        raise Refused(f"psql operation failed (exit {p.returncode}); no production output logged")
     return p.stdout.strip()
 
 def run(mode: str) -> None:
