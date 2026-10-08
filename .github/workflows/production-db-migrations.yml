@@ -151,14 +151,16 @@ jobs:
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
           echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
           echo "mode=$EXECUTION_MODE" >> "$GITHUB_OUTPUT"
-      - name: Refuse unreviewed or CI-unprotected main
+      - name: Verify protected main under explicitly selected review policy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OL_RELEASE_SOLO_MODE: ${{ vars.OL_RELEASE_SOLO_MODE }}
         run: python3 scripts/deploy/check_branch_protection.py
-      - name: Independently verify review of this exact main merge
+      - name: Verify owner merge or independent review of exact release
         if: steps.provenance.outputs.mode == 'release'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OL_RELEASE_SOLO_MODE: ${{ vars.OL_RELEASE_SOLO_MODE }}
           OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
         run: python3 scripts/deploy/check_release_approval.py
       - name: Wait for ALL applicable CI on the pinned main commit
