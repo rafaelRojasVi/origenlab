@@ -99,6 +99,7 @@ jobs:
             sudo tee /etc/apt/sources.list.d/pgdg.sources >/dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
       - name: Execute real transaction and encrypted restore regression tests
         env:
           OL_RELEASE_TEST_PORT: "5432"
@@ -206,6 +207,7 @@ jobs:
             sudo tee /etc/apt/sources.list.d/pgdg.sources >/dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
       - name: Inspect and encrypt application-schema backup
         env:
           OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }}
