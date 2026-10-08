@@ -41,9 +41,22 @@ def validate(rule: dict, require_bypass_visibility: bool = True, solo_mode: bool
     if not isinstance(approvals, int) or approvals < (0 if solo_mode else 1):
         raise Unprotected("Missing required collaborator review; use explicit solo-maintainer mode only for owner merges")
     checks = rules.get("required_status_checks")
-    if checks is None or not checks.get("strict_required_status_checks"):
+    # GitHub rulesets expose this as "strict_required_status_checks_policy".
+    # "strict_required_status_checks" is not a ruleset API field (the old
+    # test fixture incorrectly invented it and blocked valid live rulesets).
+    if checks is None or checks.get("strict_required_status_checks_policy") is not True:
         raise Unprotected("Require strict branch-up-to-date status checks")
-    present = {x.get("context") for x in checks.get("required_status_checks", []) if x.get("integration_id") == 15368}
+    required = checks.get("required_status_checks", [])
+    if not isinstance(required, list) or not required:
+        raise Unprotected("No required status checks configured")
+    # Catch accidentally added UI search placeholders: a required check with
+    # no GitHub Actions provider can permanently prevent merging every PR.
+    invalid = [x.get("context", "<missing>") if isinstance(x, dict) else "<malformed>"
+               for x in required if not isinstance(x, dict)
+               or not x.get("context") or x.get("integration_id") != 15368]
+    if invalid:
+        raise Unprotected("Unknown or unbound mandatory checks: " + ", ".join(map(str, invalid)))
+    present = {x["context"] for x in required}
     missing = REQUIRED_CHECKS - present
     if missing:
         raise Unprotected("Missing GitHub Actions-bound mandatory status checks: " + ", ".join(sorted(missing)))
