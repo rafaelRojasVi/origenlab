@@ -89,7 +89,7 @@ class ProductionGates(unittest.TestCase):
                  "parameters": {"required_approving_review_count": 1,
                                 "dismiss_stale_reviews_on_push": True}},
                 {"type": "required_status_checks",
-                 "parameters": {"strict_required_status_checks": True,
+                 "parameters": {"strict_required_status_checks_policy": True,
                                 "required_status_checks": [
                                     {"context": x, "integration_id": 15368} for x in sorted(protection.REQUIRED_CHECKS)
                                 ]}},
@@ -118,12 +118,32 @@ class ProductionGates(unittest.TestCase):
                  "parameters": {"required_approving_review_count": 0,
                                 "dismiss_stale_reviews_on_push": True}},
                 {"type": "required_status_checks",
-                 "parameters": {"strict_required_status_checks": True,
+                 "parameters": {"strict_required_status_checks_policy": True,
                                 "required_status_checks": [
                                     {"context": "gitleaks", "integration_id": 15368}]}}
             ],
         )
         protection.validate(base, solo_mode=True)
+        # Real GitHub API uses strict_required_status_checks_policy, NOT
+        # the fictitious strict_required_status_checks used by old fixtures.
+        wrong_shape = dict(base, rules=[base["rules"][0], {
+            "type": "required_status_checks",
+            "parameters": {"strict_required_status_checks": True,
+                           "required_status_checks": [
+                               {"context": "gitleaks", "integration_id": 15368}]}
+        }])
+        with self.assertRaises(protection.Unprotected):
+            protection.validate(wrong_shape, solo_mode=True)
+        placeholder = dict(base, rules=[base["rules"][0], {
+            "type": "required_status_checks",
+            "parameters": {"strict_required_status_checks_policy": True,
+                           "required_status_checks": [
+                               {"context": "add checks"},
+                               {"context": "add status checks"},
+                               {"context": "gitleaks", "integration_id": 15368}]}
+        }])
+        with self.assertRaisesRegex(protection.Unprotected, "unbound mandatory checks"):
+            protection.validate(placeholder, solo_mode=True)
         with self.assertRaises(protection.Unprotected):
             protection.validate(base, solo_mode=False)
         with self.assertRaises(protection.Unprotected):
@@ -134,7 +154,7 @@ class ProductionGates(unittest.TestCase):
             protection.validate(dict(base, rules=[
                 base["rules"][0],
                 {"type": "required_status_checks", "parameters": {
-                    "strict_required_status_checks": True,
+                    "strict_required_status_checks_policy": True,
                     "required_status_checks": [{"context": "gitleaks", "integration_id": 0}]}}
             ]), solo_mode=True)
 
