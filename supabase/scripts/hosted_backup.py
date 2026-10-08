@@ -21,6 +21,7 @@ def execute(args: list[str], env: dict[str, str] | None = None) -> str:
     return p.stdout
 
 def run() -> None:
+    os.umask(0o077)  # All plaintext and manifest outputs are owner-only.
     if os.environ.get("GITHUB_REF") != "refs/heads/main":
         raise Refused("Hosted backup requires main")
     recipient = os.environ.get("OL_PROD_BACKUP_AGE_RECIPIENT", "")
@@ -46,8 +47,11 @@ def run() -> None:
         execute([pg_dump, "--role=origenlab_owner", "--format=custom", "--no-password",
                  *(flag for schema in SCHEMAS for flag in ("-n", schema)),
                  "--file", str(dump)], env)
-        if dump.stat().st_size < 1000 or dump.read_bytes()[:5] != b"PGDMP":
-            raise Refused("Custom-format backup appears empty or malformed")
+        if dump.stat().st_size < 1000:
+            raise Refused("Custom-format backup appears empty")
+        with dump.open("rb") as stream:
+            if stream.read(5) != b"PGDMP":
+                raise Refused("Custom-format archive header is invalid")
         contents = execute([pg_restore, "--list", str(dump)])
         if sum(" TABLE DATA " in line for line in contents.splitlines()) < 25:
             raise Refused("Too few TABLE DATA entries; backup might be partial")
@@ -56,7 +60,8 @@ def run() -> None:
                           "select version || ' ' || coalesce(name,'') from supabase_migrations.schema_migrations order by version"],env)
         (private / "migration-ledger.txt").write_text(ledger, encoding="utf-8")
         import hashlib
-        digest = hashlib.sha256(dump.read_bytes()).hexdigest()
+        with dump.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
         (private / "SHA256SUMS.txt").write_text(f"{digest}  {dump.name}\n", encoding="utf-8")
         (private / "README.txt").write_text(
             "OrigenLab production application schemas only; NOT a complete Supabase or Storage backup.\n"
