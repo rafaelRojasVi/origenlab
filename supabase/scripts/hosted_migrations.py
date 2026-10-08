@@ -29,6 +29,13 @@ def require_reviewed_owner_transition(file: Path) -> None:
     sql = file.read_text(encoding="utf-8").lower()
     if not re.search(r"\bset\s+role\s+origenlab_owner\s*;", sql) or not re.search(r"\breset\s+role\s*;", sql):
         raise Refused(f"Pending migration requires an explicitly reviewed owner role transition: {file.name}")
+    # A SQL file must not end the outer psql --single-transaction boundary.
+    # A conservative check may reject future SQL with quoted transaction
+    # control text; such a file requires an explicit security review/rewrite.
+    if re.search(r"(?m)^\s*(?:commit|rollback|begin(?:\s+transaction)?|end\s+transaction)\s*;", sql):
+        raise Refused(f"Pending migration contains transaction control: {file.name}")
+    if re.search(r"(?m)^\s*\\", sql):
+        raise Refused(f"Pending migration contains psql meta-commands: {file.name}")
 
 
 def pending_files(rows: list[tuple[str,str,Path]], versions: list[str]) -> list[tuple[str,str,Path]]:
@@ -76,12 +83,12 @@ def run(mode: str) -> None:
             previous = rows[i-1][0] if i else ""
             # BEGIN / COMMIT managed by psql --single-transaction across -c, -f, -c.
             # Lock and recheck latest migration under lock: no competing apply may race.
-            guard = ("select pg_advisory_xact_lock(72830224092701); "
+            guard = ("set lock_timeout = '10s'; set statement_timeout = '180s'; "
+                     "select pg_advisory_xact_lock(72830224092701); "
                      "do $$ begin "
                      f"if (select coalesce(max(version),'') from supabase_migrations.schema_migrations) <> '{previous}' "
                      "then raise exception 'schema ledger changed while waiting for migration lock'; end if; "
-                     "end $$; "
-                     "set lock_timeout = '10s'; set statement_timeout = '180s';")
+                     "end $;")
             ledger = ("do $$ begin if session_user <> 'origenlab_migrator' or current_user <> 'origenlab_migrator' "
                       "then raise exception 'migration failed to reset the role'; end if; end $$; "
                       f"insert into supabase_migrations.schema_migrations(version,name) values ('{v}','{n}');")
