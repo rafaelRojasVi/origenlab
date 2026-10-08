@@ -1309,6 +1309,7 @@ describe("Case drawer commands (including add-case-organization)", () => {
 
   const ADVANCE = "https://proxy.test/api/v2/commands/advance-case-stage";
   const ASSIGN = "https://proxy.test/api/v2/commands/add-case-organization";
+  const REVIEW_ROLE = "https://proxy.test/api/v2/commands/set-case-organization-role";
   const WON = "https://proxy.test/api/v2/commands/record-case-won";
   const RESOLVE = "https://proxy.test/api/v2/commands/resolve-current-revision";
   const QUOTATION = "https://proxy.test/api/v2/commands/record-case-quotation";
@@ -1325,7 +1326,7 @@ describe("Case drawer commands (including add-case-organization)", () => {
       },
     });
 
-  it.each([ADVANCE, ASSIGN, WON, RESOLVE, QUOTATION])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
+  it.each([ADVANCE, ASSIGN, REVIEW_ROLE, WON, RESOLVE, QUOTATION])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
     stubUpstreamFetch();
     const res = await handleRequest(post(url), TEST_ENV);
     expect(res.status).toBe(200);
@@ -1362,7 +1363,6 @@ describe("Case drawer commands (including add-case-organization)", () => {
   it.each([
     "open-commercial-case",
     "link-case-evidence",
-    "set-case-organization-role",
     "record-case-interest",
     "record-historical-quotation",
     "void-historical-quote-revision",
@@ -1376,7 +1376,7 @@ describe("Case drawer commands (including add-case-organization)", () => {
     },
   );
 
-  it.each([ASSIGN, WON, RESOLVE, QUOTATION])("never forwards %s as GET", async (url) => {
+  it.each([ASSIGN, REVIEW_ROLE, WON, RESOLVE, QUOTATION])("never forwards %s as GET", async (url) => {
     stubUpstreamFetch();
     const res = await handleRequest(requestWithOrigin(url, { method: "GET" }), TEST_ENV);
     expect(res.status).toBe(403);
