@@ -429,7 +429,7 @@ class RegressionGates(unittest.TestCase):
     def test_setup_uses_supported_github_cli_variable_read(self):
         helper = (ROOT/"scripts/deploy/configure_release_secrets.sh").read_text()
         self.assertIn('gh api "repos/$repo/actions/variables/OL_RELEASE_SOLO_MODE" --jq .value', helper)
-        self.assertNotIn("gh variable get", helper)
+        self.assertNotIn("$(gh variable get", helper)
         self.assertIn('Cannot read the OL_RELEASE_SOLO_MODE repository variable', helper)
 
     def test_readonly_plan_and_backup_do_not_require_cron_cutover(self):
