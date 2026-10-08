@@ -450,6 +450,42 @@ def test_received_quotation_requires_review_but_explicit_request_still_opens_cas
 # ------------------------------------------------------------------ idempotency, determinism
 
 
+def test_r7_unregistered_numbered_quote_followup_never_opens_a_second_case() -> None:
+    for subject in (
+        "Compra de productos, cotización N°01259-26",
+        "Solicitud de cotización 01259–26",
+        "Request for quotation CN01259",
+        "Cotización CN01259/26",
+    ):
+        for organizations in ((), (org(),)):
+            action = only(Snapshot(
+                evidence=(mail(direction="inbound", sender="person@cliente.test", documents=(),
+                               subject=subject, requester_checked=True),),
+                cases=(case(stage="lead", organization_id=None, thread_ids=("original",)),),
+                organizations=organizations,
+            ))
+            assert (action.rule_id, action.mode, action.commands) == ("R7", "proposal", ())
+            assert action.case_id is None  # no automatic reconciliation of either case
+
+
+def test_r7_unregistered_attachment_number_requires_review_even_without_subject_number() -> None:
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", sender="person@cliente.test",
+                       subject="Solicitud de cotización", requester_checked=True),),
+        cases=(), organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode, action.commands) == ("R7", "proposal", ())
+
+
+def test_numbered_followup_keeps_existing_thread_link_priority() -> None:
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", sender="person@cliente.test", documents=(),
+                       subject="Compra de productos, cotización N°01259-26"),),
+        cases=(case(thread_ids=("t-1",)),), organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode, action.case_id) == ("R1", "auto", "c-1")
+
+
 def test_an_email_already_handled_by_a_rule_plans_nothing() -> None:
     snapshot = Snapshot(evidence=(mail(),), cases=(), organizations=(org(),), applied_evidence_ids=frozenset({"e-1"}))
     assert plan(snapshot) == []

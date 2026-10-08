@@ -27,7 +27,7 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-10-08** for §2.7.77 against main `6b4c602a` (read-only production inspection and isolated tests; branch changes not deployed).
+Last verified: **2026-10-08** for §2.7.77 against main `6b4c602a` (read-only production inspection and isolated tests; branch changes not deployed). Additional R7 branch verification is recorded below; PR #683 changes remain undeployed.
 
 Earlier verification: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed; §2.7.49 added 2026-10-04 from the branch's own validation, nothing deployed; §2.7.51 added 2026-10-05 from the branch's own validation, nothing applied or deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
 hosting and GitHub facts of §2.4, §2.7.40, §2.8, §3.1 and §3.3 — read from the GitHub API, the
@@ -2320,3 +2320,10 @@ Read-only production inspection found five `lead` cases, all with active Gmail e
 - Validation: dashboard 652 tests and production build pass; PostgreSQL 17 isolated database, API case-command boundary/workspace/mail rules: 198 tests pass, including closure without an institution and preservation of the origin link. GitHub Actions results are recorded in the PR after pushing.
 
 Remaining operator work: identify and confirm the requesting institution/contact, then close only individually reviewed false positives. API/dashboard production rollout needs approval and the migration-first deployment cutover remains governed by PR #679.
+
+
+### R7 numbered quotation follow-ups — branch verification 2026-10-08
+
+PR #683 now holds a new-thread inbound request mentioning a printed quotation reference (year-bearing number, CN-prefixed number, or captured attachment CN token) as an R7 human-review proposal. No case, institution, quotation, or evidence link is created by this hold, even when the quotation is absent from the CRM. Existing R1 thread links and R2 registered attachment-number matches retain priority. This prevents a follow-up about an unregistered sent quotation from automatically creating another commercial transaction; it does not reconcile existing duplicates or choose their institution.
+
+Validation: both new failure regressions reproduce on the unchanged PR head; the changed branch passes 68 mail-planner, automation, route and cross-thread candidate unit tests (one dependency deprecation warning). Database-backed tests and authenticated browser reconciliation are separate gates. No production data, batch application, business automation flags or deployments were changed by this verification.
