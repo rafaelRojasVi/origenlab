@@ -14,7 +14,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R4 | as R3, recipient domain unknown and neither free-mail, supplier nor ours | auto: institution «por confirmar» + case + quote |
 | R5 | inbound purchase order on a thread linked to one case (with one live quote revision) | auto: link + won |
 | R6 | inbound «otro proveedor» on a thread linked to one open case | auto: link + lost |
-| R7 | inbound quote request, no linked thread | auto: open lead; an unambiguous known institution also qualifies it |
+| R7 | inbound quote request, no linked thread | numbered quotation references require review; otherwise open lead |
 | R8 | everything else (supplier, campaign thread, Labdelivery, nothing matched) | none |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
@@ -835,6 +835,20 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
     # A quotation is not itself a customer's request. Preserve it for review rather than
     # opening a lead from this ambiguous keyword alone (Spanish requests/RFQ still qualify).
     subject = fold(e.subject)
+    # A fresh Gmail thread can be a follow-up to a sent quotation that R1 has not
+    # registered yet (for example, its requesting institution is still unresolved).
+    # Absence from crm.quote is not evidence of a new commercial transaction.
+    # Do not auto-link, infer identity, or open a second opportunity from this signal.
+    numbered_reference = re.search(
+        r"(?<![a-z0-9])(?:cn\s*[-#:]?\s*\d{4,6}(?:[-–/]\d{2,4})?"
+        r"|0?\d{4}[-–/](?:\d{4}|\d{2})(?!\d)"
+        r"|(?:cotizacion|quotation)\s*(?:n[°o]?\.?|no\.?|#)\s*\d{4,6}(?!\d))", subject,
+    ) or any(doc.cn_tokens for doc in e.documents)
+    if numbered_reference:
+        return PlannedAction(e.id, "R7", PROPOSAL, (
+            "menciona una cotización numerada: revisar el caso original antes de crear otro; "
+            "puede estar enviada pero aún no registrada en el CRM",
+        ))
     if "quotation" in subject and not any(w in subject for w in ("request", "rfq", "cotiz", "presupuesto", "precio")):
         return PlannedAction(e.id, "R7", PROPOSAL, (
             "cotización recibida: no demuestra una solicitud del cliente; requiere revisión",))

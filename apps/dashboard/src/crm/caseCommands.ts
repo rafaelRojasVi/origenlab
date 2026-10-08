@@ -28,6 +28,7 @@ export const CASE_COMMAND_PATHS = {
   recordWon: "/v2/commands/record-case-won",
   resolveCurrentRevision: "/v2/commands/resolve-current-revision",
   recordQuotation: "/v2/commands/record-case-quotation",
+  linkCaseEvidence: "/v2/commands/link-case-evidence",
   createTask: "/v2/commands/create-task",
   completeTask: "/v2/commands/complete-task",
   cancelTask: "/v2/commands/cancel-task",
@@ -175,6 +176,20 @@ export const setCaseOrganizationRole = (
   body: SetCaseOrganizationRoleBody,
   idempotencyKey: string = newCaseCommandKey(),
 ) => postCaseCommand(CASE_COMMAND_PATHS.setCaseOrganizationRole, body, idempotencyKey);
+
+/** Explicitly reviewed existing Gmail source; never auto-record a quotation or sale. */
+export interface LinkCaseQuoteEvidenceBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  relation: "mentions";
+  source_record_id: string;
+  note: string;
+}
+
+export const linkCaseQuoteEvidence = (
+  body: LinkCaseQuoteEvidenceBody,
+  idempotencyKey: string = newCaseCommandKey(),
+) => postCaseCommand(CASE_COMMAND_PATHS.linkCaseEvidence, body, idempotencyKey);
 
 export interface AdvanceCaseStageBody {
   opportunity_id: string;

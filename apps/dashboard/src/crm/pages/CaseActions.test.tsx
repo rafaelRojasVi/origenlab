@@ -112,16 +112,21 @@ function stubApi({
   pipelines,
   notes = { opportunity_id: CASE, notes: [] },
   mailDocuments = MAIL_DOCUMENTS,
+  quoteCandidates = { opportunity_id: CASE, candidates: [] },
+  organizationConfirmation = "confirmed",
   onPost = () => undefined,
 }: {
   pipelines: PipelineResponse[];
   notes?: unknown;
   mailDocuments?: unknown;
+  quoteCandidates?: unknown;
+  organizationConfirmation?: "confirmed" | "machine_proposed";
   onPost?: Handler;
 }) {
   const calls: Call[] = [];
   let pipelineReads = 0;
   let posts = 0;
+  let orgConfirmed = organizationConfirmation === "confirmed";
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -142,12 +147,13 @@ function stubApi({
       }
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/notes`) return json(notes);
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/mail-documents`) return json(mailDocuments);
+      if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/quote-candidates`) return json(quoteCandidates);
       if (call.method === "GET" && path === "/v2/organizations") {
         return json({
           items: [{
             organization_id: ORG,
             name: "Universidad Ficticia",
-            confirmation: "confirmed",
+            confirmation: orgConfirmed ? "confirmed" : "machine_proposed",
             relationship_roles: [],
           }],
           total: 1, limit: 50, offset: 0,
@@ -159,15 +165,20 @@ function stubApi({
           organization: {
             id: ORG,
             name: "Universidad Ficticia",
-            confirmation: "confirmed",
+            confirmation: orgConfirmed ? "confirmed" : "machine_proposed",
             status: "active",
-            version: 3,
+            version: organizationConfirmation === "machine_proposed" && orgConfirmed ? 4 : 3,
           },
         });
       }
       if (call.method === "POST") {
         const answer = onPost(call, posts++);
-        if (answer) return json(answer.body, answer.status ?? 200);
+        if (answer) {
+          if (call.path === "/v2/commands/confirm-organization-record" && (answer.status ?? 200) < 400) {
+            orgConfirmed = true;
+          }
+          return json(answer.body, answer.status ?? 200);
+        }
       }
       return json({ detail: "not found" }, 404);
     }),
@@ -636,6 +647,143 @@ describe("case drawer actions", () => {
     );
   });
 
+
+  it("confirms a machine-proposed organization only after explicit review, then assigns it separately", async () => {
+    const unassigned = card({ stage: "lead", organization: null });
+    const assigned = card({ stage: "lead", version: 6 });
+    const calls = stubApi({
+      pipelines: [page([unassigned]), page([assigned])],
+      organizationConfirmation: "machine_proposed",
+      onPost: (call) => {
+        if (call.path === "/v2/commands/confirm-organization-record") return { body: { ok: true, version: 4 } };
+        if (call.path === "/v2/commands/add-case-organization") {
+          return { body: receipt("add_case_organization", "lead", 6, "aaaaaaaa-0030") };
+        }
+        return undefined;
+      },
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución solicitante" }));
+    const form = within(dialog).getByRole("region", { name: "Asignar institución solicitante" });
+    fireEvent.change(within(form).getByPlaceholderText("Nombre de la institución"), {
+      target: { value: "Universidad Ficticia" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Buscar" }));
+    const selector = await within(form).findByRole("combobox", { name: "Institución solicitante" });
+    fireEvent.change(selector, { target: { value: ORG } });
+    fireEvent.change(within(form).getByRole("textbox", { name: "Motivo de la asignación" }), {
+      target: { value: "El correo original identifica expresamente a la universidad." },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Confirmar asignación" }));
+    const confirm = await within(form).findByRole("button", { name: "Confirmar ficha de institución" });
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    expect(within(form).getByRole("button", { name: "Confirmar asignación" })).toBeDisabled();
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      expect(calls.some((c) => c.path === "/v2/commands/confirm-organization-record")).toBe(true);
+    });
+    const orgPost = calls.find((c) => c.path === "/v2/commands/confirm-organization-record")!;
+    expect(orgPost.body).toMatchObject({ organization_id: ORG, expected_version: 3 });
+    expect(calls.some((c) => c.path === "/v2/commands/add-case-organization")).toBe(false);
+    await within(form).findByText(/Pulsa «Confirmar asignación»/);
+    fireEvent.click(within(form).getByRole("button", { name: "Confirmar asignación" }));
+    await waitFor(() => {
+      expect(calls.some((c) => c.path === "/v2/commands/add-case-organization")).toBe(true);
+    });
+    expect(calls.find((c) => c.path === "/v2/commands/add-case-organization")!.body)
+      .toMatchObject({ organization_version: 4, opportunity_version: 5 });
+  });
+
+  it("blocks cross-thread PDF attachment when its Gmail thread already belongs to another case", async () => {
+    const blocked = card({
+      title: "Compra de productos_ cotización N°01259-26",
+      stage: "lead",
+      organization: null,
+      quotes: [],
+      quote_numbers: [],
+      revision_count: 0,
+      latest_revision: null,
+    });
+    const otherId = "22222222-2222-4222-8222-222222222222";
+    const calls = stubApi({
+      pipelines: [page([blocked])],
+      quoteCandidates: {
+        opportunity_id: CASE,
+        candidates: [{
+          source_record_id: MESSAGE,
+          quote_token: "CN01259",
+          filename: "CN01259-ficticio.pdf",
+          subject: "Re: Solicitud de cotización",
+          sent_at: "2026-10-07T14:00:00Z",
+          document_sha256: SHA_NEW,
+          gmail_url: "https://mail.google.com/mail/u/0/#all/abc123",
+          reason: "Número exacto y destinatario externo compartido",
+          recorded_elsewhere: false,
+          other_cases_on_quote_thread: [{ opportunity_id: otherId, title: "Solicitud de productos original" }],
+        }],
+      },
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Buscar cotización enviada en otro hilo" }));
+    const review = await within(dialog).findByRole("region", { name: "Cotización en otro hilo" });
+    expect(within(review).getByText(/Este hilo ya corresponde a otro caso/)).toBeInTheDocument();
+    expect(within(review).getByRole("link", { name: /Abrir caso original/ }))
+      .toHaveAttribute("href", `#/crm/oportunidades/${otherId}`);
+    expect(within(review).queryByRole("button", { name: "Revisar vínculo con este caso" }))
+      .not.toBeInTheDocument();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("only links a cross-thread PDF after the operator reads it and writes a reason", async () => {
+    const unassigned = card({
+      title: "Compra de productos_ cotización N°01259-26",
+      stage: "lead",
+      organization: null,
+      quotes: [],
+      quote_numbers: [],
+      revision_count: 0,
+      latest_revision: null,
+    });
+    const calls = stubApi({
+      pipelines: [page([unassigned]), page([unassigned])],
+      quoteCandidates: {
+        opportunity_id: CASE,
+        candidates: [{
+          source_record_id: MESSAGE,
+          quote_token: "CN01259",
+          filename: "CN01259-ficticio.pdf",
+          subject: "Re: Solicitud de cotización",
+          sent_at: "2026-10-07T14:00:00Z",
+          document_sha256: SHA_NEW,
+          gmail_url: "https://mail.google.com/mail/u/0/#all/abc123",
+          reason: "Número exacto y destinatario externo compartido",
+          recorded_elsewhere: false,
+        }],
+      },
+      onPost: (call) => call.path === "/v2/commands/link-case-evidence"
+        ? { body: receipt("link_case_evidence", "lead", 6, "aaaaaaaa-0031") }
+        : undefined,
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Buscar cotización enviada en otro hilo" }));
+    const review = await within(dialog).findByRole("region", { name: "Cotización en otro hilo" });
+    expect(within(review).getByRole("link", { name: /Abrir mensaje original/ }))
+      .toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/abc123");
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    fireEvent.click(within(review).getByRole("button", { name: "Revisar vínculo con este caso" }));
+    expect(within(review).getByRole("button", { name: "Vincular correo revisado" })).toBeDisabled();
+    fireEvent.change(within(review).getByRole("textbox", { name: "Motivo y evidencia del vínculo" }), {
+      target: { value: "Comprobé el PDF y la dirección de Irina en los dos hilos de Gmail." },
+    });
+    fireEvent.click(within(review).getByRole("button", { name: "Vincular correo revisado" }));
+    await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/link-case-evidence")).toBe(true));
+    expect(calls.find((c) => c.path === "/v2/commands/link-case-evidence")!.body).toEqual({
+      opportunity_id: CASE, opportunity_version: 5, relation: "mentions",
+      source_record_id: MESSAGE,
+      note: "Comprobé el PDF y la dirección de Irina en los dos hilos de Gmail.",
+    });
+    expect(calls.some((c) => c.path === "/v2/commands/record-case-quotation")).toBe(false);
+  });
 
   it("promotes a reviewed machine mention to the requesting role without inventing an organization", async () => {
     const relation = "77777777-7777-4777-8777-777777777777";
