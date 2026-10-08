@@ -33,12 +33,23 @@ def request(method: str, path: str, token: str, payload: dict | None = None) -> 
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json",
                  "Content-Type": "application/json"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as exc:
-        # Avoid printing any response which might inadvertently include authentication details.
-        raise Refused(f"Render {method} endpoint failed with HTTP {exc.code}") from exc
+    for attempt in range(3 if method == "GET" else 1):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                result = json.load(response)
+                if not isinstance(result, (dict, list)):
+                    raise Refused("Unexpected Render API response shape")
+                return result
+        except urllib.error.HTTPError as exc:
+            if method == "GET" and exc.code in {429, 500, 502, 503, 504} and attempt < 2:
+                time.sleep(min(30, 5 * (attempt + 1)))
+                continue
+            raise Refused(f"Render {method} failed with HTTP {exc.code}; reconcile state before retry") from exc
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            if method == "GET" and attempt < 2:
+                time.sleep(5 * (attempt + 1))
+                continue
+            raise Refused(f"Render {method} response unavailable; reconcile state before retry") from exc
 
 
 def verify_service(service: dict, service_id: str) -> None:
@@ -76,6 +87,17 @@ def latest_deploy(token: str, service_id: str) -> dict | None:
     return rows[0].get("deploy") if rows else None
 
 
+def verify_api_http() -> None:
+    """Anonymous liveness check only; authenticated DB journey is a separate gate."""
+    try:
+        with urllib.request.urlopen("https://origenlab.onrender.com/health", timeout=30) as response:
+            data = json.load(response)
+        if data.get("ok") is not True or data.get("service") != "origenlab-api":
+            raise Refused("API HTTP readiness failed; dashboard remains unchanged")
+    except (urllib.error.URLError, ValueError, TimeoutError) as exc:
+        raise Refused("API HTTP readiness unavailable; dashboard remains unchanged") from exc
+
+
 def run(mode: str) -> None:
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_REF") != "refs/heads/main":
         raise Refused("Deployment may only run from trusted GitHub main")
@@ -87,6 +109,9 @@ def run(mode: str) -> None:
     # Guard all four first: never perform a partial deploy before discovering one remains autonomous.
     for name, service_id in SERVICES:
         verify_service(request("GET", f"/services/{service_id}", token), service_id)
+        latest = latest_deploy(token, service_id)
+        if latest and latest.get("status") in IN_PROGRESS:
+            raise Refused(f"{name} has a pending deployment; refuse before any mutation")
         print(f"Render gate OK: {name}, independent autodeploy off")
 
     if mode == "check":
@@ -94,6 +119,10 @@ def run(mode: str) -> None:
     if mode != "release":
         raise Refused("Usage: render_release.py check|release")
     for name, service_id in SERVICES:
+        check_current_main(sha)
+        if name == "dashboard":
+            verify_api_http()
+        verify_service(request("GET", f"/services/{service_id}", token), service_id)
         latest = latest_deploy(token, service_id)
         if latest and latest.get("status") == "live" and latest.get("commit", {}).get("id") == sha:
             print(f"Already on reviewed commit: {name}")

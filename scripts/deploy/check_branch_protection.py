@@ -23,12 +23,14 @@ class Unprotected(RuntimeError):
     pass
 
 
-def validate(rule: dict) -> None:
-    if rule.get("id") != RULESET_ID or rule.get("enforcement") != "active":
+def validate(rule: dict, require_bypass_visibility: bool = True) -> None:
+    if rule.get("id") != RULESET_ID or rule.get("enforcement") != "active" or rule.get("target", "branch") != "branch":
         raise Unprotected("Production main ruleset not active")
     refs = rule.get("conditions", {}).get("ref_name", {})
     if "~DEFAULT_BRANCH" not in refs.get("include", []) or refs.get("exclude"):
         raise Unprotected("Production ruleset does not cover the unexcluded default branch")
+    if require_bypass_visibility and "bypass_actors" not in rule:
+        raise Unprotected("Ruleset bypass actors hidden by token permissions; cannot prove no bypass")
     if rule.get("bypass_actors"):
         raise Unprotected("Production ruleset has bypass actors")
     rules = {r.get("type"): r.get("parameters", {}) for r in rule.get("rules", [])}
@@ -39,10 +41,10 @@ def validate(rule: dict) -> None:
     checks = rules.get("required_status_checks")
     if checks is None or not checks.get("strict_required_status_checks"):
         raise Unprotected("Require strict branch-up-to-date status checks")
-    present = {x.get("context") for x in checks.get("required_status_checks", [])}
+    present = {x.get("context") for x in checks.get("required_status_checks", []) if x.get("integration_id") == 15368}
     missing = REQUIRED_CHECKS - present
     if missing:
-        raise Unprotected("Missing mandatory status checks: " + ", ".join(sorted(missing)))
+        raise Unprotected("Missing GitHub Actions-bound mandatory status checks: " + ", ".join(sorted(missing)))
 
 
 def fetch_rule() -> dict:
@@ -69,8 +71,8 @@ def fetch_rule() -> dict:
 
 if __name__ == "__main__":
     try:
-        validate(fetch_rule())
-        print("Main protection verified: reviewed PR, up-to-date CI checks, no bypass")
+        validate(fetch_rule(), require_bypass_visibility=sys.argv[1:] == ["--local"])
+        print("Main review/check rules verified; runtime must also verify approval of the exact merge")
     except (Unprotected, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         print(f"Configure {REPOSITORY} ruleset 'Protect main' before production release.", file=sys.stderr)

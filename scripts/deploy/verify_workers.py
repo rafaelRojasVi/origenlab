@@ -2,6 +2,8 @@
 """Read-only postrelease worker checks: queue heartbeat/sweep + next successful cron run."""
 from __future__ import annotations
 import os
+import json
+import urllib.parse
 import subprocess
 import sys
 import tempfile
@@ -11,29 +13,30 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "supabase/scripts"))
 from hosted_env import Refused, database_env
-from render_release import SERVICES, latest_deploy, request, verify_service
+from render_release import OWNER, SERVICES, latest_deploy, request, verify_service
 
 
-def healthy_worker(env: dict[str, str]) -> bool:
+def healthy_worker(env: dict[str, str], since: str | None = None) -> bool:
     # Do not read message bodies, queue arguments, contacts, or email addresses.
-    query = """
+    boundary = datetime.fromisoformat(since.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat() if since else "1970-01-01T00:00:00+00:00"
+    query = f"""
     set role origenlab_owner;
     select case when
        exists (select 1 from procrastinate.procrastinate_workers
-               where last_heartbeat >= now() - interval '3 minutes')
+               where last_heartbeat >= greatest(now() - interval '3 minutes', '{boundary}'::timestamptz))
        and exists (select 1 from procrastinate.procrastinate_periodic_defers
-                   where defer_timestamp >= extract(epoch from now()) - 300)
+                   where task_name = 'sweep_untriaged' and periodic_id = 'sweep'
+                     and defer_timestamp >= extract(epoch from now()) - 300)
        and not exists (
          select 1 from comms.message m
-           join evidence.source_record sr
-             on sr.dedupe_key = 'gmail_message:' || m.provider_message_id
-          where sr.kind = 'gmail_message'
-            and m.parse_status = 'parsed'
+           left join evidence.source_record sr
+             on sr.dedupe_key = 'gmail_message:' || m.provider_message_id and sr.kind = 'gmail_message'
+          where m.parse_status = 'parsed'
             and m.eml_storage_path is not null
             and m.internal_date between now() - interval '14 days'
                                     and now() - interval '15 minutes'
             and (
-              not exists (
+              sr.id is null or not exists (
                 select 1 from evidence.assertion a
                  where a.source_record_id = sr.id
                    and a.kind = 'message_triage' and a.value_norm = 'triage:v1')
@@ -79,6 +82,35 @@ def after_deploy(iso: str | None, mark: str | None) -> bool:
     return as_utc(iso) >= as_utc(mark)
 
 
+def swept_after_deploy(token: str, service_id: str, since: str) -> bool:
+    """Successful jobs are deleted by the worker, so their events cannot be proof.
+
+    Read only the worker's aggregate triage_sweep events, never error details,
+    queue arguments or email data. The event is emitted after DB reads/defers.
+    """
+    boundary = datetime.fromisoformat(since.replace("Z", "+00:00")).astimezone(timezone.utc)
+    now = datetime.now(timezone.utc)
+    from datetime import timedelta
+    boundary = max(boundary, now - timedelta(minutes=5))
+    params = urllib.parse.urlencode({"ownerId": OWNER, "resource": service_id,
+                                    "startTime": boundary.isoformat(), "endTime": now.isoformat(),
+                                    "text": '"event": "triage_sweep"', "type": "app", "limit": 100})
+    page = request("GET", "/logs?" + params, token)
+    if not isinstance(page, dict) or not isinstance(page.get("logs"), list):
+        raise Refused("Unexpected aggregate worker log response")
+    for row in page["logs"]:
+        try:
+            labels = {label["name"]:label["value"] for label in row.get("labels", [])}
+            event = json.loads(row.get("message", ""))
+            if (labels.get("resource") == service_id and after_deploy(row.get("timestamp"), boundary.isoformat())
+                and event.get("event") == "triage_sweep"
+                and all(isinstance(event.get(key), int) and event[key] >= 0 for key in ("found", "deferred"))):
+                return True
+        except (ValueError, TypeError, KeyError):
+            continue
+    return False
+
+
 def verify() -> None:
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_REF") != "refs/heads/main":
         raise Refused("Production postflight requires reviewed GitHub main")
@@ -95,17 +127,22 @@ def verify() -> None:
         if not deploy or deploy.get("status") != "live" or deploy.get("commit", {}).get("id") != sha:
             raise Refused(f"Service {name} is not live at the approved commit")
         details[name] = deploy
+    if not details["worker"].get("finishedAt"):
+        raise Refused("Worker deployment completion timestamp missing")
     with tempfile.TemporaryDirectory(prefix="ol-postflight-", dir=os.environ.get("RUNNER_TEMP")) as d:
         env = database_env(Path(d))
         worker_deadline = time.monotonic() + 360
         while True:
-            if healthy_worker(env):
+            if (healthy_worker(env, details["worker"]["finishedAt"])
+                and swept_after_deploy(token, services["worker"], details["worker"]["finishedAt"])):
                 print("WORKER HEALTHY: heartbeat, periodic sweep and no stale 14-day triage gaps", flush=True)
                 break
             if time.monotonic() >= worker_deadline:
                 raise Refused("Mail-triage worker has no recent heartbeat or periodic sweep")
             time.sleep(20)
     cron_since = details["gmail-sync"].get("finishedAt")
+    if not cron_since or not details["worker"].get("finishedAt"):
+        raise Refused("Deployment completion timestamps missing")
     cron_deadline = time.monotonic() + 1200
     while True:
         cron = request("GET", f"/services/{services['gmail-sync']}", token)
@@ -117,6 +154,10 @@ def verify() -> None:
         if time.monotonic() >= cron_deadline:
             raise Refused("Gmail-sync cron has no verified successful run after deployment")
         time.sleep(30)
+    for name, ident in SERVICES:
+        deploy = latest_deploy(token, ident)
+        if not deploy or deploy.get("status") != "live" or deploy.get("commit", {}).get("id") != sha:
+            raise Refused(f"Service {name} changed during postflight")
     print("POSTFLIGHT PASSED: worker, periodic sweep, cron and all four SHA-pinned services")
 
 

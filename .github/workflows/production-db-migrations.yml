@@ -2,6 +2,8 @@ name: production-db-migrations
 
 # Supabase CI must pass before unattended releases. Schema-first is enforced by Render auto-deploy OFF.
 on:
+  push:
+    branches: [main]
   workflow_run:
     workflows: ["supabase"]
     branches: [main]
@@ -13,6 +15,9 @@ on:
       - "supabase/scripts/hosted_migrations.sh"
       - "supabase/scripts/tests/test_hosted_release.py"
       - "scripts/deploy/render_release.py"
+      - "scripts/deploy/release_context.py"
+      - "scripts/deploy/check_release_approval.py"
+      - "supabase/scripts/tests/test_hosted_release_db.py"
       - "scripts/deploy/check_release_ci.py"
       - "scripts/deploy/configure_release_secrets.sh"
       - "scripts/deploy/set_render_autodeploy_off.py"
@@ -32,19 +37,20 @@ on:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 
 concurrency:
-  group: origenlab-production-release
+  group: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && format('origenlab-release-tests-{0}', github.ref) || 'origenlab-production-release' }}
   cancel-in-progress: false
 
 jobs:
   offline-contract:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     name: Validate proposed release controller without production access
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Syntax and fail-closed unit tests (no credentials)
@@ -59,6 +65,46 @@ jobs:
           bash -n supabase/scripts/hosted_migrations.sh scripts/deploy/configure_release_secrets.sh
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
 
+  isolated-db-contract:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    name: Isolated PostgreSQL release contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install PG17 client and age
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ca-certificates curl gnupg postgresql-common age
+          sudo install -d -m 0755 /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc |
+            sudo gpg --batch --yes --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
+          printf 'Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: %s-pgdg\nComponents: main\nSigned-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg\n' \
+            "$(lsb_release -cs)" |
+            sudo tee /etc/apt/sources.list.d/pgdg.sources >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+      - name: Execute real transaction and encrypted restore regression tests
+        env:
+          OL_RELEASE_TEST_PORT: "5432"
+          OL_RELEASE_DB_TEST_REQUIRED: "true"
+        run: python3 -m unittest discover -s supabase/scripts/tests -p test_hosted_release_db.py -v
+
   preflight:
     if: >
       (github.event_name == 'workflow_run' &&
@@ -67,7 +113,7 @@ jobs:
        github.event.workflow_run.head_branch == 'main' &&
        vars.OL_RELEASE_AUTOMATION_ENABLED == 'true') ||
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+      (github.event_name == 'schedule' && vars.OL_BACKUP_AUTOMATION_ENABLED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 50
     environment: origenlab-release
@@ -75,7 +121,7 @@ jobs:
       sha: ${{ steps.provenance.outputs.sha }}
       mode: ${{ steps.provenance.outputs.mode }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
@@ -86,6 +132,7 @@ jobs:
           EXPECTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           EXECUTION_MODE: ${{ github.event_name == 'schedule' && 'backup_only' || github.event_name == 'workflow_run' && 'release' || inputs.mode }}
           RELEASE_ENABLED: ${{ vars.OL_RELEASE_AUTOMATION_ENABLED }}
+          BACKUP_ENABLED: ${{ vars.OL_BACKUP_AUTOMATION_ENABLED }}
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
@@ -93,11 +140,7 @@ jobs:
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA" || {
             echo "Superseding main commit exists; refuse stale release"; exit 1;
           }
-          case "$EXECUTION_MODE" in plan|backup_only|release) ;; *) exit 1 ;; esac
-          if [ "$EXECUTION_MODE" = release ] && [ "$RELEASE_ENABLED" != true ]; then
-            echo "First-release hold is active. Test the encrypted backup restore before enabling automatic releases."
-            exit 1
-          fi
+          python3 scripts/deploy/release_context.py
           python3 -m py_compile supabase/scripts/hosted_env.py \
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
             scripts/deploy/render_release.py scripts/deploy/check_release_ci.py \
@@ -111,6 +154,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/deploy/check_branch_protection.py
+      - name: Independently verify review of this exact main merge
+        if: steps.provenance.outputs.mode == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
+        run: python3 scripts/deploy/check_release_approval.py
       - name: Wait for ALL applicable CI on the pinned main commit
         if: steps.provenance.outputs.mode == 'release'
         env:
@@ -139,7 +188,7 @@ jobs:
     timeout-minutes: 30
     environment: origenlab-release
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.preflight.outputs.sha }}
           persist-credentials: false
@@ -167,7 +216,7 @@ jobs:
           OL_PROD_BACKUP_OUT: ${{ runner.temp }}/origenlab-production-snapshot.tar.age
         run: python3 supabase/scripts/hosted_backup.py
       - name: Publish only age-encrypted backup
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: origenlab-encrypted-prod-backup-${{ github.run_id }}
           path: ${{ runner.temp }}/origenlab-production-snapshot.tar.age
@@ -177,12 +226,12 @@ jobs:
 
   migrate:
     needs: [preflight, backup]
-    if: needs.preflight.outputs.mode == 'release'
+    if: needs.preflight.outputs.mode == 'release' && vars.OL_RELEASE_AUTOMATION_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: origenlab-release
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.preflight.outputs.sha }}
           persist-credentials: false
@@ -191,6 +240,19 @@ jobs:
         env:
           EXPECTED_SHA: ${{ needs.preflight.outputs.sha }}
         run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+      - name: Recheck release CI and review after backup
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+        run: |
+          python3 scripts/deploy/check_branch_protection.py
+          python3 scripts/deploy/check_release_approval.py
+          python3 scripts/deploy/check_release_ci.py
+      - name: Refuse autonomous or racing Render services before DDL
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+        run: python3 scripts/deploy/render_release.py check
       - name: Apply protected atomic migrations and ledger
         env:
           OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }}
@@ -202,12 +264,12 @@ jobs:
 
   deploy:
     needs: [preflight, migrate]
-    if: needs.preflight.outputs.mode == 'release'
+    if: needs.preflight.outputs.mode == 'release' && vars.OL_RELEASE_AUTOMATION_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 150
     environment: origenlab-release
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.preflight.outputs.sha }}
           persist-credentials: false
@@ -231,7 +293,7 @@ jobs:
     timeout-minutes: 35
     environment: origenlab-release
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.preflight.outputs.sha }}
           persist-credentials: false
@@ -245,3 +307,21 @@ jobs:
           OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }}
           OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }}
         run: python3 scripts/deploy/verify_workers.py
+
+  release-result:
+    needs: [preflight, backup, migrate, deploy, verify]
+    if: always() && needs.preflight.outputs.mode == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Never label a partial or skipped release successful
+        env:
+          BACKUP_RESULT: ${{ needs.backup.result }}
+          MIGRATE_RESULT: ${{ needs.migrate.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: |
+          test "$BACKUP_RESULT" = success
+          test "$MIGRATE_RESULT" = success
+          test "$DEPLOY_RESULT" = success
+          test "$VERIFY_RESULT" = success
+          echo "Release complete: backup, migration, deployment and postflight passed"

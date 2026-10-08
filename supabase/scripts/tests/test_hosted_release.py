@@ -85,7 +85,7 @@ class ProductionGates(unittest.TestCase):
                 {"type": "required_status_checks",
                  "parameters": {"strict_required_status_checks": True,
                                 "required_status_checks": [
-                                    {"context": x} for x in sorted(protection.REQUIRED_CHECKS)
+                                    {"context": x, "integration_id": 15368} for x in sorted(protection.REQUIRED_CHECKS)
                                 ]}},
             ],
         )
@@ -183,14 +183,14 @@ class ProductionGates(unittest.TestCase):
             return dict(name=name, event="push", head_sha="a" * 40,
                         status=status, conclusion=conclusion,
                         created_at="2026-10-08T00:00:00Z", run_attempt=attempt)
-        ok = [item("supabase"), item("secret-scan"), item("worker"), item("api"), item("dashboard")]
+        ok = [item(name) for name in ci.MANDATORY]
         self.assertEqual(ci.check_runs(ok)[0], "success")
         self.assertEqual(ci.check_runs(ok + [item("api", status="in_progress", attempt=2)])[0], "pending")
         with self.assertRaises(ci.CIRefused):
             ci.check_runs(ok + [item("dashboard", conclusion="failure", attempt=2)])
         self.assertEqual(ci.check_runs([item("supabase")])[0], "pending")
         with self.assertRaises(ci.CIRefused):
-            ci.check_runs(ok + [item("email-pipeline", conclusion="cancelled")])
+            ci.check_runs(ok + [item("email-pipeline", conclusion="cancelled", attempt=2)])
 
 
     def test_pending_sql_refuses_transaction_escape(self):
@@ -227,9 +227,11 @@ class ProductionGates(unittest.TestCase):
         with mock.patch.dict(os.environ, env), \
              mock.patch.object(render, "request", side_effect=fake_request), \
              mock.patch.object(render, "latest_deploy", side_effect=fake_latest), \
-             mock.patch.object(render, "check_current_main") as git_check:
+             mock.patch.object(render, "check_current_main") as git_check, \
+             mock.patch.object(render, "verify_api_http"):
             render.run("release")
-            git_check.assert_called_once_with(sha)
+            self.assertEqual(git_check.call_count, 5)
+            git_check.assert_called_with(sha)
 
     def test_render_refuses_auto_deploy_before_any_deployment(self):
         sha = "a" * 40
@@ -246,6 +248,124 @@ class ProductionGates(unittest.TestCase):
             with self.assertRaises(render.Refused):
                 render.run("release")
         self.assertEqual([method for method,_ in calls], ["GET"])
+
+
+class RegressionGates(unittest.TestCase):
+    def test_transaction_escapes_hidden_by_comments_or_inline_sql(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.sql"
+            for escape in ("select 1; COMMIT;", "/* comment */ END;", "COMMIT AND CHAIN;",
+                           "START TRANSACTION;", "ABORT;", "PREPARE TRANSACTION 'x';",
+                           "-- comment\nROLLBACK TO SAVEPOINT x;", "select 1;\\gexec", "SET SESSION AUTHORIZATION postgres;"):
+                path.write_text("SET ROLE origenlab_owner; " + escape + " RESET ROLE;")
+                with self.subTest(escape=escape), self.assertRaises(migrations.Refused):
+                    migrations.require_reviewed_owner_transition(path)
+            path.write_text("SET ROLE origenlab_owner; DO $$ BEGIN PERFORM 1; END $$; RESET ROLE;")
+            migrations.require_reviewed_owner_transition(path)
+
+    def test_comments_cannot_fake_role_transitions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.sql"
+            path.write_text("-- SET ROLE origenlab_owner;\nSELECT 1; -- RESET ROLE;")
+            with self.assertRaises(migrations.Refused):
+                migrations.require_reviewed_owner_transition(path)
+
+    def test_ruleset_omission_is_not_proof_of_no_bypass(self):
+        rule = dict(id=protection.RULESET_ID, enforcement="active",
+                    conditions={"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}})
+        with self.assertRaisesRegex(protection.Unprotected, "hidden"):
+            protection.validate(rule)
+
+    def test_event_provenance_and_all_disabled_paths(self):
+        context = load(ROOT / "scripts/deploy/release_context.py", "release_context")
+        sha = "a" * 40
+        base = {"repository": {"full_name": context.REPOSITORY}}
+        run = {"event": "push", "head_branch": "main", "head_sha": sha, "conclusion": "success",
+               "head_repository": {"full_name": context.REPOSITORY}}
+        event = dict(base, workflow_run=run)
+        for kind, payload in (("workflow_run", event), ("workflow_dispatch", base)):
+            for enabled in ("", "false"):
+                with self.assertRaises(ValueError):
+                    context.validate(kind, payload, "refs/heads/main", sha, "release", enabled, "")
+        context.validate("workflow_dispatch", base, "refs/heads/main", sha, "plan", "", "")
+        context.validate("workflow_dispatch", base, "refs/heads/main", sha, "backup_only", "", "")
+        with self.assertRaises(ValueError):
+            context.validate("schedule", base, "refs/heads/main", sha, "backup_only", "", "")
+        context.validate("schedule", base, "refs/heads/main", sha, "backup_only", "", "true")
+        context.validate("workflow_run", event, "refs/heads/main", sha, "release", "true", "")
+        for key, value in (("head_branch", "dev"), ("event", "pull_request"),
+                           ("head_repository", {"full_name": "attacker/repo"}), ("head_sha", "b"*40)):
+            with self.assertRaises(ValueError):
+                context.validate("workflow_run", dict(base, workflow_run={**run, key:value}),
+                                 "refs/heads/main", sha, "release", "true", "")
+
+    def test_ci_binds_identity_and_rejects_job_skip(self):
+        sha = "a" * 40
+        runs = [dict(name=name, event="push", head_sha=sha, head_branch="main",
+                     head_repository={"full_name":"rafaelRojasVi/origenlab"},
+                     path=f".github/workflows/{name}.yml", status="completed", conclusion="success")
+                for name in ci.MANDATORY]
+        self.assertEqual(ci.check_runs(runs, sha)[0], "success")
+        with self.assertRaises(ci.CIRefused):
+            ci.check_runs([dict(runs[0], head_branch="dev")] + runs[1:], sha)
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        with mock.patch.object(ci.urllib.request, "urlopen", return_value=response), \
+             mock.patch.object(ci.json, "load", return_value={"total_count":1,"jobs":[{"status":"completed","conclusion":"skipped"}]}):
+            with self.assertRaises(ci.CIRefused):
+                ci.validate_jobs({"id":1,"name":"api"}, "test-only")
+
+    def test_postflight_sql_requires_completed_specific_sweep(self):
+        from subprocess import CompletedProcess
+        with mock.patch.object(postflight.subprocess, "run", return_value=CompletedProcess([],0,"not_ready\n")) as run:
+            self.assertFalse(postflight.healthy_worker({}, "2026-10-08T12:00:00Z"))
+        query = run.call_args.args[0][-1]
+        self.assertIn("task_name = 'sweep_untriaged'", query)
+        self.assertNotIn("procrastinate_events", query)
+        self.assertIn("left join evidence.source_record", query)
+        self.assertIn("2026-10-08T12:00:00+00:00", query)
+
+    def test_exact_merge_requires_current_independent_collaborator_review(self):
+        approval = load(ROOT / "scripts/deploy/check_release_approval.py", "check_release_approval")
+        sha = "a" * 40
+        pr = dict(merged_at="2026-10-08", merge_commit_sha=sha,
+                  base={"ref":"main", "repo":{"full_name":approval.REPOSITORY}},
+                  head={"sha":"b"*40, "repo":{"full_name":approval.REPOSITORY}}, user={"login":"author"})
+        review = dict(id=1, state="APPROVED", commit_id="b"*40,
+                      user={"login":"reviewer"}, author_association="COLLABORATOR")
+        self.assertTrue(approval.approved(pr, [review], sha))
+        for invalid in (dict(review, commit_id="c"*40), dict(review, user={"login":"author"}),
+                        dict(review, author_association="NONE"), dict(review, state="DISMISSED")):
+            self.assertFalse(approval.approved(pr, [invalid], sha))
+        self.assertFalse(approval.approved(pr, [review,dict(review,id=2,state="CHANGES_REQUESTED")], sha))
+        self.assertFalse(approval.approved(dict(pr,merge_commit_sha="c"*40), [review], sha))
+
+    def test_sweep_log_checks_resource_and_timestamp(self):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        row = dict(message='{"event":"triage_sweep","found":0,"deferred":0}', timestamp=now,
+                   labels=[{"name":"resource","value":render.SERVICES[0][1]}])
+        with mock.patch.object(postflight,"request",return_value={"logs":[row]}):
+            self.assertTrue(postflight.swept_after_deploy("test-only",render.SERVICES[0][1],now))
+        with mock.patch.object(postflight,"request",return_value={"logs":[dict(row,labels=[])]}):
+            self.assertFalse(postflight.swept_after_deploy("test-only",render.SERVICES[0][1],now))
+        with mock.patch.object(postflight,"request",return_value={"logs":[dict(row,timestamp="2020-01-01T00:00:00Z")]}):
+            self.assertFalse(postflight.swept_after_deploy("test-only",render.SERVICES[0][1],now))
+
+    def test_ambiguous_render_post_is_never_blindly_retried(self):
+        import urllib.error
+        with mock.patch.object(render.urllib.request,"urlopen",side_effect=urllib.error.URLError("synthetic")) as call:
+            with self.assertRaises(render.Refused):
+                render.request("POST","/services/fake/deploys","test-only",{})
+            self.assertEqual(call.call_count,1)
+
+    def test_render_read_retries_are_bounded_and_shape_is_validated(self):
+        import urllib.error
+        with mock.patch.object(render.urllib.request,"urlopen",side_effect=urllib.error.URLError("synthetic")) as call, \
+             mock.patch.object(render.time,"sleep"):
+            with self.assertRaises(render.Refused):
+                render.request("GET","/services/fake","test-only")
+            self.assertEqual(call.call_count,3)
 
 
 if __name__ == "__main__":
