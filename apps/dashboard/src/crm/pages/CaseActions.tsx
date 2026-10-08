@@ -38,6 +38,7 @@ import { crmHash } from "../crmRoute";
 import { STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
 import { COLUMN_LABEL, CaseMoveForm, type MoveTarget } from "./CaseMove";
 import { AssignInstitution } from "./AssignInstitution";
+import { CrossThreadQuoteReview } from "./CrossThreadQuoteReview";
 import {
   Button,
   ChoiceChips,
@@ -78,6 +79,7 @@ export function CaseActions({
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
   const [mode, setMode] = useState<Mode>(initial?.mode ?? null);
+  const [crossThreadOpen, setCrossThreadOpen] = useState(false);
   const [target, setTarget] = useState<MoveTarget | null>(initial?.target ?? null);
   const [initialReason, setInitialReason] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -234,6 +236,21 @@ export function CaseActions({
           onCancel={() => setMode(null)}
           onDone={finished}
         />
+      ) : null}
+
+      {!closed && mayDecide && card.quotes.length === 0 &&
+        /(?<![A-Za-z0-9])(?:CN)?0?\d{4}[-–/]\d{2}/i.test(card.title) ? (
+        <div className="space-y-2">
+          <Button aria-expanded={crossThreadOpen} onClick={() => setCrossThreadOpen(!crossThreadOpen)}>
+            Buscar cotización enviada en otro hilo
+          </Button>
+          {crossThreadOpen ? (
+            <CrossThreadQuoteReview card={card} onDone={(outcome, refetch) => {
+              finished(outcome, refetch);
+              if (outcome.tone === "good") setCrossThreadOpen(false);
+            }} />
+          ) : null}
+        </div>
       ) : null}
 
       {card.organization?.confirmation === "machine_proposed" ? (
