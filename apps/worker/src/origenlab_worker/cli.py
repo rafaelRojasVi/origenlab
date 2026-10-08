@@ -193,7 +193,10 @@ def _parser() -> argparse.ArgumentParser:
     ledger = commands.add_parser("drive-ledger-import", help="owner, once: record the laptop archive's links")
     ledger.add_argument("ledgers", nargs="+", help="archive_links.jsonl files")
     ledger.add_argument("--dry-run", action="store_true", help="count; write nothing")
-    commands.add_parser("triage-worker", help="run the mail-triage queue worker until SIGTERM")
+    commands.add_parser("triage-worker", help="compatible entrypoint for the consolidated mail worker")
+    commands.add_parser("triage-child", help=argparse.SUPPRESS)
+    commands.add_parser("mail-worker", help="supervise triage and gated periodic capture in one release")
+    commands.add_parser("capture-worker", help="internal isolated periodic capture queue")
     once = commands.add_parser("triage-once", help="triage pending messages once, without the queue")
     once.add_argument("--since-days", type=int, default=DEFAULT_SINCE_DAYS, help="look back this many days")
     once.add_argument("--limit", type=int, default=200, help="at most this many messages")
@@ -287,13 +290,24 @@ def main(
     except _UsageError:
         return _emit(RunReport("usage", EXIT_CONFIG, RunCounts(), error="usage"), started)
     env = os.environ if environ is None else environ
+    if args.command in {"mail-worker", "triage-worker", "capture-worker"}:
+        try:
+            if args.command in {"mail-worker", "triage-worker"}:
+                from origenlab_worker.mail_worker import run_mail_worker
+                return run_mail_worker(env)
+            from origenlab_worker.capture_queue import run_capture_worker
+            return run_capture_worker(env)
+        except ConfigRefused as exc:
+            return _emit_line({"event": "mail_worker", "exit": EXIT_CONFIG, "error": exc.code}, started)
+        except Exception as exc:
+            return _emit_line({"event": "mail_worker", "exit": EXIT_FAILED, "error": type(exc).__name__}, started)
     if args.command == "drive-file":
         return run_drive_file(args, env, drive_components, started)
     if args.command == "drive-ledger-import":
         return run_drive_ledger_import(args, env, db_components, started)
     if args.command == "triage-once":
         return run_triage_once(args, env, started)
-    if args.command == "triage-worker":  # pragma: no cover - runs until SIGTERM
+    if args.command == "triage-child":  # pragma: no cover - supervised until SIGTERM
         return run_triage_worker(env, started)
     previous = None
     try:

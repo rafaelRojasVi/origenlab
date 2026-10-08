@@ -5,7 +5,7 @@ Two tasks, both on the `triage` queue:
 
 * `sweep_untriaged` — periodic, every minute: finds captured messages of the last
   `DEFAULT_SINCE_DAYS` days that have no reading of the current triage version and defers one
-  `triage_message` job each. The Gmail capture cron is untouched — it never enqueues; the sweep is
+  `triage_message` job each. Capture itself never enqueues triage; the separate capture process writes mail and this sweep is
   how new mail reaches the queue, at most a minute late.
 * `triage_message(source_record_id)` — one message, end to end (`triage.triage_one`). A queueing
   lock per source record keeps one job per message waiting at a time; a transient model failure
@@ -28,7 +28,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import procrastinate
+import psycopg
 from procrastinate import testing as procrastinate_testing
+from procrastinate.manager import QUEUEING_LOCK_CONSTRAINT
 
 from origenlab_worker.database import (
     QUEUE_REQUIRED_POLICIES,
@@ -67,6 +69,7 @@ class QueueContext:
     target: WorkerTarget | None = field(default=None, repr=False)
     store_factory: Callable[[], EmlStore] | None = field(default=None, repr=False)
     model: ModelSettings | None = field(default=None, repr=False)
+    revision: str | None = None
     log: Callable[[dict[str, Any]], None] = lambda event: print(json.dumps(event, sort_keys=True), file=sys.stdout,
                                                                   flush=True)
 
@@ -85,8 +88,39 @@ def pool_configure(target: WorkerTarget) -> Callable[[Any], Any]:
     return configure
 
 
+class RlsQueueConnector(procrastinate.PsycopgConnector):
+    """3.10 assumes UniqueViolation DETAIL is visible, but PostgreSQL RLS masks it.
+
+    Recover only the known queueing-lock violation identified by PostgreSQL's
+    constraint name. Never expose a value or broaden grants to obtain DETAIL.
+    Other AssertionErrors/constraints retain their failure behavior.
+    """
+    @staticmethod
+    def _masked_violation(exc):
+        original = exc.__context__
+        if (isinstance(original, psycopg.errors.UniqueViolation)
+                and original.diag.constraint_name == QUEUEING_LOCK_CONSTRAINT
+                and not original.diag.message_detail):
+            raise procrastinate.exceptions.UniqueViolation(
+                constraint_name=QUEUEING_LOCK_CONSTRAINT, queueing_lock=None,
+            ) from None
+        raise exc
+
+    async def execute_query_one_async(self, query, **arguments):
+        try:
+            return await super().execute_query_one_async(query, **arguments)
+        except AssertionError as exc:
+            self._masked_violation(exc)
+
+    async def execute_query_all_async(self, query, **arguments):
+        try:
+            return await super().execute_query_all_async(query, **arguments)
+        except AssertionError as exc:
+            self._masked_violation(exc)
+
+
 def connector_for(target: WorkerTarget, *, max_size: int = 3) -> procrastinate.PsycopgConnector:
-    return procrastinate.PsycopgConnector(
+    return RlsQueueConnector(
         conninfo=target.dsn,
         kwargs={"application_name": APP_NAME_QUEUE, **target.connect_options},
         min_size=1,
@@ -124,7 +158,8 @@ def build_app(connector: Any | None = None) -> procrastinate.App:
             pending = TriageDb(conn).pending(since_days=DEFAULT_SINCE_DAYS, limit=SWEEP_LIMIT)
         # The app actually running this job (the CLI's, with the real connector), not this builder's.
         deferred = defer_triage(context.app, pending)
-        ctx.log({"event": "triage_sweep", "found": len(pending), "deferred": deferred})
+        ctx.log({"event": "triage_sweep", "found": len(pending), "deferred": deferred,
+                 "revision": ctx.revision})
 
     return app
 

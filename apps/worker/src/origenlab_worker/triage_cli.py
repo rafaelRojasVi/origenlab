@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import signal
 import threading
 import time
@@ -169,6 +170,8 @@ def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
         task_queue.CONTEXT.target = config.database
         task_queue.CONTEXT.store_factory = lambda: S3EmlStore(config.storage.client())
         task_queue.CONTEXT.model = config.model
+        revision = env.get("RENDER_GIT_COMMIT", "")
+        task_queue.CONTEXT.revision = revision if re.fullmatch(r"[0-9a-f]{40}", revision) else None
         line["model"] = config.model_name if config.model_enabled else "off"
         _emit(dict(line), started)
 

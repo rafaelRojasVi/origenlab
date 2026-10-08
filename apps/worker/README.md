@@ -63,3 +63,15 @@ archive comes from `apps/api` (a uv path dependency, so the cron also installs t
 
 Owner scripts (`scripts/`): `gmail_readonly_authorize.py` (consent, once), `payload_parity.py`
 (before go-live), `shadow_reconcile.py` (shadow week).
+
+
+## Consolidated deployment (PR #679; not activated)
+
+`origenlab-worker mail-worker` supervises separate triage and capture processes in one
+pinned Render service. `triage-worker` remains a compatible entrypoint. The new
+`ORIGENLAB_WORKER_CAPTURE_SCHEDULER_ENABLED` defaults OFF, preserving triage-only behavior.
+When explicitly enabled after the old cron is suspended, the dedicated capture queue
+runs the existing Gmail then Drive commands every ten minutes. Existing business flags,
+locks and idempotency remain. See the [approved cutover](../../docs/runbooks/MAIL_WORKER_CUTOVER.md)
+for credentials, bounded retries, shutdown, rollback and resource limits. Production
+still uses the old cron until that approved handoff is complete.
