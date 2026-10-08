@@ -24,6 +24,7 @@ migrations = load(SCRIPT_DIR / "hosted_migrations.py", "hosted_migrations")
 render = load(ROOT / "scripts/deploy/render_release.py", "render_release")
 ci = load(ROOT / "scripts/deploy/check_release_ci.py", "check_release_ci")
 activator = load(ROOT / "scripts/deploy/set_render_autodeploy_off.py", "set_render_autodeploy_off")
+protection = load(ROOT / "scripts/deploy/check_branch_protection.py", "check_branch_protection")
 
 
 class ProductionGates(unittest.TestCase):
@@ -70,6 +71,35 @@ class ProductionGates(unittest.TestCase):
             activator.check_identity(dict(allowed, ownerId="untrusted"), service_id)
         with self.assertRaises(Exception):
             activator.check_identity(dict(allowed, id="different"), service_id)
+
+    def test_unreviewed_main_ruleset_must_refuse_release(self):
+        approved = dict(
+            id=protection.RULESET_ID, enforcement="active",
+            conditions={"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+            bypass_actors=[],
+            rules=[
+                {"type": "pull_request",
+                 "parameters": {"required_approving_review_count": 1,
+                                "dismiss_stale_reviews_on_push": True}},
+                {"type": "required_status_checks",
+                 "parameters": {"strict_required_status_checks": True,
+                                "required_status_checks": [
+                                    {"context": x} for x in sorted(protection.REQUIRED_CHECKS)
+                                ]}},
+            ],
+        )
+        protection.validate(approved)
+        with self.assertRaises(protection.Unprotected):
+            protection.validate({**approved, "bypass_actors": [{"actor_id": 1}]})
+        for bad in [0, None]:
+            rule = dict(approved)
+            rule["rules"] = [dict(approved["rules"][0],
+                parameters={"required_approving_review_count": bad,
+                            "dismiss_stale_reviews_on_push": True}), approved["rules"][1]]
+            with self.assertRaises((protection.Unprotected, TypeError)):
+                protection.validate(rule)
+        with self.assertRaises(protection.Unprotected):
+            protection.validate({**approved, "rules": approved["rules"][:1]})
 
     def test_all_four_services(self):
         self.assertEqual(len({r for _, r in render.SERVICES}), 4)
