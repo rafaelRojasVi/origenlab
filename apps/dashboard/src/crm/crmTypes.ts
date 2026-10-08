@@ -129,6 +129,19 @@ export interface OpportunityCardData {
     /** The organization version «Confirmar institución» compares against. */
     version?: number | null;
   } | null;
+  /** Human confirmation of the requesting-institution role on THIS case.
+   * Undefined only for an older API response; null means no current role.
+   * This is independent of organization.confirmation.
+   */
+  requesting_institution_confirmation?: string | null;
+  /** Machine-suggested 'mentioned' relationships, not a confirmed requester.
+   * Each row ID allows an operator to make a recorded case-role decision.
+   */
+  pending_institution_mentions?: {
+    opportunity_organization_id: string;
+    organization_id: string;
+    name: string;
+  }[];
   other_organizations: { organization_id: string; name: string; role: string }[];
   contact: {
     source: "crm_participant" | "gmail_recipient";

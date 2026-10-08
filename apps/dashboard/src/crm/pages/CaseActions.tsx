@@ -37,6 +37,7 @@ import { useResource } from "../useResource";
 import { crmHash } from "../crmRoute";
 import { STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
 import { COLUMN_LABEL, CaseMoveForm, type MoveTarget } from "./CaseMove";
+import { AssignInstitution } from "./AssignInstitution";
 import {
   Button,
   ChoiceChips,
@@ -50,7 +51,7 @@ import {
   toast,
 } from "../ui";
 
-export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision";
+export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution";
 
 /** «Cambiar estado» offers these, minus the one the case is in. */
 const MOVE_TARGETS: MoveTarget[] = ["solicitada", "estudio", "enviada", "conversacion", "pausa", "perdida"];
@@ -210,6 +211,29 @@ export function CaseActions({
             </Button>
           )}
         </div>
+      ) : null}
+
+      {!card.organization && !closed ? (
+        mayDecide ? (
+          <Button
+            aria-expanded={mode === "institution"}
+            onClick={() => toggle("institution")}
+          >
+            Asignar institución solicitante
+          </Button>
+        ) : (
+          <DisabledAction id="drawer-assign-institution" reason={WRITE_DISABLED_REASON}>
+            Asignar institución solicitante
+          </DisabledAction>
+        )
+      ) : null}
+
+      {mode === "institution" && !card.organization && !decideReason ? (
+        <AssignInstitution
+          card={card}
+          onCancel={() => setMode(null)}
+          onDone={finished}
+        />
       ) : null}
 
       {card.organization?.confirmation === "machine_proposed" ? (

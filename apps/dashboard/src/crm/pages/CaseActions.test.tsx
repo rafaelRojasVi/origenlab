@@ -10,6 +10,7 @@ import { clearResourceCache } from "../useResource";
 import { Toaster } from "../ui";
 import { DecideCases, proposeDecision } from "./DecideCases";
 import { PipelinePage } from "./PipelinePage";
+import { moveRefusal } from "./CaseMove";
 
 // Every value below is invented; the repository is public.
 const CASE = "11111111-1111-4111-8111-111111111111";
@@ -141,6 +142,29 @@ function stubApi({
       }
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/notes`) return json(notes);
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/mail-documents`) return json(mailDocuments);
+      if (call.method === "GET" && path === "/v2/organizations") {
+        return json({
+          items: [{
+            organization_id: ORG,
+            name: "Universidad Ficticia",
+            confirmation: "confirmed",
+            relationship_roles: [],
+          }],
+          total: 1, limit: 50, offset: 0,
+          facets: null,
+        });
+      }
+      if (call.method === "GET" && path === `/v2/workspace/organizations/${ORG}/authoring`) {
+        return json({
+          organization: {
+            id: ORG,
+            name: "Universidad Ficticia",
+            confirmation: "confirmed",
+            status: "active",
+            version: 3,
+          },
+        });
+      }
       if (call.method === "POST") {
         const answer = onPost(call, posts++);
         if (answer) return json(answer.body, answer.status ?? 200);
@@ -222,6 +246,70 @@ describe("case command helpers", () => {
     expect(mayRunCaseCommands(session("viewer"))).toBe(false);
     expect(mayRunCaseCommands(session("sales", { cases: false }))).toBe(false);
     expect(mayRunCaseCommands({ kind: "loading" })).toBe(false);
+  });
+});
+
+describe("stage movement requesting-institution prerequisites", () => {
+  it("refuses En estudio without an institution before any command is sent", () => {
+    const request = card({ stage: "lead", organization: null });
+    expect(moveRefusal(request, "estudio")).toMatch(/asociar y confirmar/);
+  });
+
+  it("refuses En estudio when the institution is only machine-proposed", () => {
+    const request = card({
+      stage: "qualifying",
+      organization: { organization_id: ORG, name: "Universidad Ficticia", confirmation: "machine_proposed", version: 3 },
+      requesting_institution_confirmation: "machine_proposed",
+    });
+    expect(moveRefusal(request, "estudio")).toMatch(/confirmar la institución/);
+  });
+
+  it("allows a confirmed requester even if the organization profile is still proposed", () => {
+    const request = card({
+      stage: "qualifying",
+      organization: {
+        organization_id: ORG,
+        name: "Universidad Ficticia",
+        confirmation: "machine_proposed",
+        version: 3,
+      },
+      requesting_institution_confirmation: "confirmed",
+    });
+    expect(moveRefusal(request, "estudio")).toBeNull();
+  });
+
+  it("refuses an unconfirmed requester even if the organization profile is confirmed", () => {
+    const request = card({
+      stage: "qualifying",
+      requesting_institution_confirmation: "machine_proposed",
+    });
+    expect(moveRefusal(request, "estudio")).toMatch(/confirmar la institución/);
+  });
+
+  it("allows En estudio when the requesting institution is confirmed", () => {
+    const request = card({ stage: "lead" });
+    expect(moveRefusal(request, "estudio")).toBeNull();
+  });
+
+  it("allows resuming a paused case in its current stage without revalidating the requester", () => {
+    const request = card({
+      stage: "qualified",
+      organization: null,
+      requesting_institution_confirmation: null,
+      open_tasks: [{
+        task_id: TASK,
+        title: "Retomar",
+        due_at: "2099-01-01T09:00:00Z",
+        version: 1,
+        owner: null,
+      }],
+    });
+    expect(moveRefusal(request, "estudio", new Date("2026-10-08T12:00:00Z"))).toBeNull();
+  });
+
+  it("allows closing an unidentified request without an institution", () => {
+    const request = card({ stage: "lead", organization: null });
+    expect(moveRefusal(request, "perdida")).toBeNull();
   });
 });
 
@@ -495,6 +583,161 @@ describe("case drawer actions", () => {
     expect(within(dialog).getByRole("button", { name: "Marcar ganada" })).toBeDisabled();
     expect(within(dialog).getByText("Se marca ganada desde «Enviada» o «Conversación»")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Cambiar estado" })).toBeEnabled();
+  });
+
+  it("assigns an existing confirmed requesting institution with audited versions", async () => {
+    const unassigned = card({ stage: "lead", organization: null });
+    const assigned = card({ stage: "lead", version: 6 });
+
+    const calls = stubApi({
+      pipelines: [page([unassigned]), page([assigned])],
+      onPost: (call) =>
+        call.path === "/v2/commands/add-case-organization"
+          ? { body: receipt("add_case_organization", "lead", 6, "aaaaaaaa-0003") }
+          : undefined,
+    });
+
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución solicitante" }));
+
+    const form = within(dialog).getByRole("region", {
+      name: "Asignar institución solicitante",
+    });
+    fireEvent.change(within(form).getByPlaceholderText("Nombre de la institución"), {
+      target: { value: "Universidad Ficticia" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Buscar" }));
+
+    const selector = await within(form).findByRole("combobox", {
+      name: "Institución solicitante",
+    });
+    fireEvent.change(selector, { target: { value: ORG } });
+    fireEvent.change(within(form).getByRole("textbox", { name: "Motivo de la asignación" }), {
+      target: { value: "Solicitante verificado por el operador." },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Confirmar asignación" }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.path === "/v2/commands/add-case-organization")).toBe(true),
+    );
+    const post = calls.find((c) => c.path === "/v2/commands/add-case-organization")!;
+    expect(post.method).toBe("POST");
+    expect(post.key).toBeTruthy();
+    expect(post.body).toEqual({
+      opportunity_id: CASE,
+      opportunity_version: 5,
+      organization_id: ORG,
+      organization_version: 3,
+      role: "requesting_institution",
+      note: "Solicitante verificado por el operador.",
+    });
+    await waitFor(() =>
+      expect(calls.filter((c) => c.path === "/v2/workspace/pipeline")).toHaveLength(2),
+    );
+  });
+
+
+  it("promotes a reviewed machine mention to the requesting role without inventing an organization", async () => {
+    const relation = "77777777-7777-4777-8777-777777777777";
+    const unassigned = card({
+      stage: "lead",
+      organization: null,
+      pending_institution_mentions: [{
+        opportunity_organization_id: relation,
+        organization_id: ORG,
+        name: "Universidad Ficticia",
+      }],
+    });
+    const assigned = card({ stage: "lead", version: 6 });
+    const calls = stubApi({
+      pipelines: [page([unassigned]), page([assigned])],
+      onPost: (call) =>
+        call.path === "/v2/commands/set-case-organization-role"
+          ? { body: receipt("set_case_organization_role", "lead", 6, "aaaaaaaa-0005") }
+          : undefined,
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución solicitante" }));
+    const review = within(dialog).getByRole("form", { name: "Revisar institución mencionada" });
+    const confirm = within(review).getByRole("button", { name: "Confirmar rol de solicitante" });
+    expect(confirm).toBeDisabled();
+
+    fireEvent.change(within(review).getByRole("combobox", { name: "Institución mencionada" }), {
+      target: { value: relation },
+    });
+    fireEvent.change(within(review).getByRole("textbox", { name: "Evidencia de que es solicitante" }), {
+      target: { value: "El correo original identifica expresamente a la institución como solicitante." },
+    });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.path === "/v2/commands/set-case-organization-role")).toBe(true),
+    );
+    const post = calls.find((c) => c.path === "/v2/commands/set-case-organization-role")!;
+    expect(post.method).toBe("POST");
+    expect(post.key).toBeTruthy();
+    expect(post.body).toEqual({
+      opportunity_id: CASE,
+      opportunity_version: 5,
+      opportunity_organization_id: relation,
+      role: "requesting_institution",
+      note: "El correo original identifica expresamente a la institución como solicitante.",
+    });
+    expect(calls.some((c) => c.path === "/v2/commands/add-case-organization")).toBe(false);
+    await waitFor(() =>
+      expect(calls.filter((c) => c.path === "/v2/workspace/pipeline")).toHaveLength(2),
+    );
+  });
+
+  it("passes an explicit supplier exception only when the operator wrote one", async () => {
+    const relation = "77777777-7777-4777-8777-777777777777";
+    const calls = stubApi({
+      pipelines: [page([card({
+        stage: "lead",
+        organization: null,
+        pending_institution_mentions: [{
+          opportunity_organization_id: relation,
+          organization_id: ORG,
+          name: "Universidad Ficticia",
+        }],
+      })])],
+      onPost: (call) =>
+        call.path === "/v2/commands/set-case-organization-role"
+          ? { body: receipt("set_case_organization_role", "lead", 6, "aaaaaaaa-0006") }
+          : undefined,
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución solicitante" }));
+    const review = within(dialog).getByRole("form", { name: "Revisar institución mencionada" });
+    fireEvent.change(within(review).getByRole("combobox", { name: "Institución mencionada" }), {
+      target: { value: relation },
+    });
+    fireEvent.change(within(review).getByRole("textbox", { name: "Evidencia de que es solicitante" }), {
+      target: { value: "Confirmado mediante orden de compra." },
+    });
+    fireEvent.change(within(review).getByRole("textbox", { name: "Excepción de proveedor (solo si corresponde)" }), {
+      target: { value: "También es proveedor, pero en esta compra figura como cliente." },
+    });
+    fireEvent.click(within(review).getByRole("button", { name: "Confirmar rol de solicitante" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.path === "/v2/commands/set-case-organization-role")).toBe(true),
+    );
+    const post = calls.find((c) => c.path === "/v2/commands/set-case-organization-role")!;
+    expect(post.body).toMatchObject({
+      supplier_exception_reason: "También es proveedor, pero en esta compra figura como cliente.",
+    });
+  });
+
+  it("prevents a viewer from assigning a requesting institution", async () => {
+    const calls = stubApi({
+      pipelines: [page([card({ stage: "lead", organization: null })])],
+    });
+    const dialog = await openDrawer(session("viewer"));
+    expect(within(dialog).getByRole("button", {
+      name: "Asignar institución solicitante",
+    })).toBeDisabled();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
   it("confirms an institution «por confirmar» with its version, then refetches", async () => {

@@ -207,7 +207,8 @@ _SQL_PIPELINE_OPPS = """
      order by op.updated_at desc, op.id
 """
 _SQL_PIPELINE_CASE_ORGS = """
-    select oo.opportunity_id::text, oo.organization_id::text, oo.role,
+    select oo.id::text as opportunity_organization_id,
+           oo.opportunity_id::text, oo.organization_id::text, oo.role,
            o.name, oo.confirmation, o.version as organization_version
       from crm.opportunity_organization oo
       join crm.organization o on o.id = oo.organization_id
@@ -696,6 +697,24 @@ def compose_pipeline(
                 "closed_at": opp.get("closed_at"),
                 "close_reason": opp.get("close_reason"),
                 "organization": organization,
+                # Confirmation of this institution's ROLE on this case, not its
+                # general CRM organization-record confirmation.
+                "requesting_institution_confirmation": (
+                    requesting[0].get("confirmation") if requesting else None
+                ),
+                # Machines may suggest "mentioned", not a requesting institution.
+                # The exact row ID permits a separate, human-reviewed role decision.
+                "pending_institution_mentions": [
+                    {
+                        "opportunity_organization_id": o["opportunity_organization_id"],
+                        "organization_id": o["organization_id"],
+                        "name": o["name"],
+                    }
+                    for o in orgs_by_opp.get(oid, [])
+                    if o["role"] == "mentioned"
+                    and o["confirmation"] == "machine_proposed"
+                    and o.get("opportunity_organization_id")
+                ],
                 "other_organizations": [
                     {"organization_id": o["organization_id"], "name": o["name"], "role": o["role"]}
                     for o in orgs_by_opp.get(oid, [])
