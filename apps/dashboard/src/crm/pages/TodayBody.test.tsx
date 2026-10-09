@@ -192,6 +192,25 @@ afterEach(() => {
 });
 
 describe("Hoy actions", () => {
+  it("a done task leaves at once, before any reload, and a refused one stays", async () => {
+    const c = card({ open_tasks: [task("t1", "2026-10-06T12:00:00Z", 2), task("t2", "2026-10-05T12:00:00Z", 1)] });
+    stub();
+    const onChanged = renderToday([c]);
+    const row = screen.getByTestId("today-task-t1");
+    fireEvent.click(within(row).getByRole("button", { name: "Hecho" }));
+    await waitFor(() => expect(row).toHaveClass("crm-row-out"));
+    await waitFor(() => expect(screen.queryByTestId("today-task-t1")).not.toBeInTheDocument());
+    expect(onChanged).toHaveBeenCalled(); // the reload confirms behind it
+
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(
+      JSON.stringify({ error: { code: "conflict", details: { code: "stale_version" } } }), { status: 409 }))));
+    const kept = screen.getByTestId("today-task-t2");
+    fireEvent.click(within(kept).getByRole("button", { name: "Hecho" }));
+    expect(await screen.findByTestId("toaster")).toBeInTheDocument();
+    expect(kept).not.toHaveClass("crm-row-out");
+    expect(screen.getByTestId("today-task-t2")).toBeInTheDocument();
+  });
+
   it("completes a task, and postpones another a week by writing it again and cancelling it", async () => {
     const calls = stub();
     const c = card({ open_tasks: [task("t1", "2026-10-06T12:00:00Z", 2), task("t2", "2026-10-05T12:00:00Z", 1)] });
