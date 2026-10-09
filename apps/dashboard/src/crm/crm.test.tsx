@@ -186,7 +186,8 @@ describe("PipelinePage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Otra Institución/ }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Institución sin confirmar")).toBeInTheDocument();
-    expect(within(dialog).getByLabelText("Abrir PDF r1 en Drive (enlace de registro local)")).toHaveAttribute("href", "https://drive.google.com/file/d/f1/view");
+    expect(within(dialog).queryByText(/registro local/)).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Abrir PDF r1 en Drive")).toHaveAttribute("href", "https://drive.google.com/file/d/f1/view");
     // No signed-in session here: every case action stays disabled (CaseActions.test.tsx covers the rest).
     for (const name of ["Cambiar estado", "Marcar ganada", "Registrar seguimiento", "Nueva revisión", "Confirmar institución"]) {
       expect(within(dialog).getByRole("button", { name })).toBeDisabled();

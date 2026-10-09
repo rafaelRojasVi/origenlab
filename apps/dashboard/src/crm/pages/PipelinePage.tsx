@@ -360,8 +360,8 @@ export function OpportunityCard({
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-good hover:underline"
-              aria-label={`Abrir carpeta de Drive de ${card.organization?.name ?? card.title} (enlace de registro local)`}
-              title="Enlace tomado del registro local del archivo de Drive; no se consultó Drive en vivo."
+              aria-label={`Abrir carpeta de Drive de ${card.organization?.name ?? card.title}`}
+              title="Carpeta del caso en Drive"
             >
               <Dot ok /> Drive <span className="text-[9px] font-semibold uppercase text-ink-faint">local</span>
             </a>

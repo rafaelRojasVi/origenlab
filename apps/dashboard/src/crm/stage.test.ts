@@ -47,6 +47,7 @@ describe("stage basis", () => {
     const c = card({});
     expect(stageBasis(c)).toBe("historical_import");
     expect(stageDisplay(c).label).toBe(HISTORICAL_STAGE_LABEL);
+    expect(HISTORICAL_STAGE_LABEL).toBe("Enviada · sin decidir"); // never the import's word «histórico»
     expect(stageDisplay(c).title).toMatch(/No confirma el estado comercial actual/);
   });
 

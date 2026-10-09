@@ -72,13 +72,13 @@ describe("board helpers", () => {
   });
 
   it("says one thing per card: the blocker, or the gaps", () => {
-    expect(boardStatusLine(card())).toEqual({ text: "histórico · sin Drive", tone: "warn" });
+    expect(boardStatusLine(card())).toEqual({ text: "sin decidir · sin Drive", tone: "warn" });
     expect(boardStatusLine(card({ contact: null }, null))).toEqual({ text: "sin cotización · sin contacto", tone: "warn" });
     expect(
       boardStatusLine(card({ attention: [{ code: "canonical_undetermined", label: "Hay más de una revisión vigente", blocking: true }] })),
     ).toEqual({ text: "Hay más de una revisión vigente", tone: "bad" });
     const done = card({ drive_folder: { source: "archive_ledger", folder_id: "f", url: "https://drive.example.cl/f" }, status: "ok" });
-    expect(boardStatusLine(done)).toEqual({ text: "histórico · al día", tone: "neutral" });
+    expect(boardStatusLine(done)).toEqual({ text: "sin decidir · al día", tone: "neutral" });
   });
 });
 

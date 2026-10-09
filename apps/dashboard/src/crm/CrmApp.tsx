@@ -172,9 +172,6 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
         </a>
         <span aria-hidden="true" className="hidden h-4 w-px bg-line-strong lg:inline" />
         <span className="hidden text-[13px] text-ink-muted lg:inline">Panel comercial</span>
-        <span className="hidden shrink-0 rounded-full border border-line bg-canvas-sunken px-2 py-px text-[11px] font-medium text-ink-muted xl:inline" data-testid="crm-read-only-chip">
-          Sin envíos · datos locales
-        </span>
         {contactAddressesRedacted(session) ? (
           <span
             className="min-w-0 truncate rounded-full border border-warn/30 bg-warn-bg px-2 py-px text-[11px] font-medium text-warn"
