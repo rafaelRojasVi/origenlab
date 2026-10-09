@@ -160,9 +160,38 @@ describe("Tablero", () => {
     );
     const c = card({}, "2026-10-01T12:00:00Z");
     const ids = (xs: OpportunityCardData[]) => xs.map((x) => x.opportunity_id);
-    expect(ids(sortCards([a, b, c], "recent", NOW))).toEqual(ids([c, a, b]));
-    expect(ids(sortCards([a, b, c], "oldest", NOW))).toEqual(ids([b, a, c]));
+    // A customer reply is new case activity even when the PDF was sent months ago.
+    expect(ids(sortCards([a, b, c], "recent", NOW))).toEqual(ids([b, c, a]));
+    expect(ids(sortCards([a, b, c], "oldest", NOW))).toEqual(ids([a, b, c]));
     expect(ids(sortCards([a, b, c], "replied", NOW))[0]).toBe(b.opportunity_id);
+  });
+
+  it("places a recently moved conversation first even when its quotation is old", () => {
+    const moved = card({
+      title: "Caso actualizado hoy",
+      stage: "negotiating",
+      updated_at: "2026-10-05T19:00:00Z",
+      last_contact: { inbound: null, outbound: null },
+    }, "2026-05-01T12:00:00Z");
+    const notMoved = card({
+      title: "Caso de cotización reciente",
+      stage: "negotiating",
+      updated_at: "2026-09-26T19:00:00Z",
+      last_contact: { inbound: null, outbound: null },
+    }, "2026-09-25T12:00:00Z");
+    const sorted = sortCards([notMoved, moved], "recent", NOW);
+    expect(sorted.map((c) => c.opportunity_id)).toEqual([moved.opportunity_id, notMoved.opportunity_id]);
+    render(<Board cards={[notMoved, moved]} onOpen={() => undefined} now={NOW} />);
+    const col = screen.getByTestId("board-column-conversacion");
+    expect(within(col).getAllByRole("article")[0])
+      .toBe(within(col).getByTestId(`board-card-${moved.opportunity_id}`));
+  });
+
+  it("keeps cases with unknown activity dates last even under oldest", () => {
+    const noDate = card({ created_at: null, updated_at: null }, null);
+    const known = card({ updated_at: "2026-10-05T12:00:00Z" }, null);
+    expect(sortCards([noDate, known], "recent", NOW)[0]).toBe(known);
+    expect(sortCards([noDate, known], "oldest", NOW)[0]).toBe(known);
   });
 
   it("puts a case with a later open task under «En pausa», and a due one back in its column", () => {
