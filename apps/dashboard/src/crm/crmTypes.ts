@@ -109,6 +109,23 @@ export interface CaseQuoteCandidatesResponse {
   candidates: CrossThreadQuoteCandidate[];
 }
 
+/** Read-only PO suggestion, matched conservatively against a quotation's recipient. */
+export interface CasePurchaseOrderCandidate {
+  source_record_id: string;
+  gmail_url: string;
+  subject: string | null;
+  sent_at: string | null;
+  filename: string;
+  document_sha256: string;
+  purchase_order_number: string | null;
+  reason: string;
+}
+
+export interface CasePurchaseOrderCandidatesResponse {
+  opportunity_id: string;
+  candidates: CasePurchaseOrderCandidate[];
+}
+
 /** One email on a case's thread, as «último contacto» shows it. */
 export interface MailTouch {
   /** Display header evidence; not a confirmed CRM person. Never a mailbox address. */
