@@ -192,6 +192,26 @@ afterEach(() => {
 });
 
 describe("Hoy actions", () => {
+  it("a row the reload still returns comes back instead of staying hidden", async () => {
+    stub();
+    const replied = card(
+      { stage: "quoting", version: 4, last_contact: { outbound: null, inbound: { at: "2026-10-02T12:00:00Z", subject: null, url: null } } },
+      "2026-09-01T12:00:00Z",
+    );
+    const tree = (items: OpportunityCardData[]) => (
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <TodayBody items={items} navigate={() => undefined} onChanged={() => undefined} now={NOW} />
+        <Toaster />
+      </AuthSessionContext.Provider>
+    );
+    const { rerender } = render(tree([replied]));
+    fireEvent.click(screen.getByRole("button", { name: "Pasar a Conversación" }));
+    await waitFor(() => expect(screen.queryByText(/Respondió el/)).not.toBeInTheDocument());
+    // The reload: the case moved stage but is still a reply to answer.
+    rerender(tree([{ ...replied, stage: "negotiating", version: 5 }]));
+    expect(await screen.findByText(/Respondió el/)).toBeInTheDocument();
+  });
+
   it("a done task leaves at once, before any reload, and a refused one stays", async () => {
     const c = card({ open_tasks: [task("t1", "2026-10-06T12:00:00Z", 2), task("t2", "2026-10-05T12:00:00Z", 1)] });
     stub();

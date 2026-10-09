@@ -234,7 +234,7 @@ function TaskRow({
   now: Date;
 }) {
   const { card, task, overdueDays } = due;
-  const { leaving, gone, leave } = useLeave();
+  const { leaving, gone, leave } = useLeave(due);
   const actions = useTaskActions(due, now, onChanged, leave);
   if (gone) return null;
 
@@ -369,7 +369,7 @@ function ReplyRow({
   now: Date;
 }) {
   const { card } = reply;
-  const { leaving, gone, leave } = useLeave();
+  const { leaving, gone, leave } = useLeave(reply);
   const [busy, setBusy] = useState<null | "move" | "skip">(null);
   const keys = useRef([newCaseCommandKey()]);
   const skipKey = useRef(newCaseCommandKey());
@@ -605,7 +605,7 @@ function FollowUpRow({
   const write = thread ?? composeInSharedMailbox(to, `Seguimiento cotización N° ${quote}`.trim());
   const since = f.byEmail ? "desde tu último correo" : "desde la cotización";
   const [menuOpen, setMenuOpen] = useState(false);
-  const { leaving, gone, leave } = useLeave();
+  const { leaving, gone, leave } = useLeave(f);
   if (gone) return null;
   return (
     <li
@@ -823,7 +823,7 @@ function OrgsPanel({
 
 function OrgRow({ org, navigate, mayAuthor, onChanged }: { org: OrgToConfirm; navigate: Navigate; mayAuthor: boolean; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
-  const { leaving, gone, leave } = useLeave();
+  const { leaving, gone, leave } = useLeave(org);
   const key = useRef(newCaseCommandKey());
   const suggested = displayName(org.cases[0]).name;
 
