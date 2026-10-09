@@ -29,8 +29,8 @@ class _CountingAuto(AutoMailRules):
         return {"applied": 0, "refused": 0, "pending": 0}
 
 
-def test_only_r1_and_r2_are_ever_automatic() -> None:
-    assert AUTOMATIC_RULES == {"R1", "R2"}
+def test_only_safe_intake_and_link_rules_are_automatic() -> None:
+    assert AUTOMATIC_RULES == {"R1", "R2", "R7"}
 
 
 def test_interval_zero_or_no_commands_never_starts_the_timer() -> None:

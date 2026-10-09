@@ -104,6 +104,7 @@ union all select 'catalog.supplier_terms', count(*)::text from catalog.supplier_
 union all select 'catalog.fx_rate', count(*)::text from catalog.fx_rate
 union all select 'catalog.cost_parameter', count(*)::text from catalog.cost_parameter
 union all select 'evidence.document_line', count(*)::text from evidence.document_line
+union all select 'evidence.triage_review', count(*)::text from evidence.triage_review
 ;
 
 commit;

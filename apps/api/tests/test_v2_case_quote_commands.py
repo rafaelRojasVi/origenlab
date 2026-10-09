@@ -207,6 +207,46 @@ def test_a_sent_quote_is_recorded_from_a_linked_gmail_message(db, world) -> None
                                              ["operator"], True)
 
 
+def test_live_gmail_pdf_with_unrelated_triage_annotation_is_recordable(db, world) -> None:
+    """Captured Gmail PDFs remain valid after asynchronous classification wrote its metadata.
+
+    Regression: formerly any evidence.assertion row caused document_reference_not_staged,
+    even when it was message_triage and no historical document staging existed.
+    """
+    case_id = _case_at(db, world)
+    with _owner(db) as conn:
+        conn.execute(
+            "insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+            "values (%s, 'message_triage', 'triage:v1', '{}'::jsonb)",
+            (world["record_id"],),
+        )
+    before_version = _version(db, case_id)
+    recorded = _record(db, world, case_id, world["sha_a"], world["number"])
+    assert recorded["assertion_id"] is None
+    assert recorded["revision_no"] == 1
+    assert recorded["opportunity_version"] == before_version + 1
+    assert _one(db, "select count(*) from evidence.assertion where source_record_id = %s "
+                "and kind = 'message_triage' and resolution = 'unresolved'",
+                world["record_id"])[0] == 1
+
+
+def test_staged_record_with_another_pdf_reference_cannot_bypass_assertion(db, world) -> None:
+    """An unrelated staged PDF reference cannot authorize recording an unasserted PDF."""
+    case_id = _case_at(db, world)
+    with _owner(db) as conn:
+        conn.execute(
+            "insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+            "values (%s, 'document_reference', %s, '{}'::jsonb)",
+            (world["record_id"], f"sha256:{world['sha_b']}"),
+        )
+    before = _events(db)
+    assert _refused(_record, db, world, case_id, world["sha_a"], world["number"]) == (
+        409, "document_reference_not_staged"
+    )
+    assert _events(db) == before
+    assert _one(db, "select count(*) from crm.quote where opportunity_id = %s", case_id)[0] == 0
+
+
 def test_a_new_revision_replaces_the_one_it_names(db, world) -> None:
     case_id = _case_at(db, world)
     first = _record(db, world, case_id, world["sha_a"], world["number"])

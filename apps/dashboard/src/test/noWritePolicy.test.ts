@@ -46,25 +46,35 @@ describe("dashboard read-only policy", () => {
   //    of person/organization/contact_point, affiliations, product lines, supplier candidates,
   //    and notes. All go through the API's Deciding role check (sales or admin).
   //  - mailRules.ts's POST to the two admin-only email → cases commands: apply the rules'
-  //    automatic actions (re-planned upstream; the browser sends no action) and undo one.
-  //  - caseCommands.ts's POST to exactly four commercial-case commands, the case drawer's
+  //    automatic actions (re-planned upstream; the browser sends no action) and undo one, and the
+  //    mail-triage verdict (review-triage: approve, correct or reject a suggestion; sales or admin).
+  //  - caseCommands.ts's POST to exactly six commercial-case commands and the three W11 task
+  //    commands (create/complete/cancel-task, «En pausa hasta…» / «Retomar ahora»), the case drawer's
   //    «Cambiar etapa» (advance-case-stage), «Marcar ganada» (record-case-won), «Elegir revisión
   //    vigente» (resolve-current-revision) and «Registrar cotización» / «Nueva revisión»
-  //    (record-case-quotation). Sales or admin upstream; no other case command (open, link
-  //    evidence, institution, interest) is named.
+  //    (record-case-quotation), plus audited institution assignment/review commands.
+  //    Sales or admin upstream. Cross-thread quote evidence can be manually linked after
+  //    review; opening a case and recording an interest remain outside the browser.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const MAIL_RULES_FILE = "../crm/mailRules.ts";
   const MAIL_RULES_PATHS = [
     "/v2/commands/apply-mail-rules",
     "/v2/commands/undo-mail-rule-action",
     "/v2/commands/set-auto-mail-rules",
+    "/v2/commands/review-triage",
   ];
   const CASE_COMMANDS_FILE = "../crm/caseCommands.ts";
   const CASE_COMMAND_PATHS = [
     "/v2/commands/advance-case-stage",
+    "/v2/commands/add-case-organization",
+    "/v2/commands/set-case-organization-role",
     "/v2/commands/record-case-won",
     "/v2/commands/resolve-current-revision",
     "/v2/commands/record-case-quotation",
+    "/v2/commands/link-case-evidence",
+    "/v2/commands/create-task",
+    "/v2/commands/complete-task",
+    "/v2/commands/cancel-task",
   ];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";

@@ -170,9 +170,13 @@ def disposable_database():
 
 @needs_worker_db
 def test_the_worker_login_proves_it_is_the_worker(disposable_database) -> None:
+    from origenlab_worker.database import ALLOWED_WORKER_DEFINERS, _DEFINER_PROBE
+
     with open_worker_db(local_test_target(worker_dsn(disposable_database))) as db, db.connection.cursor() as cur:
         cur.execute("select current_user, current_setting('application_name')")
         assert cur.fetchone() == ("origenlab_worker", "origenlab-worker-gmail-sync")
+        cur.execute(_DEFINER_PROBE)
+        assert {row[0] for row in cur.fetchall()} == set(ALLOWED_WORKER_DEFINERS)
 
 
 @needs_worker_db

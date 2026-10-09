@@ -1,7 +1,7 @@
 [project]
 name = "origenlab-worker"
 version = "0.1.0"
-description = "V2 worker — Gmail capture into the hosted V2 database (Phase 4a)"
+description = "V2 worker — Gmail capture into the hosted V2 database (Phase 4a) and mail triage"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,6 +11,12 @@ dependencies = [
     "origenlab-api",
     "psycopg[binary]>=3.2",
     "boto3>=1.36",
+    # The mail-triage queue. Pinned exactly: supabase/migrations/20261006180000 vendors this
+    # version's schema, and tests/test_queue_schema.py fails if the two ever differ. An upgrade is
+    # a new migration (Procrastinate's own sql/migrations/*.sql) in the same change as this pin.
+    "procrastinate[psycopg]==3.10.0",
+    # The triage's model stage (triage_model.py): the official SDK, as apps/api's enrichment uses.
+    "anthropic>=1.11.0",
 ]
 
 [project.scripts]

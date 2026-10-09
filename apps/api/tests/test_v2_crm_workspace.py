@@ -20,6 +20,7 @@ from origenlab_api.v2.crm_workspace import (
     compose_drive_archive,
     compose_pipeline,
     last_contacts,
+    live_drive_overview,
     load_drive_ledgers,
 )
 from origenlab_api.v2.crm_workspace_routes import workspace_router
@@ -230,6 +231,64 @@ def test_card_carries_the_versions_the_drawer_actions_compare_against() -> None:
     }
 
 
+
+def test_confirmed_requester_is_independent_of_organization_profile_confirmation() -> None:
+    """An unconfirmed organization record does not undo a human-confirmed case role."""
+    role = {
+        "opportunity_organization_id": "relation-1",
+        "opportunity_id": "o1",
+        "organization_id": "org-1",
+        "role": "requesting_institution",
+        "name": "Institución Ejemplo",
+        "confirmation": "confirmed",
+        "organization_version": 2,
+    }
+    card = compose_pipeline(
+        [_opp("o1", organization_confirmation="machine_proposed")],
+        [role], [], [], {}, [], {},
+    )[0]
+    assert card["organization"]["confirmation"] == "machine_proposed"
+    assert card["requesting_institution_confirmation"] == "confirmed"
+
+
+def test_machine_proposed_mention_stays_unassigned_but_can_be_reviewed() -> None:
+    """A machine proposal stays 'mentioned' and carries an exact reviewable row ID."""
+    mention = {
+        "opportunity_organization_id": "relation-2",
+        "opportunity_id": "o1",
+        "organization_id": "org-2",
+        "role": "mentioned",
+        "name": "Institución Mencionada",
+        "confirmation": "machine_proposed",
+        "organization_version": 1,
+    }
+    card = compose_pipeline(
+        [_opp("o1", stage="lead", organization_id=None, organization_name=None)],
+        [mention], [], [], {}, [], {},
+    )[0]
+    assert card["organization"] is None
+    assert card["requesting_institution_confirmation"] is None
+    assert card["pending_institution_mentions"] == [{
+        "opportunity_organization_id": "relation-2",
+        "organization_id": "org-2",
+        "name": "Institución Mencionada",
+    }]
+    assert any(x["code"] == "no_requesting_institution" for x in card["attention"])
+
+
+def test_no_unreviewed_row_id_is_fabricated_for_a_mentioned_institution() -> None:
+    """Older input projections without relationship IDs cannot expose a write target."""
+    card = compose_pipeline(
+        [_opp("o1", stage="lead", organization_id=None, organization_name=None)],
+        [{
+            "opportunity_id": "o1", "organization_id": "org-2",
+            "role": "mentioned", "name": "Institución Mencionada",
+            "confirmation": "machine_proposed",
+        }], [], [], {}, [], {},
+    )[0]
+    assert card["pending_institution_mentions"] == []
+
+
 def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None:
     """«Último contacto»: the newest email OrigenLab sent and the newest it received."""
     rows = [
@@ -259,7 +318,7 @@ def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None
         "outbound": {"at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
                      "url": "https://mail.google.com/mail/u/0/#all/m3"},
         "inbound": {"at": "2026-09-10T09:00:00+00:00", "subject": "Re: Cotización",
-                    "url": "https://mail.google.com/mail/u/0/#all/m2"},
+                    "url": "https://mail.google.com/mail/u/0/#all/m2", "sender_name": "Persona"},
     }
     assert out["o2"]["outbound"]["at"] == "2026-08-01T12:00:00+00:00"
     assert out["o2"]["inbound"] is None
@@ -267,6 +326,13 @@ def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None
     cards = compose_pipeline([_opp("o1"), _opp("o3")], [], [], [], {}, [], {}, out)
     assert cards[0]["last_contact"] == out["o1"]
     assert cards[1]["last_contact"] == {"outbound": None, "inbound": None}
+
+
+def test_mail_display_name_never_contains_an_address() -> None:
+    for sender in ('person@example.invalid', '"person@example.invalid" <person@example.invalid>'):
+        touch = last_contacts([{"opportunity_id": "o", "sent_at": "2026-10-01T12:00:00Z",
+                                "sender": sender, "comms_direction": "inbound"}])["o"]["inbound"]
+        assert "sender_name" not in touch
 
 
 def test_two_active_revisions_block_the_case() -> None:
@@ -365,6 +431,34 @@ def test_drive_folders_are_newest_quote_number_first_not_text_order(tmp_path: Pa
     ]
 
 
+def test_overview_drive_counts_live_worker_links_even_when_not_in_boot_ledger() -> None:
+    """The first quote after boot is archived asynchronously, without a Render API restart."""
+    old_ledger = {SHA_A: object()}
+    status = live_drive_overview(
+        {SHA_A, SHA_B, SHA_C},
+        {SHA_A, SHA_B},  # SHA_B was just filed by the worker after API startup.
+        old_ledger,  # no refreshed archive_links.jsonl on the API container.
+    )
+    assert status == {
+        "configured": True, "documents": 2,
+        "revisions_with_drive_file": 2, "revisions_total": 3,
+    }
+    assert live_drive_overview({SHA_A}, set(), {}) == {
+        "configured": False, "documents": 0,
+        "revisions_with_drive_file": 0, "revisions_total": 1,
+    }
+
+
+def test_overview_provenance_matches_running_v2_system() -> None:
+    assert ENTITY_NOTES["messages"]["provenance"] == "partial"
+    assert "sincronizador Gmail V2" in ENTITY_NOTES["messages"]["note"]
+    assert ENTITY_NOTES["products"]["provenance"] == "imported"
+    assert ENTITY_NOTES["tasks"]["provenance"] == "partial"
+    assert ENTITY_NOTES["persons"]["provenance"] == "partial"
+    assert ENTITY_NOTES["drive_links_in_crm"]["provenance"] == "imported"
+    assert "evidence.source_record" in ENTITY_NOTES["drive_links_in_crm"]["note"]
+
+
 def test_every_counted_entity_has_a_provenance_note() -> None:
     from origenlab_api.v2.crm_workspace import _COUNT_SQL
 
@@ -394,6 +488,8 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/person-suggestions",
         "/v2/workspace/opportunities/{opportunity_id}/notes",
         "/v2/workspace/opportunities/{opportunity_id}/mail-documents",
+        "/v2/workspace/opportunities/{opportunity_id}/quote-candidates",
+        "/v2/workspace/opportunities/{opportunity_id}/purchase-order-candidates",
         "/v2/workspace/mail-sync",
         "/v2/workspace/mail-quote-numbers",
         "/v2/workspace/marketing",

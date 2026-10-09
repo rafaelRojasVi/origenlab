@@ -278,6 +278,29 @@ class V2CatalogReads:
         r["supplier"] = {"id": r["supplier_organization_id"], "display_name": r.pop("supplier_name")}
         return r
 
+    def suppliers(self) -> dict[str, Any]:
+        """Every organization with at least one cost observation, with its active products by kind.
+
+        The catalog filter's supplier list: one row per supplier, so the dropdown never depends on
+        which products a page happened to show. `by_kind` keys are product kinds, `null` unclassified.
+        """
+        with self._read() as cur:
+            cur.execute(
+                "select o.id, o.name, p.product_kind, count(distinct p.id) as n "
+                "from catalog.supplier_product sp "
+                "join crm.organization o on o.id = sp.supplier_organization_id "
+                "join catalog.product p on p.id = sp.product_id and p.active "
+                "group by o.id, o.name, p.product_kind order by o.name, p.product_kind"
+            )
+            rows = self._rows(cur)
+        by_id: dict[Any, dict[str, Any]] = {}
+        for r in rows:
+            s = by_id.setdefault(r["id"], {"id": r["id"], "display_name": r["name"], "products": 0, "by_kind": {}})
+            s["products"] += r["n"]
+            s["by_kind"][r["product_kind"] or "unclassified"] = r["n"]
+        items = sorted(by_id.values(), key=lambda s: s["display_name"].casefold())
+        return _plain({"items": items})
+
     def supplier_terms(self, organization_id: uuid.UUID) -> dict[str, Any] | None:
         with self._read() as cur:
             cur.execute(

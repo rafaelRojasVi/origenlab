@@ -549,6 +549,8 @@ def test_a_refused_win_reaches_the_operator_as_its_own_status_and_code() -> None
 @pytest.mark.parametrize("path", [
     "/v2/commands/advance-case-stage", "/v2/commands/record-case-won",
     "/v2/commands/resolve-current-revision", "/v2/commands/record-case-quotation",
+    # The W11 task commands («En pausa hasta…», «Retomar ahora») mount behind the same switch.
+    "/v2/commands/create-task", "/v2/commands/complete-task", "/v2/commands/cancel-task",
 ])
 def test_the_case_commands_the_dashboard_uses_are_404_without_their_switch(
     monkeypatch, path: str
@@ -1634,8 +1636,10 @@ def test_a_case_may_not_reach_qualified_without_a_confirmed_requester(
 
 
 @_needs_db
+@pytest.mark.parametrize("close_reason", ["nunca respondieron y no sé qué institución era",
+                                           "No es una solicitud: Es una oferta del proveedor"])
 def test_a_case_that_never_found_its_requester_can_still_be_abandoned(
-    disposable_database, world
+    disposable_database, world, close_reason
 ) -> None:
     """The defect this slice found: `lost` and `abandoned` are reachable from `lead`.
 
@@ -1652,7 +1656,7 @@ def test_a_case_that_never_found_its_requester_can_still_be_abandoned(
         ADVANCE_CASE_STAGE,
         AdvanceCaseStageBody(
             opportunity_id=case_id, opportunity_version=version, stage="abandoned",
-            close_reason="nunca respondieron y no sé qué institución era",
+            close_reason=close_reason,
             note="cierre",
         ),
         world,
@@ -1666,7 +1670,9 @@ def test_a_case_that_never_found_its_requester_can_still_be_abandoned(
         )
         stage, organization_id, closed, reason = cur.fetchone()
         assert (stage, organization_id, closed) == ("abandoned", None, True)
-        assert reason.startswith("nunca respondieron")
+        assert reason == close_reason
+        cur.execute("select count(*) from crm.opportunity_evidence where opportunity_id = %s and unlinked_at is null", (case_id,))
+        assert cur.fetchone()[0] == 1  # Closing a false positive preserves its origin evidence.
 
 
 @_needs_db

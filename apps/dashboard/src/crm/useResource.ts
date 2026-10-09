@@ -73,11 +73,15 @@ function remember(load: object, key: string, data: unknown): void {
   byKey.set(key, data);
 }
 
-/** `deps` re-run the read (e.g. a filter changed); `reload` re-runs it on demand. */
+/**
+ * `deps` re-run the read (e.g. a filter changed); `reload` re-runs it on demand. The third value,
+ * `refreshing`, is true while a read runs behind data already on screen — so a page can say
+ * «Actualizando…» after a save instead of looking as if nothing happened.
+ */
 export function useResource<T>(
   load: () => Promise<T>,
   deps: readonly unknown[] = [],
-): [ResourceState<T>, () => void] {
+): [ResourceState<T>, () => void, boolean, (change: (data: T) => T) => void] {
   const key = memoryKey(sessionScope(useAuthSession().session), deps);
   const [state, setState] = useState<ResourceState<T>>(() => {
     const kept = recall<T>(load, key);
@@ -86,12 +90,26 @@ export function useResource<T>(
   const loadRef = useRef(load);
   loadRef.current = load;
   const [tick, setTick] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  // Which read is on screen: a reload of the same read keeps it while the new answer comes; a new
+  // read (another filter, another session) starts from «loading» so stale rows never show.
+  const shownRef = useRef<unknown>(null);
 
   useEffect(() => {
     let alive = true;
     const loader = loadRef.current;
     const kept = recall<T>(loader, key);
-    setState(kept === undefined ? { kind: "loading" } : { kind: "ready", data: kept });
+    const identity = [key, ...deps];
+    const sameRead =
+      Array.isArray(shownRef.current) &&
+      (shownRef.current as unknown[]).length === identity.length &&
+      (shownRef.current as unknown[]).every((v, i) => Object.is(v, identity[i]));
+    shownRef.current = identity;
+    setState((prev) => {
+      if (kept !== undefined) return { kind: "ready", data: kept };
+      return sameRead && prev.kind === "ready" ? prev : { kind: "loading" };
+    });
+    setRefreshing(true);
     loader()
       .then((data) => {
         if (key !== null) remember(loader, key, data);
@@ -100,6 +118,9 @@ export function useResource<T>(
       .catch((err: unknown) => {
         if (key !== null) memory.get(loader)?.delete(key);
         if (alive) setState(classifyError(err));
+      })
+      .finally(() => {
+        if (alive) setRefreshing(false);
       });
     return () => {
       alive = false;
@@ -108,5 +129,18 @@ export function useResource<T>(
   }, [tick, key, ...deps]);
 
   const reload = useCallback(() => setTick((n) => n + 1), []);
-  return [state, reload];
+  // Apply a write's known effect to the answer on screen at once, before the reload confirms it.
+  // A page calls `reload` right after, so a wrong guess lives only until the server answers.
+  const patch = useCallback(
+    (change: (data: T) => T) => {
+      setState((prev) => {
+        if (prev.kind !== "ready") return prev;
+        const data = change(prev.data);
+        if (key !== null) remember(loadRef.current, key, data);
+        return { kind: "ready", data };
+      });
+    },
+    [key],
+  );
+  return [state, reload, refreshing && state.kind === "ready", patch];
 }

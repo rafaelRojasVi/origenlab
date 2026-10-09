@@ -1,5 +1,6 @@
 /**
- * The case drawer's «Acciones»: change stage, mark won, register a follow-up, confirm the
+ * The case drawer's «Acciones»: change state (`CaseMove.tsx`: a stage, «Perdida» with its reason,
+ * «En pausa hasta…»), resume a pause, mark won, register a follow-up, confirm the
  * institution, choose the current revision of a quote, register a quote already sent and a new
  * revision of one. Every write goes through its owning client (`caseCommands.ts` for the four case
  * commands, `crmAuthoringApi.ts` for the institution and the note) and is followed by a refetch
@@ -9,22 +10,20 @@
  * (`sales`/`admin`); otherwise each action stays a `DisabledAction` with its reason. The API
  * remains the authority: a refusal is shown in Spanish, never swallowed.
  */
-import { useCallback, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { fetchCaseMailDocuments } from "../crmApi";
 import { confirmOrganizationRecord } from "../authoring/crmAuthoringApi";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import {
-  CLOSING_STAGES,
   TERMINAL_STAGES,
-  advanceCaseStage,
   caseRefusalText,
   isStaleRefusal,
   markCaseWon,
   mayBeWonFrom,
   mayCarryAQuote,
   newCaseCommandKey,
-  nextStages,
   recordCaseQuotation,
+  resumeCase,
   resolveCurrentRevision,
   undeterminedQuotes,
   useMayRunCaseCommands,
@@ -36,15 +35,28 @@ import {
 import type { OpportunityCardData } from "../crmTypes";
 import { useResource } from "../useResource";
 import { crmHash } from "../crmRoute";
-import { STAGE_LABEL } from "../stage";
-import { DisabledAction, FormField, SelectInput, TextInput, TextareaInput, WRITE_DISABLED_REASON, fmtDate } from "../ui";
+import { STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
+import { COLUMN_LABEL, CaseMoveForm, type MoveTarget } from "./CaseMove";
+import { AssignInstitution } from "./AssignInstitution";
+import { CrossThreadQuoteReview } from "./CrossThreadQuoteReview";
+import { PurchaseOrderReview } from "./PurchaseOrderReview";
+import {
+  Button,
+  ChoiceChips,
+  DisabledAction,
+  FormField,
+  SelectInput,
+  TextInput,
+  TextareaInput,
+  WRITE_DISABLED_REASON,
+  fmtDate,
+  toast,
+} from "../ui";
 
-const PRIMARY =
-  "h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50";
-const SECONDARY =
-  "h-7 rounded-md border border-line bg-canvas-raised px-2.5 text-xs font-medium text-ink hover:bg-canvas-sunken disabled:cursor-not-allowed disabled:opacity-50";
+export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution";
 
-type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision";
+/** «Cambiar estado» offers these, minus the one the case is in. */
+const MOVE_TARGETS: MoveTarget[] = ["solicitada", "estudio", "enviada", "conversacion", "pausa", "perdida"];
 
 interface Outcome {
   tone: "good" | "bad" | "warn";
@@ -55,21 +67,36 @@ export function CaseActions({
   card,
   onChanged,
   onFollowUp,
+  initial = null,
 }: {
   card: OpportunityCardData;
   /** Refetch the pipeline after any recorded write, or a refusal that says the view is stale. */
   onChanged: () => void;
   /** Open the note form of the drawer's note list. */
   onFollowUp: () => void;
+  /** A form to open on arrival — a card dropped on «Ganada» opens «Marcar ganada». */
+  initial?: { mode: Exclude<Mode, null>; target?: MoveTarget } | null;
 }) {
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
-  const [mode, setMode] = useState<Mode>(null);
+  const [mode, setMode] = useState<Mode>(initial?.mode ?? null);
+  const [crossThreadOpen, setCrossThreadOpen] = useState(false);
+  const [purchaseOrderOpen, setPurchaseOrderOpen] = useState(false);
+  const [target, setTarget] = useState<MoveTarget | null>(initial?.target ?? null);
+  const [initialReason, setInitialReason] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  useEffect(() => {
+    if (initial) {
+      setMode(initial.mode);
+      setTarget(initial.target ?? null);
+    }
+  }, [initial]);
 
   const closed = TERMINAL_STAGES.has(card.stage) || card.closed_at != null;
   const hasVersion = typeof card.version === "number";
-  const stages = nextStages(card.stage);
+  const here = boardColumnOf(card);
+  const targets = MOVE_TARGETS.filter((t) => t !== here || t === "pausa");
+  const until = pausedUntil(card);
   const revisions = winnableRevisions(card);
   const undetermined = undeterminedQuotes(card);
 
@@ -83,17 +110,18 @@ export function CaseActions({
   const wonReason =
     decideReason ??
     (!mayBeWonFrom(card.stage)
-      ? "Se marca ganada desde «Cotizando» o «Negociando»"
+      ? "Se marca ganada desde «Enviada» o «Conversación»"
       : revisions.length === 0
         ? "No hay una revisión enviada y vigente"
         : null);
 
   const quoteReason =
-    decideReason ?? (!mayCarryAQuote(card.stage) ? "Se registra en un caso en «Cotizando» o «Negociando»" : null);
+    decideReason ?? (!mayCarryAQuote(card.stage) ? "Se registra en un caso «Enviada» o en «Conversación»" : null);
   const revisionReason =
     quoteReason ?? (revisions.length === 0 ? "No hay una revisión enviada y vigente que reemplazar" : null);
 
   function toggle(next: Exclude<Mode, null>) {
+    setInitialReason(null);
     setOutcome(null);
     setMode(mode === next ? null : next);
   }
@@ -101,7 +129,10 @@ export function CaseActions({
   /** Show what happened; close the form unless it was refused; refetch when anything moved. */
   function finished(next: Outcome, refetch: boolean) {
     setOutcome(next);
-    if (next.tone !== "bad") setMode(null);
+    if (next.tone !== "bad") {
+      setMode(null);
+      toast(next.tone === "good" ? "Cambio registrado." : "Registrado en parte: revisa el detalle en el caso.", next.tone);
+    }
     if (refetch) onChanged();
   }
 
@@ -109,27 +140,34 @@ export function CaseActions({
     <div className="space-y-3" data-testid="case-actions">
       <div className="flex flex-wrap gap-2">
         {decideReason ? (
+          <DisabledAction id="drawer-not-request" reason={decideReason}>No es una solicitud</DisabledAction>
+        ) : (
+          <Button onClick={() => { setOutcome(null); setMode("stage"); setTarget("perdida"); setInitialReason("No es una solicitud"); }}>
+            No es una solicitud
+          </Button>
+        )}
+        {decideReason ? (
           <DisabledAction id="drawer-advance" reason={decideReason}>
-            Cambiar etapa
+            Cambiar estado
           </DisabledAction>
         ) : (
-          <button type="button" className={SECONDARY} aria-expanded={mode === "stage"} onClick={() => toggle("stage")}>
-            Cambiar etapa
-          </button>
+          <Button aria-expanded={mode === "stage"} onClick={() => toggle("stage")}>
+            Cambiar estado
+          </Button>
         )}
         {wonReason ? (
           <DisabledAction id="drawer-won" reason={wonReason}>
             Marcar ganada
           </DisabledAction>
         ) : (
-          <button type="button" className={SECONDARY} aria-expanded={mode === "won"} onClick={() => toggle("won")}>
+          <Button aria-expanded={mode === "won"} onClick={() => toggle("won")}>
             Marcar ganada
-          </button>
+          </Button>
         )}
         {mayAuthor ? (
-          <button type="button" className={SECONDARY} onClick={onFollowUp}>
+          <Button onClick={onFollowUp}>
             Registrar seguimiento
-          </button>
+          </Button>
         ) : (
           <DisabledAction id="drawer-followup" reason={WRITE_DISABLED_REASON}>
             Registrar seguimiento
@@ -140,20 +178,24 @@ export function CaseActions({
             Registrar cotización
           </DisabledAction>
         ) : (
-          <button type="button" className={SECONDARY} aria-expanded={mode === "quotation"} onClick={() => toggle("quotation")}>
+          <Button aria-expanded={mode === "quotation"} onClick={() => toggle("quotation")}>
             Registrar cotización
-          </button>
+          </Button>
         )}
         {revisionReason ? (
           <DisabledAction id="drawer-revision" reason={revisionReason}>
             Nueva revisión
           </DisabledAction>
         ) : (
-          <button type="button" className={SECONDARY} aria-expanded={mode === "revision"} onClick={() => toggle("revision")}>
+          <Button aria-expanded={mode === "revision"} onClick={() => toggle("revision")}>
             Nueva revisión
-          </button>
+          </Button>
         )}
       </div>
+
+      {until && !closed ? (
+        <PauseBanner card={card} until={until} mayDecide={!decideReason} onDone={finished} />
+      ) : null}
 
       {undetermined.length > 0 ? (
         <div
@@ -168,10 +210,48 @@ export function CaseActions({
               Elegir revisión vigente
             </DisabledAction>
           ) : (
-            <button type="button" className={PRIMARY} aria-expanded={mode === "resolve"} onClick={() => toggle("resolve")}>
+            <Button variant="primary" aria-expanded={mode === "resolve"} onClick={() => toggle("resolve")}>
               Elegir revisión vigente
-            </button>
+            </Button>
           )}
+        </div>
+      ) : null}
+
+      {!card.organization && !closed ? (
+        mayDecide ? (
+          <Button
+            aria-expanded={mode === "institution"}
+            onClick={() => toggle("institution")}
+          >
+            Asignar institución solicitante
+          </Button>
+        ) : (
+          <DisabledAction id="drawer-assign-institution" reason={WRITE_DISABLED_REASON}>
+            Asignar institución solicitante
+          </DisabledAction>
+        )
+      ) : null}
+
+      {mode === "institution" && !card.organization && !decideReason ? (
+        <AssignInstitution
+          card={card}
+          onCancel={() => setMode(null)}
+          onDone={finished}
+        />
+      ) : null}
+
+      {!closed && mayDecide && card.quotes.length === 0 &&
+        /(?<![A-Za-z0-9])(?:CN)?0?\d{4}[-–/]\d{2}/i.test(card.title) ? (
+        <div className="space-y-2">
+          <Button aria-expanded={crossThreadOpen} onClick={() => setCrossThreadOpen(!crossThreadOpen)}>
+            Buscar cotización enviada en otro hilo
+          </Button>
+          {crossThreadOpen ? (
+            <CrossThreadQuoteReview card={card} onDone={(outcome, refetch) => {
+              finished(outcome, refetch);
+              if (outcome.tone === "good") setCrossThreadOpen(false);
+            }} />
+          ) : null}
         </div>
       ) : null}
 
@@ -180,10 +260,55 @@ export function CaseActions({
       ) : null}
 
       {mode === "stage" && hasVersion ? (
-        <StageForm card={card} stages={stages} onCancel={() => setMode(null)} onDone={finished} />
+        <div className="space-y-3 rounded-md border border-line p-3" data-testid="case-state-picker">
+          <ChoiceChips
+            label="Nuevo estado"
+            options={targets.map((t) => COLUMN_LABEL[t])}
+            value={target ? COLUMN_LABEL[target] : null}
+            onChange={(label) => setTarget(targets.find((t) => COLUMN_LABEL[t] === label) ?? null)}
+          />
+          {target ? (
+            <CaseMoveForm
+              key={`${target}:${initialReason ?? ""}`}
+              card={card}
+              target={target}
+              initialReason={initialReason}
+              onCancel={() => {
+                setTarget(null);
+                setMode(null);
+              }}
+              onDone={(o, refetch) => {
+                if (o.tone !== "bad") setTarget(null);
+                finished(o, refetch);
+              }}
+            />
+          ) : (
+            <p className="text-[11px] text-ink-muted">
+              Elige a qué estado pasa el caso. «Ganada» es «Marcar ganada»: necesita la revisión aceptada.
+            </p>
+          )}
+        </div>
       ) : null}
-      {mode === "won" && hasVersion ? (
+      {card.stage === "negotiating" && revisions.length > 0 && !decideReason ? (
+        <div className="space-y-2">
+          <Button aria-expanded={purchaseOrderOpen} onClick={() => {
+            setPurchaseOrderOpen(!purchaseOrderOpen); setOutcome(null);
+          }}>Buscar OC recibida en otro hilo</Button>
+          {purchaseOrderOpen ? (
+            <PurchaseOrderReview card={card} onDone={(outcome, refetch) => {
+              finished(outcome, refetch);
+              if (outcome.tone === "good") setPurchaseOrderOpen(false);
+            }} />
+          ) : null}
+        </div>
+      ) : null}
+      {mode === "won" && hasVersion && !wonReason ? (
         <WonForm card={card} revisions={revisions} onCancel={() => setMode(null)} onDone={finished} />
+      ) : null}
+      {mode === "won" && wonReason ? (
+        <p role="alert" className="rounded-md border border-warn/40 bg-warn-bg px-3 py-2 text-xs text-warn" data-testid="case-won-refused">
+          No se puede marcar ganada: {wonReason}.
+        </p>
       ) : null}
       {mode === "resolve" && hasVersion && undetermined.length > 0 ? (
         <ResolveForm card={card} quotes={undetermined} onCancel={() => setMode(null)} onDone={finished} />
@@ -224,86 +349,52 @@ function receiptLine(step: WonStep, n: number, total: number): string {
   return `${total > 1 ? `${n}/${total} · ` : ""}${step.label}: registrado${replay} · recibo ${step.receipt.command_receipt_id.slice(0, 8)}`;
 }
 
-function StageForm({
+/** «En pausa hasta …» with «Retomar ahora»: cancels the tasks that keep the case paused. */
+function PauseBanner({
   card,
-  stages,
-  onCancel,
+  until,
+  mayDecide,
   onDone,
 }: {
   card: OpportunityCardData;
-  stages: string[];
-  onCancel: () => void;
+  until: string;
+  mayDecide: boolean;
   onDone: (o: Outcome, refetch: boolean) => void;
 }) {
-  const [stage, setStage] = useState(stages[0] ?? "");
-  const [closeReason, setCloseReason] = useState("");
-  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const keyRef = useRef(newCaseCommandKey());
-  const closing = CLOSING_STAGES.has(stage);
-  const ready = stage !== "" && note.trim() !== "" && (!closing || closeReason.trim() !== "") && !busy;
+  const keysRef = useRef<Record<string, string>>({});
+  const tasks = pauseTasks(card);
+  const first = tasks[0];
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!ready) return;
+  async function resume() {
     setBusy(true);
+    for (const t of tasks) keysRef.current[t.task_id] ??= newCaseCommandKey();
     try {
-      const receipt = await advanceCaseStage(
-        {
-          opportunity_id: card.opportunity_id,
-          opportunity_version: card.version as number,
-          stage,
-          close_reason: closing ? closeReason.trim() : null,
-          note: note.trim(),
-        },
-        keyRef.current,
-      );
-      onDone(
-        {
-          tone: "good",
-          lines: [receiptLine({ label: `Etapa → ${STAGE_LABEL[receipt.stage ?? stage] ?? receipt.stage ?? stage}`, receipt }, 1, 1)],
-        },
-        true,
-      );
+      const steps = await resumeCase(tasks, "Retomado antes de la fecha.", keysRef.current);
+      onDone({ tone: "good", lines: steps.map((s, i) => receiptLine(s, i + 1, steps.length)) }, true);
     } catch (err) {
-      keyRef.current = newCaseCommandKey();
-      onDone({ tone: "bad", lines: [caseRefusalText(err)] }, isStaleRefusal(err));
+      keysRef.current = {};
+      onDone({ tone: "bad", lines: [caseRefusalText(err)] }, true);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="space-y-2 rounded-md border border-line p-3" aria-label="Cambiar etapa">
-      <p className="text-[11px] text-ink-muted">
-        Etapa actual: <strong className="text-ink">{STAGE_LABEL[card.stage] ?? card.stage}</strong>. Sólo se ofrecen los cambios
-        permitidos desde ella.
-      </p>
-      <FormField label="Nueva etapa" htmlFor="case-stage" required>
-        <SelectInput
-          id="case-stage"
-          value={stage}
-          onChange={setStage}
-          options={stages.map((s) => ({ value: s, label: STAGE_LABEL[s] ?? s }))}
-        />
-      </FormField>
-      {closing ? (
-        <FormField label="Motivo de cierre" htmlFor="case-close-reason" required hint="Cerrar un caso necesita un motivo.">
-          <TextareaInput id="case-close-reason" value={closeReason} onChange={setCloseReason} maxLength={2000} rows={2} />
-        </FormField>
+    <div
+      className="flex flex-wrap items-center gap-2 rounded-md border border-info/40 bg-info-bg/50 px-3 py-2 text-xs"
+      data-testid="case-paused"
+    >
+      <span className="text-ink">
+        <strong className="font-semibold">En pausa hasta {fmtDate(until)}</strong>
+        {first ? <span className="text-ink-muted"> · {first.title}</span> : null}
+      </span>
+      {mayDecide ? (
+        <Button className="ml-auto" onClick={() => void resume()} busy={busy} busyLabel="Retomando…">
+          Retomar ahora
+        </Button>
       ) : null}
-      <FormField label="Nota" htmlFor="case-stage-note" required hint="Por qué cambia la etapa; queda en la auditoría del caso.">
-        <TextareaInput id="case-stage-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
-      </FormField>
-      <div className="flex justify-end gap-2">
-        <button type="button" className={SECONDARY} onClick={onCancel} disabled={busy}>
-          Cancelar
-        </button>
-        <button type="submit" className={PRIMARY} disabled={!ready}>
-          {busy ? "Registrando…" : "Cambiar etapa"}
-        </button>
-      </div>
-    </form>
+    </div>
   );
 }
 
@@ -321,6 +412,9 @@ function WonForm({
   const [revisionId, setRevisionId] = useState(revisions[0]?.revision_id ?? "");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  // One key per step for this form, reused on a retry so a double press or a lost answer can
+  // never record twice; renewed only after a refusal.
+  const keysRef = useRef({ advance: newCaseCommandKey(), won: newCaseCommandKey() });
   const twoSteps = card.stage === "quoting";
   const chosen = revisions.find((r) => r.revision_id === revisionId) ?? null;
   const ready = chosen !== null && note.trim() !== "" && !busy;
@@ -334,10 +428,13 @@ function WonForm({
         { opportunity_id: card.opportunity_id, stage: card.stage, version: card.version as number },
         { quote_id: chosen.quote_id, revision_no: chosen.revision_no },
         note.trim(),
+        keysRef.current,
       );
       onDone({ tone: "good", lines: steps.map((s, i) => receiptLine(s, i + 1, steps.length)) }, true);
     } catch (err) {
       const done = err instanceof WonFlowError ? err.done : [];
+      // A step already recorded keeps its key (a retry replays it); the refused one gets a new key.
+      keysRef.current = { advance: done.length > 0 ? keysRef.current.advance : newCaseCommandKey(), won: newCaseCommandKey() };
       const total = twoSteps ? 2 : 1;
       if (done.length > 0) {
         // The first step stays recorded: say exactly that, and refetch so the drawer shows it.
@@ -383,12 +480,12 @@ function WonForm({
         <TextareaInput id="case-won-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
       </FormField>
       <div className="flex justify-end gap-2">
-        <button type="button" className={SECONDARY} onClick={onCancel} disabled={busy}>
+        <Button onClick={onCancel} disabled={busy}>
           Cancelar
-        </button>
-        <button type="submit" className={PRIMARY} disabled={!ready}>
-          {busy ? "Registrando…" : "Marcar ganada"}
-        </button>
+        </Button>
+        <Button type="submit" variant="primary" disabled={!ready} busy={busy} busyLabel="Registrando…">
+          {"Marcar ganada"}
+        </Button>
       </div>
     </form>
   );
@@ -492,12 +589,12 @@ function ResolveForm({
         <TextareaInput id="case-resolve-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
       </FormField>
       <div className="flex justify-end gap-2">
-        <button type="button" className={SECONDARY} onClick={onCancel} disabled={busy}>
+        <Button onClick={onCancel} disabled={busy}>
           Cancelar
-        </button>
-        <button type="submit" className={PRIMARY} disabled={!ready}>
-          {busy ? "Registrando…" : "Elegir revisión vigente"}
-        </button>
+        </Button>
+        <Button type="submit" variant="primary" disabled={!ready} busy={busy} busyLabel="Registrando…">
+          {"Elegir revisión vigente"}
+        </Button>
       </div>
     </form>
   );
@@ -645,12 +742,12 @@ function QuotationForm({
         <TextareaInput id="case-quotation-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
       </FormField>
       <div className="flex justify-end gap-2">
-        <button type="button" className={SECONDARY} onClick={onCancel} disabled={busy}>
+        <Button onClick={onCancel} disabled={busy}>
           Cancelar
-        </button>
-        <button type="submit" className={PRIMARY} disabled={!ready}>
-          {busy ? "Registrando…" : title}
-        </button>
+        </Button>
+        <Button type="submit" variant="primary" disabled={!ready} busy={busy} busyLabel="Registrando…">
+          {title}
+        </Button>
       </div>
     </form>
   );
@@ -691,11 +788,14 @@ function ConfirmInstitution({
         «{org.name ?? "Sin nombre"}» está por confirmar: la propuso una regla de correo y ninguna persona la revisó.
       </span>
       {mayAuthor && version !== null ? (
-        <button type="button" className={PRIMARY} onClick={() => void confirm()} disabled={busy}>
-          {busy ? "Confirmando…" : "Confirmar institución"}
-        </button>
+        <Button variant="primary" onClick={() => void confirm()} busy={busy} busyLabel="Confirmando…">
+          Confirmar institución
+        </Button>
       ) : (
-        <DisabledAction id="drawer-confirm-org" reason={WRITE_DISABLED_REASON}>
+        <DisabledAction
+          id="drawer-confirm-org"
+          reason={mayAuthor ? "Falta la versión de la institución; recarga la página e inténtalo de nuevo" : WRITE_DISABLED_REASON}
+        >
           Confirmar institución
         </DisabledAction>
       )}

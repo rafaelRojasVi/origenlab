@@ -1,24 +1,31 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCaseNotes, fetchPipeline } from "../crmApi";
+import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
-import { CaseActions } from "./CaseActions";
-import { Board } from "./PipelineBoard";
+import { CaseActions, type Mode } from "./CaseActions";
+import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
+import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
+import { DecideCases } from "./DecideCases";
+import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import {
+  HISTORICAL_STAGE_LABEL,
   ORIGIN_LABEL,
   STATUS_LABEL,
-  byLatestSent,
+  byLatestActivity,
   matchesQuery,
+  pausedUntil,
   stageBasis,
   stageDisplay,
+  type BoardColumnKey,
 } from "../stage";
 import {
   Badge,
-  DisabledAction,
   Drawer,
   EmptyState,
   ExternalLink,
+  Modal,
   PageHeader,
   ResourceGate,
   SearchInput,
@@ -26,11 +33,11 @@ import {
   Segmented,
   Skeleton,
   StatLine,
-  WRITE_DISABLED_REASON,
   fmtDate,
   initials,
   LocalDriveLink,
   SuggestedTag,
+  toast,
 } from "../ui";
 import { useResource } from "../useResource";
 import { splitAddress } from "../address";
@@ -39,13 +46,17 @@ type StatusFilter = "all" | "blocked" | "pending" | "ok";
 type View = "cards" | "board";
 
 export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: string | null }) {
-  const [state, reload] = useResource(fetchPipeline);
+  const [state, reload, refreshing, patch] = useResource(fetchPipeline);
+  // Move the card the moment a command is recorded; the reload that follows confirms the rest.
+  useEffect(
+    () => onCaseReceipt((receipt) => patch((data) => ({ ...data, items: applyCaseReceipt(data.items, receipt) }))),
+    [patch],
+  );
   return (
     <div className="space-y-3">
       <PageHeader
         title="Oportunidades"
         subtitle="Casos comerciales del CRM con sus cotizaciones, revisiones, documentos y evidencia de Gmail y Drive."
-        actions={<DisabledAction id="pipeline-new-disabled" reason={WRITE_DISABLED_REASON}>Nueva oportunidad</DisabledAction>}
       />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} cards />}>
         {(data) => (
@@ -54,6 +65,7 @@ export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: 
             driveConfigured={data.drive_configured}
             initialId={initialOpportunityId ?? null}
             onChanged={reload}
+            refreshing={refreshing}
           />
         )}
       </ResourceGate>
@@ -66,17 +78,45 @@ function Pipeline({
   driveConfigured,
   initialId,
   onChanged,
+  refreshing = false,
 }: {
   items: OpportunityCardData[];
   driveConfigured: boolean;
   initialId: string | null;
   /** Refetch the pipeline after a write from the drawer. */
   onChanged: () => void;
+  /** A refetch is running behind the cards on screen. */
+  refreshing?: boolean;
 }) {
   const [status, setStatus] = useState<StatusFilter>("all");
-  const [view, setView] = useState<View>("cards");
+  const [view, setView] = useState<View>("board");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(initialId);
+  // A drawer opened by a drop on «Ganada» arrives with «Marcar ganada» open.
+  const [openWith, setOpenWith] = useState<{ mode: Exclude<Mode, null>; target?: MoveTarget } | null>(null);
+  const [moving, setMoving] = useState<{ id: string; to: MoveTarget } | null>(null);
+  const [sort, setSort] = useState<BoardSort>("recent");
+  const [deciding, setDeciding] = useState(false);
+  const mayDecide = useMayRunCaseCommands();
+
+  function open(id: string | null, withForm: typeof openWith = null) {
+    setOpenWith(withForm);
+    setOpenId(id);
+  }
+
+  /** A card dropped on another Tablero column: ask for what the move needs, or say why not. */
+  function onMove(card: OpportunityCardData, to: BoardColumnKey) {
+    if (to === "ganada") {
+      open(card.opportunity_id, { mode: "won" });
+      return;
+    }
+    const refusal = moveRefusal(card, to);
+    if (refusal) {
+      toast(refusal, "warn");
+      return;
+    }
+    setMoving({ id: card.opportunity_id, to });
+  }
 
   const counts = useMemo(() => {
     const c = { all: items.length, blocked: 0, pending: 0, ok: 0 };
@@ -85,14 +125,17 @@ function Pipeline({
   }, [items]);
 
   const visible = useMemo(
-    () => items.filter((i) => (status === "all" || i.status === status) && matchesQuery(i, q)).sort(byLatestSent),
+    () => items.filter((i) => (status === "all" || i.status === status) && matchesQuery(i, q)).sort(byLatestActivity),
     [items, status, q],
   );
   const quotes = items.reduce((n, i) => n + i.quotes.length, 0);
   const revisions = items.reduce((n, i) => n + i.revision_count, 0);
   const withDrive = items.filter((i) => i.drive_folder).length;
-  const historical = items.filter((i) => stageBasis(i) === "historical_import").length;
-  const open = items.find((i) => i.opportunity_id === openId) ?? null;
+  const historicalCards = useMemo(() => items.filter((i) => stageBasis(i) === "historical_import"), [items]);
+  const historical = historicalCards.length;
+  const paused = items.filter((i) => pausedUntil(i)).length;
+  const openCard = items.find((i) => i.opportunity_id === openId) ?? null;
+  const movingCard = moving ? (items.find((i) => i.opportunity_id === moving.id) ?? null) : null;
 
   if (items.length === 0) {
     return <EmptyState title="Sin oportunidades en el CRM">El CRM no tiene casos comerciales todavía.</EmptyState>;
@@ -106,16 +149,32 @@ function Pipeline({
           { label: "Cotizaciones", value: quotes },
           { label: "Revisiones", value: revisions },
           { label: "Con carpeta Drive", value: `${withDrive}/${items.length}` },
+          { label: "En pausa", value: paused },
           { label: "Bloqueadas", value: counts.blocked, tone: counts.blocked ? "bad" : undefined },
         ]}
       />
-      {historical > 0 ? (
-        <p className="rounded-md border border-line bg-canvas-sunken/70 px-3 py-2 text-xs leading-5 text-ink-muted" data-testid="historical-stage-notice">
-          <strong className="font-semibold text-ink">{historical} de {items.length}</strong> oportunidades muestran «Cotización enviada ·
-          histórico»: la importación histórica fijó su etapa porque encontró la cotización enviada. Eso es un hecho del pasado, no el
-          estado comercial actual, que nadie ha verificado todavía. Los enlaces de Drive vienen del registro local del archivo, no de
-          una consulta en vivo.
-        </p>
+      {historical > 0 && !deciding ? (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-warn/30 bg-warn-bg/50 px-3 py-2.5 text-xs leading-5 text-ink-muted"
+          data-testid="historical-stage-notice"
+        >
+          <p className="min-w-0 flex-1">
+            <strong className="font-semibold text-ink">
+              {historical} de {items.length}
+            </strong>{" "}
+            casos muestran «{HISTORICAL_STAGE_LABEL}»: la importación encontró la cotización enviada, pero nadie ha decidido en qué
+            están hoy.
+          </p>
+          {mayDecide ? (
+            <button
+              type="button"
+              onClick={() => setDeciding(true)}
+              className="inline-flex h-8 shrink-0 items-center rounded-md bg-brand-700 px-3 text-xs font-medium text-white hover:bg-brand-900"
+            >
+              Decidir {historical} casos
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {!driveConfigured ? (
         <p className="rounded-md border border-line bg-canvas-sunken/70 px-3 py-2 text-xs text-ink-muted">
@@ -136,7 +195,23 @@ function Pipeline({
         />
         <SearchInput value={q} onChange={setQ} label="Buscar oportunidades" placeholder="Institución, número, contacto…" />
         <span className="text-xs text-ink-faint tabular-nums">{visible.length} resultados</span>
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {view === "board" ? (
+            <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+              Ordenar
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as BoardSort)}
+                className="h-8 rounded-md border border-line bg-canvas-raised px-2 text-xs text-ink focus:border-brand-600 focus:outline-none"
+              >
+                {(Object.keys(BOARD_SORT_LABEL) as BoardSort[]).map((k) => (
+                  <option key={k} value={k}>
+                    {BOARD_SORT_LABEL[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <Segmented
             label="Vista"
             value={view}
@@ -149,19 +224,46 @@ function Pipeline({
         </div>
       </div>
 
-      {visible.length === 0 ? (
+      {deciding ? (
+        <DecideCases cards={historicalCards} onApplied={onChanged} onClose={() => setDeciding(false)} />
+      ) : visible.length === 0 ? (
         <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado o la búsqueda.</EmptyState>
       ) : view === "cards" ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {visible.map((card, i) => (
-            <OpportunityCard key={card.opportunity_id} card={card} index={i} onOpen={setOpenId} />
+            <OpportunityCard key={card.opportunity_id} card={card} index={i} onOpen={(id) => open(id)} />
           ))}
         </div>
       ) : (
-        <Board cards={visible} onOpen={setOpenId} />
+        <Board cards={visible} onOpen={(id) => open(id)} onMove={mayDecide ? onMove : undefined} sort={sort} />
       )}
 
-      <OpportunityDrawer card={open} onClose={() => setOpenId(null)} onChanged={onChanged} />
+      <OpportunityDrawer
+        card={openCard}
+        onClose={() => open(null)}
+        onChanged={onChanged}
+        refreshing={refreshing}
+        initial={openWith}
+      />
+      {moving && movingCard ? (
+        <Modal title={`Mover a «${COLUMN_LABEL[moving.to]}»`} onClose={() => setMoving(null)}>
+          <p className="mb-3 truncate text-[13px] font-medium text-ink">{movingCard.organization?.name ?? movingCard.title}</p>
+          <CaseMoveForm
+            card={movingCard}
+            target={moving.to}
+            onCancel={() => setMoving(null)}
+            onDone={(o, refetch) => {
+              if (refetch) onChanged();
+              if (o.tone === "bad") {
+                toast(o.lines.join(" "), "bad");
+                return;
+              }
+              setMoving(null);
+              toast(o.tone === "good" ? `Movido a «${COLUMN_LABEL[moving.to]}».` : o.lines.join(" "), o.tone);
+            }}
+          />
+        </Modal>
+      ) : null}
     </>
   );
 }
@@ -346,7 +448,7 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
           <span className="text-warn">PDF no archivado en Drive</span>
         )}
         {rev.gmail ? (
-          <ExternalLink href={rev.gmail.url} label={`Abrir correo de r${rev.revision_no} en Gmail`}>
+          <ExternalLink href={inSharedMailbox(rev.gmail.url) ?? rev.gmail.url} label={`Abrir correo de r${rev.revision_no} en Gmail`}>
             Correo en Gmail
           </ExternalLink>
         ) : (
@@ -366,14 +468,26 @@ function OpportunityDrawer({
   card,
   onClose,
   onChanged,
+  refreshing = false,
+  initial = null,
 }: {
   card: OpportunityCardData | null;
   onClose: () => void;
   onChanged: () => void;
+  refreshing?: boolean;
+  initial?: { mode: Exclude<Mode, null>; target?: MoveTarget } | null;
 }) {
   const mayAuthor = useMayAuthorCrm();
-  const [followUp, setFollowUp] = useState(0);
+  // «Registrar seguimiento» opens the note form of *this* case once. The signal belongs to the
+  // case it was pressed on and is dropped when the drawer closes or another case opens, so the
+  // form never pops open by itself on the next case.
+  const [followUp, setFollowUp] = useState<{ id: string; n: number } | null>(null);
+  const caseId = card?.opportunity_id ?? null;
+  useEffect(() => {
+    setFollowUp((f) => (f && f.id === caseId ? f : null));
+  }, [caseId]);
   if (!card) return null;
+  const openSignal = followUp && followUp.id === card.opportunity_id ? followUp.n : 0;
   const status = STATUS_LABEL[card.status];
   const stage = stageDisplay(card);
   const historical = stageBasis(card) === "historical_import";
@@ -381,6 +495,7 @@ function OpportunityDrawer({
     <Drawer
       open
       onClose={onClose}
+      busy={refreshing}
       title={card.organization?.name ?? "Sin institución"}
       subtitle={
         <span className="flex flex-wrap items-center gap-1.5">
@@ -406,10 +521,21 @@ function OpportunityDrawer({
         <span className="text-[11px] text-ink-faint">Actualizada {fmtDate(card.updated_at)}</span>
       </div>
 
-      <Section title="Siguiente paso sugerido" aside={<SuggestedTag />}>
-        <p className="text-[13px] text-ink">{card.next_action.text}</p>
-        <p className="mt-0.5 text-[11px] text-ink-faint">Sugerido a partir del estado del caso — el CRM no tiene tareas registradas.</p>
-      </Section>
+      {card.next_action.source === "task" ? (
+        <Section title="Próxima tarea">
+          <p className="text-[13px] text-ink">{card.next_action.text}</p>
+          <p className="mt-0.5 text-[11px] text-ink-faint">
+            Para el {fmtDate(card.next_action.due_at)}
+            {card.open_tasks?.[0]?.owner ? ` · ${card.open_tasks[0].owner}` : ""}
+            {(card.open_tasks?.length ?? 0) > 1 ? ` · ${(card.open_tasks?.length ?? 0) - 1} más` : ""}
+          </p>
+        </Section>
+      ) : (
+        <Section title="Siguiente paso sugerido" aside={<SuggestedTag />}>
+          <p className="text-[13px] text-ink">{card.next_action.text}</p>
+          <p className="mt-0.5 text-[11px] text-ink-faint">Sugerido a partir del estado del caso — el caso no tiene tareas abiertas.</p>
+        </Section>
+      )}
 
       {card.attention.length > 0 ? (
         <Section title="Bloqueos y pendientes">
@@ -423,6 +549,25 @@ function OpportunityDrawer({
           </ul>
         </Section>
       ) : null}
+
+      <Section title="Correos del caso">
+        {card.last_contact?.inbound || card.last_contact?.outbound ? (
+          <ul className="space-y-3 text-xs">
+            {(["inbound", "outbound"] as const).map((direction) => {
+              const mail = card.last_contact?.[direction];
+              if (!mail) return null;
+              const url = inSharedMailbox(mail.url);
+              return <li key={direction}>
+                <p className="text-ink-faint">{direction === "inbound" ? "Último recibido" : "Último enviado"} · {fmtDate(mail.at)}</p>
+                <p className="break-words text-ink">{mail.subject || "Sin asunto"}</p>
+                {mail.sender_name ? <p className="text-ink-muted">{mail.sender_name} · nombre en el correo</p> : null}
+                {url ? <ExternalLink href={url} label="Abrir correo en Gmail">Abrir correo en Gmail</ExternalLink> : <p>Sin enlace de Gmail disponible</p>}
+              </li>;
+            })}
+          </ul>
+        ) : <p className="text-xs text-ink-muted">No hay correos capturados disponibles para este caso.</p>}
+        <p className="mt-2 text-[11px] text-ink-faint">La institución y el contacto aún pueden requerir confirmación. El correo vinculado se conserva como evidencia.</p>
+      </Section>
 
       <Section title="Institución y contacto">
         <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-xs">
@@ -499,10 +644,17 @@ function OpportunityDrawer({
       </Section>
 
       <Section title="Acciones">
-        <CaseActions card={card} onChanged={onChanged} onFollowUp={() => setFollowUp((n) => n + 1)} />
+        <CaseActions
+          card={card}
+          initial={initial}
+          onChanged={onChanged}
+          onFollowUp={() =>
+            setFollowUp((f) => ({ id: card.opportunity_id, n: (f && f.id === card.opportunity_id ? f.n : 0) + 1 }))
+          }
+        />
       </Section>
 
-      <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={followUp} />
+      <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={openSignal} />
 
       <p className="font-mono text-[10px] text-ink-faint">opportunity {card.opportunity_id}</p>
     </Drawer>
