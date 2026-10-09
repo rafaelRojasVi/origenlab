@@ -1302,15 +1302,18 @@ describe("Email → cases rules commands and dry run", () => {
   });
 });
 
-describe("Case drawer commands (advance-case-stage, record-case-won, resolve-current-revision, record-case-quotation)", () => {
+describe("Case drawer commands (including add-case-organization)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   const ADVANCE = "https://proxy.test/api/v2/commands/advance-case-stage";
+  const ASSIGN = "https://proxy.test/api/v2/commands/add-case-organization";
+  const REVIEW_ROLE = "https://proxy.test/api/v2/commands/set-case-organization-role";
   const WON = "https://proxy.test/api/v2/commands/record-case-won";
   const RESOLVE = "https://proxy.test/api/v2/commands/resolve-current-revision";
   const QUOTATION = "https://proxy.test/api/v2/commands/record-case-quotation";
+  const LINK_EVIDENCE = "https://proxy.test/api/v2/commands/link-case-evidence";
   const post = (url: string, extra: Record<string, string> = {}, body = "{}") =>
     requestWithOrigin(url, {
       method: "POST",
@@ -1324,7 +1327,7 @@ describe("Case drawer commands (advance-case-stage, record-case-won, resolve-cur
       },
     });
 
-  it.each([ADVANCE, WON, RESOLVE, QUOTATION])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
+  it.each([ADVANCE, ASSIGN, REVIEW_ROLE, WON, RESOLVE, QUOTATION, LINK_EVIDENCE])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
     stubUpstreamFetch();
     const res = await handleRequest(post(url), TEST_ENV);
     expect(res.status).toBe(200);
@@ -1360,9 +1363,6 @@ describe("Case drawer commands (advance-case-stage, record-case-won, resolve-cur
 
   it.each([
     "open-commercial-case",
-    "link-case-evidence",
-    "add-case-organization",
-    "set-case-organization-role",
     "record-case-interest",
     "record-historical-quotation",
     "void-historical-quote-revision",
@@ -1376,7 +1376,7 @@ describe("Case drawer commands (advance-case-stage, record-case-won, resolve-cur
     },
   );
 
-  it.each([WON, RESOLVE, QUOTATION])("never forwards %s as GET", async (url) => {
+  it.each([ASSIGN, REVIEW_ROLE, WON, RESOLVE, QUOTATION])("never forwards %s as GET", async (url) => {
     stubUpstreamFetch();
     const res = await handleRequest(requestWithOrigin(url, { method: "GET" }), TEST_ENV);
     expect(res.status).toBe(403);

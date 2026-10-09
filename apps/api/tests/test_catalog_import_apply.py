@@ -132,6 +132,29 @@ def test_apply_is_idempotent(disposable_database, operator, tmp_path) -> None:
 
 
 @needs_db
+def test_apply_classifies_an_existing_product_only_where_unset(disposable_database, operator, tmp_path) -> None:
+    dsn = disposable_database
+    maker = _maker("Kinds")
+    [(org,)] = _owner(dsn, "insert into crm.organization (kind, name, confirmation) "
+                           "values ('supplier', %s, 'machine_proposed') returning id::text", (maker,))
+    for model, kind in (("Typ 16", None), ("Typ 21", "service")):
+        _owner(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, name, product_kind) "
+                    "values (%s, %s, 'x', %s)", (org, model, kind))
+    plan, sha = _loser_plan(tmp_path, "kinds", [("i Osmometer", "Typ 16", "1.234,00"),
+                                                ("i Cryometer", "Typ 21", "2.345,00"),
+                                                ("Microtubes", "0.01.0003", "12,00")], maker)
+    assert ipl.main(_argv("apply", dsn, plan, sha, tmp_path / "a", operator)) == 0
+    kinds = dict(_owner(dsn, "select model_number, product_kind from catalog.product "
+                             "where manufacturer_organization_id = %s", (org,)))
+    # unset → filled; an operator's kind kept; a new product (position 3 ≤ 15) inserted with its kind
+    assert kinds == {"Typ 16": "equipment", "Typ 21": "service", "0.01.0003": "accessory"}
+    assert _owner(dsn, "select version from catalog.product where manufacturer_organization_id = %s "
+                       "and model_number = 'Typ 16'", (org,)) == [(2,)]
+    assert _owner(dsn, "select count(*) from crm.domain_event e join catalog.product p on p.id = e.aggregate_id "
+                       "where p.manufacturer_organization_id = %s and e.event_type = 'product.updated'", (org,)) == [(1,)]
+
+
+@needs_db
 def test_verify_before_apply_is_a_mismatch(disposable_database, operator, tmp_path) -> None:
     dsn = disposable_database
     plan, sha = _loser_plan(tmp_path, "v", [("Osmometer", "ACME-3", "10,00")], _maker("Verify"))

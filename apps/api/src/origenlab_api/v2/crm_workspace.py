@@ -50,6 +50,28 @@ from origenlab_api.v2.marketing_audience import address_ref, addresses_in
 from origenlab_api.v2.person_suggestions import safe_person_suggestions
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
 
+def _cross_thread_quote_code(title: str) -> str | None:
+    """A single *printed* CN reference, not a fuzzy match or an invented quotation."""
+    matches = {
+        "CN" + match.group(1).zfill(5)
+        for match in re.finditer(
+            r"(?<![A-Za-z0-9])(?:CN)?(0?\d{4})[-–/](\d{2})(?!\d)",
+            title, flags=re.IGNORECASE,
+        )
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _cross_thread_addresses(sender: str | None, recipients: str | None) -> set[str]:
+    """Share a *specific external participant*, not the OrigenLab shared mailbox."""
+    headers = [str(sender or ""), str(recipients or "").replace(";", ",")]
+    return {
+        address.strip().lower()
+        for _, address in getaddresses(headers)
+        if "@" in address and not address.strip().lower().endswith("@origenlab.cl")
+    }
+
+
 GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
 DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/{}"
 DRIVE_FILE_URL = "https://drive.google.com/file/d/{}/view"
@@ -118,9 +140,9 @@ def mail_sync_state(
 ENTITY_NOTES: dict[str, dict[str, str]] = {
     "opportunities": {
         "provenance": "imported",
-        "note": "Casos comerciales: importación histórica de cotizaciones + casos abiertos a mano.",
+        "note": "Casos históricos y nuevas oportunidades creadas por operadores o reglas de Gmail.",
     },
-    "quotes": {"provenance": "imported", "note": "Cotizaciones históricas con número impreso."},
+    "quotes": {"provenance": "imported", "note": "Cotizaciones históricas y nuevas registradas desde PDF enviados por Gmail."},
     "quote_revisions": {
         "provenance": "imported",
         "note": "Revisiones enviadas; cada una con el SHA-256 de su PDF y su correo de Gmail.",
@@ -136,25 +158,30 @@ ENTITY_NOTES: dict[str, dict[str, str]] = {
         "manifiesto de origen no trae ese emparejamiento.",
     },
     "persons": {
-        "provenance": "not_imported",
-        "note": "Ninguna persona importada: el volcado V1 commercial.* no existe localmente y "
-        "ninguna evidencia se ha promovido a persona.",
+        "provenance": "partial",
+        "note": "Personas creadas o vinculadas en V2. No equivale a migración completa de las personas V1.",
     },
-    "affiliations": {"provenance": "not_imported", "note": "Depende de personas; no importado."},
+    "affiliations": {
+        "provenance": "partial",
+        "note": "Afiliaciones registradas en V2; las relaciones históricas V1 aún no están completas.",
+    },
     "tasks": {
-        "provenance": "no_write_path",
-        "note": "V2 aún no tiene comando para crear tareas; las tareas V1 no se migraron.",
+        "provenance": "partial",
+        "note": "Tareas del flujo operativo V2. Las tareas históricas V1 aún no se migraron.",
     },
     "activities": {
         "provenance": "no_write_path",
         "note": "V2 aún no registra actividades; las actividades V1 no se migraron.",
     },
     "messages": {
-        "provenance": "not_imported",
-        "note": "comms.message vacío: no existe el sincronizador de Gmail. Los correos de las "
-        "cotizaciones están como evidencia (evidence.source_record).",
+        "provenance": "partial",
+        "note": "Mensajes capturados por el sincronizador Gmail V2. "
+        "No implica que todo el historial del buzón haya sido importado.",
     },
-    "products": {"provenance": "not_imported", "note": "El catálogo V2 no se ha cargado."},
+    "products": {
+        "provenance": "imported",
+        "note": "Registros del catálogo cargados en V2; su presencia no confirma disponibilidad ni precios.",
+    },
     "campaigns": {
         "provenance": "imported",
         "note": "Campañas históricas importadas como registro de envío (archivadas).",
@@ -164,9 +191,9 @@ ENTITY_NOTES: dict[str, dict[str, str]] = {
         "note": "Las respuestas a campañas no se han importado; cero no significa sin respuestas.",
     },
     "drive_links_in_crm": {
-        "provenance": "not_imported",
-        "note": "crm.external_identifier está vacío: los enlaces de Drive viven sólo en los "
-        "registros locales del archivo de casos.",
+        "provenance": "imported",
+        "note": "Archivos vinculados mediante evidence.source_record (drive_file) en Supabase. "
+        "Incluye archivos históricos sin cotización importada; crm.external_identifier es una tabla legacy.",
     },
 }
 
@@ -184,7 +211,10 @@ _COUNT_SQL: dict[str, str] = {
     "products": "select count(*) from catalog.product",
     "campaigns": "select count(*) from outbound.campaign",
     "campaign_replies": "select count(*) from outbound.campaign_reply",
-    "drive_links_in_crm": "select count(*) from crm.external_identifier",
+    # Compatibility response key; its count now reflects the operational Drive evidence,
+    # not the legacy crm.external_identifier table that is intentionally unused.
+    "drive_links_in_crm": "select count(*) from evidence.source_record where kind = 'drive_file' "
+                          "and payload ->> 'drive_file_id' is not null",
 }
 
 # Keys in insertion order, for positional mapping of the combined counts query row.
@@ -207,7 +237,8 @@ _SQL_PIPELINE_OPPS = """
      order by op.updated_at desc, op.id
 """
 _SQL_PIPELINE_CASE_ORGS = """
-    select oo.opportunity_id::text, oo.organization_id::text, oo.role,
+    select oo.id::text as opportunity_organization_id,
+           oo.opportunity_id::text, oo.organization_id::text, oo.role,
            o.name, oo.confirmation, o.version as organization_version
       from crm.opportunity_organization oo
       join crm.organization o on o.id = oo.organization_id
@@ -227,6 +258,17 @@ _SQL_PIPELINE_REVISIONS = """
       from crm.quote_revision qr
       left join evidence.source_record d
              on d.dedupe_key = 'drive_file:' || qr.pdf_sha256 and d.kind = 'drive_file'
+"""
+# Open follow-ups (`crm.task`, W11) with their owner's name; `due_at` and `created_at` as ISO text.
+# `created_at` tells «Hoy» whether a task was scheduled after the client's last email.
+_SQL_PIPELINE_TASKS = """
+    select t.id::text as task_id, t.opportunity_id::text, t.title,
+           to_char(t.due_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as due_at,
+           to_char(t.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
+           t.version, o.display_name as owner_display_name
+      from crm.task t
+      join platform.operator o on o.id = t.owner_operator_id
+     where t.status = 'open'
 """
 _SQL_PIPELINE_SOURCES = """
     select sr.id::text as source_record_id,
@@ -385,6 +427,24 @@ def _add(index: dict[str, DriveLink], link: DriveLink, where: str) -> None:
     index.setdefault(link.document_sha256, link)
 
 
+def live_drive_overview(
+    revisions: set[str], live_drive_shas: set[str], ledgers: Mapping[str, DriveLink],
+) -> dict[str, int | bool]:
+    """Account for worker-filed PDFs as well as boot-time ledgers, by immutable SHA.
+
+    The boot-time archive is not updated when the Drive worker uploads a new quotation.
+    Counting only that archive makes the health panel incorrectly show new PDFs as absent
+    until an API restart (and after a restart if no ledger was refreshed).
+    """
+    archived = set(ledgers) | live_drive_shas
+    return {
+        "configured": bool(archived),
+        "documents": len(archived),
+        "revisions_with_drive_file": len(revisions & archived),
+        "revisions_total": len(revisions),
+    }
+
+
 def drive_links_from_records(revisions: Iterable[Mapping[str, Any]],
                              ledgers: Mapping[str, DriveLink]) -> dict[str, DriveLink]:
     """The ledgers' links plus every revision's `drive_file` record (`_SQL_PIPELINE_REVISIONS`).
@@ -507,6 +567,12 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
             "subject": row.get("subject"),
             "url": gmail_url(row.get("gmail_message_id")),
         }
+        # Display-header evidence, not an accepted CRM person or institution. Never pass a
+        # bare mailbox as a name: viewer responses must not acquire an unmasked address.
+        sender_names = [name.strip() for name, _ in getaddresses([row.get("sender") or ""])
+                        if name.strip() and "@" not in name]
+        if len(sender_names) == 1:
+            out[row["opportunity_id"]][direction]["sender_name"] = sender_names[0]
     return out
 
 
@@ -523,6 +589,7 @@ def compose_pipeline(
     participants: list[Mapping[str, Any]],
     drive: Mapping[str, DriveLink],
     contacts: Mapping[str, Mapping[str, Any]] | None = None,
+    tasks: list[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
@@ -542,6 +609,14 @@ def compose_pipeline(
         quotes_by_opp[row["opportunity_id"]].append(row)
         if row.get("number_origin") == "printed_historical":
             opps_by_number[row["quote_number"]].add(row["opportunity_id"])
+
+    tasks_by_opp: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in sorted(tasks or [], key=lambda r: (str(r["due_at"]), r["task_id"])):
+        tasks_by_opp[row["opportunity_id"]].append({
+            "task_id": row["task_id"], "title": row["title"], "due_at": row["due_at"],
+            "version": row["version"], "owner": row.get("owner_display_name"),
+            "created_at": row.get("created_at"),
+        })
 
     cards: list[dict[str, Any]] = []
     for opp in opportunities:
@@ -670,6 +745,24 @@ def compose_pipeline(
                 "closed_at": opp.get("closed_at"),
                 "close_reason": opp.get("close_reason"),
                 "organization": organization,
+                # Confirmation of this institution's ROLE on this case, not its
+                # general CRM organization-record confirmation.
+                "requesting_institution_confirmation": (
+                    requesting[0].get("confirmation") if requesting else None
+                ),
+                # Machines may suggest "mentioned", not a requesting institution.
+                # The exact row ID permits a separate, human-reviewed role decision.
+                "pending_institution_mentions": [
+                    {
+                        "opportunity_organization_id": o["opportunity_organization_id"],
+                        "organization_id": o["organization_id"],
+                        "name": o["name"],
+                    }
+                    for o in orgs_by_opp.get(oid, [])
+                    if o["role"] == "mentioned"
+                    and o["confirmation"] == "machine_proposed"
+                    and o.get("opportunity_organization_id")
+                ],
                 "other_organizations": [
                     {"organization_id": o["organization_id"], "name": o["name"], "role": o["role"]}
                     for o in orgs_by_opp.get(oid, [])
@@ -691,10 +784,22 @@ def compose_pipeline(
                     for c in ordered
                 ],
                 "status": "blocked" if blocked else ("pending" if any(c != "no_crm_contact" for c in ordered) else "ok"),
-                "next_action": suggest_next_action(opp, blocked, latest),
+                # Open `crm.task` rows (W11), earliest due first. A case whose earliest open task
+                # is due after today is «En pausa hasta…» on the dashboard.
+                "open_tasks": tasks_by_opp.get(oid, []),
+                "next_action": task_next_action(tasks_by_opp.get(oid, []))
+                or suggest_next_action(opp, blocked, latest),
             }
         )
     return cards
+
+
+def task_next_action(open_tasks: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """The earliest open task, when the case has one: a stored next action beats a suggestion."""
+    if not open_tasks:
+        return None
+    first = open_tasks[0]
+    return {"text": first["title"], "source": "task", "due_at": first["due_at"]}
 
 
 def suggest_next_action(
@@ -865,8 +970,19 @@ class CrmWorkspaceRepository:
                 "select kind, resolution, count(*) from evidence.assertion group by 1, 2 order by 1, 2"
             )
             assertions = [{"kind": r[0], "resolution": r[1], "count": int(r[2])} for r in cur.fetchall()]
-            cur.execute("select pdf_sha256 from crm.quote_revision where pdf_sha256 is not null")
-            rev_shas = {str(r[0]).lower() for r in cur.fetchall()}
+            # One round-trip, preserving overview's 8-statement budget. The worker
+            # files PDFs asynchronously into evidence.source_record after API startup.
+            cur.execute(
+                "select 'revision' as source, pdf_sha256 as sha "
+                "from crm.quote_revision where pdf_sha256 is not null "
+                "union all "
+                "select 'drive', payload ->> 'document_sha256' "
+                "from evidence.source_record where kind = 'drive_file' "
+                "and payload ->> 'drive_file_id' is not null"
+            )
+            sha_rows = cur.fetchall()
+            rev_shas = {str(sha).lower() for source, sha in sha_rows if source == 'revision' and sha}
+            live_drive_shas = {str(sha).lower() for source, sha in sha_rows if source == 'drive' and sha}
         entities = [
             {"key": k, "count": counts[k], **ENTITY_NOTES[k]} for k in _COUNT_SQL
         ]
@@ -876,12 +992,7 @@ class CrmWorkspaceRepository:
             "organizations_by_confirmation": org_confirmation,
             "contact_points_linked": {"organization": int(linked_org), "person": int(linked_person)},
             "assertions": assertions,
-            "drive_archive": {
-                "configured": self.drive_configured,
-                "documents": len(self._drive),
-                "revisions_with_drive_file": len(rev_shas & set(self._drive)),
-                "revisions_total": len(rev_shas),
-            },
+            "drive_archive": live_drive_overview(rev_shas, live_drive_shas, self._drive),
         }
 
     # -- pipeline
@@ -894,7 +1005,7 @@ class CrmWorkspaceRepository:
                 setup.execute("set transaction read only")
                 setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
 
-            # 7 data queries in 1 RTT via psycopg pipeline mode.
+            # 8 data queries in 1 RTT via psycopg pipeline mode.
             cur_opps = conn.cursor()
             cur_case_orgs = conn.cursor()
             cur_quotes = conn.cursor()
@@ -902,6 +1013,7 @@ class CrmWorkspaceRepository:
             cur_sources = conn.cursor()
             cur_participants = conn.cursor()
             cur_contact = conn.cursor()
+            cur_tasks = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -910,6 +1022,7 @@ class CrmWorkspaceRepository:
                 cur_sources.execute(_SQL_PIPELINE_SOURCES)
                 cur_participants.execute(_SQL_PIPELINE_PARTICIPANTS)
                 cur_contact.execute(_SQL_PIPELINE_CONTACT)
+                cur_tasks.execute(_SQL_PIPELINE_TASKS)
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -927,10 +1040,11 @@ class CrmWorkspaceRepository:
                 sources[row["source_record_id"]] = row
             participants = self._rows(cur_participants)
             contacts = last_contacts(self._rows(cur_contact))
+            tasks = self._rows(cur_tasks)
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
-            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts
+            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks
         )
         return {
             "items": cards,
@@ -1937,6 +2051,257 @@ class CrmWorkspaceRepository:
                 "documents": documents,
             })
         return {"opportunity_id": opportunity_id, "messages": messages}
+
+    def opportunity_quote_candidates(self, opportunity_id: str) -> dict[str, Any] | None:
+        """Read-only cross-thread proposals. Never link evidence or create a quotation here.
+
+        Require a unique printed number in the existing case, an earlier captured *sent*
+        Gmail PDF with the same exact CN token, and a shared external participant in the
+        linked case evidence. A reused quote number or shared OrigenLab mailbox alone
+        cannot establish identity; the operator still opens both messages and decides.
+        """
+        with self._read() as cur:
+            cur.execute(
+                """select title from crm.opportunity where id = %s::uuid""",
+                (opportunity_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            title = str(row[0])
+            token = _cross_thread_quote_code(title)
+            if token is None:
+                return {"opportunity_id": opportunity_id, "candidates": []}
+            cur.execute(
+                """select sr.id::text as source_record_id,
+                          sr.payload->>'sender' as sender,
+                          sr.payload->>'recipients' as recipients,
+                          sr.payload->>'sent_at' as sent_at
+                     from crm.opportunity_evidence oe
+                     join evidence.source_record sr on sr.id = oe.source_record_id
+                    where oe.opportunity_id = %s::uuid and oe.unlinked_at is null
+                      and sr.kind = 'gmail_message' and not sr.is_quarantined
+                      and sr.review_status <> 'rejected'""",
+                (opportunity_id,),
+            )
+            case_rows = self._rows(cur)
+            participants: set[str] = set()
+            already_linked: set[str] = set()
+            earliest = None
+            for case_row in case_rows:
+                already_linked.add(case_row["source_record_id"])
+                participants.update(_cross_thread_addresses(
+                    case_row["sender"], case_row["recipients"],
+                ))
+                try:
+                    at = datetime.fromisoformat(str(case_row["sent_at"]))
+                    if at.tzinfo is not None and (earliest is None or at < earliest):
+                        earliest = at
+                except (TypeError, ValueError):
+                    pass
+            if not participants or earliest is None:
+                return {"opportunity_id": opportunity_id, "candidates": []}
+            cur.execute(
+                """select sr.id::text as source_record_id,
+                          sr.payload->>'gmail_message_id' as gmail_message_id,
+                          sr.payload->>'gmail_thread_id' as gmail_thread_id,
+                          sr.payload->>'sender' as sender,
+                          sr.payload->>'recipients' as recipients,
+                          sr.payload->>'subject_raw' as subject,
+                          sr.payload->>'sent_at' as sent_at,
+                          doc.value as document,
+                          exists (
+                              select 1 from crm.quote_revision qr
+                               where lower(qr.pdf_sha256) = lower(doc.value->>'sha256')
+                          ) as recorded
+                     from evidence.source_record sr
+                     cross join lateral jsonb_array_elements(
+                         case when jsonb_typeof(sr.payload->'documents') = 'array'
+                              then sr.payload->'documents' else '[]'::jsonb end
+                     ) as doc(value)
+                    where sr.kind = 'gmail_message' and not sr.is_quarantined
+                      and sr.review_status <> 'rejected'
+                      and (doc.value->'cn_tokens') ? %s
+                    order by sr.payload->>'sent_at' desc
+                    limit 50""",
+                (token,),
+            )
+            possible = self._rows(cur)
+            # A quotation thread may already have its own commercial case. Never
+            # let a follow-up case claim that existing case's PDF merely because
+            # they share a number and contact; show the original case for review.
+            threads = sorted({
+                str(item["gmail_thread_id"])
+                for item in possible if item["gmail_thread_id"]
+            })
+            existing_cases: dict[str, list[dict[str, str]]] = defaultdict(list)
+            if threads:
+                cur.execute(
+                    """select distinct sr.payload->>'gmail_thread_id' as thread_id,
+                              o.id::text as opportunity_id, o.title
+                         from crm.opportunity_evidence oe
+                         join crm.opportunity o on o.id = oe.opportunity_id
+                         join evidence.source_record sr on sr.id = oe.source_record_id
+                        where oe.unlinked_at is null and sr.kind = 'gmail_message'
+                          and not sr.is_quarantined
+                          and sr.payload->>'gmail_thread_id' = any(%s)
+                        order by thread_id, opportunity_id""",
+                    (threads,),
+                )
+                for row in self._rows(cur):
+                    existing_cases[str(row["thread_id"])].append({
+                        "opportunity_id": str(row["opportunity_id"]),
+                        "title": str(row["title"]),
+                    })
+        candidates: list[dict[str, Any]] = []
+        for candidate in possible:
+            if candidate["source_record_id"] in already_linked:
+                continue
+            # The quote was SENT from the captured OrigenLab mailbox, not received
+            # from a customer or merely mentioned in an unrelated incoming message.
+            sender = str(candidate["sender"] or "")
+            if "contacto@origenlab.cl" not in {
+                addr.lower() for _, addr in getaddresses([sender])
+            }:
+                continue
+            shared = participants & _cross_thread_addresses(
+                candidate["sender"], candidate["recipients"],
+            )
+            if not shared:
+                continue
+            try:
+                at = datetime.fromisoformat(str(candidate["sent_at"]))
+                if at.tzinfo is None or at >= earliest:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            doc = candidate["document"]
+            sha = str(doc.get("sha256") or "").lower() if isinstance(doc, dict) else ""
+            filename = str(doc.get("filename") or "") if isinstance(doc, dict) else ""
+            if (not re.fullmatch(r"[0-9a-f]{64}", sha)
+                    or not filename.lower().endswith(".pdf")
+                    or doc.get("bytes_hash_verified") is not True):
+                continue
+            gmail_id = str(candidate["gmail_message_id"] or "")
+            if not re.fullmatch(r"[0-9a-f]+", gmail_id):
+                continue
+            candidates.append({
+                "source_record_id": candidate["source_record_id"],
+                "subject": candidate["subject"],
+                "sent_at": candidate["sent_at"],
+                "quote_token": token,
+                "filename": filename,
+                "document_sha256": sha,
+                "gmail_url": f"https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/{gmail_id}",
+                "reason": "Número de cotización exacto y destinatario externo compartido",
+                "recorded_elsewhere": bool(candidate["recorded"]),
+                "other_cases_on_quote_thread": [
+                    case for case in existing_cases.get(str(candidate["gmail_thread_id"]), [])
+                    if case["opportunity_id"] != opportunity_id
+                ],
+            })
+        return {"opportunity_id": opportunity_id, "candidates": candidates[:10]}
+
+    def opportunity_purchase_order_candidates(self, opportunity_id: str) -> dict[str, Any] | None:
+        """Suggest a standalone Gmail PO, never assert a quote match or close a case.
+
+        The PDF's quoted reference and line items are NOT available in Gmail's captured
+        metadata. We can suggest it from its verified file, a shared external recipient
+        with a sent quotation, and chronological order. Only a reviewing operator can
+        compare the actual PDF, link the evidence and record the won decision.
+        """
+        with self._read() as cur:
+            cur.execute(
+                """select id::text as id from crm.opportunity where id = %s::uuid""",
+                (opportunity_id,),
+            )
+            if cur.fetchone() is None:
+                return None
+            cur.execute(
+                """select qr.sent_at, sr.payload->>'sender' as sender,
+                          sr.payload->>'recipients' as recipients
+                     from crm.quote q join crm.quote_revision qr on qr.quote_id=q.id
+                     join evidence.source_record sr on sr.id=qr.origin_source_record_id
+                    where q.opportunity_id=%s::uuid and qr.status='sent'
+                      and qr.sent_at is not null and sr.kind='gmail_message'
+                      and qr.superseded_by_revision_no is null""",
+                (opportunity_id,),
+            )
+            rows = self._rows(cur)
+            participants: set[str] = set()
+            sent_dates = []
+            for r in rows:
+                participants.update(_cross_thread_addresses(r["sender"], r["recipients"]))
+                if r["sent_at"]:
+                    sent_dates.append(r["sent_at"])
+            if not participants or not sent_dates:
+                return {"opportunity_id": opportunity_id, "candidates": []}
+            first_sent = min(sent_dates)
+            cur.execute(
+                """select sr.id::text as source_record_id,
+                          sr.payload->>'gmail_message_id' as gmail_id,
+                          sr.payload->>'gmail_thread_id' as thread_id,
+                          sr.payload->>'sender' as sender,
+                          sr.payload->>'recipients' as recipients,
+                          sr.payload->>'subject_raw' as subject,
+                          sr.payload->>'sent_at' as sent_at,
+                          doc.value as document,
+                          exists (
+                            select 1 from crm.opportunity_evidence oe
+                             where oe.source_record_id=sr.id and oe.unlinked_at is null
+                          ) as already_linked
+                     from evidence.source_record sr
+                     cross join lateral jsonb_array_elements(
+                       case when jsonb_typeof(sr.payload->'documents')='array'
+                            then sr.payload->'documents' else '[]'::jsonb end
+                     ) doc(value)
+                    where sr.kind='gmail_message' and not sr.is_quarantined
+                      and sr.review_status <> 'rejected'
+                      and sr.created_at >= %s::timestamptz
+                      and (
+                        doc.value->>'filename' ~* '^(o[.]?c|orden de compra)[ _#n°º0-9-]*[. ]*pdf$'
+                      )
+                    order by sr.created_at desc
+                    limit 200""",
+                (first_sent,),
+            )
+            possible = self._rows(cur)
+        import re as _re
+        oc_re = _re.compile(r"(?:o[.]?c|orden\s+de\s+compra)\s*(?:n[°º]?\s*)?(\d{5,})", _re.I)
+        candidates = []
+        for row in possible:
+            if row["already_linked"]:
+                continue  # Never steal PO evidence already associated with another case.
+            sender_addresses = {
+                addr.lower() for _, addr in getaddresses([str(row["sender"] or "")])
+            }
+            if not sender_addresses or "contacto@origenlab.cl" in sender_addresses:
+                continue
+            shared = participants & _cross_thread_addresses(row["sender"], row["recipients"])
+            if not shared:
+                continue
+            doc = row["document"]
+            if not isinstance(doc, dict) or doc.get("bytes_hash_verified") is not True:
+                continue
+            filename = str(doc.get("filename") or "")
+            sha = str(doc.get("sha256") or "").lower()
+            if not _re.fullmatch(r"[0-9a-f]{64}", sha):
+                continue
+            mail_id = str(row["gmail_id"] or "")
+            if not _re.fullmatch(r"[0-9a-f]+", mail_id):
+                continue
+            found = oc_re.search(filename) or oc_re.search(str(row["subject"] or ""))
+            candidates.append({
+                "source_record_id": row["source_record_id"],
+                "gmail_url": f"https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/{mail_id}",
+                "subject": row["subject"],
+                "sent_at": row["sent_at"],
+                "filename": filename,
+                "document_sha256": sha,
+                "purchase_order_number": found.group(1) if found else None,
+                "reason": "PDF de OC verificado y participante externo compartido con la cotización",
+            })
+        return {"opportunity_id": opportunity_id, "candidates": candidates[:10]}
 
     def person_suggestions(self) -> dict[str, Any]:
         """People the quote emails name and the CRM does not hold yet (`person_suggestions.py`)."""

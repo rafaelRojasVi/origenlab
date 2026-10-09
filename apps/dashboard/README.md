@@ -6,8 +6,9 @@ durable core. It talks only to **`apps/api`**, and — apart from sign-out and t
 | Route | Use |
 |-------|-----|
 | `GET /auth/session` · `GET /auth/google/login` · `POST /auth/logout` | Sign-in state, Google Workspace login, sign-out |
-| `GET /v2/workspace/*` | Every CRM section (Resumen, Oportunidades, Organizaciones, Personas, Proveedores, Archivo Drive, Marketing, Revisión) |
+| `GET /v2/workspace/*` | Every CRM section (Hoy, Oportunidades, Organizaciones, Personas, Proveedores, Archivo Drive, Marketing, Revisión) |
 | `GET /v2/contacts` · `GET /v2/organizations` | Personas and Organizaciones search |
+| `GET /v2/catalog/*` | Catálogo, read-only: products, product detail, quoted-price history, USD/EUR rate, costing parameters, image signed URLs. Mounted only with `ORIGENLAB_V2_QUOTING_ENABLED`; off, the page shows «Catálogo no habilitado». Costs come back only for sales/admin |
 | `POST /v2/commands/create-campaign-draft` · `POST /v2/commands/save-campaign-draft` | Marketing: create and save a campaign **draft**; mounted only with `ORIGENLAB_V2_CAMPAIGN_DRAFTS_ENABLED`, refused by the production proxy |
 | `POST /v2/commands/freeze-campaign-audience` | Marketing: freeze a draft's audience into an immutable recipient snapshot, sent only from the final confirmation screen; mounted only with `ORIGENLAB_V2_AUDIENCE_FREEZE_ENABLED`, refused by the production proxy. Sends nothing |
 | `POST /v2/commands/set-campaign-planning` | Marketing: set, change or clear an unsent campaign's internal planned day («Planificación interna · no programa el envío»); sales/admin; mounted only with `ORIGENLAB_V2_CAMPAIGN_PLANNING_ENABLED`. Schedules and sends nothing |
@@ -25,7 +26,7 @@ V2 architecture: [`../../docs/README.md`](../../docs/README.md); what is built a
 ```
 App.tsx → pages/DashboardApp.tsx → components/auth/AuthGate.tsx (one Google Workspace sign-in)
   → crm/CrmApp.tsx (the one shell and navigation; crm/shellRoute.ts reads the hash)
-  → crm/pages/: Resumen, Oportunidades, Organizaciones, Personas, Proveedores,
+  → crm/pages/: Hoy (OverviewPage + TodayBody), Oportunidades, Organizaciones, Personas, Proveedores, Catálogo,
     Archivo Drive, Marketing, Revisión — read-only over `/v2/workspace/*`
 ```
 
@@ -33,7 +34,7 @@ App.tsx → pages/DashboardApp.tsx → components/auth/AuthGate.tsx (one Google 
   `#/crm/resumen`.
 - **Old bookmarks keep working.** Hashes of the earlier operator panel (`#/cotizaciones`,
   `#/ventas`, `#/contactos`, `#/archivo`, …) are redirected to the CRM section that covers the
-  same ground, or to Resumen when none does (`LEGACY_REDIRECTS` in `crm/shellRoute.ts`). A
+  same ground, or to Hoy when none does (`LEGACY_REDIRECTS` in `crm/shellRoute.ts`). A
   bookmark that selected a case — `#/ventas?opportunity=<uuid>`, `#/casos?id=<uuid>` — opens
   that case in Oportunidades when it exists in the CRM, and the list when it does not. V1
   `sales_…` ids name no V2 case and open the list.

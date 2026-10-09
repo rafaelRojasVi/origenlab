@@ -42,6 +42,10 @@ class _FakeReads:
     def supplier_terms(self, organization_id):
         return None
 
+    def suppliers(self):
+        return {"items": [{"id": "s1", "display_name": "Soviquim", "products": 2,
+                           "by_kind": {"equipment": 1, "consumable": 1}}]}
+
     def price_history(self, model_key, limit=20):
         self.calls.append(("history", (model_key, limit)))
         return {"model_key": model_key, "items": [{"line_total": "1100.0000", "unit_price": "1100.0000"}],
@@ -76,7 +80,7 @@ def test_switch_off_mounts_nothing() -> None:
                         LOOPBACK, lambda *a, **k: 1 / 0)
     assert app.state.quoting_enabled is True
     assert {"/v2/catalog/products", "/v2/catalog/products/{product_id}", "/v2/catalog/parameters",
-            "/v2/catalog/suppliers/{organization_id}/terms"} <= set(app.openapi()["paths"])
+            "/v2/catalog/suppliers", "/v2/catalog/suppliers/{organization_id}/terms"} <= set(app.openapi()["paths"])
 
 
 def test_unmounted_path_is_404() -> None:
@@ -109,6 +113,12 @@ def test_bad_paging_is_422_envelope() -> None:
     r = _client().get("/v2/catalog/products?limit=0", headers=HEADERS)
     assert r.status_code == 422 and r.json()["error"]["code"] == "validation_error"
     assert r.json()["error"]["details"]["validation_errors"]
+
+
+def test_suppliers_list() -> None:
+    r = _client().get("/v2/catalog/suppliers", headers=HEADERS)
+    assert r.status_code == 200
+    assert r.json()["items"][0]["display_name"] == "Soviquim" and r.json()["items"][0]["products"] == 2
 
 
 def test_missing_product_and_terms_are_404_in_the_production_envelope() -> None:

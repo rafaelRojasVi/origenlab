@@ -90,8 +90,46 @@ export interface CaseMailDocumentsResponse {
   messages: CaseMailMessage[];
 }
 
+/** A cross-thread match is ONLY a suggestion until an operator links the evidence. */
+export interface CrossThreadQuoteCandidate {
+  source_record_id: string;
+  subject: string | null;
+  sent_at: string;
+  quote_token: string;
+  filename: string;
+  document_sha256: string;
+  gmail_url: string;
+  reason: string;
+  recorded_elsewhere: boolean;
+  other_cases_on_quote_thread: { opportunity_id: string; title: string }[];
+}
+
+export interface CaseQuoteCandidatesResponse {
+  opportunity_id: string;
+  candidates: CrossThreadQuoteCandidate[];
+}
+
+/** Read-only PO suggestion, matched conservatively against a quotation's recipient. */
+export interface CasePurchaseOrderCandidate {
+  source_record_id: string;
+  gmail_url: string;
+  subject: string | null;
+  sent_at: string | null;
+  filename: string;
+  document_sha256: string;
+  purchase_order_number: string | null;
+  reason: string;
+}
+
+export interface CasePurchaseOrderCandidatesResponse {
+  opportunity_id: string;
+  candidates: CasePurchaseOrderCandidate[];
+}
+
 /** One email on a case's thread, as «último contacto» shows it. */
 export interface MailTouch {
+  /** Display header evidence; not a confirmed CRM person. Never a mailbox address. */
+  sender_name?: string | null;
   at: string;
   subject: string | null;
   url: string | null;
@@ -127,6 +165,19 @@ export interface OpportunityCardData {
     /** The organization version «Confirmar institución» compares against. */
     version?: number | null;
   } | null;
+  /** Human confirmation of the requesting-institution role on THIS case.
+   * Undefined only for an older API response; null means no current role.
+   * This is independent of organization.confirmation.
+   */
+  requesting_institution_confirmation?: string | null;
+  /** Machine-suggested 'mentioned' relationships, not a confirmed requester.
+   * Each row ID allows an operator to make a recorded case-role decision.
+   */
+  pending_institution_mentions?: {
+    opportunity_organization_id: string;
+    organization_id: string;
+    name: string;
+  }[];
   other_organizations: { organization_id: string; name: string; role: string }[];
   contact: {
     source: "crm_participant" | "gmail_recipient";
@@ -148,7 +199,21 @@ export interface OpportunityCardData {
   last_contact?: { outbound: MailTouch | null; inbound: MailTouch | null };
   attention: Attention[];
   status: "blocked" | "pending" | "ok";
-  next_action: { text: string; source: "suggested"; due_at: string | null };
+  /** Open `crm.task` rows (W11), earliest due first. Absent from an older API. */
+  open_tasks?: OpenTask[];
+  /** The earliest open task (`source: "task"`), or a deterministic suggestion. */
+  next_action: { text: string; source: "suggested" | "task"; due_at: string | null };
+}
+
+export interface OpenTask {
+  task_id: string;
+  title: string;
+  /** ISO 8601, UTC. */
+  due_at: string;
+  version: number;
+  owner: string | null;
+  /** ISO 8601, UTC: when the task was scheduled. Absent from an older API. */
+  created_at?: string | null;
 }
 
 export interface PipelineResponse {

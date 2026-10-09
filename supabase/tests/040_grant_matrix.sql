@@ -140,9 +140,13 @@ insert into expected values
     -- the money, the optional flag and the review fields; never the line's identity); the worker
     -- holds nothing.
     ('evidence', 'document_line', 'origenlab_api', 'SI', array['qty', 'unit_price', 'line_total', 'optional', 'check_status', 'reviewed_by_operator_id', 'reviewed_at', 'review_note', 'updated_at'], 'SIU'),
-    ('evidence', 'document_line', 'origenlab_worker', '', null, '');
+    ('evidence', 'document_line', 'origenlab_worker', '', null, ''),
+    -- 20261006180200: evidence.triage_review — append-only verdicts: api reads and inserts, never
+    -- updates; the worker reads them to evaluate its readings.
+    ('evidence', 'triage_review', 'origenlab_api', 'SI', null, 'SI'),
+    ('evidence', 'triage_review', 'origenlab_worker', 'S', null, 'S');
 
-select is((select count(*)::int from expected), 100, 'the matrix covers all 50 tables for both runtime roles');
+select is((select count(*)::int from expected), 102, 'the matrix covers all 51 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

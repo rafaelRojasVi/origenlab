@@ -44,6 +44,42 @@ def _evidence(sr: str, case: str | None, subject: str, recipients: str, files=()
             "filenames": list(files), "sent_at": "2026-03-12T10:00:00+00:00", "recipients": recipients}
 
 
+def test_inline_brand_banner_does_not_invent_customer_interest() -> None:
+    """A seller-side signature graphic is not evidence that the customer asked for its brands."""
+    out = compose(load_taxonomy(), _inputs(
+        cases={"c1": _case("c1", "org1", first_sent_at=T)},
+        evidence=[_evidence("sr1", "c1", "Cotización analizador de humedad 900",
+                            "buyer@lab.test", [
+                                "SERVA, Ortoalresa, IKA, CRTOP, Ollital, Hielscher",
+                                "Hielscher brand-strip.png",
+                                "IKA-footer.svg",
+                                "CN01260-Client-Humidity.pdf",
+                            ])],
+    ))
+    assert out["institutions"] == []
+    assert out["persons"] == []
+    assert out["coverage"]["quotation_evidence_with_mentions"] == 0
+    assert out["coverage"]["brand_linkage"]["hielscher"]["evidence_only"] == 0
+    assert out["coverage"]["brand_linkage"]["ika"]["evidence_only"] == 0
+
+
+def test_valid_quotation_pdf_and_subject_keep_real_equipment_interest() -> None:
+    """Filtering image assets must not suppress genuine quotations or subject-line evidence."""
+    out = compose(load_taxonomy(), _inputs(
+        cases={"c1": _case("c1", "org1", first_sent_at=T)},
+        evidence=[_evidence("sr1", "c1", "Cotización Hielscher UP200St",
+                            "buyer@lab.test", [
+                                "SERVA, Ortoalresa, IKA, CRTOP, Ollital, Hielscher",
+                                "Technical UP200St.pdf",
+                            ])],
+    ))
+    [inst] = out["institutions"]
+    assert {(i["brand_id"], i["model_id"]) for i in inst["interests"]} == {
+        ("hielscher", "hielscher-up200st"),
+    }
+    assert out["coverage"]["brand_linkage"]["ika"]["evidence_only"] == 0
+
+
 def test_quotation_evidence_is_a_person_and_an_institution_interest_not_recorded_in_crm() -> None:
     out = compose(load_taxonomy(), _inputs(
         cases={"c1": _case("c1", "org1", first_sent_at=T, quote_numbers=["01024-26"])},

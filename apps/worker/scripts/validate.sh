@@ -12,6 +12,12 @@ import psycopg
 import origenlab_worker.v1_reuse
 import origenlab_worker.drive_filing
 import origenlab_worker.cli
+import origenlab_worker.task_queue
+import origenlab_worker.triage_cli
+import origenlab_worker.capture_queue
+import origenlab_worker.mail_worker
+import procrastinate
+import anthropic
 print("ok: apps/worker no-dev runtime imports")
 PY
 

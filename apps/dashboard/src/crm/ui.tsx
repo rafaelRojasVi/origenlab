@@ -4,7 +4,15 @@
  * disabled with the reason next to it.
  */
 
-import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ButtonHTMLAttributes,
+  type ChangeEvent,
+  type ReactNode,
+} from "react";
 import type { Provenance } from "./crmTypes";
 import type { ResourceState } from "./useResource";
 
@@ -200,6 +208,138 @@ export function SearchInput({
 }
 
 /** A write action that exists in the product but is not enabled: visible, disabled, explained. */
+/* ─────────────────────────────────────────────────────────────── buttons ── */
+
+export type ButtonVariant = "primary" | "secondary" | "danger" | "quiet";
+
+const BUTTON_BASE =
+  "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 text-xs font-medium " +
+  "transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 " +
+  "focus-visible:outline-brand-600 disabled:cursor-not-allowed disabled:opacity-50";
+
+const BUTTON_VARIANT: Record<ButtonVariant, string> = {
+  primary: "bg-brand-700 text-white hover:bg-brand-900",
+  secondary: "border border-line bg-canvas-raised text-ink hover:bg-canvas-sunken",
+  danger: "border border-bad/40 bg-canvas-raised text-bad hover:bg-bad-bg",
+  quiet: "text-brand-700 hover:bg-canvas-sunken",
+};
+
+/** The class string of a button, for the rare element that must stay an `<a>` but look like one. */
+export function buttonClass(variant: ButtonVariant = "secondary"): string {
+  return `${BUTTON_BASE} ${BUTTON_VARIANT[variant]}`;
+}
+
+export function Spinner() {
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-block h-3 w-3 rounded-full border-2 border-current border-r-transparent motion-safe:animate-spin"
+    />
+  );
+}
+
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: ButtonVariant;
+  /** While true the button is disabled, says `busyLabel` and shows a spinner. */
+  busy?: boolean;
+  busyLabel?: ReactNode;
+};
+
+/**
+ * Every CRM button. One look per variant, a visible "working" state, and never clickable twice
+ * while its write is in flight.
+ */
+export function Button({
+  variant = "secondary",
+  busy = false,
+  busyLabel,
+  disabled,
+  className,
+  children,
+  type = "button",
+  ...rest
+}: ButtonProps) {
+  return (
+    <button
+      {...rest}
+      type={type}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
+      className={`${buttonClass(variant)}${className ? ` ${className}` : ""}`}
+    >
+      {busy ? (
+        <>
+          <Spinner />
+          {busyLabel ?? children}
+        </>
+      ) : (
+        children
+      )}
+    </button>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────── toasts ── */
+
+export interface ToastItem {
+  id: number;
+  tone: "good" | "warn" | "bad";
+  text: string;
+}
+
+let toastItems: ToastItem[] = [];
+let toastSeq = 0;
+const toastListeners = new Set<() => void>();
+
+function emitToasts(next: ToastItem[]) {
+  toastItems = next;
+  toastListeners.forEach((l) => l());
+}
+
+export function dismissToast(id: number): void {
+  emitToasts(toastItems.filter((t) => t.id !== id));
+}
+
+/** A short line saying what just happened. It disappears on its own after a few seconds. */
+export function toast(text: string, tone: ToastItem["tone"] = "good"): void {
+  const id = ++toastSeq;
+  emitToasts([...toastItems.slice(-3), { id, tone, text }]);
+  setTimeout(() => dismissToast(id), tone === "bad" ? 8000 : 4000);
+}
+
+function subscribeToasts(listener: () => void) {
+  toastListeners.add(listener);
+  return () => toastListeners.delete(listener);
+}
+
+/** Mounted once by the CRM shell. */
+export function Toaster() {
+  const items = useSyncExternalStore(subscribeToasts, () => toastItems, () => toastItems);
+  if (items.length === 0) return null;
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-4 z-[60] flex flex-col items-center gap-2 px-4" data-testid="toaster">
+      {items.map((t) => (
+        <div
+          key={t.id}
+          role={t.tone === "bad" ? "alert" : "status"}
+          className={`pointer-events-auto flex max-w-md items-start gap-2 rounded-lg border px-3 py-2 text-xs shadow-lg ${
+            t.tone === "good"
+              ? "border-good/40 bg-good-bg text-good"
+              : t.tone === "warn"
+                ? "border-warn/40 bg-warn-bg text-warn"
+                : "border-bad/40 bg-bad-bg text-bad"
+          }`}
+        >
+          <span className="min-w-0 flex-1 break-words">{t.text}</span>
+          <button type="button" onClick={() => dismissToast(t.id)} aria-label="Cerrar aviso" className="shrink-0 opacity-70 hover:opacity-100">
+            ✕
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function DisabledAction({ children, reason, id }: { children: ReactNode; reason: string; id: string }) {
   return (
     <span className="inline-flex flex-col items-start gap-0.5">
@@ -386,28 +526,35 @@ export function Drawer({
   onClose,
   title,
   subtitle,
+  busy = false,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   title: ReactNode;
   subtitle?: ReactNode;
+  /** The data behind the drawer is being refreshed (after a save). */
+  busy?: boolean;
   children: ReactNode;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Read through a ref: callers pass a new arrow on every render, and re-running the focus effect
+  // on each refresh would pull the cursor back to ✕ after every save.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
       previous?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-40" role="presentation">
@@ -423,6 +570,12 @@ export function Drawer({
             <h2 className="text-base font-semibold leading-6 text-ink">{title}</h2>
             {subtitle ? <div className="mt-0.5 text-xs text-ink-muted">{subtitle}</div> : null}
           </div>
+          {busy ? (
+            <span role="status" className="flex shrink-0 items-center gap-1.5 pt-1 text-[11px] text-ink-muted" data-testid="drawer-refreshing">
+              <Spinner />
+              Actualizando…
+            </span>
+          ) : null}
           <button
             ref={closeRef}
             type="button"
@@ -435,6 +588,101 @@ export function Drawer({
         </header>
         <div className="flex-1 space-y-5 overflow-y-auto p-4">{children}</div>
       </aside>
+    </div>
+  );
+}
+
+/**
+ * A small centred dialog for one decision (the Tablero's «Mover a…», «Perdida», «En pausa»).
+ * Escape and the backdrop close it unless `busy`; focus goes to its first field and comes back.
+ */
+export function Modal({
+  title,
+  onClose,
+  busy = false,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  busy?: boolean;
+  children: ReactNode;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const first = boxRef.current?.querySelector<HTMLElement>("input, textarea, select, button:not([data-modal-close])");
+    first?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busyRef.current) onCloseRef.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previous?.focus?.();
+    };
+  }, []);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
+      <div className="absolute inset-0 bg-ink/30" onClick={busy ? undefined : onClose} aria-hidden="true" />
+      <div
+        ref={boxRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="relative w-full max-w-md min-w-0 rounded-xl border border-line bg-canvas-raised p-5 shadow-xl"
+      >
+        <div className="mb-3 flex items-start gap-3">
+          <h2 className="min-w-0 flex-1 text-base font-semibold text-ink">{title}</h2>
+          <button
+            type="button"
+            data-modal-close
+            onClick={onClose}
+            disabled={busy}
+            aria-label="Cerrar"
+            className="h-7 w-7 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink disabled:opacity-50"
+          >
+            ✕
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** A row of one-click choices (a reason, a state). `aria-pressed` marks the chosen one. */
+export function ChoiceChips({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: string[];
+  value: string | null;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div role="group" aria-label={label} className="flex flex-wrap gap-1.5">
+      {options.map((o) => (
+        <button
+          key={o}
+          type="button"
+          aria-pressed={value === o}
+          onClick={() => onChange(o)}
+          className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+            value === o
+              ? "border-brand-700 bg-brand-700 text-white"
+              : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-brand-700"
+          }`}
+        >
+          {o}
+        </button>
+      ))}
     </div>
   );
 }
@@ -508,6 +756,7 @@ const INPUT_CLS =
 
 export function TextInput({
   id,
+  type = "text",
   value,
   onChange,
   placeholder,
@@ -516,6 +765,7 @@ export function TextInput({
   maxLength,
 }: {
   id?: string;
+  type?: "text" | "date";
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -526,7 +776,7 @@ export function TextInput({
   return (
     <input
       id={id}
-      type="text"
+      type={type}
       value={value}
       onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
       placeholder={placeholder}
@@ -651,7 +901,7 @@ export function ConfirmDialog({
       aria-labelledby="confirm-dialog-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <div className="absolute inset-0 bg-ink/30" onClick={onCancel} aria-hidden="true" />
+      <div className="absolute inset-0 bg-ink/30" onClick={busy ? undefined : onCancel} aria-hidden="true" />
       <div className="relative w-full max-w-md min-w-0 rounded-xl border border-line bg-canvas-raised p-5 shadow-xl">
         <h2 id="confirm-dialog-title" className="text-base font-semibold text-ink">
           {title}
@@ -691,22 +941,18 @@ export function ConfirmDialog({
         </label>
         {error ? <p className="mt-2 text-[11px] text-bad">{error}</p> : null}
         <div className="mt-4 flex flex-wrap justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={busy}
-            className="h-8 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken disabled:opacity-50"
-          >
+          <Button onClick={onCancel} disabled={busy}>
             {cancelLabel}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="danger"
             onClick={() => canSubmit && onConfirm(reason)}
             disabled={!canSubmit}
-            className="h-8 rounded-md bg-bad px-3 text-xs font-medium text-white hover:bg-bad/90 disabled:cursor-not-allowed disabled:opacity-40"
+            busy={busy}
+            busyLabel="Guardando…"
           >
-            {busy ? "…" : confirmLabel}
-          </button>
+            {confirmLabel}
+          </Button>
         </div>
       </div>
     </div>

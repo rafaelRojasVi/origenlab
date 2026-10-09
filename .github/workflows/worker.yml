@@ -4,17 +4,9 @@ permissions:
   contents: read
 
 on:
+  # Production release gate requires this check on EVERY main commit, not only path matches.
   push:
     branches: [main, dev]
-    paths:
-      - "apps/worker/**"
-      - "apps/email-pipeline/**"
-      # The worker depends on apps/api (the case archive) and shares its test harness.
-      - "apps/api/**"
-      - "supabase/migrations/**"
-      - "supabase/roles.sql"
-      - "render.yaml"
-      - ".github/workflows/worker.yml"
   pull_request:
     paths:
       - "apps/worker/**"

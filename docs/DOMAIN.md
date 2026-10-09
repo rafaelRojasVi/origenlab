@@ -811,11 +811,11 @@ list is decided, these rows are reclassified by the migration that introduces it
 | 13 | A case at `lead` has had no activity for eleven months | it is still `lead`. The dashboard shows *sin actividad hace 334 días*, computed at read time. Closing it is `abandon_opportunity(case, reason)` by an operator; without that act no row changes and no event exists (§3.4) |
 | 14 | A distributor that supplies OrigenLab asks to buy a unit for its own laboratory | the distributor's `supplier` relationship is untouched. `set_requesting_institution` is refused until the operator supplies a justification; with it, one `opportunity_organization(distributor, role=requesting_institution, confirmation=confirmed, confirmed_by=O)` carries `supplier_exception_reason`, and the triple can never be rewritten. The case card shows *proveedor registrado* **and** *solicitante — excepción justificada*. No marketing permission and no `prospect` relationship follow |
 
-## 7. Table inventory — the reviewed 50-table foundation
+## 7. Table inventory — the reviewed 51-table foundation
 
-Seven private schemas. **50 application tables** — 33 reviewed after the
+Seven private schemas. **51 application tables** — 33 reviewed after the
 external CRM benchmark, the three of §7.1, the one of §7.2, the four of
-§7.3, the four of §7.4 and the five of §7.5 — the current
+§7.3, the four of §7.4, the five of §7.5 and the one of §7.6 — the current
 reviewed foundation
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §13), not a permanent budget: a table
 is added only when a relational invariant proves it necessary, removed when
@@ -855,7 +855,7 @@ outside this count and outside this inventory.
 | 22 | `outbound.send_attempt` | the only send ledger, marketing and transactional | minted RFC 822 id unique; at most one open attempt per address |
 | 23 | `outbound.contact_control` | purpose-scoped `block` / `prior_contact` / `cooldown` | `(scope, value_norm, kind, purpose)` unique; `block.purpose ∈ {all, marketing}`; `prior_contact` and `cooldown` ⇒ `marketing` only; `prior_contact` never deleted, never expires; an unsubscribe (`reason = unsubscribe`, or any block a «BAJA» was linked to) never updated or deleted — no re-subscription; written only through `outbound.add_contact_control`; truth table in [`WORKFLOWS.md`](WORKFLOWS.md) §1.6, «BAJA» in §W10 |
 | 24 | `evidence.source_record` | acquired external record and migration manifests | `dedupe_key` unique; supersession chain; quarantine flag |
-| 25 | `evidence.assertion` | typed observation with resolution | `(source_record_id, kind, value_norm)`; closed `kind`; an `unsubscribe_request` is written only by `outbound.add_contact_control` and resolves to its `contact_control` — or stays `unresolved` while held for review, blocking its exact address from marketing, until that function decides it once — resolved to its control, or (admin, pending holds only) dismissed as `rejected`, which may still be confirmed later; a confirmed request is never dismissed; otherwise never changed |
+| 25 | `evidence.assertion` | typed observation with resolution | `(source_record_id, kind, value_norm)`; closed `kind`; an `unsubscribe_request` is written only by `outbound.add_contact_control` and resolves to its `contact_control` — or stays `unresolved` while held for review, blocking its exact address from marketing, until that function decides it once — resolved to its control, or (admin, pending holds only) dismissed as `rejected`, which may still be confirmed later; a confirmed request is never dismissed; otherwise never changed. The mail triage (ARCHITECTURE.md §8, D2) inserts `message_triage` (one per message and classifier version, `value_norm = triage:v<N>`), `product_mention`, and versioned `delivery_failure` rows as machine evidence and never resolves them; only a single-recipient Batch-A no-such-user `delivery_failure` may feed the closed-list global `invalid_address` block |
 | 26 | `catalog.product` | manufacturer model, its Spanish content, specs and physical data | `(manufacturer_organization_id, model_number)` unique **and** `(manufacturer_organization_id, model_key)` unique, where `model_key = upper(model_number` with whitespace, `-`, `_`, `.`, `/` removed`)` (generated; the database decides, not the API); `product_kind` closed; `content_origin ∈ {import, machine, operator}`; a confirmation names its operator and time together; `version` for optimistic concurrency; never deleted (`active = false` retires it) |
 | 27 | `catalog.supplier_product` | supplier price observation | append-only; `(supplier_organization_id, product_id, as_of, price_kind, min_qty)` unique, nulls not distinct; closed `price_kind`; `discount_pct` in [0, 1) |
 | 28 | `procurement.notice` | ChileCompra notice head and history | `codigo_externo` unique; `disappeared_at` for withdrawal |
@@ -1021,8 +1021,20 @@ Domain events added: `product.updated`, `product.content_confirmed`, `product.im
 `fx_rate` and `cost_parameter`. An event names a cost parameter's key and never its value, and a
 product cost event carries no price.
 
-Counts by schema: `crm` 21, `comms` 4, `outbound` 9, `evidence` 3,
-`catalog` 6, `procurement` 1, `platform` 6 — **50**.
+### 7.6 Mail triage review — built 2026-10-06
+
+The mail triage (ARCHITECTURE.md §8, D2) proposes a reading of each captured email as an
+`evidence.assertion` of kind `message_triage`; a person decides what it was worth.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 55 | `evidence.triage_review` | a person's verdict on one mail-triage reading | append-only (no UPDATE or DELETE grant); `verdict ∈ {approved, corrected, rejected}`; `corrected` is non-empty exactly for `corrected` and holds only `class`, `stage`, `intent`, `products`; a note is never blank; the latest row per assertion is its current verdict |
+
+Domain event added: `assertion.triage_reviewed` (aggregate `assertion`). A verdict moves no case:
+«Aprobar» on a stage suggestion runs `advance-case-stage` afterwards, which records its own event.
+
+Counts by schema: `crm` 21, `comms` 4, `outbound` 9, `evidence` 4,
+`catalog` 6, `procurement` 1, `platform` 6 — **51**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

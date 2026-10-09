@@ -134,7 +134,9 @@ union all select 'functions.security_definer_misconfigured',
           and (pg_get_userbyid(proowner) <> 'origenlab_owner'
                or coalesce(proconfig, '{}'::text[]) <> array['search_path=pg_catalog']
                or not has_function_privilege('origenlab_api', oid, 'EXECUTE')
-               or has_function_privilege('origenlab_worker', oid, 'EXECUTE')
+               or (case when nspname = 'outbound' and proname = 'add_contact_control'
+                        then not has_function_privilege('origenlab_worker', oid, 'EXECUTE')
+                        else has_function_privilege('origenlab_worker', oid, 'EXECUTE') end)
                or has_function_privilege('origenlab_migrator', oid, 'EXECUTE')))::text
 union all select 'functions.not_owned_by_origenlab_owner',
        (select count(*) from ol_functions where pg_get_userbyid(proowner) <> 'origenlab_owner')::text
