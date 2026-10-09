@@ -79,11 +79,15 @@ export function sortCards(cards: OpportunityCardData[], sort: BoardSort, now: Da
   }
   // Unknown timestamps stay last even when reversing. Do not confuse an older PDF
   // with a case the operator moved or the customer answered today.
-  return out.sort((a, b) => sort === "oldest"
-    ? (activityTimestamp(a) == null) - (activityTimestamp(b) == null)
-      || (activityTimestamp(a) ?? 0) - (activityTimestamp(b) ?? 0)
-      || a.opportunity_id.localeCompare(b.opportunity_id)
-    : byLatestActivity(a, b));
+  return out.sort((a, b) => {
+    if (sort !== "oldest") return byLatestActivity(a, b);
+    const av = activityTimestamp(a);
+    const bv = activityTimestamp(b);
+    if (av === null || bv === null) {
+      return av === bv ? a.opportunity_id.localeCompare(b.opportunity_id) : av === null ? 1 : -1;
+    }
+    return av - bv || a.opportunity_id.localeCompare(b.opportunity_id);
+  });
 }
 
 export function Board({
