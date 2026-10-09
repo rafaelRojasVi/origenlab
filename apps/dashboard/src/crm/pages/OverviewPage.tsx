@@ -31,11 +31,11 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
         counts={pipeline.kind === "ready" ? todayCounts(pipeline.data.items) : null}
         driveCasosUrl={pipeline.kind === "ready" ? (pipeline.data.drive_casos_url ?? null) : null}
       />
-      <QuoteNumberBox pipeline={pipeline} />
-      <FxSection state={fx} reload={reloadFx} />
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => <TodayBody items={p.items} navigate={navigate} onChanged={reloadPipeline} refreshing={refreshing} people={people} reloadPeople={reloadPeople} />}
       </ResourceGate>
+      <QuoteNumberBox pipeline={pipeline} />
+      <FxSection state={fx} reload={reloadFx} />
     </div>
   );
 }

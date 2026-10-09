@@ -136,7 +136,7 @@ export function TodayBody({
                 {historical} {historical === 1 ? "caso" : "casos"} por decidir
               </h2>
               <p className="mt-1 text-xs leading-5 text-ink-muted">
-                Siguen como «Enviada · histórico»: nadie ha dicho si siguen vivos. Cada uno trae una propuesta a partir del correo.
+                Siguen «sin decidir»: nadie ha dicho si siguen vivos. Cada uno trae una propuesta a partir del correo.
               </p>
               <Button className="mt-3" variant="primary" onClick={() => navigate("oportunidades")}>
                 Decidirlos en Oportunidades

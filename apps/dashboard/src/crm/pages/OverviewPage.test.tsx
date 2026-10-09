@@ -324,3 +324,15 @@ describe("Hoy · lecturas en paralelo", () => {
   });
 });
 
+describe("Hoy · orden", () => {
+  it("puts today's work above the exchange rate and the quote number", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
+    render(<OverviewPage navigate={() => undefined} />);
+    const stats = await screen.findByTestId("today-stats");
+    const usd = await screen.findByTestId("fx-USD");
+    const quotes = await screen.findByTestId("quote-number-box");
+    expect(stats.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(stats.compareDocumentPosition(quotes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+

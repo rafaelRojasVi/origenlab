@@ -22,4 +22,9 @@ describe("header quick links", () => {
       expect(a).toHaveAttribute("rel", "noopener noreferrer");
     }
   });
+
+  it("never shows the internal «datos locales» chip", () => {
+    render(<TopBar onMenu={() => undefined} menuOpen={false} />);
+    expect(screen.queryByText(/datos locales/)).not.toBeInTheDocument();
+  });
 });

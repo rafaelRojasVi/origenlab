@@ -4,7 +4,6 @@ import type { ReviewResponse, WorkQueueItem } from "../crmTypes";
 import type { CrmSection } from "../crmRoute";
 import {
   Badge,
-  DisabledAction,
   EmptyState,
   ExternalLink,
   LocalDriveLink,
@@ -14,7 +13,6 @@ import {
   Segmented,
   Skeleton,
   StatLine,
-  WRITE_DISABLED_REASON,
   fmtInt,
 } from "../ui";
 import { useAuthSession } from "../../context/AuthSessionContext";
@@ -133,7 +131,7 @@ function CrmQueue({
     <div className="space-y-3">
       <Panel
         title="Requieren una decisión"
-        note="Calculados desde crm.* en cada lectura"
+        note="Se calculan de nuevo cada vez que abres esta página"
         aside={<Badge tone={blocking.length ? "bad" : "good"}>{blocking.length}</Badge>}
         bodyClassName="divide-y divide-line"
       >
@@ -275,9 +273,6 @@ function NotImported({ review }: { review: ReviewResponse }) {
         individual y controles contra duplicados. Las cotizaciones nuevas enviadas por Gmail
         se procesan en «Acciones automáticas»; no se importan aquí.
       </p>
-      <DisabledAction id="review-import-disabled" reason={WRITE_DISABLED_REASON}>
-        Importación histórica no disponible
-      </DisabledAction>
     </>
   );
 }

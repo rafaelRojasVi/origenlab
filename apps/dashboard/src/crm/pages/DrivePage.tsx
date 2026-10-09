@@ -31,14 +31,14 @@ export function DrivePage({ navigate }: { navigate: (s: CrmSection, id?: string)
     <div className="space-y-3">
       <PageHeader
         title="Archivo Drive"
-        subtitle="Carpetas de caso en Drive › Cotizaciones › Casos, y si cada PDF ya está en el CRM. Sólo lectura: el panel no llama a Drive; cada enlace sale del registro local de la carga y lleva la marca «registro local»."
+        subtitle="Carpetas de caso en Drive › Cotizaciones › Casos, y si cada PDF ya está en el CRM."
       />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={8} />}>
         {(data) =>
           !data.configured ? (
             <NotImportedState title="Los registros del archivo de Drive no están cargados">
-              Este API arrancó sin <code>ORIGENLAB_V2_DRIVE_ARCHIVE_LEDGERS</code>. Los enlaces de Drive no están en el CRM
-              (<code>crm.external_identifier</code> está vacío); viven sólo en los registros de las corridas del archivo de casos.
+              El servidor no tiene cargado el archivo de casos de Drive, así que no puede mostrar sus carpetas. Avisa a
+              quien administra el sistema.
             </NotImportedState>
           ) : (
             <Archive data={data} navigate={navigate} />

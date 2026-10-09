@@ -93,7 +93,7 @@ function DataHealthBody({ overview, navigate }: { overview: WorkspaceOverview; n
         <Metric label="Evidencias por revisar" value={fmtInt(openAssertions)} hint="Sin resolver o ambiguas" />
       </div>
 
-      <Panel title="Estado real de los datos" note="Cantidades actuales; «Parcial» indica que aún faltan datos históricos. Los vínculos Drive están en evidence.source_record." bodyClassName="divide-y divide-line">
+      <Panel title="Estado real de los datos" note="Cantidades actuales; «Parcial» indica que aún faltan datos históricos." bodyClassName="divide-y divide-line">
         {overview.entities.map((e) => (
           <div
             key={e.key}

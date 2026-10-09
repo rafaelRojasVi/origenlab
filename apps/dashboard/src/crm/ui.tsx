@@ -395,23 +395,16 @@ export function ExternalLink({ href, children, label }: { href: string; children
   );
 }
 
-/** The Drive links shown in the CRM come from local archive ledgers, not a live Drive read. */
-export const LOCAL_DRIVE_TITLE =
-  "Enlace tomado del registro local del archivo de Drive (ledger de la carga). No se consultó Drive en vivo: el archivo pudo moverse o cambiar de permisos.";
+/** Drive links come from the case archive's own records, not a live Drive read (said once, in the tooltip). */
+export const LOCAL_DRIVE_TITLE = "Enlace del archivo de casos. Si no abre, el archivo se movió en Drive.";
 
-/**
- * A Drive link whose address comes from a local archive ledger. It is labelled as such every
- * time it appears, because nothing checked it against Drive when the page loaded.
- */
+/** A Drive link from the case archive's records: a plain link, with the caveat in its tooltip only. */
 export function LocalDriveLink({ href, children, label }: { href: string; children: ReactNode; label?: string }) {
   return (
     <span className="inline-flex items-center gap-1" title={LOCAL_DRIVE_TITLE}>
-      <ExternalLink href={href} label={label ? `${label} (enlace de registro local)` : undefined}>
+      <ExternalLink href={href} label={label}>
         {children}
       </ExternalLink>
-      <span className="rounded border border-line px-1 text-[9px] font-semibold uppercase tracking-wide text-ink-faint" data-testid="local-drive-tag">
-        registro local
-      </span>
     </span>
   );
 }

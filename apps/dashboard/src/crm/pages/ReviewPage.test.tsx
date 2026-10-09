@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceOverview } from "../crmTypes";
 import { ReviewPage } from "./ReviewPage";
@@ -53,6 +53,14 @@ describe("Revisión → Estado de los datos", () => {
     expect(calls).toContain("/v2/workspace/overview");
   });
 
+  it("offers no button that can never be pressed", async () => {
+    respond(ROUTES);
+    render(<ReviewPage navigate={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: /No importadas/ }));
+    await waitFor(() => expect(screen.queryByText(/Cargando/)).not.toBeInTheDocument());
+    expect(screen.queryByText("Importación histórica no disponible")).not.toBeInTheDocument();
+  });
+
   it("says where each Drive figure comes from", async () => {
     respond(ROUTES);
     render(<ReviewPage navigate={() => undefined} />);
@@ -60,6 +68,7 @@ describe("Revisión → Estado de los datos", () => {
     expect(await screen.findByText("14/14")).toBeInTheDocument();
     expect(screen.getByText(/actualizado desde Supabase/)).toBeInTheDocument();
     expect(screen.getByText("Archivos Drive registrados en Supabase")).toBeInTheDocument();
+    expect(screen.queryByText(/evidence\.source_record|crm\.\*/)).not.toBeInTheDocument();
   });
 });
 

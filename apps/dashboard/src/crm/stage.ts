@@ -179,7 +179,7 @@ export function stageBasis(card: OpportunityCardData): StageBasis {
   return "crm_record";
 }
 
-export const HISTORICAL_STAGE_LABEL = "Enviada · histórico";
+export const HISTORICAL_STAGE_LABEL = "Enviada · sin decidir";
 export const HISTORICAL_STAGE_TITLE =
   "Etapa fijada por la importación histórica a partir de una cotización enviada. No confirma el estado comercial actual: nadie lo ha verificado todavía en el CRM.";
 
@@ -224,7 +224,7 @@ export function boardStatusLine(card: OpportunityCardData): { text: string; tone
   const blocking = card.attention.find((a) => a.blocking);
   if (blocking) return { text: blocking.label, tone: "bad" };
   const parts: string[] = [];
-  if (stageBasis(card) === "historical_import") parts.push("histórico");
+  if (stageBasis(card) === "historical_import") parts.push("sin decidir");
   const latest = card.latest_revision;
   if (!latest) parts.push("sin cotización");
   else {
@@ -232,8 +232,8 @@ export function boardStatusLine(card: OpportunityCardData): { text: string; tone
     if (!latest.gmail) parts.push("sin Gmail");
   }
   if (!card.contact) parts.push("sin contacto");
-  if (parts.length === 0 || (parts.length === 1 && parts[0] === "histórico")) {
-    return { text: parts.length ? "histórico · al día" : "Al día", tone: parts.length ? "neutral" : "good" };
+  if (parts.length === 0 || (parts.length === 1 && parts[0] === "sin decidir")) {
+    return { text: parts.length ? "sin decidir · al día" : "Al día", tone: parts.length ? "neutral" : "good" };
   }
   return { text: parts.join(" · "), tone: card.status === "ok" ? "neutral" : "warn" };
 }
