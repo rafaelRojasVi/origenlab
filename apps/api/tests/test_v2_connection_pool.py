@@ -76,6 +76,40 @@ def test_pool_without_tls_options_still_sets_autocommit_false() -> None:
 # ─────────────────────────────────────────────── remote-target refusals ──
 
 
+def test_recently_returned_connection_skips_the_liveness_probe() -> None:
+    """A page load checks out ~10 connections at once; only an idle one pays the probe's RTT."""
+    with patch("origenlab_api.v2.connection_pool.psycopg_pool") as mock_mod:
+        probe = MagicMock()
+        mock_mod.ConnectionPool.check_connection = probe
+        pool = V2ConnectionPool(DSN)
+        kwargs = mock_mod.ConnectionPool.call_args.kwargs
+        check, reset = kwargs["check"], kwargs["reset"]
+
+        class Conn:  # weak-referenceable stand-in for a psycopg connection
+            pass
+
+        fresh, idle = Conn(), Conn()
+        check(fresh)  # never handed back yet: probed
+        assert probe.call_count == 1
+        reset(fresh)
+        check(fresh)  # just handed back: trusted
+        assert probe.call_count == 1
+
+        reset(idle)
+        with patch("origenlab_api.v2.connection_pool.time.monotonic", return_value=10**9):
+            check(idle)  # idle far longer than the window: probed again
+        assert probe.call_count == 2
+        assert pool is not None
+
+
+def test_pool_sizes_come_from_settings() -> None:
+    from origenlab_api.settings import Settings
+
+    s = Settings()
+    assert s.v2_pool_min_size >= 1
+    assert s.v2_pool_max_size >= s.v2_pool_min_size
+
+
 def test_remote_target_refusals_are_unchanged(tmp_path) -> None:
     """Pooling does not weaken the V2DatabaseTarget validation.
 
