@@ -127,12 +127,31 @@ export function matchesQuery(card: OpportunityCardData, q: string): boolean {
   return hay.includes(needle);
 }
 
-/** Most recent sent revision first; cards without a revision last. */
-export function byLatestSent(a: OpportunityCardData, b: OpportunityCardData): number {
-  const av = a.latest_revision?.sent_at ?? "";
-  const bv = b.latest_revision?.sent_at ?? "";
-  if (av === bv) return a.title.localeCompare(b.title);
-  return av < bv ? 1 : -1;
+/** Most recent commercial activity, not merely the original quotation's sent date.
+
+    Manual stage transitions update opportunity.updated_at; Gmail activity may update
+    last_contact without bumping the opportunity row. Both must bring a card to the top.
+    Revision sent and creation dates are fallbacks for legacy/imported cards.
+    Never use the current wall-clock date: resorting must be deterministic.
+ */
+export function activityTimestamp(card: OpportunityCardData): number | null {
+  const dates = [
+    card.updated_at,
+    card.last_contact?.inbound?.at,
+    card.last_contact?.outbound?.at,
+    card.latest_revision?.sent_at,
+    card.created_at,
+  ];
+  const parsed = dates.map((d) => (d ? Date.parse(d) : Number.NaN)).filter(Number.isFinite);
+  return parsed.length ? Math.max(...parsed) : null;
+}
+
+/** Last case activity first; a case with no known date stays at the end. */
+export function byLatestActivity(a: OpportunityCardData, b: OpportunityCardData): number {
+  const av = activityTimestamp(a);
+  const bv = activityTimestamp(b);
+  if (av !== bv) return (bv ?? -Infinity) - (av ?? -Infinity);
+  return a.title.localeCompare(b.title, "es") || a.opportunity_id.localeCompare(b.opportunity_id);
 }
 
 /**
@@ -181,12 +200,12 @@ export const AGE_BUCKETS = [
   { key: "d180", label: "91–180 días", maxDays: 180 },
   { key: "d365", label: "181–365 días", maxDays: 365 },
   { key: "older", label: "Más de un año", maxDays: Number.POSITIVE_INFINITY },
-  { key: "none", label: "Sin revisión enviada", maxDays: Number.NaN },
+  { key: "none", label: "Sin actividad registrada", maxDays: Number.NaN },
 ] as const;
 
 export type AgeBucketKey = (typeof AGE_BUCKETS)[number]["key"];
 
-/** Which `AGE_BUCKETS` entry a revision sent at `sentAt` falls in, seen from `now`. */
+/** Which `AGE_BUCKETS` entry a timestamp falls in, seen from `now`. */
 export function ageBucket(sentAt: string | null | undefined, now: Date = new Date()): AgeBucketKey {
   const t = sentAt ? Date.parse(sentAt) : Number.NaN;
   if (Number.isNaN(t)) return "none";

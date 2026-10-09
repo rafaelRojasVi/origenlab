@@ -8,7 +8,7 @@ import { ReviewPage } from "./ReviewPage";
 const OVERVIEW: WorkspaceOverview = {
   entities: [
     { key: "opportunities", count: 12, provenance: "imported", note: "Casos importados." },
-    { key: "drive_links_in_crm", count: 0, provenance: "not_imported", note: "Aún no se guardan en el CRM." },
+    { key: "drive_links_in_crm", count: 30, provenance: "imported", note: "Registros de archivo verificados en Supabase." },
   ],
   opportunities_by_stage: { quoting: 12 },
   organizations_by_confirmation: { confirmed: 3 },
@@ -49,7 +49,7 @@ describe("Revisión → Estado de los datos", () => {
     expect(calls).not.toContain("/v2/workspace/overview");
 
     fireEvent.click(screen.getByRole("button", { name: /Estado de los datos/ }));
-    expect(await screen.findByText("Qué hay en el CRM")).toBeInTheDocument();
+    expect(await screen.findByText("Estado real de los datos")).toBeInTheDocument();
     expect(calls).toContain("/v2/workspace/overview");
   });
 
@@ -58,8 +58,8 @@ describe("Revisión → Estado de los datos", () => {
     render(<ReviewPage navigate={() => undefined} />);
     fireEvent.click(await screen.findByRole("button", { name: /Estado de los datos/ }));
     expect(await screen.findByText("14/14")).toBeInTheDocument();
-    expect(screen.getByText(/según el registro de la carga a Drive/)).toBeInTheDocument();
-    expect(screen.getByText("Enlaces de Drive guardados en el CRM")).toBeInTheDocument();
+    expect(screen.getByText(/actualizado desde Supabase/)).toBeInTheDocument();
+    expect(screen.getByText("Archivos Drive registrados en Supabase")).toBeInTheDocument();
   });
 });
 

@@ -18,7 +18,7 @@ import { Fragment, useMemo, useState, type DragEvent, type MouseEvent } from "re
 import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData } from "../crmTypes";
 import { ageTone, contactLine, conversation, daysSince, displayName, quoteProduct } from "../caseDisplay";
-import { AGE_BUCKETS, BOARD_COLUMNS, ageBucket, boardColumnOf, pausedUntil, type BoardColumnKey } from "../stage";
+import { AGE_BUCKETS, BOARD_COLUMNS, activityTimestamp, ageBucket, boardColumnOf, byLatestActivity, pausedUntil, type BoardColumnKey } from "../stage";
 import { fmtDate, type Tone } from "../ui";
 
 export type BoardSort = "recent" | "oldest" | "replied" | "name";
@@ -70,17 +70,24 @@ export function shortDate(iso: string | null | undefined, now: Date): string {
   return d.getFullYear() === now.getFullYear() ? base : `${base} ${d.getFullYear()}`;
 }
 
-const sentAt = (c: OpportunityCardData) => c.latest_revision?.sent_at ?? "";
-
 export function sortCards(cards: OpportunityCardData[], sort: BoardSort, now: Date): OpportunityCardData[] {
   const out = [...cards];
   if (sort === "name") return out.sort((a, b) => displayName(a).name.localeCompare(displayName(b).name, "es"));
   if (sort === "replied") {
     const rank = (c: OpportunityCardData) => ({ replied: 0, followed_up: 1, silent: 2, none: 3 })[conversation(c, now).kind];
-    return out.sort((a, b) => rank(a) - rank(b) || sentAt(b).localeCompare(sentAt(a)));
+    return out.sort((a, b) => rank(a) - rank(b) || byLatestActivity(a, b));
   }
-  out.sort((a, b) => sentAt(b).localeCompare(sentAt(a)) || a.title.localeCompare(b.title));
-  return sort === "oldest" ? out.reverse() : out;
+  // Unknown timestamps stay last even when reversing. Do not confuse an older PDF
+  // with a case the operator moved or the customer answered today.
+  return out.sort((a, b) => {
+    if (sort !== "oldest") return byLatestActivity(a, b);
+    const av = activityTimestamp(a);
+    const bv = activityTimestamp(b);
+    if (av === null || bv === null) {
+      return av === bv ? a.opportunity_id.localeCompare(b.opportunity_id) : av === null ? 1 : -1;
+    }
+    return av - bv || a.opportunity_id.localeCompare(b.opportunity_id);
+  });
 }
 
 export function Board({
@@ -167,8 +174,12 @@ export function Board({
                   </p>
                 ) : (
                   inCol.map((c, i) => {
-                    const band = byDate ? ageBucket(c.latest_revision?.sent_at, at) : null;
-                    const prev = byDate && i > 0 ? ageBucket(inCol[i - 1].latest_revision?.sent_at, at) : null;
+                    const activity = activityTimestamp(c);
+                    const previousActivity = i > 0 ? activityTimestamp(inCol[i - 1]) : null;
+                    const band = byDate ? ageBucket(activity == null ? null : new Date(activity).toISOString(), at) : null;
+                    const prev = byDate && i > 0
+                      ? ageBucket(previousActivity == null ? null : new Date(previousActivity).toISOString(), at)
+                      : null;
                     const label = band && (i === 0 || band !== prev) ? AGE_BUCKETS.find((b) => b.key === band)?.label : null;
                     return (
                       <Fragment key={c.opportunity_id}>

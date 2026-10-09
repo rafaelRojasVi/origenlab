@@ -37,6 +37,9 @@ import { useResource } from "../useResource";
 import { crmHash } from "../crmRoute";
 import { STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
 import { COLUMN_LABEL, CaseMoveForm, type MoveTarget } from "./CaseMove";
+import { AssignInstitution } from "./AssignInstitution";
+import { CrossThreadQuoteReview } from "./CrossThreadQuoteReview";
+import { PurchaseOrderReview } from "./PurchaseOrderReview";
 import {
   Button,
   ChoiceChips,
@@ -50,7 +53,7 @@ import {
   toast,
 } from "../ui";
 
-export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision";
+export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution";
 
 /** «Cambiar estado» offers these, minus the one the case is in. */
 const MOVE_TARGETS: MoveTarget[] = ["solicitada", "estudio", "enviada", "conversacion", "pausa", "perdida"];
@@ -77,6 +80,8 @@ export function CaseActions({
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
   const [mode, setMode] = useState<Mode>(initial?.mode ?? null);
+  const [crossThreadOpen, setCrossThreadOpen] = useState(false);
+  const [purchaseOrderOpen, setPurchaseOrderOpen] = useState(false);
   const [target, setTarget] = useState<MoveTarget | null>(initial?.target ?? null);
   const [initialReason, setInitialReason] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -212,6 +217,44 @@ export function CaseActions({
         </div>
       ) : null}
 
+      {!card.organization && !closed ? (
+        mayDecide ? (
+          <Button
+            aria-expanded={mode === "institution"}
+            onClick={() => toggle("institution")}
+          >
+            Asignar institución solicitante
+          </Button>
+        ) : (
+          <DisabledAction id="drawer-assign-institution" reason={WRITE_DISABLED_REASON}>
+            Asignar institución solicitante
+          </DisabledAction>
+        )
+      ) : null}
+
+      {mode === "institution" && !card.organization && !decideReason ? (
+        <AssignInstitution
+          card={card}
+          onCancel={() => setMode(null)}
+          onDone={finished}
+        />
+      ) : null}
+
+      {!closed && mayDecide && card.quotes.length === 0 &&
+        /(?<![A-Za-z0-9])(?:CN)?0?\d{4}[-–/]\d{2}/i.test(card.title) ? (
+        <div className="space-y-2">
+          <Button aria-expanded={crossThreadOpen} onClick={() => setCrossThreadOpen(!crossThreadOpen)}>
+            Buscar cotización enviada en otro hilo
+          </Button>
+          {crossThreadOpen ? (
+            <CrossThreadQuoteReview card={card} onDone={(outcome, refetch) => {
+              finished(outcome, refetch);
+              if (outcome.tone === "good") setCrossThreadOpen(false);
+            }} />
+          ) : null}
+        </div>
+      ) : null}
+
       {card.organization?.confirmation === "machine_proposed" ? (
         <ConfirmInstitution card={card} mayAuthor={mayAuthor} onDone={finished} />
       ) : null}
@@ -244,6 +287,19 @@ export function CaseActions({
               Elige a qué estado pasa el caso. «Ganada» es «Marcar ganada»: necesita la revisión aceptada.
             </p>
           )}
+        </div>
+      ) : null}
+      {card.stage === "negotiating" && revisions.length > 0 && !decideReason ? (
+        <div className="space-y-2">
+          <Button aria-expanded={purchaseOrderOpen} onClick={() => {
+            setPurchaseOrderOpen(!purchaseOrderOpen); setOutcome(null);
+          }}>Buscar OC recibida en otro hilo</Button>
+          {purchaseOrderOpen ? (
+            <PurchaseOrderReview card={card} onDone={(outcome, refetch) => {
+              finished(outcome, refetch);
+              if (outcome.tone === "good") setPurchaseOrderOpen(false);
+            }} />
+          ) : null}
         </div>
       ) : null}
       {mode === "won" && hasVersion && !wonReason ? (

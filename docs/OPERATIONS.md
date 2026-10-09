@@ -229,8 +229,7 @@ a hidden secret input (§4.3, §13).
 
 #### Step 9 — the browser boundary becomes session-only
 
-Deploy `apps/dashboard-proxy` from `main` (`npm run validate`, then `npx wrangler deploy` from
-`apps/dashboard-proxy`). After this deploy the Worker forwards `/health`, `/auth/*` and the
+Initial cutover **completed 2026-10-08**: `apps/dashboard-proxy` was deployed manually from `main` (version `3a80b32a-3e58-473a-9372-0fbae157519a`) after `npm run validate` and `npm run typecheck` passed. Future `main` changes affecting the proxy are deployed by `.github/workflows/dashboard-proxy-deploy.yml` once its two GitHub repository secrets are configured; the workflow re-runs validation and typechecking before publishing. Keep `npx wrangler deploy` from `apps/dashboard-proxy` as the manual fallback. After this deploy the Worker forwards `/health`, `/auth/*` and the
 named `/v2/*` reads on GET, the named `/v2/commands/*` POSTs (marketing, CRM authoring) plus the auth POSTs, with no identity of its own, and never derives an operator header.
 
 #### Step 10 — remove Cloudflare Access from the dashboard hostname

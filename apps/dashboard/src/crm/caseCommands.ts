@@ -1,13 +1,13 @@
 /**
- * The four commercial-case commands the case drawer may send: «Cambiar estado»
+ * The six commercial-case commands the case drawer may send: «Cambiar estado»
  * (`advance-case-stage`), «Marcar ganada» (`record-case-won`), «Elegir revisión vigente»
  * (`resolve-current-revision`) and «Registrar cotización» / «Nueva revisión»
  * (`record-case-quotation`) — plus the three W11 task commands behind «En pausa hasta…»
  * (`create-task`), «Retomar ahora» (`cancel-task`) and «Hecho» (`complete-task`).
  *
- * This module owns all seven `/v2/commands/<…>` path strings — pinned by
+ * This module owns all nine `/v2/commands/<…>` path strings — pinned by
  * `src/test/noWritePolicy.test.ts`. No other dashboard module may name them, and no other case
- * command (opening a case, linking evidence, naming an institution, recording an interest) is
+ * command (opening a case, linking evidence, recording an interest) is
  * reachable from the browser: the Worker refuses them (`CASE_COMMAND_POST_PATHS`).
  *
  * Upstream each command needs an active `sales` or `admin` operator (from the session, never the
@@ -23,9 +23,12 @@ import { STAGE_LABEL } from "./stage";
 
 export const CASE_COMMAND_PATHS = {
   advanceStage: "/v2/commands/advance-case-stage",
+  addCaseOrganization: "/v2/commands/add-case-organization",
+  setCaseOrganizationRole: "/v2/commands/set-case-organization-role",
   recordWon: "/v2/commands/record-case-won",
   resolveCurrentRevision: "/v2/commands/resolve-current-revision",
   recordQuotation: "/v2/commands/record-case-quotation",
+  linkCaseEvidence: "/v2/commands/link-case-evidence",
   createTask: "/v2/commands/create-task",
   completeTask: "/v2/commands/complete-task",
   cancelTask: "/v2/commands/cancel-task",
@@ -140,6 +143,53 @@ async function postCaseCommand(path: string, body: unknown, idempotencyKey: stri
   }
   return res.json() as Promise<CaseCommandReceipt>;
 }
+
+export interface AddCaseOrganizationBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  organization_id: string;
+  organization_version: number;
+  role: "requesting_institution";
+  supplier_exception_reason?: string | null;
+  note: string;
+}
+
+/** An explicit operator decision; never infer the requesting institution from email. */
+export const addCaseOrganization = (
+  body: AddCaseOrganizationBody,
+  idempotencyKey: string = newCaseCommandKey(),
+) => postCaseCommand(CASE_COMMAND_PATHS.addCaseOrganization, body, idempotencyKey);
+
+/** Promote an existing case relationship, e.g. a reviewed "mentioned" proposal.
+ * The backend closes the proposed row and creates a confirmed requester atomically.
+ */
+export interface SetCaseOrganizationRoleBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  opportunity_organization_id: string;
+  role: "requesting_institution";
+  supplier_exception_reason?: string | null;
+  note: string;
+}
+
+export const setCaseOrganizationRole = (
+  body: SetCaseOrganizationRoleBody,
+  idempotencyKey: string = newCaseCommandKey(),
+) => postCaseCommand(CASE_COMMAND_PATHS.setCaseOrganizationRole, body, idempotencyKey);
+
+/** Explicitly reviewed existing Gmail source; never auto-record a quotation or sale. */
+export interface LinkCaseQuoteEvidenceBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  relation: "mentions";
+  source_record_id: string;
+  note: string;
+}
+
+export const linkCaseQuoteEvidence = (
+  body: LinkCaseQuoteEvidenceBody,
+  idempotencyKey: string = newCaseCommandKey(),
+) => postCaseCommand(CASE_COMMAND_PATHS.linkCaseEvidence, body, idempotencyKey);
 
 export interface AdvanceCaseStageBody {
   opportunity_id: string;
@@ -367,6 +417,13 @@ export async function markCaseWon(
 
 const REFUSAL_ES: Record<string, string> = {
   case_version_conflict: "Otra persona cambió este caso mientras lo veías. Se recargó: revisa y vuelve a intentarlo.",
+  case_organization_not_found: "Ya no se encuentra la mención de esta institución en el caso.",
+  case_organization_already_closed: "La mención ya fue resuelta. Recarga el caso.",
+  case_organization_changed_concurrently: "Otra persona revisó la institución. Recarga el caso.",
+  case_organization_role_unchanged: "Esta relación ya está confirmada.",
+  case_already_has_a_requesting_institution: "Este caso ya tiene una institución solicitante. Recarga el caso.",
+  supplier_exception_required: "Esta institución figura como proveedor. Se requiere una justificación explícita para registrar que también solicita en este caso.",
+  supplier_exception_is_not_needed: "No corresponde registrar una excepción de proveedor para esta institución.",
   case_is_closed: "El caso ya está cerrado; un caso cerrado no se reabre.",
   case_is_already_at_that_stage: "El caso ya está en esa etapa.",
   stage_transition_not_allowed: "Ese cambio de etapa no está permitido desde la etapa actual.",

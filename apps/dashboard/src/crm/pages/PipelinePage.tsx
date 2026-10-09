@@ -13,7 +13,7 @@ import {
   HISTORICAL_STAGE_LABEL,
   ORIGIN_LABEL,
   STATUS_LABEL,
-  byLatestSent,
+  byLatestActivity,
   matchesQuery,
   pausedUntil,
   stageBasis,
@@ -120,7 +120,7 @@ function Pipeline({
   }, [items]);
 
   const visible = useMemo(
-    () => items.filter((i) => (status === "all" || i.status === status) && matchesQuery(i, q)).sort(byLatestSent),
+    () => items.filter((i) => (status === "all" || i.status === status) && matchesQuery(i, q)).sort(byLatestActivity),
     [items, status, q],
   );
   const quotes = items.reduce((n, i) => n + i.quotes.length, 0);
