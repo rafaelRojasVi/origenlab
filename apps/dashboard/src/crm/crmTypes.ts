@@ -471,3 +471,20 @@ export interface EquipmentInterestsResponse {
   persons: InterestPerson[];
   institutions: InterestInstitution[];
 }
+
+/** `GET /v2/workspace/history` — «Historial»: decisions in plain Spanish, newest first. */
+export interface HistoryItem {
+  receipt_id: string;
+  at: string;
+  operator: string;
+  action: string;
+  case: { opportunity_id: string; title: string } | null;
+  organization: { organization_id: string; name: string } | null;
+  /** Only automatic mail actions can be undone from here. */
+  undo: { kind: "mail_rule"; receipt_id: string } | null;
+  undone_at: string | null;
+}
+
+export interface HistoryResponse {
+  items: HistoryItem[];
+}

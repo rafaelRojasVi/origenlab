@@ -127,6 +127,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // the Resumen's quote-number box never suggests a number already sent. Same GET-only,
   // operator-session rule; no address, subject or institution. Nothing under it is reachable.
   /^\/v2\/workspace\/mail-quote-numbers$/,
+  // «Historial»: the recorded decisions in plain Spanish (no notes, no addresses).
+  /^\/v2\/workspace\/history$/,
   // Email → cases dry run (spec 2026-10-05): what the rules would do, with their reasons, and the
   // actions already applied. Admin only upstream (403 for sales and viewer); writes nothing.
   /^\/v2\/workspace\/mail-rules\/preview$/,

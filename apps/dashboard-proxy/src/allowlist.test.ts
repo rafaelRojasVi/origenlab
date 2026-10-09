@@ -88,6 +88,7 @@ describe("allowlist", () => {
       "/v2/workspace/fx",
       "/v2/workspace/mail-sync",
       "/v2/workspace/mail-quote-numbers",
+      "/v2/workspace/history",
       "/v2/cockpit/work-queue",
     ]) {
       expect(isAllowedUpstreamPath(path)).toBe(true);
@@ -115,6 +116,8 @@ describe("allowlist", () => {
       "/v2/workspace/mail-quote-numbers/",
       "/v2/workspace/mail-quote-numbers/CN09901",
       "/v2/workspace/mail-quote-numbersx",
+      "/v2/workspace/history/",
+      "/v2/workspace/historyx",
       "/v2/cockpit",
       "/v2/cockpit/work-queue/",
       "/v2/cockpit/work-queue/1",

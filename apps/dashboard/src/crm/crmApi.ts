@@ -16,6 +16,7 @@ import type {
   MailSyncStatus,
   MarketingResponse,
   PipelineResponse,
+  HistoryResponse,
   EquipmentInterestsResponse,
   ProvidersResponse,
   ReviewResponse,
@@ -36,6 +37,7 @@ export const WORKSPACE_PATHS = {
   fx: "/v2/workspace/fx",
   mailSync: "/v2/workspace/mail-sync",
   mailQuoteNumbers: "/v2/workspace/mail-quote-numbers",
+  history: "/v2/workspace/history",
   workQueue: "/v2/cockpit/work-queue",
   caseNotes: (opportunityId: string) => `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/notes`,
   caseMailDocuments: (opportunityId: string) =>
@@ -70,5 +72,6 @@ export const fetchReview = () => fetchJsonGet<ReviewResponse>(operatorApiUrl(WOR
 export const fetchMailQuoteNumbers = () =>
   fetchJsonGet<MailQuoteNumbersResponse>(operatorApiUrl(WORKSPACE_PATHS.mailQuoteNumbers));
 export const fetchMailSync = () => fetchJsonGet<MailSyncStatus>(operatorApiUrl(WORKSPACE_PATHS.mailSync));
+export const fetchHistory = () => fetchJsonGet<HistoryResponse>(operatorApiUrl(WORKSPACE_PATHS.history));
 export const fetchWorkQueue = () =>
   fetchJsonGet<WorkQueueResponse>(operatorApiUrl(WORKSPACE_PATHS.workQueue, { limit: 200 }));

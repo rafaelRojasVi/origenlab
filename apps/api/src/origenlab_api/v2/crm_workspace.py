@@ -2324,6 +2324,13 @@ class CrmWorkspaceRepository:
             items = safe_person_suggestions(cur)
         return {"items": items, "total": len(items)}
 
+    def history(self, limit: int = 100) -> dict[str, Any]:
+        """«Historial»: the decisions of the last 60 days in plain Spanish (`history.py`)."""
+        from origenlab_api.v2.history import read_history
+
+        with self._read() as cur:
+            return read_history(cur, limit)
+
     def mail_sync(self) -> dict[str, Any]:
         """Whether the Gmail capture is running. Its age is measured by the database clock, never
         an address, a subject or a message."""
