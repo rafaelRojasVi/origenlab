@@ -10,6 +10,7 @@ import { fetchJsonGet, operatorApiUrl } from "../api/operatorClient";
 import type {
   CaseMailDocumentsResponse,
   CaseQuoteCandidatesResponse,
+  CasePurchaseOrderCandidatesResponse,
   DriveArchiveResponse,
   MailQuoteNumbersResponse,
   MailSyncStatus,
@@ -41,6 +42,8 @@ export const WORKSPACE_PATHS = {
     `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/mail-documents`,
   caseQuoteCandidates: (opportunityId: string) =>
     `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/quote-candidates`,
+  casePurchaseOrderCandidates: (opportunityId: string) =>
+    `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/purchase-order-candidates`,
 } as const;
 
 export const fetchOverview = () => fetchJsonGet<WorkspaceOverview>(operatorApiUrl(WORKSPACE_PATHS.overview));
@@ -54,6 +57,9 @@ export const fetchCaseMailDocuments = (opportunityId: string) =>
 /** Read-only review proposals: no cross-thread link is made by this GET. */
 export const fetchCaseQuoteCandidates = (opportunityId: string) =>
   fetchJsonGet<CaseQuoteCandidatesResponse>(operatorApiUrl(WORKSPACE_PATHS.caseQuoteCandidates(opportunityId)));
+/** This read never changes a sale; the operator must inspect the attached PO PDF. */
+export const fetchCasePurchaseOrderCandidates = (opportunityId: string) =>
+  fetchJsonGet<CasePurchaseOrderCandidatesResponse>(operatorApiUrl(WORKSPACE_PATHS.casePurchaseOrderCandidates(opportunityId)));
 export const fetchProviders = () => fetchJsonGet<ProvidersResponse>(operatorApiUrl(WORKSPACE_PATHS.providers));
 export const fetchEquipmentInterests = () =>
   fetchJsonGet<EquipmentInterestsResponse>(operatorApiUrl(WORKSPACE_PATHS.equipmentInterests));

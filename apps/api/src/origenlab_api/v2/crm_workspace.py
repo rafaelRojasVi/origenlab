@@ -2202,6 +2202,107 @@ class CrmWorkspaceRepository:
             })
         return {"opportunity_id": opportunity_id, "candidates": candidates[:10]}
 
+    def opportunity_purchase_order_candidates(self, opportunity_id: str) -> dict[str, Any] | None:
+        """Suggest a standalone Gmail PO, never assert a quote match or close a case.
+
+        The PDF's quoted reference and line items are NOT available in Gmail's captured
+        metadata. We can suggest it from its verified file, a shared external recipient
+        with a sent quotation, and chronological order. Only a reviewing operator can
+        compare the actual PDF, link the evidence and record the won decision.
+        """
+        with self._read() as cur:
+            cur.execute(
+                """select id::text as id from crm.opportunity where id = %s::uuid""",
+                (opportunity_id,),
+            )
+            if cur.fetchone() is None:
+                return None
+            cur.execute(
+                """select qr.sent_at, sr.payload->>'sender' as sender,
+                          sr.payload->>'recipients' as recipients
+                     from crm.quote q join crm.quote_revision qr on qr.quote_id=q.id
+                     join evidence.source_record sr on sr.id=qr.origin_source_record_id
+                    where q.opportunity_id=%s::uuid and qr.status='sent'
+                      and qr.sent_at is not null and sr.kind='gmail_message'
+                      and qr.superseded_by_revision_no is null""",
+                (opportunity_id,),
+            )
+            rows = self._rows(cur)
+            participants: set[str] = set()
+            sent_dates = []
+            for r in rows:
+                participants.update(_cross_thread_addresses(r["sender"], r["recipients"]))
+                if r["sent_at"]:
+                    sent_dates.append(r["sent_at"])
+            if not participants or not sent_dates:
+                return {"opportunity_id": opportunity_id, "candidates": []}
+            first_sent = min(sent_dates)
+            cur.execute(
+                """select sr.id::text as source_record_id,
+                          sr.payload->>'gmail_message_id' as gmail_id,
+                          sr.payload->>'gmail_thread_id' as thread_id,
+                          sr.payload->>'sender' as sender,
+                          sr.payload->>'recipients' as recipients,
+                          sr.payload->>'subject_raw' as subject,
+                          sr.payload->>'sent_at' as sent_at,
+                          doc.value as document,
+                          exists (
+                            select 1 from crm.opportunity_evidence oe
+                             where oe.source_record_id=sr.id and oe.unlinked_at is null
+                          ) as already_linked
+                     from evidence.source_record sr
+                     cross join lateral jsonb_array_elements(
+                       case when jsonb_typeof(sr.payload->'documents')='array'
+                            then sr.payload->'documents' else '[]'::jsonb end
+                     ) doc(value)
+                    where sr.kind='gmail_message' and not sr.is_quarantined
+                      and sr.review_status <> 'rejected'
+                      and sr.created_at >= %s::timestamptz
+                      and (
+                        doc.value->>'filename' ~* '^(o[.]?c|orden de compra)[ _#n°º0-9-]*[. ]*pdf$'
+                      )
+                    order by sr.created_at desc
+                    limit 200""",
+                (first_sent,),
+            )
+            possible = self._rows(cur)
+        import re as _re
+        oc_re = _re.compile(r"(?:o[.]?c|orden\s+de\s+compra)\s*(?:n[°º]?\s*)?(\d{5,})", _re.I)
+        candidates = []
+        for row in possible:
+            if row["already_linked"]:
+                continue  # Never steal PO evidence already associated with another case.
+            sender_addresses = {
+                addr.lower() for _, addr in getaddresses([str(row["sender"] or "")])
+            }
+            if not sender_addresses or "contacto@origenlab.cl" in sender_addresses:
+                continue
+            shared = participants & _cross_thread_addresses(row["sender"], row["recipients"])
+            if not shared:
+                continue
+            doc = row["document"]
+            if not isinstance(doc, dict) or doc.get("bytes_hash_verified") is not True:
+                continue
+            filename = str(doc.get("filename") or "")
+            sha = str(doc.get("sha256") or "").lower()
+            if not _re.fullmatch(r"[0-9a-f]{64}", sha):
+                continue
+            mail_id = str(row["gmail_id"] or "")
+            if not _re.fullmatch(r"[0-9a-f]+", mail_id):
+                continue
+            found = oc_re.search(filename) or oc_re.search(str(row["subject"] or ""))
+            candidates.append({
+                "source_record_id": row["source_record_id"],
+                "gmail_url": f"https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/{mail_id}",
+                "subject": row["subject"],
+                "sent_at": row["sent_at"],
+                "filename": filename,
+                "document_sha256": sha,
+                "purchase_order_number": found.group(1) if found else None,
+                "reason": "PDF de OC verificado y participante externo compartido con la cotización",
+            })
+        return {"opportunity_id": opportunity_id, "candidates": candidates[:10]}
+
     def person_suggestions(self) -> dict[str, Any]:
         """People the quote emails name and the CRM does not hold yet (`person_suggestions.py`)."""
         with self._read() as cur:

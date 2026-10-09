@@ -39,6 +39,7 @@ import { STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
 import { COLUMN_LABEL, CaseMoveForm, type MoveTarget } from "./CaseMove";
 import { AssignInstitution } from "./AssignInstitution";
 import { CrossThreadQuoteReview } from "./CrossThreadQuoteReview";
+import { PurchaseOrderReview } from "./PurchaseOrderReview";
 import {
   Button,
   ChoiceChips,
@@ -80,6 +81,7 @@ export function CaseActions({
   const mayAuthor = useMayAuthorCrm();
   const [mode, setMode] = useState<Mode>(initial?.mode ?? null);
   const [crossThreadOpen, setCrossThreadOpen] = useState(false);
+  const [purchaseOrderOpen, setPurchaseOrderOpen] = useState(false);
   const [target, setTarget] = useState<MoveTarget | null>(initial?.target ?? null);
   const [initialReason, setInitialReason] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -285,6 +287,19 @@ export function CaseActions({
               Elige a qué estado pasa el caso. «Ganada» es «Marcar ganada»: necesita la revisión aceptada.
             </p>
           )}
+        </div>
+      ) : null}
+      {card.stage === "negotiating" && revisions.length > 0 && !decideReason ? (
+        <div className="space-y-2">
+          <Button aria-expanded={purchaseOrderOpen} onClick={() => {
+            setPurchaseOrderOpen(!purchaseOrderOpen); setOutcome(null);
+          }}>Buscar OC recibida en otro hilo</Button>
+          {purchaseOrderOpen ? (
+            <PurchaseOrderReview card={card} onDone={(outcome, refetch) => {
+              finished(outcome, refetch);
+              if (outcome.tone === "good") setPurchaseOrderOpen(false);
+            }} />
+          ) : null}
         </div>
       ) : null}
       {mode === "won" && hasVersion && !wonReason ? (
