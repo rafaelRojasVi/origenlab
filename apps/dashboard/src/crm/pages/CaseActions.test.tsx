@@ -373,7 +373,7 @@ describe("case drawer actions", () => {
     const form = within(review).getByRole("form", { name: "Confirmar OC y venta" });
     const submit = within(form).getByRole("button", { name: "Vincular OC y marcar ganada" });
     fireEvent.change(within(form).getByLabelText(/Número impreso en la OC/), { target: { value: "01261-26" } });
-    fireEvent.change(within(form).getByLabelText("Número de OC"), { target: { value: "55512345" } });
+    fireEvent.change(within(form).getByLabelText(/Número de OC/), { target: { value: "55512345" } });
     fireEvent.click(within(form).getByRole("checkbox"));
     expect(submit).toBeDisabled();
     expect(calls.some((c) => c.method === "POST")).toBe(false);
