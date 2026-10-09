@@ -2,7 +2,10 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceOverview } from "../crmTypes";
-import { ReviewPage } from "./ReviewPage";
+import type { AuthSessionState } from "../../api/authClient";
+import { AuthSessionContext } from "../../context/AuthSessionContext";
+import type { DatosTab } from "../crmRoute";
+import { DatosPage } from "./DatosPage";
 
 // Every value below is invented; the repository is public.
 const OVERVIEW: WorkspaceOverview = {
@@ -35,7 +38,55 @@ function respond(routes: Record<string, unknown>) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("Revisión → Estado de los datos", () => {
+function asRole(role: "admin" | "sales"): AuthSessionState {
+  return {
+    kind: "signed_in",
+    method: "google_session",
+    operator: { operatorId: "op-1", email: "op@ejemplo.invalid", displayName: "Operadora", role },
+  } as AuthSessionState;
+}
+
+function renderDatos(role: "admin" | "sales" = "admin", tab?: DatosTab) {
+  return render(
+    <AuthSessionContext.Provider value={{ session: asRole(role), signOut: async () => true }}>
+      <DatosPage navigate={() => undefined} tab={tab} />
+    </AuthSessionContext.Provider>,
+  );
+}
+
+describe("Datos · sólo administración", () => {
+  const ROUTES = {
+    "/v2/cockpit/work-queue": { items: [], total: 0, limit: 200, offset: 0 },
+    "/v2/workspace/review": { archived_not_in_crm: [], open_assertions: [], ambiguous_organizations: [], drive_configured: true },
+  };
+
+  it("an admin reaches every technical panel that was in Revisión, plus suppliers and the Drive archive", async () => {
+    respond(ROUTES);
+    renderDatos("admin");
+    const group = await screen.findByRole("group", { name: "Sección" });
+    const labels = Array.from(group.querySelectorAll("button")).map((b) => b.textContent ?? "");
+    for (const name of ["Bloqueos técnicos", "No importadas", "Evidencia", "Estado de los datos", "Acciones automáticas", "Proveedores", "Archivo Drive"]) {
+      expect(labels.some((l) => l.startsWith(name))).toBe(true);
+    }
+    expect(labels.some((l) => l.startsWith("Correos"))).toBe(false); // email suggestions live on «Hoy»
+  });
+
+  it("a sales user sees only «Sólo administración» and nothing is read", () => {
+    const calls = respond(ROUTES);
+    renderDatos("sales");
+    expect(screen.getByText("Sólo administración")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Sección" })).not.toBeInTheDocument();
+    expect(calls).toEqual([]);
+  });
+
+  it("opens the tab an old link asked for", async () => {
+    respond({ ...ROUTES, "/v2/workspace/drive": { configured: false, folders: [], totals: {} } });
+    renderDatos("admin", "drive");
+    expect(await screen.findByRole("button", { name: /Archivo Drive/, pressed: true })).toBeInTheDocument();
+  });
+});
+
+describe("Datos → Estado de los datos", () => {
   const ROUTES = {
     "/v2/cockpit/work-queue": { items: [], total: 0, limit: 200, offset: 0 },
     "/v2/workspace/review": { archived_not_in_crm: [], open_assertions: [], ambiguous_organizations: [], drive_configured: true },
@@ -44,8 +95,8 @@ describe("Revisión → Estado de los datos", () => {
 
   it("reads the data-health counts only when the tab is opened", async () => {
     const calls = respond(ROUTES);
-    render(<ReviewPage navigate={() => undefined} />);
-    await screen.findByText("Sin bloqueos en el CRM");
+    renderDatos();
+    await screen.findByText("Sin bloqueos técnicos");
     expect(calls).not.toContain("/v2/workspace/overview");
 
     fireEvent.click(screen.getByRole("button", { name: /Estado de los datos/ }));
@@ -55,7 +106,7 @@ describe("Revisión → Estado de los datos", () => {
 
   it("offers no button that can never be pressed", async () => {
     respond(ROUTES);
-    render(<ReviewPage navigate={() => undefined} />);
+    renderDatos();
     fireEvent.click(await screen.findByRole("button", { name: /No importadas/ }));
     await waitFor(() => expect(screen.queryByText(/Cargando/)).not.toBeInTheDocument());
     expect(screen.queryByText("Importación histórica no disponible")).not.toBeInTheDocument();
@@ -63,7 +114,7 @@ describe("Revisión → Estado de los datos", () => {
 
   it("says where each Drive figure comes from", async () => {
     respond(ROUTES);
-    render(<ReviewPage navigate={() => undefined} />);
+    renderDatos();
     fireEvent.click(await screen.findByRole("button", { name: /Estado de los datos/ }));
     expect(await screen.findByText("14/14")).toBeInTheDocument();
     expect(screen.getByText(/actualizado desde Supabase/)).toBeInTheDocument();
@@ -72,7 +123,7 @@ describe("Revisión → Estado de los datos", () => {
   });
 });
 
-describe("Revisión → Bloqueos del CRM", () => {
+describe("Datos → Bloqueos técnicos", () => {
   it("shows the queue's true count for a kind when the page holds only part of it", async () => {
     const evidence = [0, 1].map((i) => ({
       kind: "pending_evidence", reason: "r", next_action: "n",
@@ -82,7 +133,7 @@ describe("Revisión → Bloqueos del CRM", () => {
       "/v2/cockpit/work-queue": { items: evidence, total: 412, counts: { pending_evidence: 412 }, limit: 200, offset: 0 },
       "/v2/workspace/review": { archived_not_in_crm: [], open_assertions: [], ambiguous_organizations: [], drive_configured: true },
     });
-    render(<ReviewPage navigate={() => undefined} />);
+    renderDatos();
     expect(await screen.findByText("· 412")).toBeInTheDocument();
     expect(screen.getByText(/se muestran los 2 más antiguos/)).toBeInTheDocument();
   });
@@ -100,10 +151,10 @@ describe("Revisión → Bloqueos del CRM", () => {
       },
       "/v2/workspace/review": { archived_not_in_crm: [], open_assertions: [], ambiguous_organizations: [], drive_configured: true },
     });
-    render(<ReviewPage navigate={() => undefined} />);
-    const tab = await screen.findByRole("button", { name: /Bloqueos del CRM/ });
+    renderDatos();
+    const tab = await screen.findByRole("button", { name: /Bloqueos técnicos/ });
     await screen.findByText("Número impreso compartido");
-    expect(tab).toHaveTextContent(/Bloqueos del CRM\s*·?\s*2$/);
+    expect(tab).toHaveTextContent(/Bloqueos técnicos\s*·?\s*2$/);
     expect(tab).not.toHaveTextContent("414");
   });
 });
