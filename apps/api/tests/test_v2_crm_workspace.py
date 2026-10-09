@@ -20,6 +20,7 @@ from origenlab_api.v2.crm_workspace import (
     compose_drive_archive,
     compose_pipeline,
     last_contacts,
+    live_drive_overview,
     load_drive_ledgers,
 )
 from origenlab_api.v2.crm_workspace_routes import workspace_router
@@ -428,6 +429,34 @@ def test_drive_folders_are_newest_quote_number_first_not_text_order(tmp_path: Pa
         "1013-26",
         "011728A-25",
     ]
+
+
+def test_overview_drive_counts_live_worker_links_even_when_not_in_boot_ledger() -> None:
+    """The first quote after boot is archived asynchronously, without a Render API restart."""
+    old_ledger = {SHA_A: object()}
+    status = live_drive_overview(
+        {SHA_A, SHA_B, SHA_C},
+        {SHA_A, SHA_B},  # SHA_B was just filed by the worker after API startup.
+        old_ledger,  # no refreshed archive_links.jsonl on the API container.
+    )
+    assert status == {
+        "configured": True, "documents": 2,
+        "revisions_with_drive_file": 2, "revisions_total": 3,
+    }
+    assert live_drive_overview({SHA_A}, set(), {}) == {
+        "configured": False, "documents": 0,
+        "revisions_with_drive_file": 0, "revisions_total": 1,
+    }
+
+
+def test_overview_provenance_matches_running_v2_system() -> None:
+    assert ENTITY_NOTES["messages"]["provenance"] == "partial"
+    assert "sincronizador Gmail V2" in ENTITY_NOTES["messages"]["note"]
+    assert ENTITY_NOTES["products"]["provenance"] == "imported"
+    assert ENTITY_NOTES["tasks"]["provenance"] == "partial"
+    assert ENTITY_NOTES["persons"]["provenance"] == "partial"
+    assert ENTITY_NOTES["drive_links_in_crm"]["provenance"] == "imported"
+    assert "evidence.source_record" in ENTITY_NOTES["drive_links_in_crm"]["note"]
 
 
 def test_every_counted_entity_has_a_provenance_note() -> None:

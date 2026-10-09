@@ -247,8 +247,8 @@ function NotImported({ review }: { review: ReviewResponse }) {
         options={[{ value: "all", label: "Todas" }, ...Object.keys(groups).map((k) => ({ value: k, label: LEDGER_STATUS[k]?.label ?? "Sin estado" }))]}
       />
       <Panel
-        title="Cotizaciones archivadas en Drive que no están en el CRM"
-        note="El motivo es el estado registrado al archivar (instantánea), no una decisión nueva"
+        title="Archivo histórico de Drive pendiente de revisión"
+        note="Estos PDF ya están archivados. Son una cola histórica independiente de las nuevas cotizaciones registradas desde Gmail; el motivo es la decisión documentada al archivar."
         bodyClassName="divide-y divide-line"
       >
         {rows.map((d) => {
@@ -269,8 +269,14 @@ function NotImported({ review }: { review: ReviewResponse }) {
           );
         })}
       </Panel>
+      <p className="text-xs text-ink-muted">
+        La importación masiva histórica no está habilitada en esta pantalla: los registros
+        retenidos por el owner y los que no tienen institución confirmada requieren revisión
+        individual y controles contra duplicados. Las cotizaciones nuevas enviadas por Gmail
+        se procesan en «Acciones automáticas»; no se importan aquí.
+      </p>
       <DisabledAction id="review-import-disabled" reason={WRITE_DISABLED_REASON}>
-        Importar al CRM
+        Importación histórica no disponible
       </DisabledAction>
     </>
   );

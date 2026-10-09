@@ -140,9 +140,9 @@ def mail_sync_state(
 ENTITY_NOTES: dict[str, dict[str, str]] = {
     "opportunities": {
         "provenance": "imported",
-        "note": "Casos comerciales: importación histórica de cotizaciones + casos abiertos a mano.",
+        "note": "Casos históricos y nuevas oportunidades creadas por operadores o reglas de Gmail.",
     },
-    "quotes": {"provenance": "imported", "note": "Cotizaciones históricas con número impreso."},
+    "quotes": {"provenance": "imported", "note": "Cotizaciones históricas y nuevas registradas desde PDF enviados por Gmail."},
     "quote_revisions": {
         "provenance": "imported",
         "note": "Revisiones enviadas; cada una con el SHA-256 de su PDF y su correo de Gmail.",
@@ -158,25 +158,30 @@ ENTITY_NOTES: dict[str, dict[str, str]] = {
         "manifiesto de origen no trae ese emparejamiento.",
     },
     "persons": {
-        "provenance": "not_imported",
-        "note": "Ninguna persona importada: el volcado V1 commercial.* no existe localmente y "
-        "ninguna evidencia se ha promovido a persona.",
+        "provenance": "partial",
+        "note": "Personas creadas o vinculadas en V2. No equivale a migración completa de las personas V1.",
     },
-    "affiliations": {"provenance": "not_imported", "note": "Depende de personas; no importado."},
+    "affiliations": {
+        "provenance": "partial",
+        "note": "Afiliaciones registradas en V2; las relaciones históricas V1 aún no están completas.",
+    },
     "tasks": {
-        "provenance": "no_write_path",
-        "note": "V2 aún no tiene comando para crear tareas; las tareas V1 no se migraron.",
+        "provenance": "partial",
+        "note": "Tareas del flujo operativo V2. Las tareas históricas V1 aún no se migraron.",
     },
     "activities": {
         "provenance": "no_write_path",
         "note": "V2 aún no registra actividades; las actividades V1 no se migraron.",
     },
     "messages": {
-        "provenance": "not_imported",
-        "note": "comms.message vacío: no existe el sincronizador de Gmail. Los correos de las "
-        "cotizaciones están como evidencia (evidence.source_record).",
+        "provenance": "partial",
+        "note": "Mensajes capturados por el sincronizador Gmail V2. "
+        "No implica que todo el historial del buzón haya sido importado.",
     },
-    "products": {"provenance": "not_imported", "note": "El catálogo V2 no se ha cargado."},
+    "products": {
+        "provenance": "imported",
+        "note": "Registros del catálogo cargados en V2; su presencia no confirma disponibilidad ni precios.",
+    },
     "campaigns": {
         "provenance": "imported",
         "note": "Campañas históricas importadas como registro de envío (archivadas).",
@@ -186,9 +191,9 @@ ENTITY_NOTES: dict[str, dict[str, str]] = {
         "note": "Las respuestas a campañas no se han importado; cero no significa sin respuestas.",
     },
     "drive_links_in_crm": {
-        "provenance": "not_imported",
-        "note": "crm.external_identifier está vacío: los enlaces de Drive viven sólo en los "
-        "registros locales del archivo de casos.",
+        "provenance": "imported",
+        "note": "Archivos vinculados mediante evidence.source_record (drive_file) en Supabase. "
+        "Incluye archivos históricos sin cotización importada; crm.external_identifier es una tabla legacy.",
     },
 }
 
@@ -206,7 +211,10 @@ _COUNT_SQL: dict[str, str] = {
     "products": "select count(*) from catalog.product",
     "campaigns": "select count(*) from outbound.campaign",
     "campaign_replies": "select count(*) from outbound.campaign_reply",
-    "drive_links_in_crm": "select count(*) from crm.external_identifier",
+    # Compatibility response key; its count now reflects the operational Drive evidence,
+    # not the legacy crm.external_identifier table that is intentionally unused.
+    "drive_links_in_crm": "select count(*) from evidence.source_record where kind = 'drive_file' "
+                          "and payload ->> 'drive_file_id' is not null",
 }
 
 # Keys in insertion order, for positional mapping of the combined counts query row.
@@ -417,6 +425,24 @@ def _add(index: dict[str, DriveLink], link: DriveLink, where: str) -> None:
             f"{where}: document {link.document_sha256[:12]} is archived as two different Drive files"
         )
     index.setdefault(link.document_sha256, link)
+
+
+def live_drive_overview(
+    revisions: set[str], live_drive_shas: set[str], ledgers: Mapping[str, DriveLink],
+) -> dict[str, int | bool]:
+    """Account for worker-filed PDFs as well as boot-time ledgers, by immutable SHA.
+
+    The boot-time archive is not updated when the Drive worker uploads a new quotation.
+    Counting only that archive makes the health panel incorrectly show new PDFs as absent
+    until an API restart (and after a restart if no ledger was refreshed).
+    """
+    archived = set(ledgers) | live_drive_shas
+    return {
+        "configured": bool(archived),
+        "documents": len(archived),
+        "revisions_with_drive_file": len(revisions & archived),
+        "revisions_total": len(revisions),
+    }
 
 
 def drive_links_from_records(revisions: Iterable[Mapping[str, Any]],
@@ -944,8 +970,19 @@ class CrmWorkspaceRepository:
                 "select kind, resolution, count(*) from evidence.assertion group by 1, 2 order by 1, 2"
             )
             assertions = [{"kind": r[0], "resolution": r[1], "count": int(r[2])} for r in cur.fetchall()]
-            cur.execute("select pdf_sha256 from crm.quote_revision where pdf_sha256 is not null")
-            rev_shas = {str(r[0]).lower() for r in cur.fetchall()}
+            # One round-trip, preserving overview's 8-statement budget. The worker
+            # files PDFs asynchronously into evidence.source_record after API startup.
+            cur.execute(
+                "select 'revision' as source, pdf_sha256 as sha "
+                "from crm.quote_revision where pdf_sha256 is not null "
+                "union all "
+                "select 'drive', payload ->> 'document_sha256' "
+                "from evidence.source_record where kind = 'drive_file' "
+                "and payload ->> 'drive_file_id' is not null"
+            )
+            sha_rows = cur.fetchall()
+            rev_shas = {str(sha).lower() for source, sha in sha_rows if source == 'revision' and sha}
+            live_drive_shas = {str(sha).lower() for source, sha in sha_rows if source == 'drive' and sha}
         entities = [
             {"key": k, "count": counts[k], **ENTITY_NOTES[k]} for k in _COUNT_SQL
         ]
@@ -955,12 +992,7 @@ class CrmWorkspaceRepository:
             "organizations_by_confirmation": org_confirmation,
             "contact_points_linked": {"organization": int(linked_org), "person": int(linked_person)},
             "assertions": assertions,
-            "drive_archive": {
-                "configured": self.drive_configured,
-                "documents": len(self._drive),
-                "revisions_with_drive_file": len(rev_shas & set(self._drive)),
-                "revisions_total": len(rev_shas),
-            },
+            "drive_archive": live_drive_overview(rev_shas, live_drive_shas, self._drive),
         }
 
     # -- pipeline
