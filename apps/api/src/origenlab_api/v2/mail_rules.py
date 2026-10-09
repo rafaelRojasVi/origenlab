@@ -15,7 +15,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R5 | inbound purchase order on a thread linked to one case (with one live quote revision) | auto: link + won |
 | R6 | inbound «otro proveedor» on a thread linked to one open case | auto: link + lost |
 | R7 | inbound quote request, no linked thread | numbered quotation references require review; otherwise open lead |
-| R8 | everything else (supplier, campaign thread, Labdelivery, nothing matched) | none |
+| R8 | everything else (supplier, a reply to our own supplier RFQ, campaign thread, Labdelivery, nothing matched) | none |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -348,6 +348,23 @@ class _Index:
         #: New quote keys and new domains an earlier email in this same plan already claims.
         self.claimed_keys: dict[tuple[int, int], str] = {}
         self.claimed_domains: dict[str, str] = {}
+        #: Threads and domains of our own price requests to suppliers (`supplier_rfq`). A reply on
+        #: such a thread, or a new email from such a domain, is a supplier answering us — never a
+        #: customer's request. Free-mail and customer domains never count: one supplier on
+        #: gmail.com must not silence every gmail.com request, and a customer we also buy from
+        #: keeps reaching R7.
+        customer_domains = {d.lower() for o in snapshot.organizations if not o.is_supplier for d in o.domains}
+        rfq_threads: set[str] = set()
+        rfq_domains: set[str] = set()
+        for ev in snapshot.evidence:
+            if ev.direction != "outbound" or (ev.direction_hint or "") != "supplier_rfq":
+                continue
+            if ev.thread_id:
+                rfq_threads.add(ev.thread_id)
+            rfq_domains.update(d for d in _external_domains(ev)
+                               if d not in FREE_MAIL_DOMAINS and d not in customer_domains)
+        self.rfq_threads: frozenset[str] = frozenset(rfq_threads)
+        self.rfq_domains: frozenset[str] = frozenset(rfq_domains)
 
     def is_supplier_domain(self, domain: str) -> bool:
         return any(o.is_supplier for o in self.by_domain.get(domain, []))
@@ -473,6 +490,11 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     if supplier_domains and not thread_cases:
         return PlannedAction(e.id, "R8", NONE, (
             f"dominio de proveedor ({', '.join(supplier_domains)}): no se crea institución ni caso",))
+    if e.direction == "inbound" and not thread_cases and (
+        (e.thread_id and e.thread_id in ix.rfq_threads) or any(d in ix.rfq_domains for d in domains)
+    ):
+        return PlannedAction(e.id, "R8", NONE, (
+            "proveedor al que OrigenLab pidió precio (sondeo de compra): no se abre caso de cliente",))
 
     signal = _signal_rules(e, thread_cases, ix, already_linked=False)
     if signal is not None:
