@@ -16,7 +16,11 @@ function where(k: KnownNumber): string {
  * Gmail», never «free». When the Gmail numbers cannot be read the box still answers from the CRM
  * and Drive and says that Gmail is missing; the next number waits until every read has answered.
  */
-export function QuoteNumberBox({ pipeline }: { pipeline: ResourceState<PipelineResponse> }) {
+export function QuoteNumberBox({ pipeline, compact = false }: {
+  pipeline: ResourceState<PipelineResponse>;
+  /** Stacked, for a side column. */
+  compact?: boolean;
+}) {
   const [drive] = useResource(fetchDriveArchive);
   const [mail] = useResource(fetchMailQuoteNumbers);
   const inputId = useId();
@@ -49,7 +53,9 @@ export function QuoteNumberBox({ pipeline }: { pipeline: ResourceState<PipelineR
     <section
       data-testid="quote-number-box"
       aria-label="Número de cotización"
-      className="crm-rise grid grid-cols-1 gap-3 rounded-xl border border-brand-600/30 bg-canvas-raised p-4 shadow-[0_1px_2px_rgb(28_25_23/0.04)] md:grid-cols-[auto_auto_minmax(0,1fr)] md:items-start md:gap-6"
+      className={`crm-rise grid grid-cols-1 gap-3 rounded-xl border border-brand-600/30 bg-canvas-raised p-4 shadow-[0_1px_2px_rgb(28_25_23/0.04)] ${
+        compact ? "grid-cols-2 gap-x-4" : "md:grid-cols-[auto_auto_minmax(0,1fr)] md:items-start md:gap-6"
+      }`}
     >
       <div data-testid="quote-last" className="min-w-0">
         <p className="text-[12px] font-medium text-ink-muted">Último número</p>
@@ -57,7 +63,7 @@ export function QuoteNumberBox({ pipeline }: { pipeline: ResourceState<PipelineR
           <div className="crm-skeleton mt-1 h-6 w-28 rounded" />
         ) : (
           <>
-            <p className="mt-0.5 text-[20px] font-semibold leading-none tracking-tight text-ink tabular-nums">{last?.number ?? "—"}</p>
+            <p className={`mt-0.5 whitespace-nowrap font-semibold leading-none tracking-tight text-ink tabular-nums ${compact ? "text-[18px]" : "text-[20px]"}`}>{last?.number ?? "—"}</p>
             {last ? <p className="mt-1 max-w-[16rem] truncate text-[11px] text-ink-faint">{where(last)}</p> : null}
           </>
         )}
@@ -65,7 +71,7 @@ export function QuoteNumberBox({ pipeline }: { pipeline: ResourceState<PipelineR
       <div data-testid="quote-next" className="min-w-0">
         <p className="text-[12px] font-medium text-ink-muted">Siguiente</p>
         <div className="mt-0.5 flex items-center gap-2">
-          <p className="text-[20px] font-semibold leading-none tracking-tight text-brand-700 tabular-nums">{loading ? "…" : next}</p>
+          <p className={`whitespace-nowrap font-semibold leading-none tracking-tight text-brand-700 tabular-nums ${compact ? "text-[18px]" : "text-[20px]"}`}>{loading ? "…" : next}</p>
           <button
             type="button"
             onClick={copy}
@@ -76,7 +82,7 @@ export function QuoteNumberBox({ pipeline }: { pipeline: ResourceState<PipelineR
           </button>
         </div>
       </div>
-      <div className="min-w-0">
+      <div className={`min-w-0 ${compact ? "col-span-2" : ""}`}>
         <label htmlFor={inputId} className="text-[12px] font-medium text-ink-muted">
           ¿Ya existe este número?
         </label>
@@ -102,7 +108,7 @@ export function QuoteNumberBox({ pipeline }: { pipeline: ResourceState<PipelineR
           )}
         </p>
       </div>
-      <p className="text-[11px] text-ink-faint md:col-span-3">
+      <p className={`text-[11px] text-ink-faint ${compact ? "col-span-2" : "md:col-span-3"}`}>
         Según el CRM, el archivo de Drive y los correos de Gmail
         {drive.kind !== "ready" && drive.kind !== "loading" ? " (sin el archivo de Drive: no se pudo leer)" : ""}
         {mailMissing ? " (los números de Gmail no se pudieron leer)" : ""}. Una cotización que aún no está en

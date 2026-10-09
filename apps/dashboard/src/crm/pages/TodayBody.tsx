@@ -18,7 +18,7 @@
  * Writes go through the same commands as the drawer (`caseCommands.ts`, `crmAuthoringApi.ts`),
  * gated the same way; a viewer sees the lists without the buttons. Every recorded write refetches.
  */
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { confirmOrganizationRecord, fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 import { PersonSuggestionList } from "../authoring/PersonSuggestionList";
 import { useMayAuthorCrm } from "../authoring/authoring";
@@ -83,6 +83,8 @@ export function TodayBody({
   now,
   people,
   reloadPeople,
+  aside,
+  after,
 }: {
   items: OpportunityCardData[];
   navigate: Navigate;
@@ -92,6 +94,10 @@ export function TodayBody({
   /** Person suggestions, read by the page beside the pipeline so neither waits on the other. */
   people?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
   reloadPeople?: () => void;
+  /** What the page keeps at hand on the side, above the lists: the quote number and the rates. */
+  aside?: ReactNode;
+  /** The main column's last panel: the emails no case holds. */
+  after?: ReactNode;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const tasks = useMemo(() => tasksDue(items, at), [items, at]);
@@ -113,8 +119,10 @@ export function TodayBody({
           <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
           <TasksPanel tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <PeoplePanel mayAuthor={mayAuthor} navigate={navigate} state={people} reload={reloadPeople} />
+          {after}
         </div>
-        <aside className="min-w-0 space-y-4">
+        <aside className="min-w-0 space-y-4 lg:sticky lg:top-4 lg:self-start">
+          {aside}
           {historical > 0 ? (
             <section className="crm-rise rounded-xl border border-info/30 bg-info-bg/40 p-4" data-testid="today-historical">
               <h2 className="text-[14px] font-semibold text-ink">
