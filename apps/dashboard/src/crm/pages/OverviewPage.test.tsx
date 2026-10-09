@@ -305,3 +305,22 @@ describe("Resumen", () => {
     expect(calls).not.toContain("/v2/workspace/overview");
   });
 });
+
+describe("Hoy · lecturas en paralelo", () => {
+  it("asks for person suggestions while the pipeline is still loading", async () => {
+    let releasePipeline: (r: Response) => void = () => undefined;
+    const held = new Promise<Response>((resolve) => { releasePipeline = resolve; });
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      calls.push(path);
+      if (path === "/v2/workspace/pipeline") return held;
+      return Promise.resolve(new Response("{}", { status: 404 }));
+    }));
+    render(<OverviewPage navigate={() => undefined} />);
+    await waitFor(() => expect(calls.some((p) => p.endsWith("/person-suggestions"))).toBe(true));
+    releasePipeline(new Response(JSON.stringify(PIPELINE), { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
+});
+

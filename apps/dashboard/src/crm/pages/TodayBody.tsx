@@ -49,7 +49,7 @@ import {
   type Reply,
 } from "../today";
 import { Badge, Button, Modal, Panel, ResourceGate, Skeleton, fmtDate, toast } from "../ui";
-import { useResource } from "../useResource";
+import { useResource, type ResourceState } from "../useResource";
 import { CaseMoveForm } from "./CaseMove";
 
 type Navigate = (s: CrmSection, id?: string) => void;
@@ -89,12 +89,17 @@ export function TodayBody({
   onChanged,
   refreshing = false,
   now,
+  people,
+  reloadPeople,
 }: {
   items: OpportunityCardData[];
   navigate: Navigate;
   onChanged: () => void;
   refreshing?: boolean;
   now?: Date;
+  /** Person suggestions, read by the page beside the pipeline so neither waits on the other. */
+  people?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
+  reloadPeople?: () => void;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const tasks = useMemo(() => tasksDue(items, at), [items, at]);
@@ -121,7 +126,7 @@ export function TodayBody({
           <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
           <TasksPanel tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
-          <PeoplePanel mayAuthor={mayAuthor} navigate={navigate} />
+          <PeoplePanel mayAuthor={mayAuthor} navigate={navigate} state={people} reload={reloadPeople} />
         </div>
         <aside className="min-w-0 space-y-4">
           {historical > 0 ? (
@@ -844,8 +849,19 @@ function OrgRow({ org, navigate, mayAuthor, onChanged }: { org: OrgToConfirm; na
   );
 }
 
-function PeoplePanel({ mayAuthor, navigate }: { mayAuthor: boolean; navigate: Navigate }) {
-  const [state, reload] = useResource(fetchPersonSuggestions);
+/** A loader that never runs a request: `PeoplePanel` was handed its state. */
+const noPeople = (): Promise<Awaited<ReturnType<typeof fetchPersonSuggestions>>> => new Promise(() => undefined);
+
+function PeoplePanel({ mayAuthor, navigate, state: given, reload: givenReload }: {
+  mayAuthor: boolean;
+  navigate: Navigate;
+  state?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
+  reload?: () => void;
+}) {
+  // Read here only when the page did not read it already (TodayBody rendered on its own).
+  const [own, ownReload] = useResource(given ? noPeople : fetchPersonSuggestions);
+  const state = given ?? own;
+  const reload = givenReload ?? ownReload;
   return (
     <Panel title="Personas por agregar" aside={state.kind === "ready" ? <Badge glyph={false}>{state.data.total}</Badge> : null}>
       <div className="p-3">

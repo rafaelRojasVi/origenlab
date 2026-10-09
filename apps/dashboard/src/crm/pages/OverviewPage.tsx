@@ -7,6 +7,7 @@ import { useResource, type ResourceState } from "../useResource";
 import { QuoteNumberBox } from "../QuoteNumberBox";
 import { SANTIAGO, WEEKDAYS, todayInSantiago } from "../marketing/calendar";
 import { TodayBody } from "./TodayBody";
+import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 
 type Navigate = (s: CrmSection, id?: string) => void;
 
@@ -18,6 +19,7 @@ type Navigate = (s: CrmSection, id?: string) => void;
 export function OverviewPage({ navigate }: { navigate: Navigate }) {
   const [fx, reloadFx] = useResource(fetchFx);
   const [pipeline, reloadPipeline, refreshing] = useResource(fetchPipeline);
+  const [people, reloadPeople] = useResource(fetchPersonSuggestions);
   return (
     <div className="space-y-5">
       <PageHeader
@@ -28,7 +30,7 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
       <QuoteNumberBox pipeline={pipeline} />
       <FxSection state={fx} reload={reloadFx} />
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
-        {(p) => <TodayBody items={p.items} navigate={navigate} onChanged={reloadPipeline} refreshing={refreshing} />}
+        {(p) => <TodayBody items={p.items} navigate={navigate} onChanged={reloadPipeline} refreshing={refreshing} people={people} reloadPeople={reloadPeople} />}
       </ResourceGate>
     </div>
   );
