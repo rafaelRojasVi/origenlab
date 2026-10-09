@@ -154,6 +154,8 @@ class FxRates:
         # an outage costs one database read (and at most one WARNING) a minute, not one a request.
         self._stored_cache: tuple[float, dict[str, Any] | None] | None = None
         self._write_thread: threading.Thread | None = None
+        # One refresh at a time, outside the lock: while it runs, others get the last figures.
+        self._refreshing = False
 
     def current(self) -> dict[str, Any]:
         fetched: tuple[str, list[dict[str, Any]]] | None = None
@@ -161,31 +163,46 @@ class FxRates:
             now = self._clock()
             if self._figures is not None and now - self._fetched_at < FX_CACHE_SECONDS:
                 return {**self._figures, "stale": False}
-            if self._failed_at is not None and now - self._failed_at < FX_RETRY_AFTER_FAILURE_SECONDS:
+            if self._refreshing and self._figures is not None:
+                # Another request is asking the outside service: never wait on it.
+                return {**self._figures, "stale": True}
+            in_backoff = self._failed_at is not None and now - self._failed_at < FX_RETRY_AFTER_FAILURE_SECONDS
+            if not in_backoff:
+                self._refreshing = True
+        answer: dict[str, Any] | None = None
+        if in_backoff:
+            with self._lock:
                 answer = self._in_memory()
-            else:
-                answer = None
+        else:
+            try:
+                # The outside call runs without the lock: only this request waits on it.
                 for name, fetch in self._sources:
                     try:
                         rates = parse_mindicador(fetch())
                     except Exception as exc:  # noqa: BLE001 — any failure of a source means "try the next"
                         logger.warning("fx source %s failed: %s: %s", name, type(exc).__name__, str(exc)[:200])
                         continue
-                    self._failed_at = None
-                    self._fetched_at = now
-                    self._figures = {
-                        "source": name,
-                        "source_label": f"Banco Central de Chile, vía {name}",
-                        "source_url": f"https://{name}",
-                        "rates": rates,
-                        "fetched_at": datetime.fromtimestamp(self._wall_clock(), tz=timezone.utc).isoformat(),
-                    }
-                    answer = {**self._figures, "stale": False}
                     fetched = (name, rates)
                     break
-                else:
-                    self._failed_at = now
-                    answer = self._in_memory()
+            finally:
+                with self._lock:
+                    self._refreshing = False
+                    if fetched is not None:
+                        name, rates = fetched
+                        self._failed_at = None
+                        self._fetched_at = now
+                        self._figures = {
+                            "source": name,
+                            "source_label": f"Banco Central de Chile, vía {name}",
+                            "source_url": f"https://{name}",
+                            "rates": rates,
+                            "fetched_at": datetime.fromtimestamp(self._wall_clock(), tz=timezone.utc).isoformat(),
+                        }
+                        answer = {**self._figures, "stale": False}
+                    else:
+                        self._failed_at = now
+                        answer = self._in_memory()
+        with self._lock:
             if answer is None and self._stored_cache is not None:
                 read_at, cached = self._stored_cache
                 if now - read_at < FX_RETRY_AFTER_FAILURE_SECONDS:
