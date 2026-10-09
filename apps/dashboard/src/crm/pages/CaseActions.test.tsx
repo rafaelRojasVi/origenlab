@@ -377,6 +377,8 @@ describe("case drawer actions", () => {
     fireEvent.click(within(form).getByRole("checkbox"));
     expect(submit).toBeDisabled();
     expect(calls.some((c) => c.method === "POST")).toBe(false);
+    fireEvent.change(within(form).getByLabelText(/Número impreso en la OC/), { target: { value: "01253A-25" } });
+    expect(submit).toBeDisabled();
     fireEvent.change(within(form).getByLabelText(/Número impreso en la OC/), { target: { value: "01253A-26" } });
     expect(submit).toBeEnabled();
     fireEvent.click(submit);
