@@ -1327,13 +1327,13 @@ describe("Decidir casos", () => {
     last_contact: { outbound: null, inbound: { at: "2026-09-25T12:00:00Z", subject: "Re", url: null } },
   });
   const silent = card({ opportunity_id: "aaaaaaaa-0000-4000-8000-000000000002", ...sentAt("2026-07-01T12:00:00Z") });
-  const recent = card({ opportunity_id: "aaaaaaaa-0000-4000-8000-000000000003", ...sentAt("2026-10-01T12:00:00Z") });
+  const recent = card({ opportunity_id: "aaaaaaaa-0000-4000-8000-000000000003", ...sentAt("2026-09-15T12:00:00Z") });
 
   it("proposes Conversación after a reply, Perdida after 45 silent days, a follow-up otherwise", () => {
     expect(proposeDecision(replied, NOW)).toEqual({ decision: "conversacion", why: "Respondió 25 sept" });
     expect(proposeDecision(silent, NOW).decision).toBe("perdida");
     expect(proposeDecision(silent, NOW).why).toBe("97 días sin respuesta");
-    expect(proposeDecision(recent, NOW)).toEqual({ decision: "seguir", why: "Enviada hace 5 días" });
+    expect(proposeDecision(recent, NOW)).toEqual({ decision: "seguir", why: "Enviada hace 21 días" });
   });
 
   it("applies every decision with its own command, and lets the operator change or leave out a row", async () => {

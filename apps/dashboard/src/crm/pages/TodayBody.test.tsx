@@ -104,6 +104,25 @@ describe("today lists", () => {
     ]);
   });
 
+  it("shows a client who writes on a won case under «Te toca responder», with nothing to decide and no button that writes", () => {
+    const inbound = (at: string) => ({ outbound: null, inbound: { at, subject: null, url: "https://mail.example.cl/pay" } });
+    // Won on 6 Oct; the client sent the payment on the 8th and asks for delivery dates.
+    const paid = card({ stage: "won", closed_at: "2026-10-06T12:00:00Z", last_contact: inbound("2026-10-08T16:30:00Z") }, "2026-09-30T12:00:00Z");
+    // Won on 6 Oct after the client's last email: nothing new to answer.
+    const settled = card({ stage: "won", closed_at: "2026-10-06T12:00:00Z", last_contact: inbound("2026-10-05T16:30:00Z") }, "2026-09-30T12:00:00Z");
+    // A lost case's client writing back is a new request, not a reply to answer here.
+    const lost = card({ stage: "lost", closed_at: "2026-10-06T12:00:00Z", last_contact: inbound("2026-10-08T16:30:00Z") }, "2026-09-30T12:00:00Z");
+    expect(repliesToAnswer([paid, settled, lost], NOW).map((r) => r.card.opportunity_id)).toEqual([paid.opportunity_id]);
+    expect(followUpsDue([paid], NOW)).toEqual([]);
+
+    stub();
+    renderToday([paid]);
+    const row = screen.getByText(/Escribió tras ganar/).closest("div")!.parentElement!;
+    expect(within(row).getByRole("link", { name: /Abrir respuesta/ })).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: /No requiere respuesta/ })).toBeNull();
+    expect(within(row).queryByRole("button", { name: /Pasar a Conversación/ })).toBeNull();
+  });
+
   it("puts a case whose «Seguimiento …» task is due in the follow-ups from day 3, never among the other tasks", () => {
     const fu = (id: string, due: string) => ({ task_id: id, title: "Seguimiento de 01239-26", due_at: due, version: 1, owner: null });
     const fresh = card({ open_tasks: [fu("f1", "2026-10-06T12:00:00Z")] }, "2026-10-05T12:00:00Z");

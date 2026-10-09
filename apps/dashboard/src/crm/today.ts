@@ -74,13 +74,23 @@ export interface Reply {
 export function repliesToAnswer(cards: OpportunityCardData[], now: Date): Reply[] {
   const out: Reply[] = [];
   for (const card of cards) {
-    if (!isOpenCase(card)) continue;
+    if (!isOpenCase(card) && !wroteAfterWinning(card)) continue;
     const conv = conversation(card, now);
     if (conv.kind !== "replied" || !conv.at) continue;
     if (answeredByTask(card, conv.at, now)) continue;
     out.push({ card, at: conv.at, url: conv.url });
   }
   return out.sort((a, b) => b.at.localeCompare(a.at));
+}
+
+/**
+ * A won case is not over for the client: the payment, the delivery date, the invoice all arrive
+ * on its thread. An email sent after the case was marked won is a reply to answer; one sent before
+ * was already read when the case was won. A lost case's client writing back is a new request.
+ */
+export function wroteAfterWinning(card: OpportunityCardData): boolean {
+  const inbound = card.last_contact?.inbound?.at ?? null;
+  return card.stage === "won" && !!card.closed_at && !!inbound && Date.parse(inbound) > Date.parse(card.closed_at);
 }
 
 /**
@@ -134,7 +144,7 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
         break;
       }
     }
-    if (!task && (pending.length > 0 || (!decided && stageBasis(card) === "historical_import"))) continue;
+    if (!task && (pending.length > 0 || (!decided && stageBasis(card, now) === "historical_import"))) continue;
     const sent = card.latest_revision?.sent_at ?? null;
     if (!sent && !task) continue;
     if (!task && conversation(card, now).kind === "replied") continue;
@@ -178,11 +188,11 @@ export function organizationsToConfirm(cards: OpportunityCardData[]): OrgToConfi
   return [...byId.values()].sort((a, b) => b.cases.length - a.cases.length || a.name.localeCompare(b.name, "es"));
 }
 
-export function historicalCount(cards: OpportunityCardData[]): number {
-  return cards.filter((c) => stageBasis(c) === "historical_import").length;
+export function historicalCount(cards: OpportunityCardData[], now: Date = new Date()): number {
+  return cards.filter((c) => stageBasis(c, now) === "historical_import").length;
 }
 
 /** The two counts «Hoy»'s header shows: cases to decide and follow-ups due today. */
 export function todayCounts(cards: OpportunityCardData[], now: Date = new Date()): { replies: number; decide: number; followUps: number } {
-  return { replies: repliesToAnswer(cards, now).length, decide: historicalCount(cards), followUps: followUpsDue(cards, now).length };
+  return { replies: repliesToAnswer(cards, now).length, decide: historicalCount(cards, now), followUps: followUpsDue(cards, now).length };
 }
