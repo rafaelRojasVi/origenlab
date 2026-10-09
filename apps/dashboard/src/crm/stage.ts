@@ -164,11 +164,21 @@ export function byLatestActivity(a: OpportunityCardData, b: OpportunityCardData)
  */
 export type StageBasis = "historical_import" | "crm_record";
 
-export function stageBasis(card: OpportunityCardData): StageBasis {
+/**
+ * Days after a quote goes out during which its stage is a decision, not an import's trace. Every
+ * registered quote — the Gmail sync's included — carries `origin = 'historical_import'`, so the
+ * age of the newest revision is what tells yesterday's quote from the 2024 backlog.
+ */
+export const RECENT_QUOTE_DAYS = 14;
+
+export function stageBasis(card: OpportunityCardData, now: Date = new Date()): StageBasis {
   const revisions = card.quotes.flatMap((q) => q.revisions);
+  const newest = Math.max(...revisions.map((r) => (r.sent_at ? Date.parse(r.sent_at) : Number.NaN)).filter((t) => !Number.isNaN(t)));
+  const recent = Number.isFinite(newest) && now.getTime() - newest < RECENT_QUOTE_DAYS * 86_400_000;
   if (
     !card.closed_at &&
     card.stage === "quoting" &&
+    !recent &&
     // A task an operator wrote (a follow-up, a pause) is a decision about the case's present.
     (card.open_tasks ?? []).length === 0 &&
     revisions.length > 0 &&
@@ -183,8 +193,8 @@ export const HISTORICAL_STAGE_LABEL = "Enviada · sin decidir";
 export const HISTORICAL_STAGE_TITLE =
   "Etapa fijada por la importación histórica a partir de una cotización enviada. No confirma el estado comercial actual: nadie lo ha verificado todavía en el CRM.";
 
-export function stageDisplay(card: OpportunityCardData): { label: string; tone: Tone; title?: string } {
-  if (stageBasis(card) === "historical_import") {
+export function stageDisplay(card: OpportunityCardData, now?: Date): { label: string; tone: Tone; title?: string } {
+  if (stageBasis(card, now) === "historical_import") {
     return { label: HISTORICAL_STAGE_LABEL, tone: "neutral", title: HISTORICAL_STAGE_TITLE };
   }
   return { label: STAGE_LABEL[card.stage] ?? card.stage, tone: STAGE_TONE[card.stage] ?? "neutral" };

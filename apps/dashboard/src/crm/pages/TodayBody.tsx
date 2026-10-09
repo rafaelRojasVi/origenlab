@@ -40,6 +40,7 @@ import {
   RHYTHM,
   followUpsDue,
   historicalCount,
+  wroteAfterWinning,
   organizationsToConfirm,
   repliesToAnswer,
   tasksDue,
@@ -104,7 +105,7 @@ export function TodayBody({
   const replies = useMemo(() => repliesToAnswer(items, at), [items, at]);
   const followUps = useMemo(() => followUpsDue(items, at), [items, at]);
   const orgs = useMemo(() => organizationsToConfirm(items), [items]);
-  const historical = historicalCount(items);
+  const historical = historicalCount(items, at);
   // A blocked case a client is waiting on shows once, in «Te toca responder», with what blocks it.
   const blocked = items.filter((i) => i.status === "blocked" && !replies.some((r) => r.card.opportunity_id === i.opportunity_id));
   const mayDecide = useMayRunCaseCommands();
@@ -364,6 +365,8 @@ function ReplyRow({
   const keys = useRef([newCaseCommandKey()]);
   const skipKey = useRef(newCaseCommandKey());
   const blocking = card.attention.find((a) => a.blocking) ?? null;
+  // A won case takes no task, so the only way off the list is answering the email.
+  const won = wroteAfterWinning(card);
   const canMove = !blocking && mayDecide && card.stage === "quoting" && typeof card.version === "number";
 
   async function noAnswerNeeded() {
@@ -418,7 +421,9 @@ function ReplyRow({
       <div className="min-w-[12rem] flex-1">
         <CaseLink card={card} navigate={navigate} />
         <p className="mt-0.5 truncate text-[11px] text-ink-muted">
-          <span className="font-medium text-warn">{card.latest_revision ? "Respondió" : "Escribió"} el {fmtDate(reply.at)}</span>
+          <span className="font-medium text-warn">
+            {won ? "Escribió tras ganar" : card.latest_revision ? "Respondió" : "Escribió"} el {fmtDate(reply.at)}
+          </span>
           {card.latest_revision ? ` · ${quoteOf(card)}` : ""}
           {contactLine(card) ? ` · ${contactLine(card)}` : ""}
         </p>
@@ -439,7 +444,7 @@ function ReplyRow({
           <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>
             Resolver
           </Button>
-        ) : mayDecide ? (
+        ) : mayDecide && !won ? (
           <Button
             variant="secondary"
             onClick={() => void noAnswerNeeded()}

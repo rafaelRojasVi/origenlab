@@ -58,4 +58,21 @@ describe("stage basis", () => {
     expect(stageBasis(card({}, []))).toBe("crm_record");
     expect(stageDisplay(card({ stage: "negotiating" })).label).toBe("Conversación");
   });
+
+  it("never calls a quote sent within the last two weeks «sin decidir»: every registered quote carries the import's origin", () => {
+    const now = new Date("2026-10-09T15:00:00Z");
+    const sentAt = (iso: string) => ({ ...rev("historical_import"), sent_at: iso });
+    const yesterday = card({ quotes: [{ quote_id: "q", quote_number: "01260-26", number_origin: null, revisions: [sentAt("2026-10-08T14:00:00Z")] }] });
+    const thirteenDays = card({ quotes: [{ quote_id: "q", quote_number: "01250-26", number_origin: null, revisions: [sentAt("2026-09-26T14:00:00Z")] }] });
+    const fifteenDays = card({ quotes: [{ quote_id: "q", quote_number: "01240-26", number_origin: null, revisions: [sentAt("2026-09-24T14:00:00Z")] }] });
+    const revised = card({
+      quotes: [{ quote_id: "q", quote_number: "01230-26", number_origin: null, revisions: [sentAt("2026-05-01T00:00:00Z"), sentAt("2026-10-01T14:00:00Z")] }],
+    });
+    expect(stageBasis(yesterday, now)).toBe("crm_record");
+    expect(stageDisplay(yesterday, now).label).toBe("Enviada");
+    expect(stageBasis(thirteenDays, now)).toBe("crm_record");
+    expect(stageBasis(fifteenDays, now)).toBe("historical_import");
+    // The newest revision counts: a quote revised last week was decided last week.
+    expect(stageBasis(revised, now)).toBe("crm_record");
+  });
 });

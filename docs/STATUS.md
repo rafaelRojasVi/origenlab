@@ -2346,3 +2346,12 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Board | The card's day badge counts from the case's last movement — the same date as the «Últimos 30 días» bands; client silence stays on the status line. Names wrap at word boundaries. |
 | Case panel | Actions at the top: «Registrar seguimiento», «Cambiar estado», «Marcar ganada» when it applies (and «No es una solicitud» on a case without a quotation); the rest under «Más…». Removed: «Estado actual sin verificar» and «Al día» badges, the explanatory footnotes, sha256, import origin and the internal id. |
 | Follow-up | PR #699 (same day): the quote-number box and the exchange rates moved to «Hoy»'s side column (sticky on wide screens), «Correos sin caso» closes the main column; nothing sits under both columns any more. |
+
+### 2.7.80 Fresh quotes are not «sin decidir»; won-case replies in «Te toca responder», 2026-10-09 — PR open
+
+| | |
+|---|---|
+| Problem | Every registered quote — the Gmail sync's included — carries `origin = 'historical_import'`, so the three quotes sent on 8 Oct showed as «Enviada · sin decidir» and «Decidir 3 casos históricos» proposed a follow-up task for the day after sending. A client writing on a won case (the payment, the delivery date) was never listed: «Hoy» skipped closed cases. |
+| Rule 1 | `stageBasis` (dashboard) ignores the import origin while the newest revision is younger than 14 days (`RECENT_QUOTE_DAYS`): the quote is «Enviada», joins «Seguimientos» from day 3 on the 3 · 14 · 30 rhythm, and only becomes «sin decidir» after two weeks with no task and no reply. |
+| Rule 2 | `repliesToAnswer` includes a won case whose last inbound email is later than `closed_at` (`wroteAfterWinning`); the row reads «Escribió tras ganar el …», offers only «Abrir respuesta» (tasks are refused on closed cases, so answering the email is what takes it off the list). Lost cases stay out: a client writing back there is a new request. |
+| Not changed | The API still stores every registered quote as `historical_import`; a distinct origin for the sync's quotes is a later change. |
