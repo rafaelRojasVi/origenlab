@@ -107,6 +107,13 @@ export function CaseActions({
       : closed
         ? "El caso está cerrado"
         : null;
+  // Choosing the current revision tidies the record and never reopens or moves the case, so a
+  // closed case may still do it (owner decision 2026-10-09).
+  const resolveReason = !mayDecide
+    ? WRITE_DISABLED_REASON
+    : !hasVersion
+      ? "El API no informó la versión del caso"
+      : null;
   const wonReason =
     decideReason ??
     (!mayBeWonFrom(card.stage)
@@ -205,8 +212,8 @@ export function CaseActions({
           <span className="text-ink-muted">
             Hay más de una revisión vigente de {undetermined.map((q) => q.quote_number).join(", ")}: elige cuál es la vigente.
           </span>
-          {decideReason ? (
-            <DisabledAction id="drawer-resolve" reason={decideReason}>
+          {resolveReason ? (
+            <DisabledAction id="drawer-resolve" reason={resolveReason}>
               Elegir revisión vigente
             </DisabledAction>
           ) : (
