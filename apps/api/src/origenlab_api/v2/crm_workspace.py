@@ -668,7 +668,9 @@ def compose_pipeline(
                     ),
                     "drive": link.as_dict() if link else None,
                     # The archiver files a PDF from the captured `.eml`; without one it never will.
-                    "drive_pending": link is None and bool(src.get("has_eml")),
+                    # The archiver skips void revisions and revisions with no PDF hash (drive_filing.py).
+                    "drive_pending": (link is None and bool(src.get("has_eml"))
+                                      and r.get("status") != "void" and sha is not None),
                     "quote_number": q["quote_number"],
                     "_recipients": src.get("recipients"),
                 }

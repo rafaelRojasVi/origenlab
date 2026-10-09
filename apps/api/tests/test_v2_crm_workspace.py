@@ -377,12 +377,24 @@ def test_a_pdf_with_no_captured_email_still_needs_a_manual_upload() -> None:
     assert card["latest_revision"]["drive_pending"] is False
 
 
+def test_a_void_revision_or_one_without_a_pdf_is_never_pending_archive() -> None:
+    """The archiver skips void revisions and revisions with no PDF hash; so must the label."""
+    sources = {"src-1": {**SOURCES["src-1"], "has_eml": True}}
+    for rev in (_rev("r1", "q1", 1, SHA_A, status="void"), _rev("r1", "q1", 1, None)):
+        card = compose_pipeline(
+            [_opp("o1")], [],
+            [{"quote_id": "q1", "opportunity_id": "o1", "quote_number": "00001-26", "number_origin": "printed_historical"}],
+            [rev], sources, [], {},
+        )[0]
+        [r] = card["quotes"][0]["revisions"]
+        assert r["drive_pending"] is False
+
+
 def test_a_pending_archive_alone_does_not_make_a_case_pending() -> None:
     card = _one_quote_card({"src-1": {**SOURCES["src-1"], "has_eml": True}})
     others = [a["code"] for a in card["attention"] if a["code"] not in ("no_crm_contact", "document_pending_drive")]
-    blocked = any(a["blocking"] for a in card["attention"])
     assert "document_pending_drive" in [a["code"] for a in card["attention"]]
-    assert card["status"] == ("blocked" if blocked else "pending" if others else "ok")
+    assert others == [] and card["status"] == "ok"
 
 
 def test_shared_printed_number_blocks_both_cases() -> None:

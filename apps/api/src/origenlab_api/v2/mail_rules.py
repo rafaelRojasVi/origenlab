@@ -242,6 +242,17 @@ def quote_key(raw: str | None, default_year: int | None) -> tuple[int, int] | No
     return (year, correlative)
 
 
+def _instant(iso: str | None) -> datetime | None:
+    """An aware instant from an ISO timestamp; None when absent, naive or malformed."""
+    if not iso:
+        return None
+    try:
+        at = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return at if at.tzinfo is not None else None
+
+
 def santiago_year(iso: str | None) -> int | None:
     if not iso:
         return None
@@ -348,23 +359,39 @@ class _Index:
         #: New quote keys and new domains an earlier email in this same plan already claims.
         self.claimed_keys: dict[tuple[int, int], str] = {}
         self.claimed_domains: dict[str, str] = {}
-        #: Threads and domains of our own price requests to suppliers (`supplier_rfq`). A reply on
-        #: such a thread, or a new email from such a domain, is a supplier answering us — never a
-        #: customer's request. Free-mail and customer domains never count: one supplier on
-        #: gmail.com must not silence every gmail.com request, and a customer we also buy from
-        #: keeps reaching R7.
+        #: Our own price requests to suppliers: (when sent, the supplier domains it went to). V1
+        #: marks ANY outbound «RFQ / request for quotation» subject as `supplier_rfq` — a reply to
+        #: a customer, a forward on a customer's thread — so only an RFQ that started its own
+        #: thread counts (no inbound mail on that thread before it). An inbound email later than
+        #: such an RFQ, from one of its domains, is that supplier answering us. Free-mail and
+        #: customer domains never count: one supplier on gmail.com must not silence every
+        #: gmail.com request, and a customer we also buy from keeps reaching R7.
         customer_domains = {d.lower() for o in snapshot.organizations if not o.is_supplier for d in o.domains}
-        rfq_threads: set[str] = set()
-        rfq_domains: set[str] = set()
+        first_inbound: dict[str, datetime] = {}
         for ev in snapshot.evidence:
-            if ev.direction != "outbound" or (ev.direction_hint or "") != "supplier_rfq":
+            at = _instant(ev.sent_at)
+            if ev.direction == "inbound" and ev.thread_id and at is not None:
+                if ev.thread_id not in first_inbound or at < first_inbound[ev.thread_id]:
+                    first_inbound[ev.thread_id] = at
+        rfqs: list[tuple[datetime, frozenset[str]]] = []
+        for ev in snapshot.evidence:
+            at = _instant(ev.sent_at)
+            if ev.direction != "outbound" or (ev.direction_hint or "") != "supplier_rfq" or at is None:
                 continue
-            if ev.thread_id:
-                rfq_threads.add(ev.thread_id)
-            rfq_domains.update(d for d in _external_domains(ev)
-                               if d not in FREE_MAIL_DOMAINS and d not in customer_domains)
-        self.rfq_threads: frozenset[str] = frozenset(rfq_threads)
-        self.rfq_domains: frozenset[str] = frozenset(rfq_domains)
+            if ev.thread_id and ev.thread_id in first_inbound and first_inbound[ev.thread_id] < at:
+                continue  # a reply or forward on someone else's thread, not a price request we started
+            domains = frozenset(d for d in _external_domains(ev)
+                                if d not in FREE_MAIL_DOMAINS and d not in customer_domains)
+            if domains:
+                rfqs.append((at, domains))
+        self.rfqs: tuple[tuple[datetime, frozenset[str]], ...] = tuple(rfqs)
+
+    def answers_our_rfq(self, e: "MailEvidence", domains: list[str]) -> bool:
+        """An inbound email later than one of our RFQs, from a domain that RFQ went to."""
+        at = _instant(e.sent_at)
+        if e.direction != "inbound" or at is None:
+            return False
+        return any(sent < at and any(d in to for d in domains) for sent, to in self.rfqs)
 
     def is_supplier_domain(self, domain: str) -> bool:
         return any(o.is_supplier for o in self.by_domain.get(domain, []))
@@ -490,9 +517,7 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     if supplier_domains and not thread_cases:
         return PlannedAction(e.id, "R8", NONE, (
             f"dominio de proveedor ({', '.join(supplier_domains)}): no se crea institución ni caso",))
-    if e.direction == "inbound" and not thread_cases and (
-        (e.thread_id and e.thread_id in ix.rfq_threads) or any(d in ix.rfq_domains for d in domains)
-    ):
+    if not thread_cases and ix.answers_our_rfq(e, domains):
         return PlannedAction(e.id, "R8", NONE, (
             "proveedor al que OrigenLab pidió precio (sondeo de compra): no se abre caso de cliente",))
 
