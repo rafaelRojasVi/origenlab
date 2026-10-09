@@ -2765,7 +2765,7 @@ def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
             )
             possible = self._rows(cur)
         import re as _re
-        oc_re = _re.compile(r"(?:o[.]?c|orden\\s+de\\s+compra)\\s*(?:n[°º]?\\s*)?(\\d{5,})", _re.I)
+        oc_re = _re.compile(r"(?:o[.]?c|orden\s+de\s+compra)\s*(?:n[°º]?\s*)?(\d{5,})", _re.I)
         candidates = []
         for row in possible:
             if row["already_linked"]:
