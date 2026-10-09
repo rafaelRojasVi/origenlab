@@ -30,15 +30,11 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
       <HeroHeader
         name={session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? "") : ""}
         counts={pipeline.kind === "ready" ? todayCounts(pipeline.data.items) : null}
-        driveCasosUrl={pipeline.kind === "ready" ? (pipeline.data.drive_casos_url ?? null) : null}
       />
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => <TodayBody items={p.items} navigate={navigate} onChanged={reloadPipeline} refreshing={refreshing} people={people} reloadPeople={reloadPeople} />}
       </ResourceGate>
-      <section aria-labelledby="hoy-triage" className="space-y-2">
-        <h2 id="hoy-triage" className="text-[15px] font-semibold text-ink">Sugerencias del correo</h2>
-        <TriagePanel />
-      </section>
+      <TriagePanel />
       <QuoteNumberBox pipeline={pipeline} />
       <FxSection state={fx} reload={reloadFx} />
     </div>

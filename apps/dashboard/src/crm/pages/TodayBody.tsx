@@ -19,7 +19,6 @@
  * gated the same way; a viewer sees the lists without the buttons. Every recorded write refetches.
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { useAuthSession } from "../../context/AuthSessionContext";
 import { confirmOrganizationRecord, fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 import { PersonSuggestionList } from "../authoring/PersonSuggestionList";
 import { useMayAuthorCrm } from "../authoring/authoring";
@@ -76,15 +75,6 @@ function quoteOf(card: OpportunityCardData): string {
   return latest ? `${latest.quote_number} · enviada ${fmtDate(latest.sent_at)}` : "sin cotización";
 }
 
-function Stat({ label, value, tone }: { label: string; value: number; tone: string }) {
-  return (
-    <div className="min-w-[6.5rem] rounded-lg border border-line bg-canvas-raised px-3 py-2">
-      <div className={`text-xl font-semibold tabular-nums ${value ? tone : "text-ink-faint"}`}>{value}</div>
-      <div className="text-[11px] text-ink-muted">{label}</div>
-    </div>
-  );
-}
-
 export function TodayBody({
   items,
   navigate,
@@ -109,22 +99,14 @@ export function TodayBody({
   const followUps = useMemo(() => followUpsDue(items, at), [items, at]);
   const orgs = useMemo(() => organizationsToConfirm(items), [items]);
   const historical = historicalCount(items);
-  const blocked = items.filter((i) => i.status === "blocked");
+  // A blocked case a client is waiting on shows once, in «Te toca responder», with what blocks it.
+  const blocked = items.filter((i) => i.status === "blocked" && !replies.some((r) => r.card.opportunity_id === i.opportunity_id));
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
-  const { session } = useAuthSession();
-  const adminRole = session.kind === "signed_in" && session.operator.role === "admin";
   const [closing, setClosing] = useState<OpportunityCardData | null>(null);
 
   return (
     <div className="space-y-4" aria-busy={refreshing || undefined}>
-      <div className="flex flex-wrap gap-2" data-testid="today-stats">
-        <Stat label="te toca responder" value={replies.length} tone="text-warn" />
-        <Stat label="seguimientos" value={followUps.length} tone="text-brand-700" />
-        <Stat label="otras tareas" value={tasks.length} tone="text-ink" />
-        <Stat label="por decidir" value={historical} tone="text-info" />
-      </div>
-
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
           <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
@@ -150,23 +132,15 @@ export function TodayBody({
           {blocked.length > 0 ? (
             <Panel title="Bloqueados" aside={<Badge tone="bad" glyph={false}>{blocked.length}</Badge>} bodyClassName="divide-y divide-line">
               {blocked.map((c) => (
-                <div key={c.opportunity_id} className="px-3 py-2">
-                  <CaseLink card={c} navigate={navigate} />
-                  <span className="block truncate text-[11px] text-bad">{c.attention.find((a) => a.blocking)?.label}</span>
+                <div key={c.opportunity_id} className="flex items-center gap-2 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <CaseLink card={c} navigate={navigate} />
+                    <span className="block truncate text-[11px] text-bad">{c.attention.find((a) => a.blocking)?.label}</span>
+                  </div>
+                  <Button onClick={() => navigate("oportunidades", c.opportunity_id)}>Resolver</Button>
                 </div>
               ))}
             </Panel>
-          ) : null}
-          {adminRole ? (
-            // «Datos» opens for an admin only: anyone else gets no link that leads nowhere.
-            <button
-              type="button"
-              onClick={() => navigate("datos", null, "estado")}
-              className="w-full rounded-lg border border-dashed border-line px-3 py-3 text-left transition-colors hover:border-line-strong hover:bg-canvas-raised"
-            >
-              <span className="block text-[13px] font-medium text-ink">Estado del sistema</span>
-              <span className="mt-0.5 block text-[11px] text-ink-muted">Datos, acciones automáticas del correo y archivo de Drive.</span>
-            </button>
           ) : null}
         </aside>
       </div>
@@ -211,6 +185,8 @@ function TasksPanel({
   onChanged: () => void;
   now: Date;
 }) {
+  // Nothing else due: no empty panel.
+  if (tasks.length === 0) return null;
   return (
     <Panel title="Otras tareas de hoy" aside={<Badge tone={tasks.length ? "warn" : "good"} glyph={false}>{tasks.length}</Badge>} bodyClassName="divide-y divide-line">
       {tasks.length === 0 ? (
@@ -379,7 +355,8 @@ function ReplyRow({
   const [busy, setBusy] = useState<null | "move" | "skip">(null);
   const keys = useRef([newCaseCommandKey()]);
   const skipKey = useRef(newCaseCommandKey());
-  const canMove = mayDecide && card.stage === "quoting" && typeof card.version === "number";
+  const blocking = card.attention.find((a) => a.blocking) ?? null;
+  const canMove = !blocking && mayDecide && card.stage === "quoting" && typeof card.version === "number";
 
   async function noAnswerNeeded() {
     setBusy("skip");
@@ -433,9 +410,11 @@ function ReplyRow({
       <div className="min-w-[12rem] flex-1">
         <CaseLink card={card} navigate={navigate} />
         <p className="mt-0.5 truncate text-[11px] text-ink-muted">
-          <span className="font-medium text-warn">Respondió el {fmtDate(reply.at)}</span> · {quoteOf(card)}
+          <span className="font-medium text-warn">{card.latest_revision ? "Respondió" : "Escribió"} el {fmtDate(reply.at)}</span>
+          {card.latest_revision ? ` · ${quoteOf(card)}` : ""}
           {contactLine(card) ? ` · ${contactLine(card)}` : ""}
         </p>
+        {blocking ? <p className="mt-0.5 truncate text-[11px] font-medium text-bad">{blocking.label}</p> : null}
       </div>
       <div className="flex shrink-0 gap-2">
         {reply.url ? (
@@ -448,7 +427,11 @@ function ReplyRow({
             Abrir respuesta ↗
           </a>
         ) : null}
-        {mayDecide ? (
+        {blocking ? (
+          <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>
+            Resolver
+          </Button>
+        ) : mayDecide ? (
           <Button
             variant="secondary"
             onClick={() => void noAnswerNeeded()}
@@ -805,6 +788,9 @@ function FollowUpMenu({
 
 /* ─────────────────────────────────────────────────────────────── aside ── */
 
+/** Institutions shown before «Ver N más». */
+const ORG_PREVIEW = 3;
+
 function OrgsPanel({
   orgs,
   navigate,
@@ -816,13 +802,19 @@ function OrgsPanel({
   mayAuthor: boolean;
   onChanged: () => void;
 }) {
+  const [open, setOpen] = useState(false);
   if (orgs.length === 0) return null;
+  const shown = open ? orgs : orgs.slice(0, ORG_PREVIEW);
   return (
     <Panel title="Instituciones por confirmar" aside={<Badge tone="warn" glyph={false}>{orgs.length}</Badge>} bodyClassName="divide-y divide-line">
-      <p className="px-3 py-2 text-[11px] text-ink-faint">Las propuso una regla del correo; nadie las ha revisado.</p>
-      {orgs.map((o) => (
+      {shown.map((o) => (
         <OrgRow key={o.organization_id} org={o} navigate={navigate} mayAuthor={mayAuthor} onChanged={onChanged} />
       ))}
+      {orgs.length > ORG_PREVIEW ? (
+        <button type="button" onClick={() => setOpen(!open)} className="w-full px-3 py-2 text-left text-[12px] font-medium text-brand-700 hover:underline">
+          {open ? "Ver menos" : `Ver ${orgs.length - ORG_PREVIEW} más`}
+        </button>
+      ) : null}
     </Panel>
   );
 }
@@ -887,6 +879,8 @@ function PeoplePanel({ mayAuthor, navigate, state: given, reload: givenReload }:
   const [own, ownReload] = useResource(given ? noPeople : fetchPersonSuggestions);
   const state = given ?? own;
   const reload = givenReload ?? ownReload;
+  // Nothing to add: the panel stays out of the way.
+  if (state.kind === "ready" && state.data.items.length === 0) return null;
   return (
     <Panel title="Personas por agregar" aside={state.kind === "ready" ? <Badge glyph={false}>{state.data.total}</Badge> : null}>
       <div className="p-3">

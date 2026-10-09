@@ -183,6 +183,6 @@ export function historicalCount(cards: OpportunityCardData[]): number {
 }
 
 /** The two counts «Hoy»'s header shows: cases to decide and follow-ups due today. */
-export function todayCounts(cards: OpportunityCardData[], now: Date = new Date()): { decide: number; followUps: number } {
-  return { decide: historicalCount(cards), followUps: followUpsDue(cards, now).length };
+export function todayCounts(cards: OpportunityCardData[], now: Date = new Date()): { replies: number; decide: number; followUps: number } {
+  return { replies: repliesToAnswer(cards, now).length, decide: historicalCount(cards), followUps: followUpsDue(cards, now).length };
 }

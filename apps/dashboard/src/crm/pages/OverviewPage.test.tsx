@@ -252,7 +252,9 @@ describe("Resumen", () => {
     // Valle is not chased here: it is decided in bulk first.
     expect(within(followUps).queryByText("Universidad del Valle")).not.toBeInTheDocument();
     expect(screen.getByTestId("today-historical")).toHaveTextContent("1 caso por decidir");
-    expect(within(screen.getByTestId("today-stats")).getByText("seguimientos").previousSibling).toHaveTextContent("1");
+    // The counts live in the greeting only, not in a second row of tiles.
+    expect(screen.getByTestId("hero-header")).toHaveTextContent("1 seguimiento");
+    expect(screen.queryByTestId("today-stats")).not.toBeInTheDocument();
   });
 
   it("lists today's tasks and the clients who answered", async () => {
@@ -328,7 +330,7 @@ describe("Hoy · orden", () => {
   it("puts today's work above the exchange rate and the quote number", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    const stats = await screen.findByTestId("today-stats");
+    const stats = await screen.findByRole("heading", { name: "Seguimientos" });
     const usd = await screen.findByTestId("fx-USD");
     const quotes = await screen.findByTestId("quote-number-box");
     expect(stats.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -337,14 +339,14 @@ describe("Hoy · orden", () => {
 });
 
 describe("Hoy · sugerencias del correo", () => {
-  it("shows the email suggestions on Hoy, under their own heading", async () => {
+  it("shows the emails no case holds on Hoy, in their own panel", async () => {
     respond({
       "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE,
       "/v2/workspace/triage-readings": { items: [] },
     });
     render(<OverviewPage navigate={() => undefined} />);
-    expect(await screen.findByRole("heading", { name: "Sugerencias del correo" })).toBeInTheDocument();
-    expect(await screen.findByText("Nada por revisar")).toBeInTheDocument();
+    expect(await screen.findByText("Correos sin caso")).toBeInTheDocument();
+    expect(await screen.findByText("Ningún correo nuevo fuera de un caso.")).toBeInTheDocument();
   });
 });
 

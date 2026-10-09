@@ -85,6 +85,7 @@ export function CaseActions({
   const [target, setTarget] = useState<MoveTarget | null>(initial?.target ?? null);
   const [initialReason, setInitialReason] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [more, setMore] = useState(false);
   useEffect(() => {
     if (initial) {
       setMode(initial.mode);
@@ -120,6 +121,16 @@ export function CaseActions({
   const revisionReason =
     quoteReason ?? (revisions.length === 0 ? "No hay una revisión enviada y vigente que reemplazar" : null);
 
+  // A request with no quotation yet: «No es una solicitud» is one of its likely first answers.
+  const notRequestFirst = card.quotes.length === 0 && !closed;
+  const notRequest = decideReason ? (
+    <DisabledAction id="drawer-not-request" reason={decideReason}>No es una solicitud</DisabledAction>
+  ) : (
+    <Button onClick={() => { setOutcome(null); setMode("stage"); setTarget("perdida"); setInitialReason("No es una solicitud"); }}>
+      No es una solicitud
+    </Button>
+  );
+
   function toggle(next: Exclude<Mode, null>) {
     setInitialReason(null);
     setOutcome(null);
@@ -138,13 +149,17 @@ export function CaseActions({
 
   return (
     <div className="space-y-3" data-testid="case-actions">
+      {/* The two everyday actions (and «Marcar ganada» when it applies) stay in sight; the rest
+          wait under «Más». */}
       <div className="flex flex-wrap gap-2">
-        {decideReason ? (
-          <DisabledAction id="drawer-not-request" reason={decideReason}>No es una solicitud</DisabledAction>
-        ) : (
-          <Button onClick={() => { setOutcome(null); setMode("stage"); setTarget("perdida"); setInitialReason("No es una solicitud"); }}>
-            No es una solicitud
+        {mayAuthor ? (
+          <Button variant="primary" onClick={onFollowUp}>
+            Registrar seguimiento
           </Button>
+        ) : (
+          <DisabledAction id="drawer-followup" reason={WRITE_DISABLED_REASON}>
+            Registrar seguimiento
+          </DisabledAction>
         )}
         {decideReason ? (
           <DisabledAction id="drawer-advance" reason={decideReason}>
@@ -155,43 +170,44 @@ export function CaseActions({
             Cambiar estado
           </Button>
         )}
-        {wonReason ? (
-          <DisabledAction id="drawer-won" reason={wonReason}>
-            Marcar ganada
-          </DisabledAction>
-        ) : (
+        {notRequestFirst ? notRequest : null}
+        {wonReason ? null : (
           <Button aria-expanded={mode === "won"} onClick={() => toggle("won")}>
             Marcar ganada
           </Button>
         )}
-        {mayAuthor ? (
-          <Button onClick={onFollowUp}>
-            Registrar seguimiento
-          </Button>
-        ) : (
-          <DisabledAction id="drawer-followup" reason={WRITE_DISABLED_REASON}>
-            Registrar seguimiento
-          </DisabledAction>
-        )}
-        {quoteReason ? (
-          <DisabledAction id="drawer-quotation" reason={quoteReason}>
-            Registrar cotización
-          </DisabledAction>
-        ) : (
-          <Button aria-expanded={mode === "quotation"} onClick={() => toggle("quotation")}>
-            Registrar cotización
-          </Button>
-        )}
-        {revisionReason ? (
-          <DisabledAction id="drawer-revision" reason={revisionReason}>
-            Nueva revisión
-          </DisabledAction>
-        ) : (
-          <Button aria-expanded={mode === "revision"} onClick={() => toggle("revision")}>
-            Nueva revisión
-          </Button>
-        )}
+        <Button variant="quiet" aria-expanded={more} onClick={() => setMore(!more)}>
+          {more ? "Menos" : "Más…"}
+        </Button>
       </div>
+      {more ? (
+        <div className="flex flex-wrap gap-2 rounded-md bg-canvas-sunken/60 p-2" data-testid="case-more-actions">
+          {notRequestFirst ? null : notRequest}
+          {wonReason ? (
+            <DisabledAction id="drawer-won" reason={wonReason}>
+              Marcar ganada
+            </DisabledAction>
+          ) : null}
+          {quoteReason ? (
+            <DisabledAction id="drawer-quotation" reason={quoteReason}>
+              Registrar cotización
+            </DisabledAction>
+          ) : (
+            <Button aria-expanded={mode === "quotation"} onClick={() => toggle("quotation")}>
+              Registrar cotización
+            </Button>
+          )}
+          {revisionReason ? (
+            <DisabledAction id="drawer-revision" reason={revisionReason}>
+              Nueva revisión
+            </DisabledAction>
+          ) : (
+            <Button aria-expanded={mode === "revision"} onClick={() => toggle("revision")}>
+              Nueva revisión
+            </Button>
+          )}
+        </div>
+      ) : null}
 
       {until && !closed ? (
         <PauseBanner card={card} until={until} mayDecide={!decideReason} onDone={finished} />

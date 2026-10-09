@@ -2328,11 +2328,21 @@ PR #683 now holds a new-thread inbound request mentioning a printed quotation re
 
 Validation: both new failure regressions reproduce on the unchanged PR head; the changed branch passes 68 mail-planner, automation, route and cross-thread candidate unit tests (one dependency deprecation warning). Database-backed tests and authenticated browser reconciliation are separate gates. No production data, batch application, business automation flags or deployments were changed by this verification.
 
-### 2.7.78 Dashboard navigation: Historial and admin-only Datos, 2026-10-09 — built (PR pending)
+### 2.7.78 Dashboard navigation: Historial and admin-only Datos, 2026-10-09 — merged and deployed (PR #697)
 
 | | |
 |---|---|
 | What | Sidebar of eight: Hoy · Oportunidades · Organizaciones · Personas · Catálogo · Marketing · Historial · Datos. «Revisión» no longer exists: its email suggestions (Aprobar / Corregir / Rechazar) are on «Hoy» under «Sugerencias del correo»; its technical tabs (Bloqueos técnicos, No importadas, Evidencia, Estado de los datos, Acciones automáticas) plus Proveedores and Archivo Drive are «Datos», shown to `role = admin` only (anyone else sees «Sólo administración»; nothing is read). Each Datos tab has its own address `#/crm/datos/<tab>`; old links `#/crm/revision` → Historial, `#/crm/proveedores` and `#/crm/drive` → that Datos tab. Earlier rows that say «Revisión → …» describe the layout before this entry. |
 | API | New read `GET /v2/workspace/history` (`v2/history.py`): completed `platform.command_receipt` rows of the last 60 days as fixed Spanish sentences, reading only the case id, institution id, new stage and quote number from the response body (notes, reasons and addresses never leave the API); unknown command names are left out. Mounted with the workspace reads (`ContactRedactingRoute`). |
 | Proxy | `GET /v2/workspace/history` added to `ALLOWED_UPSTREAM_PATHS` as an exact path. |
-| Not done | Not deployed. The Hoy proposal inbox is not part of this entry (owner decision 2026-10-09: a worker-filled proposal queue, separate plan). |
+| Not done | The Hoy proposal inbox is not part of this entry (owner decision 2026-10-09: a worker-filled proposal queue, separate plan). |
+
+### 2.7.79 Hoy, board and case panel cleanup, 2026-10-09 — built (PR pending)
+
+| | |
+|---|---|
+| Hoy | Each case shows once: a blocked case a client wrote on is only in «Te toca responder», with its blocker and «Resolver»; «Bloqueados» keeps only the others. The greeting carries the counts (no second row of tiles) and no longer repeats the top bar's Gmail / Drive / Sitio web links. «Estado del sistema» link removed (the sidebar has Datos). «Instituciones por confirmar» shows three before «Ver N más»; empty «Otras tareas» and «Personas por agregar» are not drawn. |
+| Correos sin caso | Replaces «Sugerencias del correo»: one compact row per email (subject, sender, date, class; «Abrir ↗», «Revisar», «Descartar» = a `rejected` verdict). Not asked about, only counted: emails on a case, from a registered supplier or with a supplier-offer intent, automatic senders/classes, Labdelivery forwards, and older messages of the same thread (`sortInbox`). «Ver revisados» lists past verdicts. API: `GET /v2/workspace/triage-readings` items gain `sender_is_supplier`. |
+| Board | The card's day badge counts from the case's last movement — the same date as the «Últimos 30 días» bands; client silence stays on the status line. Names wrap at word boundaries. |
+| Case panel | Actions at the top: «Registrar seguimiento», «Cambiar estado», «Marcar ganada» when it applies (and «No es una solicitud» on a case without a quotation); the rest under «Más…». Removed: «Estado actual sin verificar» and «Al día» badges, the explanatory footnotes, sha256, import origin and the internal id. |
+| Not done | Not deployed. |

@@ -11,7 +11,6 @@ import { DecideCases } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import {
   HISTORICAL_STAGE_LABEL,
-  ORIGIN_LABEL,
   STATUS_LABEL,
   byLatestActivity,
   matchesQuery,
@@ -36,7 +35,6 @@ import {
   fmtDate,
   initials,
   LocalDriveLink,
-  SuggestedTag,
   toast,
 } from "../ui";
 import { useResource } from "../useResource";
@@ -437,7 +435,6 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
       </div>
       <p className="mt-0.5 truncate text-[11px] text-ink-muted" title={rev.document?.filename ?? undefined}>
         {rev.document?.filename ?? "Documento sin nombre registrado"}
-        {rev.origin ? <span className="text-ink-faint"> · {ORIGIN_LABEL[rev.origin] ?? rev.origin}</span> : null}
       </p>
       <p className="mt-0.5 flex flex-wrap gap-x-3 text-[11px]">
         {rev.drive ? (
@@ -457,11 +454,6 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
           <span className="text-warn">Sin correo vinculado</span>
         )}
       </p>
-      {rev.document?.sha256 ? (
-        <p className="mt-0.5 font-mono text-[10px] text-ink-faint" title={rev.document.sha256}>
-          sha256 {rev.document.sha256.slice(0, 16)}…
-        </p>
-      ) : null}
     </li>
   );
 }
@@ -492,7 +484,6 @@ function OpportunityDrawer({
   const openSignal = followUp && followUp.id === card.opportunity_id ? followUp.n : 0;
   const status = STATUS_LABEL[card.status];
   const stage = stageDisplay(card);
-  const historical = stageBasis(card) === "historical_import";
   return (
     <Drawer
       open
@@ -509,19 +500,22 @@ function OpportunityDrawer({
         <Badge tone={stage.tone} glyph={false} title={stage.title}>
           {stage.label}
         </Badge>
-        {historical ? (
-          <Badge tone="warn" title="Ningún operador ha confirmado en el CRM el estado actual de este caso.">
-            Estado actual sin verificar
-          </Badge>
-        ) : null}
-        <Badge tone={status.tone}>{status.label}</Badge>
+        {card.status === "ok" ? null : <Badge tone={status.tone}>{status.label}</Badge>}
         {card.organization?.confirmation === "machine_proposed" ? (
           <Badge tone="warn" title="La institución fue propuesta por máquina y no la ha confirmado un operador">
             Institución sin confirmar
           </Badge>
         ) : null}
-        <span className="text-[11px] text-ink-faint">Actualizada {fmtDate(card.updated_at)}</span>
       </div>
+
+      <CaseActions
+        card={card}
+        initial={initial}
+        onChanged={onChanged}
+        onFollowUp={() =>
+          setFollowUp((f) => ({ id: card.opportunity_id, n: (f && f.id === card.opportunity_id ? f.n : 0) + 1 }))
+        }
+      />
 
       {card.next_action.source === "task" ? (
         <Section title="Próxima tarea">
@@ -533,19 +527,18 @@ function OpportunityDrawer({
           </p>
         </Section>
       ) : (
-        <Section title="Siguiente paso sugerido" aside={<SuggestedTag />}>
-          <p className="text-[13px] text-ink">{card.next_action.text}</p>
-          <p className="mt-0.5 text-[11px] text-ink-faint">Sugerido a partir del estado del caso — el caso no tiene tareas abiertas.</p>
-        </Section>
+        <p className="rounded-md bg-canvas-sunken/60 px-3 py-2 text-[13px] text-ink">
+          <span className="text-ink-faint">Siguiente: </span>
+          {card.next_action.text}
+        </p>
       )}
 
       {card.attention.length > 0 ? (
-        <Section title="Bloqueos y pendientes">
-          <ul className="space-y-1">
+        <Section title="Falta">
+          <ul className="list-disc space-y-0.5 pl-4 text-xs">
             {card.attention.map((a) => (
-              <li key={a.code} className="flex items-start gap-1.5 text-xs">
-                <Badge tone={a.blocking ? "bad" : "warn"}>{a.blocking ? "Bloquea" : "Pendiente"}</Badge>
-                <span className="pt-px text-ink-muted">{a.label}</span>
+              <li key={a.code} className={a.blocking ? "font-medium text-bad" : "text-ink-muted"}>
+                {a.label}
               </li>
             ))}
           </ul>
@@ -562,13 +555,12 @@ function OpportunityDrawer({
               return <li key={direction}>
                 <p className="text-ink-faint">{direction === "inbound" ? "Último recibido" : "Último enviado"} · {fmtDate(mail.at)}</p>
                 <p className="break-words text-ink">{mail.subject || "Sin asunto"}</p>
-                {mail.sender_name ? <p className="text-ink-muted">{mail.sender_name} · nombre en el correo</p> : null}
+                {mail.sender_name ? <p className="text-ink-muted">{mail.sender_name}</p> : null}
                 {url ? <ExternalLink href={url} label="Abrir correo en Gmail">Abrir correo en Gmail</ExternalLink> : <p>Sin enlace de Gmail disponible</p>}
               </li>;
             })}
           </ul>
         ) : <p className="text-xs text-ink-muted">No hay correos capturados disponibles para este caso.</p>}
-        <p className="mt-2 text-[11px] text-ink-faint">La institución y el contacto aún pueden requerir confirmación. El correo vinculado se conserva como evidencia.</p>
       </Section>
 
       <Section title="Institución y contacto">
@@ -587,11 +579,9 @@ function OpportunityDrawer({
               <>
                 {card.contact.name ?? card.contact.address}
                 {card.contact.others > 0 ? <span className="text-ink-faint"> y {card.contact.others} más</span> : null}
-                <span className="block text-[11px] text-ink-faint">
-                  {card.contact.source === "gmail_recipient"
-                    ? "Destinatario del correo de la cotización (evidencia de Gmail) — no es una persona registrada en el CRM"
-                    : "Participante registrado en el CRM"}
-                </span>
+                {card.contact.source === "gmail_recipient" ? (
+                  <span className="text-ink-faint" title="Destinatario del correo de la cotización; aún no es una persona del CRM"> · del correo</span>
+                ) : null}
               </>
             ) : (
               <span className="text-ink-faint">Sin contacto</span>
@@ -622,12 +612,9 @@ function OpportunityDrawer({
               <div key={q.quote_id} className="rounded-md border border-line p-2.5">
                 <div className="mb-2 flex items-center gap-2">
                   <span className="text-[13px] font-semibold tabular-nums text-ink">{q.quote_number}</span>
-                  {q.number_origin === "printed_historical" ? (
-                    <span className="text-[11px] text-ink-faint">número impreso en el PDF</span>
+                  {q.revisions.length > 1 ? (
+                    <span className="ml-auto text-[11px] text-ink-faint">{q.revisions.length} revisiones</span>
                   ) : null}
-                  <span className="ml-auto text-[11px] text-ink-faint">
-                    {q.revisions.length} {q.revisions.length === 1 ? "revisión" : "revisiones"}
-                  </span>
                 </div>
                 <ol className="space-y-2.5 border-l border-line pl-0 [&>li]:-ml-[5px]">
                   {[...q.revisions].reverse().map((r) => (
@@ -638,27 +625,10 @@ function OpportunityDrawer({
             ))}
           </div>
         )}
-        {card.drive_folder ? (
-          <p className="mt-1.5 text-[10px] text-ink-faint">
-            Enlaces de Drive desde los registros del archivo de casos (aún no están en el CRM).
-          </p>
-        ) : null}
       </Section>
 
-      <Section title="Acciones">
-        <CaseActions
-          card={card}
-          initial={initial}
-          onChanged={onChanged}
-          onFollowUp={() =>
-            setFollowUp((f) => ({ id: card.opportunity_id, n: (f && f.id === card.opportunity_id ? f.n : 0) + 1 }))
-          }
-        />
-      </Section>
 
       <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={openSignal} />
-
-      <p className="font-mono text-[10px] text-ink-faint">opportunity {card.opportunity_id}</p>
     </Drawer>
   );
 }

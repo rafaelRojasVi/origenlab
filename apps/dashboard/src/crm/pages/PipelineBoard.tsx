@@ -268,7 +268,10 @@ export function BoardCard({
   const latest = card.latest_revision;
   const { name, sub } = displayName(card);
   const contact = contactLine(card);
-  const days = card.closed_at ? null : daysSince(latest?.sent_at, at);
+  // The same date the column's «Últimos 30 días» bands use: the case's last movement. How long the
+  // client has been silent is the status line's job («Sin respuesta · 154 d»).
+  const activity = activityTimestamp(card);
+  const days = card.closed_at || activity == null ? null : daysSince(new Date(activity).toISOString(), at);
   const product = quoteProduct(card);
   const line = cardLine(card, at);
   const driveUrl = latest?.drive?.file_url ?? card.drive_folder?.url ?? null;
@@ -302,7 +305,7 @@ export function BoardCard({
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <h3 className="line-clamp-2 text-[13px] [overflow-wrap:anywhere] font-semibold leading-[1.15rem] text-ink">
+          <h3 className="line-clamp-2 break-words text-[13px] font-semibold leading-[1.15rem] text-ink">
             <button
               type="button"
               onClick={() => onOpen(card.opportunity_id)}
@@ -318,7 +321,7 @@ export function BoardCard({
         {days != null ? (
           <span
             className={`shrink-0 rounded px-1 py-px text-[10.5px] font-semibold tabular-nums ${BADGE_TONE[ageTone(days)]}`}
-            title={`Cotización enviada hace ${days} días`}
+            title={days === 0 ? "Último movimiento hoy" : `Último movimiento hace ${days} ${days === 1 ? "día" : "días"}`}
             data-testid="board-age"
           >
             {days === 0 ? "hoy" : `${days} d`}

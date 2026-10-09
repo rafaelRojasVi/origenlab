@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalMove, stageLabel, TRIAGE_PATHS } from "./triage";
+import { approvalMove, sortInbox, stageLabel, TRIAGE_PATHS, type TriageReading } from "./triage";
 import { MAIL_RULES_PATHS } from "./mailRules";
 import { parseProducts } from "./pages/TriagePanel";
 
@@ -43,5 +43,32 @@ describe("parseProducts — the correction's product lines", () => {
       { description: "pipeta pasteur", model: null, quantity: 3, catalog_product_id: null },
       { description: "agitador", model: null, quantity: null, catalog_product_id: null },
     ]);
+  });
+});
+
+describe("sortInbox — which emails «Hoy» asks about", () => {
+  const base = {
+    source_record_id: "s", version: "v", class: "quote_request", reasons: [], model_state: "off", stage: null,
+    intent: null, urgency: null, summary_es: null, needs_reply: null, requester_organization: null, products: [],
+    candidates: [], cases: [], transitions: [], review: null, sender_is_supplier: false,
+  };
+  const r = (id: string, over: Partial<TriageReading>): TriageReading =>
+    ({ ...base, assertion_id: id, subject: id, sender: `${id}@cliente.example`, sent_at: "2026-10-09T10:00:00Z",
+       thread_id: `t-${id}`, ...over }) as TriageReading;
+
+  it("asks only about new emails from people, one per thread, newest first", () => {
+    const { ask, hidden } = sortInbox([
+      r("nuevo", { thread_id: "t1" }),
+      r("mismo-hilo", { thread_id: "t1", sent_at: "2026-10-08T10:00:00Z" }),
+      r("en-caso", { cases: [CASE] }),
+      r("proveedor", { sender_is_supplier: true }),
+      r("oferta", { intent: "supplier_offer" }),
+      r("aviso", { sender: "no-reply@portal.example" }),
+      r("info", { sender: "info@publicidad.example" }),
+      r("reenvio", { sender: "contacto@labdelivery.cl" }),
+      r("masivo", { class: "bulk" }),
+    ]);
+    expect(ask.map((x) => x.assertion_id)).toEqual(["nuevo"]);
+    expect(hidden).toEqual({ "en un caso": 1, proveedor: 2, "aviso automático": 3, "reenvío antiguo": 1, "mismo hilo": 1 });
   });
 });
