@@ -183,7 +183,8 @@ describe("Tablero", () => {
     expect(sorted.map((c) => c.opportunity_id)).toEqual([moved.opportunity_id, notMoved.opportunity_id]);
     render(<Board cards={[notMoved, moved]} onOpen={() => undefined} now={NOW} />);
     const col = screen.getByTestId("board-column-conversacion");
-    expect(within(col).getAllByRole("article")[0]).toHaveTextContent("Caso actualizado hoy");
+    expect(within(col).getAllByRole("article")[0])
+      .toBe(within(col).getByTestId(`board-card-${moved.opportunity_id}`));
   });
 
   it("keeps cases with unknown activity dates last even under oldest", () => {
