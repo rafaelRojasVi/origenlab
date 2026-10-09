@@ -19,7 +19,7 @@ const ENTITY_LABEL: Record<string, string> = {
   products: "Productos del catálogo",
   campaigns: "Campañas",
   campaign_replies: "Respuestas a campañas",
-  drive_links_in_crm: "Enlaces de Drive guardados en el CRM",
+  drive_links_in_crm: "Archivos Drive registrados en Supabase",
 };
 
 /**
@@ -85,15 +85,15 @@ function DataHealthBody({ overview, navigate }: { overview: WorkspaceOverview; n
           value={drive.configured ? `${drive.revisions_with_drive_file}/${drive.revisions_total}` : "—"}
           hint={
             drive.configured
-              ? `Revisiones con su PDF, según el registro de la carga a Drive (${fmtInt(drive.documents)} documentos). Aún no guardados en el CRM.`
-              : "Registros de la carga a Drive no cargados"
+              ? `Revisiones con archivo vinculado en Drive (${fmtInt(drive.documents)} PDF con evidencia); actualizado desde Supabase.`
+              : "No hay vínculos de archivo Drive registrados o cargados"
           }
           onClick={() => navigate("drive")}
         />
         <Metric label="Evidencias por revisar" value={fmtInt(openAssertions)} hint="Sin resolver o ambiguas" />
       </div>
 
-      <Panel title="Qué hay en el CRM" note="Cero no siempre significa vacío: la etiqueta dice si se importó." bodyClassName="divide-y divide-line">
+      <Panel title="Estado real de los datos" note="Cantidades actuales; «Parcial» indica que aún faltan datos históricos. Los vínculos Drive están en evidence.source_record." bodyClassName="divide-y divide-line">
         {overview.entities.map((e) => (
           <div
             key={e.key}
