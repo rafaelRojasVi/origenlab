@@ -23,7 +23,7 @@ describe("shell route", () => {
     expect(redirectHash("#/instituciones")).toBe("#/crm/organizaciones");
     expect(redirectHash("#/suppliers")).toBe("#/crm/proveedores");
     expect(redirectHash("#/archivo")).toBe("#/crm/drive");
-    expect(redirectHash("#/revision")).toBe("#/crm/revision");
+    expect(redirectHash("#/revision")).toBe("#/crm/historial");
     expect(redirectHash("#/tenders")).toBe("#/crm/resumen");
     expect(redirectHash("#/catalogo")).toBe("#/crm/catalogo");
   });

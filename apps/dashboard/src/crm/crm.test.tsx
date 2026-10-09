@@ -108,6 +108,10 @@ describe("crm routing", () => {
     expect(isCrmHash("#/cotizaciones")).toBe(false);
     expect(parseCrmHash("#/crm")).toEqual({ section: "resumen", id: null });
     expect(parseCrmHash("#/crm/nope")).toEqual({ section: "resumen", id: null });
+    // Old links keep working: Revisión is Historial; suppliers and the Drive archive live in Datos.
+    expect(parseCrmHash("#/crm/revision")).toEqual({ section: "historial", id: null });
+    expect(parseCrmHash("#/crm/proveedores")).toEqual({ section: "datos", id: null, tab: "proveedores" });
+    expect(parseCrmHash("#/crm/drive")).toEqual({ section: "datos", id: null, tab: "drive" });
     const id = "11111111-1111-4111-8111-111111111111";
     expect(parseCrmHash(`#/crm/oportunidades/${id}`)).toEqual({ section: "oportunidades", id });
     // A non-uuid id is dropped, never interpolated into a request.
@@ -327,10 +331,10 @@ describe("PeoplePage", () => {
 describe("dashboard shell", () => {
   const CASE = "11111111-1111-4111-8111-111111111111";
 
-  function signedInAt(hash: string) {
+  function signedInAt(hash: string, role: "admin" | "sales" | "viewer" = "admin") {
     window.location.hash = hash;
     respond({ "/v2/workspace/pipeline": { items: [withLatest(card())], total: 1, drive_configured: true } });
-    stubSignedInAuthSession();
+    stubSignedInAuthSession(role);
     render(<DashboardApp />);
   }
 
@@ -338,17 +342,24 @@ describe("dashboard shell", () => {
     window.location.hash = "";
   });
 
-  it("navigates only the nine CRM sections and marks the current one", async () => {
+  it("shows an admin the eight sections in order and marks the current one", async () => {
     signedInAt(`#/crm/oportunidades`);
     const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
       "#/crm/resumen", "#/crm/oportunidades", "#/crm/organizaciones", "#/crm/personas",
-      "#/crm/proveedores", "#/crm/catalogo", "#/crm/drive", "#/crm/marketing", "#/crm/revision",
+      "#/crm/catalogo", "#/crm/marketing", "#/crm/historial", "#/crm/datos",
     ]);
     expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual([
       "Oportunidades",
     ]);
+  });
+
+  it("hides «Datos» from a sales user", async () => {
+    signedInAt(`#/crm/oportunidades`, "sales");
+    const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
+    expect(within(nav).queryByRole("link", { name: /Datos/ })).not.toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: /Historial/ })).toBeInTheDocument();
   });
 
   it("folds the section names into a rail of icons, and remembers it", async () => {

@@ -4,16 +4,20 @@ export type CrmSection =
   | "oportunidades"
   | "organizaciones"
   | "personas"
-  | "proveedores"
   | "catalogo"
-  | "drive"
   | "marketing"
-  | "revision";
+  | "historial"
+  | "datos";
+
+/** The tabs of «Datos» (admin only): what was technical in Revisión, plus suppliers and the Drive archive. */
+export type DatosTab = "bloqueos" | "no_importadas" | "evidencia" | "estado" | "acciones" | "proveedores" | "drive";
 
 export interface CrmNavItem {
   id: CrmSection;
   label: string;
-  group: "comercial" | "archivo" | "control";
+  group: "comercial" | "control";
+  /** Shown only to an admin; anyone else who opens it sees «Sólo administración». */
+  adminOnly?: boolean;
 }
 
 export const CRM_NAV: CrmNavItem[] = [
@@ -21,17 +25,22 @@ export const CRM_NAV: CrmNavItem[] = [
   { id: "oportunidades", label: "Oportunidades", group: "comercial" },
   { id: "organizaciones", label: "Organizaciones", group: "comercial" },
   { id: "personas", label: "Personas", group: "comercial" },
-  { id: "proveedores", label: "Proveedores", group: "comercial" },
   { id: "catalogo", label: "Catálogo", group: "comercial" },
-  { id: "drive", label: "Archivo Drive", group: "archivo" },
-  { id: "marketing", label: "Marketing", group: "archivo" },
-  { id: "revision", label: "Revisión", group: "control" },
+  { id: "marketing", label: "Marketing", group: "comercial" },
+  { id: "historial", label: "Historial", group: "control" },
+  { id: "datos", label: "Datos", group: "control", adminOnly: true },
 ];
 
 export const CRM_GROUP_LABEL: Record<CrmNavItem["group"], string> = {
   comercial: "Comercial",
-  archivo: "Archivo y difusión",
   control: "Control",
+};
+
+/** Sections that moved: an old link still lands where its content lives now. */
+const MOVED: Record<string, { section: CrmSection; tab?: DatosTab }> = {
+  revision: { section: "historial" },
+  proveedores: { section: "datos", tab: "proveedores" },
+  drive: { section: "datos", tab: "drive" },
 };
 
 const SECTIONS = new Set<string>(CRM_NAV.map((n) => n.id));
@@ -44,15 +53,20 @@ export function isCrmHash(hash: string): boolean {
 export interface CrmRoute {
   section: CrmSection;
   id: string | null;
+  /** Only for «Datos» reached through an old Proveedores / Archivo Drive link. */
+  tab?: DatosTab;
 }
 
 export function parseCrmHash(hash: string): CrmRoute {
   const parts = hash.replace(/^#\/crm\/?/, "").split("/").filter(Boolean);
+  const moved = MOVED[parts[0] ?? ""];
+  if (moved) return moved.tab ? { section: moved.section, id: null, tab: moved.tab } : { section: moved.section, id: null };
   const section = (SECTIONS.has(parts[0] ?? "") ? parts[0] : "resumen") as CrmSection;
   const id = parts[1] && UUID.test(parts[1]) ? parts[1].toLowerCase() : null;
   return { section, id };
 }
 
-export function crmHash(section: CrmSection, id?: string | null): string {
+/** `#/crm/<section>[/<id>]`; an old segment («proveedores», «drive») is accepted and resolved on read. */
+export function crmHash(section: CrmSection | "proveedores" | "drive", id?: string | null): string {
   return `#/crm/${section}${id ? `/${id}` : ""}`;
 }

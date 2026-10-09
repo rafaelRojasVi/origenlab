@@ -20,7 +20,8 @@ export const SIGNED_IN_SESSION_BODY = {
  * past `AuthGate`. Every other request goes to whatever `fetch` was installed before, so the
  * suite's own module mocks keep deciding what the pages see. Undo with `vi.unstubAllGlobals()`.
  */
-export function stubSignedInAuthSession(): void {
+export function stubSignedInAuthSession(role: "admin" | "sales" | "viewer" = "admin"): void {
+  const body = { ...SIGNED_IN_SESSION_BODY, operator: { ...SIGNED_IN_SESSION_BODY.operator, role } };
   const previousFetch = globalThis.fetch;
   vi.stubGlobal(
     "fetch",
@@ -28,7 +29,7 @@ export function stubSignedInAuthSession(): void {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (new URL(url, "http://localhost").pathname.endsWith(AUTH_SESSION_PATH)) {
         return Promise.resolve(
-          new Response(JSON.stringify(SIGNED_IN_SESSION_BODY), {
+          new Response(JSON.stringify(body), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           }),

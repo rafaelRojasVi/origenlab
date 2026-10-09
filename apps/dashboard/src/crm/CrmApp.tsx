@@ -5,17 +5,16 @@ import { Toaster } from "./ui";
 import { googleLoginUrl } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { REDACTION_NOTICE, contactAddressesRedacted } from "./redaction";
-import { CRM_GROUP_LABEL, CRM_NAV, crmHash, type CrmSection } from "./crmRoute";
+import { CRM_GROUP_LABEL, CRM_NAV, crmHash, type CrmSection, type DatosTab } from "./crmRoute";
+import { HistoryPage } from "./pages/HistoryPage";
+import { DatosPage } from "./pages/DatosPage";
 import type { ShellRoute } from "./shellRoute";
-import { DrivePage } from "./pages/DrivePage";
 import { MarketingPage } from "./pages/MarketingPage";
 import { OrganizationsPage } from "./pages/OrganizationsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { PeoplePage } from "./pages/PeoplePage";
 import { PipelinePage } from "./pages/PipelinePage";
-import { ProvidersPage } from "./pages/ProvidersPage";
 import { CatalogPage } from "./pages/CatalogPage";
-import { ReviewPage } from "./pages/ReviewPage";
 
 /**
  * The dashboard: one shell, one navigation, one sign-in. The eight CRM sections over the V2
@@ -76,7 +75,7 @@ export function CrmApp({ route }: { route: ShellRoute }) {
         <SideNav route={route} navigate={navigate} open={menuOpen} collapsed={collapsed} onToggle={toggleCollapsed} />
         <main id="crm-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pb-10 pt-4 focus:outline-none sm:px-6">
           <div key={routeKey} className="animate-fade-in-up">
-            <Section section={route.section} id={route.id} navigate={navigate} />
+            <Section section={route.section} id={route.id} tab={route.tab} navigate={navigate} />
           </div>
         </main>
       </div>
@@ -88,10 +87,12 @@ export function CrmApp({ route }: { route: ShellRoute }) {
 function Section({
   section,
   id,
+  tab,
   navigate,
 }: {
   section: CrmSection;
   id: string | null;
+  tab?: DatosTab;
   navigate: (s: CrmSection, id?: string | null) => void;
 }) {
   switch (section) {
@@ -101,16 +102,14 @@ function Section({
       return <OrganizationsPage navigate={navigate} />;
     case "personas":
       return <PeoplePage navigate={navigate} />;
-    case "proveedores":
-      return <ProvidersPage />;
     case "catalogo":
       return <CatalogPage id={id} navigate={navigate} />;
-    case "drive":
-      return <DrivePage navigate={navigate} />;
     case "marketing":
       return <MarketingPage />;
-    case "revision":
-      return <ReviewPage navigate={navigate} />;
+    case "historial":
+      return <HistoryPage navigate={navigate} />;
+    case "datos":
+      return <DatosPage navigate={navigate} tab={tab} />;
     default:
       return <OverviewPage navigate={navigate} />;
   }
@@ -286,8 +285,10 @@ function SideNav({
   collapsed: boolean;
   onToggle: () => void;
 }) {
-  const groups = ["comercial", "archivo", "control"] as const;
+  const groups = ["comercial", "control"] as const;
   const activeCrm = route.section;
+  const { session } = useAuthSession();
+  const admin = session.kind === "signed_in" && session.operator.role === "admin";
   return (
     <nav
       id="crm-sidenav"
@@ -314,7 +315,7 @@ function SideNav({
         <div key={g} className={collapsed ? "mb-4 lg:mb-2 lg:border-t lg:border-line lg:pt-2 lg:first-of-type:border-t-0" : "mb-4"}>
           <p className={`px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint ${collapsed ? "lg:sr-only" : ""}`}>{CRM_GROUP_LABEL[g]}</p>
           <ul className="space-y-px">
-            {CRM_NAV.filter((n) => n.group === g).map((n) => (
+            {CRM_NAV.filter((n) => n.group === g && (!n.adminOnly || admin)).map((n) => (
               <li key={n.id}>
                 <NavLink
                   href={`#/crm/${n.id}`}
@@ -347,11 +348,10 @@ const ICON_PATHS: Record<CrmSection, string> = {
   oportunidades: "M2.5 3.5h3v9h-3zM6.5 3.5h3v6h-3zM10.5 3.5h3v4h-3z",
   organizaciones: "M3 13.5V4l5-2 5 2v9.5M2 13.5h12M6 6.5h1M9 6.5h1M6 9h1M9 9h1M7 13.5v-2h2v2",
   personas: "M6 7.5a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5ZM2 13c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5M11 3.5a2 2 0 0 1 0 4M12 9.7c1.1.5 1.8 1.6 2 3.3",
-  proveedores: "M2 5.5h8v6H2zM10 7.5h2.5l1.5 2v2h-4M4.5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2ZM11.5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z",
   catalogo: "M3 2.5h7.5l2.5 2.5v8.5H3zM10.5 2.5V5H13M5.5 7.5h5M5.5 10h5",
-  drive: "M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z",
   marketing: "M2.5 6.5v3h2l5 3v-9l-5 3zM11.5 6a2.5 2.5 0 0 1 0 4",
-  revision: "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM10.5 10.5 14 14M5 7l1.5 1.5L9.5 5.5",
+  historial: "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM10.5 10.5 14 14M5 7l1.5 1.5L9.5 5.5",
+  datos: "M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z",
 };
 
 const NAV_ICON: Record<CrmSection, ReactNode> = Object.fromEntries(

@@ -223,7 +223,7 @@ function Coverage({ data, taxonomy }: { data: AudienceResponse; taxonomy: Equipm
         <li>
           Nuevas consultas suman intereses al registrarlos en su caso («Registrar interés») o al importar su cotización; esta vista los lee
           sin pasos adicionales. Las identidades ambiguas quedan en{" "}
-          <a className="font-medium text-brand-700 underline" href={crmHash("revision")}>Revisión</a>: {fmtInt(reviewTotal)} pendiente(s), y{" "}
+          <a className="font-medium text-brand-700 underline" href={crmHash("datos")}>Datos</a>: {fmtInt(reviewTotal)} pendiente(s), y{" "}
           {fmtInt(c.recipients_without_contact_point)} destinatario(s) sin punto de contacto.
         </li>
         <li>Sin evidencia significa «Sin información», no bajo interés. No se calcula ningún puntaje.</li>

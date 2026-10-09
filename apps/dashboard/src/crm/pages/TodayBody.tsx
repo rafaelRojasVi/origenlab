@@ -156,7 +156,7 @@ export function TodayBody({
           ) : null}
           <button
             type="button"
-            onClick={() => navigate("revision")}
+            onClick={() => navigate("datos")}
             className="w-full rounded-lg border border-dashed border-line px-3 py-3 text-left transition-colors hover:border-line-strong hover:bg-canvas-raised"
           >
             <span className="block text-[13px] font-medium text-ink">Acciones del correo y estado de los datos</span>

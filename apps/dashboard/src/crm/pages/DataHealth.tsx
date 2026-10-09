@@ -88,7 +88,7 @@ function DataHealthBody({ overview, navigate }: { overview: WorkspaceOverview; n
               ? `Revisiones con archivo vinculado en Drive (${fmtInt(drive.documents)} PDF con evidencia); actualizado desde Supabase.`
               : "No hay vínculos de archivo Drive registrados o cargados"
           }
-          onClick={() => navigate("drive")}
+          onClick={() => navigate("datos")}
         />
         <Metric label="Evidencias por revisar" value={fmtInt(openAssertions)} hint="Sin resolver o ambiguas" />
       </div>

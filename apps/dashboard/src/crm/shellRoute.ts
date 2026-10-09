@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { crmHash, isCrmHash, parseCrmHash, type CrmSection } from "./crmRoute";
+import { crmHash, isCrmHash, parseCrmHash, type CrmSection, type DatosTab } from "./crmRoute";
 
 /**
  * One dashboard, one navigation, one sign-in: the CRM under `#/crm/*`. The bare root opens
@@ -11,10 +11,13 @@ export const SHELL_HOME_HASH = "#/crm/resumen";
 export interface ShellRoute {
   section: CrmSection;
   id: string | null;
+  /** «Datos» opened through an old Proveedores / Archivo Drive link. */
+  tab?: DatosTab;
 }
 
 /** Earlier-panel hash (without `#/` and query) → the CRM section that replaced it. */
-export const LEGACY_REDIRECTS: Record<string, CrmSection> = {
+/** Old panel paths → the CRM path segment they now open («proveedores» and «drive» resolve into «Datos»). */
+export const LEGACY_REDIRECTS: Record<string, CrmSection | "proveedores" | "drive"> = {
   today: "resumen",
   inbox: "resumen",
   pipeline: "oportunidades",
@@ -28,8 +31,8 @@ export const LEGACY_REDIRECTS: Record<string, CrmSection> = {
   contactos: "personas",
   suppliers: "proveedores",
   archivo: "drive",
-  revision: "revision",
-  importacion: "revision",
+  revision: "historial",
+  importacion: "historial",
   "crm-v2": "resumen",
   catalogo: "catalogo",
   tenders: "resumen",

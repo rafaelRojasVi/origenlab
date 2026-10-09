@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchV2Organizations } from "../../api/v2Client";
 import type { V2Organization, V2OrganizationFilter, V2OrganizationSegment } from "../../api/v2Types";
 import { fetchPipeline } from "../crmApi";
@@ -38,6 +39,8 @@ import { OrgAuthoringSection } from "../authoring/OrgAuthoringSection";
 type Scope = "cases" | "all";
 
 export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
+  const { session } = useAuthSession();
+  const adminRole = session.kind === "signed_in" && session.operator.role === "admin";
   const [segment, setSegment] = useState<V2OrganizationSegment>("customers");
   const [scope, setScope] = useState<Scope>("cases");
   const [q, setQ] = useState("");
@@ -109,13 +112,16 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
             { value: "others", label: "Otras" },
           ]}
         />
-        <button
-          type="button"
-          onClick={() => navigate("proveedores")}
-          className="text-xs font-medium text-brand-700 hover:underline"
-        >
-          Proveedores →
-        </button>
+        {adminRole ? (
+          // Suppliers live in «Datos», which only an admin opens: no link that leads nowhere.
+          <button
+            type="button"
+            onClick={() => navigate("datos")}
+            className="text-xs font-medium text-brand-700 hover:underline"
+          >
+            Proveedores →
+          </button>
+        ) : null}
         <Segmented
           label="Alcance"
           value={scope}
