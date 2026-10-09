@@ -46,11 +46,11 @@ export function HeroHeader({ name, counts, driveCasosUrl, now }: {
       <div aria-hidden="true" className="crm-hero-block absolute right-36 top-0 h-5 w-20 bg-[#14b8a6]" />
       <div aria-hidden="true" className="crm-hero-block absolute bottom-0 right-16 h-7 w-11 bg-[#0f766e]" />
       <div className="flex flex-wrap items-end justify-between gap-6">
-        <div className="crm-hero-text flex flex-col gap-1.5">
+        <div className="crm-hero-text flex min-w-0 flex-col gap-1.5">
           <span className="font-mono text-xs tracking-[.28em] text-[#8d9295]">HOY</span>
-          <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-[2.4rem]">{first ? `Hola, ${first}` : "Hola"}</h1>
+          <h1 className="break-words text-3xl font-extrabold tracking-tight text-white sm:text-[2.4rem]">{first ? `Hola, ${first}` : "Hola"}</h1>
           <p className="text-[15px] text-[#b9bcbd]">
-            {date} · <strong className="font-semibold text-white">{time}</strong>
+            {date} · <strong className="font-semibold tabular-nums text-white">{time}</strong>
             {counts ? ` · ${counts.decide} por decidir · ${counts.followUps} seguimientos` : null}
           </p>
         </div>
@@ -58,6 +58,7 @@ export function HeroHeader({ name, counts, driveCasosUrl, now }: {
           {links.map((l) => (
             <a key={l.label} href={l.href} target="_blank" rel="noopener noreferrer" className={LINK}>
               {l.label} <span aria-hidden="true">↗</span>
+              <span className="sr-only"> (se abre en otra pestaña)</span>
             </a>
           ))}
         </nav>
