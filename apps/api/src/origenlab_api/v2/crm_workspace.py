@@ -427,6 +427,24 @@ def _add(index: dict[str, DriveLink], link: DriveLink, where: str) -> None:
     index.setdefault(link.document_sha256, link)
 
 
+def live_drive_overview(
+    revisions: set[str], live_drive_shas: set[str], ledgers: Mapping[str, DriveLink],
+) -> dict[str, int | bool]:
+    """Account for worker-filed PDFs as well as boot-time ledgers, by immutable SHA.
+
+    The boot-time archive is not updated when the Drive worker uploads a new quotation.
+    Counting only that archive makes the health panel incorrectly show new PDFs as absent
+    until an API restart (and after a restart if no ledger was refreshed).
+    """
+    archived = set(ledgers) | live_drive_shas
+    return {
+        "configured": bool(archived),
+        "documents": len(archived),
+        "revisions_with_drive_file": len(revisions & archived),
+        "revisions_total": len(revisions),
+    }
+
+
 def drive_links_from_records(revisions: Iterable[Mapping[str, Any]],
                              ledgers: Mapping[str, DriveLink]) -> dict[str, DriveLink]:
     """The ledgers' links plus every revision's `drive_file` record (`_SQL_PIPELINE_REVISIONS`).
@@ -961,7 +979,6 @@ class CrmWorkspaceRepository:
                 "where kind = 'drive_file' and payload ->> 'drive_file_id' is not null"
             )
             live_drive_shas = {str(r[0]).lower() for r in cur.fetchall() if r[0]}
-        archived_shas = set(self._drive) | live_drive_shas
         entities = [
             {"key": k, "count": counts[k], **ENTITY_NOTES[k]} for k in _COUNT_SQL
         ]
@@ -971,12 +988,7 @@ class CrmWorkspaceRepository:
             "organizations_by_confirmation": org_confirmation,
             "contact_points_linked": {"organization": int(linked_org), "person": int(linked_person)},
             "assertions": assertions,
-            "drive_archive": {
-                "configured": bool(archived_shas),
-                "documents": len(archived_shas),
-                "revisions_with_drive_file": len(rev_shas & archived_shas),
-                "revisions_total": len(rev_shas),
-            },
+            "drive_archive": live_drive_overview(rev_shas, live_drive_shas, self._drive),
         }
 
     # -- pipeline
