@@ -436,6 +436,82 @@ def test_multilingual_supplier_reply_does_not_open_a_new_request_case() -> None:
         assert (action.rule_id, action.mode, action.commands) == ("R8", "none", ())
 
 
+def _rfq(**over) -> MailEvidence:
+    """Our own price request to a supplier, as the capture classifies it."""
+    base = dict(id="e-0", thread_id="t-rfq", direction="outbound", direction_hint="supplier_rfq",
+                sender="Ventas <contacto@origenlab.cl>", recipients=("export@fabrica.test",),
+                subject="RFQ – 50 L autoclave", documents=())
+    base.update(over)
+    return mail(**base)
+
+
+def test_a_reply_on_our_supplier_rfq_thread_never_opens_a_request_case() -> None:
+    reply = mail(id="e-1", thread_id="t-rfq", direction="inbound", sender="ventas@fabrica.test",
+                 subject="RFQ – 50 L autoclave quotation attached", documents=(), requester_checked=True,
+                 sent_at="2026-10-02T09:00:00+00:00")
+    actions = {a.evidence_id: a for a in plan(Snapshot(evidence=(_rfq(), reply), cases=(), organizations=()))}
+    a = actions["e-1"]
+    assert (a.rule_id, a.mode, a.commands) == ("R8", "none", ())
+    assert a.reasons[0].startswith("proveedor al que OrigenLab pidió precio")
+
+
+def test_a_new_thread_from_a_domain_we_sent_an_rfq_to_is_a_supplier_too() -> None:
+    fresh = mail(id="e-1", thread_id="t-new", direction="inbound", sender="sales@fabrica.test",
+                 subject="Request for quotation follow-up", documents=(), requester_checked=True,
+                 sent_at="2026-10-02T09:00:00+00:00")
+    actions = {a.evidence_id: a for a in plan(Snapshot(evidence=(_rfq(), fresh), cases=(), organizations=()))}
+    assert (actions["e-1"].rule_id, actions["e-1"].mode) == ("R8", "none")
+
+
+def test_an_rfq_to_a_free_mail_supplier_does_not_silence_free_mail_requests() -> None:
+    rfq = _rfq(recipients=("proveedor@gmail.com",))
+    request = mail(id="e-1", thread_id="t-req", direction="inbound", sender="Cliente <cliente@gmail.com>",
+                   subject="Solicitud de cotización balanza", documents=(), requester_checked=True)
+    actions = {a.evidence_id: a for a in plan(Snapshot(evidence=(rfq, request), cases=(), organizations=()))}
+    assert (actions["e-1"].rule_id, actions["e-1"].mode) == ("R7", "auto")
+
+
+def test_a_domain_that_is_also_a_customer_is_not_treated_as_a_supplier() -> None:
+    rfq = _rfq(recipients=("compras@cliente.test",))
+    request = mail(id="e-1", thread_id="t-req", direction="inbound", sender="Compras <compras@cliente.test>",
+                   subject="Solicitud de cotización centrífuga", documents=(), requester_checked=True)
+    actions = {a.evidence_id: a for a in plan(Snapshot(evidence=(rfq, request), cases=(), organizations=(org(),)))}
+    assert (actions["e-1"].rule_id, actions["e-1"].mode) == ("R7", "auto")
+
+
+def test_a_reply_on_an_rfq_thread_already_linked_to_a_case_still_links() -> None:
+    reply = mail(id="e-1", thread_id="t-rfq", direction="inbound", sender="ventas@fabrica.test",
+                 subject="Re: RFQ – 50 L autoclave", documents=())
+    snap = Snapshot(evidence=(_rfq(), reply), cases=(case(thread_ids=("t-rfq",)),), organizations=(org(),))
+    actions = {a.evidence_id: a for a in plan(snap)}
+    assert actions["e-1"].rule_id == "R1"
+
+
+def test_our_reply_titled_request_for_quotation_to_a_customer_never_silences_that_customer() -> None:
+    """V1 marks any outbound «Request for quotation» subject as supplier_rfq, customer replies too.
+    Only an RFQ that started its own thread counts, so the customer's next request still opens a case."""
+    request = mail(id="e-1", thread_id="t-cli", direction="inbound", sender="Compras <compras@nuevo-cliente.test>",
+                   subject="Request for quotation centrifuge", documents=(), requester_checked=True,
+                   sent_at="2026-10-01T12:00:00+00:00")
+    our_reply = mail(id="e-2", thread_id="t-cli", direction="outbound", direction_hint="supplier_rfq",
+                     recipients=("compras@nuevo-cliente.test",), subject="Re: Request for quotation centrifuge",
+                     documents=(), sent_at="2026-10-01T13:00:00+00:00")
+    later = mail(id="e-3", thread_id="t-cli-2", direction="inbound", sender="Compras <compras@nuevo-cliente.test>",
+                 subject="Solicitud de cotización balanza", documents=(), requester_checked=True,
+                 sent_at="2026-10-05T12:00:00+00:00")
+    actions = {a.evidence_id: a for a in plan(Snapshot(evidence=(request, our_reply, later), cases=(), organizations=()))}
+    assert actions["e-1"].rule_id == "R7"
+    assert actions["e-3"].rule_id == "R7"
+
+
+def test_a_customer_request_older_than_our_rfq_to_its_domain_is_not_silenced() -> None:
+    request = mail(id="e-1", thread_id="t-req", direction="inbound", sender="ventas@fabrica.test",
+                   subject="Solicitud de cotización sonicador", documents=(), requester_checked=True,
+                   sent_at="2026-09-30T12:00:00+00:00")
+    actions = {a.evidence_id: a for a in plan(Snapshot(evidence=(_rfq(), request), cases=(), organizations=()))}
+    assert actions["e-1"].rule_id == "R7"
+
+
 def test_received_quotation_requires_review_but_explicit_request_still_opens_case() -> None:
     for subject, expected in (("Quotation for Vertical Autoclave", "proposal"),
                               ("Request for quotation for Vertical Autoclave", "auto")):

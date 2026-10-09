@@ -390,3 +390,52 @@ def test_the_card_index_splits_crm_people_from_address_only_evidence(disposable_
     [inst] = [i for i in idx["institutions"] if i["organization_id"] == w["uni"]]
     assert {i["family_id"] for i in inst["interests"]} == {"sonicacion"}
     assert [l["family_id"] for l in idx["lines"]] == [f["id"] for f in taxonomy.data["families"]]
+
+
+@needs_db
+def test_unlinked_or_rejected_email_never_makes_an_interest(disposable_database, audience_world) -> None:
+    """An evidence link a person removed, or a record a person rejected, is not evidence of interest."""
+    import json
+
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    w = audience_world
+    tag = uuid.uuid4().hex[:8]
+    made: dict[str, str] = {}
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        for key in ("unlinked", "rejected"):
+            cur.execute("insert into crm.organization (kind, name, confirmation) values ('institution', %s, "
+                        "'confirmed') returning id::text", (f"Institución {key} {tag}",))
+            org_id = cur.fetchone()[0]
+            with conn.transaction():
+                cur.execute("insert into crm.opportunity (title, stage, owner_operator_id, organization_id) "
+                            "values (%s, 'lead', %s, %s) returning id::text", (f"Caso {key} {tag}", w["op"], org_id))
+                case_id = cur.fetchone()[0]
+                cur.execute("insert into crm.opportunity_organization (opportunity_id, organization_id, role, "
+                            "valid_from, confirmation, confirmed_by_operator_id) values (%s, %s, "
+                            "'requesting_institution', current_date, 'confirmed', %s)", (case_id, org_id, w["op"]))
+            payload = {"subject_raw": "Cotización sonicador UP200St", "documents": [{"filename": "UP200St.pdf"}],
+                       "recipients": f"compras-{key}-{tag}@inst.test", "sent_at": "2026-03-12T10:00:00+00:00"}
+            cur.execute("insert into evidence.source_record (kind, dedupe_key, payload) values ('gmail_message', "
+                        "%s, %s) returning id::text", (f"aud-{key}:{tag}", json.dumps(payload)))
+            sr = cur.fetchone()[0]
+            cur.execute("insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
+                        "linked_by_operator_id) values (%s, %s, 'supports_interest', %s) returning id::text",
+                        (case_id, sr, w["op"]))
+            link = cur.fetchone()[0]
+            if key == "unlinked":
+                cur.execute("update crm.opportunity_evidence set unlinked_at = now(), unlink_reason = 'prueba' "
+                            "where id = %s", (link,))
+            else:
+                cur.execute("update evidence.source_record set review_status = 'rejected' where id = %s", (sr,))
+            made[key] = org_id
+
+    repo = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(disposable_database))
+    composed = compose(load_taxonomy(), repo.marketing_audience_inputs())
+    with_interest = {i["organization_id"] for i in composed["institutions"] if i["interests"]}
+    assert made["unlinked"] not in with_interest
+    assert made["rejected"] not in with_interest
+    assert w["uni"] in with_interest  # the live evidence of the module fixture still counts

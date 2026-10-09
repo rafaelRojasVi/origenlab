@@ -65,6 +65,8 @@ export interface RevisionCard {
   document: { sha256: string; filename: string | null } | null;
   gmail: GmailRef | null;
   drive: DriveLinkRef | null;
+  /** No Drive copy yet, but the archiver holds the original email and will file it. */
+  drive_pending?: boolean;
   quote_number: string;
 }
 

@@ -276,7 +276,10 @@ _SQL_PIPELINE_SOURCES = """
            sr.payload->>'gmail_thread_id' as gmail_thread_id,
            sr.payload->>'recipients' as recipients,
            sr.payload->>'subject_raw' as subject_raw,
-           sr.payload->'documents' as documents
+           sr.payload->'documents' as documents,
+           exists (select 1 from comms.message m
+                    where m.provider_message_id = sr.payload->>'gmail_message_id'
+                      and m.eml_storage_path is not null) as has_eml
       from evidence.source_record sr
      where sr.id in (select origin_source_record_id from crm.quote_revision
                       where origin_source_record_id is not null)
@@ -336,7 +339,8 @@ ATTENTION_LABELS_ES: dict[str, str] = {
     "shared_printed_number": "El mismo número impreso aparece en otro caso",
     "canonical_undetermined": "Hay más de una revisión vigente: no se sabe cuál es la canónica",
     "no_requesting_institution": "Caso sin institución solicitante",
-    "document_not_in_drive": "El PDF de la última revisión no está en el archivo de Drive",
+    "document_not_in_drive": "El PDF no está en Drive y no hay correo original para archivarlo: súbelo a mano",
+    "document_pending_drive": "PDF pendiente de archivar en Drive (lo archiva la próxima pasada)",
     "no_gmail_evidence": "Sin correo de Gmail vinculado a la última revisión",
     "no_quote": "Caso sin cotización registrada",
     "no_crm_contact": "Sin persona de contacto en el CRM (sólo el destinatario del correo)",
@@ -666,6 +670,10 @@ def compose_pipeline(
                         else None
                     ),
                     "drive": link.as_dict() if link else None,
+                    # The archiver files a PDF from the captured `.eml`; without one it never will.
+                    # The archiver skips void revisions and revisions with no PDF hash (drive_filing.py).
+                    "drive_pending": (link is None and bool(src.get("has_eml"))
+                                      and r.get("status") != "void" and sha is not None),
                     "quote_number": q["quote_number"],
                     "_recipients": src.get("recipients"),
                 }
@@ -729,7 +737,7 @@ def compose_pipeline(
                 break
         if latest is not None:
             if latest["drive"] is None:
-                attention.append("document_not_in_drive")
+                attention.append("document_pending_drive" if latest.get("drive_pending") else "document_not_in_drive")
             if latest["gmail"] is None:
                 attention.append("no_gmail_evidence")
 
@@ -789,7 +797,8 @@ def compose_pipeline(
                     {"code": c, "label": ATTENTION_LABELS_ES[c], "blocking": c in blocked}
                     for c in ordered
                 ],
-                "status": "blocked" if blocked else ("pending" if any(c != "no_crm_contact" for c in ordered) else "ok"),
+                "status": "blocked" if blocked else (
+                    "pending" if any(c not in ("no_crm_contact", "document_pending_drive") for c in ordered) else "ok"),
                 # Open `crm.task` rows (W11), earliest due first. A case whose earliest open task
                 # is due after today is «En pausa hasta…» on the dashboard.
                 "open_tasks": tasks_by_opp.get(oid, []),
@@ -2646,6 +2655,7 @@ def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
 
     # A sent quotation's Gmail message, reached through the revision recorded from it or
     # through an evidence link on the case.
+    # Only live evidence: a link a person removed, or a record rejected or quarantined, is not interest.
     cur.execute(
         """
         select distinct on (s.id, link.opportunity_id)
@@ -2664,9 +2674,12 @@ def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
                  where qr.origin_source_record_id is not null
                 union all
                 select e.source_record_id, e.opportunity_id, null::timestamptz
-                  from crm.opportunity_evidence e where e.source_record_id is not null
+                  from crm.opportunity_evidence e
+                 where e.source_record_id is not null and e.unlinked_at is null
                ) link on link.source_record_id = s.id
          where s.kind = 'gmail_message'
+           and s.review_status <> 'rejected'
+           and not s.is_quarantined
          order by s.id, link.opportunity_id, link.sent_at nulls last
         """
     )

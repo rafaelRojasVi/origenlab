@@ -1129,6 +1129,14 @@ describe("case drawer actions", () => {
     await waitFor(() => expect(within(dialog).queryByTestId("case-undetermined-revision")).not.toBeInTheDocument());
   });
 
+  it("says «Pendiente de archivar» when the archiver will file the PDF, and asks for a manual upload otherwise", async () => {
+    const revisions = [rev(1, { drive: null, drive_pending: true }), rev(2, { drive: null, drive_pending: false })];
+    stubApi({ pipelines: [page([card({ quotes: [{ quote_id: QUOTE, quote_number: "00001-26", number_origin: "printed_historical", revisions }] })])] });
+    const dialog = await openDrawer(session("sales"));
+    expect(within(dialog).getByText("Pendiente de archivar en Drive")).toBeInTheDocument();
+    expect(within(dialog).getByText("PDF sin copia en Drive: súbelo a mano")).toBeInTheDocument();
+  });
+
   it("keeps «Elegir revisión vigente» disabled on a closed case: the API never edits one", async () => {
     stubApi({ pipelines: [page([undetermined({ stage: "won", closed_at: "2026-05-10T00:00:00Z", status: "pending" })])] });
     const dialog = await openDrawer(session("sales"));

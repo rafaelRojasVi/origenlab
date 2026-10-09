@@ -353,6 +353,49 @@ def test_two_active_revisions_block_the_case() -> None:
     assert card["drive_folder"] is None
 
 
+def _one_quote_card(sources: dict) -> dict:
+    return compose_pipeline(
+        [_opp("o1")], [],
+        [{"quote_id": "q1", "opportunity_id": "o1", "quote_number": "00001-26", "number_origin": "printed_historical"}],
+        [_rev("r1", "q1", 1, SHA_A)], sources, [], {},
+    )[0]
+
+
+def test_a_pdf_the_archiver_can_file_is_pending_not_missing() -> None:
+    card = _one_quote_card({"src-1": {**SOURCES["src-1"], "has_eml": True}})
+    codes = [a["code"] for a in card["attention"]]
+    assert "document_pending_drive" in codes and "document_not_in_drive" not in codes
+    assert card["latest_revision"]["drive_pending"] is True
+    pending = [a for a in card["attention"] if a["code"] == "document_pending_drive"]
+    assert pending and pending[0]["blocking"] is False
+
+
+def test_a_pdf_with_no_captured_email_still_needs_a_manual_upload() -> None:
+    card = _one_quote_card(SOURCES)
+    codes = [a["code"] for a in card["attention"]]
+    assert "document_not_in_drive" in codes and "document_pending_drive" not in codes
+    assert card["latest_revision"]["drive_pending"] is False
+
+
+def test_a_void_revision_or_one_without_a_pdf_is_never_pending_archive() -> None:
+    """The archiver skips void revisions and revisions with no PDF hash; so must the label."""
+    sources = {"src-1": {**SOURCES["src-1"], "has_eml": True}}
+    for rev in (_rev("r1", "q1", 1, SHA_A, status="void"), _rev("r1", "q1", 1, None)):
+        card = compose_pipeline(
+            [_opp("o1")], [],
+            [{"quote_id": "q1", "opportunity_id": "o1", "quote_number": "00001-26", "number_origin": "printed_historical"}],
+            [rev], sources, [], {},
+        )[0]
+        [r] = card["quotes"][0]["revisions"]
+        assert r["drive_pending"] is False
+
+
+def test_a_pending_archive_alone_does_not_make_a_case_pending() -> None:
+    card = _one_quote_card({"src-1": {**SOURCES["src-1"], "has_eml": True}})
+    others = [a["code"] for a in card["attention"] if a["code"] not in ("no_crm_contact", "document_pending_drive")]
+    assert "document_pending_drive" in [a["code"] for a in card["attention"]]
+    assert others == [] and card["status"] == "ok"
+
 def test_a_closed_case_never_blocks() -> None:
     """Decision 2026-10-09: a won, lost or abandoned case keeps its notes but never blocks."""
     for stage in ("won", "lost", "abandoned"):
