@@ -1137,6 +1137,12 @@ describe("case drawer actions", () => {
     expect(within(dialog).getByText("PDF sin copia en Drive: súbelo a mano")).toBeInTheDocument();
   });
 
+  it("keeps «Elegir revisión vigente» disabled on a closed case: the API never edits one", async () => {
+    stubApi({ pipelines: [page([undetermined({ stage: "won", closed_at: "2026-05-10T00:00:00Z", status: "pending" })])] });
+    const dialog = await openDrawer(session("sales"));
+    expect(within(dialog).getByRole("button", { name: "Elegir revisión vigente" })).toBeDisabled();
+  });
+
   it("keeps «Elegir revisión vigente» disabled without the case commands", async () => {
     stubApi({ pipelines: [page([undetermined()])] });
     const dialog = await openDrawer(session("sales", { cases: false }));

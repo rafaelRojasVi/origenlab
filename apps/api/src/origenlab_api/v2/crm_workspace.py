@@ -332,6 +332,9 @@ BLOCKING_CODES = frozenset(
     {"shared_printed_number", "canonical_undetermined", "no_requesting_institution"}
 )
 
+#: Stages after which a case waits on nothing (`crm.opportunity` terminal stages).
+CLOSED_STAGES: frozenset[str] = frozenset({"won", "lost", "abandoned"})
+
 ATTENTION_LABELS_ES: dict[str, str] = {
     "shared_printed_number": "El mismo número impreso aparece en otro caso",
     "canonical_undetermined": "Hay más de una revisión vigente: no se sabe cuál es la canónica",
@@ -740,7 +743,10 @@ def compose_pipeline(
 
         seen: set[str] = set()
         ordered = [c for c in attention if not (c in seen or seen.add(c))]
-        blocked = [c for c in ordered if c in BLOCKING_CODES]
+        # A closed case keeps its notes but never blocks (owner decision 2026-10-09): nothing
+        # waits on it, and a blocker nobody needs to clear hides the ones that matter.
+        closed = bool(opp.get("closed_at")) or opp.get("stage") in CLOSED_STAGES
+        blocked = [] if closed else [c for c in ordered if c in BLOCKING_CODES]
         cards.append(
             {
                 "opportunity_id": oid,
@@ -788,7 +794,7 @@ def compose_pipeline(
                 # (`last_contacts`); null for a case with no captured thread.
                 "last_contact": (contacts or {}).get(oid) or {"outbound": None, "inbound": None},
                 "attention": [
-                    {"code": c, "label": ATTENTION_LABELS_ES[c], "blocking": c in BLOCKING_CODES}
+                    {"code": c, "label": ATTENTION_LABELS_ES[c], "blocking": c in blocked}
                     for c in ordered
                 ],
                 "status": "blocked" if blocked else (
