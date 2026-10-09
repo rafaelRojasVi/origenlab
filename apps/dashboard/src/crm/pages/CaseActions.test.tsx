@@ -1129,11 +1129,10 @@ describe("case drawer actions", () => {
     await waitFor(() => expect(within(dialog).queryByTestId("case-undetermined-revision")).not.toBeInTheDocument());
   });
 
-  it("offers «Elegir revisión vigente» on a closed case: it tidies the record, it does not reopen it", async () => {
+  it("keeps «Elegir revisión vigente» disabled on a closed case: the API never edits one", async () => {
     stubApi({ pipelines: [page([undetermined({ stage: "won", closed_at: "2026-05-10T00:00:00Z", status: "pending" })])] });
     const dialog = await openDrawer(session("sales"));
-    const box = within(dialog).getByTestId("case-undetermined-revision");
-    expect(within(box).getByRole("button", { name: "Elegir revisión vigente" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "Elegir revisión vigente" })).toBeDisabled();
   });
 
   it("keeps «Elegir revisión vigente» disabled without the case commands", async () => {
