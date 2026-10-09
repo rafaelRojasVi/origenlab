@@ -8,7 +8,7 @@ import type { OpportunityCardData, PipelineResponse, WorkspaceOverview } from ".
 import { PipelinePage } from "./pages/PipelinePage";
 import { PeoplePage } from "./pages/PeoplePage";
 import { AuthSessionContext } from "../context/AuthSessionContext";
-import { byLatestSent, matchesQuery } from "./stage";
+import { byLatestActivity, matchesQuery } from "./stage";
 import { classifyError } from "./useResource";
 import { DashboardApp } from "../pages/DashboardApp";
 import { stubSignedInAuthSession } from "../test/mockAuthSession";
@@ -140,10 +140,11 @@ describe("helpers", () => {
     expect(matchesQuery(c, "otra cosa")).toBe(false);
   });
 
-  it("orders by latest sent revision, cases without one last", () => {
+  it("orders by latest activity, including a newer stage update without a revision", () => {
     const a = withLatest(card());
-    const b = card({ opportunity_id: "b", latest_revision: null, title: "B" });
-    expect([b, a].sort(byLatestSent)[0]).toBe(a);
+    const b = card({ opportunity_id: "b", latest_revision: null, title: "B",
+      updated_at: "2026-10-08T19:00:00Z" });
+    expect([a, b].sort(byLatestActivity)[0]).toBe(b);
   });
 });
 
