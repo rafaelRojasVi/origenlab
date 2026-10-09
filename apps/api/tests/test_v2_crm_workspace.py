@@ -353,6 +353,38 @@ def test_two_active_revisions_block_the_case() -> None:
     assert card["drive_folder"] is None
 
 
+def _one_quote_card(sources: dict) -> dict:
+    return compose_pipeline(
+        [_opp("o1")], [],
+        [{"quote_id": "q1", "opportunity_id": "o1", "quote_number": "00001-26", "number_origin": "printed_historical"}],
+        [_rev("r1", "q1", 1, SHA_A)], sources, [], {},
+    )[0]
+
+
+def test_a_pdf_the_archiver_can_file_is_pending_not_missing() -> None:
+    card = _one_quote_card({"src-1": {**SOURCES["src-1"], "has_eml": True}})
+    codes = [a["code"] for a in card["attention"]]
+    assert "document_pending_drive" in codes and "document_not_in_drive" not in codes
+    assert card["latest_revision"]["drive_pending"] is True
+    pending = [a for a in card["attention"] if a["code"] == "document_pending_drive"]
+    assert pending and pending[0]["blocking"] is False
+
+
+def test_a_pdf_with_no_captured_email_still_needs_a_manual_upload() -> None:
+    card = _one_quote_card(SOURCES)
+    codes = [a["code"] for a in card["attention"]]
+    assert "document_not_in_drive" in codes and "document_pending_drive" not in codes
+    assert card["latest_revision"]["drive_pending"] is False
+
+
+def test_a_pending_archive_alone_does_not_make_a_case_pending() -> None:
+    card = _one_quote_card({"src-1": {**SOURCES["src-1"], "has_eml": True}})
+    others = [a["code"] for a in card["attention"] if a["code"] not in ("no_crm_contact", "document_pending_drive")]
+    blocked = any(a["blocking"] for a in card["attention"])
+    assert "document_pending_drive" in [a["code"] for a in card["attention"]]
+    assert card["status"] == ("blocked" if blocked else "pending" if others else "ok")
+
+
 def test_shared_printed_number_blocks_both_cases() -> None:
     quotes = [
         {"quote_id": "q1", "opportunity_id": "o1", "quote_number": "00005-26", "number_origin": "printed_historical"},

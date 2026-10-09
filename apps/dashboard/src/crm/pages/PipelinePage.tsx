@@ -444,8 +444,10 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
           <LocalDriveLink href={rev.drive.file_url} label={`Abrir PDF r${rev.revision_no} en Drive`}>
             PDF en Drive
           </LocalDriveLink>
+        ) : rev.drive_pending ? (
+          <span className="text-ink-muted">Pendiente de archivar en Drive</span>
         ) : (
-          <span className="text-warn">PDF no archivado en Drive</span>
+          <span className="text-warn">PDF sin copia en Drive: súbelo a mano</span>
         )}
         {rev.gmail ? (
           <ExternalLink href={inSharedMailbox(rev.gmail.url) ?? rev.gmail.url} label={`Abrir correo de r${rev.revision_no} en Gmail`}>
