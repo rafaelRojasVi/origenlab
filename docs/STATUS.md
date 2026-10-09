@@ -2337,7 +2337,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Proxy | `GET /v2/workspace/history` added to `ALLOWED_UPSTREAM_PATHS` as an exact path. |
 | Not done | The Hoy proposal inbox is not part of this entry (owner decision 2026-10-09: a worker-filled proposal queue, separate plan). |
 
-### 2.7.79 Hoy, board and case panel cleanup, 2026-10-09 — built (PR pending)
+### 2.7.79 Hoy, board and case panel cleanup, 2026-10-09 — merged and deployed (PR #698)
 
 | | |
 |---|---|
@@ -2345,4 +2345,4 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Correos sin caso | Replaces «Sugerencias del correo»: one compact row per email (subject, sender, date, class; «Abrir ↗», «Revisar», «Descartar» = a `rejected` verdict). Not asked about, only counted: emails on a case, from a registered supplier or with a supplier-offer intent, automatic senders/classes, Labdelivery forwards, and older messages of the same thread (`sortInbox`). «Ver revisados» lists past verdicts. API: `GET /v2/workspace/triage-readings` items gain `sender_is_supplier`. |
 | Board | The card's day badge counts from the case's last movement — the same date as the «Últimos 30 días» bands; client silence stays on the status line. Names wrap at word boundaries. |
 | Case panel | Actions at the top: «Registrar seguimiento», «Cambiar estado», «Marcar ganada» when it applies (and «No es una solicitud» on a case without a quotation); the rest under «Más…». Removed: «Estado actual sin verificar» and «Al día» badges, the explanatory footnotes, sha256, import origin and the internal id. |
-| Not done | Not deployed. |
+| Follow-up | PR #699 (same day): the quote-number box and the exchange rates moved to «Hoy»'s side column (sticky on wide screens), «Correos sin caso» closes the main column; nothing sits under both columns any more. |

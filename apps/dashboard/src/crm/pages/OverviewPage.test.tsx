@@ -182,7 +182,8 @@ describe("Resumen · número de cotización", () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
     await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("01020-26"));
-    expect(screen.getByTestId("quote-number-box")).toHaveTextContent(/sin el archivo de Drive/);
+    // The Drive read starts with the box, once the pipeline is in: its refusal lands a tick later.
+    await waitFor(() => expect(screen.getByTestId("quote-number-box")).toHaveTextContent(/sin el archivo de Drive/));
   });
 });
 
@@ -327,6 +328,15 @@ describe("Hoy · lecturas en paralelo", () => {
 });
 
 describe("Hoy · orden", () => {
+  it("keeps the quote number and the rates at hand on the side, not at the bottom", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
+    render(<OverviewPage navigate={() => undefined} />);
+    const side = await screen.findByRole("complementary");
+    expect(within(side).getByTestId("quote-number-box")).toBeInTheDocument();
+    expect(within(side).getByTestId("fx-USD")).toBeInTheDocument();
+  });
+
+
   it("puts today's work above the exchange rate and the quote number", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);

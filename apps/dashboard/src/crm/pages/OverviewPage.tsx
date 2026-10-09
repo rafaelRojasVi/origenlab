@@ -18,7 +18,7 @@ type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 /**
  * «Hoy», the first page: what the open cases ask of an operator today (`TodayBody`: tasks due,
  * clients who answered, the 3 · 14 · 30 follow-ups, what is left to add or decide), the next quote
- * number and the day's exchange rates. The data-health counts live on Revisión → Estado de los datos.
+ * number and the day's exchange rates kept at hand on the side. The data-health counts live on Datos.
  */
 export function OverviewPage({ navigate }: { navigate: Navigate }) {
   const { session } = useAuthSession();
@@ -32,11 +32,24 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
         counts={pipeline.kind === "ready" ? todayCounts(pipeline.data.items) : null}
       />
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
-        {(p) => <TodayBody items={p.items} navigate={navigate} onChanged={reloadPipeline} refreshing={refreshing} people={people} reloadPeople={reloadPeople} />}
+        {(p) => (
+          <TodayBody
+            items={p.items}
+            navigate={navigate}
+            onChanged={reloadPipeline}
+            refreshing={refreshing}
+            people={people}
+            reloadPeople={reloadPeople}
+            aside={
+              <>
+                <QuoteNumberBox pipeline={pipeline} compact />
+                <FxSection state={fx} reload={reloadFx} />
+              </>
+            }
+            after={<TriagePanel />}
+          />
+        )}
       </ResourceGate>
-      <TriagePanel />
-      <QuoteNumberBox pipeline={pipeline} />
-      <FxSection state={fx} reload={reloadFx} />
     </div>
   );
 }
@@ -46,7 +59,7 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
 function FxSection({ state, reload }: { state: ResourceState<FxResponse>; reload: () => void }) {
   if (state.kind === "loading") {
     return (
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.2fr]" aria-hidden="true">
+      <div className="grid grid-cols-1 gap-3" aria-hidden="true">
         {[0, 1, 2].map((i) => (
           <div key={i} className="crm-skeleton h-[7.5rem] rounded-xl" />
         ))}
@@ -71,7 +84,7 @@ function FxSection({ state, reload }: { state: ResourceState<FxResponse>; reload
   const byCode = Object.fromEntries(fx.rates.map((r) => [r.code, r])) as Partial<Record<FxRate["code"], FxRate>>;
   return (
     <section aria-label="Tipo de cambio" className="space-y-2">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.2fr]">
+      <div className="grid grid-cols-1 gap-3">
         {byCode.USD ? <RateCard rate={byCode.USD} unit="dólar" index={0} /> : null}
         {byCode.EUR ? <RateCard rate={byCode.EUR} unit="euro" index={1} /> : null}
         <Converter rates={fx.rates} uf={byCode.UF ?? null} />
@@ -100,7 +113,7 @@ function RateCard({ rate, unit, index }: { rate: FxRate; unit: string; index: nu
         <p className="text-[12px] font-medium text-ink-muted">{rate.label}</p>
         <span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">{rate.code}</span>
       </div>
-      <p className="mt-2 text-[28px] font-semibold leading-none tracking-tight text-ink tabular-nums">
+      <p className="mt-2 text-[24px] font-semibold leading-none tracking-tight text-ink tabular-nums">
         <CountUp value={rate.clp} format={fmtRate} />
       </p>
       <p className="mt-auto pt-2 text-[11px] text-ink-faint">
@@ -127,7 +140,7 @@ function Converter({ rates, uf }: { rates: FxRate[]; uf: FxRate | null }) {
   const invalid = text.trim() !== "" && amount === null;
   return (
     <div
-      className="crm-rise rounded-xl border border-line bg-canvas-raised px-4 py-3.5 shadow-[0_1px_2px_rgb(28_25_23/0.04)] sm:col-span-2 lg:col-span-1"
+      className="crm-rise rounded-xl border border-line bg-canvas-raised px-4 py-3.5 shadow-[0_1px_2px_rgb(28_25_23/0.04)]"
       style={{ "--i": 2 } as CSSProperties}
     >
       <div className="flex items-center justify-between gap-2">
