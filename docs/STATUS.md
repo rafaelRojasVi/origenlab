@@ -27,7 +27,9 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed; §2.7.49 added 2026-10-04 from the branch's own validation, nothing deployed; §2.7.51 added 2026-10-05 from the branch's own validation, nothing applied or deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
+Last verified: **2026-10-08** for §2.7.77 against main `6b4c602a` (read-only production inspection and isolated tests; branch changes not deployed). Additional R7 branch verification is recorded below; PR #683 changes remain undeployed.
+
+Earlier verification: **2026-10-02** (§2.7.41 added 2026-10-03 from the branch's own `npm run validate`, nothing deployed; §2.7.49 added 2026-10-04 from the branch's own validation, nothing deployed; §2.7.51 added 2026-10-05 from the branch's own validation, nothing applied or deployed), against `origin/main` (`7c6a7fef`, the merge of #620) for the
 hosting and GitHub facts of §2.4, §2.7.40, §2.8, §3.1 and §3.3 — read from the GitHub API, the
 public DNS and HTTP edge, the repository, and (later the same day) the Render API, the FastAPI
 Cloud CLI and the Cloudflare DNS table, all read-only, with nothing deployed, provisioned,
@@ -59,7 +61,7 @@ Slices and their gates are defined in [`MIGRATION.md`](MIGRATION.md) §5.
 | 1 — Auth / `platform.*` | **PARTIAL — built locally, schema applied to `origenlab_clean`** | Shared Workspace sign-in with PIN-verified operator profiles and revocable sessions: four `platform` tables, API, proxy and dashboard (§2.7.38). The eight sign-in migrations were **applied to `origenlab_clean` on 2026-09-30** from canonical `main` (§2.7.39); the four tables are **empty** — no principal, profile, PIN or Google identity has been provisioned. Not applied to any hosted database, not deployed. Supabase Auth itself not started |
 | 2 — CRM identity + V1 row migration | NOT STARTED | |
 | 3 — Quotes, lines, FX, snapshot, PDF | **SCHEMA ONLY** | The three commercial-case tables — `crm.opportunity_organization`, `crm.opportunity_interest`, `crm.opportunity_evidence` — were built locally on 2026-09-22 and are **empty** (§2.7.16). No command, no quote work, nothing wired |
-| 4 — Evidence, comms, shadow Gmail, catalog, notices | **PARTIAL — 4a Gmail capture built, not deployed** | §2.7.49. Catalog and notices not started |
+| 4 — Evidence, comms, shadow Gmail, catalog, notices | **PARTIAL — 4a Gmail capture running on Render (observed 2026-10-06); mail triage built, not applied, not deployed** | §2.7.49, §2.7.69. Catalog loaded (§2.7.61); notices not started |
 | 5 — Wave 1A load, send functions, reconciler | NOT STARTED | |
 | 6 — Sender handoff | NOT STARTED | |
 | 7 — Rollback window | NOT STARTED | |
@@ -1836,7 +1838,7 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 |---|---|
 | What | `apps/worker` (new; Python 3.12, uv; package `origenlab_worker`): `origenlab-worker gmail-sync [--init] [--dry-run]` captures contacto@ Inbox and Sent into `comms.message` (+ participants, attachment metadata, the `.eml` in the private bucket `mail`) and `pending` `gmail_message` evidence with the 21 keys of the staged records; drafts, spam and trash skipped; a draft sent later and a message moved out of spam are captured (history also lists `labelAdded`; a message that gained `SENT` or `INBOX` is read again); campaign copies kept as messages without evidence (R1, owner-approved 2026-10-04); one transaction per message, the cursor after the window, which in history mode is the profile `historyId` read before the list |
 | Reuse | V1 `classify_intake_folder`, `_require_stageable_gmail_payload`, `walk_attachments`, `recipients_header`, `date_iso_from_msg`, `message_from_bytes`, `classify_send_direction`, through `origenlab_worker/v1_reuse.py` (uv path dependency on `apps/email-pipeline`). The build therefore installs email-pipeline's OCR stack (about 650 MB venv) that the worker never imports (run-time RSS about 36 MB for a normal message; it grows with the message, see the Render row); slice 8 moves the seam |
-| Safety | `gmail.readonly` re-checked on every token refresh; `origenlab_worker` over `verify-full`; on every connect a probe of role, grants and policies that refuses any role membership, a port other than 5432 (6543 by name), any `crm.*`/`outbound.*` write other than `INSERT` on `outbound.campaign_reply` (the designed 4c reply-proposal lane, which 4a never writes; column-level grants, `TRIGGER` and view/matview writes included), and any executable `SECURITY DEFINER` function (extension-owned, trigger and no-`USAGE`-schema functions not counted; nothing skipped by schema name); a session advisory lock (a holder past 30 minutes that is not idle is reported as `locked_by_stuck_session`, exit 1, never ended); one JSON log line with no subject, address, id or exception text — its `error` is a Storage code, a Gmail kind, a database class with its SQLSTATE, or a class name; a paused cron opens no database session; no secret reaches a `repr` |
+| Safety | `gmail.readonly` re-checked on every token refresh; `origenlab_worker` over `verify-full`; on every connect a probe of role, grants and policies that refuses any role membership, a port other than 5432 (6543 by name), any `crm.*`/`outbound.*` write other than `INSERT` on `outbound.campaign_reply` (the designed 4c reply-proposal lane, which 4a never writes; column-level grants, `TRIGGER` and view/matview writes included), and any executable `SECURITY DEFINER` other than the closed-list `outbound.add_contact_control` hard-bounce boundary (extension-owned, trigger and no-`USAGE`-schema functions not counted; nothing skipped by schema name); a session advisory lock (a holder past 30 minutes that is not idle is reported as `locked_by_stuck_session`, exit 1, never ended); one JSON log line with no subject, address, id or exception text — its `error` is a Storage code, a Gmail kind, a database class with its SQLSTATE, or a class name; a paused cron opens no database session; no secret reaches a `repr` |
 | API, proxy, dashboard | `GET /v2/workspace/mail-sync` (state and last sync; no address) listed by the proxy; banner «Sincronización de correo detenida / atrasada»; the work queue lists every other kind before pending evidence and returns per-kind `counts`, which Revisión shows as each group's total |
 | Render | `render.yaml` declares the cron `origenlab-gmail-sync` (`*/10 * * * *`, Oregon, Standard, root `apps/worker`) — **not created** on Render; `buildFilter` also rebuilds it when `apps/email-pipeline/**` or `render.yaml` change, and `UV_PYTHON_DOWNLOADS=never` is its one plain (non-secret) value. Sizing: Standard stays. A message near `MAX_RAW_BYTES` (50 MiB) peaks at about 451 MB RSS and one around 24 MiB at about 238 MB, so Starter (512 MB) risks an out-of-memory kill that stalls every run on that message; downsizing is safe only if `MAX_RAW_BYTES` is lowered to match |
 | Docs | ARCHITECTURE §7 (the one Storage S3 key) and §8 (D1: a Render Cron Job until a queue exists); OPERATIONS §8 (runbook: exit codes, run modes, counters, StorageConflict recovery, owner checks), §11, §13; MIGRATION §5.1 (Gmail coverage proven from go-live) |
@@ -1861,9 +1863,9 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Schema | two migrations, `20261005134832_slice7_catalog_products_suppliers.sql` and `20261005140628_slice7_catalog_pricing_inputs_document_lines.sql`: `catalog.product` gains Spanish content, specs, physical data, a generated `model_key` (unique per manufacturer) and a content origin; `catalog.supplier_product` gains price kinds and the wider observation key; new tables `catalog.product_image`, `catalog.supplier_terms`, `catalog.fx_rate`, `catalog.cost_parameter` (five public keys seeded) and `evidence.document_line`; `evidence.source_record` kind `quote_document`; `crm.note` subjects include products; nine new domain events. Inventory #50–#54 and the changed #26, #27, #44 are in [`DOMAIN.md`](DOMAIN.md) §7.5 |
 | API | `/v2/catalog/*` reads, nine `/v2/commands/*` catalog commands and the multipart `add-product-image`, mounted only behind `ORIGENLAB_V2_QUOTING_ENABLED` (default `false`); exchange rates from Banco Central (BDE, else mindicador) stored in `catalog.fx_rate`; `GET /v2/workspace/fx` falls back to the newest stored rate when every source fails and writes USD and EUR through after a successful mindicador fetch (findic is shown, never stored); the published DHL Chile import tariff as data; no price calculation (catalog 1b) |
 | Tools | `apps/api/scripts/catalog/`: four importers (price lists, supplier documents and costing sheets, quote history, cost parameters), each plan / apply / verify / rollback, loopback-only, disposable database or the clean room; and the enrichment tool (Claude, dry-run by default). Runbooks in [`OPERATIONS.md`](OPERATIONS.md) §14 |
-| Proxy and dashboard | proxy allowlist for the catalog paths and a bounded multipart upload; no dashboard screen |
+| Proxy and dashboard | proxy allowlist for the catalog paths and a bounded multipart upload; the read-only «Catálogo» screen came later (§2.7.72) |
 | Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **4012 passed**, 120 skipped (the V1 Alembic-head and TLS-server skips of §2.7.49); `supabase test db --local`: 27 files, **1157 assertions**, PASS; `supabase/audit` unit tests 352; `apps/dashboard-proxy` `npm run validate` **377 passed** + typecheck; `apps/dashboard` `npm run validate` **552 passed** (45 files) + build |
-| Not done | **not applied to any database but disposable test clusters**: neither migration is on `origenlab_clean` or the hosted project (so the clean-room expected counts already name them, and the next clean-room rebuild is their first); not deployed (Render API, Worker); the `catalog` bucket, the dedicated Storage key and the BDE credentials do not exist ([`OPERATIONS.md`](OPERATIONS.md) §14.1–14.2); the euro series of BDE is unconfirmed and the BDE response parse has not run against the live service; no catalog data is loaded anywhere (the clean-room rehearsal of the importers is a private owner step); hosted loading waits for PR #623's authorised route; no dashboard screen reads or writes the catalog |
+| Not done | **not applied to any database but disposable test clusters**: neither migration is on `origenlab_clean` or the hosted project (so the clean-room expected counts already name them, and the next clean-room rebuild is their first); not deployed (Render API, Worker); the `catalog` bucket, the dedicated Storage key and the BDE credentials do not exist ([`OPERATIONS.md`](OPERATIONS.md) §14.1–14.2); the euro series of BDE is unconfirmed and the BDE response parse has not run against the live service; catalog data was loaded into hosted on 2026-10-06 (§2.7.61); the dashboard reads the catalog since §2.7.72 (read-only) and writes none of it |
 ### 2.7.52 Email → cases rules (4b-auto): preview, apply, undo, 2026-10-05 — built, not applied, not deployed
 
 | | |
@@ -1887,6 +1889,266 @@ An admin sends the stored email of a campaign (V2 campaigns with HTML, and the V
 | Hosted apply | the three `20261005…` migrations applied to `origenlab-v2` with `psql --single-transaction` as `origenlab_migrator` through the session pooler (`supabase db push` cannot: the CLI login role may not `set role origenlab_owner`, and the migrator has no access to `supabase_migrations`); the owner then inserted the three ledger rows from the SQL Editor — ledger **44**, head `20261005140628` |
 | Defect found after merge | the two catalog migrations, written on a parallel branch, rebuild `crm.domain_event_type_check` from their own list and drop `case_evidence.unlinked` and `opportunity.stage_corrected`, which `20261005120000` had added: «Deshacer» of a rules-engine link and a stage correction are refused (pgTAP 076 #1–2 on `main`). `20261005210000_slice7_domain_event_type_union.sql` rebuilds the CHECK as the union. Local: pgTAP 28 files **1171 PASS**, replay evidence PASS (50 tables, 173 policies), clean-room static 13/13, chain 9/9 |
 | Not done | the corrective migration is not yet applied to hosted (same psql route; ledger becomes 45); the dashboard-proxy Worker is not redeployed, so the catalog and mail-rules paths are still refused at the proxy |
+
+### 2.7.54 Case writes part A — the case drawer's actions work, 2026-10-05 — built (merged and deployed: §2.7.56)
+
+| | |
+|---|---|
+| What | The Oportunidades drawer's «Acciones» stop being three disabled buttons: «Cambiar etapa», «Marcar ganada», «Registrar seguimiento» and, for an institution «por confirmar», «Confirmar institución» (with a link to the institution's page to rename it). «Nueva revisión» stays disabled |
+| API | new human case command `POST /v2/commands/record-case-won` {`opportunity_id`, `opportunity_version`, `quote_id`, `revision_no`, `note`}: `negotiating` → `won` against a sent, not-superseded revision on that case (409 `case_not_negotiating` / `quote_revision_not_current` / `case_version_conflict`, 404 `quote_revision_not_on_case`). Same `Deciding` (sales/admin), `Idempotency-Key`, receipt and `ORIGENLAB_V2_COMMANDS_ENABLED` switch as the other case commands (off → 404). The writer moved from `MailRulesRepository._record_case_won` to `v2/case_won.py`, shared with rule R5: a person's win is `actor_kind = 'operator'`, the rule's stays the system's. `advance-case-stage` still refuses `won` and now points to the new command. `/auth/session` adds `case_commands_enabled`; `GET /v2/workspace/opportunities/{id}/notes` returns the case's notes (person/organization note shape); the pipeline card carries the case `version` and `organization.version` |
+| Proxy | `CASE_COMMAND_POST_PATHS` = `advance-case-stage` and `record-case-won` only, behind the Origin / JSON / `Idempotency-Key` guard (body ≤ 16 KiB); `open-commercial-case`, `link-case-evidence`, `add-case-organization`, `set-case-organization-role`, `record-case-interest` stay refused. GET `/v2/workspace/opportunities/<uuid>/notes` listed |
+| Dashboard | `crm/caseCommands.ts` owns the two paths (pinned by `noWritePolicy`). Stage choices come from the stage table for the card's stage; lost/abandoned need a motive. «Marcar ganada» picks a sent, current revision (latest by default); from `quoting` it sends `advance-case-stage` → `negotiating` then `record-case-won`, shows both receipts, and if only the first lands says the case stayed at «Negociando». Enabled only with `case_commands_enabled` and role sales/admin; the follow-up note and «Confirmar institución» need `crm_authoring_enabled`. Refusals are shown in Spanish; every write (and a stale-version refusal) refetches the pipeline |
+| Schema | none: `opportunity.staged` / `opportunity.closed` exist, and `origenlab_api` already wrote `won_quote_id` through R5 |
+| Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **4103 passed**, 120 skipped (the V1 Alembic-head and TLS-server skips of §2.7.49; no V2 DSN skip) — new: 8 database tests for the win and the case-notes read, route/switch/session tests; `apps/dashboard` `npm run validate`: **574 passed** (48 files) + build; `apps/dashboard-proxy` `npm run validate`: **408 passed** (6 files) + typecheck; public-repo hygiene passed |
+| Not done | not deployed. To ship: merge → Render auto-deploys the API and the dashboard → the owner deploys the dashboard-proxy Worker (until then the two commands and the notes read are refused at the proxy and the drawer says so). The actions are live only where `ORIGENLAB_V2_COMMANDS_ENABLED=true` (and, for the note and the institution, `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true`). No rename field in the drawer (rename stays on the institution page); no «Nueva revisión» |
+
+### 2.7.55 Case writes part B — «Elegir revisión vigente», «Registrar cotización», «Nueva revisión», 2026-10-06 — built (merged, applied and deployed: §2.7.56)
+
+| | |
+|---|---|
+| What | The Oportunidades drawer gains the quote acts part A left disabled. A case blocked by «Hay más de una revisión vigente» (`canonical_undetermined`) offers «Elegir revisión vigente»; «Registrar cotización» and «Nueva revisión» are enabled at «Cotizando»/«Negociando». Built on PR #646 (part A, not yet merged) |
+| API | two new human case commands, same `Deciding` (sales/admin), `Idempotency-Key`, non-blank note, case-version compare-and-set (409 `case_version_conflict`) and `ORIGENLAB_V2_COMMANDS_ENABLED` switch as `record-case-won`. `POST /v2/commands/resolve-current-revision` {`opportunity_id`, `opportunity_version`, `quote_id`, `revision_no`, `note`}: every other current revision of the quote gets `superseded_by_revision_no` = the chosen one + `superseded_at` and a `quote_revision.superseded` event; nothing voided; case `version + 1` (`v2/current_revision.py`). `POST /v2/commands/record-case-quotation` {…, `quote_number`, `source_record_id`, `document_sha256`, `supersedes_revision_no`?}: a quote already sent, from a `gmail_message` record already linked to the case that carries the document and a `sent_at`; `printed_historical` quote, `sent` `historical_import` revision; a number already a quote on another case is refused (409 `number_on_other_opportunity`); with `supersedes_revision_no` it is «Nueva revisión»; case `version + 1`. The writer that `record_historical_quotation` and rules R3/R4 use moved from `V2QuoteImportRepository._record_historical_quotation` to `v2/case_quotation.py` (`record_quotation`), shared by all three, with no SQL duplicated; `case_command_repository.py` still names no `crm.quote`. New read `GET /v2/workspace/opportunities/{id}/mail-documents`: the case's linked Gmail messages and their documents (file name, SHA-256, capture tokens, whether already a revision) |
+| Schema | migration `20261006120000_slice7_historical_current_revision_choice.sql`: `quote_revision_supersession_forward` lets a `historical_import` revision be superseded by any other revision of its quote (never itself) — its number is import order, not send order — and `crm.quote_revision_historical_guard` is replaced in place to require the superseding revision to be current (`sent`/`approved`, not superseded, read `for share`), so no cycle. V2-authored revisions keep the forward rule. No table, column, grant, policy, event type or function added (functions 33 unchanged); clean-room chain 45 → **46**, head `20261006120000`. pgTAP `077` (10) |
+| Proxy | `CASE_COMMAND_POST_PATHS` = `advance-case-stage`, `record-case-won`, `resolve-current-revision`, `record-case-quotation` (same Origin / JSON / key guard, ≤ 16 KiB); `open-commercial-case`, `link-case-evidence`, `add-case-organization`, `set-case-organization-role`, `record-case-interest`, `record-historical-quotation` stay refused. GET `/v2/workspace/opportunities/<uuid>/mail-documents` listed |
+| Dashboard | `crm/caseCommands.ts` owns the four paths (`noWritePolicy`). «Elegir revisión vigente»: one radio per current revision (number, send date, file), nothing preselected. «Registrar cotización»: pick an unrecorded document from the case's linked messages, type the printed number (the file name's token is shown as a hint, never filled in). «Nueva revisión»: pick the sent, current revision it replaces; the number is that quote's. Refusals in Spanish; every write refetches the pipeline |
+| Evidence | disposable PostgreSQL 17 cluster (`supabase/postgres:17.6.1.165`): `apps/api/scripts/validate.sh` **4139 passed**, 120 skipped (the same V1 Alembic-head and TLS skips as §2.7.54; no V2 DSN skip) — new: 13 database tests (`test_v2_case_quote_commands.py`), boundary/route/switch tests; `apps/dashboard` `npm run validate` **582 passed** (48 files) + build; `apps/dashboard-proxy` `npm run validate` **424 passed** (6 files) + typecheck; pgTAP, all 29 files with psql on the cluster carrying the full chain: **1180 ok**, 1 not ok (100 #22, role passwords set by the disposable cluster — environmental, as §2.7.52); `cleanroom_verify_tests.sh --static` 13 passed; audit unit tests 352 OK; public-repo hygiene passed. `supabase test db --local`, `replay_evidence.sh` and the gap checker against a local audit were not run (no Supabase CLI here); CI's Slice 0 job runs them |
+| Not done | not merged (stacked on #646), the migration is not applied anywhere, not deployed. To ship: merge #646 then this → Render auto-deploys the API and the dashboard → apply `20261006120000` to hosted (same psql route as §2.7.53; ledger + 1) **before** an operator uses «Elegir revisión vigente» on an older revision → the owner deploys the dashboard-proxy Worker. Live only with `ORIGENLAB_V2_COMMANDS_ENABLED=true`. No linking of a new Gmail message from the drawer (the message must already be linked to the case) |
+
+### 2.7.56 §2.7.54 and §2.7.55 merged, applied to hosted, proxy deployed, 2026-10-06
+
+| | |
+|---|---|
+| Merged | #645 (contact name with a comma) at `83a5a1f`; #647 (case writes part B, carrying #646's part A commits, so #646 closed as merged with it) at `855e5ec`. Render `origenlab` (API) and `origenlab-dashboard` both live on `855e5ec` (deploys finished 12:11:51 and 12:09:27 UTC, read with the Render CLI) |
+| Hosted apply | `20261006120000_slice7_historical_current_revision_choice.sql` applied to `origenlab-v2` with `psql -X --no-psqlrc -v ON_ERROR_STOP=1 --single-transaction` as `origenlab_migrator` through the session pooler (`sslmode=verify-full`); the owner inserted the ledger row from the SQL Editor — ledger **46**, head `20261006120000`. `pg_get_constraintdef` of `quote_revision_supersession_forward` returns the `historical_import` exception. `20261005210000` (§2.7.53's corrective migration) was already in the ledger |
+| Proxy | `origenlab-dashboard-proxy` deployed from `main` with `wrangler deploy` (validate 424 passed; version `352906e6`), route `dashboard.origenlab.cl/api*`, secrets unchanged. This also ships the paths §2.7.53 listed as still refused at the proxy (catalog, mail rules) and part A's `advance-case-stage` / `record-case-won` / case notes |
+| Switches | `GET /auth/session` through the deployed proxy, as an admin: `case_commands_enabled: true` and `crm_authoring_enabled: true`, i.e. `ORIGENLAB_V2_COMMANDS_ENABLED` and `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` are on |
+| Not done | no operator has yet exercised the drawer actions on hosted |
+
+### 2.7.57 Oportunidades «Tablero» readable with one crowded column, 2026-10-06 — built, not deployed
+
+| | |
+|---|---|
+| What | `apps/dashboard` only (`crm/pages/PipelineBoard.tsx`). Each board column scrolls on its own (`max-h-[70vh]`) and shows its count; a column with more than 8 cases is grouped by the age of its latest sent revision (≤ 30 / 90 / 180 / 365 days, older, none), newest group open and the rest collapsed. A board card leads with the client, then quote number · revision · send date, then **one** status line (the blocking reason, else «histórico», «sin Drive», «sin Gmail», «sin contacto», «sin cotización») instead of the stage/status chips and the Drive/Gmail row; the full suggestion is the card's tooltip. The «Tarjetas» view is unchanged. No API or proxy change |
+| Not built | a per-column total in CLP: the pipeline read carries no amounts, and historical revisions hold no parsed totals |
+| Evidence | `apps/dashboard` `npm run validate`: **589 passed** (49 files) + build; new `PipelineBoard.test.tsx` (7) |
+
+### 2.7.58 «Último contacto»: Resumen ages a case from the last email OrigenLab sent, 2026-10-06 — built, not deployed
+
+| | |
+|---|---|
+| What | A follow-up sent from contacto@ on a case's Gmail thread now resets that case's clock in Resumen, with nobody recording it. A case is aged from the newer of its latest quote sent and the newest **outbound** email on its threads; a client who wrote after that is marked «Respondió · te toca» and listed first in its group. Read-side only: no schema, no write, no rule change |
+| API | `GET /v2/workspace/pipeline` cards gain `last_contact` {`outbound`, `inbound`}: each the newest `gmail_message` evidence (`at`, `subject`, Gmail `url`) on a thread tied to the case — the thread of an email linked to it (`crm.opportunity_evidence`, by a person or rules R1/R2) or of the email a quote revision was recorded from. Quarantined and rejected records are skipped. Direction is `mail_rules.mail_direction`, now shared with the email → cases planner (capture direction, else `direction_hint`, else the sender's domain). One more query in the pipeline's single pipelined round trip |
+| Dashboard | `followUps.ts` ages from the last touch and flags replies; each Resumen row says «desde tu correo» when the email reset it, links «Seguimiento» (our last email) or «Respuesta» (theirs), and its tooltip names both dates. Also: `AuthGate` attaches its 401 listener in a layout effect, so a refusal right after the dashboard mounts is never lost (the `ProfileSelector` mid-session test failed under load because of exactly that gap) |
+| Limits | only threads already tied to a case count: an email on a brand-new thread (a follow-up written as a fresh message) is not seen until it is linked. Inbound/outbound only — no body is read |
+| Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **4142 passed**, 120 skipped (the usual V1 Alembic-head and TLS skips; no V2 DSN skip) — new: `last_contacts` unit test, an end-to-end pipeline test on PostgreSQL 17; the pipeline statement budget is 9 (2 setup + 7 data, still one round trip); `apps/dashboard` `npm run validate`: **593 passed** (49 files) + build, the full suite twice more under load after the `AuthGate` fix |
+
+### 2.7.59 Email → cases R1/R2 run automatically, with a stop switch, 2026-10-06 — built, not deployed
+
+| | |
+|---|---|
+| What | Rules R1 (same Gmail thread as an email already on exactly one open case) and R2 (a quote number held by exactly one open case) now link new email by themselves while an admin has switched the automatic run on. R3–R6 (open a case, register an institution, win, lose) still wait for «Aplicar». Owner-approved 2026-10-06; [`DOMAIN.md`](DOMAIN.md) §3.6.6 records it |
+| API | `v2/mail_rules_auto.py`: a daemon thread started with the API where `ORIGENLAB_V2_COMMANDS_ENABLED` mounts the commands, every `ORIGENLAB_V2_AUTO_MAIL_RULES_INTERVAL_SECONDS` (default 300; **0** never starts it). Each pass re-plans and applies the `auto` R1/R2 actions (at most 100) through `MailRulesRepository.apply_planned` — the same receipt key, per-email advisory lock and system attribution as «Aplicar», plus `attribution.trigger = 'automatic'` — on behalf of the admin who switched it on; if that operator is no longer an active admin the pass does nothing and the tab says why. New admin-only `POST /v2/commands/set-auto-mail-rules` {`enabled`, `note`}: one `set_auto_mail_rules` receipt per flip; the newest is the state; none = off; flipping to the current state is 409 `auto_mail_rules_unchanged`. `GET /v2/workspace/mail-rules/preview` gains `automatic` (switch, who and when, timer, this process's last pass); applied rows gain `automatic` |
+| Schema | none: the switch is `platform.command_receipt` rows, which `origenlab_api` already inserts |
+| Proxy | `MAIL_RULES_COMMAND_POST_PATHS` + `set-auto-mail-rules` (same Origin / JSON / key guard, ≤ 128 KiB) |
+| Dashboard | Revisión → «Acciones automáticas» gains «Vincular correos automáticamente»: Activo / Detenido / Activo, sin actuar, who switched it and why, the last pass, «Activar» / «Detener» with a required reason. Applied rows say «automática, a nombre de …»; «Deshacer» works the same |
+| Evidence | `apps/api/scripts/validate.sh` with disposable-cluster DSNs: **4318 passed**, 121 skipped (the V1 Alembic-head and TLS skips; no V2 DSN skip) — new: one database test (off by default; only an admin switches, with a note; R1 and R2 linked and R4 left; nothing twice; undo; off stops the next link; a demoted admin stops the run until another admin switches it on), route tests, timer tests; `apps/dashboard` `npm run validate` **597 passed** (49 files) + build; `apps/dashboard-proxy` `npm run validate` **426 passed** (6 files) + typecheck |
+| Not done | not deployed. To ship: merge → Render auto-deploys the API and the dashboard → the owner deploys the dashboard-proxy Worker (until then «Activar» is refused at the proxy) → an admin switches it on in Revisión. Runbook: [`OPERATIONS.md`](OPERATIONS.md) §8.9 |
+
+### 2.7.60 Recorded quote PDFs filed in the case's Drive folder, 2026-10-06 — built, not deployed
+
+| | |
+|---|---|
+| What | A quote revision recorded from a captured email («Registrar cotización», «Nueva revisión», rules R3/R4) now gets its PDF put in `Cotizaciones/Casos/<case folder>` in contacto@'s Drive with nobody downloading or uploading, and the case card links it. Recommended 2026-10-06 when the owner asked for the better way, not yet confirmed: keep the case-first layout of §2.7.24 (one folder per case, «Caso <serial> — <institución>», files «<número> r<n> — <archivo>», identity in `appProperties`, never in names) and contacto@'s Drive |
+| Worker | `origenlab-worker drive-file` (`apps/worker/src/origenlab_worker/drive_filing.py`), run after `gmail-sync` in the same cron: newest first, at most 20 per run; reads the `.eml` from Storage, takes the part whose SHA-256 is the revision's `pdf_sha256`, and files it through `origenlab_api.v2.quote_case_archive.archive_case` (wrong account, legacy parents and name/key conflicts refused; every upload checked by Drive's checksum and a fresh download). The case folder is the one an earlier record or a sibling revision's Drive file names, else the folder whose opening quote number is the case's, else a new one keyed by the CRM case id. One `evidence.source_record` of kind `drive_file` (`drive_file:<sha256>`, `reviewed`) per document. `drive_client.py`: Drive v3 over `urllib`, exactly the `drive` scope (anything wider refused), no rename/move/trash/delete. `drive-ledger-import`: records the 2026-09-26 archive's `archive_links.jsonl` so earlier cases keep their folders. Paused until `ORIGENLAB_WORKER_DRIVE_FILING_ENABLED=true` |
+| API | `GET /v2/workspace/pipeline` reads each revision's `drive_file` record in the revisions query (no new statement) beside the ledgers (`drive_links_from_records`; a ledger link wins for the same document): the drawer's PDF and folder links and Resumen's Drive links now come from the database too |
+| Schema | none: `evidence.source_record` kind `drive_file` exists (§2.7.6) and `origenlab_worker` already inserts evidence |
+| Render | `render.yaml`: the cron's start command runs `drive-file` after `gmail-sync`; seven new cron variables (`sync: false`); `buildFilter` adds `apps/api/**` (the worker now depends on `apps/api` for the archive) |
+| Evidence | `apps/worker/scripts/validate.sh` with disposable-cluster DSNs: **330 passed**, 1 skipped (the same one as §2.7.49) — new: filing end to end as `origenlab_worker` with an in-memory Drive (filed once, recorded, no `crm.*`/`outbound.*` row, the API's card links the file and folder, a second revision into the same folder), a case the laptop archive filed keeps its folder after `drive-ledger-import`, a wrong account writes nothing; the Drive client's scope refusals; CLI pause and configuration. `apps/api/scripts/validate.sh` with disposable-cluster DSNs on the merged code: **4319 passed**, 121 skipped, 0 failed (new: `drive_links_from_records`) |
+| Not done | not deployed. Owner setup ([`OPERATIONS.md`](OPERATIONS.md) §8.10): the Drive consent's three values, the `Casos` / `Pendientes` / `Enviadas` folder ids and the start command on the cron, `drive-ledger-import` once from the laptop, then the switch. The «Archivo Drive» page still lists the ledgers only. Historical revisions without a captured `.eml` (step B of §2.7.24, 45 Gmail-only PDFs) are not filed by this |
+
+### 2.7.61 Catalog loaded into the hosted database, 2026-10-06 — applied and verified
+
+The catalog 1a importers (§2.7.51) were applied to `origenlab-v2` by the owner, each plan's
+`apply` then its read-only `verify`, all under one operator. Every `verify` found every planned
+row present with no mismatch and the plan hash the `apply` used.
+
+| Importer | Plan sha256 | Applied (UTC) | Rows | Verify |
+|---|---|---|---|---|
+| `price_lists` | `27e7f9e2…` | 13:32 | **13,846**: 6,597 products, 7,246 price observations, 2 organizations, 1 supplier terms | 13,846 present, 0 mismatched |
+| `supplier_documents` | `0ac0ea5d…` | 14:42 | **93**: 44 products, 46 price observations, 3 organizations | 93 present, 0 mismatched |
+| `quote_history` | — | after 14:42 | **150** quote documents (evidence records with their lines) | 150 present, 0 mismatched |
+| `cost_parameters` | — | not run | no plan exists; `catalog.cost_parameter` holds the 5 migration-seeded public values only | — |
+
+| | |
+|---|---|
+| Events | one `source_record.migration_manifest_recorded` per load (importer, plan hash, counts), read back from hosted `crm.domain_event`; plus one event per catalog row written (`product.created`, `product.cost_recorded`, `organization.created`, `organization.supplier_terms_set`) — 13,847 and 94. Quote documents are evidence and carry no per-row event, so `quote_history` recorded 1 |
+| Route | `--hosted-target --authorize-hosted-connection --authorize-supavisor-session-route` (`apps/api/scripts/catalog/_common.py`, [`OPERATIONS.md`](OPERATIONS.md) §14.5): PR #623's Supavisor session route with `verify-full`; catalog rows written by `origenlab_api.<project ref>`, the manifest by the migrator as `origenlab_owner`; operator named by id. The code ran from an unpushed branch and was reviewed only afterwards, in the PR that merged it (`tests/test_catalog_import_hosted.py`: refusals, login swap, redaction, apply → verify → rollback with both hosted logins mapped onto a disposable database). Rollback on hosted may be refused (exit 12, nothing deleted); the pre-load `pg_dump` is the way back |
+| Not done | cost parameters beyond the seeds (set per key with `set-cost-parameter`, §14.3); the `catalog` bucket and product images; `ORIGENLAB_V2_QUOTING_ENABLED` on Render, so `/v2/catalog/*` is still unmounted: the «Catálogo» screen (§2.7.72) is built but shows «Catálogo no habilitado» until it is set |
+
+### 2.7.62 CRM redesign phase 1: buttons, dialogs and confirmations, 2026-10-06 — built, not deployed
+
+First phase of the Oportunidades/Revisión redesign (owner-approved 2026-10-06: states Solicitada · En estudio · Enviada · Conversación · Ganada · Perdida · En pausa; Enviada → Conversación automatic and undoable; follow-up on day 3 and 14, close suggested at 30). `apps/dashboard` only.
+
+| | |
+|---|---|
+| Shared parts (`crm/ui.tsx`) | `Button` (primary / secondary / danger / quiet; `busy` disables it, shows a spinner and a «…ndo» label, sets `aria-busy`), `Spinner`, `toast()` + `<Toaster/>` mounted once in the CRM shell; `ConfirmDialog` uses them and cannot be dismissed while saving; `Drawer` takes `busy` and shows «Actualizando…» |
+| Fixes | «Registrar seguimiento» opened the note form by itself on every later drawer (the signal now belongs to one case and is dropped on close); the drawer pulled focus back to ✕ after every refresh (`onClose` read through a ref); nothing showed a refresh after a save (`useResource` returns `refreshing`, and a reload keeps the rows on screen while a new read still starts from «loading»); «Archivar nota» could be pressed twice; «Confirmar institución» showed the write-disabled reason when only the version was missing; «Marcar ganada» used a new key on every call (keys now belong to the form and are renewed only after a refusal); «Acciones automáticas» Activar / Detener / Confirmar showed no working state and Cancelar stayed clickable. Case actions, notes and the email-rules tab use `Button` and confirm with a toast. The side-menu note no longer says only Marketing writes |
+| Evidence | `apps/dashboard` `npm run validate`: **605 passed** (49 files) + build — new: the note form opens once on its own case, focus stays put through a refresh and «Actualizando…» shows, a refused win retries with a new key, archive is one press, `Button` busy, toast, `useResource` refreshing and no stale rows on a new read |
+| Not done | the rest of the dashboard's buttons (Marketing, Organizaciones, Personas, Proveedores) still use their own classes; phases 2–5 (states, «Hoy», «Ordenar», interest and Drive on the case) |
+
+### 2.7.63 CRM redesign phase 2: six states, «Perdida» with a reason, «En pausa hasta…», draggable Tablero, 2026-10-06 — built, not deployed
+
+Second phase of the redesign in §2.7.62. No migration: `crm.task`, its grants and RLS and the `task.*` event types have existed since Slice 0.
+
+| | |
+|---|---|
+| API | The three W11 task commands, mounted with the case commands behind `ORIGENLAB_V2_COMMANDS_ENABLED`, same `Deciding` (sales/admin), `Idempotency-Key` and non-blank note (`v2/task_commands.py`, `task_command_repository.py`, `task_command_routes.py`). `POST /v2/commands/create-task` {`opportunity_id`, `title`, `due_at` (zone required), `note`}: an open case only (409 `case_is_closed`), owner = the operator, `task.created` event; the case's stage and version do not move. `POST /v2/commands/complete-task` / `cancel-task` {`task_id`, `task_version`, `note`}: compare-and-set on the task version (409 `task_version_conflict`), only while `open` (409 `task_is_not_open`); `cancel_reason` = the note. `GET /v2/workspace/pipeline` cards gain `open_tasks` (earliest due first, with the owner's name), and `next_action` is the earliest open task (`source: "task"`, `due_at`) when there is one — an eighth query in the same pipelined round trip |
+| Proxy | `CASE_COMMAND_POST_PATHS` += `create-task`, `complete-task`, `cancel-task` (7 paths, same guard, ≤ 16 KiB) |
+| Dashboard | The stages read as six states: Solicitada (`lead`, `qualifying`), En estudio (`qualified`), Enviada (`quoting`), Conversación (`negotiating`), Ganada, Perdida (`lost`, `abandoned`). «En pausa» is not a stage: an open case whose earliest open task is due later. The drawer's «Cambiar estado» replaces «Cambiar etapa»: one click per target; a move walks the stage table in as many `advance-case-stage` steps as it needs (`stagePath`), each with its receipt; «Perdida» is one click on a reason («Sin respuesta» → `abandoned`, the rest → `lost`, detail optional) and cancels the case's open tasks; «En pausa» takes a date and a reason and writes the task «Retomar: <motivo>» due 09:00 that day; a paused case shows «En pausa hasta …» with «Retomar ahora» (cancels the task). Tablero: seven columns (the six states + En pausa); for sales/admin a card can be dragged to another column — the drop records nothing by itself: it opens the same form in a dialog («Ganada» opens «Marcar ganada» in the drawer). The drawer shows «Próxima tarea» when the case has one |
+| Evidence | `apps/api` `scripts/validate.sh`: **4349 passed**, 121 skipped (task commands against PostgreSQL: written with their event, the case never moves, a closed case takes none, stale version and second close refused, a refusal writes nothing, replay writes once). `apps/dashboard-proxy` `npm run validate`: 426 passed. `apps/dashboard` `npm run validate`: **615 passed** + build |
+| Not done | «Nueva solicitud» (opening a case from the browser stays refused at the proxy); phase 3 «Hoy» (today's tasks, institutions and people to add, the day-3/14/30 follow-up rhythm, automatic Enviada → Conversación) |
+
+### 2.7.64 Tablero cards redesigned and «Decidir casos» for the historical stage, 2026-10-06 — built, not deployed
+
+`apps/dashboard` only, after the owner's review of §2.7.63 in production.
+
+| | |
+|---|---|
+| Cards (`PipelineBoard.tsx`, `caseDisplay.ts`) | A readable institution name when the CRM only holds a domain or a slug (from the quote title or the PDF's file name; the CRM name stays in the tooltip), the contact, a «N d» badge for days since the quote was sent (coloured by the 3 · 14 · 30 rhythm), quote · revision · date, the model the PDF's name prints (`UP400St`, `T10`…), one line on where the case stands (paused until, blocker, «Respondió 02 oct · te toca», «Seguimiento …», «Sin respuesta · N d») and direct Drive / Gmail links. Cards rise in, lift on hover and tilt while dragged (off under reduced motion). No more «histórico» on every card |
+| Tablero | All cards shown — the collapsed age groups are gone; «Ordenar»: más recientes, más antiguas, respondieron primero, institución; by date, thin dividers mark the age bands. The Tablero is now the default view |
+| «Decidir casos» | From the notice «N de M casos muestran «Enviada · histórico»» (sales/admin): every historical case with a proposed decision — the client wrote after the quote → Conversación; 45+ days without an answer → Perdida · Sin respuesta; otherwise a follow-up task due now. Each row can be changed (En pausa with date and reason, Ganada against the newest sent revision) or left out; «Aplicar N decisiones» runs the existing commands one case at a time and reports each. A case with an open task no longer counts as historical (`stageBasis`) |
+| Evidence | `apps/dashboard` `npm run validate`: **619 passed** + build |
+
+### 2.7.65 CRM redesign phase 3: «Hoy» replaces Resumen, 2026-10-06 — built, not deployed
+
+`apps/dashboard` only: no API, proxy or schema change. The first page (route `resumen`, menu «Hoy»).
+
+| | |
+|---|---|
+| Top | Next quote number and the day's dólar / euro / UF with the converter, side by side (unchanged components) |
+| Tareas de hoy | Open `crm.task` rows due by tonight, overdue first; «Hecho» = `complete-task`; «+1 semana» = the same task a week later (`create-task`) then `cancel-task` of this one |
+| Te toca responder | Open cases whose client wrote after OrigenLab's last email; «Abrir respuesta» (Gmail) and, for a case still «Enviada», «Pasar a Conversación» (`advance-case-stage` → `negotiating`, note «El cliente respondió el …») |
+| Seguimientos | The 3 · 14 · 30-day rhythm counted from OrigenLab's last touch (quote or later email): primer seguimiento (3–13), segundo (14–29), «¿Cerrar?» (30+) with «Cerrar sin respuesta» (the «Perdida» form with «Sin respuesta» chosen). Cases with an open task, a reply, or a stage that is only the historical import's trace are left out |
+| Aside | Cases still to decide (link to «Decidir casos»), machine-proposed institutions of open cases with «Confirmar» (`confirm-organization`), «Personas por agregar» (the existing person suggestions, first five), blocked cases, link to Revisión for the email actions |
+| Removed | `crm/followUps.ts` and its test: the old «Hacer seguimiento / Esta semana / Más de un mes» grouping is replaced by `crm/today.ts` |
+| Evidence | `apps/dashboard` `npm run validate`: **617 passed** + build — new: today lists (tasks due, rhythm, replies, institutions), «Hecho», «+1 semana», «Pasar a Conversación», «Cerrar sin respuesta», viewer sees no write button |
+| Not done | automatic Enviada → Conversación from the email rules (still one click here); the labdelivery mailbox; «Ordenar», interests and Drive on the case (phases 4–5) |
+
+### 2.7.66 Design review fixes on Hoy and the Tablero, 2026-10-06 — built, not deployed
+
+From a design critique of the shipped screens rendered with invented data (`apps/dashboard` only).
+
+| Finding | Fix |
+|---|---|
+| «Hoy»: the quote-number box squeezed beside the exchange rates, its «¿Ya existe este número?» field spilling over the dólar card | The two are stacked full width again, as on Resumen |
+| Tablero: seven columns wider than the screen, Ganada and Perdida off to the right; names cut to «Aeroservicios N…» | Five working columns share the width and Ganada / Perdida are narrower with compact cards (name, quote, how it ended); names wrap to two lines; dates drop the year when it is this one («24 sept») |
+| «Hoy» on a phone: rows squeezed the case name to «C…» beside the buttons | The text keeps 12rem and the buttons wrap below |
+| Count badges carried a «!» glyph that read as an error | Plain counts |
+| «Personas por agregar» unreadable in the narrow aside | Moved to the main column |
+| Oportunidades: a disabled «Nueva oportunidad» with «Escritura desactivada…» under it | Removed (opening a case from the browser is not a command the proxy allows) |
+| Evidence | `apps/dashboard` `npm run validate`: **618 passed** + build |
+
+### 2.7.67 «Hoy» as one traffic-light follow-up list, the product on every card, a foldable menu, 2026-10-06 — built, not deployed
+
+`apps/dashboard` only: no API, proxy or schema change.
+
+| Change | What it does |
+|---|---|
+| «Hoy» order | «Te toca responder» first, then «Seguimientos», then «Otras tareas de hoy» |
+| One follow-up list | A case whose «Seguimiento …» task is due today («Decidir casos», «+1 semana») now sits in «Seguimientos» with its «Hecho» / «+1 semana» buttons and «Programado · Vence hoy». It used to be a second list, «Tareas de hoy», that hid those cases from «Seguimientos». «Otras tareas de hoy» keeps only the other due tasks («Retomar: …», a call) |
+| Traffic light | «Seguimientos» is green from day 3, yellow from day 14 and red from day 30 since OrigenLab's last touch: a coloured stripe, day chip and group header on each row, and a legend |
+| Product | `quoteProduct` reads what the quote is for from the quote email's subject («Cotización Balanzas Ohaus» → «Balanzas Ohaus»), adding the model the PDF name ends with («Sonicador · UP400St»). Campaign, supplier-form and empty subjects fall back to the model. Shown on every Tablero card (closed ones too) and on each «Seguimientos» row |
+| Menu | On wide screens the section list folds into a rail of icons («Contraer menú»); the choice is kept in the browser. «Oportunidades» uses the full screen width |
+| Gmail | Every follow-up row has «Responder en Gmail»: it opens the case's thread, so the reply stays in it and the count restarts once the email is captured. A case with no thread gets «Nuevo correo» (compose, addressed when the address is not masked). Every Gmail link (cards, Hoy, the drawer, «Decidir casos») now opens `contacto@origenlab.cl` (`authuser`) instead of the API's `mail/u/0`, which opened whichever account the browser lists first |
+| Evidence | `apps/dashboard` `npm run validate`: **627 passed** + build |
+
+### 2.7.68 «Seguimientos» simpler, and a written follow-up clears itself, 2026-10-06 — built, not deployed
+
+`apps/dashboard` only: no API, proxy or schema change.
+
+| Change | What it does |
+|---|---|
+| Row | Days (a round chip in the traffic-light colour), the case, what the quote is for, the quote number and who. One button, «Responder en Gmail» (icon only on a phone); the rest behind «⋯»: «Recordar en 1 semana» (any row: writes a «Seguimiento …» task a week out, cancelling the due one), «Ya le escribí» (a row a task put there) and «Cerrar sin respuesta». Five rows per colour before «Ver N más» |
+| No «Hecho» needed | A «Seguimiento …» task counts as done once OrigenLab's email on the case's thread is dated on or after the task's day: the row leaves «Hoy» when the sync captures the reply, and the case comes back on the rhythm three days later if the client stays silent. The task itself stays open in the CRM until someone completes it |
+| Day 3 first | A scheduled follow-up waits for day 3 like any other: a quote sent today or yesterday is not chased today |
+| Evidence | `apps/dashboard` `npm run validate`: **629 passed** + build |
+
+### 2.7.69 Mail triage on a Procrastinate queue, 2026-10-06 — built; applied and deployed in §2.7.71
+
+| | |
+|---|---|
+| What | A cheap filter in front of the model for captured mail: rules settle machine mail (our own, bounces, automatic replies, invitations, bulk, no-reply); purchase orders, lost signals, CN follow-ups, quote requests and any other person are matched against the catalog and, when enabled, read by Claude for products, lead status, urgency and a Spanish summary. Every reading is recorded as `evidence.assertion` proposals; nothing is decided. Owner decision D2 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §8): the jobs run on Procrastinate in this database, not `pgmq` |
+| Schema | `20261006180000_slice4_procrastinate_triage_queue.sql` — schema `procrastinate` (Procrastinate 3.10.0 vendored verbatim; four tables, 16 worker policies, every function INVOKER with a pinned `search_path`, worker-only grants); outside the seven schemas, so the inventory (50 tables, 173 policies) is unchanged. `20261006180100_slice4_triage_assertion_kinds.sql` — `evidence.assertion.kind` gains `message_triage` and `product_mention`; no grant or policy changes. Migrations: **48**, head `20261006180100` |
+| Worker | `mail_text.py` (reply text from the `.eml`), `triage_rules.py` (classes, `TRIAGE_VERSION = 1`), `catalog_match.py` (exact `model_key`, then Spanish full text), `triage_model.py` (proposes the case **stage** in `crm.opportunity.stage` keys — the Tablero's columns — from the cases the Gmail thread is linked to, each move checked against `case_commands.STAGE_TRANSITIONS`; never moves a case; default `claude-opus-5-5` at low effort, structured output, cached system prompt, refusal fallback; the message sent as untrusted data; catalog ids kept only if offered), `triage.py` (one message, one transaction), `task_queue.py` (`triage_message` with a bounded retry for model outages only; `sweep_untriaged` every minute, 14 days back), `triage_cli.py` (`triage-worker`, `triage-once`). Every queue connection runs the worker's probe for the queue's grants; the triage connection for its own (SELECT on comms/evidence/catalog, INSERT on `evidence.assertion`) |
+| Render | `render.yaml` declares the Background Worker `origenlab-mail-triage` (starter, Oregon, root `apps/worker`) — **not created**. Observed through the Render API on 2026-10-06: the cron `origenlab-gmail-sync` **exists and runs** every 10 minutes (last success 21:20 UTC) with start command `origenlab-worker gmail-sync` only — the `drive-file` step of §2.7.60 is not in the deployed command |
+| Evidence | `apps/worker/scripts/validate.sh` locally: **377 passed**, 45 skipped (database tests; no local Docker) — new: rules, text extraction, catalog tokens, request and answer validation, one-message flow with fakes, queue wiring on the in-memory connector, the vendored schema equal to the pinned library's, the Render block. New database tests (`test_triage_database.py`) and pgTAP `supabase/tests/078_triage_queue.sql` (24 assertions) run in CI only |
+| Evaluation on real mail | 2026-10-06, read-only, the 325 captured messages with evidence in hosted V2 (2026-09-25 → 10-06), on database fields only (subject, sender, labels, attachment names — no bodies or machine headers): **54 (17 %) would reach the model**; 184 bounces (the Cyber campaign), 48 our own, 36 quote requests, 14 tender alerts, 14 other people, 10 notifications, 8 bulk, 5 automatic replies, 4 purchase orders, 2 «REMOVER». The run found five misreadings, fixed in this change with regression tests: «REMOVER» replies, «Ausencia…» notices, a scanner's «Undelivered Mail» bounce, Wherex tender alerts (now `tender_notice`, not for the model) and an «Anulación OC …» subject. Catalog: 6,641 products, all with `model_key`, none with `name_es`; no subject model number matched, and single-word full-text matches were accessories, so a text candidate now needs two matching words. Not yet measured: body reading and the model stage (need the `.eml` from Storage: `scripts/triage_export.py` + `scripts/triage_eval.py`) |
+| API | `mail_rules_repository._EVIDENCE_SQL` treated *any* assertion as «not a live capture»: the triage's readings would have hidden every new email from the email → cases rules (R1/R2 automatic linking and «Aplicar»). It now ignores `message_triage` / `product_mention`; DB test `test_a_triage_reading_does_not_hide_a_live_email_but_another_assertion_still_does` |
+| Review | `20261006180200_slice4_triage_review.sql` — `evidence.triage_review` (DOMAIN.md §7 #55, append-only verdicts: approved / corrected with the corrected fields / rejected, optional note) and the `assertion.triage_reviewed` event; inventory **51 tables, 176 policies, 159 foreign keys**, migrations **49**, head `20261006180200`. API `v2/triage_review.py`: `GET /v2/workspace/triage-readings` (any operator; only readings the model was asked for) and `POST /v2/commands/review-triage` (sales/admin, receipt + event; moves no case). Proxy: one exact GET and one exact POST. Dashboard: Revisión → «Correos (sugerencias)» — «Aprobar» also walks the thread's one case to the suggested stage through `advance-case-stage` (`moveCase`), «Corregir» with a stage likewise, «Rechazar» with a note. Evidence, 2026-10-06, locally with Docker: `supabase test db --local` **1217 assertions, 30 files, PASS** (078: 36), `verify_direct_logins.sh`, `replay_evidence.sh`, `evidence_tool_failure_tests.sh`, `audit_failure_tests.sh` (80/80), `cleanroom_verify_tests.sh --chain`, `db lint` (incl. `procrastinate`) and `db advisors --fail-on warn` all pass; worker on a disposable cluster **438 passed** (1 pre-existing skip, no DSN skip); API on a disposable cluster **4357 passed**, 121 skipped (V1 Alembic and TLS, no V2 DSN skip); proxy 427; dashboard 634 + build |
+| Not done | not applied to any database; not deployed. To ship: merge → apply the three migrations to hosted (§4) → create the worker from `render.yaml` with the cron's database and Storage values → `ORIGENLAB_WORKER_TRIAGE_ENABLED=true` (rules only) → the Anthropic key and `ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED=true`. Runbook: [`OPERATIONS.md`](OPERATIONS.md) §8.11. Dashboard review: see «Review» above |
+
+### 2.7.70 «Te toca responder» stops at a decided reply, and «No requiere respuesta», 2026-10-06 — built, not deployed
+
+`apps/api` read + `apps/dashboard`: no command, proxy or schema change.
+
+| Change | What it does |
+|---|---|
+| API | `GET /v2/workspace/pipeline` card `open_tasks[]` gains `created_at` (ISO UTC, `crm.task.created_at`) — same eighth query, one more column |
+| Rule | A client email stays in «Te toca responder» only until a task is scheduled on the case after it («En pausa», «Recordar…», «No requiere respuesta»): that task is the operator's answer. A newer email from the client puts the case back. A task scheduled before the email does not hide it. Without `created_at` (older API) a case «En pausa» counts as answered |
+| Button | «No requiere respuesta» on each reply row (sales/admin): `create-task` «Seguimiento de N» a week out, note naming the client's email date. The row leaves the list and comes back as a follow-up on that day |
+| Evidence | `apps/dashboard` `npm run validate`: **631 passed** + build; `apps/api` `scripts/validate.sh`: **3811 passed**, 659 skipped |
+
+### 2.7.71 Mail triage and Drive filing switched on in hosted, 2026-10-07 — applied, deployed; one fix to deploy
+
+| | |
+|---|---|
+| Schema | The three §2.7.69 migrations applied to `origenlab-v2` with psql as `origenlab_migrator` over the session pooler; ledger 46 → **49**. `20261006180000` needs `GRANT CREATE ON DATABASE` with grant option, which the migrator lacks: the owner granted it from the SQL Editor (`postgres`), the file ran, and the owner revoked it (`… from origenlab_migrator cascade`); `origenlab_owner` holds no database CREATE afterwards. The other two applied first, on their own, without it |
+| Proxy | `origenlab-dashboard-proxy` redeployed from `main` 3515461 (validate 427 passed; version `53a0040a`), shipping #668's review-tab paths |
+| Worker | Render Background Worker `origenlab-mail-triage` (`srv-db2r5c0m7kps73c0nmo0`) created by hand: `ORIGENLAB_WORKER_TRIAGE_ENABLED=true`, model off. It started (`triage_worker`, `model: off`) and heartbeats, but **never swept**: `triage_cli` built its app with `App.with_connector`, and Procrastinate's periodic deferrer defers through the task's own app — the module's in-memory connector — so `procrastinate_jobs` and `procrastinate_periodic_defers` stayed empty. Fixed here with `replace_connector` and a regression test that fails on the old code; worker validate 395 passed, 45 skipped. Live after merge (the worker auto-deploys from `main`) |
+| Drive | Cron `origenlab-gmail-sync`: start command now `gmail-sync && drive-file`, the seven Drive variables set (consent from the 2026-09-26 archive, exactly the `drive` scope), redeployed. Before that, `drive-ledger-import` recorded the 09-26 archive's two `archive_links.jsonl` (138 documents, 138 inserted). First run 2026-10-07 03:06 UTC: 10 candidates, **7 filed, 3 reused, 0 refused** |
+| Not done | the model (`ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED`, its own Anthropic key) after a few days of rule-only logs; rotate the `postgres` and `origenlab_migrator` passwords and the Drive client secret / refresh token, all of which passed through a chat session |
+
+### 2.7.72 «Catálogo»: the catalog made visible, read-only, 2026-10-07 — built, not deployed
+
+`apps/dashboard` only: no API, proxy or schema change. The seven `GET /v2/catalog/*` paths it reads
+were already allowlisted by the proxy (§2.7.51).
+
+| | |
+|---|---|
+| Section | «Catálogo» (`#/crm/catalogo`) in the Comercial group after Proveedores; the earlier panel's `#/catalogo` bookmark now opens it (it went to Hoy) |
+| List | debounced search (`q`: model or name), filters by supplier (the suppliers the list has named; the API has no supplier list of its own) and by kind (`PRODUCT_KINDS`), 50 per page with «Anterior / Siguiente» and the total. Columns: model and kind, name and category, manufacturer «vía» supplier, and «Último precio» (amount, currency, price kind, date) **only when the answer carries prices** — the API strips them for the viewer role, so a viewer never sees the column |
+| Drawer | `#/crm/catalogo/<uuid>`: details and specifications; «Precios observados» (supplier observations, only when sent); «Historial de cotizaciones» from `price-history?model_key=` (quoted sell prices, every role, median of the last five); USD and EUR in pesos from `/fx` with the day each is for, «no disponible» on a 503; the first image by its signed URL, «Sin imagen» on 503 (no `catalog` bucket yet), 404 or a broken URL; «Producto no encontrado» for an unknown id |
+| Parámetros de costeo | a read-only tab for sales and admin (hidden for a viewer, whom the API refuses with 403): each key's current value, since when and why |
+| Not enabled | with `ORIGENLAB_V2_QUOTING_ENABLED` off every catalog path is a 404: the page says «Catálogo no habilitado», not an error |
+| Writes | none: no create, edit, cost or image action |
+| Evidence | `apps/dashboard` `npm run validate`: **648 passed** (53 files) + build; new `CatalogPage.test.tsx` (11) with invented values only, `shellRoute.test.ts` +2 assertions |
+| Not done | not deployed; `ORIGENLAB_V2_QUOTING_ENABLED` not set on Render, so the screen shows «no habilitado» until it is |
+
+### 2.7.73 «En pausa» replaces a follow-up already due, 2026-10-07 — built, not deployed
+
+`apps/dashboard` only.
+
+| | |
+|---|---|
+| Problem | The Tablero puts a case under «En pausa» when its **earliest** open task is due later. Pausing cancelled only the later tasks (an earlier pause) and wrote «Retomar: …»; a follow-up already due (today or overdue, e.g. «Seguimiento de N») stayed open and first, so the case stayed in its stage column although the pause was recorded |
+| Fix | «Pausar» (`CaseMoveForm`) cancels every open task — the due ones with the note «Reemplazada por la pausa hasta …», each with its receipt — before writing the «Retomar» task |
+| Already stuck | a case paused before this fix keeps its due task: pause it again (it replaces both), or close the due task from «Hoy» |
+| Evidence | `apps/dashboard` `npm run validate`: **649 passed** + build; new `CaseActions.test.tsx` case |
+
+### 2.7.74 Catalog: every supplier in the filter, products by kind, Soviquim — built, not deployed; three lists loaded
+
+`apps/api`, `apps/dashboard-proxy`, `apps/dashboard`. No schema change.
+
+| | |
+|---|---|
+| Loaded to hosted 2026-10-07 (owner-run `load.sh`, verify clean) | Hielscher lab list 2026 (58 observations, 49 new products; 9 already there from the supplier documents), Löser 2024 and Ortoalresa 2019 (335 products). `catalog.product` 6,641 → **7,025**. Plans built with the converter of the day, before this PR |
+| Defect found | the Löser parser required a thousands dot (`1.234,00`); the 2024 list prints `1234,00`, so its **7 instruments** (positions 1–7: osmometers, cryometer) were skipped on hosted. Fixed (`_EURO`), with a test |
+| Supplier list | `GET /v2/catalog/suppliers` (any role; names and active-product counts by kind, no cost): every organization with a cost observation. Proxy allowlists the exact path. The «Proveedor» filter lists all of them with their count, not only those the current page named |
+| Kinds | the importers now set `product_kind` (and Soviquim's `category_es`): OHAUS by family (spare parts, weights/accessories/clamps, else equipment), ADAM by family, Löser by position, Ortoalresa CE = equipment / RT·RE = accessory, Hielscher UP* = equipment, Soviquim by FAMILIA (EQUIPOS → equipment, attachments → accessory, everything else → consumable). Applying a plan to a product already present fills a kind or category **only where none is stored** (version + 1, `product.updated` event); an operator's value is never overwritten. The «Tipo» select became tabs — Todos · Equipos · Accesorios · Repuestos · Insumos — with counts for the chosen supplier; «Consumible» reads «Insumo» |
+| New lists | `--hielscher <xlsx>` (the multi-sheet lab list, one row per reference) and `--soviquim-text` (the 218-page distributor catalogue via `pdftotext -layout`, CLP, ~3,430 products; the brand goes into the description, not one organization per brand spelling) |
+| Rehearsal | a disposable database replaying the hosted 06-10 and 07-10 plans, then the four kind-carrying plans (OHAUS+ADAM, Hielscher, Löser+Ortoalresa, Soviquim): 14 apply/verify steps exit 0, no mismatched key; 10,429 products, **0 unclassified**; the 7 Löser instruments inserted |
+| Evidence | `apps/api` `scripts/validate.sh` with the disposable cluster: **4,369 passed**; `apps/dashboard-proxy` `npm run validate` **427 passed**; `apps/dashboard` `npm run validate` **650 passed** + build |
+| Not done | the four plans are not applied to hosted (owner-run after merge); products from supplier documents and quote history stay unclassified; reclassifying bumps product versions, so rolling back the 06-10 manifests is refused afterwards (restore the pre-catalog dump instead) |
 
 ### 2.8 Hosted phase — frozen 2026-09-21
 
@@ -2004,3 +2266,64 @@ proven there.
 - **Two independent migration systems.** V1 is Alembic under
   `apps/email-pipeline/alembic/versions/`; V2 is the Supabase CLI under
   `supabase/migrations/`. They do not communicate.
+
+### 2.7.75 Production release engineering audit, 2026-10-08 — built; not activated
+
+Measured read-only against PR #679 and production on **2026-10-08**. Supabase project is
+ACTIVE_HEALTHY, PostgreSQL 17.6, **50** ledger versions, head **20261007160000**, and the
+assertion constraint permits `delivery_failure`. The migrator has ledger USAGE/SELECT/INSERT
+and SET access to the owner. The organization subscription is **Pro**; available managed
+recovery points and a production-data restore remain unverified. Four Render services
+still auto-deploy from main; cron is `*/10 * * * *`, latest observed capture success
+13:50:38 UTC. Worker heartbeat and aggregate sweeps are live; 7,979 historical failed
+jobs remain unchanged, and the final aggregate eligibility query returned healthy.
+
+PR #679 now has real PG17 migration rollback/ledger/lock tests, consistent snapshot and
+age-encryption tests, a restoration of the entire currently reviewed **50-migration**
+application/queue schema with synthetic data, strict event/merge/CI provenance checks,
+explicit PG17 tools and read-only postflight. Local verification: **26** offline tests
+and **10** database tests passed. GitHub also reproduced and caught a runner-default
+pg_dump version defect; explicit PG17 PATH selection fixed it. Exact final CI runs are
+linked from PR #679. Nothing merged, deployed, enabled, sent, replayed or deleted in
+production. Activation remains blocked by the mutable-main cron deployment race and
+uncompleted one-time recovery/configuration gates; policy owner is OPERATIONS §15.
+
+
+### 2.7.76 — Built: consolidated periodic mail capture, not activated (2026-10-08)
+
+PR #679 now supervises capture and triage as separate processes in the existing Render
+worker deployment. Capture runs every ten minutes on a dedicated Procrastinate queue,
+with whole-cycle session lock, bounded in-cycle retries/timeouts and existing Gmail/Drive
+idempotency. The new scheduler flag defaults OFF; the existing start command remains a
+compatible alias. Triage receives no capture OAuth credentials. RLS-masked duplicate-key
+handling was independently reproduced and fixed without widening permissions.
+
+The controller never deploys the cron; it requires the legacy cron suspended and deploys
+worker/API/dashboard at explicit commit IDs. Postflight requires candidate-SHA aggregate
+sweep/capture logs and a fresh mailbox cursor. Read-only plan/backup work before cutover.
+Local isolated PG17 tests include actual worker-role dedupe, overlap/cancellation and
+orphan behavior, plus the full worker suite and ten encrypted release/restore tests.
+Final-head CI evidence is recorded in PR #679. No production config, release, secret,
+mail automation flag or historical queue job was changed. Approved cutover, actual-data
+restore, authenticated smoke and shared 512 MB capacity observation remain pending.
+See [MAIL_WORKER_CUTOVER.md](runbooks/MAIL_WORKER_CUTOVER.md).
+
+### 2.7.77 CRM request context and false-positive correction, 2026-10-08 — built, not deployed
+
+Read-only production inspection found five `lead` cases, all with active Gmail evidence links and no participant or quote. The reported PUCV request was already linked to one of them; its deterministic `requester:v1` reading was `none`, so its institution remains unresolved. The board and drawer previously hid the useful email context behind «Sin institución» and quote-only links. No production records, automation flags, archived holds, or messages were changed.
+
+- Board: unconfirmed cases display their email subject or case title, the email-header display name when available, and a Gmail link even without a quotation. Header names are evidence, never confirmed CRM identities; bare addresses cannot enter that name field. Search includes inbound subject/name.
+- Drawer: last received/sent subjects, dates, header display names and shared-mailbox Gmail links. No raw body reading, sending, or extra capture work.
+- «No es una solicitud»: explicit confirmation through the existing versioned, idempotent `advance-case-stage` command, closes as `abandoned` with a reason; preserves evidence and history. The generic abandoned label avoids calling a rejected supplier offer «sin respuesta». Existing role/feature gates apply.
+- Planner: multilingual reply prefixes no longer open new cases from RFQ keywords; received English quotations without explicit request wording require review. Explicit requests continue to follow R7. This does not retrospectively close the existing five cases.
+- Archive backlog: retained separately. Historical archive snapshot reasons are not new decisions. No bulk import or hold override was performed.
+- Validation: dashboard 652 tests and production build pass; PostgreSQL 17 isolated database, API case-command boundary/workspace/mail rules: 198 tests pass, including closure without an institution and preservation of the origin link. GitHub Actions results are recorded in the PR after pushing.
+
+Remaining operator work: identify and confirm the requesting institution/contact, then close only individually reviewed false positives. API/dashboard production rollout needs approval and the migration-first deployment cutover remains governed by PR #679.
+
+
+### R7 numbered quotation follow-ups — branch verification 2026-10-08
+
+PR #683 now holds a new-thread inbound request mentioning a printed quotation reference (year-bearing number, CN-prefixed number, or captured attachment CN token) as an R7 human-review proposal. No case, institution, quotation, or evidence link is created by this hold, even when the quotation is absent from the CRM. Existing R1 thread links and R2 registered attachment-number matches retain priority. This prevents a follow-up about an unregistered sent quotation from automatically creating another commercial transaction; it does not reconcile existing duplicates or choose their institution.
+
+Validation: both new failure regressions reproduce on the unchanged PR head; the changed branch passes 68 mail-planner, automation, route and cross-thread candidate unit tests (one dependency deprecation warning). Database-backed tests and authenticated browser reconciliation are separate gates. No production data, batch application, business automation flags or deployments were changed by this verification.

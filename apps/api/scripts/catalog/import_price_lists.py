@@ -39,7 +39,7 @@ from collections import Counter
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -49,15 +49,22 @@ from origenlab_api.v2.catalog.keys import model_key, refuse_labdelivery  # noqa:
 import _common  # noqa: E402
 
 IMPORTER = "price_lists"
-KINDS = ("ohaus", "adam", "loser", "ortoalresa")
-DEFAULT_ORG = {"ohaus": "OHAUS", "adam": "Adam Equipment", "loser": "Löser Messtechnik", "ortoalresa": "Ortoalresa"}
+KINDS = ("ohaus", "adam", "loser", "ortoalresa", "hielscher", "soviquim")
+DEFAULT_ORG = {"ohaus": "OHAUS", "adam": "Adam Equipment", "loser": "Löser Messtechnik", "ortoalresa": "Ortoalresa",
+               "hielscher": "Hielscher", "soviquim": "Soviquim"}
 ROUTES = ("import_courier", "import_freight", "domestic")
 SOURCE_DOCUMENT = "price list"
 _SIX = Decimal("0.000001")
 _EFFECTIVE = re.compile(r"effective\s+([A-Za-z]+\s+\d{1,2},\s*\d{4})", re.IGNORECASE)
 _CURRENCY = re.compile(r"\b(USD|EUR|CLP)\b")
-_EURO = r"\d{1,3}(?:\.\d{3})*,\d{2}"
+#: "1.236,56" or "1236,56": the thousands dot is optional (Löser 2024 prints none).
+_EURO = r"(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}"
 _LOSER_LINE = re.compile(rf"^\s*(?P<pos>\d+)\s+(?P<desc>.+?)\s+(?P<item>Typ\s+\S+|\S+)\s+(?:€\s*)?(?P<price>{_EURO})\s*(?:€|EUR)?\s*$")
+_SOVIQUIM_TAIL = re.compile(r"\s{2,}(?P<price>\d{1,3}(?:\.\d{3})*)\s{2,}(?P<brand>\S+(?: \S+)*)\s{2,}52Distrib\s*$")
+_SOVIQUIM_CODE = re.compile(r"^[A-Z]\d?[A-Z]?\d{3,}[A-Z0-9]*$")
+_SOVIQUIM_FAMILY = re.compile(r"^\s*FAMILIA\s+(?P<family>\S.*?)\s*$")
+_SOVIQUIM_ACCESSORY = ("plataforma", "adaptador", "soporte", "barra", "rotor", "electrodo", "pinza", "boquilla",
+                       "bandeja", "accesorio", "tapa", "filtro", "lampara", "lámpara", "sensor", "cable")
 _ORTOALRESA_LINE = re.compile(
     r"^\s*(?P<code>(?:CE|RT|RE)[\s-]?\d[\w.\-/]*)\s+(?P<desc>.+?)\s+"
     r"(?P<price>\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\s*(?:€|EUR)?\s*$")
@@ -79,6 +86,10 @@ class Row(TypedDict):
     price_kind: str
     #: The row's own reference in its list (Material ID, product ID, position, code): plan provenance only.
     source_ref: str | None
+    #: `catalog.product.product_kind` (equipment, accessory, consumable, spare_part), from the list's own sections.
+    product_kind: NotRequired[str | None]
+    #: `catalog.product.category_es`: the list's section heading, when it has one (Soviquim's FAMILIA).
+    category: NotRequired[str | None]
 
 
 # ------------------------------------------------------------------ values
@@ -191,7 +202,8 @@ def parse_ohaus_xlsx(path: Path, *, as_of: str | None = None, org: str = DEFAULT
         out.append(Row(manufacturer=org, supplier=org, model_number=model, name=material, family=family,
                        list_price=_money(cell(col["list"])), cost=_money(cell(col["net"])), map_price=None,
                        discount_pct=_fraction(cell(col["discount"]), material_id), currency=currency, as_of=as_of,
-                       is_stale=False, price_kind="dealer_net", source_ref=material_id))
+                       is_stale=False, price_kind="dealer_net", source_ref=material_id,
+                       product_kind=ohaus_kind(family)))
     return out
 
 
@@ -213,7 +225,8 @@ def parse_adam_xlsx(path: Path, *, as_of: str | None = None, org: str = DEFAULT_
         out.append(Row(manufacturer=org, supplier=org, model_number=sku, name=f"{family or ''} {sku}".strip(),
                        family=family, list_price=_money(cell(col["list"])), cost=_money(cell(col["dealer"])),
                        map_price=_money(cell(col["map"])), discount_pct=None, currency="USD", as_of=as_of,
-                       is_stale=False, price_kind="dealer_net", source_ref=(_text(cell(id_idx)) if id_idx is not None else "") or sku))
+                       is_stale=False, price_kind="dealer_net", source_ref=(_text(cell(id_idx)) if id_idx is not None else "") or sku,
+                       product_kind=adam_kind(family)))
     return out
 
 
@@ -229,7 +242,7 @@ def parse_loser_text(text: str, *, as_of: str | None = None, org: str = DEFAULT_
         out.append(Row(manufacturer=org, supplier=org, model_number=re.sub(r"\s+", " ", m["item"]),
                        name=m["desc"].strip(), family=None, list_price=None, cost=_euro(m["price"]), map_price=None,
                        discount_pct=None, currency="EUR", as_of=as_of, is_stale=False, price_kind="dealer_net",
-                       source_ref=m["pos"]))
+                       source_ref=m["pos"], product_kind=loser_kind(m["item"], int(m["pos"]))))
     return out
 
 
@@ -243,8 +256,146 @@ def parse_ortoalresa_text(text: str, *, as_of: str | None = None, org: str = DEF
         out.append(Row(manufacturer=org, supplier=org, model_number=re.sub(r"\s+", " ", m["code"]),
                        name=m["desc"].strip(), family=None, list_price=_euro(m["price"]), cost=None, map_price=None,
                        discount_pct=None, currency="EUR", as_of=as_of, is_stale=True, price_kind="list",
-                       source_ref=re.sub(r"\s+", " ", m["code"])))
+                       source_ref=re.sub(r"\s+", " ", m["code"]),
+                       product_kind="equipment" if m["code"].upper().startswith("CE") else "accessory"))
     return out
+
+
+def parse_soviquim_text(text: str, *, as_of: str | None = None, org: str = DEFAULT_ORG["soviquim"]) -> list[Row]:
+    """The Soviquim distributor catalogue (`pdftotext -layout`), prices in CLP.
+
+    Each product is a block: an optional supplier catalogue number in the first columns, the
+    Soviquim code, a description wrapped over several lines, and one line ending in
+    `<price> <brand> 52Distrib`. Blocks holding several products are cut after each such line.
+    `FAMILIA <name>` headings set the category and the kind (`soviquim_kind`). Soviquim is both
+    manufacturer and supplier: the list spells its ~120 brands many ways (one brand under several spellings), so
+    the brand goes into the description ("Marca: <brand>") instead of becoming an organization each.
+    """
+    as_of = _as_of(as_of, "soviquim")
+    out: list[Row] = []
+    family: str | None = None
+    for page in text.split("\f"):
+        for block in re.split(r"\n\s*\n", page):
+            lines = []
+            for line in block.split("\n"):
+                if not line.strip() or "www.soviquim.cl" in line or "CATALOGO" in line:
+                    continue
+                heading = _SOVIQUIM_FAMILY.match(line)
+                if heading:
+                    family = re.split(r"\s+-{2,}\s+", heading["family"])[0].strip().title()
+                    continue
+                lines.append(line)
+            anchors = [i for i, line in enumerate(lines) if _SOVIQUIM_TAIL.search(line)]
+            if not anchors:
+                continue
+            groups, start = [], 0
+            for i in anchors:
+                groups.append(lines[start:i + 1])
+                start = i + 1
+            groups[-1] += lines[start:]
+            for group in groups:
+                row = _soviquim_row(group, family, as_of, org)
+                if row is not None:
+                    out.append(row)
+    return out
+
+
+def _soviquim_row(lines: list[str], family: str | None, as_of: str, org: str) -> Row | None:
+    code = catalogue = price = brand = None
+    desc: list[str] = []
+    for line in lines:
+        tail = _SOVIQUIM_TAIL.search(line)
+        if tail:
+            price, brand = tail["price"], tail["brand"]
+            line = line[:tail.start()]
+        for m in re.finditer(r"\S+(?: \S+)*", line):
+            text, column = m.group(), m.start()
+            if column < 12 and catalogue is None:
+                catalogue = text
+            elif code is None and column < 40 and _SOVIQUIM_CODE.match(text.split()[0]):
+                code = text.split()[0]
+                rest = text[len(code):].strip()
+                if rest:
+                    desc.append(rest)
+            else:
+                desc.append(text)
+    if code is None and catalogue and _SOVIQUIM_CODE.match(catalogue):
+        code, catalogue = catalogue, None
+    if code is None or price is None:
+        return None
+    name = " ".join(desc) or None
+    return Row(manufacturer=org, supplier=org, model_number=code, name=name,
+               family=f"Marca: {brand}" if brand else None, list_price=None,
+               cost=Decimal(price.replace(".", "")).quantize(_SIX), map_price=None, discount_pct=None,
+               currency="CLP", as_of=as_of, is_stale=False, price_kind="dealer_net", source_ref=code,
+               product_kind=soviquim_kind(family, name), category=family)
+
+
+def parse_hielscher_xlsx(path: Path, *, as_of: str | None = None, org: str = DEFAULT_ORG["hielscher"]) -> list[Row]:
+    """The Hielscher lab price list: one sheet per processor (`Reference, Description, List price,
+    Your price (25 % off)`), EUR. A part listed under several processors is one row, from its first sheet."""
+    import openpyxl
+
+    as_of = _as_of(as_of, "hielscher")
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    out: dict[str, Row] = {}
+    try:
+        for ws in wb.worksheets:
+            rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
+            try:
+                header_at, col = _header(rows, {"ref": lambda c: c.lower() == "reference",
+                                                "desc": lambda c: c.lower() == "description",
+                                                "list": lambda c: c.lower() == "list price",
+                                                "net": lambda c: c.lower().startswith("your price")})
+            except ValueError:
+                continue
+            off = re.search(r"(\d+(?:[.,]\d+)?)\s*%", _text(rows[header_at][col["net"]]))
+            discount = (Decimal(off.group(1).replace(",", ".")) / 100).quantize(_SIX) if off else None
+            for row in rows[header_at + 1:]:
+                cell = lambda i: row[i] if i < len(row) else None  # noqa: E731
+                ref = _text(cell(col["ref"])).split(" (")[0].strip()
+                if not ref or not _text(cell(col["desc"])) or ref in out:
+                    continue
+                out[ref] = Row(manufacturer=org, supplier=org, model_number=ref, name=_text(cell(col["desc"])),
+                               family=ws.title, list_price=_money(cell(col["list"])), cost=_money(cell(col["net"])),
+                               map_price=None, discount_pct=discount, currency="EUR", as_of=as_of, is_stale=False,
+                               price_kind="dealer_net", source_ref=ref,
+                               product_kind="equipment" if ref.upper().startswith("UP") else "accessory")
+    finally:
+        wb.close()
+    return list(out.values())
+
+
+# ------------------------------------------------------------------ product kinds (equipos / insumos)
+
+def ohaus_kind(family: str | None) -> str:
+    f = (family or "").casefold()
+    if "spare" in f:
+        return "spare_part"
+    if any(w in f for w in ("weights", "accessor", "clamps & supports")):
+        return "accessory"
+    return "equipment"
+
+
+def adam_kind(family: str | None) -> str:
+    f = (family or "").casefold()
+    return "accessory" if any(w in f for w in ("pesas", "cobertura", "accesorio", "impresora", "repuesto")) else "equipment"
+
+
+def loser_kind(item: str, position: int) -> str:
+    """Löser: the `Typ` units are instruments; positions 8–15 their accessories; the rest consumables."""
+    if item.startswith("Typ"):
+        return "equipment"
+    return "accessory" if position <= 15 else "consumable"
+
+
+def soviquim_kind(family: str | None, name: str | None) -> str:
+    """Soviquim: EQUIPOS are equipment (their spare parts and attachments, accessories); every other
+    family — glassware, plastics, reagents, paper, instruments such as thermometers — is a consumable."""
+    if (family or "").casefold() != "equipos":
+        return "consumable"
+    first = (name or "").casefold()
+    return "accessory" if first.startswith(_SOVIQUIM_ACCESSORY) or "repuesto" in first else "equipment"
 
 
 def text_first_page(text: str) -> str:
@@ -289,7 +440,8 @@ def plan_items(rows: list[Row], *, org_ids: dict[str, str] | None = None,
         product = f"product:{importing.norm_name(r['manufacturer'])}|{key}"
         items.append({"action": "create_product", "key": product, "source": source,
                       "fields": {"manufacturer": maker, "model_number": r["model_number"], "name": r["name"],
-                                 "description": r["family"]}})
+                                 "description": r["family"], "product_kind": r.get("product_kind"),
+                                 "category_es": r.get("category")}})
         observations = [(r["price_kind"], price, r["discount_pct"])]
         if r["map_price"] is not None:
             observations.append(("map", r["map_price"], None))
@@ -306,7 +458,7 @@ def plan_items(rows: list[Row], *, org_ids: dict[str, str] | None = None,
 
 def _read_input(kind: str, path: Path) -> tuple[str, str | None]:
     """(first page, full text) — workbooks have no full text here; they are parsed from the file."""
-    if kind in ("ohaus", "adam"):
+    if kind in ("ohaus", "adam", "hielscher"):
         return xlsx_first_page(path), None
     text = path.read_text(encoding="utf-8")
     return text_first_page(text), text
@@ -333,6 +485,10 @@ def build_price_list_plan(inputs: list[tuple[str, Path, str | None]], *, org_nam
             rows = parse_ohaus_xlsx(path, as_of=as_of, org=names[kind])
         elif kind == "adam":
             rows = parse_adam_xlsx(path, as_of=as_of, org=names[kind])
+        elif kind == "hielscher":
+            rows = parse_hielscher_xlsx(path, as_of=as_of, org=names[kind])
+        elif kind == "soviquim":
+            rows = parse_soviquim_text(text or "", as_of=as_of, org=names[kind])
         elif kind == "loser":
             rows = parse_loser_text(text or "", as_of=as_of, org=names[kind])
         else:
@@ -364,6 +520,8 @@ def _add_plan_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--adam", type=Path, action="append", default=[], help="ADAM price list (.xlsx)")
     p.add_argument("--loser-text", type=Path, action="append", default=[], help="Löser price list, as text")
     p.add_argument("--ortoalresa-text", type=Path, action="append", default=[], help="Ortoalresa tariff, as text")
+    p.add_argument("--hielscher", type=Path, action="append", default=[], help="Hielscher lab price list (.xlsx)")
+    p.add_argument("--soviquim-text", type=Path, action="append", default=[], help="Soviquim catalogue, as text")
     p.add_argument("--as-of", action="append", default=[], metavar="KIND=YYYY-MM-DD",
                    help="the date a list is valid from (OHAUS reads its own 'Effective' line)")
     p.add_argument("--org-name", action="append", default=[], metavar="KIND=NAME",
@@ -388,7 +546,8 @@ def _make_plan(args: argparse.Namespace) -> importing.Plan:
     if unknown:
         raise ValueError(f"unknown kind(s) {unknown}; kinds are {', '.join(KINDS)}")
     inputs = [(kind, path, as_of.get(kind)) for kind, paths in (
-        ("ohaus", args.ohaus), ("adam", args.adam), ("loser", args.loser_text), ("ortoalresa", args.ortoalresa_text))
+        ("ohaus", args.ohaus), ("adam", args.adam), ("loser", args.loser_text), ("ortoalresa", args.ortoalresa_text),
+        ("hielscher", args.hielscher), ("soviquim", args.soviquim_text))
         for path in paths]
     if not inputs:
         raise ValueError("no price list given")

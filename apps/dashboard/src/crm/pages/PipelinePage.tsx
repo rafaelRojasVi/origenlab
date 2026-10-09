@@ -1,23 +1,31 @@
-import { useMemo, useState } from "react";
-import { fetchPipeline } from "../crmApi";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchCaseNotes, fetchPipeline } from "../crmApi";
+import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
+import { CaseActions, type Mode } from "./CaseActions";
+import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
+import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
+import { DecideCases } from "./DecideCases";
+import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import {
-  BOARD_COLUMNS,
+  HISTORICAL_STAGE_LABEL,
   ORIGIN_LABEL,
   STATUS_LABEL,
-  byLatestSent,
+  byLatestActivity,
   matchesQuery,
+  pausedUntil,
   stageBasis,
   stageDisplay,
+  type BoardColumnKey,
 } from "../stage";
 import {
   Badge,
-  DisabledAction,
   Drawer,
   EmptyState,
   ExternalLink,
+  Modal,
   PageHeader,
   ResourceGate,
   SearchInput,
@@ -25,11 +33,11 @@ import {
   Segmented,
   Skeleton,
   StatLine,
-  WRITE_DISABLED_REASON,
   fmtDate,
   initials,
   LocalDriveLink,
   SuggestedTag,
+  toast,
 } from "../ui";
 import { useResource } from "../useResource";
 import { splitAddress } from "../address";
@@ -38,16 +46,28 @@ type StatusFilter = "all" | "blocked" | "pending" | "ok";
 type View = "cards" | "board";
 
 export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: string | null }) {
-  const [state, reload] = useResource(fetchPipeline);
+  const [state, reload, refreshing, patch] = useResource(fetchPipeline);
+  // Move the card the moment a command is recorded; the reload that follows confirms the rest.
+  useEffect(
+    () => onCaseReceipt((receipt) => patch((data) => ({ ...data, items: applyCaseReceipt(data.items, receipt) }))),
+    [patch],
+  );
   return (
     <div className="space-y-3">
       <PageHeader
         title="Oportunidades"
         subtitle="Casos comerciales del CRM con sus cotizaciones, revisiones, documentos y evidencia de Gmail y Drive."
-        actions={<DisabledAction id="pipeline-new-disabled" reason={WRITE_DISABLED_REASON}>Nueva oportunidad</DisabledAction>}
       />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} cards />}>
-        {(data) => <Pipeline items={data.items} driveConfigured={data.drive_configured} initialId={initialOpportunityId ?? null} />}
+        {(data) => (
+          <Pipeline
+            items={data.items}
+            driveConfigured={data.drive_configured}
+            initialId={initialOpportunityId ?? null}
+            onChanged={reload}
+            refreshing={refreshing}
+          />
+        )}
       </ResourceGate>
     </div>
   );
@@ -57,15 +77,46 @@ function Pipeline({
   items,
   driveConfigured,
   initialId,
+  onChanged,
+  refreshing = false,
 }: {
   items: OpportunityCardData[];
   driveConfigured: boolean;
   initialId: string | null;
+  /** Refetch the pipeline after a write from the drawer. */
+  onChanged: () => void;
+  /** A refetch is running behind the cards on screen. */
+  refreshing?: boolean;
 }) {
   const [status, setStatus] = useState<StatusFilter>("all");
-  const [view, setView] = useState<View>("cards");
+  const [view, setView] = useState<View>("board");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(initialId);
+  // A drawer opened by a drop on «Ganada» arrives with «Marcar ganada» open.
+  const [openWith, setOpenWith] = useState<{ mode: Exclude<Mode, null>; target?: MoveTarget } | null>(null);
+  const [moving, setMoving] = useState<{ id: string; to: MoveTarget } | null>(null);
+  const [sort, setSort] = useState<BoardSort>("recent");
+  const [deciding, setDeciding] = useState(false);
+  const mayDecide = useMayRunCaseCommands();
+
+  function open(id: string | null, withForm: typeof openWith = null) {
+    setOpenWith(withForm);
+    setOpenId(id);
+  }
+
+  /** A card dropped on another Tablero column: ask for what the move needs, or say why not. */
+  function onMove(card: OpportunityCardData, to: BoardColumnKey) {
+    if (to === "ganada") {
+      open(card.opportunity_id, { mode: "won" });
+      return;
+    }
+    const refusal = moveRefusal(card, to);
+    if (refusal) {
+      toast(refusal, "warn");
+      return;
+    }
+    setMoving({ id: card.opportunity_id, to });
+  }
 
   const counts = useMemo(() => {
     const c = { all: items.length, blocked: 0, pending: 0, ok: 0 };
@@ -74,14 +125,17 @@ function Pipeline({
   }, [items]);
 
   const visible = useMemo(
-    () => items.filter((i) => (status === "all" || i.status === status) && matchesQuery(i, q)).sort(byLatestSent),
+    () => items.filter((i) => (status === "all" || i.status === status) && matchesQuery(i, q)).sort(byLatestActivity),
     [items, status, q],
   );
   const quotes = items.reduce((n, i) => n + i.quotes.length, 0);
   const revisions = items.reduce((n, i) => n + i.revision_count, 0);
   const withDrive = items.filter((i) => i.drive_folder).length;
-  const historical = items.filter((i) => stageBasis(i) === "historical_import").length;
-  const open = items.find((i) => i.opportunity_id === openId) ?? null;
+  const historicalCards = useMemo(() => items.filter((i) => stageBasis(i) === "historical_import"), [items]);
+  const historical = historicalCards.length;
+  const paused = items.filter((i) => pausedUntil(i)).length;
+  const openCard = items.find((i) => i.opportunity_id === openId) ?? null;
+  const movingCard = moving ? (items.find((i) => i.opportunity_id === moving.id) ?? null) : null;
 
   if (items.length === 0) {
     return <EmptyState title="Sin oportunidades en el CRM">El CRM no tiene casos comerciales todavía.</EmptyState>;
@@ -95,16 +149,32 @@ function Pipeline({
           { label: "Cotizaciones", value: quotes },
           { label: "Revisiones", value: revisions },
           { label: "Con carpeta Drive", value: `${withDrive}/${items.length}` },
+          { label: "En pausa", value: paused },
           { label: "Bloqueadas", value: counts.blocked, tone: counts.blocked ? "bad" : undefined },
         ]}
       />
-      {historical > 0 ? (
-        <p className="rounded-md border border-line bg-canvas-sunken/70 px-3 py-2 text-xs leading-5 text-ink-muted" data-testid="historical-stage-notice">
-          <strong className="font-semibold text-ink">{historical} de {items.length}</strong> oportunidades muestran «Cotización enviada ·
-          histórico»: la importación histórica fijó su etapa porque encontró la cotización enviada. Eso es un hecho del pasado, no el
-          estado comercial actual, que nadie ha verificado todavía. Los enlaces de Drive vienen del registro local del archivo, no de
-          una consulta en vivo.
-        </p>
+      {historical > 0 && !deciding ? (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-warn/30 bg-warn-bg/50 px-3 py-2.5 text-xs leading-5 text-ink-muted"
+          data-testid="historical-stage-notice"
+        >
+          <p className="min-w-0 flex-1">
+            <strong className="font-semibold text-ink">
+              {historical} de {items.length}
+            </strong>{" "}
+            casos muestran «{HISTORICAL_STAGE_LABEL}»: la importación encontró la cotización enviada, pero nadie ha decidido en qué
+            están hoy.
+          </p>
+          {mayDecide ? (
+            <button
+              type="button"
+              onClick={() => setDeciding(true)}
+              className="inline-flex h-8 shrink-0 items-center rounded-md bg-brand-700 px-3 text-xs font-medium text-white hover:bg-brand-900"
+            >
+              Decidir {historical} casos
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {!driveConfigured ? (
         <p className="rounded-md border border-line bg-canvas-sunken/70 px-3 py-2 text-xs text-ink-muted">
@@ -125,7 +195,23 @@ function Pipeline({
         />
         <SearchInput value={q} onChange={setQ} label="Buscar oportunidades" placeholder="Institución, número, contacto…" />
         <span className="text-xs text-ink-faint tabular-nums">{visible.length} resultados</span>
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {view === "board" ? (
+            <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+              Ordenar
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as BoardSort)}
+                className="h-8 rounded-md border border-line bg-canvas-raised px-2 text-xs text-ink focus:border-brand-600 focus:outline-none"
+              >
+                {(Object.keys(BOARD_SORT_LABEL) as BoardSort[]).map((k) => (
+                  <option key={k} value={k}>
+                    {BOARD_SORT_LABEL[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <Segmented
             label="Vista"
             value={view}
@@ -138,49 +224,47 @@ function Pipeline({
         </div>
       </div>
 
-      {visible.length === 0 ? (
+      {deciding ? (
+        <DecideCases cards={historicalCards} onApplied={onChanged} onClose={() => setDeciding(false)} />
+      ) : visible.length === 0 ? (
         <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado o la búsqueda.</EmptyState>
       ) : view === "cards" ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {visible.map((card, i) => (
-            <OpportunityCard key={card.opportunity_id} card={card} index={i} onOpen={setOpenId} />
+            <OpportunityCard key={card.opportunity_id} card={card} index={i} onOpen={(id) => open(id)} />
           ))}
         </div>
       ) : (
-        <Board cards={visible} onOpen={setOpenId} />
+        <Board cards={visible} onOpen={(id) => open(id)} onMove={mayDecide ? onMove : undefined} sort={sort} />
       )}
 
-      <OpportunityDrawer card={open} onClose={() => setOpenId(null)} />
+      <OpportunityDrawer
+        card={openCard}
+        onClose={() => open(null)}
+        onChanged={onChanged}
+        refreshing={refreshing}
+        initial={openWith}
+      />
+      {moving && movingCard ? (
+        <Modal title={`Mover a «${COLUMN_LABEL[moving.to]}»`} onClose={() => setMoving(null)}>
+          <p className="mb-3 truncate text-[13px] font-medium text-ink">{movingCard.organization?.name ?? movingCard.title}</p>
+          <CaseMoveForm
+            card={movingCard}
+            target={moving.to}
+            onCancel={() => setMoving(null)}
+            onDone={(o, refetch) => {
+              if (refetch) onChanged();
+              if (o.tone === "bad") {
+                toast(o.lines.join(" "), "bad");
+                return;
+              }
+              setMoving(null);
+              toast(o.tone === "good" ? `Movido a «${COLUMN_LABEL[moving.to]}».` : o.lines.join(" "), o.tone);
+            }}
+          />
+        </Modal>
+      ) : null}
     </>
-  );
-}
-
-function Board({ cards, onOpen }: { cards: OpportunityCardData[]; onOpen: (id: string) => void }) {
-  return (
-    <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
-      <div className="grid min-w-[64rem] grid-cols-5 gap-3">
-        {BOARD_COLUMNS.map((col) => {
-          const inCol = cards.filter((c) => col.stages.includes(c.stage));
-          return (
-            <section key={col.key} aria-label={col.label} className="min-w-0">
-              <header className="mb-1.5 flex items-center gap-1.5 px-0.5">
-                <h2 className="text-[13px] font-semibold text-ink">{col.label}</h2>
-                <span className="rounded-full bg-canvas-sunken px-1.5 py-px text-[11px] tabular-nums text-ink-muted">{inCol.length}</span>
-              </header>
-              <div className="flex min-h-44 flex-col gap-1.5 rounded-lg bg-canvas-sunken/70 p-1.5">
-                {inCol.length === 0 ? (
-                  <p className="rounded-md border border-dashed border-line-strong px-2 py-3 text-center text-[11px] text-ink-faint">
-                    Sin oportunidades
-                  </p>
-                ) : (
-                  inCol.map((c, i) => <OpportunityCard key={c.opportunity_id} card={c} index={i} onOpen={onOpen} compact />)
-                )}
-              </div>
-            </section>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
@@ -192,12 +276,10 @@ export function OpportunityCard({
   card,
   index,
   onOpen,
-  compact = false,
 }: {
   card: OpportunityCardData;
   index: number;
   onOpen: (id: string) => void;
-  compact?: boolean;
 }) {
   const latest = card.latest_revision;
   const blocking = card.attention.find((a) => a.blocking);
@@ -216,7 +298,7 @@ export function OpportunityCard({
     >
       <div className="flex items-center gap-1.5">
         <span className="min-w-0 truncate text-xs font-semibold tracking-wide text-ink tabular-nums" title={numbers.join(", ")}>
-          {numbers.length ? numbers[0] : compact ? "—" : "Sin cotización"}
+          {numbers.length ? numbers[0] : "Sin cotización"}
           {numbers.length > 1 ? <span className="font-normal text-ink-faint"> +{numbers.length - 1}</span> : null}
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
@@ -236,7 +318,7 @@ export function OpportunityCard({
         <span className="block truncate text-[13px] font-semibold leading-5 text-ink">
           {card.organization?.name ?? <span className="text-bad">Sin institución</span>}
         </span>
-        {!compact ? <span className="block truncate text-xs leading-4 text-ink-muted">{card.title}</span> : null}
+        <span className="block truncate text-xs leading-4 text-ink-muted">{card.title}</span>
       </button>
 
       <dl className="mt-2 grid grid-cols-[auto_1fr] items-center gap-x-2.5 gap-y-1 text-[11px] leading-4">
@@ -266,14 +348,10 @@ export function OpportunityCard({
             <span className="inline-flex rounded border border-dashed border-line-strong px-1 text-ink-muted">Sin revisión</span>
           )}
         </dd>
-        {!compact ? (
-          <>
-            <dt className="text-ink-faint">Documento</dt>
-            <dd className="min-w-0 truncate text-ink-muted" title={latest?.document?.filename ?? undefined}>
-              {latest?.document?.filename ?? (latest?.document ? "PDF sin nombre" : "—")}
-            </dd>
-          </>
-        ) : null}
+        <dt className="text-ink-faint">Documento</dt>
+        <dd className="min-w-0 truncate text-ink-muted" title={latest?.document?.filename ?? undefined}>
+          {latest?.document?.filename ?? (latest?.document ? "PDF sin nombre" : "—")}
+        </dd>
         <dt className="text-ink-faint">Evidencia</dt>
         <dd className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
           {card.drive_folder ? (
@@ -370,7 +448,7 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
           <span className="text-warn">PDF no archivado en Drive</span>
         )}
         {rev.gmail ? (
-          <ExternalLink href={rev.gmail.url} label={`Abrir correo de r${rev.revision_no} en Gmail`}>
+          <ExternalLink href={inSharedMailbox(rev.gmail.url) ?? rev.gmail.url} label={`Abrir correo de r${rev.revision_no} en Gmail`}>
             Correo en Gmail
           </ExternalLink>
         ) : (
@@ -386,9 +464,30 @@ function RevisionRow({ rev }: { rev: RevisionCard }) {
   );
 }
 
-function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null; onClose: () => void }) {
+function OpportunityDrawer({
+  card,
+  onClose,
+  onChanged,
+  refreshing = false,
+  initial = null,
+}: {
+  card: OpportunityCardData | null;
+  onClose: () => void;
+  onChanged: () => void;
+  refreshing?: boolean;
+  initial?: { mode: Exclude<Mode, null>; target?: MoveTarget } | null;
+}) {
   const mayAuthor = useMayAuthorCrm();
+  // «Registrar seguimiento» opens the note form of *this* case once. The signal belongs to the
+  // case it was pressed on and is dropped when the drawer closes or another case opens, so the
+  // form never pops open by itself on the next case.
+  const [followUp, setFollowUp] = useState<{ id: string; n: number } | null>(null);
+  const caseId = card?.opportunity_id ?? null;
+  useEffect(() => {
+    setFollowUp((f) => (f && f.id === caseId ? f : null));
+  }, [caseId]);
   if (!card) return null;
+  const openSignal = followUp && followUp.id === card.opportunity_id ? followUp.n : 0;
   const status = STATUS_LABEL[card.status];
   const stage = stageDisplay(card);
   const historical = stageBasis(card) === "historical_import";
@@ -396,6 +495,7 @@ function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null
     <Drawer
       open
       onClose={onClose}
+      busy={refreshing}
       title={card.organization?.name ?? "Sin institución"}
       subtitle={
         <span className="flex flex-wrap items-center gap-1.5">
@@ -421,10 +521,21 @@ function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null
         <span className="text-[11px] text-ink-faint">Actualizada {fmtDate(card.updated_at)}</span>
       </div>
 
-      <Section title="Siguiente paso sugerido" aside={<SuggestedTag />}>
-        <p className="text-[13px] text-ink">{card.next_action.text}</p>
-        <p className="mt-0.5 text-[11px] text-ink-faint">Sugerido a partir del estado del caso — el CRM no tiene tareas registradas.</p>
-      </Section>
+      {card.next_action.source === "task" ? (
+        <Section title="Próxima tarea">
+          <p className="text-[13px] text-ink">{card.next_action.text}</p>
+          <p className="mt-0.5 text-[11px] text-ink-faint">
+            Para el {fmtDate(card.next_action.due_at)}
+            {card.open_tasks?.[0]?.owner ? ` · ${card.open_tasks[0].owner}` : ""}
+            {(card.open_tasks?.length ?? 0) > 1 ? ` · ${(card.open_tasks?.length ?? 0) - 1} más` : ""}
+          </p>
+        </Section>
+      ) : (
+        <Section title="Siguiente paso sugerido" aside={<SuggestedTag />}>
+          <p className="text-[13px] text-ink">{card.next_action.text}</p>
+          <p className="mt-0.5 text-[11px] text-ink-faint">Sugerido a partir del estado del caso — el caso no tiene tareas abiertas.</p>
+        </Section>
+      )}
 
       {card.attention.length > 0 ? (
         <Section title="Bloqueos y pendientes">
@@ -438,6 +549,25 @@ function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null
           </ul>
         </Section>
       ) : null}
+
+      <Section title="Correos del caso">
+        {card.last_contact?.inbound || card.last_contact?.outbound ? (
+          <ul className="space-y-3 text-xs">
+            {(["inbound", "outbound"] as const).map((direction) => {
+              const mail = card.last_contact?.[direction];
+              if (!mail) return null;
+              const url = inSharedMailbox(mail.url);
+              return <li key={direction}>
+                <p className="text-ink-faint">{direction === "inbound" ? "Último recibido" : "Último enviado"} · {fmtDate(mail.at)}</p>
+                <p className="break-words text-ink">{mail.subject || "Sin asunto"}</p>
+                {mail.sender_name ? <p className="text-ink-muted">{mail.sender_name} · nombre en el correo</p> : null}
+                {url ? <ExternalLink href={url} label="Abrir correo en Gmail">Abrir correo en Gmail</ExternalLink> : <p>Sin enlace de Gmail disponible</p>}
+              </li>;
+            })}
+          </ul>
+        ) : <p className="text-xs text-ink-muted">No hay correos capturados disponibles para este caso.</p>}
+        <p className="mt-2 text-[11px] text-ink-faint">La institución y el contacto aún pueden requerir confirmación. El correo vinculado se conserva como evidencia.</p>
+      </Section>
 
       <Section title="Institución y contacto">
         <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-xs">
@@ -514,23 +644,43 @@ function OpportunityDrawer({ card, onClose }: { card: OpportunityCardData | null
       </Section>
 
       <Section title="Acciones">
-        <div className="flex flex-wrap gap-2">
-          <DisabledAction id="drawer-advance" reason={WRITE_DISABLED_REASON}>Avanzar etapa</DisabledAction>
-          <DisabledAction id="drawer-followup" reason={WRITE_DISABLED_REASON}>Registrar seguimiento</DisabledAction>
-          <DisabledAction id="drawer-revision" reason={WRITE_DISABLED_REASON}>Nueva revisión</DisabledAction>
-        </div>
+        <CaseActions
+          card={card}
+          initial={initial}
+          onChanged={onChanged}
+          onFollowUp={() =>
+            setFollowUp((f) => ({ id: card.opportunity_id, n: (f && f.id === card.opportunity_id ? f.n : 0) + 1 }))
+          }
+        />
       </Section>
 
-      <NoteList
-        notes={[]}
-        subjectKind="opportunity"
-        subjectId={card.opportunity_id}
-        mayAuthor={mayAuthor}
-        onRefresh={() => undefined}
-      />
+      <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={openSignal} />
 
       <p className="font-mono text-[10px] text-ink-faint">opportunity {card.opportunity_id}</p>
     </Drawer>
   );
 }
 
+/** The case's notes, read from the API and re-read after «Registrar seguimiento». */
+function CaseNotes({ opportunityId, mayAuthor, openSignal }: { opportunityId: string; mayAuthor: boolean; openSignal: number }) {
+  const load = useCallback(() => fetchCaseNotes(opportunityId), [opportunityId]);
+  const [state, reload] = useResource(load, [opportunityId]);
+  return (
+    <>
+      <NoteList
+        notes={state.kind === "ready" ? state.data.notes : []}
+        subjectKind="opportunity"
+        subjectId={opportunityId}
+        mayAuthor={mayAuthor}
+        onRefresh={reload}
+        openSignal={openSignal}
+      />
+      {state.kind === "loading" ? <p className="-mt-2 text-[11px] text-ink-faint">Cargando notas…</p> : null}
+      {state.kind !== "ready" && state.kind !== "loading" ? (
+        <p className="-mt-2 text-[11px] text-warn" data-testid="case-notes-unavailable">
+          No se pudieron leer las notas de este caso{state.kind === "unavailable" ? " (no habilitado en este entorno)" : ""}.
+        </p>
+      ) : null}
+    </>
+  );
+}

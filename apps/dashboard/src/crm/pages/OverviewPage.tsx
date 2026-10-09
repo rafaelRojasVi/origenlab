@@ -1,34 +1,34 @@
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { fetchFx, fetchPipeline } from "../crmApi";
-import type { OpportunityCardData } from "../crmTypes";
 import type { CrmSection } from "../crmRoute";
-import { FOLLOW_UP_AFTER_DAYS, STALE_AFTER_DAYS, groupFollowUps, type FollowUpItem } from "../followUps";
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
-import { Badge, ExternalLink, PageHeader, Panel, ResourceGate, fmtDate, type Tone } from "../ui";
+import { PageHeader, ResourceGate } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
 import { QuoteNumberBox } from "../QuoteNumberBox";
 import { SANTIAGO, WEEKDAYS, todayInSantiago } from "../marketing/calendar";
+import { TodayBody } from "./TodayBody";
 
 type Navigate = (s: CrmSection, id?: string) => void;
 
 /**
- * The first page: who to follow up with today, and the day's exchange rates. Read-only. The
- * data-health counts that used to live here are on Revisión → Estado de los datos.
+ * «Hoy», the first page: what the open cases ask of an operator today (`TodayBody`: tasks due,
+ * clients who answered, the 3 · 14 · 30 follow-ups, what is left to add or decide), the next quote
+ * number and the day's exchange rates. The data-health counts live on Revisión → Estado de los datos.
  */
 export function OverviewPage({ navigate }: { navigate: Navigate }) {
   const [fx, reloadFx] = useResource(fetchFx);
-  const [pipeline, reloadPipeline] = useResource(fetchPipeline);
+  const [pipeline, reloadPipeline, refreshing] = useResource(fetchPipeline);
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Resumen"
-        subtitle="A quién hacer seguimiento hoy, y el tipo de cambio del día."
+        title="Hoy"
+        subtitle="Tareas, respuestas por contestar, seguimientos y lo que falta agregar."
         actions={<Clock />}
       />
       <QuoteNumberBox pipeline={pipeline} />
       <FxSection state={fx} reload={reloadFx} />
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
-        {(p) => <FollowUpsBody items={p.items} navigate={navigate} />}
+        {(p) => <TodayBody items={p.items} navigate={navigate} onChanged={reloadPipeline} refreshing={refreshing} />}
       </ResourceGate>
     </div>
   );
@@ -207,172 +207,7 @@ function CountUp({ value, format }: { value: number; format: (n: number) => stri
   return <span ref={ref}>{format(value)}</span>;
 }
 
-/* ─────────────────────────────────────────────────────────── follow-ups ── */
-
-type GroupKey = "follow_up" | "this_week" | "older";
-
-const GROUPS: { key: GroupKey; title: string; hint: string; tone: Tone; empty: string }[] = [
-  {
-    key: "follow_up",
-    title: "Hacer seguimiento",
-    hint: `Enviadas hace ${FOLLOW_UP_AFTER_DAYS + 1} a ${STALE_AFTER_DAYS} días`,
-    tone: "warn",
-    empty: `Nada pendiente entre ${FOLLOW_UP_AFTER_DAYS + 1} y ${STALE_AFTER_DAYS} días.`,
-  },
-  {
-    key: "this_week",
-    title: "Esta semana",
-    hint: `Enviadas hace ${FOLLOW_UP_AFTER_DAYS} días o menos`,
-    tone: "neutral",
-    empty: `Ninguna cotización enviada en los últimos ${FOLLOW_UP_AFTER_DAYS} días.`,
-  },
-  {
-    key: "older",
-    title: "Más de un mes",
-    hint: "Probablemente ya decididas; siguen aquí hasta poder cerrarlas",
-    tone: "neutral",
-    empty: "Ninguna cotización con más de un mes.",
-  },
-];
-
-function FollowUpsBody({ items, navigate }: { items: OpportunityCardData[]; navigate: Navigate }) {
-  const groups = useMemo(() => groupFollowUps(items, new Date()), [items]);
-  const byKey: Record<GroupKey, FollowUpItem[]> = {
-    follow_up: groups.followUp,
-    this_week: groups.thisWeek,
-    older: groups.older,
-  };
-  const blocked = items.filter((i) => i.status === "blocked");
-  const dataIsBehind =
-    groups.latestSentAt !== null && Date.now() - new Date(groups.latestSentAt).getTime() > FOLLOW_UP_AFTER_DAYS * 86_400_000;
-  return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]">
-      <div className="min-w-0 space-y-3">
-        <p data-testid="data-freshness" className="text-xs text-ink-muted">
-          {groups.latestSentAt ? (
-            <>
-              Datos hasta el <span className="font-medium text-ink">{fmtDate(groups.latestSentAt)}</span>.{" "}
-            </>
-          ) : null}
-          {groups.openWithQuote} {groups.openWithQuote === 1 ? "caso" : "casos"} con cotización abierta.
-          {dataIsBehind ? " Las cotizaciones enviadas después aún no están importadas." : ""}
-        </p>
-        {GROUPS.map((g) => (
-          <FollowUpGroup key={g.key} group={g} items={byKey[g.key]} navigate={navigate} />
-        ))}
-      </div>
-      <aside className="min-w-0 space-y-3">
-        <Panel
-          title="Requieren decisión"
-          aside={<Badge tone={blocked.length ? "bad" : "good"}>{blocked.length}</Badge>}
-          bodyClassName="divide-y divide-line"
-        >
-          {blocked.length === 0 ? (
-            <p className="px-3 py-4 text-xs text-ink-muted">Ningún caso bloqueado.</p>
-          ) : (
-            blocked.map((c) => (
-              <button
-                key={c.opportunity_id}
-                type="button"
-                onClick={() => navigate("oportunidades", c.opportunity_id)}
-                className="block w-full px-3 py-2 text-left transition-colors hover:bg-canvas-sunken/60 focus:outline-none focus-visible:bg-canvas-sunken"
-              >
-                <span className="block truncate text-[13px] font-medium text-ink">{c.organization?.name ?? c.title}</span>
-                <span className="block truncate text-[11px] text-bad">{c.attention.find((a) => a.blocking)?.label}</span>
-              </button>
-            ))
-          )}
-        </Panel>
-        {groups.withoutQuote.length > 0 ? (
-          <Panel title="Sin cotización enviada" aside={<Badge>{groups.withoutQuote.length}</Badge>} bodyClassName="divide-y divide-line">
-            {groups.withoutQuote.map((c) => (
-              <button
-                key={c.opportunity_id}
-                type="button"
-                onClick={() => navigate("oportunidades", c.opportunity_id)}
-                className="block w-full truncate px-3 py-2 text-left text-[13px] text-ink transition-colors hover:bg-canvas-sunken/60 focus:outline-none focus-visible:bg-canvas-sunken"
-              >
-                {c.organization?.name ?? c.title}
-              </button>
-            ))}
-          </Panel>
-        ) : null}
-        <button
-          type="button"
-          onClick={() => navigate("revision")}
-          className="w-full rounded-lg border border-dashed border-line px-3 py-3 text-left transition-colors hover:border-line-strong hover:bg-canvas-raised"
-        >
-          <span className="block text-[13px] font-medium text-ink">Estado de los datos</span>
-          <span className="mt-0.5 block text-[11px] text-ink-muted">Qué se importó, qué falta y las evidencias por revisar, en Revisión.</span>
-        </button>
-      </aside>
-    </div>
-  );
-}
-
-function FollowUpGroup({ group, items, navigate }: { group: (typeof GROUPS)[number]; items: FollowUpItem[]; navigate: Navigate }) {
-  return (
-    <section data-testid={`followups-${group.key}`} className="crm-rise overflow-hidden rounded-xl border border-line bg-canvas-raised">
-      <header className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line px-4 py-2.5">
-        <h2 className="text-[14px] font-semibold text-ink">{group.title}</h2>
-        <Badge tone={items.length ? group.tone : "neutral"}>{items.length}</Badge>
-        <span className="ml-auto text-[11px] text-ink-faint">{group.hint}</span>
-      </header>
-      {items.length === 0 ? (
-        <p className="px-4 py-4 text-xs text-ink-muted">{group.empty}</p>
-      ) : (
-        <ul className="divide-y divide-line">
-          {items.map((item, i) => (
-            <FollowUpRow key={item.card.opportunity_id} item={item} index={i} navigate={navigate} />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function FollowUpRow({ item, index, navigate }: { item: FollowUpItem; index: number; navigate: Navigate }) {
-  const { card, days } = item;
-  const latest = card.latest_revision;
-  const number = latest?.quote_number ?? card.quote_numbers[0] ?? "";
-  const institution = card.organization?.name ?? "Sin institución";
-  const contact = card.contact?.name ?? card.contact?.address ?? null;
-  return (
-    <li
-      className="crm-rise grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/50 sm:grid-cols-[5.75rem_minmax(0,1fr)_6.5rem_auto]"
-      style={{ "--i": Math.min(index, 12) } as CSSProperties}
-    >
-      <span className="row-start-1 text-xs font-semibold tabular-nums text-ink">{number}</span>
-      <button
-        type="button"
-        onClick={() => navigate("oportunidades", card.opportunity_id)}
-        className="col-span-2 col-start-2 row-start-1 min-w-0 rounded text-left focus:outline-none sm:col-span-1 focus-visible:ring-2 focus-visible:ring-brand-600"
-      >
-        <span className="block truncate text-[13px] font-medium text-ink">{institution}</span>
-        {contact ? <span className="block truncate text-[11px] text-ink-muted">{contact}</span> : null}
-      </button>
-      {/* On a phone, days and links share the line under the institution; columns from `sm` up. */}
-      <span
-        className="col-start-2 row-start-2 text-[11px] tabular-nums text-ink-muted sm:col-start-3 sm:row-start-1 sm:text-right sm:text-xs"
-        title={`Enviada el ${fmtDate(item.sentAt)}`}
-      >
-        {daysAgo(days)}
-      </span>
-      <span className="col-start-3 row-start-2 flex items-center justify-end gap-3 text-[12px] sm:col-start-4 sm:row-start-1">
-        {latest?.drive ? (
-          <ExternalLink href={latest.drive.file_url} label={`PDF de ${number} en Drive`}>
-            PDF
-          </ExternalLink>
-        ) : null}
-        {latest?.gmail ? (
-          <ExternalLink href={latest.gmail.url} label={`Correo de ${number} en Gmail`}>
-            Correo
-          </ExternalLink>
-        ) : null}
-      </span>
-    </li>
-  );
-}
+/* ──────────────────────────────────────────────────────────────── today ── */
 
 function FollowUpsSkeleton() {
   return (
@@ -416,12 +251,6 @@ function Clock() {
 }
 
 /* ──────────────────────────────────────────────────────────────── format ── */
-
-function daysAgo(days: number): string {
-  if (days === 0) return "hoy";
-  if (days === 1) return "ayer";
-  return `hace ${days} días`;
-}
 
 /** A `YYYY-MM-DD` day as "30 mar", read as that calendar day (no time-zone shift). */
 function fmtDay(day: string): string {

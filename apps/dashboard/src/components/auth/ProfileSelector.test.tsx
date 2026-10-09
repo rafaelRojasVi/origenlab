@@ -84,6 +84,15 @@ describe("parsing the shared sign-in answers", () => {
     }
   });
 
+  it("reads whether the case commands are mounted, and anything but true as off", () => {
+    const parse = (value: unknown) =>
+      parseAuthSessionResponse(200, { ...SIGNED_IN_AS_CARLA, case_commands_enabled: value });
+    expect(parse(true)).toMatchObject({ kind: "signed_in", caseCommandsEnabled: true });
+    for (const value of [false, "true", 1, null, undefined]) {
+      expect(parse(value)).toMatchObject({ kind: "signed_in", caseCommandsEnabled: false });
+    }
+  });
+
   it("keeps only well-formed profile cards", () => {
     expect(
       parseProfilesResponse(200, { profiles: [{ id: "a", display_name: "A", role_label: "Ventas" }, { id: "b" }, 7] }),

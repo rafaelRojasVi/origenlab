@@ -21,6 +21,7 @@ import { useAuthSession } from "../../context/AuthSessionContext";
 import { useResource } from "../useResource";
 import { DataHealth } from "./DataHealth";
 import { MailRulesPanel } from "./MailRulesPanel";
+import { TriagePanel } from "./TriagePanel";
 
 const QUEUE_LABEL: Record<string, { label: string; action: string; blocking: boolean }> = {
   canonical_undetermined: { label: "Revisión canónica indeterminada", action: "Anular o reemplazar la revisión duplicada", blocking: true },
@@ -53,7 +54,7 @@ export function blockingCount(queue: { items: WorkQueueItem[]; counts?: Record<s
   return queue.items.filter((i) => i.kind !== "pending_evidence").length;
 }
 
-type Tab = "crm" | "not_imported" | "evidence" | "data" | "mail_rules";
+type Tab = "crm" | "triage" | "not_imported" | "evidence" | "data" | "mail_rules";
 
 export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
   const [queue, reloadQueue] = useResource(fetchWorkQueue);
@@ -73,6 +74,7 @@ export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string
         onChange={setTab}
         options={[
           { value: "crm", label: "Bloqueos del CRM", count: queue.kind === "ready" ? blockingCount(queue.data) : undefined },
+          { value: "triage", label: "Correos (sugerencias)" },
           {
             value: "not_imported",
             label: "No importadas",
@@ -88,7 +90,9 @@ export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string
           ...(isAdmin ? [{ value: "mail_rules" as Tab, label: "Acciones automáticas" }] : []),
         ]}
       />
-      {tab === "mail_rules" && isAdmin ? (
+      {tab === "triage" ? (
+        <TriagePanel />
+      ) : tab === "mail_rules" && isAdmin ? (
         <MailRulesPanel />
       ) : tab === "data" ? (
         <DataHealth navigate={navigate} />
@@ -243,8 +247,8 @@ function NotImported({ review }: { review: ReviewResponse }) {
         options={[{ value: "all", label: "Todas" }, ...Object.keys(groups).map((k) => ({ value: k, label: LEDGER_STATUS[k]?.label ?? "Sin estado" }))]}
       />
       <Panel
-        title="Cotizaciones archivadas en Drive que no están en el CRM"
-        note="El motivo es el estado registrado al archivar (instantánea), no una decisión nueva"
+        title="Archivo histórico de Drive pendiente de revisión"
+        note="Estos PDF ya están archivados. Son una cola histórica independiente de las nuevas cotizaciones registradas desde Gmail; el motivo es la decisión documentada al archivar."
         bodyClassName="divide-y divide-line"
       >
         {rows.map((d) => {
@@ -265,8 +269,14 @@ function NotImported({ review }: { review: ReviewResponse }) {
           );
         })}
       </Panel>
+      <p className="text-xs text-ink-muted">
+        La importación masiva histórica no está habilitada en esta pantalla: los registros
+        retenidos por el owner y los que no tienen institución confirmada requieren revisión
+        individual y controles contra duplicados. Las cotizaciones nuevas enviadas por Gmail
+        se procesan en «Acciones automáticas»; no se importan aquí.
+      </p>
       <DisabledAction id="review-import-disabled" reason={WRITE_DISABLED_REASON}>
-        Importar al CRM
+        Importación histórica no disponible
       </DisabledAction>
     </>
   );

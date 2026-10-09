@@ -129,7 +129,6 @@ describe("allowlist", () => {
       "/v2/cockpit/case-archive",
       "/v2/cockpit/import-review",
       `/v2/cockpit/import-review/documents/${sha}`,
-      "/v2/commands/set-case-organization-role",
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
       expect(isAllowedPostPath(path), path).toBe(false);
@@ -446,19 +445,20 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("keeps the twelve evidence-bound V2 command routes unreachable through this Worker", async () => {
+  it("allows six case commands and keeps the remaining evidence-bound routes unreachable", async () => {
     // The command boundary EXISTS in apps/api: POST /v2/commands/* records durable human
-    // decisions -- six about staged evidence (including confirm-person-from-evidence), and six
-    // about a commercial case, which include opening one, naming who is asking, and moving it
-    // through its stages. Building that boundary and letting a browser reach it are two separate
-    // decisions, and only the first has been taken. Until the second is taken deliberately, the
-    // Worker forwards neither the method nor the path -- so the operator workspace stays a
-    // preview by construction rather than by discipline.
+    // decisions -- six about staged evidence (including confirm-person-from-evidence), and nine
+    // about a commercial case. Building that boundary and letting a browser reach it are two
+    // separate decisions. The second has been taken for exactly six case commands, the ones the
+    // case drawer uses: advance-case-stage («Cambiar etapa»), record-case-won («Marcar
+    // ganada»), resolve-current-revision («Elegir revisión vigente») and record-case-quotation
+    // («Registrar cotización», «Nueva revisión»). Every other one stays refused, as POST and as GET.
     //
     // The list is written out in full on purpose. A route added to apps/api and forgotten
     // here would be forgotten silently; a route added here that does not exist costs one
     // redundant assertion, which is the cheaper mistake.
-    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const { CASE_COMMAND_POST_PATHS, isAllowedCaseCommandPostPath, isAllowedPostPath, isAllowedUpstreamPath } =
+      await import("./allowlist");
     for (const path of [
       // evidence review
       "/v2/commands/keep-evidence-pending",
@@ -467,16 +467,66 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/attach-contact-address",
       "/v2/commands/attribute-sender-organization",
       "/v2/commands/confirm-person-from-evidence",
-      // the commercial case
+      // the commercial case, minus the six the drawer uses
       "/v2/commands/open-commercial-case",
-      "/v2/commands/link-case-evidence",
+      "/v2/commands/record-case-interest",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+    const allowed = [
+      "/v2/commands/advance-case-stage",
       "/v2/commands/add-case-organization",
       "/v2/commands/set-case-organization-role",
-      "/v2/commands/record-case-interest",
-      "/v2/commands/advance-case-stage",
+      "/v2/commands/record-case-won",
+      "/v2/commands/resolve-current-revision",
+      "/v2/commands/record-case-quotation",
+      "/v2/commands/link-case-evidence",
+      // W11 tasks: «En pausa hasta…», «Hecho», «Retomar ahora».
+      "/v2/commands/create-task",
+      "/v2/commands/complete-task",
+      "/v2/commands/cancel-task",
+    ];
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(10);
+    for (const path of allowed) {
+      expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(true);
+      // A command is never a read.
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
+  it("matches the allowed case command paths exactly, never a neighbour", async () => {
+    const { isAllowedPostPath, marketingCommandMaxBytes } = await import("./allowlist");
+    expect(marketingCommandMaxBytes("/v2/commands/advance-case-stage")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/set-case-organization-role")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/record-case-won")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/resolve-current-revision")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/record-case-quotation")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/link-case-evidence")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/create-task")).toBe(16_384);
+    for (const path of [
+      "/v2/commands/advance-case-stage/",
+      "/v2/commands/advance-case-stage-all",
+      "/v2/commands/record-case-won/x",
+      "/v2/commands/record-case-lost",
+      "/v2/commands/record-case-wonder",
+      "/v2/commands/RECORD-CASE-WON",
+      "/v2/commands/correct-case-stage",
+      "/v2/commands/unlink-case-evidence",
+      "/v2/commands/resolve-current-revision/",
+      "/v2/commands/resolve-current-revisions",
+      "/v2/commands/record-case-quotation/x",
+      "/v2/commands/record-historical-quotation",
+      "/v2/commands/void-historical-quote-revision",
+      "/v2/commands/RECORD-CASE-QUOTATION",
+      "/v2/commands/create-task/",
+      "/v2/commands/create-tasks",
+      "/v2/commands/delete-task",
+      "/v2/commands/update-task",
+      "/v2/commands/cancel-task/x",
     ]) {
-      expect(isAllowedPostPath(path)).toBe(false);
-      expect(isAllowedUpstreamPath(path)).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
     }
   });
 });
@@ -570,6 +620,66 @@ describe("CRM part A: confirm an institution, suggested people", () => {
       "/v2/commands/confirm-organization-record/extra",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("forwards GET of one case's notes by its exact path, never as a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${uuid}/notes`)).toBe(true);
+    expect(isAllowedPostPath(`/v2/workspace/opportunities/${uuid}/notes`)).toBe(false);
+    for (const p of [
+      `/v2/workspace/opportunities/${uuid}`,
+      `/v2/workspace/opportunities/${uuid}/notes/`,
+      `/v2/workspace/opportunities/${uuid}/notes/x`,
+      `/v2/workspace/opportunities/${uuid}/events`,
+      `/v2/workspace/opportunities/${uuid.toUpperCase()}/notes`,
+      "/v2/workspace/opportunities/not-a-uuid/notes",
+      "/v2/workspace/opportunities",
+    ]) {
+      expect(isAllowedUpstreamPath(p), p).toBe(false);
+    }
+  });
+
+  it("forwards GET of one case's mail documents by its exact path, never as a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${uuid}/mail-documents`)).toBe(true);
+    expect(isAllowedPostPath(`/v2/workspace/opportunities/${uuid}/mail-documents`)).toBe(false);
+    for (const p of [
+      `/v2/workspace/opportunities/${uuid}/mail-documents/`,
+      `/v2/workspace/opportunities/${uuid}/mail-documents/x`,
+      `/v2/workspace/opportunities/${uuid}/mail`,
+      `/v2/workspace/opportunities/${uuid.toUpperCase()}/mail-documents`,
+      "/v2/workspace/opportunities/not-a-uuid/mail-documents",
+    ]) {
+      expect(isAllowedUpstreamPath(p), p).toBe(false);
+    }
+  });
+
+  it("allows only the UUID-scoped cross-thread quote-candidate read", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    const path = `/v2/workspace/opportunities/${uuid}/quote-candidates`;
+    expect(isAllowedUpstreamPath(path)).toBe(true);
+    expect(isAllowedPostPath(path)).toBe(false);
+    for (const refused of [
+      path + "/", path + "/x",
+      `/v2/workspace/opportunities/${uuid.toUpperCase()}/quote-candidates`,
+      "/v2/workspace/opportunities/not-a-uuid/quote-candidates",
+    ]) expect(isAllowedUpstreamPath(refused)).toBe(false);
+  });
+
+  it("permits only an exact case UUID for read-only PO suggestions", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    const path = `/v2/workspace/opportunities/${uuid}/purchase-order-candidates`;
+    expect(isAllowedUpstreamPath(path)).toBe(true);
+    expect(isAllowedPostPath(path)).toBe(false);
+    for (const invalid of [path + "/", path + "/x",
+      "/v2/workspace/opportunities/not-a-uuid/purchase-order-candidates",
+      `/v2/workspace/opportunities/${uuid.toUpperCase()}/purchase-order-candidates`]) {
+      expect(isAllowedUpstreamPath(invalid)).toBe(false);
     }
   });
 
@@ -696,12 +806,29 @@ describe("V1 surfaces are refused on the browser boundary", () => {
   });
 });
 
+describe("mail triage review", () => {
+  it("allows the queue as an exact GET and the verdict as an exact POST, and nothing near them", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/triage-readings")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/workspace/triage-readings?status=reviewed&limit=50")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/triage-readings")).toBe(false);
+    expect(isAllowedPostPath("/v2/commands/review-triage")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/commands/review-triage")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/review-triage")).toBe(131_072);
+    for (const path of ["/v2/workspace/triage-readings/", "/v2/workspace/triage-readings/x", "/v2/workspace/triage",
+                        "/v2/commands/review-triage/", "/v2/commands/review-triage-all", "/v2/commands/REVIEW-TRIAGE"]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+});
+
 describe("email → cases rules (admin only upstream)", () => {
   it("allows the dry run as an exact GET and the two commands as exact POSTs", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");
     expect(isAllowedUpstreamPath("/v2/workspace/mail-rules/preview")).toBe(true);
     expect(isAllowedPostPath("/v2/workspace/mail-rules/preview")).toBe(false);
-    for (const path of ["/v2/commands/apply-mail-rules", "/v2/commands/undo-mail-rule-action"]) {
+    for (const path of ["/v2/commands/apply-mail-rules", "/v2/commands/undo-mail-rule-action", "/v2/commands/set-auto-mail-rules"]) {
       expect(isAllowedPostPath(path), path).toBe(true);
       expect(isAllowedUpstreamPath(path), path).toBe(false);
       expect(marketingCommandMaxBytes(path)).toBe(131_072);
@@ -718,11 +845,13 @@ describe("email → cases rules (admin only upstream)", () => {
       "/v2/commands/apply-mail-rules/",
       "/v2/commands/apply-mail-rules-all",
       "/v2/commands/undo-mail-rule-action/x",
+      "/v2/commands/set-auto-mail-rules/",
+      "/v2/commands/set-auto-mail-rules-all",
+      "/v2/commands/auto-mail-rules",
       "/v2/commands/APPLY-MAIL-RULES",
-      // The case commands the rules call stay unreachable from the browser.
+      // The case commands the rules call stay unreachable from the browser, except the four the
+      // case drawer uses (CASE_COMMAND_POST_PATHS), which have their own list.
       "/v2/commands/open-commercial-case",
-      "/v2/commands/advance-case-stage",
-      "/v2/commands/link-case-evidence",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
       expect(isAllowedUpstreamPath(path), path).toBe(false);
@@ -735,6 +864,7 @@ describe("Catalog 1a", () => {
   const GET_PATHS = [
     "/v2/catalog/products",
     `/v2/catalog/products/${uuid}`,
+    "/v2/catalog/suppliers",
     `/v2/catalog/suppliers/${uuid}/terms`,
     "/v2/catalog/parameters",
     "/v2/catalog/fx",
@@ -776,6 +906,7 @@ describe("Catalog 1a", () => {
       "/v2/catalog/parameters/extra",
       "/v2/catalog/price-history/extra",
       `/v2/catalog/suppliers/${uuid}`,
+      "/v2/catalog/suppliers/",
       `/v2/catalog/suppliers/${uuid}/terms/`,
       `/v2/catalog/suppliers/${uuid.toUpperCase()}/terms`,
       `/v2/catalog/images/${uuid}`,

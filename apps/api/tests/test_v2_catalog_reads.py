@@ -115,6 +115,23 @@ def test_detail_includes_history_terms_images_notes(disposable_database):
 
 
 @needs_db
+def test_suppliers_lists_every_supplier_with_products_by_kind(disposable_database):
+    dsn = disposable_database
+    supplier, other = _org(dsn, "supplier"), _org(dsn, "supplier")
+    _, eq = _seed_product(dsn, model="SUP-EQ", name="e", name_es="Equipo", kind="equipment")
+    _, c1 = _seed_product(dsn, model="SUP-C1", name="c", name_es="Insumo uno", kind="consumable")
+    _, c2 = _seed_product(dsn, model="SUP-C2", name="c", name_es="Insumo dos", kind=None)
+    for prod in (eq, c1, c2):
+        _obs(dsn, prod, supplier, as_of="2026-01-01T00:00Z", price="10")
+    _obs(dsn, eq, supplier, as_of="2026-02-01T00:00Z", price="11")  # a second observation counts once
+    _obs(dsn, c1, other, as_of="2026-01-01T00:00Z", price="9")
+    items = {i["id"]: i for i in _reads(dsn).suppliers()["items"]}
+    assert items[str(supplier)]["products"] == 3
+    assert items[str(supplier)]["by_kind"] == {"consumable": 1, "equipment": 1, "unclassified": 1}
+    assert items[str(other)]["by_kind"] == {"consumable": 1}
+
+
+@needs_db
 def test_supplier_terms_read(disposable_database):
     dsn = disposable_database
     supplier = _org(dsn, "supplier")

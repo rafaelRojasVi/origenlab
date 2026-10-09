@@ -19,6 +19,8 @@ from origenlab_api.v2.crm_workspace import (
     DriveLedgerError,
     compose_drive_archive,
     compose_pipeline,
+    last_contacts,
+    live_drive_overview,
     load_drive_ledgers,
 )
 from origenlab_api.v2.crm_workspace_routes import workspace_router
@@ -213,6 +215,126 @@ def test_card_carries_quote_revision_gmail_and_drive(tmp_path: Path) -> None:
     assert "_recipients" not in card["latest_revision"]
 
 
+def test_card_carries_the_versions_the_drawer_actions_compare_against() -> None:
+    """«Cambiar etapa» / «Marcar ganada» send the case version; «Confirmar institución» the
+    organization's. Both come from the card, so the drawer never guesses one."""
+    card = compose_pipeline(
+        [_opp("o1", version=4, organization_version=2, organization_confirmation="machine_proposed")],
+        [], [], [], {}, [], {},
+    )[0]
+    assert card["version"] == 4
+    assert card["organization"] == {
+        "organization_id": "org-1",
+        "name": "Institución Ejemplo",
+        "confirmation": "machine_proposed",
+        "version": 2,
+    }
+
+
+
+def test_confirmed_requester_is_independent_of_organization_profile_confirmation() -> None:
+    """An unconfirmed organization record does not undo a human-confirmed case role."""
+    role = {
+        "opportunity_organization_id": "relation-1",
+        "opportunity_id": "o1",
+        "organization_id": "org-1",
+        "role": "requesting_institution",
+        "name": "Institución Ejemplo",
+        "confirmation": "confirmed",
+        "organization_version": 2,
+    }
+    card = compose_pipeline(
+        [_opp("o1", organization_confirmation="machine_proposed")],
+        [role], [], [], {}, [], {},
+    )[0]
+    assert card["organization"]["confirmation"] == "machine_proposed"
+    assert card["requesting_institution_confirmation"] == "confirmed"
+
+
+def test_machine_proposed_mention_stays_unassigned_but_can_be_reviewed() -> None:
+    """A machine proposal stays 'mentioned' and carries an exact reviewable row ID."""
+    mention = {
+        "opportunity_organization_id": "relation-2",
+        "opportunity_id": "o1",
+        "organization_id": "org-2",
+        "role": "mentioned",
+        "name": "Institución Mencionada",
+        "confirmation": "machine_proposed",
+        "organization_version": 1,
+    }
+    card = compose_pipeline(
+        [_opp("o1", stage="lead", organization_id=None, organization_name=None)],
+        [mention], [], [], {}, [], {},
+    )[0]
+    assert card["organization"] is None
+    assert card["requesting_institution_confirmation"] is None
+    assert card["pending_institution_mentions"] == [{
+        "opportunity_organization_id": "relation-2",
+        "organization_id": "org-2",
+        "name": "Institución Mencionada",
+    }]
+    assert any(x["code"] == "no_requesting_institution" for x in card["attention"])
+
+
+def test_no_unreviewed_row_id_is_fabricated_for_a_mentioned_institution() -> None:
+    """Older input projections without relationship IDs cannot expose a write target."""
+    card = compose_pipeline(
+        [_opp("o1", stage="lead", organization_id=None, organization_name=None)],
+        [{
+            "opportunity_id": "o1", "organization_id": "org-2",
+            "role": "mentioned", "name": "Institución Mencionada",
+            "confirmation": "machine_proposed",
+        }], [], [], {}, [], {},
+    )[0]
+    assert card["pending_institution_mentions"] == []
+
+
+def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None:
+    """«Último contacto»: the newest email OrigenLab sent and the newest it received."""
+    rows = [
+        # Ours, by the capture's direction; then a later one, by the sender's domain.
+        {"opportunity_id": "o1", "sent_at": "2026-09-01T10:00:00-03:00", "subject": "Cotización",
+         "gmail_message_id": "m1", "sender": "Ventas <contacto@origenlab.cl>", "direction_hint": None,
+         "comms_direction": "outbound"},
+        {"opportunity_id": "o1", "sent_at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
+         "gmail_message_id": "m3", "sender": "contacto@origenlab.cl", "direction_hint": None,
+         "comms_direction": None},
+        # The client's reply, staged with no capture row.
+        {"opportunity_id": "o1", "sent_at": "2026-09-10T09:00:00Z", "subject": "Re: Cotización",
+         "gmail_message_id": "m2", "sender": "Persona <persona@ejemplo.invalid>", "direction_hint": None,
+         "comms_direction": None},
+        # The same message reached through a second thread of the case: counted once.
+        {"opportunity_id": "o1", "sent_at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
+         "gmail_message_id": "m3", "sender": "contacto@origenlab.cl", "direction_hint": None,
+         "comms_direction": None},
+        # A staged record of ours carries `direction_hint`; a date that is not a date is skipped.
+        {"opportunity_id": "o2", "sent_at": "2026-08-01T12:00:00+00:00", "subject": None,
+         "gmail_message_id": "m4", "sender": None, "direction_hint": "sent", "comms_direction": None},
+        {"opportunity_id": "o2", "sent_at": "ayer", "subject": None, "gmail_message_id": "m5",
+         "sender": "persona@ejemplo.invalid", "direction_hint": None, "comms_direction": None},
+    ]
+    out = last_contacts(rows)
+    assert out["o1"] == {
+        "outbound": {"at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
+                     "url": "https://mail.google.com/mail/u/0/#all/m3"},
+        "inbound": {"at": "2026-09-10T09:00:00+00:00", "subject": "Re: Cotización",
+                    "url": "https://mail.google.com/mail/u/0/#all/m2", "sender_name": "Persona"},
+    }
+    assert out["o2"]["outbound"]["at"] == "2026-08-01T12:00:00+00:00"
+    assert out["o2"]["inbound"] is None
+
+    cards = compose_pipeline([_opp("o1"), _opp("o3")], [], [], [], {}, [], {}, out)
+    assert cards[0]["last_contact"] == out["o1"]
+    assert cards[1]["last_contact"] == {"outbound": None, "inbound": None}
+
+
+def test_mail_display_name_never_contains_an_address() -> None:
+    for sender in ('person@example.invalid', '"person@example.invalid" <person@example.invalid>'):
+        touch = last_contacts([{"opportunity_id": "o", "sent_at": "2026-10-01T12:00:00Z",
+                                "sender": sender, "comms_direction": "inbound"}])["o"]["inbound"]
+        assert "sender_name" not in touch
+
+
 def test_two_active_revisions_block_the_case() -> None:
     cards = compose_pipeline(
         [_opp("o1")],
@@ -309,6 +431,34 @@ def test_drive_folders_are_newest_quote_number_first_not_text_order(tmp_path: Pa
     ]
 
 
+def test_overview_drive_counts_live_worker_links_even_when_not_in_boot_ledger() -> None:
+    """The first quote after boot is archived asynchronously, without a Render API restart."""
+    old_ledger = {SHA_A: object()}
+    status = live_drive_overview(
+        {SHA_A, SHA_B, SHA_C},
+        {SHA_A, SHA_B},  # SHA_B was just filed by the worker after API startup.
+        old_ledger,  # no refreshed archive_links.jsonl on the API container.
+    )
+    assert status == {
+        "configured": True, "documents": 2,
+        "revisions_with_drive_file": 2, "revisions_total": 3,
+    }
+    assert live_drive_overview({SHA_A}, set(), {}) == {
+        "configured": False, "documents": 0,
+        "revisions_with_drive_file": 0, "revisions_total": 1,
+    }
+
+
+def test_overview_provenance_matches_running_v2_system() -> None:
+    assert ENTITY_NOTES["messages"]["provenance"] == "partial"
+    assert "sincronizador Gmail V2" in ENTITY_NOTES["messages"]["note"]
+    assert ENTITY_NOTES["products"]["provenance"] == "imported"
+    assert ENTITY_NOTES["tasks"]["provenance"] == "partial"
+    assert ENTITY_NOTES["persons"]["provenance"] == "partial"
+    assert ENTITY_NOTES["drive_links_in_crm"]["provenance"] == "imported"
+    assert "evidence.source_record" in ENTITY_NOTES["drive_links_in_crm"]["note"]
+
+
 def test_every_counted_entity_has_a_provenance_note() -> None:
     from origenlab_api.v2.crm_workspace import _COUNT_SQL
 
@@ -336,6 +486,10 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/people/merge-preview",
         "/v2/workspace/organizations/{organization_id}/authoring",
         "/v2/workspace/person-suggestions",
+        "/v2/workspace/opportunities/{opportunity_id}/notes",
+        "/v2/workspace/opportunities/{opportunity_id}/mail-documents",
+        "/v2/workspace/opportunities/{opportunity_id}/quote-candidates",
+        "/v2/workspace/opportunities/{opportunity_id}/purchase-order-candidates",
         "/v2/workspace/mail-sync",
         "/v2/workspace/mail-quote-numbers",
         "/v2/workspace/marketing",
@@ -372,3 +526,38 @@ def test_workspace_routes_require_an_operator() -> None:
     for path in ("overview", "pipeline", "providers", "marketing", "drive", "review"):
         assert client.get(f"/v2/workspace/{path}").status_code == 401
         assert client.post(f"/v2/workspace/{path}").status_code == 405
+
+
+def test_first_address_keeps_a_quoted_display_name_with_a_comma_whole() -> None:
+    from origenlab_api.v2.crm_workspace import _first_address
+
+    assert _first_address('"Ruiz, Ana" <ana@example.cl>, otro@example.cl') == ("Ruiz, Ana <ana@example.cl>", 2)
+    assert _first_address("uno@example.cl; dos@example.cl") == ("uno@example.cl", 2)
+    assert _first_address(None) == (None, 0)
+
+
+def test_drive_file_records_link_revisions_and_a_ledger_link_wins() -> None:
+    """The worker's `drive_file` records (apps/worker drive_filing.py) reach the cards through the
+    revisions read; a document the laptop ledger also names keeps the ledger's link."""
+    from origenlab_api.v2.crm_workspace import DriveLink, drive_links_from_records
+
+    sha_a, sha_b, sha_c = "a" * 64, "b" * 64, "c" * 64
+    ledger = {sha_b: DriveLink(document_sha256=sha_b, file_id="ledger-file", file_url="https://drive.example/l",
+                               folder_id="lf", case_key="k", quote_number="01244-26", revision=1,
+                               original_filename="viejo.pdf", archive_status="archived_verified",
+                               ledger_crm_status=None, lifecycle=None, gmail_message_id=None, ledger="run-1")}
+    revisions = [
+        {"pdf_sha256": sha_a, "drive_record": json.dumps({
+            "drive_file_id": "f-a", "drive_folder_id": "folder-a", "case_key": "case-1",
+            "file_name": "01250-26 r1 — Cliente.pdf", "quote_number": "01250-26", "revision": 1})},
+        {"pdf_sha256": sha_b, "drive_record": {"drive_file_id": "other", "drive_folder_id": "x"}},
+        {"pdf_sha256": sha_c, "drive_record": None},
+        {"pdf_sha256": None, "drive_record": {"drive_file_id": "orphan"}},
+    ]
+    links = drive_links_from_records(revisions, ledger)
+    assert set(links) == {sha_a, sha_b}
+    assert links[sha_b].file_id == "ledger-file"
+    a = links[sha_a].as_dict()
+    assert (a["file_id"], a["folder_id"], a["original_filename"]) == ("f-a", "folder-a", "01250-26 r1 — Cliente.pdf")
+    assert a["file_url"] == "https://drive.google.com/file/d/f-a/view"
+    assert a["folder_url"] == "https://drive.google.com/drive/folders/folder-a"
