@@ -91,9 +91,11 @@ class CockpitRepository:
                 select count(*) from (
                   select q.quote_number
                   from crm.quote q
+                  join crm.opportunity op on op.id = q.opportunity_id
                   where q.number_origin = 'printed_historical'
                   group by q.quote_number
                   having count(distinct q.opportunity_id) > 1
+                     and bool_or(op.closed_at is null and op.stage not in ('won', 'lost', 'abandoned'))
                 ) sub
             """)
             shared_printed = int(cur.fetchone()[0])
@@ -182,7 +184,11 @@ class CockpitRepository:
 
     def work_queue(self, limit: int, offset: int) -> dict[str, Any]:
         """Typed work items: every blocker kind first, ``pending_evidence`` last, each group oldest
-        first, then by kind (a steady Gmail inflow must not push a blocker off the page)."""
+        first, then by kind (a steady Gmail inflow must not push a blocker off the page).
+
+        A won, lost or abandoned case never blocks (owner decision 2026-10-09): its duplicate
+        revisions are left out, and a shared printed number counts only while one of its cases
+        is still open."""
         with self._read() as cur:
             cur.execute("""
                 with items as (
@@ -230,7 +236,10 @@ class CockpitRepository:
                     q.quote_number,
                     q.created_at
                   from crm.quote q
-                  where (
+                  join crm.opportunity op on op.id = q.opportunity_id
+                  where op.closed_at is null
+                    and op.stage not in ('won', 'lost', 'abandoned')
+                    and (
                     select count(*)
                     from crm.quote_revision qr
                     where qr.quote_id = q.id
@@ -319,13 +328,19 @@ class CockpitRepository:
                  where kind = 'document_reference' and resolution = 'unresolved'
                 union all
                 select 'canonical_undetermined', count(*) from (
-                    select quote_id from crm.quote_revision
-                     where status <> 'void' and superseded_by_revision_no is null
-                     group by quote_id having count(*) > 1) s1
+                    select qr.quote_id from crm.quote_revision qr
+                      join crm.quote q on q.id = qr.quote_id
+                      join crm.opportunity op on op.id = q.opportunity_id
+                     where qr.status <> 'void' and qr.superseded_by_revision_no is null
+                       and op.closed_at is null and op.stage not in ('won', 'lost', 'abandoned')
+                     group by qr.quote_id having count(*) > 1) s1
                 union all
                 select 'shared_printed_number', count(*) from (
-                    select quote_number from crm.quote where number_origin = 'printed_historical'
-                     group by quote_number having count(distinct opportunity_id) > 1) s2
+                    select q.quote_number from crm.quote q
+                      join crm.opportunity op on op.id = q.opportunity_id
+                     where q.number_origin = 'printed_historical'
+                     group by q.quote_number having count(distinct q.opportunity_id) > 1
+                        and bool_or(op.closed_at is null and op.stage not in ('won', 'lost', 'abandoned'))) s2
                 union all
                 select 'case_without_institution', count(*) from crm.opportunity op
                  where op.stage = 'lead' and op.organization_id is null

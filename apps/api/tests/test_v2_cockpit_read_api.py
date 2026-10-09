@@ -511,6 +511,58 @@ def test_db_work_queue_lists_every_other_kind_before_pending_evidence(world) -> 
     assert result["counts"]["pending_evidence"] >= 1 and result["total"] == sum(result["counts"].values())
 
 
+@needs_db
+def test_db_work_queue_drops_duplicate_revisions_once_the_case_closes(world) -> None:
+    """Owner decision 2026-10-09: a closed case never blocks. Two live revisions on an open case
+    are a blocker; the same two after the case is abandoned are not."""
+    import psycopg
+
+    from origenlab_api.v2.cockpit_repository import CockpitRepository
+
+    tag = uuid.uuid4().hex[:10]
+    with psycopg.connect(world["dsn"], autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "insert into crm.opportunity (title, stage, owner_operator_id, origin_source_record_id)"
+            " values (%s, 'lead', %s, %s) returning id::text",
+            (f"Pytest closing {tag}", world["operator_id"], world["source_record_id"]),
+        )
+        opportunity_id = cur.fetchone()[0]
+        cur.execute(
+            "insert into crm.quote (opportunity_id, quote_number, number_origin, origin_source_record_id,"
+            " created_by_operator_id) values (%s, %s, 'printed_historical', %s, %s) returning id::text",
+            (opportunity_id, f"PYTC-{tag}", world["source_record_id"], world["operator_id"]),
+        )
+        quote_id = cur.fetchone()[0]
+        for no, sha in ((1, "b" * 64), (2, "c" * 64)):
+            cur.execute(
+                "insert into crm.quote_revision (quote_id, revision_no, status, origin,"
+                " origin_source_record_id, pdf_sha256, sent_at, created_by_operator_id)"
+                " values (%s, %s, 'sent', 'historical_import', %s, %s, '2026-05-01T10:00:00-04:00', %s)",
+                (quote_id, no, world["source_record_id"], sha, world["operator_id"]),
+            )
+
+    repo = CockpitRepository(psycopg.connect, runtime_dsn(world["dsn"]))
+
+    def undetermined_quotes() -> set[str]:
+        items = repo.work_queue(limit=1000, offset=0)["items"]
+        return {i["subject_ids"]["quote_id"] for i in items if i["kind"] == "canonical_undetermined"}
+
+    assert quote_id in undetermined_quotes()
+    before = repo.work_queue(limit=1, offset=0)["counts"]["canonical_undetermined"]
+
+    with psycopg.connect(world["dsn"], autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "update crm.opportunity set stage = 'abandoned', closed_at = now(), close_reason = 'Sin respuesta'"
+            " where id = %s",
+            (opportunity_id,),
+        )
+
+    assert quote_id not in undetermined_quotes()
+    assert repo.work_queue(limit=1, offset=0)["counts"]["canonical_undetermined"] == before - 1
+
+
 # ──────────────────────────────────── opportunities ─────────────────────────
 
 
