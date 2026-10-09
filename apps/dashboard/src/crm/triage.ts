@@ -55,6 +55,8 @@ export interface TriageReading {
   version: string;
   subject: string | null;
   sender: string | null;
+  /** The sender's domain belongs to a registered supplier or manufacturer. */
+  sender_is_supplier?: boolean;
   sent_at: string | null;
   thread_id: string | null;
   class: string | null;
@@ -129,6 +131,43 @@ export function approvalMove(reading: Pick<TriageReading, "stage" | "cases">): {
   const only = reading.cases[0];
   if (only.stage === to) return null;
   return stagePath(only.stage, to) ? { case: only, to } : null;
+}
+
+/** Why an email is not asked about on «Hoy». */
+export type HiddenReason = "en un caso" | "proveedor" | "aviso automático" | "reenvío antiguo" | "mismo hilo";
+
+const AUTOMATIC_SENDER = /^(no-?reply|do-?not-?reply|mensajeria|newsletter|news|marketing|notifications?|info|customer\.assistance)$/;
+const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce", "calendar", "unsubscribe", "empty", "outbound"]);
+
+function hiddenReason(r: TriageReading): Exclude<HiddenReason, "mismo hilo"> | null {
+  if (r.cases.length > 0) return "en un caso";
+  const [local = "", domain = ""] = (r.sender ?? "").toLowerCase().split("@");
+  if (domain.includes("labdelivery")) return "reenvío antiguo";
+  if (r.sender_is_supplier || r.intent === "supplier_offer") return "proveedor";
+  if (AUTOMATIC_SENDER.test(local) || AUTOMATIC_CLASSES.has(r.class ?? "")) return "aviso automático";
+  return null;
+}
+
+/**
+ * The emails «Hoy» asks about: written by a person, on no case, not from a supplier, not an
+ * automatic notice and not a forward from the old Labdelivery mailbox — one per thread, the
+ * newest. The rest are only counted, by reason.
+ */
+export function sortInbox(items: TriageReading[]): { ask: TriageReading[]; hidden: Partial<Record<HiddenReason, number>> } {
+  const hidden: Partial<Record<HiddenReason, number>> = {};
+  const count = (k: HiddenReason) => { hidden[k] = (hidden[k] ?? 0) + 1; };
+  const newest = [...items].sort((a, b) => (b.sent_at ?? "").localeCompare(a.sent_at ?? ""));
+  const seen = new Set<string>();
+  const ask: TriageReading[] = [];
+  for (const r of newest) {
+    const why = hiddenReason(r);
+    if (why) { count(why); continue; }
+    const thread = r.thread_id ?? r.assertion_id;
+    if (seen.has(thread)) { count("mismo hilo"); continue; }
+    seen.add(thread);
+    ask.push(r);
+  }
+  return { ask, hidden };
 }
 
 export const fetchTriageReadings = (status: TriageStatus = "pending") =>

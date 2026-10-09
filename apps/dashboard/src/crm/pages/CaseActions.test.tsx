@@ -219,7 +219,7 @@ describe("case command helpers", () => {
     render(withSession(session("sales"), <PipelinePage initialOpportunityId={CASE} />));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Solicitud de balanza ficticia")).toBeInTheDocument();
-    expect(within(dialog).getByText("Persona Ficticia · nombre en el correo")).toBeInTheDocument();
+    expect(within(dialog).getByText("Persona Ficticia")).toBeInTheDocument();
     expect(within(dialog).getByRole("link", { name: "Abrir correo en Gmail" })).toHaveAttribute("href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/example1");
     fireEvent.click(within(dialog).getByRole("button", { name: "No es una solicitud" }));
@@ -338,7 +338,10 @@ describe("case drawer actions", () => {
         </>,
       ),
     );
-    return screen.findByRole("dialog");
+    const dialog = await screen.findByRole("dialog");
+    // Every action, including the ones under «Más…».
+    fireEvent.click(within(dialog).getByRole("button", { name: "Más…" }));
+    return dialog;
   }
 
   it("requires exact printed quotation reference before linking a standalone OC and recording a win", async () => {

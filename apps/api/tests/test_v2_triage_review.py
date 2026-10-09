@@ -164,7 +164,7 @@ def world(db):
                         "returning id", (mailbox, gid, thread, subject))
             mid = cur.fetchone()[0]
             cur.execute("insert into comms.message_participant (message_id, role, address_norm) "
-                        "values (%s, 'from', %s)", (mid, f"cliente-{tag}@lab.example"))
+                        "values (%s, 'from', %s)", (mid, f"cliente-{tag}@lab-{tag}.example"))
             cur.execute("insert into evidence.assertion (source_record_id, kind, value_norm, value) values "
                         "(%s, 'message_triage', 'triage:v1', %s) returning id::text", (sid, Jsonb(value)))
             records.append((sid, cur.fetchone()[0]))
@@ -174,7 +174,8 @@ def world(db):
         cur.execute("insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
                     "linked_by_operator_id) values (%s, %s, 'mentions', %s)", (case_id, records[0][0], operator_id))
     return {"db": db, "operator_id": operator_id, "case_id": case_id,
-            "read": records[0][1], "noise": records[1][1], "noise_source": records[1][0]}
+            "read": records[0][1], "noise": records[1][1], "noise_source": records[1][0],
+            "sender": f"cliente-{tag}@lab-{tag}.example"}
 
 
 def _repo(world):
@@ -211,6 +212,21 @@ def test_the_queue_lists_what_the_model_read_with_its_case_stage_and_hides_noise
     assert item["class"] == "quote_followup" and item["stage"] == "negotiating"
     assert item["cases"][0]["opportunity_id"] == world["case_id"] and item["cases"][0]["stage"] == "lead"
     assert item["subject"] == "RE: Cotización balanzas" and item["review"] is None
+
+
+@needs_db
+def test_the_queue_says_when_the_sender_is_a_registered_supplier(world) -> None:
+    def flag():
+        items = {i["assertion_id"]: i for i in _repo(world).readings(status="all", limit=200)["items"]}
+        return items[world["read"]]["sender_is_supplier"]
+
+    domain = world["sender"].split("@", 1)[1]
+    assert flag() is False
+    org = _owner(world, "insert into crm.organization (kind, name, confirmation) values "
+                        "('supplier', 'Proveedor Ficticio', 'confirmed') returning id")[0][0]
+    _owner(world, "insert into crm.organization_domain (organization_id, domain_norm, scope) "
+                  "values (%s, %s, 'exclusive') returning id", org, domain)
+    assert flag() is True
 
 
 @needs_db

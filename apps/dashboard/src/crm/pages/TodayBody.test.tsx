@@ -192,10 +192,29 @@ afterEach(() => {
 });
 
 describe("Hoy actions", () => {
-  it("offers the system's data page to an admin only — never a link that leads nowhere", () => {
+  it("never repeats the sidebar's «Datos» link", () => {
     stub();
-    renderToday([card()], "sales");
+    renderToday([card()], "admin");
     expect(screen.queryByRole("button", { name: /Estado del sistema|Acciones del correo|estado de los datos/ })).not.toBeInTheDocument();
+  });
+
+  it("shows a blocked case a client wrote on once, in «Te toca responder», with «Resolver»", () => {
+    stub();
+    const blocked = card({
+      stage: "lead", organization: null, quotes: [], quote_numbers: [], latest_revision: null, status: "blocked",
+      attention: [{ code: "case_without_requester", label: "Caso sin institución solicitante", blocking: true }],
+      last_contact: { outbound: null, inbound: { at: "2026-10-05T12:00:00Z", subject: null, url: null } },
+    } as Partial<OpportunityCardData>);
+    const quiet = card({
+      stage: "lead", organization: null, quotes: [], quote_numbers: [], latest_revision: null, status: "blocked", title: "Caso callado",
+      attention: [{ code: "case_without_requester", label: "Caso sin institución solicitante", blocking: true }],
+    } as Partial<OpportunityCardData>);
+    renderToday([blocked, quiet], "sales");
+    expect(screen.getAllByText("Caso sin institución solicitante")).toHaveLength(2); // one row each, never twice
+    const replies = screen.getByText("Te toca responder").closest("section, div[class*=rounded]") as HTMLElement;
+    expect(within(replies).getByText(/Escribió el/)).toBeInTheDocument();
+    expect(within(replies).getByRole("button", { name: "Resolver" })).toBeInTheDocument();
+    expect(within(replies).queryByRole("button", { name: "No requiere respuesta" })).not.toBeInTheDocument();
   });
 
   it("a row the reload still returns comes back instead of staying hidden", async () => {
@@ -317,7 +336,8 @@ describe("Hoy actions", () => {
       "href",
       "https://mail.example.cl/m",
     );
-    expect(screen.getByTestId("today-no-tasks")).toBeInTheDocument();
+    // Nothing else due: the empty «Otras tareas» panel is not drawn.
+    expect(screen.queryByText("Otras tareas de hoy")).not.toBeInTheDocument();
     fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
     fireEvent.click(within(row).getByRole("menuitem", { name: "Ya le escribí" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());

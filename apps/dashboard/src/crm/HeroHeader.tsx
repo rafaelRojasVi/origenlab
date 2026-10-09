@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { SANTIAGO } from "./marketing/calendar";
-import { asShared } from "./sharedAccount";
 
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
@@ -14,17 +13,14 @@ function santiagoParts(now: Date): { date: string; time: string } {
   return { date: `${weekday} ${Number(p.day)} de ${MONTHS[Number(p.month) - 1]}`, time: `${p.hour}:${p.minute}` };
 }
 
-const LINK =
-  "inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-white/25 px-4 text-sm font-semibold text-white transition-colors hover:border-[#5eead4] hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5eead4]";
-
 /**
  * «Hoy»'s greeting: the OrigenLab charcoal card with the logo's two teals, who is working, the
- * Santiago date and time, today's two counts and the three tools the team leaves the panel for.
+ * Santiago date and time and today's counts. Gmail, Drive and the website are in the top bar,
+ * on every page, so they are not repeated here.
  */
-export function HeroHeader({ name, counts, driveCasosUrl, now }: {
+export function HeroHeader({ name, counts, now }: {
   name: string;
-  counts: { decide: number; followUps: number } | null;
-  driveCasosUrl: string | null;
+  counts: { replies: number; decide: number; followUps: number } | null;
   now?: Date;
 }) {
   const [tick, setTick] = useState(() => now ?? new Date());
@@ -35,11 +31,6 @@ export function HeroHeader({ name, counts, driveCasosUrl, now }: {
   }, [now]);
   const { date, time } = santiagoParts(now ?? tick);
   const first = name.trim().split(/\s+/)[0] || "";
-  const links = [
-    { label: "Gmail", href: asShared("https://mail.google.com/mail/") },
-    { label: "Drive casos", href: asShared(driveCasosUrl ?? "https://drive.google.com/drive/my-drive") },
-    { label: "Sitio web", href: "https://origenlab.cl/" },
-  ];
   return (
     <header className="relative isolate overflow-hidden rounded-2xl bg-[#141617] px-6 py-7 text-[#ececeb] sm:px-9" data-testid="hero-header">
       <div aria-hidden="true" className="absolute inset-y-0 right-0 -z-10 w-[46%] bg-[#1d2022] [clip-path:polygon(14%_0,100%_0,100%_100%,0_100%)]" />
@@ -51,18 +42,20 @@ export function HeroHeader({ name, counts, driveCasosUrl, now }: {
           <h1 className="break-words text-3xl font-extrabold tracking-tight text-white sm:text-[2.4rem]">{first ? `Hola, ${first}` : "Hola"}</h1>
           <p className="text-[15px] text-[#b9bcbd]">
             {date} · <strong className="font-semibold tabular-nums text-white">{time}</strong>
-            {counts ? ` · ${counts.decide} por decidir · ${counts.followUps} seguimientos` : null}
+            {counts ? ` · ${countLine(counts)}` : null}
           </p>
         </div>
-        <nav aria-label="Accesos" className="flex flex-wrap gap-2.5">
-          {links.map((l) => (
-            <a key={l.label} href={l.href} target="_blank" rel="noopener noreferrer" className={LINK}>
-              {l.label} <span aria-hidden="true">↗</span>
-              <span className="sr-only"> (se abre en otra pestaña)</span>
-            </a>
-          ))}
-        </nav>
       </div>
     </header>
   );
+}
+
+/** «4 por responder · 22 seguimientos · 3 por decidir», leaving out what is zero. */
+export function countLine(c: { replies: number; decide: number; followUps: number }): string {
+  const parts = [
+    c.replies ? `${c.replies} por responder` : "",
+    c.followUps ? `${c.followUps} ${c.followUps === 1 ? "seguimiento" : "seguimientos"}` : "",
+    c.decide ? `${c.decide} por decidir` : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "todo al día";
 }

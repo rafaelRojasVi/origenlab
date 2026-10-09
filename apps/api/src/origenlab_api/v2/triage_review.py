@@ -114,8 +114,14 @@ with readings as (
 select r.id::text as assertion_id, r.source_record_id::text as source_record_id, r.value_norm as version,
        r.value, r.created_at, r.review,
        m.subject, m.internal_date as sent_at, m.direction, m.provider_thread_id as thread_id,
-       (select p.address_norm from comms.message_participant p
-         where p.message_id = m.id and p.role = 'from' limit 1) as sender,
+       snd.address_norm as sender,
+       -- The sender's domain belongs to a registered supplier or manufacturer.
+       exists (select 1 from crm.organization_domain d join crm.organization o on o.id = d.organization_id
+                where d.removed_at is null and d.domain_norm = split_part(snd.address_norm, '@', 2)
+                  and (o.kind in ('supplier', 'manufacturer')
+                       or exists (select 1 from crm.organization_relationship rel
+                                   where rel.organization_id = o.id and rel.role in ('supplier', 'manufacturer')
+                                     and (rel.valid_to is null or rel.valid_to > current_date)))) as sender_is_supplier,
        coalesce((select json_agg(json_build_object('opportunity_id', o.id, 'title', o.title, 'stage', o.stage,
                                                    'version', o.version) order by o.id)
                    from (select distinct o.id, o.title, o.stage, o.version
@@ -127,6 +133,8 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
   from readings r
   join evidence.source_record sr on sr.id = r.source_record_id
   join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
+  left join lateral (select p.address_norm from comms.message_participant p
+                      where p.message_id = m.id and p.role = 'from' limit 1) snd on true
  where (%(status)s = 'all' or (%(status)s = 'pending') = (r.review is null))
  order by m.internal_date desc, r.id
  limit %(limit)s
@@ -164,6 +172,7 @@ class TriageReviewRepository(CommandTransaction):
                 "version": row["version"],
                 "subject": row["subject"],
                 "sender": row["sender"],
+                "sender_is_supplier": bool(row["sender_is_supplier"]),
                 "sent_at": row["sent_at"].isoformat() if row["sent_at"] else None,
                 "thread_id": row["thread_id"],
                 "class": value.get("class"),
