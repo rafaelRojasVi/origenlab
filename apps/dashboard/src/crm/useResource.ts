@@ -81,7 +81,7 @@ function remember(load: object, key: string, data: unknown): void {
 export function useResource<T>(
   load: () => Promise<T>,
   deps: readonly unknown[] = [],
-): [ResourceState<T>, () => void, boolean] {
+): [ResourceState<T>, () => void, boolean, (change: (data: T) => T) => void] {
   const key = memoryKey(sessionScope(useAuthSession().session), deps);
   const [state, setState] = useState<ResourceState<T>>(() => {
     const kept = recall<T>(load, key);
@@ -129,5 +129,18 @@ export function useResource<T>(
   }, [tick, key, ...deps]);
 
   const reload = useCallback(() => setTick((n) => n + 1), []);
-  return [state, reload, refreshing && state.kind === "ready"];
+  // Apply a write's known effect to the answer on screen at once, before the reload confirms it.
+  // A page calls `reload` right after, so a wrong guess lives only until the server answers.
+  const patch = useCallback(
+    (change: (data: T) => T) => {
+      setState((prev) => {
+        if (prev.kind !== "ready") return prev;
+        const data = change(prev.data);
+        if (key !== null) remember(loadRef.current, key, data);
+        return { kind: "ready", data };
+      });
+    },
+    [key],
+  );
+  return [state, reload, refreshing && state.kind === "ready", patch];
 }

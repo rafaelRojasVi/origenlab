@@ -8,7 +8,7 @@ import { CaseActions, type Mode } from "./CaseActions";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
 import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
 import { DecideCases } from "./DecideCases";
-import { useMayRunCaseCommands } from "../caseCommands";
+import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import {
   HISTORICAL_STAGE_LABEL,
   ORIGIN_LABEL,
@@ -46,7 +46,12 @@ type StatusFilter = "all" | "blocked" | "pending" | "ok";
 type View = "cards" | "board";
 
 export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: string | null }) {
-  const [state, reload, refreshing] = useResource(fetchPipeline);
+  const [state, reload, refreshing, patch] = useResource(fetchPipeline);
+  // Move the card the moment a command is recorded; the reload that follows confirms the rest.
+  useEffect(
+    () => onCaseReceipt((receipt) => patch((data) => ({ ...data, items: applyCaseReceipt(data.items, receipt) }))),
+    [patch],
+  );
   return (
     <div className="space-y-3">
       <PageHeader

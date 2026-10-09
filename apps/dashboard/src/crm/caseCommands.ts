@@ -129,6 +129,47 @@ export function newCaseCommandKey(): string {
     : `case-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+const TERMINAL_RECEIPT_STAGES: ReadonlySet<string> = new Set(["won", "lost", "abandoned"]);
+
+/**
+ * The cards with one receipt's known effect applied: the new version, the new stage (closed when
+ * terminal) and `updated_at` now, so «Más recientes» brings the case to the top. Everything else
+ * waits for the reload. An unknown case, or an older receipt than the card, changes nothing.
+ */
+export function applyCaseReceipt(
+  cards: OpportunityCardData[],
+  receipt: CaseCommandReceipt,
+  now: Date = new Date(),
+): OpportunityCardData[] {
+  return cards.map((card) => {
+    if (card.opportunity_id !== receipt.opportunity_id) return card;
+    if (typeof card.version === "number" && receipt.opportunity_version <= card.version) return card;
+    const stage = typeof receipt.stage === "string" ? receipt.stage : card.stage;
+    const closing = TERMINAL_RECEIPT_STAGES.has(stage) && !TERMINAL_RECEIPT_STAGES.has(card.stage);
+    return {
+      ...card,
+      stage,
+      version: receipt.opportunity_version,
+      updated_at: now.toISOString(),
+      closed_at: closing ? now.toISOString() : card.closed_at,
+    };
+  });
+}
+
+type ReceiptListener = (receipt: CaseCommandReceipt) => void;
+const receiptListeners = new Set<ReceiptListener>();
+
+/**
+ * Hear every recorded case command, so a page can show its effect (a new stage, a new version)
+ * the moment the API answers instead of after a full reload. Returns the unsubscribe.
+ */
+export function onCaseReceipt(listener: ReceiptListener): () => void {
+  receiptListeners.add(listener);
+  return () => {
+    receiptListeners.delete(listener);
+  };
+}
+
 async function postCaseCommand(path: string, body: unknown, idempotencyKey: string): Promise<CaseCommandReceipt> {
   const res = await fetch(operatorApiUrl(path), {
     method: "POST",
@@ -141,7 +182,15 @@ async function postCaseCommand(path: string, body: unknown, idempotencyKey: stri
     const text = await res.text().catch(() => "");
     throw new OperatorApiError(text || res.statusText || `HTTP ${res.status}`, res.status);
   }
-  return res.json() as Promise<CaseCommandReceipt>;
+  const receipt = (await res.json()) as CaseCommandReceipt;
+  receiptListeners.forEach((listen) => {
+    try {
+      listen(receipt);
+    } catch {
+      // A listener only redraws; it never decides whether the command succeeded.
+    }
+  });
+  return receipt;
 }
 
 export interface AddCaseOrganizationBody {
