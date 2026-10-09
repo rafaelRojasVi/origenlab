@@ -190,6 +190,24 @@ def get_opportunity_quote_candidates(opportunity_id: UUID, operator: Operator, r
     return body
 
 
+@workspace_router.get("/opportunities/{opportunity_id}/purchase-order-candidates")
+def get_opportunity_purchase_order_candidates(
+    opportunity_id: UUID, operator: Operator, repo: Repo,
+) -> Any:
+    """Propose verified purchase-order files from another Gmail thread; never mark won.
+
+    This reveals an email subject, document filename and Gmail link, so restrict to
+    sales/admin. Operator must read the original PO PDF to verify its printed
+    quotation reference and line amounts before attaching anything to a case.
+    """
+    if getattr(operator, "role", None) not in ("sales", "admin"):
+        raise HTTPException(status_code=403, detail="sales or admin required")
+    body = repo.opportunity_purchase_order_candidates(str(opportunity_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    return body
+
+
 @workspace_router.get("/person-suggestions")
 def get_person_suggestions(_: Operator, repo: Repo) -> Any:
     """People the quote emails name and the CRM does not hold yet. A read: nothing is created."""
