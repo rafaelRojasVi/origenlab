@@ -113,6 +113,7 @@ function stubApi({
   notes = { opportunity_id: CASE, notes: [] },
   mailDocuments = MAIL_DOCUMENTS,
   quoteCandidates = { opportunity_id: CASE, candidates: [] },
+  purchaseOrderCandidates = { opportunity_id: CASE, candidates: [] },
   organizationConfirmation = "confirmed",
   onPost = () => undefined,
 }: {
@@ -120,6 +121,7 @@ function stubApi({
   notes?: unknown;
   mailDocuments?: unknown;
   quoteCandidates?: unknown;
+  purchaseOrderCandidates?: unknown;
   organizationConfirmation?: "confirmed" | "machine_proposed";
   onPost?: Handler;
 }) {
@@ -148,6 +150,7 @@ function stubApi({
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/notes`) return json(notes);
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/mail-documents`) return json(mailDocuments);
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/quote-candidates`) return json(quoteCandidates);
+      if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/purchase-order-candidates`) return json(purchaseOrderCandidates);
       if (call.method === "GET" && path === "/v2/organizations") {
         return json({
           items: [{
@@ -337,6 +340,58 @@ describe("case drawer actions", () => {
     );
     return screen.findByRole("dialog");
   }
+
+  it("requires exact printed quotation reference before linking a standalone OC and recording a win", async () => {
+    const live = rev(1, {
+      quote_number: "01253-26",
+      document: { sha256: SHA_NEW, filename: "CN01253A-ficticia.pdf" },
+    });
+    const active = card({ stage: "negotiating", quotes: [{
+      quote_id: QUOTE, quote_number: "01253-26", number_origin: "printed_historical",
+      revisions: [live],
+    }], latest_revision: live, revision_count: 1, quote_numbers: ["01253-26"] });
+    const won = card({ ...active, stage: "won", version: 6, closed_at: "2026-10-09T12:00:00Z" });
+    const calls = stubApi({
+      pipelines: [page([active]), page([won])],
+      purchaseOrderCandidates: { opportunity_id: CASE, candidates: [{
+        source_record_id: MESSAGE, subject: "OC ficticia", filename: "OC 55512345.pdf",
+        purchase_order_number: "55512345", sent_at: "2026-10-09T12:00:00Z",
+        document_sha256: SHA_RECORDED, reason: "destinatario compartido",
+        gmail_url: "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/abc",
+      }] },
+      onPost: (call) =>
+        call.path === "/v2/commands/link-case-evidence"
+          ? { body: receipt("link_case_evidence", "negotiating", 5, "linked-receipt") }
+          : call.path === "/v2/commands/record-case-won"
+            ? { body: receipt("record_case_won", "won", 6, "won-receipt") }
+            : undefined,
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Buscar OC recibida en otro hilo" }));
+    const review = await within(dialog).findByRole("region", { name: "Revisar OC de otro hilo" });
+    fireEvent.click(await within(review).findByRole("button", { name: "Revisar esta OC" }));
+    const form = within(review).getByRole("form", { name: "Confirmar OC y venta" });
+    const submit = within(form).getByRole("button", { name: "Vincular OC y marcar ganada" });
+    fireEvent.change(within(form).getByLabelText(/Número impreso en la OC/), { target: { value: "01261-26" } });
+    fireEvent.change(within(form).getByLabelText("Número de OC"), { target: { value: "55512345" } });
+    fireEvent.click(within(form).getByRole("checkbox"));
+    expect(submit).toBeDisabled();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    fireEvent.change(within(form).getByLabelText(/Número impreso en la OC/), { target: { value: "01253A-26" } });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST").length).toBe(2));
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual([
+      "/v2/commands/link-case-evidence", "/v2/commands/record-case-won",
+    ]);
+    const link = calls.find((c) => c.path === "/v2/commands/link-case-evidence");
+    const win = calls.find((c) => c.path === "/v2/commands/record-case-won");
+    expect(link?.body?.source_record_id).toBe(MESSAGE);
+    expect(link?.body?.note).toContain("01253A-26");
+    expect(win?.body?.quote_id).toBe(QUOTE);
+    expect(win?.body?.revision_no).toBe(1);
+    expect(win?.body?.note).toContain("55512345");
+  });
 
   it("keeps «Cambiar estado» and «Marcar ganada» disabled when the case commands are off", async () => {
     stubApi({ pipelines: [page([card()])] });
