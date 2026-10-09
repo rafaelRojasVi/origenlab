@@ -24,9 +24,17 @@ today without a pool.
 from __future__ import annotations
 
 import threading
+import time
+import weakref
 from typing import Any
 
 import psycopg_pool
+
+
+#: A connection handed back this recently is trusted without a liveness probe. The probe is a
+#: full round trip to the database's region (~180 ms from Oregon to São Paulo), and a page load
+#: checks out ten connections in a burst; only one idle longer than this is probed first.
+RECENT_USE_SECONDS = 30.0
 
 
 class V2ConnectionPool:
@@ -54,6 +62,7 @@ class V2ConnectionPool:
         max_idle: float = 300.0,
         max_lifetime: float = 3600.0,
     ) -> None:
+        self._returned_at = weakref.WeakKeyDictionary()
         kwargs: dict[str, Any] = dict(connect_kwargs or {})
         # Repositories always open connections with autocommit=False; enforce it.
         kwargs["autocommit"] = False
@@ -66,11 +75,26 @@ class V2ConnectionPool:
             kwargs=kwargs,
             max_idle=max_idle,
             max_lifetime=max_lifetime,
-            check=psycopg_pool.ConnectionPool.check_connection,
+            check=self._check_if_idle,
+            reset=self._mark_returned,
             open=False,  # opened from the app lifespan, or on first use
         )
         self._open_lock = threading.Lock()
         self._opened = False
+
+    # When each pooled connection was last handed back. Weak keys: a connection the pool
+    # discards is forgotten with it.
+    _returned_at: "weakref.WeakKeyDictionary[Any, float]"
+
+    def _mark_returned(self, conn: Any) -> None:
+        self._returned_at[conn] = time.monotonic()
+
+    def _check_if_idle(self, conn: Any) -> None:
+        """Probe a connection before reuse only if it sat idle; raising discards it."""
+        returned = self._returned_at.get(conn)
+        if returned is not None and time.monotonic() - returned < RECENT_USE_SECONDS:
+            return
+        psycopg_pool.ConnectionPool.check_connection(conn)
 
     @property
     def connect_options(self) -> dict[str, Any]:

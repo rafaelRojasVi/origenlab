@@ -209,6 +209,12 @@ class Settings(BaseSettings):
     """Supabase Auth JWKS URL. When set, JWKS verification is used and the local development identity adapter is never constructed."""
     v2_jwks_url: str | None = None
     v2_statement_timeout_ms: int = 15_000
+    """Connections the V2 pool keeps open. Each one costs a TLS handshake to the database's region,
+    so the pool keeps them warm instead of opening one per burst of requests."""
+    v2_pool_min_size: int = 4
+    """Most connections the V2 pool opens. A dashboard page sends about ten reads at once; the
+    session pooler's per-project limit is shared with the Gmail worker and cron, so stay modest."""
+    v2_pool_max_size: int = 8
     """When true, mount POST /v2/commands/* — the human-review command boundary.
 
     Default **false**, like `commercial_operations_writes_enabled` above and for the same

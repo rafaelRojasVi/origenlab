@@ -137,6 +137,8 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     pool = V2ConnectionPool(
         dsn,
         connect_kwargs=target.connect_options,  # TLS options (sslmode, sslrootcert, …) or {}
+        min_size=settings.v2_pool_min_size,
+        max_size=max(settings.v2_pool_max_size, settings.v2_pool_min_size),
     )
     app.state.v2_pool = pool
     # ``connect`` retains the same context-manager API that every repository uses.
