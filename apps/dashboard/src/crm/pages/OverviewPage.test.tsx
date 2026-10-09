@@ -218,9 +218,9 @@ describe("Resumen", () => {
   it("shows today's date and the time in Santiago", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
-    const clock = await screen.findByTestId("resumen-clock");
-    expect(clock).toHaveTextContent(/Martes, 31 de marzo/); // only the first letter capitalised
-    expect(clock).toHaveTextContent("12:00");
+    const hero = await screen.findByTestId("hero-header");
+    expect(hero).toHaveTextContent(/Martes 31 de marzo/); // only the first letter capitalised
+    expect(hero).toHaveTextContent("12:00");
   });
 
   it("converts an amount typed the Chilean way into pesos", async () => {
@@ -237,7 +237,7 @@ describe("Resumen", () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     const navigate = vi.fn();
     render(<OverviewPage navigate={navigate} />);
-    expect(await screen.findByRole("heading", { name: "Hoy" })).toBeInTheDocument();
+    expect(await screen.findByTestId("hero-header")).toHaveTextContent("HOY");
     const followUps = await screen.findByTestId("today-followups");
     const first = within(followUps).getByTestId("today-rhythm-primero");
     expect(first).toHaveTextContent(/Primer seguimiento\s*1/);

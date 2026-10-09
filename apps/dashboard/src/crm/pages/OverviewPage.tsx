@@ -2,11 +2,14 @@ import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { fetchFx, fetchPipeline } from "../crmApi";
 import type { CrmSection } from "../crmRoute";
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
-import { PageHeader, ResourceGate } from "../ui";
+import { ResourceGate } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
 import { QuoteNumberBox } from "../QuoteNumberBox";
-import { SANTIAGO, WEEKDAYS, todayInSantiago } from "../marketing/calendar";
+import { WEEKDAYS, todayInSantiago } from "../marketing/calendar";
 import { TodayBody } from "./TodayBody";
+import { HeroHeader } from "../HeroHeader";
+import { todayCounts } from "../today";
+import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 
 type Navigate = (s: CrmSection, id?: string) => void;
@@ -17,15 +20,16 @@ type Navigate = (s: CrmSection, id?: string) => void;
  * number and the day's exchange rates. The data-health counts live on Revisión → Estado de los datos.
  */
 export function OverviewPage({ navigate }: { navigate: Navigate }) {
+  const { session } = useAuthSession();
   const [fx, reloadFx] = useResource(fetchFx);
   const [pipeline, reloadPipeline, refreshing] = useResource(fetchPipeline);
   const [people, reloadPeople] = useResource(fetchPersonSuggestions);
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="Hoy"
-        subtitle="Tareas, respuestas por contestar, seguimientos y lo que falta agregar."
-        actions={<Clock />}
+      <HeroHeader
+        name={session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? "") : ""}
+        counts={pipeline.kind === "ready" ? todayCounts(pipeline.data.items) : null}
+        driveCasosUrl={pipeline.kind === "ready" ? (pipeline.data.drive_casos_url ?? null) : null}
       />
       <QuoteNumberBox pipeline={pipeline} />
       <FxSection state={fx} reload={reloadFx} />
@@ -226,29 +230,6 @@ function FollowUpsSkeleton() {
       </div>
       <div className="crm-skeleton h-32 rounded-lg" />
     </div>
-  );
-}
-
-/* ──────────────────────────────────────────────────────────────── clock ── */
-
-const CLOCK_DAY = new Intl.DateTimeFormat("es-CL", { timeZone: SANTIAGO, weekday: "long", day: "numeric", month: "long" });
-const CLOCK_TIME = new Intl.DateTimeFormat("es-CL", { timeZone: SANTIAGO, hour: "2-digit", minute: "2-digit", hour12: false });
-
-/** Today and the time in Santiago, so «hoy» on this page always means the same day for everyone. */
-function Clock() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(id);
-  }, []);
-  // «Domingo, 4 de octubre»: only the first letter up, as Spanish writes it.
-  const formatted = CLOCK_DAY.format(now);
-  const day = formatted.charAt(0).toUpperCase() + formatted.slice(1);
-  return (
-    <p data-testid="resumen-clock" className="text-right text-xs text-ink-muted" title="Hora de Santiago">
-      <span className="font-medium text-ink">{day}</span>
-      <span className="ml-2 tabular-nums">{CLOCK_TIME.format(now)}</span>
-    </p>
   );
 }
 

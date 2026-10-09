@@ -181,3 +181,8 @@ export function organizationsToConfirm(cards: OpportunityCardData[]): OrgToConfi
 export function historicalCount(cards: OpportunityCardData[]): number {
   return cards.filter((c) => stageBasis(c) === "historical_import").length;
 }
+
+/** The two counts «Hoy»'s header shows: cases to decide and follow-ups due today. */
+export function todayCounts(cards: OpportunityCardData[], now: Date = new Date()): { decide: number; followUps: number } {
+  return { decide: historicalCount(cards), followUps: followUpsDue(cards, now).length };
+}
