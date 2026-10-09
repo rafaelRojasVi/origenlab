@@ -16,8 +16,8 @@ export function printedQuoteCode(filename: string | null | undefined): string | 
 }
 
 function enteredQuoteCode(input: string): string | null {
-  const match = input.trim().match(/^(?:CN)?0*(\d+[A-Za-z]?)(?:[-/]\d{2})?$/i);
-  return match ? match[1].toUpperCase() : null;
+  const match = input.trim().match(/^(?:CN)?0*(\d+[A-Za-z]?)[-/](\d{2})$/i);
+  return match ? `${match[1].toUpperCase()}-${match[2]}` : null;
 }
 
 export function PurchaseOrderReview({
@@ -39,7 +39,9 @@ export function PurchaseOrderReview({
   const keys = useRef({ link: newCaseCommandKey(), won: newCaseCommandKey() });
   const selected = revisions.find((r) => r.revision_id === revisionId);
   const actualCode = printedQuoteCode(selected?.document?.filename);
-  const matchedPrinted = Boolean(actualCode && enteredQuoteCode(printed) === actualCode);
+  const crmYear = selected?.quote_number.match(/-(\d{2})$/)?.[1];
+  const matchedPrinted = Boolean(actualCode && crmYear &&
+    enteredQuoteCode(printed) === `${actualCode}-${crmYear}`);
   const matchedOC = Boolean(candidate?.purchase_order_number &&
     enteredPO.trim() === candidate.purchase_order_number);
   const ready = Boolean(selected && candidate && matchedPrinted && matchedOC && verified &&
