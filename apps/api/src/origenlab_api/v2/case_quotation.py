@@ -138,12 +138,15 @@ def record_quotation(
         (record["id"], document_reference_value(fields["document_sha256"])),
     )
     assertion = repo._row(cur)
-    # A message the live Gmail capture (Phase 4a) recorded has no staged assertions: the
-    # capture writes the evidence record and nothing else. For it, the document carried by
-    # the record (checked above) is the provenance, and there is no assertion to promote.
-    # Every staged record — the historical import's — still needs its assertion.
-    live_capture = record["kind"] == "gmail_message" and assertion is None and not _has_assertions(repo, 
-        cur, record["id"]
+    # Gmail capture records can acquire independent message_triage assertions later.
+    # Those annotations do NOT turn a live captured PDF into a historical-import
+    # document. Only document_reference assertions indicate the import's staged
+    # document ledger: a missing reference for this SHA must still refuse.
+    # The exact PDF remains bound to this Gmail record by carries_document above.
+    live_capture = (
+        record["kind"] == "gmail_message"
+        and assertion is None
+        and not _has_document_reference_assertions(cur, record["id"])
     )
     if assertion is None and not live_capture:
         raise CommandRefused(
@@ -454,9 +457,18 @@ def _recorded(
     }
 
 
-def _has_assertions(repo: Any, cur: Any, source_record_id: str) -> bool:
-    """Whether the record carries any assertion at all — a staged record always does."""
-    cur.execute("select 1 from evidence.assertion where source_record_id = %s limit 1", (source_record_id,))
+def _has_document_reference_assertions(cur: Any, source_record_id: str) -> bool:
+    """Only the document-reference ledger distinguishes a staged PDF from live capture.
+
+    Message triage and requester-classification assertions are independent annotations.
+    A staged source with a document_reference for another PDF must not silently promote
+    an unasserted PDF as live capture.
+    """
+    cur.execute(
+        "select 1 from evidence.assertion where source_record_id = %s "
+        "and kind = 'document_reference' limit 1",
+        (source_record_id,),
+    )
     return cur.fetchone() is not None
 
 
