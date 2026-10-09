@@ -200,12 +200,12 @@ export const AGE_BUCKETS = [
   { key: "d180", label: "91–180 días", maxDays: 180 },
   { key: "d365", label: "181–365 días", maxDays: 365 },
   { key: "older", label: "Más de un año", maxDays: Number.POSITIVE_INFINITY },
-  { key: "none", label: "Sin revisión enviada", maxDays: Number.NaN },
+  { key: "none", label: "Sin actividad registrada", maxDays: Number.NaN },
 ] as const;
 
 export type AgeBucketKey = (typeof AGE_BUCKETS)[number]["key"];
 
-/** Which `AGE_BUCKETS` entry a revision sent at `sentAt` falls in, seen from `now`. */
+/** Which `AGE_BUCKETS` entry a timestamp falls in, seen from `now`. */
 export function ageBucket(sentAt: string | null | undefined, now: Date = new Date()): AgeBucketKey {
   const t = sentAt ? Date.parse(sentAt) : Number.NaN;
   if (Number.isNaN(t)) return "none";
