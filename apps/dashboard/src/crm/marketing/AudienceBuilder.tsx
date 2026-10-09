@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAuthSession } from "../../context/AuthSessionContext";
 import { crmHash } from "../crmRoute";
 import { Badge, Drawer, EmptyState, Panel, ResourceGate, SearchInput, Section, Segmented, Skeleton, StatLine, fmtInt, type Tone } from "../ui";
 import { useResource } from "../useResource";
@@ -185,6 +186,9 @@ export function AudienceBuilder({ taxonomy }: { taxonomy: EquipmentTaxonomy }) {
 function Coverage({ data, taxonomy }: { data: AudienceResponse; taxonomy: EquipmentTaxonomy }) {
   const c = data.coverage;
   const reviewTotal = Object.values(c.review_queue).reduce((n, x) => n + x, 0);
+  // The ambiguous identities live in «Datos» › Evidencia, which only an admin opens.
+  const { session } = useAuthSession();
+  const adminRole = session.kind === "signed_in" && session.operator.role === "admin";
   return (
     <Panel title="Cobertura del interés por equipo" note="qué está vinculado en el CRM y qué existe sólo en evidencia" bodyClassName="p-3 space-y-3">
       <div className="overflow-x-auto">
@@ -222,8 +226,13 @@ function Coverage({ data, taxonomy }: { data: AudienceResponse; taxonomy: Equipm
         </li>
         <li>
           Nuevas consultas suman intereses al registrarlos en su caso («Registrar interés») o al importar su cotización; esta vista los lee
-          sin pasos adicionales. Las identidades ambiguas quedan en{" "}
-          <a className="font-medium text-brand-700 underline" href={crmHash("revision")}>Revisión</a>: {fmtInt(reviewTotal)} pendiente(s), y{" "}
+          sin pasos adicionales. Identidades ambiguas por revisar:{" "}
+          {adminRole ? (
+            <a className="font-medium text-brand-700 underline" href={crmHash("datos", null, "evidencia")}>{fmtInt(reviewTotal)}</a>
+          ) : (
+            fmtInt(reviewTotal)
+          )}
+          , y{" "}
           {fmtInt(c.recipients_without_contact_point)} destinatario(s) sin punto de contacto.
         </li>
         <li>Sin evidencia significa «Sin información», no bajo interés. No se calcula ningún puntaje.</li>

@@ -336,3 +336,15 @@ describe("Hoy · orden", () => {
   });
 });
 
+describe("Hoy · sugerencias del correo", () => {
+  it("shows the email suggestions on Hoy, under their own heading", async () => {
+    respond({
+      "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE,
+      "/v2/workspace/triage-readings": { items: [] },
+    });
+    render(<OverviewPage navigate={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Sugerencias del correo" })).toBeInTheDocument();
+    expect(await screen.findByText("Nada por revisar")).toBeInTheDocument();
+  });
+});
+

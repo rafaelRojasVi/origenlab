@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { fetchReview, fetchWorkQueue } from "../crmApi";
 import type { ReviewResponse, WorkQueueItem } from "../crmTypes";
-import type { CrmSection } from "../crmRoute";
+import type { CrmSection, DatosTab } from "../crmRoute";
 import {
   Badge,
   EmptyState,
@@ -19,7 +19,8 @@ import { useAuthSession } from "../../context/AuthSessionContext";
 import { useResource } from "../useResource";
 import { DataHealth } from "./DataHealth";
 import { MailRulesPanel } from "./MailRulesPanel";
-import { TriagePanel } from "./TriagePanel";
+import { ProvidersPage } from "./ProvidersPage";
+import { DrivePage } from "./DrivePage";
 
 const QUEUE_LABEL: Record<string, { label: string; action: string; blocking: boolean }> = {
   canonical_undetermined: { label: "Revisión canónica indeterminada", action: "Anular o reemplazar la revisión duplicada", blocking: true },
@@ -52,55 +53,73 @@ export function blockingCount(queue: { items: WorkQueueItem[]; counts?: Record<s
   return queue.items.filter((i) => i.kind !== "pending_evidence").length;
 }
 
-type Tab = "crm" | "triage" | "not_imported" | "evidence" | "data" | "mail_rules";
+const TAB_LABEL: Record<DatosTab, string> = {
+  bloqueos: "Bloqueos técnicos",
+  no_importadas: "No importadas",
+  evidencia: "Evidencia",
+  estado: "Estado de los datos",
+  acciones: "Acciones automáticas",
+  proveedores: "Proveedores",
+  drive: "Archivo Drive",
+};
 
-export function ReviewPage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
-  const [queue, reloadQueue] = useResource(fetchWorkQueue);
-  const [review, reloadReview] = useResource(fetchReview);
-  const [tab, setTab] = useState<Tab>("crm");
+/**
+ * «Datos» (admin only): how the system is doing and its technical switches — the blockers that
+ * are not a sales decision, archived quotations not imported, open evidence, data health, the
+ * automatic mail actions, suppliers and the Drive archive. Anyone else sees one line and nothing
+ * is read on their behalf.
+ */
+export function DatosPage({ navigate, tab }: { navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void; tab?: DatosTab }) {
   const { session } = useAuthSession();
   const isAdmin = session.kind === "signed_in" && session.operator.role === "admin";
+  if (!isAdmin) {
+    return (
+      <div className="space-y-3">
+        <PageHeader title="Datos" />
+        <p className="text-sm text-ink-muted">Sólo administración</p>
+      </div>
+    );
+  }
+  return <DatosBody navigate={navigate} initialTab={tab ?? "bloqueos"} />;
+}
+
+function DatosBody({ navigate, initialTab }: { navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void; initialTab: DatosTab }) {
+  const [queue, reloadQueue] = useResource(fetchWorkQueue);
+  const [review, reloadReview] = useResource(fetchReview);
+  const [tab, setTab] = useState<DatosTab>(initialTab);
   return (
     <div className="space-y-3">
-      <PageHeader
-        title="Revisión y bloqueos"
-        subtitle="Lo que necesita una decisión humana: bloqueos del CRM, cotizaciones archivadas que aún no se importan y evidencia sin resolver."
-      />
+      <PageHeader title="Datos" subtitle="Estado del sistema y ajustes técnicos. Sólo administración." />
       <Segmented
-        label="Cola"
+        label="Sección"
         value={tab}
         onChange={setTab}
-        options={[
-          { value: "crm", label: "Bloqueos del CRM", count: queue.kind === "ready" ? blockingCount(queue.data) : undefined },
-          { value: "triage", label: "Correos (sugerencias)" },
-          {
-            value: "not_imported",
-            label: "No importadas",
-            count: review.kind === "ready" ? review.data.archived_not_in_crm.length : undefined,
-          },
-          {
-            value: "evidence",
-            label: "Evidencia",
-            count:
-              review.kind === "ready" ? review.data.open_assertions.reduce((n, a) => n + a.count, 0) : undefined,
-          },
-          { value: "data", label: "Estado de los datos" },
-          ...(isAdmin ? [{ value: "mail_rules" as Tab, label: "Acciones automáticas" }] : []),
-        ]}
+        options={(Object.keys(TAB_LABEL) as DatosTab[]).map((value) => ({
+          value,
+          label: TAB_LABEL[value],
+          count:
+            value === "bloqueos" && queue.kind === "ready"
+              ? blockingCount(queue.data)
+              : value === "no_importadas" && review.kind === "ready"
+                ? review.data.archived_not_in_crm.length
+                : undefined,
+        }))}
       />
-      {tab === "triage" ? (
-        <TriagePanel />
-      ) : tab === "mail_rules" && isAdmin ? (
+      {tab === "acciones" ? (
         <MailRulesPanel />
-      ) : tab === "data" ? (
+      ) : tab === "estado" ? (
         <DataHealth navigate={navigate} />
-      ) : tab === "crm" ? (
+      ) : tab === "proveedores" ? (
+        <ProvidersPage />
+      ) : tab === "drive" ? (
+        <DrivePage navigate={navigate} />
+      ) : tab === "bloqueos" ? (
         <ResourceGate state={queue} reload={reloadQueue} skeleton={<Skeleton rows={5} />}>
           {(q) => <CrmQueue items={q.items} counts={q.counts} navigate={navigate} />}
         </ResourceGate>
       ) : (
         <ResourceGate state={review} reload={reloadReview} skeleton={<Skeleton rows={5} />}>
-          {(r) => (tab === "not_imported" ? <NotImported review={r} /> : <Evidence review={r} />)}
+          {(r) => (tab === "no_importadas" ? <NotImported review={r} /> : <Evidence review={r} />)}
         </ResourceGate>
       )}
     </div>
@@ -114,10 +133,10 @@ function CrmQueue({
 }: {
   items: WorkQueueItem[];
   counts?: Record<string, number>;
-  navigate: (s: CrmSection, id?: string) => void;
+  navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  if (items.length === 0) return <EmptyState title="Sin bloqueos en el CRM">Ningún caso ni cotización necesita una decisión.</EmptyState>;
+  if (items.length === 0) return <EmptyState title="Sin bloqueos técnicos">Ningún caso ni cotización necesita una decisión.</EmptyState>;
   const meta = (kind: string, fallback: string) => QUEUE_LABEL[kind] ?? { label: kind, action: fallback, blocking: false };
   // Blockers one by one; everything else grouped by kind, so three decisions are not buried
   // under a hundred routine review rows.
@@ -192,7 +211,7 @@ function QueueRow({
 }: {
   item: WorkQueueItem;
   m: { label: string; action: string; blocking: boolean };
-  navigate: (s: CrmSection, id?: string) => void;
+  navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 }) {
   const oppId = item.subject_ids.opportunity_id;
   return (

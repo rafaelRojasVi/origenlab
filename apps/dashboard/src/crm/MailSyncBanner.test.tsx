@@ -49,6 +49,9 @@ describe("MailSyncBanner", () => {
     respond({ ...BASE, state: "stopped", authorization_state: "revoked" });
     render(<MailSyncBanner refreshKey="resumen" />);
     expect(await screen.findByTestId("mail-sync-banner")).toHaveTextContent(/Sincronización de correo detenida desde/);
+    // Plain words, and never a page that no longer exists.
+    expect(screen.getByTestId("mail-sync-banner")).not.toHaveTextContent(/Revisión/);
+    expect(screen.getByTestId("mail-sync-banner")).toHaveTextContent(/no aparecen en el CRM/);
   });
 
   it("renders nothing when the capture runs or the read is not deployed yet", async () => {

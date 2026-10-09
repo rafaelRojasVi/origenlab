@@ -192,6 +192,12 @@ afterEach(() => {
 });
 
 describe("Hoy actions", () => {
+  it("offers the system's data page to an admin only — never a link that leads nowhere", () => {
+    stub();
+    renderToday([card()], "sales");
+    expect(screen.queryByRole("button", { name: /Estado del sistema|Acciones del correo|estado de los datos/ })).not.toBeInTheDocument();
+  });
+
   it("a row the reload still returns comes back instead of staying hidden", async () => {
     stub();
     const replied = card(

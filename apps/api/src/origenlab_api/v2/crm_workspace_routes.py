@@ -60,6 +60,12 @@ def get_overview(_: Operator, repo: Repo) -> Any:
     return repo.overview()
 
 
+@workspace_router.get("/history")
+def get_history(_: Operator, repo: Repo, limit: Annotated[int, Query(ge=1, le=200)] = 100) -> Any:
+    """«Historial»: who decided what, on which case or institution, and when — plain Spanish only."""
+    return repo.history(limit)
+
+
 @workspace_router.get("/pipeline")
 def get_pipeline(_: Operator, repo: Repo, request: Request) -> Any:
     """One card per opportunity: institution, contact evidence, quotes, revisions, Drive, Gmail.

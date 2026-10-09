@@ -1,18 +1,19 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { fetchFx, fetchPipeline } from "../crmApi";
-import type { CrmSection } from "../crmRoute";
+import type { CrmSection, DatosTab } from "../crmRoute";
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
 import { ResourceGate } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
 import { QuoteNumberBox } from "../QuoteNumberBox";
 import { WEEKDAYS, todayInSantiago } from "../marketing/calendar";
 import { TodayBody } from "./TodayBody";
+import { TriagePanel } from "./TriagePanel";
 import { HeroHeader } from "../HeroHeader";
 import { todayCounts } from "../today";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 
-type Navigate = (s: CrmSection, id?: string) => void;
+type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 
 /**
  * «Hoy», the first page: what the open cases ask of an operator today (`TodayBody`: tasks due,
@@ -34,6 +35,10 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => <TodayBody items={p.items} navigate={navigate} onChanged={reloadPipeline} refreshing={refreshing} people={people} reloadPeople={reloadPeople} />}
       </ResourceGate>
+      <section aria-labelledby="hoy-triage" className="space-y-2">
+        <h2 id="hoy-triage" className="text-[15px] font-semibold text-ink">Sugerencias del correo</h2>
+        <TriagePanel />
+      </section>
       <QuoteNumberBox pipeline={pipeline} />
       <FxSection state={fx} reload={reloadFx} />
     </div>

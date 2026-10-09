@@ -6,7 +6,7 @@ import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { AutoMailRulesState, MailRulesPreview } from "../mailRules";
 import { MailRulesPanel } from "./MailRulesPanel";
-import { ReviewPage } from "./ReviewPage";
+import { DatosPage } from "./DatosPage";
 
 // Every value below is invented; the repository is public.
 const PREVIEW: MailRulesPreview = {
@@ -88,17 +88,17 @@ function respond(routes: Record<string, unknown>) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("Revisión → Acciones automáticas del correo", () => {
+describe("Datos → Acciones automáticas del correo", () => {
   it("is offered to an admin only", async () => {
     respond({
       "/v2/cockpit/work-queue": { items: [], total: 0, limit: 200, offset: 0 },
       "/v2/workspace/review": { archived_not_in_crm: [], open_assertions: [], ambiguous_organizations: [], drive_configured: true },
     });
-    const { unmount } = render(withRole("sales", <ReviewPage navigate={() => undefined} />));
-    await screen.findByText("Sin bloqueos en el CRM");
+    const { unmount } = render(withRole("sales", <DatosPage navigate={() => undefined} />));
+    expect(screen.getByText("Sólo administración")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Acciones automáticas/ })).not.toBeInTheDocument();
     unmount();
-    render(withRole("admin", <ReviewPage navigate={() => undefined} />));
+    render(withRole("admin", <DatosPage navigate={() => undefined} />));
     expect(await screen.findByRole("button", { name: /Acciones automáticas/ })).toBeInTheDocument();
     expect(render(withRole("viewer", <MailRulesPanel />)).container).toBeEmptyDOMElement();
   });

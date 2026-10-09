@@ -19,6 +19,7 @@
  * gated the same way; a viewer sees the lists without the buttons. Every recorded write refetches.
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useAuthSession } from "../../context/AuthSessionContext";
 import { confirmOrganizationRecord, fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 import { PersonSuggestionList } from "../authoring/PersonSuggestionList";
 import { useMayAuthorCrm } from "../authoring/authoring";
@@ -34,7 +35,7 @@ import {
 import { contactLine, displayName, quoteProduct } from "../caseDisplay";
 import { composeInSharedMailbox, inSharedMailbox } from "../gmailLinks";
 import { isMaskedAddress } from "../redaction";
-import type { CrmSection } from "../crmRoute";
+import type { CrmSection, DatosTab } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
 import {
   RHYTHM,
@@ -53,7 +54,7 @@ import { useResource, type ResourceState } from "../useResource";
 import { useLeave } from "../useLeave";
 import { CaseMoveForm } from "./CaseMove";
 
-type Navigate = (s: CrmSection, id?: string) => void;
+type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 
 const WEEK_MS = 7 * 86_400_000;
 
@@ -111,6 +112,8 @@ export function TodayBody({
   const blocked = items.filter((i) => i.status === "blocked");
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
+  const { session } = useAuthSession();
+  const adminRole = session.kind === "signed_in" && session.operator.role === "admin";
   const [closing, setClosing] = useState<OpportunityCardData | null>(null);
 
   return (
@@ -154,14 +157,17 @@ export function TodayBody({
               ))}
             </Panel>
           ) : null}
-          <button
-            type="button"
-            onClick={() => navigate("revision")}
-            className="w-full rounded-lg border border-dashed border-line px-3 py-3 text-left transition-colors hover:border-line-strong hover:bg-canvas-raised"
-          >
-            <span className="block text-[13px] font-medium text-ink">Acciones del correo y estado de los datos</span>
-            <span className="mt-0.5 block text-[11px] text-ink-muted">Órdenes de compra y respuestas que leyó el sistema, en Revisión.</span>
-          </button>
+          {adminRole ? (
+            // «Datos» opens for an admin only: anyone else gets no link that leads nowhere.
+            <button
+              type="button"
+              onClick={() => navigate("datos", null, "estado")}
+              className="w-full rounded-lg border border-dashed border-line px-3 py-3 text-left transition-colors hover:border-line-strong hover:bg-canvas-raised"
+            >
+              <span className="block text-[13px] font-medium text-ink">Estado del sistema</span>
+              <span className="mt-0.5 block text-[11px] text-ink-muted">Datos, acciones automáticas del correo y archivo de Drive.</span>
+            </button>
+          ) : null}
         </aside>
       </div>
 
