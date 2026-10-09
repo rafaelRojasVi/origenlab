@@ -137,6 +137,8 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     pool = V2ConnectionPool(
         dsn,
         connect_kwargs=target.connect_options,  # TLS options (sslmode, sslrootcert, …) or {}
+        min_size=settings.v2_pool_min_size,
+        max_size=max(settings.v2_pool_max_size, settings.v2_pool_min_size),
     )
     app.state.v2_pool = pool
     # ``connect`` retains the same context-manager API that every repository uses.
@@ -229,6 +231,15 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         commands_enabled=settings.v2_commands_configured(),
     )
     app.include_router(mail_rules_preview_router)
+    # Mail triage review (`v2/triage_review.py`): the queue of the worker's suggestions reads with
+    # the other V2 reads; `review-triage` mounts with the case commands below.
+    from origenlab_api.v2.triage_review import TriageReviewRepository
+    from origenlab_api.v2.triage_review_routes import triage_review_read_router
+
+    app.state.triage_review_repository = TriageReviewRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(triage_review_read_router)
     if settings.v2_import_review_plan_dir:
         from origenlab_api.v2.quote_import_review import QuoteImportReviewRepository, load_plan
         from origenlab_api.v2.quote_import_review_routes import import_review_router
@@ -587,8 +598,16 @@ def _mount_v2_command_boundary(
     app.state.v2_case_command_repository = V2CaseCommandRepository(
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
+    # The W11 task commands («En pausa hasta…», «Retomar ahora»): same database, role and switch.
+    from origenlab_api.v2.task_command_repository import V2TaskCommandRepository
+    from origenlab_api.v2.task_command_routes import task_command_router
+
+    app.state.v2_task_command_repository = V2TaskCommandRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
     app.include_router(command_router)
     app.include_router(case_command_router)
+    app.include_router(task_command_router)
     from origenlab_api.v2.mail_rules_auto import AutoMailRules, AutoMailRulesRunner
     from origenlab_api.v2.mail_rules_routes import mail_rules_command_router
 
@@ -598,6 +617,9 @@ def _mount_v2_command_boundary(
     )
     app.state.auto_mail_rules_runner = AutoMailRulesRunner(app.state.auto_mail_rules)
     app.include_router(mail_rules_command_router)
+    from origenlab_api.v2.triage_review_routes import triage_review_command_router
+
+    app.include_router(triage_review_command_router)
 
 
 app = create_app()

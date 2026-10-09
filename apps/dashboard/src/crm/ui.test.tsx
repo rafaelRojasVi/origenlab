@@ -29,3 +29,36 @@ describe("ExternalLink", () => {
     expect(isSafeExternalHref(href)).toBe(false);
   });
 });
+
+describe("Button", () => {
+  it("is disabled, says what it is doing and marks itself busy while its write runs", async () => {
+    const { Button } = await import("./ui");
+    const { rerender } = render(<Button variant="primary">Guardar</Button>);
+    const button = screen.getByRole("button", { name: "Guardar" });
+    expect(button).toBeEnabled();
+    expect(button).not.toHaveAttribute("aria-busy");
+    rerender(
+      <Button variant="primary" busy busyLabel="Guardando…">
+        Guardar
+      </Button>,
+    );
+    const busy = screen.getByRole("button", { name: "Guardando…" });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(busy).toHaveAttribute("type", "button");
+  });
+});
+
+describe("toast", () => {
+  it("shows a short line in the Toaster and lets it be dismissed", async () => {
+    const { Toaster, toast } = await import("./ui");
+    const { act, fireEvent } = await import("@testing-library/react");
+    render(<Toaster />);
+    act(() => toast("Nota agregada."));
+    expect(screen.getByRole("status")).toHaveTextContent("Nota agregada.");
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar aviso" }));
+    expect(screen.queryByRole("status")).toBeNull();
+    act(() => toast("No se pudo guardar.", "bad"));
+    expect(screen.getByRole("alert")).toHaveTextContent("No se pudo guardar.");
+  });
+});

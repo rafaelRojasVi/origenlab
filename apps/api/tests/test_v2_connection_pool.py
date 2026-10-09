@@ -76,6 +76,40 @@ def test_pool_without_tls_options_still_sets_autocommit_false() -> None:
 # ─────────────────────────────────────────────── remote-target refusals ──
 
 
+def test_recently_returned_connection_skips_the_liveness_probe() -> None:
+    """A page load checks out ~10 connections at once; only an idle one pays the probe's RTT."""
+    with patch("origenlab_api.v2.connection_pool.psycopg_pool") as mock_mod:
+        probe = MagicMock()
+        mock_mod.ConnectionPool.check_connection = probe
+        pool = V2ConnectionPool(DSN)
+        kwargs = mock_mod.ConnectionPool.call_args.kwargs
+        check, reset = kwargs["check"], kwargs["reset"]
+
+        class Conn:  # weak-referenceable stand-in for a psycopg connection
+            pass
+
+        fresh, idle = Conn(), Conn()
+        check(fresh)  # never handed back yet: probed
+        assert probe.call_count == 1
+        reset(fresh)
+        check(fresh)  # just handed back: trusted
+        assert probe.call_count == 1
+
+        reset(idle)
+        with patch("origenlab_api.v2.connection_pool.time.monotonic", return_value=10**9):
+            check(idle)  # idle far longer than the window: probed again
+        assert probe.call_count == 2
+        assert pool is not None
+
+
+def test_pool_sizes_come_from_settings() -> None:
+    from origenlab_api.settings import Settings
+
+    s = Settings()
+    assert s.v2_pool_min_size >= 1
+    assert s.v2_pool_max_size >= s.v2_pool_min_size
+
+
 def test_remote_target_refusals_are_unchanged(tmp_path) -> None:
     """Pooling does not weaken the V2DatabaseTarget validation.
 
@@ -290,20 +324,21 @@ def test_overview_output_shape_is_unchanged() -> None:
         assert "count" in entity
 
 
-def test_pipeline_statement_count_is_at_most_nine() -> None:
-    """pipeline() runs ≤ 9 SQL statements: 2 setup + 7 data queries.
+def test_pipeline_statement_count_is_at_most_ten() -> None:
+    """pipeline() runs ≤ 10 SQL statements: 2 setup + 8 data queries.
 
-    With psycopg pipeline mode the 7 data queries are sent in 1 RTT (instead of
-    7), but the SQL statement count stays at 9 — the test documents the bound.
-    The seventh is «último contacto» (`_SQL_PIPELINE_CONTACT`), added to the same batch.
+    With psycopg pipeline mode the 8 data queries are sent in 1 RTT (instead of
+    8), but the SQL statement count stays at 10 — the test documents the bound.
+    The seventh is «último contacto» (`_SQL_PIPELINE_CONTACT`), added to the same batch;
+    the eighth is the open tasks (`_SQL_PIPELINE_TASKS`, «En pausa hasta…»).
     """
     from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 
     conn = _CountingConn()
     repo = CrmWorkspaceRepository(connect=_fake_connect_factory(conn), dsn="unused")
     result = repo.pipeline()
-    assert len(conn.statements) <= 9, (
-        f"pipeline() used {len(conn.statements)} statements; expected ≤ 9. "
+    assert len(conn.statements) <= 10, (
+        f"pipeline() used {len(conn.statements)} statements; expected ≤ 10. "
         f"Statements: {conn.statements}"
     )
     assert "items" in result and "total" in result

@@ -728,7 +728,11 @@ endpoint on FastAPI for when a send path exists.
 | 2 | operator · `complete_task` | task open | `done`, `completed_at` set | event | — |
 | 3 | operator · `cancel_task` | task open | cancelled with a reason | event | — |
 
-`done ⇔ completed_at IS NOT NULL`. Tasks never change an opportunity stage.
+`done ⇔ completed_at IS NOT NULL`. Tasks never change an opportunity stage — nor its version.
+The three commands are `POST /v2/commands/{create,complete,cancel}-task` (`apps/api`
+`v2/task_commands.py`); the task is decided against the task version the operator was shown.
+The dashboard's «En pausa hasta…» is a task («Retomar: <motivo>») on an open case, and a case
+whose earliest open task is due later reads as paused; nothing about a pause is stored elsewhere.
 
 ### W12 — Campaign-specific recontact approval
 

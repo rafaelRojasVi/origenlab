@@ -229,8 +229,7 @@ a hidden secret input (§4.3, §13).
 
 #### Step 9 — the browser boundary becomes session-only
 
-Deploy `apps/dashboard-proxy` from `main` (`npm run validate`, then `npx wrangler deploy` from
-`apps/dashboard-proxy`). After this deploy the Worker forwards `/health`, `/auth/*` and the
+Initial cutover **completed 2026-10-08**: `apps/dashboard-proxy` was deployed manually from `main` (version `3a80b32a-3e58-473a-9372-0fbae157519a`) after `npm run validate` and `npm run typecheck` passed. Future `main` changes affecting the proxy are deployed by `.github/workflows/dashboard-proxy-deploy.yml` once its two GitHub repository secrets are configured; the workflow re-runs validation and typechecking before publishing. Keep `npx wrangler deploy` from `apps/dashboard-proxy` as the manual fallback. After this deploy the Worker forwards `/health`, `/auth/*` and the
 named `/v2/*` reads on GET, the named `/v2/commands/*` POSTs (marketing, CRM authoring) plus the auth POSTs, with no identity of its own, and never derives an operator header.
 
 #### Step 10 — remove Cloudflare Access from the dashboard hostname
@@ -1602,11 +1601,13 @@ metadata) and its `pending` `gmail_message` evidence one message at a time, and 
 the cursor. Campaign copies (outbound with `List-Unsubscribe`) are kept as messages without evidence
 (owner-approved 2026-10-04).
 
-The worker's database login can write nothing in `crm.*` or `outbound.*` except `INSERT` on
-`outbound.campaign_reply`, the designed 4c reply-proposal lane (4a never writes it). Every connect
-proves this from the inside and refuses: any role membership; a port other than 5432 (6543 is
-refused by name); any other `crm`/`outbound` write privilege, including column-level grants,
-`TRIGGER`, and view and materialized-view writes; and any `SECURITY DEFINER` function the worker can
+The worker's database login has no direct write in `crm.*` or `outbound.*` except `INSERT` on
+`outbound.campaign_reply`, the designed 4c reply-proposal lane (4a never writes it). It may EXECUTE
+exactly one closed-list privileged function, `outbound.add_contact_control`, whose worker branch
+accepts only proven single-recipient Batch-A no-such-user evidence. Every connect proves this from
+the inside and refuses: any role membership; a port other than 5432 (6543 is refused by name); any
+other `crm`/`outbound` write privilege, including column-level grants, `TRIGGER`, and view and
+materialized-view writes; and any other `SECURITY DEFINER` function the worker can
 execute (extension-owned and trigger functions and functions in schemas without `USAGE` are not
 counted; nothing is skipped by schema name). **The first hosted `--init --dry-run` is the proof**
 that Supabase's own extension functions do not trip the definer probe; read its log line before
@@ -1721,7 +1722,7 @@ runs on every connect and its code names the check, not the object. To see what 
 project's `postgres` login:
 
 ```sql
--- executable SECURITY DEFINER functions (expected: no rows)
+-- executable SECURITY DEFINER functions (expected: outbound.add_contact_control only)
 select n.nspname || '.' || p.proname
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
  where p.prosecdef and n.nspname not in ('pg_catalog', 'information_schema')
@@ -1993,6 +1994,82 @@ links it. Nothing is renamed, moved or deleted in Drive, and no CRM row is writt
 | `attachment_not_in_eml`, `eml_hash_mismatch` | the stored email does not hold that PDF: leave it, file by hand |
 | `drive_http_*`, `storage_*` | transient: the next run retries |
 
+### 8.11 Mail triage (`origenlab-mail-triage`)
+
+The Render **Background Worker** `origenlab-mail-triage` runs `origenlab-worker triage-worker`: a
+Procrastinate worker on queue `triage`, whose jobs live in the `procrastinate` schema of the same
+database ([`ARCHITECTURE.md`](ARCHITECTURE.md) §8, D2). It never touches Gmail and never writes
+`crm.*`. Every minute its periodic sweep finds captured messages of the last 14 days without a
+reading of the current version and defers one `triage_message` job each. A job:
+
+1. reads the message's `.eml` from the `mail` bucket (read only);
+2. runs the cheap rules (`triage_rules.py`): our own mail, bounces, automatic replies, invitations,
+   bulk and no-reply mail stop here; purchase orders, lost signals, CN follow-ups, quote requests
+   and any other person go on;
+3. matches product candidates in `catalog.product` (exact model number, then the Spanish
+   full-text index);
+4. only for the classes that go on, and only when the model stage is enabled, asks Claude for the
+   products, the urgency, a Spanish summary and the **stage** the case is in after this email — in
+   the CRM's own keys, the Tablero's columns (`lead` «Solicitada» … `negotiating` «Conversación»,
+   `won`, `lost`), or `not_a_case` / `unclear` — given the cases the email's Gmail thread is already
+   linked to and their current stage. Each proposed move is checked against the API's transition
+   table (`transition_allowed`); nothing moves a case: the stage stays an operator's
+   «Cambiar estado» (`triage_model.py`);
+5. records one `evidence.assertion` of kind `message_triage` (`value_norm = triage:v1`) and one
+   `product_mention` per product, all `unresolved`, all `on conflict do nothing`.
+
+**First-time setup (owner, once):**
+
+1. Apply `20261006180000_slice4_procrastinate_triage_queue.sql` and
+   `20261006180100_slice4_triage_assertion_kinds.sql` to the hosted project through the reviewed
+   migration path (§4). The worker refuses to start without the queue's grants and policies
+   (`worker_grant_missing`, `worker_policy_missing`).
+2. Render → New → Background Worker from this repository, or sync the `render.yaml` blueprint
+   (service `origenlab-mail-triage`, plan starter). Copy the database and Storage values from the
+   cron `origenlab-gmail-sync` (`ORIGENLAB_WORKER_DATABASE_*`, `ORIGENLAB_WORKER_STORAGE_S3_*`).
+   No Gmail or Drive credential belongs on this service.
+3. Without the model first: `ORIGENLAB_WORKER_TRIAGE_ENABLED=true`, leave
+   `ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED` unset. Every reading then says `model_state: off`. Check
+   the log lines (`"event": "triage_sweep"`, `"event": "triage_message"`) and the classes.
+4. The model: `ORIGENLAB_WORKER_ANTHROPIC_API_KEY` (a key for this worker alone) and
+   `ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED=true`. `ORIGENLAB_WORKER_TRIAGE_MODEL` overrides the
+   default `claude-opus-5-5` (for example `claude-haiku-4-5`, cheaper and without effort or the
+   refusal fallback).
+
+**Backfill or smoke test without the queue:** with the same environment on a laptop,
+`uv run origenlab-worker triage-once --dry-run` counts what is pending;
+`triage-once --since-days 60 --limit 500` triages it in one pass and prints the counts by class
+and by model state.
+
+**Pause:** `ORIGENLAB_WORKER_TRIAGE_ENABLED=false` — the worker idles and logs `paused` hourly
+(Render restarts a worker that exits). Model only: `ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED=false`.
+Stop everything: Render → the worker → Suspend. Waiting jobs stay in `procrastinate_jobs`; deleting
+them loses nothing, because the next sweep re-enqueues whatever has no reading.
+
+**Review (every operator, daily):** Revisión → «Correos (sugerencias)» lists the readings the
+model was asked for — never the noise — with the email, the products, the suggested stage and the
+stage of the case the Gmail thread is on. «Aprobar» records the verdict and, when the thread is on
+exactly one case and the board can walk there, moves it to the suggested stage («Aprobar y pasar a
+…»); «Ganada» is never moved this way (it needs «Marcar ganada» with its revision). «Corregir»
+records the right class, stage, intent or products (and moves the case when a stage is chosen);
+«Rechazar» records that the reading was wrong. A note is optional and is what makes a correction
+useful later. Every verdict is kept (`evidence.triage_review`, append-only; a second verdict
+supersedes the first without rewriting it). `scripts/triage_eval.py` measures the triage against
+them before a rule change.
+
+**Re-triage after a rule change:** bump `TRIAGE_VERSION` in `triage_rules.py`. New readings are
+stored beside the old ones (`triage:v2`), never over them.
+
+| Log value | Meaning / action |
+|---|---|
+| `model_state: ran` | the model read the message |
+| `model_state: off` / `not_needed` | the model stage is disabled / the rules settled it |
+| `model_state: model_refused`, `truncated`, `not_json`, `closed_value_unknown`, `summary_missing` | the answer was unusable; recorded, not retried |
+| `model_state: api_error_4xx` | a permanent API refusal (bad request, key revoked); recorded, not retried — check the key |
+| a job failing with `ModelUnavailable` | network, 429 or 5xx: retried 5 times over about 17 minutes, then re-enqueued by the sweep |
+| `outcome: storage_error` | the `.eml` could not be read; nothing written, the next sweep retries |
+| `worker_*` refusal at start | the session is not exactly `origenlab_worker` with the queue and triage grants: fix the role, never widen it |
+
 ## 9. Emergency shutdown
 
 In order, fastest first:
@@ -2216,7 +2293,62 @@ Sources are text files the operator extracted by model key
 
 ### 14.5 Hosted loading
 
-None of the importers or the enrichment tool can target a hosted database. Their targets are
-loopback-only by design. Loading catalog data into the hosted project waits for the authorised
-Supavisor route of PR #623; until then the clean room is the only populated target, and the
-hosted project receives the schema only after the owner applies the two catalog migrations.
+The four importers (`import_cost_parameters`, `import_price_lists`, `import_supplier_documents`,
+`import_quote_history`) take a hosted mode for `apply`, `verify` and `rollback`: `--hosted-target
+--authorize-hosted-connection --authorize-supavisor-session-route` in place of the two DSNs
+(`apps/api/scripts/catalog/_common.py`). It reuses PR #623's route: the target file
+`supabase/.audit/hosted_target.env` (Supavisor session mode, `verify-full` with the Supabase CA,
+address pinned), the migrator login for the manifest (`SET LOCAL ROLE origenlab_owner`), and the
+same host with the login `origenlab_api.<project ref>` for the catalog rows, its password read from
+`ORIGENLAB_API_DB_PASSWORD` (the secret Render holds). A missing flag, an `--authorize-*` flag
+without `--hosted-target`, a DSN given alongside, or a missing password is a refusal before any
+connection. Without the flags the loopback-only rules are unchanged. Printed lines are redacted of
+host, logins, address and passwords. The enrichment tool stays loopback-only.
+
+Each load: `plan` (local, no database), read its counts, `apply` with `--plan-sha256`, then `verify`
+with the same plan and hash (exit 0). Name the operator with `--operator-email`, or with
+`--operator-id` for a shared-login profile, which has no email. **Take a `pg_dump` before the first
+apply:** rollback needs `session_replication_role`, which the hosted migrator may be refused; it
+then fails closed (exit 12, nothing deleted), and a hosted mistake is undone from that dump.
+
+Loaded on 2026-10-06 through this route: `price_lists`, `supplier_documents`, `quote_history`, each
+verified with no mismatch ([`STATUS.md`](STATUS.md) §2.7.61). `cost_parameters` has no plan; the
+five seeded values stand until an operator sets more (§14.3). Each load records one
+`source_record.migration_manifest_recorded` event with its importer, plan hash and counts; to see
+what a database already holds:
+
+```sql
+select recorded_at, payload->>'importer', payload->>'plan_sha256'
+  from crm.domain_event
+ where event_type = 'source_record.migration_manifest_recorded'
+ order by recorded_at;
+```
+
+## 15. Production release contract (PR #679; built, activation blocked)
+
+Schema and code release are one guarded operation: independently approved main merge,
+exact-SHA successful CI, encrypted consistent application/queue snapshot, atomic
+DDL-plus-ledger, sequential pinned mail-worker/API/dashboard rollout, then read-only verification.
+Every SQL file must support the old running worker/API throughout the rollout. Each file
+is atomic; a multi-file batch is a committed prefix, not one transaction. Recovery rolls
+forward from that prefix and never automatically reverses schemas or mutates queue jobs.
+
+The dedicated `origenlab-release` environment admits **only the main branch**, and the
+existing public website `production` environment and `web-deploy.yml` stay separate.
+Repository release and scheduled-backup variables default OFF. Runtime metadata access
+cannot prove that GitHub bypass actors are absent: trusted one-time setup verifies that
+configuration with the owner's CLI; every actual release independently verifies current
+collaborator approval of its exact merged PR, so an unreviewed direct/bypass push cannot
+release production. A single maintainer needs an independent collaborator under this
+policy; an owner self-approval is not substituted for review.
+
+**PR #679 now removes the mutable cron from the release path.** A consolidated
+`mail-worker` (compatible alias `triage-worker`) supervises isolated triage/capture
+processes and a ten-minute capture queue. Its scheduler defaults OFF. The controller
+requires the retained legacy cron suspended and deploys only the three exact-commit
+worker/API/dashboard services. This is built, not live: production still runs the cron.
+Follow the [approved mail-worker cutover](runbooks/MAIL_WORKER_CUTOVER.md) after real
+production-data restoration, protection/secrets gates and explicit rollout approval.
+The architecture closes the cron commit race in code; it does not prove shared-resource
+capacity, real recovery or a successful production rollout. The detailed audit/state
+machine remain in the [production release runbook](runbooks/PRODUCTION_DB_MIGRATIONS.md).

@@ -25,6 +25,13 @@ describe("shell route", () => {
     expect(redirectHash("#/archivo")).toBe("#/crm/drive");
     expect(redirectHash("#/revision")).toBe("#/crm/revision");
     expect(redirectHash("#/tenders")).toBe("#/crm/resumen");
+    expect(redirectHash("#/catalogo")).toBe("#/crm/catalogo");
+  });
+
+  it("opens the catalog and one product by its id", () => {
+    const id = "6bafddfa-0000-4000-8000-0000000000c1";
+    expect(parseShellHash("#/crm/catalogo")).toEqual({ section: "catalogo", id: null });
+    expect(parseShellHash(`#/crm/catalogo/${id}`)).toEqual({ section: "catalogo", id });
   });
 
   it("keeps the selected case from an earlier-panel bookmark", () => {

@@ -13,6 +13,8 @@ export const MAIL_RULES_PATHS = {
   apply: "/v2/commands/apply-mail-rules",
   undo: "/v2/commands/undo-mail-rule-action",
   setAuto: "/v2/commands/set-auto-mail-rules",
+  /** A person's verdict on one mail-triage suggestion (`apps/api` v2/triage_review.py). */
+  reviewTriage: "/v2/commands/review-triage",
 } as const;
 
 export type MailRuleMode = "auto" | "proposal" | "none";
@@ -48,7 +50,7 @@ export interface AppliedMailAction {
   organization_id: string | null;
   organization_name: string | null;
   quote_number: string | null;
-  /** Applied by the automatic run (R1/R2), not by someone pressing «Aplicar». */
+  /** Applied by the automatic safe intake/link run (R1/R2/R7), not by someone pressing «Aplicar». */
   automatic?: boolean;
   undone: boolean;
   undone_at: string | null;
@@ -66,7 +68,7 @@ export interface AutoMailRulesRun {
   skipped: string | null;
 }
 
-/** The automatic R1/R2 run: the switch, who set it, the timer. */
+/** The automatic R1/R2/R7 run: the switch, who set it, the timer. */
 export interface AutoMailRulesState {
   enabled: boolean;
   changed_at: string | null;
@@ -107,13 +109,13 @@ export const APPLY_BATCH = 10;
 
 /** What each rule does, in the operator's words. */
 export const RULE_LABEL: Record<string, string> = {
-  R1: "Mismo hilo de Gmail → vincular al caso",
+  R1: "Mismo hilo → vincular; si se envió CN, registrar cotización",
   R2: "Mismo número de cotización → vincular al caso",
   R3: "Caso nuevo para una institución conocida",
   R4: "Caso nuevo e institución «por confirmar»",
   R5: "Orden de compra → caso ganado",
   R6: "Otro proveedor → caso perdido",
-  R7: "Solicitud de cotización → propuesta «Nuevo caso»",
+  R7: "Solicitud de cotización → abrir caso",
   R8: "Queda en Revisión",
 };
 
@@ -147,7 +149,7 @@ export const applyMailRules = (actions: MailRulePair[]) =>
 export const undoMailRuleAction = (receiptId: string, note: string) =>
   postJson<{ undoes_receipt_id: string }>(MAIL_RULES_PATHS.undo, { receipt_id: receiptId, note });
 
-/** Switch the automatic R1/R2 run on or off; a note says why. */
+/** Switch the automatic R1/R2/R7 run on or off; a note says why. */
 export const setAutoMailRules = (enabled: boolean, note: string) =>
   postJson<{ enabled: boolean }>(MAIL_RULES_PATHS.setAuto, { enabled, note });
 
@@ -165,4 +167,19 @@ export function refusalMessage(err: unknown, fallback: string): string {
     if (err.status === 404) return "Las acciones automáticas no están habilitadas en este entorno.";
   }
   return fallback;
+}
+
+/** One verdict on one mail-triage suggestion: approve, correct (with the right answer) or reject. */
+export interface ReviewTriageInput {
+  assertion_id: string;
+  verdict: "approved" | "corrected" | "rejected";
+  corrected?: object;
+  note?: string;
+}
+
+export function reviewTriage(input: ReviewTriageInput): Promise<{ review_id: string }> {
+  const body: Record<string, unknown> = { assertion_id: input.assertion_id, verdict: input.verdict };
+  if (input.verdict === "corrected") body.corrected = input.corrected ?? {};
+  if (input.note && input.note.trim()) body.note = input.note.trim();
+  return postJson<{ review_id: string }>(MAIL_RULES_PATHS.reviewTriage, body);
 }

@@ -260,6 +260,16 @@ FINISH_REGPROC='platform.finish_pin_attempt(uuid,uuid,uuid,bytea)'
 # definer_checks SHORT REGPROC -> the per-function union-all rows for one closed-list definer.
 definer_checks() {
   local short="$1" regproc="$2"
+  local expected_acl forbidden_roles expected_grantees
+  if [[ "$short" == "add_contact_control" ]]; then
+    expected_acl='{origenlab_owner=X/origenlab_owner,origenlab_api=X/origenlab_owner,origenlab_worker=X/origenlab_owner}'
+    forbidden_roles="'anon','authenticated','service_role','origenlab_migrator'"
+    expected_grantees="array['origenlab_api','origenlab_worker']"
+  else
+    expected_acl='{origenlab_owner=X/origenlab_owner,origenlab_api=X/origenlab_owner}'
+    forbidden_roles="'anon','authenticated','service_role','origenlab_worker','origenlab_migrator'"
+    expected_grantees="array['origenlab_api']"
+  fi
   cat <<SQL
   union all
   select '$short exists and is SECURITY DEFINER',
@@ -274,26 +284,33 @@ definer_checks() {
          coalesce((select proconfig = array['search_path=pg_catalog'] from pg_proc where oid = to_regprocedure('$regproc')), false),
          coalesce((select coalesce(proconfig::text, 'null') from pg_proc where oid = to_regprocedure('$regproc')), 'missing')
   union all
-  select '$short ACL is exactly {origenlab_owner=X/origenlab_owner,origenlab_api=X/origenlab_owner}',
-         coalesce((select proacl::text = '{origenlab_owner=X/origenlab_owner,origenlab_api=X/origenlab_owner}' from pg_proc where oid = to_regprocedure('$regproc')), false),
+  select '$short ACL is exactly $expected_acl',
+         coalesce((select proacl::text = '$expected_acl' from pg_proc where oid = to_regprocedure('$regproc')), false),
          coalesce((select coalesce(proacl::text, 'null (PUBLIC default)') from pg_proc where oid = to_regprocedure('$regproc')), 'missing')
   union all
   select 'PUBLIC holds no EXECUTE on $short',
          coalesce((select proacl is not null and not exists (select 1 from aclexplode(proacl) a where a.grantee = 0) from pg_proc where oid = to_regprocedure('$regproc')), false),
          coalesce((select coalesce(proacl::text, 'null (PUBLIC default)') from pg_proc where oid = to_regprocedure('$regproc')), 'missing')
   union all
-  select 'anon, authenticated, service_role, origenlab_worker and origenlab_migrator cannot EXECUTE $short',
+  select 'forbidden runtime roles cannot EXECUTE $short',
          coalesce((select not bool_or(has_function_privilege(r, to_regprocedure('$regproc'), 'EXECUTE'))
-                     from unnest(array['anon','authenticated','service_role','origenlab_worker','origenlab_migrator']) r
+                     from unnest(array[$forbidden_roles]) r
                     where to_regprocedure('$regproc') is not null), false),
-         coalesce((select string_agg(r, ',') from unnest(array['anon','authenticated','service_role','origenlab_worker','origenlab_migrator']) r
-                    where to_regprocedure('$regproc') is not null and has_function_privilege(r, to_regprocedure('$regproc'), 'EXECUTE')), 'none')
+         coalesce((select string_agg(r, ',') from unnest(array[$forbidden_roles]) r
+                    where to_regprocedure('$regproc') is not null
+                      and has_function_privilege(r, to_regprocedure('$regproc'), 'EXECUTE')), 'none')
   union all
-  select 'origenlab_api is the only grantee of EXECUTE on $short',
-         coalesce((select array_agg(distinct a.grantee::regrole::text) from pg_proc f, aclexplode(f.proacl) a
-                    where f.oid = to_regprocedure('$regproc') and a.privilege_type = 'EXECUTE' and a.grantee <> f.proowner) = array['origenlab_api'], false),
+  select 'only the intended runtime grantees hold EXECUTE on $short',
+         coalesce((select array_agg(distinct a.grantee::regrole::text order by a.grantee::regrole::text)
+                    from pg_proc f, aclexplode(f.proacl) a
+                   where f.oid = to_regprocedure('$regproc')
+                     and a.privilege_type = 'EXECUTE'
+                     and a.grantee <> f.proowner) = $expected_grantees, false),
          coalesce((select string_agg(distinct case a.grantee when 0 then 'PUBLIC' else a.grantee::regrole::text end, ',')
-                     from pg_proc f, aclexplode(f.proacl) a where f.oid = to_regprocedure('$regproc') and a.privilege_type = 'EXECUTE' and a.grantee <> f.proowner), 'none')
+                    from pg_proc f, aclexplode(f.proacl) a
+                   where f.oid = to_regprocedure('$regproc')
+                     and a.privilege_type = 'EXECUTE'
+                     and a.grantee <> f.proowner), 'none')
 SQL
 }
 
@@ -329,7 +346,7 @@ done <<<"$closed"
 
 # The same grants, proven by connecting: the worker is refused before the body runs; the API
 # reaches the body, whose own argument check refuses the call (22023) — so EXECUTE is granted.
-expect origenlab_worker "$PW_WORKER" "worker: refused EXECUTE on outbound.add_contact_control" 42501 \
+expect origenlab_worker "$PW_WORKER" "worker: may EXECUTE outbound.add_contact_control (body refuses anything outside hard-bounce authority)" 22023 \
   "select outbound.add_contact_control('revoke', 'all', 'x@lab.test', 'x', gen_random_uuid(), gen_random_uuid(), '{}'::jsonb)"
 expect origenlab_api "$PW_API" "api: may EXECUTE outbound.add_contact_control (the body refuses an unimplemented kind)" 22023 \
   "select outbound.add_contact_control('revoke', 'all', 'x@lab.test', 'x', gen_random_uuid(), gen_random_uuid(), '{}'::jsonb)"
@@ -386,8 +403,8 @@ inject "add_contact_control with its search_path pin removed" \
   "set role origenlab_owner; alter function $DEFINER_REGPROC reset search_path; reset role;"
 inject "add_contact_control executable by PUBLIC" \
   "set role origenlab_owner; grant execute on function $DEFINER_REGPROC to public; reset role;"
-inject "add_contact_control executable by origenlab_worker" \
-  "set role origenlab_owner; grant execute on function $DEFINER_REGPROC to origenlab_worker; reset role;"
+inject "add_contact_control EXECUTE revoked from origenlab_worker" \
+  "set role origenlab_owner; revoke execute on function $DEFINER_REGPROC from origenlab_worker; reset role;"
 inject "add_contact_control executable by service_role" \
   "set role origenlab_owner; grant execute on function $DEFINER_REGPROC to service_role; reset role;"
 inject "add_contact_control no longer SECURITY DEFINER" \

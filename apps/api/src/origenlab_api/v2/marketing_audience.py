@@ -253,6 +253,22 @@ def _interest(
     }
 
 
+# Gmail evidence includes inline signature images in documents[] as well as actual files.
+# Match only commercial document attachments, never image filenames or signature labels:
+# marketing audience may otherwise turn the sender's brand carousel into fictitious
+# customer demand for every brand in the seller's email footer.
+_COMMERCIAL_FILE_EXT = re.compile(r"\.(?:pdf|docx?|xlsx?|csv|odt|ods|pptx?)$", re.IGNORECASE)
+
+
+def _commercial_document_filename(filename: Any) -> bool:
+    """Conservative allow-list for identifying interest from sent-file names.
+
+    Subject lines are considered separately. This does not change stored Gmail evidence,
+    only which attachment names may support a product-interest assertion.
+    """
+    return isinstance(filename, str) and bool(_COMMERCIAL_FILE_EXT.search(filename.strip()))
+
+
 def _most_specific(matches: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """One entry per catalogue item; a brand-only match yields to a model of the same brand.
 
@@ -374,8 +390,13 @@ def compose(taxonomy: EquipmentTaxonomy, inputs: AudienceInputs) -> dict[str, An
             coverage["quotation_evidence_already_recorded"] += 1
             continue
         case = inputs.cases.get(ev["opportunity_id"]) if ev.get("opportunity_id") else None
-        texts = [ev.get("subject")] + list(ev.get("filenames") or [])
-        matches = _most_specific({**m.as_dict(), "_in": t} for t in texts for m in taxonomy.match(t))
+        # Inline mail-footer graphics are stored alongside real attachments. Only
+        # commercial document filenames can prove product demand; the subject remains
+        # useful even if the message has no recognized document extension.
+        texts = [ev.get("subject")] + [
+            fn for fn in (ev.get("filenames") or []) if _commercial_document_filename(fn)
+        ]
+        matches = _most_specific({**m.as_dict(), "_in": t} for t in texts if isinstance(t, str) for m in taxonomy.match(t))
         if not matches:
             continue
         coverage["quotation_evidence_with_mentions"] += 1

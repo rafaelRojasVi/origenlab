@@ -37,9 +37,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // Commercial cases: the list and one case. Read-only, like everything above it.
   //
   // Nine case commands exist upstream under `POST /v2/commands/*`; this read list names
-  // none of them. Four -- advance-case-stage, record-case-won, resolve-current-revision and
-  // record-case-quotation -- are reachable as POSTs through `CASE_COMMAND_POST_PATHS` below;
-  // the other five stay refused. Widening either
+  // none of them. Six -- advance-case-stage, add-case-organization, set-case-organization-role, record-case-won, resolve-current-revision and
+  // record-case-quotation -- are reachable as POSTs through `CASE_COMMAND_POST_PATHS` below
+  // (with the three W11 task commands); the other three case commands stay refused. Widening either
   // list is a separate, deliberate decision with its own review.
   /^\/v2\/cases$/,
   /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
@@ -100,6 +100,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // cotización» / «Nueva revisión». GET-only, operator session required, the same UUID-shaped
   // segment and a literal `/mail-documents` tail. Recording a quote is `record-case-quotation`.
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/mail-documents$/,
+  // Strict read-only candidates for a PDF quoted in a different Gmail thread.
+  // Never links evidence or writes a quote; exact UUID and literal tail only.
+  /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/quote-candidates$/,
+  // Operator-reviewed standalone purchase order suggestions: read-only and UUID-scoped.
+  /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/purchase-order-candidates$/,
   // The rest of the CRM workspace (dashboard `#/crm/*`): four literal read paths and the one
   // cockpit read the CRM's review screen uses. Upstream each is GET-only, resolves the operator
   // from the dashboard session cookie (401 without one), and masks every email and phone for a
@@ -125,13 +130,18 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // Email → cases dry run (spec 2026-10-05): what the rules would do, with their reasons, and the
   // actions already applied. Admin only upstream (403 for sales and viewer); writes nothing.
   /^\/v2\/workspace\/mail-rules\/preview$/,
+  // Mail triage review (`apps/api` v2/triage_review.py): the worker's suggestions for the mail a
+  // person wrote, with their email, products and case stage (`?status=&limit=`). Any operator
+  // reads; GET-only upstream through the contact-redacting route. Nothing under it is reachable.
+  /^\/v2\/workspace\/triage-readings$/,
   /^\/v2\/cockpit\/work-queue$/,
-  // Catalog 1a reads (`apps/api` v2/catalog/routes.py): products, one product, a supplier's
-  // terms, cost parameters, FX, price history (`?model_key=&limit=`) and a short-lived signed
+  // Catalog 1a reads (`apps/api` v2/catalog/routes.py): products, one product, the supplier list
+  // (names and product counts by kind, no costs), a supplier's terms, cost parameters, FX, price history (`?model_key=&limit=`) and a short-lived signed
   // image URL (JSON, never image bytes). Exact paths, GET-only upstream; named one by one so
   // nothing else under `/v2/catalog` is reachable until it is reviewed and listed.
   /^\/v2\/catalog\/products$/,
   /^\/v2\/catalog\/products\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /^\/v2\/catalog\/suppliers$/,
   /^\/v2\/catalog\/suppliers\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/terms$/,
   /^\/v2\/catalog\/parameters$/,
   /^\/v2\/catalog\/fx$/,
@@ -203,7 +213,8 @@ const TEST_SEND_PATH_RE = /^\/v2\/commands\/send-campaign-test$/;
 
 /**
  * Email → cases commands (spec 2026-10-05): apply the rules' `auto` actions, undo one applied
- * action, or switch the automatic R1/R2 run on or off (`set-auto-mail-rules`). Three exact paths. Upstream all three are admin-only, need an `Idempotency-Key`, and the apply
+ * action, or switch the automatic R1/R2 run on or off (`set-auto-mail-rules`), plus the mail-triage verdict
+ * (`review-triage`, sales or admin). Four exact paths. Upstream all three are admin-only, need an `Idempotency-Key`, and the apply
  * re-plans on the server — the browser never sends an action, at most the evidence ids to limit
  * the run to. The case commands the rules call stay unreachable from the browser except the two
  * the case drawer uses (`CASE_COMMAND_POST_PATHS`). Same
@@ -213,6 +224,9 @@ export const MAIL_RULES_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/apply-mail-rules$/,
   /^\/v2\/commands\/undo-mail-rule-action$/,
   /^\/v2\/commands\/set-auto-mail-rules$/,
+  // A person's verdict on one mail-triage suggestion (approve, correct, reject; optional note).
+  // `sales` or `admin` upstream, `Idempotency-Key`, append-only; it moves no case.
+  /^\/v2\/commands\/review-triage$/,
 ];
 
 /** At most 2,000 evidence ids, or a receipt id and a note. */
@@ -226,20 +240,28 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
 /**
  * Commercial-case commands the case drawer uses: «Cambiar etapa» (`advance-case-stage`),
  * «Marcar ganada» (`record-case-won`), «Elegir revisión vigente» (`resolve-current-revision`)
- * and «Registrar cotización» / «Nueva revisión» (`record-case-quotation`). Four exact paths, and
- * only four. Upstream each needs an
+ * and «Registrar cotización» / «Nueva revisión» (`record-case-quotation`), plus the three W11
+ * task commands behind «En pausa hasta…» (`create-task`), «Retomar ahora» (`cancel-task`) and
+ * «Hecho» (`complete-task`). Nine exact paths, and only nine. Upstream each needs an
  * active `sales` or `admin` operator (from the verified session, never the body), an
- * `Idempotency-Key`, the case version the operator was shown and a note, and mounts only behind
- * `ORIGENLAB_V2_COMMANDS_ENABLED`. The other five case commands -- open-commercial-case,
- * link-case-evidence, add-case-organization, set-case-organization-role, record-case-interest --
- * stay refused here until reviewed on their own. Same Origin / JSON / key guard as the
+ * `Idempotency-Key`, the case (or task) version the operator was shown and a note, and mounts only behind
+ * `ORIGENLAB_V2_COMMANDS_ENABLED`. The other three case commands -- open-commercial-case,
+ * record-case-interest -- stay refused. The reviewed cross-thread quotation flow
+ * explicitly links an existing Gmail evidence record via link-case-evidence; the
+ * operator must submit a case version, a written note and an idempotency key. Same Origin / JSON / key guard as the
  * marketing commands (`marketingCommandRefusal` in index.ts).
  */
 export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/advance-case-stage$/,
+  /^\/v2\/commands\/add-case-organization$/,
+  /^\/v2\/commands\/set-case-organization-role$/,
   /^\/v2\/commands\/record-case-won$/,
   /^\/v2\/commands\/resolve-current-revision$/,
   /^\/v2\/commands\/record-case-quotation$/,
+  /^\/v2\/commands\/link-case-evidence$/,
+  /^\/v2\/commands\/create-task$/,
+  /^\/v2\/commands\/complete-task$/,
+  /^\/v2\/commands\/cancel-task$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */
@@ -275,7 +297,7 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
  * «Confirmar institución», a record-level confirm that needs no assertion) among them. None is
  * evidence-bound, and none of the evidence-bound commands (create-organization, confirm-
  * organization, attach-contact-address, attribute-sender-organization, confirm-person-from-
- * evidence, the case commands, apply-unsubscribe-replies, preview) is listed here — the four case
+ * evidence, the case commands, apply-unsubscribe-replies, preview) is listed here — the six case
  * commands the drawer uses have their own list (`CASE_COMMAND_POST_PATHS`); the rest stay
  * refused on the browser boundary until reviewed separately.
  *
