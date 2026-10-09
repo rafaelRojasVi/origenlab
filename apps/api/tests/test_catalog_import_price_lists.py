@@ -139,6 +139,90 @@ def test_parse_ortoalresa_text_is_stale() -> None:
 
 # ------------------------------------------------------------------ Labdelivery (spec S5)
 
+SOVIQUIM_TEXT = """  CATALOGO        CODIGO    PRODUCTO                                       52Distrib   Marca       52Distrib
+FAMILIA EQUIPOS
+                             AGITADOR ORBITAL, minishaker 3D, de movimiento oscilante para tubos
+                   Z9902
+  XYZ100100                 vacutainer y otros, 220 V / 50 Hz (soporte tubos aparte)          123.456     MarcaUno       52Distrib
+
+
+ XYZ 1002000      Z9902D    Plataforma Dimpled mat,para tubos ,para agit orbital Z9902         11.111     MarcaUno       52Distrib
+
+
+                           DISPENSADOR Con certificado de calidad, autoclavable
+                 Z9910
+  7770001                 con 3 adaptadores. Volumen: 0,2 -                                  22.222     MarcaDos    52Distrib
+                           DISPENSADOR Con certificado de calidad, autoclavable
+                 Z9911
+  7770002                 con 3 adaptadores. Volumen: 1,0 -                                  22.222     MarcaDos    52Distrib
+\f       www.soviquim.cl F:000000000                               Edición 52            pagina 2
+FAMILIA REACTIVOS --- REACTIVOS PA --- PRECIOS DE R
+ 138              Q9Z0000000001 Reactivo ficticio PA, 1 Lt                         3.333   MarcaTres   52Distrib
+"""
+
+
+def test_parse_soviquim_text_blocks_families_and_kinds() -> None:
+    rows = ipl.parse_soviquim_text(SOVIQUIM_TEXT, as_of="2026-10-04")
+    assert [r["model_number"] for r in rows] == ["Z9902", "Z9902D", "Z9910", "Z9911", "Q9Z0000000001"]
+    first = rows[0]
+    assert first["name"] == ("AGITADOR ORBITAL, minishaker 3D, de movimiento oscilante para tubos "
+                             "vacutainer y otros, 220 V / 50 Hz (soporte tubos aparte)")
+    assert first["cost"] == Decimal("123456") and first["currency"] == "CLP"
+    assert first["manufacturer"] == first["supplier"] == "Soviquim" and first["family"] == "Marca: MarcaUno"
+    assert [r["product_kind"] for r in rows] == ["equipment", "accessory", "equipment", "equipment", "consumable"]
+    assert rows[2]["name"].startswith("DISPENSADOR") and rows[3]["name"].endswith("Volumen: 1,0 -")
+    assert rows[0]["category"] == "Equipos" and rows[4]["category"] == "Reactivos"
+
+
+def test_parse_hielscher_xlsx_one_row_per_reference(tmp_path: Path) -> None:
+    wb = openpyxl.Workbook()
+    for title, rows in (("UP50H", [("UP50H", "ultrasonic processor, 50 watts", 1000, 750),
+                                    ("MS1", "sonotrode, titanium", 200, 150)]),
+                        ("UP100H", [("MS1", "sonotrode, titanium", 200, 150)])):
+        ws = wb.create_sheet(title)
+        ws.append([title])
+        ws.append(["Reference", "Description", "List price", "Your price (25 % off)"])
+        for r in rows:
+            ws.append(list(r))
+    del wb["Sheet"]
+    path = tmp_path / "hielscher.xlsx"
+    wb.save(path)
+    rows = ipl.parse_hielscher_xlsx(path, as_of="2026-01-01")
+    assert [(r["model_number"], r["product_kind"], r["family"]) for r in rows] == [
+        ("UP50H", "equipment", "UP50H"), ("MS1", "accessory", "UP50H")]
+    assert rows[1]["discount_pct"] == Decimal("0.25") and rows[1]["cost"] == Decimal("150")
+
+
+@pytest.mark.parametrize(("family", "kind"), [
+    ("Parts / Weights / Accessories / Spare Parts", "spare_part"),
+    ("Parts / Weights / Accessories / Weights", "accessory"),
+    ("Lab Equipment / LabJaws Clamps & Supports", "accessory"),
+    ("Lab Weighing / Explorer", "equipment"), (None, "equipment")])
+def test_ohaus_kind(family: str | None, kind: str) -> None:
+    assert ipl.ohaus_kind(family) == kind
+
+
+def test_parse_loser_text_without_thousands_dot() -> None:
+    rows = ipl.parse_loser_text("1 i Osmometer, accessories Typ 16 1234,00\n8 Power supply DR 15 0.01.0010 10,00\n",
+                                as_of="2024-01-01")
+    assert [(r["model_number"], r["cost"], r["product_kind"]) for r in rows] == [
+        ("Typ 16", Decimal("1234"), "equipment"), ("0.01.0010", Decimal("10"), "accessory")]
+
+
+def test_other_kinds() -> None:
+    assert (ipl.adam_kind("Pesas ASTM"), ipl.adam_kind("Balanzas de precisión Polaris")) == ("accessory", "equipment")
+    assert [ipl.loser_kind("Typ 16", 1), ipl.loser_kind("0.01.0010", 8), ipl.loser_kind("0.01.0001", 16)] == [
+        "equipment", "accessory", "consumable"]
+    rows = ipl.parse_ortoalresa_text(ORTOALRESA_TEXT, as_of="2019-01-01")
+    assert {r["model_number"][:2]: r["product_kind"] for r in rows}.get("CE", "equipment") == "equipment"
+
+
+def test_plan_carries_kind_and_category() -> None:
+    rows = ipl.parse_soviquim_text(SOVIQUIM_TEXT, as_of="2026-10-04")
+    [product] = [i for i in ipl.plan_items(rows[:1]) if i["action"] == "create_product"]
+    assert product["fields"]["product_kind"] == "equipment" and product["fields"]["category_es"] == "Equipos"
+
+
 def test_labdelivery_path_refused(tmp_path: Path) -> None:
     folder = tmp_path / "Lab-Delivery 2024"
     folder.mkdir()

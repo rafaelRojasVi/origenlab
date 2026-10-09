@@ -14,7 +14,7 @@ import {
   type MailRuleMode,
   type PlannedMailAction,
 } from "../mailRules";
-import { Badge, EmptyState, Panel, ResourceGate, Skeleton, fmtDate } from "../ui";
+import { Badge, Button, EmptyState, Panel, ResourceGate, Skeleton, fmtDate, toast } from "../ui";
 import { useResource } from "../useResource";
 
 const MODE: Record<MailRuleMode, { label: string; tone: "good" | "warn" | "neutral" }> = {
@@ -25,10 +25,6 @@ const MODE: Record<MailRuleMode, { label: string; tone: "good" | "warn" | "neutr
 
 const RULE_ORDER = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"];
 
-const BUTTON =
-  "h-8 shrink-0 rounded-md border border-line px-3 text-xs font-medium text-ink hover:bg-canvas-sunken disabled:cursor-not-allowed disabled:opacity-50";
-const PRIMARY =
-  "h-8 shrink-0 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
  * «Acciones automáticas del correo»: the email → cases rules' dry run, «Aplicar», and the applied
@@ -90,19 +86,23 @@ function AdminPanel() {
                 cambian su etapa. Cada acción queda como «{p.label}» con sus motivos y se puede deshacer.
               </p>
               <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={BUTTON}
+                <Button
                   onClick={() => {
                     setShowPlan(true);
                     reload();
                   }}
                 >
                   Vista previa
-                </button>
-                <button type="button" className={PRIMARY} disabled={!p.commands_enabled || busy || autoCount === 0} onClick={() => void apply(p.actions)}>
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={!p.commands_enabled || autoCount === 0}
+                  busy={busy}
+                  busyLabel="Aplicando…"
+                  onClick={() => void apply(p.actions)}
+                >
                   Aplicar{autoCount ? ` (${autoCount})` : ""}
-                </button>
+                </Button>
               </div>
               {!p.commands_enabled ? (
                 <p className="text-[11px] text-ink-faint">Aplicar no está habilitado en este entorno; la vista previa no escribe nada.</p>
@@ -162,6 +162,7 @@ function AutoSwitch({ state, onChanged }: { state: AutoMailRulesState; onChanged
     setError(null);
     try {
       await setAutoMailRules(target, note.trim());
+      toast(target ? "Vinculación automática activada." : "Vinculación automática detenida.");
       setOpen(false);
       setNote("");
       onChanged();
@@ -188,9 +189,9 @@ function AutoSwitch({ state, onChanged }: { state: AutoMailRulesState; onChanged
         </span>
         <span className="flex-1" />
         {open ? null : (
-          <button type="button" className={target ? PRIMARY : BUTTON} onClick={() => setOpen(true)}>
+          <Button variant={target ? "primary" : "secondary"} onClick={() => setOpen(true)}>
             {target ? "Activar" : "Detener"}
-          </button>
+          </Button>
         )}
       </div>
       <p className="text-xs text-ink-muted">
@@ -215,12 +216,18 @@ function AutoSwitch({ state, onChanged }: { state: AutoMailRulesState; onChanged
             onChange={(e) => setNote(e.target.value)}
             className="h-8 min-w-0 flex-1 rounded-md border border-line bg-canvas-raised px-2 text-[13px] text-ink focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
           />
-          <button type="button" className={PRIMARY} disabled={busy || !note.trim()} onClick={() => void submit()}>
+          <Button
+            variant={target ? "primary" : "danger"}
+            disabled={!note.trim()}
+            busy={busy}
+            busyLabel={target ? "Activando…" : "Deteniendo…"}
+            onClick={() => void submit()}
+          >
             {target ? "Activar" : "Detener"}
-          </button>
-          <button type="button" className={BUTTON} onClick={() => setOpen(false)}>
+          </Button>
+          <Button onClick={() => setOpen(false)} disabled={busy}>
             Cancelar
-          </button>
+          </Button>
         </div>
       ) : null}
       {error ? (
@@ -312,6 +319,7 @@ function AppliedRow({ item, onUndone }: { item: AppliedMailAction; onUndone: () 
     setError(null);
     try {
       await undoMailRuleAction(item.receipt_id, note.trim());
+      toast("Acción deshecha.");
       setOpen(false);
       onUndone();
     } catch (err) {
@@ -336,9 +344,7 @@ function AppliedRow({ item, onUndone }: { item: AppliedMailAction; onUndone: () 
             deshecha por {item.undone_by ?? "—"} · {fmtDate(item.undone_at)}
           </span>
         ) : open ? null : (
-          <button type="button" className={BUTTON} onClick={() => setOpen(true)}>
-            Deshacer
-          </button>
+          <Button onClick={() => setOpen(true)}>Deshacer</Button>
         )}
       </div>
       {item.reasons?.length ? <p className="text-[11px] text-ink-muted">{item.reasons.join(" · ")}</p> : null}
@@ -353,12 +359,12 @@ function AppliedRow({ item, onUndone }: { item: AppliedMailAction; onUndone: () 
             onChange={(e) => setNote(e.target.value)}
             className="h-8 min-w-0 flex-1 rounded-md border border-line bg-canvas-raised px-2 text-[13px] text-ink focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
           />
-          <button type="button" className={PRIMARY} disabled={busy || !note.trim()} onClick={() => void undo()}>
+          <Button variant="primary" disabled={!note.trim()} busy={busy} busyLabel="Deshaciendo…" onClick={() => void undo()}>
             Confirmar
-          </button>
-          <button type="button" className={BUTTON} onClick={() => setOpen(false)}>
+          </Button>
+          <Button onClick={() => setOpen(false)} disabled={busy}>
             Cancelar
-          </button>
+          </Button>
         </div>
       ) : null}
       {error ? (

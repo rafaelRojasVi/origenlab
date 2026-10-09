@@ -31,7 +31,7 @@ export const LEGACY_REDIRECTS: Record<string, CrmSection> = {
   revision: "revision",
   importacion: "revision",
   "crm-v2": "resumen",
-  catalogo: "resumen",
+  catalogo: "catalogo",
   tenders: "resumen",
   "payments-logistics": "resumen",
   system: "resumen",

@@ -1,0 +1,67 @@
+name: dashboard-proxy-deploy
+
+# The first protected Cloudflare cutover was manual (2026-10-08).
+# After that, deploy the production Worker on changes to its code/config.
+# PRs run the separate dashboard-proxy validation workflow with no deploy secrets.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/dashboard-proxy/**"
+      - ".github/workflows/dashboard-proxy-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Avoid concurrent pushes to the same production Worker.
+concurrency:
+  group: origenlab-dashboard-proxy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Validate and deploy Cloudflare Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/dashboard-proxy
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: apps/web/.nvmrc
+          cache: npm
+          cache-dependency-path: apps/dashboard-proxy/package-lock.json
+
+      - name: Install pinned dependencies
+        run: npm ci
+      - name: Validate proxy and security allowlist
+        run: npm run validate
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Verify Cloudflare deployment credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Set repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. Never put credentials in source code."
+            exit 1
+          fi
+
+      # Only main runs this workflow on push; pull requests never receive
+      # Cloudflare credentials. Preserve existing Worker secrets and routes.
+      - name: Deploy Cloudflare Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --no-install wrangler deploy
+
+      - name: Verify production deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --no-install wrangler deployments status --name origenlab-dashboard-proxy

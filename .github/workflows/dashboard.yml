@@ -4,11 +4,9 @@ permissions:
   contents: read
 
 on:
+  # Production release gate requires this check on EVERY main commit, not only path matches.
   push:
     branches: [main, dev]
-    paths:
-      - "apps/dashboard/**"
-      - ".github/workflows/dashboard.yml"
   pull_request:
     paths:
       - "apps/dashboard/**"
