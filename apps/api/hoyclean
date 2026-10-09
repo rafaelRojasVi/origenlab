@@ -1,4 +1,0 @@
-ORIGENLAB_V2_TEST_DSN=postgresql://postgres:52fb96825d22c09255d0707e03131a499b0217b9095bb078@127.0.0.1:32781/postgres
-ORIGENLAB_V2_API_TEST_DSN=postgresql://origenlab_api:afaf83fe055601aaafc0603874fb39e34db3b2fe2bbb6154@127.0.0.1:32781/postgres
-ORIGENLAB_V2_WORKER_TEST_DSN=postgresql://origenlab_worker:9e3629c4f81758e28b5ddb997b2fb4387e910a40bb67e1ee@127.0.0.1:32781/postgres
-OL_TEST_CLUSTER=origenlab_apitest_3f5133c6
