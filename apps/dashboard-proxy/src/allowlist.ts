@@ -103,6 +103,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // Strict read-only candidates for a PDF quoted in a different Gmail thread.
   // Never links evidence or writes a quote; exact UUID and literal tail only.
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/quote-candidates$/,
+  // Operator-reviewed standalone purchase order suggestions: read-only and UUID-scoped.
+  /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/purchase-order-candidates$/,
   // The rest of the CRM workspace (dashboard `#/crm/*`): four literal read paths and the one
   // cockpit read the CRM's review screen uses. Upstream each is GET-only, resolves the operator
   // from the dashboard session cookie (401 without one), and masks every email and phone for a
