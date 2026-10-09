@@ -2640,6 +2640,7 @@ def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
 
     # A sent quotation's Gmail message, reached through the revision recorded from it or
     # through an evidence link on the case.
+    # Only live evidence: a link a person removed, or a record rejected or quarantined, is not interest.
     cur.execute(
         """
         select distinct on (s.id, link.opportunity_id)
@@ -2658,9 +2659,12 @@ def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
                  where qr.origin_source_record_id is not null
                 union all
                 select e.source_record_id, e.opportunity_id, null::timestamptz
-                  from crm.opportunity_evidence e where e.source_record_id is not null
+                  from crm.opportunity_evidence e
+                 where e.source_record_id is not null and e.unlinked_at is null
                ) link on link.source_record_id = s.id
          where s.kind = 'gmail_message'
+           and s.review_status <> 'rejected'
+           and not s.is_quarantined
          order by s.id, link.opportunity_id, link.sent_at nulls last
         """
     )
