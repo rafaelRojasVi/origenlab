@@ -970,15 +970,19 @@ class CrmWorkspaceRepository:
                 "select kind, resolution, count(*) from evidence.assertion group by 1, 2 order by 1, 2"
             )
             assertions = [{"kind": r[0], "resolution": r[1], "count": int(r[2])} for r in cur.fetchall()]
-            cur.execute("select pdf_sha256 from crm.quote_revision where pdf_sha256 is not null")
-            rev_shas = {str(r[0]).lower() for r in cur.fetchall()}
-            # The worker files PDFs asynchronously and records durable links in Supabase.
-            # The boot-time archive ledger (_drive) is historical, not the live source of truth.
+            # One round-trip, preserving overview's 8-statement budget. The worker
+            # files PDFs asynchronously into evidence.source_record after API startup.
             cur.execute(
-                "select payload ->> 'document_sha256' from evidence.source_record "
-                "where kind = 'drive_file' and payload ->> 'drive_file_id' is not null"
+                "select 'revision' as source, pdf_sha256 as sha "
+                "from crm.quote_revision where pdf_sha256 is not null "
+                "union all "
+                "select 'drive', payload ->> 'document_sha256' "
+                "from evidence.source_record where kind = 'drive_file' "
+                "and payload ->> 'drive_file_id' is not null"
             )
-            live_drive_shas = {str(r[0]).lower() for r in cur.fetchall() if r[0]}
+            sha_rows = cur.fetchall()
+            rev_shas = {str(sha).lower() for source, sha in sha_rows if source == 'revision' and sha}
+            live_drive_shas = {str(sha).lower() for source, sha in sha_rows if source == 'drive' and sha}
         entities = [
             {"key": k, "count": counts[k], **ENTITY_NOTES[k]} for k in _COUNT_SQL
         ]
