@@ -171,6 +171,17 @@ class S3EmlStore:
             raise StorageError(type(exc).__name__) from None
         return body == raw
 
+    def get(self, key: str) -> bytes:
+        """The stored `.eml` (the Drive filing reads one attachment out of it)."""
+        from botocore.exceptions import BotoCoreError, ClientError
+
+        try:
+            return self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+        except ClientError as exc:
+            raise StorageError(f"storage_get_http_{_status(exc)}") from None
+        except BotoCoreError as exc:
+            raise StorageError(type(exc).__name__) from None
+
     def put_if_absent(self, key: str, raw: bytes) -> str:
         """`stored`, or `present` when an object with exactly these bytes is already there.
 

@@ -62,3 +62,9 @@ bed1e7a7ff2349173701c710d81513798b0e6ad9:apps/api/tests/test_v2_crm_authoring.py
 # which quoted the same line.
 6af295da67a5569002d5c06de8cb0ea7fc3fcaf0:apps/dashboard/src/crm/pages/OverviewPage.test.tsx:generic-api-key:118
 b263e91f48cd86a323844fb5b837867ef4539802:.gitleaksignore:generic-api-key:60
+
+# PR #679: public Render API service identifier in the pinned deployment topology.
+# An API resource ID is not an authentication token. Gitleaks misclassifies it as a
+# generic-api-key. Suppress ONLY the exact initial commit/line fingerprint;
+# further unrelated findings continue to fail.
+d73930202a68a06239ffde3154920ae42e341ccd:scripts/deploy/render_release.py:generic-api-key:18

@@ -209,6 +209,12 @@ class Settings(BaseSettings):
     """Supabase Auth JWKS URL. When set, JWKS verification is used and the local development identity adapter is never constructed."""
     v2_jwks_url: str | None = None
     v2_statement_timeout_ms: int = 15_000
+    """Connections the V2 pool keeps open. Each one costs a TLS handshake to the database's region,
+    so the pool keeps them warm instead of opening one per burst of requests."""
+    v2_pool_min_size: int = 4
+    """Most connections the V2 pool opens. A dashboard page sends about ten reads at once; the
+    session pooler's per-project limit is shared with the Gmail worker and cron, so stay modest."""
+    v2_pool_max_size: int = 8
     """When true, mount POST /v2/commands/* — the human-review command boundary.
 
     Default **false**, like `commercial_operations_writes_enabled` above and for the same
@@ -217,6 +223,12 @@ class Settings(BaseSettings):
     it off the command router is absent entirely and every /v2/commands/* path is a 404.
     """
     v2_commands_enabled: bool = False
+    """Seconds between two automatic R1/R2 passes of the email → cases rules
+    (`v2/mail_rules_auto.py`). The timer runs only where `v2_commands_enabled` mounts the
+    commands, and acts only while an admin has switched it on in Revisión («Acciones
+    automáticas»), which is off until someone does. **0** never starts the timer — the
+    deploy-level stop, for when the dashboard itself cannot be reached."""
+    v2_auto_mail_rules_interval_seconds: int = Field(default=300, ge=0, le=86_400)
     """Mount POST /v2/commands/{create,save}-campaign-draft (writes outbound.campaign drafts).
 
     Default **false** and separate from `v2_commands_enabled`: writing email copy and recording

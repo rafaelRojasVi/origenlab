@@ -142,6 +142,55 @@ class _FakeRepo:
     def providers(self) -> dict[str, Any]:
         return {"on_cases": [], "candidates": [], "lines": []}
 
+    def opportunity_notes(self, opportunity_id: str) -> dict[str, Any] | None:
+        if opportunity_id == "00000000-0000-4000-8000-000000000003":
+            return None
+        return {
+            "opportunity_id": opportunity_id,
+            "notes": [
+                {"id": str(uuid.uuid4()), "root_note_id": None, "revision_no": 1,
+                 "body": "Llamé al laboratorio; esperan la orden de compra.",
+                 "author_operator_id": _FAKE_OP, "author_name": "Sales",
+                 "created_at": "2026-10-01T00:00:00Z", "status": "active", "archived_at": None,
+                 "archive_reason": None, "version": 1, "is_latest": True},
+            ],
+        }
+
+    def opportunity_quote_candidates(self, opportunity_id: str) -> dict[str, Any] | None:
+        if opportunity_id == "00000000-0000-4000-8000-000000000003":
+            return None
+        return {"opportunity_id": opportunity_id, "candidates": [
+            {"source_record_id": "00000000-0000-4000-8000-000000000010",
+             "quote_token": "CN01259", "filename": "CN01259-ficticio.pdf",
+             "sent_at": "2026-10-07T12:00:00Z", "subject": "Cotización ficticia",
+             "document_sha256": "ab" * 32, "gmail_url": "https://mail.google.com/mail/u/0/#all/abc",
+             "reason": "Número exacto y destinatario externo compartido", "recorded_elsewhere": False},
+        ]}
+
+    def opportunity_purchase_order_candidates(self, opportunity_id: str) -> dict[str, Any] | None:
+        if opportunity_id == "00000000-0000-4000-8000-000000000003":
+            return None
+        return {"opportunity_id": opportunity_id, "candidates": [
+            {"source_record_id": "00000000-0000-4000-8000-000000000020",
+             "purchase_order_number": "55512345", "filename": "OC 55512345.pdf",
+             "gmail_url": "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/test",
+             "subject": "OC 55512345", "document_sha256": "ab" * 32,
+             "reason": "Coincidencia externa", "sent_at": "2026-10-09T12:00:00Z"},
+        ]}
+
+    def opportunity_mail_documents(self, opportunity_id: str) -> dict[str, Any] | None:
+        if opportunity_id == "00000000-0000-4000-8000-000000000003":
+            return None
+        return {
+            "opportunity_id": opportunity_id,
+            "messages": [
+                {"source_record_id": str(uuid.uuid4()), "subject": "Cotización equipo",
+                 "sent_at": "2026-10-01T12:00:00+00:00",
+                 "documents": [{"sha256": "ab" * 32, "filename": "CN01239.pdf",
+                                "cn_tokens": ["CN01239"], "recorded": None}]},
+            ],
+        }
+
 
 def _app(role: str = "sales", repo: Any = None, authoring_enabled: bool = False) -> FastAPI:
     app = FastAPI()
@@ -261,6 +310,104 @@ def test_providers_has_lines_and_authoring() -> None:
     assert "lines" in body
     assert "authoring" in body
     assert "enabled" in body["authoring"]
+
+
+@pytest.mark.parametrize("role", ["viewer", "sales", "admin"])
+def test_case_notes_read_in_the_note_shape_for_every_role(role: str) -> None:
+    """«Registrar seguimiento» reads the case's notes; reading them is anyone's, writing is not."""
+    client = TestClient(_app(role))
+    case_id = "00000000-0000-4000-8001-000000000009"
+    r = client.get(f"/v2/workspace/opportunities/{case_id}/notes")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["opportunity_id"] == case_id
+    assert set(body["notes"][0]) == {
+        "id", "root_note_id", "revision_no", "body", "author_operator_id", "author_name",
+        "created_at", "status", "archived_at", "archive_reason", "version", "is_latest",
+    }
+
+
+def test_case_notes_of_a_missing_case_are_404_and_a_bad_id_422() -> None:
+    client = TestClient(_app("sales"))
+    assert client.get("/v2/workspace/opportunities/00000000-0000-4000-8000-000000000003/notes").status_code == 404
+    assert client.get("/v2/workspace/opportunities/not-a-uuid/notes").status_code == 422
+
+
+def test_case_notes_need_an_operator() -> None:
+    app = _app("sales")
+    app.state.v2_identity = _RefusingIdentity()
+    r = TestClient(app).get("/v2/workspace/opportunities/00000000-0000-4000-8001-000000000009/notes")
+    assert r.status_code == 401
+
+
+@pytest.mark.parametrize("role", ["viewer", "sales", "admin"])
+def test_case_mail_documents_read_for_every_role(role: str) -> None:
+    """«Registrar cotización» picks from the case's linked messages; reading them is anyone's."""
+    client = TestClient(_app(role))
+    case_id = "00000000-0000-4000-8001-000000000009"
+    r = client.get(f"/v2/workspace/opportunities/{case_id}/mail-documents")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["opportunity_id"] == case_id
+    assert set(body["messages"][0]) == {"source_record_id", "subject", "sent_at", "documents"}
+    assert set(body["messages"][0]["documents"][0]) == {"sha256", "filename", "cn_tokens", "recorded"}
+
+
+def test_case_mail_documents_of_a_missing_case_are_404_a_bad_id_422_and_need_an_operator() -> None:
+    client = TestClient(_app("sales"))
+    assert client.get(
+        "/v2/workspace/opportunities/00000000-0000-4000-8000-000000000003/mail-documents").status_code == 404
+    assert client.get("/v2/workspace/opportunities/not-a-uuid/mail-documents").status_code == 422
+    app = _app("sales")
+    app.state.v2_identity = _RefusingIdentity()
+    assert TestClient(app).get(
+        "/v2/workspace/opportunities/00000000-0000-4000-8001-000000000009/mail-documents").status_code == 401
+
+
+@pytest.mark.parametrize("role", ["viewer", "sales", "admin"])
+def test_cross_thread_quote_candidates_are_read_only_and_scoped(role: str) -> None:
+    client = TestClient(_app(role))
+    case_id = "00000000-0000-4000-8001-000000000009"
+    path = f"/v2/workspace/opportunities/{case_id}/quote-candidates"
+    r = client.get(path)
+    if role == "viewer":
+        assert r.status_code == 403
+        assert "candidates" not in r.json()
+    else:
+        assert r.status_code == 200
+        assert r.json()["candidates"][0]["quote_token"] == "CN01259"
+    assert client.post(path).status_code == 405
+    assert client.get(
+        "/v2/workspace/opportunities/00000000-0000-4000-8000-000000000003/quote-candidates"
+    ).status_code == (403 if role == "viewer" else 404)
+    assert client.get("/v2/workspace/opportunities/not-a-uuid/quote-candidates").status_code == 422
+
+
+@pytest.mark.parametrize("role", ["viewer", "sales", "admin"])
+def test_purchase_order_candidates_require_sales_and_never_write(role: str) -> None:
+    client = TestClient(_app(role))
+    cid = "00000000-0000-4000-8001-000000000009"
+    path = f"/v2/workspace/opportunities/{cid}/purchase-order-candidates"
+    response = client.get(path)
+    if role == "viewer":
+        assert response.status_code == 403
+        assert "candidates" not in response.json()
+    else:
+        assert response.status_code == 200
+        assert response.json()["candidates"][0]["purchase_order_number"] == "55512345"
+    assert client.post(path).status_code == 405
+    assert client.get(
+        "/v2/workspace/opportunities/00000000-0000-4000-8000-000000000003/purchase-order-candidates"
+    ).status_code == (403 if role == "viewer" else 404)
+    assert client.get("/v2/workspace/opportunities/not-a-uuid/purchase-order-candidates").status_code == 422
+
+
+def test_quote_candidates_require_an_operator() -> None:
+    app = _app("sales")
+    app.state.v2_identity = _RefusingIdentity()
+    assert TestClient(app).get(
+        "/v2/workspace/opportunities/00000000-0000-4000-8001-000000000009/quote-candidates"
+    ).status_code == 401
 
 
 def test_reads_report_the_switch_that_main_sets() -> None:

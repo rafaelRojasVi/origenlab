@@ -6,13 +6,15 @@ import {
   applyMailRules,
   fetchMailRulesPreview,
   refusalMessage,
+  setAutoMailRules,
   undoMailRuleAction,
   type AppliedMailAction,
+  type AutoMailRulesState,
   type ApplyMailRulesResult,
   type MailRuleMode,
   type PlannedMailAction,
 } from "../mailRules";
-import { Badge, EmptyState, Panel, ResourceGate, Skeleton, fmtDate } from "../ui";
+import { Badge, Button, EmptyState, Panel, ResourceGate, Skeleton, fmtDate, toast } from "../ui";
 import { useResource } from "../useResource";
 
 const MODE: Record<MailRuleMode, { label: string; tone: "good" | "warn" | "neutral" }> = {
@@ -23,10 +25,6 @@ const MODE: Record<MailRuleMode, { label: string; tone: "good" | "warn" | "neutr
 
 const RULE_ORDER = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"];
 
-const BUTTON =
-  "h-8 shrink-0 rounded-md border border-line px-3 text-xs font-medium text-ink hover:bg-canvas-sunken disabled:cursor-not-allowed disabled:opacity-50";
-const PRIMARY =
-  "h-8 shrink-0 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
  * «Acciones automáticas del correo»: the email → cases rules' dry run, «Aplicar», and the applied
@@ -88,19 +86,23 @@ function AdminPanel() {
                 cambian su etapa. Cada acción queda como «{p.label}» con sus motivos y se puede deshacer.
               </p>
               <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={BUTTON}
+                <Button
                   onClick={() => {
                     setShowPlan(true);
                     reload();
                   }}
                 >
                   Vista previa
-                </button>
-                <button type="button" className={PRIMARY} disabled={!p.commands_enabled || busy || autoCount === 0} onClick={() => void apply(p.actions)}>
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={!p.commands_enabled || autoCount === 0}
+                  busy={busy}
+                  busyLabel="Aplicando…"
+                  onClick={() => void apply(p.actions)}
+                >
                   Aplicar{autoCount ? ` (${autoCount})` : ""}
-                </button>
+                </Button>
               </div>
               {!p.commands_enabled ? (
                 <p className="text-[11px] text-ink-faint">Aplicar no está habilitado en este entorno; la vista previa no escribe nada.</p>
@@ -118,12 +120,122 @@ function AdminPanel() {
               ) : null}
               {result ? <ApplyResult result={result} /> : null}
             </Panel>
+            {p.automatic ? <AutoSwitch state={p.automatic} onChanged={reload} /> : null}
             {showPlan ? <Plan actions={p.actions} /> : null}
             <Applied items={p.applied} onUndone={reload} />
           </div>
         );
       }}
     </ResourceGate>
+  );
+}
+
+function lastRunLine(state: AutoMailRulesState): string {
+  const run = state.last_run;
+  if (!run) return "Todavía no ha pasado desde que se inició el servidor.";
+  const when = fmtDate(run.at);
+  if (run.skipped === "off") return `Última pasada ${when}: detenida, no hizo nada.`;
+  if (run.skipped) return `Última pasada ${when}: no actuó.`;
+  const parts = [`${run.applied} vinculado${run.applied === 1 ? "" : "s"}`];
+  if (run.refused) parts.push(`${run.refused} rechazado${run.refused === 1 ? "" : "s"}`);
+  if (run.pending) parts.push(`${run.pending} para la próxima pasada`);
+  return `Última pasada ${when}: ${parts.join(" · ")}.`;
+}
+
+/**
+ * The stop switch for the automatic run. On, every few minutes the server links each new email
+ * that R1 (same Gmail thread) or R2 (same quote number) ties to exactly one open case, on behalf
+ * of the admin who switched it on. Everything else still waits for «Aplicar». A note is required
+ * both ways.
+ */
+function AutoSwitch({ state, onChanged }: { state: AutoMailRulesState; onChanged: () => void }) {
+  const inputId = useId();
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const acting = state.enabled && !state.blocked && state.timer_running;
+  const target = !state.enabled || Boolean(state.blocked);
+  const minutes = Math.max(1, Math.round(state.interval_seconds / 60));
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await setAutoMailRules(target, note.trim());
+      toast(target ? "Vinculación automática activada." : "Vinculación automática detenida.");
+      setOpen(false);
+      setNote("");
+      onChanged();
+    } catch (err) {
+      setError(refusalMessage(err, "No se pudo cambiar."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Panel
+      title="Vincular correos automáticamente"
+      note={`${state.rules.join(" y ")} · cada ${minutes} min`}
+      bodyClassName="space-y-2 px-3 py-3"
+    >
+      <div className="flex flex-wrap items-center gap-2" data-testid="auto-mail-rules">
+        <Badge tone={acting ? "good" : state.enabled ? "warn" : "neutral"}>
+          {acting ? "Activo" : state.enabled ? "Activo, sin actuar" : "Detenido"}
+        </Badge>
+        <span className="text-xs text-ink-muted">
+          {state.changed_by
+            ? `${state.enabled ? "Activado" : "Detenido"} por ${state.changed_by} · ${fmtDate(state.changed_at)}${state.note ? ` · «${state.note}»` : ""}`
+            : "Nunca se ha activado."}
+        </span>
+        <span className="flex-1" />
+        {open ? null : (
+          <Button variant={target ? "primary" : "secondary"} onClick={() => setOpen(true)}>
+            {target ? "Activar" : "Detener"}
+          </Button>
+        )}
+      </div>
+      <p className="text-xs text-ink-muted">
+        Activo, el sistema vincula solo cada correo nuevo del mismo hilo de Gmail (R1) o con el número de una cotización
+        (R2) de exactamente un caso abierto, a nombre de quien lo activó. Abrir casos, ganar o perder siguen esperando
+        «Aplicar». Todo se puede deshacer abajo.
+      </p>
+      {state.blocked ? <p className="text-xs text-warn">{state.blocked}</p> : null}
+      {!state.timer_running ? (
+        <p className="text-[11px] text-ink-faint">El temporizador está apagado en el servidor; el interruptor no actuará.</p>
+      ) : (
+        <p className="text-[11px] text-ink-faint">{lastRunLine(state)}</p>
+      )}
+      {open ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor={inputId} className="text-[11px] font-medium text-ink">
+            Motivo
+          </label>
+          <input
+            id={inputId}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            className="h-8 min-w-0 flex-1 rounded-md border border-line bg-canvas-raised px-2 text-[13px] text-ink focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+          />
+          <Button
+            variant={target ? "primary" : "danger"}
+            disabled={!note.trim()}
+            busy={busy}
+            busyLabel={target ? "Activando…" : "Deteniendo…"}
+            onClick={() => void submit()}
+          >
+            {target ? "Activar" : "Detener"}
+          </Button>
+          <Button onClick={() => setOpen(false)} disabled={busy}>
+            Cancelar
+          </Button>
+        </div>
+      ) : null}
+      {error ? (
+        <p role="alert" className="text-xs text-bad">
+          {error}
+        </p>
+      ) : null}
+    </Panel>
   );
 }
 
@@ -207,6 +319,7 @@ function AppliedRow({ item, onUndone }: { item: AppliedMailAction; onUndone: () 
     setError(null);
     try {
       await undoMailRuleAction(item.receipt_id, note.trim());
+      toast("Acción deshecha.");
       setOpen(false);
       onUndone();
     } catch (err) {
@@ -222,7 +335,8 @@ function AppliedRow({ item, onUndone }: { item: AppliedMailAction; onUndone: () 
         <span className="font-medium text-ink">{item.case_title ?? item.organization_name ?? "—"}</span>
         {item.quote_number ? <span className="tabular-nums text-ink-muted">{item.quote_number}</span> : null}
         <span className="text-ink-faint">
-          {item.label} · {fmtDate(item.applied_at)} · aplicada por {item.applied_by ?? "—"}
+          {item.label} · {fmtDate(item.applied_at)} ·{" "}
+          {item.automatic ? `automática, a nombre de ${item.applied_by ?? "—"}` : `aplicada por ${item.applied_by ?? "—"}`}
         </span>
         <span className="flex-1" />
         {item.undone ? (
@@ -230,9 +344,7 @@ function AppliedRow({ item, onUndone }: { item: AppliedMailAction; onUndone: () 
             deshecha por {item.undone_by ?? "—"} · {fmtDate(item.undone_at)}
           </span>
         ) : open ? null : (
-          <button type="button" className={BUTTON} onClick={() => setOpen(true)}>
-            Deshacer
-          </button>
+          <Button onClick={() => setOpen(true)}>Deshacer</Button>
         )}
       </div>
       {item.reasons?.length ? <p className="text-[11px] text-ink-muted">{item.reasons.join(" · ")}</p> : null}
@@ -247,12 +359,12 @@ function AppliedRow({ item, onUndone }: { item: AppliedMailAction; onUndone: () 
             onChange={(e) => setNote(e.target.value)}
             className="h-8 min-w-0 flex-1 rounded-md border border-line bg-canvas-raised px-2 text-[13px] text-ink focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
           />
-          <button type="button" className={PRIMARY} disabled={busy || !note.trim()} onClick={() => void undo()}>
+          <Button variant="primary" disabled={!note.trim()} busy={busy} busyLabel="Deshaciendo…" onClick={() => void undo()}>
             Confirmar
-          </button>
-          <button type="button" className={BUTTON} onClick={() => setOpen(false)}>
+          </Button>
+          <Button onClick={() => setOpen(false)} disabled={busy}>
             Cancelar
-          </button>
+          </Button>
         </div>
       ) : null}
       {error ? (

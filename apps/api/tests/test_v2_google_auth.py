@@ -326,6 +326,20 @@ def test_the_session_says_whether_crm_authoring_is_mounted(monkeypatch, switch) 
     assert body["crm_authoring_enabled"] is h.app.state.crm_authoring_enabled
 
 
+@pytest.mark.parametrize("switch", [None, "false", "true"])
+def test_the_session_says_whether_the_case_commands_are_mounted(monkeypatch, switch) -> None:
+    """«Cambiar etapa» / «Marcar ganada» are offered only when their routes exist upstream."""
+    if switch is None:
+        monkeypatch.delenv("ORIGENLAB_V2_COMMANDS_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("ORIGENLAB_V2_COMMANDS_ENABLED", switch)
+    h = _Harness(monkeypatch)
+    assert h.sign_in().status_code == 303
+    body = h.client.get("/auth/session").json()
+    assert body["case_commands_enabled"] is (switch == "true")
+    assert body["case_commands_enabled"] is h.app.state.case_commands_enabled
+
+
 def test_signing_in_reads_the_operator_and_writes_nothing(monkeypatch) -> None:
     h = _Harness(monkeypatch)
     h.sign_in()
