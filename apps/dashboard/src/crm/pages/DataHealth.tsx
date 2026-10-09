@@ -1,6 +1,6 @@
 import { fetchOverview } from "../crmApi";
 import type { EntityCount, WorkspaceOverview } from "../crmTypes";
-import type { CrmSection } from "../crmRoute";
+import type { CrmSection, DatosTab } from "../crmRoute";
 import { STAGE_LABEL } from "../stage";
 import { Panel, ProvenanceBadge, ResourceGate, Skeleton, fmtInt } from "../ui";
 import { useResource } from "../useResource";
@@ -26,7 +26,7 @@ const ENTITY_LABEL: Record<string, string> = {
  * What the CRM holds, what was imported and what is still missing: the counts that used to open
  * the Resumen. Mounted only when its tab is opened, so the slowest read runs only on request.
  */
-export function DataHealth({ navigate }: { navigate: (s: CrmSection) => void }) {
+export function DataHealth({ navigate }: { navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void }) {
   const [overview, reload] = useResource(fetchOverview);
   return (
     <ResourceGate state={overview} reload={reload} skeleton={<Skeleton rows={6} />}>
@@ -56,7 +56,7 @@ function Metric({ label, value, hint, onClick }: { label: string; value: string;
   );
 }
 
-function DataHealthBody({ overview, navigate }: { overview: WorkspaceOverview; navigate: (s: CrmSection) => void }) {
+function DataHealthBody({ overview, navigate }: { overview: WorkspaceOverview; navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void }) {
   const byKey = Object.fromEntries(overview.entities.map((e) => [e.key, e])) as Record<string, EntityCount>;
   const confirmed = overview.organizations_by_confirmation.confirmed ?? 0;
   const drive = overview.drive_archive;
@@ -88,7 +88,7 @@ function DataHealthBody({ overview, navigate }: { overview: WorkspaceOverview; n
               ? `Revisiones con archivo vinculado en Drive (${fmtInt(drive.documents)} PDF con evidencia); actualizado desde Supabase.`
               : "No hay vínculos de archivo Drive registrados o cargados"
           }
-          onClick={() => navigate("datos")}
+          onClick={() => navigate("datos", null, "drive")}
         />
         <Metric label="Evidencias por revisar" value={fmtInt(openAssertions)} hint="Sin resolver o ambiguas" />
       </div>

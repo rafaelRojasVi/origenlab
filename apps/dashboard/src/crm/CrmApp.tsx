@@ -44,12 +44,13 @@ export function CrmApp({ route }: { route: ShellRoute }) {
       return !v;
     });
   }, []);
-  const navigate = useCallback((section: CrmSection, id?: string | null) => {
-    window.location.hash = crmHash(section, id);
+  const navigate = useCallback((section: CrmSection, id?: string | null, tab?: DatosTab) => {
+    window.location.hash = crmHash(section, id, tab);
     window.scrollTo?.({ top: 0 });
   }, []);
   const title = CRM_NAV.find((n) => n.id === route.section)!.label;
-  const routeKey = route.section;
+  // A «Datos» tab is part of the address: a link to another tab remounts the page on it.
+  const routeKey = route.tab ? `${route.section}/${route.tab}` : route.section;
 
   useEffect(() => {
     document.title = `${title} · OrigenLab`;
@@ -93,7 +94,7 @@ function Section({
   section: CrmSection;
   id: string | null;
   tab?: DatosTab;
-  navigate: (s: CrmSection, id?: string | null) => void;
+  navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 }) {
   switch (section) {
     case "oportunidades":

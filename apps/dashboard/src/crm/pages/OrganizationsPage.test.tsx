@@ -50,7 +50,7 @@ describe("OrganizationsPage segments", () => {
     expect(screen.queryByText("Proveedores", { selector: "dt" })).toBeNull();
     // the supplier facet counts CRM organisations, not the brands Proveedores lists — no number
     fireEvent.click(screen.getByRole("button", { name: "Proveedores →" }));
-    expect(navigate).toHaveBeenCalledWith("datos"); // suppliers live in «Datos» now
+    expect(navigate).toHaveBeenCalledWith("datos", null, "proveedores"); // suppliers live in «Datos» now
   });
 
   it("does not offer the suppliers link to a sales user (it opens an admin-only page)", async () => {

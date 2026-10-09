@@ -33,7 +33,7 @@ export function MailSyncBanner({ refreshKey }: { refreshKey: string }) {
   const tone = notice.tone === "bad" ? "border-bad/30 bg-bad-bg text-bad" : "border-warn/30 bg-warn-bg text-warn";
   return (
     <div role="status" data-testid="mail-sync-banner" className={`border-b px-4 py-2 text-[13px] font-medium sm:px-6 ${tone}`}>
-      <p className="mx-auto max-w-[1600px]">{notice.text}. Los correos nuevos no llegan a Revisión mientras tanto.</p>
+      <p className="mx-auto max-w-[1600px]">{notice.text}. Mientras tanto, los correos nuevos no aparecen en el CRM.</p>
     </div>
   );
 }

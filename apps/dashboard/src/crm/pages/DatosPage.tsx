@@ -69,7 +69,7 @@ const TAB_LABEL: Record<DatosTab, string> = {
  * automatic mail actions, suppliers and the Drive archive. Anyone else sees one line and nothing
  * is read on their behalf.
  */
-export function DatosPage({ navigate, tab }: { navigate: (s: CrmSection, id?: string) => void; tab?: DatosTab }) {
+export function DatosPage({ navigate, tab }: { navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void; tab?: DatosTab }) {
   const { session } = useAuthSession();
   const isAdmin = session.kind === "signed_in" && session.operator.role === "admin";
   if (!isAdmin) {
@@ -83,7 +83,7 @@ export function DatosPage({ navigate, tab }: { navigate: (s: CrmSection, id?: st
   return <DatosBody navigate={navigate} initialTab={tab ?? "bloqueos"} />;
 }
 
-function DatosBody({ navigate, initialTab }: { navigate: (s: CrmSection, id?: string) => void; initialTab: DatosTab }) {
+function DatosBody({ navigate, initialTab }: { navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void; initialTab: DatosTab }) {
   const [queue, reloadQueue] = useResource(fetchWorkQueue);
   const [review, reloadReview] = useResource(fetchReview);
   const [tab, setTab] = useState<DatosTab>(initialTab);
@@ -133,7 +133,7 @@ function CrmQueue({
 }: {
   items: WorkQueueItem[];
   counts?: Record<string, number>;
-  navigate: (s: CrmSection, id?: string) => void;
+  navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   if (items.length === 0) return <EmptyState title="Sin bloqueos técnicos">Ningún caso ni cotización necesita una decisión.</EmptyState>;
@@ -211,7 +211,7 @@ function QueueRow({
 }: {
   item: WorkQueueItem;
   m: { label: string; action: string; blocking: boolean };
-  navigate: (s: CrmSection, id?: string) => void;
+  navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 }) {
   const oppId = item.subject_ids.opportunity_id;
   return (

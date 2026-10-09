@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { fetchFx, fetchPipeline } from "../crmApi";
-import type { CrmSection } from "../crmRoute";
+import type { CrmSection, DatosTab } from "../crmRoute";
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
 import { ResourceGate } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
@@ -13,7 +13,7 @@ import { todayCounts } from "../today";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 
-type Navigate = (s: CrmSection, id?: string) => void;
+type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 
 /**
  * «Hoy», the first page: what the open cases ask of an operator today (`TodayBody`: tasks due,

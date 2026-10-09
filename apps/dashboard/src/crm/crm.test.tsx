@@ -112,6 +112,9 @@ describe("crm routing", () => {
     expect(parseCrmHash("#/crm/revision")).toEqual({ section: "historial", id: null });
     expect(parseCrmHash("#/crm/proveedores")).toEqual({ section: "datos", id: null, tab: "proveedores" });
     expect(parseCrmHash("#/crm/drive")).toEqual({ section: "datos", id: null, tab: "drive" });
+    // A «Datos» tab has its own address, so a link can open it directly.
+    expect(parseCrmHash("#/crm/datos/proveedores")).toEqual({ section: "datos", id: null, tab: "proveedores" });
+    expect(crmHash("datos", null, "drive")).toBe("#/crm/datos/drive");
     const id = "11111111-1111-4111-8111-111111111111";
     expect(parseCrmHash(`#/crm/oportunidades/${id}`)).toEqual({ section: "oportunidades", id });
     // A non-uuid id is dropped, never interpolated into a request.
@@ -360,6 +363,14 @@ describe("dashboard shell", () => {
     const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
     expect(within(nav).queryByRole("link", { name: /Datos/ })).not.toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: /Historial/ })).toBeInTheDocument();
+  });
+
+  it("opens the «Datos» tab a link asks for, also when already on «Datos»", async () => {
+    signedInAt(`#/crm/datos/proveedores`);
+    expect(await screen.findByRole("button", { name: /^Proveedores/, pressed: true })).toBeInTheDocument();
+    window.location.hash = "#/crm/datos/estado";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(await screen.findByRole("button", { name: /^Estado de los datos/, pressed: true })).toBeInTheDocument();
   });
 
   it("folds the section names into a rail of icons, and remembers it", async () => {

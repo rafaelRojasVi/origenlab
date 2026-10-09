@@ -13,7 +13,7 @@ import {
 } from "../interests/EquipmentInterests";
 import type { ResourceState } from "../useResource";
 import type { OpportunityCardData } from "../crmTypes";
-import type { CrmSection } from "../crmRoute";
+import type { CrmSection, DatosTab } from "../crmRoute";
 import { stageDisplay } from "../stage";
 import {
   Badge,
@@ -38,7 +38,7 @@ import { OrgAuthoringSection } from "../authoring/OrgAuthoringSection";
 
 type Scope = "cases" | "all";
 
-export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
+export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void }) {
   const { session } = useAuthSession();
   const adminRole = session.kind === "signed_in" && session.operator.role === "admin";
   const [segment, setSegment] = useState<V2OrganizationSegment>("customers");
@@ -116,7 +116,7 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
           // Suppliers live in «Datos», which only an admin opens: no link that leads nowhere.
           <button
             type="button"
-            onClick={() => navigate("datos")}
+            onClick={() => navigate("datos", null, "proveedores")}
             className="text-xs font-medium text-brand-700 hover:underline"
           >
             Proveedores →
