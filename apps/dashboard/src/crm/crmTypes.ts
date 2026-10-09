@@ -222,6 +222,8 @@ export interface PipelineResponse {
   items: OpportunityCardData[];
   total: number;
   drive_configured: boolean;
+  /** The Drive «Casos» folder, for «Hoy»'s header; null when the API has no folder configured. */
+  drive_casos_url?: string | null;
 }
 
 export interface SupplierDirectoryEntry {

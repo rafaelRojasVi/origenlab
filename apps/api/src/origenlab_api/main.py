@@ -218,6 +218,8 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         statement_timeout_ms=settings.v2_statement_timeout_ms,
     )
     app.state.v1_lane_content_dir = settings.v2_v1_lane_content_dir
+    casos = (settings.drive_casos_folder_id or "").strip()
+    app.state.drive_casos_url = f"https://drive.google.com/drive/folders/{casos}" if casos else None
     app.state.org_suggestions_file = settings.v2_org_suggestions_file
     app.state.fx_rates = build_fx_rates(connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms)
     app.include_router(workspace_router)

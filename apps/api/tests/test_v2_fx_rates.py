@@ -485,3 +485,40 @@ def test_rows_that_cannot_be_stored_never_fail_the_answer(caplog: pytest.LogCapt
         module._rows_to_store = original
     assert writer.calls == []
     assert any("write-through" in r.getMessage() and "ValueError" in r.getMessage() for r in caplog.records)
+
+
+def test_a_request_during_the_hourly_refresh_gets_the_previous_figures_at_once() -> None:
+    """The hourly refresh calls an outside service; nobody else waits on it."""
+    import threading
+
+    clock = _Clock()
+    release, entered = threading.Event(), threading.Event()
+    calls = {"n": 0}
+
+    def fetch():
+        calls["n"] += 1
+        if calls["n"] == 2:  # the hourly refresh hangs until released
+            entered.set()
+            release.wait(5)
+        return _body()
+
+    fx = FxRates(fetch=fetch, clock=clock)
+    fx.current()
+    clock.now += 3601
+    refresher = threading.Thread(target=fx.current)
+    refresher.start()
+    assert entered.wait(2)
+    done: dict = {}
+    other = threading.Thread(target=lambda: done.setdefault("answer", fx.current()))
+    other.start()
+    other.join(1)
+    release.set()
+    refresher.join(5)
+    assert "answer" in done, "a second request waited on the hung refresh"
+    assert done["answer"]["stale"] is True and done["answer"]["rates"]
+    assert fx.current()["stale"] is False
+
+
+def test_the_first_request_with_no_figures_still_waits_for_the_fetch() -> None:
+    fx = FxRates(fetch=lambda: _body(), clock=_Clock())
+    assert fx.current()["stale"] is False

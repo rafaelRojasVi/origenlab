@@ -218,9 +218,9 @@ describe("Resumen", () => {
   it("shows today's date and the time in Santiago", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
-    const clock = await screen.findByTestId("resumen-clock");
-    expect(clock).toHaveTextContent(/Martes, 31 de marzo/); // only the first letter capitalised
-    expect(clock).toHaveTextContent("12:00");
+    const hero = await screen.findByTestId("hero-header");
+    expect(hero).toHaveTextContent(/Martes 31 de marzo/); // only the first letter capitalised
+    expect(hero).toHaveTextContent("12:00");
   });
 
   it("converts an amount typed the Chilean way into pesos", async () => {
@@ -237,7 +237,7 @@ describe("Resumen", () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     const navigate = vi.fn();
     render(<OverviewPage navigate={navigate} />);
-    expect(await screen.findByRole("heading", { name: "Hoy" })).toBeInTheDocument();
+    expect(await screen.findByTestId("hero-header")).toHaveTextContent("HOY");
     const followUps = await screen.findByTestId("today-followups");
     const first = within(followUps).getByTestId("today-rhythm-primero");
     expect(first).toHaveTextContent(/Primer seguimiento\s*1/);
@@ -305,3 +305,22 @@ describe("Resumen", () => {
     expect(calls).not.toContain("/v2/workspace/overview");
   });
 });
+
+describe("Hoy · lecturas en paralelo", () => {
+  it("asks for person suggestions while the pipeline is still loading", async () => {
+    let releasePipeline: (r: Response) => void = () => undefined;
+    const held = new Promise<Response>((resolve) => { releasePipeline = resolve; });
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      calls.push(path);
+      if (path === "/v2/workspace/pipeline") return held;
+      return Promise.resolve(new Response("{}", { status: 404 }));
+    }));
+    render(<OverviewPage navigate={() => undefined} />);
+    await waitFor(() => expect(calls.some((p) => p.endsWith("/person-suggestions"))).toBe(true));
+    releasePipeline(new Response(JSON.stringify(PIPELINE), { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
+});
+

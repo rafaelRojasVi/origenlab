@@ -156,3 +156,19 @@ def test_an_admin_reads_the_same_path_unmasked(monkeypatch, path: str) -> None:
     response = client.get(path, headers=API_KEY)
     assert response.status_code == 200
     assert ADDRESS in response.text
+
+
+@pytest.mark.parametrize("folder, expected", [
+    ("1AbCdEfFolder", "https://drive.google.com/drive/folders/1AbCdEfFolder"),
+    (None, None),
+])
+def test_the_pipeline_carries_the_drive_casos_folder_link(monkeypatch, folder, expected) -> None:
+    """«Hoy»'s «Drive casos» button opens the archive's Casos folder; unset, it says so (None)."""
+    if folder is None:
+        monkeypatch.delenv("ORIGENLAB_DRIVE_CASOS_FOLDER_ID", raising=False)
+    else:
+        monkeypatch.setenv("ORIGENLAB_DRIVE_CASOS_FOLDER_ID", folder)
+    client, config = _client(monkeypatch, "admin")
+    response = client.get("/v2/workspace/pipeline", headers=API_KEY, cookies=_session(config))
+    assert response.status_code == 200
+    assert response.json()["drive_casos_url"] == expected

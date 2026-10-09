@@ -401,6 +401,10 @@ class Settings(BaseSettings):
     # closed until explicitly configured (placeholders in .env.example).
     """Drive folder ID of the canonical quotations root (e.g. "Cotizaciones"); verified read-only by preflight, never a creation target itself."""
     drive_quotes_root_folder_id: str | None = None
+    """Drive folder ID of «Cotizaciones › Casos», where the worker files each case's PDFs (the
+    same value as the worker's ORIGENLAB_WORKER_DRIVE_CASOS_FOLDER_ID). Only links «Hoy»'s
+    «Drive casos» button; unset, the button opens Drive's home."""
+    drive_casos_folder_id: str | None = None
     """Drive folder ID under which every new quote workspace folder is created (e.g. "Pendientes"); required for provisioning."""
     drive_quotes_pending_folder_id: str | None = None
     """Drive folder ID of the post-send container (e.g. "Enviadas"); optional -- verified read-only by preflight when set, not yet used by any write path (no sent lifecycle exists)."""

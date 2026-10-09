@@ -61,9 +61,14 @@ def get_overview(_: Operator, repo: Repo) -> Any:
 
 
 @workspace_router.get("/pipeline")
-def get_pipeline(_: Operator, repo: Repo) -> Any:
-    """One card per opportunity: institution, contact evidence, quotes, revisions, Drive, Gmail."""
-    return repo.pipeline()
+def get_pipeline(_: Operator, repo: Repo, request: Request) -> Any:
+    """One card per opportunity: institution, contact evidence, quotes, revisions, Drive, Gmail.
+
+    Also the link of the Drive «Casos» folder, for «Hoy»'s header (None when not configured).
+    """
+    body = repo.pipeline()
+    body["drive_casos_url"] = getattr(request.app.state, "drive_casos_url", None)
+    return body
 
 
 @workspace_router.get("/providers")

@@ -49,7 +49,8 @@ import {
   type Reply,
 } from "../today";
 import { Badge, Button, Modal, Panel, ResourceGate, Skeleton, fmtDate, toast } from "../ui";
-import { useResource } from "../useResource";
+import { useResource, type ResourceState } from "../useResource";
+import { useLeave } from "../useLeave";
 import { CaseMoveForm } from "./CaseMove";
 
 type Navigate = (s: CrmSection, id?: string) => void;
@@ -89,12 +90,17 @@ export function TodayBody({
   onChanged,
   refreshing = false,
   now,
+  people,
+  reloadPeople,
 }: {
   items: OpportunityCardData[];
   navigate: Navigate;
   onChanged: () => void;
   refreshing?: boolean;
   now?: Date;
+  /** Person suggestions, read by the page beside the pipeline so neither waits on the other. */
+  people?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
+  reloadPeople?: () => void;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const tasks = useMemo(() => tasksDue(items, at), [items, at]);
@@ -121,7 +127,7 @@ export function TodayBody({
           <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
           <TasksPanel tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
-          <PeoplePanel mayAuthor={mayAuthor} navigate={navigate} />
+          <PeoplePanel mayAuthor={mayAuthor} navigate={navigate} state={people} reload={reloadPeople} />
         </div>
         <aside className="min-w-0 space-y-4">
           {historical > 0 ? (
@@ -228,11 +234,13 @@ function TaskRow({
   now: Date;
 }) {
   const { card, task, overdueDays } = due;
-  const actions = useTaskActions(due, now, onChanged);
+  const { leaving, gone, leave } = useLeave(due);
+  const actions = useTaskActions(due, now, onChanged, leave);
+  if (gone) return null;
 
   return (
     <div
-      className="crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5"
+      className={`crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 ${leaving ? "crm-row-out" : ""}`}
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-task-${task.task_id}`}
     >
@@ -257,7 +265,7 @@ function TaskRow({
 
 
 /** «Hecho» and «+1 semana» for a due task — shared by «Seguimientos» and «Otras tareas». */
-function useTaskActions(due: DueTask, now: Date, onChanged: () => void) {
+function useTaskActions(due: DueTask, now: Date, onChanged: () => void, leave?: () => void) {
   const { card, task } = due;
   const [busy, setBusy] = useState<null | "done" | "snooze">(null);
   const keys = useRef({ done: newCaseCommandKey(), create: newCaseCommandKey(), cancel: newCaseCommandKey() });
@@ -267,6 +275,7 @@ function useTaskActions(due: DueTask, now: Date, onChanged: () => void) {
     try {
       await completeTask({ task_id: task.task_id, task_version: task.version, note: "Hecho desde «Hoy»." }, keys.current.done);
       toast("Tarea hecha.");
+      leave?.();
       onChanged();
     } catch (err) {
       keys.current.done = newCaseCommandKey();
@@ -286,6 +295,7 @@ function useTaskActions(due: DueTask, now: Date, onChanged: () => void) {
       );
       await cancelTask({ task_id: task.task_id, task_version: task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
       toast(`Pospuesta al ${fmtDate(next.toISOString())}.`);
+      leave?.();
       onChanged();
     } catch (err) {
       keys.current = { done: keys.current.done, create: newCaseCommandKey(), cancel: newCaseCommandKey() };
@@ -359,6 +369,7 @@ function ReplyRow({
   now: Date;
 }) {
   const { card } = reply;
+  const { leaving, gone, leave } = useLeave(reply);
   const [busy, setBusy] = useState<null | "move" | "skip">(null);
   const keys = useRef([newCaseCommandKey()]);
   const skipKey = useRef(newCaseCommandKey());
@@ -379,6 +390,7 @@ function ReplyRow({
         skipKey.current,
       );
       toast(`Listo. Te lo recuerdo el ${fmtDate(next.toISOString())}.`);
+      leave();
       onChanged();
     } catch (err) {
       skipKey.current = newCaseCommandKey();
@@ -399,6 +411,7 @@ function ReplyRow({
         keys.current,
       );
       toast("Pasó a «Conversación».");
+      leave();
       onChanged();
     } catch (err) {
       keys.current = [newCaseCommandKey()];
@@ -408,8 +421,9 @@ function ReplyRow({
     }
   }
 
+  if (gone) return null;
   return (
-    <div className="crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5" style={{ "--i": Math.min(index, 10) } as CSSProperties}>
+    <div className={`crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 ${leaving ? "crm-row-out" : ""}`} style={{ "--i": Math.min(index, 10) } as CSSProperties}>
       <div className="min-w-[12rem] flex-1">
         <CaseLink card={card} navigate={navigate} />
         <p className="mt-0.5 truncate text-[11px] text-ink-muted">
@@ -591,10 +605,12 @@ function FollowUpRow({
   const write = thread ?? composeInSharedMailbox(to, `Seguimiento cotización N° ${quote}`.trim());
   const since = f.byEmail ? "desde tu último correo" : "desde la cotización";
   const [menuOpen, setMenuOpen] = useState(false);
+  const { leaving, gone, leave } = useLeave(f);
+  if (gone) return null;
   return (
     <li
       // Each row animates in (a transform), so an open menu needs its row lifted over the next one.
-      className={`crm-rise group relative flex items-center gap-3 px-4 py-2 transition-colors hover:bg-canvas-sunken/50 ${menuOpen ? "z-20" : ""}`}
+      className={`crm-rise group relative flex items-center gap-3 px-4 py-2 transition-colors hover:bg-canvas-sunken/50 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={f.task ? `today-task-${f.task.task.task_id}` : `today-followup-${f.card.opportunity_id}`}
     >
@@ -638,7 +654,7 @@ function FollowUpRow({
         </svg>
         <span className="hidden sm:inline">{thread ? "Responder en Gmail" : "Nuevo correo"}</span>
       </a>
-      {mayDecide ? <FollowUpMenu followUp={f} now={now} onChanged={onChanged} onClose={onClose} open={menuOpen} setOpen={setMenuOpen} /> : null}
+      {mayDecide ? <FollowUpMenu followUp={f} now={now} onChanged={onChanged} onLeave={leave} onClose={onClose} open={menuOpen} setOpen={setMenuOpen} /> : null}
     </li>
   );
 }
@@ -652,6 +668,7 @@ function FollowUpMenu({
   followUp,
   now,
   onChanged,
+  onLeave,
   onClose,
   open,
   setOpen,
@@ -659,6 +676,8 @@ function FollowUpMenu({
   followUp: FollowUp;
   now: Date;
   onChanged: () => void;
+  /** The row leaves at once after a recorded change; the reload confirms behind it. */
+  onLeave?: () => void;
   onClose: (c: OpportunityCardData) => void;
   open: boolean;
   setOpen: (v: boolean | ((v: boolean) => boolean)) => void;
@@ -690,6 +709,7 @@ function FollowUpMenu({
     try {
       await completeTask({ task_id: f.task.task.task_id, task_version: f.task.task.version, note: "Hecho desde «Hoy»." }, keys.current.done);
       toast("Seguimiento hecho.");
+      onLeave?.();
       setOpen(false);
       onChanged();
     } catch (err) {
@@ -719,6 +739,7 @@ function FollowUpMenu({
         await cancelTask({ task_id: f.task.task.task_id, task_version: f.task.task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
       }
       toast(`Te lo recuerdo el ${fmtDate(next.toISOString())}.`);
+      onLeave?.();
       setOpen(false);
       onChanged();
     } catch (err) {
@@ -802,6 +823,7 @@ function OrgsPanel({
 
 function OrgRow({ org, navigate, mayAuthor, onChanged }: { org: OrgToConfirm; navigate: Navigate; mayAuthor: boolean; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
+  const { leaving, gone, leave } = useLeave(org);
   const key = useRef(newCaseCommandKey());
   const suggested = displayName(org.cases[0]).name;
 
@@ -811,6 +833,7 @@ function OrgRow({ org, navigate, mayAuthor, onChanged }: { org: OrgToConfirm; na
     try {
       await confirmOrganizationRecord({ organization_id: org.organization_id, expected_version: org.version }, key.current);
       toast(`«${org.name}» confirmada.`);
+      leave();
       onChanged();
     } catch (err) {
       key.current = newCaseCommandKey();
@@ -820,8 +843,9 @@ function OrgRow({ org, navigate, mayAuthor, onChanged }: { org: OrgToConfirm; na
     }
   }
 
+  if (gone) return null;
   return (
-    <div className="flex items-center gap-2 px-3 py-2">
+    <div className={`flex items-center gap-2 px-3 py-2 ${leaving ? "crm-row-out" : ""}`}>
       <div className="min-w-[12rem] flex-1">
         <button
           type="button"
@@ -844,8 +868,19 @@ function OrgRow({ org, navigate, mayAuthor, onChanged }: { org: OrgToConfirm; na
   );
 }
 
-function PeoplePanel({ mayAuthor, navigate }: { mayAuthor: boolean; navigate: Navigate }) {
-  const [state, reload] = useResource(fetchPersonSuggestions);
+/** A loader that never runs a request: `PeoplePanel` was handed its state. */
+const noPeople = (): Promise<Awaited<ReturnType<typeof fetchPersonSuggestions>>> => new Promise(() => undefined);
+
+function PeoplePanel({ mayAuthor, navigate, state: given, reload: givenReload }: {
+  mayAuthor: boolean;
+  navigate: Navigate;
+  state?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
+  reload?: () => void;
+}) {
+  // Read here only when the page did not read it already (TodayBody rendered on its own).
+  const [own, ownReload] = useResource(given ? noPeople : fetchPersonSuggestions);
+  const state = given ?? own;
+  const reload = givenReload ?? ownReload;
   return (
     <Panel title="Personas por agregar" aside={state.kind === "ready" ? <Badge glyph={false}>{state.data.total}</Badge> : null}>
       <div className="p-3">

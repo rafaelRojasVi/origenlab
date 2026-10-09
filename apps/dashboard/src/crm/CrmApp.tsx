@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { SHARED_ACCOUNT, asShared } from "./sharedAccount";
 import { MailSyncBanner } from "./MailSyncBanner";
 import { Toaster } from "./ui";
 import { googleLoginUrl } from "../api/authClient";
@@ -115,9 +116,6 @@ function Section({
   }
 }
 
-/** The shared account the team works in; Drive and Gmail open as it, not as the browser's first account. */
-const SHARED_ACCOUNT = "contacto@origenlab.cl";
-const asShared = (url: string) => `${url}?authuser=${encodeURIComponent(SHARED_ACCOUNT)}`;
 
 /** Always-visible shortcuts to the tools the team leaves the panel for. */
 export const QUICK_LINKS: { label: string; short: string; href: string; title: string }[] = [

@@ -1,7 +1,9 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* OrigenLab's typefaces, as on origenlab.cl. */
+  --font-sans: "Plus Jakarta Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   /* Teal is the single accent: active nav, links, primary actions. Not a page wash. */
   --color-brand-50: #f0fdfa;
   --color-brand-100: #ccfbf1;
@@ -139,4 +141,32 @@ body {
   .animate-fade-in-up {
     animation: none;
   }
+}
+
+/* «Hoy»'s greeting header: the text rises, the two teal blocks slide in. */
+@keyframes crm-hero-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes crm-hero-slide {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: none; }
+}
+.crm-hero-text { animation: crm-hero-rise 300ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.crm-hero-block { animation: crm-hero-slide 300ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both; }
+@media (prefers-reduced-motion: reduce) {
+  .crm-hero-text,
+  .crm-hero-block { animation: none; }
+}
+
+/* A row that did its job slides out; `useLeave` drops it after the 180 ms. */
+@keyframes crm-row-out {
+  to { opacity: 0; transform: translateX(12px); }
+}
+.crm-row-out {
+  animation: crm-row-out 180ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .crm-row-out { animation: none; opacity: 0; }
 }
