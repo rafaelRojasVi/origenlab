@@ -406,6 +406,9 @@ def current_session(request: Request) -> JSONResponse:
         # Whether the 29 CRM authoring commands are mounted. Off, every one of them is a 404,
         # so the dashboard must not offer an editor whose save cannot land.
         "crm_authoring_enabled": bool(getattr(request.app.state, "crm_authoring_enabled", False)),
+        # Whether the case commands (`ORIGENLAB_V2_COMMANDS_ENABLED`) are mounted: off, «Cambiar
+        # etapa» and «Marcar ganada» would only ever meet a 404, so the drawer keeps them disabled.
+        "case_commands_enabled": bool(getattr(request.app.state, "case_commands_enabled", False)),
         **options,
     })
 

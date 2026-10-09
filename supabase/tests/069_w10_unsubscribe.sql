@@ -22,7 +22,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
-select plan(96);
+select plan(99);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -66,10 +66,12 @@ select is((select proconfig from pg_proc where oid = 'outbound.add_contact_contr
   array['search_path=pg_catalog'], 'add_contact_control pins search_path = pg_catalog');
 select ok(has_function_privilege('origenlab_api', 'outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)', 'EXECUTE'),
   'origenlab_api may EXECUTE add_contact_control');
+select ok(has_function_privilege('origenlab_worker', 'outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)', 'EXECUTE'),
+  'origenlab_worker may EXECUTE add_contact_control through its hard-bounce-only branch');
 select is(
-  (select count(*)::int from (values ('origenlab_worker'), ('origenlab_migrator'), ('anon'), ('authenticated'), ('service_role')) r(n)
+  (select count(*)::int from (values ('origenlab_migrator'), ('anon'), ('authenticated'), ('service_role')) r(n)
     where has_function_privilege(r.n, 'outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)', 'EXECUTE')),
-  0, 'the worker, the migrator, anon, authenticated and service_role may not EXECUTE add_contact_control');
+  0, 'the migrator, anon, authenticated and service_role may not EXECUTE add_contact_control');
 select is(
   (select count(*)::int from pg_proc p, aclexplode(p.proacl) a
     where p.oid = 'outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)'::regprocedure and a.grantee = 0),
@@ -78,7 +80,13 @@ select is(
   (select array_agg(distinct a.grantee::regrole::text order by a.grantee::regrole::text) from pg_proc p, aclexplode(p.proacl) a
     where p.oid = 'outbound.add_contact_control(text,text,text,text,uuid,uuid,jsonb)'::regprocedure
       and a.privilege_type = 'EXECUTE' and a.grantee <> p.proowner),
-  array['origenlab_api'], 'EXECUTE on add_contact_control is granted to origenlab_api and to no one else');
+  array['origenlab_api', 'origenlab_worker'], 'EXECUTE on add_contact_control is granted only to the API and worker');
+select is((select prosecdef from pg_proc where oid = 'outbound.add_unsubscribe_contact_control(text,text,text,text,uuid,uuid,jsonb)'::regprocedure),
+  false, 'the retained unsubscribe implementation is SECURITY INVOKER');
+select is(
+  (select count(*)::int from (values ('origenlab_api'), ('origenlab_worker'), ('origenlab_migrator'), ('anon'), ('authenticated'), ('service_role')) r(n)
+    where has_function_privilege(r.n, 'outbound.add_unsubscribe_contact_control(text,text,text,text,uuid,uuid,jsonb)', 'EXECUTE')),
+  0, 'no runtime role may call the unsubscribe helper directly');
 -- ARCHITECTURE.md §6.2 points 4-5: static SQL only, and every relation schema-qualified. With
 -- search_path pinned to pg_catalog an unqualified relation would not resolve at all; this pins
 -- the source so one is never added.

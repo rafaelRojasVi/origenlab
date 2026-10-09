@@ -62,7 +62,7 @@ with the operator's JWT.
 | `apps/web` (Astro, static) | the public marketing site | touch operator, CRM or outbound data |
 | `apps/dashboard` (React) | presentation, operator interaction | hold truth, compute money, call the database, hold a secret |
 | `apps/api` (FastAPI) | **the only business command boundary**: authentication checks, validation, idempotency, transactions, domain events, signed-URL minting | ingest mail, call Gmail, render PDFs, run long jobs |
-| `apps/worker` (Python) | Gmail sync and the single send path, MIME parsing, PDF rendering, ChileCompra fetching, LLM classification, reconciliation | write `crm.*` — except `quote_revision.pdf_sha256` and sent-evidence ids, and only through `crm.record_quote_pdf` ([§6.2](#m-arch-definer)) |
+| `apps/worker` (Python) | Gmail sync and the single send path, MIME parsing, PDF rendering, filing recorded quote PDFs in the case's Drive folder (recorded as `drive_file` evidence), ChileCompra fetching, LLM classification, reconciliation | write `crm.*` — except `quote_revision.pdf_sha256` and sent-evidence ids, and only through `crm.record_quote_pdf` ([§6.2](#m-arch-definer)) |
 | PostgreSQL | every durable fact; the closed list of privileged send functions; the constraints that make the invariants true | store bodies, attachments or PDFs; hold a browser identity; authorize a human |
 | Storage | `.eml`, attachment bytes, quotation PDFs, dry-run reports | be public; be the authority for a fact |
 
@@ -76,6 +76,9 @@ table's unique responsibility, is owned by [`DOMAIN.md`](DOMAIN.md) §7.
 
 `public` holds nothing. Supabase-managed `auth`, `storage`, `pgmq` and
 migration-metadata objects are outside the 36 and are not application tables.
+The worker's Procrastinate queue lives in its own `procrastinate` schema (§8,
+D2): infrastructure like `pgmq`, owned by `origenlab_owner`, reachable by
+`origenlab_worker` only, outside the seven schemas and outside the inventory.
 
 Three of those `crm` tables carry the commercial case —
 `opportunity_organization`, `opportunity_interest` and `opportunity_evidence`
@@ -89,7 +92,7 @@ second lifecycle.
 | Table group | Sole writer |
 |---|---|
 | `crm.*` (except the two quote columns below) | FastAPI commands as `origenlab_api` |
-| `crm.opportunity.stage` | FastAPI commands **only** — no timer, cron job, queue worker, classifier or import may close a case ([`DOMAIN.md`](DOMAIN.md) §3.4). The one machine path is the email → cases rules, run **inside the API** when an admin presses «Aplicar»: recorded as `worker` events with `payload.attribution`, rows naming the admin who applied, every action undoable ([`DOMAIN.md`](DOMAIN.md) §3.6.6) |
+| `crm.opportunity.stage` | FastAPI commands **only** — no timer, cron job, queue worker, classifier or import may close a case ([`DOMAIN.md`](DOMAIN.md) §3.4). The one machine path is the email → cases rules, run **inside the API** when an admin presses «Aplicar» (and, for the R1/R2 *links* only, on the API's own timer while an admin has switched it on — never a stage move): recorded as `worker` events with `payload.attribution`, rows naming the admin who applied, every action undoable ([`DOMAIN.md`](DOMAIN.md) §3.6.6) |
 | `crm.quote_revision.pdf_sha256`, sent-evidence ids | the worker, through `crm.record_quote_pdf` — one privileged function, those columns only ([§6.2](#m-arch-definer)) |
 | `comms.*` | the worker's Gmail sync; FastAPI only for participant resolution |
 | `outbound.send_attempt`, `outbound.contact_control` | the send/reconcile functions, the NDR handlers, the Wave 1A loader, admin commands — **never direct DML from a runtime role** |
@@ -653,12 +656,35 @@ write `crm.*` or `outbound.*` beyond the one designed lane: the worker may hold
 `supabase/migrations/20260908120100_slice0_outbound_campaign_reply.sql`), which 4a
 never writes. The probe refuses any role membership; any port other than 5432
 (6543 refused by name); any other `crm`/`outbound` write, including column-level
-grants, `TRIGGER`, and view and materialized-view writes; and any `SECURITY DEFINER`
-function the worker can execute (extension-owned and trigger functions and functions
-in schemas without `USAGE` are not counted, and nothing is skipped by schema name).
+grants, `TRIGGER`, and view and materialized-view writes; and any executable
+`SECURITY DEFINER` other than the closed-list `outbound.add_contact_control`. That one
+exception does not grant direct DML: its body independently proves the exact hard-bounce
+evidence before it writes an address-scoped global block. Extension-owned and trigger
+functions and functions in schemas without `USAGE` are not counted; nothing is skipped
+by schema name.
 When `pgmq` arrives, a queue message triggers the same job code — only the trigger
 changes. PDF rendering, ChileCompra, the send path and the reconciler are not affected
 by this amendment.
+
+**Phase 4 amendment — owner decision D2, 2026-10-06: the mail triage runs on
+Procrastinate.** The worker's first long-running process, the Render Background Worker
+`origenlab-mail-triage` (`origenlab-worker triage-worker`), takes its jobs from a
+[Procrastinate](https://procrastinate.readthedocs.io/) queue stored in this database, schema
+`procrastinate` (`supabase/migrations/20261006180000_slice4_procrastinate_triage_queue.sql`),
+instead of `pgmq`. Still one durable database: no broker, no Redis, no second store. The schema
+is Procrastinate 3.10.0's, vendored verbatim and pinned (a library upgrade is a new migration;
+`apps/worker/tests/test_queue_schema.py` fails on drift); every function in it is `SECURITY
+INVOKER` with `search_path = procrastinate, pg_catalog`, RLS is on with one named policy per
+command for `origenlab_worker`, and no other role holds anything there. Every queue connection
+runs the worker's own probe (§6.3, as above) for the queue's grants before Procrastinate issues a
+statement. It is a single-purpose task queue — one periodic sweep and one job per captured
+message — not a workflow engine or an event bus (§12). The jobs propose: each one records
+`message_triage` and `product_mention` `evidence.assertion` rows ([`DOMAIN.md`](DOMAIN.md) §7
+#25) and nothing else; no case, stage, interest or reply follows from them without an operator
+or the API's email → cases rules. The capture cron (D1) is unchanged and does not enqueue: the
+sweep reads what it captured. The LLM call is the worker's (§2), with the message sent as
+untrusted data and the answer validated against a closed schema
+([`OPERATIONS.md`](OPERATIONS.md) §8.11).
 
 ## 9. Observability
 
@@ -666,7 +692,7 @@ by this amendment.
 |---|---|
 | Every state transition | `crm.domain_event` — the primary audit and the primary debugging tool |
 | Send safety | `outbound.send_attempt` counts by `submission_state` and `delivery_state`; open attempts older than the lease |
-| Queue health | `pgmq` depth and oldest-message age per queue |
+| Queue health | `pgmq` depth and oldest-message age per queue; for the triage (D2), `procrastinate.procrastinate_jobs` by `status` and the oldest `todo` |
 | Sync health | `comms.mailbox` cursor age |
 | Application logs | structured JSON from FastAPI and the worker, with a correlation id per command and per attempt |
 | Alerts | see [`OPERATIONS.md`](OPERATIONS.md) |

@@ -8,6 +8,9 @@
 
 import { fetchJsonGet, operatorApiUrl } from "../api/operatorClient";
 import type {
+  CaseMailDocumentsResponse,
+  CaseQuoteCandidatesResponse,
+  CasePurchaseOrderCandidatesResponse,
   DriveArchiveResponse,
   MailQuoteNumbersResponse,
   MailSyncStatus,
@@ -20,6 +23,7 @@ import type {
   WorkspaceOverview,
 } from "./crmTypes";
 import type { FxResponse } from "./fx";
+import type { NoteRow } from "./authoring/crmAuthoringApi";
 
 export const WORKSPACE_PATHS = {
   overview: "/v2/workspace/overview",
@@ -33,10 +37,29 @@ export const WORKSPACE_PATHS = {
   mailSync: "/v2/workspace/mail-sync",
   mailQuoteNumbers: "/v2/workspace/mail-quote-numbers",
   workQueue: "/v2/cockpit/work-queue",
+  caseNotes: (opportunityId: string) => `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/notes`,
+  caseMailDocuments: (opportunityId: string) =>
+    `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/mail-documents`,
+  caseQuoteCandidates: (opportunityId: string) =>
+    `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/quote-candidates`,
+  casePurchaseOrderCandidates: (opportunityId: string) =>
+    `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/purchase-order-candidates`,
 } as const;
 
 export const fetchOverview = () => fetchJsonGet<WorkspaceOverview>(operatorApiUrl(WORKSPACE_PATHS.overview));
 export const fetchPipeline = () => fetchJsonGet<PipelineResponse>(operatorApiUrl(WORKSPACE_PATHS.pipeline));
+/** The notes on one case, for the drawer's «Registrar seguimiento». Writing one is `add-note`. */
+export const fetchCaseNotes = (opportunityId: string) =>
+  fetchJsonGet<{ opportunity_id: string; notes: NoteRow[] }>(operatorApiUrl(WORKSPACE_PATHS.caseNotes(opportunityId)));
+/** The Gmail messages linked to one case and their documents, for «Registrar cotización». A read only. */
+export const fetchCaseMailDocuments = (opportunityId: string) =>
+  fetchJsonGet<CaseMailDocumentsResponse>(operatorApiUrl(WORKSPACE_PATHS.caseMailDocuments(opportunityId)));
+/** Read-only review proposals: no cross-thread link is made by this GET. */
+export const fetchCaseQuoteCandidates = (opportunityId: string) =>
+  fetchJsonGet<CaseQuoteCandidatesResponse>(operatorApiUrl(WORKSPACE_PATHS.caseQuoteCandidates(opportunityId)));
+/** This read never changes a sale; the operator must inspect the attached PO PDF. */
+export const fetchCasePurchaseOrderCandidates = (opportunityId: string) =>
+  fetchJsonGet<CasePurchaseOrderCandidatesResponse>(operatorApiUrl(WORKSPACE_PATHS.casePurchaseOrderCandidates(opportunityId)));
 export const fetchProviders = () => fetchJsonGet<ProvidersResponse>(operatorApiUrl(WORKSPACE_PATHS.providers));
 export const fetchEquipmentInterests = () =>
   fetchJsonGet<EquipmentInterestsResponse>(operatorApiUrl(WORKSPACE_PATHS.equipmentInterests));

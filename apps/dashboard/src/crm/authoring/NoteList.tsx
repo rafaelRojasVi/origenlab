@@ -1,15 +1,17 @@
 /**
  * NoteList + NoteForm — reusable for person, organization and opportunity subjects.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import {
   Badge,
+  Button,
   ConfirmDialog,
   FormField,
   Section,
   TextareaInput,
   fmtDate,
+  toast,
 } from "../ui";
 import {
   addNote,
@@ -27,17 +29,24 @@ interface NoteListProps {
   subjectId: string;
   mayAuthor: boolean;
   onRefresh: () => void;
+  /** Bumped by a caller's own button (the case drawer's «Registrar seguimiento») to open the form. */
+  openSignal?: number;
 }
 
-export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }: NoteListProps) {
+export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh, openSignal = 0 }: NoteListProps) {
   const { session } = useAuthSession();
   const myId = session.kind === "signed_in" ? session.operator.operatorId : null;
   const admin = isAdmin(session);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [archiveId, setArchiveId] = useState<string | null>(null);
+  const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (openSignal > 0 && mayAuthor) setAdding(true);
+  }, [openSignal, mayAuthor]);
 
   // Group notes by root_note_id to get revision chains.
   const byRoot = new Map<string, NoteRow[]>();
@@ -66,13 +75,7 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
       title={`Notas (${latestNotes.length})`}
       aside={
         mayAuthor ? (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="h-6 rounded-md border border-line bg-canvas-raised px-2.5 text-[11px] font-medium text-ink hover:bg-canvas-sunken"
-          >
-            Agregar nota
-          </button>
+          <Button onClick={() => setAdding(true)}>Agregar nota</Button>
         ) : null
       }
     >
@@ -182,16 +185,22 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
           reasonLabel="Motivo del archivo"
           confirmLabel="Archivar nota"
           error={error}
+          busy={archiving}
           onCancel={() => { setArchiveId(null); setError(null); }}
           onConfirm={async (reason) => {
+            if (archiving) return;
+            setArchiving(true);
             try {
               await archiveNote({ note_id: archiveTarget.id, expected_version: archiveTarget.version, note: reason });
               setArchiveId(null);
               setError(null);
+              toast("Nota archivada.");
               onRefresh();
             } catch (err) {
               const r = refusalOf(err);
               setError(r ? `${r.code}: ${r.message}` : String(err));
+            } finally {
+              setArchiving(false);
             }
           }}
         />
@@ -241,6 +250,7 @@ export function NoteForm(props: NoteFormProps) {
           idempotencyKeyRef.current,
         );
       }
+      toast(props.mode === "add" ? "Nota agregada." : "Revisión de la nota guardada.");
       props.onDone();
     } catch (err) {
       const r = refusalOf(err);
@@ -274,22 +284,12 @@ export function NoteForm(props: NoteFormProps) {
       ) : null}
       {error ? <p className="text-[11px] text-bad">{error}</p> : null}
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={submit}
-          disabled={busy || !body.trim()}
-          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {busy ? "…" : props.mode === "add" ? "Agregar" : "Guardar revisión"}
-        </button>
-        <button
-          type="button"
-          onClick={props.onCancel}
-          disabled={busy}
-          className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken"
-        >
+        <Button variant="primary" onClick={() => void submit()} disabled={!body.trim()} busy={busy} busyLabel="Guardando…">
+          {props.mode === "add" ? "Agregar" : "Guardar revisión"}
+        </Button>
+        <Button onClick={props.onCancel} disabled={busy}>
           Cancelar
-        </button>
+        </Button>
       </div>
     </div>
   );

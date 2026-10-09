@@ -56,6 +56,8 @@ EXPECTED_EXTRA_TABLES = {
     "fx_rate",
     "cost_parameter",
     "document_line",
+    # 20261006180200_slice4_triage_review.sql — DOMAIN.md §7 #55.
+    "triage_review",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -94,6 +96,7 @@ POST_SLICE0_FUNCTIONS = {
     "outbound.unsubscribe_permanent",
     "outbound.marketing_contact_refusals",
     "outbound.add_contact_control",
+    "outbound.add_unsubscribe_contact_control",
     # 20260928100000_slice5_campaign_block.sql — the block's lifecycle guard,
     # the campaign-level refusals and their enforcement trigger (all INVOKER).
     "outbound.campaign_block_guard",
@@ -243,6 +246,10 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     "catalog.cost_parameter.cost_parameter_set_by_operator_id_fkey",
     "evidence.document_line.document_line_source_record_id_fkey",
     "evidence.document_line.document_line_reviewed_by_operator_id_fkey",
+    # 20261006180200_slice4_triage_review.sql — both covered by plain unconditional indexes:
+    # triage_review_assertion_idx (assertion_id leads it) and triage_review_operator_idx.
+    "evidence.triage_review.triage_review_assertion_id_fkey",
+    "evidence.triage_review.triage_review_reviewed_by_operator_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -254,7 +261,7 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 # campaign-block keys, the eight sign-in keys, the sixteen slice-6 keys and the
 # ten slice-7 catalog and document-line keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 38
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 40
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -262,18 +269,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 51,
+        "relation_count": 52,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 50,
+        "table_count": 51,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 173,
+        "policy_count": 176,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -365,7 +372,7 @@ def main() -> int:
         refuse("a08 reports a table missing from current head")
 
     # Like a09 below, the audit lists at most twelve entries and then "...", and the
-    # seventeen extra tables do not fit. What it names must all be reviewed
+    # eighteen extra tables do not fit. What it names must all be reviewed
     # tables; only an untruncated list must name each of them, and a truncated
     # one must name exactly the twelve the audit prints — so a name the pattern
     # cannot read is refused rather than skipped. The exact count bounds what the
@@ -387,10 +394,10 @@ def main() -> int:
     if unreviewed_tables:
         refuse(f"a08 names unreviewed tables: {unreviewed_tables!r}")
 
-    if "17 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly seventeen extra tables")
+    if "18 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly eighteen extra tables")
 
-    # The 48 policy additions must belong to those same seventeen reviewed tables:
+    # The 51 policy additions must belong to those same eighteen reviewed tables:
     # four each for the three commercial-case tables and campaign_block (api
     # select/insert/update, worker select), one each for auth_principal and
     # operator_profile (api select: their throttle is written by
@@ -422,8 +429,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "48 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly forty-eight extra policies")
+    if "51 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly fifty-one extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -447,7 +454,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 51, expected 34"],
+        "a04": ["relations in scope: observed 52, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "

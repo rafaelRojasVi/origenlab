@@ -82,6 +82,12 @@ def price_history(request: Request, operator: Operator, model_key: str = Query(.
     return _reads(request).price_history(key, limit)
 
 
+@catalog_read_router.get("/suppliers")
+def suppliers(request: Request, operator: Operator) -> dict:
+    # Names and product counts only: no cost field, so nothing to redact for the viewer.
+    return _reads(request).suppliers()
+
+
 @catalog_read_router.get("/suppliers/{organization_id}/terms")
 def supplier_terms(organization_id: UUID, request: Request, operator: Operator) -> dict:
     found = _reads(request).supplier_terms(organization_id)

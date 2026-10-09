@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
-import type { MailRulesPreview } from "../mailRules";
+import type { AutoMailRulesState, MailRulesPreview } from "../mailRules";
 import { MailRulesPanel } from "./MailRulesPanel";
 import { ReviewPage } from "./ReviewPage";
 
@@ -173,5 +173,76 @@ describe("Revisión → Acciones automáticas del correo", () => {
     respond({ "/v2/workspace/mail-rules/preview": { ...PREVIEW, commands_enabled: false } });
     render(withRole("admin", <MailRulesPanel />));
     expect(await screen.findByRole("button", { name: /Aplicar/ })).toBeDisabled();
+  });
+
+  const AUTO_OFF: AutoMailRulesState = {
+    enabled: false, changed_at: null, changed_by: null, note: null, rules: ["R1", "R2"],
+    interval_seconds: 300, timer_running: true, blocked: null, last_run: null,
+  };
+
+  it("switches the automatic R1/R2 run on with a note and a key", async () => {
+    const calls = respond({
+      "/v2/workspace/mail-rules/preview": { ...PREVIEW, automatic: AUTO_OFF },
+      "/v2/commands/set-auto-mail-rules": { enabled: true },
+    });
+    render(withRole("admin", <MailRulesPanel />));
+    const box = await screen.findByTestId("auto-mail-rules");
+    expect(box).toHaveTextContent("Detenido");
+    expect(box).toHaveTextContent("Nunca se ha activado.");
+    fireEvent.click(screen.getByRole("button", { name: "Activar" }));
+    const confirm = screen.getByRole("button", { name: "Activar" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "probado en la vista previa" } });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/set-auto-mail-rules")).toBe(true));
+    const post = calls.find((c) => c.path === "/v2/commands/set-auto-mail-rules");
+    expect(post?.body).toEqual({ enabled: true, note: "probado en la vista previa" });
+    expect(post?.key).toBeTruthy();
+  });
+
+  it("shows who switched it on, the last pass, and offers «Detener»; automatic actions say so", async () => {
+    const calls = respond({
+      "/v2/workspace/mail-rules/preview": {
+        ...PREVIEW,
+        applied: [{ ...PREVIEW.applied[0], automatic: true }],
+        automatic: {
+          ...AUTO_OFF, enabled: true, changed_by: "Admin Ficticia", changed_at: "2026-10-06T12:00:00+00:00",
+          note: "probado", last_run: { at: "2026-10-06T12:05:00+00:00", applied: 3, refused: 0, pending: 0, skipped: null },
+        },
+      },
+      "/v2/commands/set-auto-mail-rules": { enabled: false },
+    });
+    render(withRole("admin", <MailRulesPanel />));
+    const box = await screen.findByTestId("auto-mail-rules");
+    expect(box).toHaveTextContent("Activo");
+    expect(box).toHaveTextContent("Activado por Admin Ficticia");
+    expect(screen.getByText(/3 vinculados/)).toBeInTheDocument();
+    expect(screen.getByText(/automática, a nombre de Admin Ficticia/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Detener" }));
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "revisar" } });
+    fireEvent.click(screen.getByRole("button", { name: "Detener" }));
+    await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/set-auto-mail-rules")).toBe(true));
+    expect(calls.find((c) => c.path === "/v2/commands/set-auto-mail-rules")?.body).toEqual({ enabled: false, note: "revisar" });
+  });
+
+  it("says when an «on» switch cannot act", async () => {
+    respond({
+      "/v2/workspace/mail-rules/preview": {
+        ...PREVIEW,
+        automatic: { ...AUTO_OFF, enabled: true, changed_by: "Ex Admin", blocked: "Ex Admin ya no es un administrador activo" },
+      },
+    });
+    render(withRole("admin", <MailRulesPanel />));
+    const box = await screen.findByTestId("auto-mail-rules");
+    expect(box).toHaveTextContent("Activo, sin actuar");
+    expect(screen.getByText(/ya no es un administrador activo/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Activar" })).toBeInTheDocument();
+  });
+
+  it("has no switch where the commands are not mounted", async () => {
+    respond({ "/v2/workspace/mail-rules/preview": { ...PREVIEW, automatic: null } });
+    render(withRole("admin", <MailRulesPanel />));
+    await screen.findByText("Caso Ficticio");
+    expect(screen.queryByTestId("auto-mail-rules")).not.toBeInTheDocument();
   });
 });

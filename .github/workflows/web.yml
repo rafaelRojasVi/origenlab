@@ -6,9 +6,6 @@ permissions:
 on:
   push:
     branches: [main, dev]
-    paths:
-      - "apps/web/**"
-      - ".github/workflows/web.yml"
   pull_request:
     paths:
       - "apps/web/**"

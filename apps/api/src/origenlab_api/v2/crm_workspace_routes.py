@@ -155,6 +155,59 @@ def get_organization_authoring(
     return body
 
 
+@workspace_router.get("/opportunities/{opportunity_id}/notes")
+def get_opportunity_notes(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
+    """The notes on one case, for the case drawer's «Registrar seguimiento». A read only:
+    writing one is `add-note` with `subject_kind = 'opportunity'` (CRM authoring)."""
+    body = repo.opportunity_notes(str(opportunity_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    return body
+
+
+@workspace_router.get("/opportunities/{opportunity_id}/mail-documents")
+def get_opportunity_mail_documents(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
+    """The Gmail messages linked to one case and the documents they carry, for the case drawer's
+    «Registrar cotización». A read only: recording one is `record-case-quotation`."""
+    body = repo.opportunity_mail_documents(str(opportunity_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    return body
+
+
+@workspace_router.get("/opportunities/{opportunity_id}/quote-candidates")
+def get_opportunity_quote_candidates(opportunity_id: UUID, operator: Operator, repo: Repo) -> Any:
+    """Read-only proposal requiring sales/admin: exact CN plus an external participant.
+
+    A candidate may contain a PDF filename and Gmail link from a different commercial
+    case, so viewers must not receive it. This never merges or records anything.
+    """
+    if getattr(operator, "role", None) not in ("sales", "admin"):
+        raise HTTPException(status_code=403, detail="sales or admin required")
+    body = repo.opportunity_quote_candidates(str(opportunity_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    return body
+
+
+@workspace_router.get("/opportunities/{opportunity_id}/purchase-order-candidates")
+def get_opportunity_purchase_order_candidates(
+    opportunity_id: UUID, operator: Operator, repo: Repo,
+) -> Any:
+    """Propose verified purchase-order files from another Gmail thread; never mark won.
+
+    This reveals an email subject, document filename and Gmail link, so restrict to
+    sales/admin. Operator must read the original PO PDF to verify its printed
+    quotation reference and line amounts before attaching anything to a case.
+    """
+    if getattr(operator, "role", None) not in ("sales", "admin"):
+        raise HTTPException(status_code=403, detail="sales or admin required")
+    body = repo.opportunity_purchase_order_candidates(str(opportunity_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    return body
+
+
 @workspace_router.get("/person-suggestions")
 def get_person_suggestions(_: Operator, repo: Repo) -> Any:
     """People the quote emails name and the CRM does not hold yet. A read: nothing is created."""

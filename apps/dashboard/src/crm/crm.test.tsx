@@ -8,7 +8,7 @@ import type { OpportunityCardData, PipelineResponse, WorkspaceOverview } from ".
 import { PipelinePage } from "./pages/PipelinePage";
 import { PeoplePage } from "./pages/PeoplePage";
 import { AuthSessionContext } from "../context/AuthSessionContext";
-import { byLatestSent, matchesQuery } from "./stage";
+import { byLatestActivity, matchesQuery } from "./stage";
 import { classifyError } from "./useResource";
 import { DashboardApp } from "../pages/DashboardApp";
 import { stubSignedInAuthSession } from "../test/mockAuthSession";
@@ -140,10 +140,11 @@ describe("helpers", () => {
     expect(matchesQuery(c, "otra cosa")).toBe(false);
   });
 
-  it("orders by latest sent revision, cases without one last", () => {
+  it("orders by latest activity, including a newer stage update without a revision", () => {
     const a = withLatest(card());
-    const b = card({ opportunity_id: "b", latest_revision: null, title: "B" });
-    expect([b, a].sort(byLatestSent)[0]).toBe(a);
+    const b = card({ opportunity_id: "b", latest_revision: null, title: "B",
+      updated_at: "2026-10-08T19:00:00Z" });
+    expect([a, b].sort(byLatestActivity)[0]).toBe(b);
   });
 });
 
@@ -167,6 +168,8 @@ describe("PipelinePage", () => {
     };
     const calls = respond({ "/v2/workspace/pipeline": pipeline });
     render(<PipelinePage />);
+    // The Tablero is the default view; the card list is one click away.
+    fireEvent.click(await screen.findByRole("button", { name: "Tarjetas" }));
     const first = await screen.findByTestId("opportunity-card-11111111-1111-4111-8111-111111111111");
     expect(within(first).getByText("00001-26")).toBeInTheDocument();
     expect(within(first).getByText(/Persona Ejemplo/)).toBeInTheDocument();
@@ -184,10 +187,10 @@ describe("PipelinePage", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Institución sin confirmar")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Abrir PDF r1 en Drive (enlace de registro local)")).toHaveAttribute("href", "https://drive.google.com/file/d/f1/view");
-    for (const name of ["Avanzar etapa", "Registrar seguimiento", "Nueva revisión"]) {
+    // No signed-in session here: every case action stays disabled (CaseActions.test.tsx covers the rest).
+    for (const name of ["Cambiar estado", "Marcar ganada", "Registrar seguimiento", "Nueva revisión", "Confirmar institución"]) {
       expect(within(dialog).getByRole("button", { name })).toBeDisabled();
     }
-    expect(screen.getByRole("button", { name: "Nueva oportunidad" })).toBeDisabled();
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
@@ -334,17 +337,29 @@ describe("dashboard shell", () => {
     window.location.hash = "";
   });
 
-  it("navigates only the eight CRM sections and marks the current one", async () => {
+  it("navigates only the nine CRM sections and marks the current one", async () => {
     signedInAt(`#/crm/oportunidades`);
     const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
       "#/crm/resumen", "#/crm/oportunidades", "#/crm/organizaciones", "#/crm/personas",
-      "#/crm/proveedores", "#/crm/drive", "#/crm/marketing", "#/crm/revision",
+      "#/crm/proveedores", "#/crm/catalogo", "#/crm/drive", "#/crm/marketing", "#/crm/revision",
     ]);
     expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual([
       "Oportunidades",
     ]);
+  });
+
+  it("folds the section names into a rail of icons, and remembers it", async () => {
+    window.localStorage.removeItem("crm.nav.collapsed");
+    signedInAt(`#/crm/oportunidades`);
+    const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
+    const toggle = within(nav).getByRole("button", { name: "Contraer menú" });
+    fireEvent.click(toggle);
+    expect(within(nav).getByRole("button", { name: "Expandir menú" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(nav).getByRole("link", { name: "Oportunidades" })).toHaveAttribute("title", "Oportunidades");
+    expect(window.localStorage.getItem("crm.nav.collapsed")).toBe("1");
+    window.localStorage.removeItem("crm.nav.collapsed");
   });
 
   it("opens the case an old ?opportunity= bookmark selected", async () => {
@@ -357,19 +372,21 @@ describe("dashboard shell", () => {
     const other = "22222222-2222-4222-8222-222222222222";
     signedInAt(`#/casos?id=${other}`);
     await waitFor(() => expect(window.location.hash).toBe(`#/crm/oportunidades/${other}`));
-    expect(await screen.findByTestId(`opportunity-card-${CASE}`)).toBeInTheDocument();
+    expect(await screen.findByTestId(`board-card-${CASE}`)).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
 
 describe("no write path in the CRM workspace", () => {
-  // Two exceptions, pinned by src/test/noWritePolicy.test.ts:
+  // Four exceptions, pinned by src/test/noWritePolicy.test.ts:
   //  - the campaign-draft client (marketingApi.ts) POSTs to campaign commands.
   //  - the CRM authoring client (crmAuthoringApi.ts) POSTs to CRM authoring commands.
   const DRAFT_CLIENT = "./marketing/marketingApi.ts";
   const CRM_AUTHORING_CLIENT = "./authoring/crmAuthoringApi.ts";
   //  - the email → cases client (mailRules.ts) POSTs to the two admin-only email-rules commands.
   const MAIL_RULES_CLIENT = "./mailRules.ts";
+  //  - the case-command client (caseCommands.ts) POSTs to advance-case-stage and record-case-won.
+  const CASE_COMMANDS_CLIENT = "./caseCommands.ts";
 
   it("never issues a non-GET request or references a command route", () => {
     const sources = import.meta.glob(["./**/*.ts", "./**/*.tsx", "!./**/*.test.tsx", "!./**/*.test.ts"], {
@@ -380,7 +397,7 @@ describe("no write path in the CRM workspace", () => {
     expect(Object.keys(sources).length).toBeGreaterThan(5);
     expect(Object.keys(sources)).toContain(DRAFT_CLIENT);
     for (const [f, src] of Object.entries(sources)) {
-      if (f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT) continue;
+      if (f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT || f === CASE_COMMANDS_CLIENT) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);
       expect(src, f).not.toMatch(/\/operations\//);

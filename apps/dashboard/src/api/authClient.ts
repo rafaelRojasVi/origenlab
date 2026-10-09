@@ -62,6 +62,11 @@ export type AuthSessionState =
        * CRM editor is offered. Absent or anything but `true` reads as off.
        */
       crmAuthoringEnabled?: boolean;
+      /**
+       * Whether the API has the case commands mounted (`ORIGENLAB_V2_COMMANDS_ENABLED`). Off,
+       * «Cambiar etapa» and «Marcar ganada» stay disabled. Absent or anything but `true` is off.
+       */
+      caseCommandsEnabled?: boolean;
     }
   | {
       kind: "signed_out";
@@ -118,6 +123,7 @@ export function parseAuthSessionResponse(status: number, body: unknown): AuthSes
           : null,
       canSwitchProfile: data.can_switch_profile === true,
       crmAuthoringEnabled: data.crm_authoring_enabled === true,
+      caseCommandsEnabled: data.case_commands_enabled === true,
     };
   }
   if (status === 401 && data.state === "profile_required") {

@@ -127,3 +127,44 @@ describe("useResource page memory", () => {
     expect(screen.getByTestId("probe")).toHaveTextContent("loading");
   });
 });
+
+function ReloadProbe({ load, deps }: { load: () => Promise<string>; deps: readonly unknown[] }) {
+  const [state, reload, refreshing] = useResource(load, deps);
+  return (
+    <>
+      <p data-testid="probe">{state.kind === "ready" ? `ready:${state.data}` : state.kind}</p>
+      <p data-testid="refreshing">{refreshing ? "yes" : "no"}</p>
+      <button type="button" onClick={reload}>
+        reload
+      </button>
+    </>
+  );
+}
+
+describe("useResource refreshing", () => {
+  it("keeps the data on screen during a reload and says it is refreshing", async () => {
+    const loader = controllableLoader();
+    render(<ReloadProbe load={loader.load} deps={["a"]} />);
+    await act(async () => loader.pending.resolve("v1"));
+    expect(screen.getByTestId("refreshing")).toHaveTextContent("no");
+
+    loader.reset();
+    await act(async () => screen.getByRole("button", { name: "reload" }).click());
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:v1");
+    expect(screen.getByTestId("refreshing")).toHaveTextContent("yes");
+    await act(async () => loader.pending.resolve("v2"));
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:v2");
+    expect(screen.getByTestId("refreshing")).toHaveTextContent("no");
+  });
+
+  it("never shows another read's rows while a new read loads", async () => {
+    const loader = controllableLoader();
+    const view = render(<ReloadProbe load={loader.load} deps={["a"]} />);
+    await act(async () => loader.pending.resolve("rows of a"));
+    loader.reset();
+    view.rerender(<ReloadProbe load={loader.load} deps={["b"]} />);
+    expect(screen.getByTestId("probe")).toHaveTextContent("loading");
+    await act(async () => loader.pending.resolve("rows of b"));
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:rows of b");
+  });
+});

@@ -162,6 +162,32 @@ def test_a_free_mail_sender_may_still_link_through_r1() -> None:
     assert (action.rule_id, action.mode) == ("R1", "auto")
 
 
+def test_r1_records_a_new_sent_quote_on_the_existing_thread() -> None:
+    action = only(Snapshot(
+        evidence=(mail(thread_id="t-1"),),
+        cases=(case(stage="qualified", thread_ids=("t-1",)),),
+        organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode, action.quote_number) == ("R1", "auto", "01239-26")
+    assert action.context["from_stage"] == "qualified"
+    assert [c["command"] for c in action.commands] == [
+        "link_case_evidence", "advance_case_stage", "record_historical_quotation",
+    ]
+    assert action.commands[1]["inputs"]["stage"] == "quoting"
+    assert action.commands[-1]["inputs"]["document_sha256"] == PDF_SHA
+
+
+def test_r1_does_not_record_a_sent_quote_until_the_requester_is_resolved() -> None:
+    action = only(Snapshot(
+        evidence=(mail(thread_id="t-1"),),
+        cases=(case(stage="lead", organization_id=None, thread_ids=("t-1",)),),
+        organizations=(),
+    ))
+    assert (action.rule_id, action.mode, action.quote_number) == ("R1", "proposal", "01239-26")
+    assert any("institución solicitante" in reason for reason in action.reasons)
+    assert action.commands == ()
+
+
 # ------------------------------------------------------------------ R3 / R4
 
 
@@ -320,14 +346,76 @@ def test_r6_loses_a_case_to_another_supplier() -> None:
     assert action.commands[1]["inputs"]["close_reason"] == "otro proveedor"
 
 
-def test_r7_a_quote_request_from_a_known_institution_is_a_proposal() -> None:
+def test_r7_a_quote_request_from_a_known_institution_opens_an_en_estudio_case() -> None:
     action = only(Snapshot(
         evidence=(mail(direction="inbound", sender="x@cliente.test", thread_id="t-9",
                        subject="Solicitud de cotización balanza", documents=()),),
         cases=(), organizations=(org(),),
     ))
-    assert (action.rule_id, action.mode) == ("R7", "proposal")
+    assert (action.rule_id, action.mode) == ("R7", "auto")
     assert action.organization_id == "o-1"
+    assert [c["command"] for c in action.commands] == [
+        "open_commercial_case", "add_case_organization", "advance_case_stage", "advance_case_stage",
+    ]
+    assert [c["inputs"]["stage"] for c in action.commands if c["command"] == "advance_case_stage"] == [
+        "qualifying", "qualified",
+    ]
+
+
+def test_r7_free_mail_waits_for_requester_check_then_opens_solicitada_without_inventing_an_institution() -> None:
+    pending = only(Snapshot(
+        evidence=(mail(direction="inbound", sender="Irina Example <irina@gmail.com>", thread_id="t-irina",
+                       subject="Solicitud de cotización de productos", documents=()),),
+        cases=(), organizations=(org(),),
+    ))
+    assert (pending.rule_id, pending.mode) == ("R7", "proposal")
+    assert any("esperando" in reason for reason in pending.reasons)
+
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", sender="Irina Example <irina@gmail.com>", thread_id="t-irina",
+                       subject="Solicitud de cotización de productos", documents=(),
+                       requester_checked=True),),
+        cases=(), organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode) == ("R7", "auto")
+    assert action.organization_id is None
+    assert len(action.commands) == 1
+    assert action.commands[0]["command"] == "open_commercial_case"
+    assert "Solicitud de cotización" in action.case_title
+    assert any("sin institución" in reason for reason in action.reasons)
+
+
+def test_r7_free_mail_uses_a_unique_exact_requester_identity_from_the_worker() -> None:
+    action = only(Snapshot(
+        evidence=(mail(
+            direction="inbound",
+            sender="Irina Example <irina@gmail.com>",
+            thread_id="t-irina",
+            subject="Solicitud de cotización de productos",
+            documents=(),
+            requester_checked=True,
+            requester_organization_id="o-1",
+            requester_organization_name="Cliente Ficticio",
+        ),),
+        cases=(),
+        organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode, action.organization_id) == ("R7", "auto", "o-1")
+    assert [c["command"] for c in action.commands] == [
+        "open_commercial_case", "add_case_organization", "advance_case_stage", "advance_case_stage",
+    ]
+    assert action.commands[-1]["inputs"]["stage"] == "qualified"
+
+
+def test_r7_unknown_domain_quote_request_opens_solicitada_after_requester_check_without_guessing_identity() -> None:
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", sender="compras@nuevo.test", thread_id="t-new",
+                       subject="RFQ centrífuga", documents=(), requester_checked=True),),
+        cases=(), organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode) == ("R7", "auto")
+    assert action.organization_id is None
+    assert [c["command"] for c in action.commands] == ["open_commercial_case"]
 
 
 def test_anything_else_is_r8() -> None:
@@ -339,7 +427,66 @@ def test_anything_else_is_r8() -> None:
     assert (action.rule_id, action.mode) == ("R8", "none")
 
 
+def test_multilingual_supplier_reply_does_not_open_a_new_request_case() -> None:
+    for subject in ("回复：RFQ – Autoclave", "回覆: Cotización", "AW: RFQ balanza", "Re : Cotización"):
+        action = only(Snapshot(
+            evidence=(mail(direction="inbound", sender="sales@unknown.test", documents=(),
+                           subject=subject, requester_checked=True),), cases=(), organizations=(),
+        ))
+        assert (action.rule_id, action.mode, action.commands) == ("R8", "none", ())
+
+
+def test_received_quotation_requires_review_but_explicit_request_still_opens_case() -> None:
+    for subject, expected in (("Quotation for Vertical Autoclave", "proposal"),
+                              ("Request for quotation for Vertical Autoclave", "auto")):
+        action = only(Snapshot(
+            evidence=(mail(direction="inbound", sender="person@unknown.test", documents=(),
+                           subject=subject, requester_checked=True),), cases=(), organizations=(),
+        ))
+        assert (action.rule_id, action.mode) == ("R7", expected)
+        assert bool(action.commands) == (expected == "auto")
+
+
 # ------------------------------------------------------------------ idempotency, determinism
+
+
+def test_r7_unregistered_numbered_quote_followup_never_opens_a_second_case() -> None:
+    for subject in (
+        "Compra de productos, cotización N°01259-26",
+        "Solicitud de cotización 01259–26",
+        "Request for quotation CN01259",
+        "Cotización CN01259/26",
+        "Solicitud de cotización 01259-2026",
+        "Compra de productos, cotización N°01259",
+        "Request for quotation No. 01259",
+    ):
+        for organizations in ((), (org(),)):
+            action = only(Snapshot(
+                evidence=(mail(direction="inbound", sender="person@cliente.test", documents=(),
+                               subject=subject, requester_checked=True),),
+                cases=(case(stage="lead", organization_id=None, thread_ids=("original",)),),
+                organizations=organizations,
+            ))
+            assert (action.rule_id, action.mode, action.commands) == ("R7", "proposal", ())
+            assert action.case_id is None  # no automatic reconciliation of either case
+
+
+def test_r7_unregistered_attachment_number_requires_review_even_without_subject_number() -> None:
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", sender="person@cliente.test",
+                       subject="Solicitud de cotización", requester_checked=True),),
+        cases=(), organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode, action.commands) == ("R7", "proposal", ())
+
+
+def test_numbered_followup_keeps_existing_thread_link_priority() -> None:
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", sender="person@cliente.test", documents=(),
+                       subject="Compra de productos, cotización N°01259-26"),),
+        cases=(case(thread_ids=("t-1",)),), organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode, action.case_id) == ("R1", "auto", "c-1")
 
 
 def test_an_email_already_handled_by_a_rule_plans_nothing() -> None:

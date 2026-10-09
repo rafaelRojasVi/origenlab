@@ -1,4 +1,4 @@
-"""The six commercial-case commands — their requests, their refusals, their vocabulary.
+"""The nine commercial-case commands — their requests, their refusals, their vocabulary.
 
 A *caso comercial* is `crm.opportunity` and nothing else ([`docs/DOMAIN.md`](../../../../../docs/DOMAIN.md)
 §3.6): no case table, no case identifier, no second lifecycle. These commands are how a human
@@ -13,10 +13,18 @@ sign.
 | `set_case_organization_role` | an institution's part on this case is confirmed, or it is this other part now |
 | `record_case_interest` | this is what the case is seeking |
 | `advance_case_stage` | the case moved, and the rules for moving it were met |
+| `record_case_won` | the case was won, against this sent, current quote revision |
+| `resolve_current_revision` | of this quote's current revisions, this one is the current one |
+| `record_case_quotation` | this quote, printing this number, was already sent on this case, by this message |
 
-**Six, and deliberately only six.** There is no command that closes an evidence link, no
+**Nine, and deliberately only nine.** There is no command that closes an evidence link, no
 command that withdraws an interest, no command that creates a person or a participant, no
-command that opens a `crm.organization_relationship`, no quote command and no send. Every
+command that opens a `crm.organization_relationship`, no command that drafts, prices or sends a
+quote. `record_case_won` *names* a quote revision that already exists; it creates none.
+`resolve_current_revision` supersedes revisions that exist; it creates none either.
+`record_case_quotation` records a quote that was **already sent** from Gmail — the printed
+number, the document, the message — through the same writer the historical import and the
+email → cases rules use (`case_quotation.py`); it carries no amount and drafts nothing. Every
 absence is a column that exists and stays unwritten until the act that writes it has been
 designed — the same rule the schema migration stated about event types: a capability nothing
 exercises is a promise, not a contract.
@@ -43,6 +51,7 @@ missing any of them is refused before a database connection is opened.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
@@ -57,6 +66,11 @@ ADD_CASE_ORGANIZATION = "add_case_organization"
 SET_CASE_ORGANIZATION_ROLE = "set_case_organization_role"
 RECORD_CASE_INTEREST = "record_case_interest"
 ADVANCE_CASE_STAGE = "advance_case_stage"
+#: Also the step name the email → cases rules use (R5, `mail_rules.py`): one writer of a win,
+#: whether a person presses «Marcar ganada» or a rule reads a purchase order.
+RECORD_CASE_WON = "record_case_won"
+RESOLVE_CURRENT_REVISION = "resolve_current_revision"
+RECORD_CASE_QUOTATION = "record_case_quotation"
 
 CASE_COMMAND_NAMES: tuple[str, ...] = (
     OPEN_COMMERCIAL_CASE,
@@ -65,7 +79,13 @@ CASE_COMMAND_NAMES: tuple[str, ...] = (
     SET_CASE_ORGANIZATION_ROLE,
     RECORD_CASE_INTEREST,
     ADVANCE_CASE_STAGE,
+    RECORD_CASE_WON,
+    RESOLVE_CURRENT_REVISION,
+    RECORD_CASE_QUOTATION,
 )
+
+#: The one stage a case is won from (`STAGE_TRANSITIONS`: only `negotiating` leads to `won`).
+WON_FROM_STAGE = "negotiating"
 
 #: `crm.opportunity_organization.role`, exactly as the CHECK constraint spells it
 #: (`DOMAIN.md` §3.6.1). `mentioned` is honest silence — named in the evidence, part not
@@ -334,11 +354,11 @@ class RecordCaseInterestBody(_CaseBody):
 class AdvanceCaseStageBody(_CaseBody):
     """Move the case, when the rules for moving it are met.
 
-    `won` is not reachable from this boundary and is refused with its own code.
+    `won` is not reachable through this command and is refused with its own code.
     `crm.opportunity` may only be `won` together with `won_quote_id` and `won_revision_no`
-    (a shipped CHECK), no command in V2 creates a quote, and `crm.quote` is empty — so
-    accepting `won` here could only ever end in a constraint violation. Saying that up front,
-    by name, is more useful than a 500.
+    (a shipped CHECK), and this request has no field that names a quote revision — so
+    accepting `won` here could only ever end in a constraint violation. `record_case_won` is
+    the command that names one; saying so up front, by name, is more useful than a 500.
 
     `close_reason` is required for `lost` and `abandoned`, and refused for anything else.
     §3.4 and [`WORKFLOWS.md`](../../../../../docs/WORKFLOWS.md) §1.1: *abandoned requires an
@@ -352,6 +372,72 @@ class AdvanceCaseStageBody(_CaseBody):
     close_reason: Annotated[str, Field(min_length=1, max_length=2000)] | None = None
 
 
+class RecordCaseWonBody(_CaseBody):
+    """The case was won, against one quote revision the operator names.
+
+    `quote_id` and `revision_no` name the revision the way an operator reads it — «CN 1234,
+    r2» — and the command refuses any revision that is not on this case, not `sent`, or
+    already superseded: a case is won against what the customer actually accepted, never a
+    draft and never a version that was replaced. The case must be at `negotiating`, the one
+    stage `won` follows; from `quoting` that is an `advance_case_stage` first, said out loud.
+
+    There is no amount, no currency and no purchase-order field. The value of the win is the
+    revision's, already recorded on `crm.quote_revision`; nothing here can restate it.
+    """
+
+    quote_id: str
+    revision_no: Annotated[int, Field(ge=1)]
+
+
+class ResolveCurrentRevisionBody(_CaseBody):
+    """Of this quote's current revisions, this one is the current one.
+
+    A case card says «Hay más de una revisión vigente» when a quote on it has two or more
+    revisions that are neither void nor superseded — the historical import records a
+    supersession only when the owner named one. `quote_id` + `revision_no` name the revision the
+    operator chose; every *other* current revision of that quote is then superseded by it, in
+    one transaction. Nothing is voided and nothing is deleted: a superseded revision stays
+    `sent` forever (`WORKFLOWS.md` §1.2), and supersession is recorded once.
+    """
+
+    quote_id: str
+    revision_no: Annotated[int, Field(ge=1)]
+
+
+class RecordCaseQuotationBody(_CaseBody):
+    """A quote already sent on this case: its printed number, its document, the message.
+
+    `source_record_id` is a Gmail message already linked to this case — the evidence that the
+    quote was sent — and `document_sha256` is one document that message carries. `quote_number`
+    is the number printed on that document, as the operator reads it; it becomes a
+    `printed_historical` quote, never a minted one. A number that is already a quote on another
+    case is refused: deciding which case a shared printed number belongs to is a different act.
+
+    `supersedes_revision_no` makes it «Nueva revisión»: a new revision of this case's quote with
+    that number, replacing the named revision (which stays `sent`, superseded). Without it, a
+    document under a number the case already has is a second current revision, and the card
+    asks the operator to choose.
+
+    No amount, no currency, no line: the document was never parsed for them, and `extra="forbid"`
+    refuses a caller who guesses a field name.
+    """
+
+    quote_number: Annotated[str, Field(min_length=1, max_length=32)]
+    source_record_id: str
+    document_sha256: Annotated[str, Field(min_length=64, max_length=64)]
+    supersedes_revision_no: Annotated[int, Field(ge=1)] | None = None
+
+    @model_validator(mode="after")
+    def _shapes(self) -> RecordCaseQuotationBody:
+        from origenlab_api.v2.quote_import_commands import QUOTE_NUMBER_SHAPE
+
+        if not QUOTE_NUMBER_SHAPE.match(self.quote_number.strip()):
+            raise ValueError("quote_number does not have the shape crm.quote accepts")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.document_sha256.strip().lower()):
+            raise ValueError("document_sha256 must be a SHA-256 hex digest")
+        return self
+
+
 CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     OPEN_COMMERCIAL_CASE: OpenCommercialCaseBody,
     LINK_CASE_EVIDENCE: LinkCaseEvidenceBody,
@@ -359,6 +445,9 @@ CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     SET_CASE_ORGANIZATION_ROLE: SetCaseOrganizationRoleBody,
     RECORD_CASE_INTEREST: RecordCaseInterestBody,
     ADVANCE_CASE_STAGE: AdvanceCaseStageBody,
+    RECORD_CASE_WON: RecordCaseWonBody,
+    RESOLVE_CURRENT_REVISION: ResolveCurrentRevisionBody,
+    RECORD_CASE_QUOTATION: RecordCaseQuotationBody,
 }
 
 
@@ -448,23 +537,32 @@ def validated_case(command_name: str, body: DecisionBody) -> dict[str, Any]:
         fields["quantity_unit"] = body.quantity_unit.strip() if body.quantity_unit else None
     elif isinstance(body, AdvanceCaseStageBody):
         fields.update(validated_stage(body))
+    elif isinstance(body, (RecordCaseWonBody, ResolveCurrentRevisionBody)):
+        fields["quote_id"] = as_uuid(body.quote_id, "quote_id")
+        fields["revision_no"] = int(body.revision_no)
+    elif isinstance(body, RecordCaseQuotationBody):
+        fields["quote_number"] = body.quote_number.strip()
+        fields["source_record_id"] = as_uuid(body.source_record_id, "source_record_id")
+        fields["document_sha256"] = body.document_sha256.strip().lower()
+        fields["supersedes_revision_no"] = (
+            int(body.supersedes_revision_no) if body.supersedes_revision_no is not None else None
+        )
     return fields
 
 
 def validated_stage(body: AdvanceCaseStageBody) -> dict[str, Any]:
     """The stage rules that do not need the current stage: the target, and its motive.
 
-    `won` is refused here rather than three layers down. It is the one target this system
-    genuinely cannot record — there is no quote to win — and an operator who asks for it has
+    `won` is refused here rather than three layers down. This request cannot name the quote
+    revision a win is recorded against, and an operator who asks for it here has
     misunderstood something a constraint violation would not explain.
     """
     if body.stage == "won":
         raise CommandRefused(
             422,
             "won_requires_a_quote",
-            "a case is won against a specific quote revision, and no command in V2 creates "
-            "a quote yet; `crm.opportunity.won_quote_id` cannot be filled, so this boundary "
-            "cannot record a win",
+            "a case is won against a specific quote revision, which this command cannot name; "
+            "record the win with record-case-won, naming the sent, current revision",
         )
     reason = (body.close_reason or "").strip() or None
     needs_reason = body.stage in STAGES_REQUIRING_A_CLOSE_REASON

@@ -55,6 +55,6 @@ describe("stage basis", () => {
     expect(stageBasis(card({ closed_at: "2026-06-01T00:00:00Z", stage: "lost" }))).toBe("crm_record");
     expect(stageBasis(card({ stage: "negotiating" }))).toBe("crm_record");
     expect(stageBasis(card({}, []))).toBe("crm_record");
-    expect(stageDisplay(card({ stage: "negotiating" })).label).toBe("Negociando");
+    expect(stageDisplay(card({ stage: "negotiating" })).label).toBe("Conversación");
   });
 });
