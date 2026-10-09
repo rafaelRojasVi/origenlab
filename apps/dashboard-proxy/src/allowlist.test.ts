@@ -670,6 +670,19 @@ describe("CRM part A: confirm an institution, suggested people", () => {
     ]) expect(isAllowedUpstreamPath(refused)).toBe(false);
   });
 
+  it("permits only an exact case UUID for read-only PO suggestions", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    const path = `/v2/workspace/opportunities/${uuid}/purchase-order-candidates`;
+    expect(isAllowedUpstreamPath(path)).toBe(true);
+    expect(isAllowedPostPath(path)).toBe(false);
+    for (const invalid of [path + "/", path + "/x",
+      "/v2/workspace/opportunities/not-a-uuid/purchase-order-candidates",
+      `/v2/workspace/opportunities/${uuid.toUpperCase()}/purchase-order-candidates`]) {
+      expect(isAllowedUpstreamPath(invalid)).toBe(false);
+    }
+  });
+
   it("forwards GET /v2/workspace/person-suggestions by its exact path, never as a POST", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     expect(isAllowedUpstreamPath("/v2/workspace/person-suggestions")).toBe(true);
