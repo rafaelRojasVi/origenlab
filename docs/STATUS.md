@@ -2355,3 +2355,14 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Rule 1 | `stageBasis` (dashboard) ignores the import origin while the newest revision is younger than 14 days (`RECENT_QUOTE_DAYS`): the quote is «Enviada», joins «Seguimientos» from day 3 on the 3 · 14 · 30 rhythm, and only becomes «sin decidir» after two weeks with no task and no reply. |
 | Rule 2 | `repliesToAnswer` includes a won case whose last inbound email is later than `closed_at` (`wroteAfterWinning`); the row reads «Escribió tras ganar el …», offers only «Abrir respuesta» (tasks are refused on closed cases, so answering the email is what takes it off the list). Lost cases stay out: a client writing back there is a new request. |
 | Not changed | The API still stores every registered quote as `historical_import`; a distinct origin for the sync's quotes is a later change. |
+
+### 2.7.82 «Archivo Drive» counts what the Drive cron filed, 2026-10-10 — built, not deployed
+
+`apps/api` read only: no command, proxy, dashboard or schema change.
+
+| | |
+|---|---|
+| Problem | The Drive cron (`drive-file`, §2.7.71) files each new quote PDF and records it as a `drive_file` source record; the case cards read those records. «Archivo Drive» (`GET /v2/workspace/drive-archive`) read only the September boot ledgers, so every quote filed since 7 Oct was listed under «Revisiones CRM sin PDF en Drive» (11 on 10 Oct) and its folder was missing from the page, although the PDF was in Drive and linked on the card. The cron itself reported `candidates: 0` every ten minutes: nothing was pending. |
+| Fix | `drive_archive` joins each revision's `drive_file` record and builds the archive from `drive_links_from_records` (ledgers + records, the same union the cards use; `drive_archive_from` is the pure part). A revision counts as «sin PDF en Drive» only when neither names its hash. `ledgers` gains `crm` for the cron's records. |
+| Evidence | `apps/api` `scripts/validate.sh`: **3883 passed**, 676 skipped; new `test_drive_archive_counts_what_the_cron_filed_not_only_the_boot_ledgers` (invented hashes and ids) |
+

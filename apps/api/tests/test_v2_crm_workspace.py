@@ -18,6 +18,7 @@ from origenlab_api.v2.crm_workspace import (
     CrmWorkspaceRepository,
     DriveLedgerError,
     compose_drive_archive,
+    drive_archive_from,
     compose_pipeline,
     last_contacts,
     live_drive_overview,
@@ -469,6 +470,34 @@ def test_drive_archive_separates_in_crm_from_not_imported(tmp_path: Path) -> Non
     assert folder["organization_name"] == "Institución Ejemplo"
     held = [d for d in folder["documents"] if not d["in_crm"]][0]
     assert held["ledger_crm_status"] == "held"
+
+
+def test_drive_archive_counts_what_the_cron_filed_not_only_the_boot_ledgers(tmp_path: Path) -> None:
+    """A quote the Drive cron filed after boot has a `drive_file` record and no ledger line. The
+    page lists its folder and does not report the revision as «sin PDF en Drive»; a revision with
+    neither is reported."""
+    ledgers = load_drive_ledgers([_ledger(tmp_path, "run-1", [_row(SHA_A, "f-a")])])
+    record = {"drive_file_id": "f-b", "drive_folder_id": "folder-b", "case_key": "case-b",
+              "quote_number": "00002-26", "revision": 1, "original_filename": "CN00002-Ejemplo.pdf"}
+    rows = [
+        {"sha": SHA_A, "pdf_sha256": SHA_A, "revision_no": 1, "quote_number": "00001-26",
+         "opportunity_id": "o1", "opportunity_title": "Caso 1", "organization_name": "Institución Ejemplo",
+         "drive_record": None},
+        {"sha": SHA_B, "pdf_sha256": SHA_B, "revision_no": 1, "quote_number": "00002-26",
+         "opportunity_id": "o2", "opportunity_title": "Caso 2", "organization_name": "Otra Institución",
+         "drive_record": json.dumps(record)},
+        {"sha": SHA_C, "pdf_sha256": SHA_C, "revision_no": 1, "quote_number": "00003-26",
+         "opportunity_id": "o3", "opportunity_title": "Caso 3", "organization_name": None,
+         "drive_record": None},
+    ]
+    out = drive_archive_from(rows, ledgers, configured=True)
+    assert out["totals"] == {"folders": 2, "documents": 2, "in_crm": 2, "not_in_crm": 0}
+    assert sorted(out["ledgers"]) == ["crm", "run-1"]
+    filed = next(f for f in out["folders"] if f["folder_id"] == "folder-b")
+    assert filed["organization_name"] == "Otra Institución"
+    assert "/file/d/f-b/" in filed["documents"][0]["file_url"]
+    assert [r["quote_number"] for r in out["crm_revisions_without_drive_file"]] == ["00003-26"]
+    assert out["configured"] is True
 
 
 def test_drive_folders_are_newest_quote_number_first_not_text_order(tmp_path: Path) -> None:

@@ -866,6 +866,28 @@ def quote_number_order(number: str | None) -> tuple[int, int, str]:
     return (int(year), int(correlative), rest + suffix)
 
 
+_DRIVE_ARCHIVE_CRM_KEYS = ("revision_no", "quote_number", "opportunity_id", "opportunity_title", "organization_name")
+
+
+def drive_archive_from(
+    rows: Iterable[Mapping[str, Any]], ledgers: Mapping[str, DriveLink], *, configured: bool
+) -> dict[str, Any]:
+    """Pure: `rows` are the CRM revisions with a PDF hash, each with its `drive_file` record when
+    the cron filed it (`drive_record`, may be a JSON string). The archive is the ledgers plus
+    those records (`drive_links_from_records`); a revision counts as «sin PDF en Drive» only when
+    neither names its hash."""
+    rows = list(rows)
+    drive = drive_links_from_records(rows, ledgers)
+    crm = {r["sha"]: {k: r.get(k) for k in _DRIVE_ARCHIVE_CRM_KEYS} for r in rows}
+    out = compose_drive_archive(drive, crm)
+    out["configured"] = configured
+    out["crm_revisions_without_drive_file"] = sorted(
+        ({"sha256": s, **v} for s, v in crm.items() if s not in drive),
+        key=lambda r: r["quote_number"] or "",
+    )
+    return out
+
+
 def compose_drive_archive(
     drive: Mapping[str, DriveLink], crm_revisions: Mapping[str, Mapping[str, Any]]
 ) -> dict[str, Any]:
@@ -1628,27 +1650,27 @@ class CrmWorkspaceRepository:
     # -- drive archive
 
     def drive_archive(self) -> dict[str, Any]:
+        """«Archivo Drive»: the September ledgers **and** every `drive_file` record the Drive cron
+        has written since (`drive-file`, STATUS §2.7.71), the same union the case cards read.
+        Before this the page read the boot ledgers alone, so each quote the cron filed counted as
+        «Revisión CRM sin PDF en Drive» although its card already linked the PDF."""
         with self._read() as cur:
             cur.execute(
                 """
-                select lower(qr.pdf_sha256) as sha, qr.revision_no, q.quote_number,
+                select lower(qr.pdf_sha256) as sha, qr.pdf_sha256, qr.revision_no, q.quote_number,
                        op.id::text as opportunity_id, op.title as opportunity_title,
-                       o.name as organization_name
+                       o.name as organization_name, d.payload as drive_record
                   from crm.quote_revision qr
                   join crm.quote q on q.id = qr.quote_id
                   join crm.opportunity op on op.id = q.opportunity_id
                   left join crm.organization o on o.id = op.organization_id
+                  left join evidence.source_record d
+                         on d.dedupe_key = 'drive_file:' || qr.pdf_sha256 and d.kind = 'drive_file'
                  where qr.pdf_sha256 is not null
                 """
             )
-            crm = {r["sha"]: {k: v for k, v in r.items() if k != "sha"} for r in self._rows(cur)}
-        out = compose_drive_archive(self._drive, crm)
-        out["configured"] = self.drive_configured
-        out["crm_revisions_without_drive_file"] = sorted(
-            ({"sha256": s, **v} for s, v in crm.items() if s not in self._drive),
-            key=lambda r: r["quote_number"],
-        )
-        return out
+            rows = self._rows(cur)
+        return drive_archive_from(rows, self._drive, configured=self.drive_configured)
 
     # -- CRM authoring reads
 
