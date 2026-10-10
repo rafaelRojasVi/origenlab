@@ -24,12 +24,14 @@ from origenlab_worker.triage import (
 from origenlab_worker.triage_model import DEFAULT_MODEL
 
 PATH = "mail/contacto@origenlab.cl/2026/10/g1.eml"
+SENT = "2026-10-12T13:00:00+00:00"
 
 
 class FakeDb:
     def __init__(self, *, direction="inbound", labels=("INBOX",), done=False, done_class="business_other",
-                 delivery_done=False, requester_done=False, candidates=(), requester=None) -> None:
-        self.msg = PendingMessage("sr-1", "m-1", direction, labels, PATH, "t-1")
+                 delivery_done=False, requester_done=False, candidates=(), requester=None,
+                 case_match_done=True, cards=()) -> None:
+        self.msg = PendingMessage("sr-1", "m-1", direction, labels, PATH, "t-1", SENT)
         self.done = done
         self.done_class = done_class
         self.delivery_done = delivery_done
@@ -39,11 +41,28 @@ class FakeDb:
         self.recorded: list[tuple[str, dict, list, dict | None]] = []
         self.requesters: list[tuple[str, dict]] = []
         self.delivery_failures = []
+        self.case_match_done = case_match_done
+        self.cards = list(cards)
+        self.case_matches: list[tuple[str, dict]] = []
 
     def load(self, sid):
         if sid != "sr-1":
             return None
-        return self.msg, self.done, self.done_class if self.done else None, self.delivery_done, self.requester_done
+        return (self.msg, self.done, self.done_class if self.done else None, self.delivery_done,
+                self.requester_done, self.case_match_done)
+
+    def case_cards(self):
+        return self.cards
+
+    def case_context(self, message):
+        return ("contacto@origenlab.cl",), ("CN09153.pdf",) if message.thread_id == "t-9" else ()
+
+    def past_decisions(self, sender):
+        self.past_asked = sender
+        return []
+
+    def record_case_match(self, sid, value):
+        self.case_matches.append((sid, value))
 
     def candidates(self, mail):
         return self._candidates
@@ -61,8 +80,10 @@ class FakeDb:
     def record_requester(self, sid, requester):
         self.requesters.append((sid, requester))
 
-    def record(self, sid, reading, mentions, requester=None):
+    def record(self, sid, reading, mentions, requester=None, case_match=None):
         self.recorded.append((sid, reading, list(mentions), requester))
+        if case_match is not None:
+            self.case_matches.append((sid, case_match))
         return len(mentions)
 
     def record_delivery_failure(self, sid, analysis):
@@ -110,7 +131,8 @@ def test_a_quote_request_is_read_by_the_model_and_recorded_with_its_products() -
     assert requester["status"] == "none"
     assert mentions == [("UP200HT", {"triage_version": 1, "source": "model", "description": "Homogeneizador",
                                      "brand": None, "model": "UP200Ht", "quantity": 1, "catalog_product_id": "p-1"})]
-    assert len(reader.requests) == 1
+    # The reading, then the case pick (no case is sure); this reader's answer is not a pick, so it is refused.
+    assert len(reader.requests) == 2 and db.case_matches[0][1]["pick_state"] == "closed_value_unknown"
 
 
 def test_the_eml_key_is_the_storage_path_without_the_bucket() -> None:
@@ -259,3 +281,95 @@ def test_noise_does_not_look_up_cases() -> None:
     db = FakeDb()
     triage_one(db, FakeStore(make_raw(subject="Respuesta automática: hola")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
     assert not hasattr(db, "thread_asked")
+
+
+def _card(oid="o-1", quote="09153-26"):
+    from origenlab_worker.case_match import CaseCard
+
+    return CaseCard(oid, "Caso", "won", "2026-10-01T00:00:00+00:00", None, (), (quote,), (), (), ())
+
+
+def test_human_mail_records_the_case_match_with_the_triage() -> None:
+    db = FakeDb(cards=[_card()])
+    raw = make_raw(subject="Re: despacho puntas", pdf_name="Cotización 09153A.pdf")
+    result = triage_one(db, FakeStore(raw), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.case_match == "exact"
+    [(sid, value)] = db.case_matches
+    assert sid == "sr-1" and value["decision"] == "exact" and value["candidates"][0]["opportunity_id"] == "o-1"
+    assert value["pick_state"] == "off"
+
+
+def test_machine_mail_gets_no_case_match() -> None:
+    db = FakeDb(cards=[_card()])
+    triage_one(db, FakeStore(make_raw(subject="Newsletter", list_unsubscribe=True)), "sr-1",
+               ModelSettings(None, DEFAULT_MODEL))
+    assert db.case_matches == []
+
+
+def test_the_threads_earlier_quote_pdf_is_read() -> None:
+    db = FakeDb(cards=[_card()])
+    db.msg = PendingMessage("sr-1", "m-1", "inbound", ("INBOX",), PATH, "t-9", SENT)
+    triage_one(db, FakeStore(make_raw(subject="Re: Cotización")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert db.case_matches[0][1]["candidates"][0]["signals"] == ["thread_pdf_quote"]
+
+
+def test_previously_triaged_human_mail_backfills_the_case_match_without_the_model() -> None:
+    db, reader = FakeDb(done=True, done_class="quote_followup", case_match_done=False, cards=[_card()]), Reader(READING)
+    raw = make_raw(subject="Re: despacho", pdf_name="CN09153.pdf")
+    result = triage_one(db, FakeStore(raw), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
+    assert (result.outcome, result.model, result.case_match) == ("recorded", "not_needed", "exact")
+    assert db.recorded == [] and reader.requests == [] and len(db.case_matches) == 1
+
+
+class PickReader:
+    """Answers the triage reading and the case pick, told apart by their system prompt."""
+
+    def __init__(self, pick, exc=None) -> None:
+        self.pick, self.exc, self.picks, self.readings = pick, exc, [], []
+
+    def __call__(self, request):
+        from origenlab_worker.case_match_model import PICK_SYSTEM_PROMPT
+
+        if request["system"][0]["text"] == PICK_SYSTEM_PROMPT:
+            self.picks.append(request)
+            if self.exc:
+                raise self.exc
+            payload = self.pick
+        else:
+            self.readings.append(request)
+            payload = READING
+        return SimpleNamespace(stop_reason="end_turn", usage=None,
+                               content=[SimpleNamespace(type="text", text=json.dumps(payload))])
+
+
+def test_exact_layer1_skips_model() -> None:
+    db, reader = FakeDb(cards=[_card()]), PickReader({"choice": "o-1", "confidence": "high", "reason_es": "x",
+                                                      "new_case": None})
+    triage_one(db, FakeStore(make_raw(subject="Re: despacho", pdf_name="CN09153.pdf")), "sr-1",
+               ModelSettings(reader, DEFAULT_MODEL))
+    assert reader.picks == [] and db.case_matches[0][1]["pick_state"] == "not_needed"
+
+
+def test_an_unsure_match_asks_the_model_and_keeps_its_pick() -> None:
+    db = FakeDb(cards=[_card(), _card("o-2", "09161-26")])
+    reader = PickReader({"choice": "o-2", "confidence": "medium", "reason_es": "Mismo producto.", "new_case": None})
+    result = triage_one(db, FakeStore(make_raw(subject="Re: puntas")), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
+    value = db.case_matches[0][1]
+    assert len(reader.picks) == 1 and db.past_asked == "ana@cliente.invalid"
+    assert value["pick_state"] == "ran" and value["pick"]["choice"] == "o-2" and result.case_match == "none"
+
+
+def test_a_pick_the_model_was_not_offered_is_dropped_and_the_triage_still_records() -> None:
+    db = FakeDb(cards=[_card()])
+    reader = PickReader({"choice": "o-9", "confidence": "high", "reason_es": "x", "new_case": None})
+    result = triage_one(db, FakeStore(make_raw(subject="Re: puntas")), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
+    assert result.outcome == "recorded"
+    value = db.case_matches[0][1]
+    assert value["pick_state"] == "choice_not_offered" and "pick" not in value
+
+
+def test_a_failed_pick_call_never_blocks_the_triage() -> None:
+    db = FakeDb(cards=[_card()])
+    reader = PickReader(None, exc=RuntimeError("network"))
+    result = triage_one(db, FakeStore(make_raw(subject="Re: puntas")), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
+    assert result.outcome == "recorded" and db.case_matches[0][1]["pick_state"] == "unavailable"

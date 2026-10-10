@@ -24,6 +24,7 @@ from origenlab_worker.database import (
     open_verified_connection,
     open_worker_db,
 )
+from origenlab_worker.case_match import CASE_MATCH_VALUE_NORM
 from origenlab_worker.triage import REQUESTER_VALUE_NORM, VALUE_NORM, ModelSettings, TriageDb, triage_one
 from origenlab_worker.triage_model import DEFAULT_MODEL
 from v2_command_harness import build_disposable_database, needs_worker_db, worker_dsn
@@ -125,6 +126,7 @@ def test_a_captured_request_is_pending_then_recorded_once(dsn, target, mailbox_i
         (sid,),
     )
     assert rows == [
+        ("message_triage", CASE_MATCH_VALUE_NORM, "unresolved", None, None, None),
         ("message_triage", REQUESTER_VALUE_NORM, "unresolved", None, None, "none"),
         ("message_triage", VALUE_NORM, "unresolved", "quote_request", "off", None),
     ]
@@ -282,3 +284,83 @@ def test_a_job_deferred_through_the_real_connector_lands_in_the_queue(dsn, targe
     asyncio.run(go())
     assert owner_rows(dsn, "select task_name, queue_name, status::text from procrastinate.procrastinate_jobs "
                            "where queueing_lock = %s", (lock,)) == [("triage_message", "triage", "todo")]
+
+
+def test_the_case_snapshot_leaves_out_discarded_and_long_closed_cases_and_the_reply_finds_its_quote(
+    dsn, target, mailbox_id
+) -> None:
+    tag = uuid.uuid4().hex[:6]
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-{tag}@example.test",))[0][0]
+
+    def case(title: str, quote: str) -> str:
+        oid = owner_rows(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) "
+                              "values (%s, 'lead', %s) returning id::text", (title, operator))[0][0]
+        owner_rows(dsn, "insert into crm.quote (opportunity_id, quote_number, number_origin) "
+                        "values (%s, %s, 'printed_historical') returning id::text", (oid, quote))
+        return oid
+
+    live = case(f"Vivo {tag}", "09871-26")
+    discarded = case(f"Descartado {tag}", "09872-26")
+    old = case(f"Antiguo {tag}", "09873-26")
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
+        conn.execute("update crm.opportunity set stage = 'abandoned', close_reason = 'discarded_by_correction', "
+                     "closed_at = now() where id = %s", (discarded,))
+        conn.execute("update crm.opportunity set stage = 'lost', close_reason = 'price', "
+                     "closed_at = now() - interval '200 days' where id = %s", (old,))
+
+    store = Store()
+    gid = f"tr-{tag}"
+    capture(target, mailbox_id, store, gid,
+            make_raw(frm=MAILBOX, to="ana@cliente.invalid", subject="Cotización", pdf_name="CN09871.pdf",
+                     message_id=f"<{uuid.uuid4().hex}@origenlab.invalid>"))
+    reply = f"{gid}-r"
+    c = build_capture(make_raw(subject="Re: Cotización", message_id=f"<{uuid.uuid4().hex}@cliente.invalid>"),
+                      gmail_message_id=reply, gmail_thread_id=f"t-{gid}", label_ids=("INBOX",), label_names={},
+                      internal_date_ms=NOW_MS, mailbox_address=MAILBOX)
+    raw_key = f"{MAILBOX}/2026/10/{reply}.eml"
+    store.objects[raw_key] = make_raw(subject="Re: Cotización", message_id="<x@cliente.invalid>")
+    with open_worker_db(target) as wdb:
+        wdb.record(c, mailbox_id=mailbox_id, eml_path=f"mail/{raw_key}", eml_sha256=c.payload["raw_sha256"],
+                   size_bytes=1)
+    sid = source_record(dsn, reply)
+    with triage_conn(target) as conn:
+        db = TriageDb(conn)
+        ids = {card.opportunity_id for card in db.case_cards()}
+        assert live in ids and discarded not in ids and old not in ids
+        result = triage_one(db, store, sid, ModelSettings(None, DEFAULT_MODEL))
+    assert result.case_match == "exact"
+    value = owner_rows(dsn, "select value from evidence.assertion where source_record_id = %s and value_norm = %s",
+                       (sid, CASE_MATCH_VALUE_NORM))[0][0]
+    assert value["candidates"][0] == {"opportunity_id": live, "score": 8, "signals": ["thread_pdf_quote"]}
+
+
+def test_past_decisions_read_links_and_rejected_suggestions_for_the_senders_domain(dsn, target, mailbox_id) -> None:
+    tag = uuid.uuid4().hex[:6]
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-p-{tag}@example.test",))[0][0]
+    oid = owner_rows(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) "
+                          "values (%s, 'lead', %s) returning id::text", (f"Caso pasado {tag}", operator))[0][0]
+    store = Store()
+    linked = capture(target, mailbox_id, store, f"pd-{tag}",
+                     make_raw(frm=f"Tom <jon@prov-{tag}.invalid>", subject="RE: titulador",
+                              message_id=f"<{uuid.uuid4().hex}@prov.invalid>"))
+    rejected = capture(target, mailbox_id, store, f"pr-{tag}",
+                       make_raw(frm=f"Ann <ann@prov-{tag}.invalid>", subject="Certificado",
+                                message_id=f"<{uuid.uuid4().hex}@prov.invalid>"))
+    owner_rows(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
+                    "linked_by_operator_id) values (%s, %s, 'mentions', %s) returning id",
+               (oid, source_record(dsn, linked), operator))
+    aid = owner_rows(dsn, "insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+                          "values (%s, 'message_triage', %s, %s::jsonb) returning id::text",
+                     (source_record(dsn, rejected), CASE_MATCH_VALUE_NORM,
+                      '{"candidates": [{"opportunity_id": "%s"}]}' % oid))[0][0]
+    owner_rows(dsn, "insert into evidence.triage_review (assertion_id, verdict, corrected, reviewed_by_operator_id) "
+                    "values (%s, 'rejected', '{}'::jsonb, %s) returning id", (aid, operator))
+    with triage_conn(target) as conn:
+        past = TriageDb(conn).past_decisions(f"new@prov-{tag}.invalid")
+    assert sorted((p.subject, p.opportunity_id, p.verdict) for p in past) == [
+        ("Certificado", oid, "rejected"), ("RE: titulador", oid, "linked")]
