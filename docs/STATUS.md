@@ -2356,7 +2356,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Rule 2 | `repliesToAnswer` includes a won case whose last inbound email is later than `closed_at` (`wroteAfterWinning`); the row reads «Escribió tras ganar el …», offers only «Abrir respuesta» (tasks are refused on closed cases, so answering the email is what takes it off the list). Lost cases stay out: a client writing back there is a new request. |
 | Not changed | The API still stores every registered quote as `historical_import`; a distinct origin for the sync's quotes is a later change. |
 
-### 2.7.81 «Atendido» on a won-case reply, 2026-10-10 — built, not deployed
+### 2.7.81 «Atendido» on a won-case reply, 2026-10-10 — merged (PR #701)
 
 `apps/api` read + `apps/dashboard`: no command, proxy or schema change. Reuses `add-note`
 (CRM authoring, §2.7.4x) and the case notes read.
@@ -2368,3 +2368,13 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Rule | `repliesToAnswer` also skips a reply on a **won** case when a note on it is newer than the client's email (`notedAfter`), alongside the task rule of §2.7.70. On an open case only a task answers: an internal note never hides a client's email. The client's next email puts the case back. |
 | Button | «Atendido» on a won-case reply row (sales/admin with `crm_authoring_enabled`): `add-note` on the case, body «Atendido: el cliente escribió el … tras ganar el caso; respondido por otro medio o sin respuesta pendiente.» The row leaves; the note is in the case drawer like any other. Open cases keep «No requiere respuesta» (a task) — unchanged. |
 | Evidence | `apps/dashboard` `npm run validate`: **700 passed** + build; `apps/api` `scripts/validate.sh`: **3883 passed**, 676 skipped (the pipeline statement-count guard documents ≤ 11: 2 setup + 9 data queries, still one round trip) |
+### 2.7.82 «Archivo Drive» counts what the Drive cron filed, 2026-10-10 — built, not deployed
+
+`apps/api` read only: no command, proxy, dashboard or schema change.
+
+| | |
+|---|---|
+| Problem | The Drive cron (`drive-file`, §2.7.71) files each new quote PDF and records it as a `drive_file` source record; the case cards read those records. «Archivo Drive» (`GET /v2/workspace/drive-archive`) read only the September boot ledgers, so every quote filed since 7 Oct was listed under «Revisiones CRM sin PDF en Drive» (11 on 10 Oct) and its folder was missing from the page, although the PDF was in Drive and linked on the card. The cron itself reported `candidates: 0` every ten minutes: nothing was pending. |
+| Fix | `drive_archive` joins each revision's `drive_file` record and builds the archive from `drive_links_from_records` (ledgers + records, the same union the cards use; `drive_archive_from` is the pure part). A revision counts as «sin PDF en Drive» only when neither names its hash. `ledgers` gains `crm` for the cron's records. |
+| Evidence | `apps/api` `scripts/validate.sh`: **3883 passed**, 676 skipped; new `test_drive_archive_counts_what_the_cron_filed_not_only_the_boot_ledgers` (invented hashes and ids) |
+
