@@ -34,6 +34,7 @@ from origenlab_api.v2.case_commands import (
     CASE_STAGES,
     EVIDENCE_RELATIONS,
     LINK_CASE_EVIDENCE,
+    DISCARD_COMMERCIAL_CASE,
     OPEN_COMMERCIAL_CASE,
     RECORD_CASE_INTEREST,
     RECORD_CASE_QUOTATION,
@@ -44,6 +45,7 @@ from origenlab_api.v2.case_commands import (
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
     LinkCaseEvidenceBody,
+    DiscardCommercialCaseBody,
     OpenCommercialCaseBody,
     RecordCaseInterestBody,
     RecordCaseQuotationBody,
@@ -71,6 +73,11 @@ ROUTES: tuple[tuple[str, str, dict], ...] = (
         "/v2/commands/open-commercial-case",
         OPEN_COMMERCIAL_CASE,
         {"title": "Caso", "origin_source_record_id": RECORD_ID, "note": "porque sí"},
+    ),
+    (
+        "/v2/commands/discard-commercial-case",
+        DISCARD_COMMERCIAL_CASE,
+        {"opportunity_id": CASE_ID, "opportunity_version": 1, "note": "porque sí"},
     ),
     (
         "/v2/commands/link-case-evidence",
@@ -222,7 +229,7 @@ def _headers(key: str | None = "key-1") -> dict[str, str]:
 def test_every_case_command_has_a_route_and_every_route_a_command() -> None:
     """The vocabulary and the surface are the same list, counted from both ends."""
     assert {command for _, command, _ in ROUTES} == set(CASE_COMMAND_NAMES)
-    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 9
+    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 10
 
 
 def test_the_case_router_exposes_nothing_but_post() -> None:
@@ -2055,3 +2062,51 @@ def test_a_case_an_undo_discarded_is_never_reopened(disposable_database, world) 
         with pytest.raises(psycopg.errors.RaiseException):
             cur.execute("update crm.opportunity set stage = 'lead', closed_at = null, close_reason = null "
                         "where id = %s", (case_id,))
+
+
+# ------------------------------------------------------------------ «quitar: no era un caso»
+
+
+def _discard(repo, world, case_id: str, version: int, note: str = "no era un caso"):
+    return _run(repo, DISCARD_COMMERCIAL_CASE,
+                DiscardCommercialCaseBody(opportunity_id=case_id, opportunity_version=version, note=note), world)
+
+
+@_needs_db
+def test_a_case_opened_by_mistake_is_removed_from_every_list_and_never_reopened(disposable_database, world) -> None:
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    repo = _repo(disposable_database)
+    workspace = CrmWorkspaceRepository(psycopg.connect, _runtime_dsn(disposable_database))
+    open_id, v_open = _open_case(repo, world, "Oferta de un proveedor")
+    lost_id, v_lost = _open_case(repo, world, "Perdido por error")
+    v_lost = _close(repo, world, lost_id, v_lost)
+    ab_id, v_ab = _open_case(repo, world, "Abandonado por error")
+    v_ab = _close(repo, world, ab_id, v_ab, stage="abandoned")
+    on_board = {c["opportunity_id"] for c in workspace.pipeline()["items"]}
+    assert {open_id, lost_id, ab_id} <= on_board
+
+    for case_id, version, was in ((open_id, v_open, "lead"), (lost_id, v_lost, "lost"), (ab_id, v_ab, "abandoned")):
+        out = _discard(repo, world, case_id, version)
+        assert (out["stage"], out["previous_stage"], out["close_reason"]) == ("abandoned", was, "discarded_by_correction")
+        with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+            cur.execute("select stage, closed_at is not null, close_reason from crm.opportunity where id = %s", (case_id,))
+            assert cur.fetchone() == ("abandoned", True, "discarded_by_correction")
+            cur.execute("select event_type, payload->>'discarded', payload->>'from_stage' from crm.domain_event "
+                        "where command_receipt_id = %s", (out["command_receipt_id"],))
+            assert cur.fetchall() == [("opportunity.staged", "true", was)]
+
+    on_board = {c["opportunity_id"] for c in workspace.pipeline()["items"]}
+    assert not {open_id, lost_id, ab_id} & on_board, "a removed case is on no list"
+    # Removed once; never reopened; nothing deleted.
+    with pytest.raises(CommandRefused) as excinfo:
+        _discard(repo, world, open_id, v_open + 1)
+    assert excinfo.value.code == "case_already_discarded"
+    with pytest.raises(CommandRefused) as excinfo:
+        _advance(repo, world, open_id, v_open + 1, "lead")
+    assert excinfo.value.code == "case_was_discarded"
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("select count(*) from crm.opportunity where id = any(%s::uuid[])", ([open_id, lost_id, ab_id],))
+        assert cur.fetchone() == (3,)

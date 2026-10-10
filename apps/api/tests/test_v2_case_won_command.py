@@ -283,3 +283,16 @@ def test_a_follow_up_note_on_the_case_is_read_back_by_the_drawer(db, world) -> N
     assert [(n["id"], n["body"], n["author_name"], n["is_latest"]) for n in body["notes"]] == [
         (added["note_id"], "Llamé; piden plazo de entrega.", "Vendedora Ficticia", True)]
     assert reads.opportunity_notes(str(uuid.uuid4())) is None
+
+
+def test_a_won_case_is_never_removed_as_a_mistake(db, world) -> None:
+    """«Quitar: no era un caso» refuses a sale (2026-10-10)."""
+    from origenlab_api.v2.case_commands import DISCARD_COMMERCIAL_CASE, DiscardCommercialCaseBody
+
+    case_id, version, quote_id = _quoted_case(db, world)
+    won = _won(db, world, case_id, version, quote_id, 2)
+    cases, _ = _repos(db)
+    with pytest.raises(CommandRefused) as excinfo:
+        _case(cases, DISCARD_COMMERCIAL_CASE, DiscardCommercialCaseBody(
+            opportunity_id=case_id, opportunity_version=won["opportunity_version"], note="error"), world)
+    assert excinfo.value.code == "case_is_won"

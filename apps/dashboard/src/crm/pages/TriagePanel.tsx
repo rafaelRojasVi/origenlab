@@ -6,6 +6,8 @@ import {
 import type { OpportunityCardData } from "../crmTypes";
 import { inSharedMailbox } from "../gmailLinks";
 import { useLeave } from "../useLeave";
+import { useMayAuthorCrm } from "../authoring/authoring";
+import { registerOrganization } from "../authoring/crmAuthoringApi";
 import { refusalMessage } from "../mailRules";
 import {
   CLASS_LABEL,
@@ -348,11 +350,44 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
   onCaseChanged: () => void;
 }) {
   const mayDecide = useMayRunCaseCommands();
+  const mayAuthor = useMayAuthorCrm();
   const { leaving, gone, leave } = useLeave(r);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const openKey = useRef(newCaseCommandKey());
+  const supplierKey = useRef(newCaseCommandKey());
   const url = gmailUrl(r);
+  const domain = supplierDomain(r.sender);
+
+  /**
+   * «Es proveedor»: register the sender's domain once as a supplier, so the triage never asks about
+   * it again (`sender_is_supplier`), then record this email as reviewed. A free-mail domain is never
+   * offered: gmail.com is not a supplier.
+   */
+  async function markSupplier() {
+    if (!domain) return;
+    setBusy(true);
+    try {
+      await registerOrganization(
+        { name: supplierName(domain), kind: "company", classification: "supplier", domain,
+          note: `Proveedor: registrado desde «Correos sin caso» (${r.sender ?? domain})` },
+        supplierKey.current,
+      );
+    } catch (err) {
+      toast(refusalMessage(err, "No se pudo registrar el proveedor."), "bad");
+      setBusy(false);
+      return;
+    }
+    try {
+      await reviewTriage({ assertion_id: r.assertion_id, verdict: "rejected", corrected: {}, note: `Proveedor (${domain})` });
+    } catch {
+      // The domain is registered; the row hides itself on the next read either way.
+    }
+    toast(`${domain} quedó como proveedor: sus correos ya no aparecen aquí.`);
+    leave();
+    onDone();
+    setBusy(false);
+  }
 
   async function discard() {
     setBusy(true);
@@ -414,6 +449,9 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
             <>
               {openable ? (
                 <Button variant="primary" onClick={() => void openCase()} busy={busy} busyLabel="…">Abrir caso</Button>
+              ) : null}
+              {mayAuthor && domain ? (
+                <Button onClick={() => void markSupplier()} busy={busy} busyLabel="…">Es proveedor</Button>
               ) : null}
               <Button variant="quiet" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Cerrar" : "Revisar"}</Button>
               <Button onClick={() => void discard()} busy={busy} busyLabel="…">Descartar</Button>
@@ -607,4 +645,23 @@ export function parseProducts(text: string): NonNullable<TriageCorrection["produ
         catalog_product_id: null,
       };
     });
+}
+
+/** Personal mailboxes: never a supplier's domain. */
+const FREE_MAIL = new Set(["gmail.com", "googlemail.com", "hotmail.com", "hotmail.cl", "outlook.com", "outlook.cl",
+  "live.com", "live.cl", "yahoo.com", "yahoo.es", "icloud.com", "me.com", "proton.me", "protonmail.com"]);
+
+/** The sender's domain when it can be a supplier's, else null. */
+export function supplierDomain(sender: string | null | undefined): string | null {
+  const domain = (sender ?? "").toLowerCase().split("@")[1]?.trim() ?? "";
+  if (!domain || !domain.includes(".") || FREE_MAIL.has(domain) || domain.endsWith("origenlab.cl")) return null;
+  return domain;
+}
+
+/** «labtron.com» → «Labtron»; «pyme.nubox.com» → «Nubox». */
+export function supplierName(domain: string): string {
+  const parts = domain.split(".");
+  const tld2 = parts.length > 2 && ["com", "co", "net", "org", "gob", "edu"].includes(parts[parts.length - 2]);
+  const label = parts[parts.length - (tld2 ? 3 : 2)] ?? domain;
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }

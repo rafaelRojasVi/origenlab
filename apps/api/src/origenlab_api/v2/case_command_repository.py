@@ -50,6 +50,7 @@ from __future__ import annotations
 from typing import Any
 
 from origenlab_api.v2.case_commands import (
+    DISCARD_COMMERCIAL_CASE,
     DISCARDED_BY_CORRECTION,
     ADD_CASE_ORGANIZATION,
     ADVANCE_CASE_STAGE,
@@ -1068,6 +1069,87 @@ class V2CaseCommandRepository(CommandTransaction):
             )
         return int(case["version"]) + 1
 
+
+    # ------------------------------------------------- «quitar: no era un caso»
+
+    def _discard_commercial_case(
+        self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
+    ) -> dict[str, Any]:
+        """A case opened by mistake leaves every list (owner decision 2026-10-10).
+
+        Nothing is deleted. The case is closed `abandoned` with `close_reason =
+        discarded_by_correction` — the mark an undo of the email rules leaves — which the pipeline
+        hides, the stage guard never reopens, and the inbox treats as no case: its email shows as
+        new mail again. A won case is refused. From `lost` the guard's own table is walked
+        (lost → lead → abandoned) inside this transaction; one event records the decision.
+        """
+        case = self._live_case(
+            cur, fields["opportunity_id"], fields["opportunity_version"], allow_closed=True
+        )
+        if case["stage"] == "won":
+            raise CommandRefused(
+                409, "case_is_won", "a won case is a sale; it is not removed as a mistake",
+            )
+        if case["close_reason"] == DISCARDED_BY_CORRECTION:
+            raise CommandRefused(409, "case_already_discarded", "this case was already removed")
+
+        version = int(case["version"])
+
+        def write(stage: str, closed: bool, reason: str | None) -> None:
+            nonlocal version
+            cur.execute(
+                """
+                update crm.opportunity
+                   set stage = %s,
+                       closed_at = case when %s then coalesce(closed_at, now()) else null end,
+                       close_reason = %s,
+                       version = version + 1,
+                       updated_at = now()
+                 where id = %s and version = %s
+                """,
+                (stage, closed, reason, case["id"], version),
+            )
+            if cur.rowcount != 1:
+                raise CommandRefused(
+                    409, "case_version_conflict",
+                    "this case changed while the command ran; re-read it and decide again",
+                )
+            version += 1
+
+        if case["stage"] == "lost":
+            write("lead", False, None)
+        write("abandoned", True, DISCARDED_BY_CORRECTION)
+
+        events = [
+            self._append_event(
+                cur,
+                aggregate_kind="opportunity",
+                aggregate_id=case["id"],
+                event_type="opportunity.staged",
+                payload={
+                    "from_stage": case["stage"],
+                    "to_stage": "abandoned",
+                    "discarded": True,
+                    "close_reason": DISCARDED_BY_CORRECTION,
+                    "previous_close_reason": case["close_reason"],
+                    "note": fields["note"],
+                },
+                operator=operator,
+                receipt_id=receipt_id,
+            )
+        ]
+        return {
+            "command": DISCARD_COMMERCIAL_CASE,
+            "opportunity_id": case["id"],
+            "opportunity_version": version,
+            "stage": "abandoned",
+            "previous_stage": case["stage"],
+            "closed": True,
+            "close_reason": DISCARDED_BY_CORRECTION,
+            "created": [],
+            "event_ids": events,
+        }
+
     _HANDLERS = {
         OPEN_COMMERCIAL_CASE: _open_commercial_case,
         LINK_CASE_EVIDENCE: _link_case_evidence,
@@ -1075,6 +1157,7 @@ class V2CaseCommandRepository(CommandTransaction):
         SET_CASE_ORGANIZATION_ROLE: _set_case_organization_role,
         RECORD_CASE_INTEREST: _record_case_interest,
         ADVANCE_CASE_STAGE: _advance_case_stage,
+        DISCARD_COMMERCIAL_CASE: _discard_commercial_case,
         # The one writer of a win, shared with the email → cases rules (`case_won.py`).
         RECORD_CASE_WON: record_case_won,
         # The quote acts, each in the module that owns the quote SQL (`current_revision.py`,

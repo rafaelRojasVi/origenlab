@@ -71,6 +71,10 @@ ADVANCE_CASE_STAGE = "advance_case_stage"
 RECORD_CASE_WON = "record_case_won"
 RESOLVE_CURRENT_REVISION = "resolve_current_revision"
 RECORD_CASE_QUOTATION = "record_case_quotation"
+#: «Quitar: no era un caso» (owner decision 2026-10-10): a case opened by mistake leaves every list.
+#: Nothing is deleted: it is closed `abandoned` with `close_reason = discarded_by_correction`, the
+#: same mark an undo of the email rules leaves, and is never reopened.
+DISCARD_COMMERCIAL_CASE = "discard_commercial_case"
 
 CASE_COMMAND_NAMES: tuple[str, ...] = (
     OPEN_COMMERCIAL_CASE,
@@ -82,6 +86,7 @@ CASE_COMMAND_NAMES: tuple[str, ...] = (
     RECORD_CASE_WON,
     RESOLVE_CURRENT_REVISION,
     RECORD_CASE_QUOTATION,
+    DISCARD_COMMERCIAL_CASE,
 )
 
 #: The one stage a case is won from (`STAGE_TRANSITIONS`: only `negotiating` leads to `won`).
@@ -211,6 +216,11 @@ class OpenCommercialCaseBody(DecisionBody):
         if not self.title.strip():
             raise ValueError("title must not be blank")
         return self
+
+
+class DiscardCommercialCaseBody(_CaseBody):
+    """«Quitar: no era un caso». Any case that was not won — open or already closed — is marked
+    `discarded_by_correction` and leaves the pipeline. The note says why."""
 
 
 class LinkCaseEvidenceBody(_CaseBody):
@@ -455,6 +465,7 @@ CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     RECORD_CASE_WON: RecordCaseWonBody,
     RESOLVE_CURRENT_REVISION: ResolveCurrentRevisionBody,
     RECORD_CASE_QUOTATION: RecordCaseQuotationBody,
+    DISCARD_COMMERCIAL_CASE: DiscardCommercialCaseBody,
 }
 
 

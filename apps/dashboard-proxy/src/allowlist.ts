@@ -250,8 +250,9 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
  * task commands behind «En pausa hasta…» (`create-task`), «Retomar ahora» (`cancel-task`) and
  * «Hecho» (`complete-task`), and «Abrir caso» on a «Correos sin caso» row (`open-commercial-case`:
  * a case at `lead` whose origin is that email, owner decision 2026-10-10). «Reabrir» on a reply to a
- * lost case is `advance-case-stage` on that same case. Eleven exact paths, and only
- * eleven. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
+ * lost case is `advance-case-stage` on that same case. «Quitar: no era un caso» is
+ * `discard-commercial-case` (closed as discarded, off every list, nothing deleted). Twelve exact paths,
+ * and only twelve. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
  * the body), an `Idempotency-Key`, the case (or task) version the operator was shown (the opening
  * command names its origin record instead) and a note, and mounts only behind
  * `ORIGENLAB_V2_COMMANDS_ENABLED`. `record-case-interest` stays refused. The reviewed cross-thread quotation flow
@@ -271,6 +272,7 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/complete-task$/,
   /^\/v2\/commands\/cancel-task$/,
   /^\/v2\/commands\/open-commercial-case$/,
+  /^\/v2\/commands\/discard-commercial-case$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */

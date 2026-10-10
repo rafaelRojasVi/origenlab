@@ -33,6 +33,7 @@ export const CASE_COMMAND_PATHS = {
   completeTask: "/v2/commands/complete-task",
   cancelTask: "/v2/commands/cancel-task",
   openCase: "/v2/commands/open-commercial-case",
+  discardCase: "/v2/commands/discard-commercial-case",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -285,6 +286,15 @@ export interface OpenCommercialCaseBody {
 
 export const openCommercialCase = (body: OpenCommercialCaseBody, idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.openCase, body, idempotencyKey);
+
+/**
+ * «Quitar: no era un caso»: a case opened by mistake is closed as discarded and leaves every list.
+ * Nothing is deleted; a won case is refused; it is never reopened. Its email shows as new mail.
+ */
+export const discardCommercialCase = (
+  body: { opportunity_id: string; opportunity_version: number; note: string },
+  idempotencyKey: string = newCaseCommandKey(),
+) => postCaseCommand(CASE_COMMAND_PATHS.discardCase, body, idempotencyKey);
 
 export interface ResolveCurrentRevisionBody {
   opportunity_id: string;

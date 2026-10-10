@@ -234,6 +234,8 @@ _SQL_PIPELINE_OPPS = """
            op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason
       from crm.opportunity op
       left join crm.organization o on o.id = op.organization_id
+     -- «Quitar: no era un caso» and the email-rule undo: never a case, never on the board.
+     where op.close_reason is distinct from 'discarded_by_correction'
      order by op.updated_at desc, op.id
 """
 _SQL_PIPELINE_CASE_ORGS = """

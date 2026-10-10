@@ -18,6 +18,7 @@ import {
   TERMINAL_STAGES,
   isReopenable,
   caseRefusalText,
+  discardCommercialCase,
   isStaleRefusal,
   markCaseWon,
   mayBeWonFrom,
@@ -54,7 +55,7 @@ import {
   toast,
 } from "../ui";
 
-export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution";
+export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution" | "discard";
 
 /** «Cambiar estado» offers these, minus the one the case is in. */
 const MOVE_TARGETS: MoveTarget[] = ["solicitada", "estudio", "enviada", "conversacion", "pausa", "perdida"];
@@ -124,13 +125,21 @@ export function CaseActions({
   const revisionReason =
     quoteReason ?? (revisions.length === 0 ? "No hay una revisión enviada y vigente que reemplazar" : null);
 
-  // A request with no quotation yet: «No es una solicitud» is one of its likely first answers.
-  const notRequestFirst = card.quotes.length === 0 && !closed;
-  const notRequest = decideReason ? (
-    <DisabledAction id="drawer-not-request" reason={decideReason}>No es una solicitud</DisabledAction>
+  // «Quitar: no era un caso» (2026-10-10): any case that was not won, open or closed, leaves every
+  // list. Up front for a case with no quotation (an offer, a mistake); under «Más» otherwise.
+  const discardReason = !mayDecide
+    ? WRITE_DISABLED_REASON
+    : !hasVersion
+      ? "El API no informó la versión del caso"
+      : card.stage === "won"
+        ? "Una venta ganada no se quita"
+        : null;
+  const notRequestFirst = card.quotes.length === 0 && card.stage !== "won";
+  const notRequest = discardReason ? (
+    <DisabledAction id="drawer-not-request" reason={discardReason}>Quitar: no era un caso</DisabledAction>
   ) : (
-    <Button onClick={() => { setOutcome(null); setMode("stage"); setTarget("perdida"); setInitialReason("No es una solicitud"); }}>
-      No es una solicitud
+    <Button aria-expanded={mode === "discard"} onClick={() => toggle("discard")}>
+      Quitar: no era un caso
     </Button>
   );
 
@@ -331,6 +340,9 @@ export function CaseActions({
       ) : null}
       {mode === "resolve" && hasVersion && undetermined.length > 0 ? (
         <ResolveForm card={card} quotes={undetermined} onCancel={() => setMode(null)} onDone={finished} />
+      ) : null}
+      {mode === "discard" && hasVersion ? (
+        <DiscardForm card={card} onCancel={() => setMode(null)} onDone={finished} />
       ) : null}
       {(mode === "quotation" || mode === "revision") && hasVersion ? (
         <QuotationForm
@@ -822,5 +834,56 @@ function ConfirmInstitution({
         Abrir institución para renombrarla
       </a>
     </div>
+  );
+}
+
+/**
+ * «Quitar: no era un caso». The case is closed as discarded and leaves every list; nothing is
+ * deleted and it is never reopened. Its email goes back to «Correos sin caso». One key per form,
+ * kept across a retry.
+ */
+function DiscardForm({ card, onCancel, onDone }: {
+  card: OpportunityCardData;
+  onCancel: () => void;
+  onDone: (outcome: Outcome, refetch: boolean) => void;
+}) {
+  const [note, setNote] = useState("No era un caso");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const key = useRef(newCaseCommandKey());
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!note.trim() || typeof card.version !== "number") return;
+    setBusy(true);
+    setError(null);
+    try {
+      await discardCommercialCase({ opportunity_id: card.opportunity_id, opportunity_version: card.version, note: note.trim() }, key.current);
+      onDone({ tone: "good", lines: ["Caso quitado: ya no aparece en ninguna lista."] }, true);
+    } catch (err) {
+      setError(caseRefusalText(err));
+      if (isStaleRefusal(err)) onDone({ tone: "bad", lines: [caseRefusalText(err)] }, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form aria-label="Quitar caso" onSubmit={(e) => void submit(e)}
+      className="space-y-2 rounded-md border border-line bg-canvas-sunken/60 p-3" data-testid="discard-case-form">
+      <p className="text-xs text-ink-muted">
+        El caso sale del tablero y de «Hoy». No se borra nada y no se puede reabrir; su correo vuelve a «Correos sin caso».
+      </p>
+      <label className="block text-[11px] font-medium text-ink">
+        Motivo
+        <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500}
+          className="mt-1 block w-full rounded-md border border-line bg-canvas-raised px-2 py-1 text-xs text-ink" />
+      </label>
+      {error ? <p role="alert" className="text-[11px] text-bad">{error}</p> : null}
+      <div className="flex gap-2">
+        <Button type="submit" variant="primary" busy={busy} busyLabel="…" disabled={!note.trim()}>Quitar caso</Button>
+        <Button type="button" variant="quiet" onClick={onCancel} disabled={busy}>Cancelar</Button>
+      </div>
+    </form>
   );
 }

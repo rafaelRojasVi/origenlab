@@ -2471,7 +2471,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Evidence | `apps/dashboard` `npm run validate`; `TodayBody.test.tsx` (+2: the list rule with own / others' / follow-up / closed-case tasks; the page order, the owner label, no duplicate in «Otras tareas»). |
 
 
-### 2.7.90 Simplification: a closed case reopens as the same case; Hoy is three lists, 2026-10-10 — applied; merged with its PR
+### 2.7.90 Simplification: a closed case reopens as the same case; Hoy is three lists, 2026-10-10 — applied, merged and deployed (PR #711)
 
 `supabase/` + `apps/api` + `apps/dashboard-proxy` + `apps/dashboard`. Owner decision 2026-10-10 after the first day of «¿Reabrir?» in production: the system had grown more rules than a team of three needs; reopening should be one click on the same case, and Hoy should be shorter.
 
@@ -2486,3 +2486,16 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Hoy | Main column: «Te toca responder», «Seguimientos», **one «Tareas» list** (overdue first — own from 3 days, anyone's from 7 with the owner named — then due today; replaces «Vencidas» + «Otras tareas de hoy») and «Correos sin caso». Side column: number box, rates, «por decidir», «Instituciones por confirmar», «Bloqueados», and «N personas por agregar» as a count linking to Personas (the list lives there). |
 | Applied | 2026-10-10, before the merge (schema first): the owner ran the plan/apply psql script as `origenlab_migrator` over the session pooler; ledger **51 → 52**, head `20261010180000`; the guard body carries the reopening rows. |
 | Evidence | `apps/api` `scripts/validate.sh` with a disposable cluster carrying the migration; case-command database tests (same-case reopen keeps the requester and writes one marked event; institution rule and closed→closed refused; a discarded case refused by the API and by the database as owner). pgTAP 062 (69), 063 (47), 076 (11) green against the cluster; the whole suite green except `100_hosted_role_bootstrap` #22, which fails only because the throwaway cluster gives the roles passwords. `apps/dashboard-proxy` and `apps/dashboard` `npm run validate`. |
+
+
+### 2.7.91 «Quitar: no era un caso» and «Es proveedor», 2026-10-10 — built, not deployed
+
+`apps/api` + `apps/dashboard-proxy` + `apps/dashboard`; no schema change. Owner requests 2026-10-10: a case opened by mistake must be removable, not sit in «Cerrada»; supplier mail must stop showing in «Correos sin caso».
+
+| | |
+|---|---|
+| Quitar | `POST /v2/commands/discard-commercial-case` (case id, version, note; sales/admin; case commands switch). Any case not won — open, lost or abandoned — is closed `abandoned` with `close_reason = discarded_by_correction`, the mark the email-rule undo already leaves: the stage guard never reopens it, the inbox treats it as no case (its email shows as new mail again), and `_SQL_PIPELINE_OPPS` now leaves such cases out, so they are on no board, column, count or Hoy list. Nothing is deleted. From `lost` the guard's own table is walked (lost → lead → abandoned) in one transaction; one `opportunity.staged` event with `discarded: true`. A won case is refused (`case_is_won`); a second removal `case_already_discarded`. The five cases the email-rule undo discarded earlier leave «Perdida» too. |
+| Drawer | «No es una solicitud» becomes «Quitar: no era un caso», with a one-line confirmation and a reason; up front for a case with no quotation, under «Más» otherwise; never for a won case. |
+| Es proveedor | A button on each «Correos sin caso» row (CRM authoring on): `register-organization` with the sender's domain, kind `company`, classification `supplier`, then a `rejected` verdict. The triage already hides any sender whose domain belongs to a supplier (`sender_is_supplier`), so that domain never asks again. Never offered for personal mailboxes (gmail.com, hotmail, outlook…) or origenlab.cl. No background job creates or closes anything. |
+| Proxy | `discard-commercial-case` added (twelve case paths). `register-organization` was already allowed. |
+| Evidence | `apps/api` `scripts/validate.sh` with a disposable cluster: removal from open, lost and abandoned (off the pipeline, one marked event, never reopened, nothing deleted), refused for a won case. `apps/dashboard` / `apps/dashboard-proxy` `npm run validate`. |

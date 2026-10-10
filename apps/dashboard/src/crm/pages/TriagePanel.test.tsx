@@ -7,7 +7,7 @@ import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import type { TriageReading } from "../triage";
 import { Toaster } from "../ui";
 import { clearResourceCache } from "../useResource";
-import { TriagePanel } from "./TriagePanel";
+import { TriagePanel, supplierDomain, supplierName } from "./TriagePanel";
 
 // Every value below is invented; the repository is public.
 
@@ -71,6 +71,9 @@ function stub(readings: TriageReading[], refuse: Record<string, number> = {}): C
       if (refuse[path]) return json({ detail: { code: "refused_in_test" } }, refuse[path]);
       if (path === "/v2/workspace/triage-readings") return json({ status: "pending", items: readings });
       if (path === "/v2/commands/review-triage") return json({ review_id: "rv-1" });
+      if (path === "/v2/commands/register-organization") {
+        return json({ command: "register-organization", organization_id: "org-new", replayed: false });
+      }
       if (path === "/v2/commands/open-commercial-case") {
         return json({ command: "open_commercial_case", opportunity_id: "o-new", opportunity_version: 1, stage: "lead",
           idempotency_key: key, command_receipt_id: "rcpt-open", replayed: false });
@@ -238,6 +241,33 @@ describe("«Correos sin caso» · Abrir caso", () => {
     fireEvent.click(within(row).getByRole("button", { name: "Descartar" }));
     await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/review-triage")).toBe(true));
     expect(calls.find((c) => c.path === "/v2/commands/review-triage")!.body).toMatchObject({ assertion_id: "vuelve", verdict: "rejected" });
+  });
+
+  it("«Es proveedor» registers the sender's domain as a supplier, records the email as reviewed, and is never offered for gmail", async () => {
+    const calls = stub([
+      reading("prov", { class: "quote_request", sender: "salvina@labtron.com" }),
+      reading("gm", { class: "quote_request", sender: "cliente@gmail.com" }),
+    ]);
+    renderPanel([]);
+    const buttons = await screen.findAllByRole("button", { name: "Es proveedor" });
+    expect(buttons).toHaveLength(1); // the gmail.com row has none
+    fireEvent.click(buttons[0]);
+    await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/review-triage")).toBe(true));
+    const posts = calls.filter((c) => c.path.startsWith("/v2/commands/"));
+    expect(posts.map((c) => c.path)).toEqual(["/v2/commands/register-organization", "/v2/commands/review-triage"]);
+    expect(posts[0].body).toMatchObject({ name: "Labtron", kind: "company", classification: "supplier", domain: "labtron.com" });
+    expect(posts[1].body).toMatchObject({ assertion_id: "prov", verdict: "rejected" });
+    expect(await screen.findByText(/labtron.com quedó como proveedor/)).toBeInTheDocument();
+  });
+
+  it("names a supplier from its domain and refuses personal mailboxes", () => {
+    expect(supplierName("labtron.com")).toBe("Labtron");
+    expect(supplierName("pyme.nubox.com")).toBe("Nubox");
+    expect(supplierName("zealwaybio.com.cn")).toBe("Zealwaybio");
+    expect(supplierDomain("A <x@Ohaus.COM>".replace(/^.*</, "").replace(">", ""))).toBe("ohaus.com");
+    expect(supplierDomain("x@gmail.com")).toBeNull();
+    expect(supplierDomain("contacto@origenlab.cl")).toBeNull();
+    expect(supplierDomain(null)).toBeNull();
   });
 
   it("when the API refuses to open the case, nothing is reviewed and the row stays", async () => {

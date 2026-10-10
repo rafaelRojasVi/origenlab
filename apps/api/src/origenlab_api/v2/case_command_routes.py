@@ -7,6 +7,7 @@
 | `POST /v2/commands/add-case-organization` | an institution is on this case, in this part |
 | `POST /v2/commands/set-case-organization-role` | an institution's part is confirmed, or it is this other part now |
 | `POST /v2/commands/record-case-interest` | what the case is seeking |
+| `POST /v2/commands/discard-commercial-case` | «Quitar: no era un caso» — closed as discarded, gone from every list, never reopened |
 | `POST /v2/commands/advance-case-stage` | the case moved, and the rules for moving it were met |
 | `POST /v2/commands/record-case-won` | the case was won, against this sent, current quote revision |
 | `POST /v2/commands/resolve-current-revision` | of this quote's current revisions, this one is the current one |
@@ -46,6 +47,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
 from origenlab_api.v2.case_commands import (
+    DISCARD_COMMERCIAL_CASE,
+    DiscardCommercialCaseBody,
     ADD_CASE_ORGANIZATION,
     ADVANCE_CASE_STAGE,
     LINK_CASE_EVIDENCE,
@@ -125,6 +128,24 @@ def open_commercial_case(
     """
     return _run(
         command_name=OPEN_COMMERCIAL_CASE,
+        body=body,
+        repo=repo,
+        operator=operator,
+        idempotency_key=idempotency_key,
+    )
+
+
+@case_command_router.post("/discard-commercial-case")
+def discard_commercial_case(
+    body: DiscardCommercialCaseBody,
+    operator: Deciding,
+    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """«Quitar: no era un caso». The case is closed `abandoned` as `discarded_by_correction` and
+    leaves the pipeline; nothing is deleted, and a won case is refused."""
+    return _run(
+        command_name=DISCARD_COMMERCIAL_CASE,
         body=body,
         repo=repo,
         operator=operator,
