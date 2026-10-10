@@ -77,7 +77,9 @@ export function repliesToAnswer(cards: OpportunityCardData[], now: Date): Reply[
     if (!isOpenCase(card) && !wroteAfterWinning(card)) continue;
     const conv = conversation(card, now);
     if (conv.kind !== "replied" || !conv.at) continue;
-    if (answeredByTask(card, conv.at, now)) continue;
+    // On a won case a task is refused, so «Atendido» leaves a note instead; on an open case only a
+    // task answers («No requiere respuesta»): an internal note must never hide a client's email.
+    if (answeredByTask(card, conv.at, now) || (wroteAfterWinning(card) && notedAfter(card, conv.at))) continue;
     out.push({ card, at: conv.at, url: conv.url });
   }
   return out.sort((a, b) => b.at.localeCompare(a.at));
@@ -91,6 +93,16 @@ export function repliesToAnswer(cards: OpportunityCardData[], now: Date): Reply[
 export function wroteAfterWinning(card: OpportunityCardData): boolean {
   const inbound = card.last_contact?.inbound?.at ?? null;
   return card.stage === "won" && !!card.closed_at && !!inbound && Date.parse(inbound) > Date.parse(card.closed_at);
+}
+
+/**
+ * The operator wrote a note on the case after the client's email at `at`: «Atendido» on a won
+ * case, where a task is refused. The note is the answer the list needs; the next email from the
+ * client puts the case back. `repliesToAnswer` consults it for won cases only.
+ */
+export function notedAfter(card: OpportunityCardData, at: string): boolean {
+  const note = card.last_note?.created_at ?? null;
+  return !!note && Date.parse(note) > Date.parse(at);
 }
 
 /**
