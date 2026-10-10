@@ -208,6 +208,17 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
     expect(reopenProposal(r("c", { cases: [lost, CASE] }), cardsById(cards), NOW)).toBeNull();
   });
 
+  it("an email that was already on the thread when the case was closed is not «volvió a escribir»", () => {
+    const NOW = new Date("2026-10-10T12:00:00Z");
+    const closedAfter = { ...CASE, opportunity_id: "o-x", stage: "abandoned", closed_at: "2026-10-09T15:00:00Z" };
+    // Sent the day before the closing: whoever closed the case had it in front of them.
+    expect(reopenProposal(r("before", { cases: [closedAfter], sent_at: "2026-10-08T20:10:00Z" }), new Map(), NOW)).toBeNull();
+    expect(reopenProposal(r("after", { cases: [closedAfter], sent_at: "2026-10-10T09:00:00Z" }), new Map(), NOW)).not.toBeNull();
+    const { ask, hidden } = sortInbox([r("before", { cases: [closedAfter], sent_at: "2026-10-08T20:10:00Z" })], [], NOW);
+    expect(ask).toEqual([]);
+    expect(hidden).toEqual({ "en un caso": 1 });
+  });
+
   it("without the board's cards, a purchase order on a case is only counted, as before", () => {
     const { ask, hidden } = sortInbox([r("oc", { class: "purchase_order", cases: [CASE] })]);
     expect(ask).toEqual([]);

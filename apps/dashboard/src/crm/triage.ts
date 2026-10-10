@@ -188,14 +188,14 @@ export interface ReopenProposal {
 const CLOSED_STAGES = new Set(["lost", "abandoned"]);
 
 /**
- * A person wrote on the thread of a case that ended «Perdida» or «Perdida · sin respuesta»:
- * the «¿Reabrir?» row on «Hoy». Every case on the thread must be closed (an open one holds the
- * email already) and none won (a won case's client is answered from «Te toca responder»). The
+ * A person wrote on the thread of a case that ended «Perdida» or «Perdida · sin respuesta»,
+ * **after** it ended: the «¿Reabrir?» row on «Hoy». Every case on the thread must be closed (an
+ * open one holds the email already) and none won (a won case's client is answered from «Te toca responder»). The
  * target stage follows the window and whether the closed case recorded who was asking — the
  * API refuses «Conversación» without that, so nothing is proposed it would refuse.
  */
 export function reopenProposal(
-  r: Pick<TriageReading, "class" | "intent" | "cases" | "sender">,
+  r: Pick<TriageReading, "class" | "intent" | "cases" | "sender" | "sent_at">,
   cards: ReadonlyMap<string, OpportunityCardData>,
   now: Date = new Date(),
 ): ReopenProposal | null {
@@ -209,6 +209,10 @@ export function reopenProposal(
   if (closed.some((x) => !CLOSED_STAGES.has(x.stage) || !x.closedAt)) return null;
   const latest = closed.sort((a, b) => (b.closedAt as string).localeCompare(a.closedAt as string))[0];
   const closedAt = latest.closedAt as string;
+  // «Volvió a escribir» means after the closing. An email that was already on the thread when
+  // the operator closed the case was seen (or ignored) then; proposing to reopen on it would
+  // second-guess that decision with nothing new (owner finding 2026-10-10).
+  if (!r.sent_at || Date.parse(r.sent_at) <= Date.parse(closedAt)) return null;
   const days = Math.max(0, Math.floor((now.getTime() - Date.parse(closedAt)) / 86_400_000));
   const requester = latest.card
     ? latest.card.organization !== null && latest.card.requesting_institution_confirmation === "confirmed"
