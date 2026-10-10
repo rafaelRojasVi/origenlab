@@ -2471,7 +2471,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Evidence | `apps/dashboard` `npm run validate`; `TodayBody.test.tsx` (+2: the list rule with own / others' / follow-up / closed-case tasks; the page order, the owner label, no duplicate in «Otras tareas»). |
 
 
-### 2.7.90 Simplification: a closed case reopens as the same case; Hoy is three lists, 2026-10-10 — built, not applied, not deployed
+### 2.7.90 Simplification: a closed case reopens as the same case; Hoy is three lists, 2026-10-10 — applied; merged with its PR
 
 `supabase/` + `apps/api` + `apps/dashboard-proxy` + `apps/dashboard`. Owner decision 2026-10-10 after the first day of «¿Reabrir?» in production: the system had grown more rules than a team of three needs; reopening should be one click on the same case, and Hoy should be shorter.
 
@@ -2484,5 +2484,5 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Proxy | The reopen path removed; eleven case paths. |
 | Dashboard | Drawer: on a lost/abandoned case «Cambiar estado» becomes a primary «Reabrir» with the open columns. Board: a lost card can be dragged back to an open column; a won or discarded one cannot. Hoy «¿Reabrir?»: one `advance-case-stage` on the same case to «Conversación» (confirmed requester) or «Solicitada», only for an email **after** the closing, only within 90 days of it; a case an undo discarded, or one closed more than 90 days ago, no longer holds its thread — its email shows as new mail with «Abrir caso». |
 | Hoy | Main column: «Te toca responder», «Seguimientos», **one «Tareas» list** (overdue first — own from 3 days, anyone's from 7 with the owner named — then due today; replaces «Vencidas» + «Otras tareas de hoy») and «Correos sin caso». Side column: number box, rates, «por decidir», «Instituciones por confirmar», «Bloqueados», and «N personas por agregar» as a count linking to Personas (the list lives there). |
-| Not done | Not applied to `origenlab-v2` (ledger 51 → 52 pending, owner-run), not deployed. **Deploy order: apply the migration first** — the new API lets a person reopen, and without the migration the database refuses it. |
+| Applied | 2026-10-10, before the merge (schema first): the owner ran the plan/apply psql script as `origenlab_migrator` over the session pooler; ledger **51 → 52**, head `20261010180000`; the guard body carries the reopening rows. |
 | Evidence | `apps/api` `scripts/validate.sh` with a disposable cluster carrying the migration; case-command database tests (same-case reopen keeps the requester and writes one marked event; institution rule and closed→closed refused; a discarded case refused by the API and by the database as owner). pgTAP 062 (69), 063 (47), 076 (11) green against the cluster; the whole suite green except `100_hosted_role_bootstrap` #22, which fails only because the throwaway cluster gives the roles passwords. `apps/dashboard-proxy` and `apps/dashboard` `npm run validate`. |
