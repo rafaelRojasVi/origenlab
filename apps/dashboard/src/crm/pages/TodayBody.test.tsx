@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
-import { followUpsDue, organizationsToConfirm, repliesToAnswer, tasksDue } from "../today";
+import { followUpsDue, organizationsToConfirm, overdueTasks, repliesToAnswer, tasksDue } from "../today";
 import { Toaster } from "../ui";
 import { clearResourceCache } from "../useResource";
 import { TodayBody } from "./TodayBody";
@@ -65,6 +65,22 @@ describe("today lists", () => {
       ["b", 2],
       ["a", 0],
     ]);
+  });
+
+  it("«Vencidas»: one's own from 3 days overdue, anyone's from 7, most overdue first, follow-ups never", () => {
+    const mine = { ...task("mine3", "2026-10-03T12:00:00Z"), owner: "Ventas" };
+    const mine2 = { ...task("mine2", "2026-10-04T12:00:00Z"), owner: "Ventas" };
+    const theirs5 = { ...task("theirs5", "2026-10-01T12:00:00Z"), owner: "Tatiana" };
+    const theirs9 = { ...task("theirs9", "2026-09-27T12:00:00Z"), owner: "Tatiana" };
+    const fu = { ...task("fu", "2026-09-20T12:00:00Z"), title: "Seguimiento de 01239-26", owner: "Ventas" };
+    const c = card({ open_tasks: [mine, mine2, theirs5, theirs9, fu] });
+    expect(overdueTasks([c], NOW, "Ventas").map((t) => [t.task.task_id, t.overdueDays, t.escalated])).toEqual([
+      ["theirs9", 9, true],
+      ["mine3", 3, false],
+    ]);
+    // Without a profile name, only the escalated ones; a closed case's tasks never.
+    expect(overdueTasks([c], NOW, null).map((t) => t.task.task_id)).toEqual(["theirs9"]);
+    expect(overdueTasks([card({ open_tasks: [theirs9], stage: "lost", closed_at: "2026-10-01T00:00:00Z" })], NOW, "Ventas")).toEqual([]);
   });
 
   it("puts each silent case on the 3 · 14 · 30 rhythm, never a planned, replied or historical one", () => {
@@ -233,6 +249,29 @@ function renderToday(items: OpportunityCardData[], role = "sales") {
 afterEach(() => {
   vi.unstubAllGlobals();
   clearResourceCache();
+});
+
+describe("«Vencidas» on the page", () => {
+  it("shows them first, names the owner of an escalated task, and keeps them out of «Otras tareas»", () => {
+    const mine = { ...task("mine4", "2026-10-02T12:00:00Z"), owner: "Ventas" };
+    const theirs8 = { ...task("theirs8", "2026-09-28T12:00:00Z"), owner: "Tatiana" };
+    const theirs4 = { ...task("theirs4", "2026-10-02T12:00:00Z"), owner: "Tatiana" };
+    const today = { ...task("today", "2026-10-06T20:00:00Z"), owner: "Ventas" };
+    renderToday([card({ open_tasks: [mine, theirs8, theirs4, today] }, "2026-10-05T12:00:00Z")]);
+    const panel = screen.getByTestId("today-overdue");
+    expect(panel).toHaveTextContent("Vencidas");
+    expect(within(panel).getAllByTestId(/^today-task-/).map((e) => e.getAttribute("data-testid"))).toEqual([
+      "today-task-theirs8", "today-task-mine4",
+    ]);
+    expect(within(within(panel).getByTestId("today-task-theirs8")).getByTestId("today-owner-label")).toHaveTextContent("de Tatiana");
+    expect(within(within(panel).getByTestId("today-task-mine4")).queryByTestId("today-owner-label")).toBeNull();
+    expect(within(panel).getAllByRole("button", { name: "Hecho" })).toHaveLength(2);
+    // The other two stay in «Otras tareas de hoy»: someone else's at 4 days, and today's.
+    const others = screen.getByText("Otras tareas de hoy").closest("section")!;
+    expect(within(others).getAllByTestId(/^today-task-/).map((e) => e.getAttribute("data-testid"))).toEqual([
+      "today-task-theirs4", "today-task-today",
+    ]);
+  });
 });
 
 describe("Hoy actions", () => {

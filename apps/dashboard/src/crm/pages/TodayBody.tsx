@@ -34,19 +34,24 @@ import {
 import { contactLine, displayName, quoteProduct } from "../caseDisplay";
 import { composeInSharedMailbox, inSharedMailbox } from "../gmailLinks";
 import { isMaskedAddress } from "../redaction";
+import { useAuthSession } from "../../context/AuthSessionContext";
 import type { CrmSection, DatosTab } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
 import {
+  OVERDUE_ALL_DAYS,
+  OVERDUE_OWN_DAYS,
   RHYTHM,
   followUpsDue,
   historicalCount,
   wroteAfterWinning,
   organizationsToConfirm,
+  overdueTasks,
   repliesToAnswer,
   tasksDue,
   type DueTask,
   type FollowUp,
   type OrgToConfirm,
+  type OverdueTask,
   type Reply,
 } from "../today";
 import { Badge, Button, Modal, Panel, ResourceGate, Skeleton, fmtDate, toast } from "../ui";
@@ -101,7 +106,13 @@ export function TodayBody({
   after?: ReactNode;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
-  const tasks = useMemo(() => tasksDue(items, at), [items, at]);
+  const { session } = useAuthSession();
+  const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
+  const overdue = useMemo(() => overdueTasks(items, at, me), [items, at, me]);
+  const tasks = useMemo(() => {
+    const shownAbove = new Set(overdue.map((o) => o.task.task_id));
+    return tasksDue(items, at).filter((t) => !shownAbove.has(t.task.task_id));
+  }, [items, at, overdue]);
   const replies = useMemo(() => repliesToAnswer(items, at), [items, at]);
   const followUps = useMemo(() => followUpsDue(items, at), [items, at]);
   const orgs = useMemo(() => organizationsToConfirm(items), [items]);
@@ -116,6 +127,7 @@ export function TodayBody({
     <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
+          <OverduePanel overdue={overdue} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
           <TasksPanel tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
@@ -209,6 +221,36 @@ function TasksPanel({
   );
 }
 
+/**
+ * «Vencidas»: one's own tasks from 3 days overdue, anyone's from 7 (`overdueTasks`), above
+ * everything else because they are the oldest promises on the page. The same «Hecho» and
+ * «+1 semana» as any task; an escalated row names whose task it is.
+ */
+function OverduePanel({ overdue, navigate, mayDecide, onChanged, now }: {
+  overdue: OverdueTask[];
+  navigate: Navigate;
+  mayDecide: boolean;
+  onChanged: () => void;
+  now: Date;
+}) {
+  if (overdue.length === 0) return null;
+  return (
+    <div data-testid="today-overdue">
+      <Panel
+        title="Vencidas"
+        note={`tuyas desde ${OVERDUE_OWN_DAYS} días de atraso · de cualquiera desde ${OVERDUE_ALL_DAYS}`}
+        aside={<Badge tone="bad" glyph={false}>{overdue.length}</Badge>}
+        bodyClassName="divide-y divide-line"
+      >
+        {overdue.map((t, i) => (
+          <TaskRow key={t.task.task_id} due={t} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={now}
+            ownerLabel={t.escalated ? `de ${t.task.owner ?? "otro perfil"}` : null} />
+        ))}
+      </Panel>
+    </div>
+  );
+}
+
 function TaskRow({
   due,
   index,
@@ -216,6 +258,7 @@ function TaskRow({
   mayDecide,
   onChanged,
   now,
+  ownerLabel = null,
 }: {
   due: DueTask;
   index: number;
@@ -223,6 +266,8 @@ function TaskRow({
   mayDecide: boolean;
   onChanged: () => void;
   now: Date;
+  /** «de Tatiana»: an escalated task shown to a profile that does not own it. */
+  ownerLabel?: string | null;
 }) {
   const { card, task, overdueDays } = due;
   const { leaving, gone, leave } = useLeave(due);
@@ -241,6 +286,12 @@ function TaskRow({
           <span className={overdueDays > 0 ? "font-medium text-bad" : "font-medium text-warn"}>
             {dueText(overdueDays)}
           </span>
+          {ownerLabel ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span data-testid="today-owner-label">{ownerLabel}</span>
+            </>
+          ) : null}
           <span aria-hidden="true">·</span>
           <CaseLink card={card} navigate={navigate} />
         </p>
