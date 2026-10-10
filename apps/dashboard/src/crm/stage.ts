@@ -1,3 +1,4 @@
+import { lastTouch } from "./caseDisplay";
 import type { OpportunityCardData } from "./crmTypes";
 import type { Tone } from "./ui";
 
@@ -127,23 +128,17 @@ export function matchesQuery(card: OpportunityCardData, q: string): boolean {
   return hay.includes(needle);
 }
 
-/** Most recent commercial activity, not merely the original quotation's sent date.
-
-    Manual stage transitions update opportunity.updated_at; Gmail activity may update
-    last_contact without bumping the opportunity row. Both must bring a card to the top.
-    Revision sent and creation dates are fallbacks for legacy/imported cards.
-    Never use the current wall-clock date: resorting must be deterministic.
- */
+/** The case's clock for sorting and banding: its last commercial touch (`lastTouch`) — the
+    client's newest email, OrigenLab's newest email or logged follow-up, else the quote's sent
+    date, else the case's creation. Never `updated_at`: a stage change or a confirmed institution
+    is a record edit, not contact, and must not make a silent case look fresh. Never the
+    wall-clock date: resorting must be deterministic. */
 export function activityTimestamp(card: OpportunityCardData): number | null {
-  const dates = [
-    card.updated_at,
-    card.last_contact?.inbound?.at,
-    card.last_contact?.outbound?.at,
-    card.latest_revision?.sent_at,
-    card.created_at,
-  ];
-  const parsed = dates.map((d) => (d ? Date.parse(d) : Number.NaN)).filter(Number.isFinite);
-  return parsed.length ? Math.max(...parsed) : null;
+  const touch = lastTouch(card).at ?? card.latest_revision?.sent_at ?? null;
+  // Creation is the clock only for a case nobody has quoted or written on: an imported case's
+  // creation is the import's date, not the client's.
+  const t = Date.parse(touch ?? card.created_at ?? "");
+  return Number.isFinite(t) ? t : null;
 }
 
 /** Last case activity first; a case with no known date stays at the end. */
@@ -203,12 +198,15 @@ export function stageDisplay(card: OpportunityCardData, now?: Date): { label: st
 
 /* ── the Tablero (board) ─────────────────────────────────────────────────── */
 
-/** Age of a card's latest sent revision, for grouping a long board column. Newest first. */
+/** Age of a card's last touch (`activityTimestamp`), for grouping a long board column. Newest
+    first; finer at the top, where this week's work is, coarser where the backlog sits. */
 export const AGE_BUCKETS = [
-  { key: "d30", label: "Últimos 30 días", maxDays: 30 },
-  { key: "d90", label: "31–90 días", maxDays: 90 },
-  { key: "d180", label: "91–180 días", maxDays: 180 },
-  { key: "d365", label: "181–365 días", maxDays: 365 },
+  { key: "hoy", label: "Hoy", maxDays: 0 },
+  { key: "semana", label: "Esta semana", maxDays: 7 },
+  { key: "semana2", label: "Semana pasada", maxDays: 14 },
+  { key: "mes", label: "Este mes", maxDays: 30 },
+  { key: "d90", label: "Más de un mes", maxDays: 90 },
+  { key: "d365", label: "Más de tres meses", maxDays: 365 },
   { key: "older", label: "Más de un año", maxDays: Number.POSITIVE_INFINITY },
   { key: "none", label: "Sin actividad registrada", maxDays: Number.NaN },
 ] as const;
@@ -219,7 +217,7 @@ export type AgeBucketKey = (typeof AGE_BUCKETS)[number]["key"];
 export function ageBucket(sentAt: string | null | undefined, now: Date = new Date()): AgeBucketKey {
   const t = sentAt ? Date.parse(sentAt) : Number.NaN;
   if (Number.isNaN(t)) return "none";
-  const days = Math.max(0, (now.getTime() - t) / 86_400_000);
+  const days = Math.max(0, Math.floor((now.getTime() - t) / 86_400_000));
   for (const b of AGE_BUCKETS) if (days <= b.maxDays) return b.key;
   return "older";
 }

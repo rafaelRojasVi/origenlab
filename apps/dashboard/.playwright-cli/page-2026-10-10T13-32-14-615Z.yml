@@ -1,0 +1,66 @@
+- generic [ref=e3]:
+  - link "Saltar al contenido" [ref=e4] [cursor=pointer]:
+    - /url: "#crm-main"
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - link "OrigenLab" [ref=e7] [cursor=pointer]:
+        - /url: "#/crm/resumen"
+        - generic [ref=e8]: O
+      - generic [ref=e11]: Panel comercial
+      - generic [ref=e12]:
+        - navigation "Accesos directos" [ref=e13]:
+          - link "Drive" [ref=e14] [cursor=pointer]:
+            - /url: https://drive.google.com/drive/my-drive?authuser=contacto%40origenlab.cl
+            - generic [ref=e16]: ↗
+          - link "Gmail" [ref=e17] [cursor=pointer]:
+            - /url: https://mail.google.com/mail/?authuser=contacto%40origenlab.cl
+            - generic [ref=e19]: ↗
+          - link "Sitio web" [ref=e20] [cursor=pointer]:
+            - /url: https://origenlab.cl/
+            - generic [ref=e22]: ↗
+        - generic "Operador Local · Administración" [ref=e23]:
+          - generic [ref=e24]: O
+          - generic [ref=e25]: Operador Local
+          - generic [ref=e26]: Administración
+          - generic [ref=e27]: desarrollo
+  - generic [ref=e28]:
+    - navigation "Secciones del panel" [ref=e29]:
+      - button "Contraer menú" [ref=e30]
+      - generic [ref=e34]:
+        - paragraph [ref=e35]: Comercial
+        - list [ref=e36]:
+          - listitem [ref=e37]:
+            - link "Hoy" [ref=e38] [cursor=pointer]:
+              - /url: "#/crm/resumen"
+          - listitem [ref=e43]:
+            - link "Oportunidades" [ref=e44] [cursor=pointer]:
+              - /url: "#/crm/oportunidades"
+          - listitem [ref=e49]:
+            - link "Organizaciones" [ref=e50] [cursor=pointer]:
+              - /url: "#/crm/organizaciones"
+          - listitem [ref=e55]:
+            - link "Personas" [ref=e56] [cursor=pointer]:
+              - /url: "#/crm/personas"
+          - listitem [ref=e61]:
+            - link "Catálogo" [ref=e62] [cursor=pointer]:
+              - /url: "#/crm/catalogo"
+          - listitem [ref=e67]:
+            - link "Marketing" [ref=e68] [cursor=pointer]:
+              - /url: "#/crm/marketing"
+      - generic [ref=e73]:
+        - paragraph [ref=e74]: Control
+        - list [ref=e75]:
+          - listitem [ref=e76]:
+            - link "Historial" [ref=e77] [cursor=pointer]:
+              - /url: "#/crm/historial"
+          - listitem [ref=e82]:
+            - link "Datos" [ref=e83] [cursor=pointer]:
+              - /url: "#/crm/datos"
+      - paragraph [ref=e88]: Cada cambio queda registrado con quién lo hizo y cuándo.
+    - main [ref=e89]:
+      - generic [ref=e91]:
+        - generic [ref=e93]:
+          - heading "Oportunidades" [level=1] [ref=e94]
+          - paragraph [ref=e95]: Casos comerciales del CRM con sus cotizaciones, revisiones, documentos y evidencia de Gmail y Drive.
+        - status "Cargando" [ref=e96]:
+          - generic [ref=e103]: Cargando…

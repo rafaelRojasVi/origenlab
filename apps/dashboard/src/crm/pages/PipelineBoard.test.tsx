@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { stagePath } from "../caseCommands";
-import { ageBucket, boardColumnOf, boardStatusLine, pausedUntil } from "../stage";
+import { activityTimestamp, ageBucket, boardColumnOf, boardStatusLine, pausedUntil } from "../stage";
 import { Board, sortCards } from "./PipelineBoard";
 
 // Every value below is invented; the repository is public.
@@ -61,10 +61,13 @@ function card(over: Partial<OpportunityCardData> = {}, sentAt: string | null = "
 }
 
 describe("board helpers", () => {
-  it("groups a revision by its age, newest first, and a missing date apart", () => {
-    expect(ageBucket("2026-10-01T00:00:00Z", NOW)).toBe("d30");
+  it("groups a touch by its age, finer this month, and a missing date apart", () => {
+    expect(ageBucket("2026-10-06T08:00:00Z", NOW)).toBe("hoy");
+    expect(ageBucket("2026-10-01T00:00:00Z", NOW)).toBe("semana");
+    expect(ageBucket("2026-09-25T00:00:00Z", NOW)).toBe("semana2");
+    expect(ageBucket("2026-09-10T00:00:00Z", NOW)).toBe("mes");
     expect(ageBucket("2026-08-01T00:00:00Z", NOW)).toBe("d90");
-    expect(ageBucket("2026-05-01T00:00:00Z", NOW)).toBe("d180");
+    expect(ageBucket("2026-05-01T00:00:00Z", NOW)).toBe("d365");
     expect(ageBucket("2025-12-01T00:00:00Z", NOW)).toBe("d365");
     expect(ageBucket("2024-01-01T00:00:00Z", NOW)).toBe("older");
     expect(ageBucket(null, NOW)).toBe("none");
@@ -83,7 +86,7 @@ describe("board helpers", () => {
 });
 
 describe("Tablero", () => {
-  it("counts every column and leads each card with the institution, the contact, the age and the quote", () => {
+  it("counts every column and leads each card with the institution, the contact and the quote — one clock, on the status line", () => {
     const lead = card({ stage: "lead" }, null);
     const quoting = card();
     render(<Board cards={[lead, quoting]} onOpen={() => undefined} now={NOW} />);
@@ -95,7 +98,7 @@ describe("Tablero", () => {
     const b = screen.getByTestId(`board-card-${quoting.opportunity_id}`);
     expect(within(b).getByRole("button", { name: /^Universidad Ficticia \d+$/ })).toBeInTheDocument();
     expect(b).toHaveTextContent("Persona Ficticia");
-    expect(within(b).getByTestId("board-age")).toHaveTextContent("16 d");
+    expect(within(b).queryByTestId("board-age")).toBeNull(); // no second «last movement» clock
     expect(b).toHaveTextContent("01239-26 · 20 sept");
     expect(within(b).getByTestId("board-status-line")).toHaveTextContent("Sin respuesta · 16 d");
     expect(within(b).getByRole("link", { name: /Correo de la cotización/ })).toHaveAttribute("href", "https://mail.example.cl/m");
@@ -147,9 +150,36 @@ describe("Tablero", () => {
     expect(within(column).queryAllByRole("group")).toHaveLength(0);
     expect(
       within(column)
-        .getAllByText(/Últimos 30 días|Más de un año/)
+        .getAllByText(/Semana pasada|Más de un año/)
         .map((e) => e.textContent),
-    ).toEqual(["Últimos 30 días", "Más de un año"]);
+    ).toEqual(["Semana pasada", "Más de un año"]);
+  });
+
+  it("bands and the status line run on the same clock: a logged follow-up moves a card up and counts the silence from it", () => {
+    const silent = card({}, "2026-07-01T12:00:00Z");
+    const followed = card({ last_note: { created_at: "2026-10-04T10:00:00Z", body: "Llamé, dijo que lo verá", author: "Ana" } }, "2026-07-01T12:00:00Z");
+    const ids = (xs: OpportunityCardData[]) => xs.map((x) => x.opportunity_id);
+    expect(ids(sortCards([silent, followed], "recent", NOW))).toEqual(ids([followed, silent]));
+    expect(ageBucket(new Date(activityTimestamp(followed)!).toISOString(), NOW)).toBe("semana");
+    expect(ageBucket(new Date(activityTimestamp(silent)!).toISOString(), NOW)).toBe("d365");
+    // An imported case created last week with a July quote sits with July, not with last week.
+    const imported = card({ created_at: "2026-10-01T12:00:00Z" }, "2026-07-01T12:00:00Z");
+    expect(ageBucket(new Date(activityTimestamp(imported)!).toISOString(), NOW)).toBe("d365");
+    render(<Board cards={[silent, followed]} onOpen={() => undefined} now={NOW} />);
+    const f = screen.getByTestId(`board-card-${followed.opportunity_id}`);
+    expect(within(f).getByTestId("board-status-line")).toHaveTextContent("Seguimiento anotado 04 oct · 2 d sin respuesta");
+    const s = screen.getByTestId(`board-card-${silent.opportunity_id}`);
+    expect(within(s).getByTestId("board-status-line")).toHaveTextContent("Sin respuesta · 97 d");
+  });
+
+  it("a note never hides the client's email: after a reply the card still says «te toca»", () => {
+    const c = card({
+      last_contact: { outbound: { at: "2026-09-28T12:00:00Z", subject: "Seguimiento", url: null }, inbound: { at: "2026-10-02T15:00:00Z", subject: "Re", url: null } },
+      last_note: { created_at: "2026-10-03T09:00:00Z", body: "visto", author: null },
+    });
+    render(<Board cards={[c]} onOpen={() => undefined} now={NOW} />);
+    const b = screen.getByTestId(`board-card-${c.opportunity_id}`);
+    expect(within(b).getByTestId("board-status-line")).toHaveTextContent(/^Respondió 02 oct · te toca$/);
   });
 
   it("sorts by date either way, by who replied, or by name", () => {
@@ -166,30 +196,30 @@ describe("Tablero", () => {
     expect(ids(sortCards([a, b, c], "replied", NOW))[0]).toBe(b.opportunity_id);
   });
 
-  it("places a recently moved conversation first even when its quotation is old", () => {
+  it("a record edit is not contact: a case moved yesterday with an old quote sorts by the quote, a followed-up one by the follow-up", () => {
     const moved = card({
-      title: "Caso actualizado hoy",
+      title: "Caso movido ayer",
       stage: "negotiating",
       updated_at: "2026-10-05T19:00:00Z",
       last_contact: { inbound: null, outbound: null },
     }, "2026-05-01T12:00:00Z");
-    const notMoved = card({
-      title: "Caso de cotización reciente",
+    const followed = card({
+      title: "Caso con seguimiento",
       stage: "negotiating",
       updated_at: "2026-09-26T19:00:00Z",
-      last_contact: { inbound: null, outbound: null },
+      last_contact: { inbound: null, outbound: { at: "2026-09-30T12:00:00Z", subject: "Seguimiento", url: null } },
     }, "2026-09-25T12:00:00Z");
-    const sorted = sortCards([notMoved, moved], "recent", NOW);
-    expect(sorted.map((c) => c.opportunity_id)).toEqual([moved.opportunity_id, notMoved.opportunity_id]);
-    render(<Board cards={[notMoved, moved]} onOpen={() => undefined} now={NOW} />);
+    const sorted = sortCards([moved, followed], "recent", NOW);
+    expect(sorted.map((c) => c.opportunity_id)).toEqual([followed.opportunity_id, moved.opportunity_id]);
+    render(<Board cards={[moved, followed]} onOpen={() => undefined} now={NOW} />);
     const col = screen.getByTestId("board-column-conversacion");
     expect(within(col).getAllByRole("article")[0])
-      .toBe(within(col).getByTestId(`board-card-${moved.opportunity_id}`));
+      .toBe(within(col).getByTestId(`board-card-${followed.opportunity_id}`));
   });
 
   it("keeps cases with unknown activity dates last even under oldest", () => {
     const noDate = card({ created_at: null, updated_at: null }, null);
-    const known = card({ updated_at: "2026-10-05T12:00:00Z" }, null);
+    const known = card({ created_at: "2026-10-05T12:00:00Z" }, null);
     expect(sortCards([noDate, known], "recent", NOW)[0]).toBe(known);
     expect(sortCards([noDate, known], "oldest", NOW)[0]).toBe(known);
   });

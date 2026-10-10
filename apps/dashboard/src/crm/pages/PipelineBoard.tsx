@@ -4,7 +4,7 @@
  *
  * - Every card is shown; every column scrolls on its own, so a long column never stretches the
  *   page. `sort` orders them (newest quote, oldest, «respondieron primero», institution); by date,
- *   a thin divider marks each age band («Últimos 30 días», «31–90 días»…) without hiding a card.
+ *   a thin divider marks each age band («Hoy», «Esta semana», «Semana pasada»…) without hiding a card.
  * - A card leads with a readable institution name, the contact and the days since the quote went
  *   out (coloured by the follow-up rhythm: 3 · 14 · 30 days), then the quote, what it is for
  *   (`quoteProduct`: the email subject's product, the PDF's model), where the conversation
@@ -17,9 +17,9 @@
 import { Fragment, useMemo, useState, type DragEvent, type MouseEvent } from "react";
 import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData } from "../crmTypes";
-import { ageTone, contactLine, conversation, daysSince, displayName, quoteProduct } from "../caseDisplay";
+import { ageTone, contactLine, conversation, displayName, quoteProduct } from "../caseDisplay";
 import { AGE_BUCKETS, BOARD_COLUMNS, activityTimestamp, ageBucket, boardColumnOf, byLatestActivity, pausedUntil, type BoardColumnKey } from "../stage";
-import { fmtDate, type Tone } from "../ui";
+import { fmtDate } from "../ui";
 
 export type BoardSort = "recent" | "oldest" | "replied" | "name";
 
@@ -37,15 +37,6 @@ const LINE_TONE: Record<string, string> = {
   info: "text-info",
   brand: "text-brand-700",
   neutral: "text-ink-muted",
-};
-
-const BADGE_TONE: Record<Tone, string> = {
-  brand: "bg-brand-50 text-brand-700",
-  info: "bg-info-bg text-info",
-  warn: "bg-warn-bg text-warn",
-  bad: "bg-bad-bg text-bad",
-  good: "bg-good-bg text-good",
-  neutral: "bg-canvas-sunken text-ink-muted",
 };
 
 const COLUMN_DOT: Record<BoardColumnKey, string> = {
@@ -243,9 +234,9 @@ export function cardLine(card: OpportunityCardData, now: Date): { text: string; 
   if (card.closed_at) return { text: card.close_reason ?? "Cerrada", tone: "neutral" };
   const conv = conversation(card, now);
   if (conv.kind === "replied") return { text: conv.text, tone: "warn" };
-  if (conv.kind === "followed_up") return { text: conv.text, tone: "info" };
   if (conv.kind === "none") return { text: conv.text, tone: "neutral" };
-  return { text: conv.text, tone: ageTone(daysSince(card.latest_revision?.sent_at, now)) };
+  // A follow-up and a quote age the same way: the rhythm counts from OrigenLab's last touch.
+  return { text: conv.text, tone: ageTone(conv.days) };
 }
 
 export function BoardCard({
@@ -268,10 +259,9 @@ export function BoardCard({
   const latest = card.latest_revision;
   const { name, sub } = displayName(card);
   const contact = contactLine(card);
-  // The same date the column's «Últimos 30 días» bands use: the case's last movement. How long the
-  // client has been silent is the status line's job («Sin respuesta · 154 d»).
-  const activity = activityTimestamp(card);
-  const days = card.closed_at || activity == null ? null : daysSince(new Date(activity).toISOString(), at);
+  // One clock per card: the status line says who touched the case last and for how long
+  // («Sin respuesta · 154 d», «Seguimiento 07 may · 156 d sin respuesta»), and the column's bands
+  // group by that same date. There is no second «last movement» badge: a record edit is not contact.
   const product = quoteProduct(card);
   const line = cardLine(card, at);
   const driveUrl = latest?.drive?.file_url ?? card.drive_folder?.url ?? null;
@@ -318,15 +308,6 @@ export function BoardCard({
           </h3>
           {contact && !compact ? <p className="truncate text-[11px] leading-4 text-ink-muted">{contact}</p> : null}
         </div>
-        {days != null ? (
-          <span
-            className={`shrink-0 rounded px-1 py-px text-[10.5px] font-semibold tabular-nums ${BADGE_TONE[ageTone(days)]}`}
-            title={days === 0 ? "Último movimiento hoy" : `Último movimiento hace ${days} ${days === 1 ? "día" : "días"}`}
-            data-testid="board-age"
-          >
-            {days === 0 ? "hoy" : `${days} d`}
-          </span>
-        ) : null}
       </div>
       <p className="mt-1.5 truncate text-[11px] leading-4 tabular-nums text-ink-muted">
         {latest ? (
