@@ -713,7 +713,12 @@ describe("W12 recontact review", () => {
 // ─────────────────────────────────────────────────────────────── W10 unsubscribe status
 
 const SUPPRESSIONS = {
-  summary: { unsubscribed_addresses: 2, baja_messages: 3, last_recorded_at: "2026-09-27T12:00:00Z", pending_reviews: 1 },
+  summary: { unsubscribed_addresses: 2, baja_messages: 3, last_recorded_at: "2026-09-27T12:00:00Z", pending_reviews: 1,
+             triage_readings: 1 },
+  triage_readings: [
+    { assertion_id: "t1", address: "***@lab.test", subject: "REMOVER", observed_at: "2026-10-09T13:00:00Z",
+      recorded_at: "2026-10-09T13:05:00Z", triage_version: "triage:v1", reasons: ["subject:baja_word"], gmail_message_id: "19abc" },
+  ],
   pending_reviews: [
     { assertion_id: "a1", address: "***@lab.test", review_reason: "recipient_mismatch",
       review_reason_label: "El remitente no es el destinatario del correo enviado al que responde",
@@ -776,6 +781,16 @@ describe("Bajas (W10)", () => {
     expect(held[0]).toHaveTextContent("***@lab.test");
     expect(held[0]).toHaveTextContent("no es el destinatario");
     expect(within(screen.getByTestId("pending-reviews")).queryAllByRole("button")).toHaveLength(0);
+    // What the triage read as an unsubscribe is listed as a proposal, masked, with a link to the
+    // email in the shared mailbox — and no action.
+    const read = screen.getAllByTestId("triage-reading-row");
+    expect(read).toHaveLength(1);
+    expect(read[0]).toHaveTextContent("***@lab.test");
+    expect(read[0]).toHaveTextContent("«REMOVER»");
+    expect(read[0]).toHaveTextContent("el asunto es «BAJA» o «REMOVER»");
+    expect(within(read[0]).getByRole("link", { name: "Abrir ↗" })).toHaveAttribute(
+      "href", "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/19abc");
+    expect(within(screen.getByTestId("triage-readings")).queryAllByRole("button")).toHaveLength(0);
     // No action of any kind: no button inside the panel, no Send anywhere, no write.
     expect(within(panel).queryAllByRole("button")).toHaveLength(0);
     expect(screen.queryByRole("button", { name: /enviar|aplicar|sincronizar|suscrib|confirmar|descartar/i })).toBeNull();
@@ -791,9 +806,16 @@ describe("Bajas (W10)", () => {
     observed_at: "2026-09-26T18:20:00Z", recorded_at: "2026-09-27T12:05:00Z", review_sha256: "c".repeat(64),
   };
 
+  const READING = {
+    assertion_id: "b0000000-0000-4000-8000-0000000000b1", address: "remover@lab.test", subject: "REMOVER",
+    observed_at: "2026-10-09T13:00:00Z", recorded_at: "2026-10-09T13:05:00Z", triage_version: "triage:v1",
+    reasons: ["subject:baja_word"], gmail_message_id: "19abc",
+  };
+
   function renderBajas(role: string | null, { applyEnabled = true, commandStatus = 200 } = {}) {
     const calls: { path: string; method: string; body: unknown; key: string | null }[] = [];
     let held = [HELD];
+    let readings = [READING];
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -806,14 +828,18 @@ describe("Bajas (W10)", () => {
           if (commandStatus !== 200) {
             return jsonResponse({ detail: { code: "review_not_pending", message: "this request is rejected, not pending" } }, commandStatus);
           }
+          if (url.pathname === UNSUBSCRIBE_REVIEW_PATHS.confirmTriage) {
+            readings = [];
+            return jsonResponse({ command: "x", assertion_id: READING.assertion_id, outcome: "added", replayed: false });
+          }
           held = [];
           return jsonResponse({ command: "x", assertion_id: HELD.assertion_id, was: "unresolved", outcome: "added", replayed: false });
         }
         if (url.pathname.endsWith("/v2/workspace/marketing")) return jsonResponse(marketing(true));
         if (url.pathname.endsWith("/v2/workspace/marketing/taxonomy")) return jsonResponse(taxonomy);
         if (url.pathname.endsWith("/v2/workspace/marketing/suppressions")) {
-          return jsonResponse({ ...SUPPRESSIONS, apply_enabled: applyEnabled, pending_reviews: held,
-                                summary: { ...SUPPRESSIONS.summary, pending_reviews: held.length } });
+          return jsonResponse({ ...SUPPRESSIONS, apply_enabled: applyEnabled, pending_reviews: held, triage_readings: readings,
+                                summary: { ...SUPPRESSIONS.summary, pending_reviews: held.length, triage_readings: readings.length } });
         }
         return jsonResponse({ detail: "not found" }, 404);
       }),
@@ -840,6 +866,7 @@ describe("Bajas (W10)", () => {
     const calls = renderBajas(role);
     const [row] = await openBajas();
     expect(within(row).queryAllByRole("button")).toHaveLength(0);
+    expect(within(screen.getByTestId("triage-readings")).queryAllByRole("button")).toHaveLength(0);
     expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
   });
 
@@ -847,6 +874,44 @@ describe("Bajas (W10)", () => {
     renderBajas("admin", { applyEnabled: false });
     const [row] = await openBajas();
     expect(within(row).queryAllByRole("button")).toHaveLength(0);
+    expect(within(screen.getByTestId("triage-readings")).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("lets sales confirm what the triage read, with a note and one Idempotency-Key, then reloads", async () => {
+    const calls = renderBajas("sales");
+    await openBajas();
+    const [row] = screen.getAllByTestId("triage-reading-row");
+    fireEvent.click(within(row).getByRole("button", { name: "Confirmar BAJA" }));
+    const form = screen.getByTestId("confirm-reading-form");
+    expect(form).toHaveTextContent("después de leer el correo");
+    const submit = within(form).getByRole("button", { name: "Confirmar BAJA permanente" });
+    expect(submit).toBeDisabled();
+    fireEvent.change(within(form).getByLabelText("Nota de la lectura"), { target: { value: "Leído: pide salir de la lista" } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryAllByTestId("triage-reading-row")).toHaveLength(0));
+    expect(screen.getAllByTestId("pending-review-row")).toHaveLength(1); // the held «BAJA» is untouched
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(posts[0].path).toBe(UNSUBSCRIBE_REVIEW_PATHS.confirmTriage);
+    expect(posts[0].body).toEqual({ assertion_id: READING.assertion_id, expected_address: READING.address,
+                                    note: "Leído: pide salir de la lista" });
+    expect(posts[0].key).toMatch(/.{8,}/);
+  });
+
+  it("shows the API's refusal of a reading confirmation and keeps the row", async () => {
+    const calls = renderBajas("sales", { commandStatus: 409 });
+    await openBajas();
+    const [row] = screen.getAllByTestId("triage-reading-row");
+    fireEvent.click(within(row).getByRole("button", { name: "Confirmar BAJA" }));
+    const form = screen.getByTestId("confirm-reading-form");
+    fireEvent.change(within(form).getByLabelText("Nota de la lectura"), { target: { value: "Leído" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Confirmar BAJA permanente" }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent("review_not_pending");
+    fireEvent.click(within(form).getByRole("button", { name: "Confirmar BAJA permanente" })); // a retry reuses the key
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(2));
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts[1].key).toBe(posts[0].key);
+    expect(screen.getAllByTestId("triage-reading-row")).toHaveLength(1);
   });
 
   it("lets sales confirm a hold with a note, one Idempotency-Key, then reloads — and never dismiss", async () => {

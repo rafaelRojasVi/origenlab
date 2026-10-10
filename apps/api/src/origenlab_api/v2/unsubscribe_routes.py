@@ -12,11 +12,14 @@
 * ``POST /v2/commands/dismiss-unsubscribe-review`` — mounted with the apply command, same
   switch. **Admin only** (sales is 403). Dismisses one *pending* hold as a false positive,
   quoting its ``review_sha256`` and an explanation; a confirmed unsubscribe is never dismissed.
+* ``POST /v2/commands/confirm-triage-unsubscribe`` — mounted with the apply command, same
+  switch. Confirms one mail-triage ``unsubscribe`` reading (the suppressions read lists them) as
+  the permanent suppression of the email's sender; idempotent.
 
 The others require an active ``sales`` or ``admin`` operator from the verified identity (a viewer
 is 403, an unknown caller 401): the batch carries message bodies and sender addresses. The preview
-and apply are not in the ``apps/dashboard-proxy`` allowlist; the two review decisions are, as
-guarded POST-only marketing commands, for the Bajas page's confirm and dismiss actions. Any database failure answers without detail and writes nothing: the
+and apply are not in the ``apps/dashboard-proxy`` allowlist; the two review decisions and the
+triage confirmation are, as guarded POST-only marketing commands, for the Bajas page's actions. Any database failure answers without detail and writes nothing: the
 transaction is rolled back before the answer leaves.
 """
 
@@ -32,6 +35,7 @@ from origenlab_api.v2.commands import CommandRefused, request_digest, require_id
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.unsubscribe_commands import (
     ApplyUnsubscribeBody,
+    ConfirmTriageUnsubscribeBody,
     DismissUnsubscribeReviewBody,
     PreviewUnsubscribeBody,
     ResolveUnsubscribeReviewBody,
@@ -39,6 +43,7 @@ from origenlab_api.v2.unsubscribe_commands import (
 )
 from origenlab_api.v2.unsubscribe_replies import (
     APPLY_UNSUBSCRIBE_REPLIES,
+    CONFIRM_TRIAGE_UNSUBSCRIBE,
     DISMISS_UNSUBSCRIBE_REVIEW,
     RESOLVE_UNSUBSCRIBE_REVIEW,
 )
@@ -157,6 +162,29 @@ def dismiss_unsubscribe_review(
             fields=body.model_dump(mode="json"),
             idempotency_key=key,
             digest=request_digest(DISMISS_UNSUBSCRIBE_REVIEW, body),
+        )
+    except CommandRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
+    except psycopg.Error as exc:
+        raise _database_failure(exc) from exc
+
+
+@unsubscribe_apply_router.post("/confirm-triage-unsubscribe")
+def confirm_triage_unsubscribe(
+    body: ConfirmTriageUnsubscribeBody,
+    operator: Deciding,
+    repo: V2UnsubscribeRepository = Depends(get_unsubscribe_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Confirm one mail-triage «baja» reading as a permanent suppression of its sender."""
+    try:
+        key = require_idempotency_key(idempotency_key)
+        return repo.execute(
+            command_name=CONFIRM_TRIAGE_UNSUBSCRIBE,
+            operator=operator,
+            fields=body.model_dump(mode="json"),
+            idempotency_key=key,
+            digest=request_digest(CONFIRM_TRIAGE_UNSUBSCRIBE, body),
         )
     except CommandRefused as exc:
         raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc

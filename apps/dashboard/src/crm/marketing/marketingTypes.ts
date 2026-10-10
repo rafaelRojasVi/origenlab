@@ -397,6 +397,21 @@ export interface PendingUnsubscribeReview {
   review_sha256?: string;
 }
 
+/**
+ * An email the mail triage read as an unsubscribe (a «REMOVER» subject, a «BAJA» first line with
+ * more text) that the reply grammar refuses: a proposal, suppressed only when a person confirms it.
+ */
+export interface TriageUnsubscribeReading {
+  assertion_id: string;
+  address: string;
+  subject: string | null;
+  observed_at: string | null;
+  recorded_at: string;
+  triage_version: string;
+  reasons: string[];
+  gmail_message_id: string | null;
+}
+
 /** The answer to a W10 review decision (confirm or dismiss). */
 export interface UnsubscribeReviewResult {
   command: string;
@@ -407,9 +422,16 @@ export interface UnsubscribeReviewResult {
 }
 
 export interface SuppressionsResponse {
-  summary: { unsubscribed_addresses: number; baja_messages: number; last_recorded_at: string | null; pending_reviews?: number };
+  summary: {
+    unsubscribed_addresses: number;
+    baja_messages: number;
+    last_recorded_at: string | null;
+    pending_reviews?: number;
+    triage_readings?: number;
+  };
   entries: SuppressionEntry[];
   pending_reviews?: PendingUnsubscribeReview[];
+  triage_readings?: TriageUnsubscribeReading[];
   truncated: boolean;
   frozen_campaigns: {
     campaign_id: string;

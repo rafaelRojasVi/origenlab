@@ -219,7 +219,20 @@ export function setCampaignPlanning(
 export const UNSUBSCRIBE_REVIEW_PATHS = {
   resolve: "/v2/commands/resolve-unsubscribe-review",
   dismiss: "/v2/commands/dismiss-unsubscribe-review",
+  confirmTriage: "/v2/commands/confirm-triage-unsubscribe",
 } as const;
+
+/**
+ * W10: confirm what the mail triage read as an unsubscribe (sales/admin). The API proves the
+ * reading is of an inbound email from that address and writes the same permanent suppression a
+ * confirmed «BAJA» gets. Nothing is suppressed without this call.
+ */
+export function confirmTriageUnsubscribe(
+  body: { assertion_id: string; expected_address: string; note: string },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<UnsubscribeReviewResult> {
+  return postCommand<UnsubscribeReviewResult>(UNSUBSCRIBE_REVIEW_PATHS.confirmTriage, body, idempotencyKey);
+}
 
 export function resolveUnsubscribeReview(
   body: { assertion_id: string; expected_address: string; note: string },

@@ -2,14 +2,16 @@ import { useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { useResource } from "../useResource";
 import { Badge, EmptyState, Panel, ResourceGate, Skeleton, StatLine, fmtDate, fmtInt } from "../ui";
+import { inSharedMailbox } from "../gmailLinks";
 import {
+  confirmTriageUnsubscribe,
   dismissUnsubscribeReview,
   fetchSuppressions,
   newIdempotencyKey,
   refusalOf,
   resolveUnsubscribeReview,
 } from "./marketingApi";
-import type { PendingUnsubscribeReview, SuppressionsResponse } from "./marketingTypes";
+import type { PendingUnsubscribeReview, SuppressionsResponse, TriageUnsubscribeReading } from "./marketingTypes";
 
 const SOURCE_LABEL: Record<string, string> = {
   unsubscribe_handler: "Respuesta BAJA aplicada",
@@ -20,6 +22,109 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 type ReviewMode = "confirm" | "dismiss";
+
+/** Why the triage read the email as an unsubscribe (`triage_rules.py` reasons), for a person. */
+const READING_REASON_LABEL: Record<string, string> = {
+  "subject:baja_word": "el asunto es «BAJA» o «REMOVER»",
+  "body:baja_first_line": "la primera línea es «BAJA» y sigue más texto",
+  "body:baja_grammar": "el texto es exactamente «BAJA»",
+};
+
+/**
+ * One email the triage read as an unsubscribe but the reply grammar refuses: a proposal. The
+ * operator opens the email, and confirms with a note; the API writes the same permanent
+ * suppression a confirmed «BAJA» gets. One Idempotency-Key per opened form, so a retry replays.
+ */
+function ReadingActions({ reading, onDone }: { reading: TriageUnsubscribeReading; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const start = () => {
+    setOpen(true);
+    setText("");
+    setError(null);
+    setKey(newIdempotencyKey());
+  };
+  const submit = async () => {
+    if (!text.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await confirmTriageUnsubscribe({ assertion_id: reading.assertion_id, expected_address: reading.address, note: text }, key);
+      setOpen(false);
+      onDone();
+    } catch (err) {
+      const refusal = refusalOf(err);
+      setError(refusal ? `${refusal.code}: ${refusal.message}` : "No se pudo registrar la BAJA.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <span className="ml-auto flex gap-1.5">
+        <button
+          type="button"
+          onClick={start}
+          className="h-7 rounded-md border border-bad/50 px-2.5 text-xs font-medium text-bad hover:bg-bad-bg"
+        >
+          Confirmar BAJA
+        </button>
+      </span>
+    );
+  }
+  return (
+    <form
+      className="mt-1.5 w-full space-y-1.5 rounded-md border border-line bg-canvas-sunken p-2"
+      data-testid="confirm-reading-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit();
+      }}
+    >
+      <p className="text-[11px] text-ink-muted">
+        Confirme sólo después de leer el correo: la dirección quedará suprimida de marketing de forma permanente. No se puede
+        deshacer.
+      </p>
+      <label className="block text-[11px] font-medium text-ink">
+        Nota de la lectura
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          maxLength={500}
+          rows={2}
+          className="mt-1 block w-full rounded-md border border-line bg-canvas-raised px-2 py-1 text-xs text-ink"
+        />
+      </label>
+      {error ? (
+        <p role="alert" className="text-[11px] text-bad">
+          {error}
+        </p>
+      ) : null}
+      <div className="flex gap-1.5">
+        <button
+          type="submit"
+          disabled={busy || !text.trim()}
+          className="h-7 rounded-md border border-line bg-canvas-raised px-2.5 text-xs font-medium text-ink disabled:opacity-50"
+        >
+          Confirmar BAJA permanente
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          disabled={busy}
+          className="h-7 rounded-md px-2.5 text-xs text-ink-muted hover:bg-canvas-raised"
+        >
+          Cancelar
+        </button>
+      </div>
+    </form>
+  );
+}
 
 /**
  * One «BAJA» held for review: confirm it as a permanent unsubscribe (sales/admin), or dismiss it
@@ -183,6 +288,7 @@ export function SuppressionStatus() {
                   { label: "Mensajes BAJA registrados", value: fmtInt(data.summary.baja_messages) },
                   { label: "Última registrada", value: data.summary.last_recorded_at ? fmtDate(data.summary.last_recorded_at) : "—" },
                   { label: "BAJAS en revisión", value: fmtInt(data.summary.pending_reviews ?? 0) },
+                  { label: "Leídas por el triaje", value: fmtInt(data.summary.triage_readings ?? 0) },
                 ]}
               />
               <p className="text-[11px] text-ink-muted" data-testid="baja-grammar">
@@ -225,6 +331,41 @@ export function SuppressionStatus() {
                       ) : null}
                     </div>
                   ))}
+                </div>
+              </Panel>
+            ) : null}
+            {data.triage_readings && data.triage_readings.length > 0 ? (
+              <Panel
+                title="Posibles BAJAS según la lectura del correo"
+                note="el triaje las leyó como baja, pero el texto no es exactamente «BAJA» · nada se suprime sin confirmarlo"
+                bodyClassName="p-3"
+              >
+                <div className="divide-y divide-line rounded-md border border-line" data-testid="triage-readings">
+                  {data.triage_readings.map((r) => {
+                    const href = r.gmail_message_id ? inSharedMailbox(`https://mail.google.com/mail/u/0/#all/${r.gmail_message_id}`) : null;
+                    return (
+                      <div key={r.assertion_id} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-[13px]" data-testid="triage-reading-row">
+                        <Badge tone="warn">Lectura</Badge>
+                        <span className="text-ink">{r.address}</span>
+                        <span className="text-[11px] text-ink-muted">
+                          {r.subject ? `«${r.subject}» · ` : ""}
+                          {r.reasons.map((x) => READING_REASON_LABEL[x] ?? x).join(", ") || "sin motivo registrado"}
+                          {r.observed_at ? ` · recibido ${fmtDate(r.observed_at)}` : ""}
+                        </span>
+                        {href ? (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-7 items-center rounded-md border border-line bg-canvas-raised px-2.5 text-xs font-medium text-ink hover:border-line-strong"
+                          >
+                            Abrir ↗
+                          </a>
+                        ) : null}
+                        {data.apply_enabled && canConfirm ? <ReadingActions reading={r} onDone={reload} /> : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </Panel>
             ) : null}

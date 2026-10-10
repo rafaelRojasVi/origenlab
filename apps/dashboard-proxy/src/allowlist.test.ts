@@ -383,7 +383,7 @@ describe("V2 durable read boundary allowlist", () => {
 
   // The eight non-sending Marketing commands. The one command that sends — the admin-only test
   // send of one campaign email to one address — has its own test below.
-  it("allows the eight non-sending Marketing commands as POST, and no campaign send, approve, schedule or activate", async () => {
+  it("allows the nine non-sending Marketing commands as POST, and no campaign send, approve, schedule or activate", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of [
       "/v2/commands/create-campaign-draft",
@@ -392,6 +392,7 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/set-campaign-planning",
       "/v2/commands/resolve-unsubscribe-review",
       "/v2/commands/dismiss-unsubscribe-review",
+      "/v2/commands/confirm-triage-unsubscribe",
       "/v2/commands/block-campaign",
       "/v2/commands/unblock-campaign",
     ]) {
@@ -425,6 +426,9 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/unsubscribe/preview",
       "/v2/commands/resolve-unsubscribe-review/",
       "/v2/commands/dismiss-unsubscribe-review-all",
+      "/v2/commands/confirm-triage-unsubscribe/",
+      "/v2/commands/confirm-triage-unsubscribes",
+      "/v2/commands/apply-triage-unsubscribes",
       "/v2/commands/lift-unsubscribe",
       "/v2/commands/resubscribe",
       "/v2/commands/revoke-block",

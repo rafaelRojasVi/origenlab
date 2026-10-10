@@ -187,6 +187,10 @@ export const MARKETING_COMMAND_POST_PATHS: readonly RegExp[] = [
   // unsubscribe; nothing here applies replies or reads a mailbox.
   /^\/v2\/commands\/resolve-unsubscribe-review$/,
   /^\/v2\/commands\/dismiss-unsubscribe-review$/,
+  // W10: confirm one mail-triage «baja» reading (a «REMOVER» subject, a «BAJA» first line) as the
+  // same permanent suppression. Upstream: an active sales/admin operator, the reading's id, its
+  // sender and a note; the database proves the reading is of an inbound email from that address.
+  /^\/v2\/commands\/confirm-triage-unsubscribe$/,
   /^\/v2\/commands\/block-campaign$/,
   /^\/v2\/commands\/unblock-campaign$/,
   // The only sending path: one test, one address, admin-only upstream.
@@ -204,7 +208,7 @@ const CAMPAIGN_PLANNING_PATH_RE = /^\/v2\/commands\/set-campaign-planning$/;
 /** A review decision is a UUID, an address, a hash and at most 1,000 characters of text. */
 export const UNSUBSCRIBE_REVIEW_MAX_BYTES = 8_192;
 
-const UNSUBSCRIBE_REVIEW_PATH_RE = /^\/v2\/commands\/(resolve|dismiss)-unsubscribe-review$/;
+const UNSUBSCRIBE_REVIEW_PATH_RE = /^\/v2\/commands\/((resolve|dismiss)-unsubscribe-review|confirm-triage-unsubscribe)$/;
 
 /** A block body is a scope, a UUID, a version and a reason of at most 2,000 characters. */
 export const CAMPAIGN_BLOCK_MAX_BYTES = 16_384;

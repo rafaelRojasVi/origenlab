@@ -68,6 +68,8 @@ RECORD_SCHEMA_VERSION = "gmail-reply-staging/2026-09-27.v1"
 APPLY_UNSUBSCRIBE_REPLIES = "apply-unsubscribe-replies"
 RESOLVE_UNSUBSCRIBE_REVIEW = "resolve-unsubscribe-review"
 DISMISS_UNSUBSCRIBE_REVIEW = "dismiss-unsubscribe-review"
+#: An operator confirms what the mail triage read as an unsubscribe (STATUS.md §2.7.86).
+CONFIRM_TRIAGE_UNSUBSCRIBE = "confirm-triage-unsubscribe"
 
 #: The version of one «BAJA» held for review, as ``outbound.add_contact_control`` recomputes it
 #: before a dismissal: over the request (alias ``a``) and its reply evidence (alias ``s``). A
