@@ -1699,6 +1699,37 @@ class CrmWorkspaceRepository:
                 """  # noqa: S608 - REVIEW_SHA256_SQL is a constant
             )
             pending = self._rows(cur)
+            # What the mail triage read as an unsubscribe but the reply grammar refuses (a
+            # «REMOVER» subject, a «BAJA» first line with more text): proposals for a person. One
+            # per captured inbound email, from an address that no marketing block and no
+            # unsubscribe request (other than a dismissed one) already covers. Never the body.
+            cur.execute(
+                """
+                select a.id::text as assertion_id, snd.address_norm as address, m.subject,
+                       m.internal_date::text as observed_at, a.created_at::text as recorded_at,
+                       a.value_norm as triage_version,
+                       coalesce((select array_agg(x) from jsonb_array_elements_text(a.value -> 'reasons') x), '{}')
+                         as reasons,
+                       m.provider_message_id as gmail_message_id
+                  from evidence.assertion a
+                  join evidence.source_record sr on sr.id = a.source_record_id and sr.kind = 'gmail_message'
+                  join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
+                  join lateral (select p.address_norm from comms.message_participant p
+                                 where p.message_id = m.id and p.role = 'from' limit 1) snd on true
+                 where a.kind = 'message_triage' and a.value ->> 'class' = 'unsubscribe'
+                   and m.direction = 'inbound'
+                   and not exists (select 1 from outbound.contact_control c
+                                    where c.scope = 'address' and c.value_norm = snd.address_norm
+                                      and c.kind = 'block' and c.purpose = 'marketing')
+                   and not exists (select 1 from evidence.assertion u
+                                    where u.kind = 'unsubscribe_request' and u.value_norm = snd.address_norm
+                                      and u.resolution <> 'rejected')
+                 order by m.internal_date desc, a.id
+                 limit %s
+                """,
+                (limit,),
+            )
+            readings = self._rows(cur)
             cur.execute(
                 """
                 select kind, purpose, count(*)::int from outbound.contact_control
@@ -1714,8 +1745,10 @@ class CrmWorkspaceRepository:
                 "baja_messages": sum(e["baja_messages"] for e in entries),
                 "last_recorded_at": entries[0]["recorded_at"] if entries else None,
                 "pending_reviews": len(pending),
+                "triage_readings": len(readings),
             },
             "pending_reviews": pending[:limit],
+            "triage_readings": readings,
             "entries": entries[:limit],
             "truncated": len(entries) > limit,
             "frozen_campaigns": frozen,

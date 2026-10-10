@@ -31,6 +31,14 @@ Four operations, deliberately separate:
   above: a confirmed request is never dismissed. The reply evidence and
   the request stay. Replaying the same ``Idempotency-Key`` returns the stored answer.
 
+* **Confirm a triage reading** (``confirm-triage-unsubscribe``) — the mail triage read an
+  email as class ``unsubscribe`` (a «REMOVER» subject, a «BAJA» first line with more text) that
+  the reply grammar refuses; an operator who read it confirms the reading with a note. The same
+  function proves the reading is of an inbound captured message from that exact address and
+  writes what a confirmed «BAJA» writes: the permanent suppression (or the link), one resolved
+  ``unsubscribe_request`` on the capture record and one event. Confirming again answers
+  ``already_resolved``. No reading is ever applied without this click.
+
 All run as ``origenlab_api`` and read or write nothing in Gmail: there is no mail client here.
 The apply, resolve and dismiss routes exist only with ``ORIGENLAB_V2_UNSUBSCRIBE_APPLY_ENABLED``
 on.
@@ -50,6 +58,7 @@ from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.unsubscribe_replies import (
     APPLIED_OUTCOMES,
     APPLY_UNSUBSCRIBE_REPLIES,
+    CONFIRM_TRIAGE_UNSUBSCRIBE,
     DISMISS_UNSUBSCRIBE_REVIEW,
     MAX_RECORDS,
     RESOLVE_UNSUBSCRIBE_REVIEW,
@@ -86,6 +95,18 @@ class ResolveUnsubscribeReviewBody(BaseModel):
 
     assertion_id: UUID
     #: The address the operator saw; must be the request's own, or nothing happens.
+    expected_address: Annotated[str, Field(min_length=3, max_length=320)]
+    note: Annotated[str, Field(min_length=1, max_length=500)]
+
+
+class ConfirmTriageUnsubscribeBody(BaseModel):
+    """Confirm one mail-triage `unsubscribe` reading as a permanent suppression of its sender."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The `message_triage` assertion the suppressions read listed.
+    assertion_id: UUID
+    #: The sender the operator saw; must be the message's own From, or nothing happens.
     expected_address: Annotated[str, Field(min_length=3, max_length=320)]
     note: Annotated[str, Field(min_length=1, max_length=500)]
 
@@ -291,6 +312,48 @@ class V2UnsubscribeRepository(CommandTransaction):
             "reads_mailbox": False,
         }
 
+    # ------------------------------------------------------------------ confirm a triage reading
+
+    def _confirm_triage(self, cur: Any, operator: OperatorIdentity, f: dict[str, Any], receipt_id: str) -> dict[str, Any]:
+        cur.execute(
+            """
+            select p.address_norm, a.value ->> 'class'
+              from evidence.assertion a
+              join evidence.source_record sr on sr.id = a.source_record_id
+              join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
+              left join lateral (select x.address_norm from comms.message_participant x
+                                  where x.message_id = m.id and x.role = 'from' limit 1) p on true
+             where a.id = %s and a.kind = 'message_triage'
+            """,
+            (f["assertion_id"],),
+        )
+        row = cur.fetchone()
+        if row is None or row[1] != "unsubscribe":
+            raise CommandRefused(404, "reading_not_found", "no unsubscribe reading with that id")
+        address = row[0]
+        if address is None or address != f["expected_address"].strip().lower():
+            raise CommandRefused(409, "reading_address_mismatch",
+                                 "the email is from another address than the one confirmed; reload the list")
+        cur.execute(
+            "select outbound.add_contact_control('block', 'marketing', %s, 'unsubscribe', %s, %s, %s::jsonb)",
+            (address, operator.operator_id, receipt_id, json_payload({
+                "basis": "triage_reading_confirmed", "assertion_id": str(f["assertion_id"]), "note": f["note"],
+                "policy_version": UNSUBSCRIBE_POLICY_VERSION,
+            })),
+        )
+        applied = cur.fetchone()[0]
+        return {
+            "command": CONFIRM_TRIAGE_UNSUBSCRIBE,
+            "assertion_id": str(f["assertion_id"]),
+            "address": address,
+            "outcome": applied["outcome"],
+            "contact_control_id": applied.get("contact_control_id"),
+            "unsubscribe_request_id": applied.get("assertion_id"),
+            "suppression": {"kind": "block", "purpose": "marketing", "reason": "unsubscribe", "permanent": True},
+            "sends_email": False,
+            "reads_mailbox": False,
+        }
+
     # ------------------------------------------------------------------ dismiss
 
     def _dismiss(self, cur: Any, operator: OperatorIdentity, f: dict[str, Any], receipt_id: str) -> dict[str, Any]:
@@ -335,4 +398,4 @@ class V2UnsubscribeRepository(CommandTransaction):
         }
 
     _HANDLERS = {APPLY_UNSUBSCRIBE_REPLIES: _apply, RESOLVE_UNSUBSCRIBE_REVIEW: _resolve,
-                 DISMISS_UNSUBSCRIBE_REVIEW: _dismiss}
+                 DISMISS_UNSUBSCRIBE_REVIEW: _dismiss, CONFIRM_TRIAGE_UNSUBSCRIBE: _confirm_triage}

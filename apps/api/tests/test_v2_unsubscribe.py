@@ -39,6 +39,7 @@ from origenlab_api.v2.marketing_audience import AudienceInputs, CaseFacts, Eligi
 from origenlab_api.v2.unsubscribe_replies import (
     APPLY_UNSUBSCRIBE_REPLIES,
     BAJA_GRAMMAR_VERSION,
+    CONFIRM_TRIAGE_UNSUBSCRIBE,
     DISMISS_UNSUBSCRIBE_REVIEW,
     RESOLVE_UNSUBSCRIBE_REVIEW,
     UNSUBSCRIBE_POLICY_VERSION,
@@ -461,6 +462,9 @@ def _client(repo, role="sales", *, apply=True) -> TestClient:
 PREVIEW, APPLY = "/v2/unsubscribe/preview", "/v2/commands/apply-unsubscribe-replies"
 RESOLVE = "/v2/commands/resolve-unsubscribe-review"
 DISMISS = "/v2/commands/dismiss-unsubscribe-review"
+CONFIRM_TRIAGE = "/v2/commands/confirm-triage-unsubscribe"
+CONFIRM_TRIAGE_BODY = {"assertion_id": "00000000-0000-4000-8000-00000000abce", "expected_address": "nadie@lab.test",
+                       "note": "Leído: asunto REMOVER, pide no recibir más correos"}
 DISMISS_BODY = {"assertion_id": "00000000-0000-4000-8000-00000000abcd", "expected_address": "nadie@lab.test",
                 "expected_review_sha256": "c" * 64, "explanation": "Falso positivo: respondió «BAJA» a otra cosa"}
 RESOLVE_BODY = {"assertion_id": "00000000-0000-4000-8000-00000000abcd", "expected_address": "nadie@lab.test",
@@ -512,6 +516,24 @@ def test_sales_and_admin_preview_and_apply(role) -> None:
     assert r.status_code == 200 and repo.calls[-1]["command_name"] == APPLY_UNSUBSCRIBE_REPLIES
     r = client.post(RESOLVE, json=RESOLVE_BODY, headers={"Idempotency-Key": "k-2"})
     assert r.status_code == 200 and repo.calls[-1]["command_name"] == RESOLVE_UNSUBSCRIBE_REVIEW
+    r = client.post(CONFIRM_TRIAGE, json=CONFIRM_TRIAGE_BODY, headers={"Idempotency-Key": "k-3"})
+    assert r.status_code == 200 and repo.calls[-1]["command_name"] == CONFIRM_TRIAGE_UNSUBSCRIBE
+
+
+def test_confirming_a_triage_reading_needs_a_key_the_reading_id_the_address_and_a_note() -> None:
+    repo = _FakeRepo()
+    client = _client(repo)
+    assert client.post(CONFIRM_TRIAGE, json=CONFIRM_TRIAGE_BODY).status_code == 400
+    for bad in ({**CONFIRM_TRIAGE_BODY, "assertion_id": "x"}, {**CONFIRM_TRIAGE_BODY, "note": ""},
+                {**CONFIRM_TRIAGE_BODY, "note": "x" * 501},
+                {k: v for k, v in CONFIRM_TRIAGE_BODY.items() if k != "expected_address"},
+                {**CONFIRM_TRIAGE_BODY, "body_text": "REMOVER"}):
+        assert client.post(CONFIRM_TRIAGE, json=bad, headers={"Idempotency-Key": "k-1"}).status_code == 422
+    assert repo.calls == []
+    assert _client(repo, "viewer").post(CONFIRM_TRIAGE, json=CONFIRM_TRIAGE_BODY,
+                                        headers={"Idempotency-Key": "k-1"}).status_code == 403
+    assert _client(repo, apply=False).post(CONFIRM_TRIAGE, json=CONFIRM_TRIAGE_BODY,
+                                           headers={"Idempotency-Key": "k-1"}).status_code == 404
 
 
 def test_resolve_needs_a_key_a_request_id_the_address_and_a_note() -> None:
@@ -562,18 +584,18 @@ def test_the_apply_route_exists_only_behind_its_switch_and_preview_always() -> N
                {"v2_database_url": loopback, "v2_audience_freeze_enabled": True},
                {"v2_unsubscribe_apply_enabled": True}):
         enabled, routes = paths(**kw)
-        assert enabled is False and not {APPLY, RESOLVE, DISMISS} & routes and PREVIEW in routes
+        assert enabled is False and not {APPLY, RESOLVE, DISMISS, CONFIRM_TRIAGE} & routes and PREVIEW in routes
     enabled, routes = paths(v2_database_url=loopback, v2_unsubscribe_apply_enabled=True)
-    assert enabled is True and {APPLY, RESOLVE, DISMISS, PREVIEW} <= routes
+    assert enabled is True and {APPLY, RESOLVE, DISMISS, CONFIRM_TRIAGE, PREVIEW} <= routes
     assert Settings(_env_file=None).v2_unsubscribe_apply_enabled is False
 
 
-def test_the_w10_routers_expose_exactly_four_posts() -> None:
+def test_the_w10_routers_expose_exactly_five_posts() -> None:
     from origenlab_api.v2.unsubscribe_routes import unsubscribe_apply_router, unsubscribe_preview_router
 
     assert [(r.path, set(r.methods)) for r in unsubscribe_preview_router.routes] == [(PREVIEW, {"POST"})]
     assert [(r.path, set(r.methods)) for r in unsubscribe_apply_router.routes] == [
-        (APPLY, {"POST"}), (RESOLVE, {"POST"}), (DISMISS, {"POST"})]
+        (APPLY, {"POST"}), (RESOLVE, {"POST"}), (DISMISS, {"POST"}), (CONFIRM_TRIAGE, {"POST"})]
 
 
 # --------------------------------------------------------------------------- no Gmail, no network, no send
@@ -1562,3 +1584,118 @@ def test_the_suppression_read_is_masked_for_a_viewer_and_says_gmail_is_not_synch
     sales = client("sales").get("/v2/workspace/marketing/suppressions")
     assert f"ana-{tag}@uni.test" in sales.text
     assert f"perdida-{tag}@lab.test" in {p["address"] for p in sales.json()["pending_reviews"]}
+
+
+# --------------------------------------------------------------------------- a triage reading, confirmed
+
+
+def _confirm_triage(dsn, operator, assertion_id, address, note="Leído: asunto REMOVER, pide salir de la lista", key=None):
+    from origenlab_api.v2.commands import request_digest
+    from origenlab_api.v2.unsubscribe_commands import ConfirmTriageUnsubscribeBody
+
+    body = ConfirmTriageUnsubscribeBody(assertion_id=assertion_id, expected_address=address, note=note)
+    return _repo(dsn).execute(command_name=CONFIRM_TRIAGE_UNSUBSCRIBE, operator=operator,
+                              fields=body.model_dump(mode="json"), idempotency_key=key or uuid.uuid4().hex,
+                              digest=request_digest(CONFIRM_TRIAGE_UNSUBSCRIBE, body))
+
+
+def _captured_reading(dsn, tag, who, *, direction="inbound", klass="unsubscribe", subject="REMOVER",
+                      reasons=("subject:baja_word",)) -> str:
+    """A captured email from `who` with one mail-triage reading, as the worker records them."""
+    import psycopg
+
+    pid = f"gm-{klass}-{who}-{uuid.uuid4().hex[:6]}"
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute("select id::text from comms.mailbox where address_norm = %s", (f"ventas-{tag}@example.invalid",))
+        mailbox = cur.fetchone()[0]
+        cur.execute("insert into comms.message (mailbox_id, provider_message_id, direction, internal_date, subject) "
+                    "values (%s, %s, %s, '2026-10-09T13:00:00+00:00', %s) returning id::text",
+                    (mailbox, pid, direction, subject))
+        message = cur.fetchone()[0]
+        cur.execute("insert into comms.message_participant (message_id, role, address_norm) values (%s, 'from', %s)",
+                    (message, f"{who}-{tag}@lab.test"))
+        cur.execute("insert into evidence.source_record (kind, dedupe_key, payload) values ('gmail_message', %s, '{}') "
+                    "returning id::text", (f"gmail_message:{pid}",))
+        sr = cur.fetchone()[0]
+        cur.execute("insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+                    "values (%s, 'message_triage', 'triage:v1', %s) returning id::text",
+                    (sr, json.dumps({"triage_version": 1, "class": klass, "needs_model": False,
+                                     "reasons": list(reasons), "model_state": "not_needed"})))
+        return cur.fetchone()[0]
+
+
+@needs_db
+def test_a_triage_unsubscribe_reading_is_listed_and_confirmed_once_into_the_same_permanent_suppression(
+        disposable_database, world) -> None:
+    import psycopg
+
+    from origenlab_api.v2.commands import CommandRefused
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    tag = world["tag"]
+    dsn = runtime_dsn(disposable_database)
+    workspace = CrmWorkspaceRepository(psycopg.connect, dsn)
+    remover = f"remover-{tag}@lab.test"
+    reading = _captured_reading(disposable_database, tag, "remover")
+    quote_reading = _captured_reading(disposable_database, tag, "cliente", klass="quote_request", subject="Cotización",
+                                      reasons=("subject:quote_word",))
+    own = _captured_reading(disposable_database, tag, "nuestro", direction="outbound")
+
+    # The read lists the inbound unsubscribe reading only: never a quote request, never our own mail.
+    sup = workspace.suppressions()
+    listed = {r["assertion_id"]: r for r in sup["triage_readings"]}
+    assert reading in listed and quote_reading not in listed and own not in listed
+    row = listed[reading]
+    assert (row["address"], row["subject"], row["reasons"], row["triage_version"]) == (
+        remover, "REMOVER", ["subject:baja_word"], "triage:v1")
+    assert row["observed_at"].startswith("2026-10-09") and row["gmail_message_id"].startswith("gm-unsubscribe-")
+    assert sup["summary"]["triage_readings"] >= 1 and "body_text" not in json.dumps(sup)
+
+    # Refusals: another address, a reading that is not an unsubscribe, a viewer.
+    with pytest.raises(CommandRefused) as err:
+        _confirm_triage(disposable_database, world["operator"], reading, f"otra-{tag}@lab.test")
+    assert err.value.code == "reading_address_mismatch"
+    with pytest.raises(CommandRefused) as err:
+        _confirm_triage(disposable_database, world["operator"], quote_reading, f"cliente-{tag}@lab.test")
+    assert err.value.code == "reading_not_found"
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        _confirm_triage(disposable_database, world["viewer_identity"], reading, remover)
+    assert _db_rows(disposable_database, "select count(*) from outbound.contact_control where value_norm = %s",
+                    (remover,)) == [(0,)]
+
+    before = _counts(disposable_database)
+    out = _confirm_triage(disposable_database, world["operator"], reading, remover)
+    assert (out["outcome"], out["address"]) == ("added", remover)
+    assert _delta(before, _counts(disposable_database)) == {
+        "outbound.contact_control": 1, "evidence.assertion": 1, "crm.domain_event": 1, "platform.command_receipt": 1}
+    [(resolution, value, reason, source, event_type, event)] = _db_rows(disposable_database, """
+        select a.resolution, a.value, c.reason, c.source, e.event_type, e.payload
+          from evidence.assertion a
+          join outbound.contact_control c on c.id = a.resolved_id
+          join crm.domain_event e on e.aggregate_kind = 'contact_control' and e.aggregate_id = c.id
+         where a.id = %s and a.kind = 'unsubscribe_request'""", (out["unsubscribe_request_id"],))
+    assert (resolution, reason, source, event_type) == ("promoted", "unsubscribe", "unsubscribe_handler", "contact_control.added")
+    assert value["basis"] == "triage_reading_confirmed" and value["triage_assertion_id"] == reading
+    assert value["triage_reasons"] == ["subject:baja_word"] and value["review_note"].startswith("Leído")
+    assert event["basis"] == "triage_reading_confirmed" and event["triage_assertion_id"] == reading
+    assert event["review_note"].startswith("Leído") and event["policy_version"] == UNSUBSCRIBE_POLICY_VERSION
+    assert "grammar_version" not in event  # no reply grammar accepted this body; a person did
+    # The same capture record that the triage read now carries the request; the reading itself is untouched.
+    assert _db_rows(disposable_database, "select a.source_record_id = r.source_record_id, r.resolution "
+                    "from evidence.assertion a join evidence.assertion r on r.id = %s where a.id = %s",
+                    (reading, out["unsubscribe_request_id"])) == [(True, "unresolved")]
+
+    # Listed no more; the suppression is in the ordinary list; confirming again adds nothing.
+    sup = workspace.suppressions()
+    assert reading not in {r["assertion_id"] for r in sup["triage_readings"]}
+    assert remover in {e["address"] for e in sup["entries"]}
+    before = _counts(disposable_database)
+    again = _confirm_triage(disposable_database, world["operator"], reading, remover)
+    assert (again["outcome"], again["contact_control_id"]) == ("already_resolved", out["contact_control_id"])
+    assert _delta(before, _counts(disposable_database)) == {"platform.command_receipt": 1}
+    # The block is the permanent one: a marketing refusal, and the owner cannot lift it.
+    with psycopg.connect(disposable_database, autocommit=True) as conn:
+        conn.execute("set role origenlab_owner")
+        with pytest.raises(psycopg.errors.RaiseException):
+            conn.execute("delete from outbound.contact_control where id = %s", (out["contact_control_id"],))

@@ -697,9 +697,18 @@ labels or answers a mailbox; synchronizing Gmail replies automatically is **not 
   dismisses, weakens, updates or deletes a contact control.
 - **Where**: the dashboard's Bajas page offers **Confirmar BAJA** (sales/admin) and **Descartar
   (falso positivo)** (admin) on each held review, only when the API mounts these commands; the
-  proxy forwards exactly these two POSTs under the marketing-command guard (allowed `Origin`, no
+  proxy forwards exactly these POSTs under the marketing-command guard (allowed `Origin`, no
   cross-site fetch, JSON within 8 KB, `Idempotency-Key`). Applying reply batches and the preview
   stay API-only.
+- **What the triage read** (2026-10-10, STATUS.md §2.7.86): an email the mail triage classed
+  `unsubscribe` — a «REMOVER» subject, a «BAJA» first line with a signature after it — that the
+  grammar refuses is listed on the same page as a *proposal* («Posibles BAJAS según la lectura
+  del correo»), with a link to the email. **Confirmar BAJA** there
+  (`POST /v2/commands/confirm-triage-unsubscribe`, sales/admin, the reading's id, its sender and
+  a note) makes the same function write the same permanent suppression, after proving the
+  reading is of an inbound captured email from that exact address (basis
+  `triage_reading_confirmed`). Nothing is suppressed without that click; the reading never feeds
+  the grammar, the sender policy or the rules.
 - **Permanence**: an unsubscribe block, and any block a «BAJA» was linked to, is never updated
   or deleted, and its evidence is immutable (trigger `outbound.unsubscribe_permanent`) — the one
   change ever made to it is the review deciding a held request (confirmed, or dismissed and

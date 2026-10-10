@@ -2057,6 +2057,12 @@ useful later. Every verdict is kept (`evidence.triage_review`, append-only; a se
 supersedes the first without rewriting it). `scripts/triage_eval.py` measures the triage against
 them before a rule change.
 
+**Before switching the model** (`ORIGENLAB_WORKER_TRIAGE_MODEL`): the same script with
+`--models <current>,<candidate>,…` reads one sample with every model and prints, per model, the
+readings run and tokens, and how often each candidate agreed with the first (the reference) on
+intent, stage, urgency and needs_reply; the report holds every model's reading side by side.
+Change the variable only on that evidence, and keep the export outside the repository.
+
 **Re-triage after a rule change:** bump `TRIAGE_VERSION` in `triage_rules.py`. New readings are
 stored beside the old ones (`triage:v2`), never over them.
 

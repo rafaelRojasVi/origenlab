@@ -89,6 +89,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/set-campaign-planning",
     "/v2/commands/resolve-unsubscribe-review",
     "/v2/commands/dismiss-unsubscribe-review",
+    "/v2/commands/confirm-triage-unsubscribe",
     "/v2/commands/block-campaign",
     "/v2/commands/unblock-campaign",
     "/v2/commands/send-campaign-test",

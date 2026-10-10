@@ -941,7 +941,8 @@ describe("W10 review decisions (confirm / dismiss a held «BAJA»)", () => {
         ...extra,
       },
     });
-  const PATHS = ["/v2/commands/resolve-unsubscribe-review", "/v2/commands/dismiss-unsubscribe-review"];
+  const PATHS = ["/v2/commands/resolve-unsubscribe-review", "/v2/commands/dismiss-unsubscribe-review",
+                 "/v2/commands/confirm-triage-unsubscribe"];
 
   it.each(PATHS)("forwards a same-origin JSON %s with its key and only the session cookie", async (path) => {
     stubUpstreamFetch();
