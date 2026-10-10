@@ -236,6 +236,10 @@ TRIAGE_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = (
     ("evidence.assertion", "SELECT"), ("evidence.assertion", "INSERT"), ("catalog.product", "SELECT"),
     ("crm.organization", "SELECT"), ("crm.organization_relationship", "SELECT"),
     ("crm.opportunity", "SELECT"), ("crm.opportunity_evidence", "SELECT"),
+    # The context matcher (`case_match.py`): the case snapshot, the thread's attachments, past verdicts.
+    ("crm.quote", "SELECT"), ("crm.quote_revision", "SELECT"), ("crm.organization_domain", "SELECT"),
+    ("crm.opportunity_interest", "SELECT"), ("comms.message_participant", "SELECT"),
+    ("comms.attachment", "SELECT"), ("evidence.triage_review", "SELECT"),
 )
 TRIAGE_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset(
     {
@@ -248,6 +252,13 @@ TRIAGE_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset(
         ("crm", "organization_relationship", "origenlab_worker_select"),
         ("crm", "opportunity", "origenlab_worker_select"),
         ("crm", "opportunity_evidence", "origenlab_worker_select"),
+        ("crm", "quote", "origenlab_worker_select"),
+        ("crm", "quote_revision", "origenlab_worker_select"),
+        ("crm", "organization_domain", "origenlab_worker_select"),
+        ("crm", "opportunity_interest", "origenlab_worker_select"),
+        ("comms", "message_participant", "origenlab_worker_select"),
+        ("comms", "attachment", "origenlab_worker_select"),
+        ("evidence", "triage_review", "origenlab_worker_select"),
     }
 )
 #: The Procrastinate queue (supabase/migrations/20261006180000): every table, every verb, and one
