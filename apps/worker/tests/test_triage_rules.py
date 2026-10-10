@@ -117,6 +117,19 @@ def test_free_mail_and_domain_are_reported_and_reasons_never_carry_text() -> Non
 @pytest.mark.parametrize("m,expected", [
     (mail(subject="REMOVER", body=""), "unsubscribe"),
     (mail(subject="Re: Cyber OrigenLab", body="BAJA"), "unsubscribe"),
+    # The instruction first, then a signature: an unsubscribe reading for a person to confirm
+    # (the W10 grammar itself still refuses it as not standalone), never a quote request.
+    (mail(subject="RE: Cyber OrigenLab · 5% a 10%", body="REMOVER\n\n \n\nSds.\n\nAna Pérez\nana@cliente.invalid\n+56 9 1111 1111\nCLIENTE SPA"),
+     "unsubscribe"),
+    (mail(subject="RE: Cyber OrigenLab", body="Remover\n\nGracias"), "unsubscribe"),
+    # An absence notice under a plain «RE:» subject with no machine header: its opening says so.
+    (mail(subject="RE: Cyber OrigenLab · 5% a 10%",
+          body="Estimados:\n\nJunto con saludarlo, me encuentro fuera de la oficina entre el 28/09 y el 23/10, "
+               "sin acceso a correos. En caso de cotizaciones dirigirse a reemplazo@cliente.invalid."), "auto_reply"),
+    # A person who mentions a trip after asking is a person.
+    (mail(subject="RE: Cyber OrigenLab", body="Necesito cotizar una balanza analítica para el laboratorio, "
+          "con despacho a Temuco. Les cuento que la próxima semana estaré fuera de la oficina, así que respondo el lunes."),
+     "quote_request"),
     (mail(subject="Re: Cyber OrigenLab", body="Por favor la baja del equipo antiguo y cotizar uno nuevo"),
      "quote_request"),
     (mail(subject="Ausencia Pre y Post natal Re: Cyber OrigenLab"), "auto_reply"),

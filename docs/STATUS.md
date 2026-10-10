@@ -2355,3 +2355,15 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Rule 1 | `stageBasis` (dashboard) ignores the import origin while the newest revision is younger than 14 days (`RECENT_QUOTE_DAYS`): the quote is «Enviada», joins «Seguimientos» from day 3 on the 3 · 14 · 30 rhythm, and only becomes «sin decidir» after two weeks with no task and no reply. |
 | Rule 2 | `repliesToAnswer` includes a won case whose last inbound email is later than `closed_at` (`wroteAfterWinning`); the row reads «Escribió tras ganar el …», offers only «Abrir respuesta» (tasks are refused on closed cases, so answering the email is what takes it off the list). Lost cases stay out: a client writing back there is a new request. |
 | Not changed | The API still stores every registered quote as `historical_import`; a distinct origin for the sync's quotes is a later change. |
+
+### 2.7.84 Triage: «REMOVER» with a signature and an absence notice under «RE:» are noise, not quote requests, 2026-10-10 — built, not deployed
+
+`apps/worker` rules only (`triage_rules.py`): no command, proxy, dashboard, API or schema change. The W10 suppression grammar (`unsubscribe_replies.classify_reply`) is unchanged.
+
+| | |
+|---|---|
+| Problem | Two replies to the Cyber campaign (9 Oct) were read as «Solicitud de cotización» and sat in «Correos sin caso»: a body «REMOVER» followed by the sender's signature (the W10 grammar refuses it as not standalone, and the subject was «RE: Cyber …», not the bare word), and an out-of-office text whose subject was only «RE: Cyber …» with no `Auto-Submitted` header. |
+| Rule 1 | `unsubscribe` when the reply's first non-empty line is a bare BAJA/REMOVER form and more text follows (`body:baja_first_line`): an unsubscribe reading for a person to confirm. Suppression itself still goes through W10, which keeps refusing the non-standalone body — nothing is suppressed by this rule. |
+| Rule 2 | `auto_reply` when the reply's own opening (quoted history cut, first 300 chars) contains an absence phrase («fuera de la oficina», «out of office», «me encuentro de vacaciones», …) and no quote-request word precedes it (`body:<phrase>`): a person who asks for a price and then mentions a trip stays a person. |
+| Evidence | `apps/worker` `scripts/validate.sh`: **428 passed**, 51 skipped; five new `test_real_mail_cases` rows (fictitious addresses) |
+
