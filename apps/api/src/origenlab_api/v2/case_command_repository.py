@@ -58,6 +58,7 @@ from origenlab_api.v2.case_commands import (
     RECORD_CASE_INTEREST,
     RECORD_CASE_QUOTATION,
     RECORD_CASE_WON,
+    REOPEN_COMMERCIAL_CASE,
     REQUESTING_INSTITUTION,
     RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
@@ -82,6 +83,11 @@ EVIDENCE_SUBJECTS: tuple[tuple[str, str, str], ...] = (
     ("message_id", "comms.message", "message"),
     ("notice_id", "procurement.notice", "procurement notice"),
 )
+
+
+#: WORKFLOWS.md §1.1, read downward from `lead`: the recorded moves a reopened case makes to
+#: reach «Conversación». Each is a transition the table allows and the stage guard trigger checks.
+REOPEN_PATH_TO_NEGOTIATING: tuple[str, ...] = ("qualifying", "qualified", "quoting", "negotiating")
 
 
 class V2CaseCommandRepository(CommandTransaction):
@@ -1055,8 +1061,210 @@ class V2CaseCommandRepository(CommandTransaction):
             )
         return int(case["version"]) + 1
 
+    # ------------------------------------------------- reopening a closed case
+
+    def _reopen_commercial_case(
+        self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
+    ) -> dict[str, Any]:
+        """A new case that references the closed one, from the email that reopened it.
+
+        §1.1 is kept to the letter: the closed case is read, never written, and the new case
+        opens at `lead` and moves only along the table — four recorded moves to «Conversación»
+        when `stage` asks for it, each one an `opportunity.staged` event, all in this
+        transaction or none. The old case's confirmed requesting institution is carried over
+        (it is what makes the moves lawful: `qualified` onward needs a human-named requester).
+        The old case is read, never written: the reference lives in the new case.
+        """
+        cur.execute(
+            """
+            select id::text as id, title, stage, closed_at, version,
+                   reopened_from_opportunity_id::text as reopened_from_opportunity_id
+              from crm.opportunity
+             where id = %s
+               for share
+            """,
+            (fields["opportunity_id"],),
+        )
+        old = self._row(cur)
+        if old is None:
+            raise CommandRefused(404, "case_not_found", "no such case")
+        if old["closed_at"] is None:
+            raise CommandRefused(
+                409,
+                "case_is_not_closed",
+                f"this case is open at '{old['stage']}'; reopening is for a case that ended. "
+                "Link the email to it instead",
+            )
+        cur.execute(
+            """
+            select id::text as id from crm.opportunity
+             where reopened_from_opportunity_id = %s and closed_at is null
+             order by created_at limit 1
+            """,
+            (old["id"],),
+        )
+        already = self._row(cur)
+        if already is not None:
+            raise CommandRefused(
+                409,
+                "case_already_reopened",
+                f"this case was already reopened as {already['id']}, which is still open; "
+                "link the email to that one",
+            )
+
+        cur.execute(
+            """
+            select id::text as id, kind, review_status, is_quarantined
+              from evidence.source_record
+             where id = %s
+               for share
+            """,
+            (fields["origin_source_record_id"],),
+        )
+        record = self._row(cur)
+        if record is None:
+            raise CommandRefused(
+                404,
+                "source_record_not_found",
+                "no such evidence record; a case is reopened from a document that exists",
+            )
+        if record["is_quarantined"]:
+            raise CommandRefused(
+                409,
+                "source_record_quarantined",
+                "this record is quarantined because its evidence contradicts itself; a case "
+                "reopened on it would inherit the contradiction as its reason to exist",
+            )
+
+        cur.execute(
+            """
+            select oo.organization_id::text as organization_id, oo.supplier_exception_reason
+              from crm.opportunity_organization oo
+             where oo.opportunity_id = %s and oo.role = %s and oo.valid_to is null
+               and oo.confirmation = 'confirmed'
+            """,
+            (old["id"], REQUESTING_INSTITUTION),
+        )
+        requester = self._row(cur)
+        if fields["stage"] != OPENING_STAGE and requester is None:
+            raise CommandRefused(
+                409,
+                "stage_requires_a_confirmed_requesting_institution",
+                "reopening at 'negotiating' means the same institution is still asking, and "
+                "the closed case never recorded a confirmed one. Reopen it at 'lead' and name "
+                "the institution there",
+            )
+
+        cur.execute(
+            """
+            insert into crm.opportunity
+                (title, stage, owner_operator_id, origin_source_record_id,
+                 reopened_from_opportunity_id)
+            values (%s, %s, %s, %s, %s)
+            returning id::text as id, version
+            """,
+            (old["title"], OPENING_STAGE, operator.operator_id, record["id"], old["id"]),
+        )
+        case = self._row(cur)
+        assert case is not None  # noqa: S101 - `returning` on a successful insert
+        created = ["opportunity", "opportunity_evidence"]
+        events = [
+            self._append_event(
+                cur,
+                aggregate_kind="opportunity",
+                aggregate_id=case["id"],
+                event_type="opportunity.created",
+                payload={
+                    "title": old["title"],
+                    "stage": OPENING_STAGE,
+                    "owner_operator_id": operator.operator_id,
+                    "origin_source_record_id": record["id"],
+                    "source_kind": record["kind"],
+                    "reopened_from_opportunity_id": old["id"],
+                    "note": fields["note"],
+                },
+                operator=operator,
+                receipt_id=receipt_id,
+            )
+        ]
+        evidence_id, event_id = self._link_evidence_row(
+            cur,
+            case_id=case["id"],
+            subject_column="source_record_id",
+            subject_id=record["id"],
+            relation="origin",
+            operator=operator,
+            receipt_id=receipt_id,
+            note=fields["note"],
+        )
+        events.append(event_id)
+
+        organization_id = None
+        version = int(case["version"])
+        if requester is not None:
+            case_organization_id, org_events, version = self._open_case_organization_row(
+                cur,
+                case={"id": case["id"], "version": version, "stage": OPENING_STAGE},
+                organization_id=requester["organization_id"],
+                role=REQUESTING_INSTITUTION,
+                supplier_exception_reason=requester["supplier_exception_reason"],
+                operator=operator,
+                receipt_id=receipt_id,
+                note=fields["note"],
+            )
+            events.extend(org_events)
+            created.append("opportunity_organization")
+            organization_id = requester["organization_id"]
+
+        stage = OPENING_STAGE
+        if fields["stage"] != OPENING_STAGE:
+            for target in REOPEN_PATH_TO_NEGOTIATING:
+                cur.execute(
+                    """
+                    update crm.opportunity
+                       set stage = %s, version = version + 1, updated_at = now()
+                     where id = %s and version = %s
+                    """,
+                    (target, case["id"], version),
+                )
+                if cur.rowcount != 1:
+                    raise CommandRefused(
+                        409, "case_version_conflict", "the new case changed while the command ran"
+                    )
+                version += 1
+                events.append(
+                    self._append_event(
+                        cur,
+                        aggregate_kind="opportunity",
+                        aggregate_id=case["id"],
+                        event_type="opportunity.staged",
+                        payload={"from_stage": stage, "to_stage": target, "note": fields["note"],
+                                 "reopened_from_opportunity_id": old["id"]},
+                        operator=operator,
+                        receipt_id=receipt_id,
+                    )
+                )
+                stage = target
+
+        # The closed case is read, never written — not even an event: the domain-event type
+        # vocabulary is a closed list in the schema, and the reference lives durably in the new
+        # case's `reopened_from_opportunity_id` and its `opportunity.created` payload.
+        return {
+            "command": REOPEN_COMMERCIAL_CASE,
+            "opportunity_id": case["id"],
+            "opportunity_version": version,
+            "stage": stage,
+            "reopened_from_opportunity_id": old["id"],
+            "organization_id": organization_id,
+            "origin_source_record_id": record["id"],
+            "opportunity_evidence_id": evidence_id,
+            "created": created,
+            "event_ids": events,
+        }
+
     _HANDLERS = {
         OPEN_COMMERCIAL_CASE: _open_commercial_case,
+        REOPEN_COMMERCIAL_CASE: _reopen_commercial_case,
         LINK_CASE_EVIDENCE: _link_case_evidence,
         ADD_CASE_ORGANIZATION: _add_case_organization,
         SET_CASE_ORGANIZATION_ROLE: _set_case_organization_role,

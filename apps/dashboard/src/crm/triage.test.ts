@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OpportunityCardData, RevisionCard } from "./crmTypes";
 import {
-  approvalMove, isOpenableRequest, openCaseTitle, sortInbox, stageLabel, wonProposal, TRIAGE_PATHS, type TriageReading,
+  approvalMove, cardsById, isOpenableRequest, openCaseTitle, reopenProposal, sortInbox, stageLabel, wonProposal, TRIAGE_PATHS, type TriageReading,
 } from "./triage";
 import { MAIL_RULES_PATHS } from "./mailRules";
 import { parseProducts } from "./pages/TriagePanel";
@@ -163,6 +163,49 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
     );
     expect(ask.map((x) => x.assertion_id)).toEqual(["oc", "nuevo"]);
     expect(hidden).toEqual({ "en un caso": 2 });
+  });
+
+  it("asks «¿Reabrir?» for a person's reply on a closed case, first; an open or won case keeps it «en un caso»", () => {
+    const NOW = new Date("2026-10-10T12:00:00Z");
+    const lost = { ...CASE, opportunity_id: "o-lost", stage: "lost", closed_at: "2026-09-20T10:00:00Z" };
+    const old = { ...CASE, opportunity_id: "o-old", stage: "abandoned", closed_at: "2026-05-01T10:00:00Z" };
+    const won = { ...CASE, opportunity_id: "o-won", stage: "won", closed_at: "2026-09-20T10:00:00Z" };
+    const { ask, hidden } = sortInbox(
+      [
+        r("nuevo", { sent_at: "2026-10-10T10:00:00Z" }),
+        r("vuelve", { class: "business_other", cases: [lost], sent_at: "2026-10-01T10:00:00Z" }),
+        r("vuelve-antiguo", { class: "quote_request", cases: [old], sent_at: "2026-09-30T10:00:00Z" }),
+        r("abierto", { cases: [CASE] }),
+        r("ganado", { cases: [won] }),
+        r("rebote", { class: "bounce", cases: [lost] }),
+      ],
+      [],
+      NOW,
+    );
+    expect(ask.map((x) => x.assertion_id)).toEqual(["vuelve", "vuelve-antiguo", "nuevo"]);
+    expect(hidden).toEqual({ "en un caso": 3 }); // the open one, the won one, and the bounce on the lost one
+    const recent = reopenProposal(r("vuelve", { cases: [lost] }), new Map(), NOW)!;
+    expect([recent.case.opportunity_id, recent.daysSinceClose, recent.stage]).toEqual(["o-lost", 20, "negotiating"]);
+    const stale = reopenProposal(r("vuelve-antiguo", { cases: [old] }), new Map(), NOW)!;
+    expect([stale.daysSinceClose, stale.stage]).toEqual([162, "lead"]);
+  });
+
+  it("with the board's cards, a closed case that never named its requester reopens at «Solicitada»", () => {
+    const NOW = new Date("2026-10-10T12:00:00Z");
+    const lost = { ...CASE, opportunity_id: "o-lost", stage: "lost" };
+    const cards = [
+      card({ opportunity_id: "o-lost", stage: "lost", closed_at: "2026-10-01T10:00:00Z", organization: null,
+             requesting_institution_confirmation: null }),
+      card({ opportunity_id: "o-lost2", stage: "lost", closed_at: "2026-10-01T10:00:00Z",
+             organization: { organization_id: "org-1", name: "Laboratorio Ejemplo", confirmation: "confirmed" },
+             requesting_institution_confirmation: "confirmed" }),
+    ];
+    const noRequester = reopenProposal(r("a", { cases: [lost] }), cardsById(cards), NOW)!;
+    expect([noRequester.stage, noRequester.daysSinceClose]).toEqual(["lead", 9]);
+    const withRequester = reopenProposal(r("b", { cases: [{ ...lost, opportunity_id: "o-lost2" }] }), cardsById(cards), NOW)!;
+    expect(withRequester.stage).toBe("negotiating");
+    // Several cases on the thread: all must be closed; the most recently closed one is reopened.
+    expect(reopenProposal(r("c", { cases: [lost, CASE] }), cardsById(cards), NOW)).toBeNull();
   });
 
   it("without the board's cards, a purchase order on a case is only counted, as before", () => {

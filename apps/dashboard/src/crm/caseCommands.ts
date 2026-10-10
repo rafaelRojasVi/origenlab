@@ -33,6 +33,7 @@ export const CASE_COMMAND_PATHS = {
   completeTask: "/v2/commands/complete-task",
   cancelTask: "/v2/commands/cancel-task",
   openCase: "/v2/commands/open-commercial-case",
+  reopenCase: "/v2/commands/reopen-commercial-case",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -276,6 +277,22 @@ export interface OpenCommercialCaseBody {
 
 export const openCommercialCase = (body: OpenCommercialCaseBody, idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.openCase, body, idempotencyKey);
+
+/**
+ * «Reabrir»: a closed case's client wrote back. A terminal stage is never revived (WORKFLOWS.md
+ * §1.1), so the API opens a *new* case that references the closed one, from that email, with the
+ * old title and confirmed requesting institution — at «Conversación» (`negotiating`) or, for an
+ * old conversation or a case that never named who was asking, at «Solicitada» (`lead`).
+ */
+export interface ReopenCommercialCaseBody {
+  opportunity_id: string;
+  origin_source_record_id: string;
+  stage: "lead" | "negotiating";
+  note: string;
+}
+
+export const reopenCommercialCase = (body: ReopenCommercialCaseBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.reopenCase, body, idempotencyKey);
 
 export interface ResolveCurrentRevisionBody {
   opportunity_id: string;

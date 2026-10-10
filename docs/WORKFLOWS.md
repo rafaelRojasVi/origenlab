@@ -49,6 +49,19 @@ change · durable evidence · failure behaviour**. Three rules apply everywhere:
 `closed_at` set. Reopening is a **new** opportunity that references the old
 one; a terminal stage is never revived. Only the API role may update `stage`.
 
+**Reopening as a command (2026-10-10, `reopen_commercial_case`,
+STATUS.md §2.7.88).** A person wrote on the thread of a `lost` or `abandoned`
+case: Hoy asks «¿Reabrir?». The command opens a **new** case with
+`reopened_from_opportunity_id` = the closed one, the old title, the old
+confirmed requesting institution (exception included) and the reply email as
+`origin`, at `lead` — and, when asked for `negotiating` (a reply within 90 days
+of closing, owner decision), walks `lead → qualifying → qualified → quoting →
+negotiating` in the same transaction, one `opportunity.staged` event per move.
+The closed case is read, never written. `negotiating` is refused by name when
+the closed case never recorded a confirmed requester; an already reopened case
+whose new case is still open is refused (`case_already_reopened`): link the
+email there.
+
 **This table is a trigger as of 2026-09-22**
 (`crm.opportunity_stage_guard`, `20260922200000_slice3_commercial_case_commands.sql`),
 not only a table in this document: a case is opened at `lead` and at no other

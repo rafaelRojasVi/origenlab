@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import {
-  WonFlowError, markCaseWon, moveCase, newCaseCommandKey, openCommercialCase, stagePath, useMayRunCaseCommands,
+  WonFlowError, markCaseWon, moveCase, newCaseCommandKey, openCommercialCase, reopenCommercialCase, stagePath,
+  useMayRunCaseCommands,
 } from "../caseCommands";
 import type { OpportunityCardData } from "../crmTypes";
 import { inSharedMailbox } from "../gmailLinks";
@@ -14,11 +15,13 @@ import {
   fetchTriageReadings,
   isOpenableRequest,
   openCaseTitle,
+  reopenProposal,
   reviewTriage,
   sortInbox,
   stageLabel,
   wonProposal,
   type HiddenReason,
+  type ReopenProposal,
   type TriageCorrection,
   type TriageReading,
   type TriageReadings,
@@ -45,7 +48,8 @@ const PREVIEW = 5;
  * «Correos sin caso» on «Hoy»: the emails a person wrote that no case holds yet (`sortInbox`) —
  * one compact row each: subject, who, when, the thread in Gmail and «Descartar». «Revisar» opens
  * what the triage read and the verdict buttons; a quote request also offers «Abrir caso», which
- * opens the case at «Solicitada» from that email. A purchase order the triage read on a case the
+ * opens the case at «Solicitada» from that email; a reply on a closed case's thread offers
+ * «Reabrir» (`reopenProposal`: a new case referencing the closed one). A purchase order the triage read on a case the
  * board can still win (`wonProposal`, from `cards`) is a «¿Marcar ganada?» row instead, with the
  * revision to win against. Other emails already on a case, from a supplier, automatic notices and
  * older messages of the same thread are not asked about, only counted. «Revisadas» lists the
@@ -93,11 +97,10 @@ export function TriagePanel({ cards = [], onCaseChanged }: {
               ) : (
                 shown.map((r) => {
                   const won = wonProposal(r, byId);
-                  return won ? (
-                    <WonRow key={r.assertion_id} reading={r} proposal={won} onDone={reload} onCaseChanged={changed} />
-                  ) : (
-                    <InboxRow key={r.assertion_id} reading={r} vocabulary={data.vocabulary} onDone={reload} onCaseChanged={changed} />
-                  );
+                  if (won) return <WonRow key={r.assertion_id} reading={r} proposal={won} onDone={reload} onCaseChanged={changed} />;
+                  const reopen = reopenProposal(r, byId);
+                  if (reopen) return <ReopenRow key={r.assertion_id} reading={r} proposal={reopen} onDone={reload} onCaseChanged={changed} />;
+                  return <InboxRow key={r.assertion_id} reading={r} vocabulary={data.vocabulary} onDone={reload} onCaseChanged={changed} />;
                 })
               )}
               {ask.length > PREVIEW ? (
@@ -238,6 +241,98 @@ function WonRow({ reading: r, proposal, onDone, onCaseChanged }: {
           {mayDecide ? (
             <>
               <Button variant="primary" onClick={() => void accept()} busy={busy} busyLabel="…" disabled={!revision}>Marcar ganada</Button>
+              <Button onClick={() => void discard()} busy={busy} busyLabel="…">Descartar</Button>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A person wrote on the thread of a closed case: «¿Reabrir?». A terminal stage is never revived
+ * (WORKFLOWS §1.1), so «Reabrir» asks the API for a *new* case that references the closed one,
+ * from this email, at «Conversación» within the 90-day window (or «Solicitada» for an older
+ * conversation, or a case that never named who was asking) — the command first, the verdict
+ * after, as «Abrir caso» does. «Descartar» records a rejected verdict and the case stays closed.
+ */
+function ReopenRow({ reading: r, proposal, onDone, onCaseChanged }: {
+  reading: TriageReading;
+  proposal: ReopenProposal;
+  onDone: () => void;
+  onCaseChanged: () => void;
+}) {
+  const mayDecide = useMayRunCaseCommands();
+  const { leaving, gone, leave } = useLeave(r);
+  const [busy, setBusy] = useState(false);
+  const reopenKey = useRef(newCaseCommandKey());
+  const url = gmailUrl(r);
+  const caseName = proposal.card?.organization?.name ?? proposal.case.title ?? "caso sin título";
+  const closedLabel = proposal.case.stage === "abandoned" ? "sin respuesta" : "perdido";
+  const target = stageLabel(proposal.stage);
+
+  async function reopen() {
+    setBusy(true);
+    try {
+      await reopenCommercialCase(
+        {
+          opportunity_id: proposal.case.opportunity_id,
+          origin_source_record_id: r.source_record_id,
+          stage: proposal.stage,
+          note: `Reabierto desde Hoy: el cliente volvió a escribir (${fmtDate(r.sent_at)}), caso cerrado hace ${proposal.daysSinceClose} días`,
+        },
+        reopenKey.current,
+      );
+    } catch (err) {
+      toast(refusalMessage(err, "No se pudo reabrir el caso."), "bad");
+      setBusy(false);
+      return;
+    }
+    try {
+      await reviewTriage({ assertion_id: r.assertion_id, verdict: "approved", corrected: {}, note: "Caso reabierto desde Hoy" });
+      toast(`«${caseName}» reabierto como caso nuevo en «${target}».`);
+      leave();
+      onDone();
+    } catch (err) {
+      toast(`El caso se reabrió, pero la lectura no quedó revisada: ${refusalMessage(err, "rechazado")}`, "bad");
+    } finally {
+      setBusy(false);
+      onCaseChanged();
+    }
+  }
+
+  async function discard() {
+    setBusy(true);
+    try {
+      await reviewTriage({ assertion_id: r.assertion_id, verdict: "rejected", corrected: {}, note: "No se reabre; descartado desde Hoy" });
+      leave();
+      onDone();
+    } catch (err) {
+      toast(refusalMessage(err, "No se pudo descartar."), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (gone) return null;
+  return (
+    <div className={leaving ? "crm-row-out" : ""} data-testid="reopen-proposal">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5">
+        <div className="min-w-[12rem] flex-1">
+          <p className="truncate text-[13px] font-medium text-ink">
+            <Badge tone="warn">Volvió a escribir</Badge>{" "}
+            {caseName} · caso {closedLabel} hace {proposal.daysSinceClose} d · ¿reabrir en «{target}»?
+          </p>
+          <p className="truncate text-[11px] text-ink-muted">
+            {r.subject || "(sin asunto)"} · {r.sender ?? "—"} · {fmtDate(r.sent_at)}
+          </p>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <GmailLink url={url} />
+          {mayDecide ? (
+            <>
+              <Button variant="primary" onClick={() => void reopen()} busy={busy} busyLabel="…">Reabrir</Button>
               <Button onClick={() => void discard()} busy={busy} busyLabel="…">Descartar</Button>
             </>
           ) : null}

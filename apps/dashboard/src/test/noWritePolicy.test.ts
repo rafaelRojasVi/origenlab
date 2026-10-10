@@ -78,6 +78,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/complete-task",
     "/v2/commands/cancel-task",
     "/v2/commands/open-commercial-case",
+    "/v2/commands/reopen-commercial-case",
   ];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
