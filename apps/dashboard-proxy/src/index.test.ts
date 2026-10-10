@@ -1316,6 +1316,7 @@ describe("Case drawer commands (including add-case-organization)", () => {
   const QUOTATION = "https://proxy.test/api/v2/commands/record-case-quotation";
   const LINK_EVIDENCE = "https://proxy.test/api/v2/commands/link-case-evidence";
   const OPEN_CASE = "https://proxy.test/api/v2/commands/open-commercial-case";
+  const REOPEN_CASE = "https://proxy.test/api/v2/commands/reopen-commercial-case";
   const post = (url: string, extra: Record<string, string> = {}, body = "{}") =>
     requestWithOrigin(url, {
       method: "POST",
@@ -1329,7 +1330,7 @@ describe("Case drawer commands (including add-case-organization)", () => {
       },
     });
 
-  it.each([ADVANCE, ASSIGN, REVIEW_ROLE, WON, RESOLVE, QUOTATION, LINK_EVIDENCE, OPEN_CASE])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
+  it.each([ADVANCE, ASSIGN, REVIEW_ROLE, WON, RESOLVE, QUOTATION, LINK_EVIDENCE, OPEN_CASE, REOPEN_CASE])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
     stubUpstreamFetch();
     const res = await handleRequest(post(url), TEST_ENV);
     expect(res.status).toBe(200);

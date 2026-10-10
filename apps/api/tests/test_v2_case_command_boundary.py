@@ -23,6 +23,7 @@ import uuid
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 from fastapi.testclient import TestClient
 
 from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
@@ -35,6 +36,7 @@ from origenlab_api.v2.case_commands import (
     EVIDENCE_RELATIONS,
     LINK_CASE_EVIDENCE,
     OPEN_COMMERCIAL_CASE,
+    REOPEN_COMMERCIAL_CASE,
     RECORD_CASE_INTEREST,
     RECORD_CASE_QUOTATION,
     RECORD_CASE_WON,
@@ -45,6 +47,7 @@ from origenlab_api.v2.case_commands import (
     AdvanceCaseStageBody,
     LinkCaseEvidenceBody,
     OpenCommercialCaseBody,
+    ReopenCommercialCaseBody,
     RecordCaseInterestBody,
     RecordCaseQuotationBody,
     RecordCaseWonBody,
@@ -71,6 +74,11 @@ ROUTES: tuple[tuple[str, str, dict], ...] = (
         "/v2/commands/open-commercial-case",
         OPEN_COMMERCIAL_CASE,
         {"title": "Caso", "origin_source_record_id": RECORD_ID, "note": "porque sí"},
+    ),
+    (
+        "/v2/commands/reopen-commercial-case",
+        REOPEN_COMMERCIAL_CASE,
+        {"opportunity_id": CASE_ID, "origin_source_record_id": RECORD_ID, "note": "porque sí"},
     ),
     (
         "/v2/commands/link-case-evidence",
@@ -222,7 +230,7 @@ def _headers(key: str | None = "key-1") -> dict[str, str]:
 def test_every_case_command_has_a_route_and_every_route_a_command() -> None:
     """The vocabulary and the surface are the same list, counted from both ends."""
     assert {command for _, command, _ in ROUTES} == set(CASE_COMMAND_NAMES)
-    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 9
+    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 10
 
 
 def test_the_case_router_exposes_nothing_but_post() -> None:
@@ -1958,3 +1966,157 @@ def test_no_case_command_moves_a_marketing_row_or_creates_a_person(
         world,
     )
     assert _counts(disposable_database) == before
+
+
+# ------------------------------------------------------------------ reopening a closed case
+
+
+def _close(repo, world, case_id: str, version: int, stage: str = "lost") -> int:
+    return _run(
+        repo,
+        ADVANCE_CASE_STAGE,
+        AdvanceCaseStageBody(opportunity_id=case_id, opportunity_version=version, stage=stage,
+                             close_reason="compraron a otro proveedor", note="cierre"),
+        world,
+    )["opportunity_version"]
+
+
+def _name_requester(repo, world, case_id: str, version: int) -> int:
+    return _run(
+        repo,
+        ADD_CASE_ORGANIZATION,
+        AddCaseOrganizationBody(
+            opportunity_id=case_id, opportunity_version=version,
+            organization_id=world["university_id"], organization_version=world["university_id_version"],
+            role="requesting_institution", note="firma el correo",
+        ),
+        world,
+    )["opportunity_version"]
+
+
+def test_reopening_is_validated_without_the_database() -> None:
+    fields = validated_case(
+        REOPEN_COMMERCIAL_CASE,
+        ReopenCommercialCaseBody(opportunity_id=CASE_ID, origin_source_record_id=RECORD_ID, note=" volvió "),
+    )
+    assert fields == {"note": "volvió", "opportunity_id": CASE_ID, "origin_source_record_id": RECORD_ID,
+                      "stage": "negotiating"}
+    with pytest.raises(ValidationError):
+        ReopenCommercialCaseBody(opportunity_id=CASE_ID, origin_source_record_id=RECORD_ID, stage="won", note="x")
+    with pytest.raises(ValidationError):
+        ReopenCommercialCaseBody(opportunity_id=CASE_ID, origin_source_record_id=RECORD_ID, note="x",
+                                 opportunity_version=3)
+
+
+@_needs_db
+def test_reopening_a_closed_case_is_a_new_case_that_references_it_at_conversacion(
+        disposable_database, world) -> None:
+    """§1.1 to the letter: the closed case is read, never written; the new one walks the table."""
+    import psycopg
+
+    repo = _repo(disposable_database)
+    old_id, version = _open_case(repo, world, "Balanza analítica")
+    version = _name_requester(repo, world, old_id, version)
+    version = _close(repo, world, old_id, version)
+    before = _counts(disposable_database, ("crm.opportunity", "crm.opportunity_organization", "crm.opportunity_evidence",
+                                           "crm.domain_event", "platform.command_receipt"))
+
+    result = _run(
+        repo,
+        REOPEN_COMMERCIAL_CASE,
+        ReopenCommercialCaseBody(opportunity_id=old_id, origin_source_record_id=world["source_record_id"],
+                                 note="volvió a escribir sobre la balanza"),
+        world,
+    )
+    new_id = result["opportunity_id"]
+    assert new_id != old_id
+    assert (result["stage"], result["reopened_from_opportunity_id"], result["organization_id"]) == (
+        "negotiating", old_id, world["university_id"])
+    assert result["created"] == ["opportunity", "opportunity_evidence", "opportunity_organization"]
+    # created + origin link + organization row (+ case row set) + 4 moves; nothing on the old case
+    assert len(result["event_ids"]) >= 7
+    after = _counts(disposable_database, tuple(before))
+    assert after["crm.opportunity"] == before["crm.opportunity"] + 1
+    assert after["crm.opportunity_organization"] == before["crm.opportunity_organization"] + 1
+    assert after["crm.opportunity_evidence"] == before["crm.opportunity_evidence"] + 1
+    assert after["platform.command_receipt"] == before["platform.command_receipt"] + 1
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("select title, stage, closed_at, organization_id::text, reopened_from_opportunity_id::text, "
+                    "origin_source_record_id::text, version from crm.opportunity where id = %s", (new_id,))
+        title, stage, closed_at, org, reopened_from, origin, new_version = cur.fetchone()
+        assert (title, stage, closed_at, org, reopened_from, origin) == (
+            "Balanza analítica", "negotiating", None, world["university_id"], old_id, world["source_record_id"])
+        assert new_version == result["opportunity_version"]
+        cur.execute("select stage, closed_at is not null, version from crm.opportunity where id = %s", (old_id,))
+        assert cur.fetchone() == ("lost", True, version), "the closed case is read, never written"
+        cur.execute("select event_type, aggregate_id::text from crm.domain_event where command_receipt_id = %s "
+                    "order by stream_position", (result["command_receipt_id"],))
+        rows = cur.fetchall()
+        assert [t for t, _ in rows][:2] == ["opportunity.created", "case_evidence.linked"]
+        assert [t for t, _ in rows].count("opportunity.staged") == 4
+        assert all(agg != old_id for _, agg in rows), "the closed case gets no event: it is never written"
+        cur.execute("select payload->>'reopened_from_opportunity_id' from crm.domain_event "
+                    "where aggregate_id = %s and event_type = 'opportunity.created'", (new_id,))
+        assert cur.fetchone() == (old_id,)
+        cur.execute("select role, confirmation, confirmed_by_operator_id::text from crm.opportunity_organization "
+                    "where opportunity_id = %s and valid_to is null", (new_id,))
+        assert cur.fetchall() == [("requesting_institution", "confirmed", world["operator_id"])]
+
+    # Reopening it again, while the new case is open, is refused: link the email to that one.
+    with pytest.raises(CommandRefused) as excinfo:
+        _run(repo, REOPEN_COMMERCIAL_CASE,
+             ReopenCommercialCaseBody(opportunity_id=old_id, origin_source_record_id=world["source_record_id"],
+                                      note="otra vez"), world)
+    assert excinfo.value.code == "case_already_reopened"
+
+
+@_needs_db
+def test_reopening_at_lead_links_the_old_case_and_names_no_stage_it_cannot_prove(
+        disposable_database, world) -> None:
+    import psycopg
+
+    repo = _repo(disposable_database)
+    old_id, version = _open_case(repo, world, "Sin institución")
+    version = _close(repo, world, old_id, version, stage="abandoned")
+
+    # No confirmed requester on the old case: «Conversación» cannot be proven, say so by name.
+    with pytest.raises(CommandRefused) as excinfo:
+        _run(repo, REOPEN_COMMERCIAL_CASE,
+             ReopenCommercialCaseBody(opportunity_id=old_id, origin_source_record_id=world["source_record_id"],
+                                      note="volvió"), world)
+    assert excinfo.value.code == "stage_requires_a_confirmed_requesting_institution"
+
+    result = _run(repo, REOPEN_COMMERCIAL_CASE,
+                  ReopenCommercialCaseBody(opportunity_id=old_id, origin_source_record_id=world["source_record_id"],
+                                           stage="lead", note="volvió; conversación antigua"), world)
+    assert (result["stage"], result["organization_id"], result["created"]) == (
+        "lead", None, ["opportunity", "opportunity_evidence"])
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("select stage, reopened_from_opportunity_id::text from crm.opportunity where id = %s",
+                    (result["opportunity_id"],))
+        assert cur.fetchone() == ("lead", old_id)
+
+
+@_needs_db
+def test_only_a_closed_case_on_an_existing_clean_document_is_reopened(disposable_database, world) -> None:
+    repo = _repo(disposable_database)
+    open_id, _ = _open_case(repo, world, "Abierto")
+    for body, code in (
+        (ReopenCommercialCaseBody(opportunity_id=open_id, origin_source_record_id=world["source_record_id"],
+                                  note="x"), "case_is_not_closed"),
+        (ReopenCommercialCaseBody(opportunity_id=CASE_ID, origin_source_record_id=world["source_record_id"],
+                                  note="x"), "case_not_found"),
+    ):
+        with pytest.raises(CommandRefused) as excinfo:
+            _run(repo, REOPEN_COMMERCIAL_CASE, body, world)
+        assert excinfo.value.code == code
+    closed_id, v = _open_case(repo, world, "Cerrado")
+    _close(repo, world, closed_id, v)
+    for record, code in ((RECORD_ID, "source_record_not_found"),
+                         (world["quarantined_source_record_id"], "source_record_quarantined")):
+        with pytest.raises(CommandRefused) as excinfo:
+            _run(repo, REOPEN_COMMERCIAL_CASE,
+                 ReopenCommercialCaseBody(opportunity_id=closed_id, origin_source_record_id=record, stage="lead",
+                                          note="x"), world)
+        assert excinfo.value.code == code

@@ -123,8 +123,9 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
                                    where rel.organization_id = o.id and rel.role in ('supplier', 'manufacturer')
                                      and (rel.valid_to is null or rel.valid_to > current_date)))) as sender_is_supplier,
        coalesce((select json_agg(json_build_object('opportunity_id', o.id, 'title', o.title, 'stage', o.stage,
-                                                   'version', o.version) order by o.id)
-                   from (select distinct o.id, o.title, o.stage, o.version
+                                                   'version', o.version, 'closed_at', o.closed_at,
+                                                   'close_reason', o.close_reason) order by o.id)
+                   from (select distinct o.id, o.title, o.stage, o.version, o.closed_at, o.close_reason
                            from crm.opportunity_evidence oe
                            join evidence.source_record s2 on s2.id = oe.source_record_id
                            join crm.opportunity o on o.id = oe.opportunity_id
