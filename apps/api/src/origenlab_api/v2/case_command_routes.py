@@ -3,7 +3,6 @@
 | Route | Records |
 |---|---|
 | `POST /v2/commands/open-commercial-case` | a case, and the document that is the reason it exists |
-| `POST /v2/commands/reopen-commercial-case` | a closed case's conversation came back: a new case that references it, from that email |
 | `POST /v2/commands/link-case-evidence` | why this case believes something — including against it |
 | `POST /v2/commands/add-case-organization` | an institution is on this case, in this part |
 | `POST /v2/commands/set-case-organization-role` | an institution's part is confirmed, or it is this other part now |
@@ -54,7 +53,6 @@ from origenlab_api.v2.case_commands import (
     RECORD_CASE_INTEREST,
     RECORD_CASE_QUOTATION,
     RECORD_CASE_WON,
-    REOPEN_COMMERCIAL_CASE,
     RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
     AddCaseOrganizationBody,
@@ -64,7 +62,6 @@ from origenlab_api.v2.case_commands import (
     RecordCaseInterestBody,
     RecordCaseQuotationBody,
     RecordCaseWonBody,
-    ReopenCommercialCaseBody,
     ResolveCurrentRevisionBody,
     SetCaseOrganizationRoleBody,
     validated_case,
@@ -128,29 +125,6 @@ def open_commercial_case(
     """
     return _run(
         command_name=OPEN_COMMERCIAL_CASE,
-        body=body,
-        repo=repo,
-        operator=operator,
-        idempotency_key=idempotency_key,
-    )
-
-
-@case_command_router.post("/reopen-commercial-case")
-def reopen_commercial_case(
-    body: ReopenCommercialCaseBody,
-    operator: Deciding,
-    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
-    idempotency_key: IdempotencyKey = None,
-) -> dict[str, Any]:
-    """A closed case's client wrote back: a new case that references the old one.
-
-    §1.1 says a terminal stage is never revived and reopening is a new opportunity that
-    references the old one; this is that sentence as a command. The new case takes the old
-    title and confirmed requesting institution, opens at `lead` from the email, and — when
-    `stage` is `negotiating` — moves along the table to «Conversación» in the same transaction.
-    """
-    return _run(
-        command_name=REOPEN_COMMERCIAL_CASE,
         body=body,
         repo=repo,
         operator=operator,

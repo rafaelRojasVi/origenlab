@@ -1,8 +1,8 @@
 -- Slice 7 — email → cases corrections, proven in the database.
 --
 -- Companion to `20261005120000_slice7_mail_auto_case_corrections.sql`: the two event types an
--- undo writes, and the one declared correction the stage guard allows out of `won`/`lost` — back
--- to the stage the audit stream records, never anywhere else, never without the declaration.
+-- undo writes; and, since `20261010180000`, the stage guard's reopening rule — a lost case returns
+-- to an open stage as the same case, a case an undo discarded never does.
 --
 -- Exercised as the owner (only constraints and triggers speak), then the runtime role for the
 -- one write an undo performs as `origenlab_api`.
@@ -12,7 +12,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 set role origenlab_owner;
-select plan(14);
+select plan(11);
 
 -- ── fixtures ───────────────────────────────────────────────────────────────────────────────
 
@@ -63,35 +63,20 @@ select throws_ok($$ insert into crm.domain_event (aggregate_kind, aggregate_id, 
   values ('opportunity', '76000000-0000-4000-8000-0000000000b3', 4, 'opportunity.staged', 1, '{}'::jsonb, 'worker', '76000000-0000-4000-8000-000000000001') $$,
   '23514', null, 'domain_event: a worker event naming an operator is refused (actor shape)');
 
--- ── 2. the stage guard: never revived, except by a declared correction to where it came from ──
+-- ── 2. the stage guard (2026-10-10): lost reopens as the same case; a discarded case never ─────
 
-select throws_ok($$ update crm.opportunity set stage = 'qualifying', closed_at = null, close_reason = null where id = '76000000-0000-4000-8000-0000000000b1' $$,
-  'P0001', null, 'stage: without the declaration a lost case is still never revived');
-
-do $$ begin perform set_config('origenlab.case_stage_correction', '76000000-0000-4000-8000-0000000000b3', true); end $$;
-select throws_ok($$ update crm.opportunity set stage = 'qualifying', closed_at = null, close_reason = null where id = '76000000-0000-4000-8000-0000000000b1' $$,
-  'P0001', null, 'stage: a correction declared for another case does not unlock this one');
-
-do $$ begin perform set_config('origenlab.case_stage_correction', '76000000-0000-4000-8000-0000000000b1', true); end $$;
-select throws_ok($$ update crm.opportunity set stage = 'lead', closed_at = null, close_reason = null where id = '76000000-0000-4000-8000-0000000000b1' $$,
-  'P0001', null, 'stage: a correction returns only to the recorded previous stage, not another');
-select throws_ok($$ update crm.opportunity set stage = 'abandoned' where id = '76000000-0000-4000-8000-0000000000b1' $$,
-  'P0001', null, 'stage: a correction never moves to another terminal stage');
 select throws_ok($$ update crm.opportunity set stage = 'qualifying' where id = '76000000-0000-4000-8000-0000000000b1' $$,
-  '23514', null, 'stage: a corrected case must clear closed_at (closed shape)');
+  '23514', null, 'stage: a reopened case must clear closed_at (closed shape)');
+select throws_ok($$ update crm.opportunity set stage = 'abandoned' where id = '76000000-0000-4000-8000-0000000000b1' $$,
+  'P0001', null, 'stage: one closed stage never becomes another');
 select lives_ok($$ update crm.opportunity set stage = 'qualifying', closed_at = null, close_reason = null where id = '76000000-0000-4000-8000-0000000000b1' $$,
-  'stage: a declared correction returns lost → qualifying, the stage it came from');
-
-do $$ begin perform set_config('origenlab.case_stage_correction', '76000000-0000-4000-8000-0000000000b2', true); end $$;
+  'stage: a lost case reopens as the same case, without any declaration');
 select throws_ok($$ update crm.opportunity set stage = 'lead', closed_at = null, close_reason = null where id = '76000000-0000-4000-8000-0000000000b2' $$,
-  'P0001', null, 'stage: abandoned is never corrected — it is what an undo uses to discard a case');
-do $$ begin perform set_config('origenlab.case_stage_correction', '76000000-0000-4000-8000-0000000000b4', true); end $$;
-select throws_ok($$ update crm.opportunity set stage = 'lead', closed_at = null, close_reason = null where id = '76000000-0000-4000-8000-0000000000b4' $$,
-  'P0001', null, 'stage: a case a person closed is never revived, even with the declaration');
-do $$ begin perform set_config('origenlab.case_stage_correction', '', true); end $$;
-
+  'P0001', null, 'stage: a case an undo discarded (discarded_by_correction) is never reopened');
+select lives_ok($$ update crm.opportunity set stage = 'lead', closed_at = null, close_reason = null where id = '76000000-0000-4000-8000-0000000000b4' $$,
+  'stage: a case a person closed reopens too');
 select is((select stage from crm.opportunity where id = '76000000-0000-4000-8000-0000000000b1'), 'qualifying',
-  'stage: the corrected case is open again');
+  'stage: the reopened case is open again');
 
 select * from finish();
 rollback;

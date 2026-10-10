@@ -2444,7 +2444,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Evidence | `apps/dashboard` `npm run validate`: **719 passed** + build; `apps/api` `scripts/validate.sh` in process. `PipelineBoard.test.tsx`: no badge; finer bands; a logged follow-up moves a card up and counts the silence from it; a note after a reply still says «te toca»; a stage edit alone does not lift a case; an imported case bands by its quote. Sandbox (same commit as production, clean-room data) screenshots before and after. |
 
 
-### 2.7.88 «¿Reabrir?» on Hoy: a reply on a closed case reopens it as a new case that references it, 2026-10-10 — built, not deployed
+### 2.7.88 «¿Reabrir?» on Hoy: a reply on a closed case reopens it as a new case that references it, 2026-10-10 — merged and deployed (PR #709); superseded by §2.7.90
 
 `apps/api` + `apps/dashboard-proxy` + `apps/dashboard`; no schema change (`crm.opportunity.reopened_from_opportunity_id` existed since Slice 0, unused). Owner decisions 2026-10-10: propose «¿Reabrir?» in Hoy; 90-day window; older replies open a new case too, linked to the old one.
 
@@ -2459,7 +2459,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Evidence | `apps/api` `scripts/validate.sh` with the disposable cluster: three new database tests (reopen at «Conversación» with the requester carried over and four moves, refused while the new case is open; reopen at «Solicitada» and the named refusal without a requester; only a closed case on an existing, clean document) + validation + the route table at ten. `apps/dashboard-proxy` `npm run validate`: **448 passed**. `apps/dashboard` `npm run validate`: `triage.test.ts` (+2), `TriagePanel.test.tsx` (+2), policy list. |
 
 
-### 2.7.89 «Vencidas» on Hoy: overdue tasks escalate, 2026-10-10 — built, not deployed
+### 2.7.89 «Vencidas» on Hoy: overdue tasks escalate, 2026-10-10 — merged and deployed (PR #710); the panel folded into «Tareas» by §2.7.90
 
 `apps/dashboard` only. Owner decisions 2026-10-10: a row in Hoy at 3 days overdue under the task's owner; from 7 days for every profile; a daily email per profile (not built, see below).
 
@@ -2469,3 +2469,20 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Page | A «Vencidas» panel above «Te toca responder», red count, the same «Hecho» / «+1 semana» as any task; an escalated row says «de ‹perfil›». Those tasks leave «Otras tareas de hoy», so nothing shows twice. Without a profile name (an older session) only the escalated ones show. |
 | Not built | The daily email per profile with its overdue tasks: it needs a worker cron and the Google sending setup the campaign test send waits on (§2.7.47); nothing sends today. |
 | Evidence | `apps/dashboard` `npm run validate`; `TodayBody.test.tsx` (+2: the list rule with own / others' / follow-up / closed-case tasks; the page order, the owner label, no duplicate in «Otras tareas»). |
+
+
+### 2.7.90 Simplification: a closed case reopens as the same case; Hoy is three lists, 2026-10-10 — built, not applied, not deployed
+
+`supabase/` + `apps/api` + `apps/dashboard-proxy` + `apps/dashboard`. Owner decision 2026-10-10 after the first day of «¿Reabrir?» in production: the system had grown more rules than a team of three needs; reopening should be one click on the same case, and Hoy should be shorter.
+
+| | |
+|---|---|
+| Why | §2.7.88 reopened by creating a new case referencing the closed one, because the stage guard made `lost`/`abandoned` terminal. In production that lost the quotes (a client asking for bank details to pay a 50 % deposit on a case closed a day earlier needed: reopen, register the quote again, win) and Hoy proposed reopening five cases an admin had just discarded with «Deshacer» (`discarded_by_correction`, labelled «sin respuesta»). |
+| Rule | `20261010180000_slice7_reopen_closed_case.sql`: the stage guard lets `lost` and `abandoned` move to any open stage; `won` stays terminal (the 2026-10-05 correction is still its only way out); a case with `close_reason = 'discarded_by_correction'` is refused by name; the institution CHECK from `qualified` on is unchanged. WORKFLOWS §1.1 and DOMAIN §3 rewritten. |
+| API | `advance_case_stage` accepts reopening (`opportunity.staged` with `reopened: true` and the old `close_reason`; `closed_at`/`close_reason` cleared); refuses `won` (`case_is_closed`) and a discarded case (`case_was_discarded`). **`reopen-commercial-case` removed** (route, body, handler, tests; back to nine case commands). `reopened_from_opportunity_id` is kept, no longer written. |
+| Undo of the email rules | `_correct_case_stage` now checks itself that the latest `opportunity.staged` into the current `won`/`lost` is a worker event before taking it back (`stage_correction_refused`, 409): the guard used to refuse that for it, and now lets any lost case reopen. A person's later decision still stands. The case card's `stage_machine.is_terminal` means «nothing may follow» (only `won`). |
+| Proxy | The reopen path removed; eleven case paths. |
+| Dashboard | Drawer: on a lost/abandoned case «Cambiar estado» becomes a primary «Reabrir» with the open columns. Board: a lost card can be dragged back to an open column; a won or discarded one cannot. Hoy «¿Reabrir?»: one `advance-case-stage` on the same case to «Conversación» (confirmed requester) or «Solicitada», only for an email **after** the closing, only within 90 days of it; a case an undo discarded, or one closed more than 90 days ago, no longer holds its thread — its email shows as new mail with «Abrir caso». |
+| Hoy | Main column: «Te toca responder», «Seguimientos», **one «Tareas» list** (overdue first — own from 3 days, anyone's from 7 with the owner named — then due today; replaces «Vencidas» + «Otras tareas de hoy») and «Correos sin caso». Side column: number box, rates, «por decidir», «Instituciones por confirmar», «Bloqueados», and «N personas por agregar» as a count linking to Personas (the list lives there). |
+| Not done | Not applied to `origenlab-v2` (ledger 51 → 52 pending, owner-run), not deployed. **Deploy order: apply the migration first** — the new API lets a person reopen, and without the migration the database refuses it. |
+| Evidence | `apps/api` `scripts/validate.sh` with a disposable cluster carrying the migration; case-command database tests (same-case reopen keeps the requester and writes one marked event; institution rule and closed→closed refused; a discarded case refused by the API and by the database as owner). pgTAP 062 (69), 063 (47), 076 (11) green against the cluster; the whole suite green except `100_hosted_role_bootstrap` #22, which fails only because the throwaway cluster gives the roles passwords. `apps/dashboard-proxy` and `apps/dashboard` `npm run validate`. |

@@ -22,6 +22,7 @@ import {
   moveCase,
   newCaseCommandKey,
   resumeCase,
+  isReopenable,
   stagePath,
   type WonStep,
 } from "../caseCommands";
@@ -68,8 +69,13 @@ function receiptLine(step: WonStep, n: number, total: number): string {
 
 /** Why `card` cannot go to `target`, or null when it can. */
 export function moveRefusal(card: OpportunityCardData, target: MoveTarget, now: Date = new Date()): string | null {
-  if (card.closed_at || ["won", "lost", "abandoned"].includes(card.stage)) return "El caso está cerrado: un caso cerrado no se mueve.";
+  const closed = card.closed_at != null || ["won", "lost", "abandoned"].includes(card.stage);
+  if (closed && card.stage === "won") return "El caso está ganado: una venta ganada no se mueve.";
+  if (closed && !isReopenable(card)) return "Este caso se descartó por una corrección: abre uno nuevo desde el correo.";
   if (typeof card.version !== "number") return "El API no informó la versión del caso.";
+  if (closed && (target === "pausa" || target === "perdida")) {
+    return "Un caso cerrado se reabre a «Solicitada», «En estudio», «Enviada» o «Conversación».";
+  }
   if (target === "pausa" || target === "perdida") return null;
 
   const to = BOARD_COLUMNS.find((c) => c.key === target)?.target as string;

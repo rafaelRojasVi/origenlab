@@ -151,15 +151,15 @@ select lives_ok($$ update crm.opportunity set stage = 'qualified' where id = '20
 select lives_ok($$ update crm.opportunity set stage = 'qualifying' where id = '20000000-0000-4000-8000-0000000000b2' $$,
   'stage: qualified → qualifying');
 
--- Terminal, from anywhere, and never revived.
+-- Closed from anywhere; a lost case reopens to an open stage as the same case (2026-10-10).
 select lives_ok($$ update crm.opportunity set stage = 'lost', closed_at = now(), close_reason = 'compraron a otro' where id = '20000000-0000-4000-8000-0000000000b3' $$,
   'stage: lead → lost, with a motive');
-select throws_ok($$ update crm.opportunity set stage = 'lead', closed_at = null, close_reason = null where id = '20000000-0000-4000-8000-0000000000b3' $$,
-  'P0001', null, 'stage: a lost case is never revived');
-select throws_ok($$ update crm.opportunity set stage = 'negotiating', closed_at = null, close_reason = null where id = '20000000-0000-4000-8000-0000000000b3' $$,
-  'P0001', null, 'stage: a lost case is not reopened at a later stage either');
 select throws_ok($$ update crm.opportunity set stage = 'abandoned' where id = '20000000-0000-4000-8000-0000000000b3' $$,
-  'P0001', null, 'stage: one terminal stage does not become another');
+  'P0001', null, 'stage: one closed stage does not become another');
+select throws_ok($$ update crm.opportunity set stage = 'negotiating', closed_at = null, close_reason = null where id = '20000000-0000-4000-8000-0000000000b3' $$,
+  '23514', null, 'stage: a reopened case still needs its requesting institution from qualified on');
+select lives_ok($$ update crm.opportunity set stage = 'lead', closed_at = null, close_reason = null where id = '20000000-0000-4000-8000-0000000000b3' $$,
+  'stage: a lost case reopens at lead as the same case');
 select throws_ok($$ delete from crm.opportunity where id = '20000000-0000-4000-8000-0000000000b3' $$,
   'P0001', null, 'stage: a case is never deleted');
 

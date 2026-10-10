@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import {
-  WonFlowError, markCaseWon, moveCase, newCaseCommandKey, openCommercialCase, reopenCommercialCase, stagePath,
+  WonFlowError, markCaseWon, moveCase, newCaseCommandKey, openCommercialCase, stagePath,
   useMayRunCaseCommands,
 } from "../caseCommands";
 import type { OpportunityCardData } from "../crmTypes";
@@ -48,8 +48,8 @@ const PREVIEW = 5;
  * «Correos sin caso» on «Hoy»: the emails a person wrote that no case holds yet (`sortInbox`) —
  * one compact row each: subject, who, when, the thread in Gmail and «Descartar». «Revisar» opens
  * what the triage read and the verdict buttons; a quote request also offers «Abrir caso», which
- * opens the case at «Solicitada» from that email; a reply on a closed case's thread offers
- * «Reabrir» (`reopenProposal`: a new case referencing the closed one). A purchase order the triage read on a case the
+ * opens the case at «Solicitada» from that email; a reply after the closing of a case lost in the
+ * last 90 days offers «Reabrir» (`reopenProposal`: that same case moves back). A purchase order the triage read on a case the
  * board can still win (`wonProposal`, from `cards`) is a «¿Marcar ganada?» row instead, with the
  * revision to win against. Other emails already on a case, from a supplier, automatic notices and
  * older messages of the same thread are not asked about, only counted. «Revisadas» lists the
@@ -100,7 +100,7 @@ export function TriagePanel({ cards = [], onCaseChanged }: {
                   if (won) return <WonRow key={r.assertion_id} reading={r} proposal={won} onDone={reload} onCaseChanged={changed} />;
                   const reopen = reopenProposal(r, byId);
                   if (reopen) return <ReopenRow key={r.assertion_id} reading={r} proposal={reopen} onDone={reload} onCaseChanged={changed} />;
-                  return <InboxRow key={r.assertion_id} reading={r} vocabulary={data.vocabulary} onDone={reload} onCaseChanged={changed} />;
+                  return <InboxRow key={r.assertion_id} reading={r} openable={isOpenableRequest(r, byId)} vocabulary={data.vocabulary} onDone={reload} onCaseChanged={changed} />;
                 })
               )}
               {ask.length > PREVIEW ? (
@@ -251,11 +251,10 @@ function WonRow({ reading: r, proposal, onDone, onCaseChanged }: {
 }
 
 /**
- * A person wrote on the thread of a closed case: «¿Reabrir?». A terminal stage is never revived
- * (WORKFLOWS §1.1), so «Reabrir» asks the API for a *new* case that references the closed one,
- * from this email, at «Conversación» within the 90-day window (or «Solicitada» for an older
- * conversation, or a case that never named who was asking) — the command first, the verdict
- * after, as «Abrir caso» does. «Descartar» records a rejected verdict and the case stays closed.
+ * A person wrote, after the closing, on the thread of a case lost or abandoned in the last 90
+ * days: «¿Reabrir?». «Reabrir» moves that same case back to «Conversación» (or «Solicitada» when
+ * it never named who was asking) — its quotes and history stay — then records the verdict.
+ * «Descartar» records a rejected verdict and the case stays closed.
  */
 function ReopenRow({ reading: r, proposal, onDone, onCaseChanged }: {
   reading: TriageReading;
@@ -269,29 +268,27 @@ function ReopenRow({ reading: r, proposal, onDone, onCaseChanged }: {
   const reopenKey = useRef(newCaseCommandKey());
   const url = gmailUrl(r);
   const caseName = proposal.card?.organization?.name ?? proposal.case.title ?? "caso sin título";
-  const closedLabel = proposal.case.stage === "abandoned" ? "sin respuesta" : "perdido";
+  const closedLabel = proposal.case.stage === "abandoned" ? "cerrado sin respuesta" : "perdido";
   const target = stageLabel(proposal.stage);
 
   async function reopen() {
     setBusy(true);
     try {
-      await reopenCommercialCase(
-        {
-          opportunity_id: proposal.case.opportunity_id,
-          origin_source_record_id: r.source_record_id,
-          stage: proposal.stage,
-          note: `Reabierto desde Hoy: el cliente volvió a escribir (${fmtDate(r.sent_at)}), caso cerrado hace ${proposal.daysSinceClose} días`,
-        },
-        reopenKey.current,
+      await moveCase(
+        { opportunity_id: proposal.case.opportunity_id, stage: proposal.case.stage, version: proposal.case.version },
+        proposal.stage,
+        `Reabierto desde Hoy: el cliente volvió a escribir (${fmtDate(r.sent_at)})`,
+        null,
+        [reopenKey.current],
       );
     } catch (err) {
-      toast(refusalMessage(err, "No se pudo reabrir el caso."), "bad");
+      toast(refusalMessage(err instanceof WonFlowError ? err.cause : err, "No se pudo reabrir el caso."), "bad");
       setBusy(false);
       return;
     }
     try {
       await reviewTriage({ assertion_id: r.assertion_id, verdict: "approved", corrected: {}, note: "Caso reabierto desde Hoy" });
-      toast(`«${caseName}» reabierto como caso nuevo en «${target}».`);
+      toast(`«${caseName}» reabierto en «${target}».`);
       leave();
       onDone();
     } catch (err) {
@@ -342,7 +339,9 @@ function ReopenRow({ reading: r, proposal, onDone, onCaseChanged }: {
   );
 }
 
-function InboxRow({ reading: r, vocabulary, onDone, onCaseChanged }: {
+function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
+  /** A quote request no case holds: «Abrir caso» is offered. */
+  openable: boolean;
   reading: TriageReading;
   vocabulary: TriageReadings["vocabulary"];
   onDone: () => void;
@@ -413,7 +412,7 @@ function InboxRow({ reading: r, vocabulary, onDone, onCaseChanged }: {
           <GmailLink url={url} />
           {mayDecide ? (
             <>
-              {isOpenableRequest(r) ? (
+              {openable ? (
                 <Button variant="primary" onClick={() => void openCase()} busy={busy} busyLabel="…">Abrir caso</Button>
               ) : null}
               <Button variant="quiet" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Cerrar" : "Revisar"}</Button>

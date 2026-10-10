@@ -741,6 +741,22 @@ class MailRulesRepository(V2CaseCommandRepository):
         if stage not in ("won", "lost"):
             raise CommandRefused(409, "case_not_correctable",
                                  f"the case is at '{stage}'; only a won or lost stage is corrected back")
+        # An undo takes back only what the rules did. Since 2026-10-10 the stage guard lets any lost
+        # case reopen, so it no longer refuses this for us: if a person set the stage after the
+        # rule did, that decision stands and the correction is refused here, by name.
+        cur.execute(
+            """
+            select actor_kind from crm.domain_event
+             where aggregate_kind = 'opportunity' and aggregate_id = %s
+               and event_type = 'opportunity.staged' and payload ->> 'to_stage' = %s
+             order by seq desc limit 1
+            """,
+            (case_id, stage),
+        )
+        latest = cur.fetchone()
+        if latest is None or latest[0] != "worker":
+            raise CommandRefused(409, "stage_correction_refused",
+                                 "a person set this stage after the email rules did; their decision stands")
         cur.execute("select set_config('origenlab.case_stage_correction', %s, true)", (case_id,))
         try:
             cur.execute(

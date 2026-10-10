@@ -623,8 +623,9 @@ then never closed: its only reachable states were `lead` and `qualifying`,
 forever. The rule now names the two exits explicitly. `won` keeps the
 requirement — a case is not won without a customer.
 
-**A case is opened at `lead` and at no other stage**, and a terminal stage is
-never revived. **(impl)** `crm.opportunity_stage_guard`, a trigger carrying the
+**A case is opened at `lead` and at no other stage.** `won` is terminal; a
+`lost` or `abandoned` case may be reopened to an open stage as the same case
+(2026-10-10), except one an undo discarded. **(impl)** `crm.opportunity_stage_guard`, a trigger carrying the
 §1.1 transition table; `advance_case_stage` refuses the same moves first, by
 name. Optimistic concurrency stays a boundary contract rather than a trigger:
 every case command reads `version`, shows it to the operator and writes back
@@ -663,10 +664,10 @@ else (R7, R8) stays a proposal in Revisión.
   `discarded_by_correction` with its quote revision voided; an institution «por
   confirmar» is archived and its domain removed unless another open case uses
   it; a `won`/`lost` the rules set is corrected back to the stage it came from
-  (`opportunity.stage_corrected`) — the one exception to "a terminal case is
-  never revived", allowed by the stage guard only for a terminal stage whose
-  latest `opportunity.staged` event is a worker event. A case a person closed
-  is never revived.
+  (`opportunity.stage_corrected`) — for `won`, the one way out, allowed by the
+  stage guard only when its latest `opportunity.staged` event is a worker
+  event. Since 2026-10-10 a `lost` case reopens by an ordinary stage move
+  anyway; a case an undo discarded never does.
 
 ## 4. Products, manufacturers and suppliers
 

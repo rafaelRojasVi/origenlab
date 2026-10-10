@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { stagePath } from "../caseCommands";
 import { activityTimestamp, ageBucket, boardColumnOf, boardStatusLine, pausedUntil } from "../stage";
+import { moveRefusal } from "./CaseMove";
 import { Board, sortCards } from "./PipelineBoard";
 
 // Every value below is invented; the repository is public.
@@ -280,7 +281,22 @@ describe("states", () => {
     expect(stagePath("negotiating", "lost")).toEqual(["lost"]);
     expect(stagePath("quoting", "quoting")).toEqual([]);
     expect(stagePath("quoting", "won")).toBeNull();
-    expect(stagePath("lost", "lead")).toBeNull();
+    // A lost or abandoned case reopens in one move, straight to an open stage (2026-10-10).
+    expect(stagePath("lost", "lead")).toEqual(["lead"]);
+    expect(stagePath("abandoned", "negotiating")).toEqual(["negotiating"]);
+    expect(stagePath("lost", "abandoned")).toBeNull();
+    expect(stagePath("lost", "won")).toBeNull();
+    expect(stagePath("won", "negotiating")).toBeNull();
+  });
+
+  it("refuses to move a won case or a case an undo discarded, and a closed case only reopens to an open column", () => {
+    const lost = card({ stage: "lost", closed_at: "2026-10-01T00:00:00Z", close_reason: "precio", version: 3,
+      organization: { organization_id: "o", name: "Uni", confirmation: "confirmed" }, requesting_institution_confirmation: "confirmed" });
+    expect(moveRefusal(lost, "conversacion", NOW)).toBeNull();
+    expect(moveRefusal(lost, "solicitada", NOW)).toBeNull();
+    expect(moveRefusal(lost, "pausa", NOW)).toMatch(/se reabre/);
+    expect(moveRefusal({ ...lost, close_reason: "discarded_by_correction" }, "solicitada", NOW)).toMatch(/descartó/);
+    expect(moveRefusal({ ...lost, stage: "won" }, "conversacion", NOW)).toMatch(/ganado/);
   });
 
   it("pauses only an open case, and only until its earliest task", () => {
