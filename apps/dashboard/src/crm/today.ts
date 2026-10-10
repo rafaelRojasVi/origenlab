@@ -16,7 +16,7 @@
  *   («Retomar: …», a call), overdue first.
  * - **Instituciones por confirmar**: the machine-proposed institutions of open cases.
  */
-import { conversation } from "./caseDisplay";
+import { conversation, lastTouch } from "./caseDisplay";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
 import { pausedUntil, stageBasis } from "./stage";
 
@@ -141,9 +141,12 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
   for (const card of cards) {
     if (!isOpenCase(card)) continue;
     const open = card.open_tasks ?? [];
-    const email = card.last_contact?.outbound?.at ?? null;
-    // A follow-up task is done once OrigenLab writes on the case's thread on or after its day:
-    // nobody has to press «Hecho» — the email the sync captures is the proof.
+    // OrigenLab's last touch after the quote: an email on the thread, or a logged follow-up
+    // («Registrar seguimiento», a call). One clock with the board's status line (`lastTouch`).
+    const touch = lastTouch(card);
+    const email = touch.by === "us" ? touch.at : null;
+    // A follow-up task is done once OrigenLab writes on the case on or after its day: nobody has
+    // to press «Hecho» — the email the sync captures, or the note, is the proof.
     const written = (t: OpenTask) => email !== null && Date.parse(email) >= startOfLocalDay(Date.parse(t.due_at));
     const pending = open.filter((t) => !(isFollowUpTask(t) && written(t)));
     // A case «Decidir casos» scheduled is decided, even if its stage still reads historical.
@@ -160,9 +163,9 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     const sent = card.latest_revision?.sent_at ?? null;
     if (!sent && !task) continue;
     if (!task && conversation(card, now).kind === "replied") continue;
-    const byEmail = email !== null && (!sent || Date.parse(email) > Date.parse(sent));
-    const touch = byEmail ? (email as string) : sent;
-    const days = touch ? Math.max(0, Math.floor((now.getTime() - Date.parse(touch)) / DAY_MS)) : 0;
+    const byEmail = email !== null;
+    const touchAt = byEmail ? (email as string) : sent;
+    const days = touchAt ? Math.max(0, Math.floor((now.getTime() - Date.parse(touchAt)) / DAY_MS)) : 0;
     // Day 3 first, task or not: a quote that went out today is not chased today.
     if (days < RHYTHM[0].from) continue;
     const rhythm = days >= RHYTHM[2].from ? "cerrar" : days >= RHYTHM[1].from ? "segundo" : "primero";
