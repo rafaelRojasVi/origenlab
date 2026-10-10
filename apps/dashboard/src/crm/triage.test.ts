@@ -1,9 +1,87 @@
 import { describe, expect, it } from "vitest";
-import { approvalMove, sortInbox, stageLabel, TRIAGE_PATHS, type TriageReading } from "./triage";
+import type { OpportunityCardData, RevisionCard } from "./crmTypes";
+import {
+  approvalMove, isOpenableRequest, openCaseTitle, sortInbox, stageLabel, wonProposal, TRIAGE_PATHS, type TriageReading,
+} from "./triage";
 import { MAIL_RULES_PATHS } from "./mailRules";
 import { parseProducts } from "./pages/TriagePanel";
 
 const CASE = { opportunity_id: "o-1", title: "Balanzas", stage: "quoting", version: 4 };
+
+// Every value below is invented; the repository is public.
+function revision(no: number, status = "sent", superseded: number | null = null): RevisionCard {
+  return {
+    revision_id: `r-${no}`, revision_no: no, status, origin: "gmail_capture", sent_at: `2026-10-0${no}T10:00:00Z`,
+    superseded_by_revision_no: superseded, is_active: superseded === null, document: null, gmail: null, drive: null,
+    quote_number: "01253-26",
+  };
+}
+
+function card(over: Partial<OpportunityCardData> = {}, revisions: RevisionCard[] = [revision(1)]): OpportunityCardData {
+  return {
+    opportunity_id: "o-1", title: "Balanzas", stage: "quoting", created_at: null, updated_at: null, closed_at: null,
+    close_reason: null, organization: null, other_organizations: [], contact: null,
+    quotes: [{ quote_id: "q-1", quote_number: "01253-26", number_origin: "printed", revisions }],
+    quote_numbers: ["01253-26"], revision_count: revisions.length, latest_revision: revisions[0] ?? null,
+    drive_folder: null, attention: [], status: "ok", next_action: { text: "", source: "suggested", due_at: null },
+    ...over,
+  } as OpportunityCardData;
+}
+
+describe("wonProposal — a purchase order the triage read on a case that can be won", () => {
+  const po = { class: "purchase_order", intent: null, cases: [CASE] };
+  const byId = (c: OpportunityCardData) => new Map([[c.opportunity_id, c]]);
+
+  it("proposes the case's sent revisions when the case is at Cotizando or Conversación", () => {
+    const got = wonProposal(po, byId(card()));
+    expect(got?.case).toEqual(CASE);
+    expect(got?.revisions.map((r) => [r.quote_id, r.revision_no])).toEqual([["q-1", 1]]);
+    expect(wonProposal(po, byId(card({ stage: "negotiating" })))?.case.stage).toBe("negotiating");
+  });
+
+  it("takes the board's stage over the reading's, which may be minutes old", () => {
+    const stale = { ...po, cases: [{ ...CASE, stage: "lead" }] };
+    expect(wonProposal(stale, byId(card({ stage: "negotiating" })))?.case.stage).toBe("negotiating");
+  });
+
+  it("lists every sent, unreplaced revision, newest first, so the row can ask which one", () => {
+    const two = card({}, [revision(1, "sent", 2), revision(2), revision(3)]);
+    expect(wonProposal(po, byId(two))?.revisions.map((r) => r.revision_no)).toEqual([3, 2]);
+  });
+
+  it("proposes nothing for a reading that is not a purchase order, a thread on 0 or 2 cases, a case not on the board, a won or closed case, or a case with nothing sent", () => {
+    expect(wonProposal({ class: "quote_request", intent: null, cases: [CASE] }, byId(card()))).toBeNull();
+    expect(wonProposal({ ...po, cases: [] }, byId(card()))).toBeNull();
+    expect(wonProposal({ ...po, cases: [CASE, { ...CASE, opportunity_id: "o-2" }] }, byId(card()))).toBeNull();
+    expect(wonProposal(po, new Map())).toBeNull();
+    expect(wonProposal(po, byId(card({ stage: "won" })))).toBeNull();
+    expect(wonProposal(po, byId(card({ stage: "lead" })))).toBeNull();
+    expect(wonProposal(po, byId(card({ closed_at: "2026-10-09T10:00:00Z" })))).toBeNull();
+    expect(wonProposal(po, byId(card({}, [revision(1, "draft")])))).toBeNull();
+    expect(wonProposal(po, byId(card({}, [revision(1, "sent", 2)])))).toBeNull();
+  });
+
+  it("reads the intent too: the model may say «purchase_order» where the rules said business_other", () => {
+    expect(wonProposal({ class: "business_other", intent: "purchase_order", cases: [CASE] }, byId(card()))).not.toBeNull();
+  });
+});
+
+describe("«Abrir caso» — which rows offer it and what the case is called", () => {
+  it("offers it on a quote request no case holds, by class or by intent", () => {
+    expect(isOpenableRequest({ class: "quote_request", intent: null, cases: [] })).toBe(true);
+    expect(isOpenableRequest({ class: "business_other", intent: "quote_request", cases: [] })).toBe(true);
+    expect(isOpenableRequest({ class: "quote_request", intent: null, cases: [CASE] })).toBe(false);
+    expect(isOpenableRequest({ class: "business_other", intent: "technical_question", cases: [] })).toBe(false);
+  });
+
+  it("titles the case with the subject minus reply prefixes, or the sender's domain", () => {
+    expect(openCaseTitle({ subject: "RE: Re: Solicitud cotización balanza", sender: "x@uni.example" })).toBe("Solicitud cotización balanza");
+    expect(openCaseTitle({ subject: "RV: Fwd: Gradillas", sender: null })).toBe("Gradillas");
+    expect(openCaseTitle({ subject: "  ", sender: "persona@uni.example" })).toBe("Solicitud por correo · uni.example");
+    expect(openCaseTitle({ subject: null, sender: null })).toBe("Solicitud por correo");
+    expect(openCaseTitle({ subject: "x".repeat(500), sender: null })).toHaveLength(400);
+  });
+});
 
 describe("approvalMove — what «Aprobar» does to the case", () => {
   it("moves the one case of the thread to the suggested stage when the board can walk there", () => {
@@ -70,5 +148,26 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
     ]);
     expect(ask.map((x) => x.assertion_id)).toEqual(["nuevo"]);
     expect(hidden).toEqual({ "en un caso": 1, proveedor: 2, "aviso automático": 3, "reenvío antiguo": 1, "mismo hilo": 1 });
+  });
+
+  it("asks «¿Marcar ganada?» for a purchase order on a winnable case, first, and still counts the rest «en un caso»", () => {
+    const won = { ...CASE, opportunity_id: "o-won", stage: "won" };
+    const { ask, hidden } = sortInbox(
+      [
+        r("nuevo", { sent_at: "2026-10-10T10:00:00Z" }),
+        r("oc", { class: "purchase_order", cases: [CASE], sent_at: "2026-10-01T10:00:00Z" }),
+        r("oc-ganada", { class: "purchase_order", cases: [won] }),
+        r("respuesta", { cases: [CASE] }),
+      ],
+      [card(), card({ opportunity_id: "o-won", stage: "won" })],
+    );
+    expect(ask.map((x) => x.assertion_id)).toEqual(["oc", "nuevo"]);
+    expect(hidden).toEqual({ "en un caso": 2 });
+  });
+
+  it("without the board's cards, a purchase order on a case is only counted, as before", () => {
+    const { ask, hidden } = sortInbox([r("oc", { class: "purchase_order", cases: [CASE] })]);
+    expect(ask).toEqual([]);
+    expect(hidden).toEqual({ "en un caso": 1 });
   });
 });

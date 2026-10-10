@@ -8,8 +8,9 @@
  * its own receipt.
  */
 import { fetchJsonGet, operatorApiUrl } from "../api/operatorClient";
+import type { OpportunityCardData, RevisionCard } from "./crmTypes";
 import { STAGE_LABEL } from "./stage";
-import { stagePath } from "./caseCommands";
+import { mayBeWonFrom, stagePath, winnableRevisions } from "./caseCommands";
 
 /** The queue (a read). The verdict is posted by `mailRules.ts`, the Revisión mail tools' one write client. */
 export const TRIAGE_PATHS = {
@@ -133,14 +134,67 @@ export function approvalMove(reading: Pick<TriageReading, "stage" | "cases">): {
   return stagePath(only.stage, to) ? { case: only, to } : null;
 }
 
+/**
+ * A purchase order the triage read on a case that can still be won: the «¿Marcar ganada?» row on
+ * «Hoy». The reading must be a purchase order (class or intent), the thread on exactly one case,
+ * that case on the board at «Cotizando» or «Conversación», and the case holding at least one sent,
+ * unreplaced revision to win against. One revision: Aceptar wins against it. Several: the row asks
+ * which (owner decision 2026-10-10). A won or closed case, or a case with nothing sent, is counted
+ * «en un caso» as before — nothing is proposed that the API would refuse.
+ */
+export interface WonProposal {
+  case: TriageCase;
+  card: OpportunityCardData;
+  revisions: (RevisionCard & { quote_id: string })[];
+}
+
+export function isPurchaseOrder(r: Pick<TriageReading, "class" | "intent">): boolean {
+  return r.class === "purchase_order" || r.intent === "purchase_order";
+}
+
+export function wonProposal(
+  r: Pick<TriageReading, "class" | "intent" | "cases">,
+  cards: ReadonlyMap<string, OpportunityCardData>,
+): WonProposal | null {
+  if (!isPurchaseOrder(r) || r.cases.length !== 1) return null;
+  const only = r.cases[0];
+  const card = cards.get(only.opportunity_id);
+  if (!card || !mayBeWonFrom(card.stage) || card.closed_at) return null;
+  const revisions = winnableRevisions(card);
+  if (revisions.length === 0) return null;
+  return { case: { ...only, stage: card.stage, version: card.version ?? only.version }, card, revisions };
+}
+
+/** A quote request a person wrote that no case holds: the row offers «Abrir caso». */
+export function isOpenableRequest(r: Pick<TriageReading, "class" | "intent" | "cases">): boolean {
+  return r.cases.length === 0 && (r.class === "quote_request" || r.intent === "quote_request");
+}
+
+const REPLY_PREFIX = /^\s*(?:(?:re|rv|fw|fwd|tr|aw|wg|sv)\s*:\s*)+/i;
+
+/**
+ * The title «Abrir caso» gives the case: the subject without its reply/forward prefixes, or the
+ * sender's domain when the subject is empty. At most 400 characters, the API's limit.
+ */
+export function openCaseTitle(r: Pick<TriageReading, "subject" | "sender">): string {
+  const subject = (r.subject ?? "").replace(REPLY_PREFIX, "").trim();
+  if (subject) return subject.slice(0, 400);
+  const domain = (r.sender ?? "").split("@")[1]?.trim();
+  return domain ? `Solicitud por correo · ${domain}`.slice(0, 400) : "Solicitud por correo";
+}
+
+export function cardsById(cards: readonly OpportunityCardData[]): Map<string, OpportunityCardData> {
+  return new Map(cards.map((c) => [c.opportunity_id, c]));
+}
+
 /** Why an email is not asked about on «Hoy». */
 export type HiddenReason = "en un caso" | "proveedor" | "aviso automático" | "reenvío antiguo" | "mismo hilo";
 
 const AUTOMATIC_SENDER = /^(no-?reply|do-?not-?reply|mensajeria|newsletter|news|marketing|notifications?|info|customer\.assistance)$/;
 const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce", "calendar", "unsubscribe", "empty", "outbound"]);
 
-function hiddenReason(r: TriageReading): Exclude<HiddenReason, "mismo hilo"> | null {
-  if (r.cases.length > 0) return "en un caso";
+function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCardData>): Exclude<HiddenReason, "mismo hilo"> | null {
+  if (r.cases.length > 0) return wonProposal(r, cards) ? null : "en un caso";
   const [local = "", domain = ""] = (r.sender ?? "").toLowerCase().split("@");
   if (domain.includes("labdelivery")) return "reenvío antiguo";
   if (r.sender_is_supplier || r.intent === "supplier_offer") return "proveedor";
@@ -151,16 +205,23 @@ function hiddenReason(r: TriageReading): Exclude<HiddenReason, "mismo hilo"> | n
 /**
  * The emails «Hoy» asks about: written by a person, on no case, not from a supplier, not an
  * automatic notice and not a forward from the old Labdelivery mailbox — one per thread, the
- * newest. The rest are only counted, by reason.
+ * newest — plus a purchase order on a case that can be won (`wonProposal`), which asks «¿Marcar
+ * ganada?» instead of being counted «en un caso». Proposals come first, then the rest newest
+ * first. What is not asked about is only counted, by reason.
  */
-export function sortInbox(items: TriageReading[]): { ask: TriageReading[]; hidden: Partial<Record<HiddenReason, number>> } {
+export function sortInbox(
+  items: TriageReading[],
+  cards: readonly OpportunityCardData[] | ReadonlyMap<string, OpportunityCardData> = [],
+): { ask: TriageReading[]; hidden: Partial<Record<HiddenReason, number>> } {
+  const byId = cards instanceof Map ? cards : cardsById(cards as readonly OpportunityCardData[]);
   const hidden: Partial<Record<HiddenReason, number>> = {};
   const count = (k: HiddenReason) => { hidden[k] = (hidden[k] ?? 0) + 1; };
-  const newest = [...items].sort((a, b) => (b.sent_at ?? "").localeCompare(a.sent_at ?? ""));
+  const rank = (r: TriageReading) => (wonProposal(r, byId) ? 0 : 1);
+  const newest = [...items].sort((a, b) => rank(a) - rank(b) || (b.sent_at ?? "").localeCompare(a.sent_at ?? ""));
   const seen = new Set<string>();
   const ask: TriageReading[] = [];
   for (const r of newest) {
-    const why = hiddenReason(r);
+    const why = hiddenReason(r, byId);
     if (why) { count(why); continue; }
     const thread = r.thread_id ?? r.assertion_id;
     if (seen.has(thread)) { count("mismo hilo"); continue; }

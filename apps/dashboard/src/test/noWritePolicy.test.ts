@@ -54,7 +54,9 @@ describe("dashboard read-only policy", () => {
   //    vigente» (resolve-current-revision) and «Registrar cotización» / «Nueva revisión»
   //    (record-case-quotation), plus audited institution assignment/review commands.
   //    Sales or admin upstream. Cross-thread quote evidence can be manually linked after
-  //    review; opening a case and recording an interest remain outside the browser.
+  //    review. «Abrir caso» on a «Correos sin caso» row opens a case from that email
+  //    (open-commercial-case, owner decision 2026-10-10); recording an interest remains outside
+  //    the browser.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const MAIL_RULES_FILE = "../crm/mailRules.ts";
   const MAIL_RULES_PATHS = [
@@ -75,6 +77,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/create-task",
     "/v2/commands/complete-task",
     "/v2/commands/cancel-task",
+    "/v2/commands/open-commercial-case",
   ];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";

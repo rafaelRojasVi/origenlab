@@ -244,11 +244,12 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
  * «Marcar ganada» (`record-case-won`), «Elegir revisión vigente» (`resolve-current-revision`)
  * and «Registrar cotización» / «Nueva revisión» (`record-case-quotation`), plus the three W11
  * task commands behind «En pausa hasta…» (`create-task`), «Retomar ahora» (`cancel-task`) and
- * «Hecho» (`complete-task`). Nine exact paths, and only nine. Upstream each needs an
- * active `sales` or `admin` operator (from the verified session, never the body), an
- * `Idempotency-Key`, the case (or task) version the operator was shown and a note, and mounts only behind
- * `ORIGENLAB_V2_COMMANDS_ENABLED`. The other three case commands -- open-commercial-case,
- * record-case-interest -- stay refused. The reviewed cross-thread quotation flow
+ * «Hecho» (`complete-task`), and «Abrir caso» on a «Correos sin caso» row (`open-commercial-case`:
+ * a case at `lead` whose origin is that email, owner decision 2026-10-10). Eleven exact paths, and only
+ * eleven. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
+ * the body), an `Idempotency-Key`, the case (or task) version the operator was shown (the opening
+ * command names its origin record instead) and a note, and mounts only behind
+ * `ORIGENLAB_V2_COMMANDS_ENABLED`. `record-case-interest` stays refused. The reviewed cross-thread quotation flow
  * explicitly links an existing Gmail evidence record via link-case-evidence; the
  * operator must submit a case version, a written note and an idempotency key. Same Origin / JSON / key guard as the
  * marketing commands (`marketingCommandRefusal` in index.ts).
@@ -264,6 +265,7 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/create-task$/,
   /^\/v2\/commands\/complete-task$/,
   /^\/v2\/commands\/cancel-task$/,
+  /^\/v2\/commands\/open-commercial-case$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */

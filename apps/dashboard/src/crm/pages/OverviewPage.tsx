@@ -46,7 +46,7 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
                 <FxSection state={fx} reload={reloadFx} />
               </>
             }
-            after={<TriagePanel />}
+            after={<TriagePanel cards={p.items} onCaseChanged={reloadPipeline} />}
           />
         )}
       </ResourceGate>
