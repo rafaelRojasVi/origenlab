@@ -642,7 +642,9 @@ else (R7, R8) stays a proposal in Revisión.
 
 - **Who acts.** The rules run in the API when an admin presses «Aplicar» on
   the previewed actions — and, for **R1 and R2 only** (a link to the one open
-  case the thread or the quote number names; owner-approved 2026-10-06), on a
+  case the thread or the quote number names — a number read from a PDF name,
+  or from the subject line when no PDF names one (2026-10-10); owner-approved
+  2026-10-06), on a
   timer in the API while an admin has switched the automatic run on in
   Revisión. The switch is off until an admin turns it on, is turned off the
   same way, and needs a note both ways; the automatic run acts on behalf of

@@ -2355,3 +2355,14 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Rule 1 | `stageBasis` (dashboard) ignores the import origin while the newest revision is younger than 14 days (`RECENT_QUOTE_DAYS`): the quote is «Enviada», joins «Seguimientos» from day 3 on the 3 · 14 · 30 rhythm, and only becomes «sin decidir» after two weeks with no task and no reply. |
 | Rule 2 | `repliesToAnswer` includes a won case whose last inbound email is later than `closed_at` (`wroteAfterWinning`); the row reads «Escribió tras ganar el …», offers only «Abrir respuesta» (tasks are refused on closed cases, so answering the email is what takes it off the list). Lost cases stay out: a client writing back there is a new request. |
 | Not changed | The API still stores every registered quote as `historical_import`; a distinct origin for the sync's quotes is a later change. |
+
+### 2.7.83 R2 reads the quote number from the subject when no PDF names one, 2026-10-10 — built, not deployed
+
+`apps/api` rules only (`v2/mail_rules.py`): no command, proxy, dashboard or schema change. The automatic R1/R2 run (§2.7.59) and «Aplicar» use the same planner.
+
+| | |
+|---|---|
+| Problem | A client answering about a quote on a fresh Gmail thread without an attachment («Consulta_Compra de productos_ cotización N°01259-26», 9 Oct) stayed in «Correos sin caso» as an R7 review, although the number named exactly one open case. R2 read quote numbers from PDF file names (`cn_tokens`) only. |
+| Rule | When no attached PDF names a quote, R2 also reads the subject (`subject_quote_keys`, `_SUBJECT_QUOTE_NUMBER`): «CN01259», «01259-26», «cotización N°01259-26», «Cotización 1259» (year = the email's Santiago year when not typed). Four or five digits, up to three letters; a sixth digit (a supplier's own number) disqualifies. A PDF's number always outranks the subject's («Re: Cotización 01198-26» carrying CN01240 sends 01240). The rest is unchanged: exactly one open case → auto link; several → proposal; a closed or unknown number → R7/R8 as before. |
+| Evidence | `apps/api` `scripts/validate.sh`: **3885 passed**, 676 skipped; three new rule tests (fictitious numbers and addresses); the subject test fails on the old planner |
+

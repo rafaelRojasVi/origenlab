@@ -153,6 +153,52 @@ def test_r2_on_two_cases_is_a_proposal() -> None:
     assert action.mode == "proposal"
 
 
+def test_r2_reads_the_quote_number_from_the_subject_when_no_pdf_names_one() -> None:
+    """A client answering about «cotización N°01259-26» on a fresh thread, with no attachment:
+    the number names exactly one open case, so the email links to it (previously an R7 review)."""
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", thread_id="t-new", sender="Irina <persona@gmail.com>",
+                       subject="Consulta_Compra de productos_ cotización N°01259-26", documents=()),),
+        cases=(case(quotes=(quote("01259-26"),)),),
+        organizations=(org(),),
+    ))
+    assert action.rule_id == "R2"
+    assert action.mode == "auto"
+    assert action.case_id == "c-1"
+    assert action.quote_number == "01259-26"
+
+
+def test_a_pdf_quote_number_outranks_the_subject_number() -> None:
+    """«Re: Cotización 01198-26» carrying CN01240: the PDF is the quote being sent; the subject
+    is the thread's old title. Only the PDF's number is matched."""
+    action = only(Snapshot(
+        evidence=(mail(thread_id="t-new", subject="Re: Cotización 01198-26 — cliente",
+                       documents=(MailDocument(filename="CN01240-cliente.pdf", sha256=PDF_SHA, cn_tokens=("CN1240",)),)),),
+        cases=(case(quotes=(quote("01198-26"),)), case(id="c-2", quotes=(quote("01240-26"),))),
+        organizations=(org(),),
+    ))
+    assert action.rule_id == "R2"
+    assert action.case_id == "c-2"
+
+
+def test_a_subject_number_of_a_closed_case_or_an_unknown_number_does_not_link() -> None:
+    closed = only(Snapshot(
+        evidence=(mail(direction="inbound", thread_id="t-new", sender="Irina <persona@gmail.com>",
+                       subject="Consulta cotización N°01259-26", documents=()),),
+        cases=(case(stage="abandoned", closed=True, quotes=(quote("01259-26"),)),),
+        organizations=(org(),),
+    ))
+    assert closed.rule_id != "R2"
+    # A supplier-style six-digit document number is not an OrigenLab correlative.
+    six = only(Snapshot(
+        evidence=(mail(direction="inbound", thread_id="t-new", sender="ventas@proveedor.test",
+                       subject="Cotización 123553", documents=()),),
+        cases=(case(quotes=(quote("12355-26"),)),),
+        organizations=(org(),),
+    ))
+    assert six.rule_id != "R2"
+
+
 def test_a_free_mail_sender_may_still_link_through_r1() -> None:
     action = only(Snapshot(
         evidence=(mail(direction="inbound", sender="alguien@gmail.com", documents=()),),
