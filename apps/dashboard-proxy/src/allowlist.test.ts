@@ -429,6 +429,8 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/confirm-triage-unsubscribe/",
       "/v2/commands/confirm-triage-unsubscribes",
       "/v2/commands/apply-triage-unsubscribes",
+      // Removed 2026-10-10: reopening is a stage move on the same case now.
+      "/v2/commands/reopen-commercial-case",
       "/v2/commands/lift-unsubscribe",
       "/v2/commands/resubscribe",
       "/v2/commands/revoke-block",
@@ -494,10 +496,8 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/cancel-task",
       // «Abrir caso» from a «Correos sin caso» row (owner decision 2026-10-10).
       "/v2/commands/open-commercial-case",
-      // «Reabrir» on a reply to a closed case: a new case that references it (owner decision 2026-10-10).
-      "/v2/commands/reopen-commercial-case",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(12);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(11);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);

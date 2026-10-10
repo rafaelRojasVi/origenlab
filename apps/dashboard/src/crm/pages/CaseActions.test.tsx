@@ -452,7 +452,9 @@ describe("case drawer actions", () => {
       note: "Precio: eligieron otra marca",
     });
     await waitFor(() => expect(calls.filter((c) => c.path === "/v2/workspace/pipeline")).toHaveLength(2));
-    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cambiar estado" })).toBeDisabled());
+    // The case is lost now: «Cambiar estado» becomes «Reabrir» (same case, 2026-10-10).
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Reabrir" })).toBeEnabled());
+    expect(within(dialog).queryByRole("button", { name: "Cambiar estado" })).toBeNull();
   });
 
   it("closes «Sin respuesta» as abandoned", async () => {

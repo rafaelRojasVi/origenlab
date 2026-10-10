@@ -182,12 +182,13 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
       [],
       NOW,
     );
-    expect(ask.map((x) => x.assertion_id)).toEqual(["vuelve", "vuelve-antiguo", "nuevo"]);
+    // A case closed more than 90 days ago no longer holds its thread: that request is new mail.
+    expect(ask.map((x) => x.assertion_id)).toEqual(["vuelve", "nuevo", "vuelve-antiguo"]);
     expect(hidden).toEqual({ "en un caso": 3 }); // the open one, the won one, and the bounce on the lost one
     const recent = reopenProposal(r("vuelve", { cases: [lost] }), new Map(), NOW)!;
     expect([recent.case.opportunity_id, recent.daysSinceClose, recent.stage]).toEqual(["o-lost", 20, "negotiating"]);
-    const stale = reopenProposal(r("vuelve-antiguo", { cases: [old] }), new Map(), NOW)!;
-    expect([stale.daysSinceClose, stale.stage]).toEqual([162, "lead"]);
+    expect(reopenProposal(r("vuelve-antiguo", { cases: [old] }), new Map(), NOW)).toBeNull();
+    expect(isOpenableRequest(r("vuelve-antiguo", { class: "quote_request", cases: [old] }), new Map(), NOW)).toBe(true);
   });
 
   it("with the board's cards, a closed case that never named its requester reopens at «Solicitada»", () => {
@@ -206,6 +207,31 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
     expect(withRequester.stage).toBe("negotiating");
     // Several cases on the thread: all must be closed; the most recently closed one is reopened.
     expect(reopenProposal(r("c", { cases: [lost, CASE] }), cardsById(cards), NOW)).toBeNull();
+  });
+
+  it("a case an undo discarded never holds its email: the request is new mail, with «Abrir caso»", () => {
+    const NOW = new Date("2026-10-10T12:00:00Z");
+    const discarded = { ...CASE, opportunity_id: "o-d", stage: "abandoned", closed_at: "2026-10-10T09:00:00Z",
+                        close_reason: "discarded_by_correction" };
+    const reading = r("pago", { class: "quote_request", cases: [discarded], sent_at: "2026-10-08T20:10:00Z" });
+    expect(reopenProposal(reading, new Map(), NOW)).toBeNull();
+    expect(isOpenableRequest(reading, new Map(), NOW)).toBe(true);
+    const { ask, hidden } = sortInbox([reading], [], NOW);
+    expect(ask.map((x) => x.assertion_id)).toEqual(["pago"]);
+    expect(hidden).toEqual({});
+    // Even after the closing: a discarded case is never proposed for reopening.
+    expect(reopenProposal({ ...reading, sent_at: "2026-10-10T11:00:00Z" }, new Map(), NOW)).toBeNull();
+  });
+
+  it("an email that was already on the thread when the case was closed is not «volvió a escribir»", () => {
+    const NOW = new Date("2026-10-10T12:00:00Z");
+    const closedAfter = { ...CASE, opportunity_id: "o-x", stage: "abandoned", closed_at: "2026-10-09T15:00:00Z" };
+    // Sent the day before the closing: whoever closed the case had it in front of them.
+    expect(reopenProposal(r("before", { cases: [closedAfter], sent_at: "2026-10-08T20:10:00Z" }), new Map(), NOW)).toBeNull();
+    expect(reopenProposal(r("after", { cases: [closedAfter], sent_at: "2026-10-10T09:00:00Z" }), new Map(), NOW)).not.toBeNull();
+    const { ask, hidden } = sortInbox([r("before", { cases: [closedAfter], sent_at: "2026-10-08T20:10:00Z" })], [], NOW);
+    expect(ask).toEqual([]);
+    expect(hidden).toEqual({ "en un caso": 1 });
   });
 
   it("without the board's cards, a purchase order on a case is only counted, as before", () => {

@@ -71,10 +71,6 @@ function stub(readings: TriageReading[], refuse: Record<string, number> = {}): C
       if (refuse[path]) return json({ detail: { code: "refused_in_test" } }, refuse[path]);
       if (path === "/v2/workspace/triage-readings") return json({ status: "pending", items: readings });
       if (path === "/v2/commands/review-triage") return json({ review_id: "rv-1" });
-      if (path === "/v2/commands/reopen-commercial-case") {
-        return json({ command: "reopen_commercial_case", opportunity_id: "o-reopened", opportunity_version: 5,
-                      stage: (body as { stage: string }).stage, reopened_from_opportunity_id: "o-lost" });
-      }
       if (path === "/v2/commands/open-commercial-case") {
         return json({ command: "open_commercial_case", opportunity_id: "o-new", opportunity_version: 1, stage: "lead",
           idempotency_key: key, command_receipt_id: "rcpt-open", replayed: false });
@@ -203,40 +199,45 @@ describe("«Correos sin caso» · Abrir caso", () => {
     expect(screen.queryByRole("button", { name: "Abrir caso" })).not.toBeInTheDocument();
   });
 
-  it("a reply on a closed case asks «¿Reabrir?», reopens it as a new case at «Conversación», then records the verdict", async () => {
+  it("a reply after the closing asks «¿Reabrir?» and moves that same case back to «Conversación», then records the verdict", async () => {
+    const day = 86_400_000;
+    const closedAt = new Date(Date.now() - 5 * day).toISOString();
     const lostCase = { opportunity_id: "o-lost", title: "Pipetas", stage: "lost", version: 3 };
-    const calls = stub([reading("vuelve", { class: "business_other", cases: [lostCase], source_record_id: "src-vuelve" })]);
-    const onCaseChanged = renderPanel([card({ opportunity_id: "o-lost", stage: "lost", closed_at: "2026-10-01T10:00:00Z",
+    const calls = stub([reading("vuelve", { class: "business_other", cases: [lostCase], source_record_id: "src-vuelve",
+                                            sent_at: new Date(Date.now() - day).toISOString() })]);
+    const onCaseChanged = renderPanel([card({ opportunity_id: "o-lost", stage: "lost", closed_at: closedAt, version: 6,
                                               close_reason: "compraron a otro", requesting_institution_confirmation: "confirmed" })]);
     const row = await screen.findByTestId("reopen-proposal");
-    expect(row).toHaveTextContent("Laboratorio Ejemplo · caso perdido hace");
+    expect(row).toHaveTextContent("Laboratorio Ejemplo · caso perdido hace 5 d");
     expect(row).toHaveTextContent("¿reabrir en «Conversación»?");
     fireEvent.click(within(row).getByRole("button", { name: "Reabrir" }));
     await waitFor(() => expect(onCaseChanged).toHaveBeenCalled());
     const posts = calls.filter((c) => c.path.startsWith("/v2/commands/"));
-    expect(posts.map((c) => c.path)).toEqual(["/v2/commands/reopen-commercial-case", "/v2/commands/review-triage"]);
-    expect(posts[0].body).toMatchObject({ opportunity_id: "o-lost", origin_source_record_id: "src-vuelve", stage: "negotiating" });
+    expect(posts.map((c) => c.path)).toEqual(["/v2/commands/advance-case-stage", "/v2/commands/review-triage"]);
+    expect(posts[0].body).toMatchObject({ opportunity_id: "o-lost", opportunity_version: 6, stage: "negotiating", close_reason: null });
     expect(String(posts[0].body?.note)).toMatch(/^Reabierto desde Hoy/);
     expect(posts[0].key).toBeTruthy();
     expect(posts[1].body).toMatchObject({ assertion_id: "vuelve", verdict: "approved" });
-    expect(await screen.findByText(/reabierto como caso nuevo en «Conversación»/)).toBeInTheDocument();
+    expect(await screen.findByText(/reabierto en «Conversación»/)).toBeInTheDocument();
   });
 
-  it("«Descartar» on a reopen proposal records a rejected verdict and nothing else; a refused reopen keeps the row", async () => {
-    const lostCase = { opportunity_id: "o-lost", title: "Pipetas", stage: "abandoned", version: 3, closed_at: "2026-05-01T10:00:00Z" };
-    const calls = stub([reading("vuelve", { cases: [lostCase] })], { "/v2/commands/reopen-commercial-case": 409 });
-    const onCaseChanged = renderPanel([]);
+  it("without a confirmed institution it reopens at «Solicitada»; a refusal keeps the row; «Descartar» only records the verdict", async () => {
+    const day = 86_400_000;
+    const lostCase = { opportunity_id: "o-ab", title: "Pipetas", stage: "abandoned", version: 3 };
+    const calls = stub([reading("vuelve", { cases: [lostCase], sent_at: new Date(Date.now() - day).toISOString() })],
+                       { "/v2/commands/advance-case-stage": 409 });
+    const onCaseChanged = renderPanel([card({ opportunity_id: "o-ab", stage: "abandoned", organization: null,
+                                              closed_at: new Date(Date.now() - 3 * day).toISOString(), close_reason: "sin respuesta" })]);
     const row = await screen.findByTestId("reopen-proposal");
-    expect(row).toHaveTextContent("caso sin respuesta hace");
+    expect(row).toHaveTextContent("caso cerrado sin respuesta hace 3 d");
     expect(row).toHaveTextContent("¿reabrir en «Solicitada»?");
     fireEvent.click(within(row).getByRole("button", { name: "Reabrir" }));
-    expect(await screen.findByText(/No se pudo reabrir el caso/)).toBeInTheDocument();
+    expect(await screen.findByText(/refused_in_test|No se pudo reabrir/)).toBeInTheDocument();
     expect(calls.some((c) => c.path === "/v2/commands/review-triage")).toBe(false);
     expect(onCaseChanged).not.toHaveBeenCalled();
     fireEvent.click(within(row).getByRole("button", { name: "Descartar" }));
     await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/review-triage")).toBe(true));
-    const verdict = calls.find((c) => c.path === "/v2/commands/review-triage")!;
-    expect(verdict.body).toMatchObject({ assertion_id: "vuelve", verdict: "rejected" });
+    expect(calls.find((c) => c.path === "/v2/commands/review-triage")!.body).toMatchObject({ assertion_id: "vuelve", verdict: "rejected" });
   });
 
   it("when the API refuses to open the case, nothing is reviewed and the row stays", async () => {

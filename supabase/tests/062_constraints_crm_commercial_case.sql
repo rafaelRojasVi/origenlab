@@ -189,10 +189,10 @@ select lives_ok($$ update crm.opportunity
   set stage = 'abandoned', closed_at = now(), close_reason = 'nunca respondieron'
   where id = '10000000-0000-4000-8000-0000000000b1' $$,
   'opportunity: a case that never found its requester can still be abandoned');
-select throws_ok($$ update crm.opportunity
+select lives_ok($$ update crm.opportunity
   set stage = 'lead', closed_at = null, close_reason = null
   where id = '10000000-0000-4000-8000-0000000000b1' $$,
-  'P0001', null, 'opportunity: a terminal case is never revived');
+  'opportunity: an abandoned case reopens as the same case (2026-10-10)');
 select throws_ok($$ delete from crm.opportunity where id = '10000000-0000-4000-8000-0000000000b1' $$,
   'P0001', null, 'opportunity: a case is never deleted');
 select lives_ok($$

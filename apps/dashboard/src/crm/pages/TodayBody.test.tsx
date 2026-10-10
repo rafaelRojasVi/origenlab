@@ -251,26 +251,25 @@ afterEach(() => {
   clearResourceCache();
 });
 
-describe("«Vencidas» on the page", () => {
-  it("shows them first, names the owner of an escalated task, and keeps them out of «Otras tareas»", () => {
+describe("«Tareas» on the page", () => {
+  it("is one list: overdue first with the owner on escalated rows, then the rest due today", () => {
     const mine = { ...task("mine4", "2026-10-02T12:00:00Z"), owner: "Ventas" };
     const theirs8 = { ...task("theirs8", "2026-09-28T12:00:00Z"), owner: "Tatiana" };
     const theirs4 = { ...task("theirs4", "2026-10-02T12:00:00Z"), owner: "Tatiana" };
     const today = { ...task("today", "2026-10-06T20:00:00Z"), owner: "Ventas" };
     renderToday([card({ open_tasks: [mine, theirs8, theirs4, today] }, "2026-10-05T12:00:00Z")]);
-    const panel = screen.getByTestId("today-overdue");
-    expect(panel).toHaveTextContent("Vencidas");
+    const panel = screen.getByTestId("today-tasks");
+    expect(panel).toHaveTextContent("Tareas");
+    expect(panel).toHaveTextContent("vencidas primero");
     expect(within(panel).getAllByTestId(/^today-task-/).map((e) => e.getAttribute("data-testid"))).toEqual([
-      "today-task-theirs8", "today-task-mine4",
+      "today-task-theirs8", "today-task-mine4", "today-task-theirs4", "today-task-today",
     ]);
     expect(within(within(panel).getByTestId("today-task-theirs8")).getByTestId("today-owner-label")).toHaveTextContent("de Tatiana");
     expect(within(within(panel).getByTestId("today-task-mine4")).queryByTestId("today-owner-label")).toBeNull();
-    expect(within(panel).getAllByRole("button", { name: "Hecho" })).toHaveLength(2);
-    // The other two stay in «Otras tareas de hoy»: someone else's at 4 days, and today's.
-    const others = screen.getByText("Otras tareas de hoy").closest("section")!;
-    expect(within(others).getAllByTestId(/^today-task-/).map((e) => e.getAttribute("data-testid"))).toEqual([
-      "today-task-theirs4", "today-task-today",
-    ]);
+    expect(within(panel).getAllByRole("button", { name: "Hecho" })).toHaveLength(4);
+    // One task list only.
+    expect(screen.queryByText("Otras tareas de hoy")).toBeNull();
+    expect(screen.queryByText("Vencidas")).toBeNull();
   });
 });
 
@@ -419,8 +418,8 @@ describe("Hoy actions", () => {
       "href",
       "https://mail.example.cl/m",
     );
-    // Nothing else due: the empty «Otras tareas» panel is not drawn.
-    expect(screen.queryByText("Otras tareas de hoy")).not.toBeInTheDocument();
+    // Nothing else due: the empty «Tareas» panel is not drawn.
+    expect(screen.queryByTestId("today-tasks")).not.toBeInTheDocument();
     fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
     fireEvent.click(within(row).getByRole("menuitem", { name: "Ya le escribí" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());

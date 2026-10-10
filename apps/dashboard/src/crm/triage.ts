@@ -170,61 +170,92 @@ export function wonProposal(
 
 /**
  * Days after a case closed during which a reply on its thread is the same deal coming back
- * (owner decision 2026-10-10): the row asks «¿Reabrir?» and the new case opens at «Conversación».
- * Older: the row still offers to reopen, but the new case opens at «Solicitada».
+ * (owner decision 2026-10-10): the row offers «Reabrir» on that same case. A case closed longer
+ * ago no longer holds its thread: the email is treated as new and offers «Abrir caso».
  */
 export const REOPEN_WINDOW_DAYS = 90;
+
+const DISCARDED = "discarded_by_correction";
+const REOPENABLE = new Set(["lost", "abandoned"]);
+
+function caseState(c: TriageCase, cards: ReadonlyMap<string, OpportunityCardData>) {
+  const card = cards.get(c.opportunity_id) ?? null;
+  return {
+    c, card,
+    stage: card?.stage ?? c.stage,
+    closedAt: card?.closed_at ?? c.closed_at ?? null,
+    closeReason: card?.close_reason ?? c.close_reason ?? null,
+  };
+}
+
+/**
+ * The cases on the thread that still hold its email. Not holding: a case an undo discarded (it was
+ * never a case), and a lost or abandoned case closed more than `REOPEN_WINDOW_DAYS` ago (the
+ * client is starting over). An open or won case always holds.
+ */
+export function holdingCases(
+  r: Pick<TriageReading, "cases">,
+  cards: ReadonlyMap<string, OpportunityCardData>,
+  now: Date = new Date(),
+): ReturnType<typeof caseState>[] {
+  return r.cases.map((c) => caseState(c, cards)).filter((x) => {
+    if (x.closeReason === DISCARDED) return false;
+    if (REOPENABLE.has(x.stage) && x.closedAt) {
+      return now.getTime() - Date.parse(x.closedAt) <= REOPEN_WINDOW_DAYS * 86_400_000;
+    }
+    return true;
+  });
+}
 
 export interface ReopenProposal {
   /** The closed case the thread belongs to (the most recently closed, if several). */
   case: TriageCase;
   closedAt: string;
   daysSinceClose: number;
-  /** Within the window and the case had a confirmed requester: «Conversación»; else «Solicitada». */
+  /** «Conversación» when the case recorded who was asking; else «Solicitada». */
   stage: "negotiating" | "lead";
   card: OpportunityCardData | null;
 }
 
-const CLOSED_STAGES = new Set(["lost", "abandoned"]);
-
 /**
- * A person wrote on the thread of a case that ended «Perdida» or «Perdida · sin respuesta»:
- * the «¿Reabrir?» row on «Hoy». Every case on the thread must be closed (an open one holds the
- * email already) and none won (a won case's client is answered from «Te toca responder»). The
- * target stage follows the window and whether the closed case recorded who was asking — the
- * API refuses «Conversación» without that, so nothing is proposed it would refuse.
+ * A person wrote, **after** the closing, on the thread of a case that ended «Perdida» or
+ * «Perdida · sin respuesta» within the last 90 days: «¿Reabrir?» on «Hoy», which moves that same
+ * case back (it keeps its quotes and history). Every holding case must be such a case; none open
+ * or won. The target is «Conversación» when the case recorded a confirmed requesting institution
+ * (the API refuses it otherwise), else «Solicitada».
  */
 export function reopenProposal(
-  r: Pick<TriageReading, "class" | "intent" | "cases" | "sender">,
+  r: Pick<TriageReading, "class" | "intent" | "cases" | "sender" | "sent_at">,
   cards: ReadonlyMap<string, OpportunityCardData>,
   now: Date = new Date(),
 ): ReopenProposal | null {
-  if (r.cases.length === 0 || AUTOMATIC_CLASSES.has(r.class ?? "") || r.intent === "supplier_offer") return null;
-  const closed = r.cases.map((c) => {
-    const card = cards.get(c.opportunity_id) ?? null;
-    const stage = card?.stage ?? c.stage;
-    const closedAt = card?.closed_at ?? c.closed_at ?? null;
-    return { c, card, stage, closedAt };
-  });
-  if (closed.some((x) => !CLOSED_STAGES.has(x.stage) || !x.closedAt)) return null;
-  const latest = closed.sort((a, b) => (b.closedAt as string).localeCompare(a.closedAt as string))[0];
+  if (AUTOMATIC_CLASSES.has(r.class ?? "") || r.intent === "supplier_offer") return null;
+  const holding = holdingCases(r, cards, now);
+  if (holding.length === 0 || holding.some((x) => !REOPENABLE.has(x.stage) || !x.closedAt)) return null;
+  const latest = holding.sort((a, b) => (b.closedAt as string).localeCompare(a.closedAt as string))[0];
   const closedAt = latest.closedAt as string;
+  // «Volvió a escribir» means after the closing: an email already on the thread then was seen.
+  if (!r.sent_at || Date.parse(r.sent_at) <= Date.parse(closedAt)) return null;
   const days = Math.max(0, Math.floor((now.getTime() - Date.parse(closedAt)) / 86_400_000));
   const requester = latest.card
     ? latest.card.organization !== null && latest.card.requesting_institution_confirmation === "confirmed"
     : true; // without the board's cards, trust the API: it refuses «Conversación» without a requester
   return {
-    case: { ...latest.c, stage: latest.stage, closed_at: closedAt },
+    case: { ...latest.c, stage: latest.stage, closed_at: closedAt, version: latest.card?.version ?? latest.c.version },
     closedAt,
     daysSinceClose: days,
-    stage: days <= REOPEN_WINDOW_DAYS && requester ? "negotiating" : "lead",
+    stage: requester ? "negotiating" : "lead",
     card: latest.card,
   };
 }
 
-/** A quote request a person wrote that no case holds: the row offers «Abrir caso». */
-export function isOpenableRequest(r: Pick<TriageReading, "class" | "intent" | "cases">): boolean {
-  return r.cases.length === 0 && (r.class === "quote_request" || r.intent === "quote_request");
+/** A quote request a person wrote that no case holds (`holdingCases`): the row offers «Abrir caso». */
+export function isOpenableRequest(
+  r: Pick<TriageReading, "class" | "intent" | "cases">,
+  cards: ReadonlyMap<string, OpportunityCardData> = new Map(),
+  now: Date = new Date(),
+): boolean {
+  return holdingCases(r, cards, now).length === 0 && (r.class === "quote_request" || r.intent === "quote_request");
 }
 
 const REPLY_PREFIX = /^\s*(?:(?:re|rv|fw|fwd|tr|aw|wg|sv)\s*:\s*)+/i;
@@ -251,7 +282,7 @@ const AUTOMATIC_SENDER = /^(no-?reply|do-?not-?reply|mensajeria|newsletter|news|
 const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce", "calendar", "unsubscribe", "empty", "outbound"]);
 
 function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCardData>, now: Date): Exclude<HiddenReason, "mismo hilo"> | null {
-  if (r.cases.length > 0) return wonProposal(r, cards) || reopenProposal(r, cards, now) ? null : "en un caso";
+  if (holdingCases(r, cards, now).length > 0) return wonProposal(r, cards) || reopenProposal(r, cards, now) ? null : "en un caso";
   const [local = "", domain = ""] = (r.sender ?? "").toLowerCase().split("@");
   if (domain.includes("labdelivery")) return "reenvío antiguo";
   if (r.sender_is_supplier || r.intent === "supplier_offer") return "proveedor";

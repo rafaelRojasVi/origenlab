@@ -41,7 +41,6 @@ from origenlab_api.v2.case_commands import (
     STAGE_TRANSITIONS,
     STAGES_REQUIRING_A_CLOSE_REASON,
     STAGES_REQUIRING_A_REQUESTING_INSTITUTION,
-    TERMINAL_STAGES,
 )
 from origenlab_api.v2.contact_redaction import (
     ContactRedactingRoute,
@@ -501,7 +500,8 @@ def case_card(
     card["stage_machine"] = {
         "stage": stage,
         "allowed_next_stages": list(STAGE_TRANSITIONS.get(stage, ())),
-        "is_terminal": stage in TERMINAL_STAGES,
+        # «Terminal» is «nothing may follow»: only `won` since lost/abandoned reopen (2026-10-10).
+        "is_terminal": not STAGE_TRANSITIONS.get(stage, ()),
         "stages_requiring_a_requesting_institution": list(
             STAGES_REQUIRING_A_REQUESTING_INSTITUTION
         ),

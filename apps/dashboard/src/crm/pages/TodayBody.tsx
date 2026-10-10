@@ -20,7 +20,6 @@
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { addNote, confirmOrganizationRecord, fetchPersonSuggestions, refusalOf } from "../authoring/crmAuthoringApi";
-import { PersonSuggestionList } from "../authoring/PersonSuggestionList";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import {
   cancelTask,
@@ -54,8 +53,8 @@ import {
   type OverdueTask,
   type Reply,
 } from "../today";
-import { Badge, Button, Modal, Panel, ResourceGate, Skeleton, fmtDate, toast } from "../ui";
-import { useResource, type ResourceState } from "../useResource";
+import { Badge, Button, Modal, Panel, fmtDate, toast } from "../ui";
+import { type ResourceState } from "../useResource";
 import { useLeave } from "../useLeave";
 import { CaseMoveForm } from "./CaseMove";
 
@@ -88,7 +87,6 @@ export function TodayBody({
   refreshing = false,
   now,
   people,
-  reloadPeople,
   aside,
   after,
 }: {
@@ -99,7 +97,6 @@ export function TodayBody({
   now?: Date;
   /** Person suggestions, read by the page beside the pipeline so neither waits on the other. */
   people?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
-  reloadPeople?: () => void;
   /** What the page keeps at hand on the side, above the lists: the quote number and the rates. */
   aside?: ReactNode;
   /** The main column's last panel: the emails no case holds. */
@@ -127,15 +124,16 @@ export function TodayBody({
     <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
-          <OverduePanel overdue={overdue} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
+          {/* Three lists and the new mail (owner decision 2026-10-10): who wrote, who to chase, what
+              is due — then the emails no case holds. Everything else sits in the side column. */}
           <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
-          <TasksPanel tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
-          <PeoplePanel mayAuthor={mayAuthor} navigate={navigate} state={people} reload={reloadPeople} />
+          <TasksPanel overdue={overdue} tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           {after}
         </div>
         <aside className="min-w-0 space-y-4 lg:sticky lg:top-4 lg:self-start">
           {aside}
+          <PeopleCount state={people} navigate={navigate} />
           {historical > 0 ? (
             <section className="crm-rise rounded-xl border border-info/30 bg-info-bg/40 p-4" data-testid="today-historical">
               <h2 className="text-[14px] font-semibold text-ink">
@@ -193,61 +191,61 @@ export function TodayBody({
 
 /* ─────────────────────────────────────────────────────────────── tasks ── */
 
+/**
+ * «Tareas»: one list. Overdue first — one's own from 3 days late, anyone's from 7 (`overdueTasks`,
+ * owner decision 2026-10-10), the escalated ones naming whose they are — then the rest due by
+ * tonight. Follow-ups live in «Seguimientos». No empty panel.
+ */
 function TasksPanel({
+  overdue,
   tasks,
   navigate,
   mayDecide,
   onChanged,
   now,
 }: {
+  overdue: OverdueTask[];
   tasks: DueTask[];
   navigate: Navigate;
   mayDecide: boolean;
   onChanged: () => void;
   now: Date;
 }) {
-  // Nothing else due: no empty panel.
-  if (tasks.length === 0) return null;
+  const total = overdue.length + tasks.length;
+  if (total === 0) return null;
   return (
-    <Panel title="Otras tareas de hoy" aside={<Badge tone={tasks.length ? "warn" : "good"} glyph={false}>{tasks.length}</Badge>} bodyClassName="divide-y divide-line">
-      {tasks.length === 0 ? (
-        <p className="px-4 py-3 text-xs text-ink-muted" data-testid="today-no-tasks">
-          Nada más vence hoy. Los seguimientos programados están arriba, en «Seguimientos».
-        </p>
-      ) : (
-        tasks.map((t, i) => <TaskRow key={t.task.task_id} due={t} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={now} />)
-      )}
-    </Panel>
-  );
-}
-
-/**
- * «Vencidas»: one's own tasks from 3 days overdue, anyone's from 7 (`overdueTasks`), above
- * everything else because they are the oldest promises on the page. The same «Hecho» and
- * «+1 semana» as any task; an escalated row names whose task it is.
- */
-function OverduePanel({ overdue, navigate, mayDecide, onChanged, now }: {
-  overdue: OverdueTask[];
-  navigate: Navigate;
-  mayDecide: boolean;
-  onChanged: () => void;
-  now: Date;
-}) {
-  if (overdue.length === 0) return null;
-  return (
-    <div data-testid="today-overdue">
+    <div data-testid="today-tasks">
       <Panel
-        title="Vencidas"
-        note={`tuyas desde ${OVERDUE_OWN_DAYS} días de atraso · de cualquiera desde ${OVERDUE_ALL_DAYS}`}
-        aside={<Badge tone="bad" glyph={false}>{overdue.length}</Badge>}
+        title="Tareas"
+        note={overdue.length ? `vencidas primero · tuyas desde ${OVERDUE_OWN_DAYS} días, de cualquiera desde ${OVERDUE_ALL_DAYS}` : undefined}
+        aside={<Badge tone={overdue.length ? "bad" : "warn"} glyph={false}>{total}</Badge>}
         bodyClassName="divide-y divide-line"
       >
         {overdue.map((t, i) => (
           <TaskRow key={t.task.task_id} due={t} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={now}
             ownerLabel={t.escalated ? `de ${t.task.owner ?? "otro perfil"}` : null} />
         ))}
+        {tasks.map((t, i) => (
+          <TaskRow key={t.task.task_id} due={t} index={overdue.length + i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={now} />
+        ))}
       </Panel>
     </div>
+  );
+}
+
+/** «Personas por agregar» as a count in the side column; the list itself lives on Personas. */
+function PeopleCount({ state, navigate }: {
+  state?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
+  navigate: Navigate;
+}) {
+  if (!state || state.kind !== "ready" || state.data.total === 0) return null;
+  const n = state.data.total;
+  return (
+    <section className="rounded-xl border border-line bg-canvas-raised p-4" data-testid="today-people-count">
+      <h2 className="text-[14px] font-semibold text-ink">{n} {n === 1 ? "persona" : "personas"} por agregar</h2>
+      <p className="mt-1 text-xs leading-5 text-ink-muted">Nombres y direcciones de los correos de cotización que aún no están en el CRM.</p>
+      <Button className="mt-3" onClick={() => navigate("personas")}>Revisarlas en Personas</Button>
+    </section>
   );
 }
 
@@ -965,40 +963,5 @@ function OrgRow({ org, navigate, mayAuthor, onChanged }: { org: OrgToConfirm; na
         </Button>
       ) : null}
     </div>
-  );
-}
-
-/** A loader that never runs a request: `PeoplePanel` was handed its state. */
-const noPeople = (): Promise<Awaited<ReturnType<typeof fetchPersonSuggestions>>> => new Promise(() => undefined);
-
-function PeoplePanel({ mayAuthor, navigate, state: given, reload: givenReload }: {
-  mayAuthor: boolean;
-  navigate: Navigate;
-  state?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
-  reload?: () => void;
-}) {
-  // Read here only when the page did not read it already (TodayBody rendered on its own).
-  const [own, ownReload] = useResource(given ? noPeople : fetchPersonSuggestions);
-  const state = given ?? own;
-  const reload = givenReload ?? ownReload;
-  // Nothing to add: the panel stays out of the way.
-  if (state.kind === "ready" && state.data.items.length === 0) return null;
-  return (
-    <Panel title="Personas por agregar" aside={state.kind === "ready" ? <Badge glyph={false}>{state.data.total}</Badge> : null}>
-      <div className="p-3">
-        <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={2} />}>
-          {(data) => (
-            <>
-              <PersonSuggestionList items={data.items.slice(0, 5)} mayAuthor={mayAuthor} showOrganization onCreated={reload} />
-              {data.items.length > 5 ? (
-                <button type="button" onClick={() => navigate("personas")} className="mt-2 text-[11px] text-brand-700 hover:underline">
-                  Ver las {data.items.length}
-                </button>
-              ) : null}
-            </>
-          )}
-        </ResourceGate>
-      </div>
-    </Panel>
   );
 }

@@ -16,6 +16,7 @@ import { confirmOrganizationRecord } from "../authoring/crmAuthoringApi";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import {
   TERMINAL_STAGES,
+  isReopenable,
   caseRefusalText,
   isStaleRefusal,
   markCaseWon,
@@ -94,6 +95,8 @@ export function CaseActions({
   }, [initial]);
 
   const closed = TERMINAL_STAGES.has(card.stage) || card.closed_at != null;
+  // A lost or abandoned case reopens as the same case (2026-10-10): «Cambiar estado» becomes «Reabrir».
+  const reopenable = closed && isReopenable(card);
   const hasVersion = typeof card.version === "number";
   const here = boardColumnOf(card);
   const targets = MOVE_TARGETS.filter((t) => t !== here || t === "pausa");
@@ -161,13 +164,13 @@ export function CaseActions({
             Registrar seguimiento
           </DisabledAction>
         )}
-        {decideReason ? (
+        {decideReason && !(reopenable && decideReason === "El caso está cerrado") ? (
           <DisabledAction id="drawer-advance" reason={decideReason}>
-            Cambiar estado
+            {reopenable ? "Reabrir" : "Cambiar estado"}
           </DisabledAction>
         ) : (
-          <Button aria-expanded={mode === "stage"} onClick={() => toggle("stage")}>
-            Cambiar estado
+          <Button variant={reopenable ? "primary" : undefined} aria-expanded={mode === "stage"} onClick={() => toggle("stage")}>
+            {reopenable ? "Reabrir" : "Cambiar estado"}
           </Button>
         )}
         {notRequestFirst ? notRequest : null}

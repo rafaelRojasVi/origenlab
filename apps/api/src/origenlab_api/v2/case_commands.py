@@ -71,14 +71,9 @@ ADVANCE_CASE_STAGE = "advance_case_stage"
 RECORD_CASE_WON = "record_case_won"
 RESOLVE_CURRENT_REVISION = "resolve_current_revision"
 RECORD_CASE_QUOTATION = "record_case_quotation"
-#: A terminal stage is never revived (WORKFLOWS.md §1.1): reopening is a *new* case that
-#: references the old one (`crm.opportunity.reopened_from_opportunity_id`), opened from the email
-#: that reopened the conversation, with the old case's confirmed requesting institution.
-REOPEN_COMMERCIAL_CASE = "reopen_commercial_case"
 
 CASE_COMMAND_NAMES: tuple[str, ...] = (
     OPEN_COMMERCIAL_CASE,
-    REOPEN_COMMERCIAL_CASE,
     LINK_CASE_EVIDENCE,
     ADD_CASE_ORGANIZATION,
     SET_CASE_ORGANIZATION_ROLE,
@@ -147,6 +142,11 @@ CASE_STAGES: tuple[str, ...] = (
 TERMINAL_STAGES: tuple[str, ...] = ("won", "lost", "abandoned")
 OPENING_STAGE = "lead"
 
+#: The open stages a closed (`lost` / `abandoned`) case may return to, as the same case.
+REOPEN_TARGETS: tuple[str, ...] = ("lead", "qualifying", "qualified", "quoting", "negotiating")
+#: `close_reason` of a case an undo of the email rules discarded: never reopened.
+DISCARDED_BY_CORRECTION = "discarded_by_correction"
+
 STAGE_TRANSITIONS: dict[str, tuple[str, ...]] = {
     "lead": ("qualifying", "abandoned", "lost"),
     "qualifying": ("qualified", "lead", "abandoned", "lost"),
@@ -154,8 +154,10 @@ STAGE_TRANSITIONS: dict[str, tuple[str, ...]] = {
     "quoting": ("negotiating", "qualified", "abandoned", "lost"),
     "negotiating": ("won", "lost", "quoting", "abandoned"),
     "won": (),
-    "lost": (),
-    "abandoned": (),
+    # Reopening (owner decision 2026-10-10): a lost or abandoned case goes back to an open stage
+    # as the same case. `won` stays terminal; a case an undo discarded is refused by name.
+    "lost": REOPEN_TARGETS,
+    "abandoned": REOPEN_TARGETS,
 }
 
 #: Stages that mean *an operator decided who is asking* (§3.6.5). A case may sit at `lead` or
@@ -209,23 +211,6 @@ class OpenCommercialCaseBody(DecisionBody):
         if not self.title.strip():
             raise ValueError("title must not be blank")
         return self
-
-
-class ReopenCommercialCaseBody(DecisionBody):
-    """Reopen a closed case: a new case that references it, from the email that reopened it.
-
-    `opportunity_id` is the closed case. The new case takes its title and its confirmed
-    requesting institution (with the supplier exception, if one was written), opens at `lead`
-    with `origin_source_record_id` as its origin, and — when `stage` is `negotiating` — moves
-    along §1.1 to «Conversación» in the same transaction, because the client wrote back about
-    the deal. `stage: lead` leaves it at «Solicitada»: a conversation old enough that nobody
-    assumes it is the same deal (owner decision 2026-10-10: 90 days). The closed case is read,
-    never written. No version is named: there is nothing to compare against.
-    """
-
-    opportunity_id: str
-    origin_source_record_id: str
-    stage: Literal["lead", "negotiating"] = "negotiating"
 
 
 class LinkCaseEvidenceBody(_CaseBody):
@@ -462,7 +447,6 @@ class RecordCaseQuotationBody(_CaseBody):
 
 CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     OPEN_COMMERCIAL_CASE: OpenCommercialCaseBody,
-    REOPEN_COMMERCIAL_CASE: ReopenCommercialCaseBody,
     LINK_CASE_EVIDENCE: LinkCaseEvidenceBody,
     ADD_CASE_ORGANIZATION: AddCaseOrganizationBody,
     SET_CASE_ORGANIZATION_ROLE: SetCaseOrganizationRoleBody,
@@ -519,14 +503,6 @@ def validated_case(command_name: str, body: DecisionBody) -> dict[str, Any]:
         fields["origin_source_record_id"] = as_uuid(
             body.origin_source_record_id, "origin_source_record_id"
         )
-        return fields
-
-    if isinstance(body, ReopenCommercialCaseBody):
-        fields["opportunity_id"] = as_uuid(body.opportunity_id, "opportunity_id")
-        fields["origin_source_record_id"] = as_uuid(
-            body.origin_source_record_id, "origin_source_record_id"
-        )
-        fields["stage"] = body.stage
         return fields
 
     assert isinstance(body, _CaseBody)  # noqa: S101 - every other command is about a case

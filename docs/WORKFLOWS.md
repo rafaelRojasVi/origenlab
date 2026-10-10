@@ -43,30 +43,30 @@ change · durable evidence · failure behaviour**. Three rules apply everywhere:
 | `qualified` | `quoting`, `qualifying`, `abandoned`, `lost` |
 | `quoting` | `negotiating`, `qualified`, `abandoned`, `lost` |
 | `negotiating` | `won`, `lost`, `quoting`, `abandoned` |
-| `won`, `lost`, `abandoned` | nothing — terminal |
+| `lost`, `abandoned` | `lead`, `qualifying`, `qualified`, `quoting`, `negotiating` — reopening |
+| `won` | nothing — terminal |
 
 `won ⇔ (won_quote_id, won_revision_no)` set. `won`/`lost`/`abandoned` ⇔
-`closed_at` set. Reopening is a **new** opportunity that references the old
-one; a terminal stage is never revived. Only the API role may update `stage`.
+`closed_at` set. Only the API role may update `stage`.
 
-**Reopening as a command (2026-10-10, `reopen_commercial_case`,
-STATUS.md §2.7.88).** A person wrote on the thread of a `lost` or `abandoned`
-case: Hoy asks «¿Reabrir?». The command opens a **new** case with
-`reopened_from_opportunity_id` = the closed one, the old title, the old
-confirmed requesting institution (exception included) and the reply email as
-`origin`, at `lead` — and, when asked for `negotiating` (a reply within 90 days
-of closing, owner decision), walks `lead → qualifying → qualified → quoting →
-negotiating` in the same transaction, one `opportunity.staged` event per move.
-The closed case is read, never written. `negotiating` is refused by name when
-the closed case never recorded a confirmed requester; an already reopened case
-whose new case is still open is refused (`case_already_reopened`): link the
-email there.
+**Reopening (owner decision 2026-10-10, STATUS.md §2.7.90).** A `lost` or
+`abandoned` case goes back to an open stage as **the same case**, with its
+quotes, links and history: an ordinary `advance_case_stage`, recorded as an
+`opportunity.staged` event marked `reopened`, which clears `closed_at` and
+`close_reason`. Everything else holds — the requesting-institution rule from
+`qualified` on, one move per command, a note. `won` stays terminal (taking back
+a machine's win is the correction below). A case an undo of the email rules
+discarded (`close_reason = discarded_by_correction`) was never a case and is
+never reopened: its email opens a new one. Until this date reopening meant a
+new case referencing the old one (`crm.opportunity.reopened_from_opportunity_id`,
+kept, no longer written); in practice it lost the quotes and made a wrong close
+expensive to undo, so the rule was simplified.
 
 **This table is a trigger as of 2026-09-22**
 (`crm.opportunity_stage_guard`, `20260922200000_slice3_commercial_case_commands.sql`),
 not only a table in this document: a case is opened at `lead` and at no other
-stage, moves only along the rows above, and once terminal is refused every
-target including another terminal one. `advance_case_stage` refuses the same
+stage and moves only along the rows above (since 2026-10-10,
+`20261010180000_slice7_reopen_closed_case.sql`, including the reopening row). `advance_case_stage` refuses the same
 moves first, with a sentence naming the rule, so an operator reads prose and a
 stray `UPDATE` still meets the rule.
 

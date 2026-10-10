@@ -24,7 +24,7 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
   const { session } = useAuthSession();
   const [fx, reloadFx] = useResource(fetchFx);
   const [pipeline, reloadPipeline, refreshing] = useResource(fetchPipeline);
-  const [people, reloadPeople] = useResource(fetchPersonSuggestions);
+  const [people] = useResource(fetchPersonSuggestions);
   return (
     <div className="space-y-5">
       <HeroHeader
@@ -39,7 +39,6 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
             onChanged={reloadPipeline}
             refreshing={refreshing}
             people={people}
-            reloadPeople={reloadPeople}
             aside={
               <>
                 <QuoteNumberBox pipeline={pipeline} compact />
