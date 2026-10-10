@@ -104,7 +104,7 @@ describe("today lists", () => {
     ]);
   });
 
-  it("shows a client who writes on a won case under «Te toca responder», with nothing to decide and no button that writes", () => {
+  it("shows a client who writes on a won case under «Te toca responder», with «Atendido» as the only write: a note on the case", async () => {
     const inbound = (at: string) => ({ outbound: null, inbound: { at, subject: null, url: "https://mail.example.cl/pay" } });
     // Won on 6 Oct; the client sent the payment on the 8th and asks for delivery dates.
     const paid = card({ stage: "won", closed_at: "2026-10-06T12:00:00Z", last_contact: inbound("2026-10-08T16:30:00Z") }, "2026-09-30T12:00:00Z");
@@ -115,12 +115,29 @@ describe("today lists", () => {
     expect(repliesToAnswer([paid, settled, lost], NOW).map((r) => r.card.opportunity_id)).toEqual([paid.opportunity_id]);
     expect(followUpsDue([paid], NOW)).toEqual([]);
 
-    stub();
-    renderToday([paid]);
+    // Answered by phone, noted on the 9th: off the list. The client's next email puts it back.
+    const noted = card(
+      { stage: "won", closed_at: "2026-10-06T12:00:00Z", last_contact: inbound("2026-10-08T16:30:00Z"), last_note: { created_at: "2026-10-09T10:00:00Z", body: "Atendido", author: null } },
+      "2026-09-30T12:00:00Z",
+    );
+    const notedBefore = card(
+      { stage: "won", closed_at: "2026-10-06T12:00:00Z", last_contact: inbound("2026-10-08T16:30:00Z"), last_note: { created_at: "2026-10-07T10:00:00Z", body: "Entrega acordada", author: null } },
+      "2026-09-30T12:00:00Z",
+    );
+    expect(repliesToAnswer([noted, notedBefore], NOW).map((r) => r.card.opportunity_id)).toEqual([notedBefore.opportunity_id]);
+
+    const calls = stub();
+    const onChanged = renderToday([paid]);
     const row = screen.getByText(/Escribió tras ganar/).closest("div")!.parentElement!;
     expect(within(row).getByRole("link", { name: /Abrir respuesta/ })).toBeInTheDocument();
     expect(within(row).queryByRole("button", { name: /No requiere respuesta/ })).toBeNull();
     expect(within(row).queryByRole("button", { name: /Pasar a Conversación/ })).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Atendido" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    const note = calls.find((c) => c.path === "/v2/commands/add-note");
+    expect(note?.body).toMatchObject({ subject_kind: "opportunity", subject_id: paid.opportunity_id });
+    expect(String(note?.body?.body)).toContain("08 oct 2026");
+    expect(calls.filter((c) => c.path.startsWith("/v2/commands/")).map((c) => c.path)).toEqual(["/v2/commands/add-note"]);
   });
 
   it("puts a case whose «Seguimiento …» task is due in the follow-ups from day 3, never among the other tasks", () => {
