@@ -282,7 +282,9 @@ _SQL_PIPELINE_NOTES = """
            o.display_name as author_display_name
       from crm.note n
       join platform.operator o on o.id = n.author_operator_id
+      join crm.opportunity op on op.id = n.subject_id
      where n.subject_kind = 'opportunity' and n.status = 'active'
+       and (op.closed_at is null or op.stage = 'won')
      order by n.subject_id, n.created_at desc, n.id desc
 """
 _SQL_PIPELINE_SOURCES = """
@@ -641,7 +643,8 @@ def compose_pipeline(
             "created_at": row.get("created_at"),
         })
 
-    # The newest active note per case; `notes` may hold several per case or arrive pre-reduced.
+    # The newest active note per case. `_SQL_PIPELINE_NOTES` already returns one row per case
+    # (`distinct on`); the reduction here keeps the pure function honest for any caller.
     note_by_opp: dict[str, dict[str, Any]] = {}
     for row in notes or []:
         current = note_by_opp.get(row["opportunity_id"])

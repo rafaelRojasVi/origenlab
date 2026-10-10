@@ -124,7 +124,15 @@ describe("today lists", () => {
       { stage: "won", closed_at: "2026-10-06T12:00:00Z", last_contact: inbound("2026-10-08T16:30:00Z"), last_note: { created_at: "2026-10-07T10:00:00Z", body: "Entrega acordada", author: null } },
       "2026-09-30T12:00:00Z",
     );
-    expect(repliesToAnswer([noted, notedBefore], NOW).map((r) => r.card.opportunity_id)).toEqual([notedBefore.opportunity_id]);
+    // An internal note on an OPEN case never hides the client's email: only a task answers it there.
+    const openNoted = card(
+      { last_contact: inbound("2026-10-08T16:30:00Z"), last_note: { created_at: "2026-10-09T10:00:00Z", body: "Llamé, no contestó", author: null } },
+      "2026-09-30T12:00:00Z",
+    );
+    expect(repliesToAnswer([noted, notedBefore, openNoted], NOW).map((r) => r.card.opportunity_id)).toEqual([
+      notedBefore.opportunity_id,
+      openNoted.opportunity_id,
+    ]);
 
     const calls = stub();
     const onChanged = renderToday([paid]);
