@@ -192,6 +192,9 @@ def case_match_view(row: dict[str, Any], cases: dict[str, dict[str, Any]]) -> di
     if not value or row.get("cases") or row.get("case_match_verdict") is not None:
         return None
     pick = value.get("pick") or {}
+    ran = value.get("pick_state") == "ran" and bool(pick)
+    if ran and pick.get("choice") == "none":
+        return None  # the model read it and placed it nowhere: «mejor none que un caso equivocado»
     signals = {c.get("opportunity_id"): c.get("signals") or [] for c in value.get("candidates") or []}
     suggestions = []
     for oid in _suggestion_ids(value):
@@ -205,6 +208,8 @@ def case_match_view(row: dict[str, Any], cases: dict[str, dict[str, Any]]) -> di
     new_case = pick.get("new_case") if pick.get("choice") == "new_case" else None
     if pick.get("choice") == "new_case":
         decision = "new_case"
+    elif ran and suggestions and suggestions[0]["from"] == "model":
+        decision = "propose"  # the model named a case the rules did not see
     if not suggestions and decision != "new_case":
         return None
     return {"assertion_id": row["case_match_id"], "decision": decision,

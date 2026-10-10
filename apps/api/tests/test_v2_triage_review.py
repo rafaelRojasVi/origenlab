@@ -369,3 +369,19 @@ def test_a_suggestion_with_a_malformed_case_id_is_ignored() -> None:
 
     value = {"pick": {"choice": "not-a-uuid"}, "candidates": [{"opportunity_id": "00000000-0000-0000-0000-000000000001"}]}
     assert _suggestion_ids(value) == ["00000000-0000-0000-0000-000000000001"]
+
+
+def test_when_the_model_ran_its_answer_wins() -> None:
+    from origenlab_api.v2.triage_review import case_match_view
+
+    case = {"opportunity_id": "00000000-0000-0000-0000-00000000000a", "title": "A", "stage": "lead", "version": 1,
+            "closed": False}
+    cases = {case["opportunity_id"]: case}
+    row = {"case_match_id": "cm", "cases": [], "case_match_verdict": None}
+    said_none = {"decision": "propose", "pick_state": "ran", "pick": {"choice": "none", "reason_es": "x"},
+                 "candidates": [{"opportunity_id": case["opportunity_id"], "signals": ["domain"]}]}
+    assert case_match_view({**row, "case_match_value": said_none}, cases) is None
+    picked = {"decision": "new_case", "new_case_quote": "09136-26", "pick_state": "ran",
+              "pick": {"choice": case["opportunity_id"], "reason_es": "Mismo producto."}, "candidates": []}
+    view = case_match_view({**row, "case_match_value": picked}, cases)
+    assert view["decision"] == "propose" and view["suggestions"][0]["from"] == "model"
