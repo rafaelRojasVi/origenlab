@@ -2456,3 +2456,15 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Hoy | `reopenProposal` (`triage.ts`): a person's email (not an automatic class, not a supplier offer) whose thread is on cases that are **all** closed `lost` or `abandoned` — never `won`, whose client is answered from «Te toca responder» — becomes a row «Volvió a escribir · ‹institución› · caso perdido hace N d · ¿reabrir en «Conversación»?». Target «Conversación» within 90 days of closing when the case had a confirmed requester (from the board's card, or trusted to the API without cards), else «Solicitada». **Reabrir** runs the command first, then the `approved` verdict (as «Abrir caso»); **Descartar** records `rejected` and the case stays closed. Proposals rank first with «¿Marcar ganada?». |
 | Gaps left | The case drawer does not yet show «Reabierto como …» on the closed case or «Reabre el caso …» on the new one (`reopened_from_opportunity_id` is not in the pipeline cards). The reply email is the new case's origin, not linked to the closed case. |
 | Evidence | `apps/api` `scripts/validate.sh` with the disposable cluster: three new database tests (reopen at «Conversación» with the requester carried over and four moves, refused while the new case is open; reopen at «Solicitada» and the named refusal without a requester; only a closed case on an existing, clean document) + validation + the route table at ten. `apps/dashboard-proxy` `npm run validate`: **448 passed**. `apps/dashboard` `npm run validate`: `triage.test.ts` (+2), `TriagePanel.test.tsx` (+2), policy list. |
+
+
+### 2.7.89 «Vencidas» on Hoy: overdue tasks escalate, 2026-10-10 — built, not deployed
+
+`apps/dashboard` only. Owner decisions 2026-10-10: a row in Hoy at 3 days overdue under the task's owner; from 7 days for every profile; a daily email per profile (not built, see below).
+
+| | |
+|---|---|
+| Rule | `overdueTasks` (`today.ts`): open, non-follow-up tasks on open cases overdue by **3 days or more that belong to the signed-in profile** (`task.owner` = the profile's display name, else the operator's), plus **anyone's overdue by 7 days or more** (`escalated`). Most overdue first. Follow-up tasks stay in «Seguimientos», whose red «¿Cerrar?» rhythm already escalates them. |
+| Page | A «Vencidas» panel above «Te toca responder», red count, the same «Hecho» / «+1 semana» as any task; an escalated row says «de ‹perfil›». Those tasks leave «Otras tareas de hoy», so nothing shows twice. Without a profile name (an older session) only the escalated ones show. |
+| Not built | The daily email per profile with its overdue tasks: it needs a worker cron and the Google sending setup the campaign test send waits on (§2.7.47); nothing sends today. |
+| Evidence | `apps/dashboard` `npm run validate`; `TodayBody.test.tsx` (+2: the list rule with own / others' / follow-up / closed-case tasks; the page order, the owner label, no duplicate in «Otras tareas»). |

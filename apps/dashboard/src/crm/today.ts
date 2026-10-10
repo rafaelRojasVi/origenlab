@@ -12,6 +12,9 @@
  *   and the task counts as done once OrigenLab writes on the thread on or after its day (no
  *   «Hecho» needed). A case with any other open task is already planned and is left out, and so
  *   is an undecided case whose stage is only the historical import's trace («Decidir casos»).
+ * - **Vencidas**: open tasks (not follow-ups, which carry their own red rhythm) at least 3 days
+ *   overdue — one's own from day 3, anyone's from day 7 (owner decision 2026-10-10: a task
+ *   nobody did for a week is everyone's), most overdue first. They leave «Otras tareas».
  * - **Otras tareas**: the open `crm.task` rows due by the end of today that are not follow-ups
  *   («Retomar: …», a call), overdue first.
  * - **Instituciones por confirmar**: the machine-proposed institutions of open cases.
@@ -63,6 +66,32 @@ export function tasksDue(cards: OpportunityCardData[], now: Date): DueTask[] {
     }
   }
   return out.sort((a, b) => a.task.due_at.localeCompare(b.task.due_at));
+}
+
+/** Days overdue from which a task is «Vencida» for its owner, and from which it is for everyone. */
+export const OVERDUE_OWN_DAYS = 3;
+export const OVERDUE_ALL_DAYS = 7;
+
+export interface OverdueTask extends DueTask {
+  /** The task belongs to someone else and reached the week: shown to every profile. */
+  escalated: boolean;
+}
+
+/**
+ * Open non-follow-up tasks overdue by `OVERDUE_OWN_DAYS` or more that are `me`'s, plus anyone's
+ * overdue by `OVERDUE_ALL_DAYS` or more. `me` is the profile's display name as the API labels
+ * task owners; without one (an older session) only the escalated ones show. Most overdue first.
+ */
+export function overdueTasks(cards: OpportunityCardData[], now: Date, me: string | null): OverdueTask[] {
+  const out: OverdueTask[] = [];
+  for (const due of tasksDue(cards, now)) {
+    if (due.overdueDays < OVERDUE_OWN_DAYS) continue;
+    const mine = me !== null && due.task.owner === me;
+    const escalated = due.overdueDays >= OVERDUE_ALL_DAYS;
+    if (!mine && !escalated) continue;
+    out.push({ ...due, escalated: escalated && !mine });
+  }
+  return out.sort((a, b) => b.overdueDays - a.overdueDays || a.task.due_at.localeCompare(b.task.due_at));
 }
 
 export interface Reply {
