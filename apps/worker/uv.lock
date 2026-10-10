@@ -1882,7 +1882,7 @@ ml = [
     { name = "pandas", specifier = "<3" },
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "scikit-learn", specifier = ">=1.5" },
-    { name = "sentence-transformers", specifier = "==5.6.0" },
+    { name = "sentence-transformers", specifier = "==5.3.0" },
     { name = "torch", specifier = "==2.13.0", index = "https://download.pytorch.org/whl/cu129" },
     { name = "torchaudio", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/cu129" },
     { name = "torchvision", specifier = "==0.28.0", index = "https://download.pytorch.org/whl/cu129" },

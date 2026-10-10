@@ -122,6 +122,9 @@ def test_free_mail_and_domain_are_reported_and_reasons_never_carry_text() -> Non
     (mail(subject="RE: Cyber OrigenLab · 5% a 10%", body="REMOVER\n\n \n\nSds.\n\nAna Pérez\nana@cliente.invalid\n+56 9 1111 1111\nCLIENTE SPA"),
      "unsubscribe"),
     (mail(subject="RE: Cyber OrigenLab", body="Remover\n\nGracias"), "unsubscribe"),
+    # The instruction outranks an absence phrase in the same reply, in body or subject.
+    (mail(subject="RE: Cyber OrigenLab", body="REMOVER\n\nEstoy fuera de la oficina del 28/09 al 23/10."), "unsubscribe"),
+    (mail(subject="BAJA", body="Me encuentro fuera de la oficina hasta el 23/10."), "unsubscribe"),
     # An absence notice under a plain «RE:» subject with no machine header: its opening says so.
     (mail(subject="RE: Cyber OrigenLab · 5% a 10%",
           body="Estimados:\n\nJunto con saludarlo, me encuentro fuera de la oficina entre el 28/09 y el 23/10, "

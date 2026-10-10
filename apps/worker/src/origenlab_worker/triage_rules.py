@@ -129,14 +129,11 @@ def _contains_any(text: str, phrases: Sequence[str]) -> str | None:
     return next((p for p in phrases if p in text), None)
 
 
-def _first_line_is_baja(body: str | None) -> bool:
-    """The reply's first non-empty line is a bare BAJA/REMOVER: the instruction, followed by a
-    signature («REMOVER\n\nSds.\nAna Pérez»). The W10 suppression grammar still refuses it (not
-    standalone) — this only files the email as an unsubscribe reading for a person to confirm,
-    instead of a quote request."""
-    if not body:
-        return False
-    own = reply_text(body)
+def _first_line_is_baja(own: str) -> bool:
+    """The reply's own text (`reply_text`) opens with a bare BAJA/REMOVER line and more follows:
+    the instruction, then a signature («REMOVER», blank line, «Sds. Ana Pérez»). The W10
+    suppression grammar still refuses it (not standalone) — this only files the email as an
+    unsubscribe reading for a person to confirm, instead of a quote request."""
     first = next((line.strip() for line in own.split("\n") if line.strip()), "")
     return first.upper() in ACCEPTED_FORMS and first != own.strip()
 
@@ -194,20 +191,22 @@ def classify(item: TriageInput) -> RuleVerdict:
         return verdict("auto_reply", f"subject:{phrase}")
     if subject.startswith(_AUTO_REPLY_PREFIXES):
         return verdict("auto_reply", "subject:absence_prefix")
-    opening = fold(reply_text(mail.body or ""))[:_AUTO_REPLY_BODY_CHARS]
-    if (phrase := _contains_any(opening, _AUTO_REPLY_BODY_OPENINGS)) is not None \
-            and _contains_any(opening[:opening.index(phrase)], QUOTE_REQUEST_WORDS) is None:
-        return verdict("auto_reply", f"body:{phrase}")
 
     if "text/calendar" in mail.content_types or "application/ics" in mail.content_types:
         return verdict("calendar", "mime:text/calendar")
 
+    own = reply_text(mail.body or "")
     if subject.strip(" .!") in _UNSUBSCRIBE_SUBJECTS:
         return verdict("unsubscribe", "subject:baja_word")
     if mail.body and classify_reply(mail.body).accepted:
         return verdict("unsubscribe", "body:baja_grammar")
-    if _first_line_is_baja(mail.body):
+    if _first_line_is_baja(own):
         return verdict("unsubscribe", "body:baja_first_line")
+    # After the unsubscribe checks: «REMOVER, estoy fuera de la oficina» is still an instruction.
+    opening = fold(own)[:_AUTO_REPLY_BODY_CHARS]
+    if (phrase := _contains_any(opening, _AUTO_REPLY_BODY_OPENINGS)) is not None \
+            and _contains_any(opening[:opening.index(phrase)], QUOTE_REQUEST_WORDS) is None:
+        return verdict("auto_reply", f"body:{phrase}")
 
     if (domain in _TENDER_DOMAINS or (domain or "").endswith(tuple("." + d for d in _TENDER_DOMAINS))) \
             and _contains_any(subject, _TENDER_SUBJECTS + ("licitacion",)):
