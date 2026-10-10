@@ -498,6 +498,10 @@ def test_drive_archive_counts_what_the_cron_filed_not_only_the_boot_ledgers(tmp_
     assert "/file/d/f-b/" in filed["documents"][0]["file_url"]
     assert [r["quote_number"] for r in out["crm_revisions_without_drive_file"]] == ["00003-26"]
     assert out["configured"] is True
+    # No boot ledger mounted at all (a fresh API), only the cron's records: still an archive.
+    cron_only = drive_archive_from(rows, {}, configured=False)
+    assert cron_only["totals"]["folders"] == 1 and cron_only["configured"] is True
+    assert drive_archive_from([], {}, configured=False)["configured"] is False
 
 
 def test_drive_folders_are_newest_quote_number_first_not_text_order(tmp_path: Path) -> None:

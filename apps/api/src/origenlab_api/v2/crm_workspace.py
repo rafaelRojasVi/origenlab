@@ -878,9 +878,14 @@ def drive_archive_from(
     neither names its hash."""
     rows = list(rows)
     drive = drive_links_from_records(rows, ledgers)
-    crm = {r["sha"]: {k: r.get(k) for k in _DRIVE_ARCHIVE_CRM_KEYS} for r in rows}
+    crm = {
+        (r.get("sha") or r.get("pdf_sha256") or "").lower(): {k: r.get(k) for k in _DRIVE_ARCHIVE_CRM_KEYS}
+        for r in rows if r.get("sha") or r.get("pdf_sha256")
+    }
     out = compose_drive_archive(drive, crm)
-    out["configured"] = configured
+    # As `pipeline()` does: the cron's records make the archive real even before any boot ledger
+    # is mounted, so the page must not say «registros no cargados» while listing folders.
+    out["configured"] = configured or bool(drive)
     out["crm_revisions_without_drive_file"] = sorted(
         ({"sha256": s, **v} for s, v in crm.items() if s not in drive),
         key=lambda r: r["quote_number"] or "",
