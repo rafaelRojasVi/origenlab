@@ -37,6 +37,10 @@ _PDF_QUOTE = re.compile(
     r"(?<![a-z0-9_-])(?:(?:cn|cot)\s*-?\s*(\d{4,5})|(0\d{4}))([a-z]{0,2})(?:-(\d{2}|\d{4}))?(?![\d])",
     re.IGNORECASE,
 )
+#: A bare 0xxxx number after one of these words in a file name is an order, invoice or dispatch
+#: number, not a quote («OC 09159.pdf», «Factura 01234.pdf», «Guía de despacho 00045.pdf»).
+_NOT_A_QUOTE_BEFORE = re.compile(r"\b(?:oc|o\.c|orden|po|factura|invoice|boleta|gu[ií]a|despacho|pedido)\b",
+                                 re.IGNORECASE)
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -102,12 +106,34 @@ def attachment_quote_keys(names: Sequence[str], sent_at: str | None) -> dict[tup
     out: dict[tuple[int, int], str] = {}
     for name in names:
         for m in _PDF_QUOTE.finditer(name or ""):
+            if m.group(2) and _NOT_A_QUOTE_BEFORE.search(name[:m.start()]):
+                continue
             digits = m.group(1) or m.group(2)
             year = m.group(4)
             key = quote_key(f"{digits}-{year}" if year else digits, santiago_year(sent_at))
             if key is not None:
                 out.setdefault(key, m.group(0).upper())
     return out
+
+
+def _case_keys(numbers: Sequence[str]) -> tuple[set[tuple[int, int]], set[int]]:
+    """(year, correlative) of each number with a year, and the bare correlative of each without one
+    («CN09139» as filed in the CRM): the latter matches any year, as R2's yearless index does."""
+    keyed: set[tuple[int, int]] = set()
+    bare: set[int] = set()
+    for q in numbers:
+        k = quote_key(q, None)
+        if k is not None:
+            keyed.add(k)
+        else:
+            k0 = quote_key(q, 0)
+            if k0 is not None:
+                bare.add(k0[1])
+    return keyed, bare
+
+
+def _held(found: dict[tuple[int, int], str] | set[tuple[int, int]], keyed: set[tuple[int, int]], bare: set[int]) -> bool:
+    return bool(keyed & set(found)) or any(k[1] in bare for k in found)
 
 
 def _domain(address: str | None) -> str | None:
@@ -136,7 +162,9 @@ def _name_hit(name: str | None, folded_text: str) -> bool:
     return len(needle) >= 10 and len(needle.split()) >= 2 and f" {needle} " in f" {folded_text} "
 
 
-def match_case(inp: MatchInput, cases: Sequence[CaseCard]) -> MatchResult:
+def match_case(inp: MatchInput, cases: Sequence[CaseCard], known_quote_numbers: Sequence[str] = ()) -> MatchResult:
+    """`known_quote_numbers`: every quote number the CRM holds, also on cases outside the snapshot (closed
+    long ago, discarded) — a number held anywhere is never proposed as a new deal."""
     pdf_keys = attachment_quote_keys(inp.attachment_names, inp.sent_at)
     thread_keys = {k: v for k, v in attachment_quote_keys(inp.thread_attachment_names, inp.sent_at).items()
                    if k not in pdf_keys}
@@ -150,13 +178,13 @@ def match_case(inp: MatchInput, cases: Sequence[CaseCard]) -> MatchResult:
 
     scored: list[Candidate] = []
     for case in cases:
-        keys = {k for k in (quote_key(q, None) for q in case.quote_numbers) if k}
+        keyed, bare = _case_keys(case.quote_numbers)
         signals: list[str] = []
-        if keys & set(pdf_keys):
+        if _held(pdf_keys, keyed, bare):
             signals.append("pdf_quote")
-        elif keys & set(thread_keys):
+        elif _held(thread_keys, keyed, bare):
             signals.append("thread_pdf_quote")
-        if keys & set(text_keys):
+        if _held(text_keys, keyed, bare):
             signals.append("text_quote")
         if inp.thread_id and inp.thread_id in case.threads:
             signals.append("same_thread")
@@ -186,8 +214,12 @@ def match_case(inp: MatchInput, cases: Sequence[CaseCard]) -> MatchResult:
     top = tuple(scored[:MAX_CANDIDATES])
     numbers = tuple(canonical_quote_number(k) for k in sorted({*pdf_keys, *thread_keys, *text_keys}))
 
-    known = {k for case in cases for k in (quote_key(q, None) for q in case.quote_numbers) if k}
-    unknown = sorted(k for k in pdf_keys if k not in known) or sorted(k for k in thread_keys if k not in known)
+    known, known_bare = _case_keys([*(q for c in cases for q in c.quote_numbers), *known_quote_numbers])
+
+    def is_known(k: tuple[int, int]) -> bool:
+        return k in known or k[1] in known_bare
+
+    unknown = sorted(k for k in pdf_keys if not is_known(k)) or sorted(k for k in thread_keys if not is_known(k))
     new_quote = canonical_quote_number(unknown[0]) if unknown else None
     # A quote no case holds is a new deal — unless the email's thread is already on a case: then it is a
     # new quote of that case (R1 records it there), and the number is kept so a person sees it.
