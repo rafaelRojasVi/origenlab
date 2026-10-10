@@ -360,6 +360,8 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
   const url = gmailUrl(r);
   const match = r.case_match ?? null;
   const suggestion = match?.suggestions[pick] ?? null;
+  /** `link-case-evidence` refuses a closed case: there the answer is «Es de ese caso», nothing linked. */
+  const closedCase = !!suggestion?.closed;
   const newDeal = match?.decision === "new_case";
   const quote = newDeal ? match?.new_case_quote ?? null : null;
 
@@ -390,12 +392,31 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
     }
   }
 
+  /** «Es de ese caso» on a closed case: both readings answered, the email leaves «Hoy»; nothing linked. */
+  async function belongsToClosed() {
+    if (!match || !suggestion) return;
+    setBusy(true);
+    try {
+      await reviewTriage({ assertion_id: match.assertion_id, verdict: "approved", corrected: {},
+        note: `Es del caso cerrado · ${suggestion.opportunity_id}` });
+      await reviewTriage({ assertion_id: r.assertion_id, verdict: "approved", corrected: {},
+        note: `Es del caso cerrado «${suggestion.title ?? ""}»` });
+      leave();
+      onDone();
+    } catch (err) {
+      toast(refusalMessage(err, "No se pudo guardar la respuesta."), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   /** «No es de este caso»: answers the suggestion only; the email stays to be decided. */
   async function notThisCase() {
     if (!match) return;
     setBusy(true);
     try {
-      await reviewTriage({ assertion_id: match.assertion_id, verdict: "rejected", corrected: {}, note: "No es de este caso" });
+      await reviewTriage({ assertion_id: match.assertion_id, verdict: "rejected", corrected: {},
+        note: suggestion ? `No es de este caso · ${suggestion.opportunity_id}` : "No es de este caso" });
       onDone();
     } catch (err) {
       toast(refusalMessage(err, "No se pudo guardar la respuesta."), "bad");
@@ -462,8 +483,11 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
           <GmailLink url={url} />
           {mayDecide ? (
             <>
-              {suggestion ? (
+              {suggestion && !closedCase ? (
                 <Button variant="primary" onClick={() => void link()} busy={busy} busyLabel="…">Vincular</Button>
+              ) : null}
+              {suggestion && closedCase ? (
+                <Button variant="primary" onClick={() => void belongsToClosed()} busy={busy} busyLabel="…">Es de ese caso</Button>
               ) : null}
               {openable || newDeal ? (
                 <Button variant={suggestion ? "quiet" : "primary"} onClick={() => void openCase()} busy={busy} busyLabel="…">Abrir caso</Button>
@@ -477,7 +501,7 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
       {suggestion ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2.5 text-[12px] text-ink-muted">
           <p className="min-w-0 flex-1">
-            Parece del caso <span className="font-medium text-ink">{suggestion.title ?? "sin título"}</span>
+            Parece del {closedCase ? "caso cerrado" : "caso"} <span className="font-medium text-ink">{suggestion.title ?? "sin título"}</span>
             {" · "}{suggestionReason(suggestion)}
           </p>
           {mayDecide ? (
