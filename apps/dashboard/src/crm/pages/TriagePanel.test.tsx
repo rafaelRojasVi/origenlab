@@ -291,7 +291,7 @@ describe("«Correos sin caso» · sugerencia de caso", () => {
     await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/review-triage")).toBe(true));
     const posts = calls.filter((c) => c.path.startsWith("/v2/commands/"));
     expect(posts).toHaveLength(1);
-    expect(posts[0].body).toMatchObject({ assertion_id: "cm-s2", verdict: "rejected", note: "No es de este caso" });
+    expect(posts[0].body).toMatchObject({ assertion_id: "cm-s2", verdict: "rejected", note: "No es de este caso · o-7" });
   });
 
   it("«Otra opción» shows the second suggestion", async () => {
@@ -323,5 +323,43 @@ describe("«Correos sin caso» · sugerencia de caso", () => {
     renderPanel([], "viewer");
     expect(await screen.findByText(/Parece del caso/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Vincular" })).not.toBeInTheDocument();
+  });
+});
+
+describe("«Correos sin caso» · sugerencia de caso · revisión", () => {
+  it("on a closed case it offers «Es de ese caso», which answers both readings and links nothing", async () => {
+    const calls = stub([matched("c1", { suggestions: [suggestion({ closed: true, stage: "won" })] })]);
+    renderPanel([]);
+    expect(await screen.findByText(/caso cerrado/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Vincular" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Es de ese caso" }));
+    await waitFor(() => expect(calls.filter((c) => c.path === "/v2/commands/review-triage")).toHaveLength(2));
+    const posts = calls.filter((c) => c.path.startsWith("/v2/commands/"));
+    expect(posts.map((c) => c.path)).not.toContain("/v2/commands/link-case-evidence");
+    expect(posts[0].body).toMatchObject({ assertion_id: "cm-c1", verdict: "approved", note: "Es del caso cerrado · o-7" });
+    expect(posts[1].body).toMatchObject({ assertion_id: "c1", verdict: "approved" });
+  });
+
+  it("«No es de este caso» names the case that was on screen, also after «Otra opción»", async () => {
+    const calls = stub([matched("c2", { suggestions: [suggestion(), suggestion({ opportunity_id: "o-8", title: "Otro" })] })]);
+    renderPanel([]);
+    fireEvent.click(await screen.findByRole("button", { name: "Otra opción" }));
+    fireEvent.click(screen.getByRole("button", { name: "No es de este caso" }));
+    await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/review-triage")).toBe(true));
+    expect(calls.find((c) => c.path === "/v2/commands/review-triage")?.body).toMatchObject({
+      assertion_id: "cm-c2", verdict: "rejected", note: "No es de este caso · o-8" });
+  });
+
+  it("an old Labdelivery forward stays counted away even with a suggestion", async () => {
+    stub([matched("c3", {}, { sender: "contacto@labdelivery.cl" })]);
+    renderPanel([]);
+    expect(await screen.findByText(/reenvío antiguo/)).toBeInTheDocument();
+    expect(screen.queryByText(/Parece del caso/)).not.toBeInTheDocument();
+  });
+
+  it("an automatic notice comes back only with a case to suggest, not for a new deal", async () => {
+    stub([matched("c4", { decision: "new_case", new_case_quote: "09136-26", suggestions: [] }, { class: "notification" })]);
+    renderPanel([]);
+    expect(await screen.findByText(/aviso automático/)).toBeInTheDocument();
   });
 });

@@ -332,13 +332,14 @@ const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce
 
 function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCardData>, now: Date): Exclude<HiddenReason, "mismo hilo"> | null {
   if (holdingCases(r, cards, now).length > 0) return wonProposal(r, cards) || reopenProposal(r, cards, now) ? null : "en un caso";
-  // A supplier's price for a client's deal, a platform's purchase-order notice: asked about when the
-  // matcher can place it on a case (or sees a deal with no case), counted away otherwise.
-  if (hasCaseMatch(r)) return null;
   const [local = "", domain = ""] = (r.sender ?? "").toLowerCase().split("@");
   if (domain.includes("labdelivery")) return "reenvío antiguo";
-  if (r.sender_is_supplier || r.intent === "supplier_offer") return "proveedor";
-  if (AUTOMATIC_SENDER.test(local) || AUTOMATIC_CLASSES.has(r.class ?? "")) return "aviso automático";
+  // A supplier's price for a client's deal is asked about when the matcher can place it on a case or
+  // sees a deal with no case; a platform's notice only when there is a case to suggest.
+  if ((r.sender_is_supplier || r.intent === "supplier_offer") && !hasCaseMatch(r)) return "proveedor";
+  const suggestsCase = (r.case_match?.suggestions.length ?? 0) > 0;
+  if ((AUTOMATIC_SENDER.test(local) || AUTOMATIC_CLASSES.has(r.class ?? "")) && !suggestsCase) return "aviso automático";
+  if (hasCaseMatch(r)) return null;
   return null;
 }
 
