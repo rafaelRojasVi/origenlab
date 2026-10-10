@@ -6,7 +6,7 @@ products, the case stage, a summary. Nothing acts on it. This module is the huma
 
 | Surface | What it does |
 |---|---|
-| `GET /v2/workspace/triage-readings?status=pending` | the suggestions waiting for a person, newest first, each with its email, its products, the cases its thread is on and their current stage, and the latest verdict if any |
+| `GET /v2/workspace/triage-readings?status=pending` | the suggestions waiting for a person, newest first, each with its email, its products, the cases its thread is on and their current stage, the latest verdict if any, and — for an email no case holds — the context matcher's suggestion (`case_match`) |
 | `POST /v2/commands/review-triage` | records one verdict — `approved`, `corrected` (with the corrected fields) or `rejected`, an optional note — as an `evidence.triage_review` row and one `assertion.triage_reviewed` event |
 
 **Append-only.** A verdict is never rewritten: a second review of the same suggestion adds a row,
@@ -23,6 +23,7 @@ if the worker's and these ever differ.
 
 from __future__ import annotations
 
+import uuid
 from contextlib import contextmanager
 from typing import Annotated, Any, Iterator, Literal
 
@@ -130,9 +131,18 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
                            join evidence.source_record s2 on s2.id = oe.source_record_id
                            join crm.opportunity o on o.id = oe.opportunity_id
                           where oe.unlinked_at is null
-                            and s2.payload ->> 'gmail_thread_id' = m.provider_thread_id) o), '[]') as cases
+                            and s2.payload ->> 'gmail_thread_id' = m.provider_thread_id) o), '[]') as cases,
+       cm.id::text as case_match_id, cm.value as case_match_value, cm.verdict as case_match_verdict
   from readings r
   join evidence.source_record sr on sr.id = r.source_record_id
+  -- The context matcher's suggestion for the same email (`apps/worker` case_match.py) and its latest verdict.
+  left join lateral (select a.id, a.value,
+                            (select tr.verdict from evidence.triage_review tr where tr.assertion_id = a.id
+                              order by tr.reviewed_at desc, tr.id desc limit 1) as verdict
+                       from evidence.assertion a
+                      where a.source_record_id = r.source_record_id and a.kind = 'message_triage'
+                        and a.value_norm = 'case_match:v1'
+                      limit 1) cm on true
   join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
   left join lateral (select p.address_norm from comms.message_participant p
                       where p.message_id = m.id and p.role = 'from' limit 1) snd on true
@@ -140,6 +150,58 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
  order by m.internal_date desc, r.id
  limit %(limit)s
 """
+
+
+_SUGGESTED_CASES_SQL = """
+select o.id::text, o.title, o.stage, o.version, o.closed_at is not null as closed
+  from crm.opportunity o
+ where o.id = any(%s::uuid[]) and o.close_reason is distinct from 'discarded_by_correction'
+"""
+MAX_SUGGESTIONS = 3
+
+
+def _suggestion_ids(value: dict[str, Any]) -> list[str]:
+    """The model's pick first (when it named a case), then layer 1's candidates; no repeats."""
+    pick = value.get("pick") or {}
+    ids = [pick["choice"]] if pick.get("choice") not in (None, "new_case", "none") else []
+    ids += [c.get("opportunity_id") for c in value.get("candidates") or [] if c.get("opportunity_id")]
+    return list(dict.fromkeys(i for i in ids if isinstance(i, str) and _is_uuid(i)))
+
+
+def _is_uuid(text: str) -> bool:
+    try:
+        uuid.UUID(text)
+    except ValueError:
+        return False
+    return True
+
+
+def case_match_view(row: dict[str, Any], cases: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    """What «Correos sin caso» shows for one email: the case it probably belongs to, or a new deal. None
+    when a case already holds the email, when there is no suggestion, or once a person answered it."""
+    value = row.get("case_match_value")
+    if not value or row.get("cases") or row.get("case_match_verdict") is not None:
+        return None
+    pick = value.get("pick") or {}
+    signals = {c.get("opportunity_id"): c.get("signals") or [] for c in value.get("candidates") or []}
+    suggestions = []
+    for oid in _suggestion_ids(value):
+        case = cases.get(oid)
+        if case is None:
+            continue
+        from_model = pick.get("choice") == oid
+        suggestions.append({**case, "signals": signals.get(oid, []), "from": "model" if from_model else "rules",
+                            "reason_es": pick.get("reason_es") if from_model else None})
+    decision = value.get("decision")
+    new_case = pick.get("new_case") if pick.get("choice") == "new_case" else None
+    if pick.get("choice") == "new_case":
+        decision = "new_case"
+    if not suggestions and decision != "new_case":
+        return None
+    return {"assertion_id": row["case_match_id"], "decision": decision,
+            "new_case_quote": (new_case or {}).get("quote_number") or value.get("new_case_quote"),
+            "new_case": new_case, "quote_numbers": value.get("quote_numbers") or [],
+            "suggestions": suggestions[:MAX_SUGGESTIONS] if decision != "new_case" else []}
 
 
 class TriageReviewRepository(CommandTransaction):
@@ -163,6 +225,13 @@ class TriageReviewRepository(CommandTransaction):
             cur.execute(_LIST_SQL, {"status": status, "limit": max(1, min(int(limit), MAX_LIST))})
             names = [d[0] for d in cur.description]
             rows = [dict(zip(names, row, strict=True)) for row in cur.fetchall()]
+            wanted = sorted({oid for row in rows if row.get("case_match_value")
+                             for oid in _suggestion_ids(row["case_match_value"])})
+            cases: dict[str, dict[str, Any]] = {}
+            if wanted:
+                cur.execute(_SUGGESTED_CASES_SQL, (wanted,))
+                cases = {oid: {"opportunity_id": oid, "title": title, "stage": stage, "version": version,
+                               "closed": closed} for oid, title, stage, version, closed in cur.fetchall()}
         items = []
         for row in rows:
             value = row["value"] or {}
@@ -190,6 +259,7 @@ class TriageReviewRepository(CommandTransaction):
                 "cases": row["cases"] or [],
                 "transitions": reading.get("linked_cases") or [],
                 "review": row["review"],
+                "case_match": case_match_view(row, cases),
             })
         return {"status": status, "items": items,
                 "vocabulary": {"classes": list(TRIAGE_CLASSES), "stages": list(TRIAGE_STAGES),
