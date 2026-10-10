@@ -181,6 +181,31 @@ def test_a_pdf_quote_number_outranks_the_subject_number() -> None:
     assert action.case_id == "c-2"
 
 
+def test_a_thread_r1_knows_keeps_its_link_whatever_the_inherited_subject_names() -> None:
+    """A reply on case c-1's thread titled after another case's quote (no PDF): R1 links to c-1
+    as before this rule; the subject is never read on a known thread."""
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", sender="compras@cliente.test", thread_id="t-1",
+                       subject="Re: Cotización 01260-26 — cliente", documents=()),),
+        cases=(case(thread_ids=("t-1",), quotes=(quote("01259-26"),)),
+               case(id="c-2", quotes=(quote("01260-26"),))),
+        organizations=(org(),),
+    ))
+    assert action.rule_id == "R1"
+    assert action.mode == "auto"
+    assert action.case_id == "c-1"
+
+
+def test_a_cn_subject_token_missing_its_leading_zero_links_the_0xxxx_quote() -> None:
+    action = only(Snapshot(
+        evidence=(mail(direction="inbound", thread_id="t-new", sender="compras@cliente.test",
+                       subject="Seguimiento CN12395", documents=()),),
+        cases=(case(quotes=(quote("012395-26"),)),),
+        organizations=(org(),),
+    ))
+    assert action.rule_id == "R2" and action.case_id == "c-1"
+
+
 def test_a_subject_number_of_a_closed_case_or_an_unknown_number_does_not_link() -> None:
     closed = only(Snapshot(
         evidence=(mail(direction="inbound", thread_id="t-new", sender="Irina <persona@gmail.com>",
@@ -189,6 +214,22 @@ def test_a_subject_number_of_a_closed_case_or_an_unknown_number_does_not_link() 
         organizations=(org(),),
     ))
     assert closed.rule_id != "R2"
+    # A purchase-order reference is not a quote number, even when it carries one.
+    po = only(Snapshot(
+        evidence=(mail(direction="inbound", thread_id="t-new", sender="compras@cliente.test",
+                       subject="OC-01259-26 aprobada", documents=()),),
+        cases=(case(quotes=(quote("01259-26"),)),),
+        organizations=(org(),),
+    ))
+    assert po.rule_id != "R2"
+    # A bare correlative without a year stays an R7 review, as before.
+    bare = only(Snapshot(
+        evidence=(mail(direction="inbound", thread_id="t-new", sender="Irina <persona@gmail.com>",
+                       subject="Consulta Cotización 1259", documents=()),),
+        cases=(case(quotes=(quote("01259-26"),)),),
+        organizations=(org(),),
+    ))
+    assert bare.rule_id == "R7" and bare.mode == "proposal"
     # A supplier-style six-digit document number is not an OrigenLab correlative.
     six = only(Snapshot(
         evidence=(mail(direction="inbound", thread_id="t-new", sender="ventas@proveedor.test",

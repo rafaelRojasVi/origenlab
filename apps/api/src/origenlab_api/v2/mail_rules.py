@@ -9,7 +9,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | Rule | When | Mode |
 |---|---|---|
 | R1 | same Gmail thread as an email already linked to exactly one open case | auto: link; a new sent CN PDF on that thread also records the quote when the case has a requester |
-| R2 | a quote number — from a PDF name, or from the subject when no PDF names one — equals a quote on exactly one open case (same year + correlative) | auto: link |
+| R2 | a quote number — from a PDF name, or from the subject (CN token or number with year) when no PDF names one and the thread is new — equals a quote on exactly one open case (same year + correlative) | auto: link |
 | R3 | outbound, a NEW CN number in a PDF, recipient domain = one known institution | auto: case + quote |
 | R4 | as R3, recipient domain unknown and neither free-mail, supplier nor ours | auto: institution «por confirmar» + case + quote |
 | R5 | inbound purchase order on a thread linked to one case (with one live quote revision) | auto: link + won |
@@ -275,27 +275,29 @@ def gmail_quote_key(token: str, sent_at: str | None) -> tuple[int, int] | None:
     return quote_key(restored, santiago_year(sent_at))
 
 
-#: An OrigenLab quote number as a person types it in a subject: «CN01259», «01259-26»,
-#: «cotización N°01259-26», «Cotización 1259». The correlative is four or five digits (a leading
+#: An OrigenLab quote number as a person types it in a subject, read conservatively: a CN token
+#: («CN01259», «CN 1259-26») or a number **with its year** («01259-26», «cotización N°01259-26»).
+#: A bare correlative («Cotización 1259») is not read: without a year it would only ever be a
+#: proposal, and R7 already files it for review. The correlative is four or five digits (a leading
 #: zero optional) with up to three letters; a sixth digit («Cotización 123553», a supplier's own
-#: number) disqualifies it. A year, when typed, is two or four digits after a dash.
+#: number) disqualifies, and so does a `-` or `_` right before it («OC-01259-26» is an order).
 _SUBJECT_QUOTE_NUMBER = re.compile(
-    r"(?<![a-z0-9])(?:cn\s*-?\s*|(?:cotizaci[oó]n|quotation|cot\.?|presupuesto)\s*(?:n[°ºo]?\.?|no\.?|#)?\s*)"
-    r"(0?\d{4,5}[a-z]{0,3}(?:-(?:\d{4}|\d{2}))?)(?![\d-])"
-    r"|(?<![a-z0-9])(0?\d{4,5}[a-z]{0,3}-(?:\d{4}|\d{2}))(?![\d-])",
+    r"(?<![a-z0-9_-])cn\s*-?\s*(0?\d{4,5}[a-z]{0,3}(?:-(?:\d{4}|\d{2}))?)(?![\d-])"
+    r"|(?<![a-z0-9_-])(0?\d{4,5}[a-z]{0,3}-(?:\d{4}|\d{2}))(?![\d-])",
     re.IGNORECASE,
 )
 
 
 def subject_quote_keys(subject: str | None, sent_at: str | None) -> dict[tuple[int, int], str]:
-    """(year, correlative) → token for each quote number a subject line names (`_SUBJECT_QUOTE_NUMBER`).
-    Without a typed year the email's Santiago year is assumed, as for a PDF token."""
+    """(year, correlative) → token for each quote number a subject line names
+    (`_SUBJECT_QUOTE_NUMBER`), read like a PDF token (`gmail_quote_key`: the dropped leading
+    zero of a CN token is restored; a CN token without a year takes the email's Santiago year)."""
     out: dict[tuple[int, int], str] = {}
     for m in _SUBJECT_QUOTE_NUMBER.finditer(subject or ""):
-        token = (m.group(1) or m.group(2) or "").upper()
-        key = quote_key(token, santiago_year(sent_at))
+        token = ("CN" + m.group(1)) if m.group(1) else (m.group(2) or "")
+        key = gmail_quote_key(token, sent_at)
         if key is not None:
-            out.setdefault(key, token)
+            out.setdefault(key, token.upper())
     return out
 
 
@@ -555,9 +557,11 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
             key = gmail_quote_key(token, e.sent_at)
             if key is not None:
                 keyed.setdefault(key, token)
-    if not keyed:
-        # No PDF names a quote: the subject may («Consulta cotización N°01259-26»). A PDF's number
-        # always outranks the subject's — «Re: Cotización 01198-26» carrying CN01240 sends 01240.
+    if not keyed and not thread_cases and not _po_subject(e):
+        # No PDF names a quote and the thread is not already a case's: the subject may name one
+        # («Consulta cotización N°01259-26»). A PDF's number always outranks the subject's («Re:
+        # Cotización 01198-26» carrying CN01240 sends 01240); a thread R1 already knows keeps its
+        # link whatever its inherited title says; a purchase order's subject is R5's, not R2's.
         keyed.update(subject_quote_keys(e.subject, e.sent_at))
     exact: dict[str, CaseState] = {}
     matched_key: tuple[int, int] | None = None
