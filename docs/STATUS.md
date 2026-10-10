@@ -2347,7 +2347,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Case panel | Actions at the top: «Registrar seguimiento», «Cambiar estado», «Marcar ganada» when it applies (and «No es una solicitud» on a case without a quotation); the rest under «Más…». Removed: «Estado actual sin verificar» and «Al día» badges, the explanatory footnotes, sha256, import origin and the internal id. |
 | Follow-up | PR #699 (same day): the quote-number box and the exchange rates moved to «Hoy»'s side column (sticky on wide screens), «Correos sin caso» closes the main column; nothing sits under both columns any more. |
 
-### 2.7.80 Fresh quotes are not «sin decidir»; won-case replies in «Te toca responder», 2026-10-09 — PR open
+### 2.7.80 Fresh quotes are not «sin decidir»; won-case replies in «Te toca responder», 2026-10-09 — merged and deployed (PR #700)
 
 | | |
 |---|---|
@@ -2356,6 +2356,18 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Rule 2 | `repliesToAnswer` includes a won case whose last inbound email is later than `closed_at` (`wroteAfterWinning`); the row reads «Escribió tras ganar el …», offers only «Abrir respuesta» (tasks are refused on closed cases, so answering the email is what takes it off the list). Lost cases stay out: a client writing back there is a new request. |
 | Not changed | The API still stores every registered quote as `historical_import`; a distinct origin for the sync's quotes is a later change. |
 
+### 2.7.81 «Atendido» on a won-case reply, 2026-10-10 — merged (PR #701)
+
+`apps/api` read + `apps/dashboard`: no command, proxy or schema change. Reuses `add-note`
+(CRM authoring, §2.7.4x) and the case notes read.
+
+| | |
+|---|---|
+| Problem | A client writing on a won case (payment receipt, «¿plazos de entrega?») showed under «Te toca responder» with «Abrir respuesta» as the only control: a task is refused on a closed case, so the row left only once an email went out on the thread. Answered by phone, or needing no answer, it stayed. |
+| API | `GET /v2/workspace/pipeline` cards gain `last_note` — the newest active `crm.note` with `subject_kind = 'opportunity'` on an open or won case: `created_at` (ISO UTC), `body` (first 160 chars), `author` — or null. A ninth query in the same pipelined round trip (`_SQL_PIPELINE_NOTES`). |
+| Rule | `repliesToAnswer` also skips a reply on a **won** case when a note on it is newer than the client's email (`notedAfter`), alongside the task rule of §2.7.70. On an open case only a task answers: an internal note never hides a client's email. The client's next email puts the case back. |
+| Button | «Atendido» on a won-case reply row (sales/admin with `crm_authoring_enabled`): `add-note` on the case, body «Atendido: el cliente escribió el … tras ganar el caso; respondido por otro medio o sin respuesta pendiente.» The row leaves; the note is in the case drawer like any other. Open cases keep «No requiere respuesta» (a task) — unchanged. |
+| Evidence | `apps/dashboard` `npm run validate`: **700 passed** + build; `apps/api` `scripts/validate.sh`: **3883 passed**, 676 skipped (the pipeline statement-count guard documents ≤ 11: 2 setup + 9 data queries, still one round trip) |
 ### 2.7.82 «Archivo Drive» counts what the Drive cron filed, 2026-10-10 — built, not deployed
 
 `apps/api` read only: no command, proxy, dashboard or schema change.

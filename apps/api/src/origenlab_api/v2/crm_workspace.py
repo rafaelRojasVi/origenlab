@@ -270,6 +270,23 @@ _SQL_PIPELINE_TASKS = """
       join platform.operator o on o.id = t.owner_operator_id
      where t.status = 'open'
 """
+# The newest active note on each case (`crm.note`, subject_kind = 'opportunity') with its author.
+# «Hoy» reads `created_at`: a note written after the client's last email is the operator's answer
+# («Atendido» on a won case, where a task is refused). `body` is cut to its first words: the card
+# shows a hint, the drawer shows the note.
+_SQL_PIPELINE_NOTES = """
+    select distinct on (n.subject_id)
+           n.subject_id::text as opportunity_id,
+           to_char(n.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
+           left(n.body, 160) as body,
+           o.display_name as author_display_name
+      from crm.note n
+      join platform.operator o on o.id = n.author_operator_id
+      join crm.opportunity op on op.id = n.subject_id
+     where n.subject_kind = 'opportunity' and n.status = 'active'
+       and (op.closed_at is null or op.stage = 'won')
+     order by n.subject_id, n.created_at desc, n.id desc
+"""
 _SQL_PIPELINE_SOURCES = """
     select sr.id::text as source_record_id,
            sr.payload->>'gmail_message_id' as gmail_message_id,
@@ -597,6 +614,7 @@ def compose_pipeline(
     drive: Mapping[str, DriveLink],
     contacts: Mapping[str, Mapping[str, Any]] | None = None,
     tasks: list[Mapping[str, Any]] | None = None,
+    notes: list[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
@@ -624,6 +642,17 @@ def compose_pipeline(
             "version": row["version"], "owner": row.get("owner_display_name"),
             "created_at": row.get("created_at"),
         })
+
+    # The newest active note per case. `_SQL_PIPELINE_NOTES` already returns one row per case
+    # (`distinct on`); the reduction here keeps the pure function honest for any caller.
+    note_by_opp: dict[str, dict[str, Any]] = {}
+    for row in notes or []:
+        current = note_by_opp.get(row["opportunity_id"])
+        if current is None or str(row["created_at"]) > str(current["created_at"]):
+            note_by_opp[row["opportunity_id"]] = {
+                "created_at": row["created_at"], "body": row["body"],
+                "author": row.get("author_display_name"),
+            }
 
     cards: list[dict[str, Any]] = []
     for opp in opportunities:
@@ -802,6 +831,9 @@ def compose_pipeline(
                 # Open `crm.task` rows (W11), earliest due first. A case whose earliest open task
                 # is due after today is «En pausa hasta…» on the dashboard.
                 "open_tasks": tasks_by_opp.get(oid, []),
+                # The newest active note on the case (`crm.note`), or null: «Hoy» counts one
+                # written after the client's last email as answered.
+                "last_note": note_by_opp.get(oid),
                 "next_action": task_next_action(tasks_by_opp.get(oid, []))
                 or suggest_next_action(opp, blocked, latest),
             }
@@ -1047,7 +1079,7 @@ class CrmWorkspaceRepository:
                 setup.execute("set transaction read only")
                 setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
 
-            # 8 data queries in 1 RTT via psycopg pipeline mode.
+            # 9 data queries in 1 RTT via psycopg pipeline mode.
             cur_opps = conn.cursor()
             cur_case_orgs = conn.cursor()
             cur_quotes = conn.cursor()
@@ -1056,6 +1088,7 @@ class CrmWorkspaceRepository:
             cur_participants = conn.cursor()
             cur_contact = conn.cursor()
             cur_tasks = conn.cursor()
+            cur_notes = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -1065,6 +1098,7 @@ class CrmWorkspaceRepository:
                 cur_participants.execute(_SQL_PIPELINE_PARTICIPANTS)
                 cur_contact.execute(_SQL_PIPELINE_CONTACT)
                 cur_tasks.execute(_SQL_PIPELINE_TASKS)
+                cur_notes.execute(_SQL_PIPELINE_NOTES)
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -1083,10 +1117,11 @@ class CrmWorkspaceRepository:
             participants = self._rows(cur_participants)
             contacts = last_contacts(self._rows(cur_contact))
             tasks = self._rows(cur_tasks)
+            notes = self._rows(cur_notes)
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
-            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks
+            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks, notes
         )
         return {
             "items": cards,
