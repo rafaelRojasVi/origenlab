@@ -2378,7 +2378,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Fix | `drive_archive` joins each revision's `drive_file` record and builds the archive from `drive_links_from_records` (ledgers + records, the same union the cards use; `drive_archive_from` is the pure part). A revision counts as «sin PDF en Drive» only when neither names its hash. `ledgers` gains `crm` for the cron's records. |
 | Evidence | `apps/api` `scripts/validate.sh`: **3883 passed**, 676 skipped; new `test_drive_archive_counts_what_the_cron_filed_not_only_the_boot_ledgers` (invented hashes and ids) |
 
-### 2.7.83 R2 reads the quote number from the subject when no PDF names one, 2026-10-10 — built, not deployed
+### 2.7.83 R2 reads the quote number from the subject when no PDF names one, 2026-10-10 — merged (PR #703)
 
 `apps/api` rules only (`v2/mail_rules.py`): no command, proxy, dashboard or schema change. The automatic R1/R2 run (§2.7.59) and «Aplicar» use the same planner.
 
@@ -2387,3 +2387,14 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Problem | A client answering about a quote on a fresh Gmail thread without an attachment («Consulta_Compra de productos_ cotización N°01259-26», 9 Oct) stayed in «Correos sin caso» as an R7 review, although the number named exactly one open case. R2 read quote numbers from PDF file names (`cn_tokens`) only. |
 | Rule | When no attached PDF names a quote **and the thread is not already a case's**, R2 also reads the subject (`subject_quote_keys`, `_SUBJECT_QUOTE_NUMBER`): a CN token («CN01259», «CN12395» with its zero restored, as a PDF token) or a number with its year («01259-26», «cotización N°01259-26»). A bare correlative («Cotización 1259») is not read: it stays an R7 review as before. Four or five digits, up to three letters; a sixth digit (a supplier's own number) disqualifies, and so does a `-`/`_` right before it («OC-01259-26»); a purchase-order subject (`_po_subject`) is never read as a quote number. A PDF's number always outranks the subject's («Re: Cotización 01198-26» carrying CN01240 sends 01240); a thread R1 already knows keeps its link whatever its inherited title says. The rest is unchanged: exactly one open case → auto link; several → proposal; a closed or unknown number → R7/R8 as before. |
 | Evidence | `apps/api` `scripts/validate.sh`: **3887 passed**, 676 skipped; seven new rule tests (fictitious numbers and addresses); the subject test fails on the old planner |
+### 2.7.84 Triage: «REMOVER» with a signature and an absence notice under «RE:» are noise, not quote requests, 2026-10-10 — built, not deployed
+
+`apps/worker` rules only (`triage_rules.py`): no command, proxy, dashboard, API or schema change. The W10 suppression grammar (`unsubscribe_replies.classify_reply`) is unchanged.
+
+| | |
+|---|---|
+| Problem | Two replies to the Cyber campaign (9 Oct) were read as «Solicitud de cotización» and sat in «Correos sin caso»: a body «REMOVER» followed by the sender's signature (the W10 grammar refuses it as not standalone, and the subject was «RE: Cyber …», not the bare word), and an out-of-office text whose subject was only «RE: Cyber …» with no `Auto-Submitted` header. |
+| Rule 1 | `unsubscribe` when the reply's first non-empty line is a bare BAJA/REMOVER form and more text follows (`body:baja_first_line`): an unsubscribe reading for a person to confirm. Suppression itself still goes through W10, which keeps refusing the non-standalone body — nothing is suppressed by this rule. |
+| Rule 2 | `auto_reply` when the reply's own opening (quoted history cut, first 300 chars) contains an absence phrase («fuera de la oficina», «out of office», «me encuentro de vacaciones», …) and no quote-request word precedes it (`body:<phrase>`): a person who asks for a price and then mentions a trip stays a person. |
+| Evidence | `apps/worker` `scripts/validate.sh`: **430 passed**, 51 skipped; seven new `test_real_mail_cases` rows (fictitious addresses) |
+

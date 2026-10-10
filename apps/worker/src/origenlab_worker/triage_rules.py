@@ -41,7 +41,7 @@ from origenlab_api.v2.mail_rules import (
     QUOTE_REQUEST_WORDS,
     fold,
 )
-from origenlab_api.v2.unsubscribe_replies import classify_reply
+from origenlab_api.v2.unsubscribe_replies import ACCEPTED_FORMS, classify_reply, reply_text
 from origenlab_worker.mail_text import MailText
 
 #: Bumped whenever a rule changes what it decides. The proposal is stored per version
@@ -71,6 +71,14 @@ _AUTO_REPLY_SUBJECTS: tuple[str, ...] = (
     "out of office", "out of the office", "fuera de la oficina", "fuera de oficina",
     "acuse de recibo", "read receipt", "leido:",
 )
+#: An absence notice whose subject is only «RE: <our campaign>» says so in its first lines. Read
+#: on the reply's own text (quoted history cut), and only its opening: a person who mentions a
+#: trip after asking for a price is still a person (no quote word may precede the phrase).
+_AUTO_REPLY_BODY_OPENINGS: tuple[str, ...] = (
+    "fuera de la oficina", "fuera de oficina", "out of office", "out of the office",
+    "me encuentro de vacaciones", "estare ausente", "estoy ausente", "me encuentro ausente",
+)
+_AUTO_REPLY_BODY_CHARS = 300
 #: Absence notices start with the word; anywhere else «ausencia» can be a real subject.
 _AUTO_REPLY_PREFIXES: tuple[str, ...] = ("ausencia", "ausente", "estare fuera", "estoy fuera")
 _UNSUBSCRIBE_SUBJECTS: frozenset[str] = frozenset({"baja", "remover", "unsubscribe", "remove"})
@@ -119,6 +127,15 @@ def _local(address: str | None) -> str:
 
 def _contains_any(text: str, phrases: Sequence[str]) -> str | None:
     return next((p for p in phrases if p in text), None)
+
+
+def _first_line_is_baja(own: str) -> bool:
+    """The reply's own text (`reply_text`) opens with a bare BAJA/REMOVER line and more follows:
+    the instruction, then a signature («REMOVER», blank line, «Sds. Ana Pérez»). The W10
+    suppression grammar still refuses it (not standalone) — this only files the email as an
+    unsubscribe reading for a person to confirm, instead of a quote request."""
+    first = next((line.strip() for line in own.split("\n") if line.strip()), "")
+    return first.upper() in ACCEPTED_FORMS and first != own.strip()
 
 
 def _machine_header_reason(headers: dict[str, str]) -> str | None:
@@ -178,10 +195,18 @@ def classify(item: TriageInput) -> RuleVerdict:
     if "text/calendar" in mail.content_types or "application/ics" in mail.content_types:
         return verdict("calendar", "mime:text/calendar")
 
+    own = reply_text(mail.body or "")
     if subject.strip(" .!") in _UNSUBSCRIBE_SUBJECTS:
         return verdict("unsubscribe", "subject:baja_word")
     if mail.body and classify_reply(mail.body).accepted:
         return verdict("unsubscribe", "body:baja_grammar")
+    if _first_line_is_baja(own):
+        return verdict("unsubscribe", "body:baja_first_line")
+    # After the unsubscribe checks: «REMOVER, estoy fuera de la oficina» is still an instruction.
+    opening = fold(own)[:_AUTO_REPLY_BODY_CHARS]
+    if (phrase := _contains_any(opening, _AUTO_REPLY_BODY_OPENINGS)) is not None \
+            and _contains_any(opening[:opening.index(phrase)], QUOTE_REQUEST_WORDS) is None:
+        return verdict("auto_reply", f"body:{phrase}")
 
     if (domain in _TENDER_DOMAINS or (domain or "").endswith(tuple("." + d for d in _TENDER_DOMAINS))) \
             and _contains_any(subject, _TENDER_SUBJECTS + ("licitacion",)):
