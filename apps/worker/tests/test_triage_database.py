@@ -364,3 +364,27 @@ def test_past_decisions_read_links_and_rejected_suggestions_for_the_senders_doma
         past = TriageDb(conn).past_decisions(f"new@prov-{tag}.invalid")
     assert sorted((p.subject, p.opportunity_id, p.verdict) for p in past) == [
         ("Certificado", oid, "rejected"), ("RE: titulador", oid, "linked")]
+
+
+def test_a_rejection_names_the_case_the_person_was_shown(dsn, target, mailbox_id) -> None:
+    tag = uuid.uuid4().hex[:6]
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-n-{tag}@example.test",))[0][0]
+    first, shown = (owner_rows(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) "
+                                    "values (%s, 'lead', %s) returning id::text", (t, operator))[0][0]
+                    for t in (f"Primero {tag}", f"Mostrado {tag}"))
+    store = Store()
+    gid = capture(target, mailbox_id, store, f"pn-{tag}",
+                  make_raw(frm=f"Ann <ann@prov-n-{tag}.invalid>", subject="Plazo de entrega",
+                           message_id=f"<{uuid.uuid4().hex}@prov.invalid>"))
+    aid = owner_rows(dsn, "insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+                          "values (%s, 'message_triage', %s, %s::jsonb) returning id::text",
+                     (source_record(dsn, gid), CASE_MATCH_VALUE_NORM,
+                      '{"pick": {"choice": "none"}, "candidates": [{"opportunity_id": "%s"}]}' % first))[0][0]
+    owner_rows(dsn, "insert into evidence.triage_review (assertion_id, verdict, corrected, note, reviewed_by_operator_id) "
+                    "values (%s, 'rejected', '{}'::jsonb, %s, %s) returning id",
+               (aid, f"No es de este caso · {shown}", operator))
+    with triage_conn(target) as conn:
+        past = TriageDb(conn).past_decisions(f"x@prov-n-{tag}.invalid")
+    assert [(p.opportunity_id, p.verdict) for p in past] == [(shown, "rejected")]

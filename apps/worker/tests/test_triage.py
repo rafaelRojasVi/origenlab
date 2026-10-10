@@ -57,6 +57,9 @@ class FakeDb:
     def case_context(self, message):
         return ("contacto@origenlab.cl",), ("CN09153.pdf",) if message.thread_id == "t-9" else ()
 
+    def known_quote_numbers(self):
+        return []
+
     def past_decisions(self, sender):
         self.past_asked = sender
         return []
@@ -373,3 +376,14 @@ def test_a_failed_pick_call_never_blocks_the_triage() -> None:
     reader = PickReader(None, exc=RuntimeError("network"))
     result = triage_one(db, FakeStore(make_raw(subject="Re: puntas")), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
     assert result.outcome == "recorded" and db.case_matches[0][1]["pick_state"] == "unavailable"
+
+
+def test_a_database_failure_in_the_matcher_never_blocks_the_triage() -> None:
+    class Broken(FakeDb):
+        def case_cards(self):
+            raise RuntimeError("statement timeout")
+
+    db = Broken(cards=[_card()])
+    result = triage_one(db, FakeStore(make_raw(subject="Re: puntas")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.outcome == "recorded" and len(db.recorded) == 1 and db.case_matches == []
+    assert result.case_match == "unavailable"

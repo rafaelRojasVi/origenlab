@@ -116,3 +116,20 @@ def test_a_new_quote_on_a_case_thread_stays_on_that_case():
     r = match_case(thread_mail(["CN09148.pdf"], thread="t-1"), [card("a", quotes=("09140-26",), threads=("t-1",))])
     assert r.decision == "exact" and r.candidates[0].opportunity_id == "a"
     assert r.new_case_quote == "09148-26"  # kept: the quote is not in the CRM yet
+
+
+def test_order_invoice_and_dispatch_numbers_in_file_names_are_not_quotes():
+    names = ["OC 09159.pdf", "OC N° 01234.pdf", "Orden de compra 01234.pdf", "Factura 01234.pdf", "Guia 00045.pdf",
+             "Guía de despacho 00045.pdf", "PO 05512 rev2.pdf"]
+    assert attachment_quote_keys(names, SENT) == {}
+    assert set(attachment_quote_keys(["Cotización 09153.pdf", "COT 09153.pdf"], SENT)) == {(26, 9153)}
+
+
+def test_a_crm_quote_number_without_year_matches_by_correlative():
+    r = match_case(mail(pdfs=("CN09139.pdf",)), [card("a", quotes=("CN09139",))])
+    assert r.decision == "exact" and r.candidates[0].signals == ("pdf_quote",)
+
+
+def test_a_quote_held_by_a_case_outside_the_snapshot_is_not_a_new_deal():
+    r = match_case(mail(pdfs=("CN09137.pdf",)), [card("a")], known_quote_numbers=("09137-26",))
+    assert r.decision == "none" and r.new_case_quote is None
