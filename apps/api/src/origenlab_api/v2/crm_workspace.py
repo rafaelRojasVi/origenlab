@@ -270,6 +270,23 @@ _SQL_PIPELINE_TASKS = """
       join platform.operator o on o.id = t.owner_operator_id
      where t.status = 'open'
 """
+# The newest active note on each case (`crm.note`, subject_kind = 'opportunity') with its author.
+# «Hoy» reads `created_at`: a note written after the client's last email is the operator's answer
+# («Atendido» on a won case, where a task is refused). `body` is cut to its first words: the card
+# shows a hint, the drawer shows the note.
+_SQL_PIPELINE_NOTES = """
+    select distinct on (n.subject_id)
+           n.subject_id::text as opportunity_id,
+           to_char(n.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
+           left(n.body, 160) as body,
+           o.display_name as author_display_name
+      from crm.note n
+      join platform.operator o on o.id = n.author_operator_id
+      join crm.opportunity op on op.id = n.subject_id
+     where n.subject_kind = 'opportunity' and n.status = 'active'
+       and (op.closed_at is null or op.stage = 'won')
+     order by n.subject_id, n.created_at desc, n.id desc
+"""
 _SQL_PIPELINE_SOURCES = """
     select sr.id::text as source_record_id,
            sr.payload->>'gmail_message_id' as gmail_message_id,
@@ -597,6 +614,7 @@ def compose_pipeline(
     drive: Mapping[str, DriveLink],
     contacts: Mapping[str, Mapping[str, Any]] | None = None,
     tasks: list[Mapping[str, Any]] | None = None,
+    notes: list[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
@@ -624,6 +642,17 @@ def compose_pipeline(
             "version": row["version"], "owner": row.get("owner_display_name"),
             "created_at": row.get("created_at"),
         })
+
+    # The newest active note per case. `_SQL_PIPELINE_NOTES` already returns one row per case
+    # (`distinct on`); the reduction here keeps the pure function honest for any caller.
+    note_by_opp: dict[str, dict[str, Any]] = {}
+    for row in notes or []:
+        current = note_by_opp.get(row["opportunity_id"])
+        if current is None or str(row["created_at"]) > str(current["created_at"]):
+            note_by_opp[row["opportunity_id"]] = {
+                "created_at": row["created_at"], "body": row["body"],
+                "author": row.get("author_display_name"),
+            }
 
     cards: list[dict[str, Any]] = []
     for opp in opportunities:
@@ -802,6 +831,9 @@ def compose_pipeline(
                 # Open `crm.task` rows (W11), earliest due first. A case whose earliest open task
                 # is due after today is «En pausa hasta…» on the dashboard.
                 "open_tasks": tasks_by_opp.get(oid, []),
+                # The newest active note on the case (`crm.note`), or null: «Hoy» counts one
+                # written after the client's last email as answered.
+                "last_note": note_by_opp.get(oid),
                 "next_action": task_next_action(tasks_by_opp.get(oid, []))
                 or suggest_next_action(opp, blocked, latest),
             }
@@ -864,6 +896,33 @@ def quote_number_order(number: str | None) -> tuple[int, int, str]:
     digits, suffix, year = m.groups()
     correlative, rest = digits.zfill(5)[:5], digits.zfill(5)[5:]
     return (int(year), int(correlative), rest + suffix)
+
+
+_DRIVE_ARCHIVE_CRM_KEYS = ("revision_no", "quote_number", "opportunity_id", "opportunity_title", "organization_name")
+
+
+def drive_archive_from(
+    rows: Iterable[Mapping[str, Any]], ledgers: Mapping[str, DriveLink], *, configured: bool
+) -> dict[str, Any]:
+    """Pure: `rows` are the CRM revisions with a PDF hash, each with its `drive_file` record when
+    the cron filed it (`drive_record`, may be a JSON string). The archive is the ledgers plus
+    those records (`drive_links_from_records`); a revision counts as «sin PDF en Drive» only when
+    neither names its hash."""
+    rows = list(rows)
+    drive = drive_links_from_records(rows, ledgers)
+    crm = {
+        (r.get("sha") or r.get("pdf_sha256") or "").lower(): {k: r.get(k) for k in _DRIVE_ARCHIVE_CRM_KEYS}
+        for r in rows if r.get("sha") or r.get("pdf_sha256")
+    }
+    out = compose_drive_archive(drive, crm)
+    # As `pipeline()` does: the cron's records make the archive real even before any boot ledger
+    # is mounted, so the page must not say «registros no cargados» while listing folders.
+    out["configured"] = configured or bool(drive)
+    out["crm_revisions_without_drive_file"] = sorted(
+        ({"sha256": s, **v} for s, v in crm.items() if s not in drive),
+        key=lambda r: r["quote_number"] or "",
+    )
+    return out
 
 
 def compose_drive_archive(
@@ -1020,7 +1079,7 @@ class CrmWorkspaceRepository:
                 setup.execute("set transaction read only")
                 setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
 
-            # 8 data queries in 1 RTT via psycopg pipeline mode.
+            # 9 data queries in 1 RTT via psycopg pipeline mode.
             cur_opps = conn.cursor()
             cur_case_orgs = conn.cursor()
             cur_quotes = conn.cursor()
@@ -1029,6 +1088,7 @@ class CrmWorkspaceRepository:
             cur_participants = conn.cursor()
             cur_contact = conn.cursor()
             cur_tasks = conn.cursor()
+            cur_notes = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -1038,6 +1098,7 @@ class CrmWorkspaceRepository:
                 cur_participants.execute(_SQL_PIPELINE_PARTICIPANTS)
                 cur_contact.execute(_SQL_PIPELINE_CONTACT)
                 cur_tasks.execute(_SQL_PIPELINE_TASKS)
+                cur_notes.execute(_SQL_PIPELINE_NOTES)
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -1056,10 +1117,11 @@ class CrmWorkspaceRepository:
             participants = self._rows(cur_participants)
             contacts = last_contacts(self._rows(cur_contact))
             tasks = self._rows(cur_tasks)
+            notes = self._rows(cur_notes)
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
-            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks
+            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks, notes
         )
         return {
             "items": cards,
@@ -1628,27 +1690,27 @@ class CrmWorkspaceRepository:
     # -- drive archive
 
     def drive_archive(self) -> dict[str, Any]:
+        """«Archivo Drive»: the September ledgers **and** every `drive_file` record the Drive cron
+        has written since (`drive-file`, STATUS §2.7.71), the same union the case cards read.
+        Before this the page read the boot ledgers alone, so each quote the cron filed counted as
+        «Revisión CRM sin PDF en Drive» although its card already linked the PDF."""
         with self._read() as cur:
             cur.execute(
                 """
-                select lower(qr.pdf_sha256) as sha, qr.revision_no, q.quote_number,
+                select lower(qr.pdf_sha256) as sha, qr.pdf_sha256, qr.revision_no, q.quote_number,
                        op.id::text as opportunity_id, op.title as opportunity_title,
-                       o.name as organization_name
+                       o.name as organization_name, d.payload as drive_record
                   from crm.quote_revision qr
                   join crm.quote q on q.id = qr.quote_id
                   join crm.opportunity op on op.id = q.opportunity_id
                   left join crm.organization o on o.id = op.organization_id
+                  left join evidence.source_record d
+                         on d.dedupe_key = 'drive_file:' || qr.pdf_sha256 and d.kind = 'drive_file'
                  where qr.pdf_sha256 is not null
                 """
             )
-            crm = {r["sha"]: {k: v for k, v in r.items() if k != "sha"} for r in self._rows(cur)}
-        out = compose_drive_archive(self._drive, crm)
-        out["configured"] = self.drive_configured
-        out["crm_revisions_without_drive_file"] = sorted(
-            ({"sha256": s, **v} for s, v in crm.items() if s not in self._drive),
-            key=lambda r: r["quote_number"],
-        )
-        return out
+            rows = self._rows(cur)
+        return drive_archive_from(rows, self._drive, configured=self.drive_configured)
 
     # -- CRM authoring reads
 

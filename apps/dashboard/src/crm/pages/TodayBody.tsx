@@ -19,7 +19,7 @@
  * gated the same way; a viewer sees the lists without the buttons. Every recorded write refetches.
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { confirmOrganizationRecord, fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
+import { addNote, confirmOrganizationRecord, fetchPersonSuggestions, refusalOf } from "../authoring/crmAuthoringApi";
 import { PersonSuggestionList } from "../authoring/PersonSuggestionList";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import {
@@ -361,9 +361,11 @@ function ReplyRow({
 }) {
   const { card } = reply;
   const { leaving, gone, leave } = useLeave(reply);
-  const [busy, setBusy] = useState<null | "move" | "skip">(null);
+  const [busy, setBusy] = useState<null | "move" | "skip" | "handled">(null);
   const keys = useRef([newCaseCommandKey()]);
   const skipKey = useRef(newCaseCommandKey());
+  const handledKey = useRef(newCaseCommandKey());
+  const mayAuthor = useMayAuthorCrm();
   const blocking = card.attention.find((a) => a.blocking) ?? null;
   // A won case takes no task, so the only way off the list is answering the email.
   const won = wroteAfterWinning(card);
@@ -389,6 +391,31 @@ function ReplyRow({
     } catch (err) {
       skipKey.current = newCaseCommandKey();
       toast(caseRefusalText(err), "bad");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // A won case takes no task, so «Atendido» leaves a note on the case: the client's email was
+  // answered by other means or needs nothing. `notedAfter` then keeps the row out until the
+  // client writes again. The note is visible in the case drawer like any other.
+  async function handled() {
+    setBusy("handled");
+    try {
+      await addNote(
+        {
+          subject_kind: "opportunity",
+          subject_id: card.opportunity_id,
+          body: `Atendido: el cliente escribió el ${fmtDate(reply.at)} tras ganar el caso; respondido por otro medio o sin respuesta pendiente.`,
+        },
+        handledKey.current,
+      );
+      toast("Listo. Queda anotado en el caso.");
+      leave();
+      onChanged();
+    } catch (err) {
+      handledKey.current = newCaseCommandKey();
+      toast(refusalOf(err)?.message ?? "No se pudo anotar el caso.", "bad");
     } finally {
       setBusy(null);
     }
@@ -454,6 +481,17 @@ function ReplyRow({
             title="Un «gracias, le aviso»: sale de la lista y vuelve como seguimiento en una semana"
           >
             No requiere respuesta
+          </Button>
+        ) : won && mayAuthor ? (
+          <Button
+            variant="secondary"
+            onClick={() => void handled()}
+            busy={busy === "handled"}
+            busyLabel="Anotando…"
+            disabled={busy !== null}
+            title="Respondiste por otro medio o no requiere respuesta: queda anotado en el caso y sale de la lista hasta que el cliente vuelva a escribir"
+          >
+            Atendido
           </Button>
         ) : null}
         {canMove ? (

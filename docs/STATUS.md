@@ -2347,7 +2347,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Case panel | Actions at the top: «Registrar seguimiento», «Cambiar estado», «Marcar ganada» when it applies (and «No es una solicitud» on a case without a quotation); the rest under «Más…». Removed: «Estado actual sin verificar» and «Al día» badges, the explanatory footnotes, sha256, import origin and the internal id. |
 | Follow-up | PR #699 (same day): the quote-number box and the exchange rates moved to «Hoy»'s side column (sticky on wide screens), «Correos sin caso» closes the main column; nothing sits under both columns any more. |
 
-### 2.7.80 Fresh quotes are not «sin decidir»; won-case replies in «Te toca responder», 2026-10-09 — PR open
+### 2.7.80 Fresh quotes are not «sin decidir»; won-case replies in «Te toca responder», 2026-10-09 — merged and deployed (PR #700)
 
 | | |
 |---|---|
@@ -2356,6 +2356,37 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Rule 2 | `repliesToAnswer` includes a won case whose last inbound email is later than `closed_at` (`wroteAfterWinning`); the row reads «Escribió tras ganar el …», offers only «Abrir respuesta» (tasks are refused on closed cases, so answering the email is what takes it off the list). Lost cases stay out: a client writing back there is a new request. |
 | Not changed | The API still stores every registered quote as `historical_import`; a distinct origin for the sync's quotes is a later change. |
 
+### 2.7.81 «Atendido» on a won-case reply, 2026-10-10 — merged (PR #701)
+
+`apps/api` read + `apps/dashboard`: no command, proxy or schema change. Reuses `add-note`
+(CRM authoring, §2.7.4x) and the case notes read.
+
+| | |
+|---|---|
+| Problem | A client writing on a won case (payment receipt, «¿plazos de entrega?») showed under «Te toca responder» with «Abrir respuesta» as the only control: a task is refused on a closed case, so the row left only once an email went out on the thread. Answered by phone, or needing no answer, it stayed. |
+| API | `GET /v2/workspace/pipeline` cards gain `last_note` — the newest active `crm.note` with `subject_kind = 'opportunity'` on an open or won case: `created_at` (ISO UTC), `body` (first 160 chars), `author` — or null. A ninth query in the same pipelined round trip (`_SQL_PIPELINE_NOTES`). |
+| Rule | `repliesToAnswer` also skips a reply on a **won** case when a note on it is newer than the client's email (`notedAfter`), alongside the task rule of §2.7.70. On an open case only a task answers: an internal note never hides a client's email. The client's next email puts the case back. |
+| Button | «Atendido» on a won-case reply row (sales/admin with `crm_authoring_enabled`): `add-note` on the case, body «Atendido: el cliente escribió el … tras ganar el caso; respondido por otro medio o sin respuesta pendiente.» The row leaves; the note is in the case drawer like any other. Open cases keep «No requiere respuesta» (a task) — unchanged. |
+| Evidence | `apps/dashboard` `npm run validate`: **700 passed** + build; `apps/api` `scripts/validate.sh`: **3883 passed**, 676 skipped (the pipeline statement-count guard documents ≤ 11: 2 setup + 9 data queries, still one round trip) |
+### 2.7.82 «Archivo Drive» counts what the Drive cron filed, 2026-10-10 — merged (PR #702)
+
+`apps/api` read only: no command, proxy, dashboard or schema change.
+
+| | |
+|---|---|
+| Problem | The Drive cron (`drive-file`, §2.7.71) files each new quote PDF and records it as a `drive_file` source record; the case cards read those records. «Archivo Drive» (`GET /v2/workspace/drive-archive`) read only the September boot ledgers, so every quote filed since 7 Oct was listed under «Revisiones CRM sin PDF en Drive» (11 on 10 Oct) and its folder was missing from the page, although the PDF was in Drive and linked on the card. The cron itself reported `candidates: 0` every ten minutes: nothing was pending. |
+| Fix | `drive_archive` joins each revision's `drive_file` record and builds the archive from `drive_links_from_records` (ledgers + records, the same union the cards use; `drive_archive_from` is the pure part). A revision counts as «sin PDF en Drive» only when neither names its hash. `ledgers` gains `crm` for the cron's records. |
+| Evidence | `apps/api` `scripts/validate.sh`: **3883 passed**, 676 skipped; new `test_drive_archive_counts_what_the_cron_filed_not_only_the_boot_ledgers` (invented hashes and ids) |
+
+### 2.7.83 R2 reads the quote number from the subject when no PDF names one, 2026-10-10 — merged (PR #703)
+
+`apps/api` rules only (`v2/mail_rules.py`): no command, proxy, dashboard or schema change. The automatic R1/R2 run (§2.7.59) and «Aplicar» use the same planner.
+
+| | |
+|---|---|
+| Problem | A client answering about a quote on a fresh Gmail thread without an attachment («Consulta_Compra de productos_ cotización N°01259-26», 9 Oct) stayed in «Correos sin caso» as an R7 review, although the number named exactly one open case. R2 read quote numbers from PDF file names (`cn_tokens`) only. |
+| Rule | When no attached PDF names a quote **and the thread is not already a case's**, R2 also reads the subject (`subject_quote_keys`, `_SUBJECT_QUOTE_NUMBER`): a CN token («CN01259», «CN12395» with its zero restored, as a PDF token) or a number with its year («01259-26», «cotización N°01259-26»). A bare correlative («Cotización 1259») is not read: it stays an R7 review as before. Four or five digits, up to three letters; a sixth digit (a supplier's own number) disqualifies, and so does a `-`/`_` right before it («OC-01259-26»); a purchase-order subject (`_po_subject`) is never read as a quote number. A PDF's number always outranks the subject's («Re: Cotización 01198-26» carrying CN01240 sends 01240); a thread R1 already knows keeps its link whatever its inherited title says. The rest is unchanged: exactly one open case → auto link; several → proposal; a closed or unknown number → R7/R8 as before. |
+| Evidence | `apps/api` `scripts/validate.sh`: **3887 passed**, 676 skipped; seven new rule tests (fictitious numbers and addresses); the subject test fails on the old planner |
 ### 2.7.84 Triage: «REMOVER» with a signature and an absence notice under «RE:» are noise, not quote requests, 2026-10-10 — built, not deployed
 
 `apps/worker` rules only (`triage_rules.py`): no command, proxy, dashboard, API or schema change. The W10 suppression grammar (`unsubscribe_replies.classify_reply`) is unchanged.
