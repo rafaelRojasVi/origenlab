@@ -159,6 +159,9 @@ describe("«Correos sin caso» · ¿marcar ganada?", () => {
     expect(calls.filter((c) => c.path === "/v2/commands/review-triage")).toHaveLength(1);
     const wons = calls.filter((c) => c.path === "/v2/commands/record-case-won");
     expect(wons[0].key).toBe(wons[1].key);
+    const advances = calls.filter((c) => c.path === "/v2/commands/advance-case-stage");
+    expect(advances).toHaveLength(2);
+    expect(advances[0].key).toBe(advances[1].key);
   });
 
   it("a purchase order on a won case is only counted, and a viewer gets no buttons", async () => {
@@ -200,7 +203,7 @@ describe("«Correos sin caso» · Abrir caso", () => {
     const calls = stub([reading("req")], { "/v2/commands/open-commercial-case": 422 });
     const onCaseChanged = renderPanel([]);
     fireEvent.click(await screen.findByRole("button", { name: "Abrir caso" }));
-    expect(await screen.findByText(/No se pudo abrir el caso|refused_in_test/)).toBeInTheDocument();
+    expect(await screen.findByText(/No se pudo abrir el caso/)).toBeInTheDocument();
     expect(calls.some((c) => c.path === "/v2/commands/review-triage")).toBe(false);
     expect(onCaseChanged).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Abrir caso" })).toBeInTheDocument();
