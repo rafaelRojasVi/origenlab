@@ -203,6 +203,12 @@ export interface OpportunityCardData {
   status: "blocked" | "pending" | "ok";
   /** Open `crm.task` rows (W11), earliest due first. Absent from an older API. */
   open_tasks?: OpenTask[];
+  /**
+   * The newest active note on the case (`crm.note`): when it was written, by whom, its first
+   * words. «Hoy» counts a note written after the client's last email as the operator's answer.
+   * Absent from an older API.
+   */
+  last_note?: { created_at: string; body: string; author: string | null } | null;
   /** The earliest open task (`source: "task"`), or a deterministic suggestion. */
   next_action: { text: string; source: "suggested" | "task"; due_at: string | null };
 }

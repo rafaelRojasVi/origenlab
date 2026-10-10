@@ -232,6 +232,27 @@ def test_card_carries_the_versions_the_drawer_actions_compare_against() -> None:
 
 
 
+def test_card_carries_the_newest_note_on_the_case() -> None:
+    """«Hoy» treats a note written after the client's last email as the operator's answer
+    («Atendido» on a won case), so the card carries the newest active note — when, by whom, and
+    its first words — or null when the case has none."""
+    notes = [
+        {"opportunity_id": "o1", "created_at": "2026-10-09T18:00:00Z", "body": "Atendido por teléfono.",
+         "author_display_name": "Ventas"},
+        {"opportunity_id": "o1", "created_at": "2026-10-02T09:00:00Z", "body": "Primera nota.",
+         "author_display_name": "Ventas"},
+    ]
+    with_note, without = compose_pipeline(
+        [_opp("o1"), _opp("o2")], [], [], [], {}, [], {}, None, None, notes,
+    )
+    assert with_note["last_note"] == {
+        "created_at": "2026-10-09T18:00:00Z", "body": "Atendido por teléfono.", "author": "Ventas",
+    }
+    assert without["last_note"] is None
+    # An older caller that passes no notes still gets a card.
+    assert compose_pipeline([_opp("o1")], [], [], [], {}, [], {})[0]["last_note"] is None
+
+
 def test_confirmed_requester_is_independent_of_organization_profile_confirmation() -> None:
     """An unconfirmed organization record does not undo a human-confirmed case role."""
     role = {
