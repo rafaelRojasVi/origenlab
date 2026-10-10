@@ -470,8 +470,7 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/attach-contact-address",
       "/v2/commands/attribute-sender-organization",
       "/v2/commands/confirm-person-from-evidence",
-      // the commercial case, minus the six the drawer uses
-      "/v2/commands/open-commercial-case",
+      // the commercial case, minus the ones the drawer and «Correos sin caso» use
       "/v2/commands/record-case-interest",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
@@ -489,8 +488,10 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/create-task",
       "/v2/commands/complete-task",
       "/v2/commands/cancel-task",
+      // «Abrir caso» from a «Correos sin caso» row (owner decision 2026-10-10).
+      "/v2/commands/open-commercial-case",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(10);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(11);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -852,9 +853,9 @@ describe("email → cases rules (admin only upstream)", () => {
       "/v2/commands/set-auto-mail-rules-all",
       "/v2/commands/auto-mail-rules",
       "/v2/commands/APPLY-MAIL-RULES",
-      // The case commands the rules call stay unreachable from the browser, except the four the
-      // case drawer uses (CASE_COMMAND_POST_PATHS), which have their own list.
-      "/v2/commands/open-commercial-case",
+      // The case commands the rules call stay unreachable from the browser, except the ones the
+      // case drawer and «Correos sin caso» use (CASE_COMMAND_POST_PATHS), which have their own list.
+      "/v2/commands/record-case-interest",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
       expect(isAllowedUpstreamPath(path), path).toBe(false);

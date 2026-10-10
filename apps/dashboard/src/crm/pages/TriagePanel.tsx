@@ -1,5 +1,8 @@
-import { useState } from "react";
-import { WonFlowError, moveCase, stagePath, useMayRunCaseCommands } from "../caseCommands";
+import { useMemo, useRef, useState } from "react";
+import {
+  WonFlowError, markCaseWon, moveCase, newCaseCommandKey, openCommercialCase, stagePath, useMayRunCaseCommands,
+} from "../caseCommands";
+import type { OpportunityCardData } from "../crmTypes";
 import { inSharedMailbox } from "../gmailLinks";
 import { useLeave } from "../useLeave";
 import { refusalMessage } from "../mailRules";
@@ -7,16 +10,21 @@ import {
   CLASS_LABEL,
   INTENT_LABEL,
   approvalMove,
+  cardsById,
   fetchTriageReadings,
+  isOpenableRequest,
+  openCaseTitle,
   reviewTriage,
   sortInbox,
   stageLabel,
+  wonProposal,
   type HiddenReason,
   type TriageCorrection,
   type TriageReading,
   type TriageReadings,
   type TriageStatus,
   type TriageVerdict,
+  type WonProposal,
 } from "../triage";
 import { Badge, Button, Panel, ResourceGate, Skeleton, fmtDate, toast } from "../ui";
 import { useResource } from "../useResource";
@@ -36,16 +44,25 @@ const PREVIEW = 5;
 /**
  * «Correos sin caso» on «Hoy»: the emails a person wrote that no case holds yet (`sortInbox`) —
  * one compact row each: subject, who, when, the thread in Gmail and «Descartar». «Revisar» opens
- * what the triage read and the verdict buttons. Emails already on a case, from a supplier,
- * automatic notices and older messages of the same thread are not asked about, only counted.
- * «Revisadas» lists the verdicts already given.
+ * what the triage read and the verdict buttons; a quote request also offers «Abrir caso», which
+ * opens the case at «Solicitada» from that email. A purchase order the triage read on a case the
+ * board can still win (`wonProposal`, from `cards`) is a «¿Marcar ganada?» row instead, with the
+ * revision to win against. Other emails already on a case, from a supplier, automatic notices and
+ * older messages of the same thread are not asked about, only counted. «Revisadas» lists the
+ * verdicts already given. `onCaseChanged` is called after a case was won or opened, so the board
+ * behind the panel reloads.
  */
-export function TriagePanel() {
+export function TriagePanel({ cards = [], onCaseChanged }: {
+  cards?: readonly OpportunityCardData[];
+  onCaseChanged?: () => void;
+} = {}) {
   const [status, setStatus] = useState<TriageStatus>("pending");
   const [all, setAll] = useState(false);
   const loader = () => fetchTriageReadings(status);
   const [state, reload] = useResource(loader, [status]);
-  const sorted = state.kind === "ready" && status === "pending" ? sortInbox(state.data.items) : null;
+  const byId = useMemo(() => cardsById(cards), [cards]);
+  const sorted = state.kind === "ready" && status === "pending" ? sortInbox(state.data.items, byId) : null;
+  const changed = () => { reload(); onCaseChanged?.(); };
   return (
     <Panel
       title={status === "pending" ? "Correos sin caso" : "Correos revisados"}
@@ -67,16 +84,21 @@ export function TriagePanel() {
               </div>
             );
           }
-          const { ask, hidden } = sortInbox(data.items);
+          const { ask, hidden } = sortInbox(data.items, byId);
           const shown = all ? ask : ask.slice(0, PREVIEW);
           return (
             <>
               {ask.length === 0 ? (
                 <p className="px-4 py-3 text-xs text-ink-muted">Ningún correo nuevo fuera de un caso.</p>
               ) : (
-                shown.map((r) => (
-                  <InboxRow key={r.assertion_id} reading={r} vocabulary={data.vocabulary} onDone={reload} />
-                ))
+                shown.map((r) => {
+                  const won = wonProposal(r, byId);
+                  return won ? (
+                    <WonRow key={r.assertion_id} reading={r} proposal={won} onDone={reload} onCaseChanged={changed} />
+                  ) : (
+                    <InboxRow key={r.assertion_id} reading={r} vocabulary={data.vocabulary} onDone={reload} onCaseChanged={changed} />
+                  );
+                })
               )}
               {ask.length > PREVIEW ? (
                 <button type="button" onClick={() => setAll(!all)}
@@ -109,16 +131,134 @@ function hiddenLine(hidden: Partial<Record<HiddenReason, number>>): string {
   return parts.length ? `No se muestran: ${parts.join(" · ")}.` : "";
 }
 
-function InboxRow({ reading: r, vocabulary, onDone }: {
+function gmailUrl(r: TriageReading): string | null {
+  return r.thread_id ? inSharedMailbox(`https://mail.google.com/mail/u/0/#all/${r.thread_id}`) : null;
+}
+
+function GmailLink({ url }: { url: string | null }) {
+  if (!url) return null;
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer"
+      className="inline-flex h-8 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong">
+      Abrir ↗
+    </a>
+  );
+}
+
+/**
+ * «OC recibida · ¿marcar ganada?»: a purchase order the triage read on a case that can be won.
+ * Aceptar records the «approved» verdict, then wins the case exactly as the drawer's «Marcar
+ * ganada» does (`markCaseWon`: → «Conversación» if needed, then `record-case-won` against the
+ * chosen revision), each step with its own key so a retry never records a step twice. Descartar
+ * records a «rejected» verdict. The row leaves at once and comes back only if the server refuses.
+ */
+function WonRow({ reading: r, proposal, onDone, onCaseChanged }: {
+  reading: TriageReading;
+  proposal: WonProposal;
+  onDone: () => void;
+  onCaseChanged: () => void;
+}) {
+  const mayDecide = useMayRunCaseCommands();
+  const { leaving, gone, leave } = useLeave(r);
+  const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState<string | null>(proposal.revisions.length === 1 ? proposal.revisions[0].revision_id : null);
+  const keys = useRef({ advance: newCaseCommandKey(), won: newCaseCommandKey(), reviewed: false });
+  const revision = proposal.revisions.find((x) => x.revision_id === picked) ?? null;
+  const url = gmailUrl(r);
+  const caseName = proposal.card.organization?.name ?? proposal.case.title ?? "caso sin título";
+
+  async function accept() {
+    if (!revision) return;
+    setBusy(true);
+    const note = `OC recibida por correo (${fmtDate(r.sent_at)}): ganada contra ${revision.quote_number} r${revision.revision_no}, desde Hoy`;
+    try {
+      if (!keys.current.reviewed) {
+        await reviewTriage({ assertion_id: r.assertion_id, verdict: "approved", corrected: {}, note: "OC recibida: caso ganado desde Hoy" });
+        keys.current.reviewed = true;
+      }
+      await markCaseWon(proposal.case, { quote_id: revision.quote_id, revision_no: revision.revision_no }, note,
+        { advance: keys.current.advance, won: keys.current.won });
+      toast(`«${caseName}» ganada contra ${revision.quote_number} r${revision.revision_no}.`);
+      leave();
+      onDone();
+      onCaseChanged();
+    } catch (err) {
+      if (err instanceof WonFlowError) {
+        const done = err.done.map((s) => s.label).join(", ");
+        toast(`${done ? `${done}; ` : ""}no se pudo marcar ganada: ${refusalMessage(err.cause, "rechazado")}`, "bad");
+        onCaseChanged();
+      } else {
+        toast(refusalMessage(err, "No se pudo registrar la revisión."), "bad");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function discard() {
+    setBusy(true);
+    try {
+      await reviewTriage({ assertion_id: r.assertion_id, verdict: "rejected", corrected: {}, note: "OC descartada desde Hoy" });
+      leave();
+      onDone();
+    } catch (err) {
+      toast(refusalMessage(err, "No se pudo descartar."), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (gone) return null;
+  return (
+    <div className={leaving ? "crm-row-out" : ""} data-testid="won-proposal">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5">
+        <div className="min-w-[12rem] flex-1">
+          <p className="truncate text-[13px] font-medium text-ink">
+            <Badge tone="good">OC recibida</Badge>{" "}
+            {caseName} · ¿marcar ganada {proposal.revisions.length === 1 ? `${revision?.quote_number} r${revision?.revision_no}` : ""}?
+          </p>
+          <p className="truncate text-[11px] text-ink-muted">
+            {r.subject || "(sin asunto)"} · {r.sender ?? "—"} · {fmtDate(r.sent_at)}
+          </p>
+          {proposal.revisions.length > 1 ? (
+            <fieldset className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-ink">
+              <legend className="sr-only">Revisión que ganó</legend>
+              {proposal.revisions.map((x) => (
+                <label key={x.revision_id} className="inline-flex items-center gap-1.5">
+                  <input type="radio" name={`won-${r.assertion_id}`} checked={picked === x.revision_id}
+                    onChange={() => setPicked(x.revision_id)} />
+                  {x.quote_number} r{x.revision_no} · {fmtDate(x.sent_at)}
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <GmailLink url={url} />
+          {mayDecide ? (
+            <>
+              <Button variant="primary" onClick={() => void accept()} busy={busy} busyLabel="…" disabled={!revision}>Marcar ganada</Button>
+              <Button onClick={() => void discard()} busy={busy} busyLabel="…">Descartar</Button>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InboxRow({ reading: r, vocabulary, onDone, onCaseChanged }: {
   reading: TriageReading;
   vocabulary: TriageReadings["vocabulary"];
   onDone: () => void;
+  onCaseChanged: () => void;
 }) {
   const mayDecide = useMayRunCaseCommands();
   const { leaving, gone, leave } = useLeave(r);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const url = r.thread_id ? inSharedMailbox(`https://mail.google.com/mail/u/0/#all/${r.thread_id}`) : null;
+  const openKey = useRef(newCaseCommandKey());
+  const url = gmailUrl(r);
 
   async function discard() {
     setBusy(true);
@@ -130,6 +270,36 @@ function InboxRow({ reading: r, vocabulary, onDone }: {
       toast(refusalMessage(err, "No se pudo descartar."), "bad");
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * «Abrir caso»: the case first (it is the decision), the verdict after. If the verdict is refused
+   * the case still exists, and the row says so rather than hiding it.
+   */
+  async function openCase() {
+    setBusy(true);
+    const title = openCaseTitle(r);
+    try {
+      await openCommercialCase(
+        { title, origin_source_record_id: r.source_record_id, note: "Abierto desde Hoy: solicitud de cotización recibida por correo" },
+        openKey.current,
+      );
+    } catch (err) {
+      toast(refusalMessage(err, "No se pudo abrir el caso."), "bad");
+      setBusy(false);
+      return;
+    }
+    try {
+      await reviewTriage({ assertion_id: r.assertion_id, verdict: "approved", corrected: {}, note: "Caso abierto desde Hoy" });
+      toast(`Caso «${title}» abierto en «${stageLabel("lead")}»: confirma la institución en Hoy.`);
+      leave();
+      onDone();
+    } catch (err) {
+      toast(`El caso «${title}» se abrió, pero la lectura no quedó revisada: ${refusalMessage(err, "rechazado")}`, "bad");
+    } finally {
+      setBusy(false);
+      onCaseChanged();
     }
   }
 
@@ -145,14 +315,12 @@ function InboxRow({ reading: r, vocabulary, onDone }: {
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
-          {url ? (
-            <a href={url} target="_blank" rel="noopener noreferrer"
-              className="inline-flex h-8 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong">
-              Abrir ↗
-            </a>
-          ) : null}
+          <GmailLink url={url} />
           {mayDecide ? (
             <>
+              {isOpenableRequest(r) ? (
+                <Button variant="primary" onClick={() => void openCase()} busy={busy} busyLabel="…">Abrir caso</Button>
+              ) : null}
               <Button variant="quiet" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Cerrar" : "Revisar"}</Button>
               <Button onClick={() => void discard()} busy={busy} busyLabel="…">Descartar</Button>
             </>

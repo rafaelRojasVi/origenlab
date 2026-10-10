@@ -32,6 +32,7 @@ export const CASE_COMMAND_PATHS = {
   createTask: "/v2/commands/create-task",
   completeTask: "/v2/commands/complete-task",
   cancelTask: "/v2/commands/cancel-task",
+  openCase: "/v2/commands/open-commercial-case",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -261,6 +262,20 @@ export interface RecordCaseWonBody {
 
 export const recordCaseWon = (body: RecordCaseWonBody, idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.recordWon, body, idempotencyKey);
+
+/**
+ * «Abrir caso» from an email: a case at «Solicitada» (`lead`) whose `origin` evidence link is that
+ * email, in one transaction upstream. No stage, no institution: the API opens every case at `lead`
+ * and «Instituciones por confirmar» is where someone says who is asking.
+ */
+export interface OpenCommercialCaseBody {
+  title: string;
+  origin_source_record_id: string;
+  note: string;
+}
+
+export const openCommercialCase = (body: OpenCommercialCaseBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.openCase, body, idempotencyKey);
 
 export interface ResolveCurrentRevisionBody {
   opportunity_id: string;

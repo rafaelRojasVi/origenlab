@@ -1314,6 +1314,7 @@ describe("Case drawer commands (including add-case-organization)", () => {
   const RESOLVE = "https://proxy.test/api/v2/commands/resolve-current-revision";
   const QUOTATION = "https://proxy.test/api/v2/commands/record-case-quotation";
   const LINK_EVIDENCE = "https://proxy.test/api/v2/commands/link-case-evidence";
+  const OPEN_CASE = "https://proxy.test/api/v2/commands/open-commercial-case";
   const post = (url: string, extra: Record<string, string> = {}, body = "{}") =>
     requestWithOrigin(url, {
       method: "POST",
@@ -1327,7 +1328,7 @@ describe("Case drawer commands (including add-case-organization)", () => {
       },
     });
 
-  it.each([ADVANCE, ASSIGN, REVIEW_ROLE, WON, RESOLVE, QUOTATION, LINK_EVIDENCE])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
+  it.each([ADVANCE, ASSIGN, REVIEW_ROLE, WON, RESOLVE, QUOTATION, LINK_EVIDENCE, OPEN_CASE])("forwards a same-origin JSON command to %s with its key and only the session cookie", async (url) => {
     stubUpstreamFetch();
     const res = await handleRequest(post(url), TEST_ENV);
     expect(res.status).toBe(200);
@@ -1346,6 +1347,8 @@ describe("Case drawer commands (including add-case-organization)", () => {
     ["a cross-site resolve", post(RESOLVE, { "Sec-Fetch-Site": "cross-site" }), 403, "cross_site_request"],
     ["a quotation without a key", post(QUOTATION, { "Idempotency-Key": "" }), 400, "idempotency_key_required"],
     ["a quotation as a form post", post(QUOTATION, { "Content-Type": "text/plain" }), 415, "unsupported_media_type"],
+    ["an open-case without a key", post(OPEN_CASE, { "Idempotency-Key": "" }), 400, "idempotency_key_required"],
+    ["a cross-site open-case", post(OPEN_CASE, { "Sec-Fetch-Site": "cross-site" }), 403, "cross_site_request"],
   ])("refuses %s before anything is forwarded", async (_label, req, status, code) => {
     stubUpstreamFetch();
     const res = await handleRequest(req, TEST_ENV);
@@ -1362,7 +1365,6 @@ describe("Case drawer commands (including add-case-organization)", () => {
   });
 
   it.each([
-    "open-commercial-case",
     "record-case-interest",
     "record-historical-quotation",
     "void-historical-quote-revision",
