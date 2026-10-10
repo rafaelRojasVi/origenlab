@@ -41,12 +41,14 @@ export const SILENT_AFTER_DAYS = 45;
 
 export function proposeDecision(card: OpportunityCardData, now: Date): { decision: Decision; why: string } {
   const conv = conversation(card, now);
-  const days = daysSince(card.latest_revision?.sent_at, now) ?? 0;
+  // The silence counts from OrigenLab's last touch (the quote, or a later email or logged
+  // follow-up), the same clock the board shows — not from the quote alone.
+  const days = conv.days ?? daysSince(card.latest_revision?.sent_at, now) ?? 0;
   if (conv.kind === "replied") return { decision: "conversacion", why: conv.text.replace(" · te toca", "") };
   if (days >= SILENT_AFTER_DAYS) {
-    return { decision: "perdida", why: `${days} días sin respuesta${conv.kind === "followed_up" ? ", con seguimiento" : ""}` };
+    return { decision: "perdida", why: `${days} días sin respuesta${conv.kind === "followed_up" ? " desde el seguimiento" : ""}` };
   }
-  return { decision: "seguir", why: `Enviada hace ${days} días` };
+  return { decision: "seguir", why: conv.kind === "followed_up" ? `Seguimiento hace ${days} días` : `Enviada hace ${days} días` };
 }
 
 interface Row {
