@@ -415,8 +415,11 @@ const CONTACT_LINK =
 
 /** «Ana Ficticia <ana@…>» → «Ana Ficticia»; a bare address stays as it is. */
 function displayNameOf(address: string): string {
-  const name = address.replace(/<[^>]*>/, "").replace(/^["'\s]+|["'\s]+$/g, "");
-  return name || address;
+  // The display part is whatever precedes the «<»; React renders it as text, nothing is sanitised here.
+  const cut = address.indexOf("<");
+  const name = (cut >= 0 ? address.slice(0, cut) : "").trim();
+  const unquoted = name.startsWith('"') && name.endsWith('"') && name.length > 1 ? name.slice(1, -1).trim() : name;
+  return unquoted || address;
 }
 
 /** Gmail's search for one address, in the shared contacto@ mailbox. */
