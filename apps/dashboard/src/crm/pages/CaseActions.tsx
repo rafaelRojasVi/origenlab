@@ -43,6 +43,7 @@ import { CrossThreadQuoteReview } from "./CrossThreadQuoteReview";
 import { PurchaseOrderReview } from "./PurchaseOrderReview";
 import {
   Button,
+  buttonClass,
   ChoiceChips,
   DisabledAction,
   FormField,
@@ -57,7 +58,7 @@ import {
 export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution";
 
 /** «Cambiar estado» offers these, minus the one the case is in. */
-const MOVE_TARGETS: MoveTarget[] = ["solicitada", "estudio", "enviada", "conversacion", "pausa", "perdida"];
+const MOVE_TARGETS: MoveTarget[] = ["solicitada", "enviada", "conversacion", "pausa", "perdida"];
 
 interface Outcome {
   tone: "good" | "bad" | "warn";
@@ -802,25 +803,32 @@ function ConfirmInstitution({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-warn/40 bg-warn-bg/40 px-3 py-2 text-xs" data-testid="case-confirm-institution">
-      <span className="text-ink-muted">
-        «{org.name ?? "Sin nombre"}» está por confirmar: la propuso una regla de correo y ninguna persona la revisó.
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-canvas-sunken/50 px-3 py-2 text-xs"
+      data-testid="case-confirm-institution"
+    >
+      <p className="min-w-0 flex-1 text-ink">
+        <span className="text-ink-muted">Institución sugerida por el correo: </span>
+        <span className="font-semibold">{org.name ?? "Sin nombre"}</span>
+        <span className="block text-[11px] text-ink-faint">¿Es quien pide la cotización?</span>
+      </p>
+      <span className="flex items-center gap-2">
+        {mayAuthor && version !== null ? (
+          <Button variant="primary" onClick={() => void confirm()} busy={busy} busyLabel="Confirmando…">
+            Sí, confirmar
+          </Button>
+        ) : (
+          <DisabledAction
+            id="drawer-confirm-org"
+            reason={mayAuthor ? "Falta la versión de la institución; recarga la página e inténtalo de nuevo" : WRITE_DISABLED_REASON}
+          >
+            Sí, confirmar
+          </DisabledAction>
+        )}
+        <a href={crmHash("organizaciones", org.organization_id)} className={buttonClass("quiet")}>
+          Cambiar
+        </a>
       </span>
-      {mayAuthor && version !== null ? (
-        <Button variant="primary" onClick={() => void confirm()} busy={busy} busyLabel="Confirmando…">
-          Confirmar institución
-        </Button>
-      ) : (
-        <DisabledAction
-          id="drawer-confirm-org"
-          reason={mayAuthor ? "Falta la versión de la institución; recarga la página e inténtalo de nuevo" : WRITE_DISABLED_REASON}
-        >
-          Confirmar institución
-        </DisabledAction>
-      )}
-      <a href={crmHash("organizaciones", org.organization_id)} className="text-brand-700 hover:underline">
-        Abrir institución para renombrarla
-      </a>
     </div>
   );
 }

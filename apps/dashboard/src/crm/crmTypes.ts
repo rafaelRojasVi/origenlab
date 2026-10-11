@@ -68,6 +68,41 @@ export interface RevisionCard {
   /** No Drive copy yet, but the archiver holds the original email and will file it. */
   drive_pending?: boolean;
   quote_number: string;
+  /** What the PDF itself says, when it was read (quote-history import or a later reader); null
+   * when nobody read it yet. Amounts are decimal strings. Absent from an older API. */
+  contents?: QuoteContents | null;
+}
+
+export interface QuoteLine {
+  line_no: number;
+  item: string | null;
+  parent_item: string | null;
+  kind: string | null;
+  brand: string | null;
+  model: string | null;
+  description: string | null;
+  qty: string | null;
+  unit_price: string | null;
+  line_total: string | null;
+  optional: boolean;
+  check_status: string;
+}
+
+export interface QuoteContents {
+  currency: string | null;
+  net_total: string | null;
+  /** «document»: printed on the PDF; «lines»: the sum of its non-optional lines; «none»: unknown. */
+  net_source: "document" | "lines" | "none";
+  /** IVA and total: only for CLP. */
+  tax_total: string | null;
+  gross_total: string | null;
+  lines: QuoteLine[];
+}
+
+/** The neto of a case's vigente revisions per currency; `unread` counts revisions never read. */
+export interface CaseMoney {
+  currency: string;
+  net_total: string;
 }
 
 /** `GET /v2/workspace/opportunities/{id}/mail-documents` — what «Registrar cotización» picks from. */
@@ -192,6 +227,8 @@ export interface OpportunityCardData {
   quotes: QuoteCard[];
   quote_numbers: string[];
   revision_count: number;
+  /** Absent from an older API. */
+  money?: CaseMoney[];
   latest_revision: RevisionCard | null;
   drive_folder: { source: "archive_ledger"; folder_id: string; url: string } | null;
   /**

@@ -93,7 +93,7 @@ describe("Tablero", () => {
     render(<Board cards={[lead, quoting]} onOpen={() => undefined} now={NOW} />);
     expect(screen.getByTestId("board-count-solicitada")).toHaveTextContent("1");
     expect(screen.getByTestId("board-count-enviada")).toHaveTextContent("1");
-    for (const key of ["estudio", "conversacion", "pausa", "ganada", "perdida"]) {
+    for (const key of ["conversacion", "pausa", "ganada", "perdida"]) {
       expect(screen.getByTestId(`board-count-${key}`)).toHaveTextContent("0");
     }
     const b = screen.getByTestId(`board-card-${quoting.opportunity_id}`);

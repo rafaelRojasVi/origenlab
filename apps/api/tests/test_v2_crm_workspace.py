@@ -678,3 +678,51 @@ def test_drive_file_records_link_revisions_and_a_ledger_link_wins() -> None:
     assert (a["file_id"], a["folder_id"], a["original_filename"]) == ("f-a", "folder-a", "01250-26 r1 — Cliente.pdf")
     assert a["file_url"] == "https://drive.google.com/file/d/f-a/view"
     assert a["folder_url"] == "https://drive.google.com/drive/folders/folder-a"
+
+
+# ── quote contents on the card (the case panel shows money and lines) ─────────────────────────
+
+def test_quote_contents_reads_the_documents_neto_and_adds_iva_for_clp() -> None:
+    from origenlab_api.v2.crm_workspace import quote_contents
+
+    lines = [
+        {"line_no": 1, "item": "1", "kind": "equipment", "brand": "Marca", "model": "X-100", "description": "Equipo",
+         "qty": "1.000000", "unit_price": "1000000.0000", "line_total": "1000000.0000", "optional": False,
+         "check_status": "verified"},
+        {"line_no": 2, "item": "2", "kind": "accessory", "brand": None, "model": None, "description": "Opcional",
+         "qty": "1.000000", "unit_price": "50000.0000", "line_total": "50000.0000", "optional": True,
+         "check_status": "single_source"},
+    ]
+    c = quote_contents({"doc_currency": "CLP", "doc_net_total": "1000000", "doc_lines": json.dumps(lines)})
+    assert c["currency"] == "CLP" and c["net_source"] == "document"
+    assert (c["net_total"], c["tax_total"], c["gross_total"]) == ("1000000", "190000", "1190000")
+    assert [l["model"] for l in c["lines"]] == ["X-100", None] and c["lines"][1]["optional"] is True
+
+
+def test_quote_contents_sums_non_optional_lines_without_a_printed_neto_and_never_adds_iva_to_usd() -> None:
+    from origenlab_api.v2.crm_workspace import quote_contents
+
+    lines = [{"line_no": 1, "line_total": "1200.5", "optional": False},
+             {"line_no": 2, "line_total": "99.25", "optional": False},
+             {"line_no": 3, "line_total": "500", "optional": True}]
+    c = quote_contents({"doc_currency": "USD", "doc_net_total": None, "doc_lines": lines})
+    assert (c["net_total"], c["net_source"], c["tax_total"], c["gross_total"]) == ("1299.75", "lines", None, None)
+    # A line without a total makes the sum unknowable: no neto rather than a wrong one.
+    c = quote_contents({"doc_currency": "CLP", "doc_net_total": None,
+                        "doc_lines": [{"line_no": 1, "line_total": None, "optional": False}]})
+    assert (c["net_total"], c["net_source"], c["tax_total"]) == (None, "none", None)
+
+
+def test_an_unread_pdf_has_no_contents_and_case_money_counts_only_vigente_revisions() -> None:
+    from origenlab_api.v2.crm_workspace import case_money, quote_contents
+
+    assert quote_contents({"doc_currency": None, "doc_net_total": None, "doc_lines": None}) is None
+    revs = [
+        {"is_active": True, "contents": {"currency": "CLP", "net_total": "1000"}},
+        {"is_active": True, "contents": {"currency": "CLP", "net_total": "250"}},
+        {"is_active": False, "contents": {"currency": "CLP", "net_total": "999999"}},  # superseded
+        {"is_active": True, "contents": {"currency": "USD", "net_total": "10.50"}},
+        {"is_active": True, "contents": None},  # never read
+    ]
+    assert case_money(revs) == [{"currency": "CLP", "net_total": "1250"}, {"currency": "USD", "net_total": "10.50"},
+                                {"currency": "unread", "net_total": "1"}]

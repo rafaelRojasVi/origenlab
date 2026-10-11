@@ -220,7 +220,7 @@ describe("case command helpers", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Solicitud de balanza ficticia")).toBeInTheDocument();
     expect(within(dialog).getByText("Persona Ficticia")).toBeInTheDocument();
-    expect(within(dialog).getByRole("link", { name: "Abrir correo en Gmail" })).toHaveAttribute("href",
+    expect(within(dialog).getByRole("link", { name: "Abrir el último correo recibido en Gmail" })).toHaveAttribute("href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/example1");
     fireEvent.click(within(dialog).getByRole("button", { name: "No es una solicitud" }));
     const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
@@ -264,18 +264,18 @@ describe("case command helpers", () => {
 });
 
 describe("stage movement requesting-institution prerequisites", () => {
-  it("refuses En estudio without an institution before any command is sent", () => {
+  it("refuses Enviada without an institution before any command is sent", () => {
     const request = card({ stage: "lead", organization: null });
-    expect(moveRefusal(request, "estudio")).toMatch(/asociar y confirmar/);
+    expect(moveRefusal(request, "enviada")).toMatch(/asociar y confirmar/);
   });
 
-  it("refuses En estudio when the institution is only machine-proposed", () => {
+  it("refuses Enviada when the institution is only machine-proposed", () => {
     const request = card({
       stage: "qualifying",
       organization: { organization_id: ORG, name: "Universidad Ficticia", confirmation: "machine_proposed", version: 3 },
       requesting_institution_confirmation: "machine_proposed",
     });
-    expect(moveRefusal(request, "estudio")).toMatch(/confirmar la institución/);
+    expect(moveRefusal(request, "enviada")).toMatch(/confirmar la institución/);
   });
 
   it("allows a confirmed requester even if the organization profile is still proposed", () => {
@@ -289,7 +289,7 @@ describe("stage movement requesting-institution prerequisites", () => {
       },
       requesting_institution_confirmation: "confirmed",
     });
-    expect(moveRefusal(request, "estudio")).toBeNull();
+    expect(moveRefusal(request, "enviada")).toBeNull();
   });
 
   it("refuses an unconfirmed requester even if the organization profile is confirmed", () => {
@@ -297,12 +297,12 @@ describe("stage movement requesting-institution prerequisites", () => {
       stage: "qualifying",
       requesting_institution_confirmation: "machine_proposed",
     });
-    expect(moveRefusal(request, "estudio")).toMatch(/confirmar la institución/);
+    expect(moveRefusal(request, "enviada")).toMatch(/confirmar la institución/);
   });
 
-  it("allows En estudio when the requesting institution is confirmed", () => {
+  it("allows Enviada when the requesting institution is confirmed", () => {
     const request = card({ stage: "lead" });
-    expect(moveRefusal(request, "estudio")).toBeNull();
+    expect(moveRefusal(request, "enviada")).toBeNull();
   });
 
   it("allows resuming a paused case in its current stage without revalidating the requester", () => {
@@ -318,7 +318,7 @@ describe("stage movement requesting-institution prerequisites", () => {
         owner: null,
       }],
     });
-    expect(moveRefusal(request, "estudio", new Date("2026-10-08T12:00:00Z"))).toBeNull();
+    expect(moveRefusal(request, "solicitada", new Date("2026-10-08T12:00:00Z"))).toBeNull();
   });
 
   it("allows closing an unidentified request without an institution", () => {
@@ -427,7 +427,6 @@ describe("case drawer actions", () => {
     // Every state but the one the case is in; «Ganada» is «Marcar ganada».
     expect(within(picker).getAllByRole("button").map((b) => b.textContent)).toEqual([
       "Solicitada",
-      "En estudio",
       "Conversación",
       "En pausa",
       "Perdida",
@@ -963,8 +962,8 @@ describe("case drawer actions", () => {
     });
     const dialog = await openDrawer(session("sales"));
     const box = within(dialog).getByTestId("case-confirm-institution");
-    expect(within(box).getByRole("link", { name: /Abrir institución/ })).toHaveAttribute("href", `#/crm/organizaciones/${ORG}`);
-    fireEvent.click(within(box).getByRole("button", { name: "Confirmar institución" }));
+    expect(within(box).getByRole("link", { name: "Cambiar" })).toHaveAttribute("href", `#/crm/organizaciones/${ORG}`);
+    fireEvent.click(within(box).getByRole("button", { name: "Sí, confirmar" }));
     expect(await within(dialog).findByText(/Institución «nuevo-ficticio.example.cl» confirmada/)).toBeInTheDocument();
     const post = calls.find((c) => c.method === "POST")!;
     expect(post.body).toEqual({ organization_id: ORG, expected_version: 3 });
@@ -978,7 +977,7 @@ describe("case drawer actions", () => {
       ],
     });
     const dialog = await openDrawer(session("sales", { authoring: false }));
-    expect(within(dialog).getByRole("button", { name: "Confirmar institución" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Sí, confirmar" })).toBeDisabled();
   });
 
   it("reads the case's notes and opens the note form from «Registrar seguimiento»", async () => {
@@ -1138,8 +1137,8 @@ describe("case drawer actions", () => {
     const revisions = [rev(1, { drive: null, drive_pending: true }), rev(2, { drive: null, drive_pending: false })];
     stubApi({ pipelines: [page([card({ quotes: [{ quote_id: QUOTE, quote_number: "00001-26", number_origin: "printed_historical", revisions }] })])] });
     const dialog = await openDrawer(session("sales"));
-    expect(within(dialog).getByText("Pendiente de archivar en Drive")).toBeInTheDocument();
-    expect(within(dialog).getByText("PDF sin copia en Drive: súbelo a mano")).toBeInTheDocument();
+    expect(within(dialog).getByText("PDF pendiente de archivar")).toBeInTheDocument();
+    expect(within(dialog).getByText("PDF sin copia en Drive")).toBeInTheDocument();
   });
 
   it("keeps «Elegir revisión vigente» disabled on a closed case: the API never edits one", async () => {

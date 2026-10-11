@@ -1,5 +1,5 @@
 /**
- * The Oportunidades «Tablero»: one column per state (Solicitada, En estudio, Enviada,
+ * The Oportunidades «Tablero»: one column per state (Solicitada, Enviada,
  * Conversación, En pausa, Ganada, Perdida).
  *
  * - Every card is shown; every column scrolls on its own, so a long column never stretches the
@@ -20,6 +20,7 @@ import type { OpportunityCardData } from "../crmTypes";
 import { ageTone, contactLine, conversation, displayName, quoteProduct } from "../caseDisplay";
 import { AGE_BUCKETS, BOARD_COLUMNS, activityTimestamp, ageBucket, boardColumnOf, byLatestActivity, pausedUntil, type BoardColumnKey } from "../stage";
 import { fmtDate } from "../ui";
+import { formatMoney } from "./CaseQuotes";
 
 export type BoardSort = "recent" | "oldest" | "replied" | "name";
 
@@ -41,7 +42,6 @@ const LINE_TONE: Record<string, string> = {
 
 const COLUMN_DOT: Record<BoardColumnKey, string> = {
   solicitada: "bg-ink-faint",
-  estudio: "bg-info",
   enviada: "bg-brand-600",
   conversacion: "bg-warn",
   pausa: "bg-violet-600",
@@ -257,6 +257,9 @@ export function BoardCard({
 }) {
   const at = now ?? new Date();
   const latest = card.latest_revision;
+  // The neto of the vigente quotations; the first currency only (a mixed-currency case is rare).
+  const firstMoney = (card.money ?? []).find((m) => m.currency !== "unread");
+  const money = firstMoney ? formatMoney(firstMoney.net_total, firstMoney.currency) : null;
   const { name, sub } = displayName(card);
   const contact = contactLine(card);
   // One clock per card: the status line says who touched the case last and for how long
@@ -309,16 +312,21 @@ export function BoardCard({
           {contact && !compact ? <p className="truncate text-[11px] leading-4 text-ink-muted">{contact}</p> : null}
         </div>
       </div>
-      <p className="mt-1.5 truncate text-[11px] leading-4 tabular-nums text-ink-muted">
+      <p className="mt-1.5 flex items-baseline gap-2 text-[11px] leading-4 tabular-nums text-ink-muted">
         {latest ? (
-          <>
+          <span className="min-w-0 truncate">
             <span className="font-semibold text-ink">{latest.quote_number}</span>
             {card.quote_numbers.length > 1 ? <span className="text-ink-faint"> +{card.quote_numbers.length - 1}</span> : null} ·{" "}
             {shortDate(latest.sent_at, at)}
-          </>
+          </span>
         ) : (
           <span className="text-ink-faint">Sin cotización</span>
         )}
+        {money ? (
+          <span className="ml-auto shrink-0 text-[11.5px] font-semibold text-ink" title="Neto de las cotizaciones vigentes" data-testid="board-money">
+            {money}
+          </span>
+        ) : null}
       </p>
       {product ? (
         <span
