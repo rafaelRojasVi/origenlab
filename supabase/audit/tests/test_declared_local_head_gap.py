@@ -28,11 +28,11 @@ SESSION_TABLE = "auth_session"
 #: select); note and organization_product_line get 4 each (api select/insert/update, worker select).
 SLICE6_SELECT_ONLY_TABLES = ("campaign_content", "campaign_content_message")
 SLICE6_FULL_TABLES = ("note", "organization_product_line")
-#: slice-7 catalog and evidence tables (the worker holds no policy on any): product_image,
-#: supplier_terms and document_line three each (api select/insert/update); fx_rate and
-#: cost_parameter two each (api select, insert: append-only).
+#: slice-7 catalog and evidence tables: product_image and supplier_terms three each (api
+#: select/insert/update); document_line five (api select/insert/update, worker select/insert —
+#: the quote reader, 20261012100000); fx_rate and cost_parameter two each (api select, insert).
 SLICE7_POLICY_COUNTS = {"product_image": 3, "supplier_terms": 3,
-                        "fx_rate": 2, "cost_parameter": 2, "document_line": 3}
+                        "fx_rate": 2, "cost_parameter": 2, "document_line": 5}
 SLICE7_TABLES = tuple(SLICE7_POLICY_COUNTS)
 #: slice-4 mail triage: triage_review three (api select, insert; worker select).
 SLICE4_POLICY_COUNTS = {"triage_review": 3}
@@ -89,10 +89,10 @@ def current_head_report():
             + "; ".join(_table(t) for t in TABLES + SIGN_IN_TABLES + (SESSION_TABLE,)
                         + SLICE6_SELECT_ONLY_TABLES + SLICE6_FULL_TABLES + SLICE7_TABLES + SLICE4_TABLES),
             "table count: observed 51, expected 33"]),
-        _check("a09", "FAIL", {"policy_count": 176}, [
-            "RLS policy count: observed 176, expected 127",
+        _check("a09", "FAIL", {"policy_count": 178}, [
+            "RLS policy count: observed 178, expected 127",
             "RLS policies: 2 entr(y|ies) in the baseline are absent here: " + REMOVED,
-            "RLS policies: 51 entr(y|ies) are present here and not in the baseline: " + policies]),
+            "RLS policies: 53 entr(y|ies) are present here and not in the baseline: " + policies]),
         _check("a10", "FAIL",
                {"foreign_key_count": 159, "covered_count": 159, "covered_unconditionally": 126},
                ["foreign keys: observed 159, expected 102"]),
@@ -390,9 +390,9 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_throttle_update_policies_must_really_be_gone(self):
         report = current_head_report()
         a09 = check_of(report, "a09")
-        a09["findings"][2] = a09["findings"][2].replace("51 entr(y|ies)", "53 entr(y|ies)")
-        a09["summary"]["policy_count"] = 178
-        self.assert_refused(report, "a09.policy_count: observed 178, expected 176")
+        a09["findings"][2] = a09["findings"][2].replace("53 entr(y|ies)", "55 entr(y|ies)")
+        a09["summary"]["policy_count"] = 180
+        self.assert_refused(report, "a09.policy_count: observed 180, expected 178")
 
     def test_the_historical_origin_foreign_key_is_declared(self):
         self.assertEqual(41, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
