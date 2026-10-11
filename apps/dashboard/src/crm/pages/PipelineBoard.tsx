@@ -113,7 +113,7 @@ export function Board({
   return (
     <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
       {/* Five working columns share the width; Ganada and Perdida are narrower, with compact cards. */}
-      <div className="grid min-w-[72rem] grid-cols-[repeat(5,minmax(10rem,1fr))_repeat(2,minmax(8.5rem,0.75fr))] gap-3">
+      <div className="grid min-w-[60rem] grid-cols-[repeat(4,minmax(11rem,1fr))_repeat(2,minmax(9rem,0.8fr))] gap-3">
         {BOARD_COLUMNS.map((col) => {
           const inCol = sortCards(
             cards.filter((c) => boardColumnOf(c, at) === col.key),
@@ -341,7 +341,7 @@ export function BoardCard({
         {line.text}
       </p>
       {compact ? null : (
-        <div className="mt-2 flex items-center gap-1 border-t border-line pt-1.5 text-[11px]">
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 border-t border-line pt-1.5 text-[11px]">
           {driveUrl ? (
             <a
               href={driveUrl}
@@ -372,7 +372,7 @@ export function BoardCard({
             </a>
           ) : null}
           {pending > 0 ? (
-            <span className="ml-auto whitespace-nowrap rounded-full bg-warn-bg px-1.5 text-[10px] font-semibold text-warn" title={card.attention.map((a) => a.label).join(" · ")}>
+            <span className="ml-auto shrink-0 whitespace-nowrap rounded-full bg-warn-bg px-1.5 py-px text-[10px] font-semibold text-warn" title={card.attention.map((a) => a.label).join(" · ")}>
               {pending} pendiente{pending > 1 ? "s" : ""}
             </span>
           ) : null}
