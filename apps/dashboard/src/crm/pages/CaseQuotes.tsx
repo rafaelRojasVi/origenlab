@@ -111,7 +111,6 @@ export function CaseMoneySummary({ card }: { card: OpportunityCardData }) {
   const read = money.filter((m) => m.currency !== "unread");
   const unread = Number(money.find((m) => m.currency === "unread")?.net_total ?? 0);
   if (card.quotes.length === 0) return null;
-  const activeCount = card.quotes.map(currentRevision).filter((r) => r?.is_active).length;
   // IVA and total per currency come from the vigente revisions' own contents (CLP only).
   const clpGross = card.quotes
     .map(currentRevision)
@@ -128,7 +127,6 @@ export function CaseMoneySummary({ card }: { card: OpportunityCardData }) {
     <section aria-label="Monto cotizado" className="rounded-lg border border-line bg-canvas-raised px-4 py-3" data-testid="case-money">
       <p className="text-[11px] font-medium text-ink-muted">
         Cotizado, neto
-        {activeCount > 1 ? <span className="text-ink-faint"> ({activeCount} cotizaciones vigentes)</span> : null}
       </p>
       {read.length === 0 ? (
         <p className="mt-1 text-sm text-ink-muted">Las cotizaciones de este caso aún no se han leído.</p>
@@ -170,7 +168,7 @@ function LineRow({ l, currency }: { l: QuoteLine; currency: string | null }) {
   const qty = formatQty(l.qty);
   const unit = formatMoney(l.unit_price, currency);
   const total = formatMoney(l.line_total, currency);
-  const meta = [l.brand, qty && unit ? `${qty} × ${unit}` : qty ? `Cant. ${qty}` : null].filter(Boolean).join(" · ");
+  const meta = qty && unit && qty !== "1" ? `${qty} × ${unit}` : null;
   return (
     <li className={`grid grid-cols-[1fr_auto] gap-x-3 py-1.5 ${l.optional ? "opacity-60" : ""}`}>
       <div className="min-w-0">
@@ -206,7 +204,7 @@ function Contents({ c }: { c: QuoteContents }) {
         </button>
       ) : null}
       <dl className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 border-t border-line pt-2 text-xs tabular-nums">
-        <dt className="text-ink-muted">Neto{c.net_source === "lines" ? " (suma de líneas)" : ""}</dt>
+        <dt className="text-ink-muted">Neto</dt>
         <dd className="text-right font-semibold text-ink">{formatMoney(c.net_total, c.currency) ?? "Sin dato"}</dd>
         {c.tax_total ? (
           <>
@@ -229,18 +227,12 @@ function RevisionLinks({ rev }: { rev: RevisionCard }) {
         <a className="font-medium text-brand-700 hover:underline" href={rev.drive.file_url} target="_blank" rel="noopener noreferrer" title={LOCAL_DRIVE_TITLE} aria-label={`Abrir PDF r${rev.revision_no} en Drive`}>
           PDF r{rev.revision_no} ↗
         </a>
-      ) : rev.drive_pending ? (
-        <span className="text-ink-muted">PDF pendiente de archivar</span>
-      ) : (
-        <span className="text-warn">PDF sin copia en Drive</span>
-      )}
+      ) : null}
       {gmail && isSafeExternalHref(gmail) ? (
         <a className="font-medium text-brand-700 hover:underline" href={gmail} target="_blank" rel="noopener noreferrer" aria-label={`Abrir correo de r${rev.revision_no} en Gmail`}>
           Correo r{rev.revision_no} ↗
         </a>
-      ) : (
-        <span className="text-warn">Sin correo vinculado</span>
-      )}
+      ) : null}
     </p>
   );
 }
@@ -262,18 +254,16 @@ function QuoteBlock({ q }: { q: QuoteCard }) {
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-1.5">
             <span className="font-mono text-sm font-semibold text-ink">{q.quote_number}</span>
-            {cur ? <span className="text-xs text-ink-muted">r{cur.revision_no}</span> : null}
+            {cur ? <span className="text-xs text-ink-muted">r{cur.revision_no}, {fmtDate(cur.sent_at)}</span> : null}
             {status ? (
               <Badge tone={status.tone} glyph={false}>
                 {status.label}
               </Badge>
             ) : null}
           </p>
-          <p className="mt-0.5 text-[11px] text-ink-muted">{cur ? `Enviada el ${fmtDate(cur.sent_at)}` : "Sin revisión"}</p>
         </div>
         {net ? (
           <p className="ml-auto whitespace-nowrap text-right text-sm font-semibold text-ink tabular-nums">
-            <span className="mr-1 text-[10px] font-normal text-ink-faint">neto</span>
             {net}
           </p>
         ) : null}
@@ -283,7 +273,7 @@ function QuoteBlock({ q }: { q: QuoteCard }) {
           <Contents c={cur.contents} />
         ) : (
           <p className="rounded-md bg-canvas-sunken/70 px-2.5 py-2 text-xs text-ink-muted">
-            Este PDF aún no se ha leído: abre el PDF para ver equipos y precios.
+            PDF aún no leído.
           </p>
         )}
         {cur ? (

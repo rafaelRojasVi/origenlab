@@ -14,6 +14,7 @@ import { moveRefusal } from "./CaseMove";
 
 // Every value below is invented; the repository is public.
 const CASE = "11111111-1111-4111-8111-111111111111";
+const PERSON = "44444444-4444-4444-8444-444444444444";
 const ORG = "33333333-3333-4333-8333-333333333333";
 const QUOTE = "44444444-4444-4444-8444-444444444444";
 const MESSAGE = "55555555-5555-4555-8555-555555555555";
@@ -219,7 +220,7 @@ describe("case command helpers", () => {
     render(withSession(session("sales"), <PipelinePage initialOpportunityId={CASE} />));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Solicitud de balanza ficticia")).toBeInTheDocument();
-    expect(within(dialog).getByText("Persona Ficticia")).toBeInTheDocument();
+    expect(within(dialog).getByTitle(/Persona Ficticia/)).toBeInTheDocument();
     expect(within(dialog).getByRole("link", { name: "Abrir el último correo recibido en Gmail" })).toHaveAttribute("href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/example1");
     fireEvent.click(within(dialog).getByRole("button", { name: "No es una solicitud" }));
@@ -1133,12 +1134,27 @@ describe("case drawer actions", () => {
     await waitFor(() => expect(within(dialog).queryByTestId("case-undetermined-revision")).not.toBeInTheDocument());
   });
 
-  it("says «Pendiente de archivar» when the archiver will file the PDF, and asks for a manual upload otherwise", async () => {
+  it("shows no PDF link while a revision is not in Drive, and keeps its email", async () => {
     const revisions = [rev(1, { drive: null, drive_pending: true }), rev(2, { drive: null, drive_pending: false })];
     stubApi({ pipelines: [page([card({ quotes: [{ quote_id: QUOTE, quote_number: "00001-26", number_origin: "printed_historical", revisions }] })])] });
     const dialog = await openDrawer(session("sales"));
-    expect(within(dialog).getByText("PDF pendiente de archivar")).toBeInTheDocument();
-    expect(within(dialog).getByText("PDF sin copia en Drive")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/Abrir PDF r\d en Drive/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/sin copia en Drive|pendiente de archivar/)).not.toBeInTheDocument();
+  });
+
+  it("opens the institution and the person from «Contacto»", async () => {
+    stubApi({ pipelines: [page([card({ contact: { source: "crm_participant", name: "Persona Ficticia", address: null, others: 0, person_id: PERSON } })])] });
+    const dialog = await openDrawer(session("sales"));
+    expect(within(dialog).getByTestId("case-org-link")).toHaveAttribute("href", `#/crm/organizaciones/${ORG}`);
+    expect(within(dialog).getByTestId("case-person-link")).toHaveAttribute("href", `#/crm/personas/${PERSON}`);
+  });
+
+  it("searches Gmail for a contact that is only an email recipient", async () => {
+    stubApi({ pipelines: [page([card({ contact: { source: "gmail_recipient", name: null, address: "Ana Ficticia <ana@lab-ficticio.example>", others: 0 } })])] });
+    const dialog = await openDrawer(session("sales"));
+    const link = within(dialog).getByTestId("case-person-link");
+    expect(link.getAttribute("href")).toBe("https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#search/ana%40lab-ficticio.example");
+    expect(link).toHaveAttribute("target", "_blank");
   });
 
   it("keeps «Elegir revisión vigente» disabled on a closed case: the API never edits one", async () => {

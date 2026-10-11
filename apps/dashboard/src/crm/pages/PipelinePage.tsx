@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCaseNotes, fetchPipeline } from "../crmApi";
 import { inSharedMailbox } from "../gmailLinks";
+import { crmHash } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
@@ -410,6 +411,15 @@ export function OpportunityCard({
   );
 }
 
+const CONTACT_LINK =
+  "flex min-w-0 items-baseline gap-2 rounded-md px-2 py-1 -mx-2 text-ink hover:bg-canvas-sunken hover:text-brand-900";
+
+/** Gmail's search for one address, in the shared contacto@ mailbox. */
+function gmailSearchUrl(address: string): string {
+  const bare = (address.match(/<([^>]+)>/)?.[1] ?? address).trim();
+  return `https://mail.google.com/mail/?authuser=${encodeURIComponent("contacto@origenlab.cl")}#search/${encodeURIComponent(bare)}`;
+}
+
 function OpportunityDrawer({
   card,
   onClose,
@@ -492,39 +502,43 @@ function OpportunityDrawer({
       </Section>
 
       <Section title="Contacto">
-        <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-1.5 text-xs">
-          <dt className="text-ink-faint">Institución</dt>
-          <dd className="text-ink">{card.organization?.name ?? <span className="text-bad">Sin institución</span>}</dd>
-          {card.other_organizations.map((o) => (
-            <div key={`${o.organization_id}-${o.role}`} className="contents">
-              <dt className="text-ink-faint">{o.role === "supplier" ? "Proveedor" : o.role === "manufacturer" ? "Fabricante" : o.role}</dt>
-              <dd className="text-ink">{o.name}</dd>
-            </div>
-          ))}
-          <dt className="text-ink-faint">Persona</dt>
-          <dd className="min-w-0 break-words text-ink">
-            {card.contact ? (
-              <>
-                {card.contact.name ?? card.contact.address}
-                {card.contact.others > 0 ? <span className="text-ink-faint"> y {card.contact.others} más</span> : null}
-                {card.contact.source === "gmail_recipient" ? (
-                  <span className="text-ink-faint" title="Destinatario del correo de la cotización; aún no es una persona del CRM"> (del correo)</span>
-                ) : null}
-              </>
+        <ul className="space-y-1.5 text-[13px]">
+          <li>
+            {card.organization ? (
+              <a href={crmHash("organizaciones", card.organization.organization_id)} className={CONTACT_LINK} data-testid="case-org-link">
+                <span className="text-ink-faint">Empresa</span>
+                <span className="truncate font-medium">{card.organization.name ?? "Sin nombre"}</span>
+              </a>
             ) : (
-              <span className="text-ink-faint">Sin contacto</span>
+              <span className="text-bad">Sin institución</span>
             )}
-          </dd>
-        </dl>
-        {card.attention.filter((a) => a.code !== "document_pending_drive").length > 0 ? (
-          <ul className="mt-2 space-y-0.5 text-[11px]">
-            {card.attention.filter((a) => a.code !== "document_pending_drive").map((a) => (
-              <li key={a.code} className={a.blocking ? "font-medium text-bad" : "text-ink-muted"}>
-                {a.label}
-              </li>
-            ))}
-          </ul>
-        ) : null}
+          </li>
+          {card.contact ? (
+            <li>
+              {card.contact.person_id ? (
+                <a href={crmHash("personas", card.contact.person_id)} className={CONTACT_LINK} data-testid="case-person-link">
+                  <span className="text-ink-faint">Persona</span>
+                  <span className="truncate font-medium">{card.contact.name ?? "Sin nombre"}</span>
+                </a>
+              ) : card.contact.address ? (
+                <a
+                  href={gmailSearchUrl(card.contact.address)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={CONTACT_LINK}
+                  title="Buscar sus correos en Gmail"
+                  data-testid="case-person-link"
+                >
+                  <span className="text-ink-faint">Persona</span>
+                  <span className="truncate font-medium">{card.contact.name ?? card.contact.address}</span>
+                  <span aria-hidden="true" className="text-[10px] text-ink-faint">↗</span>
+                </a>
+              ) : (
+                <span className="text-ink">{card.contact.name}</span>
+              )}
+            </li>
+          ) : null}
+        </ul>
       </Section>
 
       <Section title="Correos del caso">
@@ -534,12 +548,11 @@ function OpportunityDrawer({
               const mail = card.last_contact?.[direction];
               if (!mail) return null;
               const url = inSharedMailbox(mail.url);
-              return <li key={direction} className="grid grid-cols-[1fr_auto] gap-x-3">
-                <div className="min-w-0">
-                  <p className="text-[11px] text-ink-faint">{direction === "inbound" ? "Último recibido" : "Último enviado"}, {fmtDate(mail.at)}</p>
-                  <p className="truncate text-ink" title={mail.subject ?? undefined}>{mail.subject || "Sin asunto"}</p>
-                  {mail.sender_name ? <p className="truncate text-[11px] text-ink-muted">{mail.sender_name}</p> : null}
-                </div>
+              return <li key={direction} className="grid grid-cols-[1fr_auto] items-baseline gap-x-3">
+                <p className="min-w-0 truncate text-ink" title={mail.sender_name ? `${mail.sender_name}: ${mail.subject ?? ""}` : mail.subject ?? undefined}>
+                  <span className="text-ink-faint">{direction === "inbound" ? "Recibido" : "Enviado"} {fmtDate(mail.at)} </span>
+                  {mail.subject || "Sin asunto"}
+                </p>
                 {url ? <ExternalLink href={url} label={`Abrir ${direction === "inbound" ? "el último correo recibido" : "el último correo enviado"} en Gmail`}>Abrir</ExternalLink> : null}
               </li>;
             })}

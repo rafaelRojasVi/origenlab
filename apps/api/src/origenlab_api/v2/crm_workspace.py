@@ -350,7 +350,7 @@ _SQL_PIPELINE_CONTACT = """
      where not sr.is_quarantined and sr.review_status <> 'rejected'
 """
 _SQL_PIPELINE_PARTICIPANTS = """
-    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary
+    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary, p.person_id::text as person_id
       from crm.opportunity_participant p
       left join crm.person pe on pe.id = p.person_id
      where p.valid_to is null
@@ -829,7 +829,8 @@ def compose_pipeline(
         people = people_by_opp.get(oid, [])
         contact: dict[str, Any] | None = None
         if people:
-            contact = {"source": "crm_participant", "name": people[0].get("name"), "address": None, "others": len(people) - 1}
+            contact = {"source": "crm_participant", "name": people[0].get("name"), "address": None, "others": len(people) - 1,
+                       "person_id": people[0].get("person_id")}
         else:
             address, n = _first_address(latest.get("_recipients") if latest else None)
             if address:

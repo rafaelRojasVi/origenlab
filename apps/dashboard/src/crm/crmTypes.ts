@@ -221,6 +221,8 @@ export interface OpportunityCardData {
     name: string | null;
     address: string | null;
     others: number;
+    /** The CRM person, when the contact is one (`crm_participant`); opens «Personas». */
+    person_id?: string | null;
     /** Fingerprint of the bare address; joins the card to its equipment interests when masked. */
     address_ref?: string | null;
   } | null;

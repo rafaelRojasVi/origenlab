@@ -195,7 +195,7 @@ describe("PipelinePage", () => {
     // Drawer: revision history, links, and every write action disabled.
     fireEvent.click(screen.getByRole("button", { name: /Otra Institución/ }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/Institución sugerida por el correo/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/¿Institución correcta\?/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/registro local/)).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText("Abrir PDF r1 en Drive")).toHaveAttribute("href", "https://drive.google.com/file/d/f1/view");
     // No signed-in session here: every case action stays disabled (CaseActions.test.tsx covers the rest).

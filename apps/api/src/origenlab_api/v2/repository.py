@@ -251,6 +251,7 @@ class V2Repository(OperatorLookup):
         *,
         q: str | None,
         limit: int,
+        organization_id: str | None = None,
         offset: int,
         having: tuple[str, ...] = (),
         active_within_days: int | None = None,
@@ -291,6 +292,9 @@ class V2Repository(OperatorLookup):
         if q:
             clauses.append("lower(o.name) like %s")
             params.append(f"%{q.strip().lower()}%")
+        if organization_id:
+            clauses.append("o.id = %s::uuid")
+            params.append(organization_id)
         for name in having:
             clauses.append(self.ORGANIZATION_FILTERS[name])
         if active_within_days is not None:

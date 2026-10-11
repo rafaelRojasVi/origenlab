@@ -81,7 +81,7 @@ describe("case panel money and quotations", () => {
     render(<QuoteList card={card()} />);
     const block = screen.getByTestId("quote-block");
     expect(within(block).getByText("XF-200 · Equipo ficticio de laboratorio")).toBeInTheDocument();
-    expect(block).toHaveTextContent("Marca Ficticia · 1 × $ 950.000");
+    expect(block).not.toHaveTextContent("1 × $ 950.000"); // a single unit shows only its total
     expect(block).toHaveTextContent("2 × $ 25.000");
     expect(within(block).getByText("Opcional")).toBeInTheDocument();
     expect(block).toHaveTextContent("IVA 19%");
@@ -93,7 +93,7 @@ describe("case panel money and quotations", () => {
   it("asks to open an unread PDF and shows Gmail, the folder and the vigente PDF at the top", () => {
     const unread = card({ quotes: [{ quote_id: "q-1", quote_number: "00999-26", number_origin: "x", revisions: [rev({ contents: null })] }] });
     render(<><CaseLinks card={unread} /><QuoteList card={unread} /></>);
-    expect(screen.getByText(/aún no se ha leído/)).toBeInTheDocument();
+    expect(screen.getByText("PDF aún no leído.")).toBeInTheDocument();
     const links = screen.getByTestId("case-links");
     expect(within(links).getByRole("link", { name: /carpeta del caso en Drive/ })).toHaveAttribute("href", "https://drive.google.com/drive/folders/d1");
     expect(within(links).getByRole("link", { name: /PDF 00999-26 r2/ })).toHaveAttribute("href", "https://drive.google.com/file/d/f2/view");

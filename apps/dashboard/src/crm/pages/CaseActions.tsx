@@ -808,9 +808,8 @@ function ConfirmInstitution({
       data-testid="case-confirm-institution"
     >
       <p className="min-w-0 flex-1 text-ink">
-        <span className="text-ink-muted">Institución sugerida por el correo: </span>
+        <span className="text-ink-muted">¿Institución correcta? </span>
         <span className="font-semibold">{org.name ?? "Sin nombre"}</span>
-        <span className="block text-[11px] text-ink-faint">¿Es quien pide la cotización?</span>
       </p>
       <span className="flex items-center gap-2">
         {mayAuthor && version !== null ? (
