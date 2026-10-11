@@ -1162,6 +1162,8 @@ describe("case drawer actions", () => {
     const link = within(dialog).getByTestId("case-person-link");
     expect(link.getAttribute("href")).toBe("https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#search/ana%40lab-ficticio.example");
     expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveTextContent("Ana Ficticia");
+    expect(link).not.toHaveTextContent("@");
   });
 
   it("keeps «Elegir revisión vigente» disabled on a closed case: the API never edits one", async () => {

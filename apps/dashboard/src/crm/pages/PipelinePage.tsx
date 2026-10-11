@@ -413,6 +413,12 @@ export function OpportunityCard({
 const CONTACT_LINK =
   "flex min-w-0 items-baseline gap-2 rounded-md px-2 py-1 -mx-2 text-ink hover:bg-canvas-sunken hover:text-brand-900";
 
+/** «Perla Sánchez <perla@…>» → «Perla Sánchez»; a bare address stays as it is. */
+function displayNameOf(address: string): string {
+  const name = address.replace(/<[^>]*>/, "").replace(/^["'\s]+|["'\s]+$/g, "");
+  return name || address;
+}
+
 /** Gmail's search for one address, in the shared contacto@ mailbox. */
 function gmailSearchUrl(address: string): string {
   const bare = (address.match(/<([^>]+)>/)?.[1] ?? address).trim();
@@ -529,7 +535,7 @@ function OpportunityDrawer({
                   data-testid="case-person-link"
                 >
                   <span className="text-ink-faint">Persona</span>
-                  <span className="truncate font-medium">{card.contact.name ?? card.contact.address}</span>
+                  <span className="truncate font-medium">{card.contact.name ?? displayNameOf(card.contact.address)}</span>
                   <span aria-hidden="true" className="text-[10px] text-ink-faint">↗</span>
                 </a>
               ) : (
