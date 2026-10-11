@@ -2064,7 +2064,20 @@ intent, stage, urgency and needs_reply; the report holds every model's reading s
 Change the variable only on that evidence, and keep the export outside the repository.
 
 **Re-triage after a rule change:** bump `TRIAGE_VERSION` in `triage_rules.py`. New readings are
-stored beside the old ones (`triage:v2`), never over them.
+stored beside the old ones (`triage:v2`), never over them: the worker may only insert assertions.
+The sweep then reads every message of the last 14 days again (`sweep_untriaged`, rules only when
+the model is off), so a message an earlier version misread comes back under the new reading
+within minutes of the deploy. What reads the readings prefers the **newest version per message**
+by the number in `value_norm` («Correos sin caso» and «Correos revisados», `GET
+/v2/workspace/triage-readings`; «Posibles BAJAS», `crm_workspace`), and a verdict an operator
+gave on an older reading still counts as the message reviewed. The hard-bounce boundary
+(`outbound.add_contact_control`, worker branch) accepts any `triage:v<N>` the evidence names and
+re-proves it against the assertion of that version (migration `20261011120000`); before it, a
+literal `triage:v1` would have refused every block after the first bump. Versions so far: v1
+(2026-10-06); v2 (2026-10-11, STATUS §2.7.91) — quote words on the reply's own text only, a
+quote word in a «RE:» subject no longer counts, a supplier's price list is not a request, wider
+lost phrases (budget, «dejar sin efecto», «anulada») and a cancellation subject read as `lost`
+before an OC number reads as an order.
 
 | Log value | Meaning / action |
 |---|---|

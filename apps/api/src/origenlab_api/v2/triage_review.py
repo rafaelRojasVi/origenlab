@@ -102,14 +102,22 @@ def validated_review(body: ReviewTriageBody) -> dict[str, Any]:
 
 _LIST_SQL = """
 with readings as (
-  select a.id, a.source_record_id, a.value_norm, a.value, a.created_at,
+  -- One reading per message: the newest triage version (`triage:v<N>`, OPERATIONS §8.11). A verdict
+  -- an operator gave on an earlier version still counts: the message was reviewed, not the row.
+  select distinct on (a.source_record_id)
+         a.id, a.source_record_id, a.value_norm, a.value, a.created_at,
          (select json_build_object('verdict', r.verdict, 'corrected', r.corrected, 'note', r.note,
                                    'reviewed_at', r.reviewed_at, 'reviewed_by', o.display_name)
-            from evidence.triage_review r join platform.operator o on o.id = r.reviewed_by_operator_id
-           where r.assertion_id = a.id order by r.reviewed_at desc, r.id desc limit 1) as review
+            from evidence.triage_review r
+            join evidence.assertion a2 on a2.id = r.assertion_id
+            join platform.operator o on o.id = r.reviewed_by_operator_id
+           where a2.source_record_id = a.source_record_id and a2.kind = 'message_triage'
+             and a2.value_norm ~ '^triage:v[0-9]+$'
+           order by r.reviewed_at desc, r.id desc limit 1) as review
     from evidence.assertion a
    where a.kind = 'message_triage'
-     and coalesce((a.value ->> 'needs_model')::boolean, false)
+     and a.value_norm ~ '^triage:v[0-9]+$'
+   order by a.source_record_id, substring(a.value_norm from 'v([0-9]+)$')::int desc, a.created_at desc
 )
 select r.id::text as assertion_id, r.source_record_id::text as source_record_id, r.value_norm as version,
        r.value, r.created_at, r.review,
@@ -136,7 +144,8 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
   join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
   left join lateral (select p.address_norm from comms.message_participant p
                       where p.message_id = m.id and p.role = 'from' limit 1) snd on true
- where (%(status)s = 'all' or (%(status)s = 'pending') = (r.review is null))
+ where coalesce((r.value ->> 'needs_model')::boolean, false)
+   and (%(status)s = 'all' or (%(status)s = 'pending') = (r.review is null))
  order by m.internal_date desc, r.id
  limit %(limit)s
 """

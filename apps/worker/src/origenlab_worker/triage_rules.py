@@ -15,7 +15,13 @@ Order of the checks, first match wins:
    pipeline, structured already, so not for the model.
 5. Business signals, in this order, **before** the bulk and notification checks, because a
    purchase order or a quotation from a portal often arrives from a no-reply sender:
-   **purchase_order**, **lost**, **quote_followup** (a CN quote number), **quote_request**.
+   **lost** (a lost phrase, or a subject that announces a cancellation — «Anulación OC …» carries
+   an OC number and is still a loss), **purchase_order**, **quote_followup** (a CN quote number),
+   **quote_request**. Phrases are read on the reply's **own** text (`reply_text`: the quoted
+   history under it is what we or others wrote before) and on the subject — but a quote word in a
+   «RE:» subject only repeats the thread's name, so it counts only on a fresh subject. A pure
+   forward (own text empty) is read whole. Numbers (CN, OC) are still taken from the whole
+   message and the file names: they link, they do not classify.
 6. **bulk** — mailing-list and bulk headers, Gmail's Promotions / Social / Forums tabs.
 7. **notification** — no-reply and notification senders, Gmail's Updates tab.
 8. **business_other** — a person wrote and nothing above matched: the model reads it.
@@ -46,7 +52,9 @@ from origenlab_worker.mail_text import MailText
 
 #: Bumped whenever a rule changes what it decides. The proposal is stored per version
 #: (`value_norm = triage:v<N>`), so a new version re-triages every message beside the old reading.
-TRIAGE_VERSION = 1
+#: The API lists the newest version per message; the hard-bounce boundary accepts any version.
+#: v2 (2026-10-11): quote words on the reply's own text only, wider lost phrases, cancellations.
+TRIAGE_VERSION = 2
 
 NOISE_CLASSES: tuple[str, ...] = ("bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification",
                                    "empty")
@@ -93,6 +101,28 @@ _BULK_LABELS: frozenset[str] = frozenset({"CATEGORY_PROMOTIONS", "CATEGORY_SOCIA
 _UPDATE_LABELS: frozenset[str] = frozenset({"CATEGORY_UPDATES"})
 #: A CN quote number as OrigenLab prints it: «CN 1234», «CN-1234-26», «cn_998».
 _QUOTE_NUMBER = re.compile(r"(?<![a-z0-9])cn[\s_\-]?(\d{3,6})(?![0-9])")
+#: Lost signals the triage reads beyond the API's R6 list. `LOST_PHRASES` auto-closes a linked
+#: case (mail_rules R6) and stays as narrow as it is; these only file the email as `lost` for a
+#: person to confirm: a budget the quote exceeds, an order the buyer took back. Folded text.
+_TRIAGE_LOST_PHRASES: tuple[str, ...] = (
+    *LOST_PHRASES,
+    "gestionada por otro proveedor", "gestionadas por otro proveedor", "gestionado por otro proveedor",
+    "gestionados por otro proveedor",
+    "se sale de mi presupuesto", "se salen de mi presupuesto", "se sale del presupuesto",
+    "se salen del presupuesto", "se sale de nuestro presupuesto", "se salen de nuestro presupuesto",
+    "fuera de mi presupuesto", "fuera de nuestro presupuesto", "fuera de presupuesto",
+    "excede el presupuesto", "excede nuestro presupuesto", "excede mi presupuesto",
+    "supera el presupuesto", "supera nuestro presupuesto", "supera mi presupuesto",
+    "no contamos con presupuesto", "no tenemos presupuesto", "no disponemos de presupuesto",
+    "dejar sin efecto", "dejamos sin efecto", "deja sin efecto", "queda sin efecto", "quedo sin efecto",
+    "fue anulada", "ha sido anulada", "queda anulada", "fue anulado", "ha sido anulado", "queda anulado",
+)
+#: A subject that announces a cancellation: «Anulación OC 4500000123» names an OC and is a loss.
+_CANCELLED_SUBJECTS: tuple[str, ...] = ("anulacion", "anulada", "anulado", "sin efecto")
+#: A supplier's price list is not a request for a quotation, whatever the word «precio» says.
+_PRICE_LIST_SUBJECTS: tuple[str, ...] = ("lista de precios", "listas de precios", "price list")
+#: «RE:», «RV:», «Fwd:» … — the subject repeats the thread's name, it does not say what this reply does.
+_REPLY_PREFIX = re.compile(r"^\s*(?:(?:re|rv|fw|fwd|tr|aw|wg|sv)\s*:\s*)+", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -214,19 +244,24 @@ def classify(item: TriageInput) -> RuleVerdict:
     if _contains_any(subject, _TENDER_SUBJECTS) is not None:
         return verdict("tender_notice", "subject:tender_alert")
 
-    text = f"{subject}\n{body}"
+    # The reply's own words; a pure forward (nothing above the forwarded header) is read whole.
+    own_text = fold(own) or body
+    fresh_subject = not _REPLY_PREFIX.match(mail.subject or "")
+    text = f"{subject}\n{own_text}"
     quote_numbers = tuple(dict.fromkeys(m.group(1) for src in (subject, body, *names)
                                         for m in _QUOTE_NUMBER.finditer(src)))
     po_numbers = tuple(dict.fromkeys(m.group(1) for src in (subject, body, *names)
                                      for m in PURCHASE_ORDER_NUMBER.finditer(src)))
     po_file = next((n for n in names if PURCHASE_ORDER_FILENAME.match(n)), None)
     po_phrase = _contains_any(text, PURCHASE_ORDER_PHRASES)
-    lost = _contains_any(text, LOST_PHRASES)
-    quote_word_subject = _contains_any(subject, QUOTE_REQUEST_WORDS)
-    quote_word_body = _contains_any(body, QUOTE_REQUEST_WORDS)
+    cancelled = _contains_any(subject, _CANCELLED_SUBJECTS)
+    lost = _contains_any(text, _TRIAGE_LOST_PHRASES)
+    price_list = _contains_any(subject, _PRICE_LIST_SUBJECTS) is not None
+    quote_word_subject = _contains_any(subject, QUOTE_REQUEST_WORDS) if fresh_subject and not price_list else None
+    quote_word_body = _contains_any(own_text, QUOTE_REQUEST_WORDS) if not price_list else None
     signals = {
         "purchase_order": bool(po_phrase or po_file or PURCHASE_ORDER_NUMBER.search(subject)),
-        "lost": bool(lost),
+        "lost": bool(lost or cancelled),
         "quote_number": bool(quote_numbers),
         "quote_word": bool(quote_word_subject or quote_word_body),
         "attachments": bool(mail.attachment_names),
@@ -234,11 +269,13 @@ def classify(item: TriageInput) -> RuleVerdict:
     extra = {"quote_numbers": quote_numbers, "purchase_order_numbers": po_numbers, "signals": signals}
 
     po_in_subject = bool(PURCHASE_ORDER_NUMBER.search(subject))
+    if cancelled:
+        return verdict("lost", "subject:cancelled", **extra)
+    if lost:
+        return verdict("lost", "text:lost_phrase", **extra)
     if po_phrase or po_file or po_in_subject:
         reason = "attachment:oc" if po_file else "text:purchase_order_phrase" if po_phrase else "subject:oc_number"
         return verdict("purchase_order", reason, **extra)
-    if lost:
-        return verdict("lost", "text:lost_phrase", **extra)
     if quote_numbers:
         return verdict("quote_followup", "text:cn_quote_number", **extra)
     if quote_word_subject or quote_word_body:
