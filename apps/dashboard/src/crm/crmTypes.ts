@@ -533,3 +533,32 @@ export interface HistoryItem {
 export interface HistoryResponse {
   items: HistoryItem[];
 }
+
+
+/** `GET /v2/workspace/opportunities/{id}/threads`: the case's emails as Gmail cadenas. */
+export interface CaseThreadMessage {
+  message_id: string | null;
+  sent_at: string | null;
+  direction: "inbound" | "outbound" | string;
+  /** Display name, else the sender's domain; never the full address. */
+  from: string | null;
+  subject: string | null;
+  has_pdf: boolean;
+  url: string | null;
+}
+
+export interface CaseThread {
+  thread_id: string;
+  subject: string | null;
+  kind: "cliente" | "proveedor" | "interno";
+  count: number;
+  last_at: string | null;
+  url: string | null;
+  /** Newest first. */
+  messages: CaseThreadMessage[];
+}
+
+export interface CaseThreadsResponse {
+  opportunity_id: string;
+  threads: CaseThread[];
+}

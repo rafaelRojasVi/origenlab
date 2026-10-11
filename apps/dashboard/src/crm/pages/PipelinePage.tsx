@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCaseNotes, fetchPipeline } from "../crmApi";
-import { inSharedMailbox } from "../gmailLinks";
 import { crmHash } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
 import { CaseActions, type Mode } from "./CaseActions";
 import { CaseLinks, CaseMoneySummary, QuoteList } from "./CaseQuotes";
+import { CaseThreads } from "./CaseThreads";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
 import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
 import { DecideCases } from "./DecideCases";
@@ -25,7 +25,6 @@ import {
   Badge,
   Drawer,
   EmptyState,
-  ExternalLink,
   Modal,
   PageHeader,
   ResourceGate,
@@ -542,22 +541,7 @@ function OpportunityDrawer({
       </Section>
 
       <Section title="Correos del caso">
-        {card.last_contact?.inbound || card.last_contact?.outbound ? (
-          <ul className="space-y-2.5 text-xs">
-            {(["inbound", "outbound"] as const).map((direction) => {
-              const mail = card.last_contact?.[direction];
-              if (!mail) return null;
-              const url = inSharedMailbox(mail.url);
-              return <li key={direction} className="grid grid-cols-[1fr_auto] items-baseline gap-x-3">
-                <p className="min-w-0 truncate text-ink" title={mail.sender_name ? `${mail.sender_name}: ${mail.subject ?? ""}` : mail.subject ?? undefined}>
-                  <span className="text-ink-faint">{direction === "inbound" ? "Recibido" : "Enviado"} {fmtDate(mail.at)} </span>
-                  {mail.subject || "Sin asunto"}
-                </p>
-                {url ? <ExternalLink href={url} label={`Abrir ${direction === "inbound" ? "el último correo recibido" : "el último correo enviado"} en Gmail`}>Abrir</ExternalLink> : null}
-              </li>;
-            })}
-          </ul>
-        ) : <p className="text-xs text-ink-muted">No hay correos capturados para este caso.</p>}
+        <CaseThreads key={card.opportunity_id} opportunityId={card.opportunity_id} />
       </Section>
 
       <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={openSignal} />

@@ -604,6 +604,7 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/person-suggestions",
         "/v2/workspace/opportunities/{opportunity_id}/notes",
         "/v2/workspace/opportunities/{opportunity_id}/mail-documents",
+        "/v2/workspace/opportunities/{opportunity_id}/threads",
         "/v2/workspace/opportunities/{opportunity_id}/quote-candidates",
         "/v2/workspace/opportunities/{opportunity_id}/purchase-order-candidates",
         "/v2/workspace/mail-sync",
@@ -726,3 +727,35 @@ def test_an_unread_pdf_has_no_contents_and_case_money_counts_only_vigente_revisi
     ]
     assert case_money(revs) == [{"currency": "CLP", "net_total": "1250"}, {"currency": "USD", "net_total": "10.50"},
                                 {"currency": "unread", "net_total": "1"}]
+
+
+def test_case_threads_group_by_cadena_label_the_party_and_hide_addresses() -> None:
+    from origenlab_api.v2.crm_workspace import case_threads
+
+    rows = [
+        # A client cadena: OrigenLab sends the quote, the client answers later (other time zone).
+        {"thread_id": "t1", "message_id": "m1", "sent_at": "2026-09-01T10:00:00-03:00", "subject": "Cotización balanza",
+         "sender": "Equipo OrigenLab <contacto@origenlab.cl>", "recipients": "Ana Ficticia <ana@lab-ficticio.example>",
+         "direction": "outbound", "documents": [{"filename": "CN00999.pdf"}]},
+        {"thread_id": "t1", "message_id": "m2", "sent_at": "2026-09-01T16:00:00Z", "subject": "RE: Cotización balanza",
+         "sender": "Ana Ficticia <ana@lab-ficticio.example>", "recipients": "contacto@origenlab.cl",
+         "direction": None, "documents": "[]"},
+        # A supplier cadena, newest of all.
+        {"thread_id": "t2", "message_id": "m3", "sent_at": "2026-09-03T09:00:00-03:00", "subject": "Fwd: Precio equipo",
+         "sender": "<ventas@fabricante-ficticio.example>", "recipients": "contacto@origenlab.cl", "direction": "inbound",
+         "documents": []},
+        # Only OrigenLab: an internal note to self.
+        {"thread_id": "t3", "message_id": "m4", "sent_at": "2026-08-01T09:00:00-03:00", "subject": "nota",
+         "sender": "contacto@origenlab.cl", "recipients": "contacto@origenlab.cl", "direction": "outbound", "documents": []},
+        {"thread_id": None, "message_id": "m5", "sent_at": "2026-09-04T00:00:00Z", "subject": "sin hilo", "sender": "", "documents": []},
+    ]
+    threads = case_threads(rows, supplier_domains=["fabricante-ficticio.example"])
+    assert [t["thread_id"] for t in threads] == ["t2", "t1", "t3"]
+    assert [t["kind"] for t in threads] == ["proveedor", "cliente", "interno"]
+    t1 = threads[1]
+    assert t1["subject"] == "Cotización balanza" and t1["count"] == 2
+    assert [m["message_id"] for m in t1["messages"]] == ["m2", "m1"]  # newest first
+    assert t1["messages"][0]["direction"] == "inbound" and t1["messages"][0]["from"] == "Ana Ficticia"
+    assert t1["messages"][1]["has_pdf"] is True and t1["url"].endswith("m2")
+    assert threads[0]["messages"][0]["from"] == "fabricante-ficticio.example"  # no name: domain, never the address
+    assert "@" not in json.dumps(threads)

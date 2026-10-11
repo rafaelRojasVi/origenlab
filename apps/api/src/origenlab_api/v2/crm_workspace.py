@@ -46,7 +46,7 @@ from origenlab_api.v2.campaign_history import (
     read_totals,
     replies_state,
 )
-from origenlab_api.v2.mail_rules import mail_direction
+from origenlab_api.v2.mail_rules import OWN_DOMAINS, mail_direction
 from origenlab_api.v2.marketing_audience import address_ref, addresses_in
 from origenlab_api.v2.person_suggestions import safe_person_suggestions
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
@@ -633,6 +633,75 @@ def load_drive_ledgers(paths: Iterable[str | Path]) -> dict[str, DriveLink]:
 
 def gmail_url(message_id: str | None) -> str | None:
     return GMAIL_MESSAGE_URL.format(message_id) if message_id else None
+
+
+def _instant(value: Any) -> float:
+    """An ISO timestamp as seconds since the epoch, for ordering across time zones; 0 if unreadable."""
+    try:
+        d = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return d.timestamp() if d.tzinfo else d.replace(tzinfo=None).timestamp()
+
+
+_REPLY_PREFIX_RE = re.compile(r"^\s*(?:(?:re|rv|fw|fwd|tr|aw|wg|sv)\s*:\s*)+", re.IGNORECASE)
+
+
+def case_threads(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[str] = ()) -> list[dict[str, Any]]:
+    """A case's emails as Gmail cadenas (threads), newest activity first, for «Correos del caso».
+
+    `rows` are the case's `gmail_message` evidence (`opportunity_threads`): thread id, message id,
+    sent_at, subject, raw sender and recipients, direction and the documents the message carries.
+    Each cadena is labelled by the outside party in it (who wrote to OrigenLab, or whom OrigenLab
+    wrote to): «proveedor» when one of their domains is a registered supplier or manufacturer,
+    «interno» when nobody outside OrigenLab takes part, else «cliente». A sender is shown by display
+    name, else by domain: never the full address.
+    """
+    suppliers = {d.lower() for d in supplier_domains}
+    by_thread: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        tid = r.get("thread_id")
+        if not tid:
+            continue
+        pairs = [(n, a) for n, a in getaddresses([r.get("sender") or ""]) if a]
+        name, addr = pairs[0] if pairs else ("", "")
+        domain = addr.rsplit("@", 1)[1].lower() if "@" in addr else None
+        direction = r.get("direction") or ("outbound" if domain in OWN_DOMAINS else "inbound")
+        docs = r.get("documents")
+        docs = json.loads(docs) if isinstance(docs, str) else (docs or [])
+        if direction == "inbound":
+            party = {domain} if domain and domain not in OWN_DOMAINS else set()
+        else:
+            party = {a.rsplit("@", 1)[1].lower() for _, a in getaddresses([(r.get("recipients") or "").replace(";", ",")])
+                     if "@" in a} - set(OWN_DOMAINS)
+        by_thread[tid].append({
+            "_party": party,
+            "message_id": r.get("message_id"),
+            "sent_at": r.get("sent_at"),
+            "direction": direction,
+            "from": (name or "").strip() or (domain or None),
+            "_domain": domain,
+            "subject": r.get("subject"),
+            "has_pdf": any(str(d.get("filename") or "").lower().endswith(".pdf") for d in docs if isinstance(d, dict)),
+            "url": gmail_url(r.get("message_id")),
+        })
+    out: list[dict[str, Any]] = []
+    for tid, msgs in by_thread.items():
+        msgs.sort(key=lambda m: _instant(m.get("sent_at")))
+        outside = set().union(*(m["_party"] for m in msgs))
+        kind = "proveedor" if outside & suppliers else "interno" if not outside else "cliente"
+        subject = next((m["subject"] for m in msgs if m.get("subject")), None)
+        out.append({
+            "thread_id": tid,
+            "subject": _REPLY_PREFIX_RE.sub("", subject).strip() if subject else None,
+            "kind": kind,
+            "count": len(msgs),
+            "last_at": msgs[-1].get("sent_at"),
+            "url": msgs[-1].get("url"),
+            "messages": [{k: v for k, v in m.items() if not k.startswith("_")} for m in reversed(msgs)],
+        })
+    out.sort(key=lambda t: _instant(t.get("last_at")), reverse=True)
+    return out
 
 
 def _first_address(recipients: str | None) -> tuple[str | None, int]:
@@ -2226,6 +2295,68 @@ class CrmWorkspaceRepository:
             )
             notes = self._rows(cur)
         return {"opportunity_id": opportunity_id, "notes": notes}
+
+    def opportunity_threads(self, opportunity_id: str) -> dict[str, Any] | None:
+        """Every captured email on the Gmail threads of one case, grouped by thread (`case_threads`).
+
+        The threads are the ones `_SQL_PIPELINE_CONTACT` reads: any thread with an email linked to
+        the case, plus the threads its quote revisions came from. `None` when the case does not exist.
+        """
+        with self._read() as cur:
+            cur.execute("select 1 from crm.opportunity where id = %s::uuid", (opportunity_id,))
+            if cur.fetchone() is None:
+                return None
+            cur.execute(
+                """
+                with threads as (
+                    select sr.payload->>'gmail_thread_id' as thread_id
+                      from crm.opportunity_evidence oe
+                      join evidence.source_record sr on sr.id = oe.source_record_id
+                     where oe.opportunity_id = %(o)s::uuid and oe.unlinked_at is null
+                       and sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' is not null
+                    union
+                    select sr.payload->>'gmail_thread_id'
+                      from crm.quote_revision qr
+                      join crm.quote q on q.id = qr.quote_id
+                      join evidence.source_record sr on sr.id = qr.origin_source_record_id
+                     where q.opportunity_id = %(o)s::uuid and sr.kind = 'gmail_message'
+                       and sr.payload->>'gmail_thread_id' is not null
+                )
+                select distinct on (sr.payload->>'gmail_message_id')
+                       sr.payload->>'gmail_thread_id' as thread_id,
+                       sr.payload->>'gmail_message_id' as message_id,
+                       sr.payload->>'sent_at' as sent_at,
+                       sr.payload->>'subject_raw' as subject,
+                       sr.payload->>'sender' as sender,
+                       sr.payload->>'recipients' as recipients,
+                       (select cm.direction from comms.message cm
+                         where cm.provider_message_id = sr.payload->>'gmail_message_id'
+                         order by cm.created_at limit 1) as direction,
+                       case when jsonb_typeof(sr.payload->'documents') = 'array'
+                            then sr.payload->'documents' else '[]'::jsonb end as documents
+                  from threads t
+                  join evidence.source_record sr
+                    on sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = t.thread_id
+                 where not sr.is_quarantined and sr.review_status <> 'rejected'
+                 order by sr.payload->>'gmail_message_id', sr.created_at
+                """,
+                {"o": opportunity_id},
+            )
+            rows = self._rows(cur)
+            cur.execute(
+                """
+                select distinct d.domain_norm
+                  from crm.organization_domain d
+                  join crm.organization o on o.id = d.organization_id
+                 where d.removed_at is null
+                   and (o.kind in ('supplier', 'manufacturer')
+                        or exists (select 1 from crm.organization_relationship rel
+                                    where rel.organization_id = o.id and rel.role in ('supplier', 'manufacturer')
+                                      and (rel.valid_to is null or rel.valid_to > current_date)))
+                """
+            )
+            suppliers = [r[0] for r in cur.fetchall()]
+        return {"opportunity_id": opportunity_id, "threads": case_threads(rows, suppliers)}
 
     def opportunity_mail_documents(self, opportunity_id: str) -> dict[str, Any] | None:
         """The Gmail messages linked to one case and the documents each carries.

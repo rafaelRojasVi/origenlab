@@ -100,6 +100,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // cotización» / «Nueva revisión». GET-only, operator session required, the same UUID-shaped
   // segment and a literal `/mail-documents` tail. Recording a quote is `record-case-quotation`.
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/mail-documents$/,
+  // One case's emails as Gmail cadenas, for the drawer's «Correos del caso»: GET-only, operator
+  // session required, the same UUID-shaped segment and a literal `/threads` tail. Senders come
+  // by name or domain only (v2/crm_workspace.py `case_threads`).
+  /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/threads$/,
   // Strict read-only candidates for a PDF quoted in a different Gmail thread.
   // Never links evidence or writes a quote; exact UUID and literal tail only.
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/quote-candidates$/,

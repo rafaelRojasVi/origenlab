@@ -176,6 +176,16 @@ def get_opportunity_notes(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
     return body
 
 
+@workspace_router.get("/opportunities/{opportunity_id}/threads")
+def get_opportunity_threads(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
+    """The case's emails as Gmail cadenas, newest activity first, for the drawer's «Correos del
+    caso». A read only; senders by name or domain, never the full address."""
+    body = repo.opportunity_threads(str(opportunity_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    return body
+
+
 @workspace_router.get("/opportunities/{opportunity_id}/mail-documents")
 def get_opportunity_mail_documents(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
     """The Gmail messages linked to one case and the documents they carry, for the case drawer's

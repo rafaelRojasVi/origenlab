@@ -115,6 +115,7 @@ function stubApi({
   mailDocuments = MAIL_DOCUMENTS,
   quoteCandidates = { opportunity_id: CASE, candidates: [] },
   purchaseOrderCandidates = { opportunity_id: CASE, candidates: [] },
+  threads = { opportunity_id: CASE, threads: [] },
   organizationConfirmation = "confirmed",
   onPost = () => undefined,
 }: {
@@ -123,6 +124,7 @@ function stubApi({
   mailDocuments?: unknown;
   quoteCandidates?: unknown;
   purchaseOrderCandidates?: unknown;
+  threads?: unknown;
   organizationConfirmation?: "confirmed" | "machine_proposed";
   onPost?: Handler;
 }) {
@@ -150,6 +152,7 @@ function stubApi({
       }
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/notes`) return json(notes);
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/mail-documents`) return json(mailDocuments);
+      if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/threads`) return json(threads);
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/quote-candidates`) return json(quoteCandidates);
       if (call.method === "GET" && path === `/v2/workspace/opportunities/${CASE}/purchase-order-candidates`) return json(purchaseOrderCandidates);
       if (call.method === "GET" && path === "/v2/organizations") {
@@ -216,12 +219,16 @@ describe("case command helpers", () => {
       last_contact: { inbound: { at: "2026-10-07T12:00:00Z", subject: "Solicitud de balanza ficticia",
         url: "https://mail.google.com/mail/u/0/#all/example1", sender_name: "Persona Ficticia" }, outbound: null } });
     const calls = stubApi({ pipelines: [page([request])],
+      threads: { opportunity_id: CASE, threads: [{ thread_id: "t1", subject: "Solicitud de balanza ficticia", kind: "cliente",
+        count: 1, last_at: "2026-10-07T12:00:00Z", url: "https://mail.google.com/mail/u/0/#all/example1",
+        messages: [{ message_id: "example1", sent_at: "2026-10-07T12:00:00Z", direction: "inbound", from: "Persona Ficticia",
+          subject: "Solicitud de balanza ficticia", has_pdf: false, url: "https://mail.google.com/mail/u/0/#all/example1" }] }] },
       onPost: () => ({ body: receipt("advance_case_stage", "abandoned", 6, "aaaaaaaa-1234") }) });
     render(withSession(session("sales"), <PipelinePage initialOpportunityId={CASE} />));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Solicitud de balanza ficticia")).toBeInTheDocument();
-    expect(within(dialog).getByTitle(/Persona Ficticia/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("link", { name: "Abrir el último correo recibido en Gmail" })).toHaveAttribute("href",
+    expect(await within(dialog).findByText("Solicitud de balanza ficticia")).toBeInTheDocument();
+    expect(within(dialog).getByText("Persona Ficticia")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: /Abrir la cadena «Solicitud de balanza ficticia» en Gmail/ })).toHaveAttribute("href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/example1");
     fireEvent.click(within(dialog).getByRole("button", { name: "No es una solicitud" }));
     const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
