@@ -193,3 +193,47 @@ def test_pdf_text_never_raises_and_is_empty_without_a_text_layer_or_without_popp
     assert pdf_text(b"not a pdf at all") == ""
     monkeypatch.setattr("origenlab_worker.quote_reader.shutil.which", lambda _name: None)
     assert pdf_text(_minimal_pdf("COTIZACION FICTICIA")) == ""
+
+
+# ── final-review fixes (2026-10-11) ───────────────────────────────────────────────────────────
+
+def test_a_pdf_without_a_text_layer_is_refused_when_poppler_could_have_read_it(monkeypatch) -> None:
+    monkeypatch.setattr("origenlab_worker.quote_reader.pdftotext_available", lambda: True)
+    with pytest.raises(ReadRefused) as caught:
+        read_document(b"x", SHA, reader=Reader(_message(_extraction())), model=MODEL, text="")
+    assert caught.value.code == "no_text_layer"
+
+
+def test_the_prompt_says_only_origenlab_issues_a_quote_never_labdelivery() -> None:
+    system = build_request(b"x", model=MODEL)["system"][0]["text"]
+    assert "Labdelivery" in system
+
+
+def test_a_missing_neto_is_the_sum_of_the_lines_and_no_line_total_at_all_is_unreadable() -> None:
+    reading, _ = read_document(b"x", SHA, reader=Reader(_message(_extraction(subtotal_net=None))), model=MODEL, text=TEXT)
+    assert reading.payload["net_total"] == "2236000"
+    lines = [{**ln, "line_total": None} for ln in _extraction()["lines"]]
+    with pytest.raises(ReadRefused) as caught:
+        read_document(b"x", SHA, reader=Reader(_message(_extraction(lines=lines, subtotal_net=None))), model=MODEL, text=TEXT)
+    assert caught.value.code == "unreadable"
+
+
+def test_the_neto_check_still_runs_when_one_line_has_no_total() -> None:
+    lines = _extraction()["lines"]
+    lines[1]["line_total"] = None  # an «incluido» row: the printed neto must still match the rest
+    with pytest.raises(ReadRefused) as caught:
+        read_document(b"x", SHA, reader=Reader(_message(_extraction(lines=lines, subtotal_net="9000000"))),
+                      model=MODEL, text=TEXT)
+    assert caught.value.code == "net_mismatch"
+
+
+def test_an_absurd_amount_or_a_nul_byte_never_reaches_the_database() -> None:
+    lines = _extraction()["lines"]
+    lines[0]["qty"] = "10000000000000"  # numeric(18,6) holds less
+    with pytest.raises(ReadRefused) as caught:
+        read_document(b"x", SHA, reader=Reader(_message(_extraction(lines=lines))), model=MODEL, text=TEXT)
+    assert caught.value.code == "unreadable"
+    lines = _extraction()["lines"]
+    lines[0]["description"] = "Equipo\x00ficticio"
+    reading, _ = read_document(b"x", SHA, reader=Reader(_message(_extraction(lines=lines))), model=MODEL, text=TEXT)
+    assert "\x00" not in reading.lines[0]["description"]

@@ -349,6 +349,8 @@ _SIX = Decimal("0.000001")
 #: Client fields read only to withhold line strings that repeat them; never written anywhere.
 _CLIENT_FIELDS = ("client_institution", "client_unit", "client_contact")
 _MIN_IDENTITY = 4
+#: What `evidence.document_line` can hold: numeric(18,6) for qty, numeric(18,4) for money.
+_LIMIT = {_SIX: Decimal("1e12"), _FOUR: Decimal("1e14")}
 
 
 def _line_amount(field: str, value: Any, step: Decimal) -> Decimal | None:
@@ -362,6 +364,8 @@ def _line_amount(field: str, value: Any, step: Decimal) -> Decimal | None:
         raise ValueError(f"{field}: not a number")
     if number < 0:
         raise ValueError(f"{field}: negative")
+    if number >= _LIMIT[step]:
+        raise ValueError(f"{field}: too large for the column")
     if number != number.quantize(step):
         raise ValueError(f"{field}: more decimals than the column holds")
     return number
@@ -374,7 +378,7 @@ def _line_text(field: str, value: Any) -> str | None:
         value = str(value)
     if not isinstance(value, str):
         raise ValueError(f"{field}: not text")
-    return value.strip() or None
+    return value.replace("\x00", "").strip() or None
 
 
 def identities_of(extraction: Mapping[str, Any]) -> list[str]:

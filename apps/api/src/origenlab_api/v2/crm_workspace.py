@@ -547,7 +547,9 @@ def load_drive_ledgers(paths: Iterable[str | Path]) -> dict[str, DriveLink]:
 
 
 #: The quote reader's refusal codes (apps/worker quote_reader.py); anything else is shown as «other».
-QUOTE_READ_CODES = frozenset({"not_origenlab_quote", "too_many_disputed", "net_mismatch", "model_refused", "unreadable"})
+QUOTE_READ_CODES = frozenset({"not_origenlab_quote", "too_many_disputed", "net_mismatch", "model_refused", "unreadable",
+                              "no_text_layer", "request_failed", "write_failed", "hash_mismatch",
+                              "attachment_not_in_eml"})
 
 
 def quote_reading_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:

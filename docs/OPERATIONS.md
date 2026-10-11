@@ -2101,10 +2101,12 @@ read them with no other change. At most 10 per run (`--limit`, 1–50), one tran
 
 **How it reads.** Claude reads the PDF (a `document` block, untrusted framing, closed JSON schema);
 the Plantilla parser reads `pdftotext -layout` of the same PDF and every line total is cross-checked
-(`verified` / `disputed` / `single_source`). Without poppler on the host the cross-check is silent
-(every line `single_source`). With the model off nothing is written: the run counts `model_off`.
+(`verified` / `disputed` / `single_source`). Without poppler on the host the cross-check
+would be silent, so a model without poppler is refused as configuration (`pdftotext_missing`). With the
+model off nothing is written: the run counts `model_off`.
 
-**Refusals** (nothing written; one `quote_read` observation, `value_norm quote_read:v1:<ISO week>`,
+**Refusals** (nothing written; one `quote_read` observation per PDF, `value_norm
+quote_read:v1:<ISO week>:<pdf sha256>`,
 listed in Datos → «Acciones automáticas» → «Cotizaciones no leídas»; retried after 7–14 days, or at
 once after a reader version bump):
 
@@ -2113,7 +2115,15 @@ once after a reader version bump):
 | `not_origenlab_quote` | the model says it is not an OrigenLab quotation, or Labdelivery appears in it |
 | `too_many_disputed` | more than a third of the cross-checked lines disagree with the PDF's text |
 | `net_mismatch` | the printed neto is more than 1 % off the sum of the non-optional lines |
-| `model_refused` / `unreadable` | the model refused or truncated, or the answer did not validate |
+| `model_refused` / `unreadable` | the model refused or truncated, the answer did not validate, or no line carries a total |
+| `no_text_layer` | poppler read no text (a scanned page): nothing to cross-check or to find a Labdelivery letterhead in |
+| `request_failed` / `write_failed` | the API refused the PDF for good (a 4xx other than 408/409/429), or a value cannot be stored |
+| `hash_mismatch` / `attachment_not_in_eml` | the stored `.eml` is not the captured one, or does not carry the PDF |
+
+A transient failure (network, 429, 5xx) is only counted (`error:<Class>`) and retried next run; one
+PDF never stops the run. A model without `pdftotext` on the host, a model id the worker does not know,
+or a model without the key is a configuration refusal (exit 3) before anything is read; the run's log
+line says `text_layer: pdftotext` when poppler is present.
 
 **Enable (owner):** apply `20261012100000_slice7_quote_reader.sql` to hosted first (the worker's
 write grant); run `apps/worker/scripts/quote_read_eval.py` against a local copy and the private PDF

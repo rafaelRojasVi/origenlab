@@ -57,6 +57,7 @@ from origenlab_worker.quote_reader import (
     QUOTE_READ_REQUIRED_POLICIES,
     QUOTE_READ_REQUIRED_PRIVILEGES,
     QuoteReader,
+    pdftotext_available,
 )
 from origenlab_worker.storage import S3EmlStore, StorageConfig
 from origenlab_worker.triage import DEFAULT_SINCE_DAYS
@@ -76,8 +77,8 @@ ENV_DRIVE_CASOS = "ORIGENLAB_WORKER_DRIVE_CASOS_FOLDER_ID"
 ENV_DRIVE_PROTECTED = "ORIGENLAB_WORKER_DRIVE_PROTECTED_FOLDER_IDS"
 ENV_DRIVE_PRINCIPAL = "ORIGENLAB_WORKER_DRIVE_EXPECTED_PRINCIPAL"
 ENV_DRIVE_ENABLED = "ORIGENLAB_WORKER_DRIVE_FILING_ENABLED"
-#: `quote-read` (quote_reader.py): `true` to read; the model id, or `off` for the template alone
-#: (the default until the evaluation gate passes); the Anthropic key, required unless `off`.
+#: `quote-read` (quote_reader.py): `true` to read; the model id, or `off` (the default until the
+#: evaluation gate passes: nothing is written); the Anthropic key, required unless `off`.
 ENV_QUOTE_READ_ENABLED = "ORIGENLAB_WORKER_QUOTE_READ_ENABLED"
 ENV_QUOTE_READ_MODEL = "ORIGENLAB_WORKER_QUOTE_READ_MODEL"
 ENV_QUOTE_READ_KEY = "ORIGENLAB_WORKER_ANTHROPIC_API_KEY"
@@ -177,8 +178,18 @@ def quote_config_from_env(env: Mapping[str, str]) -> QuoteConfig:
     """`quote-read`'s settings. A model other than `off` needs the Anthropic key."""
     model = (env.get(ENV_QUOTE_READ_MODEL) or MODEL_OFF).strip() or MODEL_OFF
     key = (env.get(ENV_QUOTE_READ_KEY) or "").strip() or None
-    if model != MODEL_OFF and key is None:
-        raise ConfigRefused("anthropic_api_key_missing")
+    if model != MODEL_OFF:
+        from origenlab_api.v2.catalog.enrichment import check_model_id
+
+        try:
+            check_model_id(model)
+        except ValueError:
+            raise ConfigRefused("model_invalid") from None
+        if key is None:
+            raise ConfigRefused("anthropic_api_key_missing")
+        if not pdftotext_available():
+            # Without poppler there is no text to cross-check or to find a Labdelivery letterhead in.
+            raise ConfigRefused("pdftotext_missing")
     database = remote_worker_target(
         env.get(ENV_DATABASE_URL) or "",
         expected_host=env.get(ENV_EXPECTED_HOST),
@@ -315,7 +326,8 @@ def run_quote_read(args: Any, env: Mapping[str, str], components: QuoteComponent
                     return _emit_line(line, started)
             counts = QuoteReader(conn, store, reader, config.model).run(limit=max(1, min(int(args.limit), 50)))
             # A refused document is recorded by code and not retried this week; it never fails the cron.
-            line.update(counts.as_log(), model=config.model)
+            line.update(counts.as_log(), model=config.model,
+                        text_layer="pdftotext" if pdftotext_available() else "none")
     except ConfigRefused as exc:
         line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
     except _Terminated:

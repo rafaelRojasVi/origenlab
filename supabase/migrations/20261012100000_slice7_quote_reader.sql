@@ -23,7 +23,7 @@ alter table evidence.assertion
   ));
 
 comment on column evidence.assertion.kind is
-  'Closed observation vocabulary. document_reference records that a stored document names a commercial subject; unsubscribe_request records that a reply asked for no more marketing; message_triage is the mail-triage worker reading of one message; product_mention is one product a message names; delivery_failure is the versioned conservative NDR analysis for one captured message; quote_read records that the quote reader refused to read a quote PDF, with the reason code (value_norm quote_read:v<N>:<ISO week>). Machine observations are evidence, not a second CRM or suppression authority.';
+  'Closed observation vocabulary. document_reference records that a stored document names a commercial subject; unsubscribe_request records that a reply asked for no more marketing; message_triage is the mail-triage worker reading of one message; product_mention is one product a message names; delivery_failure is the versioned conservative NDR analysis for one captured message; quote_read records that the quote reader refused to read a quote PDF, with the reason code (value_norm quote_read:v<N>:<ISO week>:<pdf sha256> — one per PDF and week). Machine observations are evidence, not a second CRM or suppression authority.';
 
 grant select, insert on evidence.document_line to origenlab_worker;
 create policy origenlab_worker_select on evidence.document_line for select to origenlab_worker using (true);

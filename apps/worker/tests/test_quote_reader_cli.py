@@ -72,3 +72,18 @@ def test_with_the_model_off_it_runs_without_a_key_and_reports_counts(capsys, mon
     line = _line(capsys)
     assert (line["event"], line["mode"], line["read"], line["refused"]) == ("quote_read", "read", 1, {"unreadable": 1})
     assert seen == {"reader": None, "model": "off", "limit": 4}
+
+
+def test_an_unknown_model_id_is_a_configuration_refusal(capsys) -> None:
+    env = {**STORAGE, "ORIGENLAB_WORKER_QUOTE_READ_ENABLED": "true", "ORIGENLAB_WORKER_QUOTE_READ_MODEL": "gpt-banana",
+           "ORIGENLAB_WORKER_ANTHROPIC_API_KEY": "k"}
+    assert cli.main(["quote-read"], env, quote_components=lambda c: (_ for _ in ()).throw(AssertionError())) == 3
+    assert _line(capsys)["error"] == "model_invalid"
+
+
+def test_a_model_without_pdftotext_is_a_configuration_refusal(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli, "pdftotext_available", lambda: False)
+    env = {**STORAGE, "ORIGENLAB_WORKER_QUOTE_READ_ENABLED": "true", "ORIGENLAB_WORKER_QUOTE_READ_MODEL": "claude-opus-5-5",
+           "ORIGENLAB_WORKER_ANTHROPIC_API_KEY": "k"}
+    assert cli.main(["quote-read"], env, quote_components=lambda c: (_ for _ in ()).throw(AssertionError())) == 3
+    assert _line(capsys)["error"] == "pdftotext_missing"

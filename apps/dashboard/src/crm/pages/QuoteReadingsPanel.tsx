@@ -14,7 +14,12 @@ const REASON: Record<QuoteReading["code"], string> = {
   too_many_disputed: "Muchas líneas no cuadran con el PDF",
   net_mismatch: "El neto no cuadra con las líneas",
   model_refused: "El lector no pudo leerla",
-  unreadable: "El PDF no tiene texto legible",
+  unreadable: "La respuesta del lector no se pudo usar",
+  no_text_layer: "El PDF no tiene texto (¿escaneado?)",
+  request_failed: "El lector rechazó el PDF (¿protegido o muy grande?)",
+  write_failed: "Un valor del PDF no cabe en el registro",
+  hash_mismatch: "El correo guardado no coincide con el original",
+  attachment_not_in_eml: "El PDF no está en el correo guardado",
   other: "Motivo no reconocido",
 };
 
