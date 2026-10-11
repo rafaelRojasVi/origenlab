@@ -17,6 +17,7 @@ dependencies = [
     "procrastinate[psycopg]==3.10.0",
     # The triage's model stage (triage_model.py): the official SDK, as apps/api's enrichment uses.
     "anthropic>=1.11.0",
+    "pypdf>=6.20.0",
 ]
 
 [project.scripts]
