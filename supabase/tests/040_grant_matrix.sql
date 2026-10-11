@@ -4,7 +4,7 @@
 -- probes as each runtime role.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(47);
+select plan(50);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -137,10 +137,10 @@ insert into expected values
     ('catalog', 'cost_parameter', 'origenlab_api', 'SI', null, 'SI'),
     ('catalog', 'cost_parameter', 'origenlab_worker', '', null, ''),
     -- evidence.document_line — api inserts lines and reviews a disputed one (column-level UPDATE of
-    -- the money, the optional flag and the review fields; never the line's identity); the worker
-    -- holds nothing.
+    -- the money, the optional flag and the review fields; never the line's identity); since
+    -- 20261012100000 the worker's quote reader reads and inserts lines, never updates them.
     ('evidence', 'document_line', 'origenlab_api', 'SI', array['qty', 'unit_price', 'line_total', 'optional', 'check_status', 'reviewed_by_operator_id', 'reviewed_at', 'review_note', 'updated_at'], 'SIU'),
-    ('evidence', 'document_line', 'origenlab_worker', '', null, ''),
+    ('evidence', 'document_line', 'origenlab_worker', 'SI', null, 'SI'),
     -- 20261006180200: evidence.triage_review — append-only verdicts: api reads and inserts, never
     -- updates; the worker reads them to evaluate its readings.
     ('evidence', 'triage_review', 'origenlab_api', 'SI', null, 'SI'),
@@ -268,6 +268,9 @@ select is(left(pg_temp.run_as('origenlab_api', 'update evidence.assertion set va
 -- worker: comms/evidence/procurement/catalog writes allowed; crm, outbound and platform writes refused.
 select is(left(pg_temp.run_as('origenlab_worker', 'insert into comms.mailbox (address_norm) select ''m@example.test'' where false'), 2), 'ok', 'worker may write comms.mailbox');
 select is(left(pg_temp.run_as('origenlab_worker', 'insert into evidence.source_record (kind, dedupe_key, payload) select ''workbook_import'', ''k'', ''{}''::jsonb where false'), 2), 'ok', 'worker may write evidence.source_record');
+select is(left(pg_temp.run_as('origenlab_worker', 'insert into evidence.document_line (source_record_id, line_no, currency, extractor, check_status) select gen_random_uuid(), 1, ''CLP'', ''x'', ''single_source'' where false'), 2), 'ok', 'worker (quote reader) may insert evidence.document_line');
+select is(left(pg_temp.run_as('origenlab_worker', 'update evidence.document_line set line_total = 0 where false'), 5), '42501', 'worker may never update a document line: review stays the API''s');
+select is(left(pg_temp.run_as('origenlab_worker', 'delete from evidence.document_line where false'), 5), '42501', 'worker may never delete a document line');
 select is(left(pg_temp.run_as('origenlab_worker', 'insert into procurement.notice (codigo_externo, head) select ''x'', ''{}''::jsonb where false'), 2), 'ok', 'worker may write procurement.notice');
 select is(left(pg_temp.run_as('origenlab_worker', 'insert into crm.organization (kind, name, confirmation) select ''company'', ''w'', ''confirmed'' where false'), 5), '42501', 'worker may not write crm.organization');
 select is(left(pg_temp.run_as('origenlab_worker', 'insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind) select ''task'', gen_random_uuid(), 1, ''task.created'', 1, ''{}''::jsonb, ''worker'' where false'), 5), '42501', 'worker may not write crm.domain_event directly');
