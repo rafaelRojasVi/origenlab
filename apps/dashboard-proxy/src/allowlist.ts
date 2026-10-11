@@ -100,6 +100,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // cotización» / «Nueva revisión». GET-only, operator session required, the same UUID-shaped
   // segment and a literal `/mail-documents` tail. Recording a quote is `record-case-quotation`.
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/mail-documents$/,
+  // The quote PDFs the quote reader refused (Datos → «Acciones automáticas»): GET-only, exact path.
+  /^\/v2\/workspace\/quote-readings$/,
   // Strict read-only candidates for a PDF quoted in a different Gmail thread.
   // Never links evidence or writes a quote; exact UUID and literal tail only.
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/quote-candidates$/,

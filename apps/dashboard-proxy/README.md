@@ -59,6 +59,7 @@ Five exact GET paths (`src/allowlist.ts`), nothing under or beside them:
 | GET | `/v2/workspace/equipment-interests` | observed equipment interests per line, institution and destination; CRM people apart from address-only evidence |
 | GET | `/v2/workspace/person-suggestions` | people the quote emails name and the CRM does not hold yet (name, address, institution, quotes, last date); addresses masked for `viewer`; creates nothing |
 | GET | `/v2/workspace/opportunities/<uuid>/notes` | the notes on one case, for the case drawer's «Registrar seguimiento» (same shape as person/organization notes); writing one is `add-note` |
+| GET | `/v2/workspace/quote-readings` | the quote PDFs the quote reader refused: quotation, revision, reason code, when |
 | GET | `/v2/workspace/opportunities/<uuid>/mail-documents` | the Gmail messages linked to one case and the documents each carries (file name, SHA-256, capture's quote-number tokens, whether already a quote revision), for «Registrar cotización»; recording one is `record-case-quotation` |
 
 Same guarantees as every V2 read: the session cookie is the only cookie forwarded, the

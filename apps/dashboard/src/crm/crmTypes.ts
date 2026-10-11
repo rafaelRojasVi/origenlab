@@ -494,3 +494,19 @@ export interface HistoryItem {
 export interface HistoryResponse {
   items: HistoryItem[];
 }
+
+/** `GET /v2/workspace/quote-readings`: the quote PDFs the quote reader refused. */
+export interface QuoteReading {
+  quote_number: string | null;
+  revision_no: number | null;
+  sent_at: string | null;
+  code: "not_origenlab_quote" | "too_many_disputed" | "net_mismatch" | "model_refused" | "unreadable" | "other";
+  reader_version: string | null;
+  recorded_at: string | null;
+  opportunity_id: string | null;
+  case_title: string | null;
+}
+
+export interface QuoteReadingsResponse {
+  items: QuoteReading[];
+}

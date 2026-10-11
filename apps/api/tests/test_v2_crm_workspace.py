@@ -604,6 +604,7 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/person-suggestions",
         "/v2/workspace/opportunities/{opportunity_id}/notes",
         "/v2/workspace/opportunities/{opportunity_id}/mail-documents",
+        "/v2/workspace/quote-readings",
         "/v2/workspace/opportunities/{opportunity_id}/quote-candidates",
         "/v2/workspace/opportunities/{opportunity_id}/purchase-order-candidates",
         "/v2/workspace/mail-sync",
@@ -678,3 +679,20 @@ def test_drive_file_records_link_revisions_and_a_ledger_link_wins() -> None:
     assert (a["file_id"], a["folder_id"], a["original_filename"]) == ("f-a", "folder-a", "01250-26 r1 — Cliente.pdf")
     assert a["file_url"] == "https://drive.google.com/file/d/f-a/view"
     assert a["folder_url"] == "https://drive.google.com/drive/folders/folder-a"
+
+
+def test_quote_readings_name_the_quote_the_reason_and_the_week_never_text() -> None:
+    from origenlab_api.v2.crm_workspace import quote_reading_rows
+
+    rows = [
+        {"value_norm": "quote_read:v1:2026-W41", "code": "net_mismatch", "recorded_at": "2026-10-12T10:00:00+00:00",
+         "quote_number": "00999-26", "revision_no": 1, "sent_at": "2026-10-08T12:00:00+00:00",
+         "opportunity_id": "o-1", "case_title": "Caso ficticio"},
+        {"value_norm": "quote_read:v1:2026-W41", "code": "something_new", "recorded_at": "2026-10-12T09:00:00+00:00",
+         "quote_number": "00998-26", "revision_no": 2, "sent_at": None, "opportunity_id": "o-2", "case_title": None},
+    ]
+    out = quote_reading_rows(rows)
+    assert out[0] == {"quote_number": "00999-26", "revision_no": 1, "sent_at": "2026-10-08T12:00:00+00:00",
+                      "code": "net_mismatch", "reader_version": "quote_read:v1", "recorded_at": "2026-10-12T10:00:00+00:00",
+                      "opportunity_id": "o-1", "case_title": "Caso ficticio"}
+    assert out[1]["code"] == "other"  # an unknown code is never passed through as text

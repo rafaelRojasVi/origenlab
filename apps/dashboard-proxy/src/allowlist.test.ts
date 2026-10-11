@@ -667,6 +667,15 @@ describe("CRM part A: confirm an institution, suggested people", () => {
     }
   });
 
+  it("forwards GET of the quote reader's refusals by its exact path, never as a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/quote-readings")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/quote-readings")).toBe(false);
+    for (const p of ["/v2/workspace/quote-readings/", "/v2/workspace/quote-readings/x", "/v2/workspace/quote-reading"]) {
+      expect(isAllowedUpstreamPath(p), p).toBe(false);
+    }
+  });
+
   it("allows only the UUID-scoped cross-thread quote-candidate read", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
