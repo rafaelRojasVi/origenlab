@@ -106,9 +106,14 @@ def test_a_refused_pdf_writes_one_observation_no_line_and_is_not_retried_this_we
     assert len(seen) == 1 and seen[0][0].startswith("quote_read:v1:") and seen[0][1] == "not_origenlab_quote"
 
 
-def test_with_the_model_off_a_pdf_without_a_text_layer_is_refused_unreadable(dsn, mailbox_id) -> None:
+def test_with_the_model_off_nothing_is_written_or_recorded(dsn, mailbox_id) -> None:
     store = _Store()
-    _seed_quote(dsn, mailbox_id, pdf=_pdf(uuid.uuid4().hex), quote_number="00995-26", store=store)
+    quote = _seed_quote(dsn, mailbox_id, pdf=_pdf(uuid.uuid4().hex), quote_number="00995-26", store=store)
     with _conn(dsn) as conn:
         counts = QuoteReader(conn, store, None, "off").run()
-    assert counts.as_log()["refused"].get("unreadable", 0) >= 1
+        assert counts.as_log()["refused"].get("model_off", 0) >= 1
+        assert QuoteReader(conn, store, None, "off").run().candidates >= 1  # still waiting for the model
+    assert _documents(dsn, quote["sha"]) == []
+    assert owner_rows(dsn, "select count(*) from evidence.assertion a join crm.quote_revision r "
+                           "on r.origin_source_record_id = a.source_record_id where a.kind = 'quote_read' "
+                           "and r.pdf_sha256 = %s", (quote["sha"],)) == [(0,)]

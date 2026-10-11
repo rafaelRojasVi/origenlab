@@ -16,6 +16,7 @@ from origenlab_worker.quote_reader import (
     ReadRefused,
     build_request,
     pdf_text,
+    pdftotext_available,
     read_document,
 )
 
@@ -183,6 +184,12 @@ def _minimal_pdf(text: str) -> bytes:
     return bytes(out)
 
 
-def test_pdf_text_reads_the_text_layer_and_never_raises() -> None:
+@pytest.mark.skipif(not pdftotext_available(), reason="poppler's pdftotext is not installed here")
+def test_pdf_text_reads_the_text_layer_with_pdftotext() -> None:
     assert "COTIZACION FICTICIA" in pdf_text(_minimal_pdf("COTIZACION FICTICIA"))
+
+
+def test_pdf_text_never_raises_and_is_empty_without_a_text_layer_or_without_poppler(monkeypatch) -> None:
     assert pdf_text(b"not a pdf at all") == ""
+    monkeypatch.setattr("origenlab_worker.quote_reader.shutil.which", lambda _name: None)
+    assert pdf_text(_minimal_pdf("COTIZACION FICTICIA")) == ""

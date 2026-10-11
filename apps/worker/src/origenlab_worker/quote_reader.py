@@ -4,15 +4,17 @@ refusal with a reason code (private spec 2026-10-11-quote-pdf-reader-design).
 
 Reading, pure (this module's first half):
 
-1. the PDF's text layer (`pdf_text`, pypdf layout mode) → the Plantilla's priced rows
+1. the PDF's text layer (`pdf_text`, `pdftotext -layout` when poppler is installed) → the Plantilla's priced rows
    (`history_check.parse_template_lines`);
 2. one Claude request with the PDF as a `document` block and a closed JSON schema — the history
    extraction's fields; the client's name and contact are asked for only to withhold line strings
    that repeat them (`history_check.document_lines`) and are never stored;
 3. `history_check.cross_check` marks each line `verified` / `disputed` / `single_source`.
 
-With the model off, the template rows alone are written (`template_v1`): models and totals, no
-descriptions. Nothing is written — `ReadRefused(code)` — when the PDF is not an OrigenLab quote,
+With the model off, `QuoteReader` writes nothing and counts the PDF `model_off`: the template rows
+alone missed lines, took optional rows into the neto and read REF codes as models on the 120
+history PDFs (2026-10-11 evaluation), so they would put wrong money in the panel. `read_document`
+keeps the template-only path (`template_v1`) for the evaluation script only. Nothing is written — `ReadRefused(code)` — when the PDF is not an OrigenLab quote,
 more than a third of the cross-checked lines are disputed, the printed neto is more than 1 % off
 the non-optional lines, the model refused or truncated, or the answer is unusable.
 
@@ -24,8 +26,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import io
 import json
+import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -143,16 +146,25 @@ class Reading:
     counts: dict[str, int] = field(default_factory=dict)
 
 
-def pdf_text(data: bytes) -> str:
-    """The PDF's text layer in layout mode, pages separated by form feeds; "" when it has none or
-    cannot be parsed (a scanned or broken PDF is the model's, or a refusal)."""
-    try:
-        from pypdf import PdfReader
+def pdftotext_available() -> bool:
+    return shutil.which("pdftotext") is not None
 
-        reader = PdfReader(io.BytesIO(data), strict=False)
-        return "\f".join((page.extract_text(extraction_mode="layout") or "") for page in reader.pages)
-    except Exception:  # noqa: BLE001 - any parse failure means "no text layer"
+
+def pdf_text(data: bytes) -> str:
+    """The PDF's text layer as `pdftotext -layout` prints it — the layout the Plantilla parser was
+    built and verified on (the 2026-10-06 history import; pypdf's layout text matched it for only
+    17 of 130 quotes, so it is not used). "" when poppler is not installed, the PDF has no text
+    layer, or the tool fails: the template cross-check then has nothing to say, never a guess."""
+    if not pdftotext_available():
         return ""
+    try:
+        done = subprocess.run(["pdftotext", "-layout", "-q", "-", "-"], input=data, capture_output=True,
+                              timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if done.returncode != 0:
+        return ""
+    return done.stdout.decode("utf-8", errors="replace")
 
 
 def build_request(pdf: bytes, *, model: str) -> dict[str, Any]:
@@ -367,6 +379,9 @@ class QuoteReader:
         return rows
 
     def read_one(self, c: dict[str, Any], counts: ReadCounts) -> None:
+        if self._reader is None:
+            counts.refuse("model_off")  # nothing written, nothing recorded: read once the key is set
+            return
         sha = str(c["pdf_sha256"]).lower()
         raw = self._store.get(storage_key(str(c["eml_storage_path"])))
         if c.get("eml_sha256") and hashlib.sha256(raw).hexdigest() != c["eml_sha256"]:
@@ -421,5 +436,5 @@ class QuoteReader:
 
 __all__ = ["DEFAULT_LIMIT", "EXTRACTION_SCHEMA", "EXTRACTOR_AI", "EXTRACTOR_TEMPLATE", "LOCK_NAME", "MODEL_OFF",
            "QUOTE_READ_REQUIRED_POLICIES", "QUOTE_READ_REQUIRED_PRIVILEGES", "READER_VERSION", "QuoteReader",
-           "ReadCounts", "ReadRefused", "Reading", "build_request", "parse_extraction", "pdf_text", "read_document",
-           "week_tags"]
+           "ReadCounts", "ReadRefused", "Reading", "build_request", "parse_extraction", "pdf_text", "pdftotext_available",
+           "read_document", "week_tags"]
