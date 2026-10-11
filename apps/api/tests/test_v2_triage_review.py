@@ -215,6 +215,42 @@ def test_the_queue_lists_what_the_model_read_with_its_case_stage_and_hides_noise
 
 
 @needs_db
+def test_the_queue_lists_only_the_newest_triage_version_and_keeps_an_earlier_verdict(world) -> None:
+    """A rule change bumps `TRIAGE_VERSION` and the worker reads every recent message again under
+    `triage:v<N+1>`, beside the old reading (OPERATIONS §8.11). The queue shows the message once,
+    by its newest reading; a verdict given on the older reading still means it was reviewed."""
+    from psycopg.types.json import Jsonb
+
+    repo = _repo(world)
+    source = _owner(world, "select source_record_id::text from evidence.assertion where id = %s", world["read"])[0][0]
+    v2 = _owner(world, "insert into evidence.assertion (source_record_id, kind, value_norm, value) values "
+                       "(%s, 'message_triage', 'triage:v2', %s) returning id::text", source,
+                Jsonb({"class": "business_other", "needs_model": True, "model_state": "off"}))[0][0]
+    # The requester reading shares the kind, never the version shape: it is not a triage row.
+    _owner(world, "insert into evidence.assertion (source_record_id, kind, value_norm, value) values "
+                  "(%s, 'message_triage', 'requester:v1', %s) returning id::text", source, Jsonb({"status": "none"}))
+
+    items = {i["assertion_id"]: i for i in repo.readings(status="pending", limit=200)["items"]}
+    assert world["read"] not in items and v2 in items
+    assert items[v2]["version"] == "triage:v2" and items[v2]["class"] == "business_other"
+    assert [i for i in items.values() if i["source_record_id"] == source] == [items[v2]]
+
+    # «triage:v10» sorts after «triage:v2» as a number, not as text.
+    v10 = _owner(world, "insert into evidence.assertion (source_record_id, kind, value_norm, value) values "
+                        "(%s, 'message_triage', 'triage:v10', %s) returning id::text", source,
+                 Jsonb({"class": "quote_request", "needs_model": True, "model_state": "off"}))[0][0]
+    items = {i["assertion_id"]: i for i in repo.readings(status="pending", limit=200)["items"]}
+    assert v10 in items and v2 not in items
+
+    # A verdict on the oldest reading reviews the message: the newest reading is no longer pending.
+    _review(world, {"assertion_id": world["read"], "verdict": "approved", "note": "visto"},
+            key=f"pytest-triage-newest-{world['read']}")
+    pending = {i["assertion_id"] for i in repo.readings(status="pending", limit=200)["items"]}
+    everything = {i["assertion_id"]: i for i in repo.readings(status="all", limit=200)["items"]}
+    assert v10 not in pending and everything[v10]["review"]["verdict"] == "approved"
+
+
+@needs_db
 def test_the_queue_says_when_the_sender_is_a_registered_supplier(world) -> None:
     def flag():
         items = {i["assertion_id"]: i for i in _repo(world).readings(status="all", limit=200)["items"]}

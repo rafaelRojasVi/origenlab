@@ -139,7 +139,60 @@ def test_free_mail_and_domain_are_reported_and_reasons_never_carry_text() -> Non
     (mail(subject="Consulta sobre ausencia de stock"), "business_other"),
     (mail(sender="no-reply@tmes.scanner.invalid", subject="Undelivered Mail Returned to Sender"), "bounce"),
     (mail(sender="system@wherex.com", subject="Wherex – Nueva Licitación de Ejemplo [Lic - 1]"), "tender_notice"),
-    (mail(subject="RE: Anulación OC 4600154766 Lab. Ejemplo"), "purchase_order"),
+    # v1 read this as a purchase order because of the OC number; the subject says the order is gone.
+    (mail(subject="RE: Anulación OC 4600154766 Lab. Ejemplo"), "lost"),
 ])
 def test_real_mail_cases(m: MailText, expected: str) -> None:
     assert cls(m) == expected
+
+
+# Cases from the 2026-10-11 audit of «Correos sin caso» (STATUS §2.7.91): v1 called every reply on
+# a quote thread a new quote request, because the quote word sat in the «RE:» subject or in the
+# quoted history. v2 reads the reply's own words.
+
+QUOTED = "\n\nEl mar, 2 sept 2026 a las 12:05, OrigenLab (<contacto@origenlab.cl>) escribió:\n> Adjunto cotización CN 1171 por el sonicador, precio neto.\n"
+
+
+@pytest.mark.parametrize("m,expected", [
+    # The budget phrase outranks the thread's «Solicitud de cotización» subject and the quoted CN.
+    (mail(subject="Re: Solicitud de cotización Hielscher",
+          body="Muchas gracias por toda la información. Lamentablemente, los equipos se salen de mi presupuesto actual."
+               + QUOTED), "lost"),
+    (mail(subject="RE: Anulación OC 4500000123 Lab. Ejemplo",
+          body="Le informo que se ha decidido dejar sin efecto la OC 4500000123, la cual fue anulada."), "lost"),
+    (mail(subject="RE: Cotización balanzas", body="Las balanzas ya fueron gestionadas por otro proveedor."), "lost"),
+    # A client answering on a quote thread with no new ask is not a new request: under a quoted CN
+    # it is a follow-up on that quote (the number links; v1 called all of these quote requests).
+    (mail(subject="RE: solicitud de cotizacion", body="Buenas tardes, adjunto dirección: Planta Ejemplo, Camino Ficticio km 1."
+          + QUOTED), "quote_followup"),
+    (mail(subject="Re: Cotización Medidor de Humedad", body="Adjunto comprobante con anticipo del medidor de humedad MB 32."
+          + QUOTED, names=("comprobante.pdf",)), "quote_followup"),
+    (mail(subject="Re: Cotización Sonicador Ultrasonido",
+          body="Muchas gracias por la información. La analizaré para ver cuál se acomoda a nuestro caso." + QUOTED),
+     "quote_followup"),
+    # … and without a number to link, a person the model (or an operator) reads.
+    (mail(subject="RE: solicitud de cotizacion", body="Buenas tardes, adjunto dirección: Planta Ejemplo, Camino Ficticio km 1."
+          "\n\nEl jue, 24 sept 2026, OrigenLab escribió:\n> Adjunto documento firmado."), "business_other"),
+    # A reply whose own words ask for a price is a request even under a «RE:» subject.
+    (mail(subject="RE: Cyber OrigenLab", body="¿Me podría cotizar una centrífuga refrigerada?"
+          "\n\nEl mié, 7 oct 2026, OrigenLab escribió:\n> Cyber OrigenLab: 5% a 10% en productos seleccionados."), "quote_request"),
+    # A pure forward carries its content below the forwarded header.
+    (mail(subject="Fwd: Solicitud de cotización balanzas",
+          body="De: Juan Pérez <juan@cliente.invalid>\nEnviado: lunes\nAsunto: balanzas\n\nNecesito cotizar 3 balanzas analíticas."),
+     "quote_request"),
+    # A supplier's price list is not a request, whatever «precio» says.
+    (mail(subject="LISTA DE PRECIOS EDICION 52 //CLIENTE", body="Estimado cliente, envío lista de precios edición 52.",
+          names=("Lista52.pdf",)), "business_other"),
+    # A fresh subject with the word is still a request; a purchase order is still an order.
+    (mail(subject="Solicitud de cotización", body="Buenos días"), "quote_request"),
+    (mail(subject="Orden de compra - Origenlab - Estándar", body="Le adjunto orden de compra 9001, correspondiente a cotización N° 00999-26.",
+          names=("OC 9001.pdf",)), "purchase_order"),
+])
+def test_v2_reads_the_replys_own_words(m: MailText, expected: str) -> None:
+    assert cls(m) == expected
+
+
+def test_a_cancelled_order_is_lost_before_it_is_an_order_and_says_so_without_text() -> None:
+    v = classify(TriageInput("inbound", (), mail(subject="RE: Anulación OC 4500000123 Lab. Ejemplo")))
+    assert v.triage_class == "lost" and v.reasons == ("subject:cancelled",)
+    assert v.purchase_order_numbers == ("4500000123",) and v.signals["lost"] and v.signals["purchase_order"]

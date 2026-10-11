@@ -10,6 +10,7 @@ import pytest
 from mailfixtures import make_raw
 from origenlab_worker.catalog_match import ProductCandidate
 from origenlab_worker.storage import StorageError
+from origenlab_worker.triage_rules import TRIAGE_VERSION
 from origenlab_worker.triage import (
     REQUESTER_VALUE_NORM,
     VALUE_NORM,
@@ -108,7 +109,7 @@ def test_a_quote_request_is_read_by_the_model_and_recorded_with_its_products() -
     sid, value, mentions, requester = db.recorded[0]
     assert sid == "sr-1" and value["class"] == "quote_request" and value["reading"]["stage"] == "lead"
     assert requester["status"] == "none"
-    assert mentions == [("UP200HT", {"triage_version": 1, "source": "model", "description": "Homogeneizador",
+    assert mentions == [("UP200HT", {"triage_version": TRIAGE_VERSION, "source": "model", "description": "Homogeneizador",
                                      "brand": None, "model": "UP200Ht", "quantity": 1, "catalog_product_id": "p-1"})]
     assert len(reader.requests) == 1
 
@@ -240,7 +241,7 @@ def test_mentions_are_deduplicated_and_fall_back_to_the_folded_description() -> 
 
 
 def test_the_reading_is_stored_under_the_versioned_value_norm() -> None:
-    assert VALUE_NORM == "triage:v1"
+    assert VALUE_NORM == "triage:v2"
     assert REQUESTER_VALUE_NORM == "requester:v1"
 
 

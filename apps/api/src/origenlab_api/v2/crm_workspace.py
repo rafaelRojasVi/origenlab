@@ -1717,6 +1717,13 @@ class CrmWorkspaceRepository:
                   join lateral (select p.address_norm from comms.message_participant p
                                  where p.message_id = m.id and p.role = 'from' limit 1) snd on true
                  where a.kind = 'message_triage' and a.value ->> 'class' = 'unsubscribe'
+                   and a.value_norm ~ '^triage:v[0-9]+$'
+                   -- the newest triage version of this message (OPERATIONS §8.11)
+                   and not exists (select 1 from evidence.assertion n
+                                    where n.source_record_id = a.source_record_id
+                                      and n.kind = 'message_triage' and n.value_norm ~ '^triage:v[0-9]+$'
+                                      and substring(n.value_norm from 'v([0-9]+)$')::int
+                                          > substring(a.value_norm from 'v([0-9]+)$')::int)
                    and m.direction = 'inbound'
                    and not exists (select 1 from outbound.contact_control c
                                     where c.scope = 'address' and c.value_norm = snd.address_norm
