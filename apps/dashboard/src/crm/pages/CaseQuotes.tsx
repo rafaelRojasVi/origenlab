@@ -111,6 +111,7 @@ export function CaseMoneySummary({ card }: { card: OpportunityCardData }) {
   const read = money.filter((m) => m.currency !== "unread");
   const unread = Number(money.find((m) => m.currency === "unread")?.net_total ?? 0);
   if (card.quotes.length === 0) return null;
+  const activeCount = card.quotes.map(currentRevision).filter((r) => r?.is_active).length;
   // IVA and total per currency come from the vigente revisions' own contents (CLP only).
   const clpGross = card.quotes
     .map(currentRevision)
@@ -126,7 +127,7 @@ export function CaseMoneySummary({ card }: { card: OpportunityCardData }) {
   return (
     <section aria-label="Monto cotizado" className="rounded-lg border border-line bg-canvas-raised px-4 py-3" data-testid="case-money">
       <p className="text-[11px] font-medium text-ink-muted">
-        Cotizado, neto
+        {activeCount > 1 ? `Suma de las ${activeCount} cotizaciones vigentes, neto` : "Cotizado, neto"}
       </p>
       {read.length === 0 ? (
         <p className="mt-1 text-sm text-ink-muted">Las cotizaciones de este caso aún no se han leído.</p>
@@ -243,16 +244,27 @@ function revisionStatus(rev: RevisionCard): { label: string; tone: "good" | "bad
   return rev.status === "sent" ? { label: "Enviada", tone: "good" } : { label: rev.status, tone: "neutral" };
 }
 
-function QuoteBlock({ q }: { q: QuoteCard }) {
+function QuoteBlock({ q, defaultOpen }: { q: QuoteCard; defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const cur = currentRevision(q);
   const older = q.revisions.filter((r) => r.revision_id !== cur?.revision_id).sort((a, b) => b.revision_no - a.revision_no);
   const net = cur?.contents ? formatMoney(cur.contents.net_total, cur.contents.currency) : null;
   const status = cur ? revisionStatus(cur) : null;
   return (
     <article className="rounded-lg border border-line bg-canvas-raised" data-testid="quote-block">
-      <header className="flex items-start gap-3 px-3 pt-3">
-        <div className="min-w-0">
-          <p className="flex flex-wrap items-center gap-1.5">
+      <header className="px-3 pt-3">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          aria-label={`${open ? "Contraer" : "Expandir"} cotización ${q.quote_number}`}
+          className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-start gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-canvas-sunken/70"
+        >
+        <span aria-hidden="true" className={`mt-1 text-[9px] text-ink-faint transition-transform duration-150 ${open ? "rotate-90" : ""}`}>
+          ▶
+        </span>
+        <span className="block min-w-0">
+          <span className="flex flex-wrap items-center gap-1.5">
             <span className="font-mono text-sm font-semibold text-ink">{q.quote_number}</span>
             {cur ? <span className="text-xs text-ink-muted">r{cur.revision_no}, {fmtDate(cur.sent_at)}</span> : null}
             {status ? (
@@ -260,14 +272,16 @@ function QuoteBlock({ q }: { q: QuoteCard }) {
                 {status.label}
               </Badge>
             ) : null}
-          </p>
-        </div>
+          </span>
+        </span>
         {net ? (
-          <p className="ml-auto whitespace-nowrap text-right text-sm font-semibold text-ink tabular-nums">
+          <span className="ml-auto whitespace-nowrap text-right text-sm font-semibold text-ink tabular-nums">
             {net}
-          </p>
+          </span>
         ) : null}
+        </button>
       </header>
+      {open ? (
       <div className="px-3 pb-3 pt-2">
         {cur?.contents ? (
           <Contents c={cur.contents} />
@@ -309,6 +323,7 @@ function QuoteBlock({ q }: { q: QuoteCard }) {
           </details>
         ) : null}
       </div>
+      ) : <div className="pb-2.5" />}
     </article>
   );
 }
@@ -324,7 +339,7 @@ export function QuoteList({ card }: { card: OpportunityCardData }) {
   return (
     <div className="space-y-3">
       {card.quotes.map((q) => (
-        <QuoteBlock key={q.quote_id} q={q} />
+        <QuoteBlock key={q.quote_id} q={q} defaultOpen={card.quotes.length === 1} />
       ))}
     </div>
   );

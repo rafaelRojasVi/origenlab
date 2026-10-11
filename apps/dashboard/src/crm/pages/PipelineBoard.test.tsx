@@ -5,7 +5,7 @@ import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { stagePath } from "../caseCommands";
 import { activityTimestamp, ageBucket, boardColumnOf, boardStatusLine, pausedUntil } from "../stage";
 import { moveRefusal } from "./CaseMove";
-import { Board, sortCards } from "./PipelineBoard";
+import { Board, columnMoney, sortCards } from "./PipelineBoard";
 
 // Every value below is invented; the repository is public.
 const NOW = new Date("2026-10-06T12:00:00Z");
@@ -327,5 +327,20 @@ describe("states", () => {
     render(<Board cards={[open, lost]} onOpen={() => undefined} now={NOW} />);
     expect(within(screen.getByTestId(`board-card-${open.opportunity_id}`)).getByTestId("board-product")).toHaveTextContent("Pipetas pasteur");
     expect(within(screen.getByTestId(`board-card-${lost.opportunity_id}`)).getByTestId("board-product")).toHaveTextContent("UP400St");
+  });
+});
+
+
+describe("money per column", () => {
+  it("adds the CLP neto of a column and counts cases whose quotes were never read", () => {
+    const read = card({ money: [{ currency: "CLP", net_total: "1000000" }] });
+    const partly = card({ money: [{ currency: "CLP", net_total: "250000" }, { currency: "unread", net_total: "1" }] });
+    const unread = card({ money: [{ currency: "unread", net_total: "1" }] });
+    const noQuote = card({ quotes: [], money: [] }, null);
+    expect(columnMoney([read, partly, unread, noQuote])).toEqual({ clp: 1250000, unread: 2 });
+    render(<Board cards={[read, partly]} onOpen={() => undefined} now={NOW} />);
+    expect(screen.getByTestId("board-money-enviada")).toHaveTextContent("$ 1.250.000 neto + 1 sin leer");
+    expect(screen.getByTestId("board-money-solicitada")).toHaveTextContent("$ 0 neto");
+    expect(screen.getByRole("heading", { name: "Solicitada / En estudio" })).toBeInTheDocument();
   });
 });

@@ -108,3 +108,24 @@ describe("case panel money and quotations", () => {
     expect(screen.getByText(/^M-11/)).toBeInTheDocument();
   });
 });
+
+
+describe("several quotations on one case", () => {
+  it("says the big number is a sum and starts each quotation folded", () => {
+    const two = card({
+      quotes: [
+        { quote_id: "q-1", quote_number: "00998-26", number_origin: "x", revisions: [rev({ revision_id: "a", quote_number: "00998-26" })] },
+        { quote_id: "q-2", quote_number: "00999-26", number_origin: "x", revisions: [rev({ revision_id: "b" })] },
+      ],
+      money: [{ currency: "CLP", net_total: "2000000" }],
+    });
+    render(<><CaseMoneySummary card={two} /><QuoteList card={two} /></>);
+    expect(screen.getByTestId("case-money")).toHaveTextContent("Suma de las 2 cotizaciones vigentes, neto");
+    expect(screen.queryByText(/XF-200/)).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Expandir cotización 00999-26" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "Contraer cotización 00999-26" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/XF-200/)).toBeInTheDocument();
+  });
+});

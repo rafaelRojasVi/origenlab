@@ -48,7 +48,7 @@ export type BoardColumnKey = "solicitada" | "enviada" | "conversacion" | "pausa"
  * «En pausa» has none (a drop asks for a date and writes a task), «Ganada» asks for the revision.
  */
 export const BOARD_COLUMNS: { key: BoardColumnKey; label: string; stages: string[]; target: string | null }[] = [
-  { key: "solicitada", label: "Solicitada", stages: ["lead", "qualifying", "qualified"], target: "lead" },
+  { key: "solicitada", label: "Solicitada / En estudio", stages: ["lead", "qualifying", "qualified"], target: "lead" },
   { key: "enviada", label: "Enviada", stages: ["quoting"], target: "quoting" },
   { key: "conversacion", label: "Conversación", stages: ["negotiating"], target: "negotiating" },
   { key: "pausa", label: "En pausa", stages: [], target: null },

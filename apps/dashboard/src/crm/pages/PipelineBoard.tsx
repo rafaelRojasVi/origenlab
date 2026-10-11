@@ -51,6 +51,38 @@ const COLUMN_DOT: Record<BoardColumnKey, string> = {
 
 const DRAG_TYPE = "text/plain";
 
+/**
+ * The neto quoted in a column: the sum of each case's vigente quotations (`money`), CLP only (a
+ * foreign-currency quote is rare and would not add up), and how many cases have a quote whose
+ * PDF nobody read yet, so a small number never pretends to be the whole column.
+ */
+export function columnMoney(cards: readonly OpportunityCardData[]): { clp: number; unread: number } {
+  let clp = 0;
+  let unread = 0;
+  for (const c of cards) {
+    const money = c.money ?? [];
+    const read = money.find((m) => m.currency === "CLP");
+    if (read) clp += Number(read.net_total) || 0;
+    if (money.some((m) => m.currency === "unread") || (c.quotes.length > 0 && money.length === 0)) unread += 1;
+  }
+  return { clp, unread };
+}
+
+function ColumnMoney({ cards, columnKey }: { cards: readonly OpportunityCardData[]; columnKey: string }) {
+  const { clp, unread } = columnMoney(cards);
+  return (
+    <p className="mt-0.5 pl-3.5 text-[11.5px] tabular-nums text-ink-muted" data-testid={`board-money-${columnKey}`}>
+      <span className="font-semibold text-ink">{formatMoney(String(clp), "CLP")}</span>
+      <span className="text-ink-faint"> neto</span>
+      {unread > 0 ? (
+        <span className="text-ink-faint" title="Cotizaciones cuyo PDF aún no se ha leído: no están sumadas">
+          {" "}+ {unread} sin leer
+        </span>
+      ) : null}
+    </p>
+  );
+}
+
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
 
 /** «24 sept», with the year only when it is not this one («12 may 2025»). */
@@ -139,15 +171,18 @@ export function Board({
               onDrop={(e) => drop(e, col.key)}
               data-drop-target={over === col.key ? "true" : undefined}
             >
-              <header className="mb-1.5 flex items-center gap-1.5 px-0.5">
-                <span aria-hidden="true" className={`h-2 w-2 rounded-full ${COLUMN_DOT[col.key]}`} />
-                <h2 className="text-[13px] font-semibold text-ink">{col.label}</h2>
-                <span
-                  className="rounded-full bg-canvas-sunken px-1.5 py-px text-[11px] tabular-nums text-ink-muted"
-                  data-testid={`board-count-${col.key}`}
-                >
-                  {inCol.length}
-                </span>
+              <header className="mb-1.5 px-0.5">
+                <div className="flex items-center gap-1.5">
+                  <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${COLUMN_DOT[col.key]}`} />
+                  <h2 className="truncate text-[13px] font-semibold text-ink">{col.label}</h2>
+                  <span
+                    className="rounded-full bg-canvas-sunken px-1.5 py-px text-[11px] tabular-nums text-ink-muted"
+                    data-testid={`board-count-${col.key}`}
+                  >
+                    {inCol.length}
+                  </span>
+                </div>
+                <ColumnMoney cards={inCol} columnKey={col.key} />
               </header>
               <div
                 className={`flex max-h-[72vh] min-h-48 flex-col gap-2 overflow-y-auto rounded-xl p-1.5 transition-[background-color,box-shadow] duration-150 ${
