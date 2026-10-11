@@ -103,7 +103,7 @@ services:
     buildCommand: uv sync --frozen --no-dev
     # Capture, then file the recorded quote PDFs in Drive (paused until
     # ORIGENLAB_WORKER_DRIVE_FILING_ENABLED=true; docs/OPERATIONS.md §8.10).
-    startCommand: uv run --no-sync origenlab-worker gmail-sync && uv run --no-sync origenlab-worker drive-file
+    startCommand: uv run --no-sync origenlab-worker gmail-sync && uv run --no-sync origenlab-worker drive-file && uv run --no-sync origenlab-worker quote-read
     # The cron imports V1's parser from apps/email-pipeline (v1_reuse) and the case archive from
     # apps/api (quote_case_archive), so a change there rebuilds it too; paths are relative to the
     # repository root, not rootDir.
@@ -155,6 +155,14 @@ services:
       - key: ORIGENLAB_WORKER_DRIVE_PROTECTED_FOLDER_IDS
         sync: false
       - key: ORIGENLAB_WORKER_DRIVE_EXPECTED_PRINCIPAL
+        sync: false
+      # The quote reader (quote_reader.py): paused until true; the model id, or `off` for the
+      # template alone; the Anthropic key, required unless `off`.
+      - key: ORIGENLAB_WORKER_QUOTE_READ_ENABLED
+        sync: false
+      - key: ORIGENLAB_WORKER_QUOTE_READ_MODEL
+        sync: false
+      - key: ORIGENLAB_WORKER_ANTHROPIC_API_KEY
         sync: false
   # The mail triage (docs/OPERATIONS.md §8.11; docs/ARCHITECTURE.md §8, D2): a Procrastinate worker
   # on queue `triage` in the V2 database. Every minute its periodic sweep defers new captured mail;
@@ -228,4 +236,8 @@ services:
       - key: ORIGENLAB_WORKER_DRIVE_PROTECTED_FOLDER_IDS
         sync: false
       - key: ORIGENLAB_WORKER_DRIVE_EXPECTED_PRINCIPAL
+        sync: false
+      - key: ORIGENLAB_WORKER_QUOTE_READ_ENABLED
+        sync: false
+      - key: ORIGENLAB_WORKER_QUOTE_READ_MODEL
         sync: false

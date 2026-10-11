@@ -51,6 +51,13 @@ from origenlab_worker.gmail_sync import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, RunCo
 
 #: `drive-file`: the Drive consent is revoked or wrong — the Gmail-auth code's twin.
 EXIT_DRIVE_AUTH = 2
+from origenlab_worker.quote_reader import LOCK_NAME as QUOTE_LOCK_NAME
+from origenlab_worker.quote_reader import (
+    MODEL_OFF,
+    QUOTE_READ_REQUIRED_POLICIES,
+    QUOTE_READ_REQUIRED_PRIVILEGES,
+    QuoteReader,
+)
 from origenlab_worker.storage import S3EmlStore, StorageConfig
 from origenlab_worker.triage import DEFAULT_SINCE_DAYS
 from origenlab_worker.triage_cli import run_triage_once, run_triage_worker
@@ -69,6 +76,11 @@ ENV_DRIVE_CASOS = "ORIGENLAB_WORKER_DRIVE_CASOS_FOLDER_ID"
 ENV_DRIVE_PROTECTED = "ORIGENLAB_WORKER_DRIVE_PROTECTED_FOLDER_IDS"
 ENV_DRIVE_PRINCIPAL = "ORIGENLAB_WORKER_DRIVE_EXPECTED_PRINCIPAL"
 ENV_DRIVE_ENABLED = "ORIGENLAB_WORKER_DRIVE_FILING_ENABLED"
+#: `quote-read` (quote_reader.py): `true` to read; the model id, or `off` for the template alone
+#: (the default until the evaluation gate passes); the Anthropic key, required unless `off`.
+ENV_QUOTE_READ_ENABLED = "ORIGENLAB_WORKER_QUOTE_READ_ENABLED"
+ENV_QUOTE_READ_MODEL = "ORIGENLAB_WORKER_QUOTE_READ_MODEL"
+ENV_QUOTE_READ_KEY = "ORIGENLAB_WORKER_ANTHROPIC_API_KEY"
 DEFAULT_DRIVE_PRINCIPAL = "contacto@origenlab.cl"
 
 
@@ -153,6 +165,41 @@ def open_drive_components(config: DriveConfig) -> Iterator[tuple[Any, Any, Any]]
 DriveComponents = Callable[[DriveConfig], AbstractContextManager[tuple[Any, Any, Any]]]
 
 
+@dataclass(frozen=True)
+class QuoteConfig:
+    database: WorkerTarget = field(repr=False)
+    storage: StorageConfig = field(repr=False)
+    model: str
+    api_key: str | None = field(default=None, repr=False)
+
+
+def quote_config_from_env(env: Mapping[str, str]) -> QuoteConfig:
+    """`quote-read`'s settings. A model other than `off` needs the Anthropic key."""
+    model = (env.get(ENV_QUOTE_READ_MODEL) or MODEL_OFF).strip() or MODEL_OFF
+    key = (env.get(ENV_QUOTE_READ_KEY) or "").strip() or None
+    if model != MODEL_OFF and key is None:
+        raise ConfigRefused("anthropic_api_key_missing")
+    database = remote_worker_target(
+        env.get(ENV_DATABASE_URL) or "",
+        expected_host=env.get(ENV_EXPECTED_HOST),
+        ca_file=write_ca_file(env.get(ENV_CA_PEM) or ""),
+    )
+    return QuoteConfig(database=database, storage=StorageConfig.from_env(env), model=model, api_key=key)
+
+
+@contextmanager
+def open_quote_components(config: QuoteConfig) -> Iterator[tuple[Any, Any]]:
+    from origenlab_worker.database import open_verified_connection
+
+    with open_verified_connection(config.database, application_name="origenlab-quote-read",
+                                  privileges=QUOTE_READ_REQUIRED_PRIVILEGES,
+                                  policies=QUOTE_READ_REQUIRED_POLICIES) as conn:
+        yield conn, S3EmlStore(config.storage.client())
+
+
+QuoteComponents = Callable[[QuoteConfig], AbstractContextManager[tuple[Any, Any]]]
+
+
 @contextmanager
 def open_components(config: WorkerConfig) -> Iterator[tuple[Any, Any, Any]]:
     with open_worker_db(config.database) as db:
@@ -197,6 +244,8 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("triage-child", help=argparse.SUPPRESS)
     commands.add_parser("mail-worker", help="supervise triage and gated periodic capture in one release")
     commands.add_parser("capture-worker", help="internal isolated periodic capture queue")
+    quote = commands.add_parser("quote-read", help="read registered quote PDFs into document lines")
+    quote.add_argument("--limit", type=int, default=10, help="at most this many documents per run")
     once = commands.add_parser("triage-once", help="triage pending messages once, without the queue")
     once.add_argument("--since-days", type=int, default=DEFAULT_SINCE_DAYS, help="look back this many days")
     once.add_argument("--limit", type=int, default=200, help="at most this many messages")
@@ -246,6 +295,36 @@ def run_drive_file(args: Any, env: Mapping[str, str], components: DriveComponent
     return _emit_line(line, started)
 
 
+def run_quote_read(args: Any, env: Mapping[str, str], components: QuoteComponents, started: float) -> int:
+    line: dict[str, Any] = {"event": "quote_read", "mode": "read", "exit": EXIT_OK, "error": None}
+    if (env.get(ENV_QUOTE_READ_ENABLED) or "").strip().lower() != "true":
+        line["mode"] = "paused"
+        return _emit_line(line, started)
+    try:
+        config = quote_config_from_env(env)
+        reader = None
+        if config.model != MODEL_OFF and config.api_key:
+            from origenlab_worker.triage_model import anthropic_reader
+
+            reader = anthropic_reader(config.api_key, timeout_s=120.0)
+        with components(config) as (conn, store):
+            with conn.cursor() as cur:
+                cur.execute("select pg_try_advisory_lock(hashtextextended(%s, 0))", (QUOTE_LOCK_NAME,))
+                if not cur.fetchone()[0]:
+                    line["mode"] = "locked"
+                    return _emit_line(line, started)
+            counts = QuoteReader(conn, store, reader, config.model).run(limit=max(1, min(int(args.limit), 50)))
+            # A refused document is recorded by code and not retried this week; it never fails the cron.
+            line.update(counts.as_log(), model=config.model)
+    except ConfigRefused as exc:
+        line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
+    except _Terminated:
+        line.update(mode="failed", exit=EXIT_FAILED, error="terminated")
+    except Exception as exc:  # noqa: BLE001 — the class, never the text
+        line.update(mode="failed", exit=EXIT_FAILED, error=type(exc).__name__)
+    return _emit_line(line, started)
+
+
 def run_drive_ledger_import(args: Any, env: Mapping[str, str], components: Callable[..., Any],
                             started: float) -> int:
     line: dict[str, Any] = {"event": "drive_ledger_import", "mode": "dry_run" if args.dry_run else "import",
@@ -283,6 +362,7 @@ def main(
     components: Components = open_components,
     drive_components: DriveComponents = open_drive_components,
     db_components: Callable[..., Any] = open_worker_db,
+    quote_components: QuoteComponents = open_quote_components,
 ) -> int:
     started = time.monotonic()
     try:
@@ -303,6 +383,8 @@ def main(
             return _emit_line({"event": "mail_worker", "exit": EXIT_FAILED, "error": type(exc).__name__}, started)
     if args.command == "drive-file":
         return run_drive_file(args, env, drive_components, started)
+    if args.command == "quote-read":
+        return run_quote_read(args, env, quote_components, started)
     if args.command == "drive-ledger-import":
         return run_drive_ledger_import(args, env, db_components, started)
     if args.command == "triage-once":
