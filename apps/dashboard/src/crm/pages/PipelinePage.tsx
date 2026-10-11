@@ -413,7 +413,7 @@ export function OpportunityCard({
 const CONTACT_LINK =
   "flex min-w-0 items-baseline gap-2 rounded-md px-2 py-1 -mx-2 text-ink hover:bg-canvas-sunken hover:text-brand-900";
 
-/** «Perla Sánchez <perla@…>» → «Perla Sánchez»; a bare address stays as it is. */
+/** «Ana Ficticia <ana@…>» → «Ana Ficticia»; a bare address stays as it is. */
 function displayNameOf(address: string): string {
   const name = address.replace(/<[^>]*>/, "").replace(/^["'\s]+|["'\s]+$/g, "");
   return name || address;
