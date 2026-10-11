@@ -23,10 +23,12 @@ beyond the validated, closed schema. Logs carry codes and counts, never text.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -47,6 +49,8 @@ from origenlab_api.v2.catalog.history_check import (
     quote_document_payload,
 )
 from origenlab_api.v2.catalog.keys import is_labdelivery, model_key
+from origenlab_worker.drive_filing import attachment_bytes, storage_key
+from origenlab_worker.storage import StorageError
 
 #: Bumped whenever a rule changes what the reader decides; a refusal is recorded per version.
 READER_VERSION = "quote_read:v1"
@@ -261,5 +265,161 @@ def read_document(pdf: bytes, sha256: str, *, reader: ModelReader | None, model:
                      "input_tokens": tokens_in, "output_tokens": tokens_out}
 
 
-__all__ = ["EXTRACTION_SCHEMA", "EXTRACTOR_AI", "EXTRACTOR_TEMPLATE", "MODEL_OFF", "READER_VERSION", "ReadRefused",
-           "Reading", "build_request", "parse_extraction", "pdf_text", "read_document"]
+# ── the run: registered revisions whose PDF was never read ────────────────────────────────────
+
+#: What the reader's connection must hold (`database.verify_worker_connection`): read the revisions
+#: and their captured emails, write the document, its lines and a refusal observation.
+QUOTE_READ_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = (
+    ("crm.quote_revision", "SELECT"), ("crm.quote", "SELECT"), ("comms.message", "SELECT"),
+    ("evidence.source_record", "SELECT"), ("evidence.source_record", "INSERT"),
+    ("evidence.document_line", "SELECT"), ("evidence.document_line", "INSERT"),
+    ("evidence.assertion", "SELECT"), ("evidence.assertion", "INSERT"),
+)
+QUOTE_READ_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset({
+    ("crm", "quote_revision", "origenlab_worker_select"), ("crm", "quote", "origenlab_worker_select"),
+    ("comms", "message", "origenlab_worker_select"),
+    ("evidence", "source_record", "origenlab_worker_select"), ("evidence", "source_record", "origenlab_worker_insert"),
+    ("evidence", "document_line", "origenlab_worker_select"), ("evidence", "document_line", "origenlab_worker_insert"),
+    ("evidence", "assertion", "origenlab_worker_select"), ("evidence", "assertion", "origenlab_worker_insert"),
+})
+DEFAULT_LIMIT = 10
+LOCK_NAME = "origenlab-quote-read"
+
+#: Registered revisions with a PDF, no `quote_document` for it, and no refusal of this reader
+#: version recorded this ISO week or the last (`%s` × 2: the two week tags); newest first.
+_CANDIDATES_SQL = """
+select distinct on (r.pdf_sha256)
+       r.id::text as revision_id, r.pdf_sha256, sr.id::text as source_record_id,
+       m.eml_storage_path, m.eml_sha256
+  from crm.quote_revision r
+  join evidence.source_record sr on sr.id = r.origin_source_record_id and sr.kind = 'gmail_message'
+  join lateral (select cm.eml_storage_path, cm.eml_sha256 from comms.message cm
+                 where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
+                   and cm.eml_storage_path is not null
+                 order by cm.created_at limit 1) m on true
+ where r.status <> 'void' and r.pdf_sha256 is not null
+   and not exists (select 1 from evidence.source_record d
+                    where d.kind = 'quote_document' and d.dedupe_key = 'quote_document:' || lower(r.pdf_sha256))
+   and not exists (select 1 from evidence.assertion a
+                    where a.source_record_id = sr.id and a.kind = 'quote_read' and a.value_norm in (%s, %s))
+ order by r.pdf_sha256, r.created_at desc
+"""
+_INSERT_DOCUMENT = """
+insert into evidence.source_record (kind, dedupe_key, payload, payload_sha256, review_status)
+values ('quote_document', %s, %s, %s, 'pending')
+on conflict (dedupe_key) do nothing
+returning id
+"""
+_INSERT_LINE = """
+insert into evidence.document_line (source_record_id, line_no, parent_item, item_label, kind, brand, model, model_key,
+                                    description, qty, unit_price, line_total, currency, optional, extractor, check_status)
+values (%(source_record_id)s, %(line_no)s, %(parent_item)s, %(item_label)s, %(kind)s, %(brand)s, %(model)s,
+        %(model_key)s, %(description)s, %(qty)s, %(unit_price)s, %(line_total)s, %(currency)s, %(optional)s,
+        %(extractor)s, %(check_status)s)
+"""
+_INSERT_REFUSAL = """
+insert into evidence.assertion (source_record_id, kind, value_norm, value)
+values (%s, 'quote_read', %s, %s)
+on conflict (source_record_id, kind, value_norm) do nothing
+"""
+
+
+def week_tags(today: date) -> tuple[str, str]:
+    """This ISO week's and the last one's refusal tags: a refusal is not retried for 7–14 days."""
+    this = today.isocalendar()
+    last = (today - timedelta(days=7)).isocalendar()
+    return (f"{READER_VERSION}:{this[0]}-W{this[1]:02d}", f"{READER_VERSION}:{last[0]}-W{last[1]:02d}")
+
+
+@dataclass
+class ReadCounts:
+    candidates: int = 0
+    read: int = 0
+    lines: int = 0
+    refused: dict[str, int] = field(default_factory=dict)
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def refuse(self, code: str) -> None:
+        self.refused[code] = self.refused.get(code, 0) + 1
+
+    def as_log(self) -> dict[str, Any]:
+        return {"candidates": self.candidates, "read": self.read, "lines": self.lines, "refused": dict(self.refused),
+                "input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
+
+
+class QuoteReader:
+    """One pass over the unread registered revisions, on one verified worker connection."""
+
+    def __init__(self, conn: Any, store: Any, reader: ModelReader | None, model: str, *,
+                 today: Callable[[], date] = date.today) -> None:
+        self._conn = conn
+        self._store = store
+        self._reader = reader
+        self._model = model if reader is not None else MODEL_OFF
+        self._today = today
+
+    def candidates(self, limit: int) -> list[dict[str, Any]]:
+        with self._conn.cursor() as cur:
+            cur.execute(_CANDIDATES_SQL + " limit %s", (*week_tags(self._today()), limit))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
+        return rows
+
+    def read_one(self, c: dict[str, Any], counts: ReadCounts) -> None:
+        sha = str(c["pdf_sha256"]).lower()
+        raw = self._store.get(storage_key(str(c["eml_storage_path"])))
+        if c.get("eml_sha256") and hashlib.sha256(raw).hexdigest() != c["eml_sha256"]:
+            counts.refuse("hash_mismatch")
+            return
+        data = attachment_bytes(raw, sha)
+        if data is None:
+            counts.refuse("attachment_not_in_eml")
+            return
+        try:
+            reading, log = read_document(data, sha, reader=self._reader, model=self._model)
+        except ReadRefused as exc:
+            self._refused(c, exc)
+            counts.refuse(exc.code)
+            return
+        self._write(sha, reading)
+        counts.read += 1
+        counts.lines += len(reading.lines)
+        counts.input_tokens += int(log.get("input_tokens") or 0)
+        counts.output_tokens += int(log.get("output_tokens") or 0)
+
+    def _write(self, sha: str, reading: Reading) -> None:
+        from psycopg.types.json import Jsonb
+
+        with self._conn.transaction(), self._conn.cursor() as cur:
+            cur.execute(_INSERT_DOCUMENT, (f"quote_document:{sha}", Jsonb(reading.payload), sha))
+            row = cur.fetchone()
+            if row is None:  # another revision with the same PDF was read first: one document
+                return
+            for line in reading.lines:
+                cur.execute(_INSERT_LINE, {**line, "source_record_id": row[0]})
+
+    def _refused(self, c: dict[str, Any], exc: ReadRefused) -> None:
+        from psycopg.types.json import Jsonb
+
+        with self._conn.transaction(), self._conn.cursor() as cur:
+            cur.execute(_INSERT_REFUSAL, (c["source_record_id"], week_tags(self._today())[0],
+                                          Jsonb({"code": exc.code, "counts": exc.counts,
+                                                 "revision_id": c["revision_id"]})))
+
+    def run(self, *, limit: int = DEFAULT_LIMIT) -> ReadCounts:
+        counts = ReadCounts()
+        rows = self.candidates(limit)
+        counts.candidates = len(rows)
+        for c in rows:
+            try:
+                self.read_one(c, counts)
+            except StorageError as exc:
+                counts.refuse(exc.code)
+        return counts
+
+
+__all__ = ["DEFAULT_LIMIT", "EXTRACTION_SCHEMA", "EXTRACTOR_AI", "EXTRACTOR_TEMPLATE", "LOCK_NAME", "MODEL_OFF",
+           "QUOTE_READ_REQUIRED_POLICIES", "QUOTE_READ_REQUIRED_PRIVILEGES", "READER_VERSION", "QuoteReader",
+           "ReadCounts", "ReadRefused", "Reading", "build_request", "parse_extraction", "pdf_text", "read_document",
+           "week_tags"]
