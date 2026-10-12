@@ -301,10 +301,14 @@ class GmailReader:
 
     def messages_after(self, epoch_seconds: int) -> list[str]:
         """The resync list: every message after `epoch_seconds`, oldest first, spam and trash excluded."""
+        return self.messages_matching(f"after:{int(epoch_seconds)}")
+
+    def messages_matching(self, query: str) -> list[str]:
+        """Every message a Gmail search finds, oldest first, spam and trash excluded."""
         ids: list[str] = []
         token = None
         for _ in range(MAX_PAGES):
-            params: dict[str, Any] = {"q": f"after:{int(epoch_seconds)}", "maxResults": PAGE_SIZE}
+            params: dict[str, Any] = {"q": query, "maxResults": PAGE_SIZE}
             if token:
                 params["pageToken"] = token
             data = self._get("messages", params)

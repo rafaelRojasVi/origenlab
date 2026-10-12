@@ -15,6 +15,7 @@ from origenlab_worker.gmail_sync import (
     EXIT_FAILED,
     EXIT_OK,
     MAX_RAW_BYTES,
+    run_gmail_backfill,
     run_gmail_sync,
 )
 
@@ -356,3 +357,63 @@ def test_a_message_exactly_at_the_cap_is_not_too_large() -> None:
     db = FakeDb()
     report = run(db, gmail_with(m1=at_cap))
     assert (report.counts.too_large, report.counts.stored) == (0, 1)
+
+
+# --- backfill: old mail by a Gmail search, never the cursor -----------------------------------------
+
+OC_QUERY = 'filename:pdf subject:OC before:2026/09/26'
+
+
+def backfill(db, gmail, store=None, **kw):
+    return run_gmail_backfill(db=db, gmail=gmail, store=store or FakeStore(), enabled=kw.pop("enabled", True),
+                              query=kw.pop("query", OC_QUERY), limit=kw.pop("limit", 50), **kw)
+
+
+def test_a_backfill_captures_the_matching_messages_and_leaves_the_cursor_alone() -> None:
+    db = FakeDb()
+    store = FakeStore()
+    gmail = FakeGmail(matching={OC_QUERY: ["o1", "o2"]},
+                      messages={"o1": FakeMessage(INBOUND), "o2": FakeMessage(INBOUND, labels=("SPAM",))})
+    report = backfill(db, gmail, store)
+    assert (report.mode, report.exit_code) == ("backfill", EXIT_OK)
+    c = report.counts
+    assert (c.seen, c.stored, c.evidence, c.skipped_spam) == (2, 1, 1, 1)
+    assert db.cursor == [] and gmail.query_calls == [OC_QUERY] and "history" not in gmail.calls
+    assert set(store.objects) == {f"{MAILBOX}/2026/10/o1.eml"}
+
+
+def test_a_backfill_counts_mail_already_captured_as_duplicates() -> None:
+    db = FakeDb()
+    gmail = FakeGmail(matching={OC_QUERY: ["o1"]}, messages={"o1": FakeMessage(INBOUND)})
+    backfill(db, gmail)
+    again = backfill(db, gmail)
+    assert (again.counts.stored, again.counts.duplicates) == (0, 1)
+
+
+def test_a_backfill_over_its_limit_captures_nothing() -> None:
+    """A search wider than intended is refused whole, never cut at an arbitrary message."""
+    gmail = FakeGmail(matching={OC_QUERY: ["o1", "o2", "o3"]}, messages={})
+    report = backfill(FakeDb(), gmail, limit=2)
+    assert (report.mode, report.exit_code, report.error) == ("backfill", EXIT_CONFIG, "too_many_matches")
+    assert report.counts.seen == 0 and gmail.raw_calls == []
+
+
+def test_a_backfill_dry_run_writes_nothing() -> None:
+    db = FakeDb()
+    store = FakeStore()
+    gmail = FakeGmail(matching={OC_QUERY: ["o1"]}, messages={"o1": FakeMessage(INBOUND)})
+    report = backfill(db, gmail, store, dry_run=True)
+    assert (report.mode, report.counts.stored, report.counts.evidence) == ("backfill_dry_run", 1, 0)
+    assert store.objects == {} and db.cursor == []
+
+
+@pytest.mark.parametrize("query", ["", "   "])
+def test_a_backfill_needs_a_search(query: str) -> None:
+    report = backfill(FakeDb(), FakeGmail(), query=query)
+    assert (report.exit_code, report.error) == (EXIT_CONFIG, "empty_query")
+
+
+def test_a_backfill_respects_the_pause_the_lock_and_the_account() -> None:
+    assert backfill(FakeDb(), FakeGmail(), enabled=False).mode == "paused"
+    assert backfill(FakeDb(state="revoked"), FakeGmail()).mode == "not_authorized"
+    assert backfill(FakeDb(), FakeGmail(email="otro@example.invalid")).exit_code == EXIT_AUTH

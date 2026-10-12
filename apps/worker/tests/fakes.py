@@ -105,6 +105,8 @@ class FakeGmail:
     calls: list[str] = field(default_factory=list)
     unavailable_raw: str | None = None
     after_calls: list[int] = field(default_factory=list)
+    matching: dict[str, list[str]] = field(default_factory=dict)  # query → ids, for a backfill
+    query_calls: list[str] = field(default_factory=list)
     raw_calls: list[str] = field(default_factory=list)
     label_calls: int = 0
     window_id: str | None = None  # the historyId history() answers with, when it differs from `current`
@@ -132,6 +134,12 @@ class FakeGmail:
             raise GmailUnavailable("http_503")
         self.current = "999"  # mail arriving while the list runs moves Gmail's history id on
         return list(self.after)
+
+    def messages_matching(self, query: str) -> list[str]:
+        self.query_calls.append(query)
+        if self.after_error:
+            raise GmailUnavailable("http_503")
+        return list(self.matching.get(query, []))
 
     def metadata(self, message_id: str) -> MessageMeta:
         if message_id == self.revoke_on_metadata:
