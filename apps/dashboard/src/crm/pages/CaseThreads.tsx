@@ -13,7 +13,7 @@ import { fetchCaseThreads } from "../crmApi";
 import type { CaseThread } from "../crmTypes";
 import { inSharedMailbox } from "../gmailLinks";
 import { useResource } from "../useResource";
-import { fmtDate, isSafeExternalHref } from "../ui";
+import { fmtDateTime, isSafeExternalHref } from "../ui";
 
 const KIND: Record<CaseThread["kind"], { label: string; className: string }> = {
   cliente: { label: "Cliente", className: "bg-brand-50 text-brand-900 border-brand-600/25" },
@@ -66,7 +66,7 @@ function Thread({ t }: { t: CaseThread }) {
                 {out ? "OrigenLab" : m.from ?? "Remitente"}
                 {m.has_pdf ? <span className="ml-1.5 text-[11px] font-medium text-ink-muted">PDF</span> : null}
               </span>
-              <span className="shrink-0 tabular-nums text-ink-faint">{fmtDate(m.sent_at)}</span>
+              <span className="shrink-0 tabular-nums text-ink-faint">{fmtDateTime(m.sent_at)}</span>
             </>
           );
           return (

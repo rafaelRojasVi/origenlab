@@ -3,9 +3,10 @@
  * much, and where its email and files are, without opening the PDF.
  *
  * - `CaseLinks`: Gmail, the case's Drive folder and the vigente PDF, first thing under the title.
- * - `CaseMoneySummary`: the neto of the vigente revisions, large; IVA and total small (CLP only).
- * - `QuoteList`: one block per quotation, its vigente revision's equipment lines and totals, older
- *   revisions folded.
+ * - `CaseMoneySummary`: the neto of the LAST SENT vigente quotation, large, with when it was sent;
+ *   IVA and total small (CLP only). Never a sum of quotations (owner 2026-10-12).
+ * - `QuoteList`: one block per quotation, newest sent first and open, its vigente revision's
+ *   equipment lines and totals, older revisions folded.
  *
  * Amounts come from the API as decimal strings (`QuoteContents`) and are only formatted here.
  * A quotation whose PDF was never read says so instead of showing a number.
@@ -13,7 +14,7 @@
 import { useState } from "react";
 import type { CaseMoney, OpportunityCardData, QuoteCard, QuoteContents, QuoteLine, RevisionCard } from "../crmTypes";
 import { inSharedMailbox } from "../gmailLinks";
-import { Badge, LOCAL_DRIVE_TITLE, fmtDate, isSafeExternalHref } from "../ui";
+import { Badge, LOCAL_DRIVE_TITLE, fmtDateTime, isSafeExternalHref } from "../ui";
 
 /* ── money ───────────────────────────────────────────────────────────────── */
 
@@ -43,6 +44,19 @@ function formatQty(qty: string | null): string | null {
 export function currentRevision(q: QuoteCard): RevisionCard | null {
   const revs = [...q.revisions].sort((a, b) => b.revision_no - a.revision_no);
   return revs.find((r) => r.is_active) ?? revs[0] ?? null;
+}
+
+function sentKey(r: RevisionCard | null): string {
+  return r?.sent_at ?? "";
+}
+
+/** The case's quotations, the last sent first (by its current revision's send time). */
+export function quotesNewestFirst(card: OpportunityCardData): QuoteCard[] {
+  return [...card.quotes].sort((a, b) => {
+    const ka = sentKey(currentRevision(a));
+    const kb = sentKey(currentRevision(b));
+    return ka === kb ? b.quote_number.localeCompare(a.quote_number) : kb.localeCompare(ka);
+  });
 }
 
 /* ── links ───────────────────────────────────────────────────────────────── */
@@ -84,7 +98,7 @@ export function caseGmailUrl(card: OpportunityCardData): string | null {
 }
 
 export function CaseLinks({ card }: { card: OpportunityCardData }) {
-  const pdf = card.quotes.map(currentRevision).find((r) => r?.drive) ?? null;
+  const pdf = quotesNewestFirst(card).map(currentRevision).find((r) => r?.drive) ?? null;
   return (
     <nav aria-label="Enlaces del caso" className="flex flex-wrap gap-2" data-testid="case-links">
       <LinkButton href={caseGmailUrl(card)} label="Abrir el último correo del caso en Gmail">
@@ -107,49 +121,46 @@ export function CaseLinks({ card }: { card: OpportunityCardData }) {
 /* ── the money summary ───────────────────────────────────────────────────── */
 
 export function CaseMoneySummary({ card }: { card: OpportunityCardData }) {
-  const money: CaseMoney[] = card.money ?? [];
-  const read = money.filter((m) => m.currency !== "unread");
-  const unread = Number(money.find((m) => m.currency === "unread")?.net_total ?? 0);
   if (card.quotes.length === 0) return null;
-  const activeCount = card.quotes.map(currentRevision).filter((r) => r?.is_active).length;
-  // IVA and total per currency come from the vigente revisions' own contents (CLP only).
-  const clpGross = card.quotes
-    .map(currentRevision)
-    .filter((r): r is RevisionCard => !!r && !!r.is_active && r.contents?.currency === "CLP")
-    .reduce(
-      (acc, r) => ({
-        tax: acc.tax + Number(r.contents?.tax_total ?? 0),
-        gross: acc.gross + Number(r.contents?.gross_total ?? 0),
-        ok: acc.ok && r.contents?.gross_total != null,
-      }),
-      { tax: 0, gross: 0, ok: true },
-    );
+  const m: CaseMoney | undefined = (card.money ?? [])[0];
+  if (!m) return null;
+  const count = m.quote_count ?? card.quotes.length;
+  // The revision the amount comes from, for its IVA and total (CLP only).
+  const rev = card.quotes
+    .flatMap((q) => q.revisions)
+    .find((r) => r.quote_number === m.quote_number && r.revision_no === m.revision_no);
+  const c = rev?.contents ?? null;
+  const unread = m.currency === "unread";
+  const others = count - 1;
   return (
     <section aria-label="Monto cotizado" className="rounded-lg border border-line bg-canvas-raised px-4 py-3" data-testid="case-money">
       <p className="text-[11px] font-medium text-ink-muted">
-        {activeCount > 1 ? `Suma de las ${activeCount} cotizaciones vigentes, neto` : "Cotizado, neto"}
+        {count > 1 ? "Última cotización enviada" : "Cotizado, neto"}
+        {m.quote_number ? <span className="ml-1.5 font-mono font-semibold text-ink">{m.quote_number}</span> : null}
+        {m.sent_at ? <span className="ml-1.5 tabular-nums">· {fmtDateTime(m.sent_at)}</span> : null}
       </p>
-      {read.length === 0 ? (
-        <p className="mt-1 text-sm text-ink-muted">Las cotizaciones de este caso aún no se han leído.</p>
+      {unread ? (
+        <p className="mt-1 text-sm text-ink-muted">
+          {m.quote_number ? `La cotización ${m.quote_number} aún no se ha leído.` : "La cotización aún no se ha leído."}
+        </p>
       ) : (
-        read.map((m) => (
-          <div key={m.currency} className="mt-0.5">
-            <p className="text-[28px] font-semibold leading-tight tracking-tight text-ink tabular-nums">
-              {formatMoney(m.net_total, m.currency)}
+        <div className="mt-0.5">
+          <p className="text-[28px] font-semibold leading-tight tracking-tight text-ink tabular-nums">
+            {formatMoney(m.net_total, m.currency)}
+            {count > 1 ? <span className="ml-2 text-xs font-medium tracking-normal text-ink-muted">neto</span> : null}
+          </p>
+          {m.currency === "CLP" && c?.gross_total ? (
+            <p className="mt-0.5 text-xs text-ink-muted tabular-nums">
+              IVA {formatMoney(c.tax_total, "CLP")}
+              <span className="mx-1.5 text-ink-faint">|</span>
+              Total {formatMoney(c.gross_total, "CLP")}
             </p>
-            {m.currency === "CLP" && clpGross.ok && clpGross.gross > 0 ? (
-              <p className="mt-0.5 text-xs text-ink-muted tabular-nums">
-                IVA {formatMoney(String(clpGross.tax), "CLP")}
-                <span className="mx-1.5 text-ink-faint">|</span>
-                Total {formatMoney(String(clpGross.gross), "CLP")}
-              </p>
-            ) : null}
-          </div>
-        ))
+          ) : null}
+        </div>
       )}
-      {unread > 0 && read.length > 0 ? (
-        <p className="mt-1.5 text-[11px] text-warn">
-          {unread === 1 ? "1 cotización sin leer no está sumada." : `${unread} cotizaciones sin leer no están sumadas.`}
+      {others > 0 ? (
+        <p className="mt-1.5 text-[11px] text-ink-muted">
+          {others === 1 ? "La otra cotización del caso no se suma." : `Las otras ${others} cotizaciones del caso no se suman.`}
         </p>
       ) : null}
     </section>
@@ -244,7 +255,7 @@ function revisionStatus(rev: RevisionCard): { label: string; tone: "good" | "bad
   return rev.status === "sent" ? { label: "Enviada", tone: "good" } : { label: rev.status, tone: "neutral" };
 }
 
-function QuoteBlock({ q, defaultOpen }: { q: QuoteCard; defaultOpen: boolean }) {
+function QuoteBlock({ q, defaultOpen, latest }: { q: QuoteCard; defaultOpen: boolean; latest: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const cur = currentRevision(q);
   const older = q.revisions.filter((r) => r.revision_id !== cur?.revision_id).sort((a, b) => b.revision_no - a.revision_no);
@@ -266,7 +277,12 @@ function QuoteBlock({ q, defaultOpen }: { q: QuoteCard; defaultOpen: boolean }) 
         <span className="block min-w-0">
           <span className="flex flex-wrap items-center gap-1.5">
             <span className="font-mono text-sm font-semibold text-ink">{q.quote_number}</span>
-            {cur ? <span className="text-xs text-ink-muted">r{cur.revision_no}, {fmtDate(cur.sent_at)}</span> : null}
+            {latest ? (
+              <Badge tone="brand" glyph={false}>
+                Última
+              </Badge>
+            ) : null}
+            {cur ? <span className="text-xs text-ink-muted tabular-nums">r{cur.revision_no}, {fmtDateTime(cur.sent_at)}</span> : null}
             {status ? (
               <Badge tone={status.tone} glyph={false}>
                 {status.label}
@@ -307,7 +323,7 @@ function QuoteBlock({ q, defaultOpen }: { q: QuoteCard; defaultOpen: boolean }) 
                   <li key={r.revision_id}>
                     <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-ink-muted">
                       <span className="font-semibold text-ink">r{r.revision_no}</span>
-                      {fmtDate(r.sent_at)}
+                      {fmtDateTime(r.sent_at)}
                       <Badge tone={st.tone} glyph={false}>
                         {st.label}
                       </Badge>
@@ -338,8 +354,8 @@ export function QuoteList({ card }: { card: OpportunityCardData }) {
   }
   return (
     <div className="space-y-3">
-      {card.quotes.map((q) => (
-        <QuoteBlock key={q.quote_id} q={q} defaultOpen={card.quotes.length === 1} />
+      {quotesNewestFirst(card).map((q, i) => (
+        <QuoteBlock key={q.quote_id} q={q} defaultOpen={i === 0} latest={i === 0 && card.quotes.length > 1} />
       ))}
     </div>
   );

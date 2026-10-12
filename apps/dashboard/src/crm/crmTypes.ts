@@ -100,9 +100,16 @@ export interface QuoteContents {
 }
 
 /** The neto of a case's vigente revisions per currency; `unread` counts revisions never read. */
+/** The case's amount: the neto of its LAST SENT vigente quotation, never a sum (owner
+ *  2026-10-12). `currency` is "unread" (net_total "1") when that quotation's PDF was not read. */
 export interface CaseMoney {
   currency: string;
   net_total: string;
+  quote_number?: string | null;
+  revision_no?: number | null;
+  sent_at?: string | null;
+  /** How many vigente quotations the case has; only the last one is the amount. */
+  quote_count?: number;
 }
 
 /** `GET /v2/workspace/opportunities/{id}/mail-documents` — what «Registrar cotización» picks from. */

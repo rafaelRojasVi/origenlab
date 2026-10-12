@@ -45,7 +45,7 @@ function card(over: Partial<OpportunityCardData> = {}): OpportunityCardData {
     other_organizations: [], contact: null,
     quotes: [{ quote_id: "q-1", quote_number: "00999-26", number_origin: "printed_historical", revisions: [older, current] }],
     quote_numbers: ["00999-26"], revision_count: 2, latest_revision: current,
-    money: [{ currency: "CLP", net_total: "1000000" }],
+    money: [{ currency: "CLP", net_total: "1000000", quote_number: "00999-26", revision_no: 2, sent_at: "2026-09-20T12:00:00Z", quote_count: 1 }],
     drive_folder: { url: "https://drive.google.com/drive/folders/d1" } as OpportunityCardData["drive_folder"],
     attention: [], status: "ok",
     next_action: { text: "x", source: "suggested", due_at: null },
@@ -63,18 +63,20 @@ describe("formatMoney", () => {
 });
 
 describe("case panel money and quotations", () => {
-  it("shows the vigente neto large with IVA and total, and counts unread quotations apart", () => {
-    render(<CaseMoneySummary card={card({ money: [{ currency: "CLP", net_total: "1000000" }, { currency: "unread", net_total: "1" }] })} />);
+  it("shows the quotation's neto large with IVA, total and when it was sent", () => {
+    render(<CaseMoneySummary card={card()} />);
     const box = screen.getByTestId("case-money");
+    expect(box).toHaveTextContent("Cotizado, neto");
+    expect(box).toHaveTextContent("00999-26");
+    expect(box).toHaveTextContent(/20 sept 2026, \d{2}:\d{2}/);
     expect(box).toHaveTextContent("$ 1.000.000");
     expect(box).toHaveTextContent("IVA $ 190.000");
     expect(box).toHaveTextContent("Total $ 1.190.000");
-    expect(box).toHaveTextContent("1 cotización sin leer no está sumada.");
   });
 
-  it("says the quotations were not read instead of inventing a number", () => {
-    render(<CaseMoneySummary card={card({ money: [{ currency: "unread", net_total: "1" }] })} />);
-    expect(screen.getByTestId("case-money")).toHaveTextContent("aún no se han leído");
+  it("says the last quotation was not read instead of inventing a number", () => {
+    render(<CaseMoneySummary card={card({ money: [{ currency: "unread", net_total: "1", quote_number: "00999-26", revision_no: 2, sent_at: "2026-09-20T12:00:00Z", quote_count: 1 }] })} />);
+    expect(screen.getByTestId("case-money")).toHaveTextContent("La cotización 00999-26 aún no se ha leído.");
   });
 
   it("lists the vigente revision's equipment with prices and folds the older revision", () => {
@@ -111,21 +113,44 @@ describe("case panel money and quotations", () => {
 
 
 describe("several quotations on one case", () => {
-  it("says the big number is a sum and starts each quotation folded", () => {
-    const two = card({
-      quotes: [
-        { quote_id: "q-1", quote_number: "00998-26", number_origin: "x", revisions: [rev({ revision_id: "a", quote_number: "00998-26" })] },
-        { quote_id: "q-2", quote_number: "00999-26", number_origin: "x", revisions: [rev({ revision_id: "b" })] },
-      ],
-      money: [{ currency: "CLP", net_total: "2000000" }],
-    });
-    render(<><CaseMoneySummary card={two} /><QuoteList card={two} /></>);
-    expect(screen.getByTestId("case-money")).toHaveTextContent("Suma de las 2 cotizaciones vigentes, neto");
-    expect(screen.queryByText(/XF-200/)).not.toBeInTheDocument();
-    const toggle = screen.getByRole("button", { name: "Expandir cotización 00999-26" });
+  // Owner 2026-10-12: the top shows the LAST quotation sent, never a sum; when matters.
+  const three = () => card({
+    quotes: [
+      { quote_id: "q-1", quote_number: "00997-26", number_origin: "x", revisions: [rev({ revision_id: "a", quote_number: "00997-26", sent_at: "2026-09-07T12:00:00Z" })] },
+      { quote_id: "q-2", quote_number: "00998-26", number_origin: "x", revisions: [rev({ revision_id: "b", quote_number: "00998-26", sent_at: "2026-09-22T12:00:00Z",
+        contents: { ...CONTENTS, net_total: "480000", tax_total: "91200", gross_total: "571200" },
+        drive: { file_url: "https://drive.google.com/file/d/f98/view", folder_url: null, original_filename: "y.pdf" } as RevisionCard["drive"] })] },
+      { quote_id: "q-3", quote_number: "00999-26", number_origin: "x", revisions: [rev({ revision_id: "c", sent_at: "2026-09-09T12:00:00Z" })] },
+    ],
+    money: [{ currency: "CLP", net_total: "480000", quote_number: "00998-26", revision_no: 2, sent_at: "2026-09-22T12:00:00Z", quote_count: 3 }],
+  });
+
+  it("shows the last quotation sent, not a sum, and says the others are not added", () => {
+    render(<CaseMoneySummary card={three()} />);
+    const box = screen.getByTestId("case-money");
+    expect(box).toHaveTextContent("Última cotización enviada");
+    expect(box).toHaveTextContent("00998-26");
+    expect(box).toHaveTextContent("$ 480.000");
+    expect(box).toHaveTextContent("IVA $ 91.200");
+    expect(box).toHaveTextContent("Las otras 2 cotizaciones del caso no se suman.");
+    expect(box).not.toHaveTextContent("Suma");
+  });
+
+  it("lists the newest quotation first, open and marked, and the others folded", () => {
+    render(<QuoteList card={three()} />);
+    const blocks = screen.getAllByTestId("quote-block");
+    expect(blocks.map((b) => b.querySelector(".font-mono")?.textContent)).toEqual(["00998-26", "00999-26", "00997-26"]);
+    expect(within(blocks[0]).getByText("Última")).toBeInTheDocument();
+    expect(within(blocks[0]).getByRole("button", { name: "Contraer cotización 00998-26" })).toHaveAttribute("aria-expanded", "true");
+    const toggle = within(blocks[1]).getByRole("button", { name: "Expandir cotización 00999-26" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
-    expect(screen.getByRole("button", { name: "Contraer cotización 00999-26" })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText(/XF-200/)).toBeInTheDocument();
+    expect(within(blocks[1]).getByRole("button", { name: "Contraer cotización 00999-26" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("links the last quotation's PDF at the top", () => {
+    render(<CaseLinks card={three()} />);
+    expect(within(screen.getByTestId("case-links")).getByRole("link", { name: /PDF 00998-26 r2/ }))
+      .toHaveAttribute("href", "https://drive.google.com/file/d/f98/view");
   });
 });
