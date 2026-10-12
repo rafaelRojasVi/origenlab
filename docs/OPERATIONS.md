@@ -2089,6 +2089,51 @@ before an OC number reads as an order.
 | `outcome: storage_error` | the `.eml` could not be read; nothing written, the next sweep retries |
 | `worker_*` refusal at start | the session is not exactly `origenlab_worker` with the queue and triage grants: fix the role, never widen it |
 
+### 8.12 Quote PDFs read into lines (`quote-read`)
+
+After `drive-file`, the cron runs `origenlab-worker quote-read`
+(`apps/worker/src/origenlab_worker/quote_reader.py`): every registered quote revision whose PDF has
+no `quote_document` evidence yet is read — the PDF taken from the captured `.eml` (Gmail and Drive
+are never called) — into the same evidence the 2026-10-06 quote-history import wrote: one
+`evidence.source_record` of kind `quote_document` (payload without client identity) and its
+`evidence.document_line` rows. The case panel, the Tablero's money and the catalog's price history
+read them with no other change. At most 10 per run (`--limit`, 1–50), one transaction each.
+
+**How it reads.** Claude reads the PDF (a `document` block, untrusted framing, closed JSON schema);
+the Plantilla parser reads `pdftotext -layout` of the same PDF and every line total is cross-checked
+(`verified` / `disputed` / `single_source`). Without poppler on the host the cross-check
+would be silent, so a model without poppler is refused as configuration (`pdftotext_missing`). With the
+model off nothing is written: the run counts `model_off`.
+
+**Refusals** (nothing written; one `quote_read` observation per PDF, `value_norm
+quote_read:v1:<ISO week>:<pdf sha256>`,
+listed in Datos → «Acciones automáticas» → «Cotizaciones no leídas»; retried after 7–14 days, or at
+once after a reader version bump):
+
+| Code | Meaning |
+|---|---|
+| `not_origenlab_quote` | the model says it is not an OrigenLab quotation, or Labdelivery appears in it |
+| `too_many_disputed` | more than a third of the cross-checked lines disagree with the PDF's text |
+| `net_mismatch` | the printed neto is more than 1 % off the sum of the non-optional lines |
+| `model_refused` / `unreadable` | the model refused or truncated, the answer did not validate, or no line carries a total |
+| `no_text_layer` | poppler read no text (a scanned page): nothing to cross-check or to find a Labdelivery letterhead in |
+| `request_failed` / `write_failed` | the API refused the PDF for good (a 4xx other than 408/409/429), or a value cannot be stored |
+| `hash_mismatch` / `attachment_not_in_eml` | the stored `.eml` is not the captured one, or does not carry the PDF |
+
+A transient failure (network, 429, 5xx) is only counted (`error:<Class>`) and retried next run; one
+PDF never stops the run. A model without `pdftotext` on the host, a model id the worker does not know,
+or a model without the key is a configuration refusal (exit 3) before anything is read; the run's log
+line says `text_layer: pdftotext` when poppler is present.
+
+**Enable (owner):** apply `20261012100000_slice7_quote_reader.sql` to hosted first (the worker's
+write grant); run `apps/worker/scripts/quote_read_eval.py` against a local copy and the private PDF
+folders — switch on only when neto and line agreement are both ≥ 95 %; then on the
+`origenlab-gmail-sync` cron set `ORIGENLAB_WORKER_ANTHROPIC_API_KEY`,
+`ORIGENLAB_WORKER_QUOTE_READ_MODEL=<model id>` and `ORIGENLAB_WORKER_QUOTE_READ_ENABLED=true`.
+**Disable:** `ORIGENLAB_WORKER_QUOTE_READ_ENABLED=false` (the next run is `paused`; nothing to undo —
+written documents stay as evidence). Log: one `quote_read` JSON line per run with candidates, read,
+lines, refusals by code and tokens; never text.
+
 ## 9. Emergency shutdown
 
 In order, fastest first:

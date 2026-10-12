@@ -28,6 +28,9 @@ SECRET_KEYS = (
     "ORIGENLAB_WORKER_DRIVE_CASOS_FOLDER_ID",
     "ORIGENLAB_WORKER_DRIVE_PROTECTED_FOLDER_IDS",
     "ORIGENLAB_WORKER_DRIVE_EXPECTED_PRINCIPAL",
+    "ORIGENLAB_WORKER_QUOTE_READ_ENABLED",
+    "ORIGENLAB_WORKER_QUOTE_READ_MODEL",
+    "ORIGENLAB_WORKER_ANTHROPIC_API_KEY",
 )
 
 
@@ -47,7 +50,8 @@ def test_the_cron_service_runs_the_worker_every_ten_minutes() -> None:
     for line in ('schedule: "*/10 * * * *"', "runtime: python", "rootDir: apps/worker",
                  "buildCommand: uv sync --frozen --no-dev",
                  "startCommand: uv run --no-sync origenlab-worker gmail-sync "
-                 "&& uv run --no-sync origenlab-worker drive-file"):
+                 "&& uv run --no-sync origenlab-worker drive-file "
+                 "&& uv run --no-sync origenlab-worker quote-read"):
         assert line in service, line
     assert "--init" not in service and "--dry-run" not in service
 

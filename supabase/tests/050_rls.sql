@@ -213,7 +213,7 @@ insert into expected_policies values
     ('catalog', 'supplier_terms', 'origenlab_api', 'UPDATE'),
     -- 20261005140628: catalog.fx_rate and catalog.cost_parameter are append-only — api reads and
     -- inserts; evidence.document_line — api reads, inserts and reviews (column-level UPDATE). The
-    -- worker has no policy on any of them.
+    -- worker has no policy on the first two; since 20261012100000 it reads and inserts lines.
     ('catalog', 'fx_rate', 'origenlab_api', 'SELECT'),
     ('catalog', 'fx_rate', 'origenlab_api', 'INSERT'),
     ('catalog', 'cost_parameter', 'origenlab_api', 'SELECT'),
@@ -221,11 +221,13 @@ insert into expected_policies values
     ('evidence', 'document_line', 'origenlab_api', 'SELECT'),
     ('evidence', 'document_line', 'origenlab_api', 'INSERT'),
     ('evidence', 'document_line', 'origenlab_api', 'UPDATE'),
+    ('evidence', 'document_line', 'origenlab_worker', 'SELECT'),
+    ('evidence', 'document_line', 'origenlab_worker', 'INSERT'),
     ('evidence', 'triage_review', 'origenlab_api', 'SELECT'),
     ('evidence', 'triage_review', 'origenlab_api', 'INSERT'),
     ('evidence', 'triage_review', 'origenlab_worker', 'SELECT');
 
-select is((select count(*)::int from expected_policies), 176, 'the matrix implies 176 policies');
+select is((select count(*)::int from expected_policies), 178, 'the matrix implies 178 policies');
 
 -- Posture.
 select is(

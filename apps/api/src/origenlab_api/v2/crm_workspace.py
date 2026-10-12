@@ -546,6 +546,30 @@ def load_drive_ledgers(paths: Iterable[str | Path]) -> dict[str, DriveLink]:
 # ────────────────────────────────────────────────────────── pure composition ──
 
 
+#: The quote reader's refusal codes (apps/worker quote_reader.py); anything else is shown as «other».
+QUOTE_READ_CODES = frozenset({"not_origenlab_quote", "too_many_disputed", "net_mismatch", "model_refused", "unreadable",
+                              "no_text_layer", "request_failed", "write_failed", "hash_mismatch",
+                              "attachment_not_in_eml"})
+
+
+def quote_reading_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The quote reader's refusals for Datos: which quotation, which revision, why (a code), when."""
+    out = []
+    for r in rows:
+        norm = str(r.get("value_norm") or "")
+        out.append({
+            "quote_number": r.get("quote_number"),
+            "revision_no": r.get("revision_no"),
+            "sent_at": r.get("sent_at"),
+            "code": r.get("code") if r.get("code") in QUOTE_READ_CODES else "other",
+            "reader_version": ":".join(norm.split(":")[:2]) or None,
+            "recorded_at": r.get("recorded_at"),
+            "opportunity_id": r.get("opportunity_id"),
+            "case_title": r.get("case_title"),
+        })
+    return out
+
+
 def gmail_url(message_id: str | None) -> str | None:
     return GMAIL_MESSAGE_URL.format(message_id) if message_id else None
 
@@ -2138,6 +2162,30 @@ class CrmWorkspaceRepository:
             )
             notes = self._rows(cur)
         return {"opportunity_id": opportunity_id, "notes": notes}
+
+    def quote_readings(self, limit: int = 100) -> dict[str, Any]:
+        """The quote PDFs the reader refused, newest first (`quote_reading_rows`)."""
+        with self._read() as cur:
+            cur.execute(
+                """
+                select a.value_norm, a.value ->> 'code' as code,
+                       to_char(a.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as recorded_at,
+                       q.quote_number, r.revision_no, r.sent_at::text as sent_at,
+                       o.id::text as opportunity_id, o.title as case_title
+                  from evidence.assertion a
+                  join crm.quote_revision r on r.id::text = a.value ->> 'revision_id'
+                  join crm.quote q on q.id = r.quote_id
+                  join crm.opportunity o on o.id = q.opportunity_id
+                 where a.kind = 'quote_read'
+                   and not exists (select 1 from evidence.source_record d where d.kind = 'quote_document'
+                                    and d.dedupe_key = 'quote_document:' || lower(r.pdf_sha256))
+                 order by a.created_at desc
+                 limit %s
+                """,
+                (max(1, min(int(limit), 500)),),
+            )
+            rows = self._rows(cur)
+        return {"items": quote_reading_rows(rows)}
 
     def opportunity_mail_documents(self, opportunity_id: str) -> dict[str, Any] | None:
         """The Gmail messages linked to one case and the documents each carries.
