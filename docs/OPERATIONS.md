@@ -2063,8 +2063,13 @@ readings run and tokens, and how often each candidate agreed with the first (the
 intent, stage, urgency and needs_reply; the report holds every model's reading side by side.
 Change the variable only on that evidence, and keep the export outside the repository.
 
+**Reading with the model what was read with it off:** a version read with the model switched off
+(`model_state: off`) is never read again under that version. Switch the model on first, then bump
+`TRIAGE_VERSION` (v3, 2026-10-12, did exactly this with the rules unchanged); the sweep covers 14
+days, and a one-off `triage-once --since-days 30 --limit 500` on the worker covers older mail.
+
 **Re-triage after a rule change:** bump `TRIAGE_VERSION` in `triage_rules.py`. New readings are
-stored beside the old ones (`triage:v2`), never over them: the worker may only insert assertions.
+stored beside the old ones (`triage:v<N>`), never over them: the worker may only insert assertions.
 The sweep then reads every message of the last 14 days again (`sweep_untriaged`, rules only when
 the model is off), so a message an earlier version misread comes back under the new reading
 within minutes of the deploy. What reads the readings prefers the **newest version per message**
