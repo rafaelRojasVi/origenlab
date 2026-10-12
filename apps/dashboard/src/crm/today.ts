@@ -8,7 +8,7 @@
  * - **Seguimientos**: one list, coloured like a traffic light by the 3 · 14 · 30-day rhythm counted
  *   from OrigenLab's last touch (the quote, or a later email it sent — never a note): green from
  *   day 3 (first follow-up), yellow from day 14 (second), red from day 30 (close?). A case whose
- *   «Seguimiento …» task (a reminder from «Registrar seguimiento») is due today shows that day,
+ *   «Seguimiento …» task (a reminder from «Recordarme…») is due today shows that day,
  *   whatever the count, and the task counts as done once OrigenLab writes on the thread on or after
  *   its day (no «Hecho» needed). A reminder for a later day keeps the case off the list until then.
  *   A case with any other open task is already planned and is left out, and so is an undecided

@@ -412,13 +412,13 @@ describe("case drawer actions", () => {
     expect(within(dialog).getByRole("button", { name: "Cambiar estado" })).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "Marcar ganada" })).toBeDisabled();
     // A reminder is a task: with the case commands off it is not offered either.
-    expect(within(dialog).getByRole("button", { name: "Registrar seguimiento" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Recordarme…" })).toBeDisabled();
   });
 
   it("keeps every write disabled for a viewer", async () => {
     stubApi({ pipelines: [page([card()])] });
     const dialog = await openDrawer(session("viewer"));
-    for (const name of ["Cambiar estado", "Marcar ganada", "Registrar seguimiento", "Registrar cotización", "Nueva revisión"]) {
+    for (const name of ["Cambiar estado", "Marcar ganada", "Recordarme…", "Registrar cotización", "Nueva revisión"]) {
       expect(within(dialog).getByRole("button", { name })).toBeDisabled();
     }
   });
@@ -988,7 +988,7 @@ describe("case drawer actions", () => {
     expect(within(dialog).getByRole("button", { name: "Sí, confirmar" })).toBeDisabled();
   });
 
-  it("«Registrar seguimiento» saves a note and a reminder for the chosen day, replacing the earlier one", async () => {
+  it("«Recordarme…» saves a note and a reminder for the chosen day, replacing the earlier one", async () => {
     const earlier = { task_id: "t-old", title: "Seguimiento de 00001-26", due_at: "2026-10-06T12:00:00Z", version: 3, owner: "Ana" };
     const calls = stubApi({
       pipelines: [page([card({ open_tasks: [earlier] })])],
@@ -998,7 +998,7 @@ describe("case drawer actions", () => {
           : { body: receipt("create_task", "quoting", 5, "aaaaaaaa-0009") },
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar seguimiento" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Recordarme…" }));
     const form = await within(dialog).findByTestId("followup-reminder");
     expect(within(form).getByText(/Reemplaza el recordatorio anterior/)).toBeInTheDocument();
     fireEvent.change(within(form).getByLabelText("¿Qué tienes que hacer?"), { target: { value: "Llamar a la jefa de laboratorio" } });
@@ -1014,13 +1014,22 @@ describe("case drawer actions", () => {
     expect(posts[2].body).toMatchObject({ task_id: "t-old", task_version: 3 });
   });
 
+  it("the case says when and where its reminder shows, with the note", async () => {
+    const fu = { task_id: "t1", title: "Seguimiento de 00001-26", due_at: "2099-10-19T12:00:00Z", version: 1, owner: "Ana" };
+    stubApi({ pipelines: [page([card({ open_tasks: [fu], last_note: { created_at: "2026-10-12T10:00:00Z", body: "Mandar correo esta semana", author: "Ana" } })])] });
+    const dialog = await openDrawer(session("sales"));
+    const box = within(dialog).getByTestId("drawer-reminder");
+    expect(box).toHaveTextContent("Te lo recuerdo el 19 oct 2099 en Hoy → Seguimientos");
+    expect(box).toHaveTextContent("Mandar correo esta semana");
+  });
+
   it("a reminder without a note is just the task, for today by default", async () => {
     const calls = stubApi({
       pipelines: [page([card()])],
       onPost: () => ({ body: receipt("create_task", "quoting", 5, "aaaaaaaa-0010") }),
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar seguimiento" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Recordarme…" }));
     const form = await within(dialog).findByTestId("followup-reminder");
     expect(within(form).getByRole("button", { name: "Hoy" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(within(form).getByRole("button", { name: "Guardar recordatorio" }));

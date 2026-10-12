@@ -450,6 +450,16 @@ describe("Hoy actions", () => {
     expect(within(row).getByTestId("today-followup-note")).toHaveTextContent("Nota: Mandar correo esta semana · Rafael, 05 oct 2026");
   });
 
+  it("a case your reminder brought back says so; one on its own clock does not", () => {
+    stub();
+    const fu = { task_id: "rem", title: "Seguimiento de 00001-26", due_at: "2026-10-06T09:00:00Z", version: 1, owner: "Rafael" };
+    const reminded = card({ open_tasks: [fu] }, "2026-09-01T12:00:00Z");
+    const own = card({}, "2026-09-01T12:00:00Z");
+    renderToday([reminded, own]);
+    expect(within(screen.getByTestId("today-task-rem")).getByTestId("today-reminder-chip")).toHaveTextContent("Tu recordatorio");
+    expect(within(screen.getByTestId(`today-followup-${own.opportunity_id}`)).queryByTestId("today-reminder-chip")).toBeNull();
+  });
+
   it("puts off an unscheduled follow-up a week by writing it a «Seguimiento …» task", async () => {
     const calls = stub();
     const c = card({}, "2026-09-25T12:00:00Z");
