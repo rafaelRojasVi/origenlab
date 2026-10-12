@@ -178,6 +178,8 @@ def main(argv: list[str] | None = None) -> int:
                                    input_tokens=log.get("input_tokens"), output_tokens=log.get("output_tokens"))
                     except ReadRefused as exc:
                         row.update(outcome="refused", code=exc.code)
+                    except Exception as exc:  # noqa: BLE001 - one document never stops the evaluation
+                        row.update(outcome="refused", code=f"error:{type(exc).__name__}:{getattr(exc, 'status_code', '')}")
                 results.append(row)
                 fh.write(json.dumps({**row, "sha": doc["sha"][:12]}) + "\n")
     summary = summarize(results)

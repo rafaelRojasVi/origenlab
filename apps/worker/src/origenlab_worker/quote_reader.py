@@ -48,6 +48,7 @@ from origenlab_api.v2.catalog.history_check import (
     LINE_KINDS,
     cross_check,
     document_lines,
+    normalise_quote_date,
     parse_template_lines,
     quote_document_payload,
 )
@@ -75,15 +76,15 @@ Answer with the quotation's header and every priced line, exactly as printed:
 - is_origenlab_issued_quote: true only if this is a quotation OrigenLab issued to a client: \
 false for a supplier's quote to OrigenLab, an invoice, a purchase order or a datasheet, and false \
 when the letterhead or footer names Labdelivery or any company other than OrigenLab.
-- quote_number, date (as printed), currency (CLP, USD or EUR), subtotal_net (the neto before \
+- quote_number, date (the issue date as YYYY-MM-DD; null if none is printed), currency (CLP, USD or EUR), subtotal_net (the neto before \
 IVA, a plain number without separators), template (xlsx when it is a spreadsheet layout, docx \
 for a document layout, else null).
 - client_type: university, public_health, public_other, private_company, research_center, \
 individual or unknown.
-- client_institution, client_unit, client_contact: as printed, or null. They are used only to \
-remove the client's name from the line texts.
+- client_institution, client_unit, client_contact: as printed, or an empty string. They are used \
+only to remove the client's name from the line texts.
 - lines: every row in print order: item (the item label as printed), parent_item (the item a \
-sub-row belongs to, else null), kind (equipment, accessory, consumable, spare_part, service, \
+sub-row belongs to, else an empty string), kind (equipment, accessory, consumable, spare_part, service, \
 freight or other), brand, model, description, qty, unit_price, line_total (plain numbers \
 without separators; null when not printed) and optional (true when the row is marked optional \
 or not included in the total)."""
@@ -107,16 +108,17 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
         "subtotal_net": _NUMBER,
         "template": _nullable({"type": "string", "enum": ["xlsx", "docx"]}),
         "client_type": _nullable({"type": "string", "enum": list(CLIENT_TYPES)}),
-        "client_institution": _nullable({"type": "string"}),
-        "client_unit": _nullable({"type": "string"}),
-        "client_contact": _nullable({"type": "string"}),
+        # Plain strings, "" when absent: the API refuses more than 16 union-typed parameters.
+        "client_institution": {"type": "string"},
+        "client_unit": {"type": "string"},
+        "client_contact": {"type": "string"},
         "lines": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "required": ["item", "parent_item", "kind", "brand", "model", "description", "qty", "unit_price",
                          "line_total", "optional"],
             "properties": {
                 "item": _nullable({"type": "string"}),
-                "parent_item": _nullable({"type": "string"}),
+                "parent_item": {"type": "string"},
                 "kind": _nullable({"type": "string", "enum": list(LINE_KINDS)}),
                 "brand": _nullable({"type": "string"}),
                 "model": _nullable({"type": "string"}),
@@ -249,6 +251,10 @@ def read_document(pdf: bytes, sha256: str, *, reader: ModelReader | None, model:
     if not extraction["is_origenlab_issued_quote"]:
         raise ReadRefused("not_origenlab_quote")
     extraction = {**extraction, "sha256": sha256}
+    try:
+        normalise_quote_date(extraction.get("date"))
+    except ValueError:
+        extraction = {**extraction, "date": None}  # a date in words is not worth refusing the quote over
     try:
         payload = quote_document_payload(extraction, sha256)
         lines, ai_lines, withheld = document_lines(extraction, payload["currency"], extractor=EXTRACTOR_AI)
