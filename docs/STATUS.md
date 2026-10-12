@@ -2564,3 +2564,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Not yet | Hosted migration (54 → 55, before the deploy); the Storage secret key, the bucket and the two Render API variables; the deploy; the backfill job; the hand upload. |
 | Evidence | pgTAP 092 (20) and every pgTAP file on a disposable cluster (only the known 100 harness artefact); audit unit tests 352; clean-room static 13/13; API validate with the cluster 4493+ passed, +29 new (pure rules, routes, DB commands, card, session); proxy 465; dashboard 753 (+9). |
 
+
+### 2.7.98 A closed case shows no notes, 2026-10-12 — built, not deployed
+
+`apps/api` + `apps/dashboard`; no schema change. Owner 2026-10-12 on a won case showing «Hay más de una revisión vigente»: «whatever, it's already closed, remove it». A won, lost or abandoned case now carries no attention notes and is «al día» (2026-10-09 already made it never block); the panel no longer offers «Elegir revisión vigente» on it. Evidence: api workspace tests 43 passed (the closed-case test now asserts no notes), dashboard validate 753 passed (one test replaced: the disabled prompt on a closed case is gone, not disabled).
