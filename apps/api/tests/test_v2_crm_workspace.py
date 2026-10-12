@@ -715,19 +715,36 @@ def test_quote_contents_sums_non_optional_lines_without_a_printed_neto_and_never
     assert (c["net_total"], c["net_source"], c["tax_total"]) == (None, "none", None)
 
 
-def test_an_unread_pdf_has_no_contents_and_case_money_counts_only_vigente_revisions() -> None:
+def test_case_money_is_the_last_sent_vigente_quotation_not_a_sum() -> None:
+    """Owner 2026-10-12: a case with several quotations shows the last one sent, not their sum —
+    later quotations usually replace earlier ones for the same request."""
     from origenlab_api.v2.crm_workspace import case_money, quote_contents
 
     assert quote_contents({"doc_currency": None, "doc_net_total": None, "doc_lines": None}) is None
     revs = [
-        {"is_active": True, "contents": {"currency": "CLP", "net_total": "1000"}},
-        {"is_active": True, "contents": {"currency": "CLP", "net_total": "250"}},
-        {"is_active": False, "contents": {"currency": "CLP", "net_total": "999999"}},  # superseded
-        {"is_active": True, "contents": {"currency": "USD", "net_total": "10.50"}},
-        {"is_active": True, "contents": None},  # never read
+        {"quote_number": "00001-26", "revision_no": 1, "sent_at": "2026-09-07 10:00:00+00", "is_active": True,
+         "contents": {"currency": "CLP", "net_total": "1000"}},
+        {"quote_number": "00003-26", "revision_no": 1, "sent_at": "2026-09-22 15:30:00+00", "is_active": True,
+         "contents": {"currency": "CLP", "net_total": "250"}},
+        {"quote_number": "00002-26", "revision_no": 2, "sent_at": "2026-09-30 09:00:00+00", "is_active": False,
+         "contents": {"currency": "CLP", "net_total": "999999"}},  # superseded: never the case's amount
     ]
-    assert case_money(revs) == [{"currency": "CLP", "net_total": "1250"}, {"currency": "USD", "net_total": "10.50"},
-                                {"currency": "unread", "net_total": "1"}]
+    assert case_money(revs) == [{"currency": "CLP", "net_total": "250", "quote_number": "00003-26",
+                                 "revision_no": 1, "sent_at": "2026-09-22 15:30:00+00", "quote_count": 2}]
+
+
+def test_case_money_says_unread_when_the_last_sent_quotation_was_never_read() -> None:
+    from origenlab_api.v2.crm_workspace import case_money
+
+    revs = [
+        {"quote_number": "00001-26", "revision_no": 1, "sent_at": "2026-09-07 10:00:00+00", "is_active": True,
+         "contents": {"currency": "USD", "net_total": "10.50"}},
+        {"quote_number": "00004-26", "revision_no": 1, "sent_at": "2026-10-01 10:00:00+00", "is_active": True,
+         "contents": None},
+    ]
+    assert case_money(revs) == [{"currency": "unread", "net_total": "1", "quote_number": "00004-26",
+                                 "revision_no": 1, "sent_at": "2026-10-01 10:00:00+00", "quote_count": 2}]
+    assert case_money([{"is_active": False, "contents": None}]) == []
 
 
 def test_case_threads_group_by_cadena_label_the_party_and_hide_addresses() -> None:

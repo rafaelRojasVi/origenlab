@@ -701,6 +701,15 @@ export function fmtDate(value: string | null | undefined): string {
   return d.toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+/** «22 sept 2026, 15:30»: the day and the hour, for when something was sent (owner 2026-10-12). */
+export function fmtDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  const time = d.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${fmtDate(value)}, ${time}`;
+}
+
 export function fmtInt(n: number): string {
   return n.toLocaleString("es-CL");
 }

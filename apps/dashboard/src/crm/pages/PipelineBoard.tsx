@@ -52,7 +52,7 @@ const COLUMN_DOT: Record<BoardColumnKey, string> = {
 const DRAG_TYPE = "text/plain";
 
 /**
- * The neto quoted in a column: the sum of each case's vigente quotations (`money`), CLP only (a
+ * The neto quoted in a column: each case's last sent quotation (`money`), CLP only (a
  * foreign-currency quote is rare and would not add up), and how many cases have a quote whose
  * PDF nobody read yet, so a small number never pretends to be the whole column.
  */
@@ -358,7 +358,7 @@ export function BoardCard({
           <span className="text-ink-faint">Sin cotización</span>
         )}
         {money ? (
-          <span className="ml-auto shrink-0 text-[11.5px] font-semibold text-ink" title="Neto de las cotizaciones vigentes" data-testid="board-money">
+          <span className="ml-auto shrink-0 text-[11.5px] font-semibold text-ink" title="Neto de la última cotización enviada" data-testid="board-money">
             {money}
           </span>
         ) : null}

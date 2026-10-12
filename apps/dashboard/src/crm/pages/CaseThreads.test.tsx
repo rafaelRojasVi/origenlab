@@ -45,5 +45,7 @@ describe("Correos del caso as cadenas", () => {
     expect(within(client).getByText("PDF")).toBeInTheDocument();
     expect(threads[1]).toHaveTextContent("Proveedor");
     expect(threads[1]).toHaveTextContent("fabricante-ficticio.example");
+    // When matters (owner 2026-10-12): each email shows its hour, not only the day.
+    expect(threads[1]).toHaveTextContent(/01 sept 2026, \d{2}:\d{2}/);
   });
 });

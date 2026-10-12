@@ -536,22 +536,26 @@ def quote_contents(row: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def case_money(revisions: Iterable[Mapping[str, Any]]) -> list[dict[str, str]]:
-    """The neto of the case's vigente revisions (not void, not superseded), one entry per currency,
-    for the card and the panel header. Revisions whose PDF was never read are counted apart."""
-    sums: dict[str, Decimal] = {}
-    unread = 0
-    for r in revisions:
-        if not r.get("is_active"):
-            continue
-        c = r.get("contents")
-        net = _money(c.get("net_total")) if c else None
-        if c is None or net is None or not c.get("currency"):
-            unread += 1
-            continue
-        sums[c["currency"]] = sums.get(c["currency"], Decimal(0)) + net
-    out = [{"currency": cur, "net_total": _money_text(v, cur) or "0"} for cur, v in sorted(sums.items())]
-    return out + ([{"currency": "unread", "net_total": str(unread)}] if unread else [])
+def case_money(revisions: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The case's amount for the card, the board column and the panel header: the neto of the
+    LAST SENT vigente revision (owner 2026-10-12), not a sum — a later quotation usually replaces
+    an earlier one for the same request. One entry, or none for a case without a vigente revision.
+    Its currency is "unread" (net_total "1") when that revision's PDF was never read; it also
+    names the quotation and when it was sent, and how many vigente quotations the case has."""
+    live = [r for r in revisions if r.get("is_active")]
+    if not live:
+        return []
+    last = max(live, key=_sort_key_sent)
+    c = last.get("contents")
+    net = _money(c.get("net_total")) if c else None
+    cur = c.get("currency") if c else None
+    entry: dict[str, Any] = (
+        {"currency": cur, "net_total": _money_text(net, cur) or "0"} if net is not None and cur
+        else {"currency": "unread", "net_total": "1"}
+    )
+    entry.update(quote_number=last.get("quote_number"), revision_no=last.get("revision_no"),
+                 sent_at=last.get("sent_at"), quote_count=len(live))
+    return [entry]
 
 
 def drive_links_from_records(revisions: Iterable[Mapping[str, Any]],
