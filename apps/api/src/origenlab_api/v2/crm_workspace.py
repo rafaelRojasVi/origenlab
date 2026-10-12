@@ -288,6 +288,18 @@ _SQL_PIPELINE_TASKS = """
 # «Hoy» reads `created_at`: a note written after the client's last email is the operator's answer
 # («Atendido» on a won case, where a task is refused). `body` is cut to its first words: the card
 # shows a hint, the drawer shows the note.
+#: The live documents attached to cases (crm.opportunity_document, their purchase orders).
+_SQL_PIPELINE_DOCUMENTS = """
+select d.id::text as document_id, d.opportunity_id::text as opportunity_id,
+       d.quote_revision_id::text as quote_revision_id, d.kind, d.document_number,
+       d.original_filename, d.content_type, d.byte_size, d.source,
+       d.attached_at::text as attached_at, o.display_name as attached_by
+  from crm.opportunity_document d
+  join platform.operator o on o.id = d.attached_by_operator_id
+ where d.removed_at is null
+ order by d.attached_at desc, d.id
+"""
+
 _SQL_PIPELINE_NOTES = """
     select distinct on (n.subject_id)
            n.subject_id::text as opportunity_id,
@@ -797,10 +809,14 @@ def compose_pipeline(
     contacts: Mapping[str, Mapping[str, Any]] | None = None,
     tasks: list[Mapping[str, Any]] | None = None,
     notes: list[Mapping[str, Any]] | None = None,
+    documents: list[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
     in ``attention``."""
+    docs_by_opp: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in documents or []:
+        docs_by_opp[row["opportunity_id"]].append({k: v for k, v in row.items() if k != "opportunity_id"})
     orgs_by_opp: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for row in case_organizations:
         orgs_by_opp[row["opportunity_id"]].append(row)
@@ -1000,6 +1016,8 @@ def compose_pipeline(
                 "quote_numbers": [q["quote_number"] for q in quote_cards],
                 "revision_count": len(all_revs),
                 "money": case_money(all_revs),
+                # The documents a person attached to the case (its purchase order), newest first.
+                "documents": docs_by_opp.get(oid, []),
                 "latest_revision": (
                     {k: v for k, v in latest.items() if not k.startswith("_")} if latest else None
                 ),
@@ -1307,7 +1325,7 @@ class CrmWorkspaceRepository:
                 setup.execute("set transaction read only")
                 setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
 
-            # 9 data queries in 1 RTT via psycopg pipeline mode.
+            # 10 data queries in 1 RTT via psycopg pipeline mode.
             cur_opps = conn.cursor()
             cur_case_orgs = conn.cursor()
             cur_quotes = conn.cursor()
@@ -1317,6 +1335,7 @@ class CrmWorkspaceRepository:
             cur_contact = conn.cursor()
             cur_tasks = conn.cursor()
             cur_notes = conn.cursor()
+            cur_documents = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -1327,6 +1346,7 @@ class CrmWorkspaceRepository:
                 cur_contact.execute(_SQL_PIPELINE_CONTACT)
                 cur_tasks.execute(_SQL_PIPELINE_TASKS)
                 cur_notes.execute(_SQL_PIPELINE_NOTES)
+                cur_documents.execute(_SQL_PIPELINE_DOCUMENTS)
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -1346,10 +1366,12 @@ class CrmWorkspaceRepository:
             contacts = last_contacts(self._rows(cur_contact))
             tasks = self._rows(cur_tasks)
             notes = self._rows(cur_notes)
+            documents = self._rows(cur_documents)
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
-            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks, notes
+            opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks, notes,
+            documents=documents,
         )
         return {
             "items": cards,

@@ -409,6 +409,10 @@ def current_session(request: Request) -> JSONResponse:
         # Whether the case commands (`ORIGENLAB_V2_COMMANDS_ENABLED`) are mounted: off, «Cambiar
         # etapa» and «Marcar ganada» would only ever meet a 404, so the drawer keeps them disabled.
         "case_commands_enabled": bool(getattr(request.app.state, "case_commands_enabled", False)),
+        # Whether a case's purchase order can be attached: the case commands are mounted AND the
+        # private Storage bucket is configured. Off, the drawer does not offer «Adjuntar OC».
+        "case_documents_enabled": bool(getattr(request.app.state, "case_commands_enabled", False)
+                                       and getattr(request.app.state, "case_document_storage", None) is not None),
         **options,
     })
 

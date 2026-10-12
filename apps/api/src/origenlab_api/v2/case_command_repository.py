@@ -49,6 +49,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from origenlab_api.v2.case_documents import (
+    ATTACH_CASE_DOCUMENT,
+    REMOVE_CASE_DOCUMENT,
+    attach_case_document,
+    remove_case_document,
+)
 from origenlab_api.v2.case_commands import (
     DISCARDED_BY_CORRECTION,
     ADD_CASE_ORGANIZATION,
@@ -1081,4 +1087,7 @@ class V2CaseCommandRepository(CommandTransaction):
         # `case_quotation.py`), as `record_case_won` is: no quote SQL lives in this module.
         RESOLVE_CURRENT_REVISION: resolve_current_revision,
         RECORD_CASE_QUOTATION: record_case_quotation,
+        # A case's documents (its purchase order), in the module that owns their SQL.
+        ATTACH_CASE_DOCUMENT: attach_case_document,
+        REMOVE_CASE_DOCUMENT: remove_case_document,
     }

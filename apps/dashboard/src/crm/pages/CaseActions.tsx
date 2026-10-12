@@ -10,6 +10,8 @@
  * (`sales`/`admin`); otherwise each action stays a `DisabledAction` with its reason. The API
  * remains the authority: a refusal is shown in Spanish, never swallowed.
  */
+import { type OcChoice, attachPurchaseOrder, documentRefusalText, ocLabel, useMayAttachCaseDocuments } from "../caseDocuments";
+import { OcPicker } from "./CaseDocuments";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { fetchCaseMailDocuments } from "../crmApi";
 import { confirmOrganizationRecord } from "../authoring/crmAuthoringApi";
@@ -432,6 +434,12 @@ function WonForm({
   const [revisionId, setRevisionId] = useState(revisions[0]?.revision_id ?? "");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  // The purchase order (owner request 2026-10-12), optional: attached first, then the win.
+  const mayAttach = useMayAttachCaseDocuments();
+  const [oc, setOc] = useState<OcChoice | null>(null);
+  const [ocNumber, setOcNumber] = useState("");
+  const ocKeyRef = useRef(newCaseCommandKey());
+  const [ocAttached, setOcAttached] = useState<string | null>(null);
   // One key per step for this form, reused on a retry so a double press or a lost answer can
   // never record twice; renewed only after a refusal.
   const keysRef = useRef({ advance: newCaseCommandKey(), won: newCaseCommandKey() });
@@ -443,6 +451,23 @@ function WonForm({
     e.preventDefault();
     if (!chosen || !ready) return;
     setBusy(true);
+    let ocLine: string | null = ocAttached;
+    if (oc && !ocAttached) {
+      try {
+        const attached = await attachPurchaseOrder(
+          oc,
+          { opportunity_id: card.opportunity_id, quote_revision_id: chosen.revision_id, document_number: ocNumber, note: note.trim() },
+          ocKeyRef.current,
+        );
+        ocLine = `OC adjuntada: ${ocLabel(attached.document)}.`;
+        setOcAttached(ocLine);
+      } catch (err) {
+        ocKeyRef.current = newCaseCommandKey();
+        setBusy(false);
+        onDone({ tone: "bad", lines: [`La OC no se adjuntó y el caso no se marcó ganado: ${documentRefusalText(err)}`] }, false);
+        return;
+      }
+    }
     try {
       const steps = await markCaseWon(
         { opportunity_id: card.opportunity_id, stage: card.stage, version: card.version as number },
@@ -450,7 +475,7 @@ function WonForm({
         note.trim(),
         keysRef.current,
       );
-      onDone({ tone: "good", lines: steps.map((s, i) => receiptLine(s, i + 1, steps.length)) }, true);
+      onDone({ tone: "good", lines: [...steps.map((s, i) => receiptLine(s, i + 1, steps.length)), ...(ocLine ? [ocLine] : [])] }, true);
     } catch (err) {
       const done = err instanceof WonFlowError ? err.done : [];
       // A step already recorded keeps its key (a retry replays it); the refused one gets a new key.
@@ -496,6 +521,13 @@ function WonForm({
           }))}
         />
       </FormField>
+      {mayAttach ? (
+        ocAttached ? (
+          <p className="text-xs text-good" data-testid="won-oc-attached">{ocAttached}</p>
+        ) : (
+          <OcPicker opportunityId={card.opportunity_id} onChange={setOc} number={ocNumber} onNumber={setOcNumber} idPrefix="won-oc" />
+        )
+      ) : null}
       <FormField label="Nota" htmlFor="case-won-note" required hint="Por ejemplo, la orden de compra recibida.">
         <TextareaInput id="case-won-note" value={note} onChange={setNote} maxLength={2000} rows={2} />
       </FormField>

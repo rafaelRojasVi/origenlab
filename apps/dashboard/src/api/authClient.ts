@@ -67,6 +67,8 @@ export type AuthSessionState =
        * «Cambiar etapa» and «Marcar ganada» stay disabled. Absent or anything but `true` is off.
        */
       caseCommandsEnabled?: boolean;
+      /** A case's purchase order can be attached (case commands on and private Storage configured). */
+      caseDocumentsEnabled?: boolean;
     }
   | {
       kind: "signed_out";
@@ -124,6 +126,7 @@ export function parseAuthSessionResponse(status: number, body: unknown): AuthSes
       canSwitchProfile: data.can_switch_profile === true,
       crmAuthoringEnabled: data.crm_authoring_enabled === true,
       caseCommandsEnabled: data.case_commands_enabled === true,
+      caseDocumentsEnabled: data.case_documents_enabled === true,
     };
   }
   if (status === 401 && data.state === "profile_required") {

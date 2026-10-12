@@ -57,6 +57,9 @@ describe("dashboard read-only policy", () => {
   //    review. «Abrir caso» on a «Correos sin caso» row opens a case from that email
   //    (open-commercial-case, owner decision 2026-10-10); recording an interest remains outside
   //    the browser.
+  //  - caseDocuments.ts's POST to the three purchase-order commands (owner request 2026-10-12):
+  //    attach a case's OC from the computer (multipart) or from a case email, and remove one.
+  //    Sales or admin upstream; the file is stored privately, never served from here.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const MAIL_RULES_FILE = "../crm/mailRules.ts";
   const MAIL_RULES_PATHS = [
@@ -78,6 +81,12 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/complete-task",
     "/v2/commands/cancel-task",
     "/v2/commands/open-commercial-case",
+  ];
+  const CASE_DOCUMENTS_FILE = "../crm/caseDocuments.ts";
+  const CASE_DOCUMENT_PATHS = [
+    "/v2/commands/attach-case-document",
+    "/v2/commands/attach-case-document-from-email",
+    "/v2/commands/remove-case-document",
   ];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
@@ -174,6 +183,17 @@ describe("dashboard read-only policy", () => {
         }
         continue;
       }
+      if (path === CASE_DOCUMENTS_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...CASE_DOCUMENT_PATHS].sort())) {
+          hits.push(`${path} (case document paths mismatch: found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
       if (path !== AUTH_LOGOUT_FILE) {
         hits.push(`${path} (unsanctioned mutation module)`);
         continue;
@@ -208,7 +228,7 @@ describe("dashboard read-only policy", () => {
   });
 
   it("names no V2 command outside the campaign, CRM authoring, email-rules and case-command clients", () => {
-    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE]);
+    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE]);
     const hits = entries
       .filter(([path, text]) => !owners.has(path) && /\/v2\/commands\//.test(text))
       .map(([path]) => path);

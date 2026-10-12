@@ -220,3 +220,43 @@ describe("catalog JSON commands guard", () => {
     expect(read.headers.get("Access-Control-Allow-Headers")).not.toContain("Idempotency-Key");
   });
 });
+
+describe("case purchase-order upload guard (2026-10-12)", () => {
+  const DOC_UPLOAD = `${DASHBOARD}/api/v2/commands/attach-case-document`;
+  const CASE = "00000000-0000-4000-8000-0000000000aa";
+  const DOC = "00000000-0000-4000-8000-0000000000dd";
+
+  it("caps the document at 20 MiB + 64 KiB and leaves the image limit alone", async () => {
+    const { CASE_DOCUMENT_UPLOAD_MAX_BYTES } = await import("./allowlist");
+    expect(CASE_DOCUMENT_UPLOAD_MAX_BYTES).toBe(20_971_520 + 65_536);
+    expect(catalogCommandMaxBytes("/v2/commands/attach-case-document")).toBe(CASE_DOCUMENT_UPLOAD_MAX_BYTES);
+    expect(catalogCommandMaxBytes("/v2/commands/add-product-image")).toBe(CATALOG_UPLOAD_MAX_BYTES);
+  });
+
+  it("forwards a multipart document larger than an image may be", async () => {
+    const fetchMock = stubUpstream();
+    const tenMiB = new ArrayBuffer(10 * 1024 * 1024);
+    const res = await handleRequest(post(DOC_UPLOAD, { ...GOOD, "Content-Type": MULTIPART }, tenMiB), TEST_ENV);
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses JSON to the upload, an oversize body and a missing key", async () => {
+    const fetchMock = stubUpstream();
+    expect((await handleRequest(post(DOC_UPLOAD, { ...GOOD, "Content-Type": "application/json" }), TEST_ENV)).status).toBe(415);
+    const { CASE_DOCUMENT_UPLOAD_MAX_BYTES } = await import("./allowlist");
+    const big = new ArrayBuffer(CASE_DOCUMENT_UPLOAD_MAX_BYTES + 1);
+    expect((await handleRequest(post(DOC_UPLOAD, { ...GOOD, "Content-Type": MULTIPART }, big), TEST_ENV)).status).toBe(413);
+    const { "Idempotency-Key": _k, ...noKey } = GOOD;
+    expect((await handleRequest(post(DOC_UPLOAD, { ...noKey, "Content-Type": MULTIPART }, "--x"), TEST_ENV)).status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reads a document's signed link, and nothing beside it", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${CASE}/documents/${DOC}/url`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${CASE}/documents/${DOC}`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${CASE}/documents`)).toBe(false);
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${CASE}/documents/../url`)).toBe(false);
+  });
+});

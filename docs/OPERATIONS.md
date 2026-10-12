@@ -2139,6 +2139,26 @@ folders — switch on only when neto and line agreement are both ≥ 95 %; then 
 written documents stay as evidence). Log: one `quote_read` JSON line per run with candidates, read,
 lines, refusals by code and tokens; never text.
 
+### 8.13 A case's purchase order (`crm-documents`)
+
+«Marcar ganada» and the panel's «Orden de compra» attach a case's OC — a file from the computer or a
+PDF copied from a case email — into the private bucket `crm-documents`, recorded in
+`crm.opportunity_document` (DOMAIN §7.7, ARCHITECTURE §7). The dashboard offers it only when the
+session says `case_documents_enabled` (case commands on and Storage configured).
+
+**Owner setup, once, in this order:** apply migration `20261012120000_slice7_case_documents.sql`
+to hosted **before** the API deploys (the pipeline reads the new table); create the API's Storage
+secret key (Supabase → Project Settings → API Keys → new secret key `origenlab_api_storage`, or the
+Management API); create the private bucket `crm-documents` (20 MB, PDF/JPEG/PNG); set
+`ORIGENLAB_V2_STORAGE_URL` (`https://<ref>.supabase.co`) and `ORIGENLAB_V2_STORAGE_SECRET_KEY` on
+the Render API service. The same key reads the worker's `mail` bucket to copy an email attachment;
+it never writes there.
+
+**Backfill:** `apps/api/scripts/attach_case_documents.py --entries '<json>' --operator <id or
+name>` plans; `--apply` attaches (a second apply replays). It runs where the API runs — a Render
+one-off job on the API service — and prints UUID prefixes only. An OC whose email was never
+captured (before the Gmail capture began) is uploaded by hand with «Adjuntar OC».
+
 ## 9. Emergency shutdown
 
 In order, fastest first:

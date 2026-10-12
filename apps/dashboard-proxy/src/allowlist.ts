@@ -111,6 +111,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/quote-candidates$/,
   // Operator-reviewed standalone purchase order suggestions: read-only and UUID-scoped.
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/purchase-order-candidates$/,
+  // A short-lived signed link to one of a case's documents (its purchase order).
+  /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/documents\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/url$/,
   // The rest of the CRM workspace (dashboard `#/crm/*`): four literal read paths and the one
   // cockpit read the CRM's review screen uses. Upstream each is GET-only, resolves the operator
   // from the dashboard session cookie (401 without one), and masks every email and phone for a
@@ -256,8 +258,9 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
  * task commands behind «En pausa hasta…» (`create-task`), «Retomar ahora» (`cancel-task`) and
  * «Hecho» (`complete-task`), and «Abrir caso» on a «Correos sin caso» row (`open-commercial-case`:
  * a case at `lead` whose origin is that email, owner decision 2026-10-10). «Reabrir» on a reply to a
- * lost case is `advance-case-stage` on that same case. Eleven exact paths, and only
- * eleven. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
+ * lost case is `advance-case-stage` on that same case. «Adjuntar OC» copies a purchase order from a
+ * case email (`attach-case-document-from-email`) and removes one (`remove-case-document`). Thirteen
+ * exact paths, and only thirteen. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
  * the body), an `Idempotency-Key`, the case (or task) version the operator was shown (the opening
  * command names its origin record instead) and a note, and mounts only behind
  * `ORIGENLAB_V2_COMMANDS_ENABLED`. `record-case-interest` stays refused. The reviewed cross-thread quotation flow
@@ -277,6 +280,10 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/complete-task$/,
   /^\/v2\/commands\/cancel-task$/,
   /^\/v2\/commands\/open-commercial-case$/,
+  // A case's purchase order (2026-10-12): copy it from a captured email, or remove one. The
+  // upload itself is multipart and listed with the other upload (CATALOG_UPLOAD_POST_PATHS).
+  /^\/v2\/commands\/attach-case-document-from-email$/,
+  /^\/v2\/commands\/remove-case-document$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */
@@ -384,16 +391,25 @@ export const CATALOG_COMMAND_POST_PATHS: readonly RegExp[] = [
 export const CATALOG_COMMAND_MAX_BYTES = 65_536;
 
 /**
- * The one multipart POST: a product image. The API caps the file at 8 MiB and refuses oversize
+ * The two multipart POSTs: a product image, and a case's purchase order (`attach-case-document`,
+ * 2026-10-12). The API caps the image at 8 MiB and the document at 20 MiB and refuses oversize
  * bodies itself; the Worker's limit is the file plus 64 KiB of form overhead (defence in depth).
  */
-export const CATALOG_UPLOAD_POST_PATHS: readonly RegExp[] = [/^\/v2\/commands\/add-product-image$/];
+export const CASE_DOCUMENT_UPLOAD_PATH_RE = /^\/v2\/commands\/attach-case-document$/;
+
+export const CATALOG_UPLOAD_POST_PATHS: readonly RegExp[] = [
+  /^\/v2\/commands\/add-product-image$/,
+  CASE_DOCUMENT_UPLOAD_PATH_RE,
+];
 
 export const CATALOG_UPLOAD_MAX_BYTES = 8_388_608 + 65_536;
+export const CASE_DOCUMENT_UPLOAD_MAX_BYTES = 20_971_520 + 65_536;
 
 /** The body limit for one catalog command path: the upload's, or the JSON commands'. */
 export function catalogCommandMaxBytes(pathname: string): number {
-  return CATALOG_UPLOAD_POST_PATHS.some((pattern) => pattern.test(pathname.split("?")[0]))
+  const pathOnly = pathname.split("?")[0];
+  if (CASE_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly)) return CASE_DOCUMENT_UPLOAD_MAX_BYTES;
+  return CATALOG_UPLOAD_POST_PATHS.some((pattern) => pattern.test(pathOnly))
     ? CATALOG_UPLOAD_MAX_BYTES
     : CATALOG_COMMAND_MAX_BYTES;
 }

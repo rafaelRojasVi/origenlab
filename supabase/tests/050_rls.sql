@@ -225,9 +225,13 @@ insert into expected_policies values
     ('evidence', 'document_line', 'origenlab_worker', 'INSERT'),
     ('evidence', 'triage_review', 'origenlab_api', 'SELECT'),
     ('evidence', 'triage_review', 'origenlab_api', 'INSERT'),
-    ('evidence', 'triage_review', 'origenlab_worker', 'SELECT');
+    ('evidence', 'triage_review', 'origenlab_worker', 'SELECT'),
+    ('crm', 'opportunity_document', 'origenlab_api', 'SELECT'),
+    ('crm', 'opportunity_document', 'origenlab_api', 'INSERT'),
+    ('crm', 'opportunity_document', 'origenlab_api', 'UPDATE'),
+    ('crm', 'opportunity_document', 'origenlab_worker', 'SELECT');
 
-select is((select count(*)::int from expected_policies), 178, 'the matrix implies 178 policies');
+select is((select count(*)::int from expected_policies), 182, 'the matrix implies 182 policies');
 
 -- Posture.
 select is(

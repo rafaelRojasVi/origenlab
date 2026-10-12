@@ -31,7 +31,7 @@ SLICE6_FULL_TABLES = ("note", "organization_product_line")
 #: slice-7 catalog and evidence tables: product_image and supplier_terms three each (api
 #: select/insert/update); document_line five (api select/insert/update, worker select/insert —
 #: the quote reader, 20261012100000); fx_rate and cost_parameter two each (api select, insert).
-SLICE7_POLICY_COUNTS = {"product_image": 3, "supplier_terms": 3,
+SLICE7_POLICY_COUNTS = {"product_image": 3, "supplier_terms": 3, "opportunity_document": 4,
                         "fx_rate": 2, "cost_parameter": 2, "document_line": 5}
 SLICE7_TABLES = tuple(SLICE7_POLICY_COUNTS)
 #: slice-4 mail triage: triage_review three (api select, insert; worker select).
@@ -78,24 +78,24 @@ def current_head_report():
     checks = [_check(f"a{i:02d}") for i in (1, 2, 3, 6, 7, 11, 12)] + [
         _check("s01"),
         _check("a13", status="CORROBORATED", required=False),
-        _check("a04", "FAIL", {"relation_count": 52},
-               ["relations in scope: observed 52, expected 34"]),
-        _check("a05", "FAIL", {"function_count": 34, "security_definer_count": 3}, [
+        _check("a04", "FAIL", {"relation_count": 53},
+               ["relations in scope: observed 53, expected 34"]),
+        _check("a05", "FAIL", {"function_count": 35, "security_definer_count": 3}, [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             "3 entr(y|ies) are present here and not in the baseline: " + gap.EXPECTED_SECURITY_DEFINER,
-            "functions in scope: observed 34, expected 3"]),
-        _check("a08", "FAIL", {"table_count": 51, "schema_count": 7}, [
-            "tables: 18 entr(y|ies) are present here and not in the baseline: "
+            "functions in scope: observed 35, expected 3"]),
+        _check("a08", "FAIL", {"table_count": 52, "schema_count": 7}, [
+            "tables: 19 entr(y|ies) are present here and not in the baseline: "
             + "; ".join(_table(t) for t in TABLES + SIGN_IN_TABLES + (SESSION_TABLE,)
                         + SLICE6_SELECT_ONLY_TABLES + SLICE6_FULL_TABLES + SLICE7_TABLES + SLICE4_TABLES),
-            "table count: observed 51, expected 33"]),
-        _check("a09", "FAIL", {"policy_count": 178}, [
-            "RLS policy count: observed 178, expected 127",
+            "table count: observed 52, expected 33"]),
+        _check("a09", "FAIL", {"policy_count": 182}, [
+            "RLS policy count: observed 182, expected 127",
             "RLS policies: 2 entr(y|ies) in the baseline are absent here: " + REMOVED,
-            "RLS policies: 53 entr(y|ies) are present here and not in the baseline: " + policies]),
+            "RLS policies: 57 entr(y|ies) are present here and not in the baseline: " + policies]),
         _check("a10", "FAIL",
-               {"foreign_key_count": 159, "covered_count": 159, "covered_unconditionally": 126},
-               ["foreign keys: observed 159, expected 102"]),
+               {"foreign_key_count": 164, "covered_count": 164, "covered_unconditionally": 131},
+               ["foreign keys: observed 164, expected 102"]),
     ]
     return {
         "run": {"mode": "local", "simulated": False, "hosted_contacted": False},
@@ -133,7 +133,7 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_historical_guard_is_a_declared_post_slice0_function(self):
         self.assertIn("crm.quote_revision_historical_guard", gap.POST_SLICE0_FUNCTIONS)
         self.assertEqual(3, gap.SLICE0_FUNCTION_COUNT)
-        self.assertEqual(34, gap.EXPECTED_FUNCTION_COUNT)
+        self.assertEqual(35, gap.EXPECTED_FUNCTION_COUNT)
 
     def test_the_campaign_block_schema_is_declared(self):
         self.assertIn("campaign_block", gap.EXPECTED_EXTRA_TABLES)
@@ -258,7 +258,7 @@ class DeclaredGapTest(unittest.TestCase):
         return kept
 
     def test_a_truncated_a08_list_need_not_name_every_table(self):
-        # The audit lists at most twelve entries, sorted, then " ..." — eighteen do not fit.
+        # The audit lists at most twelve entries, sorted, then " ..." — nineteen do not fit.
         report = current_head_report()
         kept = self.truncate_a08(report)
         self.assertEqual(12, len(kept))
@@ -289,11 +289,11 @@ class DeclaredGapTest(unittest.TestCase):
         a08["findings"][0] = head + sep + "; ".join(kept[1:]) + " ..."
         self.assert_refused(report, "a08 is truncated but names 11 tables, expected twelve")
 
-    def test_an_eighteenth_extra_table_is_refused(self):
+    def test_a_twentieth_extra_table_is_refused(self):
         report = current_head_report()
         a08 = check_of(report, "a08")
-        a08["findings"][0] = a08["findings"][0].replace("18 entr(y|ies)", "19 entr(y|ies)", 1)
-        self.assert_refused(report, "a08 does not report exactly eighteen extra tables")
+        a08["findings"][0] = a08["findings"][0].replace("19 entr(y|ies)", "20 entr(y|ies)", 1)
+        self.assert_refused(report, "a08 does not report exactly nineteen extra tables")
 
     def test_a_head_without_a_catalog_table_is_refused(self):
         report = current_head_report()
@@ -390,28 +390,28 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_throttle_update_policies_must_really_be_gone(self):
         report = current_head_report()
         a09 = check_of(report, "a09")
-        a09["findings"][2] = a09["findings"][2].replace("53 entr(y|ies)", "55 entr(y|ies)")
-        a09["summary"]["policy_count"] = 180
-        self.assert_refused(report, "a09.policy_count: observed 180, expected 178")
+        a09["findings"][2] = a09["findings"][2].replace("57 entr(y|ies)", "59 entr(y|ies)")
+        a09["summary"]["policy_count"] = 184
+        self.assert_refused(report, "a09.policy_count: observed 184, expected 182")
 
     def test_the_historical_origin_foreign_key_is_declared(self):
-        self.assertEqual(41, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
-        self.assertEqual(159, gap.EXPECTED_FOREIGN_KEY_COUNT)
-        self.assertEqual(126, gap.EXPECTED_COVERED_UNCONDITIONALLY)
+        self.assertEqual(46, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
+        self.assertEqual(164, gap.EXPECTED_FOREIGN_KEY_COUNT)
+        self.assertEqual(131, gap.EXPECTED_COVERED_UNCONDITIONALLY)
         self.assertIn("platform.auth_session.(account_operator_id, sign_in_kind)"
                       " -> platform.operator.(id, sign_in_kind)", gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS)
 
     def test_the_previous_head_count_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 33
-        self.assert_refused(report, "a05.function_count: observed 33, expected 34")
+        a05["summary"]["function_count"] = 34
+        self.assert_refused(report, "a05.function_count: observed 34, expected 35")
 
-    def test_an_undeclared_thirty_fifth_function_is_refused(self):
+    def test_an_undeclared_thirty_sixth_function_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 35
-        self.assert_refused(report, "a05.function_count: observed 35, expected 34")
+        a05["summary"]["function_count"] = 36
+        self.assert_refused(report, "a05.function_count: observed 36, expected 35")
 
     def test_a_fourth_security_definer_function_is_refused(self):
         report = current_head_report()
@@ -445,9 +445,9 @@ class DeclaredGapTest(unittest.TestCase):
     def test_an_undeclared_foreign_key_is_refused(self):
         report = current_head_report()
         a10 = check_of(report, "a10")
-        a10["summary"].update(foreign_key_count=160, covered_count=160)
-        a10["findings"] = ["foreign keys: observed 160, expected 102"]
-        self.assert_refused(report, "a10.foreign_key_count: observed 160, expected 159")
+        a10["summary"].update(foreign_key_count=165, covered_count=165)
+        a10["findings"] = ["foreign keys: observed 165, expected 102"]
+        self.assert_refused(report, "a10.foreign_key_count: observed 165, expected 164")
 
     def test_another_required_check_failing_is_refused(self):
         report = current_head_report()

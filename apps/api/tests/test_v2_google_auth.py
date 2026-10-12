@@ -338,6 +338,8 @@ def test_the_session_says_whether_the_case_commands_are_mounted(monkeypatch, swi
     body = h.client.get("/auth/session").json()
     assert body["case_commands_enabled"] is (switch == "true")
     assert body["case_commands_enabled"] is h.app.state.case_commands_enabled
+    # No Storage is configured here, so the purchase-order attachment is never offered.
+    assert body["case_documents_enabled"] is False
 
 
 def test_signing_in_reads_the_operator_and_writes_nothing(monkeypatch) -> None:

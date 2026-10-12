@@ -105,6 +105,7 @@ union all select 'catalog.fx_rate', count(*)::text from catalog.fx_rate
 union all select 'catalog.cost_parameter', count(*)::text from catalog.cost_parameter
 union all select 'evidence.document_line', count(*)::text from evidence.document_line
 union all select 'evidence.triage_review', count(*)::text from evidence.triage_review
+union all select 'crm.opportunity_document', count(*)::text from crm.opportunity_document
 ;
 
 commit;

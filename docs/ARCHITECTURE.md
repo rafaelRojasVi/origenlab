@@ -615,6 +615,17 @@ role and no Data-API-facing role is ever inside these predefined roles.
   gets a signed URL from `GET /v2/catalog/images/{id}/url`, never a path.
   Product images are not in the database backup: the bucket is backed up
   separately ([`OPERATIONS.md`](OPERATIONS.md) §14).
+- **The `crm-documents` bucket (2026-10-12) holds a case's documents** — its
+  purchase order — under `opportunities/<case>/<sha256>.<ext>`
+  (`crm.opportunity_document.storage_path`). FastAPI is the only writer, with the
+  same `sb_secret_...` key and settings as `catalog`: `POST
+  /v2/commands/attach-case-document` stores an uploaded PDF/JPEG/PNG (≤ 20 MiB);
+  `attach-case-document-from-email` **reads** the message's `.eml` from `mail`
+  (never writes there) and copies the attachment whose SHA-256 the capture
+  recorded. A browser opens one through `GET
+  /v2/workspace/opportunities/{id}/documents/{doc}/url`. Without Storage
+  configured those routes answer 503 and the session says
+  `case_documents_enabled: false`.
 - A browser receives a **signed URL valid for at most 10 minutes**, minted
   only after FastAPI has authorized that specific operator for that specific
   object. Uploads go through FastAPI.
