@@ -237,3 +237,40 @@ def test_an_absurd_amount_or_a_nul_byte_never_reaches_the_database() -> None:
     lines[0]["description"] = "Equipo\x00ficticio"
     reading, _ = read_document(b"x", SHA, reader=Reader(_message(_extraction(lines=lines))), model=MODEL, text=TEXT)
     assert "\x00" not in reading.lines[0]["description"]
+
+
+def _unions(schema) -> int:
+    """Parameters whose type is a union (anyOf or a type array), counted the way the API does."""
+    n = 0
+    if isinstance(schema, dict):
+        if "anyOf" in schema or isinstance(schema.get("type"), list):
+            n += 1
+        for value in schema.values():
+            n += _unions(value)
+    elif isinstance(schema, list):
+        n += sum(_unions(v) for v in schema)
+    return n
+
+
+def test_the_answer_schema_stays_within_the_apis_union_limit() -> None:
+    from origenlab_worker.quote_reader import EXTRACTION_SCHEMA
+
+    assert _unions(EXTRACTION_SCHEMA) <= 16  # the API refuses more (HTTP 400, 2026-10-11 evaluation)
+
+
+def test_empty_client_and_parent_strings_mean_none() -> None:
+    lines = _extraction()["lines"]
+    lines[0]["parent_item"] = ""
+    reading, _ = read_document(b"x", SHA, reader=Reader(_message(_extraction(lines=lines, client_unit="", client_contact=""))),
+                               model=MODEL, text=TEXT)
+    assert reading.lines[0]["parent_item"] is None
+
+
+def test_a_date_written_out_in_words_does_not_refuse_the_quote() -> None:
+    reading, _ = read_document(b"x", SHA, reader=Reader(_message(_extraction(date="Valdivia, 07 de mayo del 2026"))),
+                               model=MODEL, text=TEXT)
+    assert reading.payload["quote_date"] is None and reading.payload["net_total"] == "2236000"
+
+
+def test_the_prompt_asks_for_an_iso_date() -> None:
+    assert "YYYY-MM-DD" in build_request(b"x", model=MODEL)["system"][0]["text"]
