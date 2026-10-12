@@ -418,8 +418,9 @@ def test_a_pending_archive_alone_does_not_make_a_case_pending() -> None:
     assert "document_pending_drive" in [a["code"] for a in card["attention"]]
     assert others == [] and card["status"] == "ok"
 
-def test_a_closed_case_never_blocks() -> None:
-    """Decision 2026-10-09: a won, lost or abandoned case keeps its notes but never blocks."""
+def test_a_closed_case_carries_no_notes() -> None:
+    """Decision 2026-10-09: a closed case never blocks. Owner 2026-10-12: nor does it show notes —
+    «whatever, it's already closed»: a won, lost or abandoned case is «al día» with no attention."""
     for stage in ("won", "lost", "abandoned"):
         cards = compose_pipeline(
             [_opp("o1", stage=stage, closed_at="2026-06-01T00:00:00+00:00")],
@@ -431,9 +432,8 @@ def test_a_closed_case_never_blocks() -> None:
             {},
         )
         card = cards[0]
-        assert card["status"] != "blocked", stage
-        attention = {a["code"]: a["blocking"] for a in card["attention"]}
-        assert attention["canonical_undetermined"] is False, stage
+        assert card["status"] == "ok", stage
+        assert card["attention"] == [], stage
         assert card["next_action"]["text"] == "Caso cerrado — sin acción", stage
 
 

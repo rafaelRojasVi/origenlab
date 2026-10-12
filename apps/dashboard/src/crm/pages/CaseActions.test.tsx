@@ -1104,6 +1104,14 @@ describe("case drawer actions", () => {
     });
   }
 
+  it("never asks to choose a revision on a closed case (owner 2026-10-12)", async () => {
+    const won = { ...undetermined(), stage: "won", closed_at: "2026-05-14T00:00:00Z" } as OpportunityCardData;
+    stubApi({ pipelines: [page([won])] });
+    const dialog = await openDrawer(session("sales"));
+    expect(within(dialog).queryByTestId("case-undetermined-revision")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Hay más de una revisión vigente/)).not.toBeInTheDocument();
+  });
+
   it("offers «Elegir revisión vigente» on a blocked case and sends the chosen revision", async () => {
     const calls = stubApi({
       pipelines: [page([undetermined()]), page([card({ version: 6 })])],
@@ -1164,12 +1172,6 @@ describe("case drawer actions", () => {
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveTextContent("Ana Ficticia");
     expect(link).not.toHaveTextContent("@");
-  });
-
-  it("keeps «Elegir revisión vigente» disabled on a closed case: the API never edits one", async () => {
-    stubApi({ pipelines: [page([undetermined({ stage: "won", closed_at: "2026-05-10T00:00:00Z", status: "pending" })])] });
-    const dialog = await openDrawer(session("sales"));
-    expect(within(dialog).getByRole("button", { name: "Elegir revisión vigente" })).toBeDisabled();
   });
 
   it("keeps «Elegir revisión vigente» disabled without the case commands", async () => {

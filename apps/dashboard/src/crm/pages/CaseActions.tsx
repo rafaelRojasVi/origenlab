@@ -105,7 +105,8 @@ export function CaseActions({
   const targets = MOVE_TARGETS.filter((t) => t !== here || t === "pausa");
   const until = pausedUntil(card);
   const revisions = winnableRevisions(card);
-  const undetermined = undeterminedQuotes(card);
+  // A closed case never asks to choose a revision (owner 2026-10-12): it is done.
+  const undetermined = closed ? [] : undeterminedQuotes(card);
 
   const decideReason = !mayDecide
     ? WRITE_DISABLED_REASON

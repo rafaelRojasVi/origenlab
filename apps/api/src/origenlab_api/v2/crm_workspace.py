@@ -975,6 +975,9 @@ def compose_pipeline(
         # A closed case keeps its notes but never blocks (owner decision 2026-10-09): nothing
         # waits on it, and a blocker nobody needs to clear hides the ones that matter.
         closed = bool(opp.get("closed_at")) or opp.get("stage") in CLOSED_STAGES
+        # Owner 2026-10-12: nor does it carry notes — a closed case is «al día», nothing to fix.
+        if closed:
+            ordered = []
         blocked = [] if closed else [c for c in ordered if c in BLOCKING_CODES]
         cards.append(
             {
