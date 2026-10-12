@@ -54,7 +54,10 @@ from origenlab_worker.mail_text import MailText
 #: (`value_norm = triage:v<N>`), so a new version re-triages every message beside the old reading.
 #: The API lists the newest version per message; the hard-bounce boundary accepts any version.
 #: v2 (2026-10-11): quote words on the reply's own text only, wider lost phrases, cancellations.
-TRIAGE_VERSION = 2
+#: v3 (2026-10-12): the same rules; bumped so the messages v2 read with the model switched off
+#: (`model_state: off`) are read again now that the triage worker has the model on. Switch the
+#: model on BEFORE deploying a new version: a version read with the model off is never re-read.
+TRIAGE_VERSION = 3
 
 NOISE_CLASSES: tuple[str, ...] = ("bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification",
                                    "empty")
