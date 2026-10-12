@@ -17,8 +17,9 @@ Owner-run, read-only, outside the cron:
 * `--out`: one JSON line per document and model (codes and counts only) and `summary.json`; it must
   be outside the repository.
 
-The gate: a model passes when neto totals agree on ≥ 95 % of documents and line totals on ≥ 95 % of
-stored lines. Prints one line per model; never a client, a description or a price.
+The gate: a model passes when the neto agrees on ≥ 95 % of the documents it was shown and the line
+totals on ≥ 95 % of their stored lines. Exact (model code, total) matches are reported beside it:
+the stored codes are an earlier AI read and code spelling varies, so they are not gated. Prints one line per model; never a client, a description or a price.
 """
 
 from __future__ import annotations
@@ -64,7 +65,12 @@ def compare(stored: Mapping[str, Any], new: Mapping[str, Any]) -> dict[str, Any]
     left = Counter((line[0], _amount(line[1])) for line in stored["lines"])
     right = Counter((line[0], _amount(line[1])) for line in new["lines"])
     matched = sum((left & right).values())
+    # The money alone: the same line totals, whatever the model code (stored codes are an earlier
+    # AI read too, and code spelling varies: dashes, suffixes).
+    totals = sum((Counter(_amount(line[1]) for line in stored["lines"])
+                  & Counter(_amount(line[1]) for line in new["lines"])).values())
     return {
+        "totals_matched": totals,
         "net_agrees": _neto(stored) == _neto(new),
         "currency_agrees": stored.get("currency") == new.get("currency"),
         "lines_stored": len(stored["lines"]),
@@ -78,20 +84,27 @@ def summarize(results: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]
     for r in results:
         by_model[str(r["model"])].append(r)
     out: dict[str, dict[str, Any]] = {}
-    for model, rows in by_model.items():
+    for model, all_rows in by_model.items():
+        # A PDF missing from the private folders was never shown to the reader: not its failure.
+        rows = [r for r in all_rows if r.get("code") != "pdf_missing"]
         docs = len(rows)
         read = [r for r in rows if r.get("outcome") == "read"]
         stored_lines = sum(int(r.get("lines_stored") or 0) for r in rows)
-        net_pct = round(100.0 * sum(1 for r in read if r.get("net_agrees")) / docs, 1) if docs else 0.0
-        line_pct = round(100.0 * sum(int(r.get("lines_matched") or 0) for r in read) / stored_lines, 1) \
-            if stored_lines else 0.0
+
+        def pct(n: int, d: int) -> float:
+            return round(100.0 * n / d, 1) if d else 0.0
+
+        net_pct = pct(sum(1 for r in read if r.get("net_agrees")), docs)
+        total_pct = pct(sum(int(r.get("totals_matched") or 0) for r in read), stored_lines)
+        line_pct = pct(sum(int(r.get("lines_matched") or 0) for r in read), stored_lines)
         out[model] = {
-            "documents": docs, "read": len(read),
+            "documents": docs, "read": len(read), "pdf_missing": len(all_rows) - docs,
             "refused": dict(Counter(str(r.get("code")) for r in rows if r.get("outcome") == "refused")),
-            "net_agreement_pct": net_pct, "line_agreement_pct": line_pct,
+            "net_agreement_pct": net_pct, "total_agreement_pct": total_pct, "line_agreement_pct": line_pct,
             "input_tokens": sum(int(r.get("input_tokens") or 0) for r in rows),
             "output_tokens": sum(int(r.get("output_tokens") or 0) for r in rows),
-            "passes_gate": net_pct >= GATE_PCT and line_pct >= GATE_PCT,
+            # The gate is the money (neto and line totals); model codes are reported, not gated.
+            "passes_gate": net_pct >= GATE_PCT and total_pct >= GATE_PCT,
         }
     return out
 
