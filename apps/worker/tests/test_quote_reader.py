@@ -212,7 +212,7 @@ def test_the_prompt_says_only_origenlab_issues_a_quote_never_labdelivery() -> No
 def test_a_missing_neto_is_the_sum_of_the_lines_and_no_line_total_at_all_is_unreadable() -> None:
     reading, _ = read_document(b"x", SHA, reader=Reader(_message(_extraction(subtotal_net=None))), model=MODEL, text=TEXT)
     assert reading.payload["net_total"] == "2236000"
-    lines = [{**ln, "line_total": None} for ln in _extraction()["lines"]]
+    lines = [{**ln, "line_total": None, "unit_price": None} for ln in _extraction()["lines"]]  # no price at all
     with pytest.raises(ReadRefused) as caught:
         read_document(b"x", SHA, reader=Reader(_message(_extraction(lines=lines, subtotal_net=None))), model=MODEL, text=TEXT)
     assert caught.value.code == "unreadable"
@@ -274,3 +274,13 @@ def test_a_date_written_out_in_words_does_not_refuse_the_quote() -> None:
 
 def test_the_prompt_asks_for_an_iso_date() -> None:
     assert "YYYY-MM-DD" in build_request(b"x", model=MODEL)["system"][0]["text"]
+
+
+def test_a_line_priced_per_unit_without_a_total_gets_unit_price_times_quantity() -> None:
+    lines = _extraction()["lines"]
+    lines[0].update(qty=None, line_total=None)  # printed: one price per item, no quantity column
+    lines[1].update(line_total=None)            # quantity 2 × 500000
+    reading, _ = read_document(b"x", SHA, reader=Reader(_message(_extraction(lines=lines, subtotal_net=None))),
+                               model=MODEL, text=TEXT)
+    assert [ln["line_total"] for ln in reading.lines] == [Decimal("1236000"), Decimal("1000000")]
+    assert reading.payload["net_total"] == "2236000"
