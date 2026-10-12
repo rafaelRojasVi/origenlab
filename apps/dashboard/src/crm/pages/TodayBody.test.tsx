@@ -164,15 +164,21 @@ describe("today lists", () => {
     expect(calls.filter((c) => c.path.startsWith("/v2/commands/")).map((c) => c.path)).toEqual(["/v2/commands/add-note"]);
   });
 
-  it("puts a case whose «Seguimiento …» task is due in the follow-ups from day 3, never among the other tasks", () => {
+  it("puts a case whose «Seguimiento …» reminder is due in the follow-ups on its day, never among the other tasks", () => {
     const fu = (id: string, due: string) => ({ task_id: id, title: "Seguimiento de 01239-26", due_at: due, version: 1, owner: null });
     const fresh = card({ open_tasks: [fu("f1", "2026-10-06T12:00:00Z")] }, "2026-10-05T12:00:00Z");
     const old = card({ stage: "quoting", open_tasks: [fu("f2", "2026-10-04T12:00:00Z")] }, "2026-08-27T12:00:00Z");
     const later = card({ open_tasks: [fu("f3", "2026-10-20T12:00:00Z")] }, "2026-08-27T12:00:00Z");
     const resume = card({ open_tasks: [task("r", "2026-10-06T12:00:00Z")] }, "2026-08-27T12:00:00Z");
     const out = followUpsDue([fresh, old, later, resume], NOW);
-    // The quote sent yesterday is not chased yet, task or not.
-    expect(out.map((f) => [f.card.opportunity_id, f.rhythm, f.task?.task.task_id])).toEqual([[old.opportunity_id, "cerrar", "f2"]]);
+    // A reminder the operator set shows on its day, even on a quote sent yesterday; one for a
+    // later day keeps its case off the list until then.
+    expect(out.map((f) => [f.card.opportunity_id, f.rhythm, f.task?.task.task_id])).toEqual([
+      [old.opportunity_id, "cerrar", "f2"],
+      [fresh.opportunity_id, "primero", "f1"],
+    ]);
+    // Without a reminder, a quote sent yesterday is not chased yet.
+    expect(followUpsDue([card({}, "2026-10-05T12:00:00Z")], NOW)).toEqual([]);
     expect(tasksDue([fresh, old, later, resume], NOW).map((t) => t.task.task_id)).toEqual(["r"]);
   });
 
@@ -433,6 +439,15 @@ describe("Hoy actions", () => {
     expect(screen.queryByRole("button", { name: "Hecho" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cerrar sin respuesta" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Más opciones" })).not.toBeInTheDocument();
+  });
+
+  it("a note is a reminder, not a contact: the case stays on its clock and shows the note under it", () => {
+    stub();
+    const c = card({ last_note: { created_at: "2026-10-05T10:00:00Z", body: "Mandar correo esta semana", author: "Rafael" } }, "2026-09-01T12:00:00Z");
+    renderToday([c]);
+    const row = screen.getByTestId(`today-followup-${c.opportunity_id}`);
+    expect(within(row).getByText("35")).toBeInTheDocument();
+    expect(within(row).getByTestId("today-followup-note")).toHaveTextContent("Nota: Mandar correo esta semana · Rafael, 05 oct 2026");
   });
 
   it("puts off an unscheduled follow-up a week by writing it a «Seguimiento …» task", async () => {

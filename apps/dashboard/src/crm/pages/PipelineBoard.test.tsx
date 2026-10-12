@@ -156,9 +156,9 @@ describe("Tablero", () => {
     ).toEqual(["Semana pasada", "Más de un año"]);
   });
 
-  it("bands and the status line run on the same clock: a logged follow-up moves a card up and counts the silence from it", () => {
+  it("bands and the status line run on the same clock: a follow-up email moves a card up and counts the silence from it", () => {
     const silent = card({}, "2026-07-01T12:00:00Z");
-    const followed = card({ last_note: { created_at: "2026-10-04T10:00:00Z", body: "Llamé, dijo que lo verá", author: "Ana" } }, "2026-07-01T12:00:00Z");
+    const followed = card({ last_contact: { outbound: { at: "2026-10-04T10:00:00Z", subject: "Seguimiento", url: null }, inbound: null } }, "2026-07-01T12:00:00Z");
     const ids = (xs: OpportunityCardData[]) => xs.map((x) => x.opportunity_id);
     expect(ids(sortCards([silent, followed], "recent", NOW))).toEqual(ids([followed, silent]));
     expect(ageBucket(new Date(activityTimestamp(followed)!).toISOString(), NOW)).toBe("semana");
@@ -168,9 +168,16 @@ describe("Tablero", () => {
     expect(ageBucket(new Date(activityTimestamp(imported)!).toISOString(), NOW)).toBe("d365");
     render(<Board cards={[silent, followed]} onOpen={() => undefined} now={NOW} />);
     const f = screen.getByTestId(`board-card-${followed.opportunity_id}`);
-    expect(within(f).getByTestId("board-status-line")).toHaveTextContent("Seguimiento anotado 04 oct · 2 d sin respuesta");
+    expect(within(f).getByTestId("board-status-line")).toHaveTextContent("Seguimiento 04 oct · 2 d sin respuesta");
     const s = screen.getByTestId(`board-card-${silent.opportunity_id}`);
     expect(within(s).getByTestId("board-status-line")).toHaveTextContent("Sin respuesta · 97 d");
+  });
+
+  it("a note is a reminder, not a contact: it never moves the clock", () => {
+    const noted = card({ last_note: { created_at: "2026-10-04T10:00:00Z", body: "Mandar correo esta semana", author: "Ana" } }, "2026-07-01T12:00:00Z");
+    render(<Board cards={[noted]} onOpen={() => undefined} now={NOW} />);
+    const n = screen.getByTestId(`board-card-${noted.opportunity_id}`);
+    expect(within(n).getByTestId("board-status-line")).toHaveTextContent("Sin respuesta · 97 d");
   });
 
   it("a note never hides the client's email: after a reply the card still says «te toca»", () => {

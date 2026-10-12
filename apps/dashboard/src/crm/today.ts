@@ -6,12 +6,13 @@
  *   scheduled a task on the case since («No requiere respuesta», «En pausa»): a task set after the
  *   client's email is the operator's answer to it. A newer email from the client brings it back.
  * - **Seguimientos**: one list, coloured like a traffic light by the 3 · 14 · 30-day rhythm counted
- *   from OrigenLab's last touch (the quote, or a later email it sent): green from day 3 (first
- *   follow-up), yellow from day 14 (second), red from day 30 (close?). A case whose «Seguimiento …»
- *   task is due today carries that task — from day 3, so a quote sent today is not chased today —
- *   and the task counts as done once OrigenLab writes on the thread on or after its day (no
- *   «Hecho» needed). A case with any other open task is already planned and is left out, and so
- *   is an undecided case whose stage is only the historical import's trace («Decidir casos»).
+ *   from OrigenLab's last touch (the quote, or a later email it sent — never a note): green from
+ *   day 3 (first follow-up), yellow from day 14 (second), red from day 30 (close?). A case whose
+ *   «Seguimiento …» task (a reminder from «Registrar seguimiento») is due today shows that day,
+ *   whatever the count, and the task counts as done once OrigenLab writes on the thread on or after
+ *   its day (no «Hecho» needed). A reminder for a later day keeps the case off the list until then.
+ *   A case with any other open task is already planned and is left out, and so is an undecided
+ *   case whose stage is only the historical import's trace («Decidir casos»).
  * - **Vencidas**: open tasks (not follow-ups, which carry their own red rhythm) at least 3 days
  *   overdue — one's own from day 3, anyone's from day 7 (owner decision 2026-10-10: a task
  *   nobody did for a week is everyone's), most overdue first. They leave «Otras tareas».
@@ -170,12 +171,12 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
   for (const card of cards) {
     if (!isOpenCase(card)) continue;
     const open = card.open_tasks ?? [];
-    // OrigenLab's last touch after the quote: an email on the thread, or a logged follow-up
-    // («Registrar seguimiento», a call). One clock with the board's status line (`lastTouch`).
+    // OrigenLab's last touch after the quote: an email on the thread — a note is a reminder, not a
+    // touch. One clock with the board's status line (`lastTouch`).
     const touch = lastTouch(card);
     const email = touch.by === "us" ? touch.at : null;
     // A follow-up task is done once OrigenLab writes on the case on or after its day: nobody has
-    // to press «Hecho» — the email the sync captures, or the note, is the proof.
+    // to press «Hecho» — the email the sync captures is the proof.
     const written = (t: OpenTask) => email !== null && Date.parse(email) >= startOfLocalDay(Date.parse(t.due_at));
     const pending = open.filter((t) => !(isFollowUpTask(t) && written(t)));
     // A case «Decidir casos» scheduled is decided, even if its stage still reads historical.
@@ -195,8 +196,9 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     const byEmail = email !== null;
     const touchAt = byEmail ? (email as string) : sent;
     const days = touchAt ? Math.max(0, Math.floor((now.getTime() - Date.parse(touchAt)) / DAY_MS)) : 0;
-    // Day 3 first, task or not: a quote that went out today is not chased today.
-    if (days < RHYTHM[0].from) continue;
+    // Day 3 first — a quote that went out today is not chased today — unless the operator asked
+    // to be reminded today: a reminder they set is shown on its day.
+    if (!task && days < RHYTHM[0].from) continue;
     const rhythm = days >= RHYTHM[2].from ? "cerrar" : days >= RHYTHM[1].from ? "segundo" : "primero";
     out.push({ card, days, rhythm, byEmail, task });
   }

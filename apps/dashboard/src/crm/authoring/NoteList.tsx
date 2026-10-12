@@ -1,7 +1,7 @@
 /**
  * NoteList + NoteForm — reusable for person, organization and opportunity subjects.
  */
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import {
   Badge,
@@ -29,11 +29,9 @@ interface NoteListProps {
   subjectId: string;
   mayAuthor: boolean;
   onRefresh: () => void;
-  /** Bumped by a caller's own button (the case drawer's «Registrar seguimiento») to open the form. */
-  openSignal?: number;
 }
 
-export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh, openSignal = 0 }: NoteListProps) {
+export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }: NoteListProps) {
   const { session } = useAuthSession();
   const myId = session.kind === "signed_in" ? session.operator.operatorId : null;
   const admin = isAdmin(session);
@@ -43,10 +41,6 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh, 
   const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (openSignal > 0 && mayAuthor) setAdding(true);
-  }, [openSignal, mayAuthor]);
 
   // Group notes by root_note_id to get revision chains.
   const byRoot = new Map<string, NoteRow[]>();

@@ -147,14 +147,14 @@ describe("helpers", () => {
     expect(matchesQuery(c, "otra cosa")).toBe(false);
   });
 
-  it("orders by the last touch, never by a record edit: a newer stage update alone does not lift a case", () => {
+  it("orders by the last touch, never by a record edit or a note: neither lifts a case", () => {
     const a = withLatest(card());
     const edited = card({ opportunity_id: "b", latest_revision: null, title: "B",
       updated_at: "2026-10-08T19:00:00Z" });
     expect([a, edited].sort(byLatestActivity)[0]).toBe(a);
     const noted = card({ opportunity_id: "c", latest_revision: null, title: "C",
       last_note: { created_at: "2026-10-08T19:00:00Z", body: "Llamé", author: null } });
-    expect([a, noted].sort(byLatestActivity)[0]).toBe(noted);
+    expect([a, noted].sort(byLatestActivity)[0]).toBe(a);
   });
 });
 

@@ -411,8 +411,8 @@ describe("case drawer actions", () => {
     const dialog = await openDrawer(session("sales", { cases: false }));
     expect(within(dialog).getByRole("button", { name: "Cambiar estado" })).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "Marcar ganada" })).toBeDisabled();
-    // add-note is a CRM authoring command: its own switch is on, so the follow-up is offered.
-    expect(within(dialog).getByRole("button", { name: "Registrar seguimiento" })).toBeEnabled();
+    // A reminder is a task: with the case commands off it is not offered either.
+    expect(within(dialog).getByRole("button", { name: "Registrar seguimiento" })).toBeDisabled();
   });
 
   it("keeps every write disabled for a viewer", async () => {
@@ -988,49 +988,46 @@ describe("case drawer actions", () => {
     expect(within(dialog).getByRole("button", { name: "Sí, confirmar" })).toBeDisabled();
   });
 
-  it("reads the case's notes and opens the note form from «Registrar seguimiento»", async () => {
+  it("«Registrar seguimiento» saves a note and a reminder for the chosen day, replacing the earlier one", async () => {
+    const earlier = { task_id: "t-old", title: "Seguimiento de 00001-26", due_at: "2026-10-06T12:00:00Z", version: 3, owner: "Ana" };
     const calls = stubApi({
-      pipelines: [page([card()])],
+      pipelines: [page([card({ open_tasks: [earlier] })])],
       onPost: (call) =>
         call.path === "/v2/commands/add-note"
           ? { body: { ok: true, replayed: false, idempotency_key: "k", command_receipt_id: "r", note_id: "n2" } }
-          : undefined,
-      notes: {
-        opportunity_id: CASE,
-        notes: [
-          {
-            id: "n1", root_note_id: "n1", revision_no: 1, body: "Pidieron plazo de entrega.", author_operator_id: "op-1",
-            author_name: "Vendedora Ficticia", created_at: "2026-10-01T00:00:00Z", status: "active", archived_at: null,
-            archive_reason: null, version: 1, is_latest: true,
-          },
-        ],
-      },
+          : { body: receipt("create_task", "quoting", 5, "aaaaaaaa-0009") },
     });
     const dialog = await openDrawer(session("sales"));
-    expect(await within(dialog).findByText("Pidieron plazo de entrega.")).toBeInTheDocument();
-    expect(within(dialog).getByText("Notas (1)")).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Registrar seguimiento" }));
-    fireEvent.change(await within(dialog).findByPlaceholderText("Escribe la nota…"), { target: { value: "Llamé al laboratorio." } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Agregar" }));
-    const notesPath = `/v2/workspace/opportunities/${CASE}/notes`;
-    await waitFor(() => expect(calls.filter((c) => c.path === notesPath)).toHaveLength(2));
-    const post = calls.find((c) => c.method === "POST")!;
-    expect(post.path).toBe("/v2/commands/add-note");
-    expect(post.body).toEqual({ subject_kind: "opportunity", subject_id: CASE, body: "Llamé al laboratorio." });
+    const form = await within(dialog).findByTestId("followup-reminder");
+    expect(within(form).getByText(/Reemplaza el recordatorio anterior/)).toBeInTheDocument();
+    fireEvent.change(within(form).getByLabelText("¿Qué tienes que hacer?"), { target: { value: "Llamar a la jefa de laboratorio" } });
+    fireEvent.click(within(form).getByRole("button", { name: "En 1 semana" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Guardar recordatorio" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(3));
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts.map((c) => c.path)).toEqual(["/v2/commands/add-note", "/v2/commands/create-task", "/v2/commands/cancel-task"]);
+    expect(posts[0].body).toEqual({ subject_kind: "opportunity", subject_id: CASE, body: "Llamar a la jefa de laboratorio" });
+    expect(posts[1].body).toMatchObject({ opportunity_id: CASE, title: "Seguimiento de 00001-26" });
+    const due = Date.parse(String(posts[1].body?.due_at));
+    expect(due - Date.now()).toBeGreaterThan(5 * 86_400_000);
+    expect(posts[2].body).toMatchObject({ task_id: "t-old", task_version: 3 });
   });
 
-  it("opens the note form once, on the case it was asked on — never by itself on the next drawer", async () => {
-    stubApi({ pipelines: [page([card()])] });
+  it("a reminder without a note is just the task, for today by default", async () => {
+    const calls = stubApi({
+      pipelines: [page([card()])],
+      onPost: () => ({ body: receipt("create_task", "quoting", 5, "aaaaaaaa-0010") }),
+    });
     const dialog = await openDrawer(session("sales"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Registrar seguimiento" }));
-    expect(await within(dialog).findByPlaceholderText("Escribe la nota…")).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cerrar" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    // Reopen the same case from its card: the note form stays closed.
-    fireEvent.click(screen.getAllByRole("button", { name: /Universidad Ficticia/ })[0]);
-    const again = await screen.findByRole("dialog");
-    await within(again).findByText(/Notas \(/);
-    expect(within(again).queryByPlaceholderText("Escribe la nota…")).not.toBeInTheDocument();
+    const form = await within(dialog).findByTestId("followup-reminder");
+    expect(within(form).getByRole("button", { name: "Hoy" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(form).getByRole("button", { name: "Guardar recordatorio" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
+    const post = calls.find((c) => c.method === "POST")!;
+    expect(post.path).toBe("/v2/commands/create-task");
+    expect(Math.abs(Date.parse(String(post.body?.due_at)) - Date.now())).toBeLessThan(60_000);
   });
 
   it("keeps the cursor where it is when the pipeline refreshes after a save, and says it is refreshing", async () => {

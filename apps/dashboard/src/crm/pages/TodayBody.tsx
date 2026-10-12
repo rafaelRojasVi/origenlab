@@ -693,6 +693,8 @@ function FollowUpRow({
   const to = f.card.contact?.address && !isMaskedAddress(f.card.contact.address) ? f.card.contact.address : null;
   const write = thread ?? composeInSharedMailbox(to, `Seguimiento cotización N° ${quote}`.trim());
   const since = f.byEmail ? "desde tu último correo" : "desde la cotización";
+  // The case's newest note — usually what the reminder is for («Mandar correo esta semana»).
+  const note = f.card.last_note?.body?.trim() ? f.card.last_note : null;
   const [menuOpen, setMenuOpen] = useState(false);
   const { leaving, gone, leave } = useLeave(f);
   if (gone) return null;
@@ -729,6 +731,16 @@ function FollowUpRow({
           <span className="tabular-nums">{quote}</span>
           {who ? ` · ${who}` : ""}
         </p>
+        {note ? (
+          <p className="truncate text-[11.5px] text-ink" data-testid="today-followup-note" title={note.body}>
+            <span className="font-medium text-warn">Nota:</span> {note.body}
+            <span className="text-ink-faint">
+              {" "}
+              · {note.author ? `${note.author}, ` : ""}
+              {fmtDate(note.created_at)}
+            </span>
+          </p>
+        ) : null}
       </div>
       <a
         href={write}
