@@ -161,11 +161,11 @@ export function CaseActions({
       <div className="flex flex-wrap gap-2">
         {followUpReason ? (
           <DisabledAction id="drawer-followup" reason={followUpReason}>
-            Registrar seguimiento
+            Recordarme…
           </DisabledAction>
         ) : (
           <Button variant="primary" aria-expanded={mode === "followup"} onClick={() => toggle("followup")}>
-            Registrar seguimiento
+            Recordarme…
           </Button>
         )}
         {decideReason && !(reopenable && decideReason === "El caso está cerrado") ? (

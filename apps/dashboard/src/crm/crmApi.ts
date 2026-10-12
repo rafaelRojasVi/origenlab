@@ -53,7 +53,7 @@ export const WORKSPACE_PATHS = {
 
 export const fetchOverview = () => fetchJsonGet<WorkspaceOverview>(operatorApiUrl(WORKSPACE_PATHS.overview));
 export const fetchPipeline = () => fetchJsonGet<PipelineResponse>(operatorApiUrl(WORKSPACE_PATHS.pipeline));
-/** The notes on one case, for the drawer's «Registrar seguimiento». Writing one is `add-note`. */
+/** The notes on one case, for the drawer's «Recordarme…». Writing one is `add-note`. */
 export const fetchCaseThreads = (opportunityId: string) =>
   fetchJsonGet<CaseThreadsResponse>(operatorApiUrl(WORKSPACE_PATHS.caseThreads(opportunityId)));
 

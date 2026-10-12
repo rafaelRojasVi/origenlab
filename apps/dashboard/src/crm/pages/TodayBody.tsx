@@ -731,14 +731,27 @@ function FollowUpRow({
           <span className="tabular-nums">{quote}</span>
           {who ? ` · ${who}` : ""}
         </p>
-        {note ? (
-          <p className="truncate text-[11.5px] text-ink" data-testid="today-followup-note" title={note.body}>
-            <span className="font-medium text-warn">Nota:</span> {note.body}
-            <span className="text-ink-faint">
-              {" "}
-              · {note.author ? `${note.author}, ` : ""}
-              {fmtDate(note.created_at)}
-            </span>
+        {note || f.task ? (
+          <p className="truncate text-[11.5px] text-ink" data-testid="today-followup-note" title={note?.body}>
+            {f.task ? (
+              <span className="mr-1.5 inline-flex items-center gap-1 rounded-full bg-warn-bg px-1.5 py-px align-[1px] text-[10.5px] font-semibold text-warn" data-testid="today-reminder-chip">
+                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                  <circle cx="8" cy="8.5" r="5.5" />
+                  <path d="M8 5.5v3l2 1.5" strokeLinecap="round" />
+                </svg>
+                Tu recordatorio
+              </span>
+            ) : null}
+            {note ? (
+              <>
+                <span className="font-medium text-warn">Nota:</span> {note.body}
+                <span className="text-ink-faint">
+                  {" "}
+                  · {note.author ? `${note.author}, ` : ""}
+                  {fmtDate(note.created_at)}
+                </span>
+              </>
+            ) : null}
           </p>
         ) : null}
       </div>

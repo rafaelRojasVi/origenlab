@@ -12,6 +12,7 @@ import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./Case
 import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
 import { DecideCases } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
+import { endOfDay, isFollowUpTask } from "../today";
 import {
   HISTORICAL_STAGE_LABEL,
   STATUS_LABEL,
@@ -444,6 +445,11 @@ function OpportunityDrawer({
 }) {
   const mayAuthor = useMayAuthorCrm();
   if (!card) return null;
+  // The case's follow-up reminder («Recordarme…»): when and where it shows, and the note it carries.
+  const reminder = [...(card.open_tasks ?? [])].filter(isFollowUpTask).sort((a, b) => a.due_at.localeCompare(b.due_at))[0] ?? null;
+  const reminderNote = reminder ? (card.last_note?.body?.trim() ?? null) : null;
+  // Due today or earlier: the case is on today's list now.
+  const reminderDue = reminder ? Date.parse(reminder.due_at) <= endOfDay(new Date()).getTime() : false;
   const status = STATUS_LABEL[card.status];
   const stage = stageDisplay(card);
   return (
@@ -473,7 +479,20 @@ function OpportunityDrawer({
 
       <CaseActions card={card} initial={initial} onChanged={onChanged} />
 
-      {card.next_action.source === "task" ? (
+      {reminder ? (
+        <p className="rounded-md bg-warn-bg/60 px-3 py-2 text-[13px] text-ink" data-testid="drawer-reminder">
+          {reminderDue ? (
+            <>
+              Está hoy en <strong>Hoy → Seguimientos</strong>
+            </>
+          ) : (
+            <>
+              Te lo recuerdo el <strong>{fmtDate(reminder.due_at)}</strong> en <strong>Hoy → Seguimientos</strong>
+            </>
+          )}
+          {reminderNote ? <span className="block text-[12px] text-ink-muted">{reminderNote}</span> : null}
+        </p>
+      ) : card.next_action.source === "task" ? (
         <p className="rounded-md bg-canvas-sunken/60 px-3 py-2 text-[13px] text-ink">
           <span className="text-ink-faint">Próxima tarea: </span>
           {card.next_action.text}
@@ -540,7 +559,7 @@ function OpportunityDrawer({
         <CaseThreads key={card.opportunity_id} opportunityId={card.opportunity_id} />
       </Section>
 
-      {/* Re-read when the case's newest note changes: a reminder from «Registrar seguimiento». */}
+      {/* Re-read when the case's newest note changes: a reminder from «Recordarme…». */}
       <CaseNotes key={`${card.opportunity_id}:${card.last_note?.created_at ?? ""}`} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} />
     </Drawer>
   );

@@ -1,5 +1,5 @@
 /**
- * «Registrar seguimiento»: remind me to follow this case up (owner, 2026-10-12). One note — what
+ * «Recordarme…»: remind me to follow this case up (owner, 2026-10-12). One note — what
  * to do — and one day. It writes the note (when there is one) and a «Seguimiento de <cotización>»
  * task due that day, cancelling the case's earlier follow-up reminder, so the case shows in
  * «Hoy → Seguimientos» on that day with the note under it, and stays off the list until then.
@@ -68,7 +68,7 @@ export function FollowUpReminder({
           opportunity_id: card.opportunity_id,
           title: `Seguimiento de ${quote}`.trim(),
           due_at: due.toISOString(),
-          note: body || "Recordatorio desde «Registrar seguimiento».",
+          note: body || "Recordatorio desde «Recordarme…».",
         },
         keys.current.task,
       );
@@ -95,8 +95,8 @@ export function FollowUpReminder({
         <TextareaInput id="followup-text" value={text} onChange={setText} rows={2} maxLength={2000} placeholder="Ej.: llamar a Gustavo, mandar la ficha técnica…" />
       </div>
       <div className="space-y-1.5">
-        <span className="text-[12.5px] font-medium text-ink">Recordarme</span>
-        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Recordarme">
+        <span className="text-[12.5px] font-medium text-ink">¿Cuándo?</span>
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="¿Cuándo?">
           {QUICK.map((q) => {
             const value = dayInput(now, q.days);
             return (
@@ -116,7 +116,7 @@ export function FollowUpReminder({
         </div>
       </div>
       <p className="text-[11.5px] text-ink-muted">
-        El caso aparece en <strong>Hoy → Seguimientos</strong> ese día, con tu nota.
+        Ese día el caso aparece en <strong>Hoy → Seguimientos</strong> con tu nota; hasta entonces no sale.
         {earlier.length > 0 ? " Reemplaza el recordatorio anterior." : ""}
       </p>
       <div className="flex gap-2">
