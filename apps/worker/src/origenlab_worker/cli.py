@@ -1,4 +1,6 @@
 """`origenlab-worker gmail-sync [--init] [--dry-run]` — the Render cron entry point (spec §3) —
+with `gmail-sync --query <gmail search> [--limit N] [--dry-run]`, the owner's one-off capture of
+older mail the cursor never saw (`run_gmail_backfill`) —
 and `origenlab-worker drive-file [--dry-run]`, which files recorded quote PDFs in Drive right after
 (`drive_filing.py`), plus the owner's one-off `drive-ledger-import <archive_links.jsonl>...`.
 
@@ -47,7 +49,15 @@ from origenlab_worker.drive_filing import LOCK_NAME as DRIVE_LOCK_NAME
 from origenlab_worker.drive_filing import DriveFiler, DriveTarget, FilingCounts, import_ledger
 from origenlab_worker.errors import ConfigRefused
 from origenlab_worker.gmail_client import GmailCredentials, GmailReader
-from origenlab_worker.gmail_sync import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, RunCounts, RunReport, run_gmail_sync
+from origenlab_worker.gmail_sync import (
+    EXIT_CONFIG,
+    EXIT_FAILED,
+    EXIT_OK,
+    RunCounts,
+    RunReport,
+    run_gmail_backfill,
+    run_gmail_sync,
+)
 
 #: `drive-file`: the Drive consent is revoked or wrong — the Gmail-auth code's twin.
 EXIT_DRIVE_AUTH = 2
@@ -245,6 +255,9 @@ def _parser() -> argparse.ArgumentParser:
     sync = commands.add_parser("gmail-sync", help="capture new contacto@ mail into the V2 database")
     sync.add_argument("--init", action="store_true", help="owner, once: authorize and take the baseline")
     sync.add_argument("--dry-run", action="store_true", help="read Gmail and the database; write nothing")
+    sync.add_argument("--query", help="owner, one-off: capture the older mail this Gmail search finds; "
+                                      "the cursor is left alone")
+    sync.add_argument("--limit", type=int, default=50, help="with --query: refuse a search finding more")
     drive = commands.add_parser("drive-file", help="file recorded quote PDFs in their case's Drive folder")
     drive.add_argument("--dry-run", action="store_true", help="read and resolve; write nothing")
     drive.add_argument("--limit", type=int, default=20, help="at most this many documents per run")
@@ -403,6 +416,9 @@ def main(
         return run_triage_once(args, env, started)
     if args.command == "triage-child":  # pragma: no cover - supervised until SIGTERM
         return run_triage_worker(env, started)
+    backfill = args.query is not None
+    if backfill and args.init:
+        return _emit(RunReport("usage", EXIT_CONFIG, RunCounts(), error="usage"), started)
     previous = None
     try:
         previous = signal.signal(signal.SIGTERM, _on_sigterm)
@@ -415,8 +431,13 @@ def main(
             report = RunReport("paused", EXIT_OK, RunCounts())
         else:
             with components(config) as (db, gmail, store):
-                report = run_gmail_sync(db=db, gmail=gmail, store=store, enabled=config.enabled,
-                                        init=args.init, dry_run=args.dry_run)
+                if backfill:
+                    report = run_gmail_backfill(db=db, gmail=gmail, store=store, enabled=config.enabled,
+                                                query=args.query, limit=max(1, min(int(args.limit), 500)),
+                                                dry_run=args.dry_run)
+                else:
+                    report = run_gmail_sync(db=db, gmail=gmail, store=store, enabled=config.enabled,
+                                            init=args.init, dry_run=args.dry_run)
     except ConfigRefused as exc:
         report = RunReport("config_refused", EXIT_CONFIG, RunCounts(), error=exc.code)
     except _Terminated:

@@ -296,3 +296,9 @@ def test_other_label_additions_are_not_collected() -> None:
                                      [{"labelsAdded": [{"message": {"id": "a"}, "labelIds": "SENT"}]}]])
 def test_a_malformed_label_record_is_invalid_json(history) -> None:
     _invalid(_Script(token(), ("history", 200, {"history": history})), lambda r: r.history("100"))
+
+
+def test_a_search_lists_every_page_oldest_first() -> None:
+    s = _Script(token(), ("q=filename%3Apdf+subject%3AOC", 200, {"messages": [{"id": "o2"}], "nextPageToken": "p2"}),
+                ("pageToken=p2", 200, {"messages": [{"id": "o1"}]}))
+    assert reader(s).messages_matching("filename:pdf subject:OC") == ["o1", "o2"]

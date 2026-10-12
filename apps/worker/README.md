@@ -13,6 +13,11 @@ than 5432 (6543 by name), any other `crm`/`outbound` write (column-level grants,
 materialized-view writes included), or any other executable `SECURITY DEFINER` function.
 
     origenlab-worker gmail-sync [--init] [--dry-run]
+    origenlab-worker gmail-sync --query '<gmail search>' [--limit N] [--dry-run]   # owner, one-off
+
+`--query` captures older mail the cursor never saw (capture began 2026-09-25) through the same
+capture path, without touching the cursor; a search finding more than `--limit` (default 50) is
+refused whole. Use: [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md) §8.8.
 
 History mode also reads `labelAdded`: a draft that is sent later, and a message moved out of spam, are
 captured. Label removals and other label changes are not tracked.

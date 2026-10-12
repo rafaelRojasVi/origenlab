@@ -1642,7 +1642,8 @@ deleted from Gmail between the list and the read; `too_large` messages over 50 M
 `last_synced_at − 1 day`), `init_baseline`, `init_resumed` (an existing cursor kept), `locked`,
 `paused`, `not_authorized`, `wrong_account` (a mode, not an error code: the token is for another
 account; exit 2), `no_mailbox`, `already_initialized`, `config_refused`,
-`usage` (a bad command line), `failed` (before a mode was known). `history`, `resync` and `init`
+`usage` (a bad command line), `failed` (before a mode was known), `backfill` (§8.8, a one-off
+`--query` run). `history`, `resync`, `init` and `backfill`
 carry the suffix **`_dry_run`** (`history_dry_run`, `resync_dry_run`, `init_dry_run`) when `--dry-run`
 is on; a dry run writes nothing and never moves the cursor. A run that fails mid-way reports the
 stage it reached (`start`, `profile`, `init`).
@@ -1931,6 +1932,7 @@ moves that seam.
 | `.eml` missing in Storage | the row keeps `eml_sha256`; fetch `format=raw` again and upload under the same key |
 | `stored_object_differs` (a different object under the key) | §8.5 |
 | `parse_failed` rows | the `.eml` is kept (except `too_large`); no evidence was created; nothing to repair in 4a |
+| Older mail the capture never saw (before go-live, 2026-09-25) is needed — e.g. a purchase order that arrived in its own thread | owner, one-off job on the cron service: `origenlab-worker gmail-sync --query '<gmail search>' --limit N`, `--dry-run` first. Each match goes through the cron's own capture (label skips, duplicate refusal, `.eml`, evidence); the cursor is never touched and the cron's lock is held. More than `N` matches captures nothing (`too_many_matches`, exit 3); the log never carries the search |
 
 **Never repair a sync by editing `comms.message` by hand.**
 
@@ -2157,7 +2159,9 @@ it never writes there.
 **Backfill:** `apps/api/scripts/attach_case_documents.py --entries '<json>' --operator <id or
 name>` plans; `--apply` attaches (a second apply replays). It runs where the API runs — a Render
 one-off job on the API service — and prints UUID prefixes only. An OC whose email was never
-captured (before the Gmail capture began) is uploaded by hand with «Adjuntar OC».
+captured (before the Gmail capture began) is captured first with `gmail-sync --query` (§8.8); the
+case's «De un correo del caso» then offers it (an OC PDF in another thread that shares an external
+participant with the sent quote), or it is uploaded by hand with «Adjuntar OC».
 
 ## 9. Emergency shutdown
 

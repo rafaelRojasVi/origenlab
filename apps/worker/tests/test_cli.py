@@ -229,3 +229,21 @@ def test_no_secret_reaches_a_repr() -> None:
     text = repr(gmail) + repr(storage) + repr(target) + repr(config)
     for secret in ("cs-fake9", "rt-fake9", "sk-fake9", "pw-fake9"):
         assert secret not in text
+
+
+def test_a_query_runs_a_backfill_and_never_logs_the_search(capsys) -> None:
+    query = "subject:OC from:compras@cliente.invalid"
+    gmail = FakeGmail(matching={query: ["o1"]}, messages={"o1": FakeMessage(make_raw())})
+    db = FakeDb()
+    code = main(["gmail-sync", "--query", query, "--limit", "5"], GOOD_ENV,
+                components=_components(db, gmail, FakeStore()))
+    out = capsys.readouterr().out
+    line = json.loads(out.strip())
+    assert code == 0 and (line["mode"], line["stored"]) == ("backfill", 1) and db.cursor == []
+    assert "cliente.invalid" not in out and "subject:OC" not in out
+
+
+def test_a_query_with_init_is_a_usage_error(capsys) -> None:
+    code = main(["gmail-sync", "--init", "--query", "subject:OC"], GOOD_ENV,
+                components=_components(FakeDb(), FakeGmail(), FakeStore()))
+    assert code == 3 and _line(capsys)["error"] == "usage"

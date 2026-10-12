@@ -76,6 +76,7 @@ class GmailSource(Protocol):
     def profile(self) -> Profile: ...
     def history(self, start_history_id: str) -> HistoryWindow: ...
     def messages_after(self, epoch_seconds: int) -> list[str]: ...
+    def messages_matching(self, query: str) -> list[str]: ...
     def metadata(self, message_id: str) -> MessageMeta: ...
     def raw(self, message_id: str) -> RawMessage: ...
     def labels(self) -> dict[str, str]: ...
@@ -136,7 +137,7 @@ def failure_code(exc: BaseException) -> str:
 
 
 def _label(mode: str, dry_run: bool) -> str:
-    return f"{mode}_dry_run" if dry_run and mode in ("history", "resync", "init") else mode
+    return f"{mode}_dry_run" if dry_run and mode in ("history", "resync", "init", "backfill") else mode
 
 
 def _utcnow() -> datetime:
@@ -230,6 +231,58 @@ def run_gmail_sync(
                 error = f"{exc.kind}+{type(db_exc).__name__}"
         return RunReport(_label(mode, dry_run), EXIT_AUTH, counts, error=error)
     except Exception as exc:  # noqa: BLE001 — a code or a class, never the text (it may carry an address)
+        return RunReport(_label(mode, dry_run), EXIT_FAILED, counts, error=failure_code(exc))
+
+
+def run_gmail_backfill(
+    *,
+    db: SyncDb,
+    gmail: GmailSource,
+    store: EmlStore,
+    enabled: bool,
+    query: str,
+    limit: int,
+    dry_run: bool = False,
+) -> RunReport:
+    """Owner-run, one-off: capture the mail a Gmail search finds — older mail the cursor never saw
+    (capture began on 2026-09-25), such as a purchase order that arrived in its own thread.
+
+    Every message goes through the cron's own `_capture_one`: the same label skips, duplicate
+    refusal, `.eml` and evidence. The cursor is never read or moved, and the cron's lock is held,
+    so a backfill and a sync never overlap. A search finding more than `limit` messages captures
+    nothing: a query wider than intended is refused whole, never cut at an arbitrary message."""
+    counts = RunCounts()
+    mode = "backfill"
+    if not query.strip():
+        return RunReport(_label(mode, dry_run), EXIT_CONFIG, counts, error="empty_query")
+    mailbox: Mailbox | None = None
+    try:
+        lock = db.try_lock()
+        if lock == LOCK_STUCK:
+            return RunReport("locked", EXIT_FAILED, counts, error="locked_by_stuck_session")
+        if lock != LOCK_ACQUIRED:
+            return RunReport("locked", EXIT_OK, counts)
+        mailbox = db.mailbox(MAILBOX_ADDRESS)
+        if mailbox is None:
+            return RunReport("no_mailbox", EXIT_CONFIG, counts)
+        if not enabled:
+            return RunReport("paused", EXIT_OK, counts)
+        if mailbox.authorization_state != "authorized":
+            return RunReport("not_authorized", EXIT_OK, counts)
+        if gmail.profile().email_address != mailbox.address:
+            return RunReport(_label(mode, dry_run), EXIT_AUTH, counts, error="wrong_account")
+        message_ids = gmail.messages_matching(query.strip())
+        if len(message_ids) > limit:
+            return RunReport(_label(mode, dry_run), EXIT_CONFIG, counts, error="too_many_matches")
+        names = _LabelNames(gmail)
+        for message_id in message_ids:
+            _capture_one(message_id, db=db, gmail=gmail, store=store, mailbox=mailbox,
+                         names=names, dry_run=dry_run, counts=counts)
+        return RunReport(_label(mode, dry_run), EXIT_OK, counts)
+    except GmailAuthError as exc:
+        # A backfill never revokes the mailbox: the next cron run sees the same answer and does.
+        return RunReport(_label(mode, dry_run), EXIT_AUTH, counts, error=exc.kind)
+    except Exception as exc:  # noqa: BLE001 — a code or a class, never the text
         return RunReport(_label(mode, dry_run), EXIT_FAILED, counts, error=failure_code(exc))
 
 
