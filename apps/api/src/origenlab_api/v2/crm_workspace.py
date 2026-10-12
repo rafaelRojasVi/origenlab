@@ -29,6 +29,7 @@ from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from email.utils import getaddresses
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -45,7 +46,7 @@ from origenlab_api.v2.campaign_history import (
     read_totals,
     replies_state,
 )
-from origenlab_api.v2.mail_rules import mail_direction
+from origenlab_api.v2.mail_rules import OWN_DOMAINS, mail_direction
 from origenlab_api.v2.marketing_audience import address_ref, addresses_in
 from origenlab_api.v2.person_suggestions import safe_person_suggestions
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
@@ -251,13 +252,26 @@ _SQL_PIPELINE_QUOTES = """
 # `drive_record`: where the worker's Drive filing (apps/worker `drive_filing.py`) or the imported
 # laptop ledger put this revision's PDF — an `evidence.source_record` of kind `drive_file`, keyed
 # by the document's SHA-256.
+#
+# `doc_*`: what the quote PDF itself says, when it was read — the `quote_document` evidence the
+# catalog's quote-history import (or a later reader) recorded for the same SHA-256, and its
+# `evidence.document_line` rows. Amounts travel as text so no float ever rounds a peso.
 _SQL_PIPELINE_REVISIONS = """
     select qr.id::text as revision_id, qr.quote_id::text, qr.revision_no, qr.status,
            qr.origin, qr.sent_at::text, qr.pdf_sha256, qr.superseded_by_revision_no,
-           qr.origin_source_record_id::text, d.payload as drive_record
+           qr.origin_source_record_id::text, d.payload as drive_record,
+           qd.payload ->> 'currency' as doc_currency, qd.payload ->> 'net_total' as doc_net_total,
+           (select json_agg(json_build_object(
+                     'line_no', l.line_no, 'item', l.item_label, 'parent_item', l.parent_item,
+                     'kind', l.kind, 'brand', l.brand, 'model', l.model, 'description', l.description,
+                     'qty', l.qty::text, 'unit_price', l.unit_price::text, 'line_total', l.line_total::text,
+                     'optional', l.optional, 'check_status', l.check_status) order by l.line_no)
+              from evidence.document_line l where l.source_record_id = qd.id) as doc_lines
       from crm.quote_revision qr
       left join evidence.source_record d
              on d.dedupe_key = 'drive_file:' || qr.pdf_sha256 and d.kind = 'drive_file'
+      left join evidence.source_record qd
+             on qd.dedupe_key = 'quote_document:' || lower(qr.pdf_sha256) and qd.kind = 'quote_document'
 """
 # Open follow-ups (`crm.task`, W11) with their owner's name; `due_at` and `created_at` as ISO text.
 # `created_at` tells «Hoy» whether a task was scheduled after the client's last email.
@@ -336,7 +350,7 @@ _SQL_PIPELINE_CONTACT = """
      where not sr.is_quarantined and sr.review_status <> 'rejected'
 """
 _SQL_PIPELINE_PARTICIPANTS = """
-    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary
+    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary, p.person_id::text as person_id
       from crm.opportunity_participant p
       left join crm.person pe on pe.id = p.person_id
      where p.valid_to is null
@@ -469,6 +483,77 @@ def live_drive_overview(
     }
 
 
+#: Chile's IVA. Quotes are priced neto; the panel shows what the client pays beside it. Only for
+#: CLP: a USD or EUR quote is shown neto, as printed.
+IVA_RATE = Decimal("0.19")
+
+
+def _money(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _money_text(value: Decimal | None, currency: str | None) -> str | None:
+    if value is None:
+        return None
+    step = Decimal(1) if currency == "CLP" else Decimal("0.01")
+    return str(value.quantize(step, rounding=ROUND_HALF_UP))
+
+
+def quote_contents(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    """What one revision's PDF says, from its `quote_document` evidence (`_SQL_PIPELINE_REVISIONS`):
+    currency, neto, IVA and total for CLP, and the read lines. None when the PDF was never read.
+    The neto is the document's own; without one, the sum of its non-optional line totals."""
+    currency = row.get("doc_currency")
+    raw = row.get("doc_lines")
+    lines = json.loads(raw) if isinstance(raw, str) else (raw or [])
+    if not currency and not lines:
+        return None
+    net = _money(row.get("doc_net_total"))
+    net_source = "document"
+    if net is None:
+        totals = [_money(l.get("line_total")) for l in lines if not l.get("optional")]
+        if totals and all(t is not None for t in totals):
+            net, net_source = sum(totals, Decimal(0)), "lines"
+        else:
+            net_source = "none"
+    tax = net * IVA_RATE if net is not None and currency == "CLP" else None
+    return {
+        "currency": currency,
+        "net_total": _money_text(net, currency),
+        "net_source": net_source,
+        "tax_total": _money_text(tax, currency),
+        "gross_total": _money_text(net + tax, currency) if tax is not None else None,
+        "lines": [
+            {k: l.get(k) for k in ("line_no", "item", "parent_item", "kind", "brand", "model", "description",
+                                   "qty", "unit_price", "line_total", "optional", "check_status")}
+            for l in lines
+        ],
+    }
+
+
+def case_money(revisions: Iterable[Mapping[str, Any]]) -> list[dict[str, str]]:
+    """The neto of the case's vigente revisions (not void, not superseded), one entry per currency,
+    for the card and the panel header. Revisions whose PDF was never read are counted apart."""
+    sums: dict[str, Decimal] = {}
+    unread = 0
+    for r in revisions:
+        if not r.get("is_active"):
+            continue
+        c = r.get("contents")
+        net = _money(c.get("net_total")) if c else None
+        if c is None or net is None or not c.get("currency"):
+            unread += 1
+            continue
+        sums[c["currency"]] = sums.get(c["currency"], Decimal(0)) + net
+    out = [{"currency": cur, "net_total": _money_text(v, cur) or "0"} for cur, v in sorted(sums.items())]
+    return out + ([{"currency": "unread", "net_total": str(unread)}] if unread else [])
+
+
 def drive_links_from_records(revisions: Iterable[Mapping[str, Any]],
                              ledgers: Mapping[str, DriveLink]) -> dict[str, DriveLink]:
     """The ledgers' links plus every revision's `drive_file` record (`_SQL_PIPELINE_REVISIONS`).
@@ -546,8 +631,101 @@ def load_drive_ledgers(paths: Iterable[str | Path]) -> dict[str, DriveLink]:
 # ────────────────────────────────────────────────────────── pure composition ──
 
 
+#: The quote reader's refusal codes (apps/worker quote_reader.py); anything else is shown as «other».
+QUOTE_READ_CODES = frozenset({"not_origenlab_quote", "too_many_disputed", "net_mismatch", "model_refused", "unreadable",
+                              "no_text_layer", "request_failed", "write_failed", "hash_mismatch",
+                              "attachment_not_in_eml"})
+
+
+def quote_reading_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The quote reader's refusals for Datos: which quotation, which revision, why (a code), when."""
+    out = []
+    for r in rows:
+        norm = str(r.get("value_norm") or "")
+        out.append({
+            "quote_number": r.get("quote_number"),
+            "revision_no": r.get("revision_no"),
+            "sent_at": r.get("sent_at"),
+            "code": r.get("code") if r.get("code") in QUOTE_READ_CODES else "other",
+            "reader_version": ":".join(norm.split(":")[:2]) or None,
+            "recorded_at": r.get("recorded_at"),
+            "opportunity_id": r.get("opportunity_id"),
+            "case_title": r.get("case_title"),
+        })
+    return out
+
+
 def gmail_url(message_id: str | None) -> str | None:
     return GMAIL_MESSAGE_URL.format(message_id) if message_id else None
+
+
+def _instant(value: Any) -> float:
+    """An ISO timestamp as seconds since the epoch, for ordering across time zones; 0 if unreadable."""
+    try:
+        d = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return d.timestamp() if d.tzinfo else d.replace(tzinfo=None).timestamp()
+
+
+_REPLY_PREFIX_RE = re.compile(r"^\s*(?:(?:re|rv|fw|fwd|tr|aw|wg|sv)\s*:\s*)+", re.IGNORECASE)
+
+
+def case_threads(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[str] = ()) -> list[dict[str, Any]]:
+    """A case's emails as Gmail cadenas (threads), newest activity first, for «Correos del caso».
+
+    `rows` are the case's `gmail_message` evidence (`opportunity_threads`): thread id, message id,
+    sent_at, subject, raw sender and recipients, direction and the documents the message carries.
+    Each cadena is labelled by the outside party in it (who wrote to OrigenLab, or whom OrigenLab
+    wrote to): «proveedor» when one of their domains is a registered supplier or manufacturer,
+    «interno» when nobody outside OrigenLab takes part, else «cliente». A sender is shown by display
+    name, else by domain: never the full address.
+    """
+    suppliers = {d.lower() for d in supplier_domains}
+    by_thread: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        tid = r.get("thread_id")
+        if not tid:
+            continue
+        pairs = [(n, a) for n, a in getaddresses([r.get("sender") or ""]) if a]
+        name, addr = pairs[0] if pairs else ("", "")
+        domain = addr.rsplit("@", 1)[1].lower() if "@" in addr else None
+        direction = r.get("direction") or ("outbound" if domain in OWN_DOMAINS else "inbound")
+        docs = r.get("documents")
+        docs = json.loads(docs) if isinstance(docs, str) else (docs or [])
+        if direction == "inbound":
+            party = {domain} if domain and domain not in OWN_DOMAINS else set()
+        else:
+            party = {a.rsplit("@", 1)[1].lower() for _, a in getaddresses([(r.get("recipients") or "").replace(";", ",")])
+                     if "@" in a} - set(OWN_DOMAINS)
+        by_thread[tid].append({
+            "_party": party,
+            "message_id": r.get("message_id"),
+            "sent_at": r.get("sent_at"),
+            "direction": direction,
+            "from": (name or "").strip() or (domain or None),
+            "_domain": domain,
+            "subject": r.get("subject"),
+            "has_pdf": any(str(d.get("filename") or "").lower().endswith(".pdf") for d in docs if isinstance(d, dict)),
+            "url": gmail_url(r.get("message_id")),
+        })
+    out: list[dict[str, Any]] = []
+    for tid, msgs in by_thread.items():
+        msgs.sort(key=lambda m: _instant(m.get("sent_at")))
+        outside = set().union(*(m["_party"] for m in msgs))
+        kind = "proveedor" if outside & suppliers else "interno" if not outside else "cliente"
+        subject = next((m["subject"] for m in msgs if m.get("subject")), None)
+        out.append({
+            "thread_id": tid,
+            "subject": _REPLY_PREFIX_RE.sub("", subject).strip() if subject else None,
+            "kind": kind,
+            "count": len(msgs),
+            "last_at": msgs[-1].get("sent_at"),
+            "url": msgs[-1].get("url"),
+            "messages": [{k: v for k, v in m.items() if not k.startswith("_")} for m in reversed(msgs)],
+        })
+    out.sort(key=lambda t: _instant(t.get("last_at")), reverse=True)
+    return out
 
 
 def _first_address(recipients: str | None) -> tuple[str | None, int]:
@@ -704,6 +882,7 @@ def compose_pipeline(
                     "drive_pending": (link is None and bool(src.get("has_eml"))
                                       and r.get("status") != "void" and sha is not None),
                     "quote_number": q["quote_number"],
+                    "contents": quote_contents(r),
                     "_recipients": src.get("recipients"),
                 }
                 rev_cards.append(rc)
@@ -743,7 +922,8 @@ def compose_pipeline(
         people = people_by_opp.get(oid, [])
         contact: dict[str, Any] | None = None
         if people:
-            contact = {"source": "crm_participant", "name": people[0].get("name"), "address": None, "others": len(people) - 1}
+            contact = {"source": "crm_participant", "name": people[0].get("name"), "address": None, "others": len(people) - 1,
+                       "person_id": people[0].get("person_id")}
         else:
             address, n = _first_address(latest.get("_recipients") if latest else None)
             if address:
@@ -815,6 +995,7 @@ def compose_pipeline(
                 "quotes": quote_cards,
                 "quote_numbers": [q["quote_number"] for q in quote_cards],
                 "revision_count": len(all_revs),
+                "money": case_money(all_revs),
                 "latest_revision": (
                     {k: v for k, v in latest.items() if not k.startswith("_")} if latest else None
                 ),
@@ -2138,6 +2319,92 @@ class CrmWorkspaceRepository:
             )
             notes = self._rows(cur)
         return {"opportunity_id": opportunity_id, "notes": notes}
+
+    def opportunity_threads(self, opportunity_id: str) -> dict[str, Any] | None:
+        """Every captured email on the Gmail threads of one case, grouped by thread (`case_threads`).
+
+        The threads are the ones `_SQL_PIPELINE_CONTACT` reads: any thread with an email linked to
+        the case, plus the threads its quote revisions came from. `None` when the case does not exist.
+        """
+        with self._read() as cur:
+            cur.execute("select 1 from crm.opportunity where id = %s::uuid", (opportunity_id,))
+            if cur.fetchone() is None:
+                return None
+            cur.execute(
+                """
+                with threads as (
+                    select sr.payload->>'gmail_thread_id' as thread_id
+                      from crm.opportunity_evidence oe
+                      join evidence.source_record sr on sr.id = oe.source_record_id
+                     where oe.opportunity_id = %(o)s::uuid and oe.unlinked_at is null
+                       and sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' is not null
+                    union
+                    select sr.payload->>'gmail_thread_id'
+                      from crm.quote_revision qr
+                      join crm.quote q on q.id = qr.quote_id
+                      join evidence.source_record sr on sr.id = qr.origin_source_record_id
+                     where q.opportunity_id = %(o)s::uuid and sr.kind = 'gmail_message'
+                       and sr.payload->>'gmail_thread_id' is not null
+                )
+                select distinct on (sr.payload->>'gmail_message_id')
+                       sr.payload->>'gmail_thread_id' as thread_id,
+                       sr.payload->>'gmail_message_id' as message_id,
+                       sr.payload->>'sent_at' as sent_at,
+                       sr.payload->>'subject_raw' as subject,
+                       sr.payload->>'sender' as sender,
+                       sr.payload->>'recipients' as recipients,
+                       (select cm.direction from comms.message cm
+                         where cm.provider_message_id = sr.payload->>'gmail_message_id'
+                         order by cm.created_at limit 1) as direction,
+                       case when jsonb_typeof(sr.payload->'documents') = 'array'
+                            then sr.payload->'documents' else '[]'::jsonb end as documents
+                  from threads t
+                  join evidence.source_record sr
+                    on sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = t.thread_id
+                 where not sr.is_quarantined and sr.review_status <> 'rejected'
+                 order by sr.payload->>'gmail_message_id', sr.created_at
+                """,
+                {"o": opportunity_id},
+            )
+            rows = self._rows(cur)
+            cur.execute(
+                """
+                select distinct d.domain_norm
+                  from crm.organization_domain d
+                  join crm.organization o on o.id = d.organization_id
+                 where d.removed_at is null
+                   and (o.kind in ('supplier', 'manufacturer')
+                        or exists (select 1 from crm.organization_relationship rel
+                                    where rel.organization_id = o.id and rel.role in ('supplier', 'manufacturer')
+                                      and (rel.valid_to is null or rel.valid_to > current_date)))
+                """
+            )
+            suppliers = [r[0] for r in cur.fetchall()]
+        return {"opportunity_id": opportunity_id, "threads": case_threads(rows, suppliers)}
+
+    def quote_readings(self, limit: int = 100) -> dict[str, Any]:
+        """The quote PDFs the reader refused, newest first (`quote_reading_rows`)."""
+        with self._read() as cur:
+            cur.execute(
+                """
+                select a.value_norm, a.value ->> 'code' as code,
+                       to_char(a.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as recorded_at,
+                       q.quote_number, r.revision_no, r.sent_at::text as sent_at,
+                       o.id::text as opportunity_id, o.title as case_title
+                  from evidence.assertion a
+                  join crm.quote_revision r on r.id::text = a.value ->> 'revision_id'
+                  join crm.quote q on q.id = r.quote_id
+                  join crm.opportunity o on o.id = q.opportunity_id
+                 where a.kind = 'quote_read'
+                   and not exists (select 1 from evidence.source_record d where d.kind = 'quote_document'
+                                    and d.dedupe_key = 'quote_document:' || lower(r.pdf_sha256))
+                 order by a.created_at desc
+                 limit %s
+                """,
+                (max(1, min(int(limit), 500)),),
+            )
+            rows = self._rows(cur)
+        return {"items": quote_reading_rows(rows)}
 
     def opportunity_mail_documents(self, opportunity_id: str) -> dict[str, Any] | None:
         """The Gmail messages linked to one case and the documents each carries.

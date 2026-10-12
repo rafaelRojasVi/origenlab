@@ -37,12 +37,12 @@
   ],
   "probes": {
     "migrations.count": {
-      "expect": 53,
+      "expect": 54,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20261011120000",
-      "why": "slice4_hard_bounce_any_triage_version, the newest migration — the worker's hard-bounce evidence may name any triage version (triage:v<N>) instead of the literal triage:v1. Before it 20261010180000 lets a lost or abandoned case reopen as the same case, 20261010120000 confirms a triage unsubscribe reading into the W10 suppression, and 20261007160000 adds delivery_failure evidence and the worker-only hard-bounce branch. None of the three after 20261007160000 seeds a row or adds a table, so only this count and head moved; the baseline was left at 50 when #707 and #711 landed their migrations, and this check caught it."
+      "expect": "20261012100000",
+      "why": "slice7_quote_reader, the newest migration — the worker's quote reader may read and insert evidence.document_line (RLS policies included, never UPDATE) and record a quote_read observation when it refuses a PDF. It seeds no row and adds no table, so only this count and head moved."
     },
 
     "source_record.total": {

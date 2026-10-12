@@ -63,7 +63,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from origenlab_api.v2.catalog import importing  # noqa: E402
 from origenlab_api.v2.catalog.history_check import (  # noqa: E402
+    LINE_KINDS,
     cross_check,
+    document_lines,
     parse_template_lines,
     quote_document_payload,
 )
@@ -78,17 +80,9 @@ import _common  # noqa: E402
 
 IMPORTER = "quote_history"
 EXTRACTOR = "ai_v1+template_v1"
-LINE_KINDS = ("equipment", "accessory", "consumable", "spare_part", "service", "freight", "other")
 DISPUTED_CSV = "disputed.csv"
 DISPUTED_COLUMNS = ("quote_number", "line", "ai_total", "template_total")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_PHONE = re.compile(r"\+\s?\d{2,3}[\s-]?\(?\d{1,2}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}|\b9\s?\d{4}\s?\d{4}\b")
-_FOUR = Decimal("0.0001")
-_SIX = Decimal("0.000001")
-#: Client fields read only to withhold line strings that repeat them.
-_CLIENT_FIELDS = ("client_institution", "client_unit", "client_contact")
-_MIN_IDENTITY = 4
 
 
 class _Bad(ValueError):
@@ -101,50 +95,6 @@ def _fail(name: str, field: str, why: str) -> _Bad:
 
 # ------------------------------------------------------------------ values
 
-def _money(name: str, field: str, value: Any, step: Decimal) -> Decimal | None:
-    if value is None or value == "":
-        return None
-    try:
-        number = importing.to_decimal(value)
-    except ValueError:
-        number = None
-    if number is None or not number.is_finite():
-        raise _fail(name, field, "not a number")
-    if number < 0:
-        raise _fail(name, field, "negative")
-    if number != number.quantize(step):
-        raise _fail(name, field, "more decimals than the column holds")
-    return number
-
-
-def _text(name: str, field: str, value: Any) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        value = str(value)
-    if not isinstance(value, str):
-        raise _fail(name, field, "not text")
-    return value.strip() or None
-
-
-def _identities(extraction: dict[str, Any]) -> list[str]:
-    found = []
-    for field in _CLIENT_FIELDS:
-        value = extraction.get(field)
-        if isinstance(value, str) and len(importing.norm_name(value)) >= _MIN_IDENTITY:
-            found.append(importing.norm_name(value))
-    return found
-
-
-def _withheld(value: str | None, identities: list[str]) -> bool:
-    if value is None:
-        return False
-    if _EMAIL.search(value) or _PHONE.search(value):
-        return True
-    folded = f" {importing.norm_name(value)} "
-    return any(f" {identity} " in folded for identity in identities)
-
-
 def _refuse_labdelivery(name: str, *parts: str) -> None:
     """The Labdelivery refusal, naming the file (a hash-named basename) so it can be set aside."""
     try:
@@ -155,39 +105,15 @@ def _refuse_labdelivery(name: str, *parts: str) -> None:
 
 # ------------------------------------------------------------------ one document
 
-def _lines(name: str, extraction: dict[str, Any], currency: str, identities: list[str],
-           counts: Counter[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """(document lines as written, the AI lines as the cross-check reads them)."""
-    raw = extraction.get("lines")
-    if not isinstance(raw, list):
-        raise _fail(name, "lines", "not a list")
-    written, checked_input = [], []
-    for n, line in enumerate(raw):
-        at = f"lines[{n}]"
-        if not isinstance(line, dict):
-            raise _fail(name, at, "not an object")
-        kind = line.get("kind")
-        if kind is not None and kind not in LINE_KINDS:
-            raise _fail(name, f"{at}.kind", "not a known line kind")
-        optional = line.get("optional", False)
-        if optional is None:
-            optional = False
-        if not isinstance(optional, bool):
-            raise _fail(name, f"{at}.optional", "not true or false")
-        qty = _money(name, f"{at}.qty", line.get("qty"), _SIX)
-        strings = {field: _text(name, f"{at}.{source}", line.get(source))
-                   for field, source in (("item_label", "item"), ("parent_item", "parent_item"),
-                                         ("brand", "brand"), ("model", "model"), ("description", "description"))}
-        for field, value in strings.items():
-            if _withheld(value, identities):
-                strings[field] = None
-                counts["strings_withheld"] += 1
-        total = _money(name, f"{at}.line_total", line.get("line_total"), _FOUR)
-        written.append({"line_no": n + 1, **strings, "kind": kind, "model_key": model_key(strings["model"]),
-                        "qty": qty, "unit_price": _money(name, f"{at}.unit_price", line.get("unit_price"), _FOUR),
-                        "line_total": total, "currency": currency, "optional": optional, "extractor": EXTRACTOR})
-        checked_input.append({"item": line.get("item"), "model": line.get("model"), "line_total": total})
-    return written, checked_input
+def _lines(name: str, extraction: dict[str, Any], counts: Counter[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(document lines as written, the AI lines as the cross-check reads them) — the shared
+    `history_check.document_lines`, its errors prefixed with the file's basename."""
+    try:
+        written, checked, held = document_lines(extraction, extraction["currency"], extractor=EXTRACTOR)
+    except ValueError as exc:
+        raise _Bad(f"{name}: {exc}") from None
+    counts["strings_withheld"] += held
+    return written, checked
 
 
 def _plain(value: Decimal) -> str:
@@ -202,7 +128,7 @@ def _document(name: str, input_sha256: str, extraction: dict[str, Any], text: st
         payload = quote_document_payload(extraction, sha)
     except ValueError as exc:
         raise _Bad(f"{name}: {exc}") from None
-    lines, ai = _lines(name, extraction, payload["currency"], _identities(extraction), counts)
+    lines, ai = _lines(name, {**extraction, "currency": payload["currency"]}, counts)
     template = parse_template_lines(text) if payload["currency"] == "CLP" else []
     for c in cross_check(ai, template):
         if c.ai_index is None:

@@ -237,3 +237,54 @@ def test_a_numeric_ai_item_with_an_integer_value_matches_its_label() -> None:
     checked = cross_check(ai, [TemplateLine("1", "ACME-1", Decimal("1000")), TemplateLine("2", "ACME-2", Decimal("2000"))])
     assert [(c.check_status, c.reason, c.item_label) for c in checked] == [
         ("verified", "item_total_match", "1"), ("verified", "item_total_match", "2")]
+
+
+# ── shared with the quote reader (2026-10-11): line building and identity withholding ─────────
+
+def _reader_extraction(**lines_over):
+    line = {"item": "1", "parent_item": None, "kind": "equipment", "brand": "Marca Ficticia", "model": "XF 200",
+            "description": "Equipo ficticio", "qty": "2", "unit_price": "1000", "line_total": "2000",
+            "optional": False}
+    line.update(lines_over)
+    return {"client_institution": "Universidad Ficticia del Sur", "client_contact": "Ana Ficticia",
+            "lines": [line]}
+
+
+def test_document_lines_builds_the_rows_the_history_import_writes() -> None:
+    from decimal import Decimal
+
+    from origenlab_api.v2.catalog.history_check import document_lines
+
+    written, checked, withheld = document_lines(_reader_extraction(), "CLP", extractor="ai_v2+template_v1")
+    assert withheld == 0
+    row = written[0]
+    assert row["line_no"] == 1 and row["item_label"] == "1" and row["model"] == "XF 200"
+    assert row["model_key"] and row["qty"] == Decimal("2") and row["line_total"] == Decimal("2000")
+    assert row["currency"] == "CLP" and row["extractor"] == "ai_v2+template_v1" and row["optional"] is False
+    assert checked == [{"item": "1", "model": "XF 200", "line_total": Decimal("2000")}]
+
+
+def test_document_lines_withholds_strings_that_name_the_client_or_hold_contact_details() -> None:
+    from origenlab_api.v2.catalog.history_check import document_lines, identities_of, withheld
+
+    written, _, n = document_lines(
+        _reader_extraction(description="Equipo para Universidad Ficticia del Sur", brand="ventas@fabrica.example"),
+        "CLP", extractor="x")
+    assert written[0]["description"] is None and written[0]["brand"] is None and n == 2
+    assert identities_of({"client_institution": "Uni", "client_contact": "Ana Ficticia"}) == ["ana ficticia"]
+    assert withheld("Llamar al +56 9 1234 5678", []) is True
+    assert withheld("Equipo XF 200", ["ana ficticia"]) is False
+
+
+def test_document_lines_refuses_a_malformed_line_by_field() -> None:
+    import pytest
+
+    from origenlab_api.v2.catalog.history_check import LINE_KINDS, document_lines
+
+    assert "equipment" in LINE_KINDS
+    with pytest.raises(ValueError, match=r"lines\[0\]\.line_total: negative"):
+        document_lines(_reader_extraction(line_total="-5"), "CLP", extractor="x")
+    with pytest.raises(ValueError, match=r"lines\[0\]\.kind"):
+        document_lines(_reader_extraction(kind="robot"), "CLP", extractor="x")
+    with pytest.raises(ValueError, match=r"lines: not a list"):
+        document_lines({"lines": None}, "CLP", extractor="x")

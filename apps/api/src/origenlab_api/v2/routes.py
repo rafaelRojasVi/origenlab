@@ -196,8 +196,12 @@ def list_organizations(
     segment: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    id: str | None = Query(default=None, max_length=36),
 ) -> dict[str, Any]:
     """Organizations, most connected first.
+
+    `id` keeps the one organization with that UUID (same row shape as the list): the case
+    panel links to an institution, and its page opens that row even when it is not on the first page.
 
     `segment` keeps one commercial side — `customers` (asks OrigenLab for equipment on a
     case, or a recorded customer), `suppliers` (supplier or manufacturer on a case, or
@@ -224,6 +228,7 @@ def list_organizations(
     return _page_response(
         repo.organizations(
             q=q,
+            organization_id=_uuid_path_param(id, "organization") if id else None,
             having=tuple(dict.fromkeys(has)),
             active_within_days=active_within_days,
             segment=segment,

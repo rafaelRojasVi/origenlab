@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCaseNotes, fetchPipeline } from "../crmApi";
-import { inSharedMailbox } from "../gmailLinks";
-import type { OpportunityCardData, RevisionCard } from "../crmTypes";
+import { crmHash } from "../crmRoute";
+import type { OpportunityCardData } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
 import { CaseActions, type Mode } from "./CaseActions";
+import { CaseLinks, CaseMoneySummary, QuoteList } from "./CaseQuotes";
+import { CaseThreads } from "./CaseThreads";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
 import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
 import { DecideCases } from "./DecideCases";
@@ -23,7 +25,6 @@ import {
   Badge,
   Drawer,
   EmptyState,
-  ExternalLink,
   Modal,
   PageHeader,
   ResourceGate,
@@ -34,7 +35,6 @@ import {
   StatLine,
   fmtDate,
   initials,
-  LocalDriveLink,
   toast,
 } from "../ui";
 import { useResource } from "../useResource";
@@ -410,52 +410,22 @@ export function OpportunityCard({
   );
 }
 
-function RevisionRow({ rev }: { rev: RevisionCard }) {
-  return (
-    <li className="relative pl-5">
-      <span
-        aria-hidden="true"
-        className={`absolute left-0 top-1.5 h-2.5 w-2.5 rounded-full border-2 ${rev.is_active ? "border-brand-600 bg-brand-50" : "border-line-strong bg-canvas-raised"}`}
-      />
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-xs font-semibold tabular-nums text-ink">r{rev.revision_no}</span>
-        <span className="text-xs text-ink-muted">{fmtDate(rev.sent_at)}</span>
-        <Badge tone={rev.status === "sent" ? "good" : rev.status === "void" ? "bad" : "neutral"}>
-          {rev.status === "sent" ? "Enviada" : rev.status === "void" ? "Anulada" : rev.status}
-        </Badge>
-        {rev.superseded_by_revision_no ? (
-          <Badge tone="neutral" glyph={false}>
-            Reemplazada por r{rev.superseded_by_revision_no}
-          </Badge>
-        ) : rev.is_active ? (
-          <Badge tone="brand" glyph={false}>
-            Vigente
-          </Badge>
-        ) : null}
-      </div>
-      <p className="mt-0.5 truncate text-[11px] text-ink-muted" title={rev.document?.filename ?? undefined}>
-        {rev.document?.filename ?? "Documento sin nombre registrado"}
-      </p>
-      <p className="mt-0.5 flex flex-wrap gap-x-3 text-[11px]">
-        {rev.drive ? (
-          <LocalDriveLink href={rev.drive.file_url} label={`Abrir PDF r${rev.revision_no} en Drive`}>
-            PDF en Drive
-          </LocalDriveLink>
-        ) : rev.drive_pending ? (
-          <span className="text-ink-muted">Pendiente de archivar en Drive</span>
-        ) : (
-          <span className="text-warn">PDF sin copia en Drive: súbelo a mano</span>
-        )}
-        {rev.gmail ? (
-          <ExternalLink href={inSharedMailbox(rev.gmail.url) ?? rev.gmail.url} label={`Abrir correo de r${rev.revision_no} en Gmail`}>
-            Correo en Gmail
-          </ExternalLink>
-        ) : (
-          <span className="text-warn">Sin correo vinculado</span>
-        )}
-      </p>
-    </li>
-  );
+const CONTACT_LINK =
+  "flex min-w-0 items-baseline gap-2 rounded-md px-2 py-1 -mx-2 text-ink hover:bg-canvas-sunken hover:text-brand-900";
+
+/** «Ana Ficticia <ana@…>» → «Ana Ficticia»; a bare address stays as it is. */
+function displayNameOf(address: string): string {
+  // The display part is whatever precedes the «<»; React renders it as text, nothing is sanitised here.
+  const cut = address.indexOf("<");
+  const name = (cut >= 0 ? address.slice(0, cut) : "").trim();
+  const unquoted = name.startsWith('"') && name.endsWith('"') && name.length > 1 ? name.slice(1, -1).trim() : name;
+  return unquoted || address;
+}
+
+/** Gmail's search for one address, in the shared contacto@ mailbox. */
+function gmailSearchUrl(address: string): string {
+  const bare = (address.match(/<([^>]+)>/)?.[1] ?? address).trim();
+  return `https://mail.google.com/mail/?authuser=${encodeURIComponent("contacto@origenlab.cl")}#search/${encodeURIComponent(bare)}`;
 }
 
 function OpportunityDrawer({
@@ -501,12 +471,11 @@ function OpportunityDrawer({
           {stage.label}
         </Badge>
         {card.status === "ok" ? null : <Badge tone={status.tone}>{status.label}</Badge>}
-        {card.organization?.confirmation === "machine_proposed" ? (
-          <Badge tone="warn" title="La institución fue propuesta por máquina y no la ha confirmado un operador">
-            Institución sin confirmar
-          </Badge>
-        ) : null}
       </div>
+
+      <CaseLinks card={card} />
+
+      <CaseMoneySummary card={card} />
 
       <CaseActions
         card={card}
@@ -518,14 +487,15 @@ function OpportunityDrawer({
       />
 
       {card.next_action.source === "task" ? (
-        <Section title="Próxima tarea">
-          <p className="text-[13px] text-ink">{card.next_action.text}</p>
-          <p className="mt-0.5 text-[11px] text-ink-faint">
+        <p className="rounded-md bg-canvas-sunken/60 px-3 py-2 text-[13px] text-ink">
+          <span className="text-ink-faint">Próxima tarea: </span>
+          {card.next_action.text}
+          <span className="block text-[11px] text-ink-faint">
             Para el {fmtDate(card.next_action.due_at)}
-            {card.open_tasks?.[0]?.owner ? ` · ${card.open_tasks[0].owner}` : ""}
-            {(card.open_tasks?.length ?? 0) > 1 ? ` · ${(card.open_tasks?.length ?? 0) - 1} más` : ""}
-          </p>
-        </Section>
+            {card.open_tasks?.[0]?.owner ? `, ${card.open_tasks[0].owner}` : ""}
+            {(card.open_tasks?.length ?? 0) > 1 ? ` (${(card.open_tasks?.length ?? 0) - 1} más)` : ""}
+          </span>
+        </p>
       ) : (
         <p className="rounded-md bg-canvas-sunken/60 px-3 py-2 text-[13px] text-ink">
           <span className="text-ink-faint">Siguiente: </span>
@@ -533,100 +503,55 @@ function OpportunityDrawer({
         </p>
       )}
 
-      {card.attention.length > 0 ? (
-        <Section title="Falta">
-          <ul className="list-disc space-y-0.5 pl-4 text-xs">
-            {card.attention.map((a) => (
-              <li key={a.code} className={a.blocking ? "font-medium text-bad" : "text-ink-muted"}>
-                {a.label}
-              </li>
-            ))}
-          </ul>
-        </Section>
-      ) : null}
+      <Section
+        title={card.quotes.length === 1 ? "Cotización" : `Cotizaciones (${card.quotes.length})`}
+      >
+        <QuoteList card={card} />
+      </Section>
+
+      <Section title="Contacto">
+        <ul className="space-y-1.5 text-[13px]">
+          <li>
+            {card.organization ? (
+              <a href={crmHash("organizaciones", card.organization.organization_id)} className={CONTACT_LINK} data-testid="case-org-link">
+                <span className="text-ink-faint">Empresa</span>
+                <span className="truncate font-medium">{card.organization.name ?? "Sin nombre"}</span>
+              </a>
+            ) : (
+              <span className="text-bad">Sin institución</span>
+            )}
+          </li>
+          {card.contact ? (
+            <li>
+              {card.contact.person_id ? (
+                <a href={crmHash("personas", card.contact.person_id)} className={CONTACT_LINK} data-testid="case-person-link">
+                  <span className="text-ink-faint">Persona</span>
+                  <span className="truncate font-medium">{card.contact.name ?? "Sin nombre"}</span>
+                </a>
+              ) : card.contact.address ? (
+                <a
+                  href={gmailSearchUrl(card.contact.address)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={CONTACT_LINK}
+                  title="Buscar sus correos en Gmail"
+                  data-testid="case-person-link"
+                >
+                  <span className="text-ink-faint">Persona</span>
+                  <span className="truncate font-medium">{card.contact.name ?? displayNameOf(card.contact.address)}</span>
+                  <span aria-hidden="true" className="text-[10px] text-ink-faint">↗</span>
+                </a>
+              ) : (
+                <span className="text-ink">{card.contact.name}</span>
+              )}
+            </li>
+          ) : null}
+        </ul>
+      </Section>
 
       <Section title="Correos del caso">
-        {card.last_contact?.inbound || card.last_contact?.outbound ? (
-          <ul className="space-y-3 text-xs">
-            {(["inbound", "outbound"] as const).map((direction) => {
-              const mail = card.last_contact?.[direction];
-              if (!mail) return null;
-              const url = inSharedMailbox(mail.url);
-              return <li key={direction}>
-                <p className="text-ink-faint">{direction === "inbound" ? "Último recibido" : "Último enviado"} · {fmtDate(mail.at)}</p>
-                <p className="break-words text-ink">{mail.subject || "Sin asunto"}</p>
-                {mail.sender_name ? <p className="text-ink-muted">{mail.sender_name}</p> : null}
-                {url ? <ExternalLink href={url} label="Abrir correo en Gmail">Abrir correo en Gmail</ExternalLink> : <p>Sin enlace de Gmail disponible</p>}
-              </li>;
-            })}
-          </ul>
-        ) : <p className="text-xs text-ink-muted">No hay correos capturados disponibles para este caso.</p>}
+        <CaseThreads key={card.opportunity_id} opportunityId={card.opportunity_id} />
       </Section>
-
-      <Section title="Institución y contacto">
-        <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-xs">
-          <dt className="text-ink-faint">Solicitante</dt>
-          <dd className="text-ink">{card.organization?.name ?? <span className="text-bad">Sin institución</span>}</dd>
-          {card.other_organizations.map((o) => (
-            <div key={`${o.organization_id}-${o.role}`} className="contents">
-              <dt className="text-ink-faint">{o.role === "supplier" ? "Proveedor" : o.role === "manufacturer" ? "Fabricante" : o.role}</dt>
-              <dd className="text-ink">{o.name}</dd>
-            </div>
-          ))}
-          <dt className="text-ink-faint">Contacto</dt>
-          <dd className="min-w-0 break-words text-ink">
-            {card.contact ? (
-              <>
-                {card.contact.name ?? card.contact.address}
-                {card.contact.others > 0 ? <span className="text-ink-faint"> y {card.contact.others} más</span> : null}
-                {card.contact.source === "gmail_recipient" ? (
-                  <span className="text-ink-faint" title="Destinatario del correo de la cotización; aún no es una persona del CRM"> · del correo</span>
-                ) : null}
-              </>
-            ) : (
-              <span className="text-ink-faint">Sin contacto</span>
-            )}
-          </dd>
-        </dl>
-      </Section>
-
-      <Section
-        title={`Cotizaciones (${card.quotes.length})`}
-        aside={
-          card.drive_folder ? (
-            <span className="text-xs">
-              <LocalDriveLink href={card.drive_folder.url} label="Abrir carpeta del caso en Drive">
-                Carpeta del caso
-              </LocalDriveLink>
-            </span>
-          ) : null
-        }
-      >
-        {card.quotes.length === 0 ? (
-          <p className="rounded-md border border-dashed border-line-strong px-3 py-3 text-xs text-ink-muted">
-            Este caso no tiene cotizaciones registradas.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {card.quotes.map((q) => (
-              <div key={q.quote_id} className="rounded-md border border-line p-2.5">
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="text-[13px] font-semibold tabular-nums text-ink">{q.quote_number}</span>
-                  {q.revisions.length > 1 ? (
-                    <span className="ml-auto text-[11px] text-ink-faint">{q.revisions.length} revisiones</span>
-                  ) : null}
-                </div>
-                <ol className="space-y-2.5 border-l border-line pl-0 [&>li]:-ml-[5px]">
-                  {[...q.revisions].reverse().map((r) => (
-                    <RevisionRow key={r.revision_id} rev={r} />
-                  ))}
-                </ol>
-              </div>
-            ))}
-          </div>
-        )}
-      </Section>
-
 
       <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={openSignal} />
     </Drawer>

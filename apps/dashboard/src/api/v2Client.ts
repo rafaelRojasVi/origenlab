@@ -62,6 +62,8 @@ export function fetchV2Organizations(
     segment?: V2OrganizationSegment;
     limit?: number;
     offset?: number;
+    /** One organization by UUID, in the same row shape as the list. */
+    id?: string;
   } = {},
 ): Promise<V2OrganizationsPage> {
   return fetchJsonGet<unknown>(
@@ -72,6 +74,7 @@ export function fetchV2Organizations(
       segment: params.segment,
       limit: params.limit ?? DEFAULT_LIMIT,
       offset: params.offset ?? 0,
+      id: params.id,
     }),
   ).then(parseV2OrganizationsPage);
 }

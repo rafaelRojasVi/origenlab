@@ -1,5 +1,5 @@
 /**
- * The Oportunidades «Tablero»: one column per state (Solicitada, En estudio, Enviada,
+ * The Oportunidades «Tablero»: one column per state (Solicitada, Enviada,
  * Conversación, En pausa, Ganada, Perdida).
  *
  * - Every card is shown; every column scrolls on its own, so a long column never stretches the
@@ -20,6 +20,7 @@ import type { OpportunityCardData } from "../crmTypes";
 import { ageTone, contactLine, conversation, displayName, quoteProduct } from "../caseDisplay";
 import { AGE_BUCKETS, BOARD_COLUMNS, activityTimestamp, ageBucket, boardColumnOf, byLatestActivity, pausedUntil, type BoardColumnKey } from "../stage";
 import { fmtDate } from "../ui";
+import { formatMoney } from "./CaseQuotes";
 
 export type BoardSort = "recent" | "oldest" | "replied" | "name";
 
@@ -41,7 +42,6 @@ const LINE_TONE: Record<string, string> = {
 
 const COLUMN_DOT: Record<BoardColumnKey, string> = {
   solicitada: "bg-ink-faint",
-  estudio: "bg-info",
   enviada: "bg-brand-600",
   conversacion: "bg-warn",
   pausa: "bg-violet-600",
@@ -50,6 +50,38 @@ const COLUMN_DOT: Record<BoardColumnKey, string> = {
 };
 
 const DRAG_TYPE = "text/plain";
+
+/**
+ * The neto quoted in a column: the sum of each case's vigente quotations (`money`), CLP only (a
+ * foreign-currency quote is rare and would not add up), and how many cases have a quote whose
+ * PDF nobody read yet, so a small number never pretends to be the whole column.
+ */
+export function columnMoney(cards: readonly OpportunityCardData[]): { clp: number; unread: number } {
+  let clp = 0;
+  let unread = 0;
+  for (const c of cards) {
+    const money = c.money ?? [];
+    const read = money.find((m) => m.currency === "CLP");
+    if (read) clp += Number(read.net_total) || 0;
+    if (money.some((m) => m.currency === "unread") || (c.quotes.length > 0 && money.length === 0)) unread += 1;
+  }
+  return { clp, unread };
+}
+
+function ColumnMoney({ cards, columnKey }: { cards: readonly OpportunityCardData[]; columnKey: string }) {
+  const { clp, unread } = columnMoney(cards);
+  return (
+    <p className="mt-0.5 pl-3.5 text-[11.5px] tabular-nums text-ink-muted" data-testid={`board-money-${columnKey}`}>
+      <span className="font-semibold text-ink">{formatMoney(String(clp), "CLP")}</span>
+      <span className="text-ink-faint"> neto</span>
+      {unread > 0 ? (
+        <span className="text-ink-faint" title="Cotizaciones cuyo PDF aún no se ha leído: no están sumadas">
+          {" "}+ {unread} sin leer
+        </span>
+      ) : null}
+    </p>
+  );
+}
 
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
 
@@ -113,7 +145,7 @@ export function Board({
   return (
     <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
       {/* Five working columns share the width; Ganada and Perdida are narrower, with compact cards. */}
-      <div className="grid min-w-[72rem] grid-cols-[repeat(5,minmax(10rem,1fr))_repeat(2,minmax(8.5rem,0.75fr))] gap-3">
+      <div className="grid min-w-[60rem] grid-cols-[repeat(4,minmax(11rem,1fr))_repeat(2,minmax(9rem,0.8fr))] gap-3">
         {BOARD_COLUMNS.map((col) => {
           const inCol = sortCards(
             cards.filter((c) => boardColumnOf(c, at) === col.key),
@@ -139,15 +171,18 @@ export function Board({
               onDrop={(e) => drop(e, col.key)}
               data-drop-target={over === col.key ? "true" : undefined}
             >
-              <header className="mb-1.5 flex items-center gap-1.5 px-0.5">
-                <span aria-hidden="true" className={`h-2 w-2 rounded-full ${COLUMN_DOT[col.key]}`} />
-                <h2 className="text-[13px] font-semibold text-ink">{col.label}</h2>
-                <span
-                  className="rounded-full bg-canvas-sunken px-1.5 py-px text-[11px] tabular-nums text-ink-muted"
-                  data-testid={`board-count-${col.key}`}
-                >
-                  {inCol.length}
-                </span>
+              <header className="mb-1.5 px-0.5">
+                <div className="flex items-center gap-1.5">
+                  <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${COLUMN_DOT[col.key]}`} />
+                  <h2 className="truncate text-[13px] font-semibold text-ink">{col.label}</h2>
+                  <span
+                    className="rounded-full bg-canvas-sunken px-1.5 py-px text-[11px] tabular-nums text-ink-muted"
+                    data-testid={`board-count-${col.key}`}
+                  >
+                    {inCol.length}
+                  </span>
+                </div>
+                <ColumnMoney cards={inCol} columnKey={col.key} />
               </header>
               <div
                 className={`flex max-h-[72vh] min-h-48 flex-col gap-2 overflow-y-auto rounded-xl p-1.5 transition-[background-color,box-shadow] duration-150 ${
@@ -257,6 +292,9 @@ export function BoardCard({
 }) {
   const at = now ?? new Date();
   const latest = card.latest_revision;
+  // The neto of the vigente quotations; the first currency only (a mixed-currency case is rare).
+  const firstMoney = (card.money ?? []).find((m) => m.currency !== "unread");
+  const money = firstMoney ? formatMoney(firstMoney.net_total, firstMoney.currency) : null;
   const { name, sub } = displayName(card);
   const contact = contactLine(card);
   // One clock per card: the status line says who touched the case last and for how long
@@ -309,16 +347,21 @@ export function BoardCard({
           {contact && !compact ? <p className="truncate text-[11px] leading-4 text-ink-muted">{contact}</p> : null}
         </div>
       </div>
-      <p className="mt-1.5 truncate text-[11px] leading-4 tabular-nums text-ink-muted">
+      <p className="mt-1.5 flex items-baseline gap-2 text-[11px] leading-4 tabular-nums text-ink-muted">
         {latest ? (
-          <>
+          <span className="min-w-0 truncate">
             <span className="font-semibold text-ink">{latest.quote_number}</span>
             {card.quote_numbers.length > 1 ? <span className="text-ink-faint"> +{card.quote_numbers.length - 1}</span> : null} ·{" "}
             {shortDate(latest.sent_at, at)}
-          </>
+          </span>
         ) : (
           <span className="text-ink-faint">Sin cotización</span>
         )}
+        {money ? (
+          <span className="ml-auto shrink-0 text-[11.5px] font-semibold text-ink" title="Neto de las cotizaciones vigentes" data-testid="board-money">
+            {money}
+          </span>
+        ) : null}
       </p>
       {product ? (
         <span
@@ -333,7 +376,7 @@ export function BoardCard({
         {line.text}
       </p>
       {compact ? null : (
-        <div className="mt-2 flex items-center gap-1 border-t border-line pt-1.5 text-[11px]">
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 border-t border-line pt-1.5 text-[11px]">
           {driveUrl ? (
             <a
               href={driveUrl}
@@ -364,7 +407,7 @@ export function BoardCard({
             </a>
           ) : null}
           {pending > 0 ? (
-            <span className="ml-auto whitespace-nowrap rounded-full bg-warn-bg px-1.5 text-[10px] font-semibold text-warn" title={card.attention.map((a) => a.label).join(" · ")}>
+            <span className="ml-auto shrink-0 whitespace-nowrap rounded-full bg-warn-bg px-1.5 py-px text-[10px] font-semibold text-warn" title={card.attention.map((a) => a.label).join(" · ")}>
               {pending} pendiente{pending > 1 ? "s" : ""}
             </span>
           ) : null}

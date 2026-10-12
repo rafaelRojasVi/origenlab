@@ -297,6 +297,15 @@ class _StubRepo:
     def organization_card(self, organization_id: str):
         return self.organization
 
+    ORGANIZATION_FILTERS = {"cases": "true"}
+    ORGANIZATION_SEGMENTS = ("customers", "suppliers", "others")
+
+    def organizations(self, **kwargs):
+        from origenlab_api.v2.repository import Page
+
+        self.organization_list_calls = [*getattr(self, "organization_list_calls", []), kwargs]
+        return Page(items=[], total=0, limit=kwargs["limit"], offset=kwargs["offset"])
+
     def organization_cases(self, organization_id: str, **kwargs):
         from origenlab_api.v2.repository import Page
 
@@ -827,3 +836,30 @@ def test_a_name_only_search_cannot_discover_an_address() -> None:
         assert local_part in names, f"matched on something other than a name: {item}"
     # And the full address, which no recorded name should carry, finds nothing by name.
     assert repo.contacts(q=address, limit=10, offset=0, search_addresses=False).total == 0
+
+
+def test_the_organization_list_takes_one_id_and_refuses_a_malformed_one() -> None:
+    """The case panel links to its institution; the page asks the list for that one row."""
+    repo = _StubRepo()
+    client = _client(repo)
+    oid = "00000000-0000-4000-8000-000000000002"
+    assert client.get(f"/v2/organizations?id={oid}").status_code == 200
+    assert repo.organization_list_calls[-1]["organization_id"] == oid
+    assert client.get("/v2/organizations").status_code == 200
+    assert repo.organization_list_calls[-1]["organization_id"] is None
+    assert client.get("/v2/organizations?id=12345").status_code == 404
+
+
+@_needs_db
+def test_the_organization_id_filter_returns_exactly_that_row() -> None:
+    import psycopg
+
+    from origenlab_api.v2.repository import V2Repository
+
+    repo = V2Repository(psycopg.connect, _TEST_DSN)
+    first = repo.organizations(q=None, limit=1, offset=0)
+    if first.total == 0:
+        pytest.skip("the target database holds no organizations")
+    oid = first.items[0]["organization_id"]
+    one = repo.organizations(q=None, limit=5, offset=0, organization_id=oid)
+    assert one.total == 1 and [r["organization_id"] for r in one.items] == [oid]

@@ -2,7 +2,7 @@
  * «Cambiar estado»: move a case to one of the operator's states — from the drawer, or by dropping
  * its card on a Tablero column. One form per kind of target:
  *
- * - **Solicitada / En estudio / Enviada / Conversación** — as many `advance-case-stage` steps as
+ * - **Solicitada / Enviada / Conversación** — as many `advance-case-stage` steps as
  *   the stage table needs (`stagePath`), each with its receipt, the note prefilled and editable.
  * - **Perdida** — one click on a reason (`LOST_REASONS`); «Sin respuesta» closes as `abandoned`.
  * - **En pausa** — a date and a reason: a `create-task` «Retomar: <motivo>» due that day. The case
@@ -74,7 +74,7 @@ export function moveRefusal(card: OpportunityCardData, target: MoveTarget, now: 
   if (closed && !isReopenable(card)) return "Este caso se descartó por una corrección: abre uno nuevo desde el correo.";
   if (typeof card.version !== "number") return "El API no informó la versión del caso.";
   if (closed && (target === "pausa" || target === "perdida")) {
-    return "Un caso cerrado se reabre a «Solicitada», «En estudio», «Enviada» o «Conversación».";
+    return "Un caso cerrado se reabre a «Solicitada», «Enviada» o «Conversación».";
   }
   if (target === "pausa" || target === "perdida") return null;
 
@@ -86,9 +86,9 @@ export function moveRefusal(card: OpportunityCardData, target: MoveTarget, now: 
   }
   if (stagePath(card.stage, to) === null) return "Ese cambio no está permitido desde el estado actual.";
 
-  // En estudio and later require a human-confirmed requesting institution.
+  // Enviada and later require a human-confirmed requesting institution.
   // Refuse before a multi-step move partially advances the case.
-  if (["estudio", "enviada", "conversacion"].includes(target)) {
+  if (["enviada", "conversacion"].includes(target)) {
     if (!card.organization) {
       return "Antes de mover este caso, debes asociar y confirmar la institución solicitante.";
     }

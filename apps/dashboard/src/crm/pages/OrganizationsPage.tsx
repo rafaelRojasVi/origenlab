@@ -38,7 +38,13 @@ import { OrgAuthoringSection } from "../authoring/OrgAuthoringSection";
 
 type Scope = "cases" | "all";
 
-export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void }) {
+export function OrganizationsPage({
+  navigate,
+  initialId = null,
+}: {
+  navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
+  initialId?: string | null;
+}) {
   const { session } = useAuthSession();
   const adminRole = session.kind === "signed_in" && session.operator.role === "admin";
   const [segment, setSegment] = useState<V2OrganizationSegment>("customers");
@@ -73,7 +79,18 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
     }
     return m;
   }, [pipeline]);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(initialId);
+  // A link from a case («Institución») opens that organization even when the list does not
+  // show it (another segment, or past the first page): its own row, fetched by id.
+  const [linked, setLinked] = useState<V2Organization | null>(null);
+  useEffect(() => {
+    if (!initialId) return;
+    let live = true;
+    fetchV2Organizations({ id: initialId, limit: 1 })
+      .then((p) => { if (live) setLinked(p.items[0] ?? null); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [initialId]);
   const interests = useEquipmentInterests();
   const mayAuthor = useMayAuthorCrm();
   const admin = useIsAdmin();
@@ -136,7 +153,7 @@ export function OrganizationsPage({ navigate }: { navigate: (s: CrmSection, id?:
       <EquipmentLineStrip state={interests} onSelectLine={openLine} />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} cards />}>
         {(page) => {
-          const open = page.items.find((o) => o.organization_id === openId) ?? null;
+          const open = page.items.find((o) => o.organization_id === openId) ?? (linked && linked.organization_id === openId ? linked : null);
           return (
             <>
               <StatLine

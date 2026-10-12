@@ -68,6 +68,41 @@ export interface RevisionCard {
   /** No Drive copy yet, but the archiver holds the original email and will file it. */
   drive_pending?: boolean;
   quote_number: string;
+  /** What the PDF itself says, when it was read (quote-history import or a later reader); null
+   * when nobody read it yet. Amounts are decimal strings. Absent from an older API. */
+  contents?: QuoteContents | null;
+}
+
+export interface QuoteLine {
+  line_no: number;
+  item: string | null;
+  parent_item: string | null;
+  kind: string | null;
+  brand: string | null;
+  model: string | null;
+  description: string | null;
+  qty: string | null;
+  unit_price: string | null;
+  line_total: string | null;
+  optional: boolean;
+  check_status: string;
+}
+
+export interface QuoteContents {
+  currency: string | null;
+  net_total: string | null;
+  /** «document»: printed on the PDF; «lines»: the sum of its non-optional lines; «none»: unknown. */
+  net_source: "document" | "lines" | "none";
+  /** IVA and total: only for CLP. */
+  tax_total: string | null;
+  gross_total: string | null;
+  lines: QuoteLine[];
+}
+
+/** The neto of a case's vigente revisions per currency; `unread` counts revisions never read. */
+export interface CaseMoney {
+  currency: string;
+  net_total: string;
 }
 
 /** `GET /v2/workspace/opportunities/{id}/mail-documents` — what «Registrar cotización» picks from. */
@@ -186,12 +221,16 @@ export interface OpportunityCardData {
     name: string | null;
     address: string | null;
     others: number;
+    /** The CRM person, when the contact is one (`crm_participant`); opens «Personas». */
+    person_id?: string | null;
     /** Fingerprint of the bare address; joins the card to its equipment interests when masked. */
     address_ref?: string | null;
   } | null;
   quotes: QuoteCard[];
   quote_numbers: string[];
   revision_count: number;
+  /** Absent from an older API. */
+  money?: CaseMoney[];
   latest_revision: RevisionCard | null;
   drive_folder: { source: "archive_ledger"; folder_id: string; url: string } | null;
   /**
@@ -493,4 +532,51 @@ export interface HistoryItem {
 
 export interface HistoryResponse {
   items: HistoryItem[];
+}
+
+
+/** `GET /v2/workspace/opportunities/{id}/threads`: the case's emails as Gmail cadenas. */
+export interface CaseThreadMessage {
+  message_id: string | null;
+  sent_at: string | null;
+  direction: "inbound" | "outbound" | string;
+  /** Display name, else the sender's domain; never the full address. */
+  from: string | null;
+  subject: string | null;
+  has_pdf: boolean;
+  url: string | null;
+}
+
+export interface CaseThread {
+  thread_id: string;
+  subject: string | null;
+  kind: "cliente" | "proveedor" | "interno";
+  count: number;
+  last_at: string | null;
+  url: string | null;
+  /** Newest first. */
+  messages: CaseThreadMessage[];
+}
+
+export interface CaseThreadsResponse {
+  opportunity_id: string;
+  threads: CaseThread[];
+}
+
+/** `GET /v2/workspace/quote-readings`: the quote PDFs the quote reader refused. */
+export interface QuoteReading {
+  quote_number: string | null;
+  revision_no: number | null;
+  sent_at: string | null;
+  code:
+    | "not_origenlab_quote" | "too_many_disputed" | "net_mismatch" | "model_refused" | "unreadable"
+    | "no_text_layer" | "request_failed" | "write_failed" | "hash_mismatch" | "attachment_not_in_eml" | "other";
+  reader_version: string | null;
+  recorded_at: string | null;
+  opportunity_id: string | null;
+  case_title: string | null;
+}
+
+export interface QuoteReadingsResponse {
+  items: QuoteReading[];
 }

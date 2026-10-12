@@ -43,7 +43,7 @@ interface Recipient {
 }
 
 
-export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string) => void }) {
+export function PeoplePage({ navigate, initialId = null }: { navigate: (s: CrmSection, id?: string) => void; initialId?: string | null }) {
   const [overview, reloadOverview] = useResource(fetchOverview);
   const [pipeline, reloadPipeline] = useResource(fetchPipeline);
   const [q, setQ] = useState("");
@@ -64,7 +64,8 @@ export function PeoplePage({ navigate }: { navigate: (s: CrmSection, id?: string
   const [line, setLine] = useState<string | null>(null);
   const mayAuthor = useMayAuthorCrm();
   const [showNewPerson, setShowNewPerson] = useState(false);
-  const [openPersonId, setOpenPersonId] = useState<string | null>(null);
+  // A link from a case («Persona») opens that person directly: `#/crm/personas/<id>`.
+  const [openPersonId, setOpenPersonId] = useState<string | null>(initialId);
   const [suggestions, reloadSuggestions] = useResource(fetchPersonSuggestions);
 
   return (

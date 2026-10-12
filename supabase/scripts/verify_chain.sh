@@ -39,7 +39,7 @@ export OL_REPO_ROOT
 EXPECT_SCHEMAS=7
 EXPECT_TABLES=51
 EXPECT_TABLES_BY_SCHEMA="catalog=6,comms=4,crm=21,evidence=4,outbound=9,platform=6,procurement=1"
-EXPECT_POLICIES=176
+EXPECT_POLICIES=178
 EXPECT_ROLES=4
 EXPECT_SECURITY_DEFINER=3  # outbound.add_contact_control (W10), platform.begin_pin_attempt and platform.finish_pin_attempt (slice 1), the closed list (ARCHITECTURE.md §6.2)
 

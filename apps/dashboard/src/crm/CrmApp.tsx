@@ -100,9 +100,9 @@ function Section({
     case "oportunidades":
       return <PipelinePage key={id ?? "all"} initialOpportunityId={id} />;
     case "organizaciones":
-      return <OrganizationsPage navigate={navigate} />;
+      return <OrganizationsPage key={id ?? "all"} navigate={navigate} initialId={id} />;
     case "personas":
-      return <PeoplePage navigate={navigate} />;
+      return <PeoplePage key={id ?? "all"} navigate={navigate} initialId={id} />;
     case "catalogo":
       return <CatalogPage id={id} navigate={navigate} />;
     case "marketing":

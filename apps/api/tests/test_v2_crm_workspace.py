@@ -604,6 +604,8 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/person-suggestions",
         "/v2/workspace/opportunities/{opportunity_id}/notes",
         "/v2/workspace/opportunities/{opportunity_id}/mail-documents",
+        "/v2/workspace/opportunities/{opportunity_id}/threads",
+        "/v2/workspace/quote-readings",
         "/v2/workspace/opportunities/{opportunity_id}/quote-candidates",
         "/v2/workspace/opportunities/{opportunity_id}/purchase-order-candidates",
         "/v2/workspace/mail-sync",
@@ -678,3 +680,100 @@ def test_drive_file_records_link_revisions_and_a_ledger_link_wins() -> None:
     assert (a["file_id"], a["folder_id"], a["original_filename"]) == ("f-a", "folder-a", "01250-26 r1 — Cliente.pdf")
     assert a["file_url"] == "https://drive.google.com/file/d/f-a/view"
     assert a["folder_url"] == "https://drive.google.com/drive/folders/folder-a"
+
+
+# ── quote contents on the card (the case panel shows money and lines) ─────────────────────────
+
+def test_quote_contents_reads_the_documents_neto_and_adds_iva_for_clp() -> None:
+    from origenlab_api.v2.crm_workspace import quote_contents
+
+    lines = [
+        {"line_no": 1, "item": "1", "kind": "equipment", "brand": "Marca", "model": "X-100", "description": "Equipo",
+         "qty": "1.000000", "unit_price": "1000000.0000", "line_total": "1000000.0000", "optional": False,
+         "check_status": "verified"},
+        {"line_no": 2, "item": "2", "kind": "accessory", "brand": None, "model": None, "description": "Opcional",
+         "qty": "1.000000", "unit_price": "50000.0000", "line_total": "50000.0000", "optional": True,
+         "check_status": "single_source"},
+    ]
+    c = quote_contents({"doc_currency": "CLP", "doc_net_total": "1000000", "doc_lines": json.dumps(lines)})
+    assert c["currency"] == "CLP" and c["net_source"] == "document"
+    assert (c["net_total"], c["tax_total"], c["gross_total"]) == ("1000000", "190000", "1190000")
+    assert [l["model"] for l in c["lines"]] == ["X-100", None] and c["lines"][1]["optional"] is True
+
+
+def test_quote_contents_sums_non_optional_lines_without_a_printed_neto_and_never_adds_iva_to_usd() -> None:
+    from origenlab_api.v2.crm_workspace import quote_contents
+
+    lines = [{"line_no": 1, "line_total": "1200.5", "optional": False},
+             {"line_no": 2, "line_total": "99.25", "optional": False},
+             {"line_no": 3, "line_total": "500", "optional": True}]
+    c = quote_contents({"doc_currency": "USD", "doc_net_total": None, "doc_lines": lines})
+    assert (c["net_total"], c["net_source"], c["tax_total"], c["gross_total"]) == ("1299.75", "lines", None, None)
+    # A line without a total makes the sum unknowable: no neto rather than a wrong one.
+    c = quote_contents({"doc_currency": "CLP", "doc_net_total": None,
+                        "doc_lines": [{"line_no": 1, "line_total": None, "optional": False}]})
+    assert (c["net_total"], c["net_source"], c["tax_total"]) == (None, "none", None)
+
+
+def test_an_unread_pdf_has_no_contents_and_case_money_counts_only_vigente_revisions() -> None:
+    from origenlab_api.v2.crm_workspace import case_money, quote_contents
+
+    assert quote_contents({"doc_currency": None, "doc_net_total": None, "doc_lines": None}) is None
+    revs = [
+        {"is_active": True, "contents": {"currency": "CLP", "net_total": "1000"}},
+        {"is_active": True, "contents": {"currency": "CLP", "net_total": "250"}},
+        {"is_active": False, "contents": {"currency": "CLP", "net_total": "999999"}},  # superseded
+        {"is_active": True, "contents": {"currency": "USD", "net_total": "10.50"}},
+        {"is_active": True, "contents": None},  # never read
+    ]
+    assert case_money(revs) == [{"currency": "CLP", "net_total": "1250"}, {"currency": "USD", "net_total": "10.50"},
+                                {"currency": "unread", "net_total": "1"}]
+
+
+def test_case_threads_group_by_cadena_label_the_party_and_hide_addresses() -> None:
+    from origenlab_api.v2.crm_workspace import case_threads
+
+    rows = [
+        # A client cadena: OrigenLab sends the quote, the client answers later (other time zone).
+        {"thread_id": "t1", "message_id": "m1", "sent_at": "2026-09-01T10:00:00-03:00", "subject": "Cotización balanza",
+         "sender": "Equipo OrigenLab <contacto@origenlab.cl>", "recipients": "Ana Ficticia <ana@lab-ficticio.example>",
+         "direction": "outbound", "documents": [{"filename": "CN00999.pdf"}]},
+        {"thread_id": "t1", "message_id": "m2", "sent_at": "2026-09-01T16:00:00Z", "subject": "RE: Cotización balanza",
+         "sender": "Ana Ficticia <ana@lab-ficticio.example>", "recipients": "contacto@origenlab.cl",
+         "direction": None, "documents": "[]"},
+        # A supplier cadena, newest of all.
+        {"thread_id": "t2", "message_id": "m3", "sent_at": "2026-09-03T09:00:00-03:00", "subject": "Fwd: Precio equipo",
+         "sender": "<ventas@fabricante-ficticio.example>", "recipients": "contacto@origenlab.cl", "direction": "inbound",
+         "documents": []},
+        # Only OrigenLab: an internal note to self.
+        {"thread_id": "t3", "message_id": "m4", "sent_at": "2026-08-01T09:00:00-03:00", "subject": "nota",
+         "sender": "contacto@origenlab.cl", "recipients": "contacto@origenlab.cl", "direction": "outbound", "documents": []},
+        {"thread_id": None, "message_id": "m5", "sent_at": "2026-09-04T00:00:00Z", "subject": "sin hilo", "sender": "", "documents": []},
+    ]
+    threads = case_threads(rows, supplier_domains=["fabricante-ficticio.example"])
+    assert [t["thread_id"] for t in threads] == ["t2", "t1", "t3"]
+    assert [t["kind"] for t in threads] == ["proveedor", "cliente", "interno"]
+    t1 = threads[1]
+    assert t1["subject"] == "Cotización balanza" and t1["count"] == 2
+    assert [m["message_id"] for m in t1["messages"]] == ["m2", "m1"]  # newest first
+    assert t1["messages"][0]["direction"] == "inbound" and t1["messages"][0]["from"] == "Ana Ficticia"
+    assert t1["messages"][1]["has_pdf"] is True and t1["url"].endswith("m2")
+    assert threads[0]["messages"][0]["from"] == "fabricante-ficticio.example"  # no name: domain, never the address
+    assert "@" not in json.dumps(threads)
+
+
+def test_quote_readings_name_the_quote_the_reason_and_the_week_never_text() -> None:
+    from origenlab_api.v2.crm_workspace import quote_reading_rows
+
+    rows = [
+        {"value_norm": "quote_read:v1:2026-W41", "code": "net_mismatch", "recorded_at": "2026-10-12T10:00:00+00:00",
+         "quote_number": "00999-26", "revision_no": 1, "sent_at": "2026-10-08T12:00:00+00:00",
+         "opportunity_id": "o-1", "case_title": "Caso ficticio"},
+        {"value_norm": "quote_read:v1:2026-W41", "code": "something_new", "recorded_at": "2026-10-12T09:00:00+00:00",
+         "quote_number": "00998-26", "revision_no": 2, "sent_at": None, "opportunity_id": "o-2", "case_title": None},
+    ]
+    out = quote_reading_rows(rows)
+    assert out[0] == {"quote_number": "00999-26", "revision_no": 1, "sent_at": "2026-10-08T12:00:00+00:00",
+                      "code": "net_mismatch", "reader_version": "quote_read:v1", "recorded_at": "2026-10-12T10:00:00+00:00",
+                      "opportunity_id": "o-1", "case_title": "Caso ficticio"}
+    assert out[1]["code"] == "other"  # an unknown code is never passed through as text

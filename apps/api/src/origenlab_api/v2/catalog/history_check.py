@@ -33,6 +33,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import Any, Literal, NamedTuple
 
@@ -336,3 +337,106 @@ def quote_document_payload(extraction: dict[str, Any], sha256: str) -> dict[str,
         "template": _optional_text("template", extraction.get("template")),
         "file_sha256": sha256,
     }
+
+
+# ── quote lines and identity withholding, shared by the history import and the quote reader ──
+
+LINE_KINDS: tuple[str, ...] = ("equipment", "accessory", "consumable", "spare_part", "service", "freight", "other")
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE = re.compile(r"\+\s?\d{2,3}[\s-]?\(?\d{1,2}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}|\b9\s?\d{4}\s?\d{4}\b")
+_FOUR = Decimal("0.0001")
+_SIX = Decimal("0.000001")
+#: Client fields read only to withhold line strings that repeat them; never written anywhere.
+_CLIENT_FIELDS = ("client_institution", "client_unit", "client_contact")
+_MIN_IDENTITY = 4
+#: What `evidence.document_line` can hold: numeric(18,6) for qty, numeric(18,4) for money.
+_LIMIT = {_SIX: Decimal("1e12"), _FOUR: Decimal("1e14")}
+
+
+def _line_amount(field: str, value: Any, step: Decimal) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = importing.to_decimal(value)
+    except ValueError:
+        number = None
+    if number is None or not number.is_finite():
+        raise ValueError(f"{field}: not a number")
+    if number < 0:
+        raise ValueError(f"{field}: negative")
+    if number >= _LIMIT[step]:
+        raise ValueError(f"{field}: too large for the column")
+    if number != number.quantize(step):
+        raise ValueError(f"{field}: more decimals than the column holds")
+    return number
+
+
+def _line_text(field: str, value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        value = str(value)
+    if not isinstance(value, str):
+        raise ValueError(f"{field}: not text")
+    return value.replace("\x00", "").strip() or None
+
+
+def identities_of(extraction: Mapping[str, Any]) -> list[str]:
+    """The client's name, unit and contact as the extraction read them, normalised; never stored."""
+    found = []
+    for field in _CLIENT_FIELDS:
+        value = extraction.get(field)
+        if isinstance(value, str) and len(importing.norm_name(value)) >= _MIN_IDENTITY:
+            found.append(importing.norm_name(value))
+    return found
+
+
+def withheld(value: str | None, identities: Sequence[str]) -> bool:
+    """A line string that names the client, or holds an email address or a phone number."""
+    if value is None:
+        return False
+    if _EMAIL.search(value) or _PHONE.search(value):
+        return True
+    folded = f" {importing.norm_name(value)} "
+    return any(f" {identity} " in folded for identity in identities)
+
+
+def document_lines(extraction: Mapping[str, Any], currency: str, *,
+                   extractor: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """(the `evidence.document_line` rows, the lines as `cross_check` reads them, strings withheld).
+
+    A malformed line raises `ValueError("lines[3].qty: not a number")`: the field, never the value.
+    """
+    raw = extraction.get("lines")
+    if not isinstance(raw, list):
+        raise ValueError("lines: not a list")
+    identities = identities_of(extraction)
+    written: list[dict[str, Any]] = []
+    checked: list[dict[str, Any]] = []
+    held = 0
+    for n, line in enumerate(raw):
+        at = f"lines[{n}]"
+        if not isinstance(line, Mapping):
+            raise ValueError(f"{at}: not an object")
+        kind = line.get("kind")
+        if kind is not None and kind not in LINE_KINDS:
+            raise ValueError(f"{at}.kind: not a known line kind")
+        optional = line.get("optional", False)
+        if optional is None:
+            optional = False
+        if not isinstance(optional, bool):
+            raise ValueError(f"{at}.optional: not true or false")
+        strings = {field: _line_text(f"{at}.{source}", line.get(source))
+                   for field, source in (("item_label", "item"), ("parent_item", "parent_item"),
+                                         ("brand", "brand"), ("model", "model"), ("description", "description"))}
+        for field, value in strings.items():
+            if withheld(value, identities):
+                strings[field] = None
+                held += 1
+        total = _line_amount(f"{at}.line_total", line.get("line_total"), _FOUR)
+        written.append({"line_no": n + 1, **strings, "kind": kind, "model_key": model_key(strings["model"]),
+                        "qty": _line_amount(f"{at}.qty", line.get("qty"), _SIX),
+                        "unit_price": _line_amount(f"{at}.unit_price", line.get("unit_price"), _FOUR),
+                        "line_total": total, "currency": currency, "optional": optional, "extractor": extractor})
+        checked.append({"item": line.get("item"), "model": line.get("model"), "line_total": total})
+    return written, checked, held

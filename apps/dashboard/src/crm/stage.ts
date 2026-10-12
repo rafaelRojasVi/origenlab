@@ -5,12 +5,11 @@ import type { Tone } from "./ui";
 export const STAGE_ORDER = ["lead", "qualifying", "qualified", "quoting", "negotiating", "won", "lost", "abandoned"] as const;
 
 /**
- * The operator's six states, over the eight stages the API keeps (`STAGE_TRANSITIONS`):
+ * The operator's five states, over the eight stages the API keeps (`STAGE_TRANSITIONS`):
  *
  * | State | Stage(s) |
  * |---|---|
- * | Solicitada | `lead`, `qualifying` |
- * | En estudio | `qualified` |
+ * | Solicitada | `lead`, `qualifying`, `qualified` |
  * | Enviada | `quoting` |
  * | Conversación | `negotiating` |
  * | Ganada | `won` |
@@ -20,8 +19,10 @@ export const STAGE_ORDER = ["lead", "qualifying", "qualified", "quoting", "negot
  */
 export const STAGE_LABEL: Record<string, string> = {
   lead: "Solicitada",
-  qualifying: "Solicitada · calificando",
-  qualified: "En estudio",
+  // Owner decision 2026-10-11: «Solicitada» and «En estudio» are one moment. The API keeps the
+  // three stages (the institution rule starts at `qualified`); the operator sees one state.
+  qualifying: "Solicitada",
+  qualified: "Solicitada",
   quoting: "Enviada",
   negotiating: "Conversación",
   won: "Ganada",
@@ -32,7 +33,7 @@ export const STAGE_LABEL: Record<string, string> = {
 export const STAGE_TONE: Record<string, Tone> = {
   lead: "neutral",
   qualifying: "neutral",
-  qualified: "info",
+  qualified: "neutral",
   quoting: "brand",
   negotiating: "warn",
   won: "good",
@@ -40,15 +41,14 @@ export const STAGE_TONE: Record<string, Tone> = {
   abandoned: "neutral",
 };
 
-export type BoardColumnKey = "solicitada" | "estudio" | "enviada" | "conversacion" | "pausa" | "ganada" | "perdida";
+export type BoardColumnKey = "solicitada" | "enviada" | "conversacion" | "pausa" | "ganada" | "perdida";
 
 /**
  * The Tablero's columns, one per state. `target` is the stage a card dropped there moves to;
  * «En pausa» has none (a drop asks for a date and writes a task), «Ganada» asks for the revision.
  */
 export const BOARD_COLUMNS: { key: BoardColumnKey; label: string; stages: string[]; target: string | null }[] = [
-  { key: "solicitada", label: "Solicitada", stages: ["lead", "qualifying"], target: "lead" },
-  { key: "estudio", label: "En estudio", stages: ["qualified"], target: "qualified" },
+  { key: "solicitada", label: "Solicitada / En estudio", stages: ["lead", "qualifying", "qualified"], target: "lead" },
   { key: "enviada", label: "Enviada", stages: ["quoting"], target: "quoting" },
   { key: "conversacion", label: "Conversación", stages: ["negotiating"], target: "negotiating" },
   { key: "pausa", label: "En pausa", stages: [], target: null },
