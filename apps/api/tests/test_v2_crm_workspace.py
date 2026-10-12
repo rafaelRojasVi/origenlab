@@ -605,6 +605,7 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/opportunities/{opportunity_id}/notes",
         "/v2/workspace/opportunities/{opportunity_id}/mail-documents",
         "/v2/workspace/opportunities/{opportunity_id}/threads",
+        "/v2/workspace/quote-readings",
         "/v2/workspace/opportunities/{opportunity_id}/quote-candidates",
         "/v2/workspace/opportunities/{opportunity_id}/purchase-order-candidates",
         "/v2/workspace/mail-sync",
@@ -759,3 +760,20 @@ def test_case_threads_group_by_cadena_label_the_party_and_hide_addresses() -> No
     assert t1["messages"][1]["has_pdf"] is True and t1["url"].endswith("m2")
     assert threads[0]["messages"][0]["from"] == "fabricante-ficticio.example"  # no name: domain, never the address
     assert "@" not in json.dumps(threads)
+
+
+def test_quote_readings_name_the_quote_the_reason_and_the_week_never_text() -> None:
+    from origenlab_api.v2.crm_workspace import quote_reading_rows
+
+    rows = [
+        {"value_norm": "quote_read:v1:2026-W41", "code": "net_mismatch", "recorded_at": "2026-10-12T10:00:00+00:00",
+         "quote_number": "00999-26", "revision_no": 1, "sent_at": "2026-10-08T12:00:00+00:00",
+         "opportunity_id": "o-1", "case_title": "Caso ficticio"},
+        {"value_norm": "quote_read:v1:2026-W41", "code": "something_new", "recorded_at": "2026-10-12T09:00:00+00:00",
+         "quote_number": "00998-26", "revision_no": 2, "sent_at": None, "opportunity_id": "o-2", "case_title": None},
+    ]
+    out = quote_reading_rows(rows)
+    assert out[0] == {"quote_number": "00999-26", "revision_no": 1, "sent_at": "2026-10-08T12:00:00+00:00",
+                      "code": "net_mismatch", "reader_version": "quote_read:v1", "recorded_at": "2026-10-12T10:00:00+00:00",
+                      "opportunity_id": "o-1", "case_title": "Caso ficticio"}
+    assert out[1]["code"] == "other"  # an unknown code is never passed through as text

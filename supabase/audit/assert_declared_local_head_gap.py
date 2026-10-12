@@ -280,7 +280,7 @@ EXPECTED_SUMMARIES = {
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 176,
+        "policy_count": 178,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -397,7 +397,7 @@ def main() -> int:
     if "18 entr(y|ies) are present here and not in the baseline" not in a08_text:
         refuse("a08 does not report exactly eighteen extra tables")
 
-    # The 51 policy additions must belong to those same eighteen reviewed tables:
+    # The 53 policy additions must belong to those same eighteen reviewed tables:
     # four each for the three commercial-case tables and campaign_block (api
     # select/insert/update, worker select), one each for auth_principal and
     # operator_profile (api select: their throttle is written by
@@ -405,8 +405,9 @@ def main() -> int:
     # select, insert), three for auth_session (api select, insert, update), two
     # each for campaign_content and campaign_content_message (api and worker
     # select), four each for note and organization_product_line (api
-    # select/insert/update, worker select), three each for product_image,
-    # supplier_terms and document_line (api select/insert/update) and two each for
+    # select/insert/update, worker select), three each for product_image and
+    # supplier_terms (api select/insert/update), five for document_line (api
+    # select/insert/update; worker select/insert since 20261012100000) and two each for
     # fx_rate and cost_parameter (api select, insert: both are append-only).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 3:
@@ -429,8 +430,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "51 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly fifty-one extra policies")
+    if "53 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly fifty-three extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must

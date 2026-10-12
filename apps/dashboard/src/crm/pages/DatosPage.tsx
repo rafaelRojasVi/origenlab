@@ -19,6 +19,7 @@ import { useAuthSession } from "../../context/AuthSessionContext";
 import { useResource } from "../useResource";
 import { DataHealth } from "./DataHealth";
 import { MailRulesPanel } from "./MailRulesPanel";
+import { QuoteReadingsPanel } from "./QuoteReadingsPanel";
 import { ProvidersPage } from "./ProvidersPage";
 import { DrivePage } from "./DrivePage";
 
@@ -106,7 +107,10 @@ function DatosBody({ navigate, initialTab }: { navigate: (s: CrmSection, id?: st
         }))}
       />
       {tab === "acciones" ? (
-        <MailRulesPanel />
+        <>
+          <MailRulesPanel />
+          <QuoteReadingsPanel />
+        </>
       ) : tab === "estado" ? (
         <DataHealth navigate={navigate} />
       ) : tab === "proveedores" ? (

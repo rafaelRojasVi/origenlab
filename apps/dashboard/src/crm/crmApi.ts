@@ -25,11 +25,12 @@ import type {
 } from "./crmTypes";
 import type { FxResponse } from "./fx";
 import type { NoteRow } from "./authoring/crmAuthoringApi";
-import type { CaseThreadsResponse } from "./crmTypes";
+import type { CaseThreadsResponse, QuoteReadingsResponse } from "./crmTypes";
 
 export const WORKSPACE_PATHS = {
   overview: "/v2/workspace/overview",
   pipeline: "/v2/workspace/pipeline",
+  quoteReadings: "/v2/workspace/quote-readings",
   providers: "/v2/workspace/providers",
   equipmentInterests: "/v2/workspace/equipment-interests",
   marketing: "/v2/workspace/marketing",
@@ -55,6 +56,9 @@ export const fetchPipeline = () => fetchJsonGet<PipelineResponse>(operatorApiUrl
 /** The notes on one case, for the drawer's «Registrar seguimiento». Writing one is `add-note`. */
 export const fetchCaseThreads = (opportunityId: string) =>
   fetchJsonGet<CaseThreadsResponse>(operatorApiUrl(WORKSPACE_PATHS.caseThreads(opportunityId)));
+
+export const fetchQuoteReadings = () =>
+  fetchJsonGet<QuoteReadingsResponse>(operatorApiUrl(WORKSPACE_PATHS.quoteReadings));
 
 export const fetchCaseNotes = (opportunityId: string) =>
   fetchJsonGet<{ opportunity_id: string; notes: NoteRow[] }>(operatorApiUrl(WORKSPACE_PATHS.caseNotes(opportunityId)));
