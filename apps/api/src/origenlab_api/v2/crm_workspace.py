@@ -1041,8 +1041,7 @@ def compose_pipeline(
                 # written after the client's last email as answered.
                 "last_note": note_by_opp.get(oid),
                 "next_action": task_next_action(tasks_by_opp.get(oid, []))
-                or suggest_next_action(opp, blocked, latest, last_contact=(contacts or {}).get(oid),
-                                       last_note=note_by_opp.get(oid)),
+                or suggest_next_action(opp, blocked, latest, last_contact=(contacts or {}).get(oid)),
             }
         )
     return cards
@@ -1058,13 +1057,14 @@ def task_next_action(open_tasks: list[Mapping[str, Any]]) -> dict[str, Any] | No
 
 def suggest_next_action(
     opp: Mapping[str, Any], blocked: list[str], latest: Mapping[str, Any] | None, *,
-    last_contact: Mapping[str, Any] | None = None, last_note: Mapping[str, Any] | None = None,
+    last_contact: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A deterministic suggestion, labelled as such — ``crm.task`` holds no stored next action.
 
     For a quoted case it names the last touch, on the dashboard's one clock (`lastTouch` in
     `caseDisplay.ts`): the client's newest email after the quote means «Responder …»; OrigenLab's
-    newest email or note after the quote means «(último contacto …)»; else «(enviada …)».
+    newest email after the quote means «(último contacto …)»; else «(enviada …)». A note is never a
+    touch: it is a reminder to oneself, not a contact with the client.
     """
     if "no_requesting_institution" in blocked:
         text = "Confirmar la institución solicitante"
@@ -1077,7 +1077,7 @@ def suggest_next_action(
     elif latest is None:
         text = "Registrar la cotización del caso"
     elif opp.get("stage") in ("quoting", "negotiating"):
-        touch, by = _last_touch(latest.get("sent_at"), last_contact, last_note)
+        touch, by = _last_touch(latest.get("sent_at"), last_contact)
         if by == "client":
             text = f"Responder al correo del {_short_date(touch)} sobre {latest['quote_number']}"
         else:
@@ -1089,10 +1089,9 @@ def suggest_next_action(
     return {"text": text, "source": "suggested", "due_at": None}
 
 
-def _last_touch(sent_at: Any, last_contact: Mapping[str, Any] | None,
-                last_note: Mapping[str, Any] | None) -> tuple[Any, str]:
-    """The last touch after the quote and whose it is: ``client``, ``us`` or ``quote``.
-    A note never hides a client's email; a touch counts only after the quote went out."""
+def _last_touch(sent_at: Any, last_contact: Mapping[str, Any] | None) -> tuple[Any, str]:
+    """The last touch after the quote and whose it is: ``client``, ``us`` or ``quote``. Only email
+    counts — a note is a reminder to oneself, not a contact — and only after the quote went out."""
     def ts(value: Any) -> datetime | None:
         if not value:
             return None
@@ -1107,16 +1106,12 @@ def _last_touch(sent_at: Any, last_contact: Mapping[str, Any] | None,
     outbound = (last_contact or {}).get("outbound") or {}
     client = ts(inbound.get("at"))
     mail = ts(outbound.get("at"))
-    note = ts((last_note or {}).get("created_at"))
     client = client if after(client) else None
     mail = mail if after(mail) else None
-    note = note if after(note) else None
     if client and (mail is None or client >= mail):
         return inbound.get("at"), "client"
-    ours = [t for t in (mail, note) if t]
-    if ours:
-        best = max(ours)
-        return (outbound.get("at") if best == mail else (last_note or {}).get("created_at")), "us"
+    if mail:
+        return outbound.get("at"), "us"
     return sent_at, "quote"
 
 

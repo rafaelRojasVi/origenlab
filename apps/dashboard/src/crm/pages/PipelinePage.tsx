@@ -443,16 +443,7 @@ function OpportunityDrawer({
   initial?: { mode: Exclude<Mode, null>; target?: MoveTarget } | null;
 }) {
   const mayAuthor = useMayAuthorCrm();
-  // «Registrar seguimiento» opens the note form of *this* case once. The signal belongs to the
-  // case it was pressed on and is dropped when the drawer closes or another case opens, so the
-  // form never pops open by itself on the next case.
-  const [followUp, setFollowUp] = useState<{ id: string; n: number } | null>(null);
-  const caseId = card?.opportunity_id ?? null;
-  useEffect(() => {
-    setFollowUp((f) => (f && f.id === caseId ? f : null));
-  }, [caseId]);
   if (!card) return null;
-  const openSignal = followUp && followUp.id === card.opportunity_id ? followUp.n : 0;
   const status = STATUS_LABEL[card.status];
   const stage = stageDisplay(card);
   return (
@@ -480,14 +471,7 @@ function OpportunityDrawer({
 
       <CaseDocumentsBlock card={card} onChanged={onChanged} />
 
-      <CaseActions
-        card={card}
-        initial={initial}
-        onChanged={onChanged}
-        onFollowUp={() =>
-          setFollowUp((f) => ({ id: card.opportunity_id, n: (f && f.id === card.opportunity_id ? f.n : 0) + 1 }))
-        }
-      />
+      <CaseActions card={card} initial={initial} onChanged={onChanged} />
 
       {card.next_action.source === "task" ? (
         <p className="rounded-md bg-canvas-sunken/60 px-3 py-2 text-[13px] text-ink">
@@ -556,13 +540,14 @@ function OpportunityDrawer({
         <CaseThreads key={card.opportunity_id} opportunityId={card.opportunity_id} />
       </Section>
 
-      <CaseNotes key={card.opportunity_id} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} openSignal={openSignal} />
+      {/* Re-read when the case's newest note changes: a reminder from «Registrar seguimiento». */}
+      <CaseNotes key={`${card.opportunity_id}:${card.last_note?.created_at ?? ""}`} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} />
     </Drawer>
   );
 }
 
-/** The case's notes, read from the API and re-read after «Registrar seguimiento». */
-function CaseNotes({ opportunityId, mayAuthor, openSignal }: { opportunityId: string; mayAuthor: boolean; openSignal: number }) {
+/** The case's notes, read from the API. */
+function CaseNotes({ opportunityId, mayAuthor }: { opportunityId: string; mayAuthor: boolean }) {
   const load = useCallback(() => fetchCaseNotes(opportunityId), [opportunityId]);
   const [state, reload] = useResource(load, [opportunityId]);
   return (
@@ -573,7 +558,6 @@ function CaseNotes({ opportunityId, mayAuthor, openSignal }: { opportunityId: st
         subjectId={opportunityId}
         mayAuthor={mayAuthor}
         onRefresh={reload}
-        openSignal={openSignal}
       />
       {state.kind === "loading" ? <p className="-mt-2 text-[11px] text-ink-faint">Cargando notas…</p> : null}
       {state.kind !== "ready" && state.kind !== "loading" ? (

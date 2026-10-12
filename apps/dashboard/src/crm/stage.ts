@@ -129,7 +129,7 @@ export function matchesQuery(card: OpportunityCardData, q: string): boolean {
 }
 
 /** The case's clock for sorting and banding: its last commercial touch (`lastTouch`) — the
-    client's newest email, OrigenLab's newest email or logged follow-up, else the quote's sent
+    client's newest email, OrigenLab's newest email (a note is not a touch), else the quote's sent
     date, else the case's creation. Never `updated_at`: a stage change or a confirmed institution
     is a record edit, not contact, and must not make a silent case look fresh. Never the
     wall-clock date: resorting must be deterministic. */

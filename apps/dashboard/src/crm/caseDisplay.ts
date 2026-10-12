@@ -109,37 +109,28 @@ export function ageTone(days: number | null): Tone {
 /**
  * The one clock a case runs on: the last commercial touch after the latest quote went out.
  *
- * - `client`: the client's newest email, when it is newer than anything OrigenLab did.
- * - `us`: OrigenLab's newest touch after the quote — an email it sent on the thread, or a note a
- *   person wrote on the case («Registrar seguimiento», a logged call). A note never hides a
- *   client's email: if the client wrote after our last email, the touch is theirs.
+ * - `client`: the client's newest email, when it is newer than OrigenLab's.
+ * - `us`: OrigenLab's newest email on the case's threads after the quote.
  * - `quote`: nothing after the quote; the touch is the quote itself.
  * - `none`: no quote and no email.
  *
- * Record edits (`updated_at`) are not a touch: moving a card between columns says nothing about
- * the client.
+ * Only email counts. A note is a reminder to oneself («Mandar correo esta semana»), not a contact
+ * with the client, so it never moves the clock (owner, 2026-10-12); a reminder for a later day is
+ * a «Seguimiento …» task. Record edits (`updated_at`) are not a touch either.
  */
-export function lastTouch(
-  card: OpportunityCardData,
-): { by: "client" | "us" | "quote" | "none"; at: string | null; url: string | null; viaNote: boolean } {
+export function lastTouch(card: OpportunityCardData): { by: "client" | "us" | "quote" | "none"; at: string | null; url: string | null } {
   const sent = card.latest_revision?.sent_at ?? null;
   const inbound = card.last_contact?.inbound ?? null;
   const outbound = card.last_contact?.outbound ?? null;
-  const note = card.last_note?.created_at ?? null;
   const after = (at: string | null | undefined) => !!at && (!sent || Date.parse(at) > Date.parse(sent) + 60_000);
-  const ts = (at: string | null | undefined) => (at ? Date.parse(at) : Number.NaN);
   const clientAt = inbound && after(inbound.at) ? inbound.at : null;
   const mailAt = outbound && after(outbound.at) ? outbound.at : null;
-  if (clientAt && (!mailAt || ts(clientAt) >= ts(mailAt))) {
-    return { by: "client", at: clientAt, url: inbound?.url ?? null, viaNote: false };
+  if (clientAt && (!mailAt || Date.parse(clientAt) >= Date.parse(mailAt))) {
+    return { by: "client", at: clientAt, url: inbound?.url ?? null };
   }
-  const noteAt = note && after(note) ? note : null;
-  if (mailAt || noteAt) {
-    const viaNote = !!noteAt && (!mailAt || ts(noteAt) > ts(mailAt));
-    return { by: "us", at: viaNote ? noteAt : mailAt, url: viaNote ? null : (outbound?.url ?? null), viaNote };
-  }
-  if (sent) return { by: "quote", at: sent, url: card.latest_revision?.gmail?.url ?? null, viaNote: false };
-  return { by: "none", at: null, url: null, viaNote: false };
+  if (mailAt) return { by: "us", at: mailAt, url: outbound?.url ?? null };
+  if (sent) return { by: "quote", at: sent, url: card.latest_revision?.gmail?.url ?? null };
+  return { by: "none", at: null, url: null };
 }
 
 /** Where the conversation stands since the latest quote went out, and for how many days. */
@@ -158,8 +149,7 @@ export function conversation(
   }
   if (touch.by === "us" && touch.at) {
     const d = days ?? 0;
-    const what = touch.viaNote ? "Seguimiento anotado" : "Seguimiento";
-    return { kind: "followed_up", text: d === 0 ? `${what} hoy` : `${what} ${short(touch.at)} · ${d} d sin respuesta`, at: touch.at, url: touch.url, days };
+    return { kind: "followed_up", text: d === 0 ? "Seguimiento hoy" : `Seguimiento ${short(touch.at)} · ${d} d sin respuesta`, at: touch.at, url: touch.url, days };
   }
   if (touch.by === "none") return { kind: "none", text: "Sin cotización", at: null, url: null, days: null };
   const d = days ?? 0;

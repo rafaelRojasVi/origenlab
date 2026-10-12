@@ -41,6 +41,7 @@ import { crmHash } from "../crmRoute";
 import { STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
 import { COLUMN_LABEL, CaseMoveForm, type MoveTarget } from "./CaseMove";
 import { AssignInstitution } from "./AssignInstitution";
+import { FollowUpReminder } from "./FollowUpReminder";
 import { CrossThreadQuoteReview } from "./CrossThreadQuoteReview";
 import { PurchaseOrderReview } from "./PurchaseOrderReview";
 import {
@@ -57,7 +58,7 @@ import {
   toast,
 } from "../ui";
 
-export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution";
+export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution" | "followup";
 
 /** «Cambiar estado» offers these, minus the one the case is in. */
 const MOVE_TARGETS: MoveTarget[] = ["solicitada", "enviada", "conversacion", "pausa", "perdida"];
@@ -70,14 +71,11 @@ interface Outcome {
 export function CaseActions({
   card,
   onChanged,
-  onFollowUp,
   initial = null,
 }: {
   card: OpportunityCardData;
   /** Refetch the pipeline after any recorded write, or a refusal that says the view is stale. */
   onChanged: () => void;
-  /** Open the note form of the drawer's note list. */
-  onFollowUp: () => void;
   /** A form to open on arrival — a card dropped on «Ganada» opens «Marcar ganada». */
   initial?: { mode: Exclude<Mode, null>; target?: MoveTarget } | null;
 }) {
@@ -115,6 +113,8 @@ export function CaseActions({
       : closed
         ? "El caso está cerrado"
         : null;
+  // A reminder is a task (case commands) with a note (authoring); a closed case takes no task.
+  const followUpReason = !mayDecide || !mayAuthor ? WRITE_DISABLED_REASON : closed ? "El caso está cerrado" : null;
   const wonReason =
     decideReason ??
     (!mayBeWonFrom(card.stage)
@@ -159,14 +159,14 @@ export function CaseActions({
       {/* The two everyday actions (and «Marcar ganada» when it applies) stay in sight; the rest
           wait under «Más». */}
       <div className="flex flex-wrap gap-2">
-        {mayAuthor ? (
-          <Button variant="primary" onClick={onFollowUp}>
-            Registrar seguimiento
-          </Button>
-        ) : (
-          <DisabledAction id="drawer-followup" reason={WRITE_DISABLED_REASON}>
+        {followUpReason ? (
+          <DisabledAction id="drawer-followup" reason={followUpReason}>
             Registrar seguimiento
           </DisabledAction>
+        ) : (
+          <Button variant="primary" aria-expanded={mode === "followup"} onClick={() => toggle("followup")}>
+            Registrar seguimiento
+          </Button>
         )}
         {decideReason && !(reopenable && decideReason === "El caso está cerrado") ? (
           <DisabledAction id="drawer-advance" reason={decideReason}>
@@ -255,6 +255,16 @@ export function CaseActions({
         )
       ) : null}
 
+      {mode === "followup" && !followUpReason ? (
+        <FollowUpReminder
+          card={card}
+          onCancel={() => setMode(null)}
+          onDone={() => {
+            setMode(null);
+            onChanged();
+          }}
+        />
+      ) : null}
       {mode === "institution" && !card.organization && !decideReason ? (
         <AssignInstitution
           card={card}
