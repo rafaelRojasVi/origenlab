@@ -112,6 +112,20 @@ export interface CaseMoney {
   quote_count?: number;
 }
 
+/** A document a person attached to the case (`crm.opportunity_document`): today its purchase order. */
+export interface CaseDocument {
+  document_id: string;
+  quote_revision_id: string | null;
+  kind: "purchase_order";
+  document_number: string | null;
+  original_filename: string;
+  content_type: string;
+  byte_size: number;
+  source: "upload" | "email";
+  attached_at: string;
+  attached_by: string | null;
+}
+
 /** `GET /v2/workspace/opportunities/{id}/mail-documents` — what «Registrar cotización» picks from. */
 export interface CaseMailDocument {
   sha256: string;
@@ -238,6 +252,8 @@ export interface OpportunityCardData {
   revision_count: number;
   /** Absent from an older API. */
   money?: CaseMoney[];
+  /** Documents attached to the case (its purchase order), newest first. */
+  documents?: CaseDocument[];
   latest_revision: RevisionCard | null;
   drive_folder: { source: "archive_ledger"; folder_id: string; url: string } | null;
   /**

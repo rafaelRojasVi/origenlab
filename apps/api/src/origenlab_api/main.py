@@ -407,8 +407,9 @@ def _mount_catalog(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> 
     app.include_router(catalog_command_router)
 
 
-def _build_catalog_storage(settings: Settings) -> Any:
-    """The private `catalog` bucket, or None (image routes then answer 503 `storage_unavailable`).
+def _build_catalog_storage(settings: Settings, bucket: str = "catalog") -> Any:
+    """One private bucket (`catalog` by default), or None (its routes then answer 503
+    `storage_unavailable`). The case documents use `crm-documents` and read `mail`.
 
     A configuration that would expose the key (plain http to a remote host, a legacy JWT key) is
     refused here and logged without the key; the rest of the API still starts.
@@ -423,10 +424,11 @@ def _build_catalog_storage(settings: Settings) -> Any:
     assert settings.v2_storage_url is not None and settings.v2_storage_secret_key is not None  # noqa: S101
     client = httpx.Client(timeout=httpx.Timeout(30.0, connect=5.0))
     try:
-        return SupabaseStorage(settings.v2_storage_url, settings.v2_storage_secret_key.get_secret_value(), client)
+        return SupabaseStorage(settings.v2_storage_url, settings.v2_storage_secret_key.get_secret_value(), client,
+                               bucket=bucket)
     except ValueError as exc:
         client.close()
-        logging.getLogger(__name__).warning("catalog image storage disabled: %s", exc)
+        logging.getLogger(__name__).warning("%s storage disabled: %s", bucket, exc)
         return None
 
 
@@ -610,6 +612,15 @@ def _mount_v2_command_boundary(
     app.include_router(command_router)
     app.include_router(case_command_router)
     app.include_router(task_command_router)
+    # A case's documents (its purchase order): the private `crm-documents` bucket, and the
+    # worker's `mail` bucket read to copy an email attachment. Without Storage configured the
+    # routes answer 503 `storage_unavailable`; everything else here still works.
+    from origenlab_api.v2.case_document_routes import case_document_command_router, case_document_read_router
+
+    app.state.case_document_storage = _build_catalog_storage(settings, "crm-documents")
+    app.state.mail_storage = _build_catalog_storage(settings, "mail")
+    app.include_router(case_document_command_router)
+    app.include_router(case_document_read_router)
     from origenlab_api.v2.mail_rules_auto import AutoMailRules, AutoMailRulesRunner
     from origenlab_api.v2.mail_rules_routes import mail_rules_command_router
 

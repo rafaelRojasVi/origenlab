@@ -496,8 +496,11 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/cancel-task",
       // «Abrir caso» from a «Correos sin caso» row (owner decision 2026-10-10).
       "/v2/commands/open-commercial-case",
+      // «Adjuntar OC»: copy a case email's purchase order, or remove one (2026-10-12).
+      "/v2/commands/attach-case-document-from-email",
+      "/v2/commands/remove-case-document",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(11);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(13);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);

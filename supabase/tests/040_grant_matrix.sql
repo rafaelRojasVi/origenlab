@@ -144,9 +144,13 @@ insert into expected values
     -- 20261006180200: evidence.triage_review — append-only verdicts: api reads and inserts, never
     -- updates; the worker reads them to evaluate its readings.
     ('evidence', 'triage_review', 'origenlab_api', 'SI', null, 'SI'),
-    ('evidence', 'triage_review', 'origenlab_worker', 'S', null, 'S');
+    ('evidence', 'triage_review', 'origenlab_worker', 'S', null, 'S'),
+    -- 20261012120000: crm.opportunity_document — a case's attached documents: api reads, inserts
+    -- and removes (only the three removal columns); the worker reads.
+    ('crm', 'opportunity_document', 'origenlab_api', 'SI', array['removed_at', 'removed_by_operator_id', 'remove_reason'], 'SIU'),
+    ('crm', 'opportunity_document', 'origenlab_worker', 'S', null, 'S');
 
-select is((select count(*)::int from expected), 102, 'the matrix covers all 51 tables for both runtime roles');
+select is((select count(*)::int from expected), 104, 'the matrix covers all 52 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

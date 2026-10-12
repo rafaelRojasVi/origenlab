@@ -362,6 +362,15 @@ export function BoardCard({
             {money}
           </span>
         ) : null}
+        {(card.documents?.length ?? 0) > 0 ? (
+          <span
+            className={`${money ? "" : "ml-auto "}shrink-0 rounded bg-good-bg px-1 text-[10.5px] font-semibold text-good`}
+            title="Orden de compra adjunta"
+            data-testid="board-oc"
+          >
+            OC
+          </span>
+        ) : null}
       </p>
       {product ? (
         <span

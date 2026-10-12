@@ -414,6 +414,8 @@ describe("no write path in the CRM workspace", () => {
   const MAIL_RULES_CLIENT = "./mailRules.ts";
   //  - the case-command client (caseCommands.ts) POSTs to advance-case-stage and record-case-won.
   const CASE_COMMANDS_CLIENT = "./caseCommands.ts";
+  //  - the case-document client (caseDocuments.ts) POSTs a case's purchase order (2026-10-12).
+  const CASE_DOCUMENTS_CLIENT = "./caseDocuments.ts";
 
   it("never issues a non-GET request or references a command route", () => {
     const sources = import.meta.glob(["./**/*.ts", "./**/*.tsx", "!./**/*.test.tsx", "!./**/*.test.ts"], {
@@ -424,7 +426,10 @@ describe("no write path in the CRM workspace", () => {
     expect(Object.keys(sources).length).toBeGreaterThan(5);
     expect(Object.keys(sources)).toContain(DRAFT_CLIENT);
     for (const [f, src] of Object.entries(sources)) {
-      if (f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT || f === CASE_COMMANDS_CLIENT) continue;
+      if (
+        f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT || f === CASE_COMMANDS_CLIENT ||
+        f === CASE_DOCUMENTS_CLIENT
+      ) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);
       expect(src, f).not.toMatch(/\/operations\//);

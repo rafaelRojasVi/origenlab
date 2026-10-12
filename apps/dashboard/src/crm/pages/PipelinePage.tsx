@@ -1,3 +1,4 @@
+import { CaseDocumentsBlock } from "./CaseDocuments";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCaseNotes, fetchPipeline } from "../crmApi";
 import { crmHash } from "../crmRoute";
@@ -476,6 +477,8 @@ function OpportunityDrawer({
       <CaseLinks card={card} />
 
       <CaseMoneySummary card={card} />
+
+      <CaseDocumentsBlock card={card} onChanged={onChanged} />
 
       <CaseActions
         card={card}

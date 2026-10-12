@@ -58,6 +58,8 @@ class CatalogStorage(Protocol):
 
     def signed_url(self, path: str, expires_s: int) -> str: ...
 
+    def get(self, path: str, max_bytes: int) -> bytes: ...
+
 
 # ──────────────────────────────────────────────────────────── pure rules ──
 
@@ -126,18 +128,30 @@ def _safe_base_url(raw: str) -> str:
 
 
 class SupabaseStorage:
-    """The Storage API of one Supabase project, as its dedicated secret key, for the `catalog` bucket."""
+    """The Storage API of one Supabase project, as its dedicated secret key, for one private bucket.
 
-    def __init__(self, base_url: str, secret_key: str, client: httpx.Client) -> None:
+    `catalog` by default (product images). The case documents use `crm-documents`, and read the
+    worker's `.eml` objects from `mail` (never written from here) — the same key, one client per
+    bucket, so no call can name a bucket it was not built for.
+    """
+
+    def __init__(self, base_url: str, secret_key: str, client: httpx.Client, bucket: str = BUCKET) -> None:
         if not secret_key or not secret_key.startswith(_SECRET_KEY_PREFIX):
             # ARCHITECTURE §7: a current `sb_secret_…` key; legacy JWT service_role keys are not used.
             raise ValueError("the Storage key must be a Supabase secret key (sb_secret_…)")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}", bucket or ""):
+            raise ValueError("the bucket name is not a Storage bucket name")
         self._base = _safe_base_url(base_url)
         self._key = secret_key
         self._client = client
+        self._bucket = bucket
+
+    @property
+    def bucket(self) -> str:
+        return self._bucket
 
     def __repr__(self) -> str:
-        return f"SupabaseStorage(base_url={self._base!r}, bucket={BUCKET!r})"
+        return f"SupabaseStorage(base_url={self._base!r}, bucket={self._bucket!r})"
 
     __str__ = __repr__
 
@@ -145,7 +159,7 @@ class SupabaseStorage:
         return {"Authorization": f"Bearer {self._key}", "apikey": self._key, **extra}
 
     def _url(self, kind: str, path: str) -> str:
-        return f"{self._base}/storage/v1/object/{kind}{BUCKET}/{quote(path, safe='/')}"
+        return f"{self._base}/storage/v1/object/{kind}{self._bucket}/{quote(path, safe='/')}"
 
     def _post(self, what: str, url: str, **kwargs: object) -> httpx.Response:
         try:
@@ -176,6 +190,28 @@ class SupabaseStorage:
         logger.warning("catalog storage upload answered HTTP %s", response.status_code)
         raise StorageUnavailable(f"storage upload answered HTTP {response.status_code}")
 
+    def get(self, path: str, max_bytes: int) -> bytes:
+        """The object's bytes, read as the secret key. Missing is `KeyError`; larger than
+        `max_bytes` or any other failure is `StorageUnavailable` (never names the key)."""
+        try:
+            with self._client.stream("GET", self._url("authenticated/", path), headers=self._headers()) as response:
+                if response.status_code in (400, 404):
+                    raise KeyError(path)
+                if not response.is_success:
+                    logger.warning("storage download answered HTTP %s", response.status_code)
+                    raise StorageUnavailable(f"storage download answered HTTP {response.status_code}")
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise StorageUnavailable("storage object is larger than allowed")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+        except httpx.HTTPError as exc:
+            logger.warning("storage download failed: %s", type(exc).__name__)
+            raise StorageUnavailable(f"storage download failed: {type(exc).__name__}") from None
+
     def signed_url(self, path: str, expires_s: int) -> str:
         _check_expiry(expires_s)
         response = self._post("signing", self._url("sign/", path), json={"expiresIn": expires_s},
@@ -198,7 +234,8 @@ class SupabaseStorage:
 class FakeStorage:
     """A dict-backed bucket: what was put, how many puts were asked for, and fake signed URLs."""
 
-    def __init__(self) -> None:
+    def __init__(self, bucket: str = BUCKET) -> None:
+        self.bucket = bucket
         self.objects: dict[str, tuple[bytes, str]] = {}
         self.puts = 0
 
@@ -208,4 +245,12 @@ class FakeStorage:
 
     def signed_url(self, path: str, expires_s: int) -> str:
         _check_expiry(expires_s)
-        return f"https://storage.invalid/storage/v1/object/sign/{BUCKET}/{path}?token=fake&expires_in={expires_s}"
+        return f"https://storage.invalid/storage/v1/object/sign/{self.bucket}/{path}?token=fake&expires_in={expires_s}"
+
+    def get(self, path: str, max_bytes: int) -> bytes:
+        if path not in self.objects:
+            raise KeyError(path)
+        data = self.objects[path][0]
+        if len(data) > max_bytes:
+            raise StorageUnavailable("storage object is larger than allowed")
+        return data

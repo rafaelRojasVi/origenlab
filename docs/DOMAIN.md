@@ -814,7 +814,7 @@ list is decided, these rows are reclassified by the migration that introduces it
 | 13 | A case at `lead` has had no activity for eleven months | it is still `lead`. The dashboard shows *sin actividad hace 334 días*, computed at read time. Closing it is `abandon_opportunity(case, reason)` by an operator; without that act no row changes and no event exists (§3.4) |
 | 14 | A distributor that supplies OrigenLab asks to buy a unit for its own laboratory | the distributor's `supplier` relationship is untouched. `set_requesting_institution` is refused until the operator supplies a justification; with it, one `opportunity_organization(distributor, role=requesting_institution, confirmation=confirmed, confirmed_by=O)` carries `supplier_exception_reason`, and the triple can never be rewritten. The case card shows *proveedor registrado* **and** *solicitante — excepción justificada*. No marketing permission and no `prospect` relationship follow |
 
-## 7. Table inventory — the reviewed 51-table foundation
+## 7. Table inventory — the reviewed 52-table foundation
 
 Seven private schemas. **51 application tables** — 33 reviewed after the
 external CRM benchmark, the three of §7.1, the one of §7.2, the four of
@@ -1036,8 +1036,21 @@ The mail triage (ARCHITECTURE.md §8, D2) proposes a reading of each captured em
 Domain event added: `assertion.triage_reviewed` (aggregate `assertion`). A verdict moves no case:
 «Aprobar» on a stage suggestion runs `advance-case-stage` afterwards, which records its own event.
 
-Counts by schema: `crm` 21, `comms` 4, `outbound` 9, `evidence` 4,
-`catalog` 6, `procurement` 1, `platform` 6 — **51**.
+### 7.7 A case's documents — built 2026-10-12
+
+A person attaches to a case the documents that close it — today its purchase order (OC), from the
+computer or copied from a case email — with the quote revision it closes when known.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 56 | `crm.opportunity_document` | a document attached to a case (its purchase order) | `kind ∈ {purchase_order}`; bytes in the private bucket `crm-documents` under `opportunities/<case>/<sha256>.<pdf\|jpg\|png>`; `source ∈ {upload, email}` and `email` ⇔ the captured message (`source_record_id`); one live copy of the same bytes per case; never deleted or rewritten — removal sets `removed_at`, its reason and who, once |
+
+Domain events added: `opportunity.document_attached` and `opportunity.document_removed` (aggregate
+`opportunity`). Attaching changes no case column and takes no case version; a win is still only
+`record_case_won`.
+
+Counts by schema: `crm` 22, `comms` 4, `outbound` 9, `evidence` 4,
+`catalog` 6, `procurement` 1, `platform` 6 — **52**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

@@ -12,7 +12,8 @@
  * A quotation whose PDF was never read says so instead of showing a number.
  */
 import { useState } from "react";
-import type { CaseMoney, OpportunityCardData, QuoteCard, QuoteContents, QuoteLine, RevisionCard } from "../crmTypes";
+import { ocLabel } from "../caseDocuments";
+import type { CaseDocument, CaseMoney, OpportunityCardData, QuoteCard, QuoteContents, QuoteLine, RevisionCard } from "../crmTypes";
 import { inSharedMailbox } from "../gmailLinks";
 import { Badge, LOCAL_DRIVE_TITLE, fmtDateTime, isSafeExternalHref } from "../ui";
 
@@ -255,9 +256,13 @@ function revisionStatus(rev: RevisionCard): { label: string; tone: "good" | "bad
   return rev.status === "sent" ? { label: "Enviada", tone: "good" } : { label: rev.status, tone: "neutral" };
 }
 
-function QuoteBlock({ q, defaultOpen, latest }: { q: QuoteCard; defaultOpen: boolean; latest: boolean }) {
+function QuoteBlock({ q, defaultOpen, latest, documents = [] }: {
+  q: QuoteCard; defaultOpen: boolean; latest: boolean; documents?: CaseDocument[];
+}) {
   const [open, setOpen] = useState(defaultOpen);
   const cur = currentRevision(q);
+  const ids = new Set(q.revisions.map((r) => r.revision_id));
+  const ocNumbers = documents.filter((d) => d.quote_revision_id && ids.has(d.quote_revision_id)).map(ocLabel);
   const older = q.revisions.filter((r) => r.revision_id !== cur?.revision_id).sort((a, b) => b.revision_no - a.revision_no);
   const net = cur?.contents ? formatMoney(cur.contents.net_total, cur.contents.currency) : null;
   const status = cur ? revisionStatus(cur) : null;
@@ -280,6 +285,11 @@ function QuoteBlock({ q, defaultOpen, latest }: { q: QuoteCard; defaultOpen: boo
             {latest ? (
               <Badge tone="brand" glyph={false}>
                 Última
+              </Badge>
+            ) : null}
+            {ocNumbers.length > 0 ? (
+              <Badge tone="good" glyph={false} title="Orden de compra adjunta">
+                {ocNumbers.join(", ")}
               </Badge>
             ) : null}
             {cur ? <span className="text-xs text-ink-muted tabular-nums">r{cur.revision_no}, {fmtDateTime(cur.sent_at)}</span> : null}
@@ -355,7 +365,7 @@ export function QuoteList({ card }: { card: OpportunityCardData }) {
   return (
     <div className="space-y-3">
       {quotesNewestFirst(card).map((q, i) => (
-        <QuoteBlock key={q.quote_id} q={q} defaultOpen={i === 0} latest={i === 0 && card.quotes.length > 1} />
+        <QuoteBlock key={q.quote_id} q={q} defaultOpen={i === 0} latest={i === 0 && card.quotes.length > 1} documents={card.documents} />
       ))}
     </div>
   );

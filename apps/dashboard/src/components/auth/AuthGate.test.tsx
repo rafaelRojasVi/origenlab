@@ -72,6 +72,7 @@ describe("parseAuthSessionResponse", () => {
       canSwitchProfile: false,
       crmAuthoringEnabled: false,
       caseCommandsEnabled: false,
+      caseDocumentsEnabled: false,
     });
   });
 

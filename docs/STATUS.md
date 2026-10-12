@@ -2546,6 +2546,21 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 | Panel | «Última cotización enviada <número> · <fecha, hora>» (one quotation: «Cotizado, neto»), the neto large, IVA and total of that revision, and «Las otras N cotizaciones del caso no se suman.»; the quotation list is newest sent first, the newest open and marked «Última», the rest folded; «PDF <número>» at the top is the last quotation's. Quotation, revision and every email in «Correos del caso» show the day and the hour. |
 | Evidence | `apps/api` validate 3904 passed (682 skipped without a cluster); +2 pure tests replace the sum test. `apps/dashboard` validate **744 passed** (+3 several-quotation tests, times in cadenas). Checked in the local sandbox on a read-only copy of hosted: a three-quotation case shows only its last quotation's neto with its send time. |
 
-### 2.7.96 Triage v3: the model reads what v2 read with it off, 2026-10-12 — built, not deployed
+### 2.7.96 Triage v3: the model reads what v2 read with it off, 2026-10-12 — merged (#715, 53e2a645) and deployed; model on in production
 
 `apps/worker`; no schema change. The triage worker had never had the model on: in a read-only copy of hosted, 88 inbound emails (supplier replies, orders, quote requests) carried `model_state: off` and showed as «Otro (persona)» in «Correos sin caso». A reading is stored once per version, so switching the model on alone would only reach new mail. `TRIAGE_VERSION` 2 → 3 with the rules unchanged; order: the model on (Anthropic key, `ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED=true`, `ORIGENLAB_WORKER_TRIAGE_MODEL=claude-opus-5-5`) before this deploys, then a one-off `triage-once --since-days 30` for mail older than the sweep's 14 days. OPERATIONS §8.11 records the rule. Evidence: worker validate 480 passed.
+
+### 2.7.97 A case's purchase order: attached, stored privately, shown with its quotation, 2026-10-12 — built, not applied, not deployed
+
+`supabase/` + `apps/api` + `apps/dashboard-proxy` + `apps/dashboard`. Owner request 2026-10-12: «en ganada attach the oc too, upload it to the database so it's there with the cotización», and attach the OCs of the cases already won.
+
+| | |
+|---|---|
+| Schema | `20261012120000_slice7_case_documents.sql`: `crm.opportunity_document` (DOMAIN §7 #56): kind `purchase_order`, the quote revision it closes, the object in the private bucket `crm-documents` (`opportunities/<case>/<sha256>.<ext>`), source `upload` or `email` (the captured message); never deleted or rewritten, removed once with its reason. Events `opportunity.document_attached` / `document_removed`. Inventory **52 tables, 182 policies, 164 foreign keys (131 unconditionally covered), 35 functions, 55 migrations**. |
+| API | `POST /v2/commands/attach-case-document` (multipart, ≤ 20 MiB, the bytes decide PDF/JPEG/PNG), `attach-case-document-from-email` (reads the message's `.eml` from `mail`, copies the part whose SHA-256 the capture recorded), `remove-case-document`, `GET /v2/workspace/opportunities/{id}/documents/{doc}/url` (signed, 10 minutes). Attaching takes no case version. Cards carry `documents`; the session says `case_documents_enabled`. `scripts/attach_case_documents.py` backfills emailed OCs onto won cases (plan, `--apply`). |
+| Proxy | The two JSON commands with the case commands; the upload beside the image upload (≤ 20 MiB + 64 KiB); the link read. |
+| Dashboard | «Marcar ganada» gains an optional «Orden de compra» (a case email's PDF, likely OCs first, or a file); the OC is attached first, then the win; a failed attach records no win. The panel's «Orden de compra» block (number, the quotation it closes, who and when, «Abrir», «Quitar», «Adjuntar OC» on won or negotiating cases); an «OC Nº …» badge on the quotation; an «OC» chip on the board card. |
+| Backfill found | Of the 4 won cases in a read-only copy of hosted, 3 have their OC in a captured email (one on another thread, a Nubox notification) — plan verified against that copy; the 4th's OC (May) predates the Gmail capture and is uploaded by hand. |
+| Not yet | Hosted migration (54 → 55, before the deploy); the Storage secret key, the bucket and the two Render API variables; the deploy; the backfill job; the hand upload. |
+| Evidence | pgTAP 092 (20) and every pgTAP file on a disposable cluster (only the known 100 harness artefact); audit unit tests 352; clean-room static 13/13; API validate with the cluster 4493+ passed, +29 new (pure rules, routes, DB commands, card, session); proxy 465; dashboard 753 (+9). |
+

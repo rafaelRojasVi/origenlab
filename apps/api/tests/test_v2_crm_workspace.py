@@ -794,3 +794,16 @@ def test_quote_readings_name_the_quote_the_reason_and_the_week_never_text() -> N
                       "code": "net_mismatch", "reader_version": "quote_read:v1", "recorded_at": "2026-10-12T10:00:00+00:00",
                       "opportunity_id": "o-1", "case_title": "Caso ficticio"}
     assert out[1]["code"] == "other"  # an unknown code is never passed through as text
+
+
+def test_a_card_carries_its_attached_documents_and_a_case_without_any_an_empty_list() -> None:
+    """The purchase order attached to a case (crm.opportunity_document) shows on its card."""
+    from origenlab_api.v2.crm_workspace import compose_pipeline
+
+    docs = [{"document_id": "d1", "opportunity_id": "o1", "quote_revision_id": "r1", "kind": "purchase_order",
+             "document_number": "4500", "original_filename": "OC 4500.pdf", "content_type": "application/pdf",
+             "byte_size": 1024, "source": "upload", "attached_at": "2026-10-12 12:00:00+00",
+             "attached_by": "Operadora Ficticia"}]
+    with_doc, without = compose_pipeline([_opp("o1"), _opp("o2")], [], [], [], {}, [], {}, documents=docs)
+    assert with_doc["documents"] == [{k: v for k, v in docs[0].items() if k != "opportunity_id"}]
+    assert without["documents"] == []

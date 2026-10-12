@@ -45,7 +45,9 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/commands/create-task`, `/v2/commands/complete-task`, `/v2/commands/cancel-task` | The W11 tasks behind «En pausa hasta…» (create), «Hecho» (complete) and «Retomar ahora» (cancel), in the same `CASE_COMMAND_POST_PATHS` list and under the same guard and upstream requirements (the task version shown, not the case's). A task never changes the case's stage or version |
 | `/v2/commands/<name>` for the 29 CRM-authoring commands (person, organization — `confirm-organization-record` included —, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not in this list. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
 | `/v2/commands/{create-product,update-product,confirm-product-content,record-supplier-cost,set-supplier-terms,set-cost-parameter,record-fx-rate,update-product-image,review-document-line}` | Catalog commands: 9 exact paths, JSON, body ≤ 64 KiB — see *Catalog 1a* below |
-| `/v2/commands/add-product-image` | Catalog image upload: the one multipart POST, body ≤ 8 MiB + 64 KiB — see *Catalog 1a* below |
+| `/v2/commands/add-product-image` | Catalog image upload: one of the two multipart POSTs, body ≤ 8 MiB + 64 KiB — see *Catalog 1a* below |
+| `/v2/commands/attach-case-document` | A case's purchase order from the computer (2026-10-12): the second multipart POST, same guard as the image upload, body ≤ 20 MiB + 64 KiB. Upstream: active `sales`/`admin`, `Idempotency-Key`, a note; behind `ORIGENLAB_V2_COMMANDS_ENABLED` and Storage |
+| `/v2/commands/attach-case-document-from-email`, `/v2/commands/remove-case-document` | Copy a case email's purchase order into the case's documents, or remove one with its reason (`CASE_COMMAND_POST_PATHS`, JSON ≤ 16 KiB, same guard as the case commands) |
 
 All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return **405**.
 
@@ -62,6 +64,7 @@ Five exact GET paths (`src/allowlist.ts`), nothing under or beside them:
 | GET | `/v2/workspace/opportunities/<uuid>/threads` | one case's emails grouped by Gmail cadena, newest first, each labelled cliente / proveedor / interno; senders by name or domain only |
 | GET | `/v2/workspace/quote-readings` | the quote PDFs the quote reader refused: quotation, revision, reason code, when |
 | GET | `/v2/workspace/opportunities/<uuid>/mail-documents` | the Gmail messages linked to one case and the documents each carries (file name, SHA-256, capture's quote-number tokens, whether already a quote revision), for «Registrar cotización»; recording one is `record-case-quotation` |
+| GET | `/v2/workspace/opportunities/<uuid>/documents/<uuid>/url` | a signed link, valid ten minutes, to one live document of that case (its purchase order); `Cache-Control: no-store` upstream |
 
 Same guarantees as every V2 read: the session cookie is the only cookie forwarded, the
 browser-sent operator header is dropped and nothing replaces it (identity is the session cookie), addresses are
@@ -152,7 +155,7 @@ required `Idempotency-Key` (a custom header, which forces one) plus the Origin a
   `record-supplier-cost`, `set-supplier-terms`, `set-cost-parameter`, `record-fx-rate`,
   `update-product-image`, `review-document-line`): `application/json`, body ≤ 64 KiB
   (`CATALOG_COMMAND_MAX_BYTES`).
-- One multipart command, `add-product-image`: `multipart/form-data; boundary=...` (a type without
+- Two multipart commands, `add-product-image` and `attach-case-document` (≤ 20 MiB + 64 KiB): `multipart/form-data; boundary=...` (a type without
   a boundary is 415), body ≤ 8 MiB + 64 KiB (`CATALOG_UPLOAD_MAX_BYTES`). The API caps the file at
   8 MiB itself. JSON to this path and multipart to a JSON command are both 415.
 
