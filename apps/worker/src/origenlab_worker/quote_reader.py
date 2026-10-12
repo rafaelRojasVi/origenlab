@@ -210,6 +210,21 @@ def parse_extraction(message: Any) -> tuple[dict[str, Any], int | None, int | No
     return raw, getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None)
 
 
+def _priced(line: Any) -> Any:
+    """A line printed with one price per item and no total: total = unit price × quantity (1 when
+    no quantity is printed). Anything unreadable is left as it is for `document_lines` to judge."""
+    if not isinstance(line, dict) or line.get("line_total") not in (None, "") or line.get("unit_price") in (None, ""):
+        return line
+    try:
+        unit = importing.to_decimal(line["unit_price"])
+        qty = importing.to_decimal(line.get("qty")) if line.get("qty") not in (None, "") else Decimal(1)
+    except ValueError:
+        return line
+    if unit is None or qty is None:
+        return line
+    return {**line, "line_total": importing.decimal_text(unit * qty)}
+
+
 def _sum_non_optional(lines: list[dict[str, Any]]) -> Decimal | None:
     """The sum of the non-optional lines that carry a total («incluido» rows carry none); None when
     no such line has one."""
@@ -250,7 +265,7 @@ def read_document(pdf: bytes, sha256: str, *, reader: ModelReader | None, model:
     extraction, tokens_in, tokens_out = parse_extraction(message)
     if not extraction["is_origenlab_issued_quote"]:
         raise ReadRefused("not_origenlab_quote")
-    extraction = {**extraction, "sha256": sha256}
+    extraction = {**extraction, "sha256": sha256, "lines": [_priced(ln) for ln in extraction["lines"]]}
     try:
         normalise_quote_date(extraction.get("date"))
     except ValueError:
