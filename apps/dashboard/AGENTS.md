@@ -20,4 +20,4 @@
 
 ## Smokes
 
-From `apps/dashboard/`: `npm run smoke:sqlite` · `npm run smoke:contacts` · `npm test`
+From the repo root: `make test-dashboard` (vitest + typecheck + build, as CI) — see root [`AGENTS.md`](../../AGENTS.md) *Testing*. V1 smokes from `apps/dashboard/`: `npm run smoke:sqlite` · `npm run smoke:contacts`

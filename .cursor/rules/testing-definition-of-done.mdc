@@ -29,4 +29,4 @@ Prefer **small, local** tests over giant E2E. Name tests after **observable beha
 
 ## Handoff template
 
-In the final message, include: files changed; **which tests were added or updated**; command(s) run (e.g. `uv run pytest …`); **pass/fail summary**.
+In the final message, include: files changed; **which tests were added or updated**; command(s) run (`make check` from a worktree after `make db-up`, or `scripts/run_pytest.sh <app> <file>` while iterating — see root `AGENTS.md` *Testing*); **pass/fail summary**.
