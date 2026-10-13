@@ -1,0 +1,34 @@
+name: hosted-smoke
+
+# Read-only checks against production every 30 minutes and on demand (run it after a release):
+# every route the dashboard Worker forwards answers as it should, /health reports a commit on
+# main, and — once the OL_PROD_* secrets exist — every migration on main is applied and the
+# workers are alive. A failed run is the alert (GitHub emails the owner).
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: hosted-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the deployed commit is checked against main's history
+      - name: Hosted smoke
+        env:
+          OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }}
+          OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }}
+          OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }}
+          OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }}
+        run: make smoke

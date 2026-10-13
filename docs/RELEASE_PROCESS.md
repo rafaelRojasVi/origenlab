@@ -39,7 +39,7 @@ Avoid vague tags (`latest`, `prod`, `fix`) and never reuse a tag name for a diff
 - **Scope:** which apps changed (`api`, `dashboard`, `email-pipeline`, `web`)
 - **Operator-visible changes:** new read-only routes, dashboard sections, automation status fields
 - **Breaking or behavior changes:** API response shape, env var renames, cron wrapper changes
-- **Validation performed:** `make check-all`, remote response/latency audit, dashboard smoke commands run
+- **Validation performed:** `make check-all` before; after the deploy, `make smoke` (or run the `hosted-smoke` workflow) — every Worker route answers as it should and `/health` reports the released commit
 - **Deploy notes:** Render service restarted, mirror sync verified, known follow-ups
 
 Keep notes factual. Do not invent business claims, client names, or certification language not supported by canonical docs.

@@ -34,6 +34,7 @@ def test_health_returns_stable_contract() -> None:
         "sqlite_query_only",
         "recovery_mode",
         "dotenv_disabled",
+        "version",  # the deployed commit, for the hosted smoke check
     }
 
 

@@ -73,7 +73,9 @@ def test_health_shows_backend_sqlite_default() -> None:
         "sqlite_query_only",
         "recovery_mode",
         "dotenv_disabled",
+        "version",
     }
+    assert data["version"] is None  # no RENDER_GIT_COMMIT outside Render
 
 
 def test_health_shows_postgres_backend_when_configured(
@@ -90,6 +92,26 @@ def test_health_shows_postgres_backend_when_configured(
     assert data["backend"] == "postgres"
     assert data["postgres_configured"] is True
     assert data["mode"] == "operator-postgres-mirror-readonly"
+
+
+def test_health_reports_the_commit_render_deployed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hosted smoke check compares this with main: production must run a reviewed commit."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "0123456789abcdef0123456789abcdef01234567")
+    _clear_settings_cache()
+    data = TestClient(create_app()).get("/health").json()
+    assert data["version"] == "0123456789abcdef0123456789abcdef01234567"
+
+
+def test_health_ignores_a_version_that_is_not_a_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "<script>")
+    _clear_settings_cache()
+    assert TestClient(create_app()).get("/health").json()["version"] is None
 
 
 def test_map_operator_status_row_fixture() -> None:

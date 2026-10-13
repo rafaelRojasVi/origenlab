@@ -4,9 +4,10 @@
 #   make lint       ruff, gitleaks and file checks on every file (pre-commit)
 #   make check      lint, then only what your change needs (vs origin/main); SKIP_DB=1 skips DB tests
 #   make check-all  everything
+#   make smoke      read-only checks against production (every Worker route, deployed commit)
 SHELL := bash
 .SHELLFLAGS := -euo pipefail -c
-.PHONY: setup lint check check-all db-up db-down test-api test-worker test-email-pipeline \
+.PHONY: setup smoke lint check check-all db-up db-down test-api test-worker test-email-pipeline \
         test-dashboard test-proxy test-web test-supabase test-repo
 
 setup:
@@ -16,7 +17,7 @@ setup:
 	cd apps/dashboard && npm ci
 	cd apps/dashboard-proxy && npm ci
 	cd apps/web && npm ci
-	uv tool install pre-commit
+	command -v pre-commit >/dev/null || uv tool install pre-commit
 	pre-commit install
 
 lint:
@@ -27,6 +28,9 @@ check:
 
 check-all:
 	scripts/check.sh --all
+
+smoke:
+	python3 apps/api/scripts/hosted_smoke.py
 
 db-up:
 	scripts/test_db.sh up .test-db.env
