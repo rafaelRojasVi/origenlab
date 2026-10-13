@@ -120,6 +120,23 @@ def test_the_cards_read_the_database_as_the_api_role(disposable_database) -> Non
                 "origin_source_record_id, created_at) select %s, 1, 'CLP', 0, %s, id, now() - interval '2 days' "
                 "from evidence.source_record limit 1", quote, "ab" * 32)
 
+    # Never counted (2026-10-13 false alarms): an old email a backfill fetched today is outside the
+    # triage worker's 14-day window, and a revision whose email file is not stored can never be
+    # read or filed by the workers.
+    old_gid = uuid.uuid4().hex
+    _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) values ('gmail_message', %s, %s::jsonb, %s)",
+           f"gmail_message:{old_gid}", json.dumps({"gmail_message_id": old_gid}), f"gmail://msg/{old_gid}")
+    _owner(dsn, "insert into comms.message (mailbox_id, provider_message_id, direction, internal_date, parse_status, "
+                "eml_storage_path, eml_sha256, created_at) values (%s, %s, 'inbound', now() - interval '60 days', 'parsed', "
+                "'mail/old.eml', repeat('0', 64), now() - interval '20 hours')", mailbox, old_gid)
+    unstored = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) values "
+                           "('gmail_message', 'gmail_message:sin-archivo', '{\"gmail_message_id\": \"sin-archivo\"}'::jsonb, "
+                           "'gmail://msg/sin-archivo') returning id")[0][0]
+    quote2 = _owner(dsn, "insert into crm.quote (opportunity_id, quote_number) values (%s, '09875-26') returning id", case)[0][0]
+    _owner(dsn, "insert into crm.quote_revision (quote_id, revision_no, quote_currency, price_decimals, pdf_sha256, "
+                "origin_source_record_id, created_at) values (%s, 1, 'CLP', 0, %s, %s, now() - interval '3 days')",
+           quote2, "cd" * 32, unstored)
+
     repo._facts_cache.clear()  # the read is shared for 30 s; this test changed the data meanwhile
     body = repo.operations()
     cards = {c["key"]: c for c in body["cards"]}
@@ -127,6 +144,8 @@ def test_the_cards_read_the_database_as_the_api_role(disposable_database) -> Non
     assert {f["label"]: f["value"] for f in cards["correo"]["facts"]}["Correos hoy"] >= 1
     assert (cards["clasificacion"]["status"], cards["clasificacion"]["facts"][0]["value"]) == ("warn", 1)
     assert cards["drive"]["status"] == "warn" and cards["cotizaciones"]["status"] == "warn"
+    assert {f["label"]: f["value"] for f in cards["cotizaciones"]["facts"]}["Pendientes"] == 1
+    assert {f["label"]: f["value"] for f in cards["drive"]["facts"]}["Pendientes"] == 1
     assert body["counts"]["cases_without_institution"] == 1
     text = json.dumps(body)
     assert "@" not in text and "Asunto ficticio" not in text

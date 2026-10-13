@@ -150,14 +150,15 @@ select authorization_state, last_synced_at, {_MINUTES.format(col='last_synced_at
 """
 _MESSAGES_TODAY_SQL = f"select count(*) from comms.message where created_at >= {_TODAY}"
 _MESSAGE_EVENTS_SQL = "select created_at, direction from comms.message order by created_at desc limit 10"
-#: Captured mail with no triage reading at any version yet, between 15 minutes and 14 days old —
-#: the release postflight's rule without its version (a version bump re-reads in the background).
+#: Captured mail with no triage reading at any version yet, **received** between 15 minutes and
+#: 14 days ago — the triage sweep's own window (`internal_date`), not the capture time: an old
+#: email a backfill fetches today is outside it and is never triaged (2026-10-13 false alarm).
 _TRIAGE_WAITING_SQL = f"""
-select count(*), max({_MINUTES.format(col='m.created_at')})
+select count(*), max({_MINUTES.format(col='m.internal_date')})
   from comms.message m
   join evidence.source_record sr on sr.dedupe_key = 'gmail_message:' || m.provider_message_id and sr.kind = 'gmail_message'
  where m.direction = 'inbound' and m.parse_status = 'parsed' and m.eml_storage_path is not null
-   and m.created_at between now() - interval '14 days' and now() - interval '{TRIAGE_WAIT_MIN} minutes'
+   and m.internal_date between now() - interval '14 days' and now() - interval '{TRIAGE_WAIT_MIN} minutes'
    and not exists (select 1 from evidence.assertion a where a.source_record_id = sr.id
                     and a.kind = 'message_triage' and a.value_norm like 'triage:v%')
 """
@@ -169,11 +170,17 @@ _TRIAGE_EVENTS_SQL = """
 select created_at, value ->> 'class' from evidence.assertion
  where kind = 'message_triage' and value_norm like 'triage:v%' order by created_at desc limit 10
 """
-#: The worker's own candidate rules (quote_reader / drive_filing): a live revision with a PDF.
-_REVISIONS = "crm.quote_revision r where r.status <> 'void' and r.pdf_sha256 is not null"
+#: The workers' own candidate rule (quote_reader / drive_filing): a live revision with a PDF whose
+#: originating email is a captured message with its file stored. A revision without one (the
+#: historical import) can never be read or filed, so it never counts as pending.
+_REVISIONS = """crm.quote_revision r where r.status <> 'void' and r.pdf_sha256 is not null
+   and exists (select 1 from evidence.source_record sr
+                 join comms.message cm on cm.provider_message_id = sr.payload ->> 'gmail_message_id'
+                                      and cm.eml_storage_path is not null
+                where sr.id = r.origin_source_record_id and sr.kind = 'gmail_message')"""
 _QUOTES_PENDING_SQL = f"""
 select count(*), count(*) filter (where r.created_at < now() - interval '1 day')
-  from {_REVISIONS} and r.origin_source_record_id is not null
+  from {_REVISIONS}
    and not exists (select 1 from evidence.source_record d
                     where d.kind = 'quote_document' and d.dedupe_key = 'quote_document:' || lower(r.pdf_sha256))
    and not exists (select 1 from evidence.assertion a

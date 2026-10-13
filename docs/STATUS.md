@@ -2659,6 +2659,10 @@ Por decidir (interim counts and links) and Más (Proveedores, Archivo Drive, the
 for an admin). No body, address or subject in the response. Not yet: backup, release and smoke status
 (they live in GitHub) and the worker heartbeat (not granted to the API role) — delivery 2, an
 operation-run log; the single decision list — delivery 3.
+Corrected the same day: Clasificación counts mail by its received time (the triage sweep's
+14-day window), and Cotizaciones / Archivo Drive count only revisions whose originating email file
+is stored (the workers' own candidate rule) — the first production view showed 5 / 11 / 2 «pending»
+that no worker could ever process (an OC backfill's old mail; historical-import revisions).
 
 ### 2.7.108 «Cotizaciones enviadas sin caso» with «Abrir caso», 2026-10-13 — built, deploys on merge
 
