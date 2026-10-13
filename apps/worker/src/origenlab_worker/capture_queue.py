@@ -1,4 +1,4 @@
-"""Pinned worker's ten-minute Gmail → Drive → quote-read cycle, on its own process/queue.
+"""Pinned worker's one-minute Gmail check, then Drive → quote-read, on its own process/queue.
 
 No new business flag is enabled. The existing commands retain their locks and
 idempotency. A session lock covers the complete cycle (including rolling overlap).
@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from typing import Any
@@ -31,6 +32,27 @@ ENV_CAPTURE_SCHEDULER = "ORIGENLAB_WORKER_CAPTURE_SCHEDULER_ENABLED"
 QUEUE = "capture"
 TASK = "capture_mail_cycle"
 PERIODIC_ID = "gmail-drive-v1"
+#: Gmail is checked every minute (was every ten, the legacy cron's): on normal days the poll interval
+#: was nearly all of the arrival-to-Hoy delay (measured 2026-10-09..13: cycle ~15 s, fetch p50 3–7 min).
+#: Drive filing and quote reading follow only when the check stored new mail, on the first cycle of
+#: the process (so a release's postflight sees a complete cycle), or after FOLLOWUP_EVERY seconds —
+#: a quiet minute costs one short command. The session lock and the one-waiting-job queueing lock
+#: keep a long cycle from overlapping the next.
+CAPTURE_CRON = "* * * * *"
+FOLLOWUP_EVERY = 600
+
+
+class Followups:
+    """When Drive filing and quote reading last ran in this process (monotonic seconds)."""
+
+    def __init__(self) -> None:
+        self.last: float | None = None
+
+    def due(self, stored: int, now: float) -> bool:
+        return stored > 0 or self.last is None or now - self.last >= FOLLOWUP_EVERY
+
+
+FOLLOWUPS = Followups()
 CYCLE_LOCK = "origenlab-worker:capture-cycle:v1"
 STAGE_TIMEOUT = 300
 CYCLE_TIMEOUT = 540
@@ -118,7 +140,9 @@ async def run_stage(command: str, env: Mapping[str, str]) -> dict[str, Any]:
 
 
 async def run_cycle(target: WorkerTarget, env: Mapping[str, str], *,
-                    stage=run_stage, lock=cycle_lock, log=None) -> None:
+                    stage=run_stage, lock=cycle_lock, log=None, followups: Followups | None = None,
+                    clock=time.monotonic) -> None:
+    followups = FOLLOWUPS if followups is None else followups
     emit = log or (lambda event: print(json.dumps(event, sort_keys=True), flush=True))
     async with lock(target) as acquired:
         if not acquired:
@@ -129,8 +153,9 @@ async def run_cycle(target: WorkerTarget, env: Mapping[str, str], *,
                 for attempt in range(len(RETRY_DELAYS) + 1):
                     try:
                         gmail = await stage("gmail-sync", env)
+                        due = followups.due(gmail.get("counts", {}).get("stored", 0), clock())
                         # The former && contract: never file after failed capture.
-                        drive = await stage("drive-file", env)
+                        drive = await stage("drive-file", env) if due else {"mode": "skipped"}
                         break
                     except CaptureTransient:
                         if attempt == len(RETRY_DELAYS):
@@ -138,7 +163,11 @@ async def run_cycle(target: WorkerTarget, env: Mapping[str, str], *,
                         await asyncio.sleep(RETRY_DELAYS[attempt])
         except TimeoutError:
             raise CaptureTransient("capture_cycle_timeout") from None
-        quote = await read_quotes(stage, env)
+        if due:
+            quote = await read_quotes(stage, env)
+            followups.last = clock()
+        else:
+            quote = {"mode": "skipped"}
         revision = env.get("RENDER_GIT_COMMIT", "")
         emit({"event": "capture_cycle", "outcome": "success",
               "revision": revision if re.fullmatch(r"[0-9a-f]{40}", revision) else None,
@@ -161,7 +190,7 @@ def build_app(target: WorkerTarget | None = None, env: Mapping[str, str] | None 
               connector=None, *, cycle=run_cycle) -> procrastinate.App:
     app = procrastinate.App(connector=connector or testing.InMemoryConnector())
 
-    @app.periodic(cron="*/10 * * * *", periodic_id=PERIODIC_ID)
+    @app.periodic(cron=CAPTURE_CRON, periodic_id=PERIODIC_ID)
     # Retry inside the lock instead of moving the job back to TODO: another
     # periodic TODO could otherwise collide with its queueing lock during retry.
     @app.task(name=TASK, queue=QUEUE, queueing_lock=CYCLE_LOCK, retry=False)
@@ -179,7 +208,7 @@ def run_capture_worker(env: Mapping[str, str]) -> int:
         raise ConfigRefused("capture_scheduler_disabled")
     target = target_from_env(env)
     # Configuration failures must stop the supervised child immediately, rather
-    # than leave a healthy-looking scheduler failing every ten minutes.
+    # than leave a healthy-looking scheduler failing every minute.
     from origenlab_worker.cli import config_from_env, drive_config_from_env
     config_from_env(env)
     if env.get("ORIGENLAB_WORKER_DRIVE_FILING_ENABLED", "").strip().lower() == "true":

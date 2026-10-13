@@ -2437,9 +2437,10 @@ policy; an owner self-approval is not substituted for review.
 
 **PR #679 now removes the mutable cron from the release path.** A consolidated
 `mail-worker` (compatible alias `triage-worker`) supervises isolated triage/capture
-processes and a ten-minute capture queue. Its scheduler defaults OFF. The controller
-requires the retained legacy cron suspended and deploys only the three exact-commit
-worker/API/dashboard services. This is built, not live: production still runs the cron.
+processes and a capture queue (Gmail every minute since 2026-10-13; ten before). Its
+scheduler defaults OFF. The controller requires the retained legacy cron suspended and
+deploys only the three exact-commit worker/API/dashboard services. Live since the
+2026-10-13 cutover (STATUS §2.7.104): the worker captures and the cron is suspended.
 Follow the [approved mail-worker cutover](runbooks/MAIL_WORKER_CUTOVER.md) after real
 production-data restoration, protection/secrets gates and explicit rollout approval.
 The architecture closes the cron commit race in code; it does not prove shared-resource

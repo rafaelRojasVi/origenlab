@@ -11,7 +11,7 @@ One Render background service supervises two independent processes:
 | Process | Queue | Concurrency | Work |
 |---|---|---|---|
 | Triage | `triage` | 2 | Existing per-minute sweep and message readings |
-| Capture | `capture` | 1 | Gmail capture, then Drive filing, then quote reading, every ten minutes |
+| Capture | `capture` | 1 | Gmail check every minute (ten until 2026-10-13); Drive filing and quote reading when it stored mail, on a process's first cycle, or every ten minutes |
 
 `mail-worker` is the canonical command; the existing `triage-worker` command aliases it,
 so the initial cutover needs no provider start-command change. Internal `triage-child`
@@ -36,7 +36,7 @@ Each child command has a five-minute bound. The complete cycle has a nine-minute
 bound; transient failures retry inside that bound with 30/90-second waits (at most
 three attempts). Auth/configuration failures do not retry immediately. Retries stay
 inside the current job/session lock: moving it back to `todo` could collide with a
-new periodic waiting job. The next ten-minute cycle safely resumes committed capture
+new periodic waiting job. The next one-minute cycle safely resumes committed capture
 work. No historical job is replayed, deleted or repaired automatically.
 
 The supervisor stops both process groups if either child exits unexpectedly. SIGTERM
