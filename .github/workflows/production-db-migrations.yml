@@ -23,6 +23,9 @@ on:
       - "scripts/deploy/set_render_autodeploy_off.py"
       - "scripts/deploy/check_branch_protection.py"
       - "scripts/deploy/verify_workers.py"
+      - "apps/worker/src/origenlab_worker/triage_rules.py"
+      - "apps/worker/src/origenlab_worker/triage.py"
+      - "apps/worker/src/origenlab_worker/bounce.py"
       - "docs/runbooks/PRODUCTION_DB_MIGRATIONS.md"
   workflow_dispatch:
     inputs:

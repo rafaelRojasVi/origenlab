@@ -3,6 +3,7 @@
 from __future__ import annotations
 import os
 import json
+import re
 import urllib.parse
 import subprocess
 import sys
@@ -15,6 +16,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "supabase/scripts")
 from hosted_env import Refused, database_env
 from render_release import OWNER, SERVICES, latest_deploy, request, verify_service, verify_legacy_cron
 
+WORKER_SRC = Path(__file__).resolve().parents[2] / "apps/worker/src/origenlab_worker"
+
+
+def worker_constant(module: str, name: str) -> str:
+    """A literal the worker writes, read from its source: this check must not import the worker,
+    and a hard-coded copy went stale when triage moved from v1 to v3."""
+    match = re.search(rf'^{name} = (\d+|"[a-z_]+:v\d+")$', (WORKER_SRC / module).read_text(encoding="utf-8"), re.M)
+    if not match:
+        raise Refused(f"Cannot read {name} from the worker's {module}")
+    return match.group(1).strip('"')
+
+
+def evidence_value_norms() -> dict[str, str]:
+    """The value_norm of the current triage, delivery-failure and requester readings."""
+    return {"triage": f"triage:v{worker_constant('triage_rules.py', 'TRIAGE_VERSION')}",
+            "delivery": f"delivery:v{worker_constant('bounce.py', 'DELIVERY_FAILURE_VERSION')}",
+            "requester": worker_constant("triage.py", "REQUESTER_VALUE_NORM")}
+
 
 def worker_conditions(env: dict[str, str], since: str | None = None, *,
                       require_capture: bool = False) -> dict[str, bool]:
@@ -26,6 +45,7 @@ def worker_conditions(env: dict[str, str], since: str | None = None, *,
     last 15 minutes and an authorized mailbox synced in the last 20.
     """
     # Do not read message bodies, queue arguments, contacts, or email addresses.
+    norms = evidence_value_norms()
     boundary = datetime.fromisoformat(since.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat() if since else "1970-01-01T00:00:00+00:00"
     columns = {
         "heartbeat": f"""exists (select 1 from procrastinate.procrastinate_workers
@@ -33,7 +53,7 @@ def worker_conditions(env: dict[str, str], since: str | None = None, *,
         "sweep_scheduled": """exists (select 1 from procrastinate.procrastinate_periodic_defers
                    where task_name = 'sweep_untriaged' and periodic_id = 'sweep'
                      and defer_timestamp >= extract(epoch from now()) - 300)""",
-        "triage_caught_up": """not exists (
+        "triage_caught_up": f"""not exists (
          select 1 from comms.message m
            left join evidence.source_record sr
              on sr.dedupe_key = 'gmail_message:' || m.provider_message_id and sr.kind = 'gmail_message'
@@ -49,28 +69,28 @@ def worker_conditions(env: dict[str, str], since: str | None = None, *,
               sr.id is null or not exists (
                 select 1 from evidence.assertion a
                  where a.source_record_id = sr.id
-                   and a.kind = 'message_triage' and a.value_norm = 'triage:v1')
+                   and a.kind = 'message_triage' and a.value_norm = '{norms["triage"]}')
               or (
                 exists (
                   select 1 from evidence.assertion a
                    where a.source_record_id = sr.id
-                     and a.kind = 'message_triage' and a.value_norm = 'triage:v1'
+                     and a.kind = 'message_triage' and a.value_norm = '{norms["triage"]}'
                      and a.value->>'class' = 'bounce')
                 and not exists (
                   select 1 from evidence.assertion d
                    where d.source_record_id = sr.id
-                     and d.kind = 'delivery_failure' and d.value_norm = 'delivery:v1')
+                     and d.kind = 'delivery_failure' and d.value_norm = '{norms["delivery"]}')
               )
               or (
                 exists (
                   select 1 from evidence.assertion a
                    where a.source_record_id = sr.id
-                     and a.kind = 'message_triage' and a.value_norm = 'triage:v1'
+                     and a.kind = 'message_triage' and a.value_norm = '{norms["triage"]}'
                      and a.value->>'class' = 'quote_request')
                 and not exists (
                   select 1 from evidence.assertion r
                    where r.source_record_id = sr.id
-                     and r.kind = 'message_triage' and r.value_norm = 'requester:v1')
+                     and r.kind = 'message_triage' and r.value_norm = '{norms["requester"]}')
               )
             )
        )""",
