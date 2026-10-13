@@ -298,3 +298,28 @@ def test_the_scheduled_run_does_not_nag_about_the_on_demand_session(monkeypatch:
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     hs.main([])
     assert "OL_SMOKE_SESSION" not in capsys.readouterr().out
+
+
+def test_a_slow_probe_is_timed_again_before_it_fails() -> None:
+    timings = iter([2.6, 0.4])
+    clock = {"t": 0.0}
+
+    def fetch(path: str) -> tuple[int, bytes]:
+        clock["t"] += next(timings)
+        return 401, b""
+
+    p = hs.probe("/v2/contacts", fetch, clock=lambda: clock["t"])
+    assert p.status == 401 and p.seconds == pytest.approx(0.4)
+
+
+def test_a_probe_slow_twice_stays_slow() -> None:
+    timings = iter([2.6, 2.7])
+    clock = {"t": 0.0}
+
+    def fetch(path: str) -> tuple[int, bytes]:
+        clock["t"] += next(timings)
+        return 401, b""
+
+    p = hs.probe("/v2/contacts", fetch, clock=lambda: clock["t"])
+    assert p.seconds == pytest.approx(2.7)
+    assert hs.route_failures([p])
