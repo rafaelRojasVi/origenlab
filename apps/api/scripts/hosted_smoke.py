@@ -8,9 +8,14 @@ by the Worker. `/api/health` must report a commit that is on main. Inside GitHub
 the production secrets present, it also checks that every migration in the repo is applied and
 that the workers are alive; without them it says NOT CHECKED instead of passing silently.
 
-It sends only GETs, never a credential, and never prints a response body.
+With OL_SMOKE_SESSION set to your own dashboard session cookie (copy `__Host-origenlab_session`
+from the browser after signing in), it also reads every route as you: each must answer 200 with
+JSON (404 for the placeholder ids), within 3 s. Run it after a release; sessions last 7 days at
+most, and nothing stores the cookie.
 
-    python3 apps/api/scripts/hosted_smoke.py [--base-url https://dashboard.origenlab.cl]
+It sends only GETs, never prints a response body, and never prints the session.
+
+    OL_SMOKE_SESSION=... python3 apps/api/scripts/hosted_smoke.py [--base-url https://dashboard.origenlab.cl]
 """
 
 from __future__ import annotations
@@ -37,6 +42,8 @@ DEFAULT_BASE_URL = "https://dashboard.origenlab.cl"
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 MAX_SECONDS = 2.0
+MAX_AUTHENTICATED_SECONDS = 3.0
+SESSION_COOKIE = "__Host-origenlab_session"
 
 # Routes the Worker forwards that answer without a session, by design.
 PUBLIC_ROUTES = {
@@ -147,6 +154,74 @@ def switch_notes(probes: list[Probe]) -> list[str]:
             for p in probes if p.path in SWITCHED_ROUTES and p.status == 404]
 
 
+# ------------------------------------------------------------------ with your own session
+
+
+def session_cookie_header(value: str) -> str:
+    """The Cookie header for the session: a bare value, or `__Host-origenlab_session=<value>`."""
+    value = value.strip()
+    if ";" in value:
+        raise ValueError(f"OL_SMOKE_SESSION must be the {SESSION_COOKIE} cookie and nothing else")
+    if value.startswith(f"{SESSION_COOKIE}="):
+        return value
+    return f"{SESSION_COOKIE}={value}"
+
+
+def authenticated_paths(paths: list[str]) -> list[str]:
+    """Every probed path except /health and the Google redirects, which a session does not change."""
+    return [p for p in paths if p != "/health" and not p.startswith("/auth/google/")]
+
+
+def expected_authenticated(path: str) -> str:
+    if NIL_UUID in path or path in SWITCHED_ROUTES:
+        return "200|404"  # the placeholder id names nothing; a switched-off route is not mounted
+    return "200"
+
+
+@dataclass
+class AuthProbe:
+    path: str
+    status: int | None
+    body: bytes
+    seconds: float
+    error: str = ""
+
+
+def authenticated_failures(probes: list[AuthProbe]) -> list[str]:
+    failures = []
+    for p in probes:
+        expected = expected_authenticated(p.path)
+        if p.status is None:
+            failures.append(f"{p.path} (as you): no answer ({p.error})")
+        elif p.status == 401:
+            failures.append(f"{p.path} (as you): HTTP 401 — the session was not accepted; sign in again")
+        elif not _matches(p.status, expected):
+            why = "broken" if p.status >= 500 else "refused" if p.status == 403 else "unexpected"
+            failures.append(f"{p.path} (as you): HTTP {p.status}, expected {expected} — {why}")
+        elif p.status == 200 and not _is_json(p.body):
+            failures.append(f"{p.path} (as you): HTTP 200 but not JSON")
+        elif p.seconds > MAX_AUTHENTICATED_SECONDS:
+            failures.append(f"{p.path} (as you): {p.seconds:.1f} s, over the {MAX_AUTHENTICATED_SECONDS:.0f} s budget")
+    return failures
+
+
+def _is_json(body: bytes) -> bool:
+    try:
+        json.loads(body)
+    except ValueError:
+        return False
+    return True
+
+
+def authenticated_probe(path: str, fetch: Fetch) -> AuthProbe:
+    started = time.monotonic()
+    try:
+        status, body = fetch(path)
+    except (OSError, urllib.error.URLError) as exc:
+        return AuthProbe(path, None, b"", time.monotonic() - started, error=str(exc) or type(exc).__name__)
+    return AuthProbe(path, status, body, time.monotonic() - started)
+
+
 # ------------------------------------------------------------------ version
 
 
@@ -232,7 +307,8 @@ def pending_migration_failures(applied: set[str], migrations_dir: Path) -> list[
 # ------------------------------------------------------------------ main
 
 
-def http_fetch(base_url: str) -> Fetch:
+def http_fetch(base_url: str, cookie: str | None = None) -> Fetch:
+    """GET only, no redirects followed. With `cookie` it returns every body (never printed)."""
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):  # noqa: ANN002, ANN003
             return None
@@ -240,12 +316,13 @@ def http_fetch(base_url: str) -> Fetch:
     opener = urllib.request.build_opener(_NoRedirect)
 
     def fetch(path: str) -> tuple[int, bytes]:
-        request = urllib.request.Request(
-            f"{base_url}/api{path}", method="GET", headers={"User-Agent": "origenlab-hosted-smoke"}
-        )
+        headers = {"User-Agent": "origenlab-hosted-smoke", "Accept": "application/json"}
+        if cookie:
+            headers["Cookie"] = cookie
+        request = urllib.request.Request(f"{base_url}/api{path}", method="GET", headers=headers)
         try:
             with opener.open(request, timeout=15) as response:
-                return response.status, response.read() if path == "/health" else b""
+                return response.status, response.read() if cookie or path == "/health" else b""
         except urllib.error.HTTPError as exc:
             return exc.code, b""
 
@@ -277,9 +354,21 @@ def main(argv: list[str] | None = None) -> int:
     failures += [f for v in verdicts for f in v.failures]
     warnings = [w for v in verdicts for w in v.warnings]
 
+    session = os.environ.get("OL_SMOKE_SESSION", "")
+    authenticated: list[AuthProbe] = []
+    if session:
+        as_you = http_fetch(args.base_url.rstrip("/"), cookie=session_cookie_header(session))
+        authenticated = [authenticated_probe(p, as_you) for p in authenticated_paths(paths)]
+        failures += authenticated_failures(authenticated)
+    elif os.environ.get("GITHUB_ACTIONS") != "true":  # on demand by design; the schedule has none
+        warnings.append("authenticated reads not checked: set OL_SMOKE_SESSION to your own session cookie")
+
     slowest = max(probes, key=lambda p: p.seconds)
     print(f"{len(probes)} routes probed at {args.base_url}; slowest {slowest.path} {slowest.seconds:.2f} s")
     print(f"deployed version: {version or 'not reported'}")
+    if authenticated:
+        slow = max(authenticated, key=lambda p: p.seconds)
+        print(f"{len(authenticated)} authenticated reads as you; slowest {slow.path} {slow.seconds:.2f} s")
     for note in switch_notes(probes):
         print(f"note {note}")
     for w in warnings:

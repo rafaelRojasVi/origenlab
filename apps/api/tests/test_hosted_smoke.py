@@ -207,3 +207,94 @@ def test_main_never_prints_a_response_body(monkeypatch: pytest.MonkeyPatch, caps
     monkeypatch.delenv("OL_PROD_MIGRATOR_PASSWORD", raising=False)
     assert hs.main([]) == 0
     assert secret not in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ with your own session
+
+COOKIE = "abc.def-SESSIONVALUE"
+
+
+def test_a_bare_cookie_value_becomes_the_session_cookie() -> None:
+    assert hs.session_cookie_header(COOKIE) == f"__Host-origenlab_session={COOKIE}"
+
+
+def test_a_named_cookie_is_kept_and_nothing_else_is_accepted() -> None:
+    assert hs.session_cookie_header(f"__Host-origenlab_session={COOKIE}") == f"__Host-origenlab_session={COOKIE}"
+    with pytest.raises(ValueError):
+        hs.session_cookie_header(f"other=1; __Host-origenlab_session={COOKIE}")
+
+
+def test_the_authenticated_pass_skips_health_and_the_google_redirects() -> None:
+    paths = ["/health", "/auth/google/login", "/auth/google/callback", "/auth/session", "/v2/contacts"]
+    assert hs.authenticated_paths(paths) == ["/auth/session", "/v2/contacts"]
+
+
+def test_authenticated_expectations() -> None:
+    assert hs.expected_authenticated("/v2/contacts") == "200"
+    assert hs.expected_authenticated(f"/v2/contacts/{hs.NIL_UUID}") == "200|404"
+    assert hs.expected_authenticated("/v2/workspace/marketing/test-send-history") == "200|404"
+
+
+def _aprobe(path: str, status: int | None, body: bytes = b"{}", seconds: float = 0.3) -> object:
+    return hs.AuthProbe(path=path, status=status, body=body, seconds=seconds)
+
+
+def test_authenticated_reads_that_answer_json_pass() -> None:
+    probes = [_aprobe("/v2/contacts", 200, b'{"items": []}'), _aprobe(f"/v2/cases/{hs.NIL_UUID}", 404)]
+    assert hs.authenticated_failures(probes) == []
+
+
+@pytest.mark.parametrize("status,body,word", [
+    (401, b"", "sign in again"),
+    (403, b"", "refused"),
+    (500, b"", "broken"),
+    (200, b"<html>", "not JSON"),
+])
+def test_authenticated_failures_say_why(status: int, body: bytes, word: str) -> None:
+    failures = hs.authenticated_failures([_aprobe("/v2/contacts", status, body)])
+    assert len(failures) == 1 and word in failures[0] and "/v2/contacts" in failures[0]
+
+
+def test_a_slow_authenticated_read_fails() -> None:
+    failures = hs.authenticated_failures([_aprobe("/v2/contacts", 200, b"{}", seconds=3.5)])
+    assert failures and "3.5" in failures[0]
+
+
+def test_the_session_and_bodies_never_reach_the_output(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    marker_body = "BODY-MARKER-42"
+    seen_cookies: list[str | None] = []
+    seen_methods: list[str] = []
+
+    def fake_fetch_factory(base_url: str, cookie: str | None = None):
+        def fetch(path: str) -> tuple[int, bytes]:
+            seen_cookies.append(cookie)
+            seen_methods.append("GET")
+            if cookie is None:
+                code = {"200": 200, "3xx": 302}.get(hs.expected_status(path), 401)
+                return code, b'{"version": null}' if path == "/health" else b""
+            return 200, json.dumps({"x": marker_body}).encode()
+        return fetch
+
+    monkeypatch.setattr(hs, "http_fetch", fake_fetch_factory)
+    monkeypatch.setenv("OL_SMOKE_SESSION", COOKIE)
+    monkeypatch.delenv("OL_PROD_MIGRATOR_PASSWORD", raising=False)
+    assert hs.main([]) == 0
+    out = capsys.readouterr().out
+    assert COOKIE not in out and marker_body not in out
+    assert "authenticated reads" in out
+    assert f"__Host-origenlab_session={COOKIE}" in seen_cookies
+
+
+def test_the_scheduled_run_does_not_nag_about_the_on_demand_session(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    def fake_fetch_factory(base_url: str, cookie: str | None = None):
+        def fetch(path: str) -> tuple[int, bytes]:
+            code = {"200": 200, "3xx": 302}.get(hs.expected_status(path), 401)
+            return code, b'{"version": null}' if path == "/health" else b""
+        return fetch
+
+    monkeypatch.setattr(hs, "http_fetch", fake_fetch_factory)
+    monkeypatch.delenv("OL_SMOKE_SESSION", raising=False)
+    monkeypatch.delenv("OL_PROD_MIGRATOR_PASSWORD", raising=False)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    hs.main([])
+    assert "OL_SMOKE_SESSION" not in capsys.readouterr().out
