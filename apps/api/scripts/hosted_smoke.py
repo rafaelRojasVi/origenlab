@@ -45,6 +45,11 @@ PUBLIC_ROUTES = {
     "/auth/google/callback": "3xx",  # redirect back to the dashboard
 }
 
+# Routes mounted only when a deployment switch is on: 401 when on, 404 when off; either is fine.
+SWITCHED_ROUTES = {
+    "/v2/workspace/marketing/test-send-history": "ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED",
+}
+
 Fetch = Callable[[str], "tuple[int, bytes]"]
 
 
@@ -77,6 +82,8 @@ def _expand(pattern: str) -> list[str]:
 
 
 def expected_status(path: str) -> str:
+    if path in SWITCHED_ROUTES:
+        return "401|404"
     return PUBLIC_ROUTES.get(path, "401")
 
 
@@ -105,7 +112,9 @@ def probe(path: str, fetch: Fetch) -> Probe:
 
 
 def _matches(status: int, expected: str) -> bool:
-    return 300 <= status < 400 if expected == "3xx" else status == int(expected)
+    if expected == "3xx":
+        return 300 <= status < 400
+    return status in {int(code) for code in expected.split("|")}
 
 
 def _why(status: int) -> str:
@@ -131,6 +140,11 @@ def route_failures(probes: list[Probe]) -> list[str]:
         elif p.seconds > MAX_SECONDS:
             failures.append(f"{p.path}: {p.seconds:.1f} s, over the {MAX_SECONDS:.0f} s budget")
     return failures
+
+
+def switch_notes(probes: list[Probe]) -> list[str]:
+    return [f"{p.path}: switched off ({SWITCHED_ROUTES[p.path]})"
+            for p in probes if p.path in SWITCHED_ROUTES and p.status == 404]
 
 
 # ------------------------------------------------------------------ version
@@ -266,6 +280,8 @@ def main(argv: list[str] | None = None) -> int:
     slowest = max(probes, key=lambda p: p.seconds)
     print(f"{len(probes)} routes probed at {args.base_url}; slowest {slowest.path} {slowest.seconds:.2f} s")
     print(f"deployed version: {version or 'not reported'}")
+    for note in switch_notes(probes):
+        print(f"note {note}")
     for w in warnings:
         print(f"WARN {w}")
         if os.environ.get("GITHUB_ACTIONS") == "true":

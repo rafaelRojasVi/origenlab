@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
@@ -75,9 +76,22 @@ def test_expected_status_per_route_class() -> None:
     assert hs.expected_status("/v2/contacts") == "401"
 
 
+@pytest.mark.parametrize("status,ok", [(401, True), (404, True), (200, False), (502, False)])
+def test_a_route_behind_a_switch_may_be_off(status: int, ok: bool) -> None:
+    path = "/v2/workspace/marketing/test-send-history"
+    assert hs.expected_status(path) == "401|404"
+    assert (hs.route_failures([_probe(path, status)]) == []) is ok
+
+
+def test_a_switched_off_route_is_reported() -> None:
+    notes = hs.switch_notes([_probe("/v2/workspace/marketing/test-send-history", 404)])
+    assert notes == ["/v2/workspace/marketing/test-send-history: switched off (ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED)"]
+
+
 def test_every_public_route_in_the_table_is_still_allowlisted() -> None:
     paths = {p for _, ps in hs.allowlist_entries(_ALLOWLIST.read_text(encoding="utf-8")) for p in ps}
     assert set(hs.PUBLIC_ROUTES) <= paths
+    assert set(hs.SWITCHED_ROUTES) <= paths
 
 
 # ------------------------------------------------------------------ verdicts
@@ -152,3 +166,44 @@ def test_a_commit_not_on_main_fails() -> None:
 def test_behind_main_on_the_api_is_a_warning_with_the_count() -> None:
     v = hs.version_verdict(SHA, on_main=lambda s: True, behind=lambda s: 3)
     assert v.failures == [] and "3" in v.warnings[0]
+
+
+# ------------------------------------------------------------------ production database
+
+
+def test_every_repo_migration_applied_passes(tmp_path: Path) -> None:
+    for name in ("20260901000000_a.sql", "20260902000000_b.sql"):
+        (tmp_path / name).write_text("select 1;")
+    applied = {"20260901000000", "20260902000000", "20250101000000"}  # extra ledger rows are fine
+    assert hs.pending_migration_failures(applied, tmp_path) == []
+
+
+def test_a_merged_migration_not_applied_fails_and_names_the_first(tmp_path: Path) -> None:
+    for name in ("20260901000000_a.sql", "20260902000000_b.sql", "20260903000000_c.sql"):
+        (tmp_path / name).write_text("select 1;")
+    failures = hs.pending_migration_failures({"20260901000000"}, tmp_path)
+    assert failures == ["2 migration(s) on main not applied in production, first 20260902000000"]
+
+
+def test_without_secrets_the_database_checks_say_not_checked(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OL_PROD_MIGRATOR_PASSWORD", raising=False)
+    v = hs.database_checks()
+    assert v.failures == []
+    assert v.warnings and v.warnings[0].startswith("NOT CHECKED")
+
+
+def test_main_never_prints_a_response_body(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    secret = "SECRET-BODY-MARKER"
+
+    def fake_fetch_factory(base_url: str):
+        def fetch(path: str) -> tuple[int, bytes]:
+            if path == "/health":
+                return 200, json.dumps({"ok": True, "version": None, "x": secret}).encode()
+            code = {"200": 200, "3xx": 302}.get(hs.expected_status(path), 401)
+            return code, secret.encode()
+        return fetch
+
+    monkeypatch.setattr(hs, "http_fetch", fake_fetch_factory)
+    monkeypatch.delenv("OL_PROD_MIGRATOR_PASSWORD", raising=False)
+    assert hs.main([]) == 0
+    assert secret not in capsys.readouterr().out
