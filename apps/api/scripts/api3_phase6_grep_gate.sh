@@ -58,16 +58,19 @@ ROUTE_PATTERNS=(
   'legacy-smoke'
 )
 
+# Loaded once: re-reading the file through `echo | tr` for every hit cost ~14 s over ~340 hits.
+ALLOW_PREFIXES=()
+while IFS= read -r line || [[ -n "${line}" ]]; do
+  line="${line%%#*}"
+  line="${line//[[:space:]]/}"
+  [[ -n "${line}" ]] && ALLOW_PREFIXES+=("${line}")
+done < "${ALLOWLIST}"
+
 is_allowlisted() {
-  local rel="$1"
-  while IFS= read -r line || [[ -n "${line}" ]]; do
-    line="${line%%#*}"
-    line="$(echo "${line}" | tr -d '[:space:]')"
-    [[ -z "${line}" ]] && continue
-    if [[ "${rel}" == "${line}"* ]]; then
-      return 0
-    fi
-  done < "${ALLOWLIST}"
+  local rel="$1" prefix
+  for prefix in "${ALLOW_PREFIXES[@]}"; do
+    [[ "${rel}" == "${prefix}"* ]] && return 0
+  done
   return 1
 }
 
