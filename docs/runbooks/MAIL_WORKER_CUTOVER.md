@@ -1,7 +1,8 @@
 # Consolidated mail worker: approved one-time cutover
 
-Built in PR #679; **not activated or deployed**. The legacy Gmail cron still runs in
-production. Do not suspend it, change secrets or trigger a rollout without owner approval.
+Built in PR #679; **cut over 2026-10-13** (STATUS §2.7.104): the worker captures, the legacy
+`origenlab-gmail-sync` cron is suspended (kept for rollback). Do not resume it while the worker's
+capture scheduler is on — see *Failure and recovery*.
 No new migration is needed: the existing Procrastinate schema accepts the new task/queue.
 
 ## What changes

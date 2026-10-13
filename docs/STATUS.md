@@ -2594,3 +2594,28 @@ ledger matching production. Details and what the drill does not cover:
 *Drill record, 2026-10-13*. `OL_BACKUP_AUTOMATION_ENABLED=true` since then: a backup-only
 run every day at 06:15 UTC, artifacts kept 30 days. `OL_RELEASE_AUTOMATION_ENABLED` stays
 off until the mail-worker cutover ([`runbooks/MAIL_WORKER_CUTOVER.md`](runbooks/MAIL_WORKER_CUTOVER.md)).
+
+### 2.7.104 Automatic releases on; the mail worker captures, the legacy cron is suspended, 2026-10-13
+
+`OL_RELEASE_AUTOMATION_ENABLED=true` since 2026-10-13: a merge to main, once its CI passes, runs
+production-db-migrations end to end (encrypted backup → migrations → worker → API → dashboard at
+the merge SHA → postflight). First complete run: **38414668262** for `296cf6be` — all three
+services live on that SHA, postflight passed (candidate-SHA triage sweep and capture cycle, fresh
+mailbox cursor, heartbeat, no eligible evidence gaps). Render auto-deploy stays off; nothing else
+deploys.
+
+Mail-worker cutover ([`runbooks/MAIL_WORKER_CUTOVER.md`](runbooks/MAIL_WORKER_CUTOVER.md)) done the
+same day: the worker gained the cron's seven `ORIGENLAB_WORKER_DRIVE_*` and two
+`ORIGENLAB_WORKER_QUOTE_READ_*` settings (copied value-for-value; the two `DATABASE_CA_PEM` values
+differ and the worker keeps its own, which it already verified), `ORIGENLAB_WORKER_CAPTURE_SCHEDULER_ENABLED=true`,
+and its capture cycle now runs gmail-sync → drive-file → quote-read (#733 — the cycle predated the
+cron's `&& quote-read`). `origenlab-gmail-sync` is **suspended, not deleted**, for rollback (runbook
+→ *Failure and recovery*). Capture was paused about 14:00–14:40 UTC while the first releases were
+refused.
+
+The first three automatic releases stopped on defects in the release controller itself, each before
+the step it guarded, each fixed with a test that fails on the old code: #734 read `merged_by` from
+the commit→pulls list, which never carries it; #735 the post-backup recheck lacked
+`OL_RELEASE_SOLO_MODE`; #736 API readiness read the onrender.com host, which the API's host guard
+answers 403 — it now reads `dashboard.origenlab.cl/api/health` and requires the released SHA.
+#731 fixed the smoke's stale `triage:v1` worker check the same day.
