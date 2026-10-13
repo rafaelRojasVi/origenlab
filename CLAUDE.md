@@ -166,15 +166,16 @@ are not required reading for routine code changes.
   implementation. Search callers (imports, scripts, CI, docs) before
   deleting code — see `docs/architecture/COMMERCIAL_RESET_LEDGER.md` for
   the evidence standard used in the last cleanup pass.
-- Run the affected app's test suite for anything you touch:
-  `apps/email-pipeline/scripts/validate.sh` (via `./scripts/sync_test_env.sh`
-  first — **note this runs a narrow subset, not the full pytest suite; use
-  `scripts/check-all.sh` for anything touching pipeline logic**),
-  `apps/api/scripts/validate.sh`, `apps/dashboard`'s
-  `npm run validate`, `apps/dashboard-proxy`'s `npm run validate`. For any
-  change under `supabase/`, run the Slice 0 evidence suite
-  ([`docs/OPERATIONS.md`](docs/OPERATIONS.md) §4.1); CI enforces it via
-  `.github/workflows/supabase.yml`.
+- Run `make check` from the repo root for anything you touch: it runs exactly
+  the suites your change needs (vs `origin/main`), in parallel, the same
+  commands CI runs. Run `make db-up` once first — it starts disposable test
+  databases (`make db-down` stops them) and `make check` refuses to pass with
+  database tests skipped. `make check-all` runs everything; `make setup`
+  installs every app's dependencies. For a change under `supabase/`,
+  `make test-supabase` runs the database-free half of the Slice 0 evidence
+  suite; the rest resets a Supabase stack, so it runs only in CI
+  (`.github/workflows/supabase.yml`, [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
+  §4.1) — never against your local one.
 
 ## Documentation rules
 

@@ -31,25 +31,18 @@ For dashboard/API checks without production risk:
 
 **Do not** use casual validation to mutate **Gmail**, **production SQLite**, or **production/scratch Postgres**. Mirror sync and ingest/send scripts live in **email-pipeline** and require explicit approval — see [`apps/email-pipeline/docs/CRUD_SAFETY.md`](apps/email-pipeline/docs/CRUD_SAFETY.md).
 
-### Active operator stack
+### Checks
 
-For PRs touching email-pipeline, API, or dashboard:
-
-```bash
-./scripts/validate-active-stack.sh
-```
-
-This runs each app’s validate script safely (no apply/send/purge/Alembic). It does not include the public web app. The script fails fast if the tree is dirty before validation and also checks that validation did not dirty tracked files; if `apps/api/uv.lock` drifts, inspect the diff before restoring.
-
-### Local full check
-
-From the repo root:
+From the repo root — the same commands CI runs:
 
 ```bash
-./scripts/check-all.sh
+make setup      # once: every app's dependencies and test groups
+make db-up      # once per session: disposable test databases (make db-down stops them)
+make check      # only the suites your change needs (vs origin/main), in parallel
+make check-all  # every suite
 ```
 
-This runs web, email-pipeline, API, and dashboard gates. It is intentionally heavier than app-specific checks. Use `./scripts/validate-active-stack.sh` when you only need the active operator stack. It does not run Gmail/Postgres/send/purge/apply workflows.
+`make check` refuses to pass if database tests skipped; `SKIP_DB=1 make check` runs without databases and says how many it skipped. None of these touch Gmail, production data, or your local Supabase stack.
 
 ## Local setup
 

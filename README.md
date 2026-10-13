@@ -100,12 +100,12 @@ Two debounced cron loops keep ingest and publish separate: Gmail → SQLite (~3 
 
 | Check | Command | Notes |
 |-------|---------|-------|
-| **Active operator stack** | [`./scripts/validate-active-stack.sh`](scripts/validate-active-stack.sh) | email-pipeline + API + dashboard; no send/purge |
+| **Changed apps** | `make check` (after `make db-up`) | Only the suites a change needs, in parallel, as CI runs them |
 | **Public-repo hygiene** | [`./scripts/security/check-public-repo-hygiene.sh`](scripts/security/check-public-repo-hygiene.sh) | Tracked files only; no network |
 | **Remote response audit** | `apps/api/scripts/remote_response_audit.py` | Live GET contract checks behind Cloudflare Access; skips without CF credentials |
 | **Remote latency audit** | `apps/api/scripts/remote_latency_audit.py` | Warm-run latency budgets; cold probe advisory |
 
-Per-app CI: `./scripts/validate.sh` inside each app. Heavier monorepo sweep: [`./scripts/check-all.sh`](scripts/check-all.sh)
+Every suite: `make check-all`. One app: `make test-<app>` (`api`, `worker`, `email-pipeline`, `dashboard`, `proxy`, `web`, `supabase`, `repo`).
 
 Before changing repo visibility: [`docs/PUBLIC_RELEASE_CHECKLIST.md`](docs/PUBLIC_RELEASE_CHECKLIST.md)
 
