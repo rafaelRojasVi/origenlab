@@ -88,8 +88,9 @@ Rules that are easy to get wrong:
   per-worker clone plugin (`scripts/pytest_plugins/pg_per_worker.py`) refuses anything else.
   `make test-supabase` runs only the database-free half locally — the rest resets a Supabase stack
   and runs only in CI, never against your local `supabase_db_origenlab`.
-- **Merging to `main` redeploys the production API** (~1–2 min of 502s). A PR with a migration goes
-  live before the migration is applied unless the owner applies it first — say so in the PR.
+- **Merging to `main` does not deploy.** Render auto-deploy is off on all four services (since
+  2026-10-13): a release is apply any migration first, then deploy in Render, then `make smoke`.
+  Say in the PR whether it carries a migration.
 - **Handoff:** name the command you ran and its result (`make check` → the `== passed ==` table, or
   the failures). "Should pass" is not a result.
 
