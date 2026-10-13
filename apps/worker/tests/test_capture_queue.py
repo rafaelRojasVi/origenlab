@@ -14,6 +14,11 @@ from procrastinate import periodic, testing
 from origenlab_worker import capture_queue as capture, mail_worker
 
 
+@pytest.fixture(autouse=True)
+def fresh_followups(monkeypatch):
+    monkeypatch.setattr(capture, "FOLLOWUPS", capture.Followups())
+
+
 @asynccontextmanager
 async def acquired(_target):
     yield True
@@ -61,9 +66,9 @@ def test_periodic_defer_is_deduplicated_and_backlog_is_bounded():
     async def ticks():
         async with app.open_async():
             task, = app.periodic_registry.periodic_tasks.values()
-            assert (task.cron, task.periodic_id) == ("*/10 * * * *", capture.PERIODIC_ID)
+            assert (task.cron, task.periodic_id) == ("* * * * *", capture.PERIODIC_ID)
             defer = periodic.PeriodicDeferrer(registry=app.periodic_registry)
-            await defer.defer_jobs([(task, 1800000000), (task, 1800000000), (task, 1800000600)])
+            await defer.defer_jobs([(task, 1800000000), (task, 1800000000), (task, 1800000060)])
     asyncio.run(ticks())
     jobs = list(connector.jobs.values())
     assert len(jobs) == 1
@@ -260,3 +265,42 @@ def test_the_quote_read_report_is_reconciled(monkeypatch, report, expected):
             asyncio.run(capture.run_stage("quote-read", os.environ))
     else:
         assert asyncio.run(capture.run_stage("quote-read", os.environ)) == expected
+
+
+def test_a_quiet_minute_checks_gmail_only_and_new_mail_files_and_reads_at_once():
+    calls, events, now = [], [], [1000.0]
+    stored = {"n": 0}
+    async def stage(command, env):
+        calls.append(command)
+        counts = {"stored": stored["n"]} if command == "gmail-sync" else {}
+        return {"mode": MODES[command], "counts": counts}
+    def run():
+        asyncio.run(capture.run_cycle(object(), {}, stage=stage, lock=acquired, log=events.append,
+                                      clock=lambda: now[0]))
+    run()  # first cycle of the process: complete, so a release postflight finds one
+    assert calls == ["gmail-sync", "drive-file", "quote-read"]
+    calls.clear(); now[0] += 60
+    run()  # quiet minute
+    assert calls == ["gmail-sync"]
+    assert (events[-1]["drive_mode"], events[-1]["quote_mode"]) == ("skipped", "skipped")
+    calls.clear(); now[0] += 60; stored["n"] = 2
+    run()  # new mail: filed and read in the same minute
+    assert calls == ["gmail-sync", "drive-file", "quote-read"]
+    calls.clear(); now[0] += 60; stored["n"] = 0
+    run()
+    assert calls == ["gmail-sync"]
+    calls.clear(); now[0] += capture.FOLLOWUP_EVERY
+    run()  # nothing new for ten minutes: the safety-net pass still files and reads
+    assert calls == ["gmail-sync", "drive-file", "quote-read"]
+
+
+def test_a_skipped_cycle_never_counts_as_a_release_capture_proof():
+    import importlib.util
+    from pathlib import Path as P
+    repo = P(__file__).resolve().parents[3]
+    sys.path.insert(0, str(repo / "scripts/deploy"))
+    spec = importlib.util.spec_from_file_location("verify_workers_for_capture", repo / "scripts/deploy/verify_workers.py")
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    source = P(module.__file__).read_text()
+    # Postflight accepts drive_mode file|paused only, so a gmail-only minute is never the proof.
+    assert 'event.get("drive_mode") in {"file", "paused"}' in source

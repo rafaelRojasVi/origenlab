@@ -2619,3 +2619,17 @@ the commit→pulls list, which never carries it; #735 the post-backup recheck la
 `OL_RELEASE_SOLO_MODE`; #736 API readiness read the onrender.com host, which the API's host guard
 answers 403 — it now reads `dashboard.origenlab.cl/api/health` and requires the released SHA.
 #731 fixed the smoke's stale `triage:v1` worker check the same day.
+
+### 2.7.105 Mail is checked every minute; Drive and quotes follow new mail, 2026-10-13 — built, deploys on merge
+
+The worker's capture cycle (`capture_queue.CAPTURE_CRON`) checks Gmail **every minute** instead of
+every 10. Drive filing and quote reading follow in the same cycle when the check stored new mail,
+on the first cycle of a worker process (so a release postflight sees a complete cycle), or after
+10 minutes without one (`FOLLOWUP_EVERY`); a quiet minute runs the Gmail check alone and logs
+`drive_mode`/`quote_mode: skipped`, which postflight never accepts as its capture proof.
+Measured read-only first: on normal days (9–13 Oct) a full cycle is ~15 s (Gmail 6 s, Drive 5 s,
+quotes 7 s) and inbound mail reached the database 3–7 min after arrival (p90 ~9 min), triage
+< 1 min — the ten-minute poll was nearly all of the delay. Unchanged: the session lock and one
+waiting job keep a slow cycle from overlapping the next; postflight windows still allow 15/20
+minutes. Not addressed: campaign bursts (6 and 8 Oct), where single Gmail runs took 18–24 min
+because messages are fetched one at a time.
