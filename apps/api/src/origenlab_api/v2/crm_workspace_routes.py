@@ -534,9 +534,12 @@ def get_operations(request: Request, _: Operator, repo: Repo) -> Any:
     from origenlab_api.services.health_service import deployed_version
     from origenlab_api.v2.operations import reglas_card, respaldo_card, rules_state_for_card, version_card
 
-    body = repo.operations()
+    body = dict(repo.operations())  # a copy: the repository shares its result for 30 s
     auto = getattr(request.app.state, "auto_mail_rules", None)
-    state = auto.state() if auto is not None else None
+    try:
+        state = auto.state() if auto is not None else None
+    except Exception:  # noqa: BLE001 - one card says it, the page stays up
+        state = {"unreadable": True}
     body["cards"] = [*body["cards"],
                      reglas_card(rules_state_for_card(state, body["generated_at"]), int(body.get("actions_today") or 0)),
                      version_card(deployed_version()), respaldo_card()]

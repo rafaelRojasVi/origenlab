@@ -80,3 +80,28 @@ def test_every_mail_rule_is_explained_on_the_operaciones_page() -> None:
     guide = (Path(__file__).resolve().parents[2] / "dashboard/src/crm/operations.ts").read_text(encoding="utf-8")
     block = guide[guide.index("export const RULE_GUIDE"):guide.index("const RULE_WHY")]
     assert re.findall(r"^  (R\d+): \{", block, re.M) == list(RULE_IDS)
+
+
+def test_the_rules_card_is_red_when_the_switch_is_blocked_and_amber_on_refusals() -> None:
+    blocked = op.reglas_card({"enabled": True, "blocked": "Admin ya no es administrador",
+                              "last_run": {"minutes_ago": 2, "applied": 0, "skipped": "operator_not_admin"}}, 0)
+    assert blocked["status"] == "bad" and "administrador" in blocked["summary"]
+    skipped = op.reglas_card({"enabled": True, "last_run": {"minutes_ago": 2, "skipped": "operator_not_admin"}}, 0)
+    assert skipped["status"] == "bad"
+    refused = op.reglas_card({"enabled": True, "last_run": {"minutes_ago": 2, "applied": 1, "refused": 2}}, 1)
+    assert refused["status"] == "warn"
+    out = op.rules_state_for_card({"enabled": True, "blocked": "x", "last_run": {"at": "2026-10-13T12:00:00+00:00",
+                                   "skipped": "operator_not_admin", "refused": 1}}, "2026-10-13T12:01:00+00:00")
+    assert (out["blocked"], out["last_run"]["skipped"], out["last_run"]["refused"]) == ("x", "operator_not_admin", 1)
+
+
+def test_the_facts_are_shared_for_a_short_while_across_requests() -> None:
+    calls = []
+    cache = op.FactsCache(ttl_seconds=30, clock=lambda: now[0])
+    now = [1000.0]
+    load = lambda: calls.append(1) or {"n": len(calls)}  # noqa: E731
+    assert cache.get(load) == {"n": 1}
+    now[0] += 29
+    assert cache.get(load) == {"n": 1} and len(calls) == 1
+    now[0] += 2
+    assert cache.get(load) == {"n": 2}

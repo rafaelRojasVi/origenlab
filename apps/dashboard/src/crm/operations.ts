@@ -34,10 +34,11 @@ export interface OpsAction {
   at: string | null;
   rule_id: string | null;
   automatic: boolean;
+  /** Applied on today's Santiago day (the API decides; a date string would be the UTC day). */
+  today: boolean;
   case_id: string | null;
   case_title: string | null;
   quote_number: string | null;
-  reasons: string[];
   undone: boolean;
 }
 

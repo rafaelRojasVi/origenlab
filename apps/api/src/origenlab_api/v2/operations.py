@@ -104,18 +104,25 @@ def reglas_card(state: Mapping[str, Any] | None, actions_today: int) -> dict[str
     facts = [_fact("Acciones hoy", actions_today)]
     if state is None:
         return card("reglas", "Reglas automáticas", "info", "No se ejecutan en este servidor", facts=facts)
+    if state.get("unreadable"):
+        return card("reglas", "Reglas automáticas", "warn", "No se pudo leer el estado de las reglas", facts=facts)
     if not state.get("enabled"):
         return card("reglas", "Reglas automáticas", "warn",
                     "Apagadas: vincular correos y abrir casos espera a una persona", facts=facts)
     run = state.get("last_run")
+    if state.get("blocked") or (run or {}).get("skipped") == "operator_not_admin":
+        why = state.get("blocked") or "quien las activó ya no es administrador"
+        return card("reglas", "Reglas automáticas", "bad", f"Detenidas: {why}", (run or {}).get("at"), facts)
     if not run:
         return card("reglas", "Reglas automáticas", "warn",
                     "Aún no pasa desde el reinicio del servidor (pasa cada 5 min)", facts=facts)
     minutes = run.get("minutes_ago")
-    status = "bad" if minutes is None or minutes > RULES_STALE_MIN else "ok"
-    return card("reglas", "Reglas automáticas", status,
-                f"Encendidas · última pasada {_ago(minutes)} · {actions_today} accion{'es' if actions_today != 1 else ''} hoy",
-                run.get("at"), facts)
+    refused = int(run.get("refused") or 0)
+    status = "bad" if minutes is None or minutes > RULES_STALE_MIN else "warn" if refused else "ok"
+    summary = f"Encendidas · última pasada {_ago(minutes)} · {actions_today} accion{'es' if actions_today != 1 else ''} hoy"
+    if refused:
+        summary += f" · {refused} rechazada{'s' if refused != 1 else ''} en la última pasada"
+    return card("reglas", "Reglas automáticas", status, summary, run.get("at"), facts)
 
 
 def version_card(commit: str | None) -> dict[str, Any]:
@@ -184,8 +191,8 @@ _DRIVE_DONE_SQL = f"""
 select count(*) filter (where created_at >= {_TODAY}), max(created_at)
   from evidence.source_record where kind = 'drive_file'
 """
-_ACTIONS_SQL = """
-select r.id::text, r.completed_at, r.response_body,
+_ACTIONS_SQL = f"""
+select r.id::text, r.completed_at, r.response_body, r.completed_at >= {_TODAY} as today,
        exists (select 1 from platform.command_receipt u
                 where u.command_name = 'undo_mail_rule_action' and u.status = 'completed'
                   and u.response_body ->> 'undoes_receipt_id' = r.id::text) as undone,
@@ -247,15 +254,15 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
     d_today, d_newest = cur.fetchone()
     cur.execute(_ACTIONS_SQL)
     actions = []
-    for receipt_id, at, body, undone, title in cur.fetchall():
+    for receipt_id, at, body, today, undone, title in cur.fetchall():
         b = _json(body)
-        attribution = b.get("attribution") or {}
+        # No `reasons`: they quote PDF names, which can hold a person's name; the page words each
+        # action from its rule instead. `trigger` is what the apply receipt records (repository).
         actions.append({
             "receipt_id": receipt_id, "at": _iso(at), "rule_id": b.get("rule_id"),
-            "automatic": (attribution.get("trigger") if isinstance(attribution, dict) else None) == "automatic"
-                         or bool(b.get("automatic")),
+            "automatic": b.get("trigger") == "automatic", "today": bool(today),
             "case_id": b.get("case_id"), "case_title": title or b.get("case_title"),
-            "quote_number": b.get("quote_number"), "reasons": list(b.get("reasons") or []), "undone": bool(undone),
+            "quote_number": b.get("quote_number"), "undone": bool(undone),
         })
     cur.execute(_COUNTS_SQL)
     no_institution, por_confirmar = cur.fetchone()
@@ -278,21 +285,20 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
 def build_operations(facts: Mapping[str, Any], generated_at: str) -> dict[str, Any]:
     """The repository's part: the four database cards, the actions and the counts. The route adds
     the cards only the running process knows (rules timer, deployed commit)."""
-    today = generated_at[:10]
     return {
         "generated_at": generated_at,
         "cards": [correo_card(facts["correo"]), clasificacion_card(facts["clasificacion"]),
                   cotizaciones_card(facts["cotizaciones"]), drive_card(facts["drive"])],
         "actions": list(facts["actions"]),
-        "actions_today": sum(1 for a in facts["actions"] if (a.get("at") or "").startswith(today)),
+        "actions_today": sum(1 for a in facts["actions"] if a.get("today")),
         "counts": dict(facts["counts"]),
     }
 
 
 def rules_state_for_card(state: Mapping[str, Any] | None, now_iso: str) -> dict[str, Any] | None:
     """The auto-rules timer state with the last pass's age in minutes (the card's input)."""
-    if state is None:
-        return None
+    if state is None or state.get("unreadable"):
+        return state
     from datetime import datetime
 
     run = state.get("last_run")
@@ -300,4 +306,30 @@ def rules_state_for_card(state: Mapping[str, Any] | None, now_iso: str) -> dict[
         at = datetime.fromisoformat(str(run["at"]).replace("Z", "+00:00"))
         now = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
         run = {**run, "minutes_ago": max(0, int((now - at).total_seconds() // 60))}
-    return {"enabled": bool(state.get("enabled")), "last_run": run}
+    return {"enabled": bool(state.get("enabled")), "blocked": state.get("blocked"), "last_run": run}
+
+
+class FactsCache:
+    """The facts, shared across requests for ``ttl_seconds``: every open «Operaciones» tab polls
+    each minute, and one read per half minute serves them all."""
+
+    def __init__(self, ttl_seconds: float = 30, clock: Any = None) -> None:
+        import threading
+        import time
+
+        self._ttl = ttl_seconds
+        self._clock = clock or time.monotonic
+        self._lock = threading.Lock()
+        self._value: Any = None
+        self._at: float | None = None
+
+    def get(self, load: Any) -> Any:
+        with self._lock:
+            now = self._clock()
+            if self._at is None or now - self._at >= self._ttl:
+                self._value, self._at = load(), now
+            return self._value
+
+    def clear(self) -> None:
+        with self._lock:
+            self._value, self._at = None, None

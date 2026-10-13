@@ -87,7 +87,7 @@ export function OperacionesPage({ navigate, tab }: { navigate: (s: CrmSection, i
             ) : view === "actividad" ? (
               <Activity actions={data.actions} isAdmin={isAdmin} reload={reload} />
             ) : view === "reglas" ? (
-              <Rules actions={data.actions} generatedAt={data.generated_at} />
+              <Rules actions={data.actions} />
             ) : (
               <ToDecide data={data} navigate={navigate} isAdmin={isAdmin} goTo={setView} />
             )
@@ -224,9 +224,8 @@ function Activity({ actions, isAdmin, reload }: { actions: OpsAction[]; isAdmin:
   );
 }
 
-function Rules({ actions, generatedAt }: { actions: OpsAction[]; generatedAt: string }) {
-  const today = generatedAt.slice(0, 10);
-  const todayCount = (id: string) => actions.filter((a) => a.rule_id === id && (a.at ?? "").startsWith(today)).length;
+function Rules({ actions }: { actions: OpsAction[] }) {
+  const todayCount = (id: string) => actions.filter((a) => a.rule_id === id && a.today).length;
   return (
     <div className="space-y-2">
       <p className="text-xs text-ink-muted">

@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { RULE_GUIDE, actionSentence, type OpsAction } from "./operations";
 
 const base: OpsAction = {
-  receipt_id: "r-1", at: "2026-10-13T12:00:00+00:00", rule_id: "R1", automatic: true,
-  case_id: "c-1", case_title: "Caso X", quote_number: null, reasons: [], undone: false,
+  receipt_id: "r-1", at: "2026-10-13T12:00:00+00:00", rule_id: "R1", automatic: true, today: true,
+  case_id: "c-1", case_title: "Caso X", quote_number: null, undone: false,
 };
 
 describe("rule guide", () => {

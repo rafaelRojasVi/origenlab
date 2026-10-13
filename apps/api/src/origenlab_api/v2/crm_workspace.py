@@ -1241,6 +1241,9 @@ class CrmWorkspaceRepository:
         self._dsn = dsn
         self._drive: Mapping[str, DriveLink] = drive or {}
         self._statement_timeout_ms = statement_timeout_ms
+        from origenlab_api.v2.operations import FactsCache
+
+        self._facts_cache = FactsCache(30)
 
     @property
     def drive_configured(self) -> bool:
@@ -2771,11 +2774,14 @@ class CrmWorkspaceRepository:
         """«Operaciones» (spec 2026-10-13): the database cards, the rule actions and the counts."""
         from origenlab_api.v2.operations import build_operations, read_operation_facts
 
-        with self._read() as cur:
-            facts = read_operation_facts(cur)
-            cur.execute("select now()")
-            now = cur.fetchone()[0]
-        return build_operations(facts, now.isoformat())
+        def load() -> dict[str, Any]:
+            with self._read() as cur:
+                facts = read_operation_facts(cur)
+                cur.execute("select now()")
+                now = cur.fetchone()[0]
+            return build_operations(facts, now.isoformat())
+
+        return self._facts_cache.get(load)
 
     def mail_sync(self) -> dict[str, Any]:
         """Whether the Gmail capture is running. Its age is measured by the database clock, never

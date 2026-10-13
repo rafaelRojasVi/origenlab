@@ -24,8 +24,9 @@ const PAYLOAD: OperationsPayload = {
       facts: [{ label: "GitHub", value: "https://github.com/rafaelRojasVi/origenlab/commit/abc1234" }], events: [] },
   ],
   actions: [
-    { receipt_id: "r-1", at: "2026-10-13T11:00:00+00:00", rule_id: "R1", automatic: true, case_id: "c-1",
-      case_title: "Caso Ficticio", quote_number: null, reasons: ["mismo hilo de Gmail"], undone: false },
+    // 01:30 UTC on the 14th is still the 13th in Chile: the API's `today` flag decides, not the date string.
+    { receipt_id: "r-1", at: "2026-10-14T01:30:00+00:00", rule_id: "R1", automatic: true, today: true, case_id: "c-1",
+      case_title: "Caso Ficticio", quote_number: null, undone: false },
   ],
 };
 
@@ -79,6 +80,7 @@ describe("Operaciones", () => {
     const undo = screen.getByRole("button", { name: /Deshacer/ });
     expect(undo).toBeDisabled();
     expect(undo).toHaveAttribute("title", "Solo administración");
+    expect(screen.getByText(/automático/)).toBeInTheDocument();
   });
 
   it("explains every rule in Spanish and says which act alone", async () => {
@@ -88,6 +90,7 @@ describe("Operaciones", () => {
     expect(screen.getAllByTestId(/^rule-R\d+$/)).toHaveLength(10);
     expect(screen.getByTestId("rule-R1")).toHaveTextContent("Automática");
     expect(screen.getByTestId("rule-R3")).toHaveTextContent("Con «Aplicar»");
+    expect(screen.getByTestId("rule-R1")).toHaveTextContent("hoy: 1");
   });
 
   it("counts what waits for a person", async () => {

@@ -42,6 +42,23 @@ def _client(operator: OperatorIdentity | None) -> TestClient:
     return TestClient(app)
 
 
+class _BrokenAuto:
+    def state(self):
+        raise RuntimeError("database away")
+
+
+def test_a_failing_rules_state_does_not_take_the_page_down() -> None:
+    app = FastAPI()
+    app.state.v2_identity = _Port(VIEWER)
+    app.state.crm_workspace = _Repo()
+    app.state.auto_mail_rules = _BrokenAuto()
+    app.include_router(workspace_router)
+    res = TestClient(app).get("/v2/workspace/operations")
+    assert res.status_code == 200
+    reglas = next(c for c in res.json()["cards"] if c["key"] == "reglas")
+    assert reglas["status"] == "warn" and "No se pudo leer" in reglas["summary"]
+
+
 def test_any_signed_in_operator_reads_it_and_nobody_else() -> None:
     assert _client(None).get("/v2/workspace/operations").status_code == 401
     res = _client(VIEWER).get("/v2/workspace/operations")
@@ -103,6 +120,7 @@ def test_the_cards_read_the_database_as_the_api_role(disposable_database) -> Non
                 "origin_source_record_id, created_at) select %s, 1, 'CLP', 0, %s, id, now() - interval '2 days' "
                 "from evidence.source_record limit 1", quote, "ab" * 32)
 
+    repo._facts_cache.clear()  # the read is shared for 30 s; this test changed the data meanwhile
     body = repo.operations()
     cards = {c["key"]: c for c in body["cards"]}
     assert cards["correo"]["status"] == "ok"
@@ -112,3 +130,16 @@ def test_the_cards_read_the_database_as_the_api_role(disposable_database) -> Non
     assert body["counts"]["cases_without_institution"] == 1
     text = json.dumps(body)
     assert "@" not in text and "Asunto ficticio" not in text
+
+    # A rule action the automatic timer applied, today: flagged automatic, counted today, and its
+    # reasons (PDF names can hold a person's name) are not sent to the page.
+    _owner(dsn, "insert into platform.command_receipt (operator_id, idempotency_key, command_name, request_digest, "
+                "status, response_status, response_body, completed_at) values (%s, 'mail-rule:x:R1', 'apply_mail_rule', "
+                "repeat('a', 64), 'completed', 200, %s::jsonb, now())",
+           admin, json.dumps({"rule_id": "R1", "trigger": "automatic", "case_id": str(case),
+                              "reasons": ["PDF «CN09876-Persona Ficticia-Empresa Ficticia SA.pdf»"]}))
+    repo._facts_cache.clear()
+    later = repo.operations()
+    action = later["actions"][0]
+    assert action["automatic"] is True and action["today"] is True and "reasons" not in action
+    assert later["actions_today"] == 1 and "Persona Ficticia" not in json.dumps(later)
