@@ -21,6 +21,9 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The OL_PROD_* secrets live in this main-only environment (read-only use: the migration
+    # ledger and worker heartbeats).
+    environment: origenlab-release
     steps:
       - uses: actions/checkout@v7
         with:
