@@ -129,7 +129,7 @@ function StatusCard({ card }: { card: OpsCard }) {
     >
       <header className="flex items-center gap-2">
         <span aria-hidden className={`size-2 shrink-0 rounded-full ${s.dot}`} />
-        <h2 className="text-[13px] font-semibold text-ink">{card.title}</h2>
+        <h2 className="min-w-0 truncate text-[13px] font-semibold text-ink">{card.title}</h2>
         <Badge tone={s.tone}>{s.word}</Badge>
         {card.at ? <span className="ml-auto text-[11px] tabular-nums text-ink-faint">{fmtDateTime(card.at)}</span> : null}
       </header>
@@ -156,7 +156,7 @@ function StatusCard({ card }: { card: OpsCard }) {
             aria-expanded={open}
             aria-label={`Ver actividad de ${card.title}`}
             onClick={() => setOpen((v) => !v)}
-            className="text-[11px] font-medium text-brand-700 hover:underline"
+            className="rounded-sm text-[11px] font-medium text-brand-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
           >
             {open ? "Ocultar actividad" : "Ver actividad"}
           </button>
@@ -211,6 +211,7 @@ function Activity({ actions, isAdmin, reload }: { actions: OpsAction[]; isAdmin:
                 disabled={!isAdmin}
                 title={isAdmin ? undefined : "Solo administración"}
                 busy={busy === a.receipt_id}
+                busyLabel="Deshaciendo…"
                 onClick={() => void undo(a)}
               >
                 Deshacer
