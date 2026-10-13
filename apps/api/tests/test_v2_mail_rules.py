@@ -841,10 +841,7 @@ def test_r9_never_guesses() -> None:
     assert (late.rule_id, late.mode) == ("R9", "proposal")
 
 
-def test_r9_does_not_act_on_an_unknown_name_a_supplier_or_a_known_recipient_domain() -> None:
-    unknown = only(Snapshot(evidence=(r9_mail("CN09876-Otra Institución.pdf"),),
-                            cases=(case(organization_id="o-ifde"),), organizations=(org(**IFDE),)))
-    assert (unknown.rule_id, unknown.mode) == ("R8", "none")
+def test_r9_does_not_act_on_a_supplier_or_a_known_recipient_domain() -> None:
     supplier = only(Snapshot(evidence=(r9_mail(),), cases=(case(organization_id="o-ifde"),),
                              organizations=(org(**{**IFDE, "is_supplier": True}),)))
     assert supplier.rule_id == "R8"
@@ -861,3 +858,41 @@ def test_r9_is_automatic_and_undone_like_r1() -> None:
     assert "R9" in AUTOMATIC_RULES and "R9" in RULE_IDS
     source = inspect.getsource(mail_rules_repository.MailRulesRepository._undo_steps)
     assert 'rule in ("R1", "R9") and created.get("quote_revision_id")' in source
+
+
+
+# ------------------------------------------------------------------ R10: the PDF names an institution the CRM lacks
+def test_r10_proposes_an_institution_por_confirmar_with_its_case_in_enviada() -> None:
+    from origenlab_api.v2.mail_rules_auto import AUTOMATIC_RULES
+    action = only(Snapshot(evidence=(r9_mail("CN09876-Otra Institución (OTRA).pdf"),), cases=(), organizations=(org(),)))
+    assert (action.rule_id, action.mode, action.organization_name) == ("R10", "auto", "Otra Institución (OTRA)")
+    assert "R10" not in AUTOMATIC_RULES  # a person presses «Aplicar», as for R4
+    names = [c["command"] for c in action.commands]
+    assert names == ["register_mail_organization", "open_commercial_case", "add_case_organization",
+                     "advance_case_stage", "advance_case_stage", "advance_case_stage", "record_historical_quotation"]
+    assert action.commands[0]["inputs"]["domain"] is None
+    assert action.commands[0]["inputs"]["name"] == "Otra Institución (OTRA)"
+    assert action.commands[2]["inputs"]["organization_id"] == "@organization"
+    assert action.commands[-2]["inputs"]["stage"] == "quoting"
+
+
+def test_r10_never_claims_one_name_twice_in_a_pass_and_a_bare_file_name_stays_r8() -> None:
+    a = r9_mail("CN09876-Otra Institución.pdf", id="e-a")
+    b = r9_mail("CN09877-Otra Institución.pdf", id="e-b",
+                documents=(MailDocument(filename="CN09877-Otra Institución.pdf", sha256=PDF_SHA, cn_tokens=("CN09877",)),))
+    first, second = plan(Snapshot(evidence=(a, b), cases=(), organizations=()))
+    assert (first.rule_id, first.mode) == ("R10", "auto")
+    assert (second.rule_id, second.mode) == ("R10", "proposal")
+    bare = only(Snapshot(evidence=(r9_mail("CN09876.pdf"),), cases=(), organizations=()))
+    assert (bare.rule_id, bare.mode) == ("R8", "none")
+
+
+
+def test_r10_only_creates_from_a_name_that_looks_like_an_institution() -> None:
+    from origenlab_api.v2.mail_rules import plausible_institution_name
+    for good in ("Instituto Ficticio de Ensayos (IFDE)", "IFDE", "Universidad Ficticia", "Vidrios Ficticios"):
+        assert plausible_institution_name(good), good
+    for filler in ("cliente", "final", "cotizacion final", "Cotización v2", "copia", "Ficticia"):
+        assert not plausible_institution_name(filler), filler
+    action = only(Snapshot(evidence=(r9_mail("CN09876-cotizacion final.pdf"),), cases=(), organizations=()))
+    assert (action.rule_id, action.mode) == ("R8", "none")

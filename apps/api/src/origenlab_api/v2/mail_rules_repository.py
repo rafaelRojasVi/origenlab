@@ -577,8 +577,8 @@ class MailRulesRepository(V2CaseCommandRepository):
         if rule in ("R1", "R2", "R5", "R6", "R9"):
             for link_id in created.get("opportunity_evidence_ids") or []:
                 run(UNLINK_CASE_EVIDENCE, {"opportunity_evidence_id": link_id, "reason": note, "note": note})
-        if rule in ("R3", "R4", "R7"):
-            if rule in ("R3", "R4") and created.get("quote_revision_id"):
+        if rule in ("R3", "R4", "R7", "R10"):
+            if rule in ("R3", "R4", "R10") and created.get("quote_revision_id"):
                 cur.execute("select version, status from crm.quote_revision where id = %s",
                             (created["quote_revision_id"],))
                 rev = cur.fetchone()
@@ -588,7 +588,7 @@ class MailRulesRepository(V2CaseCommandRepository):
             run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": self._case_version(cur, case_id),
                                      "stage": "abandoned", "close_reason": DISCARDED_BY_CORRECTION, "note": note})
             org_id = created.get("organization_id")
-            if rule == "R4" and org_id:
+            if rule in ("R4", "R10") and org_id:
                 kept = self._retire_mail_organization(cur, org_id, action, note, run)
         if not done:
             raise CommandRefused(409, "nothing_to_undo", "this action left nothing that can be reversed")
@@ -662,16 +662,24 @@ class MailRulesRepository(V2CaseCommandRepository):
 
     def _register_mail_organization(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                                     receipt_id: str) -> dict[str, Any]:
-        """An institution «por confirmar» (`machine_proposed`), named by its domain, with that
-        domain and the email it came from. A person confirms, renames or archives it later."""
-        domain = str(fields["domain"]).strip().lower()
-        cur.execute(
-            "select d.organization_id::text from crm.organization_domain d join crm.organization o on o.id = d.organization_id "
-            "where d.domain_norm = %s and d.removed_at is null and o.status = 'active'",
-            (domain,),
-        )
-        if cur.fetchone() is not None:
-            raise CommandRefused(409, "domain_already_known", f"{domain} already belongs to an institution")
+        """An institution «por confirmar» (`machine_proposed`), named by its domain (R4) or by the
+        name a quote PDF gives it (R10, no domain), with the email it came from. A person confirms,
+        renames or archives it later."""
+        domain = str(fields["domain"]).strip().lower() if fields.get("domain") else None
+        if domain is not None:
+            cur.execute(
+                "select d.organization_id::text from crm.organization_domain d join crm.organization o on o.id = d.organization_id "
+                "where d.domain_norm = %s and d.removed_at is null and o.status = 'active'",
+                (domain,),
+            )
+            if cur.fetchone() is not None:
+                raise CommandRefused(409, "domain_already_known", f"{domain} already belongs to an institution")
+        else:
+            cur.execute("select 1 from crm.organization where status = 'active' and lower(name) = lower(%s)",
+                        (fields["name"],))
+            if cur.fetchone() is not None:
+                raise CommandRefused(409, "organization_name_already_known",
+                                     f"{fields['name']} already names an institution")
         cur.execute(
             """
             insert into crm.organization (name, kind, confirmation, origin_source_record_id, note)
@@ -688,18 +696,19 @@ class MailRulesRepository(V2CaseCommandRepository):
                      "origin_source_record_id": fields["origin_source_record_id"], "note": fields["note"]},
             operator=operator, receipt_id=receipt_id,
         )]
-        cur.execute(
-            """
-            insert into crm.organization_domain (organization_id, domain_norm, scope, origin_source_record_id)
-            values (%s, %s, 'shared', %s)
-            """,
-            (org["id"], domain, fields["origin_source_record_id"]),
-        )
-        events.append(self._append_event(
-            cur, aggregate_kind="organization", aggregate_id=org["id"], event_type="organization.domain_added",
-            payload={"organization_id": org["id"], "domain_norm": domain, "scope": "shared"},
-            operator=operator, receipt_id=receipt_id,
-        ))
+        if domain is not None:
+            cur.execute(
+                """
+                insert into crm.organization_domain (organization_id, domain_norm, scope, origin_source_record_id)
+                values (%s, %s, 'shared', %s)
+                """,
+                (org["id"], domain, fields["origin_source_record_id"]),
+            )
+            events.append(self._append_event(
+                cur, aggregate_kind="organization", aggregate_id=org["id"], event_type="organization.domain_added",
+                payload={"organization_id": org["id"], "domain_norm": domain, "scope": "shared"},
+                operator=operator, receipt_id=receipt_id,
+            ))
         return {"command": REGISTER_MAIL_ORGANIZATION, "organization_id": org["id"],
                 "organization_version": int(org["version"]), "event_ids": events}
 

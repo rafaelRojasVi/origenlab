@@ -17,6 +17,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R7 | inbound quote request, no linked thread | numbered quotation references require review; otherwise open lead |
 | R8 | everything else (supplier, a reply to our own supplier RFQ, campaign thread, Labdelivery, nothing matched) | none |
 | R9 | outbound, a NEW CN number in a PDF, no recipient names an institution (free-mail), and the PDF's own name names exactly one institution (`CN09876-<institución>.pdf`, as the Cotizador writes it) | auto when that institution has exactly one open case: link + «Enviada» + quote; otherwise a proposal |
+| R10 | as R9, but the institution the PDF names is not in the CRM | «Aplicar» only: institution «por confirmar» (named as the PDF names it, no domain) + case in «Enviada» + quote |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -49,7 +50,7 @@ from email.utils import getaddresses
 from typing import Any
 from zoneinfo import ZoneInfo
 
-RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9")
+RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: OrigenLab's own domains: never an institution, never a recipient that counts.
@@ -327,6 +328,22 @@ def quote_file_institution(filename: str | None) -> str | None:
         return None
     name = m.group("name").strip(" -_")
     return name if len(fold(name)) >= 3 else None
+
+
+#: Words a quote file name carries that never name an institution («CN01262-cotizacion-final.pdf»).
+_FILE_NAME_FILLER = frozenset({
+    "cotizacion", "cotizaciones", "cot", "final", "rev", "revision", "version", "v", "copia", "borrador",
+    "nueva", "nuevo", "actualizada", "corregida", "cliente", "pdf", "de", "del", "la", "el", "y",
+})
+
+
+def plausible_institution_name(name: str) -> bool:
+    """R10 creates an institution only from a name that looks like one: two or more words that
+    are not file-name filler, or an acronym of three or more capitals («SIGLA», «(SIGLA)»)."""
+    if re.search(r"\b[A-ZÁÉÍÓÚÑ]{3,}\b", name):
+        return True
+    words = [w for w in re.split(r"[^a-z0-9]+", fold(name)) if w and not w.isdigit()]
+    return len([w for w in words if w not in _FILE_NAME_FILLER]) >= 2
 
 
 def institution_keys(name: str | None) -> set[str]:
@@ -915,7 +932,8 @@ def _quote_file_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: str,
     gmail.com still names the institution the quote is for. Only a whole-name, name-without-
     parenthetical or «(ACRONYM)» match against the CRM counts; a supplier never matches. One open
     case of that one institution is recorded like R1 does on a thread; anything else is a proposal
-    naming the candidates, never a guess. An unmatched name returns None (the caller's R8).
+    naming the candidates, never a guess. A name the CRM does not hold is R10: an institution
+    «por confirmar» with the case and quote, applied only by a person («Aplicar»), like R4.
     """
     name = quote_file_institution(doc.filename)
     if name is None:
@@ -924,8 +942,12 @@ def _quote_file_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: str,
     for k in institution_keys(name):
         for o in ix.by_name.get(k, []):
             found[o.id] = o
-    if not found or any(o.is_supplier for o in found.values()):
+    if any(o.is_supplier for o in found.values()):
         return None
+    if not found:
+        if not plausible_institution_name(name):
+            return None
+        return _new_institution_from_file_rule(e, ix, doc, token, key, number, derivation, base_reasons, name)
     if len(found) >= 2:
         return PlannedAction(e.id, "R9", PROPOSAL, (
             *base_reasons, f"el PDF nombra «{name}», que coincide con {len(found)} instituciones: un humano elige",),
@@ -956,6 +978,31 @@ def _quote_file_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: str,
         commands=_sent_quote_steps(c, e, doc, number, token, derivation, _note("R9", reasons)),
         context={"case": c.id, "case_version": c.version, "from_stage": c.stage},
     )
+
+
+def _new_institution_from_file_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: str,
+                                    key: tuple[int, int], number: str, derivation: dict[str, Any],
+                                    base_reasons: list[str], name: str) -> PlannedAction:
+    """R10: the PDF names an institution the CRM does not hold. Same steps as R4 — an institution
+    «por confirmar» (`machine_proposed`), its case walked to «Enviada», the quote — but named as the
+    PDF names it and with no domain (the recipient is free-mail). Never automatic."""
+    claim = f"name:{fold(name)}"
+    if claim in ix.claimed_domains:
+        return PlannedAction(e.id, "R10", PROPOSAL, (
+            *base_reasons, f"«{name}» ya crea una institución «por confirmar» con otro correo de esta pasada "
+            f"({ix.claimed_domains[claim]}): se decide después",), organization_name=name, quote_number=number)
+    reasons = [*base_reasons, f"el PDF nombra «{name}», que no está en el CRM: se crea «por confirmar»"]
+    ix.claimed_keys[key] = e.id
+    ix.claimed_domains[claim] = e.id
+    note = _note("R10", reasons)
+    steps = (
+        {"command": "register_mail_organization", "inputs": {
+            "name": name, "domain": None, "origin_source_record_id": e.id, "note": note}},
+        *_case_with_quote_steps(e, doc, number, token, derivation, f"{name} — cotización {number}", note,
+                                organization_id="@organization", organization_version="@organization_version"),
+    )
+    return PlannedAction(e.id, "R10", AUTO, tuple(reasons), case_title=f"{name} — cotización {number}",
+                         organization_name=name, quote_number=number, commands=steps)
 
 
 #: Open stages a sent quote may move to «Enviada» (`quoting`), and the edges it walks there.

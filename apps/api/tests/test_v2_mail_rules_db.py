@@ -302,6 +302,29 @@ def test_r9_a_quote_sent_to_gmail_reaches_the_case_of_the_institution_its_pdf_na
     assert _one(db, "select stage from crm.opportunity where id = %s", case_id)[0] == "qualified"
 
 
+def test_r10_creates_the_institution_the_pdf_names_with_its_case_in_enviada_and_undoes(db, world) -> None:
+    repo = _repo(db)
+    op = _operator(world["admin"])
+    serial = int(world["number"][1:-3]) + 6
+    token = f"CN0{serial}"
+    name = f"Instituto Nuevo {world['tag']} (INU)"
+    with _owner(db) as conn:
+        sent = _mail(conn, thread=f"t-r10-{world['tag']}", direction_hint="external",
+                     sender="contacto@origenlab.cl", recipients="persona.nueva@gmail.com", subject="Cotización",
+                     documents=[_doc(f"{token}-{name}.pdf", [token])])
+    planned = _action(repo.preview(), sent)
+    assert (planned["rule_id"], planned["mode"]) == ("R10", "auto")
+    applied = _apply_only(db, world, sent)
+    case_id, org_id = applied["case_id"], applied["created"]["organization_id"]
+    assert _one(db, "select name, confirmation from crm.organization where id = %s", org_id) == (name, "machine_proposed")
+    assert _one(db, "select count(*) from crm.organization_domain where organization_id = %s", org_id)[0] == 0
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id)[0] == "quoting"
+
+    repo.undo(op, applied["command_receipt_id"], "la institución no era esa")
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id)[0] == "abandoned"
+    assert _one(db, "select status from crm.organization where id = %s", org_id)[0] == "archived"
+
+
 def test_r7_free_mail_request_is_visible_as_solicitada_without_false_institution(db, world) -> None:
     with _owner(db) as conn:
         request = _mail(

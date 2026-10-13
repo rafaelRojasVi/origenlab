@@ -23,7 +23,7 @@ const MODE: Record<MailRuleMode, { label: string; tone: "good" | "warn" | "neutr
   none: { label: "Sin acción", tone: "neutral" },
 };
 
-const RULE_ORDER = ["R1", "R2", "R9", "R3", "R4", "R5", "R6", "R7", "R8"];
+const RULE_ORDER = ["R1", "R2", "R9", "R3", "R4", "R10", "R5", "R6", "R7", "R8"];
 
 
 /**

@@ -2643,6 +2643,8 @@ number, R3/R4 a recipient domain; free-mail is never an institution), so the cas
 Cotizador's file name and, when it names exactly one institution with exactly one open case,
 links the email, walks the case to `quoting` and records the quote — automatically, like R1 on a
 thread (DOMAIN.md §3.6.6, owner-approved 2026-10-13); undo is R1's. Every other outcome is a
-proposal naming its candidates. Evidence: mail-rule unit tests (6 new) and a real-database test
-of apply and undo.
+proposal naming its candidates. When the PDF names an institution the CRM does not hold, **R10**
+offers the same steps as R4 — an institution «por confirmar» (named as the PDF names it, no
+domain), its case in «Enviada» and the quote — applied only with «Aplicar». Evidence: mail-rule
+unit tests (9 new) and real-database tests of R9 and R10 apply and undo.
 
