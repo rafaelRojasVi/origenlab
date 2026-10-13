@@ -66,9 +66,13 @@ def main():
     pulls = get(f"/commits/{sha}/pulls?per_page=100")
     if not isinstance(pulls, list) or len(pulls) >= 100:
         raise Refused("Unexpected or truncated merge provenance")
-    for pr in pulls:
-        if pr.get("merge_commit_sha") != sha or not pr.get("merged_at"):
+    for listed in pulls:
+        if listed.get("merge_commit_sha") != sha or not listed.get("merged_at"):
             continue
+        # The commit→pulls list never carries `merged_by`; only the PR itself does.
+        pr = get(f"/pulls/{listed['number']}")
+        if not isinstance(pr, dict) or pr.get("number") != listed["number"]:
+            raise Refused("Unexpected pull request record")
         reviews = get(f"/pulls/{pr['number']}/reviews?per_page=100")
         if not isinstance(reviews, list) or len(reviews) >= 100:
             raise Refused("Unexpected or truncated PR review history")

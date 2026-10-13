@@ -178,6 +178,29 @@ class ProductionGates(unittest.TestCase):
         ):
             self.assertFalse(approval.approved(invalid, [], sha, solo_mode=True))
 
+    def test_solo_mode_reads_the_merger_from_the_pull_request_not_the_commit_list(self):
+        # GitHub's /commits/{sha}/pulls list omits merged_by: every solo release was refused (2026-10-13).
+        approval = load(ROOT / "scripts/deploy/check_release_approval.py", "check_release_approval_merger")
+        sha = "f" * 40
+        owner = approval.REPOSITORY.split("/")[0]
+        listed = dict(number=7, merged_at="2026-10-13", merge_commit_sha=sha,
+                      base={"ref": "main", "repo": {"full_name": approval.REPOSITORY}},
+                      head={"sha": "a" * 40, "repo": {"full_name": approval.REPOSITORY}},
+                      user={"login": owner})
+        full = dict(listed, merged_by={"login": owner})
+        def fake_get(path, merger=full):
+            return {f"/commits/{sha}/pulls?per_page=100": [listed], "/pulls/7/reviews?per_page=100": [],
+                    "/pulls/7": merger}[path]
+        with mock.patch.dict(os.environ, {"OL_RELEASE_SHA": sha, "OL_RELEASE_SOLO_MODE": "true"}):
+            with mock.patch.object(approval, "get", fake_get):
+                approval.main()
+            with mock.patch.object(approval, "get", lambda path: fake_get(path, dict(full, merged_by={"login": "other"}))):
+                with self.assertRaises(approval.Refused):
+                    approval.main()
+            with mock.patch.object(approval, "get", lambda path: fake_get(path, dict(full, number=8))):
+                with self.assertRaises(approval.Refused):
+                    approval.main()
+
     def test_atomic_migration_command_includes_ddl_and_ledger(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
