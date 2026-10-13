@@ -98,7 +98,7 @@ gh variable set OL_RELEASE_SOLO_MODE -R rafaelRojasVi/origenlab --body true
 
 Then, in the [Protect main ruleset](https://github.com/rafaelRojasVi/origenlab/rules/17174991), leave PRs required and stale reviews dismissed, keep zero required approving reviews *only in solo mode*, require the **GitHub Actions `gitleaks`** status check, and enable strict/up-to-date status checks. Verify there are no bypass actors. Configure ruleset changes through an authorized repository administrator; this connected assistant cannot change those settings.
 
-**Selecting solo mode is not release activation.** `OL_BACKUP_AUTOMATION_ENABLED` was set `true` on 2026-10-13, after the encrypted production-data restore drill below passed. `OL_RELEASE_AUTOMATION_ENABLED` stays OFF until the approved legacy-cron cutover. When a collaborator becomes available, switch back to the collaborative policy and independently reviewed PR merges. Never use a fake second account as a substitute for review.
+**Selecting solo mode is not release activation.** `OL_BACKUP_AUTOMATION_ENABLED` was set `true` on 2026-10-13, after the encrypted production-data restore drill below passed. `OL_RELEASE_AUTOMATION_ENABLED` was set `true` on 2026-10-13 after the legacy-cron cutover; the first complete release is run 38414668262 (STATUS §2.7.104). When a collaborator becomes available, switch back to the collaborative policy and independently reviewed PR merges. Never use a fake second account as a substitute for review.
 
 ## Release state machine
 
@@ -323,7 +323,7 @@ validated beyond the single-transaction restore succeeding.
 
 ## Short one-time procedure
 
-1. Keep repository variable `OL_RELEASE_AUTOMATION_ENABLED=false` until step 5.
+1. Keep repository variable `OL_RELEASE_AUTOMATION_ENABLED=false` until step 5 (done: set `true` on 2026-10-13).
    `OL_BACKUP_AUTOMATION_ENABLED` stays false until a real restore drill passes (done:
    set `true` on 2026-10-13). Their actual current values and protected
    Environment configuration could not be read through the connected GitHub APIs;
