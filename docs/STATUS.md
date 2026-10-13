@@ -2646,5 +2646,5 @@ thread (DOMAIN.md §3.6.6, owner-approved 2026-10-13); undo is R1's. Every other
 proposal naming its candidates. When the PDF names an institution the CRM does not hold, **R10**
 offers the same steps as R4 — an institution «por confirmar» (named as the PDF names it, no
 domain), its case in «Enviada» and the quote — applied only with «Aplicar». Evidence: mail-rule
-unit tests (9 new) and real-database tests of R9 and R10 apply and undo.
+unit tests (11 new) and real-database tests of R9 and R10 apply and undo. File names are split on dashes («<persona> - <institución>»); R10 creates only from the one segment that carries a legal form, a kind of institution or a «(SIGLA)», so a person never becomes an institution.
 

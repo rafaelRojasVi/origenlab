@@ -877,9 +877,9 @@ def test_r10_proposes_an_institution_por_confirmar_with_its_case_in_enviada() ->
 
 
 def test_r10_never_claims_one_name_twice_in_a_pass_and_a_bare_file_name_stays_r8() -> None:
-    a = r9_mail("CN09876-Otra Institución.pdf", id="e-a")
-    b = r9_mail("CN09877-Otra Institución.pdf", id="e-b",
-                documents=(MailDocument(filename="CN09877-Otra Institución.pdf", sha256=PDF_SHA, cn_tokens=("CN09877",)),))
+    a = r9_mail("CN09876-Otra Institución (OTRA).pdf", id="e-a")
+    b = r9_mail("CN09877-Otra Institución (OTRA).pdf", id="e-b",
+                documents=(MailDocument(filename="CN09877-Otra Institución (OTRA).pdf", sha256=PDF_SHA, cn_tokens=("CN09877",)),))
     first, second = plan(Snapshot(evidence=(a, b), cases=(), organizations=()))
     assert (first.rule_id, first.mode) == ("R10", "auto")
     assert (second.rule_id, second.mode) == ("R10", "proposal")
@@ -888,11 +888,30 @@ def test_r10_never_claims_one_name_twice_in_a_pass_and_a_bare_file_name_stays_r8
 
 
 
-def test_r10_only_creates_from_a_name_that_looks_like_an_institution() -> None:
-    from origenlab_api.v2.mail_rules import plausible_institution_name
-    for good in ("Instituto Ficticio de Ensayos (IFDE)", "IFDE", "Universidad Ficticia", "Vidrios Ficticios"):
-        assert plausible_institution_name(good), good
-    for filler in ("cliente", "final", "cotizacion final", "Cotización v2", "copia", "Ficticia"):
-        assert not plausible_institution_name(filler), filler
-    action = only(Snapshot(evidence=(r9_mail("CN09876-cotizacion final.pdf"),), cases=(), organizations=()))
-    assert (action.rule_id, action.mode) == ("R8", "none")
+def test_r10_creates_only_from_the_segment_that_names_an_institution() -> None:
+    from origenlab_api.v2.mail_rules import institution_segment, quote_file_segments
+    assert quote_file_segments("Persona Ficticia - Empresa Ficticia SA-MB32") == ["Persona Ficticia", "Empresa Ficticia SA"]
+    cases = {
+        "Instituto Ficticio de Ensayos (IFDE)": "Instituto Ficticio de Ensayos (IFDE)",
+        "Persona Ficticia-Empresa Ficticia SA": "Empresa Ficticia SA",
+        "Persona Ficticia - Comercial Ficticia S.A.": "Comercial Ficticia S.A.",
+        "Persona Ficticia – Ficticia Chile": "Ficticia Chile",
+        "Persona Ficticia - EMPRESA FICTICIA SPA-AB12": "EMPRESA FICTICIA SPA",
+        # A person alone, a person and a model, filler, or two institutions: never created.
+        "Pedro Ficticio Pérez": None, "Pedro Ficticio-AB12": None, "cliente": None, "cotizacion final": None,
+        "Empresa Uno SA - Empresa Dos Ltda": None,
+    }
+    for name, expected in cases.items():
+        assert institution_segment(name) == expected, name
+    person_only = only(Snapshot(evidence=(r9_mail("CN09876-Pedro Ficticio Pérez.pdf"),), cases=(), organizations=()))
+    assert (person_only.rule_id, person_only.mode) == ("R8", "none")
+    person_and_company = only(Snapshot(evidence=(r9_mail("CN09876-Pedro Ficticio-Empresa Ficticia SA-AB12.pdf"),),
+                                       cases=(), organizations=()))
+    assert (person_and_company.rule_id, person_and_company.organization_name) == ("R10", "Empresa Ficticia SA")
+
+
+def test_r9_matches_the_institution_segment_after_a_person() -> None:
+    action = only(Snapshot(evidence=(r9_mail("CN09876-Persona Ficticia-Empresa Ficticia SA.pdf"),),
+                           cases=(case(id="c-e", organization_id="o-e"),),
+                           organizations=(org(id="o-e", name="Empresa Ficticia SA", domains=()),)))
+    assert (action.rule_id, action.mode, action.case_id) == ("R9", "auto", "c-e")

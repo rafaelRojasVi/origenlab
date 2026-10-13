@@ -330,20 +330,30 @@ def quote_file_institution(filename: str | None) -> str | None:
     return name if len(fold(name)) >= 3 else None
 
 
-#: Words a quote file name carries that never name an institution («CN01262-cotizacion-final.pdf»).
-_FILE_NAME_FILLER = frozenset({
-    "cotizacion", "cotizaciones", "cot", "final", "rev", "revision", "version", "v", "copia", "borrador",
-    "nueva", "nuevo", "actualizada", "corregida", "cliente", "pdf", "de", "del", "la", "el", "y",
-})
+#: The Cotizador writes «<persona> - <institución>» more often than the institution alone, and may
+#: end with a model («…-MB32»): the name is split into segments on dashes.
+_SEGMENT_SPLIT = re.compile(r"\s*[-–—]\s*")
+_MODEL_CODE = re.compile(r"^[A-Z]{1,5}\d[A-Z0-9]*$")
+#: What makes a segment an institution rather than a person: a legal form, a kind of
+#: institution, or «(SIGLA)». A person's name («Pedro Ficticio Pérez») has none of these.
+_INSTITUTION_MARKER = re.compile(
+    r"\b(?:s\.?\s?a\.?|spa|ltda\.?|limitada|eirl|inc\.?|llc|corp\.?|group|universidad|instituto|"
+    r"laboratorios?|lab|labs|hospital|clinica|facultad|centro|servicio|ministerio|municipalidad|"
+    r"corporacion|fundacion|empresas?|agricola|sociedad|chile|foods|industrial|comercial|asociacion|"
+    r"cooperativa|escuela|colegio|liceo)(?=\s|$|[.,)])")
 
 
-def plausible_institution_name(name: str) -> bool:
-    """R10 creates an institution only from a name that looks like one: two or more words that
-    are not file-name filler, or an acronym of three or more capitals («SIGLA», «(SIGLA)»)."""
-    if re.search(r"\b[A-ZÁÉÍÓÚÑ]{3,}\b", name):
-        return True
-    words = [w for w in re.split(r"[^a-z0-9]+", fold(name)) if w and not w.isdigit()]
-    return len([w for w in words if w not in _FILE_NAME_FILLER]) >= 2
+def quote_file_segments(name: str | None) -> list[str]:
+    """The dash-separated parts of a quote file name, without model codes or 1–2 letter crumbs."""
+    parts = [p.strip(" _,") for p in _SEGMENT_SPLIT.split(name or "")]
+    return [p for p in parts if len(fold(p)) >= 3 and not _MODEL_CODE.match(p)]
+
+
+def institution_segment(name: str | None) -> str | None:
+    """The one segment that names an institution (R10), or None when none or several do."""
+    marked = [p for p in quote_file_segments(name)
+              if _PARENTHETICAL.search(p) or _INSTITUTION_MARKER.search(fold(p))]
+    return marked[0] if len(marked) == 1 else None
 
 
 def institution_keys(name: str | None) -> set[str]:
@@ -928,9 +938,10 @@ def _quote_file_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: str,
                      number: str, derivation: dict[str, Any], base_reasons: list[str]) -> PlannedAction | None:
     """R9: no recipient names an institution, but the PDF's own name does.
 
-    The Cotizador names every quote `CN<number>-<institución>.pdf`, so a customer writing from
-    gmail.com still names the institution the quote is for. Only a whole-name, name-without-
-    parenthetical or «(ACRONYM)» match against the CRM counts; a supplier never matches. One open
+    The Cotizador names quotes `CN<number>-<institución>.pdf` or `CN<number>-<persona> -
+    <institución>.pdf`, so a customer writing from gmail.com still names who the quote is for.
+    The whole name and each dash-separated segment are matched against the CRM (whole name,
+    name without parenthetical, «(ACRONYM)»); a supplier never matches. One open
     case of that one institution is recorded like R1 does on a thread; anything else is a proposal
     naming the candidates, never a guess. A name the CRM does not hold is R10: an institution
     «por confirmar» with the case and quote, applied only by a person («Aplicar»), like R4.
@@ -939,15 +950,18 @@ def _quote_file_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: str,
     if name is None:
         return None
     found: dict[str, Organization] = {}
-    for k in institution_keys(name):
-        for o in ix.by_name.get(k, []):
-            found[o.id] = o
+    for part in (name, *quote_file_segments(name)):
+        for k in institution_keys(part):
+            for o in ix.by_name.get(k, []):
+                found[o.id] = o
     if any(o.is_supplier for o in found.values()):
         return None
     if not found:
-        if not plausible_institution_name(name):
+        institution = institution_segment(name)
+        if institution is None:
             return None
-        return _new_institution_from_file_rule(e, ix, doc, token, key, number, derivation, base_reasons, name)
+        return _new_institution_from_file_rule(e, ix, doc, token, key, number, derivation, base_reasons,
+                                               institution)
     if len(found) >= 2:
         return PlannedAction(e.id, "R9", PROPOSAL, (
             *base_reasons, f"el PDF nombra «{name}», que coincide con {len(found)} instituciones: un humano elige",),
