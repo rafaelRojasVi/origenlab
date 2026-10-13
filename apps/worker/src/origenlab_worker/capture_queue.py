@@ -1,4 +1,4 @@
-"""Pinned worker's ten-minute Gmail → Drive cycle, on its own process/queue.
+"""Pinned worker's ten-minute Gmail → Drive → quote-read cycle, on its own process/queue.
 
 No new business flag is enabled. The existing commands retain their locks and
 idempotency. A session lock covers the complete cycle (including rolling overlap).
@@ -37,7 +37,14 @@ CYCLE_TIMEOUT = 540
 RETRY_DELAYS = (30, 90)
 COUNT_FIELDS = ("seen", "stored", "evidence", "bulk_sends", "duplicates", "skipped_draft",
                 "skipped_spam", "skipped_trash", "gone", "too_large", "parse_failed",
-                "candidates", "filed", "reused", "skipped", "refused", "elapsed_ms", "max_rss_mb")
+                "candidates", "filed", "reused", "skipped", "refused", "elapsed_ms", "max_rss_mb",
+                "read", "lines", "input_tokens", "output_tokens")
+#: Each child command: the event its one report line must carry, and the modes that count as done.
+STAGES = {
+    "gmail-sync": ("gmail_sync", {"history", "resync"}),
+    "drive-file": ("drive_file", {"file", "paused"}),
+    "quote-read": ("quote_read", {"read", "paused", "locked"}),
+}
 
 
 class CaptureTransient(RuntimeError):
@@ -98,8 +105,7 @@ async def run_stage(command: str, env: Mapping[str, str]) -> dict[str, Any]:
         raise CaptureRefused("capture_stage_auth_or_config_refused")
     try:
         report = json.loads(stdout.decode().strip())
-        allowed = {"history", "resync"} if command == "gmail-sync" else {"file", "paused"}
-        expected = "gmail_sync" if command == "gmail-sync" else "drive_file"
+        expected, allowed = STAGES[command]
         if report.get("event") != expected or report.get("exit") != 0 or report.get("mode") not in allowed:
             raise ValueError
     except (ValueError, UnicodeError, AttributeError):
@@ -132,11 +138,23 @@ async def run_cycle(target: WorkerTarget, env: Mapping[str, str], *,
                         await asyncio.sleep(RETRY_DELAYS[attempt])
         except TimeoutError:
             raise CaptureTransient("capture_cycle_timeout") from None
+        quote = await read_quotes(stage, env)
         revision = env.get("RENDER_GIT_COMMIT", "")
         emit({"event": "capture_cycle", "outcome": "success",
               "revision": revision if re.fullmatch(r"[0-9a-f]{40}", revision) else None,
-              "gmail_mode": gmail["mode"], "drive_mode": drive["mode"],
-              "gmail_counts": gmail.get("counts", {}), "drive_counts": drive.get("counts", {})})
+              "gmail_mode": gmail["mode"], "drive_mode": drive["mode"], "quote_mode": quote["mode"],
+              "gmail_counts": gmail.get("counts", {}), "drive_counts": drive.get("counts", {}),
+              "quote_counts": quote.get("counts", {}), "quote_error": quote.get("error")})
+
+
+async def read_quotes(stage, env: Mapping[str, str]) -> dict[str, Any]:
+    """The legacy cron's third command (`... && quote-read`): only after capture and filing
+    succeeded. Mail is already committed, so a failure here neither fails nor retries the
+    cycle; it is reported as `quote_mode: failed` and the next cycle reads again."""
+    try:
+        return await stage("quote-read", env)
+    except (CaptureTransient, CaptureRefused) as exc:
+        return {"mode": "failed", "error": str(exc), "counts": {}}
 
 
 def build_app(target: WorkerTarget | None = None, env: Mapping[str, str] | None = None,
