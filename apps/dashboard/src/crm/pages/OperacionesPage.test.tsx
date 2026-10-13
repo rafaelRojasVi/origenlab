@@ -14,7 +14,8 @@ const PAYLOAD: OperationsPayload = {
   actions_today: 1,
   counts: { cases_without_institution: 2, institutions_por_confirmar: 3, sent_quotes_without_case: 1 },
   sent_quotes_without_case: [
-    { source_record_id: "s-1", quote_number: "09877-26", sent_at: "2026-10-01T15:00:00+00:00", thread_id: "hilo-1" },
+    { source_record_id: "s-1", quote_number: "09877-26", sent_at: "2026-10-01T15:00:00+00:00", thread_id: "hilo-1",
+      suggested_institution: "Instituto Ficticio (IF)" },
   ],
   cards: [
     { key: "correo", title: "Correo", status: "ok", summary: "Última lectura hace 1 min · 4 correos hoy",
@@ -33,16 +34,16 @@ const PAYLOAD: OperationsPayload = {
   ],
 };
 
-let opened: Record<string, unknown>[] = [];
+let completed: Record<string, unknown>[] = [];
 
 function respond(body: unknown = PAYLOAD) {
-  opened = [];
+  completed = [];
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const path = new URL(url, "http://localhost").pathname;
-    if (path === "/v2/commands/open-commercial-case") {
-      opened.push(JSON.parse(String((init as RequestInit | undefined)?.body ?? "{}")));
-      return Promise.resolve(new Response(JSON.stringify({ command: "open_commercial_case", opportunity_id: "caso-nuevo",
+    if (path === "/v2/commands/complete-case-from-sent-quote") {
+      completed.push(JSON.parse(String((init as RequestInit | undefined)?.body ?? "{}")));
+      return Promise.resolve(new Response(JSON.stringify({ command: "complete_case_from_sent_quote", opportunity_id: "caso-nuevo",
         opportunity_version: 1, idempotency_key: "k", command_receipt_id: "r", replayed: false }),
         { status: 200, headers: { "Content-Type": "application/json" } }));
     }
@@ -131,15 +132,17 @@ describe("Operaciones", () => {
 
 
 describe("Operaciones · cotizaciones enviadas sin caso", () => {
-  it("lists them by number and opens a case on the email, then goes to it", async () => {
+  it("offers «Completar…» with the institution the PDF names, and goes to the case it completed", async () => {
     respond();
     const navigate = vi.fn();
     renderOps("sales", undefined, navigate);
     fireEvent.click(await screen.findByRole("button", { name: "Por decidir" }));
     expect(screen.getByText(/Cotización 09877-26/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Abrir caso para la cotización 09877-26" }));
+    fireEvent.click(screen.getByRole("button", { name: "Completar la cotización 09877-26" }));
+    expect(screen.getByLabelText("Institución")).toHaveValue("Instituto Ficticio (IF)");
+    fireEvent.click(screen.getByRole("button", { name: "Completar" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("oportunidades", "caso-nuevo"));
-    expect(opened[0]).toMatchObject({ title: "Cotización 09877-26", origin_source_record_id: "s-1" });
+    expect(completed[0]).toMatchObject({ source_record_id: "s-1", new_organization_name: "Instituto Ficticio (IF)" });
   });
 
   it("does not offer it to a viewer", async () => {
@@ -147,6 +150,6 @@ describe("Operaciones · cotizaciones enviadas sin caso", () => {
     renderOps("viewer");
     fireEvent.click(await screen.findByRole("button", { name: "Por decidir" }));
     expect(screen.getByText(/Cotización 09877-26/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Abrir caso/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Completar/ })).not.toBeInTheDocument();
   });
 });

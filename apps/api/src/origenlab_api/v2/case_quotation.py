@@ -416,9 +416,11 @@ def record_case_quotation(
         {
             "opportunity_id": case["id"],
             "quote_number": fields["quote_number"],
-            # The operator read this number on the document; it is printed, never minted.
-            "printed_quote_numbers": [fields["quote_number"]],
-            "quote_number_derivation": None,
+            # The operator read this number on the document; it is printed, never minted. A caller
+            # that derived it from the file name (`case_sent_quote.py`) passes the printed token and
+            # how the number was derived, as the email rules record it.
+            "printed_quote_numbers": fields.get("printed_quote_numbers") or [fields["quote_number"]],
+            "quote_number_derivation": fields.get("quote_number_derivation"),
             "document_sha256": fields["document_sha256"],
             "sent_at": sent_at,
             "origin_source_record_id": message["id"],

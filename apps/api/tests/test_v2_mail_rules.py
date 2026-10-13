@@ -864,22 +864,22 @@ def test_r9_is_automatic_and_undone_like_r1() -> None:
 # ------------------------------------------------------------------ R10: the PDF names an institution the CRM lacks
 def test_r10_proposes_an_institution_por_confirmar_with_its_case_in_enviada() -> None:
     from origenlab_api.v2.mail_rules_auto import AUTOMATIC_RULES
-    action = only(Snapshot(evidence=(r9_mail("CN09876-Otra Institución (OTRA).pdf"),), cases=(), organizations=(org(),)))
-    assert (action.rule_id, action.mode, action.organization_name) == ("R10", "auto", "Otra Institución (OTRA)")
+    action = only(Snapshot(evidence=(r9_mail("CN09876-Instituto Otro (OTRA).pdf"),), cases=(), organizations=(org(),)))
+    assert (action.rule_id, action.mode, action.organization_name) == ("R10", "auto", "Instituto Otro (OTRA)")
     assert "R10" not in AUTOMATIC_RULES  # a person presses «Aplicar», as for R4
     names = [c["command"] for c in action.commands]
     assert names == ["register_mail_organization", "open_commercial_case", "add_case_organization",
                      "advance_case_stage", "advance_case_stage", "advance_case_stage", "record_historical_quotation"]
     assert action.commands[0]["inputs"]["domain"] is None
-    assert action.commands[0]["inputs"]["name"] == "Otra Institución (OTRA)"
+    assert action.commands[0]["inputs"]["name"] == "Instituto Otro (OTRA)"
     assert action.commands[2]["inputs"]["organization_id"] == "@organization"
     assert action.commands[-2]["inputs"]["stage"] == "quoting"
 
 
 def test_r10_never_claims_one_name_twice_in_a_pass_and_a_bare_file_name_stays_r8() -> None:
-    a = r9_mail("CN09876-Otra Institución (OTRA).pdf", id="e-a")
-    b = r9_mail("CN09877-Otra Institución (OTRA).pdf", id="e-b",
-                documents=(MailDocument(filename="CN09877-Otra Institución (OTRA).pdf", sha256=PDF_SHA, cn_tokens=("CN09877",)),))
+    a = r9_mail("CN09876-Instituto Otro (OTRA).pdf", id="e-a")
+    b = r9_mail("CN09877-Instituto Otro (OTRA).pdf", id="e-b",
+                documents=(MailDocument(filename="CN09877-Instituto Otro (OTRA).pdf", sha256=PDF_SHA, cn_tokens=("CN09877",)),))
     first, second = plan(Snapshot(evidence=(a, b), cases=(), organizations=()))
     assert (first.rule_id, first.mode) == ("R10", "auto")
     assert (second.rule_id, second.mode) == ("R10", "proposal")
@@ -915,3 +915,14 @@ def test_r9_matches_the_institution_segment_after_a_person() -> None:
                            cases=(case(id="c-e", organization_id="o-e"),),
                            organizations=(org(id="o-e", name="Empresa Ficticia SA", domains=()),)))
     assert (action.rule_id, action.mode, action.case_id) == ("R9", "auto", "c-e")
+
+
+def test_a_person_written_before_the_institution_in_one_part_is_never_the_institution() -> None:
+    from origenlab_api.v2.mail_rules import institution_segment
+    # No dash between the person and the institution: the part does not start with its marker.
+    assert institution_segment("Pedro Ficticio Universidad Ficticia") is None
+    assert institution_segment("Pedro Ficticio (UFI)") is None
+    # One part that starts with what it is stays an institution; after a dash the person is split off.
+    assert institution_segment("Instituto Ficticio de Ensayos (IFDE)") == "Instituto Ficticio de Ensayos (IFDE)"
+    assert institution_segment("Pedro Ficticio - Empresa Ficticia SA") == "Empresa Ficticia SA"
+

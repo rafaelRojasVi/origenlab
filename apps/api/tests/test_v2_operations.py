@@ -120,5 +120,9 @@ def test_sent_quotes_without_case_read_the_number_from_the_pdf_and_skip_known_on
     ]
     items = op.sent_quote_items(rows, existing_numbers={"09876-26"})
     assert items == [{"source_record_id": "s-3", "quote_number": "09877-26",
-                      "sent_at": "2026-10-03T15:00:00+00:00", "thread_id": "t-3"}]
+                      "sent_at": "2026-10-03T15:00:00+00:00", "thread_id": "t-3", "suggested_institution": None}]
+    named = op.sent_quote_items([{"source_record_id": "s-9", "sent_at": "2026-10-03T15:00:00+00:00", "thread_id": None,
+                                  "filename": "CN09870-Persona Ficticia-Empresa Ficticia SA.pdf"}], set())
+    # Only the institution part leaves the API, never the person before it.
+    assert named[0]["suggested_institution"] == "Empresa Ficticia SA"
     assert "filename" not in items[0]  # PDF names can hold a person's name

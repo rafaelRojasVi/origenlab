@@ -58,6 +58,7 @@ from origenlab_api.v2.case_documents import (
 from origenlab_api.v2.case_commands import (
     DISCARDED_BY_CORRECTION,
     ADD_CASE_ORGANIZATION,
+    COMPLETE_CASE_FROM_SENT_QUOTE,
     ADVANCE_CASE_STAGE,
     LINK_CASE_EVIDENCE,
     OPEN_COMMERCIAL_CASE,
@@ -74,6 +75,7 @@ from origenlab_api.v2.case_commands import (
     stage_transition_allowed,
 )
 from origenlab_api.v2.case_quotation import record_case_quotation
+from origenlab_api.v2.case_sent_quote import complete_case_from_sent_quote
 from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
@@ -1087,6 +1089,8 @@ class V2CaseCommandRepository(CommandTransaction):
         # `case_quotation.py`), as `record_case_won` is: no quote SQL lives in this module.
         RESOLVE_CURRENT_REVISION: resolve_current_revision,
         RECORD_CASE_QUOTATION: record_case_quotation,
+        # «Completar con la cotización del correo»: the writers above, chained (`case_sent_quote.py`).
+        COMPLETE_CASE_FROM_SENT_QUOTE: complete_case_from_sent_quote,
         # A case's documents (its purchase order), in the module that owns their SQL.
         ATTACH_CASE_DOCUMENT: attach_case_document,
         REMOVE_CASE_DOCUMENT: remove_case_document,

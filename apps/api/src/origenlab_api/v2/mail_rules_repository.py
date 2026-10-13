@@ -662,55 +662,7 @@ class MailRulesRepository(V2CaseCommandRepository):
 
     def _register_mail_organization(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                                     receipt_id: str) -> dict[str, Any]:
-        """An institution «por confirmar» (`machine_proposed`), named by its domain (R4) or by the
-        name a quote PDF gives it (R10, no domain), with the email it came from. A person confirms,
-        renames or archives it later."""
-        domain = str(fields["domain"]).strip().lower() if fields.get("domain") else None
-        if domain is not None:
-            cur.execute(
-                "select d.organization_id::text from crm.organization_domain d join crm.organization o on o.id = d.organization_id "
-                "where d.domain_norm = %s and d.removed_at is null and o.status = 'active'",
-                (domain,),
-            )
-            if cur.fetchone() is not None:
-                raise CommandRefused(409, "domain_already_known", f"{domain} already belongs to an institution")
-        else:
-            cur.execute("select 1 from crm.organization where status = 'active' and lower(name) = lower(%s)",
-                        (fields["name"],))
-            if cur.fetchone() is not None:
-                raise CommandRefused(409, "organization_name_already_known",
-                                     f"{fields['name']} already names an institution")
-        cur.execute(
-            """
-            insert into crm.organization (name, kind, confirmation, origin_source_record_id, note)
-            values (%s, 'institution', 'machine_proposed', %s, %s)
-            returning id::text as id, version
-            """,
-            (fields["name"], fields["origin_source_record_id"], fields["note"]),
-        )
-        org = self._row(cur)
-        assert org is not None  # noqa: S101
-        events = [self._append_event(
-            cur, aggregate_kind="organization", aggregate_id=org["id"], event_type="organization.created",
-            payload={"name": fields["name"], "kind": "institution", "confirmation": "machine_proposed",
-                     "origin_source_record_id": fields["origin_source_record_id"], "note": fields["note"]},
-            operator=operator, receipt_id=receipt_id,
-        )]
-        if domain is not None:
-            cur.execute(
-                """
-                insert into crm.organization_domain (organization_id, domain_norm, scope, origin_source_record_id)
-                values (%s, %s, 'shared', %s)
-                """,
-                (org["id"], domain, fields["origin_source_record_id"]),
-            )
-            events.append(self._append_event(
-                cur, aggregate_kind="organization", aggregate_id=org["id"], event_type="organization.domain_added",
-                payload={"organization_id": org["id"], "domain_norm": domain, "scope": "shared"},
-                operator=operator, receipt_id=receipt_id,
-            ))
-        return {"command": REGISTER_MAIL_ORGANIZATION, "organization_id": org["id"],
-                "organization_version": int(org["version"]), "event_ids": events}
+        return register_machine_organization(self, cur, operator, fields, receipt_id)
 
     def _unlink_case_evidence(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                               receipt_id: str) -> dict[str, Any]:
@@ -809,6 +761,59 @@ _RESULT_KEYS = ("opportunity_id", "opportunity_version", "opportunity_evidence_i
                 "organization_version", "quote_id", "quote_revision_id", "stage", "previous_stage")
 
 
+def register_machine_organization(repo: Any, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
+                                  receipt_id: str) -> dict[str, Any]:
+    """An institution «por confirmar» (`machine_proposed`), named by its domain (R4) or by the
+    name a quote PDF gives it (R10, no domain), with the email it came from. A person confirms,
+    renames or archives it later."""
+    domain = str(fields["domain"]).strip().lower() if fields.get("domain") else None
+    if domain is not None:
+        cur.execute(
+            "select d.organization_id::text from crm.organization_domain d join crm.organization o on o.id = d.organization_id "
+            "where d.domain_norm = %s and d.removed_at is null and o.status = 'active'",
+            (domain,),
+        )
+        if cur.fetchone() is not None:
+            raise CommandRefused(409, "domain_already_known", f"{domain} already belongs to an institution")
+    else:
+        cur.execute("select 1 from crm.organization where status = 'active' and lower(name) = lower(%s)",
+                    (fields["name"],))
+        if cur.fetchone() is not None:
+            raise CommandRefused(409, "organization_name_already_known",
+                                 f"{fields['name']} already names an institution")
+    cur.execute(
+        """
+        insert into crm.organization (name, kind, confirmation, origin_source_record_id, note)
+        values (%s, 'institution', 'machine_proposed', %s, %s)
+        returning id::text as id, version
+        """,
+        (fields["name"], fields["origin_source_record_id"], fields["note"]),
+    )
+    org = repo._row(cur)
+    assert org is not None  # noqa: S101
+    events = [repo._append_event(
+        cur, aggregate_kind="organization", aggregate_id=org["id"], event_type="organization.created",
+        payload={"name": fields["name"], "kind": "institution", "confirmation": "machine_proposed",
+                 "origin_source_record_id": fields["origin_source_record_id"], "note": fields["note"]},
+        operator=operator, receipt_id=receipt_id,
+    )]
+    if domain is not None:
+        cur.execute(
+            """
+            insert into crm.organization_domain (organization_id, domain_norm, scope, origin_source_record_id)
+            values (%s, %s, 'shared', %s)
+            """,
+            (org["id"], domain, fields["origin_source_record_id"]),
+        )
+        events.append(repo._append_event(
+            cur, aggregate_kind="organization", aggregate_id=org["id"], event_type="organization.domain_added",
+            payload={"organization_id": org["id"], "domain_norm": domain, "scope": "shared"},
+            operator=operator, receipt_id=receipt_id,
+        ))
+    return {"command": REGISTER_MAIL_ORGANIZATION, "organization_id": org["id"],
+            "organization_version": int(org["version"]), "event_ids": events}
+
+
 def _absorb(ctx: dict[str, Any], created: dict[str, Any], command: str, result: dict[str, Any]) -> None:
     if result.get("opportunity_id"):
         ctx["case"] = result["opportunity_id"]
@@ -835,4 +840,5 @@ def _is_database_error(exc: Exception) -> bool:
     return isinstance(exc, psycopg.Error)
 
 
-__all__ = ["APPLY_COMMAND", "DISCARDED_BY_CORRECTION", "MailRulesRepository", "UNDO_COMMAND", "read_snapshot"]
+__all__ = ["APPLY_COMMAND", "DISCARDED_BY_CORRECTION", "MailRulesRepository", "UNDO_COMMAND", "read_snapshot",
+           "register_machine_organization"]

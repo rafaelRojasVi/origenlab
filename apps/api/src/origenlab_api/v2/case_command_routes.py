@@ -48,6 +48,7 @@ from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
 from origenlab_api.v2.case_commands import (
     ADD_CASE_ORGANIZATION,
     ADVANCE_CASE_STAGE,
+    COMPLETE_CASE_FROM_SENT_QUOTE,
     LINK_CASE_EVIDENCE,
     OPEN_COMMERCIAL_CASE,
     RECORD_CASE_INTEREST,
@@ -57,6 +58,7 @@ from origenlab_api.v2.case_commands import (
     SET_CASE_ORGANIZATION_ROLE,
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
+    CompleteCaseFromSentQuoteBody,
     LinkCaseEvidenceBody,
     OpenCommercialCaseBody,
     RecordCaseInterestBody,
@@ -340,3 +342,23 @@ def record_case_quotation(
         operator=operator,
         idempotency_key=idempotency_key,
     )
+
+
+@case_command_router.post("/complete-case-from-sent-quote")
+def complete_case_from_sent_quote(
+    body: CompleteCaseFromSentQuoteBody,
+    operator: Deciding,
+    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """«Completar con la cotización del correo»: from a quote PDF contacto@ sent, a case in «Enviada»
+    with its institution and its quote, in one transaction (`case_sent_quote.py`). Without
+    `opportunity_id` a case is opened on the message; a new institution is created «por confirmar»."""
+    return _run(
+        command_name=COMPLETE_CASE_FROM_SENT_QUOTE,
+        body=body,
+        repo=repo,
+        operator=operator,
+        idempotency_key=idempotency_key,
+    )
+

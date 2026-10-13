@@ -350,10 +350,17 @@ def quote_file_segments(name: str | None) -> list[str]:
 
 
 def institution_segment(name: str | None) -> str | None:
-    """The one segment that names an institution (R10), or None when none or several do."""
-    marked = [p for p in quote_file_segments(name)
-              if _PARENTHETICAL.search(p) or _INSTITUTION_MARKER.search(fold(p))]
-    return marked[0] if len(marked) == 1 else None
+    """The one segment that names an institution (R10), or None when none or several do.
+
+    A name with no dash is one part that may still hold a person («Persona Universidad X»,
+    «Persona (SIGLA)»): it counts only when it *starts* with a kind of institution or legal form."""
+    parts = quote_file_segments(name)
+    marked = [p for p in parts if _PARENTHETICAL.search(p) or _INSTITUTION_MARKER.search(fold(p))]
+    if len(marked) != 1:
+        return None
+    if len(parts) == 1 and not _INSTITUTION_MARKER.match(fold(marked[0])):
+        return None
+    return marked[0]
 
 
 def institution_keys(name: str | None) -> set[str]:

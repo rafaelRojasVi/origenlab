@@ -48,6 +48,8 @@ export interface SentQuoteWithoutCase {
   quote_number: string;
   sent_at: string | null;
   thread_id: string | null;
+  /** The institution part of the PDF name (legal form / kind / «(SIGLA)»), or null; never a person. */
+  suggested_institution: string | null;
 }
 
 export interface OperationsPayload {

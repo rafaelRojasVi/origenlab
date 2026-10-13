@@ -2673,3 +2673,16 @@ never leaves the API). «Abrir caso» (sales/admin, case commands enabled) opens
 NNNNN-YY» on that email and goes to it; the institution and «Registrar cotización» follow with the
 existing case buttons. Covers what R1–R10 cannot place (a free-mail customer named only as a person).
 
+### 2.7.109 «Completar con la cotización del correo»: one click from a sent quote to «Enviada», 2026-10-13 — built, deploys on merge
+
+New case command `complete-case-from-sent-quote` (sales/admin, `Idempotency-Key`, mandatory note):
+from a Gmail message contacto@ sent with exactly one quote PDF, in **one transaction** — open a case
+on it when none is named, take an existing institution or create one «por confirmar» (the shared
+writer R4/R10 use, now `register_machine_organization`; an active institution with the same name is
+reused), set it as requesting institution, walk the case along the ordinary edges to `quoting`, and
+record the quote with `record_case_quotation` (number read from the PDF's CN token and sending year,
+never typed). Any refusal rolls everything back. The dashboard offers it in the case panel (an open
+case with no quote whose emails carry one unrecorded quote PDF) and in Operaciones → Por decidir
+(replacing «Abrir caso»), with the institution prefilled from the PDF name (institution part only).
+The proxy allows the POST. Not included: creating the contact person from the email.
+
