@@ -236,7 +236,7 @@ def test_proposal_is_not_accepted_until_confirmed_or_edited(env) -> None:
 
 def test_duplicate_cn_is_only_a_warning(env) -> None:
     staging, ledger, *_ = env
-    one, two = staging.item(1001), staging.item(1002)
+    one, _two = staging.item(1001), staging.item(1002)
     assert qr.WARNING_SHARED_CN in one.warnings and one.same_number_other_emails == (1002,)
     assert qr.WARNING_SHARED_DOCUMENT in one.warnings and one.same_document_other_emails == (1002,)
     first = _confirm(staging, ledger, 1001)

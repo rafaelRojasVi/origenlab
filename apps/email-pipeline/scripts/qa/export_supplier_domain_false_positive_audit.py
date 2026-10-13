@@ -104,7 +104,6 @@ def _institutional_false_positive_signals(domain_norm: str, trade_name: str | No
     if re.search(r"\.gob\.|\.gov\.|\.mil\.|\.int$", d) or d.endswith(".gov"):
         reasons.append("gov_style_tld")
 
-    blob = f"{d} {n}"
     for kw in _DOMAIN_KEYWORDS:
         if kw in d:
             reasons.append(f"domain_keyword:{kw}")

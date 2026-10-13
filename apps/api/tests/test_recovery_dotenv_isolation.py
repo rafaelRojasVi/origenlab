@@ -317,7 +317,7 @@ def test_email_pipeline_load_settings_respects_recovery_env(
             [
                 f"ORIGENLAB_POSTGRES_URL={FAKE_PG}",
                 f"ORIGENLAB_GMAIL_OAUTH_CLIENT_JSON={FAKE_GMAIL}",
-                f"ORIGENLAB_GMAIL_WORKSPACE_USER=fake@example.cl",
+                "ORIGENLAB_GMAIL_WORKSPACE_USER=fake@example.cl",
             ]
         )
         + "\n",
@@ -443,7 +443,6 @@ def test_production_exclusion_does_not_mutate_environ(
     assert not sqlite_paths_equivalent(cand, production)
 
     def _worker() -> dict[str, str]:
-        snap = dict(os.environ)
         assert_not_production_sqlite(cand, settings=settings)
         return dict(os.environ)
 

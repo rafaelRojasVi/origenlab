@@ -881,7 +881,6 @@ def build_summary(
     out_dir: Path,
     bucket_rows: list[dict[str, Any]] | None = None,
 ) -> str:
-    modules = result.modules
     data = build_json_summary(result, out_dir)
     if bucket_rows is None:
         bucket_rows = data["bucket_summary"]

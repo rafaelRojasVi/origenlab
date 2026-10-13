@@ -225,7 +225,7 @@ def build_html(summary: dict) -> str:
         ensure_ascii=False,
     )
     folder_display = escape(summary.get("folder_display") or summary["run_id"])
-    title = f"OrigenLab — informe de archivo de correo"
+    title = "OrigenLab — informe de archivo de correo"
 
     rows_year = "".join(
         f"<tr><td>{escape(str(x['year']))}</td><td>{x['count']:,}</td></tr>"

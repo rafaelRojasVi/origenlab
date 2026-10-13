@@ -916,10 +916,10 @@ def test_add_revise_archive_note_chain(disposable_database, world):
         assert cur.fetchone()[0] == 2
 
     # Archive by a different sales operator should fail (not author, not admin)
-    other_person = _run(disposable_database, world["admin"], "create-person", {
+    _run(disposable_database, world["admin"], "create-person", {
         "display_name": f"OtherSales {tag}", "note": "other",
     })
-    other_op = OperatorIdentity(
+    OperatorIdentity(
         operator_id=world["admin"].operator_id,  # admin for creation, but simulate a second sales op
         email_norm=world["admin"].email_norm,
         display_name="Admin",

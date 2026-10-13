@@ -131,7 +131,7 @@ def test_manifest_privacy_rejects_absolute_paths_and_emails() -> None:
 
 def test_sanitize_unexpected_exception_messages() -> None:
     msg = sanitize_error_message(
-        OSError(f"failed /home/rafael/data/emails.sqlite for user@example.org")
+        OSError("failed /home/rafael/data/emails.sqlite for user@example.org")
     )
     assert "/home/" not in msg
     assert "@" not in msg or "<email>" in msg
@@ -904,7 +904,7 @@ def test_cli_apply_happy_path(synth_dirs: tuple[Path, Path, Path]) -> None:
 def test_cli_sanitizes_unexpected_exceptions(synth_dirs: tuple[Path, Path, Path]) -> None:
     src_dir, _dst, _lock = synth_dirs
     source = src_dir / "source.sqlite"
-    dest = src_dir / "copy.sqlite"
+    src_dir / "copy.sqlite"
     _build_wal_db(source, rows=5)
     with patch(
         "origenlab_email_pipeline.qa.sqlite_online_backup.run_online_backup",

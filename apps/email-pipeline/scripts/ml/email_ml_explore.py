@@ -98,7 +98,6 @@ def main() -> None:
     texts = []
     for r in iterator:
         subj, snd, body = r[1] or "", r[2] or "", (r[3] or "")[:1200]
-        blob = f"{subj}\n{snd}\n{body}"
         rows.append({"id": r[0], "subject": subj[:120], "sender": snd[:80], "snippet": body[:200]})
         texts.append(f"Subject: {subj}\nFrom: {snd}\n{body}")
     conn.close()
@@ -147,7 +146,7 @@ def main() -> None:
     n_agg = min(k + 2, len(rows) // 3)
     n_agg = max(3, n_agg)
     agg = AgglomerativeClustering(n_clusters=n_agg, metric="cosine", linkage="average")
-    labels_agg = agg.fit_predict(Xn)
+    agg.fit_predict(Xn)
 
     hdb_info = None
     try:

@@ -63,7 +63,6 @@ def failure_bucket_for_row(rr: ReviewRow) -> str:
     Uses notes keywords first, then scores/decision.
     """
     note = (rr.notes or "").lower()
-    dec = rr.reviewer_decision or ""
 
     # notes-driven keyword mapping
     kw_map = [

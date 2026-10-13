@@ -591,7 +591,7 @@ def test_postgres_snapshot_includes_redacted_active_current_dir_info(
         "origenlab_api.settings", fromlist=["get_settings"]
     ).get_settings
     get_settings.cache_clear()
-    settings = Settings(
+    Settings(
         active_current=_healthy_fixture(tmp_path),
         api_backend="postgres",
         postgres_url="postgresql://127.0.0.1:5432/origenlab_test",

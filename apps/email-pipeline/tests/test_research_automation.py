@@ -1350,7 +1350,7 @@ def test_api_request_and_response_summaries_written(tmp_path: Path, monkeypatch)
             {},
         ),
     )
-    artifacts = ra.run_research_automation(
+    ra.run_research_automation(
         model=ra.DEFAULT_HEAVY_MODEL,
         prompt_file=prompt,
         out_dir=tmp_path / "out",

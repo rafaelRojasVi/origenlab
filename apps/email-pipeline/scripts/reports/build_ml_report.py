@@ -52,8 +52,8 @@ def main() -> None:
     equipment = data.get("equipment_model_mentions") or []
     # Chart.js: top 20 by count
     eq_top = equipment[:20]
-    eq_labels = [f"{e.get('family','')} — {e.get('span','')}"[:50] for e in eq_top]
-    eq_counts = [e.get("count", 0) for e in eq_top]
+    [f"{e.get('family','')} — {e.get('span','')}"[:50] for e in eq_top]
+    [e.get("count", 0) for e in eq_top]
 
     kmeans_clusters = data.get("kmeans_clusters") or {}
     # Sort by cluster size (desc)

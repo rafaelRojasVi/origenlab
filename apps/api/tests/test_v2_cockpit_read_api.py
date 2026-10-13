@@ -350,8 +350,8 @@ def world(disposable_database):
         gmail_payload = {
             "gmail_message_id": f"msg-{tag}",
             "gmail_thread_id": f"thr-{tag}",
-            "sender": f"ventas@example.test",
-            "recipients": f"compras@cliente.invalid",
+            "sender": "ventas@example.test",
+            "recipients": "compras@cliente.invalid",
             "subject_raw": f"Cotizacion prueba {tag}",
             "sent_at": "2026-05-01T10:00:00-04:00",
             "documents": [

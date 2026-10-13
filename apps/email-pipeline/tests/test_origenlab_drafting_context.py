@@ -66,7 +66,7 @@ def test_build_prompt_blocks_origenlab_includes_company_facts() -> None:
 
 
 def test_tatiana_profile_no_role_noise_in_style_keys() -> None:
-    ctx = load_origenlab_drafting_context()
+    load_origenlab_drafting_context()
     ex = RetrievedExample(
         example_id="e1",
         score=1.0,

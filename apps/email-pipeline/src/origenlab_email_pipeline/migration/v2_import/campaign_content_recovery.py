@@ -404,7 +404,7 @@ def _attribute_campaign(
 
     # Cross-campaign ambiguity: check that no copy is the nearest candidate for two different campaigns
     # (this check is global; here we just track which copies were chosen)
-    matched_copy_ids = {c.email_id for c in chosen.values() if c is not None}
+    {c.email_id for c in chosen.values() if c is not None}
 
     # Check: if no recipient match at all (all unmatched because no_copy or copy_outside_window),
     # the campaign is not_recovered (not ambiguous)

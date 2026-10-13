@@ -94,7 +94,7 @@ def list_retire_candidates(
 def count_reactivatable_by_normalize(conn: sqlite3.Connection) -> int:
     """Leads currently retired but whose key exists again in raw (next normalize will reactivate)."""
     row = conn.execute(
-        f"""
+        """
         SELECT COUNT(*) FROM lead_master AS lm
         WHERE lm.upstream_sync_state = ?
           AND EXISTS (

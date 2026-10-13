@@ -546,13 +546,13 @@ def world(disposable_database: str) -> dict[str, str]:
         )
 
         # External identifier (one active, one soft-removed)
-        ident_active = w["ident_active"] = _insert(
+        w["ident_active"] = _insert(
             cur,
             "insert into crm.external_identifier (organization_id, scheme, value_norm)"
             " values (%s, 'rut', %s)",
             (org, f"CL-{tag}-ACTIVE"),
         )
-        ident_removed = w["ident_removed"] = _insert(
+        w["ident_removed"] = _insert(
             cur,
             "insert into crm.external_identifier (organization_id, scheme, value_norm,"
             " removed_at, removed_by_operator_id, remove_reason)"
@@ -561,13 +561,13 @@ def world(disposable_database: str) -> dict[str, str]:
         )
 
         # Domain (one active, one removed)
-        domain_active = w["domain_active"] = _insert(
+        w["domain_active"] = _insert(
             cur,
             "insert into crm.organization_domain (organization_id, domain_norm, scope)"
             " values (%s, %s, 'shared')",
             (org, f"inst-{tag}.test"),
         )
-        domain_removed = w["domain_removed"] = _insert(
+        w["domain_removed"] = _insert(
             cur,
             "insert into crm.organization_domain (organization_id, domain_norm, scope,"
             " removed_at, removed_by_operator_id, remove_reason)"
@@ -576,7 +576,7 @@ def world(disposable_database: str) -> dict[str, str]:
         )
 
         # Classification
-        class_id = w["class"] = _insert(
+        w["class"] = _insert(
             cur,
             "insert into crm.organization_relationship (organization_id, role, valid_from,"
             " origin_source_record_id)"
@@ -585,7 +585,7 @@ def world(disposable_database: str) -> dict[str, str]:
         )
 
         # Product line link
-        pl = w["pl"] = _insert(
+        w["pl"] = _insert(
             cur,
             "insert into crm.organization_product_line (organization_id, line_id, linked_by_operator_id)"
             " values (%s, 'hielscher', %s)",
@@ -599,7 +599,7 @@ def world(disposable_database: str) -> dict[str, str]:
             " values (%s, 'confirmed', %s)",
             (f"Ana {tag}", op),
         )
-        person2 = w["person2"] = _insert(
+        w["person2"] = _insert(
             cur,
             "insert into crm.person (display_name, confirmation, confirmed_by_operator_id)"
             " values (%s, 'confirmed', %s)",
@@ -614,7 +614,7 @@ def world(disposable_database: str) -> dict[str, str]:
             " values (%s, %s, 'email', %s, %s, 'work', 'confirmed')",
             (person, org, f"ana-{tag}@inst-{tag}.test", f"ana-{tag}@inst-{tag}.test"),
         )
-        cp_inactive = w["cp_inactive"] = _insert(
+        w["cp_inactive"] = _insert(
             cur,
             "insert into crm.contact_point (person_id, kind, value_display, value_norm, usage,"
             " confirmation, status, deactivated_at, deactivated_by_operator_id)"
@@ -623,7 +623,7 @@ def world(disposable_database: str) -> dict[str, str]:
         )
 
         # Affiliation: person → org
-        aff = w["aff"] = _insert(
+        w["aff"] = _insert(
             cur,
             "insert into crm.affiliation (person_id, organization_id, role_title, valid_from,"
             " confirmation, confirmed_by_operator_id)"
@@ -640,7 +640,7 @@ def world(disposable_database: str) -> dict[str, str]:
             (person, op),
         )
         # Revision of note1
-        note2 = w["note2"] = _insert(
+        w["note2"] = _insert(
             cur,
             "insert into crm.note (subject_kind, subject_id, body, author_operator_id,"
             " revision_of_note_id, root_note_id, revision_no)"
@@ -648,7 +648,7 @@ def world(disposable_database: str) -> dict[str, str]:
             (person, op, note1, note1),
         )
         # Archived note (separate chain, not a revision)
-        note3 = w["note3"] = _insert(
+        w["note3"] = _insert(
             cur,
             "insert into crm.note (subject_kind, subject_id, body, author_operator_id,"
             " status, archived_at, archived_by_operator_id, archive_reason, version)"
@@ -678,7 +678,7 @@ def world(disposable_database: str) -> dict[str, str]:
         )
 
         # Campaign recipient referencing the person
-        cr = w["cr"] = _insert(
+        w["cr"] = _insert(
             cur,
             "insert into outbound.campaign_recipient (campaign_id, contact_point_id, person_id,"
             " address_norm, state)"

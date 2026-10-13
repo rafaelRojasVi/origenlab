@@ -176,7 +176,7 @@ class PostgresCustomerQuoteIntakeResolutionRepository:
         )
 
     def _exists(self, sql: str, value: str) -> bool:
-        pg = require_psycopg()
+        require_psycopg()
         with postgres_connection(self._settings) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, {"value": value})

@@ -204,24 +204,6 @@ def write_operator_csv(rows: list[dict[str, str]], path: Path) -> None:
 
 def aligned_ab_queue_rows(operator_rows: list[dict[str, str]]) -> list[dict[str, str]]:
     """Equipment-only replacement for buyer_opportunity_ab_queue."""
-    ab_fields = [
-        "account",
-        "contact_name",
-        "contact_email",
-        "subject",
-        "latest_date",
-        "product_line",
-        "warm_signal",
-        "current_status",
-        "recommended_next_action",
-        "priority",
-        "owner_note",
-        "gmail_search_terms",
-        "tender_codes",
-        "source_type",
-        "ab_queue",
-        "suppression_flags",
-    ]
     rows: list[dict[str, str]] = []
     for r in operator_rows:
         rows.append(

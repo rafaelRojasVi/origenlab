@@ -320,7 +320,7 @@ class _PromoCursor:
             and "RETURNING id, case_key" in sql
         ):
             assert params is not None
-            updated_by = str(params[0])
+            str(params[0])
             source = str(params[1])
             keys = {str(k) for k in params[2]}
             closed: list[tuple[int, str]] = []

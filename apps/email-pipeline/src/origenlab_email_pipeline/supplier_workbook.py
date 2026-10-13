@@ -346,7 +346,6 @@ def _url_hostname(value: str) -> str | None:
 
 def infer_channel_type(key: str, value: str) -> str:
     kl = key.lower()
-    v = value.lower()
     if "@" in value:
         return "email"
     linkedin_host = _url_hostname(value)

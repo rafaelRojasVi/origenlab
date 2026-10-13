@@ -63,7 +63,7 @@ def main() -> int:
     for name, c in norm_counter.most_common(args.top):
         print(f"  {c:6d}  {name[:100]!r}")
     print()
-    print(f"Sample suspect rows (junk/missing org but has domain/web/email), max 15:")
+    print("Sample suspect rows (junk/missing org but has domain/web/email), max 15:")
     for row in suspect[:15]:
         print(f"  id={row[0]} org={row[1]!r} {row[2]}")
 

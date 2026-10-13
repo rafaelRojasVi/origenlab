@@ -389,7 +389,7 @@ def world(disposable_database: str) -> dict[str, str]:
     with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
         cur.execute("set role origenlab_owner")
 
-        op = w["op"] = _insert(
+        w["op"] = _insert(
             cur,
             "insert into platform.operator (auth_user_id, email_norm, display_name, role, status)"
             " values (gen_random_uuid(), %s, 'CC Test Op', 'sales', 'active')",
@@ -410,7 +410,6 @@ def world(disposable_database: str) -> dict[str, str]:
             " values ('migration_manifest', %s, %s::jsonb, %s)",
             (f"mm:camp-a:{tag}", camp_a_payload, f"v1://campaign/a/{tag}"),
         )
-        dummy_sha = "a" * 64
         camp_a = w["camp_a"] = _insert(
             cur,
             "insert into outbound.campaign (name, status, mailbox_id, origin_source_record_id,"
@@ -438,7 +437,7 @@ def world(disposable_database: str) -> dict[str, str]:
             "  'campaign-content-attribution/2026-09-30.v1', 1, %s)",
             (camp_a, SENT_HTML_V1, SENT_HTML_SHA_V1, NORM_SHA_V1, content_sr),
         )
-        content_v2 = w["content_v2"] = _insert(
+        w["content_v2"] = _insert(
             cur,
             "insert into outbound.campaign_content"
             " (campaign_id, content_kind, variant_no, body_html, body_html_sha256,"
@@ -473,7 +472,7 @@ def world(disposable_database: str) -> dict[str, str]:
         )
 
         # Campaign content message: linked to attempt
-        msg_linked = w["msg_linked"] = _insert(
+        w["msg_linked"] = _insert(
             cur,
             "insert into outbound.campaign_content_message"
             " (campaign_content_id, send_attempt_id, rfc822_message_id,"
@@ -482,7 +481,7 @@ def world(disposable_database: str) -> dict[str, str]:
             (content_v1, attempt, f"<linked-{tag}@mail.test>"),
         )
         # Campaign content message: NOT linked (no send_attempt_id)
-        msg_unlinked = w["msg_unlinked"] = _insert(
+        w["msg_unlinked"] = _insert(
             cur,
             "insert into outbound.campaign_content_message"
             " (campaign_content_id, rfc822_message_id,"
@@ -500,7 +499,7 @@ def world(disposable_database: str) -> dict[str, str]:
             (f"mm:camp-b:{tag}", json.dumps({"v1_campaign_id": v1_b_id}),
              f"v1://campaign/b/{tag}"),
         )
-        camp_b = w["camp_b"] = _insert(
+        w["camp_b"] = _insert(
             cur,
             "insert into outbound.campaign (name, status, mailbox_id, origin_source_record_id,"
             " content_frozen_at, content_sha256, max_sends)"
@@ -521,7 +520,7 @@ def world(disposable_database: str) -> dict[str, str]:
         )
 
         # Campaign C: native draft, no content (content_frozen_at null → not_frozen)
-        camp_c = w["camp_c"] = _insert(
+        w["camp_c"] = _insert(
             cur,
             "insert into outbound.campaign (name, status, mailbox_id, max_sends,"
             " recontact_interval_days)"
