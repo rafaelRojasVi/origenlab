@@ -33,6 +33,8 @@ def workflow_paths(path: Path) -> list[str]:
         if re.match(r"^\s*paths:\s*$", line):
             inside = True
             continue
+        if inside and re.match(r"^\s*#", line):
+            continue  # a comment inside the list does not end it
         m = re.match(r'^\s*-\s*"([^"]+)"\s*$', line)
         if inside and m:
             out.append(m.group(1))
@@ -47,8 +49,8 @@ def sample(glob: str) -> str:
 
 
 class TargetsFor(unittest.TestCase):
-    def test_api_change_runs_api_only(self):
-        self.assertEqual(changed_apps.targets_for(["apps/api/src/x.py"]), ["api"])
+    def test_api_change_also_runs_worker_which_shares_its_harness(self):
+        self.assertEqual(changed_apps.targets_for(["apps/api/src/x.py"]), ["api", "worker"])
 
     def test_pipeline_change_runs_its_importers(self):
         self.assertEqual(

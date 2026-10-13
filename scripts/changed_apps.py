@@ -18,7 +18,9 @@ ALL = ("api", "dashboard", "email-pipeline", "proxy", "repo", "supabase", "web",
 # Every matching rule contributes its targets. `*` crosses `/` in fnmatch, so "apps/api/*"
 # covers the whole tree and "apps/dashboard/*" never matches "apps/dashboard-proxy/...".
 RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("apps/api/*", ("api",)),
+    # The worker imports the api's case archive and shares its database test harness.
+    ("apps/api/*", ("api", "worker")),
+    ("render.yaml", ("worker",)),
     # api and worker import email-pipeline modules.
     ("apps/email-pipeline/*", ("email-pipeline", "api", "worker")),
     ("apps/worker/*", ("worker",)),
