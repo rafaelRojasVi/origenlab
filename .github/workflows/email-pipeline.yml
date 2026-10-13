@@ -9,48 +9,36 @@ on:
   pull_request:
     paths:
       - "apps/email-pipeline/**"
+      - "scripts/run_pytest.sh"
+      - "scripts/test_db.sh"
+      - "scripts/pytest_plugins/**"
+      - "supabase/migrations/**"
+      - "supabase/roles.sql"
       - ".github/workflows/email-pipeline.yml"
 
+concurrency:
+  group: email-pipeline-${{ github.ref }}
+  # Superseded PR runs are cancelled; main runs never are (the release gate reads them).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # The transactional Postgres files against the V1 test database, then the whole suite in
+  # parallel; the V2 evidence/import proofs run against the disposable V2 cluster.
   test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/email-pipeline
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: origenlab_pg_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d origenlab_pg_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --group dev --group data-tools --group postgres --group lab --frozen
-      - name: Migrate disposable Postgres schema
+      # Not captured: the script's stdout carries the ::add-mask:: commands for the passwords.
+      - name: Start disposable databases
+        run: scripts/test_db.sh up "$RUNNER_TEMP/test-db.env"
+      - name: Test
         env:
-          ALEMBIC_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/origenlab_pg_test
-        run: uv run alembic -c alembic.ini upgrade head
-      - name: Transactional publication Postgres tests
-        env:
-          # Disposable loopback test DB only — never a production URL.
-          ORIGENLAB_POSTGRES_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/origenlab_pg_test
-        run: >
-          uv run pytest -q
-          tests/test_postgres_transactional_publication.py
-          tests/test_sqlite_outbound_sidecars_to_postgres_migrate.py
-          tests/test_sqlite_mart_core_to_postgres_migrate.py
-      - name: Full suite
-        # Leave ORIGENLAB_POSTGRES_TEST_URL unset so unrelated optional PG
-        # integrations that require a preloaded archive stay skip-gated.
-        run: uv run pytest -q
+          OL_TEST_DB_ENV: ${{ runner.temp }}/test-db.env
+        run: make test-email-pipeline
+      - name: Remove the databases
+        if: always()
+        run: scripts/test_db.sh down "$RUNNER_TEMP/test-db.env"

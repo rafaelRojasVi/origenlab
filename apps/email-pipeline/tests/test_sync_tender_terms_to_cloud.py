@@ -775,3 +775,12 @@ def test_promotion_guard_rejects_plain_directory_as_canonical(tmp_path: Path) ->
     assert cp.returncode != 0
     assert "real directory" in cp.stderr
     assert canonical.is_dir() and not canonical.is_symlink()
+
+
+def test_sync_script_never_prunes_the_local_environment() -> None:
+    # `uv sync` without --inexact removes every dependency group it is not given, so running this
+    # script (or the test above that runs it for real) stripped data-tools/lab from the venv.
+    text = _SYNC_SCRIPT.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if line.strip().startswith("uv sync"):
+            assert "--inexact" in line, line

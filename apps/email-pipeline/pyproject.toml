@@ -25,6 +25,8 @@ origenlab = "origenlab_email_pipeline.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "pytest-timeout>=2.3",
+    "pytest-xdist>=3.6",
     { include-group = "postgres" },
 ]
 # Tatiana copilot, research automation, and other OpenAI-backed lab tooling (not daily ops).
@@ -89,3 +91,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/origenlab_email_pipeline"]
+
+[tool.pytest.ini_options]
+# A hung test fails after a minute instead of holding CI until the job timeout.
+timeout = 60
+# scripts/run_pytest.sh runs these alone, after the parallel phase.
+markers = ["serial_db: uses database state every worker shares (cluster roles, a fixed database); runs alone"]

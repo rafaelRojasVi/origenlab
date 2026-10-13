@@ -148,7 +148,7 @@ fi
 # would reject.
 echo "-- Validating local T1 source publication --"
 cd "$PIPE"
-uv sync --group dev >/dev/null 2>&1
+uv sync --inexact --group dev >/dev/null 2>&1
 
 LOCAL_VALIDATION_OUT="$(
   uv run python -c "

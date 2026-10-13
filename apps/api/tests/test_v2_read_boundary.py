@@ -734,6 +734,10 @@ def test_a_bulk_manifest_cannot_return_its_whole_assertion_list() -> None:
     if page.total == 0:
         pytest.skip("the target database holds no migration manifests")
     biggest = max(page.items, key=lambda row: row["assertion_total"])
+    # The cap is only observable on a manifest bigger than it: a disposable database may hold
+    # small fixture manifests other suites staged (evidence is append-only, so they stay).
+    if biggest["assertion_total"] <= V2Repository.CARD_CHILD_LIMIT:
+        pytest.skip("no migration manifest here exceeds CARD_CHILD_LIMIT")
     assert biggest["assertion_total"] > len(biggest["assertions"])
     for row in page.items:
         assert len(row["assertions"]) <= V2Repository.CARD_CHILD_LIMIT

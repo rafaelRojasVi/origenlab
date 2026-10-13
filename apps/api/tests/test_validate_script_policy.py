@@ -13,7 +13,7 @@ def test_validate_script_exists_and_matches_ci_shape() -> None:
     assert _VALIDATE_SCRIPT.is_file()
     text = _VALIDATE_SCRIPT.read_text(encoding="utf-8")
     assert "uv sync --group dev --frozen" in text
-    assert "uv run --frozen pytest tests -q" in text
+    assert "../../scripts/run_pytest.sh api" in text
     assert "ORIGENLAB_API_BACKEND=sqlite" in text
     assert "ORIGENLAB_POSTGRES_URL=" in text
     assert "ALEMBIC_DATABASE_URL=" in text

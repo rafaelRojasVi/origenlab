@@ -103,3 +103,4 @@ reports/out/
 
 # Subagent-driven-development scratch workspace (ledgers, briefs, review packages)
 .superpowers/
+.test-db.env

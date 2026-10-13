@@ -2224,8 +2224,7 @@ proven there.
   in two places. V2 designs an unsubscribe path
   ([`WORKFLOWS.md`](WORKFLOWS.md) §W10, still `[OPEN]`); it is not built.
 - **`apps/email-pipeline/scripts/validate.sh` runs a narrow subset**, not the
-  full pytest suite. Use `scripts/check-all.sh` for anything touching pipeline
-  logic.
+  full pytest suite. `make test-email-pipeline` runs the full suite in parallel.
 
 ### 3.3 Open — needs an operator check, not a code change
 
@@ -2576,3 +2575,7 @@ Validation: both new failure regressions reproduce on the unchanged PR head; the
 ### 2.7.100 An email domain given to the organization it belongs to, 2026-10-12 — built, rehearsed, not run on hosted
 
 `apps/api/scripts/move_domain_to_organization.py`. Owner 2026-10-12: a quote to `uc.cl` opened its case under a new institution «uc.cl» (rule R4: the domain was on no organization), while the CRM already holds the Pontificia Universidad Católica de Chile. The tool moves the domain to the right organization (`remove-organization-domain`, `add-organization-domain`), so R3 matches it from then on; on each case where the stray is the requesting institution it steps the case back to `qualifying` (a case from `qualified` on must keep a requester), demotes the stray to «mentioned», names the right institution, and walks the case back to its stage; a stray left with no case is archived. Each step is the dashboard's own command, keyed so a rerun replays. Rehearsed on a read-only copy of hosted: the `uc.cl` case moved to the PUC at `quoting`, the stray archived, a rerun changed nothing.
+
+### 2.7.101 One way to run the tests, locally and in CI, 2026-10-12 — built, not merged
+
+`make check` runs only the suites a change needs (vs `origin/main`), `make check-all` all of them; the api, worker, email-pipeline, dashboard, proxy and web workflows call the same targets (`supabase.yml` keeps its own steps; `make test-supabase` is their database-free half). Python suites run in parallel (pytest-xdist; 60 s per-test timeout). `make db-up` starts the disposable V2 cluster and a V1 Postgres 16 at the Alembic head, and a run with database tests skipped fails. Measured on a 16-core machine: everything 155 s (api alone 53 s) (was ~6.5 min with the 688 V2 and 142 V1 database tests skipped). New in CI: the api's 142 V1 `commercial.*` Postgres tests and email-pipeline's V2 evidence/import proofs, which no job ran before. Tests that share server-wide state (role memberships, the fixed V2 test database) carry `serial_db` and run alone after the parallel phase.

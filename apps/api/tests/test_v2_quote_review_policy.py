@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib.util
+import sys
 import json
 from pathlib import Path
 
@@ -483,6 +484,9 @@ def _load_script():
     spec = importlib.util.spec_from_file_location("quote_review_policy_dryrun", _SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    # Registered before it runs: its dataclasses resolve their module through sys.modules, so
+    # loading it unregistered only worked when an earlier test had already imported it.
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 

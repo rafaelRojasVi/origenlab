@@ -11,12 +11,14 @@ on:
       - "apps/dashboard-proxy/**"
       - ".github/workflows/dashboard-proxy.yml"
 
+concurrency:
+  group: dashboard-proxy-${{ github.ref }}
+  # Superseded PR runs are cancelled; main runs never are (the release gate reads them).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/dashboard-proxy
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -25,5 +27,5 @@ jobs:
           cache: npm
           cache-dependency-path: apps/dashboard-proxy/package-lock.json
       - run: npm ci
-      - run: npm run validate
-      - run: npm run typecheck
+        working-directory: apps/dashboard-proxy
+      - run: make test-proxy
