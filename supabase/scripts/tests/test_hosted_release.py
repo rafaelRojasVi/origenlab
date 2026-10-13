@@ -178,6 +178,16 @@ class ProductionGates(unittest.TestCase):
         ):
             self.assertFalse(approval.approved(invalid, [], sha, solo_mode=True))
 
+    def test_every_review_check_step_receives_the_selected_review_policy(self):
+        # The post-backup recheck lacked OL_RELEASE_SOLO_MODE and refused the first release (2026-10-13).
+        workflow = (ROOT / ".github/workflows/production-db-migrations.yml").read_text()
+        steps = [s for s in workflow.split("      - name: ")
+                 if "python3 scripts/deploy/check_branch_protection.py" in s
+                 or "python3 scripts/deploy/check_release_approval.py" in s]
+        self.assertGreaterEqual(len(steps), 3)
+        for step in steps:
+            self.assertIn("OL_RELEASE_SOLO_MODE: ${{ vars.OL_RELEASE_SOLO_MODE }}", step, step.splitlines()[0])
+
     def test_solo_mode_reads_the_merger_from_the_pull_request_not_the_commit_list(self):
         # GitHub's /commits/{sha}/pulls list omits merged_by: every solo release was refused (2026-10-13).
         approval = load(ROOT / "scripts/deploy/check_release_approval.py", "check_release_approval_merger")
