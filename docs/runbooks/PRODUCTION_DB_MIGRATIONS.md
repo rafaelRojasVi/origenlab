@@ -70,8 +70,8 @@ for independent decryption/restoration in this audit.
 | Medium | Heartbeat and periodic defer alone do not prove sweep execution; successful job events are deleted. | Narrow Render aggregate sweep-log check after worker deployment, plus SQL eligibility checks. No message bodies/queue arguments queried. |
 | Medium | Source-less outbound bulk sends intentionally lack evidence. Treating all such records as broken processing produces 3,199 false gaps in the sampled window. | Verifier checks source-bearing mail and missing-source inbound mail; isolated SQL regression covers bulk, bounce and requester cases. Source-less outbound non-bulk loss remains indistinguishable without additional capture metadata. |
 | Medium | API Render healthCheckPath is empty; `/health` returns liveness/configuration, not an authenticated DB journey. | Controller checks API HTTP liveness before dashboard. Authenticated CRM/DB smoke and provider health-check configuration remain activation/operational work. |
-| Medium | A readable dump is not a restore; production roles/platform/object dependencies are outside an application dump. | Entire reviewed 50-migration schema restored in isolation with synthetic queue/data; real production-data restore still required. |
-| Medium | Managed backup entitlement is not proof of an available recovery point; Storage/Drive and RTO remain unproven. | Pro confirmed; actual recovery inventory, object backup and measured recovery duration remain open. |
+| Medium | A readable dump is not a restore; production roles/platform/object dependencies are outside an application dump. | Entire reviewed 50-migration schema restored in isolation with synthetic queue/data. **Real production-data restore done 2026-10-13** (drill record below). |
+| Medium | Managed backup entitlement is not proof of an available recovery point; Storage/Drive and RTO remain unproven. | Pro confirmed. Database restore measured 2026-10-13 (7 s, drill record below); managed recovery points, Storage/Drive object backup and role/credential recovery remain open. |
 | Low | Major action tags can move; backup log claimed verification more strongly than proved. | Release checkout/artifact actions pinned to upstream SHAs; backup output explicitly says restoration not yet proven. |
 
 The SQL scanner is a boundary guard for **reviewed** SQL, not a sandbox for malicious
@@ -98,7 +98,7 @@ gh variable set OL_RELEASE_SOLO_MODE -R rafaelRojasVi/origenlab --body true
 
 Then, in the [Protect main ruleset](https://github.com/rafaelRojasVi/origenlab/rules/17174991), leave PRs required and stale reviews dismissed, keep zero required approving reviews *only in solo mode*, require the **GitHub Actions `gitleaks`** status check, and enable strict/up-to-date status checks. Verify there are no bypass actors. Configure ruleset changes through an authorized repository administrator; this connected assistant cannot change those settings.
 
-**Selecting solo mode is not release activation.** `OL_RELEASE_AUTOMATION_ENABLED` and `OL_BACKUP_AUTOMATION_ENABLED` remain OFF until a tested encrypted production-data restore and the approved legacy-cron cutover. When a collaborator becomes available, switch back to the collaborative policy and independently reviewed PR merges. Never use a fake second account as a substitute for review.
+**Selecting solo mode is not release activation.** `OL_BACKUP_AUTOMATION_ENABLED` was set `true` on 2026-10-13, after the encrypted production-data restore drill below passed. `OL_RELEASE_AUTOMATION_ENABLED` stays OFF until the approved legacy-cron cutover. When a collaborator becomes available, switch back to the collaborative policy and independently reviewed PR merges. Never use a fake second account as a substitute for review.
 
 ## Release state machine
 
@@ -303,10 +303,29 @@ or replay failed jobs automatically. Fetch/verify external objects independently
 elapsed recovery time and record the result. Synthetic CI restoration does not replace
 this real production-data/offline-key drill.
 
+**Drill record, 2026-10-13.** Artifact `origenlab-encrypted-prod-backup-38404933821`
+(manual `backup_only` run 38404933821 from main, 9.0 MB ciphertext, backup job 1 min 21 s)
+decrypted on the owner's machine with the offline identity; the bundle held the five
+fixed files and `sha256sum -c` passed. Restored into a disposable `postgres:17` container
+on loopback with nothing attached: `anon`, `authenticated` and `service_role` created
+first as NOLOGIN placeholders (whether the dump needs them was not tested separately),
+then `roles.sql`, `btree_gist` in `extensions`, and one `pg_restore --exit-on-error
+--single-transaction` — it succeeded. `roles.sql` printed six "has not been granted
+membership" warnings: its defensive revokes of memberships a fresh cluster never had.
+After `analyze`: catalog 6 tables / 21,604 rows, comms 4 / 16,544, crm 22 / 58,311,
+evidence 4 / 14,418, outbound 9 / 17,924, platform 6 / 940, procrastinate 4 / 31,926,
+procurement 1 / 0. The ledger manifest lists **55** migrations, matching production.
+Database restore time **7 s** (container start to rows counted). Plaintext deleted
+afterwards; the ciphertext is kept under `~/data/origenlab-v2-migration/`. Not covered:
+Storage object bytes, Google Drive, role passwords, managed recovery points; counts were
+not compared with production row by row, and constraints/RLS/grants were not separately
+validated beyond the single-transaction restore succeeding.
+
 ## Short one-time procedure
 
-1. Keep repository variables `OL_RELEASE_AUTOMATION_ENABLED=false` and
-   `OL_BACKUP_AUTOMATION_ENABLED=false`. Their actual current values and protected
+1. Keep repository variable `OL_RELEASE_AUTOMATION_ENABLED=false` until step 5.
+   `OL_BACKUP_AUTOMATION_ENABLED` stays false until a real restore drill passes (done:
+   set `true` on 2026-10-13). Their actual current values and protected
    Environment configuration could not be read through the connected GitHub APIs;
    the owner must confirm them before merge. No value was changed in this review.
 2. Configure strict universal `gitleaks` bound to GitHub Actions integration 15368,
