@@ -6,6 +6,7 @@ import type { OpportunityCardData } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
 import { CaseActions, type Mode } from "./CaseActions";
+import { CompleteFromMail } from "./CompleteFromMail";
 import { CaseLinks, CaseMoneySummary, QuoteList } from "./CaseQuotes";
 import { CaseThreads } from "./CaseThreads";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
@@ -476,6 +477,8 @@ function OpportunityDrawer({
       <CaseMoneySummary card={card} />
 
       <CaseDocumentsBlock card={card} onChanged={onChanged} />
+
+      <CompleteFromMail card={card} onChanged={onChanged} />
 
       <CaseActions card={card} initial={initial} onChanged={onChanged} />
 

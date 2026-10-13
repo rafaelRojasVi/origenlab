@@ -285,6 +285,9 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/complete-task$/,
   /^\/v2\/commands\/cancel-task$/,
   /^\/v2\/commands\/open-commercial-case$/,
+  // «Completar con la cotización del correo» (2026-10-13): a sent quote PDF → case in «Enviada» with its
+  // institution and quote, one transaction upstream (`case_sent_quote.py`); sales/admin only there.
+  /^\/v2\/commands\/complete-case-from-sent-quote$/,
   // A case's purchase order (2026-10-12): copy it from a captured email, or remove one. The
   // upload itself is multipart and listed with the other upload (CATALOG_UPLOAD_POST_PATHS).
   /^\/v2\/commands\/attach-case-document-from-email$/,

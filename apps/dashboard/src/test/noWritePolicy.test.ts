@@ -81,6 +81,8 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/complete-task",
     "/v2/commands/cancel-task",
     "/v2/commands/open-commercial-case",
+    // «Completar con la cotización del correo» (2026-10-13): a sent quote → case in «Enviada».
+    "/v2/commands/complete-case-from-sent-quote",
   ];
   const CASE_DOCUMENTS_FILE = "../crm/caseDocuments.ts";
   const CASE_DOCUMENT_PATHS = [

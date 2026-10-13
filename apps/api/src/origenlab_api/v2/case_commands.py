@@ -71,6 +71,9 @@ ADVANCE_CASE_STAGE = "advance_case_stage"
 RECORD_CASE_WON = "record_case_won"
 RESOLVE_CURRENT_REVISION = "resolve_current_revision"
 RECORD_CASE_QUOTATION = "record_case_quotation"
+#: «Completar con la cotización del correo» (2026-10-13): from a quote PDF contacto@ sent, a case in
+#: «Enviada» with its institution and its quote, in one transaction (`case_sent_quote.py`).
+COMPLETE_CASE_FROM_SENT_QUOTE = "complete_case_from_sent_quote"
 
 CASE_COMMAND_NAMES: tuple[str, ...] = (
     OPEN_COMMERCIAL_CASE,
@@ -82,6 +85,7 @@ CASE_COMMAND_NAMES: tuple[str, ...] = (
     RECORD_CASE_WON,
     RESOLVE_CURRENT_REVISION,
     RECORD_CASE_QUOTATION,
+    COMPLETE_CASE_FROM_SENT_QUOTE,
 )
 
 #: The one stage a case is won from (`STAGE_TRANSITIONS`: only `negotiating` leads to `won`).
@@ -445,6 +449,35 @@ class RecordCaseQuotationBody(_CaseBody):
         return self
 
 
+class CompleteCaseFromSentQuoteBody(DecisionBody):
+    """A quote contacto@ sent, made a case in «Enviada» with its institution and its quote.
+
+    `source_record_id` is the Gmail message that carried the one quote PDF; the number is read
+    from that PDF (as R3/R4 read it), never typed. Without `opportunity_id` a case is opened on
+    that message; with it, the message must already be on that case. The institution is either an
+    existing one (`organization_id` + `organization_version`) or `new_organization_name`, created
+    «por confirmar» unless an active institution already has that name, which is then used.
+    """
+
+    source_record_id: str
+    opportunity_id: str | None = None
+    opportunity_version: Annotated[int, Field(ge=1)] | None = None
+    organization_id: str | None = None
+    organization_version: Annotated[int, Field(ge=1)] | None = None
+    new_organization_name: Annotated[str, Field(min_length=3, max_length=200)] | None = None
+
+    @model_validator(mode="after")
+    def _one_institution_one_case(self) -> CompleteCaseFromSentQuoteBody:
+        if (self.opportunity_id is None) != (self.opportunity_version is None):
+            raise ValueError("opportunity_id and opportunity_version go together")
+        existing = self.organization_id is not None
+        if existing == (self.new_organization_name is not None):
+            raise ValueError("name exactly one institution: organization_id or new_organization_name")
+        if existing and self.organization_version is None:
+            raise ValueError("organization_version is required with organization_id")
+        return self
+
+
 CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     OPEN_COMMERCIAL_CASE: OpenCommercialCaseBody,
     LINK_CASE_EVIDENCE: LinkCaseEvidenceBody,
@@ -455,6 +488,7 @@ CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     RECORD_CASE_WON: RecordCaseWonBody,
     RESOLVE_CURRENT_REVISION: ResolveCurrentRevisionBody,
     RECORD_CASE_QUOTATION: RecordCaseQuotationBody,
+    COMPLETE_CASE_FROM_SENT_QUOTE: CompleteCaseFromSentQuoteBody,
 }
 
 
@@ -503,6 +537,15 @@ def validated_case(command_name: str, body: DecisionBody) -> dict[str, Any]:
         fields["origin_source_record_id"] = as_uuid(
             body.origin_source_record_id, "origin_source_record_id"
         )
+        return fields
+
+    if isinstance(body, CompleteCaseFromSentQuoteBody):
+        fields["source_record_id"] = as_uuid(body.source_record_id, "source_record_id")
+        fields["opportunity_id"] = as_uuid(body.opportunity_id, "opportunity_id") if body.opportunity_id else None
+        fields["opportunity_version"] = body.opportunity_version
+        fields["organization_id"] = as_uuid(body.organization_id, "organization_id") if body.organization_id else None
+        fields["organization_version"] = body.organization_version
+        fields["new_organization_name"] = body.new_organization_name.strip() if body.new_organization_name else None
         return fields
 
     assert isinstance(body, _CaseBody)  # noqa: S101 - every other command is about a case

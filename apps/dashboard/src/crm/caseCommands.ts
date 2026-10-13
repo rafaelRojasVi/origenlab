@@ -33,6 +33,7 @@ export const CASE_COMMAND_PATHS = {
   completeTask: "/v2/commands/complete-task",
   cancelTask: "/v2/commands/cancel-task",
   openCase: "/v2/commands/open-commercial-case",
+  completeFromSentQuote: "/v2/commands/complete-case-from-sent-quote",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -285,6 +286,21 @@ export interface OpenCommercialCaseBody {
 
 export const openCommercialCase = (body: OpenCommercialCaseBody, idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.openCase, body, idempotencyKey);
+
+/** «Completar con la cotización del correo»: one institution (existing or new), an optional open case. */
+export interface CompleteCaseFromSentQuoteBody {
+  source_record_id: string;
+  opportunity_id?: string;
+  opportunity_version?: number;
+  organization_id?: string;
+  organization_version?: number;
+  new_organization_name?: string;
+  note: string;
+}
+
+/** A sent quote PDF → case in «Enviada» with its institution and its quote, in one transaction. */
+export const completeCaseFromSentQuote = (body: CompleteCaseFromSentQuoteBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.completeFromSentQuote, body, idempotencyKey);
 
 export interface ResolveCurrentRevisionBody {
   opportunity_id: string;

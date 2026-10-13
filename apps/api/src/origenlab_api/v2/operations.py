@@ -238,7 +238,12 @@ SENT_QUOTES_LIMIT = 20
 def sent_quote_items(rows: list[Mapping[str, Any]], existing_numbers: set[str]) -> list[dict[str, Any]]:
     """One row per quote number, newest email first; numbers already a CRM quote are skipped.
     The file name never leaves: only the number derived from it (`mail_rules.gmail_quote_key`)."""
-    from origenlab_api.v2.mail_rules import canonical_quote_number, gmail_quote_key
+    from origenlab_api.v2.mail_rules import (
+        canonical_quote_number,
+        gmail_quote_key,
+        institution_segment,
+        quote_file_institution,
+    )
 
     out: dict[str, dict[str, Any]] = {}
     for r in sorted(rows, key=lambda x: x.get("sent_at") or "", reverse=True):
@@ -250,7 +255,9 @@ def sent_quote_items(rows: list[Mapping[str, Any]], existing_numbers: set[str]) 
         if number in existing_numbers or number in out:
             continue
         out[number] = {"source_record_id": r["source_record_id"], "quote_number": number,
-                       "sent_at": r.get("sent_at"), "thread_id": r.get("thread_id")}
+                       "sent_at": r.get("sent_at"), "thread_id": r.get("thread_id"),
+                       # The institution part only (legal form / kind / «(SIGLA)»), never a person.
+                       "suggested_institution": institution_segment(quote_file_institution(r.get("filename")))}
     return list(out.values())[:SENT_QUOTES_LIMIT]
 
 

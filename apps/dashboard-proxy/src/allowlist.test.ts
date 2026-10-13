@@ -499,11 +499,13 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/cancel-task",
       // «Abrir caso» from a «Correos sin caso» row (owner decision 2026-10-10).
       "/v2/commands/open-commercial-case",
+      // «Completar con la cotización del correo» (2026-10-13).
+      "/v2/commands/complete-case-from-sent-quote",
       // «Adjuntar OC»: copy a case email's purchase order, or remove one (2026-10-12).
       "/v2/commands/attach-case-document-from-email",
       "/v2/commands/remove-case-document",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(13);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(14);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -533,6 +535,7 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/resolve-current-revision/",
       "/v2/commands/resolve-current-revisions",
       "/v2/commands/record-case-quotation/x",
+      "/v2/commands/complete-case-from-sent-quote/x",
       "/v2/commands/record-historical-quotation",
       "/v2/commands/void-historical-quote-revision",
       "/v2/commands/RECORD-CASE-QUOTATION",
