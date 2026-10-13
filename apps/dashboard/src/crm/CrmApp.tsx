@@ -7,7 +7,7 @@ import { useAuthSession } from "../context/AuthSessionContext";
 import { REDACTION_NOTICE, contactAddressesRedacted } from "./redaction";
 import { CRM_GROUP_LABEL, CRM_NAV, crmHash, type CrmSection, type DatosTab } from "./crmRoute";
 import { HistoryPage } from "./pages/HistoryPage";
-import { DatosPage } from "./pages/DatosPage";
+import { OperacionesPage } from "./pages/OperacionesPage";
 import type { ShellRoute } from "./shellRoute";
 import { MarketingPage } from "./pages/MarketingPage";
 import { OrganizationsPage } from "./pages/OrganizationsPage";
@@ -110,7 +110,7 @@ function Section({
     case "historial":
       return <HistoryPage navigate={navigate} />;
     case "datos":
-      return <DatosPage navigate={navigate} tab={tab} />;
+      return <OperacionesPage navigate={navigate} tab={tab} />;
     default:
       return <OverviewPage navigate={navigate} />;
   }
