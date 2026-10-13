@@ -251,6 +251,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          OL_RELEASE_SOLO_MODE: ${{ vars.OL_RELEASE_SOLO_MODE }}
         run: |
           python3 scripts/deploy/check_branch_protection.py
           python3 scripts/deploy/check_release_approval.py
