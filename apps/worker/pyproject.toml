@@ -26,6 +26,8 @@ origenlab-worker = "origenlab_worker.cli:main"
 dev = [
     "pytest>=8",
     "moto[server]>=5.1",
+    "pytest-xdist>=3.6",
+    "pytest-timeout>=2.3",
 ]
 # Owner-only, local, once: the browser consent of scripts/gmail_readonly_authorize.py. The cron
 # never runs a consent flow, so the Render install (`--no-dev`, no groups) does not carry it.
@@ -44,5 +46,7 @@ packages = ["src/origenlab_worker"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A hung test fails after a minute instead of holding CI until the job timeout.
+timeout = 60
 # ../api/tests: the one disposable-database harness both apps share (v2_command_harness.py).
 pythonpath = ["src", "tests", "../api/tests"]
