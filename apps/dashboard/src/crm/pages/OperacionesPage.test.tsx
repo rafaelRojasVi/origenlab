@@ -12,7 +12,10 @@ import { OperacionesPage } from "./OperacionesPage";
 const PAYLOAD: OperationsPayload = {
   generated_at: "2026-10-13T12:00:00+00:00",
   actions_today: 1,
-  counts: { cases_without_institution: 2, institutions_por_confirmar: 3 },
+  counts: { cases_without_institution: 2, institutions_por_confirmar: 3, sent_quotes_without_case: 1 },
+  sent_quotes_without_case: [
+    { source_record_id: "s-1", quote_number: "09877-26", sent_at: "2026-10-01T15:00:00+00:00", thread_id: "hilo-1" },
+  ],
   cards: [
     { key: "correo", title: "Correo", status: "ok", summary: "Última lectura hace 1 min · 4 correos hoy",
       at: "2026-10-13T11:59:00+00:00", facts: [{ label: "Correos hoy", value: 4 }],
@@ -30,10 +33,19 @@ const PAYLOAD: OperationsPayload = {
   ],
 };
 
+let opened: Record<string, unknown>[] = [];
+
 function respond(body: unknown = PAYLOAD) {
-  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+  opened = [];
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const path = new URL(url, "http://localhost").pathname;
+    if (path === "/v2/commands/open-commercial-case") {
+      opened.push(JSON.parse(String((init as RequestInit | undefined)?.body ?? "{}")));
+      return Promise.resolve(new Response(JSON.stringify({ command: "open_commercial_case", opportunity_id: "caso-nuevo",
+        opportunity_version: 1, idempotency_key: "k", command_receipt_id: "r", replayed: false }),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
     if (path === "/v2/workspace/operations") {
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
     }
@@ -43,12 +55,12 @@ function respond(body: unknown = PAYLOAD) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function renderOps(role: "admin" | "sales" = "sales", tab?: DatosTab) {
-  const session = { kind: "signed_in", method: "google_session",
+function renderOps(role: "admin" | "sales" | "viewer" = "sales", tab?: DatosTab, navigate = vi.fn()) {
+  const session = { kind: "signed_in", method: "google_session", caseCommandsEnabled: true,
     operator: { operatorId: "op-1", email: "op@ejemplo.invalid", displayName: "Operadora", role } } as AuthSessionState;
   return render(
     <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
-      <OperacionesPage navigate={() => undefined} tab={tab} />
+      <OperacionesPage navigate={navigate} tab={tab} />
     </AuthSessionContext.Provider>,
   );
 }
@@ -114,5 +126,27 @@ describe("Operaciones", () => {
     respond();
     renderOps("admin", "proveedores");
     await waitFor(() => expect(screen.getByRole("button", { name: "Proveedores" })).toHaveAttribute("aria-pressed", "true"));
+  });
+});
+
+
+describe("Operaciones · cotizaciones enviadas sin caso", () => {
+  it("lists them by number and opens a case on the email, then goes to it", async () => {
+    respond();
+    const navigate = vi.fn();
+    renderOps("sales", undefined, navigate);
+    fireEvent.click(await screen.findByRole("button", { name: "Por decidir" }));
+    expect(screen.getByText(/Cotización 09877-26/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir caso para la cotización 09877-26" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("oportunidades", "caso-nuevo"));
+    expect(opened[0]).toMatchObject({ title: "Cotización 09877-26", origin_source_record_id: "s-1" });
+  });
+
+  it("does not offer it to a viewer", async () => {
+    respond();
+    renderOps("viewer");
+    fireEvent.click(await screen.findByRole("button", { name: "Por decidir" }));
+    expect(screen.getByText(/Cotización 09877-26/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Abrir caso/ })).not.toBeInTheDocument();
   });
 });

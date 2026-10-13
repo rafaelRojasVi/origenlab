@@ -143,3 +143,23 @@ def test_the_cards_read_the_database_as_the_api_role(disposable_database) -> Non
     action = later["actions"][0]
     assert action["automatic"] is True and action["today"] is True and "reasons" not in action
     assert later["actions_today"] == 1 and "Persona Ficticia" not in json.dumps(later)
+
+    # A quote sent from contacto@ that no case holds is listed by number only, until a case opens on it.
+    gid = uuid.uuid4().hex
+    sent = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) "
+                       "values ('gmail_message', %s, %s::jsonb, %s) returning id::text",
+                  f"gmail_message:{gid}", json.dumps({"gmail_message_id": gid}), f"gmail://msg/{gid}")[0][0]
+    message = _owner(dsn, "insert into comms.message (mailbox_id, provider_message_id, provider_thread_id, direction, "
+                          "internal_date, parse_status) values (%s, %s, 'hilo-ficticio', 'outbound', now() - interval '1 day', "
+                          "'parsed') returning id", mailbox, gid)[0][0]
+    _owner(dsn, "insert into comms.message_participant (message_id, role, address_norm) values (%s, 'from', 'contacto@origenlab.cl')", message)
+    _owner(dsn, "insert into comms.attachment (message_id, part_index, filename, mime_type, size_bytes) "
+                "values (%s, 1, 'CN09877-Persona Ficticia.pdf', 'application/pdf', 10)", message)
+    repo._facts_cache.clear()
+    listed = repo.operations()
+    assert [(i["source_record_id"], i["quote_number"]) for i in listed["sent_quotes_without_case"]] == [(sent, "09877-26")]
+    assert listed["counts"]["sent_quotes_without_case"] == 1 and "Persona Ficticia" not in json.dumps(listed)
+    _owner(dsn, "insert into crm.opportunity (title, stage, owner_operator_id, origin_source_record_id) "
+                "values ('Cotización 09877-26', 'lead', %s, %s)", admin, sent)
+    repo._facts_cache.clear()
+    assert repo.operations()["sent_quotes_without_case"] == []

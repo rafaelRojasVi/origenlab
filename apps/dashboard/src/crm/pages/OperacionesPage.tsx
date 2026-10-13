@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import type { CrmSection, DatosTab } from "../crmRoute";
+import { newCaseCommandKey, openCommercialCase, useMayRunCaseCommands } from "../caseCommands";
+import { inSharedMailbox } from "../gmailLinks";
 import { undoMailRuleAction, refusalMessage } from "../mailRules";
 import {
   RULE_GUIDE,
@@ -10,6 +12,7 @@ import {
   type OpsAction,
   type OpsCard,
   type OpsStatus,
+  type SentQuoteWithoutCase,
 } from "../operations";
 import { Badge, Button, EmptyState, ExternalLink, PageHeader, Panel, ResourceGate, Segmented, Skeleton, fmtDateTime } from "../ui";
 import { useResource } from "../useResource";
@@ -281,7 +284,73 @@ function ToDecide({
         </li>
       </ul>
       <p className="px-3 pb-2 text-[11px] text-ink-faint">Pronto: una sola lista con «Aceptar» y «Descartar» para cada decisión.</p>
+      <SentQuotesWithoutCase items={data.sent_quotes_without_case ?? []} navigate={navigate} />
     </Panel>
+  );
+}
+
+/**
+ * Quotes contacto@ sent that no case holds (no rule could tell which case: a free-mail customer and
+ * no institution in the PDF name). «Abrir caso» opens a case on that email and goes to it; there a
+ * person names the institution and records the quote with the existing buttons.
+ */
+function SentQuotesWithoutCase({ items, navigate }: {
+  items: SentQuoteWithoutCase[];
+  navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
+}) {
+  const mayOpen = useMayRunCaseCommands();
+  const keys = useRef<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  if (!items.length) return null;
+  async function open(q: SentQuoteWithoutCase) {
+    setBusy(q.source_record_id);
+    setError(null);
+    keys.current[q.source_record_id] ??= newCaseCommandKey();
+    try {
+      const receipt = await openCommercialCase(
+        { title: `Cotización ${q.quote_number}`, origin_source_record_id: q.source_record_id,
+          note: "Abierto desde Operaciones: cotización enviada sin caso" },
+        keys.current[q.source_record_id],
+      );
+      navigate("oportunidades", receipt.opportunity_id);
+    } catch (err) {
+      setError(refusalMessage(err, "No se pudo abrir el caso"));
+    } finally {
+      setBusy(null);
+    }
+  }
+  return (
+    <div className="border-t border-line">
+      <h3 className="px-3 pt-2 text-[12px] font-semibold text-ink">Cotizaciones enviadas sin caso · {items.length}</h3>
+      <p className="px-3 text-[11px] text-ink-muted">
+        Ninguna regla pudo saber a qué caso pertenecen. «Abrir caso» lo crea; luego asigna la institución y usa
+        «Registrar cotización» en el caso.
+      </p>
+      {error ? <p role="alert" className="px-3 pt-1 text-xs text-bad">{error}</p> : null}
+      <ul className="divide-y divide-line text-[13px]">
+        {items.map((q) => {
+          const gmail = q.thread_id ? inSharedMailbox(`https://mail.google.com/mail/u/0/#all/${q.thread_id}`) : null;
+          return (
+            <li key={q.source_record_id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+              <span className="flex-1 tabular-nums">Cotización {q.quote_number} · enviada {fmtDateTime(q.sent_at)}</span>
+              {gmail ? <ExternalLink href={gmail}>Gmail</ExternalLink> : null}
+              {mayOpen ? (
+                <Button
+                  variant="primary"
+                  aria-label={`Abrir caso para la cotización ${q.quote_number}`}
+                  busy={busy === q.source_record_id}
+                  busyLabel="Abriendo…"
+                  onClick={() => void open(q)}
+                >
+                  Abrir caso
+                </Button>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

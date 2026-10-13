@@ -105,3 +105,20 @@ def test_the_facts_are_shared_for_a_short_while_across_requests() -> None:
     assert cache.get(load) == {"n": 1} and len(calls) == 1
     now[0] += 2
     assert cache.get(load) == {"n": 2}
+
+
+def test_sent_quotes_without_case_read_the_number_from_the_pdf_and_skip_known_ones() -> None:
+    rows = [
+        {"source_record_id": "s-1", "sent_at": "2026-10-01T15:00:00+00:00", "thread_id": "t-1",
+         "filename": "CN09877-Persona Ficticia.pdf"},
+        {"source_record_id": "s-2", "sent_at": "2026-10-02T15:00:00+00:00", "thread_id": "t-2",
+         "filename": "CN09876-Empresa Ficticia SA.pdf"},          # number already a CRM quote
+        {"source_record_id": "s-3", "sent_at": "2026-10-03T15:00:00+00:00", "thread_id": "t-3",
+         "filename": "CN09877-Persona Ficticia.pdf"},          # same number, newer email
+        {"source_record_id": "s-4", "sent_at": "2026-10-03T15:00:00+00:00", "thread_id": "t-4",
+         "filename": "Folleto.pdf"},
+    ]
+    items = op.sent_quote_items(rows, existing_numbers={"09876-26"})
+    assert items == [{"source_record_id": "s-3", "quote_number": "09877-26",
+                      "sent_at": "2026-10-03T15:00:00+00:00", "thread_id": "t-3"}]
+    assert "filename" not in items[0]  # PDF names can hold a person's name
