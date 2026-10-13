@@ -11,13 +11,18 @@ One Render background service supervises two independent processes:
 | Process | Queue | Concurrency | Work |
 |---|---|---|---|
 | Triage | `triage` | 2 | Existing per-minute sweep and message readings |
-| Capture | `capture` | 1 | Gmail capture, then Drive filing, every ten minutes |
+| Capture | `capture` | 1 | Gmail capture, then Drive filing, then quote reading, every ten minutes |
 
 `mail-worker` is the canonical command; the existing `triage-worker` command aliases it,
 so the initial cutover needs no provider start-command change. Internal `triage-child`
 uses the existing triage runner; it receives no Gmail/Drive credentials. The capture
 process is spawned only when `ORIGENLAB_WORKER_CAPTURE_SCHEDULER_ENABLED=true`.
 A missing/false flag preserves triage-only behavior and needs no capture secrets.
+Quote reading (`quote-read`, the legacy cron's third command since 2026-10-11) runs only
+after capture and filing succeed, as with `&&`; its failure is reported as
+`quote_mode: failed` in the cycle event and never fails or retries captured mail. The
+worker therefore needs the cron's `ORIGENLAB_WORKER_QUOTE_READ_ENABLED`,
+`ORIGENLAB_WORKER_QUOTE_READ_MODEL` and `ORIGENLAB_WORKER_ANTHROPIC_API_KEY` values too.
 The existing Gmail and Drive business flags are retained exactly; this change does
 not grant consent, initialise a mailbox, send email or activate CRM rules.
 
