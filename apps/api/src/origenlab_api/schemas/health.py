@@ -15,3 +15,5 @@ class HealthResponse(BaseModel):
     sqlite_query_only: bool = False
     recovery_mode: bool = False
     dotenv_disabled: bool = False
+    # The git commit Render deployed (RENDER_GIT_COMMIT); None outside Render.
+    version: str | None = None
