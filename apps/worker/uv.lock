@@ -1878,6 +1878,8 @@ dev = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pytest", specifier = ">=8" },
+    { name = "pytest-timeout", specifier = ">=2.3" },
+    { name = "pytest-xdist", specifier = ">=3.6" },
     { name = "sqlalchemy", specifier = ">=2.0" },
 ]
 gmail = [
