@@ -284,7 +284,7 @@ def database_checks() -> Verdict:
     sys.path.insert(0, str(REPO / "supabase" / "scripts"))
     sys.path.insert(0, str(REPO / "scripts" / "deploy"))
     from hosted_env import database_env  # noqa: E402
-    from verify_workers import healthy_worker  # noqa: E402
+    from verify_workers import worker_conditions  # noqa: E402
 
     with tempfile.TemporaryDirectory() as cert_dir:
         env = database_env(Path(cert_dir))
@@ -297,9 +297,20 @@ def database_checks() -> Verdict:
             v.failures.append("could not read the production migration ledger")
             return v
         v.failures += pending_migration_failures(set(out.stdout.split()), MIGRATIONS)
-        if not healthy_worker(env):
-            v.failures.append("workers: no recent heartbeat, sweep or capture cycle")
+        v.failures += worker_failures(worker_conditions(env))
     return v
+
+
+WORKER_CONDITION_FAILURES = {
+    "heartbeat": "workers: no worker heartbeat in the last 3 minutes",
+    "sweep_scheduled": "workers: the triage sweep was not scheduled in the last 5 minutes",
+    "triage_caught_up": "workers: captured mail older than 15 minutes is waiting for triage",
+    "capture_recent": "workers: no mail capture cycle in the last 15 minutes",
+}
+
+
+def worker_failures(conditions: dict[str, bool]) -> list[str]:
+    return [WORKER_CONDITION_FAILURES[name] for name, ok in conditions.items() if not ok]
 
 
 def pending_migration_failures(applied: set[str], migrations_dir: Path) -> list[str]:

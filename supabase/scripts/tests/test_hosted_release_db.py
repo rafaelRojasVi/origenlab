@@ -219,6 +219,35 @@ class RealReleaseDatabase(unittest.TestCase):
         finally:
             self.sql(f'DROP DATABASE {recovery} WITH (FORCE)')
 
+    def test_worker_conditions_name_which_one_failed(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts/deploy"))
+        import verify_workers
+        self.sql("""CREATE SCHEMA comms AUTHORIZATION origenlab_owner;
+          CREATE SCHEMA evidence AUTHORIZATION origenlab_owner;
+          CREATE SCHEMA procrastinate AUTHORIZATION origenlab_owner;
+          SET ROLE origenlab_owner;
+          CREATE TABLE comms.message(provider_message_id text, parse_status text, eml_storage_path text,
+                                     internal_date timestamptz, direction text);
+          CREATE TABLE comms.mailbox(authorization_state text, last_synced_at timestamptz);
+          CREATE TABLE evidence.source_record(id int, dedupe_key text, kind text);
+          CREATE TABLE evidence.assertion(source_record_id int, kind text, value_norm text, value jsonb);
+          CREATE TABLE procrastinate.procrastinate_workers(last_heartbeat timestamptz);
+          CREATE TABLE procrastinate.procrastinate_periodic_defers(task_name text, periodic_id text, defer_timestamp bigint);
+          INSERT INTO procrastinate.procrastinate_workers VALUES(now());
+          INSERT INTO procrastinate.procrastinate_periodic_defers VALUES('sweep_untriaged','sweep',extract(epoch from now()));
+          RESET ROLE;""", self.env)
+        self.assertEqual(verify_workers.worker_conditions(self.env),
+                         {"heartbeat": True, "sweep_scheduled": True, "triage_caught_up": True})
+        self.sql("SET ROLE origenlab_owner; DELETE FROM procrastinate.procrastinate_periodic_defers; RESET ROLE", self.env)
+        self.assertEqual(verify_workers.worker_conditions(self.env),
+                         {"heartbeat": True, "sweep_scheduled": False, "triage_caught_up": True})
+        self.assertFalse(verify_workers.healthy_worker(self.env))
+        self.sql("SET ROLE origenlab_owner; INSERT INTO comms.message VALUES('m1','parsed','x',now()-interval '1 hour','inbound'); UPDATE procrastinate.procrastinate_workers SET last_heartbeat=now()-interval '1 hour'; RESET ROLE", self.env)
+        self.assertEqual(verify_workers.worker_conditions(self.env),
+                         {"heartbeat": False, "sweep_scheduled": False, "triage_caught_up": False})
+        conditions = verify_workers.worker_conditions(self.env, require_capture=True)
+        self.assertEqual(conditions["capture_recent"], False)
+
     def test_worker_health_sql_handles_bulk_sends_and_real_evidence_gaps(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts/deploy"))
         import verify_workers

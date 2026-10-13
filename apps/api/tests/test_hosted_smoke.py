@@ -323,3 +323,12 @@ def test_a_probe_slow_twice_stays_slow() -> None:
     p = hs.probe("/v2/contacts", fetch, clock=lambda: clock["t"])
     assert p.seconds == pytest.approx(2.7)
     assert hs.route_failures([p])
+
+
+def test_worker_failures_name_each_failed_condition() -> None:
+    assert hs.worker_failures({"heartbeat": True, "sweep_scheduled": True, "triage_caught_up": True}) == []
+    assert hs.worker_failures({"heartbeat": True, "sweep_scheduled": False, "triage_caught_up": False}) == [
+        "workers: the triage sweep was not scheduled in the last 5 minutes",
+        "workers: captured mail older than 15 minutes is waiting for triage",
+    ]
+    assert hs.worker_failures({"heartbeat": False}) == ["workers: no worker heartbeat in the last 3 minutes"]

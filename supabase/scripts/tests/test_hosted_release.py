@@ -244,10 +244,10 @@ class ProductionGates(unittest.TestCase):
 
     def test_postflight_refuses_missing_worker_heartbeat(self):
         import subprocess
-        fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="SET\nnot_ready\nRESET\n", stderr="")
+        fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="SET\ntrue|false|true\nRESET\n", stderr="")
         with mock.patch.object(postflight.subprocess, "run", return_value=fake):
             self.assertFalse(postflight.healthy_worker({}))
-        good = subprocess.CompletedProcess(args=[], returncode=0, stdout="SET\nhealthy\nRESET\n", stderr="")
+        good = subprocess.CompletedProcess(args=[], returncode=0, stdout="SET\ntrue|true|true\nRESET\n", stderr="")
         with mock.patch.object(postflight.subprocess, "run", return_value=good):
             self.assertTrue(postflight.healthy_worker({}))
 
@@ -403,7 +403,7 @@ class RegressionGates(unittest.TestCase):
 
     def test_postflight_sql_requires_completed_specific_sweep(self):
         from subprocess import CompletedProcess
-        with mock.patch.object(postflight.subprocess, "run", return_value=CompletedProcess([],0,"not_ready\n")) as run:
+        with mock.patch.object(postflight.subprocess, "run", return_value=CompletedProcess([],0,"false|false|false\n")) as run:
             self.assertFalse(postflight.healthy_worker({}, "2026-10-08T12:00:00Z"))
         query = run.call_args.args[0][-1]
         self.assertIn("task_name = 'sweep_untriaged'", query)
