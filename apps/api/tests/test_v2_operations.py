@@ -60,3 +60,11 @@ def test_every_card_has_the_same_shape() -> None:
     for c in cards:
         assert set(c) == {"key", "title", "status", "summary", "at", "facts", "events"}, c["key"]
         assert c["status"] in {"ok", "warn", "bad", "info"}
+
+
+def test_the_rules_card_measures_the_last_pass_against_the_database_clock() -> None:
+    state = {"enabled": True, "last_run": {"at": "2026-10-13T12:00:00+00:00", "applied": 2}}
+    out = op.rules_state_for_card(state, "2026-10-13T12:17:30+00:00")
+    assert out["last_run"]["minutes_ago"] == 17
+    assert op.reglas_card(out, 2)["status"] == "bad"
+    assert op.rules_state_for_card(None, "2026-10-13T12:00:00+00:00") is None

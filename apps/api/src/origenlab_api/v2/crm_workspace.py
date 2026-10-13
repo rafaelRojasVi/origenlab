@@ -2767,6 +2767,16 @@ class CrmWorkspaceRepository:
         with self._read() as cur:
             return read_history(cur, limit)
 
+    def operations(self) -> dict[str, Any]:
+        """«Operaciones» (spec 2026-10-13): the database cards, the rule actions and the counts."""
+        from origenlab_api.v2.operations import build_operations, read_operation_facts
+
+        with self._read() as cur:
+            facts = read_operation_facts(cur)
+            cur.execute("select now()")
+            now = cur.fetchone()[0]
+        return build_operations(facts, now.isoformat())
+
     def mail_sync(self) -> dict[str, Any]:
         """Whether the Gmail capture is running. Its age is measured by the database clock, never
         an address, a subject or a message."""
