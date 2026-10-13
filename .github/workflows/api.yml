@@ -13,6 +13,9 @@ on:
       - "apps/email-pipeline/**"
       - "supabase/migrations/**"
       - "supabase/roles.sql"
+      - "scripts/run_pytest.sh"
+      - "scripts/test_db.sh"
+      - "scripts/pytest_plugins/**"
       - ".github/workflows/api.yml"
 
 concurrency:

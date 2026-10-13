@@ -61,8 +61,15 @@ class TargetsFor(unittest.TestCase):
     def test_migration_runs_supabase_api_and_worker(self):
         self.assertEqual(
             changed_apps.targets_for(["supabase/migrations/20261012_x.sql"]),
-            ["api", "supabase", "worker"],
+            ["api", "email-pipeline", "supabase", "worker"],
         )
+
+    def test_the_shared_test_harness_runs_every_python_suite(self):
+        for path in ("scripts/run_pytest.sh", "scripts/test_db.sh",
+                     "scripts/pytest_plugins/pg_per_worker.py"):
+            with self.subTest(path=path):
+                self.assertEqual(changed_apps.targets_for([path]),
+                                 ["api", "email-pipeline", "repo", "worker"])
 
     def test_dashboard_is_not_proxy(self):
         self.assertEqual(changed_apps.targets_for(["apps/dashboard/src/a.tsx"]), ["dashboard"])

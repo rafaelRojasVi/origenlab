@@ -16,6 +16,9 @@ on:
       - "supabase/migrations/**"
       - "supabase/roles.sql"
       - "render.yaml"
+      - "scripts/run_pytest.sh"
+      - "scripts/test_db.sh"
+      - "scripts/pytest_plugins/**"
       - ".github/workflows/worker.yml"
 
 concurrency:

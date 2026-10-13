@@ -5,7 +5,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 
-mapfile -t targets < <(python3 scripts/changed_apps.py "$@")
+# Captured first: a failure inside `< <(...)` would not stop the script, and an empty list
+# would then pass as "nothing to test".
+out="$(python3 scripts/changed_apps.py "$@")"
+mapfile -t targets <<< "$out"
+[[ -z "$out" ]] && targets=()
 if [[ ${#targets[@]} -eq 0 ]]; then
   echo "No app changed vs origin/main; nothing to test."
   exit 0

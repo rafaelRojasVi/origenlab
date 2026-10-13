@@ -24,9 +24,13 @@ RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     # api and worker import email-pipeline modules.
     ("apps/email-pipeline/*", ("email-pipeline", "api", "worker")),
     ("apps/worker/*", ("worker",)),
-    # Both apps' database tests build their schema from these files.
-    ("supabase/migrations/*", ("supabase", "api", "worker")),
-    ("supabase/roles.sql", ("supabase", "api", "worker")),
+    # The api's, the worker's and email-pipeline's V2 database tests build their schema from these.
+    ("supabase/migrations/*", ("supabase", "api", "worker", "email-pipeline")),
+    ("supabase/roles.sql", ("supabase", "api", "worker", "email-pipeline")),
+    # The shared test harness: a change here can break every Python suite's run.
+    ("scripts/run_pytest.sh", ("api", "worker", "email-pipeline")),
+    ("scripts/test_db.sh", ("api", "worker", "email-pipeline")),
+    ("scripts/pytest_plugins/*", ("api", "worker", "email-pipeline")),
     ("supabase/*", ("supabase",)),
     ("docs/ARCHITECTURE.md", ("supabase",)),
     ("docs/DOMAIN.md", ("supabase",)),

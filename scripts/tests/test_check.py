@@ -40,5 +40,18 @@ class Check(unittest.TestCase):
         self.assertIn("FAILED: email-pipeline", r.stderr)
 
 
+class CheckWhenTargetsFail(unittest.TestCase):
+    def test_a_crash_in_changed_apps_fails_the_check(self):
+        tmp = Path(tempfile.mkdtemp())
+        fake = tmp / "python3"
+        fake.write_text("#!/usr/bin/env bash\necho 'fatal: no merge base' >&2\nexit 3\n")
+        fake.chmod(0o755)
+        env = {**os.environ, "PATH": f"{tmp}:{os.environ['PATH']}"}
+        r = subprocess.run(["bash", str(ROOT / "scripts" / "check.sh")], env=env,
+                           capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("nothing to test", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@
 # The whole email-pipeline suite, the way CI runs it: first the three transactional Postgres
 # test files against the V1 test database (scripts/test_db.sh), then everything else with
 # ORIGENLAB_POSTGRES_TEST_URL unset, so optional PG integrations that need a preloaded archive
-# stay skip-gated.
+# stay skip-gated, and the V2 proofs against the disposable V2 cluster.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(cd ../.. && pwd -P)"
@@ -19,4 +19,6 @@ if [[ "${SKIP_DB:-0}" != 1 ]]; then
       tests/test_sqlite_outbound_sidecars_to_postgres_migrate.py \
       tests/test_sqlite_mart_core_to_postgres_migrate.py
 fi
-OL_DB_SKIP_PATTERN='^$' "$ROOT/scripts/run_pytest.sh" email-pipeline "$@"
+# The default skip guard: a V2 proof or an ORIGENLAB_TEST_POSTGRES_URL test that skips fails the
+# run. Only ORIGENLAB_POSTGRES_TEST_URL skips are expected here (that URL is the phase above).
+"$ROOT/scripts/run_pytest.sh" email-pipeline "$@"

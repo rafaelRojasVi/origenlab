@@ -9,6 +9,11 @@ on:
   pull_request:
     paths:
       - "apps/email-pipeline/**"
+      - "scripts/run_pytest.sh"
+      - "scripts/test_db.sh"
+      - "scripts/pytest_plugins/**"
+      - "supabase/migrations/**"
+      - "supabase/roles.sql"
       - ".github/workflows/email-pipeline.yml"
 
 concurrency:
