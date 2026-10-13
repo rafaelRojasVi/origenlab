@@ -68,3 +68,15 @@ def test_the_rules_card_measures_the_last_pass_against_the_database_clock() -> N
     assert out["last_run"]["minutes_ago"] == 17
     assert op.reglas_card(out, 2)["status"] == "bad"
     assert op.rules_state_for_card(None, "2026-10-13T12:00:00+00:00") is None
+
+
+def test_every_mail_rule_is_explained_on_the_operaciones_page() -> None:
+    # The page's Spanish guide (apps/dashboard/src/crm/operations.ts) must name every rule the API has.
+    import re
+    from pathlib import Path
+
+    from origenlab_api.v2.mail_rules import RULE_IDS
+
+    guide = (Path(__file__).resolve().parents[2] / "dashboard/src/crm/operations.ts").read_text(encoding="utf-8")
+    block = guide[guide.index("export const RULE_GUIDE"):guide.index("const RULE_WHY")]
+    assert re.findall(r"^  (R\d+): \{", block, re.M) == list(RULE_IDS)
