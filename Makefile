@@ -1,11 +1,12 @@
 # One entry point for every check, the same locally and in CI. Logic lives in scripts/.
 #   make setup      install every app's dependencies and test groups
 #   make db-up      start the disposable test databases (.test-db.env); make db-down stops them
-#   make check      only what your change needs (vs origin/main); SKIP_DB=1 skips DB tests
+#   make lint       ruff, gitleaks and file checks on every file (pre-commit)
+#   make check      lint, then only what your change needs (vs origin/main); SKIP_DB=1 skips DB tests
 #   make check-all  everything
 SHELL := bash
 .SHELLFLAGS := -euo pipefail -c
-.PHONY: setup check check-all db-up db-down test-api test-worker test-email-pipeline \
+.PHONY: setup lint check check-all db-up db-down test-api test-worker test-email-pipeline \
         test-dashboard test-proxy test-web test-supabase test-repo
 
 setup:
@@ -15,6 +16,11 @@ setup:
 	cd apps/dashboard && npm ci
 	cd apps/dashboard-proxy && npm ci
 	cd apps/web && npm ci
+	uv tool install pre-commit
+	pre-commit install
+
+lint:
+	scripts/lint.sh
 
 check:
 	scripts/check.sh

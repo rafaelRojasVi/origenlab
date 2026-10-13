@@ -17,10 +17,13 @@ fi
 echo "targets: ${targets[*]}"
 
 summary=()
-for t in "${targets[@]}"; do
+# Lint first: seconds, and it catches what would otherwise surface as a test failure.
+for t in lint "${targets[@]}"; do
+  target="test-$t"
+  [[ $t == lint ]] && target=lint
   start=$SECONDS
   printf '\n== %s ==\n' "$t"
-  if ! make --no-print-directory "test-$t"; then
+  if ! make --no-print-directory "$target"; then
     echo "FAILED: $t after $((SECONDS - start)) s" >&2
     exit 1
   fi
