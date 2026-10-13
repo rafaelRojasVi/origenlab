@@ -200,7 +200,6 @@ def main() -> int:
 
     mode = resolve_audit_only_build_batch_mode(ap, args)
     audit_only = mode.audit_only
-    build_batch = mode.build_batch
 
     if audit_only and args.write_postgres_audit:
         ap.error("--write-postgres-audit requires --build-batch")

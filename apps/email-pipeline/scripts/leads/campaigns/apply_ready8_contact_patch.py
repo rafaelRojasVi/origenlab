@@ -185,7 +185,7 @@ def write_plan_md(
     import_cmd: str,
     pack_cmd: str,
 ) -> None:
-    body = f"""# Ready-8 hunt patch and top-20 reporting base
+    body = """# Ready-8 hunt patch and top-20 reporting base
 
 ## Context
 

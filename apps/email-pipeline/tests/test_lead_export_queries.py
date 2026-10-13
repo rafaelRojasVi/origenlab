@@ -42,7 +42,7 @@ def test_left_join_variants(variant: str, expect_cols: str) -> None:
 
 def test_cte_matches_join_columns_org_domain() -> None:
     cte = sql_cte_best_org_match()
-    join = sql_left_join_best_org_match(variant="org_domain_archive")
+    sql_left_join_best_org_match(variant="org_domain_archive")
     # Same SELECT column set as org_domain_archive join subquery
     assert "m1.matched_domain" in cte
     assert "m1.matched_org_name" in cte

@@ -445,7 +445,7 @@ def _handle_update_person(
     expected_version = fields["expected_version"]
     note = fields["note"]
 
-    person = _live_person(cur, person_id, expected_version)
+    _live_person(cur, person_id, expected_version)
 
     changes: dict[str, Any] = {}
     for col in ("display_name", "given_name", "family_name", "title"):
@@ -2260,7 +2260,7 @@ def _handle_reject_supplier_candidate(
     assertion_id = fields["assertion_id"]
     note_text = fields["note"]
 
-    assertion = _live_assertion(cur, assertion_id, kind="supplier_candidate")
+    _live_assertion(cur, assertion_id, kind="supplier_candidate")
 
     cur.execute(
         """

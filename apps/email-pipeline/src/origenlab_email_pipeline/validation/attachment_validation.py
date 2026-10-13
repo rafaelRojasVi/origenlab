@@ -98,12 +98,10 @@ def run_attachment_validation(conn: sqlite3.Connection) -> AttachmentValidationR
         "SELECT COUNT(*) FROM emails WHERE has_attachments = 1"
     ).fetchone()[0]
 
-    count_emails = cur.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
-    count_att = cur.execute("SELECT COUNT(*) FROM attachments").fetchone()[0]
     distinct_email_id_att = cur.execute(
         "SELECT COUNT(DISTINCT email_id) FROM attachments"
     ).fetchone()[0]
-    emails_has_att = cur.execute(
+    cur.execute(
         "SELECT COUNT(*) FROM emails WHERE has_attachments = 1"
     ).fetchone()[0]
     sum_attachment_count = cur.execute(

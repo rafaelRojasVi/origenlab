@@ -339,7 +339,7 @@ def test_same_domain_empty_email_not_net_new_safe(overlay_db: sqlite3.Connection
 
 
 def test_suppression_wins_over_contacted() -> None:
-    idx = load_operational_indexes_from_sqlite(sqlite3.connect(":memory:"))
+    load_operational_indexes_from_sqlite(sqlite3.connect(":memory:"))
     # build indexes manually
     from origenlab_email_pipeline.lead_research.lead_research_operational_overlay import (
         OperationalEmailIndexes,

@@ -216,7 +216,7 @@ class TestHostedTargetFile(unittest.TestCase):
 
     def test_a_duplicate_key_is_refused(self):
         with self.assertRaises(TargetError):
-            self.resolve(self.good() + f"\nOL_HOSTED_PORT=5432\n")
+            self.resolve(self.good() + "\nOL_HOSTED_PORT=5432\n")
 
 
 class TestSupavisorSessionRoute(unittest.TestCase):

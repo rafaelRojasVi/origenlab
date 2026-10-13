@@ -285,16 +285,16 @@ def infer_column_mapping(columns: Iterable[str]) -> dict[str, str]:
     lowered = {c.lower(): c for c in norm_cols}
     mapping: dict[str, str] = {}
     used: set[str] = set()
-    for field, aliases in _COLUMN_ALIASES.items():
+    for field_name, aliases in _COLUMN_ALIASES.items():
         for alias in aliases:
             for col_lower, original in lowered.items():
                 if col_lower in used:
                     continue
                 if alias in col_lower or col_lower == alias:
-                    mapping[field] = original
+                    mapping[field_name] = original
                     used.add(col_lower)
                     break
-            if field in mapping:
+            if field_name in mapping:
                 break
     cols_list = list(norm_cols.keys())
     if "email" not in mapping:

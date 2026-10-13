@@ -51,7 +51,7 @@ def test_a_complete_remote_target_binds_verify_full(ca) -> None:
 @pytest.mark.parametrize(
     "dsn, reason",
     [
-        (f"postgresql://origenlab_api:pw@other.example-v2.test:5432/origenlab", "does not name"),
+        ("postgresql://origenlab_api:pw@other.example-v2.test:5432/origenlab", "does not name"),
         (f"postgresql://origenlab_api:pw@{HOST}.evil.test:5432/origenlab", "does not name"),
         (f"{DSN}?sslmode=disable", "no query string"),
         (f"{DSN}?host=elsewhere.test", "no query string"),

@@ -36,9 +36,10 @@ For dashboard/API checks without production risk:
 From the repo root — the same commands CI runs:
 
 ```bash
-make setup      # once: every app's dependencies and test groups
+make setup      # once: every app's dependencies, test groups and the pre-commit hook
 make db-up      # once per session: disposable test databases (make db-down stops them)
-make check      # only the suites your change needs (vs origin/main), in parallel
+make lint       # ruff (bug rules), gitleaks, file checks on every file — also a pre-commit hook
+make check      # lint, then only the suites your change needs (vs origin/main), in parallel
 make check-all  # every suite
 ```
 

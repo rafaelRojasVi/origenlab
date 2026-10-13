@@ -45,7 +45,6 @@ def _repo_root() -> Path:
 def default_tatiana_seed_paths(settings: Settings) -> tuple[Path, Path, Path]:
     """Same defaults as ``run_pilot_batch`` for cohort CSVs."""
     root = _repo_root()
-    reports = settings.resolved_reports_dir()
     lf = root / "reports" / "out" / "tatiana_candidate_cohort_marketing_top200_labeled_final.csv"
     sf = root / "reports" / "out" / "tatiana_candidate_cohort_marketing_top200_seed_style_guide.csv"
     rf = root / "reports" / "out" / "tatiana_candidate_cohort_marketing_top200_seed_retrieval.csv"

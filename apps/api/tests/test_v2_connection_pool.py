@@ -58,7 +58,7 @@ def test_pool_connect_refuses_autocommit_true() -> None:
 def test_pool_passes_tls_options_to_new_connections() -> None:
     """All connect_options from V2DatabaseTarget are forwarded to psycopg_pool as kwargs."""
     seen_kwargs: dict[str, Any] = {}
-    pool = _fake_pool(connect_kwargs=TLS_OPTIONS, capture=seen_kwargs)
+    _fake_pool(connect_kwargs=TLS_OPTIONS, capture=seen_kwargs)
     # open() triggers the pool to try to connect; check kwargs captured
     assert seen_kwargs.get("sslmode") == "verify-full"
     assert seen_kwargs.get("sslrootcert") == "/tmp/ca.pem"

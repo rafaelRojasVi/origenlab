@@ -135,7 +135,6 @@ def test_postgres_mirror_sync_from_sqlite(
     apply_promotion_plan(conn, plan)
     conn.close()
 
-    written: dict[str, int] = {}
 
     class FakeCursor:
         def __init__(self) -> None:

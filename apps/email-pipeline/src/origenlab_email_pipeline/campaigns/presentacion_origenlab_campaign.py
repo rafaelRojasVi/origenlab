@@ -509,7 +509,6 @@ def _gather_missing_email_rows(prospect_rows: list[dict[str, str]]) -> list[Pres
         if (row.get("classification") or "") != "research_only_contact_needed":
             continue
         org = row.get("organization_name") or ""
-        dom = row.get("domain") or ""
         angle = row.get("product_angle") or row.get("spanish_message_angle") or product_angle()
         out.append(
             PresentacionReviewRow(

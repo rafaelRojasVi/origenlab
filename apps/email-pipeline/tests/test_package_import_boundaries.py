@@ -53,7 +53,7 @@ def test_tatiana_copilot_import_boundaries(path: Path) -> None:
     bad = _violations_in_file(path)
     assert not bad, (
         "tatiana_copilot must not import gate/archive/parent streamlit modules "
-        f"(see docs/pipeline/PACKAGE_DOMAINS.md). Violations:\n" + "\n".join(bad)
+        "(see docs/pipeline/PACKAGE_DOMAINS.md). Violations:\n" + "\n".join(bad)
     )
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from origenlab_email_pipeline.campaigns.cyber_campaign_types import OPT_OUT_LINE_ES
+from origenlab_email_pipeline.campaigns.cyber_campaign_types import OPT_OUT_LINE_ES, CyberCampaignRow
 
 
 def _greeting_line(contact_name: str) -> str:

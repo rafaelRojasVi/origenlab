@@ -166,7 +166,7 @@ def classify_email(
     to = to or recipients or ""
     subj = subject or ""
     b = body or ""
-    combined_recip = f"{to} {cc or ''}".strip()
+    f"{to} {cc or ''}".strip()
 
     sender_dom = normalized_domain(from_)
     tags: list[str] = []

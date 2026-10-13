@@ -30,7 +30,8 @@ class Check(unittest.TestCase):
     def test_all_runs_every_target(self):
         r, calls = self.run_check()
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual([c.split()[-1] for c in calls], [f"test-{t}" for t in changed_apps.ALL])
+        self.assertEqual([c.split()[-1] for c in calls],
+                         ["lint"] + [f"test-{t}" for t in changed_apps.ALL])
         self.assertIn("== passed ==", r.stdout)
 
     def test_stops_at_the_first_failure(self):

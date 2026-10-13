@@ -906,7 +906,7 @@ def _reconcile(
         total = sum(1 for r in collected.recipients if r["campaign_id"] == campaign_id)
         if sum(buckets.values()) != total:
             raise ExtractionRefused(
-                f"count disagreement: recipient state buckets do not sum to the total"
+                "count disagreement: recipient state buckets do not sum to the total"
             )
         per_campaign[campaign_id] = {
             "recipients_total": total,

@@ -1,0 +1,21 @@
+# `make lint` runs these on every file; `make setup` installs them as a git hook, where they run
+# on staged files only (a couple of seconds). CI runs `make lint` on every PR (lint.yml).
+# No formatter and no whitespace fixers on purpose: they would rewrite byte-exact fixtures.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.0
+    hooks:
+      - id: ruff-check  # rules in ruff.toml: real bugs only
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks  # same .gitleaksignore as the secret-scan workflow
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: check-yaml
+        args: ["--allow-multiple-documents"]
+      - id: check-toml

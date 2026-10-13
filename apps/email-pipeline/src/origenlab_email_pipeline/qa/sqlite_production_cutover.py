@@ -2892,7 +2892,8 @@ def _validate_journal_location(adapters: CutoverAdapters, path: Path, production
             "refusing symlinked journal path",
             category=CutoverFailureCategory.SAFETY,
         )
-    expected_dir = canonical_journal_dir(production)
+    # Computed and never compared: the check below tests only the parent's basename.
+    expected_dir = canonical_journal_dir(production)  # noqa: F841
     if path.name != f"{path.name}" or not path.name.endswith(".journal.json"):
         _fail("invalid journal basename", category=CutoverFailureCategory.SAFETY)
     # Parent basename must be journals dir.
@@ -3586,7 +3587,7 @@ def plan_preflight(opts: CutoverOptions) -> dict[str, Any]:
         if opts.expected_production_path is not None
         else canonical_production_sqlite_path()
     )
-    reports = opts.reports_dir or settings.resolved_reports_dir()
+    opts.reports_dir or settings.resolved_reports_dir()
 
     prod_exists = adapters.path_exists(production) and adapters.is_file(production)
     fp = adapters.fingerprint(production) if prod_exists else None

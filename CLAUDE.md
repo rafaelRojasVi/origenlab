@@ -166,8 +166,9 @@ are not required reading for routine code changes.
   implementation. Search callers (imports, scripts, CI, docs) before
   deleting code — see `docs/architecture/COMMERCIAL_RESET_LEDGER.md` for
   the evidence standard used in the last cleanup pass.
-- Run `make check` from the repo root for anything you touch: it runs exactly
-  the suites your change needs (vs `origin/main`), in parallel, the same
+- Run `make check` from the repo root for anything you touch: it runs `make lint`
+  (Ruff for real bugs, gitleaks, file checks — under a second; `make setup` also
+  installs it as a pre-commit hook), then exactly the suites your change needs (vs `origin/main`), in parallel, the same
   commands CI runs. Run `make db-up` once first — it starts disposable test
   databases (`make db-down` stops them) and `make check` refuses to pass with
   database tests skipped. `make check-all` runs everything; `make setup`

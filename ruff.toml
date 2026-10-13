@@ -1,0 +1,15 @@
+# Lint for real bugs only — undefined names, unused variables, shadowing, syntax errors — not
+# style. `make lint` (pre-commit) runs it on every commit and in CI; no formatter on purpose.
+target-version = "py312"
+extend-exclude = ["**/node_modules", "**/.venv", "**/dist"]
+
+[lint]
+select = ["F", "E9"]
+# Unused imports stay allowed: modules and scripts here re-export names that other modules and
+# tests reach as attributes (see scripts/qa/audit_module_facades.py), and removing them breaks
+# those callers.
+ignore = ["F401"]
+
+[lint.per-file-ignores]
+# pytest fixtures imported into a test module and then requested by parameter name.
+"**/tests/**" = ["F811"]

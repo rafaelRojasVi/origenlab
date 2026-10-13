@@ -360,7 +360,7 @@ def test_a_viewer_can_neither_read_nor_probe_an_address(disposable_database, wor
         probe = viewer.get(f"{_base(world['A'])}/recipients", params={"q": local}).json()
         assert probe["total_rows"] == 0 and probe["filters"]["search_scope"] == "names_only"
     by_name = viewer.get(f"{_base(world['A'])}/recipients", params={"q": "Ana Ficticia"}).json()
-    assert by_name["total_rows"] == 1 and by_name["rows"][0]["address"] == f"***@uni.test"
+    assert by_name["total_rows"] == 1 and by_name["rows"][0]["address"] == "***@uni.test"
     replies = viewer.get(f"{_base(world['A'])}/replies").text
     assert f"copia-{world['tag']}" not in replies and f"replied-{world['tag']}" not in replies
 

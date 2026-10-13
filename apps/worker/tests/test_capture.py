@@ -232,7 +232,7 @@ def test_a_message_in_inbox_and_sent_from_a_send_as_alias_is_outbound_by_the_sen
 
 
 def test_the_mailbox_as_sender_without_a_sent_label_is_outbound_in_any_case() -> None:
-    c = capture(make_raw(frm=f"OrigenLab <Contacto@OrigenLab.cl>", to="x@cliente.invalid"), labels=("INBOX",))
+    c = capture(make_raw(frm="OrigenLab <Contacto@OrigenLab.cl>", to="x@cliente.invalid"), labels=("INBOX",))
     assert c.direction == "outbound"
 
 
