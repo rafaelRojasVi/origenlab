@@ -23,7 +23,7 @@ const MODE: Record<MailRuleMode, { label: string; tone: "good" | "warn" | "neutr
   none: { label: "Sin acción", tone: "neutral" },
 };
 
-const RULE_ORDER = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"];
+const RULE_ORDER = ["R1", "R2", "R9", "R3", "R4", "R5", "R6", "R7", "R8"];
 
 
 /**
@@ -196,7 +196,8 @@ function AutoSwitch({ state, onChanged }: { state: AutoMailRulesState; onChanged
       </div>
       <p className="text-xs text-ink-muted">
         Activo, el sistema vincula solo cada correo nuevo del mismo hilo de Gmail (R1) o con el número de una cotización
-        (R2) de exactamente un caso abierto, a nombre de quien lo activó. Abrir casos, ganar o perder siguen esperando
+        (R2) de exactamente un caso abierto, y cada cotización enviada a un correo gratuito al único caso abierto de la
+        institución que nombra el PDF (R9), a nombre de quien lo activó. Abrir casos, ganar o perder siguen esperando
         «Aplicar». Todo se puede deshacer abajo.
       </p>
       {state.blocked ? <p className="text-xs text-warn">{state.blocked}</p> : null}

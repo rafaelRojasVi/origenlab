@@ -650,7 +650,13 @@ else (R7, R8) stays a proposal in Revisión.
   Revisión. The switch is off until an admin turns it on, is turned off the
   same way, and needs a note both ways; the automatic run acts on behalf of
   the admin who switched it on, and stops if that operator is no longer an
-  active admin. R3–R6 always wait for «Aplicar». Their events are `crm.domain_event.actor_kind =
+  active admin. **R9** joins that timer (owner-approved 2026-10-13): contacto@ sent a new CN
+  quote PDF, no recipient names an institution (a free-mail customer), and the PDF's own name
+  (`CN<número>-<institución>.pdf`, as the Cotizador writes it) names exactly one non-supplier
+  institution — by its whole name, its name without the parenthetical, or a «(SIGLA)» of three or
+  more letters — that has exactly one open case. That case gets the link, the walk to «Enviada»
+  and the quote, undone like R1's. Two institutions, no open case or several open cases stay
+  proposals naming the candidates. R3–R6 always wait for «Aplicar». Their events are `crm.domain_event.actor_kind =
   'worker'`, with no `actor_operator_id`, and `payload.attribution` naming the
   rule, its reasons, the email and the admin who applied them. The row
   columns that require an operator (`owner_operator_id`,

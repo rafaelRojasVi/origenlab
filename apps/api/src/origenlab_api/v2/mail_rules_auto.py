@@ -9,6 +9,7 @@ applies, and **which** rules may apply without a person pressing «Aplicar»:
 | R1 | yes | same Gmail thread as one open case; a new sent CN PDF may also record the quote when the requester is already resolved |
 | R2 | yes | the email names a quote number held by exactly one open case: link only |
 | R7 | yes | an explicit inbound RFQ opens a lead; free-mail never invents an institution |
+| R9 | yes | a sent CN PDF whose own name names one institution with exactly one open case: link + «Enviada» + quote (owner-approved 2026-10-13) |
 | R3–R6 | no | recipient-domain case creation and terminal win/loss actions still wait for an admin |
 
 **The switch.** An admin turns the automatic run on or off in Revisión → «Acciones automáticas»
@@ -49,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 #: Safe intake/link rules the timer applies. Terminal actions (R5/R6) and recipient-domain
 #: creation (R3/R4) still wait for an admin.
-AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R7"})
+AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R7", "R9"})
 SWITCH_COMMAND = "set_auto_mail_rules"
 DEFAULT_INTERVAL_SECONDS = 300
 #: At most this many actions per pass; the next pass takes the rest.

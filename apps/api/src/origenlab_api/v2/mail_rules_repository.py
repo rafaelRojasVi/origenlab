@@ -550,7 +550,7 @@ class MailRulesRepository(V2CaseCommandRepository):
             if rule == "R5" and action.get("from_stage") == "quoting":
                 run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": self._case_version(cur, case_id),
                                          "stage": "quoting", "note": note})
-        if rule == "R1" and created.get("quote_revision_id"):
+        if rule in ("R1", "R9") and created.get("quote_revision_id"):
             # R1 can now recognize a new sent CN PDF on an existing thread. Undo the quote first,
             # then walk the ordinary reversible stage edges back to where the case was before the
             # email action. No privileged stage correction is needed for these open stages.
@@ -574,7 +574,7 @@ class MailRulesRepository(V2CaseCommandRepository):
                     "stage": stage,
                     "note": note,
                 })
-        if rule in ("R1", "R2", "R5", "R6"):
+        if rule in ("R1", "R2", "R5", "R6", "R9"):
             for link_id in created.get("opportunity_evidence_ids") or []:
                 run(UNLINK_CASE_EVIDENCE, {"opportunity_evidence_id": link_id, "reason": note, "note": note})
         if rule in ("R3", "R4", "R7"):

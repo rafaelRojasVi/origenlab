@@ -30,7 +30,8 @@ class _CountingAuto(AutoMailRules):
 
 
 def test_only_safe_intake_and_link_rules_are_automatic() -> None:
-    assert AUTOMATIC_RULES == {"R1", "R2", "R7"}
+    # R9 (the institution a sent CN PDF names, one open case) owner-approved 2026-10-13.
+    assert AUTOMATIC_RULES == {"R1", "R2", "R7", "R9"}
 
 
 def test_interval_zero_or_no_commands_never_starts_the_timer() -> None:

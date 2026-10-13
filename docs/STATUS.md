@@ -2633,3 +2633,16 @@ quotes 7 s) and inbound mail reached the database 3–7 min after arrival (p90 ~
 waiting job keep a slow cycle from overlapping the next; postflight windows still allow 15/20
 minutes. Not addressed: campaign bursts (6 and 8 Oct), where single Gmail runs took 18–24 min
 because messages are fetched one at a time.
+
+### 2.7.106 R9: a quote sent to a free-mail customer reaches the case its PDF names, 2026-10-13 — built, deploys on merge
+
+Found on a real send: contacto@ sent `CN09876-<institución> (SIGLA).pdf` to a gmail.com address
+on a new thread, and no rule could tell which case it was for (R1 needs a known thread, R2 a known
+number, R3/R4 a recipient domain; free-mail is never an institution), so the case never reached
+«Enviada». New rule **R9** (`mail_rules._quote_file_rule`) reads the institution from the
+Cotizador's file name and, when it names exactly one institution with exactly one open case,
+links the email, walks the case to `quoting` and records the quote — automatically, like R1 on a
+thread (DOMAIN.md §3.6.6, owner-approved 2026-10-13); undo is R1's. Every other outcome is a
+proposal naming its candidates. Evidence: mail-rule unit tests (6 new) and a real-database test
+of apply and undo.
+

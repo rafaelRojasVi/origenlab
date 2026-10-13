@@ -267,6 +267,41 @@ def test_r7_request_then_r1_sent_quote_walks_en_estudio_to_enviada_and_undoes(db
                 applied["created"]["quote_revision_id"])[0] == "void"
 
 
+def test_r9_a_quote_sent_to_gmail_reaches_the_case_of_the_institution_its_pdf_names_and_undoes(db, world) -> None:
+    # The 2026-10-13 shape: the customer writes from gmail.com on a new thread; only the Cotizador
+    # file name «CN0…-<institución>.pdf» says which institution the quote is for.
+    repo = _repo(db)
+    op = _operator(world["admin"])
+    with _owner(db) as conn:
+        request = _mail(
+            conn, thread=f"t-r9-rfq-{world['tag']}", direction_hint=None,
+            sender=f"investigadora@{world['client_domain']}", recipients="contacto@origenlab.cl",
+            subject="Solicitud de cotización de productos",
+        )
+    case_id = _apply_only(db, world, request)["case_id"]
+    serial = int(world["number"][1:-3]) + 5
+    token = f"CN0{serial}"
+    with _owner(db) as conn:
+        sent = _mail(
+            conn, thread=f"t-r9-sent-{world['tag']}", direction_hint="external",
+            sender="Tatiana <contacto@origenlab.cl>", recipients="investigadora.personal@gmail.com",
+            subject="Cotización", documents=[_doc(f"{token}-Cliente Ficticio {world['tag']}.pdf", [token])],
+        )
+    planned = _action(repo.preview(), sent)
+    assert (planned["rule_id"], planned["mode"], planned["case_id"]) == ("R9", "auto", case_id)
+    applied = _apply_only(db, world, sent)
+    assert applied["quote_number"] == f"0{serial}-26"
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id)[0] == "quoting"
+    assert _one(db, "select status from crm.quote_revision where id = %s",
+                applied["created"]["quote_revision_id"])[0] == "sent"
+
+    undone = repo.undo(op, applied["command_receipt_id"], "la cotización era de otro caso")
+    assert [step["command"] for step in undone["steps"]] == [
+        "void_historical_quote_revision", "advance_case_stage", "unlink_case_evidence",
+    ]
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id)[0] == "qualified"
+
+
 def test_r7_free_mail_request_is_visible_as_solicitada_without_false_institution(db, world) -> None:
     with _owner(db) as conn:
         request = _mail(
@@ -590,7 +625,7 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     assert unchanged.value.code == "auto_mail_rules_unchanged"
     state = auto.state()
     assert (state["enabled"], state["changed_by"], state["note"], state["rules"]) == (
-        True, "Admin Ficticio", "probado en vista previa", ["R1", "R2", "R7"])
+        True, "Admin Ficticio", "probado en vista previa", ["R1", "R2", "R7", "R9"])
 
     # One pass: R1/R2 link and R7 opens the RFQ lead; R4 still waits for a person.
     result = auto.run_once()

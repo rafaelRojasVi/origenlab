@@ -16,6 +16,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R6 | inbound «otro proveedor» on a thread linked to one open case | auto: link + lost |
 | R7 | inbound quote request, no linked thread | numbered quotation references require review; otherwise open lead |
 | R8 | everything else (supplier, a reply to our own supplier RFQ, campaign thread, Labdelivery, nothing matched) | none |
+| R9 | outbound, a NEW CN number in a PDF, no recipient names an institution (free-mail), and the PDF's own name names exactly one institution (`CN09876-<institución>.pdf`, as the Cotizador writes it) | auto when that institution has exactly one open case: link + «Enviada» + quote; otherwise a proposal |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -48,7 +49,7 @@ from email.utils import getaddresses
 from typing import Any
 from zoneinfo import ZoneInfo
 
-RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8")
+RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: OrigenLab's own domains: never an institution, never a recipient that counts.
@@ -313,6 +314,36 @@ def fold(text: str | None) -> str:
     return re.sub(r"\s+", " ", plain.lower()).strip()
 
 
+#: «CN09876-Instituto … (SIGLA).pdf», «CN 09876-26 - Institución.pdf»: the quote token, then the name.
+_QUOTE_FILE_NAME = re.compile(r"^\s*(?:CN|COT)\s*-?\s*\d+(?:\s*-\s*\d{2}(?!\d))?\s*[-_–]\s*(?P<name>.+?)\s*\.pdf\s*$",
+                              re.IGNORECASE)
+_PARENTHETICAL = re.compile(r"\(([^()]*)\)")
+
+
+def quote_file_institution(filename: str | None) -> str | None:
+    """The institution a Cotizador PDF names after its quote token, or None."""
+    m = _QUOTE_FILE_NAME.match(filename or "")
+    if not m:
+        return None
+    name = m.group("name").strip(" -_")
+    return name if len(fold(name)) >= 3 else None
+
+
+def institution_keys(name: str | None) -> set[str]:
+    """Folded forms one institution is recognised by: the whole name, the name without its
+    parenthetical, and an acronym of three or more letters in parentheses («(SIGLA)»)."""
+    full = fold(name)
+    keys = {full} if full else set()
+    base = fold(_PARENTHETICAL.sub(" ", name or ""))
+    if base:
+        keys.add(base)
+    for inner in _PARENTHETICAL.findall(name or ""):
+        acronym = fold(inner)
+        if len(acronym) >= 3:
+            keys.add(acronym)
+    return keys
+
+
 def addresses(values: Iterable[str | None]) -> list[str]:
     out: list[str] = []
     for _, address in getaddresses([v for v in values if v]):
@@ -378,6 +409,11 @@ class _Index:
                 if bare is not None:
                     self.by_correlative.setdefault(bare[1], []).append((q.quote_number, None))
         self.orgs = {o.id: o for o in snapshot.organizations}
+        #: Folded name, name without its parenthetical, and «(ACRONYM)» → organizations (R9).
+        self.by_name: dict[str, list[Organization]] = {}
+        for o in snapshot.organizations:
+            for k in institution_keys(o.name):
+                self.by_name.setdefault(k, []).append(o)
         self.by_domain: dict[str, list[Organization]] = {}
         for o in snapshot.organizations:
             for d in o.domains:
@@ -761,22 +797,7 @@ def _thread_sent_quote_rule(e: MailEvidence, ix: _Index, c: CaseState) -> Planne
         "mismo hilo de Gmail que el caso",
         f"cotización nueva {number} enviada por contacto@ (PDF «{doc.filename}»)",
     ]
-    note = _note("R1", reasons)
-    to_quoting: dict[str, tuple[str, ...]] = {
-        "lead": ("qualifying", "qualified", "quoting"),
-        "qualifying": ("qualified", "quoting"),
-        "qualified": ("quoting",),
-        "quoting": (),
-        "negotiating": (),
-    }
-    steps: list[dict[str, Any]] = [_link_step(c, e.id, "mentions", note)]
-    steps.extend(_advance_step(stage, note) for stage in to_quoting[c.stage])
-    steps.append({"command": "record_historical_quotation", "inputs": {
-        "opportunity_id": "@case", "quote_number": number, "printed_quote_numbers": [token],
-        "quote_number_derivation": derivation,
-        "document_sha256": doc.sha256, "sent_at": e.sent_at, "origin_source_record_id": e.id,
-        "ledger_decision_id": f"mail-rule:{e.id}", "filename": doc.filename, "note": note,
-    }})
+    steps = _sent_quote_steps(c, e, doc, number, token, derivation, _note("R1", reasons))
     ix.claimed_keys[key] = e.id
     return PlannedAction(
         e.id, "R1", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
@@ -875,11 +896,91 @@ def _creation_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedA
         return PlannedAction(e.id, "R4", PROPOSAL, (
             f"cotización {number} enviada a varios dominios sin institución ({', '.join(unknown)}): un humano elige",),
             quote_number=number)
+    if not known:
+        named_in_file = _quote_file_rule(e, ix, doc, token, key, number, derivation, base_reasons)
+        if named_in_file is not None:
+            return named_in_file
     if free:
         return PlannedAction(e.id, "R8", NONE, (
             f"cotización {number} enviada a correo gratuito ({', '.join(free)}): no se crea institución",),
             quote_number=number)
     return PlannedAction(e.id, "R8", NONE, ("correo saliente sin destinatario externo",), quote_number=number)
+
+
+def _quote_file_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: str, key: tuple[int, int],
+                     number: str, derivation: dict[str, Any], base_reasons: list[str]) -> PlannedAction | None:
+    """R9: no recipient names an institution, but the PDF's own name does.
+
+    The Cotizador names every quote `CN<number>-<institución>.pdf`, so a customer writing from
+    gmail.com still names the institution the quote is for. Only a whole-name, name-without-
+    parenthetical or «(ACRONYM)» match against the CRM counts; a supplier never matches. One open
+    case of that one institution is recorded like R1 does on a thread; anything else is a proposal
+    naming the candidates, never a guess. An unmatched name returns None (the caller's R8).
+    """
+    name = quote_file_institution(doc.filename)
+    if name is None:
+        return None
+    found: dict[str, Organization] = {}
+    for k in institution_keys(name):
+        for o in ix.by_name.get(k, []):
+            found[o.id] = o
+    if not found or any(o.is_supplier for o in found.values()):
+        return None
+    if len(found) >= 2:
+        return PlannedAction(e.id, "R9", PROPOSAL, (
+            *base_reasons, f"el PDF nombra «{name}», que coincide con {len(found)} instituciones: un humano elige",),
+            quote_number=number, candidates=tuple(sorted(found)))
+    o = next(iter(found.values()))
+    open_cases = sorted((c for c in ix.cases.values() if c.organization_id == o.id and not c.closed),
+                        key=lambda c: c.id)
+    named = f"el PDF nombra la institución «{o.name}»"
+    if not open_cases:
+        return PlannedAction(e.id, "R9", PROPOSAL, (
+            *base_reasons, named, "no tiene un caso abierto: un humano abre el caso o vincula el correo",),
+            organization_id=o.id, organization_name=o.name, quote_number=number)
+    if len(open_cases) >= 2:
+        return PlannedAction(e.id, "R9", PROPOSAL, (
+            *base_reasons, named, f"tiene {len(open_cases)} casos abiertos: un humano elige",),
+            organization_id=o.id, organization_name=o.name, quote_number=number,
+            candidates=tuple(c.id for c in open_cases))
+    c = open_cases[0]
+    if c.stage not in _TO_QUOTING:
+        return PlannedAction(e.id, "R9", PROPOSAL, (
+            *base_reasons, named, f"su único caso abierto está en {c.stage}: un humano decide",),
+            case_id=c.id, case_title=c.title, organization_id=o.id, quote_number=number)
+    reasons = [*base_reasons, named, f"único caso abierto de esa institución: «{c.title}»"]
+    ix.claimed_keys[key] = e.id
+    return PlannedAction(
+        e.id, "R9", AUTO, tuple(reasons), case_id=c.id, case_title=c.title, organization_id=o.id,
+        organization_name=o.name, quote_number=number,
+        commands=_sent_quote_steps(c, e, doc, number, token, derivation, _note("R9", reasons)),
+        context={"case": c.id, "case_version": c.version, "from_stage": c.stage},
+    )
+
+
+#: Open stages a sent quote may move to «Enviada» (`quoting`), and the edges it walks there.
+_TO_QUOTING: dict[str, tuple[str, ...]] = {
+    "lead": ("qualifying", "qualified", "quoting"),
+    "qualifying": ("qualified", "quoting"),
+    "qualified": ("quoting",),
+    "quoting": (),
+    "negotiating": (),
+}
+
+
+def _sent_quote_steps(c: CaseState, e: MailEvidence, doc: MailDocument, number: str, token: str,
+                      derivation: dict[str, Any], note: str) -> tuple[dict[str, Any], ...]:
+    """Link the email to an existing case, walk it to «Enviada», record the sent quote (R1, R9)."""
+    return (
+        _link_step(c, e.id, "mentions", note),
+        *(_advance_step(stage, note) for stage in _TO_QUOTING[c.stage]),
+        {"command": "record_historical_quotation", "inputs": {
+            "opportunity_id": "@case", "quote_number": number, "printed_quote_numbers": [token],
+            "quote_number_derivation": derivation,
+            "document_sha256": doc.sha256, "sent_at": e.sent_at, "origin_source_record_id": e.id,
+            "ledger_decision_id": f"mail-rule:{e.id}", "filename": doc.filename, "note": note,
+        }},
+    )
 
 
 def _case_with_quote_steps(e: MailEvidence, doc: MailDocument, number: str, token: str,

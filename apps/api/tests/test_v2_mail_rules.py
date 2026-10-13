@@ -17,6 +17,8 @@ from origenlab_api.v2.mail_rules import (
     gmail_quote_key,
     plan,
     quote_key,
+    quote_file_institution,
+    RULE_IDS,
 )
 
 PDF_SHA = "a" * 64
@@ -780,3 +782,82 @@ def test_r1_defers_to_a_quote_number_that_belongs_to_another_case() -> None:
     ))
     assert (action.rule_id, action.mode) == ("R1", "proposal")
     assert set(action.candidates) == {"c-1", "c-2"}
+
+
+# ------------------------------------------------------------------ R9: the institution the PDF names
+def r9_mail(filename="CN09876-Instituto Ficticio de Ensayos (IFDE).pdf", **over) -> MailEvidence:
+    base = dict(thread_id="t-new", recipients=("Persona <persona.cliente@gmail.com>",),
+                documents=(MailDocument(filename=filename, sha256=PDF_SHA, cn_tokens=("CN09876",)),))
+    return mail(**{**base, **over})
+
+
+IFDE = dict(id="o-ifde", name="IFDE", domains=("ifde.test",))
+
+
+def test_quote_file_institution_reads_the_name_after_the_token() -> None:
+    assert quote_file_institution("CN09876-Instituto Ficticio de Ensayos (IFDE).pdf") == \
+        "Instituto Ficticio de Ensayos (IFDE)"
+    assert quote_file_institution("CN 09876-26 - Universidad Ficticia.pdf") == "Universidad Ficticia"
+    assert quote_file_institution("COT09876_Hospital Ficticio.PDF") == "Hospital Ficticio"
+    for bare in ("CN09876.pdf", "CN09876-26.pdf", "Folleto_producto.pdf", "CN09876-ab.pdf", None):
+        assert quote_file_institution(bare) is None, bare
+
+
+def test_r9_records_a_sent_quote_on_the_one_open_case_of_the_institution_the_pdf_names() -> None:
+    # The 2026-10-13 shape: contacto@ → a gmail.com address, new thread, new number, «(SIGLA)».
+    action = only(Snapshot(
+        evidence=(r9_mail(),),
+        cases=(case(id="c-ifde", stage="qualified", organization_id="o-ifde"),),
+        organizations=(org(**IFDE),),
+    ))
+    assert (action.rule_id, action.mode, action.case_id, action.quote_number) == ("R9", "auto", "c-ifde", "09876-26")
+    assert action.context["from_stage"] == "qualified"
+    assert [c["command"] for c in action.commands] == [
+        "link_case_evidence", "advance_case_stage", "record_historical_quotation"]
+    assert action.commands[1]["inputs"]["stage"] == "quoting"
+    assert action.commands[-1]["inputs"]["quote_number"] == "09876-26"
+    assert any("IFDE" in r for r in action.reasons)
+
+
+def test_r9_matches_the_whole_name_or_the_name_without_its_parenthetical() -> None:
+    for crm_name in ("Instituto Ficticio de Ensayos", "Instituto Ficticio de Ensayos (IFDE)"):
+        action = only(Snapshot(evidence=(r9_mail(),), cases=(case(organization_id="o-ifde"),),
+                               organizations=(org(**{**IFDE, "name": crm_name}),)))
+        assert (action.rule_id, action.mode) == ("R9", "auto"), crm_name
+
+
+def test_r9_never_guesses() -> None:
+    two_cases = only(Snapshot(evidence=(r9_mail(),), organizations=(org(**IFDE),), cases=(
+        case(id="c-1", organization_id="o-ifde"), case(id="c-2", organization_id="o-ifde"))))
+    assert (two_cases.rule_id, two_cases.mode, two_cases.candidates) == ("R9", "proposal", ("c-1", "c-2"))
+    no_case = only(Snapshot(evidence=(r9_mail(),), organizations=(org(**IFDE),),
+                            cases=(case(organization_id="o-ifde", closed=True, stage="won"),)))
+    assert (no_case.rule_id, no_case.mode) == ("R9", "proposal")
+    two_orgs = only(Snapshot(evidence=(r9_mail(),), cases=(), organizations=(
+        org(**IFDE), org(id="o-dup", name="Instituto Ficticio de Ensayos", domains=()))))
+    assert (two_orgs.rule_id, two_orgs.mode, two_orgs.candidates) == ("R9", "proposal", ("o-dup", "o-ifde"))
+    late = only(Snapshot(evidence=(r9_mail(),), organizations=(org(**IFDE),),
+                         cases=(case(organization_id="o-ifde", stage="won"),)))
+    assert (late.rule_id, late.mode) == ("R9", "proposal")
+
+
+def test_r9_does_not_act_on_an_unknown_name_a_supplier_or_a_known_recipient_domain() -> None:
+    unknown = only(Snapshot(evidence=(r9_mail("CN09876-Otra Institución.pdf"),),
+                            cases=(case(organization_id="o-ifde"),), organizations=(org(**IFDE),)))
+    assert (unknown.rule_id, unknown.mode) == ("R8", "none")
+    supplier = only(Snapshot(evidence=(r9_mail(),), cases=(case(organization_id="o-ifde"),),
+                             organizations=(org(**{**IFDE, "is_supplier": True}),)))
+    assert supplier.rule_id == "R8"
+    # A recipient domain that names an institution is R3's, whatever the file name says.
+    by_domain = only(Snapshot(evidence=(r9_mail(recipients=("compras@cliente.test",)),),
+                              cases=(case(organization_id="o-ifde"),), organizations=(org(), org(**IFDE))))
+    assert by_domain.rule_id == "R3"
+
+
+def test_r9_is_automatic_and_undone_like_r1() -> None:
+    from origenlab_api.v2.mail_rules_auto import AUTOMATIC_RULES
+    import inspect
+    from origenlab_api.v2 import mail_rules_repository
+    assert "R9" in AUTOMATIC_RULES and "R9" in RULE_IDS
+    source = inspect.getsource(mail_rules_repository.MailRulesRepository._undo_steps)
+    assert 'rule in ("R1", "R9") and created.get("quote_revision_id")' in source
