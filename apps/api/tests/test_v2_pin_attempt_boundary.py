@@ -565,6 +565,7 @@ def test_success_wrong_malformed_and_locked(db, ids) -> None:
         ("profile.selection_refused", "profile_inactive"), ("profile.selection_refused", "locked")]
 
 
+@pytest.mark.serial_db  # grants a role membership; roles are cluster-wide
 def test_only_the_runtime_login_may_run_either_function(db, ids) -> None:
     with _owner(db) as conn, conn.cursor() as cur:
         for fn in ("platform.begin_pin_attempt(uuid,uuid)",

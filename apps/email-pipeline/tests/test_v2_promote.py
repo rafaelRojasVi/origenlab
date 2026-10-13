@@ -300,3 +300,8 @@ def test_marketing_linkage_never_touches_contact_control() -> None:
     # A suppression is a fact about an address and must keep working for an address whose
     # owner is unknown, so this stage must leave the table completely alone.
     assert after == before
+
+
+# Its database proofs write into the fixed ORIGENLAB_V2_TEST_DSN database that every
+# parallel worker shares, so scripts/run_pytest.sh runs this file alone.
+pytestmark = pytest.mark.serial_db

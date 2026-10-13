@@ -1909,3 +1909,8 @@ def test_a_target_without_the_owning_role_refuses_with_a_reason(clean_db: Any) -
 
     with pytest.raises(ApplyRefused, match="origenlab_owner"):
         assume_import_role(_Refusing())
+
+
+# Its database proofs write into the fixed ORIGENLAB_V2_TEST_DSN database that every
+# parallel worker shares, so scripts/run_pytest.sh runs this file alone.
+pytestmark = pytest.mark.serial_db

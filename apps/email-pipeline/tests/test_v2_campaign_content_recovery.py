@@ -680,3 +680,8 @@ def test_db_dry_run_apply_idempotent_immutable(tmp_path: Path) -> None:
         cur.execute("SELECT to_jsonb(c) FROM outbound.campaign c WHERE id = %s::uuid", (v2_cid,))
         row_after = cur.fetchone()[0]
         assert row_before == row_after
+
+
+# Its database proofs write into the fixed ORIGENLAB_V2_TEST_DSN database that every
+# parallel worker shares, so scripts/run_pytest.sh runs this file alone.
+pytestmark = pytest.mark.serial_db

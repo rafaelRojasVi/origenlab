@@ -257,6 +257,7 @@ def scratch_database():
     yield from build_disposable_database()
 
 
+@pytest.mark.serial_db  # grants a role membership; roles are cluster-wide
 @needs_worker_db
 def test_a_set_only_membership_in_any_role_is_refused(scratch_database) -> None:
     import psycopg

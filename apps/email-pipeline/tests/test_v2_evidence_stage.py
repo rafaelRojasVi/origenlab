@@ -603,3 +603,8 @@ def test_a_drive_record_is_unaffected_by_the_gmail_intake_rules() -> None:
         }
     )
     assert manifest.source_kind == "drive_file"
+
+
+# Its database proofs write into the fixed ORIGENLAB_V2_TEST_DSN database that every
+# parallel worker shares, so scripts/run_pytest.sh runs this file alone.
+pytestmark = pytest.mark.serial_db

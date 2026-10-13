@@ -14,7 +14,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 app="${1:?usage: run_pytest.sh <app> [pytest args...]}"
 shift
 ENV_FILE="${OL_TEST_DB_ENV:-$ROOT/.test-db.env}"
-PATTERN="${OL_DB_SKIP_PATTERN:-ORIGENLAB_V2_[A-Z_]*TEST_DSN|ORIGENLAB_TEST_POSTGRES_URL}"
+# A skip naming only the database variable. "…POSTGRES_URL and ORIGENLAB_TEST_SQLITE_PATH" skips
+# also need a real SQLite archive, which no disposable setup provides, so they do not count.
+PATTERN="${OL_DB_SKIP_PATTERN:-ORIGENLAB_V2_[A-Z_]*TEST_DSN|ORIGENLAB_TEST_POSTGRES_URL to}"
 
 # uv warns when an outer venv is active, and the warning carries a /home path into CLI output
 # that leakage tests assert is absent.
@@ -41,10 +43,21 @@ cd "$ROOT/apps/$app"
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 
+# Two phases. Everything runs in parallel except tests marked `serial_db`: they use database
+# state every worker shares (cluster-wide roles, or one fixed database), which no per-worker
+# clone can contain, so they run alone afterwards. Exit 5 is "no tests selected", which a phase may legitimately be.
+export PYTHONPATH="$ROOT/scripts/pytest_plugins${PYTHONPATH:+:$PYTHONPATH}"
+common=(-p pg_per_worker -q -rfEs --durations=10)
 set +e
-uv run --frozen pytest -n auto --dist loadfile -q -rs --durations=10 "$@" | tee "$log"
-rc=${PIPESTATUS[0]}
+uv run --frozen pytest -n auto --dist loadfile -m "not serial_db" "${common[@]}" "$@" \
+  | tee "$log"
+rc_parallel=${PIPESTATUS[0]}
+uv run --frozen pytest -n 0 -m serial_db "${common[@]}" "$@" | tee -a "$log"
+rc_alone=${PIPESTATUS[0]}
 set -e
+[[ $rc_parallel == 5 ]] && rc_parallel=0
+[[ $rc_alone == 5 ]] && rc_alone=0
+rc=$(( rc_parallel != 0 ? rc_parallel : rc_alone ))
 
 db_skips="$(grep -E "^SKIPPED .*($PATTERN)" "$log" \
   | awk -F'[][]' '{n += $2} END {print n + 0}' || true)"

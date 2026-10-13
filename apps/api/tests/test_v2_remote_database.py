@@ -295,6 +295,7 @@ def test_a_superuser_session_over_verified_tls_is_refused_by_the_probe() -> None
         verify_runtime_connection(target, _tls_connect(_TLS["HOSTADDR"]))
 
 
+@pytest.mark.serial_db  # grants a role membership; roles are cluster-wide
 @needs_tls
 def test_membership_in_an_unnamed_bypassrls_role_is_refused_by_the_probe() -> None:
     # A hosted project carries roles the probe cannot name (service_role holds BYPASSRLS). The

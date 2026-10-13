@@ -70,21 +70,55 @@ class RunPytest(unittest.TestCase):
         self.pytest_out = "SKIPPED [1] tests/test_y.py:3: needs ripgrep"
         self.assertEqual(self.run_script().returncode, 0)
 
+    def test_a_skip_that_also_needs_a_sqlite_archive_is_fine(self):
+        self.write_env()
+        self.pytest_out = ("SKIPPED [3] tests/m.py:133: Set ORIGENLAB_TEST_POSTGRES_URL and "
+                           "ORIGENLAB_TEST_SQLITE_PATH for ARCH-2B real-backend parity.")
+        self.assertEqual(self.run_script().returncode, 0)
+
+    def test_a_v1_postgres_skip_fails(self):
+        self.write_env()
+        self.pytest_out = ("SKIPPED [7] tests/q.py:52: Set ORIGENLAB_TEST_POSTGRES_URL to a "
+                           "disposable Postgres migrated to Alembic head.")
+        self.assertEqual(self.run_script().returncode, 1)
+
     def test_unsets_virtual_env(self):
         self.write_env()
         r = self.run_script(VIRTUAL_ENV="/home/someone/.venv")
         self.assertIn("VIRTUAL_ENV=\n", r.stderr)
 
-    def test_passes_parallel_flags(self):
+    def calls(self, *args: str, uv_body: str) -> tuple[subprocess.CompletedProcess, list[str]]:
         self.write_env()
-        self.fake("uv", 'printf "%s " "$@" >&2; echo\n')
+        log = self.tmp / "uv.log"
+        self.fake("uv", f'echo "$*" >> {log}\n' + uv_body)
         self.fake("docker", "exit 0\n")
         env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": str(self.tmp),
                "OL_TEST_DB_ENV": str(self.env_file)}
-        r = subprocess.run(["bash", str(SCRIPT), "worker", "tests/test_a.py"], env=env,
+        r = subprocess.run(["bash", str(SCRIPT), "worker", *args], env=env,
                            capture_output=True, text=True)
-        for flag in ("-n auto", "--dist loadfile", "-rs", "--durations=10", "tests/test_a.py"):
-            self.assertIn(flag, r.stderr)
+        return r, log.read_text().splitlines()
+
+    def test_runs_in_parallel_then_serial_db_tests_alone(self):
+        r, calls = self.calls("tests/test_a.py", uv_body="echo '1 passed'\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(calls), 2, calls)
+        parallel, alone = calls
+        for flag in ("-n auto", "--dist loadfile", "-rfEs", "--durations=10", "-p pg_per_worker",
+                     "not serial_db", "tests/test_a.py"):
+            self.assertIn(flag, parallel)
+        self.assertIn("-n 0", alone)
+        self.assertIn("-m serial_db", alone)
+        self.assertIn("tests/test_a.py", alone)
+
+    def test_no_serial_db_tests_selected_is_fine(self):
+        body = 'case "$*" in *"-m serial_db"*) exit 5;; esac\necho "1 passed"\n'
+        r, _ = self.calls(uv_body=body)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_failure_in_either_phase_fails_the_run(self):
+        body = 'case "$*" in *"-m serial_db"*) exit 1;; esac\necho "1 passed"\n'
+        r, _ = self.calls(uv_body=body)
+        self.assertEqual(r.returncode, 1)
 
 
 if __name__ == "__main__":

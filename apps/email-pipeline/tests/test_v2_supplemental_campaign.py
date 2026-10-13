@@ -147,3 +147,8 @@ def test_dry_run_then_apply_then_reapply(tmp_path: Path) -> None:
         with pytest.raises(psycopg.errors.RaiseException):
             cur.execute("update outbound.campaign set status = 'draft' where origin_source_record_id = "
                         "(select id from evidence.source_record where payload->>'v1_campaign_id' = %s)", (f"sup-{tag}",))
+
+
+# Its database proofs write into the fixed ORIGENLAB_V2_TEST_DSN database that every
+# parallel worker shares, so scripts/run_pytest.sh runs this file alone.
+pytestmark = pytest.mark.serial_db

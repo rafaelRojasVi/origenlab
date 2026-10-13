@@ -48,5 +48,7 @@ packages = ["src/origenlab_worker"]
 testpaths = ["tests"]
 # A hung test fails after a minute instead of holding CI until the job timeout.
 timeout = 60
+# scripts/run_pytest.sh runs these alone, after the parallel phase.
+markers = ["serial_db: uses database state every worker shares (cluster roles, a fixed database); runs alone"]
 # ../api/tests: the one disposable-database harness both apps share (v2_command_harness.py).
 pythonpath = ["src", "tests", "../api/tests"]

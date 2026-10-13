@@ -95,3 +95,5 @@ packages = ["src/origenlab_email_pipeline"]
 [tool.pytest.ini_options]
 # A hung test fails after a minute instead of holding CI until the job timeout.
 timeout = 60
+# scripts/run_pytest.sh runs these alone, after the parallel phase.
+markers = ["serial_db: uses database state every worker shares (cluster roles, a fixed database); runs alone"]
