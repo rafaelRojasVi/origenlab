@@ -34,7 +34,7 @@
 | **LEGACY scripts**                | **Do not use for current operator work:** `buyer_opportunity_crosscheck_*`, `tender_buyer_outreach_queue_*` — use `build_equipment_first_*` builders instead. Legacy `build_buyer_opportunity_queue.py` was **removed in Phase 5C**. |
 | **Parked stack**                  | Read [`docs/EXPERIMENTAL_PARKED.md`](docs/EXPERIMENTAL_PARKED.md) before Postgres/API/Tatiana/ML; not required for ingest, DNR, equipment-first queues, or send safety.                                                              |
 | **No file deletes**               | Unless the user explicitly requests deletion.                                                                                                                                                                                        |
-| **Tests for behavior changes**    | If you change code (not docs-only), run targeted pytest; see workspace rule *Testing — definition of done*.                                                                                                                          |
+| **Tests for behavior changes**    | If you change code (not docs-only), run `make test-email-pipeline` from the repo root (full suite, parallel, ~1 min; `make db-up` first) — see root [`AGENTS.md`](../../AGENTS.md) *Testing*. `scripts/validate.sh` is the operator CLI smoke, not the test suite. |
 
 ## Runtime truth
 

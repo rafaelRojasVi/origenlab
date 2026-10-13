@@ -166,6 +166,9 @@ are not required reading for routine code changes.
   implementation. Search callers (imports, scripts, CI, docs) before
   deleting code — see `docs/architecture/COMMERCIAL_RESET_LEDGER.md` for
   the evidence standard used in the last cleanup pass.
+- Testing: [`AGENTS.md` → *Testing*](AGENTS.md) is canonical (commands, rules, the
+  parallel/`serial_db` and database guards). In short — from a worktree, never the
+  main checkout: `make setup` once, `make db-up` once per session, then:
 - Run `make check` from the repo root for anything you touch: it runs `make lint`
   (Ruff for real bugs, gitleaks, file checks — under a second; `make setup` also
   installs it as a pre-commit hook), then exactly the suites your change needs (vs `origin/main`), in parallel, the same

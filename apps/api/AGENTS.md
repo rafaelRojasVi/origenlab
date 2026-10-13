@@ -22,4 +22,4 @@
 
 ## Tests
 
-From `apps/api/`: `uv run pytest tests -q` · `uv run python scripts/dashboard_v1_http_smoke.py --expect-backend sqlite`
+From the repo root: `make test-api` (after `make db-up`; see [root `AGENTS.md` → *Testing*](../../AGENTS.md)) · one file: `scripts/run_pytest.sh api tests/test_x.py` · V1 smoke: `uv run python scripts/dashboard_v1_http_smoke.py --expect-backend sqlite` (from `apps/api/`) · production: `make smoke`
