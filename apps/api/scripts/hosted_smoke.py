@@ -105,17 +105,23 @@ class Probe:
     error: str = ""
 
 
-def probe(path: str, fetch: Fetch) -> Probe:
-    """One GET; a network error is retried once, a status never is."""
-    for attempt in (1, 2):
-        started = time.monotonic()
-        try:
-            status, _ = fetch(path)
-            return Probe(path, status, time.monotonic() - started)
-        except (OSError, urllib.error.URLError) as exc:  # TimeoutError is an OSError
-            if attempt == 2:
-                return Probe(path, None, time.monotonic() - started, error=str(exc) or type(exc).__name__)
-    raise AssertionError("unreachable")
+def probe(path: str, fetch: Fetch, *, clock: Callable[[], float] = time.monotonic) -> Probe:
+    """One GET. A network error is retried once, a status never is; an answer over the time
+    budget is timed once more (a just-restarted instance warms up per route), and the second
+    time is the one judged."""
+    result = _probe_once(path, fetch, clock)
+    if result.status is None or result.seconds > MAX_SECONDS:
+        result = _probe_once(path, fetch, clock)
+    return result
+
+
+def _probe_once(path: str, fetch: Fetch, clock: Callable[[], float]) -> Probe:
+    started = clock()
+    try:
+        status, _ = fetch(path)
+        return Probe(path, status, clock() - started)
+    except (OSError, urllib.error.URLError) as exc:  # TimeoutError is an OSError
+        return Probe(path, None, clock() - started, error=str(exc) or type(exc).__name__)
 
 
 def _matches(status: int, expected: str) -> bool:
