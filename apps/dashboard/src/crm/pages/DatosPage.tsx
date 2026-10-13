@@ -84,18 +84,31 @@ export function DatosPage({ navigate, tab }: { navigate: (s: CrmSection, id?: st
   return <DatosBody navigate={navigate} initialTab={tab ?? "bloqueos"} />;
 }
 
-function DatosBody({ navigate, initialTab }: { navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void; initialTab: DatosTab }) {
+/** The technical views «Operaciones → Más → Técnico» keeps (admin only). */
+export const TECHNICAL_TABS = ["bloqueos", "no_importadas", "evidencia", "estado", "acciones"] as const;
+
+export function DatosBody({
+  navigate,
+  initialTab,
+  embedded = false,
+}: {
+  navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
+  initialTab: DatosTab;
+  /** Inside «Operaciones → Más → Técnico»: no page header, technical views only. */
+  embedded?: boolean;
+}) {
   const [queue, reloadQueue] = useResource(fetchWorkQueue);
   const [review, reloadReview] = useResource(fetchReview);
   const [tab, setTab] = useState<DatosTab>(initialTab);
+  const tabs = embedded ? ([...TECHNICAL_TABS] as DatosTab[]) : (Object.keys(TAB_LABEL) as DatosTab[]);
   return (
     <div className="space-y-3">
-      <PageHeader title="Datos" subtitle="Estado del sistema y ajustes técnicos. Sólo administración." />
+      {embedded ? null : <PageHeader title="Datos" subtitle="Estado del sistema y ajustes técnicos. Sólo administración." />}
       <Segmented
-        label="Sección"
+        label={embedded ? "Vista técnica" : "Sección"}
         value={tab}
         onChange={setTab}
-        options={(Object.keys(TAB_LABEL) as DatosTab[]).map((value) => ({
+        options={tabs.map((value) => ({
           value,
           label: TAB_LABEL[value],
           count:

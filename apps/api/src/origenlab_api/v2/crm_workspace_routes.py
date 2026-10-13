@@ -526,6 +526,26 @@ def get_mail_sync(_: Operator, repo: Repo) -> Any:
     return repo.mail_sync()
 
 
+@workspace_router.get("/operations")
+def get_operations(request: Request, _: Operator, repo: Repo) -> Any:
+    """«Operaciones»: every part of the system with its state (spec 2026-10-13). Read-only, any
+    signed-in operator; no body, address or subject. The rules timer and the deployed commit are
+    this process's, so the route adds those two cards."""
+    from origenlab_api.services.health_service import deployed_version
+    from origenlab_api.v2.operations import reglas_card, respaldo_card, rules_state_for_card, version_card
+
+    body = dict(repo.operations())  # a copy: the repository shares its result for 30 s
+    auto = getattr(request.app.state, "auto_mail_rules", None)
+    try:
+        state = auto.state() if auto is not None else None
+    except Exception:  # noqa: BLE001 - one card says it, the page stays up
+        state = {"unreadable": True}
+    body["cards"] = [*body["cards"],
+                     reglas_card(rules_state_for_card(state, body["generated_at"]), int(body.get("actions_today") or 0)),
+                     version_card(deployed_version()), respaldo_card()]
+    return body
+
+
 @workspace_router.get("/mail-quote-numbers")
 def get_mail_quote_numbers(_: Operator, repo: Repo) -> Any:
     """Quote numbers already seen in the captured Gmail (the 500 newest), for the Resumen's

@@ -29,7 +29,7 @@ export const CRM_NAV: CrmNavItem[] = [
   { id: "catalogo", label: "Catálogo", group: "comercial" },
   { id: "marketing", label: "Marketing", group: "comercial" },
   { id: "historial", label: "Historial", group: "control" },
-  { id: "datos", label: "Datos", group: "control", adminOnly: true },
+  { id: "datos", label: "Operaciones", group: "control" },
 ];
 
 export const CRM_GROUP_LABEL: Record<CrmNavItem["group"], string> = {
