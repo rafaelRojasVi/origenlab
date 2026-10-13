@@ -105,15 +105,32 @@ def latest_deploy(token: str, service_id: str) -> dict | None:
     return rows[0].get("deploy") if rows else None
 
 
-def verify_api_http() -> None:
-    """Anonymous liveness check only; authenticated DB journey is a separate gate."""
-    try:
-        with urllib.request.urlopen("https://origenlab.onrender.com/health", timeout=30) as response:
-            data = json.load(response)
-        if data.get("ok") is not True or data.get("service") != "origenlab-api":
-            raise Refused("API HTTP readiness failed; dashboard remains unchanged")
-    except (urllib.error.URLError, ValueError, TimeoutError) as exc:
-        raise Refused("API HTTP readiness unavailable; dashboard remains unchanged") from exc
+API_HEALTH_URL = "https://dashboard.origenlab.cl/api/health"
+
+
+def verify_api_http(sha: str, *, attempts: int = 6, wait: float = 20.0,
+                    opener=urllib.request.urlopen, sleep=time.sleep) -> None:
+    """Anonymous liveness through the public route, at the exact released commit.
+
+    The API refuses hosts outside ORIGENLAB_API_ALLOWED_HOSTS, so its onrender.com address
+    answers 403 by design (the first automatic release stopped there, 2026-10-13). The
+    dashboard Worker forwards /api/health, the same route the 30-minute smoke reads.
+    Authenticated DB journeys remain a separate gate.
+    """
+    request = urllib.request.Request(API_HEALTH_URL, headers={
+        "User-Agent": "origenlab-release", "Accept": "application/json"})
+    for attempt in range(attempts):
+        try:
+            with opener(request, timeout=30) as response:
+                data = json.load(response)
+            if data.get("ok") is True and data.get("service") == "origenlab-api" \
+                    and data.get("version") == sha:
+                return
+        except (urllib.error.URLError, ValueError, TimeoutError):
+            pass
+        if attempt < attempts - 1:
+            sleep(wait)
+    raise Refused("API HTTP readiness at the released commit unavailable; dashboard remains unchanged")
 
 
 def run(mode: str) -> None:
@@ -141,7 +158,7 @@ def run(mode: str) -> None:
         check_current_main(sha)
         verify_legacy_cron(token)
         if name == "dashboard":
-            verify_api_http()
+            verify_api_http(sha)
         verify_service(request("GET", f"/services/{service_id}", token), service_id)
         latest = latest_deploy(token, service_id)
         if latest and latest.get("status") == "live" and latest.get("commit", {}).get("id") == sha:

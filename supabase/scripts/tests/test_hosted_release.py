@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
 import os
 from unittest import mock
 import sys
@@ -177,6 +179,28 @@ class ProductionGates(unittest.TestCase):
             dict(pr, merged_at=None),
         ):
             self.assertFalse(approval.approved(invalid, [], sha, solo_mode=True))
+
+    def test_api_readiness_reads_the_public_route_at_the_released_commit(self):
+        render = load(ROOT / "scripts/deploy/render_release.py", "render_release_health")
+        sha = "c" * 40
+        self.assertEqual(render.API_HEALTH_URL, "https://dashboard.origenlab.cl/api/health")
+        self.assertNotIn("onrender.com/health", (ROOT / "scripts/deploy/render_release.py").read_text())
+        class Answer:
+            def __init__(self, body): self.body = body
+            def __enter__(self): return io.BytesIO(json.dumps(self.body).encode())
+            def __exit__(self, *a): return False
+        seen, waits = [], []
+        answers = [Answer({"ok": True, "service": "origenlab-api", "version": "0" * 40}),
+                   Answer({"ok": True, "service": "origenlab-api", "version": sha})]
+        def opener(request, timeout):
+            seen.append(request.full_url)
+            return answers.pop(0)
+        render.verify_api_http(sha, opener=opener, sleep=waits.append)
+        self.assertEqual(seen, [render.API_HEALTH_URL] * 2)
+        self.assertEqual(len(waits), 1)
+        stale = lambda request, timeout: Answer({"ok": True, "service": "origenlab-api", "version": "0" * 40})
+        with self.assertRaises(render.Refused):
+            render.verify_api_http(sha, attempts=3, opener=stale, sleep=lambda s: None)
 
     def test_every_review_check_step_receives_the_selected_review_policy(self):
         # The post-backup recheck lacked OL_RELEASE_SOLO_MODE and refused the first release (2026-10-13).
