@@ -16,26 +16,24 @@ from hosted_env import Refused, database_env
 from render_release import OWNER, SERVICES, latest_deploy, request, verify_service, verify_legacy_cron
 
 
-def healthy_worker(env: dict[str, str], since: str | None = None, *, require_capture: bool = False) -> bool:
+def worker_conditions(env: dict[str, str], since: str | None = None, *,
+                      require_capture: bool = False) -> dict[str, bool]:
+    """Each worker-health condition by name, so a failure says which one.
+
+    heartbeat: a worker beat in the last 3 minutes; sweep_scheduled: the triage sweep was
+    deferred in the last 5 minutes; triage_caught_up: no captured mail between 15 minutes and
+    14 days old is left untriaged; capture_recent (with require_capture): a capture cycle in the
+    last 15 minutes and an authorized mailbox synced in the last 20.
+    """
     # Do not read message bodies, queue arguments, contacts, or email addresses.
     boundary = datetime.fromisoformat(since.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat() if since else "1970-01-01T00:00:00+00:00"
-    capture_guard = f"""
-       and exists (select 1 from procrastinate.procrastinate_periodic_defers
-                   where task_name = 'capture_mail_cycle' and periodic_id = 'gmail-drive-v1'
-                     and defer_timestamp >= extract(epoch from now()) - 900)
-       and exists (select 1 from comms.mailbox
-                   where authorization_state = 'authorized'
-                     and last_synced_at >= greatest(now() - interval '20 minutes', '{boundary}'::timestamptz))
-    """ if require_capture else ""
-    query = f"""
-    set role origenlab_owner;
-    select case when
-       exists (select 1 from procrastinate.procrastinate_workers
-               where last_heartbeat >= greatest(now() - interval '3 minutes', '{boundary}'::timestamptz))
-       and exists (select 1 from procrastinate.procrastinate_periodic_defers
+    columns = {
+        "heartbeat": f"""exists (select 1 from procrastinate.procrastinate_workers
+               where last_heartbeat >= greatest(now() - interval '3 minutes', '{boundary}'::timestamptz))""",
+        "sweep_scheduled": """exists (select 1 from procrastinate.procrastinate_periodic_defers
                    where task_name = 'sweep_untriaged' and periodic_id = 'sweep'
-                     and defer_timestamp >= extract(epoch from now()) - 300)
-       and not exists (
+                     and defer_timestamp >= extract(epoch from now()) - 300)""",
+        "triage_caught_up": """not exists (
          select 1 from comms.message m
            left join evidence.source_record sr
              on sr.dedupe_key = 'gmail_message:' || m.provider_message_id and sr.kind = 'gmail_message'
@@ -75,16 +73,30 @@ def healthy_worker(env: dict[str, str], since: str | None = None, *, require_cap
                      and r.kind = 'message_triage' and r.value_norm = 'requester:v1')
               )
             )
-       )
-       {capture_guard}
-    then 'healthy' else 'not_ready' end;
-    reset role;
-    """
-    r = subprocess.run(["psql", "-X", "--no-psqlrc", "-At", "-v", "ON_ERROR_STOP=1", "-c", query],
+       )""",
+    }
+    if require_capture:
+        columns["capture_recent"] = f"""(exists (select 1 from procrastinate.procrastinate_periodic_defers
+                   where task_name = 'capture_mail_cycle' and periodic_id = 'gmail-drive-v1'
+                     and defer_timestamp >= extract(epoch from now()) - 900)
+       and exists (select 1 from comms.mailbox
+                   where authorization_state = 'authorized'
+                     and last_synced_at >= greatest(now() - interval '20 minutes', '{boundary}'::timestamptz)))"""
+    select = ",\n".join(f"({sql})::text" for sql in columns.values())
+    query = f"set role origenlab_owner;\nselect {select};\nreset role;"
+    r = subprocess.run(["psql", "-X", "--no-psqlrc", "-At", "-F", "|", "-v", "ON_ERROR_STOP=1", "-c", query],
                        env=env, capture_output=True, text=True, check=False, timeout=25)
     if r.returncode:
         raise Refused("Postrelease worker/capture health query failed")
-    return "healthy" in r.stdout.splitlines()
+    row = next(line for line in r.stdout.splitlines() if "|" in line or line in ("true", "false"))
+    values = row.split("|")
+    if len(values) != len(columns) or any(v not in ("true", "false") for v in values):
+        raise Refused("Postrelease worker/capture health query returned an unexpected row")
+    return {name: value == "true" for name, value in zip(columns, values)}
+
+
+def healthy_worker(env: dict[str, str], since: str | None = None, *, require_capture: bool = False) -> bool:
+    return all(worker_conditions(env, since, require_capture=require_capture).values())
 
 
 def after_deploy(iso: str | None, mark: str | None) -> bool:
