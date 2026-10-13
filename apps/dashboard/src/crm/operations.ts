@@ -42,12 +42,21 @@ export interface OpsAction {
   undone: boolean;
 }
 
+/** A quote contacto@ sent that no case holds: by number only (the PDF name may hold a person's name). */
+export interface SentQuoteWithoutCase {
+  source_record_id: string;
+  quote_number: string;
+  sent_at: string | null;
+  thread_id: string | null;
+}
+
 export interface OperationsPayload {
   generated_at: string;
   cards: OpsCard[];
   actions: OpsAction[];
   actions_today: number;
-  counts: { cases_without_institution: number; institutions_por_confirmar: number };
+  sent_quotes_without_case: SentQuoteWithoutCase[];
+  counts: { cases_without_institution: number; institutions_por_confirmar: number; sent_quotes_without_case: number };
 }
 
 export const fetchOperations = () => fetchJsonGet<OperationsPayload>(operatorApiUrl(OPERATIONS_PATH));

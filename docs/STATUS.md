@@ -2660,3 +2660,12 @@ for an admin). No body, address or subject in the response. Not yet: backup, rel
 (they live in GitHub) and the worker heartbeat (not granted to the API role) — delivery 2, an
 operation-run log; the single decision list — delivery 3.
 
+### 2.7.108 «Cotizaciones enviadas sin caso» with «Abrir caso», 2026-10-13 — built, deploys on merge
+
+Operaciones → Por decidir lists the quotes contacto@ sent in the last 60 days (a CN/COT PDF) whose
+email no case holds — neither linked as evidence nor a case's origin — and whose number is not a
+CRM quote: by number, date and Gmail thread only (the PDF name, which can hold a person's name,
+never leaves the API). «Abrir caso» (sales/admin, case commands enabled) opens «Cotización
+NNNNN-YY» on that email and goes to it; the institution and «Registrar cotización» follow with the
+existing case buttons. Covers what R1–R10 cannot place (a free-mail customer named only as a person).
+

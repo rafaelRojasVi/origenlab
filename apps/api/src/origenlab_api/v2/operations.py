@@ -8,6 +8,7 @@ model gathered. Nothing here carries a message body, an address, a subject or a 
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -204,6 +205,48 @@ select r.id::text, r.completed_at, r.response_body, r.completed_at >= {_TODAY} a
  order by r.completed_at desc
  limit 100
 """
+#: Quotes contacto@ sent in the last 60 days (a CN/COT PDF) whose email no case holds — neither
+#: linked as evidence nor the origin of a case. The PDF name is read only to derive the number.
+_SENT_QUOTES_SQL = """
+select sr.id::text, m.internal_date, m.provider_thread_id, a.filename
+  from comms.message m
+  join comms.attachment a on a.message_id = m.id
+  join evidence.source_record sr on sr.dedupe_key = 'gmail_message:' || m.provider_message_id
+                                and sr.kind = 'gmail_message'
+ where m.direction = 'outbound' and m.internal_date > now() - interval '60 days'
+   and a.filename ~* '^\\s*(CN|COT)\\s*-?\\s*\\d+.*\\.pdf$'
+   and exists (select 1 from comms.message_participant p where p.message_id = m.id
+                and p.role = 'from' and p.address_norm = 'contacto@origenlab.cl')
+   and not exists (select 1 from crm.opportunity_evidence oe where oe.unlinked_at is null
+                    and (oe.source_record_id = sr.id or oe.message_id = m.id))
+   and not exists (select 1 from crm.opportunity o where o.origin_source_record_id = sr.id)
+ order by m.internal_date desc
+ limit 200
+"""
+_QUOTE_NUMBERS_SQL = "select quote_number from crm.quote"
+_FILE_TOKEN = re.compile(r"^\s*(CN|COT)\s*-?\s*(\d+)", re.IGNORECASE)
+SENT_QUOTES_LIMIT = 20
+
+
+def sent_quote_items(rows: list[Mapping[str, Any]], existing_numbers: set[str]) -> list[dict[str, Any]]:
+    """One row per quote number, newest email first; numbers already a CRM quote are skipped.
+    The file name never leaves: only the number derived from it (`mail_rules.gmail_quote_key`)."""
+    from origenlab_api.v2.mail_rules import canonical_quote_number, gmail_quote_key
+
+    out: dict[str, dict[str, Any]] = {}
+    for r in sorted(rows, key=lambda x: x.get("sent_at") or "", reverse=True):
+        m = _FILE_TOKEN.match(r.get("filename") or "")
+        key = gmail_quote_key(f"CN{m.group(2)}", r.get("sent_at")) if m else None
+        if key is None:
+            continue
+        number = canonical_quote_number(key)
+        if number in existing_numbers or number in out:
+            continue
+        out[number] = {"source_record_id": r["source_record_id"], "quote_number": number,
+                       "sent_at": r.get("sent_at"), "thread_id": r.get("thread_id")}
+    return list(out.values())[:SENT_QUOTES_LIMIT]
+
+
 _COUNTS_SQL = """
 select (select count(*) from crm.opportunity where closed_at is null and organization_id is null),
        (select count(*) from crm.organization where confirmation = 'machine_proposed'
@@ -264,6 +307,14 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
             "case_id": b.get("case_id"), "case_title": title or b.get("case_title"),
             "quote_number": b.get("quote_number"), "undone": bool(undone),
         })
+    cur.execute(_SENT_QUOTES_SQL)
+    sent_rows = [{"source_record_id": sid, "sent_at": _iso(at), "thread_id": thread, "filename": name}
+                 for sid, at, thread, name in cur.fetchall()]
+    cur.execute(_QUOTE_NUMBERS_SQL)
+    from origenlab_api.v2.mail_rules import canonical_quote_number, quote_key
+
+    existing = {canonical_quote_number(k) for (q,) in cur.fetchall() if (k := quote_key(q, None)) is not None}
+    sent_quotes = sent_quote_items(sent_rows, existing)
     cur.execute(_COUNTS_SQL)
     no_institution, por_confirmar = cur.fetchone()
     return {
@@ -278,7 +329,9 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
         "drive": {"pending": int(d_pending or 0), "pending_over_a_day": int(d_late or 0),
                   "today": int(d_today or 0), "newest_at": _iso(d_newest), "events": []},
         "actions": actions,
-        "counts": {"cases_without_institution": int(no_institution), "institutions_por_confirmar": int(por_confirmar)},
+        "sent_quotes_without_case": sent_quotes,
+        "counts": {"cases_without_institution": int(no_institution), "institutions_por_confirmar": int(por_confirmar),
+                   "sent_quotes_without_case": len(sent_quotes)},
     }
 
 
@@ -291,6 +344,7 @@ def build_operations(facts: Mapping[str, Any], generated_at: str) -> dict[str, A
                   cotizaciones_card(facts["cotizaciones"]), drive_card(facts["drive"])],
         "actions": list(facts["actions"]),
         "actions_today": sum(1 for a in facts["actions"] if a.get("today")),
+        "sent_quotes_without_case": list(facts.get("sent_quotes_without_case") or []),
         "counts": dict(facts["counts"]),
     }
 
