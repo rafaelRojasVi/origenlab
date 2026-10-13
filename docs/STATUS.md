@@ -2648,3 +2648,15 @@ offers the same steps as R4 — an institution «por confirmar» (named as the P
 domain), its case in «Enviada» and the quote — applied only with «Aplicar». Evidence: mail-rule
 unit tests (11 new) and real-database tests of R9 and R10 apply and undo. File names are split on dashes («<persona> - <institución>»); R10 creates only from the one segment that carries a legal form, a kind of institution or a «(SIGLA)», so a person never becomes an institution.
 
+### 2.7.107 «Operaciones» replaces «Datos», visible to everyone, 2026-10-13 — built, deploys on merge
+
+One read, `GET /v2/workspace/operations` (any signed-in operator, read-only, no migration), gives
+seven Render-style cards — Correo, Clasificación, Lector de cotizaciones, Archivo Drive, Reglas
+automáticas, Versión, Respaldo y publicación — each `ok`/`warn`/`bad`/`info` with a Spanish line and
+its recent activity, plus the last 7 days of rule actions and two counts. The page has five tabs:
+Estado, Lo que hizo el sistema (Deshacer for an admin), Reglas (R1–R10 explained, which act alone),
+Por decidir (interim counts and links) and Más (Proveedores, Archivo Drive, the old technical views
+for an admin). No body, address or subject in the response. Not yet: backup, release and smoke status
+(they live in GitHub) and the worker heartbeat (not granted to the API role) — delivery 2, an
+operation-run log; the single decision list — delivery 3.
+
