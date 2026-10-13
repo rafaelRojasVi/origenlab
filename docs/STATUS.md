@@ -2633,3 +2633,18 @@ quotes 7 s) and inbound mail reached the database 3–7 min after arrival (p90 ~
 waiting job keep a slow cycle from overlapping the next; postflight windows still allow 15/20
 minutes. Not addressed: campaign bursts (6 and 8 Oct), where single Gmail runs took 18–24 min
 because messages are fetched one at a time.
+
+### 2.7.106 R9: a quote sent to a free-mail customer reaches the case its PDF names, 2026-10-13 — built, deploys on merge
+
+Found on a real send: contacto@ sent `CN09876-<institución> (SIGLA).pdf` to a gmail.com address
+on a new thread, and no rule could tell which case it was for (R1 needs a known thread, R2 a known
+number, R3/R4 a recipient domain; free-mail is never an institution), so the case never reached
+«Enviada». New rule **R9** (`mail_rules._quote_file_rule`) reads the institution from the
+Cotizador's file name and, when it names exactly one institution with exactly one open case,
+links the email, walks the case to `quoting` and records the quote — automatically, like R1 on a
+thread (DOMAIN.md §3.6.6, owner-approved 2026-10-13); undo is R1's. Every other outcome is a
+proposal naming its candidates. When the PDF names an institution the CRM does not hold, **R10**
+offers the same steps as R4 — an institution «por confirmar» (named as the PDF names it, no
+domain), its case in «Enviada» and the quote — applied only with «Aplicar». Evidence: mail-rule
+unit tests (11 new) and real-database tests of R9 and R10 apply and undo. File names are split on dashes («<persona> - <institución>»); R10 creates only from the one segment that carries a legal form, a kind of institution or a «(SIGLA)», so a person never becomes an institution.
+

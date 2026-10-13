@@ -117,6 +117,8 @@ export const RULE_LABEL: Record<string, string> = {
   R6: "Otro proveedor → caso perdido",
   R7: "Solicitud de cotización → abrir caso",
   R8: "Queda en Revisión",
+  R9: "CN enviada a correo gratuito → caso de la institución del PDF",
+  R10: "CN enviada a correo gratuito → institución del PDF «por confirmar» + caso",
 };
 
 export const fetchMailRulesPreview = () => fetchJsonGet<MailRulesPreview>(operatorApiUrl(MAIL_RULES_PATHS.preview));
