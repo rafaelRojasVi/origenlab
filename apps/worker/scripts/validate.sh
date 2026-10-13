@@ -22,4 +22,4 @@ print("ok: apps/worker no-dev runtime imports")
 PY
 
 uv sync --group dev --frozen
-uv run --frozen pytest tests -q
+../../scripts/run_pytest.sh worker "$@"
