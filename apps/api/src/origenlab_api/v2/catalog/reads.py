@@ -72,13 +72,19 @@ select md5(concat_ws('|',
 """
 
 _INDEX_SQL = """
+with sup as (
+  -- Every product's suppliers in ONE pass: through a product merge (its twin's observations count)
+  -- and through an organization merge (the kept organization). A per-product `or … in (subquery)`
+  -- here defeated the index and timed out on 10,000 products (2026-10-14).
+  select coalesce(pm.merged_into_product_id, sp.product_id) as pid,
+         array_agg(distinct coalesce(so.merged_into_organization_id, so.id)::text) as ids
+    from catalog.supplier_product sp
+    join catalog.product pm on pm.id = sp.product_id
+    join crm.organization so on so.id = sp.supplier_organization_id
+   group by 1
+)
 select p.id::text, p.model_number, p.model_key, coalesce(p.name_es, p.name, p.model_number), p.category_es,
-       p.product_kind, m.name,
-       coalesce((select array_agg(distinct coalesce(so.merged_into_organization_id, so.id)::text)
-                   from catalog.supplier_product sp
-                   join crm.organization so on so.id = sp.supplier_organization_id
-                  where sp.product_id = p.id or sp.product_id in
-                        (select d.id from catalog.product d where d.merged_into_product_id = p.id)), '{}'),
+       p.product_kind, m.name, coalesce(sup.ids, '{}'),
        (select i.id::text from catalog.product_image i where i.product_id = p.id and i.status <> 'hidden'
          order by i.sort_order, i.created_at, i.id limit 1),
        exists (select 1 from catalog.product_document d where d.product_id = p.id
@@ -87,6 +93,7 @@ select p.id::text, p.model_number, p.model_key, coalesce(p.name_es, p.name, p.mo
        case when p.name_es is not null and p.name is distinct from p.name_es then p.name end
   from catalog.product p
   join crm.organization m on m.id = p.manufacturer_organization_id
+  left join sup on sup.pid = p.id
  where p.active
  order by p.model_key, p.id
 """
