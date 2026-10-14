@@ -2312,16 +2312,20 @@ disposable cluster or the local clean room; hosted loading is not available
 - **`ORIGENLAB_V2_QUOTING_ENABLED`** (default `false`) mounts `/v2/catalog/*` and the catalog
   commands; off, they answer 404. It needs a V2 database. Turn it on only after the catalog
   migrations are applied to that database.
-- **Banco Central (BDE) credentials**: `ORIGENLAB_V2_BDE_USER`, `ORIGENLAB_V2_BDE_PASSWORD`,
-  `ORIGENLAB_V2_BDE_SERIES_USD` (default `F073.TCO.PRE.Z.D`) and `ORIGENLAB_V2_BDE_SERIES_EUR`
-  (default empty: the euro series is not confirmed from an official source, so BDE declines EUR
-  and mindicador answers). Without a user and password, mindicador is the only source.
-- **The BDE web service takes the user and password in the URL query string.** No proxy, load
-  balancer, CDN or access log between the API and `si3.bcentral.cl` may record that URL, and
-  none must be added without checking. The API silences its own HTTP client's request logging
-  (`quiet_http_logs`); that is the only guard. The BDE response format has not been verified
-  against the live service; the first real call is an owner check (a wrong parse falls back to
-  mindicador, never to a guessed rate).
+- **Banco Central (BDE) access**: `ORIGENLAB_V2_BDE_TOKEN` — the API key token from
+  si3.bcentral.cl → «Mi Cuenta» → «Apikey Token» (valid one year; renew there with «Extender
+  fecha expiración» before it lapses, or BDE answers «Invalid token» and mindicador takes over).
+  The older `ORIGENLAB_V2_BDE_USER` + `ORIGENLAB_V2_BDE_PASSWORD` still work and are used only
+  when no token is set. Series: `ORIGENLAB_V2_BDE_SERIES_USD` (default `F073.TCO.PRE.Z.D`, dólar
+  observado) and `ORIGENLAB_V2_BDE_SERIES_EUR` (default `F072.CLP.EUR.N.O.D`, tipo de cambio
+  nominal euro). Without a token or a user and password, mindicador is the only source.
+- **The BDE web service takes the token (or user and password) in the URL query string.** No
+  proxy, load balancer, CDN or access log between the API and `si3.bcentral.cl` may record that
+  URL, and none must be added without checking. The API silences its own HTTP client's request
+  logging (`quiet_http_logs`); that is the only guard. Verified against the live service on
+  2026-10-14: the reply is JSON written in Latin-1 (read as such), and the 2026 EUR/USD history
+  was loaded into hosted `catalog.fx_rate` (provider `bde`) the same day. A wrong parse still
+  falls back to mindicador, never to a guessed rate.
 
 ### 14.2 Owner steps: the `catalog` Storage bucket
 

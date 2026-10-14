@@ -2773,3 +2773,12 @@ panel makes one request instead of two in a row; the nine side queries of a prod
 psycopg pipeline, and the read-only set-up is one statement. Measured from a workstation against
 hosted (70 ms per round trip): the product read went from ~1.1 s to ~0.39 s, and the separate
 price-history request (~0.8 s) is gone. No schema change.
+
+### 2.7.116 Exchange rates from the Banco Central, 2026-10-14 — built, deploys on merge; history loaded
+
+The API reads the BDE with its API key token (`ORIGENLAB_V2_BDE_TOKEN`, preferred over user and
+password), reads the bank's Latin-1 replies, and has the euro series by default
+(`F072.CLP.EUR.N.O.D`). The 2026 history (197 business days each of EUR and USD, 2 Jan – 14 Oct)
+was loaded into hosted `catalog.fx_rate` from the BDE on 14 Oct (provider `bde`, new rows only),
+after mindicador answered 15 of 43 needed days; every quote of the model checked now has its
+margin (§2.7.115). The token on Render is an owner step (`docs/OPERATIONS.md` §14.1).

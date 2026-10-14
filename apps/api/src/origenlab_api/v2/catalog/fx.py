@@ -8,6 +8,7 @@ domain event, no operator). Never returns a rate dated after the requested day.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
@@ -86,8 +87,8 @@ class BdeProvider:
     name = "bde"
 
     def __init__(self, user: str | None, password: str | None, client: httpx.Client,
-                 series: dict[str, str]) -> None:
-        self._user, self._password, self._client = user, password, client
+                 series: dict[str, str], token: str | None = None) -> None:
+        self._user, self._password, self._client, self._token = user, password, client, token
         self._series = {c: s for c, s in series.items() if s}
 
     @staticmethod
@@ -107,13 +108,25 @@ class BdeProvider:
 
     def observed(self, currency: str, start: dt.date, end: dt.date) -> dict[dt.date, Decimal]:
         series = self._series.get(currency)
-        if not (self._user and self._password and series):
+        # The API key token (the bank's recommended access) or, failing it, the BDE user and password.
+        if self._token:
+            auth = {"token": self._token}
+        elif self._user and self._password:
+            auth = {"user": self._user, "pass": self._password}
+        else:
+            auth = None
+        if not (auth and series):
             return {}  # declines: the next provider answers
         resp = self._client.get(BDE_URL, timeout=FX_TIMEOUT_SECONDS, params={
-            "user": self._user, "pass": self._password, "function": "GetSeries", "timeseries": series,
+            **auth, "function": "GetSeries", "timeseries": series,
             "firstdate": start.isoformat(), "lastdate": end.isoformat()})
         resp.raise_for_status()
-        return self.parse(resp.json())
+        # The bank writes Latin-1 («dólar») without saying so: UTF-8 first, Latin-1 if that fails.
+        try:
+            text = resp.content.decode("utf-8")
+        except UnicodeDecodeError:
+            text = resp.content.decode("latin-1")
+        return self.parse(json.loads(text))
 
 
 class PricingFx:
