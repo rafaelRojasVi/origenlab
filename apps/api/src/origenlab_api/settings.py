@@ -247,10 +247,13 @@ class Settings(BaseSettings):
     v2_quoting_enabled: bool = False
     v2_bde_user: str | None = None
     v2_bde_password: SecretStr | None = None
+    v2_bde_token: SecretStr | None = None
+    """BDE API key token (Mi Cuenta → Apikey Token at si3.bcentral.cl; valid one year). Preferred over
+    user and password, which the bank still accepts."""
     v2_bde_series_usd: str = "F073.TCO.PRE.Z.D"
-    """BDE series for the observed dollar. The euro series is unconfirmed from an official source,
-    so it defaults empty (BDE then declines EUR and mindicador answers)."""
-    v2_bde_series_eur: str = ""
+    """BDE series for the observed dollar (Tipo de cambio nominal, dólar observado)."""
+    v2_bde_series_eur: str = "F072.CLP.EUR.N.O.D"
+    """BDE series for the euro in pesos (Tipo de cambio nominal euro), read from the BDE catalogue 2026-10-14."""
     """Origin of the Supabase project whose private `catalog` bucket holds product images
     (`https://<ref>.supabase.co`). Without it and the key below, image routes answer 503."""
     v2_storage_url: str | None = None

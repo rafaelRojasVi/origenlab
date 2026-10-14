@@ -445,7 +445,8 @@ def _build_catalog_fx(settings: Settings, reads: Any, connect: Any, dsn: str) ->
     password = settings.v2_bde_password.get_secret_value() if settings.v2_bde_password else None
     providers: list[Any] = [
         BdeProvider(settings.v2_bde_user, password, client,
-                    {"USD": settings.v2_bde_series_usd, "EUR": settings.v2_bde_series_eur}),
+                    {"USD": settings.v2_bde_series_usd, "EUR": settings.v2_bde_series_eur},
+                    token=settings.v2_bde_token.get_secret_value() if settings.v2_bde_token else None),
         MindicadorProvider(client),
     ]
     return PricingFx(reads, FxCacheWriter(connect, dsn, settings.v2_statement_timeout_ms), providers,

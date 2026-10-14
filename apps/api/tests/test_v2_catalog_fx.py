@@ -279,3 +279,35 @@ def test_rates_for_without_fetch_uses_only_what_is_stored():
     fx = PricingFx(reads, _Writer(), [provider], _today)
     got = fx.rates_for("EUR", [date(2026, 4, 23), date(2026, 10, 2)], fetch=False)
     assert list(got) == [date(2026, 10, 2)] and provider.calls == 0
+
+
+def test_bde_uses_the_api_token_and_reads_a_latin1_reply():
+    # The bank answers in Latin-1 («dólar»); the token goes as `token`, never user/pass.
+    seen = {}
+
+    def answer(request):
+        seen.update(request.url.params)
+        body = ('{"Codigo": 0, "Series": {"descripEsp": "dólar observado", "Obs": ['
+                '{"indexDateString": "01-10-2026", "value": "950.25"}]}}').encode("latin-1")
+        return httpx.Response(200, content=body, headers={"Content-Type": "application/json"})
+
+    client = httpx.Client(transport=httpx.MockTransport(answer))
+    bde = BdeProvider(None, None, client, {"USD": "S"}, token="synthetic-token")
+    assert bde.observed("USD", date(2026, 10, 1), date(2026, 10, 1)) == {date(2026, 10, 1): D("950.25")}
+    assert seen["token"] == "synthetic-token" and "user" not in seen and "pass" not in seen
+
+
+def test_the_euro_has_an_official_bde_series_by_default():
+    from origenlab_api.settings import Settings
+
+    assert Settings().v2_bde_series_eur == "F072.CLP.EUR.N.O.D"
+
+
+def test_http_error_path_never_logs_the_token(caplog):
+    quiet_http_logs()
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    bde = BdeProvider(None, None, client, {"USD": "S"}, token="synthetic-secret-token")
+    with caplog.at_level("DEBUG"):
+        with pytest.raises(FxUnavailable):
+            PricingFx(_Reads({}), _Writer(), [bde], _today).rate("USD", date(2026, 10, 1))
+    assert "synthetic-secret-token" not in caplog.text and "token=" not in caplog.text
