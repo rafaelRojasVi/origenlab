@@ -523,7 +523,14 @@ def cmd_verify(args: argparse.Namespace, importer: str, print_keys: bool) -> int
     return EXIT_OK if not mismatched else EXIT_MISMATCH
 
 
+#: Importers whose apply rewrites mutable rows instead of inserting owned ones: no automatic undo.
+_NO_ROLLBACK = {"maker_merges": "a maker merge rewrites rows it did not insert; restore the pre-apply backup "
+                                "(the release takes one) or the dump of OPERATIONS §14.5"}
+
+
 def cmd_rollback(args: argparse.Namespace, importer: str, print_keys: bool) -> int:
+    if importer in _NO_ROLLBACK:
+        raise Refused(f"rollback refused: {_NO_ROLLBACK[importer]}")
     if not args.confirm_delete_loaded_rows:
         raise Refused("rollback deletes the rows this plan loaded; it needs --confirm-delete-loaded-rows")
     mode = check_targets(args, admin=True, writes=True)

@@ -2704,3 +2704,14 @@ image), «Descargas» in the product panel. Importer
 `scripts/catalog/import_product_documents.py` (OPERATIONS §14.6). **Not applied on hosted; no
 documents loaded** — owner steps: apply the migration (psql-as-migrator + ledger row), then plan →
 apply → verify the private manifest (10 entries: 8 price lists, 2 Hielscher data sheets).
+
+### 2.7.111 One maker per brand: duplicate Hielscher and Ortoalresa merged, 2026-10-14 — built, migration not applied
+
+Migration `20261014100000` adds `catalog.product.merged_into_product_id` (a merged product is
+inactive; event `product.merged`; foreign keys **169**, migrations **57**). Tool
+`scripts/catalog/merge_makers.py` (OPERATIONS §14.7): confirms the kept maker, moves or merges the
+duplicate's products, marks the duplicate maker merged; rollback refused (backup). Catalog reads
+follow merges: a product's cost history includes the observations of products merged into it,
+suppliers, index rows and price lists resolve to the kept organization. Planned hosted run:
+«HIELSCHER» and «Hielscher Ultrasonics GmbH» into the CRM's confirmed «Hielscher Ultrasonics» (it
+carries two cases), «Ortoalresa (Alvarez Redondo, S.A.)» into «Ortoalresa»; 16 duplicated models.

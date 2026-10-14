@@ -28,9 +28,9 @@ from origenlab_api.v2.catalog.keys import refuse_labdelivery
 PLAN_VERSION = 1
 #: Dependency order: an item may only reference items of an earlier action.
 ACTION_ORDER = ("create_org", "create_product", "add_observation", "set_terms", "set_cost_parameter",
-                "add_quote_document", "add_product_document")
+                "add_quote_document", "add_product_document", "merge_maker")
 Action = Literal["create_org", "create_product", "add_observation", "set_terms", "set_cost_parameter",
-                 "add_quote_document", "add_product_document"]
+                 "add_quote_document", "add_product_document", "merge_maker"]
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _NON_ALNUM = re.compile(r"[\W_]+")
 

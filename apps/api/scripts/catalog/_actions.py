@@ -516,14 +516,83 @@ def _verify_add_product_document(ctx: Context, item: importing.PlanItem) -> tupl
     return ("missing", [], None) if row is None else ("present", [], row["id"])
 
 
+# ------------------------------------------------------------------ maker merges (cleanup 2026-10-14)
+
+def _one_org(ctx: Context, name: str) -> dict[str, Any] | None:
+    ctx.cur.execute("select id::text as id, name, confirmation, merged_into_organization_id::text as merged_into "
+                    "from crm.organization where lower(name) = lower(%s) for no key update", (name,))
+    rows = ctx.cur.fetchall()
+    if len(rows) != 1:
+        return None
+    return dict(zip([d[0] for d in ctx.cur.description], rows[0], strict=True))
+
+
+def _apply_merge_maker(ctx: Context, item: importing.PlanItem) -> str:
+    f = item["fields"]
+    # A rerun finds the kept maker under the name this merge gave it.
+    keep = _one_org(ctx, f["keep"]) or (_one_org(ctx, f["rename_to"]) if f.get("rename_to") else None)
+    drop = _one_org(ctx, f["drop"])
+    if keep is None or drop is None or keep["merged_into"] is not None:
+        return "unmatched"
+    if drop["merged_into"] == keep["id"]:
+        return "already_present"
+    if drop["merged_into"] is not None:
+        return "present_different"
+    op = ctx.operator.operator_id
+    if keep["confirmation"] != "confirmed":
+        ctx.cur.execute("update crm.organization set confirmation = 'confirmed', confirmed_by_operator_id = %s::uuid, "
+                        "version = version + 1, updated_at = now() where id = %s::uuid", (op, keep["id"]))
+        _event(ctx, "organization", keep["id"], "organization.confirmed", {"reason": "merge target"})
+    rename = f.get("rename_to")
+    if rename and rename != keep["name"]:
+        ctx.cur.execute("update crm.organization set name = %s, version = version + 1, updated_at = now() "
+                        "where id = %s::uuid", (rename, keep["id"]))
+        _event(ctx, "organization", keep["id"], "organization.updated",
+               {"changed": ["name"], "from": keep["name"], "to": rename})
+    ctx.cur.execute("select id::text, model_key from catalog.product where manufacturer_organization_id = %s::uuid "
+                    "and active order by model_key, id for no key update", (drop["id"],))
+    for product_id, key in ctx.cur.fetchall():
+        ctx.cur.execute("select id::text from catalog.product where manufacturer_organization_id = %s::uuid "
+                        "and model_key = %s order by active desc, id limit 1", (keep["id"], key))
+        twin = ctx.cur.fetchone()
+        if twin is not None:
+            ctx.cur.execute("update catalog.product set active = false, merged_into_product_id = %s::uuid, "
+                            "version = version + 1, updated_at = now() where id = %s::uuid", (twin[0], product_id))
+            _event(ctx, "product", product_id, "product.merged", {"into_product_id": twin[0]})
+        else:
+            ctx.cur.execute("update catalog.product set manufacturer_organization_id = %s::uuid, "
+                            "version = version + 1, updated_at = now() where id = %s::uuid", (keep["id"], product_id))
+            _event(ctx, "product", product_id, "product.updated",
+                   {"changed": ["manufacturer_organization_id"], "from": drop["id"], "to": keep["id"]})
+    ctx.cur.execute("update crm.organization set merged_into_organization_id = %s::uuid, version = version + 1, "
+                    "updated_at = now() where id = %s::uuid", (keep["id"], drop["id"]))
+    _event(ctx, "organization", drop["id"], "organization.merged", {"into_organization_id": keep["id"]})
+    return "inserted"
+
+
+def _verify_merge_maker(ctx: Context, item: importing.PlanItem) -> tuple[str, list[str], str | None]:
+    f = item["fields"]
+    ctx.cur.execute("select d.id::text, d.merged_into_organization_id::text, k.id::text, "
+                    "(select count(*) from catalog.product p where p.manufacturer_organization_id = d.id and p.active) "
+                    "from crm.organization d join crm.organization k on lower(k.name) = lower(%s) "
+                    "where lower(d.name) = lower(%s)", (f.get("rename_to") or f["keep"], f["drop"]))
+    rows = ctx.cur.fetchall()
+    if len(rows) != 1:
+        return "unmatched", [], None
+    drop_id, merged_into, keep_id, active_left = rows[0]
+    if merged_into != keep_id:
+        return "missing", [], None
+    return ("present", [], drop_id) if active_left == 0 else ("different", ["active products left"], drop_id)
+
+
 _APPLY = {"create_org": _apply_create_org, "create_product": _apply_create_product,
           "add_observation": _apply_add_observation, "set_terms": _apply_set_terms,
           "set_cost_parameter": _apply_set_cost_parameter, "add_quote_document": _apply_add_quote_document,
-          "add_product_document": _apply_add_product_document}
+          "add_product_document": _apply_add_product_document, "merge_maker": _apply_merge_maker}
 _VERIFY = {"create_org": _verify_create_org, "create_product": _verify_create_product,
            "add_observation": _verify_add_observation, "set_terms": _verify_set_terms,
            "set_cost_parameter": _verify_set_cost_parameter, "add_quote_document": _verify_add_quote_document,
-           "add_product_document": _verify_add_product_document}
+           "add_product_document": _verify_add_product_document, "merge_maker": _verify_merge_maker}
 
 
 def apply_item(ctx: Context, item: importing.PlanItem) -> str:
