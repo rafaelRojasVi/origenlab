@@ -58,6 +58,8 @@ class CatalogStorage(Protocol):
 
     def signed_url(self, path: str, expires_s: int) -> str: ...
 
+    def signed_urls(self, paths: list[str], expires_s: int) -> dict[str, str]: ...
+
     def get(self, path: str, max_bytes: int) -> bytes: ...
 
 
@@ -228,6 +230,37 @@ class SupabaseStorage:
             raise StorageUnavailable("storage signing returned no signed URL")
         return f"{self._base}/storage/v1{signed}"
 
+    def signed_urls(self, paths: list[str], expires_s: int) -> dict[str, str]:
+        """Many signed URLs in one Storage call (`POST /object/sign/<bucket>`). A path Storage
+        cannot sign (a missing object) is left out; only a failed call as a whole is
+        `StorageUnavailable`, so one bad row never darkens the rest."""
+        _check_expiry(expires_s)
+        if not paths:
+            return {}
+        response = self._post("batch signing", f"{self._base}/storage/v1/object/sign/{self._bucket}",
+                              json={"expiresIn": expires_s, "paths": list(paths)}, headers=self._headers())
+        if not response.is_success:
+            logger.warning("catalog storage batch signing answered HTTP %s", response.status_code)
+            raise StorageUnavailable(f"storage batch signing answered HTTP {response.status_code}")
+        try:
+            rows = response.json()
+        except ValueError:
+            rows = None
+        if not isinstance(rows, list):
+            raise StorageUnavailable("storage batch signing returned no list")
+        wanted = set(paths)
+        urls: dict[str, str] = {}
+        for row in rows:
+            if not isinstance(row, dict) or row.get("error") or row.get("path") not in wanted:
+                continue
+            signed = row.get("signedURL")
+            if not isinstance(signed, str):
+                continue
+            if not signed.startswith("/"):
+                raise StorageUnavailable("storage batch signing returned a URL of another origin")
+            urls[row["path"]] = f"{self._base}/storage/v1{signed}"
+        return urls
+
 
 # ──────────────────────────────────────────────────────────── tests ──
 
@@ -246,6 +279,10 @@ class FakeStorage:
     def signed_url(self, path: str, expires_s: int) -> str:
         _check_expiry(expires_s)
         return f"https://storage.invalid/storage/v1/object/sign/{self.bucket}/{path}?token=fake&expires_in={expires_s}"
+
+    def signed_urls(self, paths: list[str], expires_s: int) -> dict[str, str]:
+        _check_expiry(expires_s)
+        return {p: self.signed_url(p, expires_s) for p in paths}
 
     def get(self, path: str, max_bytes: int) -> bytes:
         if path not in self.objects:

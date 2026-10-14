@@ -27,6 +27,8 @@ export interface IndexItem {
   supplier_ids: string[];
   image_id: string | null;
   has_datasheet: boolean;
+  /** The supplier's (usually English) name when it differs from the Spanish one. */
+  name_en: string | null;
 }
 
 export interface SearchScope {
@@ -62,7 +64,7 @@ export function createCatalogSearch(items: IndexItem[]) {
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
   const mini = new MiniSearch<IndexItem>({
-    fields: ["name", "category_es", "manufacturer", "model_number"],
+    fields: ["name", "name_en", "category_es", "manufacturer", "model_number"],
     storeFields: [],
     processTerm: (term) => foldText(term),
     searchOptions: {

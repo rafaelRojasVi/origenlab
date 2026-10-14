@@ -178,7 +178,9 @@ def image_urls(request: Request, response: Response, operator: Operator,
     storage = _storage(request)
     paths = _reads(request).images(wanted, include_hidden=operator.role in ("sales", "admin"))
     try:
-        urls = {image_id: storage.signed_url(path, SIGNED_URL_SECONDS) for image_id, path in paths.items()}
+        # One Storage call for the whole batch; a path it cannot sign is simply left out.
+        signed = storage.signed_urls(list(dict.fromkeys(paths.values())), SIGNED_URL_SECONDS)
+        urls = {image_id: signed[path] for image_id, path in paths.items() if path in signed}
     except StorageUnavailable:
         raise HTTPException(503, detail=_STORAGE_UNAVAILABLE) from None
     response.headers["Cache-Control"] = "no-store"  # the URLs are short-lived credentials

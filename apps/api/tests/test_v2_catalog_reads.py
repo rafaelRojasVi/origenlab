@@ -357,3 +357,13 @@ def test_images_returns_paths_for_visible_ids_only(disposable_database):
     assert reads.images([*ids, unknown], include_hidden=False) == {str(ids[0]): f"products/{prod}/{'a' * 64}.png"}
     assert set(reads.images([*ids, unknown], include_hidden=True)) == {str(ids[0]), str(ids[1])}
     assert _index_row(reads.catalog_index(), prod)["image_id"] == str(ids[0])
+
+
+@needs_db
+def test_index_keeps_the_english_name_when_a_spanish_one_exists(disposable_database):
+    dsn = disposable_database
+    _, both = _seed_product(dsn, model="IDX-EN1", name="Magnetic stirrer", name_es="Agitador magnético")
+    _, same = _seed_product(dsn, model="IDX-EN2", name="Agitador", name_es="Agitador")
+    out = _reads(dsn).catalog_index()
+    assert _index_row(out, both)["name_en"] == "Magnetic stirrer"
+    assert _index_row(out, same)["name_en"] is None

@@ -58,7 +58,7 @@ _COUNT_SQL = (
 
 #: The positional columns of `GET /v2/catalog/index` — no cost field, ever (Catálogo v2, spec D1).
 INDEX_FIELDS = ("id", "model_number", "model_key", "name", "category_es", "kind", "manufacturer",
-                "supplier_ids", "image_id", "has_datasheet")
+                "supplier_ids", "image_id", "has_datasheet", "name_en")
 DRIVE_VIEW_URL = "https://drive.google.com/file/d/{}/view"
 
 # Changes whenever a product, a cost observation, an image or a document is written: the
@@ -79,7 +79,9 @@ select p.id::text, p.model_number, p.model_key, coalesce(p.name_es, p.name, p.mo
        (select i.id::text from catalog.product_image i where i.product_id = p.id and i.status <> 'hidden'
          order by i.sort_order, i.created_at, i.id limit 1),
        exists (select 1 from catalog.product_document d where d.product_id = p.id
-                and d.kind = 'datasheet' and d.status = 'active')
+                and d.kind = 'datasheet' and d.status = 'active'),
+       -- The supplier's (usually English) name, searched too; null when it adds nothing.
+       case when p.name_es is not null and p.name is distinct from p.name_es then p.name end
   from catalog.product p
   join crm.organization m on m.id = p.manufacturer_organization_id
  where p.active
@@ -239,7 +241,7 @@ class V2CatalogReads:
             if known_version == version:
                 return {"version": version, "unchanged": True}
             cur.execute(_INDEX_SQL)
-            items = [[*r[:7], list(r[7]), r[8], r[9]] for r in cur.fetchall()]
+            items = [[*r[:7], list(r[7]), *r[8:]] for r in cur.fetchall()]
         return {"version": version, "fields": list(INDEX_FIELDS), "suppliers": self.suppliers()["items"],
                 "items": items}
 

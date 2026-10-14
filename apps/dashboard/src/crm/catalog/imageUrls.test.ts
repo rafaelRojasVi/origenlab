@@ -53,4 +53,18 @@ describe("requestImageUrl", () => {
     expect(await requestImageUrl("c")).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("asks again a minute after a 503, so a passing Storage hiccup does not last the session", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("{}", { status: 503 }))
+      .mockImplementation((url: string) => Promise.resolve(okBody(idsOf([url]))));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await requestImageUrl("a")).toBeNull();
+    expect(await requestImageUrl("a")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 61_000);
+    expect(await requestImageUrl("a")).toBe("https://s.test/a");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

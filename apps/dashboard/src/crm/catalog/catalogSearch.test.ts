@@ -12,6 +12,7 @@ const item = (id: string, model: string, name: string, extra: Partial<IndexItem>
   supplier_ids: ["s1"],
   image_id: null,
   has_datasheet: false,
+  name_en: null,
   ...extra,
 });
 
@@ -47,6 +48,11 @@ describe("catalogSearch", () => {
     expect(engine.search("ultrasonico").hits.map((h) => h.id).sort()).toEqual(["a", "b"]);
     expect(engine.search("sonotrdo").hits[0].id).toBe("d");
     expect(engine.search("titan").hits[0].id).toBe("d");
+  });
+
+  it("finds a product by its English name too", () => {
+    const e = createCatalogSearch([item("en", "AG-1", "Agitador magnético", { name_en: "Magnetic stirrer" })]);
+    expect(e.search("stirrer").hits.map((h) => h.id)).toEqual(["en"]);
   });
 
   it("needs every word: «procesador 400» is only the 400", () =>
