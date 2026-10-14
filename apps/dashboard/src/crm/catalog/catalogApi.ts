@@ -193,12 +193,28 @@ export interface QuotedPrice {
   check_status: string | null;
   client_type: string | null;
   document_number: string | null;
+  /** The CRM case holding the quote of that number; `outcome` is «won» only for the quote the case was won with. */
+  case?: { id: string; institution: string | null; outcome: "won" | "other_won" | "lost" | "abandoned" | "open" } | null;
+}
+
+/** «Ventas»: how often the model was quoted, at what single-unit prices (one currency), how often it sold. */
+export interface SalesSummaryData {
+  times_quoted: number;
+  times_won: number;
+  currency: string | null;
+  min: string | null;
+  max: string | null;
+  median: string | null;
+  last: { date: string | null; price: string } | null;
+  won_prices: string[];
+  institutions: number;
 }
 
 export interface PriceHistory {
   model_key: string | null;
   items: QuotedPrice[];
   median_last_5: string | null;
+  summary?: SalesSummaryData;
 }
 
 export interface CatalogFx {
@@ -243,8 +259,8 @@ export const fetchProducts = (query: ProductQuery) =>
 export const fetchSuppliers = () =>
   fetchJsonGet<{ items: SupplierSummary[] }>(operatorApiUrl(CATALOG_PATHS.suppliers));
 export const fetchProduct = (id: string) => fetchJsonGet<ProductDetail>(operatorApiUrl(CATALOG_PATHS.product(id)));
-export const fetchPriceHistory = (modelKey: string) =>
-  fetchJsonGet<PriceHistory>(operatorApiUrl(CATALOG_PATHS.priceHistory, { model_key: modelKey }));
+export const fetchPriceHistory = (modelKey: string, limit = 100) =>
+  fetchJsonGet<PriceHistory>(operatorApiUrl(CATALOG_PATHS.priceHistory, { model_key: modelKey, limit }));
 export const fetchCatalogFx = (currency: "USD" | "EUR") =>
   fetchJsonGet<CatalogFx>(operatorApiUrl(CATALOG_PATHS.fx, { currency }));
 export const fetchCostParameters = () => fetchJsonGet<CostParameters>(operatorApiUrl(CATALOG_PATHS.parameters));

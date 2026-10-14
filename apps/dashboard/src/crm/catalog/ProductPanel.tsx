@@ -19,6 +19,7 @@ import {
 } from "./catalogApi";
 import { ProductDownloads } from "./ProductDownloads";
 import { ProductImage } from "./ProductImage";
+import { SalesSummary } from "./SalesSummary";
 import { Badge, Drawer, EmptyState, ResourceGate, Section, Skeleton, fmtDate } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
 
@@ -182,42 +183,14 @@ function CostHistory({ rows }: { rows: CostObservation[] }) {
   );
 }
 
-/** What past quote documents charged for this model: sell prices, not costs; every role sees them. */
+/** «Ventas»: what past quotes charged for this model and which sold — sell prices, not costs; every role sees them. */
 function QuotedHistory({ modelKey }: { modelKey: string }) {
   const load = useCallback(() => fetchPriceHistory(modelKey), [modelKey]);
   const [state, reload] = useResource(load, [load]);
   return (
-    <Section title="Historial de cotizaciones">
-      <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={2} />}>
-        {(h) =>
-          h.items.length === 0 ? (
-            <p className="text-xs text-ink-faint">Este modelo no aparece en cotizaciones anteriores.</p>
-          ) : (
-            <div data-testid="quoted-history">
-              {h.median_last_5 ? (
-                <p className="mb-1.5 text-xs text-ink-muted">
-                  Mediana de las últimas 5:{" "}
-                  <span className="font-semibold tabular-nums text-ink">{fmtMoney(h.median_last_5, h.items[0]?.currency)}</span>
-                </p>
-              ) : null}
-              <ul className="divide-y divide-line rounded-md border border-line text-xs">
-                {h.items.map((r, i) => (
-                  <li key={`${r.document_number ?? "doc"}-${i}`} className="flex flex-wrap items-baseline gap-x-2 px-2.5 py-1.5">
-                    <span className="font-medium tabular-nums text-ink">
-                      {fmtMoney(r.unit_price ?? r.line_total, r.currency)}
-                    </span>
-                    {r.qty && Number(r.qty) !== 1 ? <span className="text-ink-faint">× {r.qty}</span> : null}
-                    {r.check_status === "disputed" ? <Badge tone="warn">En duda</Badge> : null}
-                    <span className="ml-auto text-ink-faint">
-                      {r.document_number ? `N° ${r.document_number} · ` : ""}
-                      {fmtDay(r.date)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )
-        }
+    <Section title="Ventas y cotizaciones">
+      <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={3} />}>
+        {(h) => <SalesSummary history={h} />}
       </ResourceGate>
     </Section>
   );
