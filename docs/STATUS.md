@@ -2738,3 +2738,16 @@ sold and at what price, the last price, and the single-unit range and median in 
 The panel shows the four numbers, a dot plot of price over time (sold filled in the brand teal,
 quoted hollow, the median dashed; native tooltips), and the list with a link to each case. Sell
 prices only, never costs: every role sees them. No schema change.
+
+### 2.7.114 Forwarded requests become Solicitudes, 2026-10-14 — built, migration not applied
+
+Spec `~/data/origenlab-v2-migration/specs/2026-10-14-forwarded-requests-design.md` (private).
+Migration `20261014140000` adds `evidence.source_record` kind `forwarded_request` (no table, policy
+or grant change; migrations **58**). Worker: `forwarded_request.py` reads, for an email we sent with
+a forward prefix, the customer out of a marketplace contact block or the innermost forwarded hop;
+stored as that record after the triage, isolated in its own `try`, off with
+`ORIGENLAB_WORKER_FORWARD_READING=off`; `forward-backfill` reads past forwards only (dry run by
+default). API: `GET /v2/workspace/forwarded-requests` (copies collapsed), `create-request-from-forward`
+(a lead on the record, institution existing / «por confirmar» / none, contact as a note, our email
+copies linked — never a Labdelivery-mailbox email), `dismiss-forwarded-request`. Hoy panel
+«Solicitudes reenviadas». Measured before: 19 forwards since 1 Jul, 9 never became anything.

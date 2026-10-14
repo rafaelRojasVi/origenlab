@@ -46,6 +46,7 @@ implementation.
 | **Domain event** | Append-only audit of one state transition, with a closed type and a versioned payload. | `crm.domain_event` |
 | **Send attempt** | One intent to deliver one message to one address. Submission and delivery are tracked separately. **The only send ledger.** | `outbound.send_attempt` |
 | **Contact control** | A `block`, a permanent `prior_contact` fact, or a dated `cooldown` on an address or a domain, each scoped to a `purpose` (`all` or `marketing`). | `outbound.contact_control` |
+| **Forwarded request** | Who really asked, read by the worker out of a request Tatiana forwarded to contacto@ from another mailbox: one `source_record` of kind `forwarded_request` with only the customer's fields and the id of the email it came from — never its text. `pending` until «Crear solicitud» (`promoted`, the case's origin) or «Descartar» (`rejected`). | `evidence.source_record` |
 | **Quote document** | A past quote PDF held as evidence: one `source_record` of kind `quote_document` with its lines in `evidence.document_line`, each cross-checked. Never trusted truth; it informs price history. | `evidence.source_record`, `evidence.document_line` |
 | **Source record** | An acquired external record with provenance and review status. | `evidence.source_record` |
 | **Assertion** | A typed observed fact extracted from a source record, with a resolution. | `evidence.assertion` |

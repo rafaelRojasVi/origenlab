@@ -57,6 +57,7 @@ import { Badge, Button, Modal, Panel, fmtDate, toast } from "../ui";
 import { type ResourceState } from "../useResource";
 import { useLeave } from "../useLeave";
 import { CaseMoveForm } from "./CaseMove";
+import { ForwardedRequestsPanel } from "./ForwardedRequestsPanel";
 
 type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 
@@ -127,6 +128,8 @@ export function TodayBody({
           {/* Three lists and the new mail (owner decision 2026-10-10): who wrote, who to chase, what
               is due — then the emails no case holds. Everything else sits in the side column. */}
           <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
+          {/* Requests Tatiana forwarded from another mailbox (spec 2026-10-14); renders nothing when none wait. */}
+          <ForwardedRequestsPanel navigate={navigate} onChanged={onChanged} />
           <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
           <TasksPanel overdue={overdue} tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
           {after}
