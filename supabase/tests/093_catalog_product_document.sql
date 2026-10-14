@@ -3,7 +3,7 @@
 -- Synthetic fixtures only.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(17);
+select plan(18);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -26,6 +26,8 @@ select ok(pg_get_constraintdef((select oid from pg_constraint where conname = 'd
   'event vocabulary: product.document_recorded');
 select ok(pg_get_constraintdef((select oid from pg_constraint where conname = 'domain_event_type_check')) like '%product.document_retired%',
   'event vocabulary: product.document_retired');
+select ok(pg_get_constraintdef((select oid from pg_constraint where conname = 'domain_event_type_check')) like '%organization.price_list_recorded%',
+  'event vocabulary: organization.price_list_recorded');
 select ok(pg_get_constraintdef((select oid from pg_constraint where conname = 'domain_event_type_check')) like '%opportunity.document_removed%',
   'the rebuilt vocabulary keeps the newest earlier type');
 

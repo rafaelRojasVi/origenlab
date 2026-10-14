@@ -1067,8 +1067,9 @@ proxy). A price list carries dealer costs, so the API leaves it out for the view
 |---|---|---|---|
 | 57 | `catalog.product_document` | a Drive file documenting the catalog | `kind ∈ {datasheet, price_list}`; `datasheet` ⇔ `product_id`, `price_list` ⇔ `supplier_organization_id`; a Drive-shaped `drive_file_id`, once per subject; `source ∈ {drive_manifest, operator}` with the manifest in `origin_source_record_id`; never deleted — a superseded file is retired (`status`) |
 
-Domain events added: `product.document_recorded` and `product.document_retired` (aggregate
-`product` for a data sheet, `organization` for a price list).
+Domain events added: `product.document_recorded` / `product.document_retired` for a data sheet
+(aggregate `product`) and `organization.price_list_recorded` / `organization.price_list_retired`
+for a price list (aggregate `organization`).
 
 Counts by schema: `crm` 22, `comms` 4, `outbound` 9, `evidence` 4,
 `catalog` 7, `procurement` 1, `platform` 6 — **53**.

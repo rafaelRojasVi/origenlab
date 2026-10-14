@@ -7,8 +7,10 @@
 -- Never deleted: a superseded list or sheet is retired (status). Rows written by the importer
 -- carry the manifest that wrote them (origin_source_record_id), as catalog.supplier_product does.
 --
--- Events: product.document_recorded / product.document_retired. The list below is the live CHECK
--- (last rebuilt by 20261012120000) plus those two.
+-- Events: product.document_recorded / _retired for a data sheet (aggregate product) and
+-- organization.price_list_recorded / _retired for a price list (aggregate organization: an event's
+-- type names its aggregate, crm.domain_event_is_valid). The list below is the live CHECK
+-- (last rebuilt by 20261012120000) plus those four.
 
 set role origenlab_owner;
 
@@ -98,7 +100,7 @@ alter table crm.domain_event add constraint domain_event_type_check check (event
   'product.cost_recorded', 'organization.supplier_terms_set', 'fx_rate.recorded',
   'cost_parameter.set', 'source_record.document_line_reviewed', 'assertion.triage_reviewed',
   'opportunity.document_attached', 'opportunity.document_removed', 'product.document_recorded',
-  'product.document_retired'
+  'product.document_retired', 'organization.price_list_recorded', 'organization.price_list_retired'
 ));
 
 reset role;
