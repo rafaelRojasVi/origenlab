@@ -164,6 +164,8 @@ export interface ProductDetail {
   supplier_terms: SupplierTerms[];
   /** Drive files: the product's own data sheets and its suppliers' price lists (absent for a viewer). */
   documents?: ProductDocuments;
+  /** «Ventas y cotizaciones», margins included for sales/admin; absent from an older API. */
+  price_history?: PriceHistory;
 }
 
 export interface DriveDocument {
@@ -195,6 +197,21 @@ export interface QuotedPrice {
   document_number: string | null;
   /** The CRM case holding the quote of that number; `outcome` is «won» only for the quote the case was won with. */
   case?: { id: string; institution: string | null; outcome: "won" | "other_won" | "lost" | "abandoned" | "open" } | null;
+  /** What it cost us that day (sales/admin only): the observation, the rate of the day, the cost in pesos. */
+  cost?: QuoteCost;
+  /** Gross margin, «0.4500» = 45,00 %, before import expenses (sales/admin only). */
+  margin?: string;
+}
+
+export interface QuoteCost {
+  price: string;
+  currency: string;
+  price_kind: string | null;
+  as_of: string;
+  after_quote: boolean;
+  fx: string | null;
+  fx_as_of: string | null;
+  clp: string;
 }
 
 /** «Ventas»: how often the model was quoted, at what single-unit prices (one currency), how often it sold. */
@@ -208,6 +225,8 @@ export interface SalesSummaryData {
   last: { date: string | null; price: string } | null;
   won_prices: string[];
   institutions: number;
+  /** Gross margins of the quotes that have a cost and a rate (sales/admin only). */
+  margin?: { last: string; median: string; min: string; max: string; count: number } | null;
 }
 
 export interface PriceHistory {

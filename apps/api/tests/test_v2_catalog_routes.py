@@ -414,3 +414,71 @@ def test_viewer_detail_loses_price_lists_but_keeps_datasheets() -> None:
         client = _client(role)
         client.app.state.catalog_reads = _Reads()
         assert client.get(f"/v2/catalog/products/{pid}", headers=HEADERS).json()["documents"] == expected
+
+
+class _MarginReads(_FakeReads):
+    def price_history(self, model_key, limit=20):
+        return {"model_key": model_key, "median_last_5": None, "summary": {"times_quoted": 1},
+                "items": [{"date": "2026-09-17", "line_total": "7000000.0000", "unit_price": "7000000.0000",
+                           "qty": "1", "currency": "CLP", "document_number": "09201-26"}],
+                "costs": [{"as_of": "2026-01-01T00:00:00+00:00", "price": "2500.000000", "currency": "EUR",
+                           "price_kind": "dealer_net", "is_stale": False}]}
+
+
+class _FakeFx:
+    def __init__(self):
+        self.asked = []
+
+    def rates_for(self, currency, days, *, fetch=True):
+        from datetime import date
+        from decimal import Decimal
+
+        assert fetch is False, "the panel never waits on a rate provider"
+        self.asked.append((currency, sorted(days)))
+        return {d: {"clp_per_unit": Decimal("1100"), "as_of": date(2026, 9, 16)} for d in days}
+
+
+def _margin_client(role):
+    client = _client(role)
+    client.app.state.catalog_reads = _MarginReads()
+    client.app.state.catalog_fx = _FakeFx()
+    return client
+
+
+def test_price_history_carries_cost_and_margin_for_sales() -> None:
+    client = _margin_client("sales")
+    body = client.get("/v2/catalog/price-history", params={"model_key": "SYN1"}, headers=HEADERS).json()
+    [line] = body["items"]
+    assert line["margin"] == "0.6071" and line["cost"]["clp"] == "2750000" and line["cost"]["fx_as_of"] == "2026-09-16"
+    assert body["summary"]["margin"]["last"] == "0.6071" and "costs" not in body
+
+
+def test_a_viewer_sees_prices_but_no_cost_and_no_margin_and_no_rate_is_fetched() -> None:
+    client = _margin_client("viewer")
+    body = client.get("/v2/catalog/price-history", params={"model_key": "SYN1"}, headers=HEADERS).json()
+    [line] = body["items"]
+    assert line["line_total"] == "7000000.0000"
+    assert "cost" not in line and "margin" not in line and "costs" not in body and "margin" not in body["summary"]
+    assert client.app.state.catalog_fx.asked == []
+
+
+class _DetailMarginReads(_MarginReads):
+    def product_detail(self, product_id, include_hidden=False):
+        return {"id": str(product_id), "model_key": "SYN1", "price_history": self.price_history("SYN1")}
+
+
+def test_the_product_carries_its_margins_so_the_panel_needs_one_request() -> None:
+    pid = "00000000-0000-4000-8000-0000000000ab"
+    client = _client("sales")
+    client.app.state.catalog_reads = _DetailMarginReads()
+    client.app.state.catalog_fx = _FakeFx()
+    history = client.get(f"/v2/catalog/products/{pid}", headers=HEADERS).json()["price_history"]
+    assert history["items"][0]["margin"] == "0.6071" and history["summary"]["margin"]["last"] == "0.6071"
+    assert "costs" not in history
+
+    viewer = _client("viewer")
+    viewer.app.state.catalog_reads = _DetailMarginReads()
+    viewer.app.state.catalog_fx = _FakeFx()
+    history = viewer.get(f"/v2/catalog/products/{pid}", headers=HEADERS).json()["price_history"]
+    assert "margin" not in history["items"][0] and "costs" not in history and "margin" not in history["summary"]
+    assert viewer.app.state.catalog_fx.asked == []

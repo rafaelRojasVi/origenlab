@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { PriceHistory, QuotedPrice } from "./catalogApi";
 import { SalesSummary } from "./SalesSummary";
@@ -73,5 +73,52 @@ describe("SalesSummary without a summary (older API)", () => {
     render(<SalesSummary history={{ ...HISTORY, summary: undefined }} />);
     expect(screen.queryByTestId("sales-stats")).toBeNull();
     expect(within(screen.getByTestId("quoted-history")).getAllByRole("listitem")).toHaveLength(3);
+  });
+});
+
+describe("SalesSummary with margins", () => {
+  const cost = (clp: string) => ({ price: "2500", currency: "EUR", price_kind: "dealer_net", as_of: "2026-01-01",
+    after_quote: false, fx: "1100", fx_as_of: "2026-09-16", clp });
+  const many = Array.from({ length: 9 }, (_, i) => ({
+    ...line(`2026-0${(i % 9) + 1}-10`, `${6000000 + i * 10000}.0000`, `0910${i}-26`, i === 2 ? "won" : "open"),
+    cost: cost("2750000"), margin: (0.44 + i / 1000).toFixed(4),
+  }));
+  const withMargins: PriceHistory = {
+    ...HISTORY,
+    // the same quote read twice must show once
+    items: [...many, { ...many[8] }],
+    summary: { ...HISTORY.summary!, times_quoted: 9,
+      margin: { last: "0.4480", median: "0.4440", min: "0.4400", max: "0.4480", count: 9 } },
+  };
+
+  it("adds the margin to the numbers", () => {
+    render(<SalesSummary history={withMargins} />);
+    expect(screen.getByTestId("sales-stats")).toHaveTextContent("Margen bruto");
+    expect(screen.getByTestId("sales-stats")).toHaveTextContent("44,4 %");
+  });
+
+  it("merges a quote read twice and shows the six newest until asked for all", () => {
+    render(<SalesSummary history={withMargins} />);
+    const list = screen.getByTestId("quoted-history");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(6);
+    fireEvent.click(screen.getByRole("button", { name: "Ver las 9 cotizaciones" }));
+    expect(within(screen.getByTestId("quoted-history")).getAllByRole("listitem")).toHaveLength(9);
+  });
+
+  it("each row shows its margin and how its cost was converted", () => {
+    render(<SalesSummary history={withMargins} />);
+    const row = within(screen.getByTestId("quoted-history")).getAllByRole("listitem")[0];
+    expect(row).toHaveTextContent("44,8 %");
+    expect(within(row).getByTitle(/€ 2\.500,00 × \$1\.100 \(16 sept 2026\) = \$2\.750\.000/)).toBeInTheDocument();
+  });
+
+  it("hovering a point explains it, and the point links to its case", () => {
+    render(<SalesSummary history={withMargins} />);
+    const dots = screen.getAllByTestId("price-dot");
+    fireEvent.mouseEnter(dots[0]);
+    const tip = screen.getByRole("tooltip");
+    expect(tip).toHaveTextContent("Margen");
+    expect(tip).toHaveTextContent("Costo");
+    expect(dots[0].closest("a")).toHaveAttribute("href", expect.stringContaining("#/crm/oportunidades/case-"));
   });
 });

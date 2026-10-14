@@ -149,6 +149,11 @@ def _like_escape(key: str) -> str:
     return key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+# The supplier_product rows of a product and of the twins merged into it (two `%s`: the product id).
+_OWN_PRODUCT_ROWS = ("(sp.product_id = %s or sp.product_id in "
+                     "(select id from catalog.product where merged_into_product_id = %s))")
+
+
 class V2CatalogReads:
     def __init__(self, connect: Any, dsn: str, statement_timeout_ms: int = 30_000) -> None:
         self._connect = connect
@@ -159,8 +164,8 @@ class V2CatalogReads:
     def _read(self):  # type: ignore[no-untyped-def]
         with self._connect(self._dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
-                cur.execute("set transaction read only")
-                cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
+                # One round trip for both (no parameters, so one simple-protocol message).
+                cur.execute(f"set transaction read only; set local statement_timeout = {int(self._statement_timeout_ms)}")
                 try:
                     yield cur
                 finally:
@@ -170,6 +175,21 @@ class V2CatalogReads:
     def _rows(cur: Any) -> list[dict[str, Any]]:
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
+
+    def _batch(self, cur: Any, queries: dict[str, tuple[str, tuple[Any, ...]]]) -> dict[str, list[dict[str, Any]]]:
+        """Independent queries sent together in one pipeline: one round trip to the database for
+        all of them instead of one each (the API sits ~180 ms from it). Same transaction as `cur`."""
+        conn = cur.connection
+        cursors = {}
+        with conn.pipeline():
+            for name, (sql, params) in queries.items():
+                cursors[name] = conn.cursor()
+                cursors[name].execute(sql, params)
+        try:
+            return {name: self._rows(c) for name, c in cursors.items()}
+        finally:
+            for c in cursors.values():
+                c.close()
 
     # -- products
 
@@ -202,10 +222,11 @@ class V2CatalogReads:
         return {"items": items, "total": total, "limit": limit, "offset": offset}
 
     def product_detail(self, product_id: uuid.UUID, include_hidden: bool = False) -> dict[str, Any] | None:
-        """The product with its images, costs, terms and notes.
+        """The product with its images, costs, terms, notes, quoted prices, kits and documents.
 
         Hidden images are left out unless `include_hidden` (the route asks for them for the
-        roles that may un-hide one); every image carries its `status` either way.
+        roles that may un-hide one); every image carries its `status` either way. Two round trips
+        after the set-up: the product, then everything else in one pipeline.
         """
         with self._read() as cur:
             cur.execute(
@@ -220,49 +241,52 @@ class V2CatalogReads:
             manufacturer_name = product.pop("manufacturer_name")
             product["manufacturer"] = {"id": product["manufacturer_organization_id"],
                                        "display_name": manufacturer_name}
-            cur.execute(
-                "select id, storage_path, sha256, content_type, width_px, height_px, sort_order, caption_es, "
-                "source, source_url, status, version, created_at from catalog.product_image "
-                "where product_id = %s and (%s or status <> 'hidden') order by sort_order, created_at, id",
-                (product_id, include_hidden),
-            )
-            product["images"] = self._rows(cur)
-            cur.execute(
-                "select sp.id, sp.as_of, sp.price, sp.currency, sp.price_kind, sp.list_price, sp.discount_pct, "
-                "sp.incoterm, sp.valid_until, sp.min_qty, sp.is_stale, sp.source_document, sp.provenance_note, "
-                "sp.created_at, o.id as supplier_id, o.name as supplier_name "
-                "from catalog.supplier_product sp join crm.organization raw on raw.id = sp.supplier_organization_id "
-                "join crm.organization o on o.id = coalesce(raw.merged_into_organization_id, raw.id) "
-                "where (sp.product_id = %s or sp.product_id in (select id from catalog.product where merged_into_product_id = %s)) order by sp.as_of desc, sp.created_at desc, sp.id desc",
-                (product_id, product_id),
-            )
-            history = []
-            for r in self._rows(cur):
-                r["supplier"] = {"id": r.pop("supplier_id"), "display_name": r.pop("supplier_name")}
-                history.append(r)
-            product["cost_history"] = history
-            supplier_ids = list(dict.fromkeys(h["supplier"]["id"] for h in history))
-            terms: list[dict[str, Any]] = []
-            if supplier_ids:
-                cur.execute(
+            key = model_key(product["model_key"])
+            rows = self._batch(cur, {
+                "images": (
+                    "select id, storage_path, sha256, content_type, width_px, height_px, sort_order, caption_es, "
+                    "source, source_url, status, version, created_at from catalog.product_image "
+                    "where product_id = %s and (%s or status <> 'hidden') order by sort_order, created_at, id",
+                    (product_id, include_hidden)),
+                "costs": (
+                    "select sp.id, sp.as_of, sp.price, sp.currency, sp.price_kind, sp.list_price, sp.discount_pct, "
+                    "sp.incoterm, sp.valid_until, sp.min_qty, sp.is_stale, sp.source_document, sp.provenance_note, "
+                    "sp.created_at, o.id as supplier_id, o.name as supplier_name "
+                    "from catalog.supplier_product sp join crm.organization raw on raw.id = sp.supplier_organization_id "
+                    "join crm.organization o on o.id = coalesce(raw.merged_into_organization_id, raw.id) "
+                    f"where {_OWN_PRODUCT_ROWS} order by sp.as_of desc, sp.created_at desc, sp.id desc",
+                    (product_id, product_id)),
+                # The terms of every supplier that lists it (through organization merges).
+                "terms": (
                     "select t.*, o.name as supplier_name from catalog.supplier_terms t "
                     "join crm.organization raw on raw.id = t.supplier_organization_id "
                     "join crm.organization o on o.id = coalesce(raw.merged_into_organization_id, raw.id) "
-                    "where o.id = any(%s) order by o.name, t.supplier_organization_id",
-                    (supplier_ids,),
-                )
-                terms = [self._terms_row(r) for r in self._rows(cur)]
-            product["supplier_terms"] = terms
-            cur.execute(
-                "select id, body, author_operator_id, revision_no, created_at from crm.note "
-                "where subject_kind = 'product' and subject_id = %s and status <> 'archived' "
-                "order by created_at desc, id desc",
-                (product_id,),
-            )
-            product["notes"] = self._rows(cur)
-            product["price_history"] = self._price_history(cur, product["model_key"], 20)
-            product["kit_suggestions"] = self._kit_suggestions(cur, product["model_key"], Decimal("0.30"))
-            product["documents"] = self._documents(cur, product_id)
+                    "where o.id in (select coalesce(so.merged_into_organization_id, so.id) "
+                    "  from catalog.supplier_product sp join crm.organization so on so.id = sp.supplier_organization_id "
+                    f"  where {_OWN_PRODUCT_ROWS}) order by o.name, t.supplier_organization_id",
+                    (product_id, product_id)),
+                "notes": (
+                    "select id, body, author_operator_id, revision_no, created_at from crm.note "
+                    "where subject_kind = 'product' and subject_id = %s and status <> 'archived' "
+                    "order by created_at desc, id desc",
+                    (product_id,)),
+                **self._price_history_queries(key),
+                **self._kit_queries(key),
+                **self._documents_queries(product_id),
+            })
+        product["images"] = rows["images"]
+        history = []
+        for r in rows["costs"]:
+            r["supplier"] = {"id": r.pop("supplier_id"), "display_name": r.pop("supplier_name")}
+            history.append(r)
+        product["cost_history"] = history
+        product["supplier_terms"] = [self._terms_row(r) for r in rows["terms"]]
+        product["notes"] = rows["notes"]
+        # As many quotes as the panel lists; `costs` stays — the route turns it into margins
+        # (and the redaction drops it for a viewer).
+        product["price_history"] = self._price_history_from(key, rows, 100)
+        product["kit_suggestions"] = self._kit_from(key, rows, Decimal("0.30"))
+        product["documents"] = self._documents_from(rows)
         return _plain(product)
 
     # -- Catálogo v2: the browser's search index, batch image paths, Drive documents
@@ -292,25 +316,30 @@ class V2CatalogReads:
                         "where id = any(%s) and (%s or status <> 'hidden')", (image_ids, include_hidden))
             return {r[0]: r[1] for r in cur.fetchall()}
 
-    def _documents(self, cur: Any, product_id: uuid.UUID) -> dict[str, Any]:
+    @staticmethod
+    def _documents_queries(product_id: uuid.UUID) -> dict[str, tuple[str, tuple[Any, ...]]]:
         """The product's own data sheets, and the active price lists of the suppliers that list it."""
-        cur.execute("select id, title, drive_file_id, as_of from catalog.product_document "
-                    "where kind = 'datasheet' and status = 'active' and product_id = %s "
-                    "order by as_of desc nulls last, title, id", (product_id,))
+        return {
+            "datasheets": ("select id, title, drive_file_id, as_of from catalog.product_document "
+                           "where kind = 'datasheet' and status = 'active' and product_id = %s "
+                           "order by as_of desc nulls last, title, id", (product_id,)),
+            "price_lists": ("select d.id, d.title, d.drive_file_id, d.as_of, o.id as supplier_id, o.name as supplier_name "
+                            "from catalog.product_document d join crm.organization raw on raw.id = d.supplier_organization_id "
+                            "join crm.organization o on o.id = coalesce(raw.merged_into_organization_id, raw.id) "
+                            "where d.kind = 'price_list' and d.status = 'active' and o.id in "
+                            "(select coalesce(so.merged_into_organization_id, so.id) from catalog.supplier_product sp "
+                            " join crm.organization so on so.id = sp.supplier_organization_id "
+                            f" where {_OWN_PRODUCT_ROWS}) "
+                            "order by o.name, d.as_of desc nulls last, d.id", (product_id, product_id)),
+        }
+
+    @staticmethod
+    def _documents_from(rows: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         sheets = [{"id": r["id"], "title": r["title"], "url": DRIVE_VIEW_URL.format(r["drive_file_id"]),
-                   "as_of": r["as_of"]} for r in self._rows(cur)]
-        cur.execute("select d.id, d.title, d.drive_file_id, d.as_of, o.id as supplier_id, o.name as supplier_name "
-                    "from catalog.product_document d join crm.organization raw on raw.id = d.supplier_organization_id "
-                    "join crm.organization o on o.id = coalesce(raw.merged_into_organization_id, raw.id) "
-                    "where d.kind = 'price_list' and d.status = 'active' and o.id in "
-                    "(select coalesce(so.merged_into_organization_id, so.id) from catalog.supplier_product sp "
-                    " join crm.organization so on so.id = sp.supplier_organization_id "
-                    " where sp.product_id = %s or sp.product_id in "
-                    "       (select id from catalog.product where merged_into_product_id = %s)) "
-                    "order by o.name, d.as_of desc nulls last, d.id", (product_id, product_id))
+                   "as_of": r["as_of"]} for r in rows["datasheets"]]
         lists = [{"id": r["id"], "title": r["title"], "url": DRIVE_VIEW_URL.format(r["drive_file_id"]),
                   "as_of": r["as_of"], "supplier": {"id": r["supplier_id"], "display_name": r["supplier_name"]}}
-                 for r in self._rows(cur)]
+                 for r in rows["price_lists"]]
         return {"datasheets": sheets, "price_lists": lists}
 
     # -- quoted-price history and kits (evidence.document_line; 1b adds authored quote lines)
@@ -331,11 +360,15 @@ class V2CatalogReads:
 
     def _price_history(self, cur: Any, key: str | None, limit: int) -> dict[str, Any]:
         key = model_key(key)
+        return self._price_history_from(key, self._batch(cur, self._price_history_queries(key)) if key else {}, limit)
+
+    @staticmethod
+    def _price_history_queries(key: str | None) -> dict[str, tuple[str, tuple[Any, ...]]]:
         if key is None:
-            return {"model_key": None, "items": [], "median_last_5": None, "summary": _sales_summary([])}
+            return {}
         # Each quoted line with the CRM quote of the same printed number, its case, the case's
         # institution (through any merge) and whether that very quote is the one the case won with.
-        base = (
+        quoted = (
             "select s.id::text as document_id, s.payload->>'quote_date' as date, l.line_total, l.qty, "
             "l.unit_price, l.currency, l.check_status, s.payload->>'client_type' as client_type, "
             "s.payload->>'printed_quote_number' as document_number, "
@@ -352,29 +385,43 @@ class V2CatalogReads:
             "   where q.quote_number = s.payload->>'printed_quote_number' "
             "   order by (o.won_quote_id = q.id) desc nulls last, o.created_at limit 1) c on true "
             "where l.model_key = %s and s.kind = 'quote_document' and not l.optional "
+            "order by s.payload->>'quote_date' desc nulls last, l.line_no desc, l.id desc"
         )
-        order = "order by s.payload->>'quote_date' desc nulls last, l.line_no desc, l.id desc "
-        cur.execute(base + order, (key,))
-        rows = self._rows(cur)
+        # What the model cost us, every observation (twins merged into it share its model_key): the
+        # route turns it into each quote's margin. Cost data: redacted for a viewer.
+        costs = ("select sp.as_of, sp.price, sp.currency, sp.price_kind, sp.is_stale "
+                 "from catalog.supplier_product sp join catalog.product p on p.id = sp.product_id "
+                 "where p.model_key = %s order by sp.as_of")
+        return {"quoted": (quoted, (key,)), "model_costs": (costs, (key,))}
+
+    def _price_history_from(self, key: str | None, rows: dict[str, list[dict[str, Any]]], limit: int) -> dict[str, Any]:
+        if key is None:
+            return {"model_key": None, "items": [], "median_last_5": None, "summary": _sales_summary([])}
+        quoted = rows["quoted"]
         items = []
-        for r in rows[:limit]:
+        for r in quoted[:limit]:
             case = ({"id": r["case_id"], "institution": r["institution"], "outcome": r["outcome"]}
                     if r["case_id"] else None)
             items.append({k: v for k, v in r.items() if k not in ("case_id", "institution", "outcome", "document_id")}
                          | {"source": "documento", "case": case})
-        recent = [r for r in rows if r["line_total"] is not None and (r["qty"] is None or r["qty"] == 1)
+        recent = [r for r in quoted if r["line_total"] is not None and (r["qty"] is None or r["qty"] == 1)
                   and r["check_status"] in _MEDIAN_STATUSES][:5]
         median = None
         if recent:
             totals = [r["line_total"] for r in recent if r["currency"] == recent[0]["currency"]]
             median = str(Decimal(statistics.median(totals)).quantize(_MONEY_STEP))
-        return {"model_key": key, "items": _plain(items), "median_last_5": median, "summary": _sales_summary(rows)}
+        return {"model_key": key, "items": _plain(items), "median_last_5": median, "summary": _sales_summary(quoted),
+                "costs": _plain(rows["model_costs"])}
 
     def _kit_suggestions(self, cur: Any, key: str | None, min_share: Decimal) -> list[dict[str, Any]]:
         key = model_key(key)
+        return self._kit_from(key, self._batch(cur, self._kit_queries(key)) if key else {}, min_share)
+
+    @staticmethod
+    def _kit_queries(key: str | None) -> dict[str, tuple[str, tuple[Any, ...]]]:
         if key is None:
-            return []
-        cur.execute(
+            return {}
+        return {"kit": (
             "with docs as (select distinct l.source_record_id from evidence.document_line l "
             "  join evidence.source_record s on s.id = l.source_record_id "
             "  where l.model_key = %s and s.kind = 'quote_document') "
@@ -382,10 +429,14 @@ class V2CatalogReads:
             "count(distinct l.source_record_id) as n "
             "from evidence.document_line l join docs d on d.source_record_id = l.source_record_id "
             "where l.model_key is not null and l.model_key <> %s group by l.model_key",
-            (key, key),
-        )
+            (key, key))}
+
+    @staticmethod
+    def _kit_from(key: str | None, rows: dict[str, list[dict[str, Any]]], min_share: Decimal) -> list[dict[str, Any]]:
+        if key is None:
+            return []
         out = []
-        for r in self._rows(cur):
+        for r in rows["kit"]:
             share = Decimal(r["n"]) / Decimal(r["total"])
             if share >= min_share:
                 out.append({"model_key": r["model_key"], "brand": r["brand"],
@@ -473,6 +524,16 @@ class V2CatalogReads:
             if r["valid_from"] <= now and r["key"] not in current:
                 current[r["key"]] = {k: v for k, v in entry.items() if k != "key"}
         return _plain({"current": current, "history": history})
+
+    def fx_series(self, currency: str, start: dt.date, end: dt.date) -> dict[dt.date, Decimal]:
+        """Every stored day in [start, end] with its rate (a manual one first, then Banco Central)."""
+        with self._read() as cur:
+            cur.execute(
+                "select distinct on (rate_date) rate_date, clp_per_unit from catalog.fx_rate "
+                "where currency = %s and rate_date between %s and %s "
+                "order by rate_date, (source = 'manual') desc, (provider = 'bde') desc, created_at desc, id desc",
+                (currency, start, end))
+            return {r[0]: r[1] for r in cur.fetchall()}
 
     def stored_fx(self, currency: str, on: dt.date) -> dict[str, Any] | None:
         with self._read() as cur:

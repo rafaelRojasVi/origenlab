@@ -127,7 +127,11 @@ function ProductBody({ product: p }: { product: ProductDetail }) {
         </Section>
       ) : null}
       {p.cost_history ? <CostHistory rows={p.cost_history} /> : null}
-      <QuotedHistory modelKey={p.model_key} />
+      {p.price_history ? (
+        <Section title="Ventas y cotizaciones"><SalesSummary history={p.price_history} /></Section>
+      ) : (
+        <QuotedHistory modelKey={p.model_key} />
+      )}
       <FxBlock />
       {p.supplier_terms.length > 0 ? (
         <Section title="Condiciones del proveedor">
@@ -183,7 +187,7 @@ function CostHistory({ rows }: { rows: CostObservation[] }) {
   );
 }
 
-/** «Ventas»: what past quotes charged for this model and which sold — sell prices, not costs; every role sees them. */
+/** «Ventas y cotizaciones» by its own request — only for an older API whose product does not carry it. */
 function QuotedHistory({ modelKey }: { modelKey: string }) {
   const load = useCallback(() => fetchPriceHistory(modelKey), [modelKey]);
   const [state, reload] = useResource(load, [load]);

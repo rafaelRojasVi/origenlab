@@ -2751,3 +2751,25 @@ default). API: `GET /v2/workspace/forwarded-requests` (copies collapsed), `creat
 (a lead on the record, institution existing / «por confirmar» / none, contact as a note, our email
 copies linked — never a Labdelivery-mailbox email), `dismiss-forwarded-request`. Hoy panel
 «Solicitudes reenviadas». Measured before: 19 forwards since 1 Jul, 9 never became anything.
+
+### 2.7.115 Gross margin per quote, and a faster product panel, 2026-10-14 — built, deploys on merge
+
+Each quoted price in «Ventas y cotizaciones» now carries, for sales and admin, the supplier cost
+in force that day (`margins.py`: the newest observation on or before it, current before stale;
+before the first, the earliest flagged `after_quote`), converted at that day's stored EUR/USD
+rate (`PricingFx.rates_for(..., fetch=False)`: the newest stored rate within 7 days, never a
+provider call while the page waits), and the **gross** margin `(price − cost) / price` — before
+freight, customs and transport. The summary adds median, last, min and max margin. `cost`,
+`margin` and `costs` are cost fields: a viewer gets none. A day without a stored rate shows no
+margin, never a guess. The 43 quote days of Apr–Oct 2026 were filled into hosted
+`catalog.fx_rate` from mindicador day by day (its year endpoint failed on 14 Oct).
+
+The panel: the margin first, a chart of one stem per quote from cost to price (sold filled in the
+brand teal), a tooltip with how the cost was converted and the margin, click to open the case;
+the six newest quotes with «Ver las N», a quote read twice shown once.
+
+Speed: `GET /v2/catalog/products/{id}` now carries the price history with its margins, so the
+panel makes one request instead of two in a row; the nine side queries of a product go out in one
+psycopg pipeline, and the read-only set-up is one statement. Measured from a workstation against
+hosted (70 ms per round trip): the product read went from ~1.1 s to ~0.39 s, and the separate
+price-history request (~0.8 s) is gone. No schema change.

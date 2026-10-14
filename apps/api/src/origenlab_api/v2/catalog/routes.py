@@ -69,6 +69,9 @@ def product_detail(product_id: UUID, request: Request, operator: Operator) -> di
     found = _reads(request).product_detail(product_id, include_hidden=operator.role in ("sales", "admin"))
     if found is None:
         raise HTTPException(404, detail={"code": "product_not_found", "message": "product not found"})
+    # The panel reads its «Ventas y cotizaciones» from here, margins included: one request, not two.
+    if isinstance(found.get("price_history"), dict):
+        _attach_margins(request, found["price_history"], operator.role)
     return redact_costs(found, operator.role)
 
 
@@ -79,7 +82,24 @@ def price_history(request: Request, operator: Operator, model_key: str = Query(.
     key = normalize_model_key(model_key)
     if key is None:
         raise HTTPException(422, detail={"code": "invalid_model_key", "message": "model_key has no letter or digit"})
-    return _reads(request).price_history(key, limit)
+    history = _reads(request).price_history(key, limit)
+    _attach_margins(request, history, operator.role)
+    return redact_costs(history, operator.role)
+
+
+def _attach_margins(request: Request, history: dict, role: str) -> None:
+    """Each quote's gross margin against the cost in force that day, at that day's rate
+    (`margins.py`). Never for a viewer: the history's `costs` are then only dropped by the redaction."""
+    if role == "viewer":
+        return
+    from origenlab_api.v2.catalog.margins import _day, attach_margins
+
+    days = {d for i in history.get("items", []) if (d := _day(i.get("date"))) is not None}
+    currencies = {c.get("currency") for c in history.get("costs") or []} - {None, "CLP"}
+    fx = getattr(request.app.state, "catalog_fx", None)
+    # Stored rates only: the panel must never wait on a provider (history is filled ahead of time).
+    rates = {cur: fx.rates_for(cur, days, fetch=False) for cur in currencies} if fx is not None and days else {}
+    attach_margins(history, rates)
 
 
 @catalog_read_router.get("/suppliers")

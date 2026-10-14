@@ -236,3 +236,46 @@ def test_http_error_path_never_logs_the_password(caplog):
 def test_route_default_date_uses_service_clock():
     fx = PricingFx(_Reads({("USD", date(2026, 10, 5)): D("1")}), _Writer(), [], _today)
     assert _client(fx).get("/v2/catalog/fx?currency=USD", headers=H).json()["as_of"] == "2026-10-05"
+
+
+# -- rates for many past days at once (the margin of each quote, at its own date)
+
+class _SeriesReads(_Reads):
+    def fx_series(self, currency, start, end):
+        return {d: v for (c, d), v in self.stored.items() if c == currency and start <= d <= end}
+
+
+def test_rates_for_past_days_fetch_the_gap_once_and_store_it():
+    reads = _SeriesReads({("EUR", date(2026, 10, 1)): D("1100")})
+    provider = _Provider({date(2026, 4, 22): D("1060"), date(2026, 4, 23): D("1062"), date(2026, 9, 16): D("1095")},
+                         name="mindicador")
+    writer = _Writer()
+    fx = PricingFx(reads, writer, [provider], _today)
+    got = fx.rates_for("EUR", [date(2026, 4, 23), date(2026, 4, 25), date(2026, 9, 17), date(2026, 10, 2)])
+    assert got[date(2026, 4, 23)] == {"clp_per_unit": D("1062"), "as_of": date(2026, 4, 23)}
+    assert got[date(2026, 4, 25)]["as_of"] == date(2026, 4, 23)          # a weekend takes the last business day
+    assert got[date(2026, 9, 17)]["clp_per_unit"] == D("1095")
+    assert got[date(2026, 10, 2)]["clp_per_unit"] == D("1100")           # already stored: no fetch needed for it
+    assert provider.calls == 1 and {r["rate_date"] for r in writer.rows} == {date(2026, 4, 22), date(2026, 4, 23),
+                                                                            date(2026, 9, 16)}
+
+
+def test_rates_for_days_already_stored_never_call_a_provider():
+    reads = _SeriesReads({("USD", date(2026, 10, 1)): D("950")})
+    provider = _Provider({})
+    fx = PricingFx(reads, _Writer(), [provider], _today)
+    assert fx.rates_for("USD", [date(2026, 10, 2)])[date(2026, 10, 2)]["clp_per_unit"] == D("950")
+    assert provider.calls == 0
+
+
+def test_a_day_no_provider_can_cover_has_no_rate_instead_of_failing():
+    fx = PricingFx(_SeriesReads({}), _Writer(), [_Broken()], _today)
+    assert fx.rates_for("EUR", [date(2026, 5, 1)]) == {}
+
+
+def test_rates_for_without_fetch_uses_only_what_is_stored():
+    reads = _SeriesReads({("EUR", date(2026, 10, 1)): D("1100")})
+    provider = _Provider({date(2026, 4, 23): D("1062")})
+    fx = PricingFx(reads, _Writer(), [provider], _today)
+    got = fx.rates_for("EUR", [date(2026, 4, 23), date(2026, 10, 2)], fetch=False)
+    assert list(got) == [date(2026, 10, 2)] and provider.calls == 0

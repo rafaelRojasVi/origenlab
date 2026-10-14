@@ -317,7 +317,15 @@ describe("Catálogo list", () => {
 });
 
 describe("Catálogo product drawer", () => {
-  it("loads the product, its supplier prices, the quoted-price history and the day's rates", async () => {
+  it("reads the quoted-price history from the product itself: one request, not two", async () => {
+    const urls = stub({ product: () => json({ ...detail(), price_history: HISTORY }) });
+    renderCatalog({ id: PRODUCT_ID });
+    const dialog = await screen.findByRole("dialog", { name: "XB-100" });
+    expect(await within(dialog).findByTestId("quoted-history")).toHaveTextContent("N° 09999-26");
+    expect(urls.some((u) => u.pathname === "/v2/catalog/price-history")).toBe(false);
+  });
+
+  it("an older API without the embedded history still gets it, by its own request", async () => {
     const urls = stub();
     renderCatalog({ id: PRODUCT_ID });
     const dialog = await screen.findByRole("dialog", { name: "XB-100" });
