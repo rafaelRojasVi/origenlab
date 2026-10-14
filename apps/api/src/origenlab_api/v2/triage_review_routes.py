@@ -46,6 +46,16 @@ def triage_readings(
         raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
 
 
+@triage_review_read_router.get("/forwarded-requests")
+def forwarded_requests(
+    operator: Operator,
+    repo: TriageReviewRepository = Depends(get_triage_review_repository),
+) -> dict[str, Any]:
+    """Requests Tatiana forwarded to contacto@, one row per request (spec 2026-10-14). Contact
+    fields are redacted for a viewer by this router's `ContactRedactingRoute`."""
+    return repo.forwarded_requests()
+
+
 @triage_review_command_router.post("/review-triage")
 def review_triage(
     body: ReviewTriageBody,

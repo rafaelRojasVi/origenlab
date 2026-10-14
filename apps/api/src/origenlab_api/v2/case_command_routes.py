@@ -49,6 +49,8 @@ from origenlab_api.v2.case_commands import (
     ADD_CASE_ORGANIZATION,
     ADVANCE_CASE_STAGE,
     COMPLETE_CASE_FROM_SENT_QUOTE,
+    CREATE_REQUEST_FROM_FORWARD,
+    DISMISS_FORWARDED_REQUEST,
     LINK_CASE_EVIDENCE,
     OPEN_COMMERCIAL_CASE,
     RECORD_CASE_INTEREST,
@@ -59,6 +61,8 @@ from origenlab_api.v2.case_commands import (
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
     CompleteCaseFromSentQuoteBody,
+    CreateRequestFromForwardBody,
+    DismissForwardedRequestBody,
     LinkCaseEvidenceBody,
     OpenCommercialCaseBody,
     RecordCaseInterestBody,
@@ -342,6 +346,30 @@ def record_case_quotation(
         operator=operator,
         idempotency_key=idempotency_key,
     )
+
+
+@case_command_router.post("/create-request-from-forward")
+def create_request_from_forward(
+    body: CreateRequestFromForwardBody,
+    operator: Deciding,
+    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """«Crear solicitud» from a request Tatiana forwarded to contacto@ (`forwarded_requests.py`)."""
+    return _run(command_name=CREATE_REQUEST_FROM_FORWARD, body=body, repo=repo, operator=operator,
+                idempotency_key=idempotency_key)
+
+
+@case_command_router.post("/dismiss-forwarded-request")
+def dismiss_forwarded_request(
+    body: DismissForwardedRequestBody,
+    operator: Deciding,
+    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """«Descartar» a forward that is not a request: every copy of it leaves Hoy."""
+    return _run(command_name=DISMISS_FORWARDED_REQUEST, body=body, repo=repo, operator=operator,
+                idempotency_key=idempotency_key)
 
 
 @case_command_router.post("/complete-case-from-sent-quote")

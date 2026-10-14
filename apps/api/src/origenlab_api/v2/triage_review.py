@@ -165,6 +165,13 @@ class TriageReviewRepository(CommandTransaction):
                 finally:
                     conn.rollback()
 
+    def forwarded_requests(self) -> dict[str, Any]:
+        """Requests Tatiana forwarded to contacto@, still waiting for «Crear solicitud» or «Descartar»."""
+        from origenlab_api.v2.forwarded_requests import read_forwarded_requests
+
+        with self._read() as cur:
+            return {"items": read_forwarded_requests(cur)}
+
     def readings(self, *, status: str = "pending", limit: int = 100) -> dict[str, Any]:
         if status not in LIST_STATUSES:
             raise CommandRefused(422, "status_invalid", f"status is one of {', '.join(LIST_STATUSES)}")
