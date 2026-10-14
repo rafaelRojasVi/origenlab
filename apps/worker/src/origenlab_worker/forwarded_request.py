@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
-from email.utils import parseaddr
+from email.utils import getaddresses, parseaddr
 
 from origenlab_worker.mail_text import html_to_text
 
@@ -82,26 +82,41 @@ def _domain(address: str) -> str:
     return address.rsplit("@", 1)[-1].lower()
 
 
+def _ours(address: str) -> bool:
+    return address.lower() in OWN_SENDERS or _domain(address) in OWN_DOMAINS
+
+
 def _ours_or_relay(address: str) -> bool:
     d = _domain(address)
     return (address.lower() in OWN_SENDERS or d in OWN_DOMAINS
             or any(d == r or d.endswith("." + r) for r in RELAY_DOMAINS))
 
 
-def _full_text(msg: EmailMessage) -> str:
-    part = msg.get_body(preferencelist=("plain", "html"))
-    if part is None:
-        return ""
-    try:
-        content = part.get_content()
-    except (LookupError, UnicodeError, ValueError):
-        content = (part.get_payload(decode=True) or b"").decode("utf-8", errors="replace")
-    if not isinstance(content, str):
-        return ""
-    if part.get_content_type() == "text/html":
-        content = html_to_text(content)
-    lines = [re.sub(r"[ \t ]+", " ", line).strip() for line in content.replace("\r", "").split("\n")]
-    return "\n".join(line for line in lines if not line.startswith(">") or len(line) > 1)
+#: A link a mailer puts in the plain-text part: «<https://…>», possibly folded over several lines.
+_LINK = re.compile(r"<https?://[^>\s][^>]*>", re.DOTALL)
+_WS = re.compile("[ \t\u00a0]+")
+
+
+def _texts(msg: EmailMessage) -> list[str]:
+    """The plain-text part and the HTML part as text, each with mailer links removed. Both are read:
+    a marketplace's plain part hides its labels behind tracking links that its HTML part lacks."""
+    out = []
+    for kind in ("plain", "html"):
+        part = msg.get_body(preferencelist=(kind,))
+        if part is None or part.get_content_type() != f"text/{kind}":
+            continue
+        try:
+            content = part.get_content()
+        except (LookupError, UnicodeError, ValueError):
+            content = (part.get_payload(decode=True) or b"").decode("utf-8", errors="replace")
+        if not isinstance(content, str):
+            continue
+        if kind == "html":
+            content = html_to_text(content)
+        content = _LINK.sub(" ", content.replace("\r", ""))
+        lines = [_WS.sub(" ", line).strip() for line in content.split("\n")]
+        out.append("\n".join(line for line in lines if not line.startswith(">") or len(line) > 1))
+    return out
 
 
 def _hops(lines: list[str]) -> list[dict[str, str | None]]:
@@ -176,36 +191,50 @@ def read_forward(raw: bytes) -> ForwardedRequest | None:
         if not isinstance(msg, EmailMessage):
             return None
         sender = (parseaddr(str(msg.get("From", "")))[1] or "").lower()
+        # Only a forward addressed to us is a request for us: Tatiana also forwards answers TO
+        # customers («Fwd:» from contacto@ to the client), and those are conversations, not requests.
+        recipients = [a.lower() for _, a in getaddresses([str(msg.get(h, "")) for h in ("To", "Cc")]) if a]
+        if not recipients or any(not _ours(a) for a in recipients):
+            return None
         subject = _ANY_PREFIX.sub("", " ".join(str(msg.get("Subject", "") or "").split())).strip()
-        lines = _full_text(msg).split("\n")
+        texts = [t.split("\n") for t in _texts(msg)]
     except Exception:  # noqa: BLE001 - an unreadable message is no reading, never an error
         return None
-
-    block = _marketplace_block(lines)
-    if block is not None:
-        fields, product = block
-        email = (fields.get("email") or "").lower()
-        if _EMAIL.fullmatch(email) and not _ours_or_relay(email):
-            company = fields.get("company")
-            rut = None
-            if company:
-                r = _RUT.search(company)
-                if r:
-                    rut = r.group(1)
-                    company = _RUT.sub("", company).strip(" ,;") or None
-            return ForwardedRequest(
-                original_name=fields.get("name"), original_email=email, company=company, rut=rut,
-                phone=fields.get("phone"), requested_item=product or subject or None, relay="marketplace",
-                origin=_origin(sender), subject=subject)
-
-    for hop in reversed(_hops(lines)):  # innermost first
-        email = hop["email"] or ""
-        if _EMAIL.fullmatch(email) and not _ours_or_relay(email):
-            item = _ANY_PREFIX.sub("", hop["subject"] or "").strip() or subject or None
-            return ForwardedRequest(
-                original_name=hop["name"], original_email=email, company=None, rut=None, phone=None,
-                requested_item=item, relay=None, origin=_origin(sender), subject=subject)
+    # A marketplace buyer, found in either part, outranks any forwarded hop (a hop above it is a relay);
+    # when both parts name the buyer, the reading with more fields wins (a plain part may split the RUT off).
+    buyers = [b for b in (_from_marketplace(lines, sender, subject) for lines in texts) if b is not None]
+    if buyers:
+        return max(buyers, key=lambda b: sum(v is not None for v in b.as_json().values()))
+    for lines in texts:
+        for hop in reversed(_hops(lines)):  # innermost first
+            email = hop["email"] or ""
+            if _EMAIL.fullmatch(email) and not _ours_or_relay(email):
+                item = _ANY_PREFIX.sub("", hop["subject"] or "").strip() or subject or None
+                return ForwardedRequest(
+                    original_name=hop["name"], original_email=email, company=None, rut=None, phone=None,
+                    requested_item=item, relay=None, origin=_origin(sender), subject=subject)
     return None
+
+
+def _from_marketplace(lines: list[str], sender: str, subject: str) -> ForwardedRequest | None:
+    block = _marketplace_block(lines)
+    if block is None:
+        return None
+    fields, product = block
+    email = (fields.get("email") or "").lower()
+    if not _EMAIL.fullmatch(email) or _ours_or_relay(email):
+        return None
+    company = fields.get("company")
+    rut = None
+    if company:
+        r = _RUT.search(company)
+        if r:
+            rut = r.group(1)
+            company = _RUT.sub("", company).strip(" ,;") or None
+    return ForwardedRequest(
+        original_name=fields.get("name"), original_email=email, company=company, rut=rut,
+        phone=fields.get("phone"), requested_item=product or subject or None, relay="marketplace",
+        origin=_origin(sender), subject=subject)
 
 
 __all__ = ["FORWARDED_VALUE_NORM", "ForwardedRequest", "is_candidate", "read_forward"]

@@ -34,6 +34,12 @@ def test_a_request_handled_or_dismissed_through_either_copy_is_gone() -> None:
     assert group_forwards([row("f1", "promoted", "origenlab")]) == []
 
 
+def test_a_request_whose_email_is_already_on_a_case_is_not_listed() -> None:
+    linked = row("f2", "pending", "origenlab")
+    linked["linked"] = True
+    assert group_forwards([row("f1", "pending", "labdelivery"), linked]) == []
+
+
 def test_different_customers_or_items_stay_apart_newest_first() -> None:
     items = group_forwards([row("f1", "pending", "origenlab", at="2026-10-01T00:00:00+00:00"),
                             row("f2", "pending", "origenlab", email="otro@empresa-ficticia.cl",

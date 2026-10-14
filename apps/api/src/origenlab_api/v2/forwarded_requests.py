@@ -31,7 +31,9 @@ _PREFIX = re.compile(r"^\s*(?:(?:re|rv|fw|fwd|tr|aw|wg|sv|reenv(?:iado)?)\s*:\s*
 
 READ_SQL = """
 select f.id::text as id, f.review_status, f.created_at, f.payload,
-       g.payload->>'gmail_message_id' as gmail_message_id, g.payload->>'sent_at' as sent_at
+       g.payload->>'gmail_message_id' as gmail_message_id, g.payload->>'sent_at' as sent_at,
+       exists (select 1 from crm.opportunity_evidence oe where oe.source_record_id = g.id
+                and oe.unlinked_at is null) as linked
   from evidence.source_record f
   left join evidence.source_record g on g.id::text = f.payload->>'forwarded_message_id'
  where f.kind = 'forwarded_request' and f.created_at > now() - interval '60 days'
@@ -59,8 +61,8 @@ def group_forwards(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         groups.setdefault(_key(_payload(r)), []).append(r)
     out = []
     for members in groups.values():
-        if any(m["review_status"] != "pending" for m in members):
-            continue  # handled or dismissed through one of its copies
+        if any(m["review_status"] != "pending" or m.get("linked") for m in members):
+            continue  # handled or dismissed through one of its copies, or its email is already on a case
         ours = [m for m in members if _payload(m).get("origin") != "labdelivery"]
         lead = max(ours or members, key=lambda m: str(m.get("sent_at") or m.get("created_at") or ""))
         p = _payload(lead)

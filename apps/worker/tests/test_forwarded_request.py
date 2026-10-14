@@ -137,3 +137,45 @@ def test_the_reading_as_json_carries_only_the_fields() -> None:
     assert set(value) == {"original_name", "original_email", "company", "rut", "phone", "requested_item",
                           "relay", "origin", "subject"}
     assert "gradillas para tubos" not in str(value)  # no body text is kept
+
+
+TRACKED = "<https://u000.ct.sendgrid.invalid/ls/click?upn=u001.abcDEF-2B\nGHIjkl-3D-3D>"
+
+
+def test_marketplace_labels_wrapped_in_tracking_links_still_name_the_buyer_not_the_supplier() -> None:
+    # The plain-text part as a marketplace mailer writes it: every label behind a multi-line tracking link,
+    # and the supplier who forwarded the lead sits above as an ordinary «De:» hop.
+    body = (OUTLOOK_MARKETPLACE.split("Contact Information:")[0]
+            + f"{TRACKED} Contact Information:\n\n{TRACKED} Name:\n\nAna Prueba Ficticia\n\n{TRACKED} Email:\n\n"
+              f"ana@laboratorio-ficticio.cl\n\n{TRACKED} Phone:\n\n900000001\n\n{TRACKED} Company:\n\n"
+              f"Laboratorio Ficticio EIRL (Rut:11.111.111-1)\n\n{TRACKED} Message:\n\nHello\n")
+    got = read_forward(_eml("contacto@labdelivery.cl", "RV: Marketplace Quote Request: Tabletas", body))
+    assert got is not None and got.original_email == "ana@laboratorio-ficticio.cl"
+    assert got.company == "Laboratorio Ficticio EIRL" and got.relay == "marketplace"
+
+
+def test_the_buyer_in_the_html_part_wins_over_a_supplier_hop_in_the_plain_part() -> None:
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = "contacto@labdelivery.cl", "contacto@origenlab.cl", "RV: lead"
+    msg.set_content("De: Ventas Proveedor <ventas@proveedor-ficticio.com>\nEnviado el: lunes\nPara: x\nAsunto: FW: lead\n\nmira")
+    msg.add_alternative("<p>Contact Information:</p><p>Name:</p><p>Ana Prueba</p><p>Email:</p>"
+                        "<p>ana@laboratorio-ficticio.cl</p><p>Message:</p><p>hola</p>", subtype="html")
+    got = read_forward(msg.as_bytes())
+    assert got is not None and got.original_email == "ana@laboratorio-ficticio.cl"
+
+
+def test_a_forward_we_send_to_a_customer_is_not_a_request_for_us() -> None:
+    # Tatiana forwarding an answer TO the customer: sender ours, «Fwd:», but addressed outside.
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = "contacto@origenlab.cl", "pedro.ejemplo@universidad-ficticia.cl", \
+        "Fwd: Solicitud cotización Gradillas"
+    msg.set_content(GMAIL_FORWARD)
+    assert read_forward(msg.as_bytes()) is None
+
+
+def test_a_forward_copied_to_someone_outside_is_not_one_either() -> None:
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Cc"], msg["Subject"] = ("contacto@labdelivery.cl", "contacto@origenlab.cl",
+                                                         "otro@empresa-ficticia.cl", "RV: algo")
+    msg.set_content(GMAIL_FORWARD)
+    assert read_forward(msg.as_bytes()) is None
