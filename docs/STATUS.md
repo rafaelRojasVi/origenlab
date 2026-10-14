@@ -2727,3 +2727,14 @@ R1 learned to record one); «Registrar en el caso» records it there through
 `complete-case-from-sent-quote` with the case named. `GET /v2/workspace/operations` adds
 `sent_quotes_unrecorded_on_case` and its count. Found on Arcegon: 01251-26 (4 + 8 balances) sent on
 the thread of 1176-26 and never recorded.
+
+### 2.7.113 «Ventas y cotizaciones» on the product panel, 2026-10-14 — built, deploys on merge
+
+`GET /v2/catalog/price-history` (and the product panel) now names, for each quoted price, the CRM
+case holding the quote of that printed number, its institution (through any merge) and the
+outcome: «Vendida» only for the quote the case was won with (`won_quote_id`), «Ganó otra
+cotización», «Perdida», «Cerrada», «Abierta», or «Sin caso». A `summary` adds times quoted, times
+sold and at what price, the last price, and the single-unit range and median in one currency.
+The panel shows the four numbers, a dot plot of price over time (sold filled in the brand teal,
+quoted hollow, the median dashed; native tooltips), and the list with a link to each case. Sell
+prices only, never costs: every role sees them. No schema change.

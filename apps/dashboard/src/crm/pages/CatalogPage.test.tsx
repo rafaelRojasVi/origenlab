@@ -349,7 +349,7 @@ describe("Catálogo product drawer", () => {
     renderCatalog({ id: PRODUCT_ID });
     const dialog = await screen.findByRole("dialog", { name: "XB-100" });
     expect(await within(dialog).findByTestId("image-placeholder")).toBeInTheDocument();
-    expect(within(dialog).queryByRole("img")).toBeNull();
+    expect(within(dialog).queryByRole("img", { name: /Imagen de/ })).toBeNull();
   });
 
   it("shows a signed image when the bucket answers", async () => {
