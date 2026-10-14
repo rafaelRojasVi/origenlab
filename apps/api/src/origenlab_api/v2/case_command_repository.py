@@ -59,6 +59,8 @@ from origenlab_api.v2.case_commands import (
     DISCARDED_BY_CORRECTION,
     ADD_CASE_ORGANIZATION,
     COMPLETE_CASE_FROM_SENT_QUOTE,
+    CREATE_REQUEST_FROM_FORWARD,
+    DISMISS_FORWARDED_REQUEST,
     ADVANCE_CASE_STAGE,
     LINK_CASE_EVIDENCE,
     OPEN_COMMERCIAL_CASE,
@@ -76,6 +78,7 @@ from origenlab_api.v2.case_commands import (
 )
 from origenlab_api.v2.case_quotation import record_case_quotation
 from origenlab_api.v2.case_sent_quote import complete_case_from_sent_quote
+from origenlab_api.v2.forwarded_requests import create_request_from_forward, dismiss_forwarded_request
 from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
@@ -1091,6 +1094,9 @@ class V2CaseCommandRepository(CommandTransaction):
         RECORD_CASE_QUOTATION: record_case_quotation,
         # «Completar con la cotización del correo»: the writers above, chained (`case_sent_quote.py`).
         COMPLETE_CASE_FROM_SENT_QUOTE: complete_case_from_sent_quote,
+        # Forwarded requests → Solicitudes (`forwarded_requests.py`).
+        CREATE_REQUEST_FROM_FORWARD: create_request_from_forward,
+        DISMISS_FORWARDED_REQUEST: dismiss_forwarded_request,
         # A case's documents (its purchase order), in the module that owns their SQL.
         ATTACH_CASE_DOCUMENT: attach_case_document,
         REMOVE_CASE_DOCUMENT: remove_case_document,

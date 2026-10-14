@@ -71,7 +71,7 @@ from origenlab_worker.quote_reader import (
 )
 from origenlab_worker.storage import S3EmlStore, StorageConfig
 from origenlab_worker.triage import DEFAULT_SINCE_DAYS
-from origenlab_worker.triage_cli import run_triage_once, run_triage_worker
+from origenlab_worker.triage_cli import run_forward_backfill, run_triage_once, run_triage_worker
 
 ENV_DATABASE_URL = "ORIGENLAB_WORKER_DATABASE_URL"
 ENV_EXPECTED_HOST = "ORIGENLAB_WORKER_DATABASE_EXPECTED_HOST"
@@ -274,6 +274,10 @@ def _parser() -> argparse.ArgumentParser:
     once.add_argument("--since-days", type=int, default=DEFAULT_SINCE_DAYS, help="look back this many days")
     once.add_argument("--limit", type=int, default=200, help="at most this many messages")
     once.add_argument("--dry-run", action="store_true", help="count pending messages; write nothing")
+    fwd = commands.add_parser("forward-backfill", help="read recent forwards we sent for who really asked")
+    fwd.add_argument("--since-days", type=int, default=60, help="look back this many days")
+    fwd.add_argument("--limit", type=int, default=500, help="at most this many messages")
+    fwd.add_argument("--apply", action="store_true", help="write the readings (default: read and count only)")
     return parser
 
 
@@ -414,6 +418,8 @@ def main(
         return run_drive_ledger_import(args, env, db_components, started)
     if args.command == "triage-once":
         return run_triage_once(args, env, started)
+    if args.command == "forward-backfill":
+        return run_forward_backfill(args, env, started)
     if args.command == "triage-child":  # pragma: no cover - supervised until SIGTERM
         return run_triage_worker(env, started)
     backfill = args.query is not None

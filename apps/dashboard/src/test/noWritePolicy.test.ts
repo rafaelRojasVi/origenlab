@@ -83,6 +83,9 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/open-commercial-case",
     // «Completar con la cotización del correo» (2026-10-13): a sent quote → case in «Enviada».
     "/v2/commands/complete-case-from-sent-quote",
+    // Forwarded requests (2026-10-14): «Crear solicitud» and «Descartar» in Hoy.
+    "/v2/commands/create-request-from-forward",
+    "/v2/commands/dismiss-forwarded-request",
   ];
   const CASE_DOCUMENTS_FILE = "../crm/caseDocuments.ts";
   const CASE_DOCUMENT_PATHS = [

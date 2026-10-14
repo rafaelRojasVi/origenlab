@@ -2096,6 +2096,32 @@ before an OC number reads as an order.
 | `outcome: storage_error` | the `.eml` could not be read; nothing written, the next sweep retries |
 | `worker_*` refusal at start | the session is not exactly `origenlab_worker` with the queue and triage grants: fix the role, never widen it |
 
+### 8.11a Forwarded requests (who really asked)
+
+Tatiana forwards to contacto@ requests that reached her elsewhere. After the triage records its own
+reading of an email **we** sent (contacto@origenlab.cl, contacto@labdelivery.cl, or an address in
+`ORIGENLAB_WORKER_FORWARD_SENDERS`, comma-separated, set on Render only) whose subject starts with a
+forward prefix, the worker reads the forwarded text — a marketplace «Contact Information» block, else
+the innermost forwarded «De:/From:» hop that is neither ours nor a relay — and stores the customer's
+fields as `evidence.source_record` kind `forwarded_request` (never the text). No model is called. The
+step runs inside its own `try`; nothing it does can fail the triage, the capture, the quote reading
+or Drive filing. **Off switch:** `ORIGENLAB_WORKER_FORWARD_READING=off` on the worker (no deploy).
+
+Hoy → «Solicitudes reenviadas» lists them (`GET /v2/workspace/forwarded-requests`); «Crear
+solicitud» (`create-request-from-forward`) opens a case at Solicitud on the record — a
+Labdelivery-mailbox email is never linked (owner decision 2026-10-14) — and «Descartar»
+(`dismiss-forwarded-request`) rejects every copy.
+
+**Backfill** of mail captured before this shipped (reads only forwards, never re-runs the triage):
+
+```
+origenlab-worker forward-backfill --since-days 60            # dry run: counts only
+origenlab-worker forward-backfill --since-days 60 --apply    # writes the readings
+```
+
+Run it as a one-off job on the worker service (it needs the worker's database and Storage settings).
+Output is one JSON line of counts (`found`, `readable`, `recorded`, `skipped`), never an address.
+
 ### 8.12 Quote PDFs read into lines (`quote-read`)
 
 After `drive-file`, the cron runs `origenlab-worker quote-read`

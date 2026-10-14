@@ -28,6 +28,8 @@ from fastapi.testclient import TestClient
 from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
 from origenlab_api.v2.case_commands import (
     COMPLETE_CASE_FROM_SENT_QUOTE,
+    CREATE_REQUEST_FROM_FORWARD,
+    DISMISS_FORWARDED_REQUEST,
     ADD_CASE_ORGANIZATION,
     ADVANCE_CASE_STAGE,
     CASE_COMMAND_NAMES,
@@ -68,6 +70,10 @@ DOCUMENT_SHA = "ab" * 32
 #: Used by the authorization and header tests, so a route added without one of the four
 #: universal requirements fails here rather than in production.
 ROUTES: tuple[tuple[str, str, dict], ...] = (
+    ("/v2/commands/create-request-from-forward", CREATE_REQUEST_FROM_FORWARD,
+     {"forwarded_request_id": RECORD_ID, "new_organization_name": "Laboratorio Ficticio", "note": "porque sí"}),
+    ("/v2/commands/dismiss-forwarded-request", DISMISS_FORWARDED_REQUEST,
+     {"forwarded_request_id": RECORD_ID, "note": "porque sí"}),
     (
         "/v2/commands/complete-case-from-sent-quote",
         COMPLETE_CASE_FROM_SENT_QUOTE,
@@ -229,7 +235,7 @@ def _headers(key: str | None = "key-1") -> dict[str, str]:
 def test_every_case_command_has_a_route_and_every_route_a_command() -> None:
     """The vocabulary and the surface are the same list, counted from both ends."""
     assert {command for _, command, _ in ROUTES} == set(CASE_COMMAND_NAMES)
-    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 10
+    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 12
 
 
 def test_the_case_router_exposes_nothing_but_post() -> None:

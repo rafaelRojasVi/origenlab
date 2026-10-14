@@ -149,6 +149,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // person wrote, with their email, products and case stage (`?status=&limit=`). Any operator
   // reads; GET-only upstream through the contact-redacting route. Nothing under it is reachable.
   /^\/v2\/workspace\/triage-readings$/,
+  // Requests Tatiana forwarded to contacto@, for Hoy (contact fields redacted upstream for a viewer).
+  /^\/v2\/workspace\/forwarded-requests$/,
   /^\/v2\/cockpit\/work-queue$/,
   // Catalog 1a reads (`apps/api` v2/catalog/routes.py): products, one product, the supplier list
   // (names and product counts by kind, no costs), a supplier's terms, cost parameters, FX, price history (`?model_key=&limit=`) and a short-lived signed
@@ -292,6 +294,9 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   // «Completar con la cotización del correo» (2026-10-13): a sent quote PDF → case in «Enviada» with its
   // institution and quote, one transaction upstream (`case_sent_quote.py`); sales/admin only there.
   /^\/v2\/commands\/complete-case-from-sent-quote$/,
+  // Forwarded requests (spec 2026-10-14): «Crear solicitud» and «Descartar» in Hoy.
+  /^\/v2\/commands\/create-request-from-forward$/,
+  /^\/v2\/commands\/dismiss-forwarded-request$/,
   // A case's purchase order (2026-10-12): copy it from a captured email, or remove one. The
   // upload itself is multipart and listed with the other upload (CATALOG_UPLOAD_POST_PATHS).
   /^\/v2\/commands\/attach-case-document-from-email$/,

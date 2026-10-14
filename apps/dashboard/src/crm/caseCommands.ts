@@ -34,6 +34,8 @@ export const CASE_COMMAND_PATHS = {
   cancelTask: "/v2/commands/cancel-task",
   openCase: "/v2/commands/open-commercial-case",
   completeFromSentQuote: "/v2/commands/complete-case-from-sent-quote",
+  createRequestFromForward: "/v2/commands/create-request-from-forward",
+  dismissForwardedRequest: "/v2/commands/dismiss-forwarded-request",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -301,6 +303,22 @@ export interface CompleteCaseFromSentQuoteBody {
 /** A sent quote PDF → case in «Enviada» with its institution and its quote, in one transaction. */
 export const completeCaseFromSentQuote = (body: CompleteCaseFromSentQuoteBody, idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.completeFromSentQuote, body, idempotencyKey);
+
+/** «Crear solicitud» from a forwarded request: an existing institution, a new one «por confirmar», or none. */
+export interface CreateRequestFromForwardBody {
+  forwarded_request_id: string;
+  organization_id?: string;
+  organization_version?: number;
+  new_organization_name?: string;
+  note: string;
+}
+
+export const createRequestFromForward = (body: CreateRequestFromForwardBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.createRequestFromForward, body, idempotencyKey);
+
+export const dismissForwardedRequest = (body: { forwarded_request_id: string; note: string },
+                                        idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.dismissForwardedRequest, body, idempotencyKey);
 
 export interface ResolveCurrentRevisionBody {
   opportunity_id: string;

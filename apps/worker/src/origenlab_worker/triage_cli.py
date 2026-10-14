@@ -5,6 +5,9 @@ points (docs/OPERATIONS.md §8.11).
   worker on queue `triage` until SIGTERM. The periodic sweep defers new messages every minute.
 * `triage-once [--since-days N] [--limit N] [--dry-run]` — one pass without the queue: the owner's
   backfill and smoke test. `--dry-run` lists how many messages are pending and writes nothing.
+* `forward-backfill [--since-days N] [--limit N] [--apply]` — reads only the forwards we sent of the
+  last days for who really asked (spec 2026-10-14); never re-runs the triage, never calls a model.
+  Without `--apply` it reads and counts and writes nothing.
 
 Settings (environment; the database and Storage values are the capture's own):
 
@@ -42,7 +45,14 @@ from origenlab_worker.database import (
 )
 from origenlab_worker.errors import ConfigRefused
 from origenlab_worker.storage import S3EmlStore, StorageConfig
-from origenlab_worker.triage import DEFAULT_SINCE_DAYS, ModelSettings, SweepCounts, TriageDb, triage_one
+from origenlab_worker.triage import (
+    DEFAULT_SINCE_DAYS,
+    ModelSettings,
+    SweepCounts,
+    TriageDb,
+    backfill_forwards,
+    triage_one,
+)
 from origenlab_worker.triage_model import DEFAULT_MODEL, anthropic_reader
 from origenlab_api.v2.catalog.enrichment import check_model_id
 
@@ -138,6 +148,29 @@ def run_triage_once(args: Any, env: Mapping[str, str], started: float, *,
                     counts.add(triage_one(db, store, sid, config.model))
         line.update(found=counts.found, outcomes=counts.outcomes, classes=counts.classes,
                     model_states=counts.model)
+    except ConfigRefused as exc:
+        line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
+    except Exception as exc:  # noqa: BLE001 — the class, never the text
+        line.update(mode="failed", exit=EXIT_FAILED, error=type(exc).__name__)
+    return _emit(line, started)
+
+
+def run_forward_backfill(args: Any, env: Mapping[str, str], started: float, *,
+                         open_connection: OpenConnection = _open_triage_connection,
+                         store_factory: Callable[[StorageConfig], Any] | None = None) -> int:
+    line: dict[str, Any] = {"event": "forward_backfill", "mode": "apply" if args.apply else "dry_run",
+                            "exit": EXIT_OK, "error": None}
+    try:
+        storage = StorageConfig.from_env(env)
+        database = remote_worker_target(env.get(ENV_DATABASE_URL) or "", expected_host=env.get(ENV_EXPECTED_HOST),
+                                        ca_file=write_ca_file(env.get(ENV_CA_PEM) or ""))
+        store = (store_factory or (lambda s: S3EmlStore(s.client())))(storage)
+        since = max(1, min(int(args.since_days), 3650))
+        limit = max(1, min(int(args.limit), 2000))
+        with open_connection(database) as conn:
+            db = TriageDb(conn)
+            line.update(backfill_forwards(db, store, db.pending_forwards(since_days=since, limit=limit),
+                                          apply=bool(args.apply)))
     except ConfigRefused as exc:
         line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
     except Exception as exc:  # noqa: BLE001 — the class, never the text
