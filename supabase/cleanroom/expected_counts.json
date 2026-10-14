@@ -37,12 +37,12 @@
   ],
   "probes": {
     "migrations.count": {
-      "expect": 55,
+      "expect": 56,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20261012120000",
-      "why": "slice7_case_documents, the newest migration — crm.opportunity_document (DOMAIN.md §7 #56), the documents a person attaches to a case (today its purchase order), and the opportunity.document_attached / document_removed events; before it 20261012100000 lets the worker's quote reader read and insert evidence.document_line."
+      "expect": "20261013120000",
+      "why": "slice7_catalog_product_document, the newest migration — catalog.product_document (DOMAIN.md §7 #57), where a product's data sheet or a supplier's price list lives in Google Drive, and the product.document_recorded / document_retired events; before it slice7_case_documents — crm.opportunity_document (DOMAIN.md §7 #56), the documents a person attaches to a case (today its purchase order), and the opportunity.document_attached / document_removed events; before it 20261012100000 lets the worker's quote reader read and insert evidence.document_line."
     },
 
     "source_record.total": {
@@ -155,6 +155,7 @@
     "catalog.cost_parameter": { "expect": 5, "why": "slice 7: migration 20261005140628 seeds only the five public/regulatory costing parameters (iva_rate, duty_rate_general, duty_rate_fta, courier_threshold_usd_fob, insurance_pct_of_fob; valid_from 2026-01-01, no operator). The repository is public, so the other eighteen keys are set per environment by an operator. Fewer means the seed did not run; more means something set a parameter during the build." },
     "evidence.document_line": { "expect": 0, "why": "slice 7: no quote-document line exists in a fresh build; lines are loaded by a separate extraction step outside the build." },
     "evidence.triage_review": { "expect": 0, "why": "slice 4: no triage verdict exists in a fresh build; verdicts are operator decisions in Revisión." },
-    "crm.opportunity_document": { "expect": 0, "why": "slice 7: no case document exists in a fresh build; a purchase order is attached by an operator." }
+    "crm.opportunity_document": { "expect": 0, "why": "slice 7: no case document exists in a fresh build; a purchase order is attached by an operator." },
+    "catalog.product_document": { "expect": 0, "why": "Catálogo v2: no Drive document is recorded in a fresh build; the documents importer loads them from a private manifest." }
   }
 }
