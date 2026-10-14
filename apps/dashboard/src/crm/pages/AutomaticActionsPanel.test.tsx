@@ -63,6 +63,7 @@ describe("Hecho automáticamente", () => {
     renderPanel();
     const rows = await screen.findAllByTestId("automatic-row");
     expect(rows).toHaveLength(2);
+    expect(screen.getByText(/1 solicitud abierta y 1 correo archivado en su caso en los últimos dos días/)).toBeInTheDocument();
     expect(rows[0]).toHaveTextContent("Solicitud abierta");
     expect(rows[0]).toHaveTextContent("Gradillas · Ana Prueba");
     expect(rows[1]).toHaveTextContent("Archivado en el caso");

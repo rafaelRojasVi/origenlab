@@ -40,6 +40,11 @@ export function AutomaticActionsPanel({ navigate, onChanged }: { navigate: Navig
   const items = state.data.items.filter((i) => !gone.has(i.receipt_id));
   if (items.length === 0) return null;
   const opened = items.filter((i) => i.kind === "opened").length;
+  const filed = items.length - opened;
+  const summary = [
+    opened ? `${opened} ${opened === 1 ? "solicitud abierta" : "solicitudes abiertas"}` : null,
+    filed ? `${filed} ${filed === 1 ? "correo archivado en su caso" : "correos archivados en su caso"}` : null,
+  ].filter(Boolean).join(" y ");
   return (
     <Panel
       title="Hecho automáticamente"
@@ -47,8 +52,7 @@ export function AutomaticActionsPanel({ navigate, onChanged }: { navigate: Navig
       bodyClassName="divide-y divide-line"
     >
       <p className="px-4 pt-2 text-[11px] text-ink-muted">
-        {opened ? `${opened} ${opened === 1 ? "solicitud abierta" : "solicitudes abiertas"} y ` : ""}
-        correos archivados en su caso en los últimos dos días. Si algo no corresponde, «Quitar» lo deshace.
+        {summary} en los últimos dos días. Si algo no corresponde, «Quitar» lo deshace.
       </p>
       {items.map((it) => (
         <AutomaticRow key={it.receipt_id} item={it} mayDecide={mayDecide} navigate={navigate}
@@ -90,8 +94,10 @@ function AutomaticRow({ item, mayDecide, navigate, onRemoved }: {
         </p>
         <p className="mt-0.5 text-[11px] text-ink-muted">
           {item.case_title ? <>{opened ? "Caso" : "En"} «{item.case_title}» · </> : null}
-          {item.applied_at ? `${fmtDate(item.applied_at)} · ` : ""}
-          <span className="text-ink-faint">{item.reasons.join("; ")}</span>
+          {item.applied_at ? fmtDate(item.applied_at) : ""}
+        </p>
+        <p className="line-clamp-2 text-[11px] text-ink-faint" title={item.reasons.join("; ")}>
+          Por qué: {item.reasons.join("; ")}
         </p>
       </div>
       <div className="flex shrink-0 flex-wrap gap-2">
