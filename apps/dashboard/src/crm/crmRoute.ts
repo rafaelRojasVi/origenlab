@@ -59,7 +59,8 @@ export interface CrmRoute {
 }
 
 export function parseCrmHash(hash: string): CrmRoute {
-  const parts = hash.replace(/^#\/crm\/?/, "").split("/").filter(Boolean);
+  // A page's own `?query` (the catalog's supplier and search) is not part of the route.
+  const parts = hash.split("?")[0].replace(/^#\/crm\/?/, "").split("/").filter(Boolean);
   const moved = MOVED[parts[0] ?? ""];
   if (moved) return moved.tab ? { section: moved.section, id: null, tab: moved.tab } : { section: moved.section, id: null };
   const section = (SECTIONS.has(parts[0] ?? "") ? parts[0] : "resumen") as CrmSection;

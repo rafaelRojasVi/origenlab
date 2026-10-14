@@ -58,6 +58,7 @@ describe("catalogSearch", () => {
     expect(r.total).toBe(1);
     expect(r.bySupplier).toEqual({ s1: 1 }); // ignores the supplier scope, keeps the kind
     expect(r.byKind).toEqual({ equipment: 2, accessory: 1 }); // ignores the kind scope, keeps the supplier
+    expect(r.allSuppliers).toBe(1); // «Todos» in the rail: the kind scope, every supplier
   });
 
   it("an empty query lists everything in index order", () =>

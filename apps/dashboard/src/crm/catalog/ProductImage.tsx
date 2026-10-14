@@ -77,6 +77,8 @@ export function ProductImage({ imageId, kind, alt, size }: {
         <img
           src={url}
           alt={alt}
+          width={size === "thumb" ? 40 : undefined}
+          height={size === "thumb" ? 40 : 192}
           loading={size === "thumb" ? "lazy" : "eager"}
           decoding="async"
           onError={onError}

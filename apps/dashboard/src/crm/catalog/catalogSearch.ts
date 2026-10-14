@@ -39,6 +39,8 @@ export interface SearchResult {
   total: number;
   bySupplier: Record<string, number>;
   byKind: Record<string, number>;
+  /** Matches across every supplier within the kind scope: the rail's «Todos». */
+  allSuppliers: number;
   /** Ids whose code equals the query's code key. */
   exact: Set<string>;
   ms: number;
@@ -113,10 +115,14 @@ export function createCatalogSearch(items: IndexItem[]) {
     const byKind: Record<string, number> = {};
     const hits: IndexItem[] = [];
     let total = 0;
+    let allSuppliers = 0;
     for (const item of ordered) {
       const kindOk = !scope.kind || item.kind === scope.kind;
       const supplierOk = !scope.supplierId || item.supplier_ids.includes(scope.supplierId);
-      if (kindOk) for (const s of item.supplier_ids) bySupplier[s] = (bySupplier[s] ?? 0) + 1;
+      if (kindOk) {
+        allSuppliers++;
+        for (const s of item.supplier_ids) bySupplier[s] = (bySupplier[s] ?? 0) + 1;
+      }
       if (supplierOk) {
         const k = item.kind ?? "unclassified";
         byKind[k] = (byKind[k] ?? 0) + 1;
@@ -126,7 +132,7 @@ export function createCatalogSearch(items: IndexItem[]) {
         if (hits.length < limit) hits.push(item);
       }
     }
-    return { hits, total, bySupplier, byKind, exact, ms: performance.now() - started };
+    return { hits, total, bySupplier, byKind, allSuppliers, exact, ms: performance.now() - started };
   }
 
   return { search };
