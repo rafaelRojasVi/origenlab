@@ -412,7 +412,7 @@ function ReplyRow({
   const { leaving, gone, leave } = useLeave(reply);
   const [busy, setBusy] = useState<null | "move" | "skip" | "handled">(null);
   const keys = useRef([newCaseCommandKey()]);
-  const skipKey = useRef(newCaseCommandKey());
+  const skipKeys = useRef<string[]>([]);
   const handledKey = useRef(newCaseCommandKey());
   const mayAuthor = useMayAuthorCrm();
   const blocking = card.attention.find((a) => a.blocking) ?? null;
@@ -423,22 +423,26 @@ function ReplyRow({
   async function noAnswerNeeded() {
     setBusy("skip");
     const next = new Date(now.getTime() + WEEK_MS);
-    const quote = card.latest_revision?.quote_number ?? card.quote_numbers[0] ?? "";
     try {
-      await createTask(
-        {
-          opportunity_id: card.opportunity_id,
-          title: `Seguimiento de ${quote}`.trim(),
-          due_at: next.toISOString(),
-          note: `El cliente escribió el ${fmtDate(reply.at)}; no requiere respuesta.`,
-        },
-        skipKey.current,
-      );
+      // The one email answers every case it is the newest client email of: each gets its follow-up.
+      for (const [i, c] of [card, ...reply.others].entries()) {
+        const quote = c.latest_revision?.quote_number ?? c.quote_numbers[0] ?? "";
+        skipKeys.current[i] ??= newCaseCommandKey();
+        await createTask(
+          {
+            opportunity_id: c.opportunity_id,
+            title: `Seguimiento de ${quote}`.trim(),
+            due_at: next.toISOString(),
+            note: `El cliente escribió el ${fmtDate(reply.at)}; no requiere respuesta.`,
+          },
+          skipKeys.current[i],
+        );
+      }
       toast(`Listo. Te lo recuerdo el ${fmtDate(next.toISOString())}.`);
       leave();
       onChanged();
     } catch (err) {
-      skipKey.current = newCaseCommandKey();
+      skipKeys.current = [];
       toast(caseRefusalText(err), "bad");
     } finally {
       setBusy(null);
@@ -503,6 +507,20 @@ function ReplyRow({
           {card.latest_revision ? ` · ${quoteOf(card)}` : ""}
           {contactLine(card) ? ` · ${contactLine(card)}` : ""}
         </p>
+        {reply.others.length ? (
+          <p className="mt-0.5 text-[11px] text-ink-muted">
+            También en:{" "}
+            {reply.others.map((o, i) => (
+              <span key={o.opportunity_id}>
+                {i ? ", " : ""}
+                <button type="button" className="text-brand-700 hover:underline" onClick={() => navigate("oportunidades", o.opportunity_id)}>
+                  {o.title}
+                </button>
+              </span>
+            ))}
+            <span className="text-ink-faint"> · el mismo correo</span>
+          </p>
+        ) : null}
         {blocking ? <p className="mt-0.5 truncate text-[11px] font-medium text-bad">{blocking.label}</p> : null}
       </div>
       <div className="flex shrink-0 gap-2">

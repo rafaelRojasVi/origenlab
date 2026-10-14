@@ -121,7 +121,9 @@ describe("today lists", () => {
   });
 
   it("shows a client who writes on a won case under «Te toca responder», with «Atendido» as the only write: a note on the case", async () => {
-    const inbound = (at: string) => ({ outbound: null, inbound: { at, subject: null, url: "https://mail.example.cl/pay" } });
+    // Each case its own email: one email shared by two cases is a single row (see the test below).
+    let n = 0;
+    const inbound = (at: string) => ({ outbound: null, inbound: { at, subject: null, url: `https://mail.example.cl/pay-${++n}` } });
     // Won on 6 Oct; the client sent the payment on the 8th and asks for delivery dates.
     const paid = card({ stage: "won", closed_at: "2026-10-06T12:00:00Z", last_contact: inbound("2026-10-08T16:30:00Z") }, "2026-09-30T12:00:00Z");
     // Won on 6 Oct after the client's last email: nothing new to answer.
@@ -377,6 +379,20 @@ describe("Hoy actions", () => {
       opportunity_version: 4,
       stage: "negotiating",
     });
+  });
+
+  it("shows one client email that answers two cases once, naming both, and «No requiere respuesta» settles both", async () => {
+    const calls = stub();
+    const mail = { outbound: null, inbound: { at: "2026-10-03T12:00:00Z", subject: "Re", url: "https://mail.example.cl/same" } };
+    const a = card({ opportunity_id: "case-a", title: "Cotización 1176-26 — Cliente Uno", stage: "quoting", last_contact: mail });
+    const b = card({ opportunity_id: "case-b", title: "Cliente Uno — cotización 01254-26", stage: "quoting", last_contact: mail });
+    renderToday([a, b]);
+    expect(screen.getAllByRole("link", { name: "Abrir respuesta ↗" })).toHaveLength(1);
+    expect(screen.getByText(/También en/)).toHaveTextContent("Cliente Uno — cotización 01254-26");
+    fireEvent.click(screen.getByRole("button", { name: "No requiere respuesta" }));
+    expect(await screen.findByTestId("toaster")).toHaveTextContent("Listo.");
+    const tasks = calls.filter((x) => x.path === "/v2/commands/create-task").map((x) => x.body?.opportunity_id);
+    expect(tasks.sort()).toEqual(["case-a", "case-b"]);
   });
 
   it("takes a «gracias, le aviso» off «Te toca responder» with a follow-up a week out", async () => {

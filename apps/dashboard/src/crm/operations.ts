@@ -52,13 +52,32 @@ export interface SentQuoteWithoutCase {
   suggested_institution: string | null;
 }
 
+/** A quote contacto@ sent on an email already linked to one open case, whose number no case records. */
+export interface SentQuoteUnrecordedOnCase {
+  source_record_id: string;
+  quote_number: string;
+  sent_at: string | null;
+  thread_id: string | null;
+  case_id: string;
+  case_title: string;
+  case_version: number;
+  /** The case's requesting institution, or null when it has none yet. */
+  organization_name: string | null;
+}
+
 export interface OperationsPayload {
   generated_at: string;
   cards: OpsCard[];
   actions: OpsAction[];
   actions_today: number;
   sent_quotes_without_case: SentQuoteWithoutCase[];
-  counts: { cases_without_institution: number; institutions_por_confirmar: number; sent_quotes_without_case: number };
+  sent_quotes_unrecorded_on_case?: SentQuoteUnrecordedOnCase[];
+  counts: {
+    cases_without_institution: number;
+    institutions_por_confirmar: number;
+    sent_quotes_without_case: number;
+    sent_quotes_unrecorded_on_case?: number;
+  };
 }
 
 export const fetchOperations = () => fetchJsonGet<OperationsPayload>(operatorApiUrl(OPERATIONS_PATH));

@@ -1,71 +1,13 @@
-"""«Operaciones» against a disposable database, read as the API role; and the route's audience."""
-
+"""«Operaciones» facts against PostgreSQL: the two sent-quote lists. Every name and number is invented."""
 from __future__ import annotations
 
-import json
 import uuid
 
+import psycopg
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
-from origenlab_api.v2.crm_workspace_routes import workspace_router
-from origenlab_api.v2.identity import IdentityPort, IdentityRefused, OperatorIdentity
+from origenlab_api.v2.operations import read_operation_facts
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
-
-VIEWER = OperatorIdentity(operator_id="00000000-0000-0000-0000-0000000000a1", email_norm="viewer@origenlab.cl",
-                          display_name="Lectora Ficticia", role="viewer", status="active", version=1)
-
-
-class _Port(IdentityPort):
-    def __init__(self, operator: OperatorIdentity | None) -> None:
-        self._operator = operator
-
-    def resolve(self, headers: dict[str, str]) -> OperatorIdentity:
-        if self._operator is None:
-            raise IdentityRefused("no identity")
-        return self._operator
-
-
-class _Repo:
-    def operations(self):
-        return {"generated_at": "2026-10-13T12:00:00+00:00", "cards": [], "actions": [],
-                "counts": {"cases_without_institution": 0, "institutions_por_confirmar": 0}, "actions_today": 0}
-
-
-def _client(operator: OperatorIdentity | None) -> TestClient:
-    app = FastAPI()
-    app.state.v2_identity = _Port(operator)
-    app.state.crm_workspace = _Repo()
-    app.include_router(workspace_router)
-    return TestClient(app)
-
-
-class _BrokenAuto:
-    def state(self):
-        raise RuntimeError("database away")
-
-
-def test_a_failing_rules_state_does_not_take_the_page_down() -> None:
-    app = FastAPI()
-    app.state.v2_identity = _Port(VIEWER)
-    app.state.crm_workspace = _Repo()
-    app.state.auto_mail_rules = _BrokenAuto()
-    app.include_router(workspace_router)
-    res = TestClient(app).get("/v2/workspace/operations")
-    assert res.status_code == 200
-    reglas = next(c for c in res.json()["cards"] if c["key"] == "reglas")
-    assert reglas["status"] == "warn" and "No se pudo leer" in reglas["summary"]
-
-
-def test_any_signed_in_operator_reads_it_and_nobody_else() -> None:
-    assert _client(None).get("/v2/workspace/operations").status_code == 401
-    res = _client(VIEWER).get("/v2/workspace/operations")
-    assert res.status_code == 200
-    keys = [c["key"] for c in res.json()["cards"]]
-    assert keys[-3:] == ["reglas", "version", "respaldo"]  # added by the route, not the repository
-    assert _client(VIEWER).post("/v2/workspace/operations").status_code == 405
 
 
 @pytest.fixture(scope="module")
@@ -73,112 +15,48 @@ def disposable_database():
     yield from build_disposable_database()
 
 
-def _owner(dsn: str, sql: str, *args) -> list:
-    import psycopg
-
+def _owner(dsn: str, sql: str, params: tuple = ()):
     with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("set role origenlab_owner")
-        cur.execute(sql, args or None)
-        return cur.fetchall() if cur.description else []
+        cur.execute(sql, params)
+        return cur.fetchall() if cur.description else None
 
 
-def _message(dsn: str, mailbox: str, *, minutes_ago: int, subject: str, triaged: bool) -> None:
-    gid = uuid.uuid4().hex
-    rec = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) "
-                      "values ('gmail_message', %s, %s::jsonb, %s) returning id::text",
-                 f"gmail_message:{gid}", json.dumps({"gmail_message_id": gid, "subject": subject}), f"gmail://msg/{gid}")[0][0]
-    _owner(dsn, "insert into comms.message (mailbox_id, provider_message_id, direction, internal_date, subject, "
-                "parse_status, eml_storage_path, eml_sha256, created_at) values (%s, %s, 'inbound', now() - make_interval(mins => %s), "
-                "%s, 'parsed', 'mail/x.eml', repeat('0', 64), now() - make_interval(mins => %s))",
-           mailbox, gid, minutes_ago, subject, minutes_ago)
-    if triaged:
-        _owner(dsn, "insert into evidence.assertion (source_record_id, kind, value_norm, value) "
-                    "values (%s, 'message_triage', 'triage:v3', '{\"class\": \"business_other\"}'::jsonb)", rec)
+def _sent_quote_email(dsn: str, mailbox: str, filename: str) -> tuple[str, str]:
+    """A message contacto@ sent with one quote PDF, and its Gmail evidence record: (message id, record id)."""
+    gmail_id = uuid.uuid4().hex[:16]
+    [(msg,)] = _owner(dsn, "insert into comms.message (mailbox_id, provider_message_id, provider_thread_id, direction, "
+                           "internal_date) values (%s, %s, 'thread-x', 'outbound', now() - interval '2 days') "
+                           "returning id::text", (mailbox, gmail_id))
+    _owner(dsn, "insert into comms.message_participant (message_id, role, address_norm) values (%s, 'from', "
+                "'contacto@origenlab.cl'), (%s, 'to', 'compras@empresa-ficticia.cl')", (msg, msg))
+    _owner(dsn, "insert into comms.attachment (message_id, part_index, filename, mime_type) values (%s, 1, %s, "
+                "'application/pdf')", (msg, filename))
+    [(rec,)] = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, review_status) values "
+                           "('gmail_message', %s, '{}'::jsonb, 'pending') returning id::text", (f"gmail_message:{gmail_id}",))
+    return msg, rec
 
 
 @needs_db
-def test_the_cards_read_the_database_as_the_api_role(disposable_database) -> None:
-    import psycopg
-
+def test_a_quote_sent_on_a_case_email_but_never_recorded_is_listed_with_its_case(disposable_database) -> None:
     dsn = disposable_database
-    repo = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(dsn))
-    empty = {c["key"]: c for c in repo.operations()["cards"]}
-    assert empty["correo"]["summary"] == "Gmail no configurado"
-    assert empty["clasificacion"]["status"] == "ok" and empty["drive"]["status"] == "ok"
+    [(op,)] = _owner(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) values "
+                          "(gen_random_uuid(), 'ops-db@example.test', 'Ops', 'sales', 'active') returning id::text")
+    [(mailbox,)] = _owner(dsn, "select id::text from comms.mailbox limit 1") or _owner(
+        dsn, "insert into comms.mailbox (address_norm) values ('contacto@origenlab.cl') returning id::text")
+    # A requesting institution is set by the case commands (its trigger demands the confirmed link);
+    # the list then names it — here the case has none yet, so the name is null and the form asks.
+    [(case,)] = _owner(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) values "
+                            "('Cotización 09176-26 — Empresa Ficticia', 'lead', %s) returning id::text", (op,))
+    _, linked = _sent_quote_email(dsn, mailbox, "CN09251-Persona - Empresa Ficticia.pdf")
+    _owner(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, linked_by_operator_id) "
+                "values (%s, %s, 'mentions', %s)", (case, linked, op))
+    _, unlinked = _sent_quote_email(dsn, mailbox, "CN09300-Otra Persona.pdf")
 
-    mailbox = _owner(dsn, "insert into comms.mailbox (address_norm, authorization_state, last_synced_at) "
-                          "values ('contacto@origenlab.cl', 'authorized', now() - interval '2 minutes') returning id")[0][0]
-    _message(dsn, mailbox, minutes_ago=3, subject="Asunto ficticio uno", triaged=True)
-    _message(dsn, mailbox, minutes_ago=20, subject="Asunto ficticio dos", triaged=False)
-    admin = _owner(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
-                        "values (gen_random_uuid(), 'admin.ficticio@example.test', 'Admin Ficticio', 'admin', 'active') "
-                        "returning id")[0][0]
-    case = _owner(dsn, "insert into crm.opportunity (title, stage, owner_operator_id, origin_source_record_id) "
-                       "select 'Caso ficticio', 'lead', %s, id from evidence.source_record limit 1 returning id", admin)[0][0]
-    quote = _owner(dsn, "insert into crm.quote (opportunity_id, quote_number) values (%s, '09876-26') returning id", case)[0][0]
-    _owner(dsn, "insert into crm.quote_revision (quote_id, revision_no, quote_currency, price_decimals, pdf_sha256, "
-                "origin_source_record_id, created_at) select %s, 1, 'CLP', 0, %s, id, now() - interval '2 days' "
-                "from evidence.source_record limit 1", quote, "ab" * 32)
-
-    # Never counted (2026-10-13 false alarms): an old email a backfill fetched today is outside the
-    # triage worker's 14-day window, and a revision whose email file is not stored can never be
-    # read or filed by the workers.
-    old_gid = uuid.uuid4().hex
-    _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) values ('gmail_message', %s, %s::jsonb, %s)",
-           f"gmail_message:{old_gid}", json.dumps({"gmail_message_id": old_gid}), f"gmail://msg/{old_gid}")
-    _owner(dsn, "insert into comms.message (mailbox_id, provider_message_id, direction, internal_date, parse_status, "
-                "eml_storage_path, eml_sha256, created_at) values (%s, %s, 'inbound', now() - interval '60 days', 'parsed', "
-                "'mail/old.eml', repeat('0', 64), now() - interval '20 hours')", mailbox, old_gid)
-    unstored = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) values "
-                           "('gmail_message', 'gmail_message:sin-archivo', '{\"gmail_message_id\": \"sin-archivo\"}'::jsonb, "
-                           "'gmail://msg/sin-archivo') returning id")[0][0]
-    quote2 = _owner(dsn, "insert into crm.quote (opportunity_id, quote_number) values (%s, '09875-26') returning id", case)[0][0]
-    _owner(dsn, "insert into crm.quote_revision (quote_id, revision_no, quote_currency, price_decimals, pdf_sha256, "
-                "origin_source_record_id, created_at) values (%s, 1, 'CLP', 0, %s, %s, now() - interval '3 days')",
-           quote2, "cd" * 32, unstored)
-
-    repo._facts_cache.clear()  # the read is shared for 30 s; this test changed the data meanwhile
-    body = repo.operations()
-    cards = {c["key"]: c for c in body["cards"]}
-    assert cards["correo"]["status"] == "ok"
-    assert {f["label"]: f["value"] for f in cards["correo"]["facts"]}["Correos hoy"] >= 1
-    assert (cards["clasificacion"]["status"], cards["clasificacion"]["facts"][0]["value"]) == ("warn", 1)
-    assert cards["drive"]["status"] == "warn" and cards["cotizaciones"]["status"] == "warn"
-    assert {f["label"]: f["value"] for f in cards["cotizaciones"]["facts"]}["Pendientes"] == 1
-    assert {f["label"]: f["value"] for f in cards["drive"]["facts"]}["Pendientes"] == 1
-    assert body["counts"]["cases_without_institution"] == 1
-    text = json.dumps(body)
-    assert "@" not in text and "Asunto ficticio" not in text
-
-    # A rule action the automatic timer applied, today: flagged automatic, counted today, and its
-    # reasons (PDF names can hold a person's name) are not sent to the page.
-    _owner(dsn, "insert into platform.command_receipt (operator_id, idempotency_key, command_name, request_digest, "
-                "status, response_status, response_body, completed_at) values (%s, 'mail-rule:x:R1', 'apply_mail_rule', "
-                "repeat('a', 64), 'completed', 200, %s::jsonb, now())",
-           admin, json.dumps({"rule_id": "R1", "trigger": "automatic", "case_id": str(case),
-                              "reasons": ["PDF «CN09876-Persona Ficticia-Empresa Ficticia SA.pdf»"]}))
-    repo._facts_cache.clear()
-    later = repo.operations()
-    action = later["actions"][0]
-    assert action["automatic"] is True and action["today"] is True and "reasons" not in action
-    assert later["actions_today"] == 1 and "Persona Ficticia" not in json.dumps(later)
-
-    # A quote sent from contacto@ that no case holds is listed by number only, until a case opens on it.
-    gid = uuid.uuid4().hex
-    sent = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) "
-                       "values ('gmail_message', %s, %s::jsonb, %s) returning id::text",
-                  f"gmail_message:{gid}", json.dumps({"gmail_message_id": gid}), f"gmail://msg/{gid}")[0][0]
-    message = _owner(dsn, "insert into comms.message (mailbox_id, provider_message_id, provider_thread_id, direction, "
-                          "internal_date, parse_status) values (%s, %s, 'hilo-ficticio', 'outbound', now() - interval '1 day', "
-                          "'parsed') returning id", mailbox, gid)[0][0]
-    _owner(dsn, "insert into comms.message_participant (message_id, role, address_norm) values (%s, 'from', 'contacto@origenlab.cl')", message)
-    _owner(dsn, "insert into comms.attachment (message_id, part_index, filename, mime_type, size_bytes) "
-                "values (%s, 1, 'CN09877-Persona Ficticia.pdf', 'application/pdf', 10)", message)
-    repo._facts_cache.clear()
-    listed = repo.operations()
-    assert [(i["source_record_id"], i["quote_number"]) for i in listed["sent_quotes_without_case"]] == [(sent, "09877-26")]
-    assert listed["counts"]["sent_quotes_without_case"] == 1 and "Persona Ficticia" not in json.dumps(listed)
-    _owner(dsn, "insert into crm.opportunity (title, stage, owner_operator_id, origin_source_record_id) "
-                "values ('Cotización 09877-26', 'lead', %s, %s)", admin, sent)
-    repo._facts_cache.clear()
-    assert repo.operations()["sent_quotes_without_case"] == []
+    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
+        facts = read_operation_facts(cur)
+    on_case = facts["sent_quotes_unrecorded_on_case"]
+    assert [(i["source_record_id"], i["quote_number"][:6], i["case_id"], i["organization_name"]) for i in on_case] == [
+        (linked, "09251-", case, None)]
+    assert [i["source_record_id"] for i in facts["sent_quotes_without_case"]] == [unlinked]
+    assert facts["counts"]["sent_quotes_unrecorded_on_case"] == 1

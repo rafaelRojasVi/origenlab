@@ -126,3 +126,18 @@ def test_sent_quotes_without_case_read_the_number_from_the_pdf_and_skip_known_on
     # Only the institution part leaves the API, never the person before it.
     assert named[0]["suggested_institution"] == "Empresa Ficticia SA"
     assert "filename" not in items[0]  # PDF names can hold a person's name
+
+
+def test_quotes_sent_on_a_case_thread_but_never_recorded_name_their_case() -> None:
+    rows = [
+        {"source_record_id": "s-1", "sent_at": "2026-09-30T16:57:00+00:00", "thread_id": "t-1",
+         "filename": "CN09251-Persona - Empresa.pdf", "case_id": "c-1", "case_title": "Cotización 09176-26 — Empresa",
+         "case_version": 4, "organization_name": "Empresa Ficticia"},
+        {"source_record_id": "s-2", "sent_at": "2026-09-30T19:56:00+00:00", "thread_id": "t-1",
+         "filename": "CN09254-Persona - Empresa.pdf", "case_id": "c-2", "case_title": "Empresa — 09254-26",
+         "case_version": 2, "organization_name": "Empresa Ficticia"},   # already a CRM quote
+    ]
+    items = op.unrecorded_on_case_items(rows, existing_numbers={"09254-26"})
+    assert items == [{"source_record_id": "s-1", "quote_number": "09251-26", "sent_at": "2026-09-30T16:57:00+00:00",
+                      "thread_id": "t-1", "case_id": "c-1", "case_title": "Cotización 09176-26 — Empresa",
+                      "case_version": 4, "organization_name": "Empresa Ficticia"}]
