@@ -282,3 +282,30 @@ def test_a_job_deferred_through_the_real_connector_lands_in_the_queue(dsn, targe
     asyncio.run(go())
     assert owner_rows(dsn, "select task_name, queue_name, status::text from procrastinate.procrastinate_jobs "
                            "where queueing_lock = %s", (lock,)) == [("triage_message", "triage", "todo")]
+
+
+def test_a_captured_forward_is_read_for_who_asked_by_the_triage_and_the_backfill_skips_it(dsn, target, mailbox_id,
+                                                                                        monkeypatch) -> None:
+    from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM
+    from origenlab_worker.triage import backfill_forwards
+
+    monkeypatch.delenv("ORIGENLAB_WORKER_FORWARD_READING", raising=False)
+    msg = EmailMessage()
+    msg["From"] = f"Tatiana <{MAILBOX}>"
+    msg["To"] = MAILBOX
+    msg["Subject"] = "Fwd: Solicitud cotización Gradillas"
+    msg["Message-ID"] = f"<{uuid.uuid4().hex}@origenlab.invalid>"
+    msg.set_content("---------- Forwarded message ---------\nDe: Pedro Ejemplo <pedro@universidad-ficticia.cl>\n"
+                    "Date: lun, 5 oct 2026\nSubject: Solicitud cotización Gradillas\nTo: <contacto@origenlab.cl>\n\n"
+                    "Necesitamos 20 gradillas.\n")
+    store = Store()
+    sid = source_record(dsn, capture(target, mailbox_id, store, f"fw-{uuid.uuid4().hex[:8]}", msg.as_bytes()))
+    with triage_conn(target) as conn:
+        db = TriageDb(conn)
+        assert sid in db.pending_forwards(since_days=36500, limit=500)
+        assert backfill_forwards(db, store, [sid], apply=False)["readable"] == 1
+        triage_one(db, store, sid, ModelSettings(None, DEFAULT_MODEL))
+        assert sid not in db.pending_forwards(since_days=36500, limit=500)
+    [(value,)] = owner_rows(dsn, "select value from evidence.assertion where source_record_id = %s and "
+                                 "kind = 'message_triage' and value_norm = %s", (sid, FORWARDED_VALUE_NORM))
+    assert value["original_email"] == "pedro@universidad-ficticia.cl" and value["origin"] == "origenlab"

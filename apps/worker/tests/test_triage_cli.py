@@ -95,3 +95,15 @@ def test_a_pass_triages_every_pending_message_and_reports_counts_only(capsys, fa
     line = _line(capsys)
     assert code == 0 and triaged == ["sr-1", "sr-2"]
     assert line["outcomes"] == {"recorded": 2} and line["classes"] == {"quote_request": 2}
+
+
+def test_forward_backfill_without_settings_is_a_config_refusal(capsys) -> None:
+    import json
+    import time
+    from types import SimpleNamespace
+
+    from origenlab_worker.triage_cli import run_forward_backfill
+
+    code = run_forward_backfill(SimpleNamespace(apply=False, since_days=60, limit=10), {}, time.monotonic())
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert code == 3 and line["event"] == "forward_backfill" and line["mode"] == "config_refused"

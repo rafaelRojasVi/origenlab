@@ -329,3 +329,16 @@ def test_a_customer_email_is_never_read_as_a_forward(monkeypatch) -> None:
     triage_one(db, FakeStore(_forward_raw(sender="cliente@universidad-ficticia.cl")), "sr-1",
                ModelSettings(None, DEFAULT_MODEL))
     assert db.forwards == []
+
+
+def test_the_forward_backfill_reads_only_and_writes_only_on_apply(monkeypatch) -> None:
+    from origenlab_worker.triage import backfill_forwards
+
+    monkeypatch.delenv("ORIGENLAB_WORKER_FORWARD_READING", raising=False)
+    db = ForwardDb()
+    dry = backfill_forwards(db, FakeStore(_forward_raw()), ["sr-1", "sr-missing"], apply=False)
+    assert dry == {"found": 2, "readable": 1, "recorded": 0, "skipped": 1}
+    assert db.forwards == [] and db.recorded == []          # never the triage itself
+    applied = backfill_forwards(db, FakeStore(_forward_raw()), ["sr-1"], apply=True)
+    assert applied == {"found": 1, "readable": 1, "recorded": 1, "skipped": 0}
+    assert db.recorded == [] and db.forwards[0][1]["original_email"] == "pedro@universidad-ficticia.cl"

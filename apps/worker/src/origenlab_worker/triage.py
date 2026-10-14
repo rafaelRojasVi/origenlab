@@ -226,6 +226,11 @@ class TriageDb:
                 (source_record_id, "message_triage", REQUESTER_VALUE_NORM, Jsonb(requester)),
             )
 
+    def pending_forwards(self, *, since_days: int, limit: int) -> list[str]:
+        with self._tx() as cur:
+            cur.execute(_FORWARD_PENDING, (since_days, FORWARDED_VALUE_NORM, limit))
+            return [row[0] for row in cur.fetchall()]
+
     def record_forward(self, source_record_id: str, value: dict[str, Any]) -> None:
         """The forwarded-request reading (`forwarded:v1`); a second write of it is a no-op."""
         from psycopg.types.json import Jsonb
@@ -436,6 +441,46 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
         db.record_delivery_failure(message.source_record_id, analyze_bounce(raw))
     record_forward_reading(db, message.source_record_id, raw, mail.sender, mail.subject)
     return TriageResult("recorded", verdict.triage_class, state, written)
+
+
+_FORWARD_PENDING = """
+select sr.id::text
+  from evidence.source_record sr
+ where sr.kind = 'gmail_message'
+   and sr.created_at > now() - make_interval(days => %s)
+   and coalesce(sr.payload->>'subject_raw', '') ~* '^\\s*((re|aw)\\s*:\\s*)*(rv|fw|fwd|tr|reenv(iado)?)\\s*:'
+   and not exists (select 1 from evidence.assertion a where a.source_record_id = sr.id
+                    and a.kind = 'message_triage' and a.value_norm = %s)
+ order by sr.created_at desc
+ limit %s
+"""
+
+
+def backfill_forwards(db: Any, store: EmlStore, source_record_ids: Sequence[str], *, apply: bool) -> dict[str, int]:
+    """The forwards of the last days, read again for who really asked — and nothing else: the
+    triage is never re-run, no model is called. A dry run reads and counts, writes nothing."""
+    counts = {"found": len(source_record_ids), "readable": 0, "recorded": 0, "skipped": 0}
+    for sid in source_record_ids:
+        loaded = db.load(sid)
+        if loaded is None or not loaded[0].eml_storage_path:
+            counts["skipped"] += 1
+            continue
+        try:
+            raw = store.get(storage_key(loaded[0].eml_storage_path))
+            mail = parse_mail(raw)
+        except Exception:  # noqa: BLE001 - one unreadable message is skipped, never fatal
+            counts["skipped"] += 1
+            continue
+        if not is_candidate(mail.sender, mail.subject, extra_senders=forward_extra_senders()):
+            counts["skipped"] += 1
+            continue
+        if read_forward(raw) is None:
+            counts["skipped"] += 1
+            continue
+        counts["readable"] += 1
+        if apply and record_forward_reading(db, sid, raw, mail.sender, mail.subject):
+            counts["recorded"] += 1
+    return counts
 
 
 def forward_reading_enabled() -> bool:
