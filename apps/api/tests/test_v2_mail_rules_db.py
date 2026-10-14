@@ -648,7 +648,7 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     assert unchanged.value.code == "auto_mail_rules_unchanged"
     state = auto.state()
     assert (state["enabled"], state["changed_by"], state["note"], state["rules"]) == (
-        True, "Admin Ficticio", "probado en vista previa", ["R1", "R2", "R7", "R9"])
+        True, "Admin Ficticio", "probado en vista previa", ["R1", "R11", "R2", "R7", "R9"])
 
     # One pass: R1/R2 link and R7 opens the RFQ lead; R4 still waits for a person.
     result = auto.run_once()
@@ -742,3 +742,60 @@ def test_the_ai_reading_opens_a_request_whose_subject_has_no_quote_word(db, worl
     assert opened["rule_id"] == "R7"
     assert any("IA" in r for r in opened["reasons"])
     assert _one(db, "select stage from crm.opportunity where id = %s", opened["case_id"]) == ("lead",)
+
+
+def _forward(conn, email, *, origin="origenlab", company=None, item="Gradillas"):
+    """A request forwarded to contacto@: our copy (a gmail_message record) and the worker's reading."""
+    gid = uuid.uuid4().hex[:12]
+    mid = conn.execute("insert into evidence.source_record (kind, dedupe_key, payload) values ('gmail_message', %s, "
+                       "%s::jsonb) returning id::text",
+                       (f"gmail_message:fw-{gid}", json.dumps({"gmail_message_id": gid,
+                                                                "sent_at": "2026-10-13T12:00:00+00:00"}))).fetchone()[0]
+    payload = {"original_email": email, "original_name": "Ana Ficticia", "company": company, "requested_item": item,
+               "origin": origin, "subject": f"Fwd: {item}", "forwarded_message_id": mid, "reading": "forwarded:v1"}
+    fid = conn.execute("insert into evidence.source_record (kind, dedupe_key, payload) values ('forwarded_request', %s, "
+                       "%s::jsonb) returning id::text", (f"forwarded_request:{mid}", json.dumps(payload))).fetchone()[0]
+    return fid, mid
+
+
+def test_r11_a_new_customers_forward_becomes_a_request_and_quitar_removes_it(db, world) -> None:
+    repo = _repo(db)
+    with _owner(db) as conn:
+        fid, mid = _forward(conn, f"ana@nuevo-{world['tag']}.test", company=f"Laboratorio Nuevo {world['tag']}")
+    opened = _apply_only(db, world, fid)
+    assert opened["rule_id"] == "R11"
+    case_id = opened["case_id"]
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id) == ("lead",)
+    assert _one(db, "select review_status from evidence.source_record where id = %s", fid) == ("promoted",)
+    assert _one(db, "select count(*) from crm.opportunity_evidence where opportunity_id = %s and source_record_id = %s",
+                case_id, mid) == (1,)
+
+    repo.undo(_operator(world["admin"]), opened["command_receipt_id"], "no era una solicitud")
+    assert _one(db, "select stage, close_reason from crm.opportunity where id = %s", case_id) == (
+        "abandoned", "discarded_by_correction")
+    assert _one(db, "select review_status from evidence.source_record where id = %s", fid) == ("rejected",)
+    assert not any(a["evidence_id"] == fid for a in repo.preview()["actions"])
+
+
+def test_r11_a_forward_from_a_customer_already_on_a_case_joins_it_and_quitar_hands_it_back(db, world) -> None:
+    repo = _repo(db)
+    case_id = _apply_only(db, world, world["e_known"])["case_id"]
+    with _owner(db) as conn:
+        reply = _mail(conn, thread=world["t1"], direction_hint=None, sender=f"Compras <compras@{world['client_domain']}>",
+                      recipients="contacto@origenlab.cl", subject="RE: Cotización")
+    _apply_only(db, world, reply)
+    with _owner(db) as conn:
+        fid, mid = _forward(conn, f"compras@{world['client_domain']}")
+        lab, lab_mid = _forward(conn, f"compras@{world['client_domain']}", origin="labdelivery")
+    joined = _apply_only(db, world, fid)
+    assert (joined["rule_id"], joined["case_id"]) == ("R11", case_id)
+    assert _one(db, "select count(*) from crm.opportunity_evidence where opportunity_id = %s and source_record_id = %s "
+                    "and unlinked_at is null", case_id, mid) == (1,)
+    # Its Labdelivery-mailbox copy is the same request: handled with it, and never linked.
+    assert _one(db, "select review_status from evidence.source_record where id = %s", lab) == ("promoted",)
+    assert _one(db, "select count(*) from crm.opportunity_evidence where source_record_id = %s", lab_mid) == (0,)
+
+    repo.undo(_operator(world["admin"]), joined["command_receipt_id"], "era otra solicitud")
+    assert _one(db, "select unlinked_at is not null from crm.opportunity_evidence "
+                    "where opportunity_id = %s and source_record_id = %s", case_id, mid) == (True,)
+    assert _one(db, "select review_status from evidence.source_record where id = %s", fid) == ("pending",)

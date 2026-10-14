@@ -18,6 +18,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R8 | everything else (supplier, a reply to our own supplier RFQ, campaign thread, Labdelivery, nothing matched) | none |
 | R9 | outbound, a NEW CN number in a PDF, no recipient names an institution (free-mail), and the PDF's own name names exactly one institution (`CN09876-<institución>.pdf`, as the Cotizador writes it) | auto when that institution has exactly one open case: link + «Enviada» + quote; otherwise a proposal |
 | R10 | as R9, but the institution the PDF names is not in the CRM | «Aplicar» only: institution «por confirmar» (named as the PDF names it, no domain) + case in «Enviada» + quote |
+| R11 | a request forwarded to contacto@ (`forwarded_request`, read by the worker), still pending | auto: joins the one open case whose emails come from that customer, or of the customer's institution; otherwise a request (`create_request_from_forward`) with the known institution, the company the forward names, or none. Never a supplier's domain; never links a Labdelivery-mailbox email |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -50,7 +51,7 @@ from email.utils import getaddresses
 from typing import Any
 from zoneinfo import ZoneInfo
 
-RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10")
+RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: OrigenLab's own domains: never an institution, never a recipient that counts.
@@ -178,6 +179,8 @@ class CaseState:
     #: Gmail threads of the emails currently linked to this case.
     thread_ids: tuple[str, ...] = ()
     quotes: tuple[CaseQuote, ...] = ()
+    #: Lower-case addresses that wrote the inbound emails linked to this case (R11).
+    people: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -192,11 +195,26 @@ class Organization:
 
 
 @dataclass(frozen=True)
+class ForwardRequest:
+    """A request forwarded to contacto@, its copies merged (`forwarded_requests.group_forwards`)."""
+
+    id: str
+    ids: tuple[str, ...]
+    customer_email: str | None
+    customer_name: str | None = None
+    company: str | None = None
+    requested_item: str | None = None
+    origins: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Snapshot:
     evidence: tuple[MailEvidence, ...]
     cases: tuple[CaseState, ...]
     organizations: tuple[Organization, ...]
     applied_evidence_ids: frozenset[str] = frozenset()
+    #: Pending forwarded requests (R11).
+    forwards: tuple[ForwardRequest, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -612,7 +630,57 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
         action = _plan_one(e, index)
         if action is not None:
             out.append(action)
+    for f in sorted(snapshot.forwards, key=lambda x: x.id):
+        if f.id not in snapshot.applied_evidence_ids and not (set(f.ids) & snapshot.applied_evidence_ids):
+            out.append(_plan_forward(f, index))
     return out
+
+
+ATTACH_FORWARD = "attach_forward_to_case"
+CREATE_REQUEST_FROM_FORWARD_STEP = "create_request_from_forward"
+
+
+def _plan_forward(f: ForwardRequest, ix: _Index) -> PlannedAction:
+    """R11 (owner, 2026-10-14: «the system acts, I remove what is wrong»). A forwarded request
+    joins the one open case already speaking with that customer, or of the customer's institution;
+    otherwise it becomes a request of its own. The Labdelivery-mailbox copy is never linked — the
+    handlers (`forwarded_requests.py`) link our own copies only."""
+    email = (f.customer_email or "").strip().lower()
+    d = domain_of(email) if "@" in email else ""
+    named = d and d not in FREE_MAIL_DOMAINS and d not in OWN_DOMAINS
+    if named and ix.is_supplier_domain(d):
+        return PlannedAction(f.id, "R8", NONE, (f"reenvío desde un dominio de proveedor ({d}): no se abre solicitud",))
+    who = f.customer_name or email or "cliente sin nombre"
+    open_cases = [c for c in ix.cases.values() if not c.closed]
+    by_person = [c for c in open_cases if email and email in c.people]
+    domain_orgs = [o for o in ix.by_domain.get(d, []) if not o.is_supplier] if named else []
+    by_institution = [c for c in open_cases if c.organization_id in {o.id for o in domain_orgs}]
+    joined = by_person if len(by_person) == 1 else by_institution if not by_person and len(by_institution) == 1 else []
+    if joined:
+        c = joined[0]
+        why = ("el cliente ya escribe en este caso" if by_person else "caso abierto de la institución del cliente")
+        reasons = [f"solicitud reenviada de {who}", why]
+        return PlannedAction(f.id, "R11", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+                             organization_id=c.organization_id, commands=({"command": ATTACH_FORWARD, "inputs": {
+                                 "opportunity_id": c.id, "forwarded_request_id": f.id,
+                                 "note": _note("R11", reasons)}},))
+    inputs: dict[str, Any] = {"forwarded_request_id": f.id}
+    organization: Organization | None = domain_orgs[0] if len(domain_orgs) == 1 else None
+    if organization is not None:
+        inputs |= {"organization_id": organization.id, "organization_version": organization.version}
+        where = f"institución conocida «{organization.name}»"
+    elif f.company:
+        inputs["new_organization_name"] = f.company
+        where = f"institución «{f.company}» por confirmar"
+    else:
+        where = "sin institución hasta confirmarla"
+    reasons = [f"solicitud reenviada de {who}" + (f": {f.requested_item}" if f.requested_item else ""), where]
+    inputs["note"] = _note("R11", reasons)
+    title = f"Solicitud — {f.requested_item}" if f.requested_item else "Solicitud reenviada"
+    return PlannedAction(f.id, "R11", AUTO, tuple(reasons), case_title=title[:200],
+                         organization_id=organization.id if organization else None,
+                         organization_name=organization.name if organization else f.company,
+                         commands=({"command": CREATE_REQUEST_FROM_FORWARD_STEP, "inputs": inputs},))
 
 
 def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
@@ -1208,7 +1276,7 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
 __all__ = [
     "AUTO", "CONTACT_SENDER", "FREE_MAIL_DOMAINS", "NOT_CUSTOMER_HINTS", "PURCHASE_ORDER_FILENAME", "LABDELIVERY_MARKERS", "LOST_CLOSE_REASON", "LOST_PHRASES", "NONE",
     "OWN_DOMAINS", "PROPOSAL", "PURCHASE_ORDER_NUMBER", "PURCHASE_ORDER_PHRASES", "QUOTE_REQUEST_WORDS",
-    "RULE_IDS", "SYSTEM_LABEL", "CaseQuote", "CaseState", "MailDocument", "MailEvidence", "Organization",
+    "RULE_IDS", "SYSTEM_LABEL", "ATTACH_FORWARD", "CREATE_REQUEST_FROM_FORWARD_STEP", "CaseQuote", "CaseState", "ForwardRequest", "MailDocument", "MailEvidence", "Organization",
     "PlannedAction", "QuoteRevision", "Snapshot", "addresses", "canonical_quote_number", "domain_of", "fold",
     "gmail_quote_key", "mail_direction", "plan", "quote_key", "quote_number_tokens", "santiago_year",
     "token_quote_keys",

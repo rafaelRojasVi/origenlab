@@ -48,9 +48,9 @@ from origenlab_api.v2.mail_rules import AUTO
 
 logger = logging.getLogger(__name__)
 
-#: Safe intake/link rules the timer applies. Terminal actions (R5/R6) and recipient-domain
+#: Safe intake/link rules the timer applies (R11, forwarded requests: owner 2026-10-14). Terminal actions (R5/R6) and recipient-domain
 #: creation (R3/R4) still wait for an admin.
-AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R7", "R9"})
+AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R7", "R9", "R11"})
 SWITCH_COMMAND = "set_auto_mail_rules"
 DEFAULT_INTERVAL_SECONDS = 300
 #: At most this many actions per pass; the next pass takes the rest.

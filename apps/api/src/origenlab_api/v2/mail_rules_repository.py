@@ -56,18 +56,25 @@ from origenlab_api.v2.command_core import DEFAULT_COMMAND_TIMEOUT_MS
 from origenlab_api.v2.commands import CommandRefused, as_uuid
 from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
 from origenlab_api.v2.identity import OperatorIdentity
+from origenlab_api.v2 import forwarded_requests
 from origenlab_api.v2.mail_rules import (
+    ATTACH_FORWARD,
     AUTO,
+    CREATE_REQUEST_FROM_FORWARD_STEP,
     LINK_AFTER_CLOSE,
+    OWN_DOMAINS,
     SYSTEM_LABEL,
     CaseQuote,
     CaseState,
+    ForwardRequest,
     MailDocument,
     MailEvidence,
     Organization,
     PlannedAction,
     QuoteRevision,
     Snapshot,
+    addresses,
+    domain_of,
     mail_direction,
     plan,
 )
@@ -148,7 +155,7 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
 """
 _LINKS_SQL = """
 select oe.source_record_id::text as source_record_id, oe.opportunity_id::text as opportunity_id,
-       sr.payload ->> 'gmail_thread_id' as thread_id
+       sr.payload ->> 'gmail_thread_id' as thread_id, sr.payload ->> 'sender' as sender
   from crm.opportunity_evidence oe
   join evidence.source_record sr on sr.id = oe.source_record_id
  where oe.unlinked_at is null and oe.source_record_id is not null
@@ -207,10 +214,14 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
     links = rows()
     linked_cases: dict[str, list[str]] = {}
     case_threads: dict[str, set[str]] = {}
+    case_people: dict[str, set[str]] = {}
     for link in links:
         linked_cases.setdefault(link["source_record_id"], []).append(link["opportunity_id"])
         if link["thread_id"]:
             case_threads.setdefault(link["opportunity_id"], set()).add(link["thread_id"])
+        for address in addresses([link.get("sender")]):
+            if domain_of(address) not in OWN_DOMAINS:
+                case_people.setdefault(link["opportunity_id"], set()).add(address)
 
     cur.execute(_CAMPAIGN_THREADS_SQL)
     campaign_threads = {r[0] for r in cur.fetchall()}
@@ -265,7 +276,8 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
         CaseState(id=r["id"], title=r["title"], stage=r["stage"], version=int(r["version"]),
                   organization_id=r["organization_id"], closed=bool(r["closed"]),
                   thread_ids=tuple(sorted(case_threads.get(r["id"], ()))),
-                  quotes=tuple(by_case.get(r["id"], ())))
+                  quotes=tuple(by_case.get(r["id"], ())),
+                  people=tuple(sorted(case_people.get(r["id"], ()))))
         for r in rows()
     )
 
@@ -279,8 +291,19 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
 
     cur.execute(_APPLIED_EVIDENCE_SQL, (APPLY_COMMAND,))
     applied = frozenset(r[0] for r in cur.fetchall() if r[0])
+
+    # R11: the pending forwarded requests, their copies merged as «Hoy» shows them.
+    cur.execute(forwarded_requests.READ_SQL)
+    forwards = []
+    for g in forwarded_requests.group_forwards(rows()):
+        c = g["customer"]
+        forwards.append(ForwardRequest(id=g["id"], ids=tuple(g["ids"]), customer_email=c.get("email"),
+                                       customer_name=c.get("name"), company=c.get("company"),
+                                       requested_item=g.get("requested_item"), origins=tuple(g.get("origins") or ())))
+        display[g["id"]] = {"subject": f"Reenviado: {g.get('requested_item') or c.get('email') or ''}",
+                            "sent_at": g.get("received_at"), "direction": "inbound"}
     return Snapshot(evidence=tuple(evidence), cases=cases, organizations=organizations,
-                    applied_evidence_ids=applied), display
+                    applied_evidence_ids=applied, forwards=tuple(forwards)), display
 
 
 # ─────────────────────────────────────────────────────────────── the repository ──
@@ -592,6 +615,22 @@ class MailRulesRepository(V2CaseCommandRepository):
         if rule in ("R1", "R2", "R5", "R6", "R9"):
             for link_id in created.get("opportunity_evidence_ids") or []:
                 run(UNLINK_CASE_EVIDENCE, {"opportunity_evidence_id": link_id, "reason": note, "note": note})
+        if rule == "R11":
+            forwards = created.get("forwarded_request_ids") or []
+            if created.get("opportunity_id"):
+                # A request R11 opened: it was not one. Closed as a correction, never reopened.
+                run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": self._case_version(cur, case_id),
+                                         "stage": "abandoned", "close_reason": DISCARDED_BY_CORRECTION, "note": note})
+                if created.get("organization_id"):
+                    kept = self._retire_mail_organization(cur, created["organization_id"], action, note, run)
+                forwarded_requests.set_forward_status(cur, forwards, "rejected")
+                done.append({"command": "forwarded_request_rejected", "forwarded_request_ids": forwards})
+            else:
+                # It joined the wrong case: unlinked, and back in «Solicitudes reenviadas» for a person.
+                for link_id in created.get("opportunity_evidence_ids") or []:
+                    run(UNLINK_CASE_EVIDENCE, {"opportunity_evidence_id": link_id, "reason": note, "note": note})
+                forwarded_requests.set_forward_status(cur, forwards, "pending")
+                done.append({"command": "forwarded_request_pending", "forwarded_request_ids": forwards})
         if rule in ("R3", "R4", "R7", "R10"):
             if rule in ("R3", "R4", "R10") and created.get("quote_revision_id"):
                 cur.execute("select version, status from crm.quote_revision where id = %s",
@@ -669,6 +708,8 @@ class MailRulesRepository(V2CaseCommandRepository):
             UNLINK_CASE_EVIDENCE: MailRulesRepository._unlink_case_evidence,
             CORRECT_CASE_STAGE: MailRulesRepository._correct_case_stage,
             LINK_AFTER_CLOSE: MailRulesRepository._link_after_close,
+            ATTACH_FORWARD: forwarded_requests.attach_forward_to_case,
+            CREATE_REQUEST_FROM_FORWARD_STEP: forwarded_requests.create_request_from_forward,
         }
         if command not in local:
             raise CommandRefused(500, "unknown_step", f"no handler for step '{command}'")
@@ -862,6 +903,13 @@ def _absorb(ctx: dict[str, Any], created: dict[str, Any], command: str, result: 
         created["opportunity_id"] = result["opportunity_id"]
     elif command in (LINK_CASE_EVIDENCE, LINK_AFTER_CLOSE):
         created["opportunity_evidence_ids"].append(result["opportunity_evidence_id"])
+    if command in (ATTACH_FORWARD, CREATE_REQUEST_FROM_FORWARD_STEP):
+        created["opportunity_evidence_ids"].extend(result.get("opportunity_evidence_ids") or [])
+        created["forwarded_request_ids"] = list(result.get("forwarded_request_ids") or [])
+    if command == CREATE_REQUEST_FROM_FORWARD_STEP:
+        created["opportunity_id"] = result["opportunity_id"]
+        if result.get("organization_created"):
+            created["organization_id"] = result["organization_id"]
     if command == RECORD_HISTORICAL_QUOTATION:
         created["quote_revision_id"] = result["quote_revision_id"]
         created["quote_id"] = result["quote_id"]

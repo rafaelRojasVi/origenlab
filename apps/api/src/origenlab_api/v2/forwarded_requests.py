@@ -145,7 +145,7 @@ def create_request_from_forward(repo: Any, cur: Any, operator: OperatorIdentity,
         "title": f"Solicitud — {item}"[:200], "origin_source_record_id": lead["id"], "note": note}, receipt_id)
     case_id, version = opened["opportunity_id"], int(opened["opportunity_version"])
 
-    organization_id = None
+    organization_id, organization_created = None, False
     if fields.get("organization_id") is not None:
         organization_id, organization_version = fields["organization_id"], int(fields["organization_version"])
     elif fields.get("new_organization_name"):
@@ -160,6 +160,7 @@ def create_request_from_forward(repo: Any, cur: Any, operator: OperatorIdentity,
             made = register_machine_organization(repo, cur, operator, {
                 "name": name, "domain": None, "origin_source_record_id": lead["id"], "note": note}, receipt_id)
             organization_id, organization_version = made["organization_id"], int(made["organization_version"])
+            organization_created = True
     if organization_id is not None:
         added = repo._add_case_organization(cur, operator, {
             "opportunity_id": case_id, "opportunity_version": version, "organization_id": organization_id,
@@ -167,17 +168,51 @@ def create_request_from_forward(repo: Any, cur: Any, operator: OperatorIdentity,
             "supplier_exception_reason": None, "note": note}, receipt_id)
         version = int(added["opportunity_version"])
 
-    # The emails it was read from: only our own copies, never the Labdelivery mailbox's.
-    linked = []
+    links = _link_our_copies(repo, cur, operator, case_id, version, members, note, receipt_id)
+    _customer_note(repo, cur, operator, case_id, p, members, receipt_id)
+    _mark(cur, [m["id"] for m in members], "promoted")
+    return {"command": CREATE_REQUEST_FROM_FORWARD, "opportunity_id": case_id, "opportunity_version": version,
+            "organization_id": organization_id, "organization_created": organization_created,
+            "linked_emails": len(links), "opportunity_evidence_ids": links,
+            "forwarded_request_ids": sorted(m["id"] for m in members)}
+
+
+def attach_forward_to_case(repo: Any, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
+                           receipt_id: str) -> dict[str, Any]:
+    """R11 (`mail_rules.py`): a forwarded request for a customer who already has an open case joins
+    that case — our own copies linked, the customer's details as a note, every copy `promoted`."""
+    lead, members = _group_for(cur, fields["forwarded_request_id"])
+    case_id = str(fields["opportunity_id"])
+    cur.execute("select version, closed_at is not null from crm.opportunity where id = %s for update", (case_id,))
+    row = cur.fetchone()
+    if row is None:
+        raise CommandRefused(404, "case_not_found", "no such commercial case")
+    if row[1]:
+        raise CommandRefused(409, "case_is_closed", "a forwarded request joins an open case only")
+    links = _link_our_copies(repo, cur, operator, case_id, int(row[0]), members, fields["note"], receipt_id)
+    _customer_note(repo, cur, operator, case_id, _payload(lead), members, receipt_id)
+    _mark(cur, [m["id"] for m in members], "promoted")
+    return {"command": "attach_forward_to_case", "opportunity_id": case_id, "opportunity_version": int(row[0]),
+            "opportunity_evidence_ids": links, "forwarded_request_ids": sorted(m["id"] for m in members)}
+
+
+def _link_our_copies(repo: Any, cur: Any, operator: OperatorIdentity, case_id: str, version: int,
+                     members: Sequence[Mapping[str, Any]], note: str, receipt_id: str) -> list[str]:
+    """The emails it was read from: only our own copies, never the Labdelivery mailbox's."""
+    links = []
     for m in members:
         mp = _payload(m)
         if mp.get("origin") == "labdelivery" or not mp.get("forwarded_message_id"):
             continue
-        repo._link_case_evidence(cur, operator, {
+        linked = repo._link_case_evidence(cur, operator, {
             "opportunity_id": case_id, "opportunity_version": version, "source_record_id": mp["forwarded_message_id"],
             "relation": "mentions", "note": note}, receipt_id)
-        linked.append(mp["forwarded_message_id"])
+        links.append(linked["opportunity_evidence_id"])
+    return links
 
+
+def _customer_note(repo: Any, cur: Any, operator: OperatorIdentity, case_id: str, p: Mapping[str, Any],
+                   members: Sequence[Mapping[str, Any]], receipt_id: str) -> None:
     details = [f"Solicitud reenviada por correo ({', '.join(sorted({str(_payload(m).get('origin')) for m in members}))})."]
     for label, key in (("Contacto", "original_name"), ("Correo", "original_email"), ("Institución", "company"),
                        ("RUT", "rut"), ("Teléfono", "phone"), ("Pide", "requested_item")):
@@ -190,10 +225,12 @@ def create_request_from_forward(repo: Any, cur: Any, operator: OperatorIdentity,
     repo._append_event(cur, aggregate_kind="note", aggregate_id=note_id, event_type="note.created",
                        payload={"subject_kind": "opportunity", "subject_id": case_id},
                        operator=operator, receipt_id=receipt_id)
-    _mark(cur, [m["id"] for m in members], "promoted")
-    return {"command": CREATE_REQUEST_FROM_FORWARD, "opportunity_id": case_id, "opportunity_version": version,
-            "organization_id": organization_id, "linked_emails": len(linked),
-            "forwarded_request_ids": sorted(m["id"] for m in members)}
+
+
+def set_forward_status(cur: Any, ids: Sequence[str], status: str) -> None:
+    """«Quitar» on an R11 action: back to `pending` (a joined case was wrong) or `rejected` (not a request)."""
+    cur.execute("update evidence.source_record set review_status = %s, updated_at = now() "
+                "where id = any(%s::uuid[]) and kind = 'forwarded_request'", (status, list(ids)))
 
 
 def dismiss_forwarded_request(repo: Any, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
