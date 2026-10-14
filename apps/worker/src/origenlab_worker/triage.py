@@ -228,15 +228,17 @@ class TriageDb:
 
     def pending_forwards(self, *, since_days: int, limit: int) -> list[str]:
         with self._tx() as cur:
-            cur.execute(_FORWARD_PENDING, (since_days, FORWARDED_VALUE_NORM, limit))
+            cur.execute(_FORWARD_PENDING, (since_days, limit))
             return [row[0] for row in cur.fetchall()]
 
     def record_forward(self, source_record_id: str, value: dict[str, Any]) -> None:
-        """The forwarded-request reading (`forwarded:v1`); a second write of it is a no-op."""
+        """Who really asked, as an evidence record of its own (`forwarded_request`): the customer
+        fields and the id of the email they were read from — never its text. Once per email."""
         from psycopg.types.json import Jsonb
 
+        payload = {**value, "forwarded_message_id": source_record_id, "reading": FORWARDED_VALUE_NORM}
         with self._tx() as cur:
-            cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", FORWARDED_VALUE_NORM, Jsonb(value)))
+            cur.execute(_INSERT_FORWARD, (f"forwarded_request:{source_record_id}", Jsonb(payload)))
 
     def record(self, source_record_id: str, reading: dict[str, Any],
                mentions: Sequence[tuple[str, dict[str, Any]]],
@@ -443,14 +445,20 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     return TriageResult("recorded", verdict.triage_class, state, written)
 
 
+_INSERT_FORWARD = """
+insert into evidence.source_record (kind, dedupe_key, payload)
+values ('forwarded_request', %s, %s)
+on conflict (dedupe_key) do nothing
+"""
+
 _FORWARD_PENDING = """
 select sr.id::text
   from evidence.source_record sr
  where sr.kind = 'gmail_message'
    and sr.created_at > now() - make_interval(days => %s)
    and coalesce(sr.payload->>'subject_raw', '') ~* '^\\s*((re|aw)\\s*:\\s*)*(rv|fw|fwd|tr|reenv(iado)?)\\s*:'
-   and not exists (select 1 from evidence.assertion a where a.source_record_id = sr.id
-                    and a.kind = 'message_triage' and a.value_norm = %s)
+   and not exists (select 1 from evidence.source_record f
+                    where f.dedupe_key = 'forwarded_request:' || sr.id::text)
  order by sr.created_at desc
  limit %s
 """

@@ -306,6 +306,9 @@ def test_a_captured_forward_is_read_for_who_asked_by_the_triage_and_the_backfill
         assert backfill_forwards(db, store, [sid], apply=False)["readable"] == 1
         triage_one(db, store, sid, ModelSettings(None, DEFAULT_MODEL))
         assert sid not in db.pending_forwards(since_days=36500, limit=500)
-    [(value,)] = owner_rows(dsn, "select value from evidence.assertion where source_record_id = %s and "
-                                 "kind = 'message_triage' and value_norm = %s", (sid, FORWARDED_VALUE_NORM))
-    assert value["original_email"] == "pedro@universidad-ficticia.cl" and value["origin"] == "origenlab"
+    # One evidence record of its own: the customer's fields and the email it was read from — no body.
+    [(kind, status, payload)] = owner_rows(dsn, "select kind, review_status, payload from evidence.source_record "
+                                                "where dedupe_key = %s", (f"forwarded_request:{sid}",))
+    assert (kind, status) == ("forwarded_request", "pending")
+    assert payload["original_email"] == "pedro@universidad-ficticia.cl" and payload["origin"] == "origenlab"
+    assert payload["forwarded_message_id"] == sid and payload["reading"] == FORWARDED_VALUE_NORM
