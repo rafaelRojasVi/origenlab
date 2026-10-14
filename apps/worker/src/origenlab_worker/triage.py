@@ -35,6 +35,7 @@ from origenlab_worker.catalog_match import ProductCandidate, match_products, mod
 from origenlab_worker.drive_filing import storage_key
 from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM, is_candidate, read_forward
 from origenlab_worker.mail_text import MailText, parse_mail
+from origenlab_worker.quote_refs import QUOTE_REFS_VALUE_NORM, read_quote_refs
 from origenlab_worker.storage import StorageError
 from origenlab_worker.triage_model import (
     LinkedCase,
@@ -225,6 +226,20 @@ class TriageDb:
                 _INSERT_ASSERTION,
                 (source_record_id, "message_triage", REQUESTER_VALUE_NORM, Jsonb(requester)),
             )
+
+    def pending_quote_refs(self, *, since_days: int, limit: int) -> list[str]:
+        """Captured emails of the last days the quote-number reading has not seen yet."""
+        with self._tx() as cur:
+            cur.execute(_QUOTE_REFS_PENDING, (since_days, QUOTE_REFS_VALUE_NORM, limit))
+            return [row[0] for row in cur.fetchall()]
+
+    def record_quote_refs(self, source_record_id: str, tokens: Sequence[str]) -> None:
+        """The quote tokens the body names — possibly none, so the email is not read again."""
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", QUOTE_REFS_VALUE_NORM,
+                                            Jsonb({"version": 1, "tokens": list(tokens)})))
 
     def pending_forwards(self, *, since_days: int, limit: int) -> list[str]:
         with self._tx() as cur:
@@ -442,13 +457,58 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     if verdict.triage_class == "bounce":
         db.record_delivery_failure(message.source_record_id, analyze_bounce(raw))
     record_forward_reading(db, message.source_record_id, raw, mail.sender, mail.subject)
+    record_quote_refs(db, message.source_record_id, mail)
     return TriageResult("recorded", verdict.triage_class, state, written)
+
+
+def record_quote_refs(db: Any, source_record_id: str, mail: MailText) -> bool:
+    """`quote_refs:v1` (`quote_refs.py`), isolated like the forward reading: a failure here is
+    logged by class and swallowed, never the triage's."""
+    try:
+        db.record_quote_refs(source_record_id, read_quote_refs(mail.subject, mail.body))
+        return True
+    except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage
+        logger.warning("quote reference reading skipped: %s", type(exc).__name__)
+        return False
+
+
+def backfill_quote_refs(db: Any, store: EmlStore, source_record_ids: Sequence[str], *, apply: bool) -> dict[str, int]:
+    """Emails captured before `quote_refs:v1` existed, read for the quote numbers their body names —
+    nothing else: no triage, no model. A dry run reads and counts, writes nothing."""
+    counts = {"found": len(source_record_ids), "with_numbers": 0, "recorded": 0, "skipped": 0}
+    for sid in source_record_ids:
+        loaded = db.load(sid)
+        if loaded is None or not loaded[0].eml_storage_path:
+            counts["skipped"] += 1
+            continue
+        try:
+            mail = parse_mail(store.get(storage_key(loaded[0].eml_storage_path)))
+        except Exception:  # noqa: BLE001 - one unreadable message is skipped, never fatal
+            counts["skipped"] += 1
+            continue
+        tokens = read_quote_refs(mail.subject, mail.body)
+        counts["with_numbers"] += 1 if tokens else 0
+        if apply:
+            db.record_quote_refs(sid, tokens)
+            counts["recorded"] += 1
+    return counts
 
 
 _INSERT_FORWARD = """
 insert into evidence.source_record (kind, dedupe_key, payload)
 values ('forwarded_request', %s, %s)
 on conflict (dedupe_key) do nothing
+"""
+
+_QUOTE_REFS_PENDING = """
+select sr.id::text
+  from evidence.source_record sr
+ where sr.kind = 'gmail_message'
+   and sr.created_at > now() - make_interval(days => %s)
+   and not exists (select 1 from evidence.assertion a
+                    where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s)
+ order by sr.created_at desc
+ limit %s
 """
 
 _FORWARD_PENDING = """
@@ -546,5 +606,6 @@ class SweepCounts:
 
 
 __all__ = ["DEFAULT_SINCE_DAYS", "OUTCOMES", "VALUE_NORM", "REQUESTER_VALUE_NORM", "ModelSettings",
+           "backfill_quote_refs", "record_quote_refs",
            "ModelUnavailable", "is_permanent_api_error", "PendingMessage", "SweepCounts", "TriageDb",
            "TriageResult", "match_requester_organization", "mentions_for", "reading_value", "triage_one"]

@@ -107,3 +107,18 @@ def test_forward_backfill_without_settings_is_a_config_refusal(capsys) -> None:
     code = run_forward_backfill(SimpleNamespace(apply=False, since_days=60, limit=10), {}, time.monotonic())
     line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert code == 3 and line["event"] == "forward_backfill" and line["mode"] == "config_refused"
+
+
+def test_quote_refs_backfill_without_settings_is_a_config_refusal_and_the_cli_knows_it(capsys) -> None:
+    import json
+    import time
+    from types import SimpleNamespace
+
+    from origenlab_worker.cli import _parser as build_parser
+    from origenlab_worker.triage_cli import run_quote_refs_backfill
+
+    args = build_parser().parse_args(["quote-refs-backfill", "--since-days", "30", "--apply"])
+    assert (args.command, args.since_days, args.apply) == ("quote-refs-backfill", 30, True)
+    code = run_quote_refs_backfill(SimpleNamespace(apply=False, since_days=30, limit=10), {}, time.monotonic())
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert code == 3 and line["event"] == "quote_refs_backfill" and line["mode"] == "config_refused"

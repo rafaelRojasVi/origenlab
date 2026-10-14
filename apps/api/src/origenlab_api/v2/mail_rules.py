@@ -290,13 +290,24 @@ _SUBJECT_QUOTE_NUMBER = re.compile(
 )
 
 
+def quote_number_tokens(text: str | None) -> list[str]:
+    """Each quote number a line of text names (`_SUBJECT_QUOTE_NUMBER`), as typed, upper-cased, in
+    order: «CN01259», «01259-26». The worker reads the email body with it (`quote_refs:v1`)."""
+    return [(("CN" + m.group(1)) if m.group(1) else (m.group(2) or "")).upper()
+            for m in _SUBJECT_QUOTE_NUMBER.finditer(text or "")]
+
+
 def subject_quote_keys(subject: str | None, sent_at: str | None) -> dict[tuple[int, int], str]:
     """(year, correlative) → token for each quote number a subject line names
     (`_SUBJECT_QUOTE_NUMBER`), read like a PDF token (`gmail_quote_key`: the dropped leading
     zero of a CN token is restored; a CN token without a year takes the email's Santiago year)."""
+    return token_quote_keys(quote_number_tokens(subject), sent_at)
+
+
+def token_quote_keys(tokens: Iterable[str], sent_at: str | None) -> dict[tuple[int, int], str]:
+    """(year, correlative) → token, for tokens as `quote_number_tokens` reads them."""
     out: dict[tuple[int, int], str] = {}
-    for m in _SUBJECT_QUOTE_NUMBER.finditer(subject or ""):
-        token = ("CN" + m.group(1)) if m.group(1) else (m.group(2) or "")
+    for token in tokens:
         key = gmail_quote_key(token, sent_at)
         if key is not None:
             out.setdefault(key, token.upper())
@@ -1158,5 +1169,6 @@ __all__ = [
     "OWN_DOMAINS", "PROPOSAL", "PURCHASE_ORDER_NUMBER", "PURCHASE_ORDER_PHRASES", "QUOTE_REQUEST_WORDS",
     "RULE_IDS", "SYSTEM_LABEL", "CaseQuote", "CaseState", "MailDocument", "MailEvidence", "Organization",
     "PlannedAction", "QuoteRevision", "Snapshot", "addresses", "canonical_quote_number", "domain_of", "fold",
-    "gmail_quote_key", "mail_direction", "plan", "quote_key", "santiago_year",
+    "gmail_quote_key", "mail_direction", "plan", "quote_key", "quote_number_tokens", "santiago_year",
+    "token_quote_keys",
 ]
