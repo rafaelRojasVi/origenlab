@@ -99,6 +99,8 @@ export interface Reply {
   card: OpportunityCardData;
   at: string;
   url: string | null;
+  /** Other open cases whose newest client email is this same email (one Gmail thread, several quotes). */
+  others: OpportunityCardData[];
 }
 
 export function repliesToAnswer(cards: OpportunityCardData[], now: Date): Reply[] {
@@ -110,7 +112,10 @@ export function repliesToAnswer(cards: OpportunityCardData[], now: Date): Reply[
     // On a won case a task is refused, so «Atendido» leaves a note instead; on an open case only a
     // task answers («No requiere respuesta»): an internal note must never hide a client's email.
     if (answeredByTask(card, conv.at, now) || (wroteAfterWinning(card) && notedAfter(card, conv.at))) continue;
-    out.push({ card, at: conv.at, url: conv.url });
+    // One email answering several cases (they share a thread) is one row naming them all.
+    const same = conv.url ? out.find((r) => r.url === conv.url && r.at === conv.at) : undefined;
+    if (same) same.others.push(card);
+    else out.push({ card, at: conv.at, url: conv.url, others: [] });
   }
   return out.sort((a, b) => b.at.localeCompare(a.at));
 }

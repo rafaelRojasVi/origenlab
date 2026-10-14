@@ -12,10 +12,16 @@ import { OperacionesPage } from "./OperacionesPage";
 const PAYLOAD: OperationsPayload = {
   generated_at: "2026-10-13T12:00:00+00:00",
   actions_today: 1,
-  counts: { cases_without_institution: 2, institutions_por_confirmar: 3, sent_quotes_without_case: 1 },
+  counts: { cases_without_institution: 2, institutions_por_confirmar: 3, sent_quotes_without_case: 1,
+            sent_quotes_unrecorded_on_case: 1 },
   sent_quotes_without_case: [
     { source_record_id: "s-1", quote_number: "09877-26", sent_at: "2026-10-01T15:00:00+00:00", thread_id: "hilo-1",
       suggested_institution: "Instituto Ficticio (IF)" },
+  ],
+  sent_quotes_unrecorded_on_case: [
+    { source_record_id: "s-2", quote_number: "09251-26", sent_at: "2026-09-30T16:57:00+00:00", thread_id: "hilo-2",
+      case_id: "caso-9", case_title: "Cotización 09176-26 — Empresa Ficticia", case_version: 4,
+      organization_name: "Empresa Ficticia" },
   ],
   cards: [
     { key: "correo", title: "Correo", status: "ok", summary: "Última lectura hace 1 min · 4 correos hoy",
@@ -143,6 +149,19 @@ describe("Operaciones · cotizaciones enviadas sin caso", () => {
     fireEvent.click(screen.getByRole("button", { name: "Completar" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("oportunidades", "caso-nuevo"));
     expect(completed[0]).toMatchObject({ source_record_id: "s-1", new_organization_name: "Instituto Ficticio (IF)" });
+  });
+
+  it("lists a quote sent on a case's email but never recorded, and records it on that case", async () => {
+    respond();
+    const navigate = vi.fn();
+    renderOps("sales", undefined, navigate);
+    fireEvent.click(await screen.findByRole("button", { name: "Por decidir" }));
+    expect(screen.getByText(/Cotización 09251-26/).closest("li")).toHaveTextContent("en Cotización 09176-26 — Empresa Ficticia");
+    fireEvent.click(screen.getByRole("button", { name: "Registrar la cotización 09251-26 en su caso" }));
+    expect(screen.getByLabelText("Institución")).toHaveValue("Empresa Ficticia");
+    fireEvent.click(screen.getByRole("button", { name: "Completar" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("oportunidades", "caso-nuevo"));
+    expect(completed[0]).toMatchObject({ source_record_id: "s-2", opportunity_id: "caso-9", opportunity_version: 4 });
   });
 
   it("does not offer it to a viewer", async () => {

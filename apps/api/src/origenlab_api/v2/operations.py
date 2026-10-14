@@ -230,6 +230,33 @@ select sr.id::text, m.internal_date, m.provider_thread_id, a.filename
  order by m.internal_date desc
  limit 200
 """
+#: Quotes contacto@ sent in the last 60 days on an email that IS linked to exactly one open case,
+#: but whose number no case records — e.g. a second quote sent on a thread the rules had already
+#: linked before they learned to record one (Arcegon 01251-26). The case and its requesting
+#: institution come along so «Registrar en el caso» needs nothing typed.
+_SENT_ON_CASE_SQL = """
+select sr.id::text, m.internal_date, m.provider_thread_id, a.filename,
+       o.id::text, o.title, o.version, org.name
+  from comms.message m
+  join comms.attachment a on a.message_id = m.id
+  join evidence.source_record sr on sr.dedupe_key = 'gmail_message:' || m.provider_message_id
+                                and sr.kind = 'gmail_message'
+  join lateral (select oe.opportunity_id from crm.opportunity_evidence oe
+                  join crm.opportunity x on x.id = oe.opportunity_id and x.closed_at is null
+                 where oe.unlinked_at is null and (oe.source_record_id = sr.id or oe.message_id = m.id)
+                 group by oe.opportunity_id) linked on true
+  join crm.opportunity o on o.id = linked.opportunity_id
+  left join crm.organization org on org.id = o.organization_id
+ where m.direction = 'outbound' and m.internal_date > now() - interval '60 days'
+   and a.filename ~* '^\\s*(CN|COT)\\s*-?\\s*\\d+.*\\.pdf$'
+   and exists (select 1 from comms.message_participant p where p.message_id = m.id
+                and p.role = 'from' and p.address_norm = 'contacto@origenlab.cl')
+   and (select count(distinct oe2.opportunity_id) from crm.opportunity_evidence oe2
+          join crm.opportunity y on y.id = oe2.opportunity_id and y.closed_at is null
+         where oe2.unlinked_at is null and (oe2.source_record_id = sr.id or oe2.message_id = m.id)) = 1
+ order by m.internal_date desc
+ limit 200
+"""
 _QUOTE_NUMBERS_SQL = "select quote_number from crm.quote"
 _FILE_TOKEN = re.compile(r"^\s*(CN|COT)\s*-?\s*(\d+)", re.IGNORECASE)
 SENT_QUOTES_LIMIT = 20
@@ -259,6 +286,19 @@ def sent_quote_items(rows: list[Mapping[str, Any]], existing_numbers: set[str]) 
                        # The institution part only (legal form / kind / «(SIGLA)»), never a person.
                        "suggested_institution": institution_segment(quote_file_institution(r.get("filename")))}
     return list(out.values())[:SENT_QUOTES_LIMIT]
+
+
+def unrecorded_on_case_items(rows: list[Mapping[str, Any]], existing_numbers: set[str]) -> list[dict[str, Any]]:
+    """As `sent_quote_items`, for a quote sent on an email already linked to one open case: one row
+    per number not yet a CRM quote, with the case it belongs on. No file name leaves."""
+    base = {r["source_record_id"]: r for r in rows}
+    out = []
+    for item in sent_quote_items(rows, existing_numbers):
+        r = base[item["source_record_id"]]
+        out.append({k: item[k] for k in ("source_record_id", "quote_number", "sent_at", "thread_id")}
+                   | {"case_id": r["case_id"], "case_title": r["case_title"], "case_version": r["case_version"],
+                      "organization_name": r["organization_name"]})
+    return out
 
 
 _COUNTS_SQL = """
@@ -329,6 +369,11 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
 
     existing = {canonical_quote_number(k) for (q,) in cur.fetchall() if (k := quote_key(q, None)) is not None}
     sent_quotes = sent_quote_items(sent_rows, existing)
+    cur.execute(_SENT_ON_CASE_SQL)
+    on_case_rows = [{"source_record_id": sid, "sent_at": _iso(at), "thread_id": thread, "filename": name,
+                     "case_id": case_id, "case_title": title, "case_version": version, "organization_name": org}
+                    for sid, at, thread, name, case_id, title, version, org in cur.fetchall()]
+    unrecorded_on_case = unrecorded_on_case_items(on_case_rows, existing)
     cur.execute(_COUNTS_SQL)
     no_institution, por_confirmar = cur.fetchone()
     return {
@@ -344,8 +389,10 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
                   "today": int(d_today or 0), "newest_at": _iso(d_newest), "events": []},
         "actions": actions,
         "sent_quotes_without_case": sent_quotes,
+        "sent_quotes_unrecorded_on_case": unrecorded_on_case,
         "counts": {"cases_without_institution": int(no_institution), "institutions_por_confirmar": int(por_confirmar),
-                   "sent_quotes_without_case": len(sent_quotes)},
+                   "sent_quotes_without_case": len(sent_quotes),
+                   "sent_quotes_unrecorded_on_case": len(unrecorded_on_case)},
     }
 
 
@@ -359,6 +406,7 @@ def build_operations(facts: Mapping[str, Any], generated_at: str) -> dict[str, A
         "actions": list(facts["actions"]),
         "actions_today": sum(1 for a in facts["actions"] if a.get("today")),
         "sent_quotes_without_case": list(facts.get("sent_quotes_without_case") or []),
+        "sent_quotes_unrecorded_on_case": list(facts.get("sent_quotes_unrecorded_on_case") or []),
         "counts": dict(facts["counts"]),
     }
 

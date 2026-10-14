@@ -12,6 +12,7 @@ import {
   type OpsAction,
   type OpsCard,
   type OpsStatus,
+  type SentQuoteUnrecordedOnCase,
   type SentQuoteWithoutCase,
 } from "../operations";
 import { Badge, Button, EmptyState, ExternalLink, PageHeader, Panel, ResourceGate, Segmented, Skeleton, fmtDateTime } from "../ui";
@@ -286,6 +287,7 @@ function ToDecide({
       </ul>
       <p className="px-3 pb-2 text-[11px] text-ink-faint">Pronto: una sola lista con «Aceptar» y «Descartar» para cada decisión.</p>
       <SentQuotesWithoutCase items={data.sent_quotes_without_case ?? []} navigate={navigate} />
+      <SentQuotesUnrecordedOnCase items={data.sent_quotes_unrecorded_on_case ?? []} navigate={navigate} />
     </Panel>
   );
 }
@@ -334,6 +336,67 @@ function SentQuotesWithoutCase({ items, navigate }: {
                   sourceRecordId={q.source_record_id}
                   quoteNumber={q.quote_number}
                   suggestion={q.suggested_institution}
+                  onDone={(caseId) => navigate("oportunidades", caseId)}
+                />
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Quotes contacto@ sent on an email the rules already linked to one open case, but whose number no
+ * case records: a second quote on the same thread, linked before the rules learned to record it
+ * (e.g. 4 balances quoted on the thread of an earlier 1-balance quote). «Registrar en el caso»
+ * records it on that case with `CompleteSentQuote`, the case's institution prefilled.
+ */
+function SentQuotesUnrecordedOnCase({ items, navigate }: {
+  items: SentQuoteUnrecordedOnCase[];
+  navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
+}) {
+  const mayOpen = useMayRunCaseCommands();
+  const [open, setOpen] = useState<string | null>(null);
+  if (!items.length) return null;
+  return (
+    <div className="border-t border-line">
+      <h3 className="px-3 pt-2 text-[12px] font-semibold text-ink">Cotizaciones enviadas en un caso, sin registrar · {items.length}</h3>
+      <p className="px-3 text-[11px] text-ink-muted">
+        El correo ya está en el caso, pero su número de cotización no quedó registrado. «Registrar en el caso» la agrega
+        como cotización enviada.
+      </p>
+      <ul className="divide-y divide-line text-[13px]">
+        {items.map((q) => {
+          const gmail = q.thread_id ? inSharedMailbox(`https://mail.google.com/mail/u/0/#all/${q.thread_id}`) : null;
+          return (
+            <li key={q.source_record_id} className="space-y-2 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="flex-1">
+                  <span className="tabular-nums">Cotización {q.quote_number}</span> · enviada {fmtDateTime(q.sent_at)} · en{" "}
+                  <button type="button" className="text-brand-700 hover:underline" onClick={() => navigate("oportunidades", q.case_id)}>
+                    {q.case_title}
+                  </button>
+                </span>
+                {gmail ? <ExternalLink href={gmail}>Gmail</ExternalLink> : null}
+                {mayOpen ? (
+                  <Button
+                    variant={open === q.source_record_id ? "quiet" : "primary"}
+                    aria-label={`Registrar la cotización ${q.quote_number} en su caso`}
+                    aria-expanded={open === q.source_record_id}
+                    onClick={() => setOpen(open === q.source_record_id ? null : q.source_record_id)}
+                  >
+                    {open === q.source_record_id ? "Cerrar" : "Registrar en el caso"}
+                  </Button>
+                ) : null}
+              </div>
+              {open === q.source_record_id ? (
+                <CompleteSentQuote
+                  sourceRecordId={q.source_record_id}
+                  quoteNumber={q.quote_number}
+                  suggestion={q.organization_name}
+                  opportunity={{ id: q.case_id, version: q.case_version }}
                   onDone={(caseId) => navigate("oportunidades", caseId)}
                 />
               ) : null}

@@ -271,6 +271,8 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     "catalog.product_document.product_document_supplier_organization_id_fkey",
     "catalog.product_document.product_document_origin_source_record_id_fkey",
     "catalog.product_document.product_document_created_by_operator_id_fkey",
+    # 20261014100000_slice7_catalog_product_merge.sql — covered by the plain product_merged_into_idx.
+    "catalog.product.product_merged_into_product_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -282,7 +284,7 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 # campaign-block keys, the eight sign-in keys, the sixteen slice-6 keys and the
 # ten slice-7 catalog and document-line keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 49
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 50
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY

@@ -74,8 +74,11 @@ select md5(concat_ws('|',
 _INDEX_SQL = """
 select p.id::text, p.model_number, p.model_key, coalesce(p.name_es, p.name, p.model_number), p.category_es,
        p.product_kind, m.name,
-       coalesce((select array_agg(distinct sp.supplier_organization_id::text)
-                   from catalog.supplier_product sp where sp.product_id = p.id), '{}'),
+       coalesce((select array_agg(distinct coalesce(so.merged_into_organization_id, so.id)::text)
+                   from catalog.supplier_product sp
+                   join crm.organization so on so.id = sp.supplier_organization_id
+                  where sp.product_id = p.id or sp.product_id in
+                        (select d.id from catalog.product d where d.merged_into_product_id = p.id)), '{}'),
        (select i.id::text from catalog.product_image i where i.product_id = p.id and i.status <> 'hidden'
          order by i.sort_order, i.created_at, i.id limit 1),
        exists (select 1 from catalog.product_document d where d.product_id = p.id
@@ -193,9 +196,10 @@ class V2CatalogReads:
                 "select sp.id, sp.as_of, sp.price, sp.currency, sp.price_kind, sp.list_price, sp.discount_pct, "
                 "sp.incoterm, sp.valid_until, sp.min_qty, sp.is_stale, sp.source_document, sp.provenance_note, "
                 "sp.created_at, o.id as supplier_id, o.name as supplier_name "
-                "from catalog.supplier_product sp join crm.organization o on o.id = sp.supplier_organization_id "
-                "where sp.product_id = %s order by sp.as_of desc, sp.created_at desc, sp.id desc",
-                (product_id,),
+                "from catalog.supplier_product sp join crm.organization raw on raw.id = sp.supplier_organization_id "
+                "join crm.organization o on o.id = coalesce(raw.merged_into_organization_id, raw.id) "
+                "where (sp.product_id = %s or sp.product_id in (select id from catalog.product where merged_into_product_id = %s)) order by sp.as_of desc, sp.created_at desc, sp.id desc",
+                (product_id, product_id),
             )
             history = []
             for r in self._rows(cur):
@@ -207,8 +211,9 @@ class V2CatalogReads:
             if supplier_ids:
                 cur.execute(
                     "select t.*, o.name as supplier_name from catalog.supplier_terms t "
-                    "join crm.organization o on o.id = t.supplier_organization_id "
-                    "where t.supplier_organization_id = any(%s) order by o.name, t.supplier_organization_id",
+                    "join crm.organization raw on raw.id = t.supplier_organization_id "
+                    "join crm.organization o on o.id = coalesce(raw.merged_into_organization_id, raw.id) "
+                    "where o.id = any(%s) order by o.name, t.supplier_organization_id",
                     (supplier_ids,),
                 )
                 terms = [self._terms_row(r) for r in self._rows(cur)]
@@ -260,10 +265,14 @@ class V2CatalogReads:
         sheets = [{"id": r["id"], "title": r["title"], "url": DRIVE_VIEW_URL.format(r["drive_file_id"]),
                    "as_of": r["as_of"]} for r in self._rows(cur)]
         cur.execute("select d.id, d.title, d.drive_file_id, d.as_of, o.id as supplier_id, o.name as supplier_name "
-                    "from catalog.product_document d join crm.organization o on o.id = d.supplier_organization_id "
-                    "where d.kind = 'price_list' and d.status = 'active' and d.supplier_organization_id in "
-                    "(select supplier_organization_id from catalog.supplier_product where product_id = %s) "
-                    "order by o.name, d.as_of desc nulls last, d.id", (product_id,))
+                    "from catalog.product_document d join crm.organization raw on raw.id = d.supplier_organization_id "
+                    "join crm.organization o on o.id = coalesce(raw.merged_into_organization_id, raw.id) "
+                    "where d.kind = 'price_list' and d.status = 'active' and o.id in "
+                    "(select coalesce(so.merged_into_organization_id, so.id) from catalog.supplier_product sp "
+                    " join crm.organization so on so.id = sp.supplier_organization_id "
+                    " where sp.product_id = %s or sp.product_id in "
+                    "       (select id from catalog.product where merged_into_product_id = %s)) "
+                    "order by o.name, d.as_of desc nulls last, d.id", (product_id, product_id))
         lists = [{"id": r["id"], "title": r["title"], "url": DRIVE_VIEW_URL.format(r["drive_file_id"]),
                   "as_of": r["as_of"], "supplier": {"id": r["supplier_id"], "display_name": r["supplier_name"]}}
                  for r in self._rows(cur)]
@@ -366,7 +375,8 @@ class V2CatalogReads:
             cur.execute(
                 "select o.id, o.name, p.product_kind, count(distinct p.id) as n "
                 "from catalog.supplier_product sp "
-                "join crm.organization o on o.id = sp.supplier_organization_id "
+                "join crm.organization raw on raw.id = sp.supplier_organization_id "
+                "join crm.organization o on o.id = coalesce(raw.merged_into_organization_id, raw.id) "
                 "join catalog.product p on p.id = sp.product_id and p.active "
                 "group by o.id, o.name, p.product_kind order by o.name, p.product_kind"
             )

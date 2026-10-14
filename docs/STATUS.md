@@ -2704,3 +2704,26 @@ image), «Descargas» in the product panel. Importer
 `scripts/catalog/import_product_documents.py` (OPERATIONS §14.6). **Not applied on hosted; no
 documents loaded** — owner steps: apply the migration (psql-as-migrator + ledger row), then plan →
 apply → verify the private manifest (10 entries: 8 price lists, 2 Hielscher data sheets).
+
+### 2.7.111 One maker per brand: duplicate Hielscher and Ortoalresa merged, 2026-10-14 — built, migration not applied
+
+Migration `20261014100000` adds `catalog.product.merged_into_product_id` (a merged product is
+inactive; event `product.merged`; foreign keys **169**, migrations **57**). Tool
+`scripts/catalog/merge_makers.py` (OPERATIONS §14.7): confirms the kept maker, moves or merges the
+duplicate's products, marks the duplicate maker merged; rollback refused (backup). Catalog reads
+follow merges: a product's cost history includes the observations of products merged into it,
+suppliers, index rows and price lists resolve to the kept organization. Planned hosted run:
+«HIELSCHER» and «Hielscher Ultrasonics GmbH» into the CRM's confirmed «Hielscher Ultrasonics» (it
+carries two cases), «Ortoalresa (Alvarez Redondo, S.A.)» into «Ortoalresa»; 16 duplicated models.
+
+### 2.7.112 One email, one row; quotes sent on a case's thread but never recorded, 2026-10-14 — built, deploys on merge
+
+Hoy «Te toca responder» lists a client email once even when it is the newest client email of
+several cases (they share a Gmail thread): the row names the other cases («También en …») and «No
+requiere respuesta» schedules the follow-up on each. Operaciones → Por decidir adds «Cotizaciones
+enviadas en un caso, sin registrar»: a quote PDF contacto@ sent on an email already linked to one
+open case whose number no case records (a second quote sent on a thread the rules had linked before
+R1 learned to record one); «Registrar en el caso» records it there through
+`complete-case-from-sent-quote` with the case named. `GET /v2/workspace/operations` adds
+`sent_quotes_unrecorded_on_case` and its count. Found on Arcegon: 01251-26 (4 + 8 balances) sent on
+the thread of 1176-26 and never recorded.

@@ -2440,6 +2440,19 @@ makers), is `unmatched` in the apply and verify reports and writes nothing — f
 run a new plan. Quote PDFs (`CN…`, `NNNNN-26 rN — …`) and Labdelivery-origin entries are refused at
 plan time. Add a sheet by dropping the PDF in Drive and adding one manifest entry.
 
+### 14.7 Merging a maker loaded twice
+
+`apps/api/scripts/catalog/merge_makers.py` merges a maker that exists under a second name (the
+2026-10-06 supplier-documents import created «Hielscher Ultrasonics GmbH» and «Ortoalresa (Alvarez
+Redondo, S.A.)» next to the price-list makers). Input `{"merges": [{"keep": "…", "drop": "…",
+"rename_to": "…"}]}`; plan → apply → verify with the hosted route of §14.5. Apply confirms the kept
+maker, moves the duplicate's products to it — or, for a model it already carries, switches the
+duplicate off and points it at its twin (`catalog.product.merged_into_product_id`) — and marks the
+duplicate merged (`crm.organization.merged_into_organization_id`); every change is an event and
+nothing is deleted. The catalog reads follow both merges (cost history, supplier list, index,
+price lists). **Rollback is refused**: undo from the pre-apply backup. Run one merge per plan, the
+price-list maker first, so the kept product of each twin pair is the price-list one.
+
 ## 15. Production release contract (PR #679; built, activation blocked)
 
 Schema and code release are one guarded operation: independently approved main merge,
