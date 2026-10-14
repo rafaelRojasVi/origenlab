@@ -1,7 +1,7 @@
 """Quote numbers named in what the sender wrote (spec 2026-10-14, «Hoy» automations).
 
 The API's rules read a subject and attachment names only; a payment notice, an order or a reply
-often names its quote in the body («Transferencia por cotización N°01259-26»). The triage reads
+often names its quote in the body («Transferencia por cotización N°09259-26»). The triage reads
 the sender's own text (no quoted history, no signature: `mail_text.MailText.body`) for the same
 tokens the subject reader knows (`mail_rules.quote_number_tokens`) and stores them as the
 `message_triage` assertion `quote_refs:v1` — the tokens only, never the text. The rules

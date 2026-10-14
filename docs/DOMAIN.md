@@ -659,7 +659,21 @@ else (R7, R8) stays a proposal in Revisión.
   and the quote, undone like R1's. Two institutions, no open case or several open cases stay
   proposals naming the candidates. **R10** — the PDF names an institution the CRM does not hold —
   offers R4's steps with the name instead of a domain (institution «por confirmar», case in
-  «Enviada», quote) and, like R4, waits for «Aplicar». R3–R6 always wait for «Aplicar». Their events are `crm.domain_event.actor_kind =
+  «Enviada», quote) and, like R4, waits for «Aplicar». R3–R6 always wait for «Aplicar».
+  **2026-10-14 (owner: «the system acts by itself, I remove what is wrong»).** The timer runs
+  **R1, R2, R7, R9 and R11**. R2 also reads the quote numbers of the sender's own text (the
+  worker's `message_triage` `quote_refs:v1`: tokens only, never the body) when neither a PDF nor
+  the subject names one, and may file an email on a **won** case — a payment notice, an order, a
+  delivery note — through a link that adds evidence and leaves the case closed (lost and abandoned
+  cases are not filed into, so a client writing again stays visible). R7 opens a request when the
+  AI triage reading's intent is `quote_request` even without a quote word in the subject — never on
+  a reply, never on a supplier's offer. **R11** places a request forwarded to contacto@
+  (`forwarded_request`): it joins the one open case whose emails come from that customer, or of the
+  customer's institution; otherwise it opens a request (`create_request_from_forward`) — never for a
+  supplier's domain or one whose other mail the AI reads as a supplier's offer, and never linking a
+  Labdelivery-mailbox email. Hoy lists what the timer did in the last two days, and **«Quitar»**
+  (sales or admin) undoes one of those automatic actions; a person's «Aplicar» stays an admin's to
+  undo in Historial. Their events are `crm.domain_event.actor_kind =
   'worker'`, with no `actor_operator_id`, and `payload.attribution` naming the
   rule, its reasons, the email and the admin who applied them. The row
   columns that require an operator (`owner_operator_id`,

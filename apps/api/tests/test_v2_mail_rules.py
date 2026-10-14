@@ -1035,3 +1035,13 @@ def test_a_forward_from_a_supplier_domain_opens_nothing_and_an_applied_one_is_no
     assert (a.rule_id, a.mode) == ("R8", "none")
     assert plan(Snapshot(evidence=(), cases=(), organizations=(), forwards=(forward(),),
                          applied_evidence_ids=frozenset({"f-1"}))) == []
+
+
+def test_a_forward_from_a_domain_the_ai_reads_as_offering_products_opens_nothing() -> None:
+    offer = inbound(id="e-5", sender="Ventas <info@fabrica-ficticia.test>", subject="New products",
+                    model_intent="supplier_offer")
+    actions = {a.evidence_id: a for a in plan(Snapshot(
+        evidence=(offer,), cases=(), organizations=(),
+        forwards=(forward(customer_email="info@fabrica-ficticia.test", customer_name=None),)))}
+    assert (actions["f-1"].rule_id, actions["f-1"].mode) == ("R8", "none")
+    assert any("proveedor" in r for r in actions["f-1"].reasons)

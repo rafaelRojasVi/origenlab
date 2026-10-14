@@ -321,7 +321,7 @@ _SUBJECT_QUOTE_NUMBER = re.compile(
 
 def quote_number_tokens(text: str | None) -> list[str]:
     """Each quote number a line of text names (`_SUBJECT_QUOTE_NUMBER`), as typed, upper-cased, in
-    order: «CN01259», «01259-26». The worker reads the email body with it (`quote_refs:v1`)."""
+    order: «CN09259», «09259-26». The worker reads the email body with it (`quote_refs:v1`)."""
     return [(("CN" + m.group(1)) if m.group(1) else (m.group(2) or "")).upper()
             for m in _SUBJECT_QUOTE_NUMBER.finditer(text or "")]
 
@@ -521,6 +521,11 @@ class _Index:
             if domains:
                 rfqs.append((at, domains))
         self.rfqs: tuple[tuple[datetime, frozenset[str]], ...] = tuple(rfqs)
+        #: Domains whose inbound mail the AI read as a supplier's offer (never free mail): a forwarded
+        #: «request» from one of them is a supplier writing, not a customer (R11).
+        self.ai_supplier_domains: frozenset[str] = frozenset(
+            d for ev in snapshot.evidence if ev.direction == "inbound" and ev.model_intent == "supplier_offer"
+            for d in _external_domains(ev) if d not in FREE_MAIL_DOMAINS)
 
     def answers_our_rfq(self, e: "MailEvidence", domains: list[str]) -> bool:
         """An inbound email later than one of our RFQs, from a domain that RFQ went to."""
@@ -650,6 +655,9 @@ def _plan_forward(f: ForwardRequest, ix: _Index) -> PlannedAction:
     named = d and d not in FREE_MAIL_DOMAINS and d not in OWN_DOMAINS
     if named and ix.is_supplier_domain(d):
         return PlannedAction(f.id, "R8", NONE, (f"reenvío desde un dominio de proveedor ({d}): no se abre solicitud",))
+    if named and d in ix.ai_supplier_domains:
+        return PlannedAction(f.id, "R8", NONE, (
+            f"la lectura (IA) de otros correos de {d} es una oferta de proveedor: no se abre solicitud",))
     who = f.customer_name or email or "cliente sin nombre"
     open_cases = [c for c in ix.cases.values() if not c.closed]
     by_person = [c for c in open_cases if email and email in c.people]
@@ -726,7 +734,7 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     from_body = False
     if not keyed and not thread_cases and e.body_quote_tokens:
         # Nothing in a PDF or the subject: the sender's own text may name the quote («Transferencia
-        # por cotización N°01259-26»). Lowest rank, and only for a thread no case holds yet.
+        # por cotización N°09259-26»). Lowest rank, and only for a thread no case holds yet.
         keyed.update(token_quote_keys(e.body_quote_tokens, e.sent_at))
         from_body = bool(keyed)
     exact: dict[str, CaseState] = {}
