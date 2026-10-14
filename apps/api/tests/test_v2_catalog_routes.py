@@ -54,6 +54,12 @@ class _FakeReads:
     def parameters(self):
         return {"current": {}, "history": []}
 
+    def catalog_index(self, known_version=None):
+        self.calls.append(("index", known_version))
+        if known_version == "v1":
+            return {"version": "v1", "unchanged": True}
+        return {"version": "v1", "fields": ["id", "name"], "suppliers": [], "items": [["p1", "Sonicador"]]}
+
 
 def _client(role="sales"):
     app = FastAPI()
@@ -386,3 +392,25 @@ def test_price_history_limit_bounds_are_accepted() -> None:
 
 def test_price_history_unauthenticated_is_refused() -> None:
     assert _client().get("/v2/catalog/price-history?model_key=X").status_code == 401
+
+
+def test_index_passes_the_known_version_and_is_not_cached_blindly() -> None:
+    client = _client("viewer")
+    r = client.get("/v2/catalog/index", headers=HEADERS)
+    assert r.status_code == 200 and r.json()["items"] == [["p1", "Sonicador"]]
+    assert "no-cache" in r.headers["cache-control"] and "private" in r.headers["cache-control"]
+    assert client.get("/v2/catalog/index", params={"version": "v1"}, headers=HEADERS).json() == {
+        "version": "v1", "unchanged": True}
+
+
+def test_viewer_detail_loses_price_lists_but_keeps_datasheets() -> None:
+    class _Reads(_FakeReads):
+        def product_detail(self, product_id, include_hidden=False):
+            return {"id": str(product_id), "documents": {"datasheets": [{"url": "d"}], "price_lists": [{"url": "p"}]}}
+
+    pid = "00000000-0000-4000-8000-0000000000aa"
+    for role, expected in (("viewer", {"datasheets": [{"url": "d"}]}),
+                           ("sales", {"datasheets": [{"url": "d"}], "price_lists": [{"url": "p"}]})):
+        client = _client(role)
+        client.app.state.catalog_reads = _Reads()
+        assert client.get(f"/v2/catalog/products/{pid}", headers=HEADERS).json()["documents"] == expected

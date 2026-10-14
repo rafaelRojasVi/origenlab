@@ -356,6 +356,10 @@ class _FakeReads:
         self.detail_calls.append(include_hidden)
         return {"id": str(product_id), "images": []}
 
+    def images(self, image_ids, include_hidden):
+        return {str(i): self._images[str(i)]["storage_path"] for i in image_ids
+                if str(i) in self._images and (include_hidden or self._images[str(i)]["status"] != "hidden")}
+
 
 def _operator(role: str) -> OperatorIdentity:
     return OperatorIdentity(operator_id="00000000-0000-4000-8000-000000000001", email_norm="op@example.test",
@@ -1024,3 +1028,35 @@ def test_upload_end_to_end_through_the_route(disposable_database, db_operator) -
     r = client.get(f"/v2/catalog/images/{first.json()['image_id']}/url", headers=HEADERS)
     assert r.status_code == 200 and r.json()["expires_in"] == 600
     assert f"products/{pid}/{_sha(data)}.webp" in r.json()["url"]
+
+
+# ──────────────────────────────────────────────────── batch signing (Catálogo v2) ──
+
+def test_batch_signs_visible_images_and_skips_unknown_ones() -> None:
+    _, client = _client("viewer", images=IMAGES)
+    r = client.get("/v2/catalog/images/urls", params={"ids": f"{IMG},{HIDDEN},{uuid.uuid4()}"}, headers=HEADERS)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["expires_in"] == SIGNED_URL_SECONDS and list(body["urls"]) == [IMG]
+    assert IMAGES[IMG]["storage_path"] in body["urls"][IMG]
+    assert "no-store" in r.headers["cache-control"]
+
+
+@pytest.mark.parametrize("role", ["sales", "admin"])
+def test_batch_signs_hidden_images_for_sales_and_admin(role) -> None:
+    _, client = _client(role, images=IMAGES)
+    r = client.get("/v2/catalog/images/urls", params={"ids": f"{IMG},{HIDDEN}"}, headers=HEADERS)
+    assert set(r.json()["urls"]) == {IMG, HIDDEN}
+
+
+@pytest.mark.parametrize("ids", ["nope", "", ",".join(str(uuid.uuid4()) for _ in range(61))],
+                         ids=["not-a-uuid", "empty", "sixty-one"])
+def test_batch_refuses_bad_or_too_many_ids(ids) -> None:
+    _, client = _client(images=IMAGES)
+    assert client.get("/v2/catalog/images/urls", params={"ids": ids}, headers=HEADERS).status_code == 422
+
+
+def test_batch_without_storage_is_one_503() -> None:
+    _, client = _client(storage=None, images=IMAGES)
+    r = client.get("/v2/catalog/images/urls", params={"ids": IMG}, headers=HEADERS)
+    assert r.status_code == 503 and r.json()["error"]["details"]["code"] == "storage_unavailable"

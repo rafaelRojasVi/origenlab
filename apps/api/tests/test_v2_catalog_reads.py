@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import uuid
 from decimal import Decimal
 
@@ -279,3 +280,80 @@ def test_detail_carries_history_and_kits(disposable_database):
     detail = _reads(dsn).product_detail(prod)
     assert detail["price_history"]["median_last_5"] == "1100.0000"
     assert detail["kit_suggestions"][0]["model_key"] == "DETPROBE2"
+
+
+# -- Catálogo v2: the search index, documents in Drive, batch image paths
+
+def _index_row(out: dict, product_id) -> dict:
+    return next(dict(zip(out["fields"], r, strict=True)) for r in out["items"] if r[0] == str(product_id))
+
+
+@needs_db
+def test_index_lists_active_products_without_costs(disposable_database):
+    dsn = disposable_database
+    supplier = _org(dsn, "supplier")
+    _, prod = _seed_product(dsn, model="IDX-200 St", name="Index probe", name_es="Sonda índice")
+    _obs(dsn, prod, supplier, as_of=dt.date(2026, 1, 1), price=Decimal("10987.65"))
+    out = _reads(dsn).catalog_index()
+    row = _index_row(out, prod)
+    assert row["model_key"] == "IDX200ST" and row["name"] == "Sonda índice"
+    assert row["supplier_ids"] == [str(supplier)] and row["image_id"] is None and row["has_datasheet"] is False
+    assert any(s["id"] == str(supplier) for s in out["suppliers"])
+    flat = json.dumps(out)
+    assert "10987" not in flat and "price" not in flat
+
+
+@needs_db
+def test_index_leaves_out_inactive_products(disposable_database):
+    dsn = disposable_database
+    _, prod = _seed_product(dsn, model="IDX-OFF", name="off", name_es="off")
+    _owner(dsn, "update catalog.product set active = false where id = %s", (prod,))
+    assert all(r[0] != str(prod) for r in _reads(dsn).catalog_index()["items"])
+
+
+@needs_db
+def test_index_version_changes_after_a_write_and_short_circuits(disposable_database):
+    dsn = disposable_database
+    reads = _reads(dsn)
+    v1 = reads.catalog_version()
+    assert reads.catalog_index(known_version=v1) == {"version": v1, "unchanged": True}
+    _seed_product(dsn, model="IDX-NEW", name="n", name_es="n")
+    assert reads.catalog_version() != v1
+    assert "items" in reads.catalog_index(known_version=v1)
+
+
+@needs_db
+def test_detail_documents_datasheet_and_supplier_price_list(disposable_database):
+    dsn = disposable_database
+    supplier = _org(dsn, "supplier")
+    _, prod = _seed_product(dsn, model="DOC-1", name="d", name_es="d")
+    _obs(dsn, prod, supplier, as_of=dt.date(2026, 1, 1), price=Decimal("5"))
+    _owner(dsn, "insert into catalog.product_document (product_id, kind, title, drive_file_id, mime_type, source) "
+                "values (%s, 'datasheet', 'DOC-1.pdf', 'SyntheticSheet0001', 'application/pdf', 'operator')", (prod,))
+    _owner(dsn, "insert into catalog.product_document (supplier_organization_id, kind, title, drive_file_id, mime_type, "
+                "source, as_of) values (%s, 'price_list', 'Lista.xlsx', 'SyntheticList00001', 'application/pdf', "
+                "'operator', '2026-01-01')", (supplier,))
+    _owner(dsn, "insert into catalog.product_document (supplier_organization_id, kind, title, drive_file_id, mime_type, "
+                "source, status) values (%s, 'price_list', 'Vieja.xlsx', 'SyntheticList00002', 'application/pdf', "
+                "'operator', 'retired')", (supplier,))
+    docs = _reads(dsn).product_detail(prod)["documents"]
+    assert [d["url"] for d in docs["datasheets"]] == ["https://drive.google.com/file/d/SyntheticSheet0001/view"]
+    assert [(d["title"], d["supplier"]["id"], d["as_of"]) for d in docs["price_lists"]] == [
+        ("Lista.xlsx", str(supplier), "2026-01-01")]
+    assert _index_row(_reads(dsn).catalog_index(), prod)["has_datasheet"] is True
+
+
+@needs_db
+def test_images_returns_paths_for_visible_ids_only(disposable_database):
+    dsn = disposable_database
+    _, prod = _seed_product(dsn, model="IMG-1", name="i", name_es="i")
+    ids = []
+    for ch, status in (("a", "proposed"), ("b", "hidden")):
+        ids.append(_owner(dsn, "insert into catalog.product_image (product_id, storage_path, sha256, content_type, "
+                               "source, status) values (%s, %s, %s, 'image/png', 'upload', %s) returning id",
+                          (prod, f"products/{prod}/{ch * 64}.png", ch * 64, status))[0][0])
+    reads = _reads(dsn)
+    unknown = uuid.uuid4()
+    assert reads.images([*ids, unknown], include_hidden=False) == {str(ids[0]): f"products/{prod}/{'a' * 64}.png"}
+    assert set(reads.images([*ids, unknown], include_hidden=True)) == {str(ids[0]), str(ids[1])}
+    assert _index_row(reads.catalog_index(), prod)["image_id"] == str(ids[0])
