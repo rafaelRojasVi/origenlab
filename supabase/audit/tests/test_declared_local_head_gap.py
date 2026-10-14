@@ -94,8 +94,8 @@ def current_head_report():
             "RLS policies: 2 entr(y|ies) in the baseline are absent here: " + REMOVED,
             "RLS policies: 60 entr(y|ies) are present here and not in the baseline: " + policies]),
         _check("a10", "FAIL",
-               {"foreign_key_count": 168, "covered_count": 168, "covered_unconditionally": 135},
-               ["foreign keys: observed 168, expected 102"]),
+               {"foreign_key_count": 169, "covered_count": 169, "covered_unconditionally": 136},
+               ["foreign keys: observed 169, expected 102"]),
     ]
     return {
         "run": {"mode": "local", "simulated": False, "hosted_contacted": False},
@@ -395,9 +395,9 @@ class DeclaredGapTest(unittest.TestCase):
         self.assert_refused(report, "a09.policy_count: observed 187, expected 185")
 
     def test_the_historical_origin_foreign_key_is_declared(self):
-        self.assertEqual(50, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
-        self.assertEqual(168, gap.EXPECTED_FOREIGN_KEY_COUNT)
-        self.assertEqual(135, gap.EXPECTED_COVERED_UNCONDITIONALLY)
+        self.assertEqual(51, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
+        self.assertEqual(169, gap.EXPECTED_FOREIGN_KEY_COUNT)
+        self.assertEqual(136, gap.EXPECTED_COVERED_UNCONDITIONALLY)
         self.assertIn("platform.auth_session.(account_operator_id, sign_in_kind)"
                       " -> platform.operator.(id, sign_in_kind)", gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS)
 
@@ -445,9 +445,9 @@ class DeclaredGapTest(unittest.TestCase):
     def test_an_undeclared_foreign_key_is_refused(self):
         report = current_head_report()
         a10 = check_of(report, "a10")
-        a10["summary"].update(foreign_key_count=169, covered_count=169)
-        a10["findings"] = ["foreign keys: observed 169, expected 102"]
-        self.assert_refused(report, "a10.foreign_key_count: observed 169, expected 168")
+        a10["summary"].update(foreign_key_count=170, covered_count=170)
+        a10["findings"] = ["foreign keys: observed 170, expected 102"]
+        self.assert_refused(report, "a10.foreign_key_count: observed 170, expected 169")
 
     def test_another_required_check_failing_is_refused(self):
         report = current_head_report()
