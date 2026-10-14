@@ -143,6 +143,8 @@ Seven exact GET paths (`src/allowlist.ts`; UUIDs lower-case, query strings pass 
 | GET | `/v2/catalog/fx` | FX rates |
 | GET | `/v2/catalog/parameters` | cost parameters |
 | GET | `/v2/catalog/images/<uuid>/url` | JSON `{url, expires_in}`: a short-lived signed URL. The Worker never streams image bytes |
+| GET | `/v2/catalog/images/urls?ids=` | JSON `{urls, expires_in}`: up to sixty signed URLs at once (the thumbnails in view) |
+| GET | `/v2/catalog/index?version=` | JSON: every active product as a compact, cost-free row for the dashboard's in-browser search, or `{version, unchanged}` |
 
 Ten exact POST paths, all under `/v2/commands/`, each behind `catalogCommandRefusal` (`src/index.ts`):
 an allowed `Origin` (403 `origin_not_allowed`), no cross-site `Sec-Fetch-Site` (403
