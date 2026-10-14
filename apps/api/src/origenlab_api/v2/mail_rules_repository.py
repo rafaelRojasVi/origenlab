@@ -193,6 +193,22 @@ select distinct m.provider_thread_id
    and not exists (select 1 from evidence.source_record sr
                     where sr.dedupe_key = 'gmail_message:' || m.provider_message_id)
 """
+#: Rules whose action opens a case; the rest file an email in one.
+OPENING_RULES: frozenset[str] = frozenset({"R3", "R4", "R7", "R10"})
+REMOVED_FROM_HOY = "Quitado desde Hoy: la acción automática no correspondía"
+_RECENT_AUTOMATIC_SQL = """
+select r.id::text as receipt_id, r.completed_at, r.response_body, sr.kind, sr.payload
+  from platform.command_receipt r
+  left join evidence.source_record sr on sr.id::text = r.response_body ->> 'evidence_id'
+ where r.command_name = %s and r.status = 'completed'
+   and r.response_body ->> 'trigger' = 'automatic'
+   and r.completed_at > now() - make_interval(hours => %s)
+   and not exists (select 1 from platform.command_receipt u
+                    where u.command_name = %s and u.status = 'completed'
+                      and u.response_body ->> 'undoes_receipt_id' = r.id::text)
+ order by r.completed_at desc
+ limit %s
+"""
 _APPLIED_EVIDENCE_SQL = """
 select distinct response_body ->> 'evidence_id'
   from platform.command_receipt
@@ -399,6 +415,50 @@ class MailRulesRepository(V2CaseCommandRepository):
                     "undo_note": r["undo_note"],
                 })
             return out
+
+    # ------------------------------------------------------------------ «Hoy»: what the system did by itself
+
+    def recent_automatic(self, hours: int = 48, limit: int = 50) -> list[dict[str, Any]]:
+        """The automatic run's actions of the last `hours`, not undone, newest first — «Hecho
+        automáticamente» on Hoy, each with what it acted on (a subject or a forwarded request) and
+        whether it opened a case or filed the email in one."""
+        with self._read() as cur:
+            cur.execute(_RECENT_AUTOMATIC_SQL, (APPLY_COMMAND, max(1, min(int(hours), 24 * 14)), UNDO_COMMAND,
+                                                max(1, min(int(limit), 200))))
+            cols = [d[0] for d in cur.description]
+            out = []
+            for row in cur.fetchall():
+                r = dict(zip(cols, row, strict=True))
+                body = _json(r["response_body"]) or {}
+                created = body.get("created") or {}
+                opened = body.get("rule_id") in OPENING_RULES or bool(created.get("opportunity_id"))
+                payload = _json(r["payload"]) or {}
+                what = (payload.get("subject_raw") if r["kind"] == "gmail_message" else
+                        " · ".join(x for x in (payload.get("requested_item"), payload.get("original_name")
+                                               or payload.get("original_email")) if x))
+                out.append({
+                    "receipt_id": r["receipt_id"],
+                    "applied_at": r["completed_at"].isoformat() if r["completed_at"] else None,
+                    "rule_id": body.get("rule_id"), "reasons": body.get("reasons") or [],
+                    "case_id": body.get("case_id"), "case_title": body.get("case_title"),
+                    "quote_number": body.get("quote_number"), "kind": "opened" if opened else "filed",
+                    "what": what or None, "source": "forward" if r["kind"] == "forwarded_request" else "email",
+                })
+            return out
+
+    def remove_automatic(self, operator: OperatorIdentity, receipt_id: str) -> dict[str, Any]:
+        """«Quitar» on Hoy (sales or admin): undo one action the automatic run took. A person's
+        «Aplicar» stays an admin's to undo, in Historial."""
+        receipt_id = as_uuid(receipt_id, "receipt_id")
+        with self._read() as cur:
+            cur.execute("select response_body ->> 'trigger' from platform.command_receipt "
+                        "where id = %s and command_name = %s and status = 'completed'", (receipt_id, APPLY_COMMAND))
+            row = cur.fetchone()
+        if row is None:
+            raise CommandRefused(404, "applied_action_not_found", "no applied email action with that receipt")
+        if row[0] != "automatic":
+            raise CommandRefused(403, "not_automatic", "only what the system did by itself is removed from Hoy")
+        return self.undo(operator, receipt_id, REMOVED_FROM_HOY)
 
     # ------------------------------------------------------------------ apply
 

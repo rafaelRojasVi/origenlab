@@ -151,6 +151,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/workspace\/triage-readings$/,
   // Requests Tatiana forwarded to contacto@, for Hoy (contact fields redacted upstream for a viewer).
   /^\/v2\/workspace\/forwarded-requests$/,
+  // «Hecho automáticamente» on Hoy (2026-10-14): what the automatic email rules did, any operator reads.
+  /^\/v2\/workspace\/automatic-actions$/,
   /^\/v2\/cockpit\/work-queue$/,
   // Catalog 1a reads (`apps/api` v2/catalog/routes.py): products, one product, the supplier list
   // (names and product counts by kind, no costs), a supplier's terms, cost parameters, FX, price history (`?model_key=&limit=`) and a short-lived signed
@@ -252,6 +254,9 @@ export const MAIL_RULES_COMMAND_POST_PATHS: readonly RegExp[] = [
   // A person's verdict on one mail-triage suggestion (approve, correct, reject; optional note).
   // `sales` or `admin` upstream, `Idempotency-Key`, append-only; it moves no case.
   /^\/v2\/commands\/review-triage$/,
+  // «Quitar» on Hoy (2026-10-14): undo one action the automatic run took — `sales` or `admin`
+  // upstream, never a person's «Aplicar»; a receipt id only.
+  /^\/v2\/commands\/remove-automatic-action$/,
 ];
 
 /** At most 2,000 evidence ids, or a receipt id and a note. */

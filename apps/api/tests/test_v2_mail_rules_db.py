@@ -799,3 +799,32 @@ def test_r11_a_forward_from_a_customer_already_on_a_case_joins_it_and_quitar_han
     assert _one(db, "select unlinked_at is not null from crm.opportunity_evidence "
                     "where opportunity_id = %s and source_record_id = %s", case_id, mid) == (True,)
     assert _one(db, "select review_status from evidence.source_record where id = %s", fid) == ("pending",)
+
+
+def test_hoy_lists_the_automatic_actions_and_sales_removes_only_those(db, world) -> None:
+    from origenlab_api.v2.commands import CommandRefused
+
+    repo = _repo(db)
+    with _owner(db) as conn:
+        fid, _ = _forward(conn, f"luis@otro-{world['tag']}.test", item="Pipetas")
+        seller = conn.execute(
+            "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+            "values (gen_random_uuid(), %s, 'Vendedora', 'sales', 'active') returning id::text",
+            (f"v-{world['tag']}@example.test",)).fetchone()[0]
+    actions, _display, _snapshot = repo.plan()
+    action = next(a for a in actions if a.evidence_id == fid)
+    auto = repo.apply_planned(_operator(world["admin"]), action, automatic=True)
+    manual = _apply_only(db, world, world["e_known"])  # «Aplicar» by an admin: not removable from Hoy
+
+    listed = {i["receipt_id"]: i for i in repo.recent_automatic(hours=48)}
+    assert auto["command_receipt_id"] in listed and manual["command_receipt_id"] not in listed
+    item = listed[auto["command_receipt_id"]]
+    assert (item["rule_id"], item["kind"], item["case_id"]) == ("R11", "opened", auto["case_id"])
+    assert "Pipetas" in item["what"]
+
+    with pytest.raises(CommandRefused) as refused:
+        repo.remove_automatic(_operator(seller, "sales"), manual["command_receipt_id"])
+    assert refused.value.code == "not_automatic"
+    repo.remove_automatic(_operator(seller, "sales"), auto["command_receipt_id"])
+    assert _one(db, "select stage from crm.opportunity where id = %s", auto["case_id"]) == ("abandoned",)
+    assert auto["command_receipt_id"] not in {i["receipt_id"] for i in repo.recent_automatic(hours=48)}
