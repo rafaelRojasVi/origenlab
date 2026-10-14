@@ -20,6 +20,8 @@ the catalog ids, and the model's own summary and product descriptions.
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -31,6 +33,7 @@ from origenlab_api.v2.mail_rules import fold
 from origenlab_worker.bounce import BounceAnalysis, DELIVERY_FAILURE_VALUE_NORM, analyze_bounce
 from origenlab_worker.catalog_match import ProductCandidate, match_products, model_key
 from origenlab_worker.drive_filing import storage_key
+from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM, is_candidate, read_forward
 from origenlab_worker.mail_text import MailText, parse_mail
 from origenlab_worker.storage import StorageError
 from origenlab_worker.triage_model import (
@@ -43,6 +46,7 @@ from origenlab_worker.triage_model import (
 )
 from origenlab_worker.triage_rules import TRIAGE_VERSION, RuleVerdict, TriageInput, classify
 
+logger = logging.getLogger(__name__)
 VALUE_NORM = f"triage:v{TRIAGE_VERSION}"
 REQUESTER_VALUE_NORM = "requester:v1"
 #: The periodic sweep looks this far back; `triage-once --since-days` reaches further on purpose.
@@ -221,6 +225,13 @@ class TriageDb:
                 _INSERT_ASSERTION,
                 (source_record_id, "message_triage", REQUESTER_VALUE_NORM, Jsonb(requester)),
             )
+
+    def record_forward(self, source_record_id: str, value: dict[str, Any]) -> None:
+        """The forwarded-request reading (`forwarded:v1`); a second write of it is a no-op."""
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", FORWARDED_VALUE_NORM, Jsonb(value)))
 
     def record(self, source_record_id: str, reading: dict[str, Any],
                mentions: Sequence[tuple[str, dict[str, Any]]],
@@ -423,7 +434,35 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     written = db.record(message.source_record_id, value, mentions, requester)
     if verdict.triage_class == "bounce":
         db.record_delivery_failure(message.source_record_id, analyze_bounce(raw))
+    record_forward_reading(db, message.source_record_id, raw, mail.sender, mail.subject)
     return TriageResult("recorded", verdict.triage_class, state, written)
+
+
+def forward_reading_enabled() -> bool:
+    """`ORIGENLAB_WORKER_FORWARD_READING` (default on): «0», «false» or «off» turns it off without a deploy."""
+    return os.environ.get("ORIGENLAB_WORKER_FORWARD_READING", "on").strip().lower() not in ("0", "false", "off", "no")
+
+
+def forward_extra_senders() -> set[str]:
+    """`ORIGENLAB_WORKER_FORWARD_SENDERS`: Tatiana's other addresses, comma-separated (never in the repo)."""
+    return {a.strip().lower() for a in os.environ.get("ORIGENLAB_WORKER_FORWARD_SENDERS", "").split(",") if a.strip()}
+
+
+def record_forward_reading(db: Any, source_record_id: str, raw: bytes, sender: str | None, subject: str | None) -> bool:
+    """Who really asked, for a request we forwarded to contacto@ (spec 2026-10-14). Runs after the
+    triage has recorded its own reading and is isolated from it: whatever fails here — the reader,
+    the write — is logged by class and swallowed, so capture, triage, quotes and Drive never wait on it."""
+    if not forward_reading_enabled() or not is_candidate(sender, subject, extra_senders=forward_extra_senders()):
+        return False
+    try:
+        reading = read_forward(raw)
+        if reading is None:
+            return False
+        db.record_forward(source_record_id, reading.as_json())
+        return True
+    except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage
+        logger.warning("forward reading skipped: %s", type(exc).__name__)
+        return False
 
 
 class ModelUnavailable(RuntimeError):

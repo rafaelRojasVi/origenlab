@@ -260,3 +260,72 @@ def test_noise_does_not_look_up_cases() -> None:
     db = FakeDb()
     triage_one(db, FakeStore(make_raw(subject="Respuesta automática: hola")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
     assert not hasattr(db, "thread_asked")
+
+
+# -- forwarded requests (spec 2026-10-14): read after the triage, never in its way
+
+from email.message import EmailMessage as _Em  # noqa: E402
+
+
+def _forward_raw(sender: str = "Tatiana <contacto@origenlab.cl>", subject: str = "Fwd: Solicitud cotización") -> bytes:
+    m = _Em()
+    m["From"], m["To"], m["Subject"] = sender, "contacto@origenlab.cl", subject
+    m.set_content("---------- Forwarded message ---------\nDe: Pedro Ejemplo <pedro@universidad-ficticia.cl>\n"
+                  "Date: lun, 5 oct 2026\nSubject: Solicitud cotización Gradillas\nTo: <contacto@origenlab.cl>\n\n"
+                  "Necesitamos 20 gradillas.\n")
+    return m.as_bytes()
+
+
+class ForwardDb(FakeDb):
+    def __init__(self, **kw) -> None:
+        super().__init__(direction="outbound", labels=("SENT",), **kw)
+        self.forwards: list[tuple[str, dict]] = []
+
+    def record_forward(self, sid, value):
+        self.forwards.append((sid, value))
+
+
+def test_a_forward_we_sent_records_who_really_asked_after_the_triage(monkeypatch) -> None:
+    monkeypatch.delenv("ORIGENLAB_WORKER_FORWARD_READING", raising=False)
+    db = ForwardDb()
+    result = triage_one(db, FakeStore(_forward_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.outcome == "recorded" and len(db.recorded) == 1
+    [(sid, value)] = db.forwards
+    assert sid == "sr-1" and value["original_email"] == "pedro@universidad-ficticia.cl"
+
+
+def test_the_switch_turns_forward_reading_off(monkeypatch) -> None:
+    monkeypatch.setenv("ORIGENLAB_WORKER_FORWARD_READING", "off")
+    db = ForwardDb()
+    triage_one(db, FakeStore(_forward_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert db.forwards == [] and len(db.recorded) == 1
+
+
+def test_a_reader_that_breaks_never_breaks_the_triage(monkeypatch) -> None:
+    import origenlab_worker.triage as triage_module
+
+    monkeypatch.delenv("ORIGENLAB_WORKER_FORWARD_READING", raising=False)
+    monkeypatch.setattr(triage_module, "read_forward", lambda raw: (_ for _ in ()).throw(RuntimeError("boom")))
+    db = ForwardDb()
+    result = triage_one(db, FakeStore(_forward_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.outcome == "recorded" and len(db.recorded) == 1 and db.forwards == []
+
+
+def test_a_failed_forward_write_never_breaks_the_triage(monkeypatch) -> None:
+    monkeypatch.delenv("ORIGENLAB_WORKER_FORWARD_READING", raising=False)
+
+    class Broken(ForwardDb):
+        def record_forward(self, sid, value):
+            raise RuntimeError("db down")
+
+    db = Broken()
+    result = triage_one(db, FakeStore(_forward_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.outcome == "recorded" and len(db.recorded) == 1
+
+
+def test_a_customer_email_is_never_read_as_a_forward(monkeypatch) -> None:
+    monkeypatch.delenv("ORIGENLAB_WORKER_FORWARD_READING", raising=False)
+    db = ForwardDb()
+    triage_one(db, FakeStore(_forward_raw(sender="cliente@universidad-ficticia.cl")), "sr-1",
+               ModelSettings(None, DEFAULT_MODEL))
+    assert db.forwards == []
