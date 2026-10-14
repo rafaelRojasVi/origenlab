@@ -148,6 +148,45 @@ def image_url(image_id: UUID, request: Request, response: Response, operator: Op
     return {"url": url, "expires_in": SIGNED_URL_SECONDS}
 
 
+_IMAGE_IDS_MAX = 60
+
+
+@catalog_read_router.get("/index")
+def catalog_index(request: Request, response: Response, operator: Operator,
+                  version: str | None = Query(None, max_length=64)) -> dict:
+    """Every active product as a compact row for the dashboard's in-browser search (Catálogo v2).
+
+    No cost column is selected; the answer is redacted anyway so a later column cannot reach a
+    viewer. `version` is the one the caller holds: when it is current the answer is only
+    `{version, unchanged}` (the proxy forwards no ETag, so the conditional lives in the body).
+    """
+    response.headers["Cache-Control"] = "private, no-cache"
+    return redact_costs(_reads(request).catalog_index(version), operator.role)
+
+
+@catalog_read_router.get("/images/urls")
+def image_urls(request: Request, response: Response, operator: Operator,
+               ids: str = Query(..., max_length=_IMAGE_IDS_MAX * 37)) -> dict:
+    """Signed URLs for up to sixty images at once — the thumbnails in view — by the same rules
+    as one image: hidden ones only for sales and admin; unknown or withheld ids are left out."""
+    try:
+        wanted = list(dict.fromkeys(UUID(part) for part in ids.split(",") if part.strip()))
+    except ValueError:
+        raise HTTPException(422, detail={"code": "invalid_image_id", "message": "ids must be UUIDs"}) from None
+    if not 1 <= len(wanted) <= _IMAGE_IDS_MAX:
+        raise HTTPException(422, detail={"code": "image_id_count", "message": "between 1 and 60 ids"})
+    storage = _storage(request)
+    paths = _reads(request).images(wanted, include_hidden=operator.role in ("sales", "admin"))
+    try:
+        # One Storage call for the whole batch; a path it cannot sign is simply left out.
+        signed = storage.signed_urls(list(dict.fromkeys(paths.values())), SIGNED_URL_SECONDS)
+        urls = {image_id: signed[path] for image_id, path in paths.items() if path in signed}
+    except StorageUnavailable:
+        raise HTTPException(503, detail=_STORAGE_UNAVAILABLE) from None
+    response.headers["Cache-Control"] = "no-store"  # the URLs are short-lived credentials
+    return {"urls": urls, "expires_in": SIGNED_URL_SECONDS}
+
+
 # ──────────────────────────────────────────────────────── command bodies ──
 
 Currency = Literal["EUR", "USD", "CLP"]

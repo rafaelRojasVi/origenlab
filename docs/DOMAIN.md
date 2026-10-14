@@ -822,7 +822,7 @@ list is decided, these rows are reclassified by the migration that introduces it
 | 13 | A case at `lead` has had no activity for eleven months | it is still `lead`. The dashboard shows *sin actividad hace 334 días*, computed at read time. Closing it is `abandon_opportunity(case, reason)` by an operator; without that act no row changes and no event exists (§3.4) |
 | 14 | A distributor that supplies OrigenLab asks to buy a unit for its own laboratory | the distributor's `supplier` relationship is untouched. `set_requesting_institution` is refused until the operator supplies a justification; with it, one `opportunity_organization(distributor, role=requesting_institution, confirmation=confirmed, confirmed_by=O)` carries `supplier_exception_reason`, and the triple can never be rewritten. The case card shows *proveedor registrado* **and** *solicitante — excepción justificada*. No marketing permission and no `prospect` relationship follow |
 
-## 7. Table inventory — the reviewed 52-table foundation
+## 7. Table inventory — the reviewed 53-table foundation
 
 Seven private schemas. **51 application tables** — 33 reviewed after the
 external CRM benchmark, the three of §7.1, the one of §7.2, the four of
@@ -1057,8 +1057,22 @@ Domain events added: `opportunity.document_attached` and `opportunity.document_r
 `opportunity`). Attaching changes no case column and takes no case version; a win is still only
 `record_case_won`.
 
+### 7.8 Catalog documents in Drive — built 2026-10-13
+
+Where a product's own data sheet, or a supplier's price list, lives in Google Drive. Only the
+Drive file id is stored; the dashboard opens the file in Drive (no bytes through the API or the
+proxy). A price list carries dealer costs, so the API leaves it out for the viewer role.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 57 | `catalog.product_document` | a Drive file documenting the catalog | `kind ∈ {datasheet, price_list}`; `datasheet` ⇔ `product_id`, `price_list` ⇔ `supplier_organization_id`; a Drive-shaped `drive_file_id`, once per subject; `source ∈ {drive_manifest, operator}` with the manifest in `origin_source_record_id`; never deleted — a superseded file is retired (`status`) |
+
+Domain events added: `product.document_recorded` / `product.document_retired` for a data sheet
+(aggregate `product`) and `organization.price_list_recorded` / `organization.price_list_retired`
+for a price list (aggregate `organization`).
+
 Counts by schema: `crm` 22, `comms` 4, `outbound` 9, `evidence` 4,
-`catalog` 6, `procurement` 1, `platform` 6 — **52**.
+`catalog` 7, `procurement` 1, `platform` 6 — **53**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

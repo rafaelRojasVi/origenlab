@@ -462,12 +462,68 @@ def _verify_add_quote_document(ctx: Context, item: importing.PlanItem) -> tuple[
     return _quote_document_status(ctx, item, row)
 
 
+# ------------------------------------------------------------------ Drive documents (Catálogo v2)
+
+def _document_subject(ctx: Context, fields: dict[str, Any]) -> tuple[str, str] | None:
+    """(column, id) the document attaches to, or None when unmatched — exact only, never guessed:
+    no row, or more than one (two makers with one model key), is unmatched."""
+    if fields["kind"] == "price_list":
+        ctx.cur.execute("select distinct o.id::text from crm.organization o join catalog.supplier_product sp "
+                        "on sp.supplier_organization_id = o.id where lower(o.name) = lower(%s)",
+                        (fields["supplier_name"],))
+        column = "supplier_organization_id"
+    else:
+        ctx.cur.execute("select id::text from catalog.product where active and model_key = %s", (fields["model_key"],))
+        column = "product_id"
+    rows = ctx.cur.fetchall()
+    return (column, rows[0][0]) if len(rows) == 1 else None
+
+
+def _find_document(ctx: Context, column: str, subject: str, fields: dict[str, Any]) -> dict[str, Any] | None:
+    ctx.cur.execute(f"select id::text as id from catalog.product_document "  # noqa: S608 - column is fixed above
+                    f"where kind = %s and {column} = %s::uuid and drive_file_id = %s",
+                    (fields["kind"], subject, fields["drive_file_id"]))
+    return _row(ctx.cur)
+
+
+def _apply_add_product_document(ctx: Context, item: importing.PlanItem) -> str:
+    fields = item["fields"]
+    subject = _document_subject(ctx, fields)
+    if subject is None:
+        return "unmatched"
+    column, subject_id = subject
+    if _find_document(ctx, column, subject_id, fields) is not None:
+        return "already_present"
+    ctx.cur.execute(
+        f"insert into catalog.product_document ({column}, kind, title, drive_file_id, mime_type, as_of, source, "  # noqa: S608
+        f"origin_source_record_id, created_by_operator_id) values (%s::uuid, %s, %s, %s, %s, %s::date, "
+        f"'drive_manifest', %s::uuid, %s::uuid) returning id::text as id",
+        (subject_id, fields["kind"], fields["title"], fields["drive_file_id"], fields["mime_type"], fields.get("as_of"),
+         ctx.manifest_id, ctx.operator.operator_id))
+    document_id = _row(ctx.cur)["id"]
+    if column == "product_id":
+        _event(ctx, "product", subject_id, "product.document_recorded", {"product_document_id": document_id})
+    else:
+        _event(ctx, "organization", subject_id, "organization.price_list_recorded", {"product_document_id": document_id})
+    return "inserted"
+
+
+def _verify_add_product_document(ctx: Context, item: importing.PlanItem) -> tuple[str, list[str], str | None]:
+    subject = _document_subject(ctx, item["fields"])
+    if subject is None:
+        return "unmatched", [], None
+    row = _find_document(ctx, *subject, item["fields"])
+    return ("missing", [], None) if row is None else ("present", [], row["id"])
+
+
 _APPLY = {"create_org": _apply_create_org, "create_product": _apply_create_product,
           "add_observation": _apply_add_observation, "set_terms": _apply_set_terms,
-          "set_cost_parameter": _apply_set_cost_parameter, "add_quote_document": _apply_add_quote_document}
+          "set_cost_parameter": _apply_set_cost_parameter, "add_quote_document": _apply_add_quote_document,
+          "add_product_document": _apply_add_product_document}
 _VERIFY = {"create_org": _verify_create_org, "create_product": _verify_create_product,
            "add_observation": _verify_add_observation, "set_terms": _verify_set_terms,
-           "set_cost_parameter": _verify_set_cost_parameter, "add_quote_document": _verify_add_quote_document}
+           "set_cost_parameter": _verify_set_cost_parameter, "add_quote_document": _verify_add_quote_document,
+           "add_product_document": _verify_add_product_document}
 
 
 def apply_item(ctx: Context, item: importing.PlanItem) -> str:
@@ -505,6 +561,7 @@ def record_manifest_event(ctx: Context, plan: importing.Plan, plan_sha: str) -> 
 #: Delete order (dependants first). The id column is what identifies a row of that table.
 OWNED_TABLES = (
     ("crm.domain_event", "id"),
+    ("catalog.product_document", "id"),
     ("catalog.supplier_product", "id"),
     ("catalog.supplier_terms", "supplier_organization_id"),
     ("catalog.cost_parameter", "id"),
@@ -514,7 +571,7 @@ OWNED_TABLES = (
     ("evidence.source_record", "id"),
 )
 #: Mutable tables: a row with a later version or update time changed after the apply.
-_VERSIONED = ("crm.organization", "catalog.product", "catalog.supplier_terms")
+_VERSIONED = ("crm.organization", "catalog.product", "catalog.supplier_terms", "catalog.product_document")
 _NOT_AN_ENTITY_ID = ("crm.domain_event", "catalog.supplier_terms")
 
 
@@ -534,6 +591,9 @@ def collect_owned(cur: Any, manifest_id: str) -> dict[str, list[str]]:
     cur.execute("select id::text from catalog.supplier_product where origin_source_record_id = %s::uuid",
                 (manifest_id,))
     observations = sorted(r[0] for r in cur.fetchall())
+    cur.execute("select id::text from catalog.product_document where origin_source_record_id = %s::uuid",
+                (manifest_id,))
+    product_documents = sorted(r[0] for r in cur.fetchall())
     cur.execute("select id::text from evidence.source_record where kind = 'quote_document' "
                 "and payload->>'origin_source_record_id' = %s", (manifest_id,))
     documents = sorted(r[0] for r in cur.fetchall())
@@ -541,6 +601,7 @@ def collect_owned(cur: Any, manifest_id: str) -> dict[str, list[str]]:
     lines = sorted(r[0] for r in cur.fetchall())
     return {
         "crm.domain_event": sorted(e[0] for e in events),
+        "catalog.product_document": product_documents,
         "catalog.supplier_product": observations,
         "catalog.supplier_terms": created_by("organization.supplier_terms_set"),
         "catalog.cost_parameter": created_by("cost_parameter.set"),

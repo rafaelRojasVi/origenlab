@@ -56,6 +56,39 @@ _COUNT_SQL = (
 )
 
 
+#: The positional columns of `GET /v2/catalog/index` — no cost field, ever (Catálogo v2, spec D1).
+INDEX_FIELDS = ("id", "model_number", "model_key", "name", "category_es", "kind", "manufacturer",
+                "supplier_ids", "image_id", "has_datasheet", "name_en")
+DRIVE_VIEW_URL = "https://drive.google.com/file/d/{}/view"
+
+# Changes whenever a product, a cost observation, an image or a document is written: the
+# dashboard keeps its index until this moves.
+_VERSION_SQL = """
+select md5(concat_ws('|',
+  (select count(*) || ':' || coalesce(max(updated_at)::text, '') from catalog.product),
+  (select count(*) || ':' || coalesce(max(created_at)::text, '') from catalog.supplier_product),
+  (select count(*) || ':' || coalesce(max(updated_at)::text, '') from catalog.product_image),
+  (select count(*) || ':' || coalesce(max(updated_at)::text, '') from catalog.product_document)))
+"""
+
+_INDEX_SQL = """
+select p.id::text, p.model_number, p.model_key, coalesce(p.name_es, p.name, p.model_number), p.category_es,
+       p.product_kind, m.name,
+       coalesce((select array_agg(distinct sp.supplier_organization_id::text)
+                   from catalog.supplier_product sp where sp.product_id = p.id), '{}'),
+       (select i.id::text from catalog.product_image i where i.product_id = p.id and i.status <> 'hidden'
+         order by i.sort_order, i.created_at, i.id limit 1),
+       exists (select 1 from catalog.product_document d where d.product_id = p.id
+                and d.kind = 'datasheet' and d.status = 'active'),
+       -- The supplier's (usually English) name, searched too; null when it adds nothing.
+       case when p.name_es is not null and p.name is distinct from p.name_es then p.name end
+  from catalog.product p
+  join crm.organization m on m.id = p.manufacturer_organization_id
+ where p.active
+ order by p.model_key, p.id
+"""
+
+
 def _plain(value: Any) -> Any:
     if isinstance(value, Decimal):
         return str(value)
@@ -189,7 +222,52 @@ class V2CatalogReads:
             product["notes"] = self._rows(cur)
             product["price_history"] = self._price_history(cur, product["model_key"], 20)
             product["kit_suggestions"] = self._kit_suggestions(cur, product["model_key"], Decimal("0.30"))
+            product["documents"] = self._documents(cur, product_id)
         return _plain(product)
+
+    # -- Catálogo v2: the browser's search index, batch image paths, Drive documents
+
+    def catalog_version(self) -> str:
+        with self._read() as cur:
+            cur.execute(_VERSION_SQL)
+            return cur.fetchone()[0]
+
+    def catalog_index(self, known_version: str | None = None) -> dict[str, Any]:
+        """Every active product as a positional row (`INDEX_FIELDS`, no cost), or `unchanged`
+        when the caller already holds `known_version`."""
+        with self._read() as cur:
+            cur.execute(_VERSION_SQL)
+            version = cur.fetchone()[0]
+            if known_version == version:
+                return {"version": version, "unchanged": True}
+            cur.execute(_INDEX_SQL)
+            items = [[*r[:7], list(r[7]), *r[8:]] for r in cur.fetchall()]
+        return {"version": version, "fields": list(INDEX_FIELDS), "suppliers": self.suppliers()["items"],
+                "items": items}
+
+    def images(self, image_ids: list[uuid.UUID], include_hidden: bool) -> dict[str, str]:
+        """id → storage path for the ids that exist and, unless `include_hidden`, are not hidden."""
+        with self._read() as cur:
+            cur.execute("select id::text, storage_path from catalog.product_image "
+                        "where id = any(%s) and (%s or status <> 'hidden')", (image_ids, include_hidden))
+            return {r[0]: r[1] for r in cur.fetchall()}
+
+    def _documents(self, cur: Any, product_id: uuid.UUID) -> dict[str, Any]:
+        """The product's own data sheets, and the active price lists of the suppliers that list it."""
+        cur.execute("select id, title, drive_file_id, as_of from catalog.product_document "
+                    "where kind = 'datasheet' and status = 'active' and product_id = %s "
+                    "order by as_of desc nulls last, title, id", (product_id,))
+        sheets = [{"id": r["id"], "title": r["title"], "url": DRIVE_VIEW_URL.format(r["drive_file_id"]),
+                   "as_of": r["as_of"]} for r in self._rows(cur)]
+        cur.execute("select d.id, d.title, d.drive_file_id, d.as_of, o.id as supplier_id, o.name as supplier_name "
+                    "from catalog.product_document d join crm.organization o on o.id = d.supplier_organization_id "
+                    "where d.kind = 'price_list' and d.status = 'active' and d.supplier_organization_id in "
+                    "(select supplier_organization_id from catalog.supplier_product where product_id = %s) "
+                    "order by o.name, d.as_of desc nulls last, d.id", (product_id,))
+        lists = [{"id": r["id"], "title": r["title"], "url": DRIVE_VIEW_URL.format(r["drive_file_id"]),
+                  "as_of": r["as_of"], "supplier": {"id": r["supplier_id"], "display_name": r["supplier_name"]}}
+                 for r in self._rows(cur)]
+        return {"datasheets": sheets, "price_lists": lists}
 
     # -- quoted-price history and kits (evidence.document_line; 1b adds authored quote lines)
 

@@ -148,9 +148,13 @@ insert into expected values
     -- 20261012120000: crm.opportunity_document — a case's attached documents: api reads, inserts
     -- and removes (only the three removal columns); the worker reads.
     ('crm', 'opportunity_document', 'origenlab_api', 'SI', array['removed_at', 'removed_by_operator_id', 'remove_reason'], 'SIU'),
-    ('crm', 'opportunity_document', 'origenlab_worker', 'S', null, 'S');
+    ('crm', 'opportunity_document', 'origenlab_worker', 'S', null, 'S'),
+    -- 20261013120000: catalog.product_document — api reads, records and retires (status only);
+    -- the worker has no access.
+    ('catalog', 'product_document', 'origenlab_api', 'SI', array['status', 'version', 'updated_at'], 'SIU'),
+    ('catalog', 'product_document', 'origenlab_worker', '', null, '');
 
-select is((select count(*)::int from expected), 104, 'the matrix covers all 52 tables for both runtime roles');
+select is((select count(*)::int from expected), 106, 'the matrix covers all 53 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

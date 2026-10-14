@@ -5,7 +5,9 @@ import copy
 from typing import Any
 
 COST_FIELDS = frozenset({"cost", "price", "list_price", "map_price", "discount_pct", "default_discount_pct",
-                         "packing_pct", "margin", "markup", "unit_cost", "cost_history"})
+                         "packing_pct", "margin", "markup", "unit_cost", "cost_history",
+                         # A supplier price list prints dealer costs (Catálogo v2, spec D7).
+                         "price_lists"})
 
 
 def _strip(node: Any) -> Any:

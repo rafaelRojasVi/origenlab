@@ -229,9 +229,13 @@ insert into expected_policies values
     ('crm', 'opportunity_document', 'origenlab_api', 'SELECT'),
     ('crm', 'opportunity_document', 'origenlab_api', 'INSERT'),
     ('crm', 'opportunity_document', 'origenlab_api', 'UPDATE'),
-    ('crm', 'opportunity_document', 'origenlab_worker', 'SELECT');
+    ('crm', 'opportunity_document', 'origenlab_worker', 'SELECT'),
+    -- 20261013120000: catalog.product_document — api reads, records and retires.
+    ('catalog', 'product_document', 'origenlab_api', 'SELECT'),
+    ('catalog', 'product_document', 'origenlab_api', 'INSERT'),
+    ('catalog', 'product_document', 'origenlab_api', 'UPDATE');
 
-select is((select count(*)::int from expected_policies), 182, 'the matrix implies 182 policies');
+select is((select count(*)::int from expected_policies), 185, 'the matrix implies 185 policies');
 
 -- Posture.
 select is(

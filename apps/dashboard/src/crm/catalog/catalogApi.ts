@@ -17,6 +17,8 @@ export const CATALOG_PATHS = {
   fx: "/v2/catalog/fx",
   parameters: "/v2/catalog/parameters",
   imageUrl: (id: string) => `/v2/catalog/images/${encodeURIComponent(id)}/url`,
+  imageUrls: "/v2/catalog/images/urls",
+  index: "/v2/catalog/index",
 } as const;
 
 /** `PRODUCT_KINDS` of `apps/api/.../v2/catalog/keys.py`, in its order. */
@@ -160,7 +162,26 @@ export interface ProductDetail {
   /** Absent for the viewer role. */
   cost_history?: CostObservation[];
   supplier_terms: SupplierTerms[];
+  /** Drive files: the product's own data sheets and its suppliers' price lists (absent for a viewer). */
+  documents?: ProductDocuments;
 }
+
+export interface DriveDocument {
+  id: string;
+  title: string;
+  url: string;
+  as_of: string | null;
+}
+
+export interface ProductDocuments {
+  datasheets: DriveDocument[];
+  price_lists?: (DriveDocument & { supplier: NamedRef })[];
+}
+
+/** `GET /v2/catalog/index`: positional rows named by `fields`, or `unchanged` for a current version. */
+export type CatalogIndexPayload =
+  | { version: string; unchanged: true }
+  | { version: string; fields: string[]; suppliers: SupplierSummary[]; items: unknown[][]; unchanged?: undefined };
 
 /** A line of a past quote document: what OrigenLab charged, not what it paid. Every role sees it. */
 export interface QuotedPrice {
@@ -227,6 +248,12 @@ export const fetchPriceHistory = (modelKey: string) =>
 export const fetchCatalogFx = (currency: "USD" | "EUR") =>
   fetchJsonGet<CatalogFx>(operatorApiUrl(CATALOG_PATHS.fx, { currency }));
 export const fetchCostParameters = () => fetchJsonGet<CostParameters>(operatorApiUrl(CATALOG_PATHS.parameters));
+export const fetchCatalogIndex = (version?: string) =>
+  fetchJsonGet<CatalogIndexPayload>(operatorApiUrl(CATALOG_PATHS.index, { version }));
+export const fetchImageUrls = (ids: string[]) =>
+  fetchJsonGet<{ urls: Record<string, string>; expires_in: number }>(
+    operatorApiUrl(CATALOG_PATHS.imageUrls, { ids: ids.join(",") }),
+  );
 export const fetchImageUrl = (id: string) =>
   fetchJsonGet<{ url: string; expires_in: number }>(operatorApiUrl(CATALOG_PATHS.imageUrl(id)));
 

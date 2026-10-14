@@ -913,6 +913,8 @@ describe("Catalog 1a", () => {
     "/v2/catalog/fx",
     "/v2/catalog/price-history",
     `/v2/catalog/images/${uuid}/url`,
+    "/v2/catalog/index",
+    "/v2/catalog/images/urls",
   ];
   const JSON_COMMANDS = [
     "create-product",
@@ -932,6 +934,12 @@ describe("Catalog 1a", () => {
       expect(isAllowedUpstreamPath(path), path).toBe(true);
       expect(isAllowedUpstreamPath(`${path}?model_key=x&limit=5`), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("refuses the Catálogo v2 reads' neighbours", () => {
+    for (const path of ["/v2/catalog/index/x", "/v2/catalog/index/", "/v2/catalog/images/urls/x", "/v2/catalog/images"]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
     }
   });
 

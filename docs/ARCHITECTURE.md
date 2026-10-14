@@ -626,6 +626,11 @@ role and no Data-API-facing role is ever inside these predefined roles.
   /v2/workspace/opportunities/{id}/documents/{doc}/url`. Without Storage
   configured those routes answer 503 and the session says
   `case_documents_enabled: false`.
+- **Catalog documents stay in Google Drive (2026-10-13).** Data sheets and supplier
+  price lists are not copied into Storage: `catalog.product_document` holds the
+  Drive file id and the dashboard opens `drive.google.com/file/d/<id>/view` in a
+  new tab, signed in as contacto@. No file body passes through FastAPI or the
+  proxy; a price list is redacted for the viewer role like any cost.
 - A browser receives a **signed URL valid for at most 10 minutes**, minted
   only after FastAPI has authorized that specific operator for that specific
   object. Uploads go through FastAPI.

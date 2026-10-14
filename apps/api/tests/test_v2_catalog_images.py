@@ -356,6 +356,10 @@ class _FakeReads:
         self.detail_calls.append(include_hidden)
         return {"id": str(product_id), "images": []}
 
+    def images(self, image_ids, include_hidden):
+        return {str(i): self._images[str(i)]["storage_path"] for i in image_ids
+                if str(i) in self._images and (include_hidden or self._images[str(i)]["status"] != "hidden")}
+
 
 def _operator(role: str) -> OperatorIdentity:
     return OperatorIdentity(operator_id="00000000-0000-4000-8000-000000000001", email_norm="op@example.test",
@@ -1024,3 +1028,89 @@ def test_upload_end_to_end_through_the_route(disposable_database, db_operator) -
     r = client.get(f"/v2/catalog/images/{first.json()['image_id']}/url", headers=HEADERS)
     assert r.status_code == 200 and r.json()["expires_in"] == 600
     assert f"products/{pid}/{_sha(data)}.webp" in r.json()["url"]
+
+
+# ──────────────────────────────────────────────────── batch signing (Catálogo v2) ──
+
+def test_batch_signs_visible_images_and_skips_unknown_ones() -> None:
+    _, client = _client("viewer", images=IMAGES)
+    r = client.get("/v2/catalog/images/urls", params={"ids": f"{IMG},{HIDDEN},{uuid.uuid4()}"}, headers=HEADERS)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["expires_in"] == SIGNED_URL_SECONDS and list(body["urls"]) == [IMG]
+    assert IMAGES[IMG]["storage_path"] in body["urls"][IMG]
+    assert "no-store" in r.headers["cache-control"]
+
+
+@pytest.mark.parametrize("role", ["sales", "admin"])
+def test_batch_signs_hidden_images_for_sales_and_admin(role) -> None:
+    _, client = _client(role, images=IMAGES)
+    r = client.get("/v2/catalog/images/urls", params={"ids": f"{IMG},{HIDDEN}"}, headers=HEADERS)
+    assert set(r.json()["urls"]) == {IMG, HIDDEN}
+
+
+@pytest.mark.parametrize("ids", ["nope", "", ",".join(str(uuid.uuid4()) for _ in range(61))],
+                         ids=["not-a-uuid", "empty", "sixty-one"])
+def test_batch_refuses_bad_or_too_many_ids(ids) -> None:
+    _, client = _client(images=IMAGES)
+    assert client.get("/v2/catalog/images/urls", params={"ids": ids}, headers=HEADERS).status_code == 422
+
+
+def test_batch_without_storage_is_one_503() -> None:
+    _, client = _client(storage=None, images=IMAGES)
+    r = client.get("/v2/catalog/images/urls", params={"ids": IMG}, headers=HEADERS)
+    assert r.status_code == 503 and r.json()["error"]["details"]["code"] == "storage_unavailable"
+
+
+# ──────────────────────────────────── review fixes: one Storage call, a missing object is skipped ──
+
+def test_signed_urls_signs_many_paths_in_one_request_and_skips_per_path_errors() -> None:
+    a, b = f"products/{PID}/a.png", f"products/{PID}/b.png"
+    body = [{"path": a, "signedURL": f"/object/sign/catalog/{a}?token=t1", "error": None},
+            {"path": b, "signedURL": None, "error": "Either the object does not exist or you do not have access to it"}]
+    storage, seen = _supabase(lambda r: httpx.Response(200, json=body))
+    assert storage.signed_urls([a, b], 600) == {a: f"{BASE}/storage/v1/object/sign/catalog/{a}?token=t1"}
+    [request] = seen
+    assert str(request.url) == f"{BASE}/storage/v1/object/sign/catalog"
+    assert json.loads(request.content) == {"expiresIn": 600, "paths": [a, b]}
+
+
+@pytest.mark.parametrize("response", [httpx.Response(500, text="boom"), httpx.Response(200, json={"nope": 1}),
+                                      httpx.Response(200, json=[{"path": "x", "signedURL": "https://elsewhere.invalid/x"}])],
+                         ids=["http-500", "not-a-list", "foreign-url"])
+def test_signed_urls_whole_failure_is_storage_unavailable(response) -> None:
+    storage, _ = _supabase(lambda r: response)
+    with pytest.raises(StorageUnavailable):
+        storage.signed_urls(["x"], 600)
+
+
+def test_signed_urls_refuses_a_long_lived_url_and_needs_no_call_for_nothing() -> None:
+    storage, seen = _supabase(lambda r: httpx.Response(200, json=[]))
+    assert storage.signed_urls([], 600) == {}
+    with pytest.raises(ValueError):
+        storage.signed_urls(["x"], 3600)
+    assert seen == []
+
+
+class _OneMissingStorage(FakeStorage):
+    def __init__(self, missing: str) -> None:
+        super().__init__()
+        self.missing = missing
+        self.batches: list[list[str]] = []
+
+    def signed_urls(self, paths, expires_s):
+        self.batches.append(list(paths))
+        return {p: u for p, u in super().signed_urls(paths, expires_s).items() if p != self.missing}
+
+
+def test_batch_route_leaves_out_a_missing_object_and_signs_the_rest_in_one_call() -> None:
+    images = {**IMAGES, "00000000-0000-4000-8000-0000000000ee": {
+        "id": "00000000-0000-4000-8000-0000000000ee", "product_id": PID,
+        "storage_path": f"products/{PID}/{'e' * 64}.png", "status": "confirmed"}}
+    storage = _OneMissingStorage(images[IMG]["storage_path"])
+    _, client = _client("sales", storage=storage, images=images)
+    r = client.get("/v2/catalog/images/urls", params={"ids": f"{IMG},00000000-0000-4000-8000-0000000000ee"},
+                   headers=HEADERS)
+    assert r.status_code == 200, r.text
+    assert list(r.json()["urls"]) == ["00000000-0000-4000-8000-0000000000ee"]
+    assert len(storage.batches) == 1

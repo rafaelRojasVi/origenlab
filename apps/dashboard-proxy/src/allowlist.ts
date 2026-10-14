@@ -162,6 +162,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/catalog\/fx$/,
   /^\/v2\/catalog\/price-history$/,
   /^\/v2\/catalog\/images\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/url$/,
+  // Catálogo v2 (spec 2026-10-13): the cost-free search index (`?version=`) the dashboard
+  // searches in the browser, and up to sixty signed image URLs at once (`?ids=`). GET-only, JSON.
+  /^\/v2\/catalog\/index$/,
+  /^\/v2\/catalog\/images\/urls$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to
   // these paths only.

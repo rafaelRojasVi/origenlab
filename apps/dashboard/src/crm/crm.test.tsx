@@ -108,6 +108,10 @@ describe("crm routing", () => {
     expect(isCrmHash("#/cotizaciones")).toBe(false);
     expect(parseCrmHash("#/crm")).toEqual({ section: "resumen", id: null });
     expect(parseCrmHash("#/crm/nope")).toEqual({ section: "resumen", id: null });
+    // A page's own query (the catalog keeps its supplier and search there) never changes the route.
+    expect(parseCrmHash("#/crm/catalogo?s=x&q=y")).toEqual({ section: "catalogo", id: null });
+    expect(parseCrmHash("#/crm/catalogo/6bafddfa-0000-4000-8000-0000000000c1?q=y")).toEqual({
+      section: "catalogo", id: "6bafddfa-0000-4000-8000-0000000000c1" });
     // Old links keep working: Revisión is Historial; suppliers and the Drive archive live in Datos.
     expect(parseCrmHash("#/crm/revision")).toEqual({ section: "historial", id: null });
     expect(parseCrmHash("#/crm/proveedores")).toEqual({ section: "datos", id: null, tab: "proveedores" });
