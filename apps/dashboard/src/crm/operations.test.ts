@@ -7,8 +7,8 @@ const base: OpsAction = {
 };
 
 describe("rule guide", () => {
-  it("explains exactly R1–R10, in full", () => {
-    expect(Object.keys(RULE_GUIDE)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"]);
+  it("explains exactly R1–R11, in full", () => {
+    expect(Object.keys(RULE_GUIDE)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11"]);
     for (const [id, g] of Object.entries(RULE_GUIDE)) {
       for (const field of [g.cuando, g.hace, g.ejemplo]) expect(field.trim().length, id).toBeGreaterThan(10);
     }
@@ -16,7 +16,7 @@ describe("rule guide", () => {
 
   it("marks as automatic only the rules the API runs on its timer", () => {
     const auto = Object.entries(RULE_GUIDE).filter(([, g]) => g.automatica).map(([id]) => id);
-    expect(auto).toEqual(["R1", "R2", "R7", "R9"]);
+    expect(auto).toEqual(["R1", "R2", "R7", "R9", "R11"]);
   });
 });
 
@@ -25,6 +25,8 @@ describe("actionSentence", () => {
     expect(actionSentence(base)).toBe("Vinculó un correo al caso «Caso X» — mismo hilo de Gmail (R1)");
   });
   it("names the quote when a case was opened with one", () => {
+    expect(actionSentence({ ...base, rule_id: "R11", case_title: "Solicitud — Gradillas" }))
+      .toBe("Atendió una solicitud reenviada: el caso «Solicitud — Gradillas» — solicitud reenviada a contacto@ (R11)");
     expect(actionSentence({ ...base, rule_id: "R10", case_title: "Instituto Ficticio — cotización 09876-26", quote_number: "09876-26" }))
       .toBe("Abrió el caso «Instituto Ficticio — cotización 09876-26» con la cotización 09876-26 — institución del PDF «por confirmar» (R10)");
   });

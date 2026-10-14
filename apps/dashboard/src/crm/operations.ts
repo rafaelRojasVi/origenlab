@@ -190,6 +190,8 @@ export function actionSentence(a: OpsAction): string {
     verb = `Marcó perdido ${target}`;
   } else if (rule === "R7") {
     verb = `Abrió una solicitud: ${target}`;
+  } else if (rule === "R11") {
+    verb = `Atendió una solicitud reenviada: ${target}`;
   } else {
     verb = `Vinculó un correo a${a.case_title ? `l caso «${a.case_title}»` : " un caso"}`;
   }
