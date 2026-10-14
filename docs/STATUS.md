@@ -2686,3 +2686,21 @@ case with no quote whose emails carry one unrecorded quote PDF) and in Operacion
 (replacing «Abrir caso»), with the institution prefilled from the PDF name (institution part only).
 The proxy allows the POST. Not included: creating the contact person from the email.
 
+
+### 2.7.110 Catálogo v2: instant search, one section per supplier, Drive data sheets and price lists, 2026-10-13 — built, migration not applied
+
+Spec `~/data/origenlab-v2-migration/specs/2026-10-13-catalogo-v2-design.md` (private). Table #57
+`catalog.product_document` (migration `20261013120000`; inventory **53** tables, **185** policies,
+**168** foreign keys, **56** migrations): a product's own data sheet or a supplier's price list as a
+Google Drive file id, never deleted (retired); events `product.document_recorded/_retired`,
+`organization.price_list_recorded/_retired`. API: `GET /v2/catalog/index[?version=]` (every active
+product as a positional, cost-free row; `{version, unchanged}` when current), `GET
+/v2/catalog/images/urls?ids=` (≤ 60 signed URLs), product detail `documents` (price lists redacted
+for viewers). Proxy allows both reads. Dashboard «Catálogo»: the index is searched in the browser
+(MiniSearch behind an exact model-code path; < 50 ms on 10,500 items, measured in tests), supplier
+rail and kind chips with live counts, supplier/kind/search in the address, windowed list of real
+links with keyboard navigation, thumbnails signed in batches (one 503 → placeholders, never a broken
+image), «Descargas» in the product panel. Importer
+`scripts/catalog/import_product_documents.py` (OPERATIONS §14.6). **Not applied on hosted; no
+documents loaded** — owner steps: apply the migration (psql-as-migrator + ledger row), then plan →
+apply → verify the private manifest (10 entries: 8 price lists, 2 Hielscher data sheets).

@@ -2417,6 +2417,29 @@ select recorded_at, payload->>'importer', payload->>'plan_sha256'
  order by recorded_at;
 ```
 
+### 14.6 Catalog documents in Drive (Catálogo v2)
+
+`catalog.product_document` records where a product's own data sheet, or a supplier's price list,
+lives in Google Drive — the file id only; the dashboard opens it in Drive as contacto@ («Ficha
+técnica», else «Lista de precios», the latter never shown to a viewer). It is loaded from a private
+manifest (Drive file ids stay out of this repository) by
+`apps/api/scripts/catalog/import_product_documents.py`, with the same plan → apply → verify →
+rollback and hosted route as §14.5:
+
+```json
+{"documents": [
+  {"kind": "price_list", "title": "…", "drive_file_id": "…", "mime_type": "…",
+   "as_of": "YYYY-MM-DD" | null, "supplier_name": "<the supplier organization's name>"},
+  {"kind": "datasheet", "title": "…", "drive_file_id": "…", "mime_type": "application/pdf",
+   "model_codes": ["<model as printed>"]}]}
+```
+
+A data sheet attaches to the active product whose `model_key` equals each code; a price list to the
+supplier organization of that name that has cost observations. No match, or two (one code, two
+makers), is `unmatched` in the apply and verify reports and writes nothing — fix the manifest and
+run a new plan. Quote PDFs (`CN…`, `NNNNN-26 rN — …`) and Labdelivery-origin entries are refused at
+plan time. Add a sheet by dropping the PDF in Drive and adding one manifest entry.
+
 ## 15. Production release contract (PR #679; built, activation blocked)
 
 Schema and code release are one guarded operation: independently approved main merge,
