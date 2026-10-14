@@ -92,6 +92,34 @@ select p.id::text, p.model_number, p.model_key, coalesce(p.name_es, p.name, p.mo
 """
 
 
+def _sales_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """«Ventas» on the product page: how often the model was quoted, at what prices, how often it sold.
+
+    Prices are single-unit lines (no quantity, or one) in the currency of the newest such line;
+    disputed readings are left out of the range. «Vendido» counts a line only when its quote is the
+    one its case was won with (`crm.opportunity.won_quote_id`), never a quote a won case passed over.
+    """
+    documents = {r["document_id"] for r in rows}
+    priced = [r for r in rows if r["line_total"] is not None and (r["qty"] is None or r["qty"] == 1)
+              and r["check_status"] != "disputed"]
+    currency = priced[0]["currency"] if priced else None
+    same = [r for r in priced if r["currency"] == currency]
+    won_docs = {r["document_id"] for r in rows if r.get("outcome") == "won"}
+    totals = [r["line_total"] for r in same]
+    last = same[0] if same else None
+    return _plain({
+        "times_quoted": len(documents),
+        "times_won": len(won_docs),
+        "currency": currency,
+        "min": min(totals) if totals else None,
+        "max": max(totals) if totals else None,
+        "median": Decimal(statistics.median(totals)).quantize(_MONEY_STEP) if totals else None,
+        "last": {"date": last["date"], "price": last["line_total"]} if last else None,
+        "won_prices": [r["line_total"] for r in same if r.get("outcome") == "won"],
+        "institutions": len({r["institution"] for r in rows if r.get("institution")}),
+    })
+
+
 def _plain(value: Any) -> Any:
     if isinstance(value, Decimal):
         return str(value)
@@ -297,27 +325,43 @@ class V2CatalogReads:
     def _price_history(self, cur: Any, key: str | None, limit: int) -> dict[str, Any]:
         key = model_key(key)
         if key is None:
-            return {"model_key": None, "items": [], "median_last_5": None}
+            return {"model_key": None, "items": [], "median_last_5": None, "summary": _sales_summary([])}
+        # Each quoted line with the CRM quote of the same printed number, its case, the case's
+        # institution (through any merge) and whether that very quote is the one the case won with.
         base = (
-            "select s.payload->>'quote_date' as date, l.line_total, l.qty, l.unit_price, l.currency, "
-            "l.check_status, s.payload->>'client_type' as client_type, "
-            "s.payload->>'printed_quote_number' as document_number "
+            "select s.id::text as document_id, s.payload->>'quote_date' as date, l.line_total, l.qty, "
+            "l.unit_price, l.currency, l.check_status, s.payload->>'client_type' as client_type, "
+            "s.payload->>'printed_quote_number' as document_number, "
+            "c.case_id, c.institution, c.outcome "
             "from evidence.document_line l join evidence.source_record s on s.id = l.source_record_id "
+            "left join lateral ("
+            "  select o.id::text as case_id, root.name as institution, "
+            "         case when o.won_quote_id = q.id then 'won' when o.stage = 'won' then 'other_won' "
+            "              when o.stage = 'lost' then 'lost' when o.stage = 'abandoned' then 'abandoned' "
+            "              else 'open' end as outcome "
+            "    from crm.quote q join crm.opportunity o on o.id = q.opportunity_id "
+            "    left join crm.organization org on org.id = o.organization_id "
+            "    left join crm.organization root on root.id = coalesce(org.merged_into_organization_id, org.id) "
+            "   where q.quote_number = s.payload->>'printed_quote_number' "
+            "   order by (o.won_quote_id = q.id) desc nulls last, o.created_at limit 1) c on true "
             "where l.model_key = %s and s.kind = 'quote_document' and not l.optional "
         )
         order = "order by s.payload->>'quote_date' desc nulls last, l.line_no desc, l.id desc "
-        cur.execute(base + order + "limit %s", (key, limit))
-        items = [{**r, "source": "documento"} for r in self._rows(cur)]
-        cur.execute(
-            base + "and l.line_total is not null and (l.qty is null or l.qty = 1) and l.check_status = any(%s) "
-            + order + "limit 5", (key, list(_MEDIAN_STATUSES)),
-        )
-        recent = self._rows(cur)
+        cur.execute(base + order, (key,))
+        rows = self._rows(cur)
+        items = []
+        for r in rows[:limit]:
+            case = ({"id": r["case_id"], "institution": r["institution"], "outcome": r["outcome"]}
+                    if r["case_id"] else None)
+            items.append({k: v for k, v in r.items() if k not in ("case_id", "institution", "outcome", "document_id")}
+                         | {"source": "documento", "case": case})
+        recent = [r for r in rows if r["line_total"] is not None and (r["qty"] is None or r["qty"] == 1)
+                  and r["check_status"] in _MEDIAN_STATUSES][:5]
         median = None
         if recent:
             totals = [r["line_total"] for r in recent if r["currency"] == recent[0]["currency"]]
             median = str(Decimal(statistics.median(totals)).quantize(_MONEY_STEP))
-        return {"model_key": key, "items": items, "median_last_5": median}
+        return {"model_key": key, "items": _plain(items), "median_last_5": median, "summary": _sales_summary(rows)}
 
     def _kit_suggestions(self, cur: Any, key: str | None, min_share: Decimal) -> list[dict[str, Any]]:
         key = model_key(key)

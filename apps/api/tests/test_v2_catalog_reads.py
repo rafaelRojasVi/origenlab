@@ -248,7 +248,10 @@ def test_price_history_limit_and_median_use_the_last_five(disposable_database):
     history = _reads(dsn).price_history("limit 1", limit=2)
     assert [i["line_total"] for i in history["items"]] == ["700.0000", "600.0000"]
     assert history["median_last_5"] == "500.0000"  # 300..700, not all seven
-    assert _reads(dsn).price_history("NO-SUCH-MODEL") == {"model_key": "NOSUCHMODEL", "items": [], "median_last_5": None}
+    empty = _reads(dsn).price_history("NO-SUCH-MODEL")
+    assert {k: empty[k] for k in ("model_key", "items", "median_last_5")} == {
+        "model_key": "NOSUCHMODEL", "items": [], "median_last_5": None}
+    assert empty["summary"]["times_quoted"] == 0 and empty["summary"]["last"] is None
 
 
 @needs_db
@@ -367,3 +370,60 @@ def test_index_keeps_the_english_name_when_a_spanish_one_exists(disposable_datab
     out = _reads(dsn).catalog_index()
     assert _index_row(out, both)["name_en"] == "Magnetic stirrer"
     assert _index_row(out, same)["name_en"] is None
+
+
+# -- «Ventas»: each quoted price with its case and outcome, and the summary
+
+def _case_with_quote(dsn: str, number: str, stage: str, institution: str) -> str:
+    """A case at `stage` holding CRM quote `number`, its requesting institution named. Seeded with the
+    triggers off (as the test DB's owner may): the stage walk and confirmations are not under test."""
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set session_replication_role = replica")
+        cur.execute("set role origenlab_owner")
+        cur.execute("select id from platform.operator limit 1")
+        row = cur.fetchone()
+        op = row[0] if row else _operator(dsn)
+        cur.execute("insert into crm.organization (kind, name, confirmation) values ('customer', %s, 'confirmed') "
+                    "returning id", (institution,))
+        org = cur.fetchone()[0]
+        cur.execute("insert into crm.opportunity (title, stage, owner_operator_id, organization_id) "
+                    "values (%s, 'quoting', %s, %s) returning id::text", (f"Caso {number}", op, org))
+        case = cur.fetchone()[0]
+        cur.execute("insert into crm.quote (opportunity_id, quote_number, number_origin) values (%s, %s, "
+                    "'printed_historical') returning id", (case, number))
+        quote = cur.fetchone()[0]
+        cur.execute("insert into evidence.source_record (kind, dedupe_key, payload, review_status) values "
+                    "('gmail_message', %s, '{}'::jsonb, 'pending') returning id", (f"gmail_message:{uuid.uuid4().hex}",))
+        mail = cur.fetchone()[0]
+        cur.execute("insert into crm.quote_revision (quote_id, revision_no, status, origin, pdf_sha256, sent_at, "
+                    "origin_source_record_id) values (%s, 1, 'sent', 'historical_import', %s, now(), %s)",
+                    (quote, "a" * 64, mail))
+        if stage == "won":
+            cur.execute("update crm.opportunity set stage = 'won', closed_at = now(), won_quote_id = %s, "
+                        "won_revision_no = 1 where id = %s", (quote, case))
+        elif stage == "lost":
+            cur.execute("update crm.opportunity set stage = 'lost', closed_at = now() where id = %s", (case,))
+    return case
+
+
+@needs_db
+def test_price_history_names_case_institution_and_outcome_and_summarises(disposable_database):
+    dsn = disposable_database
+    won_doc, open_doc, loose_doc = (_quote(dsn, d, n) for d, n in (
+        ("2026-04-10", "09101-26"), ("2026-05-10", "09102-26"), ("2026-06-10", "09103-26")))
+    _qline(dsn, won_doc, 1, "SALES-1", "1000.0000")
+    _qline(dsn, open_doc, 1, "SALES-1", "1300.0000")
+    _qline(dsn, loose_doc, 1, "SALES-1", "1200.0000")
+    won_case = _case_with_quote(dsn, "09101-26", "won", "Universidad Ficticia")
+    open_case = _case_with_quote(dsn, "09102-26", "quoting", "Laboratorio Ficticio")
+
+    out = _reads(dsn).price_history("SALES1")
+    by_number = {i["document_number"]: i for i in out["items"]}
+    assert by_number["09101-26"]["case"] == {"id": won_case, "institution": "Universidad Ficticia", "outcome": "won"}
+    assert by_number["09102-26"]["case"] == {"id": open_case, "institution": "Laboratorio Ficticio", "outcome": "open"}
+    assert by_number["09103-26"]["case"] is None
+    s = out["summary"]
+    assert s["times_quoted"] == 3 and s["times_won"] == 1 and s["currency"] == "CLP"
+    assert (s["min"], s["max"], s["last"]["price"], s["last"]["date"]) == ("1000.0000", "1300.0000", "1200.0000",
+                                                                        "2026-06-10")
+    assert s["won_prices"] == ["1000.0000"]
