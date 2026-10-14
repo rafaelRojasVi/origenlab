@@ -164,6 +164,53 @@ class PricingFx:
         raise FxUnavailable(f"no {currency} rate available for {on.isoformat()}")
 
 
+    def rates_for(self, currency: str, days: "list[dt.date] | set[dt.date]", *,
+                  fetch: bool = True) -> dict[dt.date, dict]:
+        """The rate in force on each day (the newest stored one on or before it, within
+        FX_WINDOW_DAYS). Days the store cannot cover are fetched ONCE as a range and stored; a day no
+        provider covers is simply absent — a margin without its rate is not shown, never guessed.
+        `fetch=False` reads the store only: a page never waits on a provider (mindicador's year
+        endpoint has been seen to take over a minute)."""
+        wanted = sorted({min(d, self._today()) for d in days})
+        if not wanted:
+            return {}
+        window = dt.timedelta(days=FX_WINDOW_DAYS)
+        stored = dict(self._reads.fx_series(currency, wanted[0] - window, wanted[-1]))
+
+        def resolve(day: dt.date) -> dict | None:
+            near = [d for d in stored if day - window <= d <= day]
+            if not near:
+                return None
+            best = max(near)
+            return {"clp_per_unit": Decimal(str(stored[best])), "as_of": best}
+
+        missing = [d for d in wanted if resolve(d) is None]
+        if missing and fetch:
+            start, end = missing[0] - window, missing[-1]
+            for provider in self._providers:
+                try:
+                    fetched = provider.observed(currency, start, end)
+                except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                    log.warning("fx provider %s failed for %s history: %s", provider.name, currency, type(exc).__name__)
+                    continue
+                fetched = {d: v for d, v in fetched.items() if start <= d <= end}
+                if not fetched:
+                    continue
+                try:
+                    self._writer([{"rate_date": d, "currency": currency, "clp_per_unit": fetched[d],
+                                   "provider": provider.name} for d in sorted(fetched)])
+                except Exception:  # a cache fill must not fail the read
+                    log.warning("fx history cache fill failed: %s via %s", currency, provider.name)
+                stored.update(fetched)
+                break
+        out = {}
+        for day in days:
+            found = resolve(min(day, self._today()))
+            if found is not None:
+                out[day] = found
+        return out
+
+
 class FxCacheWriter:
     """Its own short write transaction per fetch; the API role may insert catalog.fx_rate."""
 
