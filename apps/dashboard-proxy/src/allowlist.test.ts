@@ -501,11 +501,13 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/open-commercial-case",
       // «Completar con la cotización del correo» (2026-10-13).
       "/v2/commands/complete-case-from-sent-quote",
+      "/v2/commands/create-request-from-forward",
+      "/v2/commands/dismiss-forwarded-request",
       // «Adjuntar OC»: copy a case email's purchase order, or remove one (2026-10-12).
       "/v2/commands/attach-case-document-from-email",
       "/v2/commands/remove-case-document",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(14);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(16);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -853,6 +855,10 @@ describe("mail triage review", () => {
   it("allows the queue as an exact GET and the verdict as an exact POST, and nothing near them", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");
     expect(isAllowedUpstreamPath("/v2/workspace/triage-readings")).toBe(true);
+    // Forwarded requests (spec 2026-10-14): the read for Hoy, GET-only.
+    expect(isAllowedUpstreamPath("/v2/workspace/forwarded-requests")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/forwarded-requests")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/workspace/forwarded-requests/x")).toBe(false);
     expect(isAllowedUpstreamPath("/v2/workspace/triage-readings?status=reviewed&limit=50")).toBe(true);
     expect(isAllowedPostPath("/v2/workspace/triage-readings")).toBe(false);
     expect(isAllowedPostPath("/v2/commands/review-triage")).toBe(true);
