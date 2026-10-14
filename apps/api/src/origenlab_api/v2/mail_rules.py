@@ -9,12 +9,12 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | Rule | When | Mode |
 |---|---|---|
 | R1 | same Gmail thread as an email already linked to exactly one open case | auto: link; a new sent CN PDF on that thread also records the quote when the case has a requester |
-| R2 | a quote number — from a PDF name, or from the subject (CN token or number with year) when no PDF names one and the thread is new — equals a quote on exactly one open case (same year + correlative) | auto: link |
+| R2 | a quote number — from a PDF name, or from the subject (CN token or number with year) when no PDF names one and the thread is new, or else from the sender's own text (`quote_refs:v1`) — equals a quote on exactly one open **or won** case (same year + correlative) | auto: link (a won case keeps its later mail — payment, order, delivery — without reopening) |
 | R3 | outbound, a NEW CN number in a PDF, recipient domain = one known institution | auto: case + quote |
 | R4 | as R3, recipient domain unknown and neither free-mail, supplier nor ours | auto: institution «por confirmar» + case + quote |
 | R5 | inbound purchase order on a thread linked to one case (with one live quote revision) | auto: link + won |
 | R6 | inbound «otro proveedor» on a thread linked to one open case | auto: link + lost |
-| R7 | inbound quote request, no linked thread | numbered quotation references require review; otherwise open lead |
+| R7 | inbound quote request (quote words in the subject, or the AI reading's intent `quote_request`), no linked thread, not a reply; never when the AI reads a supplier's offer | numbered quotation references require review; otherwise open lead |
 | R8 | everything else (supplier, a reply to our own supplier RFQ, campaign thread, Labdelivery, nothing matched) | none |
 | R9 | outbound, a NEW CN number in a PDF, no recipient names an institution (free-mail), and the PDF's own name names exactly one institution (`CN09876-<institución>.pdf`, as the Cotizador writes it) | auto when that institution has exactly one open case: link + «Enviada» + quote; otherwise a proposal |
 | R10 | as R9, but the institution the PDF names is not in the CRM | «Aplicar» only: institution «por confirmar» (named as the PDF names it, no domain) + case in «Enviada» + quote |
@@ -91,8 +91,12 @@ LOST_PHRASES: tuple[str, ...] = (
     "optamos por otro proveedor",
 )
 LOST_CLOSE_REASON = "otro proveedor"
+#: R2 on a won case: the one link a closed case accepts (`mail_rules_repository`).
+LINK_AFTER_CLOSE = "link_case_evidence_after_close"
 
 #: R7 — words that make an inbound email a quote request.
+#: R7 on the AI reading alone: said in the reasons, so «Quitar» shows why.
+AI_REQUEST_REASON = "la lectura del correo (IA) dice que pide precio"
 QUOTE_REQUEST_WORDS: tuple[str, ...] = ("cotiz", "solicitud", "presupuesto", "rfq", "quotation",
                                         "precio")
 
@@ -137,6 +141,13 @@ class MailEvidence:
     #: evidence, not a fuzzy/model guess; the planner still verifies the id against its snapshot.
     requester_organization_id: str | None = None
     requester_organization_name: str | None = None
+    #: Quote numbers the sender's own text names, as the worker read them (`quote_refs:v1`): R2
+    #: reads them when neither a PDF nor the subject names a number.
+    body_quote_tokens: tuple[str, ...] = ()
+    #: The AI reading's intent (`triage:vN` value.reading.intent), when the model read this email:
+    #: «quote_request» lets R7 open a request whose subject has no quote word; «supplier_offer»
+    #: keeps a supplier's own quotation from opening one.
+    model_intent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -644,6 +655,12 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
         # Cotización 01198-26» carrying CN01240 sends 01240); a thread R1 already knows keeps its
         # link whatever its inherited title says; a purchase order's subject is R5's, not R2's.
         keyed.update(subject_quote_keys(e.subject, e.sent_at))
+    from_body = False
+    if not keyed and not thread_cases and e.body_quote_tokens:
+        # Nothing in a PDF or the subject: the sender's own text may name the quote («Transferencia
+        # por cotización N°01259-26»). Lowest rank, and only for a thread no case holds yet.
+        keyed.update(token_quote_keys(e.body_quote_tokens, e.sent_at))
+        from_body = bool(keyed)
     exact: dict[str, CaseState] = {}
     matched_key: tuple[int, int] | None = None
     for key in keyed:
@@ -669,7 +686,9 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
         return _link_rule(e, "R1", thread_cases, "mismo hilo de Gmail que un correo ya vinculado", None)
     if exact and matched_key is not None:
         number = canonical_quote_number(matched_key)
-        return _link_rule(e, "R2", list(exact.values()), f"el número {number} ya es una cotización del caso", number)
+        where = " (nombrado en el texto del correo)" if from_body else ""
+        return _link_rule(e, "R2", list(exact.values()), f"el número {number}{where} ya es una cotización del caso",
+                          number, keep_won=True)
     for key in keyed:
         yearless = ix.by_yearless_key.get(key, [])
         if yearless:
@@ -686,12 +705,24 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
 
 
 def _link_rule(e: MailEvidence, rule_id: str, cases: list[CaseState], why: str,
-               quote_number: str | None) -> PlannedAction:
+               quote_number: str | None, *, keep_won: bool = False) -> PlannedAction:
     open_cases = [c for c in cases if not c.closed]
     if len(cases) >= 2:
         return PlannedAction(e.id, rule_id, PROPOSAL, (
             f"{why}, pero {len(cases)} casos coinciden: un humano elige",),
             quote_number=quote_number, candidates=tuple(sorted(c.id for c in cases)))
+    if not open_cases and keep_won and cases[0].stage == "won":
+        # A won case's later mail (payment, order, delivery) belongs to it; it is filed, the case
+        # stays closed. A lost or abandoned case is not: a client writing again must stay visible.
+        c = cases[0]
+        reasons = [why, "el caso está ganado: se archiva el correo sin reabrirlo"]
+        note = _note(rule_id, reasons)
+        return PlannedAction(e.id, rule_id, AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+                             organization_id=c.organization_id, quote_number=quote_number,
+                             commands=({"command": LINK_AFTER_CLOSE, "inputs": {
+                                 "opportunity_id": "@case", "relation": "mentions",
+                                 "source_record_id": e.id, "note": note}},),
+                             context={"case": c.id, "case_version": c.version})
     if not open_cases:
         return PlannedAction(e.id, "R8", NONE, (f"{why}, pero el caso está cerrado",),
                              case_id=cases[0].id, case_title=cases[0].title, quote_number=quote_number)
@@ -778,11 +809,15 @@ def _request_case_title(e: MailEvidence, organization: Organization | None = Non
     return "Solicitud de cotización"
 
 
+def _is_reply(e: MailEvidence) -> bool:
+    return bool(re.match(r"^(?:re|rv|fw|fwd|aw|wg|sv|回复|回覆|答复|转发)\s*[:：]", fold(e.subject)))
+
+
 def _is_quote_request(e: MailEvidence) -> bool:
     subject = fold(e.subject)
     # A reply/forward with «cotización» is much more likely to belong to an existing case whose
     # thread link is missing; never open a second case from that weak signal.
-    if re.match(r"^(?:re|rv|fw|fwd|aw|wg|sv|回复|回覆|答复|转发)\s*[:：]", subject):
+    if _is_reply(e):
         return False
     # «solicitud» by itself is too broad to create a commercial case automatically.
     strong = tuple(w for w in QUOTE_REQUEST_WORDS if w != "solicitud")
@@ -1088,8 +1123,13 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
     if not domains:
         return PlannedAction(e.id, "R8", NONE, ("correo interno",))
     d = domains[0]
+    if e.model_intent == "supplier_offer":
+        return PlannedAction(e.id, "R8", NONE, ("la lectura del correo (IA) es una oferta de un proveedor: no se abre solicitud",))
+    by_ai = False
     if not _is_quote_request(e):
-        return PlannedAction(e.id, "R8", NONE, ("ninguna regla aplica: queda en Revisión",))
+        if e.model_intent != "quote_request" or _is_reply(e):
+            return PlannedAction(e.id, "R8", NONE, ("ninguna regla aplica: queda en Revisión",))
+        by_ai = True
     # A supplier may send its quotation on a new thread with no known supplier domain.
     # A quotation is not itself a customer's request. Preserve it for review rather than
     # opening a lead from this ambiguous keyword alone (Spanish requests/RFQ still qualify).
@@ -1130,7 +1170,7 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
         o = orgs[0]
         how = ("institución identificada exactamente en el cuerpo del correo"
                if requester is not None else "remitente de una institución conocida")
-        reasons = [f"solicitud de cotización de «{o.name}»", how]
+        reasons = [f"solicitud de cotización de «{o.name}»", how, *([AI_REQUEST_REASON] if by_ai else [])]
         note = _note("R7", reasons)
         title = _request_case_title(e, o)
         commands = (
@@ -1154,10 +1194,11 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
         ))
     reason = (f"solicitud de cotización desde correo gratuito ({d})"
               if d in FREE_MAIL_DOMAINS else f"solicitud de cotización desde dominio no reconocido ({d})")
-    note = _note("R7", [reason, "se abre caso sin inventar institución solicitante"])
+    extra = [AI_REQUEST_REASON] if by_ai else []
+    note = _note("R7", [reason, *extra, "se abre caso sin inventar institución solicitante"])
     title = _request_case_title(e)
     return PlannedAction(
-        e.id, "R7", AUTO, (reason, "caso abierto en «Solicitada» sin institución hasta confirmación"),
+        e.id, "R7", AUTO, (reason, *extra, "caso abierto en «Solicitada» sin institución hasta confirmación"),
         case_title=title,
         commands=({"command": "open_commercial_case", "inputs": {
             "title": title, "origin_source_record_id": e.id, "note": note}},),

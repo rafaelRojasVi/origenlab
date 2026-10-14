@@ -58,6 +58,7 @@ from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.mail_rules import (
     AUTO,
+    LINK_AFTER_CLOSE,
     SYSTEM_LABEL,
     CaseQuote,
     CaseState,
@@ -112,7 +113,7 @@ def _json(value: Any) -> Any:
 #: they must not hide a live email from the rules.
 _EVIDENCE_SQL = """
 select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
-       requester.value as requester_match
+       requester.value as requester_match, quote_refs.value as quote_refs, ai.intent as model_intent
   from evidence.source_record sr
   join lateral (select cm.direction, cm.provider_thread_id from comms.message cm
                  where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
@@ -126,6 +127,18 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
         order by a.created_at desc
         limit 1
   ) requester on true
+  left join lateral (
+       select a.value from evidence.assertion a
+        where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = 'quote_refs:v1'
+        limit 1
+  ) quote_refs on true
+  left join lateral (
+       -- The newest triage reading's AI intent, when the model read the email.
+       select a.value -> 'reading' ->> 'intent' as intent from evidence.assertion a
+        where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm ~ '^triage:v[0-9]+$'
+        order by substring(a.value_norm from 9)::int desc
+        limit 1
+  ) ai on true
  where sr.kind = 'gmail_message' and not sr.is_quarantined
    and sr.review_status <> 'rejected'
    and sr.payload ->> 'staging_source_record_sha256' is null
@@ -226,6 +239,8 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
             requester_checked=bool(requester),
             requester_organization_id=(requester.get("organization_id") if requester_matched else None),
             requester_organization_name=(requester.get("organization_name") if requester_matched else None),
+            body_quote_tokens=tuple(str(t) for t in ((_json(r.get("quote_refs")) or {}).get("tokens") or ())),
+            model_intent=r.get("model_intent"),
         ))
         display[r["id"]] = {"subject": p.get("subject_raw"), "sent_at": p.get("sent_at"),
                             "direction": direction}
@@ -653,6 +668,7 @@ class MailRulesRepository(V2CaseCommandRepository):
             RECORD_CASE_WON: record_case_won,
             UNLINK_CASE_EVIDENCE: MailRulesRepository._unlink_case_evidence,
             CORRECT_CASE_STAGE: MailRulesRepository._correct_case_stage,
+            LINK_AFTER_CLOSE: MailRulesRepository._link_after_close,
         }
         if command not in local:
             raise CommandRefused(500, "unknown_step", f"no handler for step '{command}'")
@@ -663,6 +679,25 @@ class MailRulesRepository(V2CaseCommandRepository):
     def _register_mail_organization(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                                     receipt_id: str) -> dict[str, Any]:
         return register_machine_organization(self, cur, operator, fields, receipt_id)
+
+    def _link_after_close(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
+                          receipt_id: str) -> dict[str, Any]:
+        """R2 on a **won** case: the email is filed and the case stays closed (owner, 2026-10-14 — a
+        payment, an order or a delivery note is still that sale's). `link_case_evidence` refuses a
+        closed case for a person; the machine may add this one kind of evidence, never edit."""
+        case_id = as_uuid(fields["opportunity_id"], "opportunity_id")
+        cur.execute("select stage, version from crm.opportunity where id = %s for update", (case_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise CommandRefused(404, "case_not_found", "no such commercial case")
+        if row[0] != "won":
+            raise CommandRefused(409, "case_not_won", "only a won case takes mail after it closed")
+        evidence_id, event_id = self._link_evidence_row(
+            cur, case_id=case_id, subject_column="source_record_id",
+            subject_id=as_uuid(fields["source_record_id"], "source_record_id"), relation=fields["relation"],
+            operator=operator, receipt_id=receipt_id, note=fields["note"])
+        return {"command": LINK_AFTER_CLOSE, "opportunity_id": case_id, "opportunity_version": int(row[1]),
+                "opportunity_evidence_id": evidence_id, "stage": row[0], "event_ids": [event_id]}
 
     def _unlink_case_evidence(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                               receipt_id: str) -> dict[str, Any]:
@@ -825,7 +860,7 @@ def _absorb(ctx: dict[str, Any], created: dict[str, Any], command: str, result: 
         created["organization_id"] = result["organization_id"]
     if command == OPEN_COMMERCIAL_CASE:
         created["opportunity_id"] = result["opportunity_id"]
-    elif command == LINK_CASE_EVIDENCE:
+    elif command in (LINK_CASE_EVIDENCE, LINK_AFTER_CLOSE):
         created["opportunity_evidence_ids"].append(result["opportunity_evidence_id"])
     if command == RECORD_HISTORICAL_QUOTATION:
         created["quote_revision_id"] = result["quote_revision_id"]

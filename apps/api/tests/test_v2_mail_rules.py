@@ -926,3 +926,66 @@ def test_a_person_written_before_the_institution_in_one_part_is_never_the_instit
     assert institution_segment("Instituto Ficticio de Ensayos (IFDE)") == "Instituto Ficticio de Ensayos (IFDE)"
     assert institution_segment("Pedro Ficticio - Empresa Ficticia SA") == "Empresa Ficticia SA"
 
+
+
+# ------------------------------------------------------------------ 2026-10-14: body numbers and the AI reading
+
+
+def inbound(**over) -> MailEvidence:
+    base = dict(id="e-9", thread_id="t-9", direction="inbound", sender="Pagos <pagos@banco-ficticio.test>",
+                recipients=("contacto@origenlab.cl",), subject="Aviso de transferencia de fondos",
+                sent_at="2026-10-13T15:00:00+00:00", documents=(), requester_checked=True)
+    base.update(over)
+    return MailEvidence(**base)
+
+
+def test_a_payment_notice_naming_its_quote_in_the_body_is_filed_on_that_case() -> None:
+    a = only(Snapshot(evidence=(inbound(body_quote_tokens=("09259-26",)),),
+                      cases=(case(quotes=(quote("09259-26"),)),), organizations=(org(),)))
+    assert (a.rule_id, a.mode, a.case_id) == ("R2", "auto", "c-1")
+    assert a.commands[0]["command"] == "link_case_evidence"
+    assert any("texto del correo" in r for r in a.reasons)
+
+
+def test_a_won_case_still_gets_its_payment_and_order_mail_without_reopening() -> None:
+    won = case(stage="won", closed=True, quotes=(quote("09259-26"),))
+    a = only(Snapshot(evidence=(inbound(body_quote_tokens=("09259-26",)),), cases=(won,), organizations=(org(),)))
+    assert (a.rule_id, a.mode, a.case_id) == ("R2", "auto", "c-1")
+    assert [c["command"] for c in a.commands] == ["link_case_evidence_after_close"]
+
+
+def test_a_lost_case_is_not_filed_into_so_the_reply_stays_visible() -> None:
+    lost = case(stage="lost", closed=True, quotes=(quote("09259-26"),))
+    a = only(Snapshot(evidence=(inbound(body_quote_tokens=("09259-26",)),), cases=(lost,), organizations=(org(),)))
+    assert (a.rule_id, a.mode) == ("R8", "none")
+
+
+def test_the_subject_number_outranks_the_body_number() -> None:
+    one, two = case(id="c-1", quotes=(quote("01200-26"),)), case(id="c-2", quotes=(quote("09259-26"),))
+    a = only(Snapshot(evidence=(inbound(subject="Consulta cotización 01200-26", body_quote_tokens=("09259-26",)),),
+                      cases=(one, two), organizations=(org(),)))
+    assert (a.rule_id, a.case_id) == ("R2", "c-1")
+
+
+def test_a_client_asking_for_a_price_in_the_body_opens_a_request_when_the_ai_reads_it_so() -> None:
+    a = only(Snapshot(evidence=(inbound(sender="Ana <ana@laboratorio-ficticio.test>", subject="Consulta equipos",
+                                        model_intent="quote_request"),),
+                      cases=(), organizations=()))
+    assert (a.rule_id, a.mode) == ("R7", "auto")
+    assert a.commands[0]["command"] == "open_commercial_case"
+    assert any("IA" in r for r in a.reasons)
+
+
+def test_a_reply_is_never_a_new_request_even_when_the_ai_says_so() -> None:
+    a = only(Snapshot(evidence=(inbound(sender="Ana <ana@laboratorio-ficticio.test>", subject="Re: Consulta equipos",
+                                        model_intent="quote_request"),),
+                      cases=(), organizations=()))
+    assert (a.rule_id, a.mode) == ("R8", "none")
+
+
+def test_a_supplier_offer_with_quotation_words_does_not_open_a_request() -> None:
+    a = only(Snapshot(evidence=(inbound(sender="Ventas <ventas@fabrica-ficticia.test>",
+                                        subject="Cotización equipos de laboratorio", model_intent="supplier_offer"),),
+                      cases=(), organizations=()))
+    assert (a.rule_id, a.mode) == ("R8", "none")
+    assert any("proveedor" in r for r in a.reasons)

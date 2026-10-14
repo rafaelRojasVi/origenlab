@@ -698,3 +698,47 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     assert _one(db, "select operator_id::text from platform.command_receipt "
                     "where command_name = 'apply_mail_rule' and response_body ->> 'evidence_id' = %s", later)[0] == other
     auto.set_enabled(_operator(other), False, "fin de la prueba", f"auto-off2-{world['tag']}")
+
+
+def _reading(conn, source_record_id, value_norm, value):
+    conn.execute("insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+                 "values (%s, 'message_triage', %s, %s::jsonb)", (source_record_id, value_norm, json.dumps(value)))
+
+
+def test_a_payment_notice_naming_the_quote_in_its_body_is_filed_on_the_won_case_and_undoes(db, world) -> None:
+    repo = _repo(db)
+    op = _operator(world["admin"])
+    case_id = _apply_only(db, world, world["e_known"])["case_id"]
+    with _owner(db) as conn:
+        order = _mail(conn, thread=world["t1"], direction_hint=None, sender=f"compras@{world['client_domain']}",
+                      recipients="contacto@origenlab.cl", subject="Orden de compra", documents=[_doc("OC 4500123.pdf")])
+    _apply_only(db, world, order)
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id) == ("won",)
+
+    with _owner(db) as conn:
+        notice = _mail(conn, thread=f"thread-pay-{world['tag']}", direction_hint=None,
+                       sender="transferencias@banco-ficticio.test", recipients="contacto@origenlab.cl",
+                       subject="Aviso de transferencia de fondos")
+        _reading(conn, notice, "quote_refs:v1", {"version": 1, "tokens": [world["number"]]})
+    filed = _apply_only(db, world, notice)
+    assert (filed["rule_id"], filed["case_id"]) == ("R2", case_id)
+    assert _one(db, "select stage, closed_at is not null from crm.opportunity where id = %s", case_id) == ("won", True)
+    assert _one(db, "select count(*) from crm.opportunity_evidence where opportunity_id = %s and source_record_id = %s "
+                    "and unlinked_at is null", case_id, notice) == (1,)
+
+    repo.undo(op, filed["command_receipt_id"], "no era de este caso")
+    assert _one(db, "select unlinked_at is not null from crm.opportunity_evidence "
+                    "where opportunity_id = %s and source_record_id = %s", case_id, notice) == (True,)
+
+
+def test_the_ai_reading_opens_a_request_whose_subject_has_no_quote_word(db, world) -> None:
+    with _owner(db) as conn:
+        ask = _mail(conn, thread=f"thread-ai-{world['tag']}", direction_hint=None,
+                    sender=f"ana@laboratorio-{world['tag']}.test", recipients="contacto@origenlab.cl",
+                    subject="Consulta por equipos")
+        _requester_check(conn, ask)
+        _reading(conn, ask, "triage:v3", {"class": "business_other", "reading": {"intent": "quote_request"}})
+    opened = _apply_only(db, world, ask)
+    assert opened["rule_id"] == "R7"
+    assert any("IA" in r for r in opened["reasons"])
+    assert _one(db, "select stage from crm.opportunity where id = %s", opened["case_id"]) == ("lead",)
