@@ -225,6 +225,7 @@ def test_truth_mode_with_a_pick_sample_scores_the_model_and_the_combination(tmp_
     rules, combined = lines_out[1], lines_out[2]
     assert rules["top1_right"] == 0 and combined["event"] == "triage_eval_truth_combined"
     assert combined["top1_right"] == 2 and combined["pick_calls"] == 2 and combined["pick_input_tokens"] == 100
+    assert combined["pick_medium_right"] == 2  # by confidence: what R12 (high only) hangs on
     # Leave-one-out: each email is shown the other's owner decision from the same domain, never its own.
     assert "Re: centrífuga lead time" in picks[0]["messages"][0]["content"]
     assert "Re: centrífuga price" not in picks[0]["messages"][0]["content"].split("<email>")[0]

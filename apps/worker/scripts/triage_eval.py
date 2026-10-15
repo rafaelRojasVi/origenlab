@@ -151,6 +151,10 @@ def pick_results(truth_rows: list[dict], results: dict[str, MatchResult], inputs
         n["pick_input_tokens"] += pick["usage"]["input_tokens"] or 0
         n["pick_output_tokens"] += pick["usage"]["output_tokens"] or 0
         q = results[sid].quote_numbers
+        if pick["choice"] not in ("new_case", "none"):
+            # What rule R12 hangs on: a pick naming a case, by confidence — right when it is the case
+            # the person answered; only «high» is linked automatically in production.
+            n[f"pick_{pick['confidence']}_{'right' if pick['choice'] == t.get('case_id') else 'wrong'}"] += 1
         if pick["choice"] == "new_case":
             combined[sid] = MatchResult("new_case", (), q, (pick["new_case"] or {}).get("quote_number"))
         elif pick["choice"] == "none":
