@@ -2814,3 +2814,14 @@ este caso». New on 2026-10-15: rule **R12** (automatic) links the email when th
 (layer 1 «exact» or a «high» pick), before R7 would open a second request — also a supplier's mail
 about a client's deal; a won case keeps it closed; it lists on Hoy with «Quitar». The emails people
 take off a case now count as rejections in the examples the AI reads. No schema change.
+
+### 2.7.120 A sent quote lands on the client's open request (R13); R3/R4 automatic, 2026-10-15 — built, deploys on merge
+
+Found on 15 Oct: quotes sent on a new thread never reached the request the client had made
+(S&B Analítica's 01266-26 would have opened a second case), and quotes to new clients waited for
+an admin's «Aplicar» (Panimex 01265-26, Grupo Bimbo 01267-26). Rule **R13** files such a quote on
+the client's open request without a quote — matched by a recipient who wrote on it or asked through
+a forwarded request, the institution's domain, or the institution the PDF names — walks it to
+«Enviada» and records the quote; two candidates stay a proposal. R3 and R4 are now automatic, so a
+quote to a client with no open request opens its case by itself; all three undo with «Quitar». The
+snapshot counts a forwarded request's customer as a person of its case. No schema change.

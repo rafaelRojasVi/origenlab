@@ -661,7 +661,7 @@ else (R7, R8) stays a proposal in Revisión.
   offers R4's steps with the name instead of a domain (institution «por confirmar», case in
   «Enviada», quote) and, like R4, waits for «Aplicar». R3–R6 always wait for «Aplicar».
   **2026-10-14 (owner: «the system acts by itself, I remove what is wrong»).** The timer runs
-  **R1, R2, R7, R9, R11 and R12**. **R12** (2026-10-15): an inbound email no thread or quote number
+  **R1, R2, R3, R4, R7, R9, R11, R12 and R13**. **R13** (2026-10-15): a quote sent on a new thread lands on the client's open request that has no quote yet (a recipient wrote on it or asked through a forward, a recipient's domain is its institution's, or the PDF names it) instead of opening a second case; R3 and R4 then open a case only for a client with no open request, by themselves, undone with «Quitar». **R12** (2026-10-15): an inbound email no thread or quote number
   places joins the case the worker's context matcher (`case_match:v1`) is sure of — rules «exact»,
   or the AI's pick with confidence «high» — before R7 would open a second request; a supplier
   writing about a client's deal goes to the client's case the same way; a won case keeps it

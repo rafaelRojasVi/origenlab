@@ -19,6 +19,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R9 | outbound, a NEW CN number in a PDF, no recipient names an institution (free-mail), and the PDF's own name names exactly one institution (`CN09876-<institución>.pdf`, as the Cotizador writes it) | auto when that institution has exactly one open case: link + «Enviada» + quote; otherwise a proposal |
 | R10 | as R9, but the institution the PDF names is not in the CRM | «Aplicar» only: institution «por confirmar» (named as the PDF names it, no domain) + case in «Enviada» + quote |
 | R12 | inbound, no thread or quote number placed it, and the context matcher (`case_match:v1`, the worker's triage) is sure: layer 1 «exact», or the AI's pick with confidence «high» — also for a supplier writing about a client's deal | auto: link to that open case (a won case keeps it closed); a medium or low pick stays a suggestion |
+| R13 | outbound, a NEW CN number in a PDF on a new thread, answering the client's open request with no quote yet (a recipient wrote on it or asked through a forward, a recipient's domain is its institution's, or the PDF names its institution) | auto: link + «Enviada» + quote on that request; two requests → a proposal |
 | R11 | a request forwarded to contacto@ (`forwarded_request`, read by the worker), still pending | auto: joins the one open case whose emails come from that customer, or of the customer's institution; otherwise a request (`create_request_from_forward`) with the known institution, the company the forward names, or none. Never a supplier's domain; never links a Labdelivery-mailbox email |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
@@ -52,7 +53,7 @@ from email.utils import getaddresses
 from typing import Any
 from zoneinfo import ZoneInfo
 
-RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12")
+RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: OrigenLab's own domains: never an institution, never a recipient that counts.
@@ -1064,6 +1065,9 @@ def _creation_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedA
             unknown.append(d)
     if any(o.is_supplier for o in known.values()):
         return PlannedAction(e.id, "R8", NONE, ("destinatario de un proveedor: no se crea caso",), quote_number=number)
+    request = _open_request_rule(e, ix, doc, token, key, number)
+    if request is not None:
+        return request
     if len(known) >= 2:
         return PlannedAction(e.id, "R3", PROPOSAL, (
             f"cotización {number} enviada a {len(known)} instituciones conocidas: un humano elige",),
@@ -1113,6 +1117,58 @@ def _creation_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedA
             f"cotización {number} enviada a correo gratuito ({', '.join(free)}): no se crea institución",),
             quote_number=number)
     return PlannedAction(e.id, "R8", NONE, ("correo saliente sin destinatario externo",), quote_number=number)
+
+
+#: Stages of a request still waiting for its first quote (R13).
+_REQUEST_STAGES = ("lead", "qualifying", "qualified")
+
+
+def _open_request_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: str, key: tuple[int, int],
+                       number: str) -> PlannedAction | None:
+    """R13 (owner, 2026-10-15): a quote sent on a NEW thread answers the client's open request —
+    the case a person or the rules opened when they asked (R7, R11) and that has no quote yet. It is
+    that request when a recipient wrote on it (or asked through a forward), when a recipient's domain
+    is its institution's, or when the PDF's name names its institution. Exactly one → the email is
+    filed there, the case walks to «Enviada» and the quote is recorded; two or more → a proposal; none
+    → the creation rules (R3/R4/R9/R10) go on as before. Never a request without an institution:
+    recording a quote needs the requester (as R1)."""
+    recipients = {a.lower() for a in addresses(e.recipients)}
+    domains = {domain_of(a) for a in recipients} - FREE_MAIL_DOMAINS - OWN_DOMAINS
+    named_orgs: set[str] = set()
+    name = quote_file_institution(doc.filename)
+    if name:
+        for part in (name, *quote_file_segments(name)):
+            for k in institution_keys(part):
+                named_orgs.update(o.id for o in ix.by_name.get(k, []))
+    matches: dict[str, tuple[CaseState, str]] = {}
+    for c in ix.cases.values():
+        if c.closed or c.quotes or c.stage not in _REQUEST_STAGES or c.organization_id is None:
+            continue
+        org = ix.orgs.get(c.organization_id)
+        if org is None or org.is_supplier:
+            continue
+        if recipients & set(c.people):
+            matches[c.id] = (c, "el destinatario es quien pidió la cotización")
+        elif domains & {d.lower() for d in org.domains}:
+            matches[c.id] = (c, f"el destinatario es de «{org.name}»")
+        elif org.id in named_orgs:
+            matches[c.id] = (c, f"el PDF nombra «{org.name}»")
+    if not matches:
+        return None
+    if len(matches) >= 2:
+        return PlannedAction(e.id, "R13", PROPOSAL, (
+            f"cotización {number}: {len(matches)} solicitudes abiertas de este cliente sin cotización: un humano elige",),
+            quote_number=number, candidates=tuple(sorted(matches)))
+    c, why = next(iter(matches.values()))
+    reasons = [f"cotización nueva {number} (PDF «{doc.filename}»)", why,
+               f"responde la solicitud abierta «{c.title}», que aún no tenía cotización"]
+    ix.claimed_keys[key] = e.id
+    return PlannedAction(
+        e.id, "R13", AUTO, tuple(reasons), case_id=c.id, case_title=c.title, organization_id=c.organization_id,
+        quote_number=number,
+        commands=_sent_quote_steps(c, e, doc, number, token, _derivation(token, e.sent_at), _note("R13", reasons)),
+        context={"case": c.id, "case_version": c.version, "from_stage": c.stage},
+    )
 
 
 def _quote_file_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: str, key: tuple[int, int],

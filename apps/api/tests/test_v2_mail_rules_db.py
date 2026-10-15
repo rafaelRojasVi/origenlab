@@ -288,7 +288,8 @@ def test_r9_a_quote_sent_to_gmail_reaches_the_case_of_the_institution_its_pdf_na
             subject="Cotización", documents=[_doc(f"{token}-Cliente Ficticio {world['tag']}.pdf", [token])],
         )
     planned = _action(repo.preview(), sent)
-    assert (planned["rule_id"], planned["mode"], planned["case_id"]) == ("R9", "auto", case_id)
+    # The case has no quote yet: R13 (2026-10-15) takes it first, with R9's three steps.
+    assert (planned["rule_id"], planned["mode"], planned["case_id"]) == ("R13", "auto", case_id)
     applied = _apply_only(db, world, sent)
     assert applied["quote_number"] == f"0{serial}-26"
     assert _one(db, "select stage from crm.opportunity where id = %s", case_id)[0] == "quoting"
@@ -648,19 +649,19 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     assert unchanged.value.code == "auto_mail_rules_unchanged"
     state = auto.state()
     assert (state["enabled"], state["changed_by"], state["note"], state["rules"]) == (
-        True, "Admin Ficticio", "probado en vista previa", ["R1", "R11", "R12", "R2", "R7", "R9"])
+        True, "Admin Ficticio", "probado en vista previa", ["R1", "R11", "R12", "R13", "R2", "R3", "R4", "R7", "R9"])
 
-    # One pass: R1/R2 link and R7 opens the RFQ lead; R4 still waits for a person.
+    # One pass: R1/R2 link, R7 opens the RFQ lead and (2026-10-15) R4 opens the new domain's case too.
     result = auto.run_once()
     assert result["skipped"] is None and result["applied"] >= 3, result
     links = _one(db, "select array_agg(source_record_id::text order by source_record_id) from crm.opportunity_evidence "
                      "where opportunity_id = %s and unlinked_at is null and source_record_id in (%s, %s)",
                  case_id, reply, by_number)[0]
     assert sorted(links) == sorted([reply, by_number])
-    assert _one(db, "select count(*) from crm.opportunity where origin_source_record_id = %s", world["e_new"])[0] == 0
+    assert _one(db, "select count(*) from crm.opportunity where origin_source_record_id = %s", world["e_new"])[0] == 1
     assert _one(db, "select stage, organization_id from crm.opportunity where origin_source_record_id = %s",
                 fresh_rfq) == ("lead", None)
-    assert _action(repo.preview(), world["e_new"])["mode"] == "auto"
+    assert not any(a["evidence_id"] == world["e_new"] for a in repo.preview()["actions"])  # applied, not planned again
     applied = {a["evidence_id"]: a for a in repo.applied()}
     assert applied[reply]["automatic"] is True and applied[reply]["applied_by"] == "Admin Ficticio"
     assert _one(db, "select bool_and(actor_kind = 'worker'), bool_and(payload -> 'attribution' ->> 'trigger' = 'automatic') "
@@ -847,3 +848,24 @@ def test_r12_the_context_matcher_places_a_new_thread_on_its_case_and_quitar_unli
     repo.undo(_operator(world["admin"]), placed["command_receipt_id"], "no era")
     assert _one(db, "select unlinked_at is not null from crm.opportunity_evidence "
                     "where opportunity_id = %s and source_record_id = %s", case_id, ask) == (True,)
+
+
+def test_r13_a_quote_sent_on_a_new_thread_lands_on_the_forwarded_request_and_undoes(db, world) -> None:
+    repo = _repo(db)
+    customer = f"esteban@lab-{world['tag']}.test"
+    with _owner(db) as conn:
+        fid, _ = _forward(conn, customer, company=f"Laboratorio Ficticio {world['tag']} EIRL", item="Tabletas")
+    request = _apply_only(db, world, fid)
+    case_id = request["case_id"]
+    serial = int(world["number"][1:5]) + 7
+    with _owner(db) as conn:
+        quote_mail = _mail(conn, thread=f"thread-q-{world['tag']}", direction_hint="external",
+                           sender="contacto@origenlab.cl", recipients=f"Esteban <{customer}>", subject="Cotización tabletas",
+                           documents=[_doc(f"CN0{serial}-Esteban – Laboratorio.pdf", [f"CN0{serial}"])])
+    filed = _apply_only(db, world, quote_mail)
+    assert (filed["rule_id"], filed["case_id"]) == ("R13", case_id)
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id) == ("quoting",)
+    assert _one(db, "select count(*) from crm.quote where opportunity_id = %s", case_id) == (1,)
+
+    repo.undo(_operator(world["admin"]), filed["command_receipt_id"], "no era esta solicitud")
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id) == ("lead",)
