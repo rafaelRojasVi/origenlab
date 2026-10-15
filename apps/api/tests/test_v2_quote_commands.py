@@ -1,4 +1,4 @@
-"""Quote commands (create-quote, save-quote-draft) against PostgreSQL, as the real `origenlab_api` role.
+"""Quote commands (create, save, approve, void, revise) against PostgreSQL, as the real `origenlab_api` role.
 
 Every name, number, cost and rate is invented. Each command runs through `V2QuoteRepository.execute`
 exactly as the route will call it: the body validated by its Pydantic model and handed over as
@@ -6,6 +6,7 @@ exactly as the route will call it: the body validated by its Pydantic model and 
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -13,13 +14,23 @@ from decimal import Decimal
 import psycopg
 import pytest
 
-from origenlab_api.quoting.engine import peso
+from origenlab_api.quoting.engine import compute, peso
 from origenlab_api.v2.catalog.fx import FxUnavailable
 from origenlab_api.v2.commands import CommandRefused, request_digest
 from origenlab_api.v2.identity import OperatorIdentity
-from origenlab_api.v2.quotes.commands import V2QuoteRepository
+from origenlab_api.v2.quotes.commands import (
+    APPROVAL_REFUSALS,
+    ApprovalFacts,
+    V2QuoteRepository,
+    check_approvable,
+)
 from origenlab_api.v2.quotes.draft import QUOTE_BODIES, DraftFxOverride, QuoteDraft
-from origenlab_api.v2.quotes.inputs import fx_overrides_from_row, load_parameters, resolve_draft
+from origenlab_api.v2.quotes.inputs import (
+    draft_from_rows,
+    fx_overrides_from_row,
+    load_parameters,
+    resolve_draft,
+)
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
 
 NOW = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)
@@ -495,3 +506,413 @@ def test_a_draft_resolves_in_a_constant_number_of_statements(world) -> None:
     assert len(one.items) == 1 and len(ten.items) == 11
     assert [i.unit_cost for i in ten.items[:10]] == [Decimal(100 + n) for n in range(10)]
     assert counts[0] == counts[1] <= 6
+
+
+# ------------------------------------------------------------------ robustness carried from Task 7
+
+@needs_db
+def test_save_refuses_an_unknown_cost_observation(world) -> None:
+    created = _new_quote(world)
+    refused = _refused(world, "save-quote-draft", {
+        "revision_id": created["revision_id"], "expected_version": 1,
+        "draft": {"items": [_catalog_item(world, cost_observation_id=str(uuid.uuid4()))]}})
+    assert (refused.status_code, refused.code) == (422, "cost_observation_not_found")
+    assert _lines(world["dsn"], created["revision_id"]) == []
+
+
+@needs_db
+def test_save_refuses_an_amount_too_large_for_its_column(world) -> None:
+    created = _new_quote(world)
+    refused = _refused(world, "save-quote-draft", {
+        "revision_id": created["revision_id"], "expected_version": 1,
+        "draft": {"items": [_catalog_item(world, unit_cost="999999999999", cost_currency="EUR")]}})
+    assert (refused.status_code, refused.code, refused.message) == (422, "amount_too_large",
+                                                                   "Un monto es demasiado grande.")
+    assert _lines(world["dsn"], created["revision_id"]) == []
+    assert _revision(world["dsn"], created["revision_id"])["version"] == 1
+
+
+# ------------------------------------------------------------------ draft_from_rows
+
+def _accessory(world: dict, model: str) -> str:
+    maker = _org(world["dsn"], "manufacturer", "Fabricante Ficticio")
+    return _owner(world["dsn"], "insert into catalog.product (manufacturer_organization_id, model_number, name_es, "
+                                "product_kind, weight_kg, origin_country, content_origin) values (%s, %s, "
+                                "'Accesorio ficticio', 'accessory', 1, 'DE', 'operator') returning id::text",
+                  (maker, model))[0][0]
+
+
+@needs_db
+def test_draft_from_rows_reprices_exactly_what_was_saved(world) -> None:
+    dsn = world["dsn"]
+    created = _new_quote(world)
+    accessory = _accessory(world, f"RT-{uuid.uuid4().hex[:6]}")
+    draft = {
+        "items": [
+            _catalog_item(world, quantity="2", line_note_es="Incluye manual"),
+            {"product_id": accessory, "description": "Accesorio por precio", "quantity": "3",
+             "margin_mode": "none", "typed_unit_price": "45000.4", "unit_cost": "20",
+             "cost_currency": "USD", "supplier_organization_id": world["supplier"]},
+            {"description": "Servicio ficticio", "quantity": "1", "item_type": "service",
+             "unit_cost": "100000", "cost_currency": "CLP", "margin_mode": "margin", "margin_pct": "0.3"},
+        ],
+        "manual_expenses": [{"label": "Seguro ficticio", "amount": "15", "currency": "USD"}],
+        "fx_overrides": [{"currency": "USD", "clp_per_unit": "950", "reason": "tipo de cambio del agente"}],
+        "terms": {"payment_terms": "30 días", "warranty_terms_es": WARRANTY, "validity_days": 20,
+                  "terms_extra": [{"label_es": "Capacitación", "text_es": "Una sesión"}]},
+    }
+    _save(world, created, draft)
+    revision = _revision(dsn, created["revision_id"])
+    rows = _lines(dsn, created["revision_id"])
+
+    rebuilt = draft_from_rows(revision, rows)
+    assert [e.label for e in rebuilt.manual_expenses] == ["Seguro ficticio"]  # profile lines are regenerated
+    assert rebuilt.fx_overrides == [DraftFxOverride(currency="USD", clp_per_unit=Decimal("950"),
+                                                    reason="tipo de cambio del agente")]
+    assert rebuilt.terms.validity_days == 20 and rebuilt.terms.terms_extra[0].label_es == "Capacitación"
+    assert rebuilt.recipient_participant_id is not None
+    assert [i.margin_mode for i in rebuilt.items] == ["markup", "none", "margin"]
+
+    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
+        params = {**load_parameters(cur), "iva_rate": Decimal(revision["tax_rate"])}
+        resolved = resolve_draft(cur, rebuilt, params, fake_fx, TODAY)
+    result = compute(resolved.engine_input)
+    assert (result.net, result.iva, result.total) == (revision["subtotal"], revision["tax_total"],
+                                                      revision["grand_total"])
+    items = [r for r in rows if r["line_kind"] == "item"]
+    assert [line.unit_price for line in result.lines] == [r["unit_price_qc"] for r in items]
+    assert len(resolved.expenses) == len(rows) - len(items)
+
+
+# ------------------------------------------------------------------ check_approvable (pure)
+
+def _facts(**over) -> ApprovalFacts:
+    base = {"item_line_nos": (1,), "unpriced_line_nos": (), "expense_count": 0, "principal_line_no": None,
+            "missing_fx": (), "has_institution": True, "has_recipient": True,
+            "printed": (("Garantía", "Doce meses"),)}
+    return ApprovalFacts(**{**base, **over})
+
+
+def test_check_approvable_passes_a_complete_quote() -> None:
+    assert check_approvable(_facts()) == []
+    assert check_approvable(_facts(expense_count=2, principal_line_no=1)) == []
+
+
+@pytest.mark.parametrize(("over", "expected"), [
+    ({"item_line_nos": ()}, [("no_items", "Agrega al menos un producto.")]),
+    ({"item_line_nos": (1, 2, 3), "unpriced_line_nos": (2, 3)},
+     [("unpriced_line", "La línea 2 no tiene precio (falta costo o precio)."),
+      ("unpriced_line", "La línea 3 no tiene precio (falta costo o precio).")]),
+    ({"expense_count": 1}, [("principal_missing", "Hay gastos de importación pero ningún equipo principal; elige uno.")]),
+    ({"missing_fx": ("EUR", "USD")}, [("fx_missing", "Falta el tipo de cambio de EUR."),
+                                      ("fx_missing", "Falta el tipo de cambio de USD.")]),
+    ({"has_institution": False}, [("no_institution", "El caso no tiene institución.")]),
+    ({"has_recipient": False}, [("no_recipient", "Elige a quién va dirigida.")]),
+    ({"printed": (("Garantía", "[GARANTÍA]"), ("Forma de pago", None), ("Capacitación", "Ver [detalle] aquí"))},
+     [("placeholder_left", "Completa «Garantía»: aún tiene un texto entre corchetes."),
+      ("placeholder_left", "Completa «Capacitación»: aún tiene un texto entre corchetes.")]),
+])
+def test_check_approvable_refusals(over, expected) -> None:
+    assert check_approvable(_facts(**over)) == expected
+
+
+def test_check_approvable_ignores_empty_brackets_and_lists_every_refusal_in_order() -> None:
+    assert check_approvable(_facts(printed=(("Garantía", "sin [] nada"),))) == []
+    codes = [code for code, _ in check_approvable(_facts(item_line_nos=(), expense_count=1, has_recipient=False))]
+    assert codes == ["no_items", "principal_missing", "no_recipient"]
+    assert set(APPROVAL_REFUSALS) == {"no_items", "unpriced_line", "principal_missing", "fx_missing",
+                                      "no_institution", "no_recipient", "placeholder_left"}
+
+
+# ------------------------------------------------------------------ approve-quote-revision
+
+def _approve(world: dict, revision_id: str, version: int, **kw) -> dict:
+    return _run(world, "approve-quote-revision", {"revision_id": revision_id, "expected_version": version}, **kw)
+
+
+def _approve_refused(world: dict, revision_id: str, version: int, **kw) -> CommandRefused:
+    return _refused(world, "approve-quote-revision", {"revision_id": revision_id, "expected_version": version}, **kw)
+
+
+def _approvable(world: dict, **extra) -> tuple[dict, dict]:
+    """A quote whose saved draft is approvable: the catalog equipment and a warranty."""
+    created = _new_quote(world)
+    saved = _save(world, created, {"items": [_catalog_item(world)], "terms": {"warranty_terms_es": WARRANTY},
+                                   **extra})
+    return created, saved
+
+
+@needs_db
+def test_approve_freezes_the_revision(world) -> None:
+    dsn, operator = world["dsn"], world["operator"]
+    institution = _org(dsn, "institution", "Instituto Ficticio")
+    _owner(dsn, "insert into crm.external_identifier (scheme, value_norm, organization_id) values ('rut', %s, %s)",
+           (f"7{uuid.uuid4().int % 10**7:07d}-K", institution))
+    [(rut,)] = _owner(dsn, "select value_norm from crm.external_identifier where organization_id = %s", (institution,))
+    case = _case(dsn, operator, institution)
+    [participant] = _rows(dsn, "select id::text as id, person_id from crm.opportunity_participant "
+                               "where opportunity_id = %s", (case,))
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                "values ('email', %s, %s, %s, 'personal', 'machine_proposed')",
+           (f"persona-{uuid.uuid4().hex[:6]}@example.test", "persona@example.test", participant["person_id"]))
+    [(email,)] = _owner(dsn, "select value_norm from crm.contact_point where person_id = %s", (participant["person_id"],))
+    created = _run(world, "create-quote", {"opportunity_id": case})
+    accessory = _accessory(world, f"NEG-{uuid.uuid4().hex[:6]}")
+    negotiated = {"product_id": accessory, "description": "Accesorio negociado", "quantity": "2",
+                  "unit_cost": "80", "cost_currency": "EUR", "supplier_organization_id": world["supplier"]}
+    terms = {"warranty_terms_es": WARRANTY, "payment_terms": "30 días", "delivery_terms": "60 días",
+             "terms_extra": [{"label_es": "Capacitación", "text_es": "Una sesión"}]}
+    saved = _save(world, created, {"items": [_catalog_item(world), negotiated], "terms": terms})
+    before = _revision(dsn, created["revision_id"])
+
+    out = _approve(world, created["revision_id"], saved["version"])
+    number = created["quote_number"]
+    assert {k: out[k] for k in ("ok", "revision_id", "version", "quote_number", "revision_label")} == {
+        "ok": True, "revision_id": created["revision_id"], "version": saved["version"] + 1,
+        "quote_number": number, "revision_label": number}
+
+    rev = _revision(dsn, created["revision_id"])
+    assert (rev["status"], rev["version"], str(rev["approved_by_operator_id"])) == (
+        "approved", saved["version"] + 1, operator.operator_id)
+    assert rev["approved_at"] is not None and rev["totals_computed_at"] is not None
+    assert rev["valid_until"] == date(2026, 11, 14)  # TODAY + the default 30 days
+    assert (rev["subtotal"], rev["tax_total"], rev["grand_total"]) == (
+        before["subtotal"], before["tax_total"], before["grand_total"])
+    assert rev["party_snapshot_version"] == 1
+    snapshot = rev["party_snapshot"]
+    assert snapshot["institution"] == {"id": institution, "name": _rows(dsn, "select name from crm.organization "
+                                                                              "where id = %s", (institution,))[0]["name"],
+                                       "rut": rut}
+    assert snapshot["recipient"] == {"participant_id": participant["id"], "name": "Persona Ficticia", "email": email}
+    assert snapshot["terms"] == {"delivery_terms": "60 días", "payment_terms": "30 días", "warranty_terms_es": WARRANTY,
+                                 "delivery_place_es": None, "installation_terms_es": None, "client_notes_es": None,
+                                 "validity_days": 30,
+                                 "terms_extra": [{"label_es": "Capacitación", "text_es": "Una sesión"}]}
+    assert (snapshot["quote_number"], snapshot["revision_label"], snapshot["approved_by"]) == (
+        number, number, "Vendedora Prueba")
+    assert (snapshot["approved_at"], snapshot["valid_until"]) == ("2026-10-15", "2026-11-14")
+    printed = json.dumps(snapshot)
+    assert all(word not in printed for word in ("cost", "margin", "markup", "price", "unit"))
+
+    assert _events(dsn, "quote_revision", created["revision_id"])[-1] == (
+        "quote_revision.transitioned", {"from": "draft", "to": "approved"})
+    [observation] = _rows(dsn, "select id::text as id, supplier_organization_id::text as supplier, price, currency, "
+                               "price_kind, provenance_note, recorded_by_operator_id::text as operator "
+                               "from catalog.supplier_product where product_id = %s", (accessory,))
+    assert (observation["supplier"], observation["price"], observation["currency"], observation["price_kind"],
+            observation["provenance_note"], observation["operator"]) == (
+        world["supplier"], Decimal("80"), "EUR", "negotiated", f"Cotización {number}", operator.operator_id)
+    assert _events(dsn, "product", accessory) == [("product.cost_recorded", {
+        "supplier_product_id": observation["id"], "supplier_organization_id": world["supplier"],
+        "price_kind": "negotiated", "currency": "EUR", "quote_revision_id": created["revision_id"]})]
+    # The catalog line's cost came from an observation: nothing new is recorded for it.
+    assert _owner(dsn, "select count(*) from catalog.supplier_product where product_id = %s and price_kind = "
+                       "'negotiated'", (world["product"],)) == [(0,)]
+
+    refused = _approve_refused(world, created["revision_id"], out["version"])
+    assert (refused.status_code, refused.code) == (409, "not_a_draft")
+
+
+@needs_db
+def test_approve_with_a_stale_version_is_refused(world) -> None:
+    created, saved = _approvable(world)
+    refused = _approve_refused(world, created["revision_id"], saved["version"] - 1)
+    assert (refused.status_code, refused.code) == (409, "stale_version")
+    assert _revision(world["dsn"], created["revision_id"])["status"] == "draft"
+
+
+@needs_db
+def test_approve_refuses_a_quote_without_items(world) -> None:
+    created = _new_quote(world)
+    refused = _approve_refused(world, created["revision_id"], 1)
+    assert (refused.status_code, refused.code, refused.message) == (409, "no_items", "Agrega al menos un producto.")
+    rev = _revision(world["dsn"], created["revision_id"])
+    assert (rev["status"], rev["version"], rev["party_snapshot"]) == ("draft", 1, None)
+
+
+@needs_db
+def test_approve_refuses_import_expenses_without_a_principal(world) -> None:
+    created = _new_quote(world)
+    accessory = {"description": "Accesorio importado", "quantity": "1", "item_type": "accessory",
+                 "unit_cost": "100", "cost_currency": "EUR", "supplier_organization_id": world["supplier"]}
+    saved = _save(world, created, {"items": [accessory], "terms": {"warranty_terms_es": WARRANTY}})
+    assert len(_lines(world["dsn"], created["revision_id"])) == 5  # the profile's four expense lines
+    refused = _approve_refused(world, created["revision_id"], saved["version"])
+    assert (refused.status_code, refused.code, refused.message) == (
+        409, "principal_missing", "Hay gastos de importación pero ningún equipo principal; elige uno.")
+
+
+@needs_db
+def test_approve_refuses_a_manual_expense_without_a_principal(world) -> None:
+    created = _new_quote(world)
+    local = {"description": "Insumo local", "quantity": "1", "item_type": "consumable",
+             "unit_cost": "10000", "cost_currency": "CLP"}
+    saved = _save(world, created, {"items": [local], "manual_expenses": [{"label": "Despacho", "amount": "5000"}],
+                                   "terms": {"warranty_terms_es": WARRANTY}})
+    refused = _approve_refused(world, created["revision_id"], saved["version"])
+    assert refused.code == "principal_missing"
+
+
+@needs_db
+def test_approve_refuses_a_placeholder_left_in_a_printed_condition(world) -> None:
+    created, saved = _approvable(world, terms={"warranty_terms_es": "[GARANTÍA]"})
+    refused = _approve_refused(world, created["revision_id"], saved["version"])
+    assert (refused.status_code, refused.code, refused.message) == (
+        409, "placeholder_left", "Completa «Garantía»: aún tiene un texto entre corchetes.")
+
+
+@needs_db
+def test_approve_lists_every_refusal(world) -> None:
+    created = _new_quote(world)
+    saved = _save(world, created, {"items": [{"description": "Sin costo", "quantity": "1"}],
+                                   "terms": {"payment_terms": "[FORMA DE PAGO]"}})
+    refused = _approve_refused(world, created["revision_id"], saved["version"])
+    assert refused.code == "unpriced_line"
+    assert refused.message == ("La línea 1 no tiene precio (falta costo o precio). · "
+                               "Completa «Forma de pago»: aún tiene un texto entre corchetes.")
+
+
+@needs_db
+def test_approve_refuses_a_missing_exchange_rate(world) -> None:
+    created, saved = _approvable(world)
+    refused = _approve_refused(world, created["revision_id"], saved["version"], fx=no_fx)
+    assert (refused.status_code, refused.code, refused.message) == (409, "fx_missing", "Falta el tipo de cambio de EUR.")
+
+
+@needs_db
+def test_approve_refuses_a_closed_case(world) -> None:
+    created, saved = _approvable(world)
+    _owner(world["dsn"], "update crm.opportunity set stage = 'lost', closed_at = now(), close_reason = 'precio' "
+                         "where id = (select opportunity_id from crm.quote where id = %s)", (created["quote_id"],))
+    refused = _approve_refused(world, created["revision_id"], saved["version"])
+    assert (refused.status_code, refused.code) == (409, "case_closed")
+
+
+@needs_db
+def test_an_approved_revision_keeps_its_lines(world) -> None:
+    created, saved = _approvable(world)
+    _approve(world, created["revision_id"], saved["version"])
+    with psycopg.connect(runtime_dsn(world["dsn"])) as conn, conn.cursor() as cur:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute("insert into crm.quote_line (quote_revision_id, line_no, line_kind, description, quantity) "
+                        "values (%s, 9, 'item', 'Línea agregada', 1)", (created["revision_id"],))
+    with psycopg.connect(runtime_dsn(world["dsn"])) as conn, conn.cursor() as cur:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute("update crm.quote_line set quantity = 5 where quote_revision_id = %s", (created["revision_id"],))
+
+
+# ------------------------------------------------------------------ void-quote-revision
+
+def _void(world: dict, revision_id: str, version: int, reason: str = "el cliente desistió") -> dict:
+    return _run(world, "void-quote-revision", {"revision_id": revision_id, "expected_version": version,
+                                               "reason": reason})
+
+
+def _void_refused(world: dict, revision_id: str, version: int) -> CommandRefused:
+    return _refused(world, "void-quote-revision", {"revision_id": revision_id, "expected_version": version,
+                                                   "reason": "el cliente desistió"})
+
+
+@needs_db
+def test_void_a_draft(world) -> None:
+    created = _new_quote(world)
+    out = _void(world, created["revision_id"], 1)
+    assert (out["ok"], out["version"]) == (True, 2)
+    rev = _revision(world["dsn"], created["revision_id"])
+    assert (rev["status"], rev["version"]) == ("void", 2)
+    assert _events(world["dsn"], "quote_revision", created["revision_id"])[-1] == (
+        "quote_revision.transitioned", {"from": "draft", "to": "void", "reason": "el cliente desistió"})
+    assert _void_refused(world, created["revision_id"], 2).code == "already_void"
+
+
+@needs_db
+def test_void_an_approved_revision_but_not_a_sent_one(world) -> None:
+    dsn = world["dsn"]
+    created, saved = _approvable(world)
+    approved = _approve(world, created["revision_id"], saved["version"])
+    assert _void_refused(world, created["revision_id"], approved["version"] - 1).code == "stale_version"
+    out = _void(world, created["revision_id"], approved["version"])
+    assert _revision(dsn, created["revision_id"])["status"] == "void" and out["version"] == approved["version"] + 1
+    assert _events(dsn, "quote_revision", created["revision_id"])[-1][1]["from"] == "approved"
+
+    created, saved = _approvable(world)
+    approved = _approve(world, created["revision_id"], saved["version"])
+    mailbox = _owner(dsn, "insert into comms.mailbox (address_norm) values (%s) returning id",
+                     (f"buzon-{uuid.uuid4().hex[:6]}@example.invalid",))[0][0]
+    message = _owner(dsn, "insert into comms.message (mailbox_id, provider_message_id, direction, internal_date) "
+                          "values (%s, %s, 'outbound', now()) returning id", (mailbox, uuid.uuid4().hex))[0][0]
+    _owner(dsn, "update crm.quote_revision set status = 'sent', pdf_sha256 = %s, sent_at = now(), sent_message_id = %s "
+                "where id = %s", ("a" * 64, message, created["revision_id"]))
+    refused = _void_refused(world, created["revision_id"], approved["version"])
+    assert (refused.status_code, refused.code, refused.message) == (
+        409, "already_sent", "Ya se envió: crea una nueva revisión.")
+
+
+@needs_db
+def test_void_refuses_a_historical_revision(world) -> None:
+    dsn = world["dsn"]
+    case = _case(dsn, world["operator"], world["institution"])
+    record = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload) values ('quote_document', "
+                         "%s, '{}'::jsonb) returning id", (f"hist-{uuid.uuid4().hex}",))[0][0]
+    quote = _owner(dsn, "insert into crm.quote (opportunity_id, quote_number, number_origin) values (%s, %s, "
+                        "'printed_historical') returning id", (case, f"H{uuid.uuid4().hex[:8]}"))[0][0]
+    revision = _owner(dsn, "insert into crm.quote_revision (quote_id, revision_no, status, origin, pdf_sha256, sent_at, "
+                           "origin_source_record_id) values (%s, 1, 'sent', 'historical_import', %s, now(), %s) "
+                           "returning id::text", (quote, "b" * 64, record))[0][0]
+    refused = _void_refused(world, revision, 1)
+    assert (refused.status_code, refused.code) == (409, "not_authored")
+
+
+# ------------------------------------------------------------------ create-quote-revision
+
+@needs_db
+def test_a_new_revision_copies_the_issued_one_and_supersedes_it_on_approval(world) -> None:
+    dsn = world["dsn"]
+    created, saved = _approvable(world, terms={"warranty_terms_es": WARRANTY, "payment_terms": "30 días"})
+    quote = {"quote_id": created["quote_id"]}
+    refused = _refused(world, "create-quote-revision", quote)
+    assert (refused.status_code, refused.code) == (409, "draft_open")  # revision 1 is still the draft
+    _approve(world, created["revision_id"], saved["version"])
+
+    opened = _run(world, "create-quote-revision", quote)
+    number = created["quote_number"]
+    label = f"{number[:5]}A-{number[-2:]}"
+    assert (opened["ok"], opened["revision_no"], opened["version"], opened["revision_label"]) == (True, 2, 1, label)
+    rev2 = _revision(dsn, opened["revision_id"])
+    rev1 = _revision(dsn, created["revision_id"])
+    assert (rev2["status"], rev2["origin"], rev2["party_snapshot"], rev2["approved_at"]) == (
+        "draft", "authored", None, None)
+    copied = ("payment_terms", "warranty_terms_es", "validity_days", "expense_method", "expense_allocation_mode",
+              "principal_rule", "fx_override_reasons", "recipient_participant_id", "tax_rate", "terms_extra",
+              "subtotal", "grand_total")
+    assert {c: rev2[c] for c in copied} == {c: rev1[c] for c in copied}
+
+    def content(rows):
+        skip = {"id", "quote_revision_id", "created_at", "updated_at"}
+        return [{k: v for k, v in r.items() if k not in skip} for r in rows]
+
+    assert content(_lines(dsn, opened["revision_id"])) == content(_lines(dsn, created["revision_id"]))
+    assert _events(dsn, "quote_revision", opened["revision_id"]) == [
+        ("quote_revision.opened", {"quote_id": created["quote_id"], "revision_no": 2, "copied_from": 1})]
+    refused = _refused(world, "create-quote-revision", quote)
+    assert (refused.status_code, refused.code) == (409, "draft_open")
+
+    again = _save(world, {"revision_id": opened["revision_id"], "version": 1},
+                  {"items": [_catalog_item(world, quantity="2")], "terms": {"warranty_terms_es": WARRANTY}})
+    out = _approve(world, opened["revision_id"], again["version"])
+    assert (out["revision_label"], out["quote_number"]) == (label, number)
+    assert _revision(dsn, opened["revision_id"])["party_snapshot"]["revision_label"] == label
+    rev1 = _revision(dsn, created["revision_id"])
+    assert (rev1["status"], rev1["superseded_by_revision_no"]) == ("approved", 2) and rev1["superseded_at"]
+    assert _events(dsn, "quote_revision", created["revision_id"])[-1] == ("quote_revision.superseded", {
+        "quote_id": created["quote_id"], "revision_no": 1, "superseded_by_revision_no": 2})
+
+
+@needs_db
+def test_create_quote_revision_needs_an_issued_revision(world) -> None:
+    refused = _refused(world, "create-quote-revision", {"quote_id": str(uuid.uuid4())})
+    assert (refused.status_code, refused.code) == (404, "quote_not_found")
+    created = _new_quote(world)
+    _void(world, created["revision_id"], 1)
+    refused = _refused(world, "create-quote-revision", {"quote_id": created["quote_id"]})
+    assert (refused.status_code, refused.code) == (409, "nothing_to_revise")

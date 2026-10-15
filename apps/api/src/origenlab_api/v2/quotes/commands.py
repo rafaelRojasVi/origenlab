@@ -1,4 +1,4 @@
-"""Quote commands — create a quote on a case, save its draft priced by the engine.
+"""Quote commands — create a quote on a case, save its draft priced by the engine, approve, void, revise.
 
 Every handler runs inside the one transaction `CommandTransaction` provides: the receipt, the
 handler's writes and its events commit together or not at all; a `CommandRefused` rolls all of it
@@ -10,9 +10,21 @@ resolves it against the catalog, the parameters and the day's exchange rates (`i
 written, the version bumped. The database decides the rest — lines change only on an authored draft
 and carry one exchange rate per currency (`crm.quote_line_authored_draft_only`).
 
+**Approval re-prices.** `approve-quote-revision` rebuilds the draft from what was stored
+(`inputs.draft_from_rows`), prices it again with the day's rates, refuses with every reason the
+operator must fix (`check_approvable`, Spanish, joined by « · »), and otherwise rewrites the lines
+with that pricing, freezes the totals, the validity and the party snapshot (10-05 W3a), records the
+costs the operator typed for a catalog product as `negotiated` supplier observations (10-05 D6) and
+supersedes the revision that was current. From then on the database keeps the lines as they are.
+`create-quote-revision` copies the newest issued revision into the next draft (the next letter);
+`void-quote-revision` voids a draft or an approved revision, never one already sent.
+
 **Locks.** `create-quote` locks the case row (so a case being closed cannot get a quote in the same
 instant) and mints the number under the numbering advisory lock; its events open two new streams.
-`save-quote-draft` locks the revision row, which owns the `quote_revision` stream it appends to.
+`save-quote-draft`, `approve-quote-revision` and `void-quote-revision` lock the revision row, which
+owns the `quote_revision` stream they append to; approval also holds the case `for share` (it cannot
+be closed underneath), locks the revision it supersedes and the products whose stream gets a cost.
+`create-quote-revision` locks the quote, so two cannot open the same next revision.
 
 **Nothing of Labdelivery origin** enters a quote: `execute` refuses any submitted string that names
 it, before a transaction opens. Event payloads carry no cost, price or margin — only the net total
@@ -21,30 +33,34 @@ of a saved draft, which is the client-facing figure.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 import psycopg
 
-from origenlab_api.quoting.engine import EngineError, compute
+from origenlab_api.quoting.engine import EngineError, EngineResult, compute
 from origenlab_api.v2.catalog.commands import _submitted_text
+from origenlab_api.v2.catalog.fx import FxUnavailable
 from origenlab_api.v2.catalog.keys import LabdeliveryRefused, refuse_labdelivery
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
-from origenlab_api.v2.quotes.draft import QuoteDraft
+from origenlab_api.v2.quotes.draft import DraftTerms, QuoteDraft
 from origenlab_api.v2.quotes.inputs import (
     FxResolver,
     Resolved,
+    draft_from_rows,
     expense_target,
     fx_override_reasons,
     load_parameters,
     resolve_draft,
     result_json,
 )
-from origenlab_api.v2.quotes.numbering import SANTIAGO, allocate_quote_number
+from origenlab_api.v2.quotes.numbering import SANTIAGO, allocate_quote_number, revision_label
 
 #: Revision columns filled from `quote_default_*` text parameters when a quote is created.
 _DEFAULT_TEXTS = {
@@ -86,6 +102,19 @@ def _one(cur: Any) -> dict[str, Any] | None:
     if row is None:
         return None
     return dict(zip([d[0] for d in cur.description], row, strict=True))
+
+
+def _all(cur: Any) -> list[dict[str, Any]]:
+    names = [d[0] for d in cur.description]
+    return [dict(zip(names, row, strict=True)) for row in cur.fetchall()]
+
+
+def _write_amounts(cur: Any, sql: str, params: Any) -> None:
+    """A write of computed money: a figure its column cannot hold is the operator's 422, not a 500."""
+    try:
+        cur.execute(sql, params)
+    except psycopg.errors.NumericValueOutOfRange as exc:
+        raise CommandRefused(422, "amount_too_large", "Un monto es demasiado grande.") from exc
 
 
 def _text(value: str | None) -> str | None:
@@ -219,7 +248,7 @@ def _insert_lines(cur: Any, revision_id: str, resolved: Resolved, result: Any, t
         })
     try:
         for row in rows:
-            cur.execute(_INSERT_LINE_SQL, row)
+            _write_amounts(cur, _INSERT_LINE_SQL, row)
     except psycopg.errors.ForeignKeyViolation as exc:
         raise CommandRefused(422, "reference_not_found",
                              "a line names a supplier or cost observation that does not exist") from exc
@@ -276,7 +305,8 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
     _insert_lines(cur, revision_id, resolved, result, today)
 
     terms = draft.terms
-    cur.execute(
+    _write_amounts(
+        cur,
         """
         update crm.quote_revision
            set delivery_terms = %(delivery_terms)s, payment_terms = %(payment_terms)s,
@@ -313,11 +343,392 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
             "computed": result_json(resolved, result)}
 
 
-# ------------------------------------------------------------------ not yet
+# ------------------------------------------------------------------ approve-quote-revision
 
-def _not_implemented(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
-                     fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
-    raise CommandRefused(501, "not_implemented", "this quote command is not available yet")
+#: Why a draft cannot be approved yet, in the words the dashboard shows beside the button.
+APPROVAL_REFUSALS = {
+    "no_items": "Agrega al menos un producto.",
+    "unpriced_line": "La línea {line_no} no tiene precio (falta costo o precio).",
+    "principal_missing": "Hay gastos de importación pero ningún equipo principal; elige uno.",
+    "fx_missing": "Falta el tipo de cambio de {currency}.",
+    "no_institution": "El caso no tiene institución.",
+    "no_recipient": "Elige a quién va dirigida.",
+    "placeholder_left": "Completa «{field}»: aún tiene un texto entre corchetes.",
+}
+_PLACEHOLDER = re.compile(r"\[[^\]]+\]")
+
+#: The printed conditions, by revision column, with the name the operator knows each by.
+PRINTED_TERMS = (
+    ("delivery_terms", "Plazo de entrega"),
+    ("payment_terms", "Forma de pago"),
+    ("warranty_terms_es", "Garantía"),
+    ("delivery_place_es", "Lugar de entrega"),
+    ("installation_terms_es", "Instalación"),
+    ("client_notes_es", "Nota al cliente"),
+)
+
+
+@dataclass(frozen=True)
+class ApprovalFacts:
+    """What approval checks, already read and priced: `check_approvable` decides on it alone."""
+    item_line_nos: tuple[int, ...]
+    unpriced_line_nos: tuple[int, ...]
+    expense_count: int
+    principal_line_no: int | None
+    missing_fx: tuple[str, ...]
+    has_institution: bool
+    has_recipient: bool
+    printed: tuple[tuple[str, str | None], ...]  # (the condition's name, its printed text)
+
+
+def check_approvable(facts: ApprovalFacts) -> list[tuple[str, str]]:
+    """Every reason the revision cannot be approved, in the order the operator should fix them.
+
+    A principal is required whenever any expense line exists, a manual one included: without it
+    the engine allocates the expenses to no line and they silently drop out of the price.
+    """
+    out: list[tuple[str, str]] = []
+    if not facts.item_line_nos:
+        out.append(("no_items", APPROVAL_REFUSALS["no_items"]))
+    out += [("unpriced_line", APPROVAL_REFUSALS["unpriced_line"].format(line_no=n)) for n in facts.unpriced_line_nos]
+    if facts.expense_count and facts.principal_line_no is None:
+        out.append(("principal_missing", APPROVAL_REFUSALS["principal_missing"]))
+    out += [("fx_missing", APPROVAL_REFUSALS["fx_missing"].format(currency=c)) for c in facts.missing_fx]
+    if not facts.has_institution:
+        out.append(("no_institution", APPROVAL_REFUSALS["no_institution"]))
+    if not facts.has_recipient:
+        out.append(("no_recipient", APPROVAL_REFUSALS["no_recipient"]))
+    out += [("placeholder_left", APPROVAL_REFUSALS["placeholder_left"].format(field=name))
+            for name, text in facts.printed if text and _PLACEHOLDER.search(text)]
+    return out
+
+
+def printed_texts(terms: DraftTerms) -> tuple[tuple[str, str | None], ...]:
+    """Every condition the client will read, named; an extra condition's name is printed too."""
+    fixed = tuple((name, getattr(terms, column)) for column, name in PRINTED_TERMS)
+    return fixed + tuple((t.label_es, f"{t.label_es} {t.text_es}") for t in terms.terms_extra)
+
+
+def _recording(resolver: FxResolver, missing: list[str]) -> FxResolver:
+    """The resolver, except that a missing rate is noted (and stood in for) instead of raised.
+
+    Approval must name every missing currency alongside every other refusal; a stand-in rate
+    only lets the rest of the draft be priced for the checks — a draft with one is refused.
+    """
+    def resolve(currency: str, day: date) -> dict:
+        try:
+            return resolver(currency, day)
+        except FxUnavailable:
+            missing.append(currency)
+            return {"clp_per_unit": Decimal(1), "as_of": day, "source": "manual"}
+    return resolve
+
+
+_APPROVAL_REVISION_SQL = """
+select r.*, q.quote_number, q.opportunity_id::text as case_id
+  from crm.quote_revision r join crm.quote q on q.id = r.quote_id
+ where r.id = %s::uuid
+"""
+
+# The case's institution (the survivor of a merge) and its first RUT.
+_INSTITUTION_SQL = """
+select o.id::text as id, o.name,
+       (select e.value_norm from crm.external_identifier e
+         where e.organization_id = o.id and e.scheme = 'rut' order by e.created_at, e.id limit 1) as rut
+  from crm.organization m
+  join crm.organization o on o.id = coalesce(m.merged_into_organization_id, m.id)
+ where m.id = %s::uuid
+"""
+
+# The recipient, while still a current participant of the case: the person's name and the
+# participant's own email address, else the person's (an active one first).
+_RECIPIENT_SQL = """
+select p.id::text as participant_id, coalesce(pe.display_name, cp.value_display) as name, cp.value_norm as email
+  from crm.opportunity_participant p
+  left join crm.person pe on pe.id = p.person_id
+  left join lateral (
+    select c.value_norm, c.value_display from crm.contact_point c
+     where c.kind = 'email'
+       and (c.id = p.contact_point_id or (p.contact_point_id is null and c.person_id = p.person_id))
+     order by (c.status = 'active') desc, c.created_at, c.id
+     limit 1) cp on true
+ where p.id = %s::uuid and p.opportunity_id = %s::uuid and p.valid_to is null
+"""
+
+
+def _label(quote_number: str, revision_no: int) -> str:
+    try:
+        return revision_label(quote_number, revision_no)
+    except ValueError as exc:
+        raise CommandRefused(409, "revision_letters_exhausted",
+                             f"quote {quote_number} has no letter left for revision {revision_no}") from exc
+
+
+def _approval_facts(resolved: Resolved, result: EngineResult, missing_fx: list[str], institution: Any,
+                    recipient: Any, terms: DraftTerms) -> ApprovalFacts:
+    return ApprovalFacts(
+        item_line_nos=tuple(i.line_no for i in resolved.items),
+        unpriced_line_nos=tuple(r.line_no for r in result.lines if r.unit_price is None),
+        expense_count=len(resolved.expenses), principal_line_no=result.principal_line_no,
+        missing_fx=tuple(sorted(set(missing_fx))), has_institution=institution is not None,
+        has_recipient=recipient is not None, printed=printed_texts(terms))
+
+
+def party_snapshot(*, institution: dict[str, Any], recipient: dict[str, Any], terms: DraftTerms, validity_days: int,
+                   quote_number: str, label: str, approved_by: str, approved_on: date,
+                   valid_until: date) -> dict[str, Any]:
+    """What the client's document says, frozen at approval. No cost, price or margin: the PDF reads it."""
+    return {
+        "institution": {"id": institution["id"], "name": institution["name"], "rut": institution["rut"]},
+        "recipient": {"participant_id": recipient["participant_id"], "name": recipient["name"],
+                      "email": recipient["email"]},
+        "terms": {**{column: getattr(terms, column) or None for column, _ in PRINTED_TERMS},
+                  "validity_days": validity_days, "terms_extra": [t.model_dump() for t in terms.terms_extra]},
+        "quote_number": quote_number, "revision_label": label, "approved_by": approved_by,
+        "approved_at": approved_on.isoformat(), "valid_until": valid_until.isoformat(),
+    }
+
+
+def _record_negotiated_costs(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, resolved: Resolved,
+                             label: str, revision_id: str, receipt_id: str) -> None:
+    """A cost the operator typed for a catalog product and a named supplier becomes a `negotiated`
+    observation (10-05 D6). Append-only: a same-instant duplicate is skipped, never overwritten."""
+    typed = [i for i in resolved.items if i.cost_observation_id is None and i.product_id
+             and i.supplier_organization_id and i.unit_cost is not None and i.cost_currency]
+    if not typed:
+        return
+    # The product's stream gets the event: lock it as record-supplier-cost does, in id order.
+    cur.execute("select id from catalog.product where id = any(%s::uuid[]) order by id for no key update",
+                (sorted({i.product_id for i in typed}),))
+    for item in typed:
+        cur.execute(
+            """
+            insert into catalog.supplier_product
+                (supplier_organization_id, product_id, as_of, price, currency, price_kind, provenance_note,
+                 recorded_by_operator_id)
+            values (%s::uuid, %s::uuid, now(), %s, %s, 'negotiated', %s, %s::uuid)
+            on conflict do nothing
+            returning id::text as id
+            """,
+            (item.supplier_organization_id, item.product_id, item.unit_cost, item.cost_currency,
+             f"Cotización {label}", operator.operator_id),
+        )
+        recorded = _one(cur)
+        if recorded is not None:
+            self._append_event(cur, aggregate_kind="product", aggregate_id=item.product_id,
+                               event_type="product.cost_recorded",
+                               payload={"supplier_product_id": recorded["id"],
+                                        "supplier_organization_id": item.supplier_organization_id,
+                                        "price_kind": "negotiated", "currency": item.cost_currency,
+                                        "quote_revision_id": revision_id},
+                               operator=operator, receipt_id=receipt_id)
+
+
+def _supersede_current(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, revision: dict[str, Any],
+                       receipt_id: str) -> None:
+    """The quote's other issued, not yet superseded revisions are superseded by this one."""
+    cur.execute(
+        """
+        select id::text as id, revision_no from crm.quote_revision
+         where quote_id = %s and id <> %s and status in ('approved', 'sent') and superseded_by_revision_no is null
+         order by revision_no
+           for update
+        """,
+        (revision["quote_id"], revision["id"]),
+    )
+    for prior in _all(cur):
+        cur.execute("update crm.quote_revision set superseded_by_revision_no = %s, superseded_at = now(), "
+                    "version = version + 1, updated_at = now() where id = %s::uuid",
+                    (revision["revision_no"], prior["id"]))
+        self._append_event(cur, aggregate_kind="quote_revision", aggregate_id=prior["id"],
+                           event_type="quote_revision.superseded",
+                           payload={"quote_id": str(revision["quote_id"]), "revision_no": prior["revision_no"],
+                                    "superseded_by_revision_no": revision["revision_no"]},
+                           operator=operator, receipt_id=receipt_id)
+
+
+def _handle_approve_quote_revision(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
+                                   fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
+    revision_id, expected_version = fields["revision_id"], fields["expected_version"]
+    _locked_draft(cur, revision_id, expected_version)
+    cur.execute(_APPROVAL_REVISION_SQL, (revision_id,))
+    revision = _one(cur)
+    assert revision is not None  # noqa: S101 - locked just above
+    cur.execute("select closed_at, organization_id::text as organization_id from crm.opportunity "
+                "where id = %s::uuid for share", (revision["case_id"],))
+    case = _one(cur)
+    assert case is not None  # noqa: S101 - crm.quote.opportunity_id is a foreign key
+    if case["closed_at"] is not None:
+        raise CommandRefused(409, "case_closed", "this case is closed; its quote is not approved")
+
+    cur.execute("select * from crm.quote_line where quote_revision_id = %s::uuid order by line_no", (revision_id,))
+    draft = draft_from_rows(revision, _all(cur))
+    today = santiago_today(self._clock())
+    params = load_parameters(cur)
+    missing_fx: list[str] = []
+    try:
+        resolved = resolve_draft(cur, draft, {**params, "iva_rate": Decimal(revision["tax_rate"])},
+                                 _recording(self._fx_resolver, missing_fx), today)
+        result = compute(resolved.engine_input)
+    except EngineError as exc:
+        raise CommandRefused(422, exc.code, f"the draft cannot be priced ({exc.code})") from exc
+
+    institution = None
+    if case["organization_id"] is not None:
+        cur.execute(_INSTITUTION_SQL, (case["organization_id"],))
+        institution = _one(cur)
+    recipient = None
+    if revision["recipient_participant_id"] is not None:
+        cur.execute(_RECIPIENT_SQL, (revision["recipient_participant_id"], revision["case_id"]))
+        recipient = _one(cur)
+    refusals = check_approvable(_approval_facts(resolved, result, missing_fx, institution, recipient, draft.terms))
+    if refusals:
+        raise CommandRefused(409, refusals[0][0], " · ".join(message for _, message in refusals))
+    assert institution is not None and recipient is not None  # noqa: S101 - refused above otherwise
+
+    label = _label(revision["quote_number"], revision["revision_no"])
+    # The lines become exactly what was just priced, so they and the frozen totals agree.
+    cur.execute("delete from crm.quote_line where quote_revision_id = %s::uuid", (revision_id,))
+    _insert_lines(cur, revision_id, resolved, result, today)
+    validity = draft.terms.validity_days or _validity_days(params)
+    valid_until = today + timedelta(days=validity)
+    snapshot = party_snapshot(institution=institution, recipient=recipient, terms=draft.terms,
+                              validity_days=validity, quote_number=revision["quote_number"], label=label,
+                              approved_by=operator.display_name, approved_on=today, valid_until=valid_until)
+    _write_amounts(
+        cur,
+        """
+        update crm.quote_revision
+           set status = 'approved', approved_at = now(), approved_by_operator_id = %(operator)s::uuid,
+               valid_until = %(valid_until)s, subtotal = %(net)s, discount_total = 0, tax_base = %(net)s,
+               tax_total = %(iva)s, grand_total = %(total)s, totals_computed_at = now(),
+               party_snapshot = %(snapshot)s::jsonb, party_snapshot_version = 1,
+               version = version + 1, updated_at = now()
+         where id = %(id)s::uuid and version = %(version)s
+        returning version
+        """,
+        {"operator": operator.operator_id, "valid_until": valid_until, "net": result.net, "iva": result.iva,
+         "total": result.total, "snapshot": json.dumps(snapshot, ensure_ascii=False), "id": revision_id,
+         "version": expected_version},
+    )
+    updated = _one(cur)
+    if updated is None:  # pragma: no cover - the row is locked; kept as the compare-and-set's other half
+        raise CommandRefused(409, "stale_version", "concurrent modification")
+    self._append_event(cur, aggregate_kind="quote_revision", aggregate_id=revision_id,
+                       event_type="quote_revision.transitioned", payload={"from": "draft", "to": "approved"},
+                       operator=operator, receipt_id=receipt_id)
+    _supersede_current(self, cur, operator, revision, receipt_id)
+    _record_negotiated_costs(self, cur, operator, resolved, label, revision_id, receipt_id)
+    return {"ok": True, "revision_id": revision_id, "version": updated["version"],
+            "quote_number": revision["quote_number"], "revision_label": label}
+
+
+# ------------------------------------------------------------------ void-quote-revision
+
+def _handle_void_quote_revision(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
+                                fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
+    """A draft or an approved revision is voided; one already sent is answered by a new revision."""
+    revision_id, expected_version = fields["revision_id"], fields["expected_version"]
+    cur.execute("select status, origin, version from crm.quote_revision where id = %s::uuid for update",
+                (revision_id,))
+    revision = _one(cur)
+    if revision is None:
+        raise CommandRefused(404, "revision_not_found", "no such quote revision")
+    if revision["origin"] != "authored":
+        raise CommandRefused(409, "not_authored", "a historical revision is voided by its own command")
+    if revision["status"] == "sent":
+        raise CommandRefused(409, "already_sent", "Ya se envió: crea una nueva revisión.")
+    if revision["status"] == "void":
+        raise CommandRefused(409, "already_void", "this revision is already void")
+    if revision["version"] != expected_version:
+        raise CommandRefused(409, "stale_version", "the revision was modified since you loaded it")
+    cur.execute("update crm.quote_revision set status = 'void', version = version + 1, updated_at = now() "
+                "where id = %s::uuid returning version", (revision_id,))
+    updated = _one(cur)
+    assert updated is not None  # noqa: S101 - locked above
+    self._append_event(cur, aggregate_kind="quote_revision", aggregate_id=revision_id,
+                       event_type="quote_revision.transitioned",
+                       payload={"from": revision["status"], "to": "void", "reason": fields["reason"]},
+                       operator=operator, receipt_id=receipt_id)
+    return {"ok": True, "revision_id": revision_id, "version": updated["version"]}
+
+
+# ------------------------------------------------------------------ create-quote-revision
+
+_REVISION_COPY_COLUMNS = (
+    "quote_currency", "price_decimals", "tax_rate", "rounding_rule", "subtotal", "discount_total", "tax_base",
+    "tax_total", "grand_total", "totals_computed_at", "payment_terms", "delivery_terms", "tax_note",
+    "billing_address_id", "delivery_address_id", "recipient_participant_id", "signatory_participant_id",
+    "warranty_terms_es", "delivery_place_es", "installation_terms_es", "client_notes_es", "terms_extra",
+    "validity_days", "expense_method", "expense_allocation_mode", "principal_rule", "fx_override_reasons",
+)
+_LINE_COPY_COLUMNS = (
+    "line_no", "line_kind", "description", "product_id", "quantity", "cost_currency", "unit_cost", "fx_rate",
+    "fx_as_of", "fx_source", "margin_mode", "margin_pct", "unit_price_qc", "line_total_qc", "is_principal",
+    "allocated_to_line_no", "item_type", "expense_method", "calc_inputs", "supplier_organization_id",
+    "cost_observation_id", "line_note_es",
+)
+_OPEN_REVISION = "quote_revision_one_open_per_quote"
+
+
+def _draft_open() -> CommandRefused:
+    return CommandRefused(409, "draft_open", "this quote already has an open draft; edit or void it first")
+
+
+def _handle_create_quote_revision(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
+                                  fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
+    """The newest issued revision, copied whole (terms, pricing choices, lines) into the next draft."""
+    quote_id = fields["quote_id"]
+    cur.execute("select id::text as id, quote_number from crm.quote where id = %s::uuid for update", (quote_id,))
+    quote = _one(cur)
+    if quote is None:
+        raise CommandRefused(404, "quote_not_found", "no such quote")
+    cur.execute("select 1 from crm.quote_revision where quote_id = %s::uuid and status in ('draft', 'in_review')",
+                (quote_id,))
+    if cur.fetchone() is not None:
+        raise _draft_open()
+    cur.execute("select id::text as id, revision_no from crm.quote_revision where quote_id = %s::uuid "
+                "and origin = 'authored' and status in ('approved', 'sent') order by revision_no desc limit 1",
+                (quote_id,))
+    source = _one(cur)
+    if source is None:
+        raise CommandRefused(409, "nothing_to_revise", "this quote has no approved or sent revision to revise")
+    cur.execute("select max(revision_no) + 1 as next from crm.quote_revision where quote_id = %s::uuid", (quote_id,))
+    revision_no = _one(cur)["next"]  # type: ignore[index]
+    label = _label(quote["quote_number"], revision_no)
+
+    columns = ", ".join(_REVISION_COPY_COLUMNS)
+    try:
+        cur.execute(
+            f"""
+            insert into crm.quote_revision (quote_id, revision_no, status, origin, created_by_operator_id, {columns})
+            select quote_id, %s, 'draft', 'authored', %s::uuid, {columns}
+              from crm.quote_revision where id = %s::uuid
+            returning id::text as id, version
+            """,  # noqa: S608 - column names are module constants
+            (revision_no, operator.operator_id, source["id"]),
+        )
+    except psycopg.errors.UniqueViolation as exc:
+        if exc.diag.constraint_name == _OPEN_REVISION:
+            raise _draft_open() from exc
+        raise
+    revision = _one(cur)
+    assert revision is not None  # noqa: S101 - `returning` on a successful insert
+    line_columns = ", ".join(_LINE_COPY_COLUMNS)
+    cur.execute(
+        f"""
+        insert into crm.quote_line (quote_revision_id, {line_columns})
+        select %s::uuid, {line_columns} from crm.quote_line where quote_revision_id = %s::uuid order by line_no
+        """,  # noqa: S608 - column names are module constants
+        (revision["id"], source["id"]),
+    )
+    self._append_event(cur, aggregate_kind="quote_revision", aggregate_id=revision["id"],
+                       event_type="quote_revision.opened",
+                       payload={"quote_id": quote_id, "revision_no": revision_no,
+                                "copied_from": source["revision_no"]},
+                       operator=operator, receipt_id=receipt_id)
+    return {"ok": True, "quote_id": quote_id, "revision_id": revision["id"], "revision_no": revision_no,
+            "revision_label": label, "version": revision["version"]}
 
 
 class V2QuoteRepository(CommandTransaction):
@@ -342,7 +753,7 @@ class V2QuoteRepository(CommandTransaction):
     _HANDLERS = {
         "create-quote": _handle_create_quote,
         "save-quote-draft": _handle_save_quote_draft,
-        "approve-quote-revision": _not_implemented,
-        "void-quote-revision": _not_implemented,
-        "create-quote-revision": _not_implemented,
+        "approve-quote-revision": _handle_approve_quote_revision,
+        "void-quote-revision": _handle_void_quote_revision,
+        "create-quote-revision": _handle_create_quote_revision,
     }

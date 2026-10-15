@@ -27,7 +27,14 @@ from origenlab_api.quoting.engine import EngineInput, EngineResult, ExpenseLine,
 from origenlab_api.quoting.expenses import ShipmentItem, expenses_for
 from origenlab_api.v2.catalog.fx import FxUnavailable
 from origenlab_api.v2.commands import CommandRefused
-from origenlab_api.v2.quotes.draft import DraftFxOverride, DraftItemLine, QuoteDraft
+from origenlab_api.v2.quotes.draft import (
+    DraftExpenseLine,
+    DraftFxOverride,
+    DraftItemLine,
+    DraftTerm,
+    DraftTerms,
+    QuoteDraft,
+)
 
 #: (currency, day) -> {"clp_per_unit", "as_of", "source", ...}; raises FxUnavailable.
 FxResolver = Callable[[str, dt.date], dict]
@@ -193,7 +200,12 @@ def _observations(cur: Any, lines: list[DraftItemLine],
     cur.execute(_OBSERVATIONS_SQL, {"lines": [a[0] for a in asks], "products": [a[1] for a in asks],
                                     "suppliers": [a[2] for a in asks], "observations": [a[3] for a in asks],
                                     "kinds": list(PRICE_KIND_PRIORITY)})
-    return {row["line_no"]: row for row in _rows(cur)}
+    found = {row["line_no"]: row for row in _rows(cur)}
+    for n, _, _, observation in asks:
+        if observation is not None and n not in found:
+            raise CommandRefused(422, "cost_observation_not_found",
+                                 f"line {n} names a cost observation that does not exist")
+    return found
 
 
 def _suppliers(cur: Any, ids: set[str]) -> dict[str, dict[str, Any]]:
@@ -261,6 +273,45 @@ def fx_overrides_from_row(value: dict[str, Any] | None) -> list[DraftFxOverride]
             out.append(DraftFxOverride(currency=currency, clp_per_unit=Decimal(str(entry["clp_per_unit"])),
                                        reason=entry["reason"]))
     return out
+
+
+def draft_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]) -> QuoteDraft:
+    """The draft a stored revision was saved from (the inverse of `save-quote-draft`).
+
+    Item lines keep exactly the cost they were priced with — unit cost, currency, supplier and
+    observation as stored — so re-resolving the draft reproduces the save: a stored cost is a
+    typed cost, never looked up again. A `none` line's price is its stored unit price; any other
+    line carries its stored `margin_pct` (the default markup was made explicit at save). Only the
+    manual expense lines come back as expenses: the profile and DHL lines are derived, and
+    `resolve_draft` regenerates them from `expense_method` exactly as the save did. The principal
+    flag returns only under the manual rule, the one rule where the operator chose it.
+    """
+    manual = revision["principal_rule"] == "manual"
+    items, expenses = [], []
+    for row in sorted(lines, key=lambda r: r["line_no"]):
+        if row["line_kind"] == "item":
+            none = row["margin_mode"] == "none"
+            items.append(DraftItemLine(
+                product_id=row["product_id"], description=row["description"], quantity=row["quantity"],
+                item_type=row["item_type"], unit_cost=row["unit_cost"], cost_currency=row["cost_currency"],
+                supplier_organization_id=row["supplier_organization_id"],
+                cost_observation_id=row["cost_observation_id"], margin_mode=row["margin_mode"],
+                margin_pct=None if none else row["margin_pct"],
+                typed_unit_price=row["unit_price_qc"] if none else None,
+                is_principal=bool(row["is_principal"]) and manual, line_note_es=row["line_note_es"]))
+        elif row["expense_method"] == "manual":
+            expenses.append(DraftExpenseLine(label=row["description"], amount=row["unit_cost"],
+                                             currency=row["cost_currency"]))
+    terms = DraftTerms(
+        delivery_terms=revision["delivery_terms"], validity_days=revision["validity_days"],
+        payment_terms=revision["payment_terms"], warranty_terms_es=revision["warranty_terms_es"],
+        delivery_place_es=revision["delivery_place_es"], installation_terms_es=revision["installation_terms_es"],
+        client_notes_es=revision["client_notes_es"],
+        terms_extra=[DraftTerm(**t) for t in revision["terms_extra"] or []])
+    return QuoteDraft(items=items, manual_expenses=expenses, expense_method=revision["expense_method"],
+                      allocation_mode=revision["expense_allocation_mode"], principal_rule=revision["principal_rule"],
+                      fx_overrides=fx_overrides_from_row(revision["fx_override_reasons"]), terms=terms,
+                      recipient_participant_id=revision["recipient_participant_id"])
 
 
 def _as_date(value: Any) -> dt.date:
@@ -377,5 +428,5 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
 
 
 __all__ = ["DEFAULT_MARKUP_KEYS", "FxResolver", "PRICE_KIND_PRIORITY", "Resolved", "ResolvedItem",
-           "default_markup", "expense_target", "fx_override_reasons", "fx_overrides_from_row", "load_parameters",
-           "resolve_draft", "result_json"]
+           "default_markup", "draft_from_rows", "expense_target", "fx_override_reasons", "fx_overrides_from_row",
+           "load_parameters", "resolve_draft", "result_json"]
