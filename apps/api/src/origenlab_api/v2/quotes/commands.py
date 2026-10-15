@@ -39,6 +39,7 @@ from origenlab_api.v2.quotes.inputs import (
     FxResolver,
     Resolved,
     expense_target,
+    fx_override_reasons,
     load_parameters,
     resolve_draft,
     result_json,
@@ -297,7 +298,7 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
          "terms_extra": json.dumps([t.model_dump() for t in terms.terms_extra], ensure_ascii=False),
          "validity_days": terms.validity_days, "expense_method": draft.expense_method,
          "allocation_mode": draft.allocation_mode, "principal_rule": draft.principal_rule,
-         "fx_override_reasons": json.dumps({o.currency: o.reason for o in draft.fx_overrides}, ensure_ascii=False),
+         "fx_override_reasons": json.dumps(fx_override_reasons(draft), ensure_ascii=False),
          "recipient": recipient, "net": result.net, "iva": result.iva, "total": result.total,
          "id": revision_id, "version": expected_version},
     )

@@ -1,4 +1,9 @@
-"""Request bodies for quote drafts and the quote commands. Shape validation only: no pricing here."""
+"""Request bodies for quote drafts and the quote commands. Shape validation only: no pricing here.
+
+Money and quantities carry the precision of the columns they land in (`crm.quote_line` numeric(18,6),
+`margin_pct` numeric(9,6), an FX rate numeric(18,8)), so a saved draft reads back exactly as sent and a
+value the column cannot hold is a 422 here, never a 500 at the insert.
+"""
 from __future__ import annotations
 
 from decimal import Decimal
@@ -20,15 +25,16 @@ class _Model(BaseModel):
 class DraftItemLine(_Model):
     product_id: UUID | None = None
     description: Annotated[str, StringConstraints(min_length=1, max_length=500)]
-    quantity: Decimal = Field(gt=0, le=Decimal("100000"))
+    quantity: Decimal = Field(gt=0, le=Decimal("100000"), max_digits=18, decimal_places=6)
     item_type: ItemType | None = None  # None: the product's kind, else "other"
-    unit_cost: Decimal | None = Field(default=None, ge=0)
+    unit_cost: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
     cost_currency: Currency | None = None
     supplier_organization_id: UUID | None = None
     cost_observation_id: UUID | None = None
     margin_mode: Literal["markup", "margin", "none"] = "markup"
-    margin_pct: Decimal | None = Field(default=None, ge=0, le=Decimal("10"))  # None + markup: default by item type
-    typed_unit_price: Decimal | None = Field(default=None, ge=0)
+    margin_pct: Decimal | None = Field(default=None, ge=0, le=Decimal("10"),
+                                       decimal_places=6)  # None + markup: default by item type
+    typed_unit_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
     is_principal: bool = False
     line_note_es: Annotated[str | None, StringConstraints(min_length=1, max_length=1000)] = None
 
@@ -45,13 +51,13 @@ class DraftItemLine(_Model):
 
 class DraftExpenseLine(_Model):
     label: Annotated[str, StringConstraints(min_length=1, max_length=120)]
-    amount: Decimal = Field(ge=0)
+    amount: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
     currency: Currency = "CLP"
 
 
 class DraftFxOverride(_Model):
     currency: Literal["EUR", "USD"]
-    clp_per_unit: Decimal = Field(gt=0)
+    clp_per_unit: Decimal = Field(gt=0, max_digits=18, decimal_places=8)
     reason: _Reason
 
 

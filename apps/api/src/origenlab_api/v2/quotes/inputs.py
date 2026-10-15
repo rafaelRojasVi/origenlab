@@ -6,7 +6,9 @@ the injected `FxResolver` (the catalog's `PricingFx.rate`) unless the draft over
 
 What a line costs, when the operator did not type it: the product's newest observation (its own and
 those of the twins merged into it), non-stale first, newest day first, per-deal kinds before list
-kinds on the same day (10-05 spec §4.3). A line is imported unless its supplier's terms say
+kinds on the same day (10-05 spec §4.3) — from the line's supplier when it names one, or exactly
+the observation it names. The whole draft resolves in three statements whatever its length
+(products, observations, suppliers), so a preview stays fast over a remote database. A line is imported unless its supplier's terms say
 `domestic`; with no terms, a CLP cost is domestic and any other currency imported. Only imported
 lines ship, and a draft with nothing to ship gets no import expenses — only the manual lines the
 operator typed (10-05 spec §5.3: "domestic suppliers produce no import expense lines").
@@ -25,7 +27,7 @@ from origenlab_api.quoting.engine import EngineInput, EngineResult, ExpenseLine,
 from origenlab_api.quoting.expenses import ShipmentItem, expenses_for
 from origenlab_api.v2.catalog.fx import FxUnavailable
 from origenlab_api.v2.commands import CommandRefused
-from origenlab_api.v2.quotes.draft import DraftItemLine, QuoteDraft
+from origenlab_api.v2.quotes.draft import DraftFxOverride, DraftItemLine, QuoteDraft
 
 #: (currency, day) -> {"clp_per_unit", "as_of", "source", ...}; raises FxUnavailable.
 FxResolver = Callable[[str, dt.date], dict]
@@ -61,31 +63,44 @@ select distinct on (key) key, value_numeric, value_json
  order by key, valid_from desc, created_at desc
 """
 
-_PRODUCT_SQL = """
-select id::text as id, merged_into_product_id::text as merged_into_product_id, product_kind, weight_kg,
-       length_cm, width_cm, height_cm, origin_country, is_dangerous_goods
-  from catalog.product
- where id = %s::uuid
+# Every product the draft names, each with the product it survives as (one level of merge).
+_PRODUCTS_SQL = """
+select p.id::text as requested, t.id::text as id, t.product_kind, t.weight_kg, t.length_cm, t.width_cm,
+       t.height_cm, t.origin_country, t.is_dangerous_goods
+  from catalog.product p
+  join catalog.product t on t.id = coalesce(p.merged_into_product_id, p.id)
+ where p.id = any(%s::uuid[])
 """
 
-# The product's newest observation, through product merges and organization merges (as the catalog reads).
-_OBSERVATION_SQL = """
-select sp.id::text as id, coalesce(so.merged_into_organization_id, so.id)::text as supplier_id,
-       sp.price, sp.currency
-  from catalog.supplier_product sp
-  join crm.organization so on so.id = sp.supplier_organization_id
- where (sp.product_id = %(pid)s::uuid
-        or sp.product_id in (select id from catalog.product where merged_into_product_id = %(pid)s::uuid))
- order by sp.is_stale, (sp.as_of at time zone 'America/Santiago')::date desc,
-          array_position(%(kinds)s::text[], sp.price_kind) nulls last, sp.as_of desc, sp.created_at desc, sp.id
- limit 1
+# One observation per line that needs a cost, in one statement: the observation the line names; else
+# the newest of the product (its own and its merged twins'), from the line's supplier when it names
+# one (through organization merges, as the catalog reads). Non-stale first, newest Santiago day first,
+# per-deal kinds before list kinds on the same day.
+_OBSERVATIONS_SQL = """
+select r.line_no, o.id, o.supplier_id, o.price, o.currency
+  from unnest(%(lines)s::int[], %(products)s::uuid[], %(suppliers)s::uuid[], %(observations)s::uuid[])
+       as r(line_no, product_id, supplier_id, observation_id)
+  cross join lateral (
+    select sp.id::text as id, coalesce(so.merged_into_organization_id, so.id)::text as supplier_id,
+           sp.price, sp.currency
+      from catalog.supplier_product sp
+      join crm.organization so on so.id = sp.supplier_organization_id
+     where case when r.observation_id is not null then sp.id = r.observation_id
+                else (sp.product_id = r.product_id
+                      or sp.product_id in (select id from catalog.product where merged_into_product_id = r.product_id))
+                     and (r.supplier_id is null or r.supplier_id in (so.id, so.merged_into_organization_id))
+           end
+     order by sp.is_stale, (sp.as_of at time zone 'America/Santiago')::date desc,
+              array_position(%(kinds)s::text[], sp.price_kind) nulls last, sp.as_of desc, sp.created_at desc, sp.id
+     limit 1
+  ) o
 """
 
-_SUPPLIER_SQL = """
-select o.name, t.route, t.origin_country
+_SUPPLIERS_SQL = """
+select o.id::text as id, o.name, t.route, t.origin_country
   from crm.organization o
   left join catalog.supplier_terms t on t.supplier_organization_id = o.id
- where o.id = %s::uuid
+ where o.id = any(%s::uuid[])
 """
 
 
@@ -120,13 +135,6 @@ class Resolved:
     warnings: list[str] = field(default_factory=list)
 
 
-def _one(cur: Any) -> dict[str, Any] | None:
-    row = cur.fetchone()
-    if row is None:
-        return None
-    return dict(zip([d[0] for d in cur.description], row, strict=True))
-
-
 def load_parameters(cur: Any) -> dict[str, Decimal | str]:
     """The current value of every parameter: numbers as Decimal, printed texts as str."""
     cur.execute(_PARAMETERS_SQL)
@@ -156,53 +164,103 @@ def _rate_card() -> RateCard:
     return RateCard.load()
 
 
-def _product(cur: Any, product_id: str) -> dict[str, Any]:
-    cur.execute(_PRODUCT_SQL, (product_id,))
-    product = _one(cur)
-    if product is not None and product["merged_into_product_id"] is not None:
-        cur.execute(_PRODUCT_SQL, (product["merged_into_product_id"],))
-        product = _one(cur)
-    if product is None:
+def _rows(cur: Any) -> list[dict[str, Any]]:
+    names = [d[0] for d in cur.description]
+    return [dict(zip(names, row, strict=True)) for row in cur.fetchall()]
+
+
+def _products(cur: Any, lines: list[DraftItemLine]) -> dict[str, dict[str, Any]]:
+    wanted = sorted({str(line.product_id) for line in lines if line.product_id})
+    if not wanted:
+        return {}
+    cur.execute(_PRODUCTS_SQL, (wanted,))
+    found = {row["requested"]: row for row in _rows(cur)}
+    if set(wanted) - set(found):
         raise CommandRefused(404, "product_not_found", "no such product")
-    return product
+    return found
 
 
-def _resolve_item(cur: Any, line_no: int, line: DraftItemLine, params: dict[str, Decimal | str]) -> ResolvedItem:
-    product = _product(cur, str(line.product_id)) if line.product_id else None
-    unit_cost, currency = line.unit_cost, line.cost_currency
-    supplier = str(line.supplier_organization_id) if line.supplier_organization_id else None
-    observation = str(line.cost_observation_id) if line.cost_observation_id else None
-    if unit_cost is None and product is not None:
-        cur.execute(_OBSERVATION_SQL, {"pid": product["id"], "kinds": list(PRICE_KIND_PRIORITY)})
-        found = _one(cur)
+def _observations(cur: Any, lines: list[DraftItemLine],
+                  products: dict[str, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    """The cost observation for every line that has no typed cost, by line number."""
+    asks = [(n, products[str(line.product_id)]["id"] if line.product_id else None,
+             str(line.supplier_organization_id) if line.supplier_organization_id else None,
+             str(line.cost_observation_id) if line.cost_observation_id else None)
+            for n, line in enumerate(lines, start=1)
+            if line.unit_cost is None and (line.product_id or line.cost_observation_id)]
+    if not asks:
+        return {}
+    cur.execute(_OBSERVATIONS_SQL, {"lines": [a[0] for a in asks], "products": [a[1] for a in asks],
+                                    "suppliers": [a[2] for a in asks], "observations": [a[3] for a in asks],
+                                    "kinds": list(PRICE_KIND_PRIORITY)})
+    return {row["line_no"]: row for row in _rows(cur)}
+
+
+def _suppliers(cur: Any, ids: set[str]) -> dict[str, dict[str, Any]]:
+    if not ids:
+        return {}
+    cur.execute(_SUPPLIERS_SQL, (sorted(ids),))
+    return {row["id"]: row for row in _rows(cur)}
+
+
+def _resolve_items(cur: Any, lines: list[DraftItemLine], params: dict[str, Decimal | str]) -> list[ResolvedItem]:
+    """Every line's cost, supplier and product facts in three statements, whatever the line count."""
+    products = _products(cur, lines)
+    observations = _observations(cur, lines, products)
+    costs: list[tuple[Decimal | None, str | None, str | None, str | None]] = []
+    for n, line in enumerate(lines, start=1):
+        supplier = str(line.supplier_organization_id) if line.supplier_organization_id else None
+        observation = str(line.cost_observation_id) if line.cost_observation_id else None
+        found = observations.get(n)
         if found is not None:
-            unit_cost, currency = Decimal(found["price"]), found["currency"]
-            supplier, observation = found["supplier_id"], found["id"]
+            costs.append((Decimal(found["price"]), found["currency"], found["supplier_id"], found["id"]))
+        else:
+            costs.append((line.unit_cost, line.cost_currency, supplier, observation))
+    suppliers = _suppliers(cur, {c[2] for c in costs if c[2]})
 
-    terms: dict[str, Any] | None = None
-    if supplier is not None:
-        cur.execute(_SUPPLIER_SQL, (supplier,))
-        terms = _one(cur)
-    if terms is not None and terms["route"] is not None:
-        imported = terms["route"] != "domestic"
-    else:
-        imported = currency is not None and currency != "CLP"
+    items = []
+    for n, (line, (unit_cost, currency, supplier, observation)) in enumerate(zip(lines, costs, strict=True), start=1):
+        product = products[str(line.product_id)] if line.product_id else {}
+        terms = suppliers.get(supplier) if supplier else None
+        if terms is not None and terms["route"] is not None:
+            imported = terms["route"] != "domestic"
+        else:
+            imported = currency is not None and currency != "CLP"
+        item_type = line.item_type or product.get("product_kind") or "other"
+        margin_pct = line.margin_pct
+        if margin_pct is None and line.margin_mode == "markup":
+            margin_pct = default_markup(item_type, params)
+        origin = product.get("origin_country") or (terms or {}).get("origin_country")
+        items.append(ResolvedItem(
+            line_no=n, draft=line, product_id=product.get("id"), item_type=item_type,
+            unit_cost=unit_cost, cost_currency=currency, supplier_organization_id=supplier,
+            cost_observation_id=observation, margin_pct=margin_pct, imported=imported,
+            weight_kg=product.get("weight_kg"), length_cm=product.get("length_cm"),
+            width_cm=product.get("width_cm"), height_cm=product.get("height_cm"),
+            origin_country=origin.strip() if origin else None,
+            dangerous=bool(product.get("is_dangerous_goods")),
+            supplier_key=(terms or {}).get("name") or "sin proveedor",
+        ))
+    return items
 
-    item_type = line.item_type or (product or {}).get("product_kind") or "other"
-    margin_pct = line.margin_pct
-    if margin_pct is None and line.margin_mode == "markup":
-        margin_pct = default_markup(item_type, params)
-    origin = (product or {}).get("origin_country") or (terms or {}).get("origin_country")
-    return ResolvedItem(
-        line_no=line_no, draft=line, product_id=product["id"] if product else None, item_type=item_type,
-        unit_cost=unit_cost, cost_currency=currency, supplier_organization_id=supplier,
-        cost_observation_id=observation, margin_pct=margin_pct, imported=imported,
-        weight_kg=(product or {}).get("weight_kg"), length_cm=(product or {}).get("length_cm"),
-        width_cm=(product or {}).get("width_cm"), height_cm=(product or {}).get("height_cm"),
-        origin_country=origin.strip() if origin else None,
-        dangerous=bool((product or {}).get("is_dangerous_goods")),
-        supplier_key=(terms or {}).get("name") or "sin proveedor",
-    )
+
+def fx_override_reasons(draft: QuoteDraft) -> dict[str, dict[str, str]]:
+    """What `crm.quote_revision.fx_override_reasons` stores: per currency, the operator's rate and why.
+
+    The rate is kept here, not only in line snapshots: an override for a currency no line costs in
+    (a USD rate that only drives the DHL calculation) would otherwise be lost on reload.
+    """
+    return {o.currency: {"reason": o.reason, "clp_per_unit": str(o.clp_per_unit)} for o in draft.fx_overrides}
+
+
+def fx_overrides_from_row(value: dict[str, Any] | None) -> list[DraftFxOverride]:
+    """The draft's overrides back from the stored column (the inverse of `fx_override_reasons`)."""
+    out = []
+    for currency, entry in sorted((value or {}).items()):
+        if isinstance(entry, dict) and entry.get("clp_per_unit") is not None:
+            out.append(DraftFxOverride(currency=currency, clp_per_unit=Decimal(str(entry["clp_per_unit"])),
+                                       reason=entry["reason"]))
+    return out
 
 
 def _as_date(value: Any) -> dt.date:
@@ -234,7 +292,7 @@ def _clp(amount: Decimal, currency: str, fx: dict[str, FxRate]) -> Decimal:
 
 def resolve_draft(cur: Any, draft: QuoteDraft, params: dict[str, Decimal | str], fx_resolver: FxResolver,
                   today: dt.date) -> Resolved:
-    items = [_resolve_item(cur, n, line, params) for n, line in enumerate(draft.items, start=1)]
+    items = _resolve_items(cur, list(draft.items), params)
     shipping = [i for i in items if i.imported]
 
     currencies = {i.cost_currency for i in items if i.cost_currency} | {e.currency for e in draft.manual_expenses}
@@ -319,4 +377,5 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
 
 
 __all__ = ["DEFAULT_MARKUP_KEYS", "FxResolver", "PRICE_KIND_PRIORITY", "Resolved", "ResolvedItem",
-           "default_markup", "expense_target", "load_parameters", "resolve_draft", "result_json"]
+           "default_markup", "expense_target", "fx_override_reasons", "fx_overrides_from_row", "load_parameters",
+           "resolve_draft", "result_json"]

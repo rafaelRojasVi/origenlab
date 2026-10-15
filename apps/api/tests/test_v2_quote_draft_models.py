@@ -122,3 +122,24 @@ def test_command_bodies() -> None:
         VoidQuoteBody(revision_id=rid, expected_version=1, reason="motivo", extra=1)
     assert set(QUOTE_BODIES) == {"create-quote", "save-quote-draft", "approve-quote-revision",
                                  "void-quote-revision", "create-quote-revision"}
+
+
+def test_numbers_carry_the_precision_of_their_columns() -> None:
+    from origenlab_api.v2.quotes.draft import DraftExpenseLine, DraftFxOverride
+
+    ok = DraftItemLine(**{**_LINE, "quantity": "1.123456", "unit_cost": "999999999999.999999", "cost_currency": "EUR",
+                          "margin_pct": "0.123456"})
+    assert ok.unit_cost == Decimal("999999999999.999999") and ok.quantity == Decimal("1.123456")
+    for bad in ({"quantity": "1.1234567"}, {"unit_cost": "1.1234567", "cost_currency": "EUR"},
+                {"unit_cost": "1000000000000", "cost_currency": "EUR"}, {"margin_pct": "0.1234567"},
+                {"margin_mode": "none", "typed_unit_price": "1000000000000"},
+                {"margin_mode": "none", "typed_unit_price": "1.1234567"}):
+        with pytest.raises(ValidationError):
+            DraftItemLine(**{**_LINE, **bad})
+    assert DraftFxOverride(currency="EUR", clp_per_unit="1023.12345678", reason="prueba").clp_per_unit == Decimal(
+        "1023.12345678")
+    for bad in ("1.123456789", "10000000000"):
+        with pytest.raises(ValidationError):
+            DraftFxOverride(currency="EUR", clp_per_unit=bad, reason="prueba")
+    with pytest.raises(ValidationError):
+        DraftExpenseLine(label="Flete", amount="1000000000000")

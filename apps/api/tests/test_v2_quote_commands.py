@@ -18,7 +18,8 @@ from origenlab_api.v2.catalog.fx import FxUnavailable
 from origenlab_api.v2.commands import CommandRefused, request_digest
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.quotes.commands import V2QuoteRepository
-from origenlab_api.v2.quotes.draft import QUOTE_BODIES
+from origenlab_api.v2.quotes.draft import QUOTE_BODIES, DraftFxOverride, QuoteDraft
+from origenlab_api.v2.quotes.inputs import fx_overrides_from_row, load_parameters, resolve_draft
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
 
 NOW = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)
@@ -305,7 +306,8 @@ def test_fx_override_is_used_and_its_reason_kept(world) -> None:
         {"currency": "EUR", "clp_per_unit": "1100", "reason": "cotización proveedor"}]})
     item = _lines(dsn, created["revision_id"])[0]
     assert (item["fx_rate"], item["fx_source"], item["fx_as_of"]) == (Decimal("1100"), "manual", TODAY)
-    assert _revision(dsn, created["revision_id"])["fx_override_reasons"] == {"EUR": "cotización proveedor"}
+    assert _revision(dsn, created["revision_id"])["fx_override_reasons"] == {
+        "EUR": {"reason": "cotización proveedor", "clp_per_unit": "1100"}}
     assert out["computed"]["fx"] == [{"currency": "EUR", "clp_per_unit": "1100", "as_of": "2026-10-15",
                                       "source": "manual"}]
 
@@ -380,3 +382,116 @@ def test_a_draft_with_nothing_imported_gets_no_import_expenses(world) -> None:
     assert (expense["line_no"], expense["expense_method"], expense["unit_cost"]) == (2, "manual", Decimal(5000))
     assert expense["allocated_to_line_no"] is None and item["is_principal"] is False
     assert "principal_missing" in out["computed"]["warnings"]
+
+
+@needs_db
+def test_an_override_for_a_currency_no_line_uses_keeps_its_rate(world) -> None:
+    """A USD rate that only the DHL calculation would read is not in any line snapshot; the revision keeps it."""
+    dsn = world["dsn"]
+    created = _new_quote(world)
+    override = {"currency": "USD", "clp_per_unit": "912.5", "reason": "tipo de cambio del agente"}
+    _save(world, created, {"items": [_catalog_item(world)], "fx_overrides": [override]})
+    stored = _revision(dsn, created["revision_id"])["fx_override_reasons"]
+    assert stored == {"USD": {"reason": "tipo de cambio del agente", "clp_per_unit": "912.5"}}
+    assert {line["cost_currency"] for line in _lines(dsn, created["revision_id"])} == {"EUR", "CLP"}
+    assert fx_overrides_from_row(stored) == [DraftFxOverride(**override)]
+    assert fx_overrides_from_row({}) == [] and fx_overrides_from_row(None) == []
+
+
+# ------------------------------------------------------------------ which cost a line gets
+
+class CountingCursor:
+    """A cursor that counts the statements it runs."""
+
+    def __init__(self, cur) -> None:
+        self._cur, self.statements = cur, 0
+
+    def execute(self, *args, **kwargs):
+        self.statements += 1
+        return self._cur.execute(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
+def _resolve(world: dict, items: list[dict], *, counter: list | None = None):
+    draft = QuoteDraft(items=items)
+    with psycopg.connect(runtime_dsn(world["dsn"])) as conn, conn.cursor() as raw:
+        params = load_parameters(raw)
+        cur = CountingCursor(raw)
+        resolved = resolve_draft(cur, draft, params, fake_fx, TODAY)
+        if counter is not None:
+            counter.append(cur.statements)
+        return resolved
+
+
+def _observe(dsn: str, supplier: str, product: str, as_of: str, price: str, kind: str, *, stale: bool = False) -> str:
+    return _owner(dsn, "insert into catalog.supplier_product (supplier_organization_id, product_id, as_of, price, "
+                       "currency, price_kind, is_stale, provenance_note) values (%s, %s, %s::timestamptz, %s, 'EUR', "
+                       "%s, %s, 'prueba') returning id::text", (supplier, product, as_of, price, kind, stale))[0][0]
+
+
+@needs_db
+def test_the_cost_a_catalog_line_gets(world) -> None:
+    dsn = world["dsn"]
+    maker = _org(dsn, "manufacturer", "Fabricante Ficticio")
+    other_supplier = _org(dsn, "supplier", "Otro Proveedor Ficticio")
+    survivor = _owner(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, product_kind) "
+                           "values (%s, 'OBS-1', 'equipment') returning id::text", (maker,))[0][0]
+    twin = _owner(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, product_kind, active, "
+                       "merged_into_product_id) values (%s, 'OBS-1-DUP', 'equipment', false, %s) returning id::text",
+                  (maker, survivor))[0][0]
+    supplier = world["supplier"]
+
+    def cost(**line):
+        [item] = _resolve(world, [{"description": "Equipo", "quantity": "1", **line}]).items
+        return item
+
+    # The twin's observations are the survivor's; naming the twin resolves to the survivor.
+    _observe(dsn, supplier, twin, "2026-10-01 13:00+00", "500", "dealer_net")
+    assert (cost(product_id=survivor).unit_cost, cost(product_id=twin).product_id) == (Decimal("500"), survivor)
+    # Same Santiago day: negotiated beats dealer_net, though recorded earlier; list and map come last.
+    listed = _observe(dsn, supplier, survivor, "2026-10-01 16:00+00", "300", "list")
+    _observe(dsn, supplier, survivor, "2026-10-01 17:00+00", "310", "map")
+    _observe(dsn, supplier, survivor, "2026-10-01 14:00+00", "200", "dealer_net")
+    negotiated = _observe(dsn, supplier, survivor, "2026-10-01 12:30+00", "150", "negotiated")
+    item = cost(product_id=survivor)
+    assert (item.unit_cost, item.cost_observation_id, item.supplier_organization_id) == (
+        Decimal("150"), negotiated, supplier)
+    # A newer stale row loses to an older live one.
+    _observe(dsn, supplier, survivor, "2026-10-05 13:00+00", "1", "negotiated", stale=True)
+    assert cost(product_id=survivor).unit_cost == Decimal("150")
+    # A newer day beats a better kind.
+    _observe(dsn, supplier, survivor, "2026-10-02 13:00+00", "180", "dealer_net")
+    assert cost(product_id=survivor).unit_cost == Decimal("180")
+    # A named supplier gets its own newest observation, even an older one; a named observation is that one.
+    theirs = _observe(dsn, other_supplier, survivor, "2026-09-01 13:00+00", "999", "dealer_net")
+    item = cost(product_id=survivor, supplier_organization_id=other_supplier)
+    assert (item.unit_cost, item.cost_observation_id, item.supplier_organization_id) == (
+        Decimal("999"), theirs, other_supplier)
+    assert cost(product_id=survivor, cost_observation_id=listed).unit_cost == Decimal("300")
+    # A named supplier with no observation leaves the line without a cost rather than borrowing another's.
+    nobody = _org(dsn, "supplier", "Proveedor Sin Costos")
+    item = cost(product_id=survivor, supplier_organization_id=nobody)
+    assert (item.unit_cost, item.cost_currency, item.supplier_organization_id) == (None, None, nobody)
+
+
+@needs_db
+def test_a_draft_resolves_in_a_constant_number_of_statements(world) -> None:
+    dsn = world["dsn"]
+    maker = _org(dsn, "manufacturer", "Fabricante Ficticio")
+    products = []
+    for n in range(10):
+        pid = _owner(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, product_kind, "
+                          "weight_kg, origin_country) values (%s, %s, 'accessory', 1, 'DE') returning id::text",
+                     (maker, f"CNT-{n}"))[0][0]
+        _observe(dsn, world["supplier"], pid, "2026-10-01 13:00+00", str(100 + n), "dealer_net")
+        products.append(pid)
+    counts: list[int] = []
+    one = _resolve(world, [{"product_id": products[0], "description": "Accesorio", "quantity": "1"}], counter=counts)
+    ten = _resolve(world, [{"product_id": pid, "description": "Accesorio", "quantity": "2"} for pid in products]
+                   + [{"description": "Línea libre", "quantity": "1", "unit_cost": "5", "cost_currency": "USD"}],
+                   counter=counts)
+    assert len(one.items) == 1 and len(ten.items) == 11
+    assert [i.unit_cost for i in ten.items[:10]] == [Decimal(100 + n) for n in range(10)]
+    assert counts[0] == counts[1] <= 6
