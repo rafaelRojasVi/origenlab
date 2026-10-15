@@ -143,11 +143,12 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
       r("oferta", { intent: "supplier_offer" }),
       r("aviso", { sender: "no-reply@portal.example" }),
       r("info", { sender: "info@publicidad.example" }),
+      r("notas", { sender: "gemini-notes@google.example" }),
       r("reenvio", { sender: "contacto@labdelivery.cl" }),
       r("masivo", { class: "bulk" }),
     ]);
     expect(ask.map((x) => x.assertion_id)).toEqual(["nuevo"]);
-    expect(hidden).toEqual({ "en un caso": 1, proveedor: 2, "aviso automático": 3, "reenvío antiguo": 1, "mismo hilo": 1 });
+    expect(hidden).toEqual({ "en un caso": 1, proveedor: 2, "aviso automático": 4, "reenvío antiguo": 1, "mismo hilo": 1 });
   });
 
   it("asks «¿Marcar ganada?» for a purchase order on a winnable case, first, and still counts the rest «en un caso»", () => {
