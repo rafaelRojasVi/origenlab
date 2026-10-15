@@ -15,12 +15,16 @@ import {
   type SentQuoteUnrecordedOnCase,
   type SentQuoteWithoutCase,
 } from "../operations";
+import { followUpsDue, historicalCount, organizationsToConfirm } from "../today";
 import { Badge, Button, EmptyState, ExternalLink, PageHeader, Panel, ResourceGate, Segmented, Skeleton, fmtDateTime } from "../ui";
 import { useResource } from "../useResource";
+import { fetchPipeline } from "../crmApi";
+import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 import { CompleteSentQuote } from "./CompleteSentQuote";
 import { DatosBody, TECHNICAL_TABS } from "./DatosPage";
 import { DrivePage } from "./DrivePage";
 import { ProvidersPage } from "./ProvidersPage";
+import { TriagePanel } from "./TriagePanel";
 
 type View = "general" | "actividad" | "reglas" | "decidir" | "mas";
 type More = "proveedores" | "drive" | "tecnico";
@@ -44,6 +48,7 @@ const REFRESH_MS = 60_000;
 
 /** Where an old «Datos» link (`#/crm/datos/<tab>`) lands now. */
 function landing(tab: DatosTab | undefined): { view: View; more: More; technical: DatosTab } {
+  if (tab === "decidir") return { view: "decidir", more: "proveedores", technical: "bloqueos" };
   if (tab === "proveedores" || tab === "drive") return { view: "mas", more: tab, technical: "bloqueos" };
   if (tab && (TECHNICAL_TABS as readonly string[]).includes(tab)) return { view: "mas", more: "tecnico", technical: tab };
   return { view: "general", more: "proveedores", technical: "bloqueos" };
@@ -268,27 +273,127 @@ function ToDecide({
 }) {
   const { cases_without_institution: noInstitution, institutions_por_confirmar: porConfirmar } = data.counts;
   return (
-    <Panel title="Por decidir" note="lo que espera a una persona">
-      <ul className="divide-y divide-line text-[13px]">
-        <li className="flex flex-wrap items-center gap-2 px-3 py-2">
-          <span className="flex-1">{noInstitution} casos sin institución</span>
-          <Button onClick={() => navigate("oportunidades")}>Ver casos</Button>
-        </li>
-        <li className="flex flex-wrap items-center gap-2 px-3 py-2">
-          <span className="flex-1">{porConfirmar} instituciones «por confirmar»</span>
-          <Button onClick={() => navigate("organizaciones")}>Ver instituciones</Button>
-        </li>
-        <li className="flex flex-wrap items-center gap-2 px-3 py-2">
-          <span className="flex-1">Propuestas de las reglas del correo (vista previa y «Aplicar»)</span>
-          <Button disabled={!isAdmin} title={isAdmin ? undefined : "Solo administración"} onClick={() => goTo("mas")}>
-            Abrir
-          </Button>
-        </li>
-      </ul>
-      <p className="px-3 pb-2 text-[11px] text-ink-faint">Pronto: una sola lista con «Aceptar» y «Descartar» para cada decisión.</p>
-      <SentQuotesWithoutCase items={data.sent_quotes_without_case ?? []} navigate={navigate} />
-      <SentQuotesUnrecordedOnCase items={data.sent_quotes_unrecorded_on_case ?? []} navigate={navigate} />
-    </Panel>
+    <div className="space-y-4">
+      <Panel title="Por decidir" note="lo que espera a una persona">
+        <ul className="divide-y divide-line text-[13px]">
+          <li className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="flex-1">{noInstitution} casos sin institución</span>
+            <Button onClick={() => navigate("oportunidades")}>Ver casos</Button>
+          </li>
+          <li className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="flex-1">{porConfirmar} instituciones «por confirmar»</span>
+            <Button onClick={() => navigate("organizaciones")}>Ver instituciones</Button>
+          </li>
+          <li className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="flex-1">Propuestas de las reglas del correo (vista previa y «Aplicar»)</span>
+            <Button disabled={!isAdmin} title={isAdmin ? undefined : "Solo administración"} onClick={() => goTo("mas")}>
+              Abrir
+            </Button>
+          </li>
+        </ul>
+        <p className="px-3 pb-2 text-[11px] text-ink-faint">Pronto: una sola lista con «Aceptar» y «Descartar» para cada decisión.</p>
+        <SentQuotesWithoutCase items={data.sent_quotes_without_case ?? []} navigate={navigate} />
+        <SentQuotesUnrecordedOnCase items={data.sent_quotes_unrecorded_on_case ?? []} navigate={navigate} />
+      </Panel>
+      {/* «Por ordenar»: the housekeeping panels moved from Hoy (2026-10-15 redesign). */}
+      <PorOrdenarSection navigate={navigate} />
+    </div>
+  );
+}
+
+/**
+ * «Por ordenar» (2026-10-15): housekeeping panels moved from «Hoy» to keep the operator's daily
+ * queue focused. Fetches the pipeline on demand (only when the «Por decidir» view is open).
+ * Shows: emails without a case (TriagePanel), institutions to confirm, the full follow-up list,
+ * people to add, historical cases and blocked cases.
+ */
+function PorOrdenarSection({ navigate }: { navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void }) {
+  const [pipeline, reloadPipeline] = useResource(fetchPipeline);
+  const [people] = useResource(fetchPersonSuggestions);
+  const now = new Date();
+
+  const items = pipeline.kind === "ready" ? pipeline.data.items : [];
+  const orgs = organizationsToConfirm(items);
+  const historical = historicalCount(items, now);
+  const followUps = followUpsDue(items, now);
+  const blocked = items.filter((c) => c.status === "blocked");
+  const peopleCount = people.kind === "ready" ? people.data.total : 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Emails no case holds: the triage inbox. */}
+      <TriagePanel cards={items} onCaseChanged={reloadPipeline} />
+      {orgs.length > 0 ? (
+        <Panel title="Instituciones por confirmar" aside={<Badge tone="warn" glyph={false}>{orgs.length}</Badge>} bodyClassName="divide-y divide-line">
+          {orgs.map((o) => (
+            <div key={o.organization_id} className="flex items-center gap-2 px-3 py-2 text-[13px]">
+              <span className="flex-1 truncate font-medium text-ink">{o.name}</span>
+              <span className="text-[11px] text-ink-muted">{o.cases.length} {o.cases.length === 1 ? "caso" : "casos"}</span>
+              <Button onClick={() => navigate("organizaciones", o.organization_id)}>Ver</Button>
+            </div>
+          ))}
+        </Panel>
+      ) : null}
+      {followUps.length > 0 ? (
+        <Panel title="Seguimientos pendientes" aside={<Badge tone="neutral" glyph={false}>{followUps.length}</Badge>} bodyClassName="divide-y divide-line">
+          {followUps.slice(0, 8).map((f) => (
+            <div key={f.card.opportunity_id} className="flex items-center gap-2 px-3 py-2 text-[13px]">
+              <span className="flex-1 truncate">
+                <button type="button" onClick={() => navigate("oportunidades", f.card.opportunity_id)}
+                  className="font-medium text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">
+                  {f.card.organization?.name ?? f.card.title}
+                </button>
+              </span>
+              <span className="text-[11px] text-ink-muted tabular-nums">{f.days} días</span>
+            </div>
+          ))}
+          {followUps.length > 8 ? (
+            <div className="px-3 py-2">
+              <button type="button" onClick={() => navigate("oportunidades")}
+                className="text-[12px] font-medium text-brand-700 hover:underline">
+                Ver todos en Oportunidades →
+              </button>
+            </div>
+          ) : null}
+        </Panel>
+      ) : null}
+      {peopleCount > 0 ? (
+        <Panel title="Personas por agregar" aside={<Badge tone="neutral" glyph={false}>{peopleCount}</Badge>}>
+          <p className="px-3 py-2 text-[13px] text-ink-muted">
+            {peopleCount} {peopleCount === 1 ? "persona" : "personas"} de correos de cotización aún no están en el CRM.
+          </p>
+          <div className="px-3 pb-2">
+            <Button onClick={() => navigate("personas")}>Revisarlas en Personas</Button>
+          </div>
+        </Panel>
+      ) : null}
+      {historical > 0 ? (
+        <Panel title="Casos por decidir" aside={<Badge tone="info" glyph={false}>{historical}</Badge>}>
+          <p className="px-3 py-2 text-[13px] text-ink-muted">
+            {historical} {historical === 1 ? "caso" : "casos"} del historial siguen «sin decidir»: ningún operador los ha marcado como vivos o cerrados.
+          </p>
+          <div className="px-3 pb-2">
+            <Button variant="primary" onClick={() => navigate("oportunidades")}>Decidirlos en Oportunidades</Button>
+          </div>
+        </Panel>
+      ) : null}
+      {blocked.length > 0 ? (
+        <Panel title="Casos bloqueados" aside={<Badge tone="bad" glyph={false}>{blocked.length}</Badge>} bodyClassName="divide-y divide-line">
+          {blocked.map((c) => (
+            <div key={c.opportunity_id} className="flex items-center gap-2 px-3 py-2 text-[13px]">
+              <div className="flex-1 min-w-0">
+                <button type="button" onClick={() => navigate("oportunidades", c.opportunity_id)}
+                  className="truncate font-medium text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">
+                  {c.organization?.name ?? c.title}
+                </button>
+                <span className="block truncate text-[11px] text-bad">{c.attention.find((a) => a.blocking)?.label}</span>
+              </div>
+              <Button onClick={() => navigate("oportunidades", c.opportunity_id)}>Resolver</Button>
+            </div>
+          ))}
+        </Panel>
+      ) : null}
+    </div>
   );
 }
 
