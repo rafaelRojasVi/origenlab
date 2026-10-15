@@ -524,3 +524,34 @@ describe("Hoy actions", () => {
     });
   });
 });
+
+describe("«Para ti» queue", () => {
+  const inbound = (at: string, url = `https://mail.example.cl/${at}`) =>
+    ({ last_contact: { outbound: null, inbound: { at, subject: "Consulta", url } } }) as Partial<OpportunityCardData>;
+
+  it("puts clients waiting on us first, the newest request on top, then follow-ups", async () => {
+    const { buildParaTiQueue } = await import("../today");
+    const fresh = card(inbound("2026-10-06T13:00:00Z"), "2026-10-01T12:00:00Z");
+    const old = card(inbound("2026-09-28T12:00:00Z"), "2026-09-25T12:00:00Z");
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    const order = buildParaTiQueue([silent14, old, fresh], NOW, null).map((q) => [q.kind, q.opportunity_id]);
+    expect(order).toEqual([["reply", fresh.opportunity_id], ["reply", old.opportunity_id], ["followup", silent14.opportunity_id]]);
+  });
+
+  it("one email that answers two cases is one row: the other case takes no follow-up row", async () => {
+    const { buildParaTiQueue } = await import("../today");
+    const same = inbound("2026-10-06T10:00:00Z", "https://mail.example.cl/una-respuesta");
+    const a = card(same, "2026-09-22T15:00:00Z");
+    const b = card(same, "2026-09-22T15:00:00Z");
+    const rows = buildParaTiQueue([a, b], NOW, null);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("reply");
+  });
+
+  it("the header count includes the forwarded requests waiting", async () => {
+    const { paraTiCount } = await import("../today");
+    const c = card(inbound("2026-10-06T13:00:00Z"), "2026-10-01T12:00:00Z");
+    expect(paraTiCount([c], NOW, null)).toBe(1);
+    expect(paraTiCount([c], NOW, null, 2)).toBe(3);
+  });
+});

@@ -27,9 +27,10 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
   // «M hechas»: items the operator cleared from «Para ti» in this browser session.
   const [hechas, setHechas] = useState(0);
   const onCleared = useCallback(() => setHechas((n) => n + 1), []);
+  const [forwardCount, setForwardCount] = useState(0);
 
   const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
-  const paraTi = pipeline.kind === "ready" ? paraTiCount(pipeline.data.items, new Date(), me) : null;
+  const paraTi = pipeline.kind === "ready" ? paraTiCount(pipeline.data.items, new Date(), me, forwardCount) : null;
 
   return (
     <div className="space-y-5">
@@ -44,6 +45,7 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
             navigate={navigate}
             onChanged={reloadPipeline}
             onCleared={onCleared}
+            onForwardCount={setForwardCount}
             refreshing={refreshing}
             people={people}
             aside={

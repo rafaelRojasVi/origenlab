@@ -89,6 +89,7 @@ export function TodayBody({
   navigate,
   onChanged,
   onCleared,
+  onForwardCount,
   refreshing = false,
   now,
   people,
@@ -99,6 +100,8 @@ export function TodayBody({
   onChanged: () => void;
   /** Called each time an item is cleared from the queue — increments «M hechas» in the header. */
   onCleared?: () => void;
+  /** Called with the number of forwarded requests waiting, for the header's count. */
+  onForwardCount?: (n: number) => void;
   refreshing?: boolean;
   now?: Date;
   /** Person suggestions, read by the page beside the pipeline so neither waits on the other. */
@@ -119,6 +122,8 @@ export function TodayBody({
   const forwards: ForwardedRequest[] = fwdState.kind === "ready" && Array.isArray(fwdState.data?.items)
     ? fwdState.data.items.filter((f) => !fwdGone.has(f.id))
     : [];
+  // The header's «N para ti» counts them too, so it matches the list.
+  useEffect(() => { onForwardCount?.(forwards.length); }, [forwards.length, onForwardCount]);
 
   // Housekeeping counts (local — no extra fetch needed).
   const orgs = useMemo(() => organizationsToConfirm(items), [items]);

@@ -285,15 +285,19 @@ export type QueueItem = ReplyQueueItem | TaskQueueItem | FollowUpQueueItem;
 /**
  * ONE merged list of what the operator needs to act on today, deduplicated by `opportunity_id`.
  * Priority per case: reply > overdue task > due task > follow-up due today.
- * Sorted longest-wait first (who has been waiting longest appears at the top).
+ * Order (owner, 2026-10-15): clients waiting on us first, the newest request on top so a fresh lead
+ * is never under a month-old silence; then tasks and follow-ups, longest wait first.
  * Forwarded requests are excluded: they have no case yet and are appended in `TodayBody`.
  */
 export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: string | null): QueueItem[] {
   const queue = new Map<string, QueueItem>();
 
-  // 1. Replies — a client is waiting
+  // 1. Replies — a client is waiting. One email that answers several cases is one row: the other
+  // cases it names («También en…») take no row of their own below.
+  const answered = new Set<string>();
   for (const reply of repliesToAnswer(items, now)) {
     const id = reply.card.opportunity_id;
+    for (const other of reply.others) answered.add(other.opportunity_id);
     queue.set(id, {
       kind: "reply",
       opportunity_id: id,
@@ -309,7 +313,7 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
   const taskList = tasksDue(items, now).filter((t) => !overdueIds.has(t.task.task_id));
   for (const due of [...overdueList, ...taskList]) {
     const id = due.card.opportunity_id;
-    if (queue.has(id)) continue;
+    if (queue.has(id) || answered.has(id)) continue;
     const waitMs = Math.max(0, now.getTime() - Date.parse(due.task.due_at));
     queue.set(id, { kind: "task", opportunity_id: id, card: due.card, due, waitMs });
   }
@@ -317,14 +321,16 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
   // 3. Follow-ups due today only (exact threshold crossing or operator reminder)
   for (const f of followUpsDue(items, now).filter(isFollowUpDueToday)) {
     const id = f.card.opportunity_id;
-    if (queue.has(id)) continue;
+    if (queue.has(id) || answered.has(id)) continue;
     queue.set(id, { kind: "followup", opportunity_id: id, card: f.card, followUp: f, waitMs: f.days * DAY_MS });
   }
 
-  return [...queue.values()].sort((a, b) => b.waitMs - a.waitMs);
+  const RANK: Record<QueueItem["kind"], number> = { reply: 0, task: 1, followup: 2 };
+  return [...queue.values()].sort((a, b) =>
+    RANK[a.kind] - RANK[b.kind] || (a.kind === "reply" ? a.waitMs - b.waitMs : b.waitMs - a.waitMs));
 }
 
-/** Count for «N para ti» in the header. Does not include forwarded requests. */
-export function paraTiCount(items: OpportunityCardData[], now: Date, me: string | null): number {
-  return buildParaTiQueue(items, now, me).length;
+/** Count for «N para ti» in the header; `forwards` are the forwarded requests still waiting. */
+export function paraTiCount(items: OpportunityCardData[], now: Date, me: string | null, forwards = 0): number {
+  return buildParaTiQueue(items, now, me).length + forwards;
 }
