@@ -78,7 +78,7 @@ function card(id: string, org: string, sentAt: string, quoteNumber: string): Opp
 // Andino is a decided case (in «Conversación»); Valle is still the historical import's trace.
 const PIPELINE = {
   items: [
-    { ...card("11111111-1111-4111-8111-111111111111", "Laboratorio Andino", "2026-03-20T12:00:00Z", "01020-26"), stage: "negotiating" },
+    { ...card("11111111-1111-4111-8111-111111111111", "Laboratorio Andino", "2026-03-28T12:00:00Z", "01020-26"), stage: "negotiating" },
     card("22222222-2222-4222-8222-222222222222", "Universidad del Valle", "2026-02-10T12:00:00Z", "01001-26"),
   ],
   total: 2,
@@ -239,22 +239,22 @@ describe("Resumen", () => {
     const navigate = vi.fn();
     render(<OverviewPage navigate={navigate} />);
     expect(await screen.findByTestId("hero-header")).toHaveTextContent("HOY");
-    const followUps = await screen.findByTestId("today-followups");
-    const first = within(followUps).getByTestId("today-rhythm-primero");
-    expect(first).toHaveTextContent(/Primer seguimiento\s*1/);
-    expect(first).toHaveTextContent("11días");
+    // Andino is 3 days old (sentAt "2026-03-28") → exactly the first-follow-up threshold.
+    const paraTi = await screen.findByTestId("today-para-ti");
+    const row = within(paraTi).getByTestId("today-followup-11111111-1111-4111-8111-111111111111");
+    expect(row).toHaveTextContent("3");
     // The thread, opened as the shared mailbox — not as whichever account the browser lists first.
-    expect(within(first).getByRole("link", { name: /Responder en Gmail/ })).toHaveAttribute(
+    expect(within(row).getByRole("link", { name: /Responder en Gmail/ })).toHaveAttribute(
       "href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/gm1",
     );
-    fireEvent.click(within(first).getByRole("button", { name: "Laboratorio Andino" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Laboratorio Andino" }));
     expect(navigate).toHaveBeenCalledWith("oportunidades", "11111111-1111-4111-8111-111111111111");
-    // Valle is not chased here: it is decided in bulk first.
-    expect(within(followUps).queryByText("Universidad del Valle")).not.toBeInTheDocument();
-    expect(screen.getByTestId("today-historical")).toHaveTextContent("1 caso por decidir");
-    // The counts live in the greeting only, not in a second row of tiles.
-    expect(screen.getByTestId("hero-header")).toHaveTextContent("1 seguimiento");
+    // Valle is historical (undecided) → in housekeeping, not in the queue.
+    expect(within(paraTi).queryByText("Universidad del Valle")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("today-housekeeping")).toHaveTextContent(/1.*cosa.*ordenar/);
+    // Header shows "1 para ti" (one follow-up), no old tiles.
+    expect(screen.getByTestId("hero-header")).toHaveTextContent("1 para ti");
     expect(screen.queryByTestId("today-stats")).not.toBeInTheDocument();
   });
 
@@ -281,11 +281,11 @@ describe("Resumen", () => {
     const task = await screen.findByTestId("today-task-t-1");
     expect(task).toHaveTextContent("Llamar por la balanza");
     expect(task).toHaveTextContent("Atrasada 1 día");
-    const replies = screen.getByText("Te toca responder").closest("section") as HTMLElement;
-    expect(within(replies).getByText("Universidad del Valle")).toBeInTheDocument();
-    expect(within(replies).getByRole("link", { name: /Abrir respuesta/ })).toHaveAttribute("href", "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/in1");
-    // A case with an open task is planned: it is not also a follow-up.
-    expect(screen.getByTestId("today-followups")).toHaveTextContent("Ningún seguimiento pendiente.");
+    const paraTi = screen.getByTestId("today-para-ti");
+    expect(within(paraTi).getByText("Universidad del Valle")).toBeInTheDocument();
+    expect(within(paraTi).getByRole("link", { name: /Abrir respuesta/ })).toHaveAttribute("href", "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/in1");
+    // A case with an open task is planned: it does not appear separately as a follow-up.
+    expect(screen.queryByTestId("today-followups")).not.toBeInTheDocument();
   });
 
   it("keeps the follow-ups when the exchange rate cannot be read", async () => {
@@ -340,23 +340,26 @@ describe("Hoy · orden", () => {
   it("puts today's work above the exchange rate and the quote number", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    const stats = await screen.findByRole("heading", { name: "Seguimientos" });
+    // «Para ti» section heading (Andino is at 3-day threshold, so it shows).
+    const heading = await screen.findByRole("heading", { level: 2, name: "Para ti" });
     const usd = await screen.findByTestId("fx-USD");
     const quotes = await screen.findByTestId("quote-number-box");
-    expect(stats.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(stats.compareDocumentPosition(quotes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(heading.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(heading.compareDocumentPosition(quotes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 
-describe("Hoy · sugerencias del correo", () => {
-  it("shows the emails no case holds on Hoy, in their own panel", async () => {
+describe("Hoy · housekeeping", () => {
+  it("the triage panel no longer lives on Hoy — a housekeeping link navigates to Operaciones", async () => {
     respond({
       "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE,
-      "/v2/workspace/triage-readings": { items: [] },
     });
     render(<OverviewPage navigate={() => undefined} />);
-    expect(await screen.findByText("Correos sin caso")).toBeInTheDocument();
-    expect(await screen.findByText("Ningún correo nuevo fuera de un caso.")).toBeInTheDocument();
+    await screen.findByTestId("hero-header");
+    // «Correos sin caso» moved to Operaciones → not on «Hoy».
+    expect(screen.queryByText("Correos sin caso")).not.toBeInTheDocument();
+    // Valle is historical_import → housekeeping count = 1 (link to Operaciones).
+    expect(await screen.findByTestId("today-housekeeping")).toHaveTextContent(/1.*cosa.*ordenar/);
   });
 });
 

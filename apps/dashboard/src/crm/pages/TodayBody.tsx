@@ -1,31 +1,38 @@
 /**
- * The body of «Hoy» (`OverviewPage`): the lists `today.ts` computes from the pipeline, each row
- * with the one action it needs.
+ * The body of «Hoy» (`OverviewPage`): a single «Para ti» queue of everything the operator needs
+ * to act on today, followed by a one-line summary of what the system did automatically, and a
+ * housekeeping link to «Operaciones → Por ordenar».
  *
- * - **Te toca responder** — first: a client is waiting. The client's email, «Pasar a
- *   Conversación» when the case is still «Enviada», and «No requiere respuesta» for a «gracias, le
- *   aviso»: it schedules a «Seguimiento …» a week out, which takes the row off the list until the
- *   client writes again (`today.ts`).
- * - **Seguimientos** — one list, a traffic light by the 3 · 14 · 30-day rhythm (green, yellow,
- *   red), five rows per colour before «Ver N más». A row is the days, the case, what the quote is
- *   for, the quote number and who, and one button: «Responder en Gmail» on the case's thread (the
- *   captured email clears the row by itself). «⋯» holds the rest: «Recordar en 1 semana», «Ya le
- *   escribí» (a row a task put there) and «Cerrar sin respuesta» (the «Perdida» form).
- * - **Otras tareas** — the due tasks that are not follow-ups («Retomar: …»), same two buttons.
- * - Aside: the historical cases still to decide, the institutions to confirm, the people the quote
- *   emails name, and the blocked cases.
+ * **«Para ti»** merges (deduped by `opportunity_id`, most-urgent-first):
+ *  - client replies to answer — chip «Responder»
+ *  - tasks due / overdue — chip «Tarea»
+ *  - follow-ups crossing a rhythm threshold today only (not every follow-up) — chip «Seguimiento»
+ *  - forwarded requests still waiting for a decision — chip «Decidir»
+ *
+ * Each row: one chip, who (institution), what (product / quote), why now, ONE primary button and
+ * a «⋯» secondary-actions menu (existing commands, not new API calls).
+ *
+ * **System summary**: one line «Mientras no estabas: N solicitudes abiertas · M correos archivados»
+ * with a «Revisar» button that expands the existing `AutomaticActionsPanel` inline.
+ *
+ * **Housekeeping**: one link «N cosas por ordenar → Operaciones» that navigates to the
+ * «Por decidir» area of `OperacionesPage` (tab "decidir").
+ *
+ * **Empty state**: when the queue is empty, «Todo al día» with the next 3 follow-ups as a preview.
  *
  * Writes go through the same commands as the drawer (`caseCommands.ts`, `crmAuthoringApi.ts`),
- * gated the same way; a viewer sees the lists without the buttons. Every recorded write refetches.
+ * gated the same way; a viewer sees the lists without the buttons.
  */
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { addNote, confirmOrganizationRecord, fetchPersonSuggestions, refusalOf } from "../authoring/crmAuthoringApi";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { addNote, fetchPersonSuggestions, refusalOf } from "../authoring/crmAuthoringApi";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import {
   cancelTask,
   caseRefusalText,
   completeTask,
+  createRequestFromForward,
   createTask,
+  dismissForwardedRequest,
   moveCase,
   newCaseCommandKey,
   useMayRunCaseCommands,
@@ -37,32 +44,30 @@ import { useAuthSession } from "../../context/AuthSessionContext";
 import type { CrmSection, DatosTab } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
 import {
-  OVERDUE_ALL_DAYS,
-  OVERDUE_OWN_DAYS,
-  RHYTHM,
+  buildParaTiQueue,
   followUpsDue,
   historicalCount,
-  wroteAfterWinning,
   organizationsToConfirm,
-  overdueTasks,
-  repliesToAnswer,
-  tasksDue,
+  wroteAfterWinning,
   type DueTask,
   type FollowUp,
-  type OrgToConfirm,
   type OverdueTask,
-  type Reply,
+  type QueueItem,
 } from "../today";
-import { Badge, Button, Modal, Panel, fmtDate, toast } from "../ui";
-import { type ResourceState } from "../useResource";
+import { fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";
+import { Badge, Button, FormField, Modal, TextInput, fmtDate, toast } from "../ui";
+import type { ResourceState } from "../useResource";
+import { useResource } from "../useResource";
 import { useLeave } from "../useLeave";
 import { CaseMoveForm } from "./CaseMove";
-import { AutomaticActionsPanel } from "./AutomaticActionsPanel";
-import { ForwardedRequestsPanel } from "./ForwardedRequestsPanel";
+import { AutomaticActionsPanel, newsRows, type AutomaticAction } from "./AutomaticActionsPanel";
+import type { ForwardedRequest } from "./ForwardedRequestsPanel";
 
 type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 
 const WEEK_MS = 7 * 86_400_000;
+
+/* ──────────────────────────────────────────────────────────── helpers ── */
 
 function CaseLink({ card, navigate }: { card: OpportunityCardData; navigate: Navigate }) {
   const { name } = displayName(card);
@@ -77,97 +82,101 @@ function CaseLink({ card, navigate }: { card: OpportunityCardData; navigate: Nav
   );
 }
 
-function quoteOf(card: OpportunityCardData): string {
-  const latest = card.latest_revision;
-  return latest ? `${latest.quote_number} · enviada ${fmtDate(latest.sent_at)}` : "sin cotización";
-}
+/* ──────────────────────────────────────────────────── TodayBody ── */
 
 export function TodayBody({
   items,
   navigate,
   onChanged,
+  onCleared,
   refreshing = false,
   now,
   people,
   aside,
-  after,
 }: {
   items: OpportunityCardData[];
   navigate: Navigate;
   onChanged: () => void;
+  /** Called each time an item is cleared from the queue — increments «M hechas» in the header. */
+  onCleared?: () => void;
   refreshing?: boolean;
   now?: Date;
   /** Person suggestions, read by the page beside the pipeline so neither waits on the other. */
   people?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
-  /** What the page keeps at hand on the side, above the lists: the quote number and the rates. */
+  /** The main column's last panel: the quote number and the rates. */
   aside?: ReactNode;
-  /** The main column's last panel: the emails no case holds. */
-  after?: ReactNode;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const { session } = useAuthSession();
   const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
-  const overdue = useMemo(() => overdueTasks(items, at, me), [items, at, me]);
-  const tasks = useMemo(() => {
-    const shownAbove = new Set(overdue.map((o) => o.task.task_id));
-    return tasksDue(items, at).filter((t) => !shownAbove.has(t.task.task_id));
-  }, [items, at, overdue]);
-  const replies = useMemo(() => repliesToAnswer(items, at), [items, at]);
-  const followUps = useMemo(() => followUpsDue(items, at), [items, at]);
+
+  const queue = useMemo(() => buildParaTiQueue(items, at, me), [items, at, me]);
+
+  // Forwarded requests — fetched separately, appended to the end of the queue.
+  const [fwdState, reloadFwd] = useResource(useCallback(() =>
+    fetchJsonGet<{ items: ForwardedRequest[] }>(operatorApiUrl("/v2/workspace/forwarded-requests")), []));
+  const [fwdGone, setFwdGone] = useState<Set<string>>(new Set());
+  const forwards: ForwardedRequest[] = fwdState.kind === "ready" && Array.isArray(fwdState.data?.items)
+    ? fwdState.data.items.filter((f) => !fwdGone.has(f.id))
+    : [];
+
+  // Housekeeping counts (local — no extra fetch needed).
   const orgs = useMemo(() => organizationsToConfirm(items), [items]);
   const historical = historicalCount(items, at);
-  // A blocked case a client is waiting on shows once, in «Te toca responder», with what blocks it.
-  const blocked = items.filter((i) => i.status === "blocked" && !replies.some((r) => r.card.opportunity_id === i.opportunity_id));
+  const blocked = useMemo(() => items.filter((i) => i.status === "blocked" && !queue.some((q) => q.opportunity_id === i.opportunity_id)), [items, queue]);
+  const peopleCount = people?.kind === "ready" ? people.data.total : 0;
+  const housekeepingCount = orgs.length + historical + blocked.length + peopleCount;
+
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
   const [closing, setClosing] = useState<OpportunityCardData | null>(null);
+
+  // «Gone» IDs — items that left the queue in this render session (leave animation).
+  const [goneIds, setGoneIds] = useState<Set<string>>(new Set());
+  const clearItem = useCallback((id: string) => {
+    setGoneIds((s) => new Set([...s, id]));
+    onCleared?.();
+  }, [onCleared]);
+
+  const totalQueue = queue.length + forwards.length;
+  const nextFollowUps = useMemo(() => followUpsDue(items, at).slice(0, 3), [items, at]);
 
   return (
     <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
-          {/* Owner, 2026-10-14 («this is getting super messy»): what needs a person first — who wrote,
-              what the system did by itself (with «Quitar»), what is still waiting — and everything
-              else folded under «Más». */}
-          <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
-          <AutomaticActionsPanel navigate={navigate} onChanged={onChanged} />
-          {/* Forwards the automatic run handed back or could not place; renders nothing when none wait. */}
-          <ForwardedRequestsPanel navigate={navigate} onChanged={onChanged} />
-          <TasksPanel overdue={overdue} tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
-          <MoreSection count={followUps.length + orgs.length + blocked.length + historical}>
-            <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
-            {after}
-            <PeopleCount state={people} navigate={navigate} />
-            {historical > 0 ? (
-              <section className="crm-rise rounded-xl border border-info/30 bg-info-bg/40 p-4" data-testid="today-historical">
-                <h2 className="text-[14px] font-semibold text-ink">
-                  {historical} {historical === 1 ? "caso" : "casos"} por decidir
-                </h2>
-                <p className="mt-1 text-xs leading-5 text-ink-muted">
-                  Siguen «sin decidir»: nadie ha dicho si siguen vivos. Cada uno trae una propuesta a partir del correo.
-                </p>
-                <Button className="mt-3" variant="primary" onClick={() => navigate("oportunidades")}>
-                  Decidirlos en Oportunidades
-                </Button>
-              </section>
-            ) : null}
-            <OrgsPanel orgs={orgs} navigate={navigate} mayAuthor={mayAuthor} onChanged={onChanged} />
-            {blocked.length > 0 ? (
-              <Panel title="Bloqueados" aside={<Badge tone="bad" glyph={false}>{blocked.length}</Badge>} bodyClassName="divide-y divide-line">
-                {blocked.map((c) => (
-                  <div key={c.opportunity_id} className="flex items-center gap-2 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <CaseLink card={c} navigate={navigate} />
-                      <span className="block truncate text-[11px] text-bad">{c.attention.find((a) => a.blocking)?.label}</span>
-                    </div>
-                    <Button onClick={() => navigate("oportunidades", c.opportunity_id)}>Resolver</Button>
-                  </div>
-                ))}
-              </Panel>
-            ) : null}
-          </MoreSection>
+
+          {/* ─── «Para ti» queue ─── */}
+          <ParaTiSection
+            queue={queue}
+            forwards={forwards}
+            goneIds={goneIds}
+            navigate={navigate}
+            mayDecide={mayDecide}
+            mayAuthor={mayAuthor}
+            onChanged={() => { onChanged(); reloadFwd(); }}
+            onClearItem={clearItem}
+            onFwdDone={(id) => { setFwdGone((g) => new Set([...g, id])); onChanged(); reloadFwd(); }}
+            onClose={setClosing}
+            now={at}
+            me={me}
+          />
+
+          {/* ─── Empty state ─── */}
+          {totalQueue === 0 && (
+            <EmptyState followUps={nextFollowUps} navigate={navigate} />
+          )}
+
+          {/* ─── «Hecho automáticamente» — one collapsible line ─── */}
+          <SystemSummaryLine navigate={navigate} onChanged={onChanged} />
+
+          {/* ─── Housekeeping link → Operaciones ─── */}
+          {housekeepingCount > 0 ? (
+            <HousekeepingLink count={housekeepingCount} navigate={navigate} />
+          ) : null}
+
         </div>
-        {/* Tools at hand, not tasks: the next quote number and the day's exchange rates. */}
+        {/* Tools at hand: the next quote number and the day's exchange rates. */}
         <aside className="min-w-0 space-y-4 lg:sticky lg:top-4 lg:self-start">{aside}</aside>
       </div>
 
@@ -196,289 +205,184 @@ export function TodayBody({
   );
 }
 
-/* ─────────────────────────────────────────────────────────────── tasks ── */
+/* ────────────────────────────────────────────────── «Para ti» section ── */
 
-/**
- * «Tareas»: one list. Overdue first — one's own from 3 days late, anyone's from 7 (`overdueTasks`,
- * owner decision 2026-10-10), the escalated ones naming whose they are — then the rest due by
- * tonight. Follow-ups live in «Seguimientos». No empty panel.
- */
-function TasksPanel({
-  overdue,
-  tasks,
-  navigate,
-  mayDecide,
-  onChanged,
-  now,
-}: {
-  overdue: OverdueTask[];
-  tasks: DueTask[];
-  navigate: Navigate;
-  mayDecide: boolean;
-  onChanged: () => void;
-  now: Date;
-}) {
-  const total = overdue.length + tasks.length;
-  if (total === 0) return null;
+const CHIP: Record<string, { label: string; cls: string }> = {
+  reply:   { label: "Responder",  cls: "bg-warn-bg text-warn" },
+  task:    { label: "Tarea",      cls: "bg-bad-bg text-bad" },
+  followup:{ label: "Seguimiento",cls: "bg-good-bg text-good" },
+  forward: { label: "Decidir",    cls: "bg-info-bg text-info" },
+};
+
+function ChipBadge({ kind }: { kind: keyof typeof CHIP }) {
+  const { label, cls } = CHIP[kind] ?? CHIP.reply;
   return (
-    <div data-testid="today-tasks">
-      <Panel
-        title="Tareas"
-        note={overdue.length ? `vencidas primero · tuyas desde ${OVERDUE_OWN_DAYS} días, de cualquiera desde ${OVERDUE_ALL_DAYS}` : undefined}
-        aside={<Badge tone={overdue.length ? "bad" : "warn"} glyph={false}>{total}</Badge>}
-        bodyClassName="divide-y divide-line"
-      >
-        {overdue.map((t, i) => (
-          <TaskRow key={t.task.task_id} due={t} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={now}
-            ownerLabel={t.escalated ? `de ${t.task.owner ?? "otro perfil"}` : null} />
-        ))}
-        {tasks.map((t, i) => (
-          <TaskRow key={t.task.task_id} due={t} index={overdue.length + i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={now} />
-        ))}
-      </Panel>
-    </div>
+    <span className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>
+      {label}
+    </span>
   );
 }
 
-/** «Personas por agregar» as a count in the side column; the list itself lives on Personas. */
-function PeopleCount({ state, navigate }: {
-  state?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
+function ParaTiSection({
+  queue, forwards, goneIds, navigate, mayDecide, mayAuthor, onChanged, onClearItem, onFwdDone, onClose, now, me,
+}: {
+  queue: QueueItem[];
+  forwards: ForwardedRequest[];
+  goneIds: Set<string>;
   navigate: Navigate;
+  mayDecide: boolean;
+  mayAuthor: boolean;
+  onChanged: () => void;
+  onClearItem: (id: string) => void;
+  onFwdDone: (id: string) => void;
+  onClose: (c: OpportunityCardData) => void;
+  now: Date;
+  me: string | null;
 }) {
-  if (!state || state.kind !== "ready" || state.data.total === 0) return null;
-  const n = state.data.total;
+  if (queue.length === 0 && forwards.length === 0) return null;
   return (
-    <section className="rounded-xl border border-line bg-canvas-raised p-4" data-testid="today-people-count">
-      <h2 className="text-[14px] font-semibold text-ink">{n} {n === 1 ? "persona" : "personas"} por agregar</h2>
-      <p className="mt-1 text-xs leading-5 text-ink-muted">Nombres y direcciones de los correos de cotización que aún no están en el CRM.</p>
-      <Button className="mt-3" onClick={() => navigate("personas")}>Revisarlas en Personas</Button>
+    <section data-testid="today-para-ti" className="overflow-hidden rounded-xl border border-line bg-canvas-raised">
+      <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 pb-1 pt-3">
+        <h2 className="text-[14px] font-semibold text-ink">Para ti</h2>
+        <span className="text-[12px] tabular-nums text-ink-muted">{queue.length + forwards.length}</span>
+        {me ? <span className="ml-auto text-[11px] text-ink-faint">ordenado por quién lleva más esperando</span> : null}
+      </header>
+      <ul className="divide-y divide-line">
+        {queue.map((item, i) => {
+          if (goneIds.has(item.opportunity_id)) return null;
+          if (item.kind === "reply") {
+            return (
+              <ReplyQueueRow
+                key={item.opportunity_id}
+                reply={item.reply}
+                index={i}
+                navigate={navigate}
+                mayDecide={mayDecide}
+                mayAuthor={mayAuthor}
+                onChanged={onChanged}
+                onClearItem={() => onClearItem(item.opportunity_id)}
+                now={now}
+              />
+            );
+          }
+          if (item.kind === "task") {
+            return (
+              <TaskQueueRow
+                key={item.opportunity_id}
+                due={item.due}
+                index={i}
+                navigate={navigate}
+                mayDecide={mayDecide}
+                onChanged={onChanged}
+                onClearItem={() => onClearItem(item.opportunity_id)}
+                now={now}
+              />
+            );
+          }
+          if (item.kind === "followup") {
+            return (
+              <FollowUpQueueRow
+                key={item.opportunity_id}
+                followUp={item.followUp}
+                index={i}
+                navigate={navigate}
+                mayDecide={mayDecide}
+                onChanged={onChanged}
+                onClearItem={() => onClearItem(item.opportunity_id)}
+                onClose={onClose}
+                now={now}
+              />
+            );
+          }
+          return null;
+        })}
+        {forwards.map((f, i) => (
+          <ForwardQueueRow
+            key={f.id}
+            item={f}
+            index={queue.length + i}
+            navigate={navigate}
+            mayDecide={mayDecide}
+            onDone={onFwdDone}
+          />
+        ))}
+      </ul>
     </section>
   );
 }
 
-function TaskRow({
-  due,
-  index,
-  navigate,
-  mayDecide,
-  onChanged,
-  now,
-  ownerLabel = null,
+/* ─────────────────────────────────────────────── Reply row ── */
+
+function ReplyQueueRow({
+  reply, index, navigate, mayDecide, mayAuthor, onChanged, onClearItem, now,
 }: {
-  due: DueTask;
+  reply: import("../today").Reply;
   index: number;
   navigate: Navigate;
   mayDecide: boolean;
+  mayAuthor: boolean;
   onChanged: () => void;
-  now: Date;
-  /** «de Tatiana»: an escalated task shown to a profile that does not own it. */
-  ownerLabel?: string | null;
-}) {
-  const { card, task, overdueDays } = due;
-  const { leaving, gone, leave } = useLeave(due);
-  const actions = useTaskActions(due, now, onChanged, leave);
-  if (gone) return null;
-
-  return (
-    <div
-      className={`crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 ${leaving ? "crm-row-out" : ""}`}
-      style={{ "--i": Math.min(index, 10) } as CSSProperties}
-      data-testid={`today-task-${task.task_id}`}
-    >
-      <div className="min-w-[12rem] flex-1">
-        <p className="text-[13px] text-ink">{task.title}</p>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-ink-muted">
-          <span className={overdueDays > 0 ? "font-medium text-bad" : "font-medium text-warn"}>
-            {dueText(overdueDays)}
-          </span>
-          {ownerLabel ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <span data-testid="today-owner-label">{ownerLabel}</span>
-            </>
-          ) : null}
-          <span aria-hidden="true">·</span>
-          <CaseLink card={card} navigate={navigate} />
-        </p>
-      </div>
-      {mayDecide ? (
-        <div className="flex shrink-0 gap-2">
-          <TaskButtons actions={actions} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-
-/** «Hecho» and «+1 semana» for a due task — shared by «Seguimientos» and «Otras tareas». */
-function useTaskActions(due: DueTask, now: Date, onChanged: () => void, leave?: () => void) {
-  const { card, task } = due;
-  const [busy, setBusy] = useState<null | "done" | "snooze">(null);
-  const keys = useRef({ done: newCaseCommandKey(), create: newCaseCommandKey(), cancel: newCaseCommandKey() });
-
-  async function done() {
-    setBusy("done");
-    try {
-      await completeTask({ task_id: task.task_id, task_version: task.version, note: "Hecho desde «Hoy»." }, keys.current.done);
-      toast("Tarea hecha.");
-      leave?.();
-      onChanged();
-    } catch (err) {
-      keys.current.done = newCaseCommandKey();
-      toast(caseRefusalText(err), "bad");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function snooze() {
-    setBusy("snooze");
-    const next = new Date(Math.max(now.getTime(), Date.parse(task.due_at)) + WEEK_MS);
-    try {
-      await createTask(
-        { opportunity_id: card.opportunity_id, title: task.title, due_at: next.toISOString(), note: "Pospuesta una semana desde «Hoy»." },
-        keys.current.create,
-      );
-      await cancelTask({ task_id: task.task_id, task_version: task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
-      toast(`Pospuesta al ${fmtDate(next.toISOString())}.`);
-      leave?.();
-      onChanged();
-    } catch (err) {
-      keys.current = { done: keys.current.done, create: newCaseCommandKey(), cancel: newCaseCommandKey() };
-      toast(caseRefusalText(err), "bad");
-      onChanged();
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  return { busy, done, snooze };
-}
-
-function TaskButtons({ actions }: { actions: ReturnType<typeof useTaskActions> }) {
-  const { busy, done, snooze } = actions;
-  return (
-    <>
-      <Button onClick={() => void snooze()} busy={busy === "snooze"} busyLabel="Posponiendo…" disabled={busy !== null}>
-        +1 semana
-      </Button>
-      <Button variant="primary" onClick={() => void done()} busy={busy === "done"} busyLabel="Guardando…" disabled={busy !== null}>
-        Hecho
-      </Button>
-    </>
-  );
-}
-
-function dueText(overdueDays: number): string {
-  return overdueDays === 0 ? "Vence hoy" : overdueDays === 1 ? "Atrasada 1 día" : `Atrasada ${overdueDays} días`;
-}
-
-/* ───────────────────────────────────────────────────────────── replies ── */
-
-function RepliesPanel({
-  replies,
-  navigate,
-  mayDecide,
-  onChanged,
-  now,
-}: {
-  replies: Reply[];
-  navigate: Navigate;
-  mayDecide: boolean;
-  onChanged: () => void;
-  now: Date;
-}) {
-  return (
-    <Panel title="Te toca responder" aside={<Badge tone={replies.length ? "warn" : "good"} glyph={false}>{replies.length}</Badge>} bodyClassName="divide-y divide-line">
-      {replies.length === 0 ? (
-        <p className="px-4 py-4 text-xs text-ink-muted">Ningún cliente espera respuesta.</p>
-      ) : (
-        replies.map((r, i) => <ReplyRow key={r.card.opportunity_id} reply={r} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={now} />)
-      )}
-    </Panel>
-  );
-}
-
-function ReplyRow({
-  reply,
-  index,
-  navigate,
-  mayDecide,
-  onChanged,
-  now,
-}: {
-  reply: Reply;
-  index: number;
-  navigate: Navigate;
-  mayDecide: boolean;
-  onChanged: () => void;
+  onClearItem: () => void;
   now: Date;
 }) {
   const { card } = reply;
   const { leaving, gone, leave } = useLeave(reply);
   const [busy, setBusy] = useState<null | "move" | "skip" | "handled">(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const keys = useRef([newCaseCommandKey()]);
   const skipKeys = useRef<string[]>([]);
   const handledKey = useRef(newCaseCommandKey());
-  const mayAuthor = useMayAuthorCrm();
+  const menuRef = useRef<HTMLDivElement>(null);
   const blocking = card.attention.find((a) => a.blocking) ?? null;
-  // A won case takes no task, so the only way off the list is answering the email.
   const won = wroteAfterWinning(card);
   const canMove = !blocking && mayDecide && card.stage === "quoting" && typeof card.version === "number";
+  const product = quoteProduct(card);
+
+  // Elapsed time since the client wrote
+  const waitLabel = replyWaitLabel(reply.at, now);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const away = (e: Event) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
+  }, [menuOpen]);
 
   async function noAnswerNeeded() {
     setBusy("skip");
     const next = new Date(now.getTime() + WEEK_MS);
     try {
-      // The one email answers every case it is the newest client email of: each gets its follow-up.
       for (const [i, c] of [card, ...reply.others].entries()) {
         const quote = c.latest_revision?.quote_number ?? c.quote_numbers[0] ?? "";
         skipKeys.current[i] ??= newCaseCommandKey();
         await createTask(
-          {
-            opportunity_id: c.opportunity_id,
-            title: `Seguimiento de ${quote}`.trim(),
-            due_at: next.toISOString(),
-            note: `El cliente escribió el ${fmtDate(reply.at)}; no requiere respuesta.`,
-          },
+          { opportunity_id: c.opportunity_id, title: `Seguimiento de ${quote}`.trim(), due_at: next.toISOString(), note: `El cliente escribió el ${fmtDate(reply.at)}; no requiere respuesta.` },
           skipKeys.current[i],
         );
       }
       toast(`Listo. Te lo recuerdo el ${fmtDate(next.toISOString())}.`);
-      leave();
-      onChanged();
+      leave(); onClearItem(); onChanged();
     } catch (err) {
       skipKeys.current = [];
       toast(caseRefusalText(err), "bad");
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
-  // A won case takes no task, so «Atendido» leaves a note on the case: the client's email was
-  // answered by other means or needs nothing. `notedAfter` then keeps the row out until the
-  // client writes again. The note is visible in the case drawer like any other.
   async function handled() {
     setBusy("handled");
     try {
       await addNote(
-        {
-          subject_kind: "opportunity",
-          subject_id: card.opportunity_id,
-          body: `Atendido: el cliente escribió el ${fmtDate(reply.at)} tras ganar el caso; respondido por otro medio o sin respuesta pendiente.`,
-        },
+        { subject_kind: "opportunity", subject_id: card.opportunity_id, body: `Atendido: el cliente escribió el ${fmtDate(reply.at)} tras ganar el caso; respondido por otro medio o sin respuesta pendiente.` },
         handledKey.current,
       );
       toast("Listo. Queda anotado en el caso.");
-      leave();
-      onChanged();
+      leave(); onClearItem(); onChanged();
     } catch (err) {
       handledKey.current = newCaseCommandKey();
       toast(refusalOf(err)?.message ?? "No se pudo anotar el caso.", "bad");
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
   async function toConversation() {
@@ -488,30 +392,31 @@ function ReplyRow({
         { opportunity_id: card.opportunity_id, stage: card.stage, version: card.version as number },
         "negotiating",
         `El cliente respondió el ${fmtDate(reply.at)}.`,
-        null,
-        keys.current,
+        null, keys.current,
       );
       toast("Pasó a «Conversación».");
-      leave();
-      onChanged();
+      leave(); onClearItem(); onChanged();
     } catch (err) {
       keys.current = [newCaseCommandKey()];
       toast(caseRefusalText(err), "bad");
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
   if (gone) return null;
+  const menuItem = "flex w-full items-center rounded px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-canvas-sunken focus:bg-canvas-sunken focus:outline-none disabled:opacity-50";
   return (
-    <div className={`crm-rise flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 ${leaving ? "crm-row-out" : ""}`} style={{ "--i": Math.min(index, 10) } as CSSProperties}>
+    <li
+      className={`crm-rise group relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
+      style={{ "--i": Math.min(index, 10) } as CSSProperties}
+      data-testid={`today-reply-${card.opportunity_id}`}
+    >
+      <ChipBadge kind="reply" />
       <div className="min-w-[12rem] flex-1">
         <CaseLink card={card} navigate={navigate} />
         <p className="mt-0.5 truncate text-[11px] text-ink-muted">
-          <span className="font-medium text-warn">
-            {won ? "Escribió tras ganar" : card.latest_revision ? "Respondió" : "Escribió"} el {fmtDate(reply.at)}
-          </span>
-          {card.latest_revision ? ` · ${quoteOf(card)}` : ""}
+          <span className="font-medium text-warn">{won ? "Escribió tras ganar" : card.latest_revision ? "Respondió" : "Escribió"}</span>
+          {" · "}<span className="text-ink-faint">{waitLabel}</span>
+          {product ? ` · ${product}` : ""}
           {contactLine(card) ? ` · ${contactLine(card)}` : ""}
         </p>
         {reply.others.length ? (
@@ -531,526 +436,569 @@ function ReplyRow({
         {blocking ? <p className="mt-0.5 truncate text-[11px] font-medium text-bad">{blocking.label}</p> : null}
       </div>
       <div className="flex shrink-0 gap-2">
-        {reply.url ? (
+        {/* Primary button */}
+        {blocking ? (
+          <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>Resolver</Button>
+        ) : reply.url ? (
           <a
             href={inSharedMailbox(reply.url) ?? undefined}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-8 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong"
+            className="inline-flex h-8 items-center rounded-md bg-brand-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
           >
             Abrir respuesta ↗
           </a>
-        ) : null}
-        {blocking ? (
-          <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>
-            Resolver
-          </Button>
-        ) : mayDecide && !won ? (
-          <Button
-            variant="secondary"
-            onClick={() => void noAnswerNeeded()}
-            busy={busy === "skip"}
-            busyLabel="Guardando…"
-            disabled={busy !== null}
-            title="Un «gracias, le aviso»: sale de la lista y vuelve como seguimiento en una semana"
-          >
-            No requiere respuesta
-          </Button>
-        ) : won && mayAuthor ? (
-          <Button
-            variant="secondary"
-            onClick={() => void handled()}
-            busy={busy === "handled"}
-            busyLabel="Anotando…"
-            disabled={busy !== null}
-            title="Respondiste por otro medio o no requiere respuesta: queda anotado en el caso y sale de la lista hasta que el cliente vuelva a escribir"
-          >
-            Atendido
-          </Button>
-        ) : null}
-        {canMove ? (
-          <Button
-            variant="primary"
-            onClick={() => void toConversation()}
-            busy={busy === "move"}
-            busyLabel="Moviendo…"
-            disabled={busy !== null}
-          >
-            Pasar a Conversación
-          </Button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────── follow-ups ── */
-
-const LIGHT = {
-  good: { chip: "bg-good-bg text-good", dot: "bg-good", text: "text-good" },
-  warn: { chip: "bg-warn-bg text-warn", dot: "bg-warn", text: "text-warn" },
-  bad: { chip: "bg-bad-bg text-bad", dot: "bg-bad", text: "text-bad" },
-} as const;
-
-/** Rows a group shows before «Ver N más». */
-const GROUP_PREVIEW = 5;
-
-function FollowUpsPanel({
-  followUps,
-  navigate,
-  mayDecide,
-  onChanged,
-  onClose,
-  now,
-}: {
-  followUps: FollowUp[];
-  navigate: Navigate;
-  mayDecide: boolean;
-  onChanged: () => void;
-  onClose: (c: OpportunityCardData) => void;
-  now: Date;
-}) {
-  return (
-    <section className="crm-rise overflow-hidden rounded-xl border border-line bg-canvas-raised" data-testid="today-followups">
-      <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 pb-1 pt-3">
-        <h2 className="text-[14px] font-semibold text-ink">Seguimientos</h2>
-        <span className="text-[12px] tabular-nums text-ink-muted">{followUps.length}</span>
-        <span className="ml-auto text-[11px] text-ink-faint">Responde en el hilo: el sistema lo registra solo.</span>
-      </header>
-      {followUps.length === 0 ? (
-        <p className="px-4 pb-4 pt-1 text-xs text-ink-muted">Ningún seguimiento pendiente.</p>
-      ) : (
-        <div className="pb-1">
-          {RHYTHM.map((r) => {
-            const rows = followUps.filter((f) => f.rhythm === r.key);
-            if (rows.length === 0) return null;
-            return (
-              <FollowUpGroup key={r.key} rhythm={r} rows={rows} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={onClose} now={now} />
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function FollowUpGroup({
-  rhythm,
-  rows,
-  navigate,
-  mayDecide,
-  onChanged,
-  onClose,
-  now,
-}: {
-  rhythm: (typeof RHYTHM)[number];
-  rows: FollowUp[];
-  navigate: Navigate;
-  mayDecide: boolean;
-  onChanged: () => void;
-  onClose: (c: OpportunityCardData) => void;
-  now: Date;
-}) {
-  const [all, setAll] = useState(false);
-  const shown = all ? rows : rows.slice(0, GROUP_PREVIEW);
-  return (
-    <div data-testid={`today-rhythm-${rhythm.key}`} className="mt-1">
-      <p className="flex items-center gap-2 px-4 pb-1 pt-2 text-[11px] text-ink-muted">
-        <span aria-hidden="true" className={`h-2 w-2 rounded-full ${LIGHT[rhythm.tone].dot}`} />
-        <span className={`font-semibold ${LIGHT[rhythm.tone].text}`}>{rhythm.label}</span>
-        <span className="tabular-nums">{rows.length}</span>
-        <span className="hidden text-ink-faint sm:inline">· {rhythm.hint}</span>
-      </p>
-      <ul>
-        {shown.map((f, i) => (
-          <FollowUpRow
-            key={f.card.opportunity_id}
-            followUp={f}
-            tone={rhythm.tone}
-            index={i}
-            navigate={navigate}
-            mayDecide={mayDecide}
-            onChanged={onChanged}
-            onClose={onClose}
-            now={now}
-          />
-        ))}
-      </ul>
-      {rows.length > GROUP_PREVIEW ? (
-        <button
-          type="button"
-          onClick={() => setAll((v) => !v)}
-          className="mx-4 mb-1 mt-0.5 rounded text-[11px] font-medium text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-        >
-          {all ? "Ver menos" : `Ver ${rows.length - GROUP_PREVIEW} más`}
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function FollowUpRow({
-  followUp,
-  tone,
-  index,
-  navigate,
-  mayDecide,
-  onChanged,
-  onClose,
-  now,
-}: {
-  followUp: FollowUp;
-  tone: keyof typeof LIGHT;
-  index: number;
-  navigate: Navigate;
-  mayDecide: boolean;
-  onChanged: () => void;
-  onClose: (c: OpportunityCardData) => void;
-  now: Date;
-}) {
-  const f = followUp;
-  const product = quoteProduct(f.card);
-  const who = f.card.contact?.name?.trim() || f.card.contact?.address || null;
-  const quote = f.card.latest_revision?.quote_number ?? f.card.quote_numbers[0] ?? "";
-  // Reply on the case's own thread: the email stays in it, so the system sees the follow-up and
-  // restarts the count. With no thread to reply on, a new email from the shared mailbox.
-  const thread = inSharedMailbox(f.card.last_contact?.outbound?.url ?? f.card.latest_revision?.gmail?.url);
-  const to = f.card.contact?.address && !isMaskedAddress(f.card.contact.address) ? f.card.contact.address : null;
-  const write = thread ?? composeInSharedMailbox(to, `Seguimiento cotización N° ${quote}`.trim());
-  const since = f.byEmail ? "desde tu último correo" : "desde la cotización";
-  // The case's newest note — usually what the reminder is for («Mandar correo esta semana»).
-  const note = f.card.last_note?.body?.trim() ? f.card.last_note : null;
-  const [menuOpen, setMenuOpen] = useState(false);
-  const { leaving, gone, leave } = useLeave(f);
-  if (gone) return null;
-  return (
-    <li
-      // Each row animates in (a transform), so an open menu needs its row lifted over the next one.
-      className={`crm-rise group relative flex items-center gap-3 px-4 py-2 transition-colors hover:bg-canvas-sunken/50 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
-      style={{ "--i": Math.min(index, 10) } as CSSProperties}
-      data-testid={f.task ? `today-task-${f.task.task.task_id}` : `today-followup-${f.card.opportunity_id}`}
-    >
-      <span
-        className={`flex h-9 w-9 shrink-0 flex-col items-center justify-center rounded-full leading-none ${LIGHT[tone].chip}`}
-        title={`${f.days} días ${since}`}
-      >
-        <span className="text-[13px] font-bold tabular-nums">{f.days}</span>
-        <span className="text-[7px] font-semibold uppercase tracking-wide">días</span>
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate">
-            <CaseLink card={f.card} navigate={navigate} />
-          </span>
-          {product ? (
-            <span
-              className="hidden max-w-[14rem] shrink truncate rounded-full bg-brand-50 px-1.5 py-px text-[10.5px] leading-4 text-brand-700 sm:inline"
-              data-testid="today-product"
-              title={product}
+        ) : (
+          <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>Abrir caso</Button>
+        )}
+        {/* Secondary ⋯ menu */}
+        {mayDecide && !blocking ? (
+          <div ref={menuRef} className="relative shrink-0">
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label="Más opciones"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
             >
-              {product}
-            </span>
-          ) : null}
-        </div>
-        <p className="truncate text-[11px] text-ink-muted" title={contactLine(f.card) ?? undefined}>
-          <span className="tabular-nums">{quote}</span>
-          {who ? ` · ${who}` : ""}
-        </p>
-        {note || f.task ? (
-          <p className="truncate text-[11.5px] text-ink" data-testid="today-followup-note" title={note?.body}>
-            {f.task ? (
-              <span className="mr-1.5 inline-flex items-center gap-1 rounded-full bg-warn-bg px-1.5 py-px align-[1px] text-[10.5px] font-semibold text-warn" data-testid="today-reminder-chip">
-                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-                  <circle cx="8" cy="8.5" r="5.5" />
-                  <path d="M8 5.5v3l2 1.5" strokeLinecap="round" />
-                </svg>
-                Tu recordatorio
-              </span>
+              <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                <circle cx="3.5" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="12.5" cy="8" r="1.3" />
+              </svg>
+            </button>
+            {menuOpen ? (
+              <div role="menu" className="absolute right-0 top-9 z-20 w-56 rounded-lg border border-line bg-canvas-raised p-1 shadow-lg">
+                {!won ? (
+                  <button type="button" role="menuitem" className={menuItem} disabled={busy !== null} onClick={() => { setMenuOpen(false); void noAnswerNeeded(); }}>
+                    {busy === "skip" ? "Guardando…" : "No requiere respuesta"}
+                  </button>
+                ) : won && mayAuthor ? (
+                  <button type="button" role="menuitem" className={menuItem} disabled={busy !== null} onClick={() => { setMenuOpen(false); void handled(); }}>
+                    {busy === "handled" ? "Anotando…" : "Atendido"}
+                  </button>
+                ) : null}
+                {canMove ? (
+                  <button type="button" role="menuitem" className={menuItem} disabled={busy !== null} onClick={() => { setMenuOpen(false); void toConversation(); }}>
+                    {busy === "move" ? "Moviendo…" : "Pasar a Conversación"}
+                  </button>
+                ) : null}
+              </div>
             ) : null}
-            {note ? (
-              <>
-                <span className="font-medium text-warn">Nota:</span> {note.body}
-                <span className="text-ink-faint">
-                  {" "}
-                  · {note.author ? `${note.author}, ` : ""}
-                  {fmtDate(note.created_at)}
-                </span>
-              </>
-            ) : null}
-          </p>
+          </div>
         ) : null}
       </div>
-      <a
-        href={write}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={thread ? "Abre el hilo de la cotización en Gmail: responde ahí y el seguimiento se registra solo" : "Abre un correo nuevo en Gmail"}
-        aria-label={thread ? "Responder en Gmail" : "Nuevo correo en Gmail"}
-        className="inline-flex h-8 w-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-brand-600 text-xs sm:w-auto sm:px-3 font-semibold text-white shadow-sm hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
-      >
-        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-          <path d="M2.5 4h11v8h-11zM2.5 4.5 8 8.5l5.5-4" strokeLinejoin="round" />
-        </svg>
-        <span className="hidden sm:inline">{thread ? "Responder en Gmail" : "Nuevo correo"}</span>
-      </a>
-      {mayDecide ? <FollowUpMenu followUp={f} now={now} onChanged={onChanged} onLeave={leave} onClose={onClose} open={menuOpen} setOpen={setMenuOpen} /> : null}
     </li>
   );
 }
 
-/**
- * The row's quieter choices, behind «⋯»: «Recordar en 1 semana» (any row: writes a «Seguimiento …»
- * task a week out, cancelling the due one), «Ya le escribí» (a row a task put there) and «Cerrar
- * sin respuesta».
- */
-function FollowUpMenu({
-  followUp,
-  now,
-  onChanged,
-  onLeave,
-  onClose,
-  open,
-  setOpen,
+function replyWaitLabel(at: string, now: Date): string {
+  const ms = now.getTime() - Date.parse(at);
+  if (ms < 0) return fmtDate(at);
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 60) return `hace ${mins} ${mins === 1 ? "min" : "min"}`;
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 24) return `hace ${hours} ${hours === 1 ? "hora" : "horas"}`;
+  const days = Math.floor(ms / 86_400_000);
+  return `hace ${days} ${days === 1 ? "día" : "días"}`;
+}
+
+/* ─────────────────────────────────────────────────── Task row ── */
+
+function TaskQueueRow({
+  due, index, navigate, mayDecide, onChanged, onClearItem, now,
 }: {
-  followUp: FollowUp;
-  now: Date;
+  due: DueTask | OverdueTask;
+  index: number;
+  navigate: Navigate;
+  mayDecide: boolean;
   onChanged: () => void;
-  /** The row leaves at once after a recorded change; the reload confirms behind it. */
-  onLeave?: () => void;
-  onClose: (c: OpportunityCardData) => void;
-  open: boolean;
-  setOpen: (v: boolean | ((v: boolean) => boolean)) => void;
+  onClearItem: () => void;
+  now: Date;
 }) {
-  const f = followUp;
+  const { card, task, overdueDays } = due;
+  const { leaving, gone, leave } = useLeave(due);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState<null | "done" | "snooze">(null);
   const keys = useRef({ done: newCaseCommandKey(), create: newCaseCommandKey(), cancel: newCaseCommandKey() });
-  const ref = useRef<HTMLDivElement>(null);
+  // "escalated" is only on OverdueTask
+  const escalated = "escalated" in due ? (due as OverdueTask).escalated : false;
 
   useEffect(() => {
-    if (!open) return;
-    const away = (e: Event) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
+    if (!menuOpen) return;
+    const away = (e: Event) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
     document.addEventListener("mousedown", away);
     document.addEventListener("keydown", esc);
-    return () => {
-      document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", esc);
-    };
-  }, [open, setOpen]);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
+  }, [menuOpen]);
 
   async function done() {
+    setBusy("done");
+    try {
+      await completeTask({ task_id: task.task_id, task_version: task.version, note: "Hecho desde «Hoy»." }, keys.current.done);
+      toast("Tarea hecha.");
+      leave(); onClearItem(); onChanged();
+    } catch (err) {
+      keys.current.done = newCaseCommandKey();
+      toast(caseRefusalText(err), "bad");
+    } finally { setBusy(null); }
+  }
+
+  async function snooze() {
+    setBusy("snooze");
+    const next = new Date(Math.max(now.getTime(), Date.parse(task.due_at)) + WEEK_MS);
+    try {
+      await createTask(
+        { opportunity_id: card.opportunity_id, title: task.title, due_at: next.toISOString(), note: "Pospuesta una semana desde «Hoy»." },
+        keys.current.create,
+      );
+      await cancelTask({ task_id: task.task_id, task_version: task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
+      toast(`Pospuesta al ${fmtDate(next.toISOString())}.`);
+      leave(); onClearItem(); onChanged();
+    } catch (err) {
+      keys.current = { done: keys.current.done, create: newCaseCommandKey(), cancel: newCaseCommandKey() };
+      toast(caseRefusalText(err), "bad");
+      onChanged();
+    } finally { setBusy(null); }
+  }
+
+  if (gone) return null;
+  const menuItem = "flex w-full items-center rounded px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-canvas-sunken focus:bg-canvas-sunken focus:outline-none disabled:opacity-50";
+  return (
+    <li
+      className={`crm-rise group relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
+      style={{ "--i": Math.min(index, 10) } as CSSProperties}
+      data-testid={`today-task-${task.task_id}`}
+    >
+      <ChipBadge kind="task" />
+      <div className="min-w-[12rem] flex-1">
+        <p className="text-[13px] text-ink">{task.title}</p>
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-ink-muted">
+          <span className={overdueDays > 0 ? "font-medium text-bad" : "font-medium text-warn"}>{dueText(overdueDays)}</span>
+          {escalated && task.owner ? (
+            <><span aria-hidden="true">·</span><span data-testid="today-owner-label">de {task.owner}</span></>
+          ) : null}
+          <span aria-hidden="true">·</span>
+          <CaseLink card={card} navigate={navigate} />
+        </p>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        {/* Primary: open the case */}
+        <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>
+          Abrir caso
+        </Button>
+        {/* Secondary ⋯: Hecho + +1 semana */}
+        {mayDecide ? (
+          <div ref={menuRef} className="relative shrink-0">
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label="Más opciones"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            >
+              <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                <circle cx="3.5" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="12.5" cy="8" r="1.3" />
+              </svg>
+            </button>
+            {menuOpen ? (
+              <div role="menu" className="absolute right-0 top-9 z-20 w-48 rounded-lg border border-line bg-canvas-raised p-1 shadow-lg">
+                <button type="button" role="menuitem" className={menuItem} disabled={busy !== null} onClick={() => { setMenuOpen(false); void done(); }}>
+                  {busy === "done" ? "Guardando…" : "Hecho"}
+                </button>
+                <button type="button" role="menuitem" className={menuItem} disabled={busy !== null} onClick={() => { setMenuOpen(false); void snooze(); }}>
+                  {busy === "snooze" ? "Guardando…" : "+1 semana"}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function dueText(overdueDays: number): string {
+  return overdueDays === 0 ? "Vence hoy" : overdueDays === 1 ? "Atrasada 1 día" : `Atrasada ${overdueDays} días`;
+}
+
+/* ─────────────────────────────────────────────── Follow-up row ── */
+
+function FollowUpQueueRow({
+  followUp, index, navigate, mayDecide, onChanged, onClearItem, onClose, now,
+}: {
+  followUp: FollowUp;
+  index: number;
+  navigate: Navigate;
+  mayDecide: boolean;
+  onChanged: () => void;
+  onClearItem: () => void;
+  onClose: (c: OpportunityCardData) => void;
+  now: Date;
+}) {
+  const f = followUp;
+  const { leaving, gone, leave } = useLeave(f);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [busy, setBusy] = useState<null | "done" | "snooze">(null);
+  const keys = useRef({ done: newCaseCommandKey(), create: newCaseCommandKey(), cancel: newCaseCommandKey() });
+
+  const product = quoteProduct(f.card);
+  const quote = f.card.latest_revision?.quote_number ?? f.card.quote_numbers[0] ?? "";
+  const thread = inSharedMailbox(f.card.last_contact?.outbound?.url ?? f.card.latest_revision?.gmail?.url);
+  const to = f.card.contact?.address && !isMaskedAddress(f.card.contact.address) ? f.card.contact.address : null;
+  const write = thread ?? composeInSharedMailbox(to, `Seguimiento cotización N° ${quote}`.trim());
+  const note = f.card.last_note?.body?.trim() ? f.card.last_note : null;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const away = (e: Event) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
+  }, [menuOpen]);
+
+  async function markDone() {
     if (!f.task) return;
     setBusy("done");
     try {
       await completeTask({ task_id: f.task.task.task_id, task_version: f.task.task.version, note: "Hecho desde «Hoy»." }, keys.current.done);
       toast("Seguimiento hecho.");
-      onLeave?.();
-      setOpen(false);
-      onChanged();
+      leave(); onClearItem(); setMenuOpen(false); onChanged();
     } catch (err) {
       keys.current.done = newCaseCommandKey();
       toast(caseRefusalText(err), "bad");
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
   async function snooze() {
     setBusy("snooze");
     const base = f.task ? Math.max(now.getTime(), Date.parse(f.task.task.due_at)) : now.getTime();
     const next = new Date(base + WEEK_MS);
-    const quote = f.card.latest_revision?.quote_number ?? f.card.quote_numbers[0] ?? "";
     try {
       await createTask(
-        {
-          opportunity_id: f.card.opportunity_id,
-          title: f.task?.task.title ?? `Seguimiento de ${quote}`.trim(),
-          due_at: next.toISOString(),
-          note: "Pospuesta una semana desde «Hoy».",
-        },
+        { opportunity_id: f.card.opportunity_id, title: f.task?.task.title ?? `Seguimiento de ${quote}`.trim(), due_at: next.toISOString(), note: "Pospuesta una semana desde «Hoy»." },
         keys.current.create,
       );
       if (f.task) {
         await cancelTask({ task_id: f.task.task.task_id, task_version: f.task.task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
       }
       toast(`Te lo recuerdo el ${fmtDate(next.toISOString())}.`);
-      onLeave?.();
-      setOpen(false);
-      onChanged();
+      leave(); onClearItem(); setMenuOpen(false); onChanged();
     } catch (err) {
       keys.current = { done: keys.current.done, create: newCaseCommandKey(), cancel: newCaseCommandKey() };
       toast(caseRefusalText(err), "bad");
       onChanged();
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
-  const item =
-    "flex w-full items-center rounded px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-canvas-sunken focus:bg-canvas-sunken focus:outline-none disabled:opacity-50";
+  if (gone) return null;
+  const menuItem = "flex w-full items-center rounded px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-canvas-sunken focus:bg-canvas-sunken focus:outline-none disabled:opacity-50";
   return (
-    <div ref={ref} className="relative shrink-0">
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Más opciones"
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-      >
-        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-          <circle cx="3.5" cy="8" r="1.3" />
-          <circle cx="8" cy="8" r="1.3" />
-          <circle cx="12.5" cy="8" r="1.3" />
-        </svg>
-      </button>
-      {open ? (
-        <div role="menu" className="absolute right-0 top-9 z-20 w-56 rounded-lg border border-line bg-canvas-raised p-1 shadow-lg">
-          <button type="button" role="menuitem" className={item} disabled={busy !== null} onClick={() => void snooze()}>
-            {busy === "snooze" ? "Guardando…" : "Recordar en 1 semana"}
-          </button>
-          {f.task ? (
-            <button type="button" role="menuitem" className={item} disabled={busy !== null} onClick={() => void done()}>
-              {busy === "done" ? "Guardando…" : "Ya le escribí"}
-            </button>
+    <li
+      className={`crm-rise group relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
+      style={{ "--i": Math.min(index, 10) } as CSSProperties}
+      data-testid={f.task ? `today-task-${f.task.task.task_id}` : `today-followup-${f.card.opportunity_id}`}
+    >
+      <ChipBadge kind="followup" />
+      <div className="min-w-[12rem] flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 truncate"><CaseLink card={f.card} navigate={navigate} /></span>
+          {product ? (
+            <span className="hidden max-w-[14rem] shrink truncate rounded-full bg-brand-50 px-1.5 py-px text-[10.5px] leading-4 text-brand-700 sm:inline" data-testid="today-product" title={product}>
+              {product}
+            </span>
           ) : null}
-          <button
-            type="button"
-            role="menuitem"
-            className={`${item} text-bad`}
-            disabled={busy !== null}
-            onClick={() => {
-              setOpen(false);
-              onClose(f.card);
-            }}
-          >
-            Cerrar sin respuesta
-          </button>
+        </div>
+        <p className="truncate text-[11px] text-ink-muted">
+          <span className="tabular-nums font-medium text-warn">{f.days} días sin respuesta</span>
+          {quote ? ` · ${quote}` : ""}
+        </p>
+        {note || f.task ? (
+          <p className="truncate text-[11.5px] text-ink" data-testid="today-followup-note">
+            {f.task ? (
+              <span className="mr-1.5 inline-flex items-center gap-1 rounded-full bg-warn-bg px-1.5 py-px align-[1px] text-[10.5px] font-semibold text-warn" data-testid="today-reminder-chip">
+                <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="8" cy="8.5" r="5.5" /><path d="M8 5.5v3l2 1.5" strokeLinecap="round" /></svg>
+                Tu recordatorio
+              </span>
+            ) : null}
+            {note ? <><span className="font-medium text-warn">Nota:</span> {note.body}<span className="text-ink-faint"> · {note.author ? `${note.author}, ` : ""}{fmtDate(note.created_at)}</span></> : null}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 gap-2">
+        {/* Primary: respond on the thread or compose new */}
+        <a
+          href={write}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={thread ? "Abre el hilo de la cotización en Gmail" : "Abre un correo nuevo en Gmail"}
+          aria-label={thread ? "Responder en Gmail" : "Nuevo correo en Gmail"}
+          className="inline-flex h-8 w-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-brand-600 text-xs sm:w-auto sm:px-3 font-semibold text-white shadow-sm hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
+        >
+          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M2.5 4h11v8h-11zM2.5 4.5 8 8.5l5.5-4" strokeLinejoin="round" /></svg>
+          <span className="hidden sm:inline">{thread ? "Responder en Gmail" : "Nuevo correo"}</span>
+        </a>
+        {/* Secondary ⋯ */}
+        {mayDecide ? (
+          <div ref={menuRef} className="relative shrink-0">
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label="Más opciones"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            >
+              <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                <circle cx="3.5" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="12.5" cy="8" r="1.3" />
+              </svg>
+            </button>
+            {menuOpen ? (
+              <div role="menu" className="absolute right-0 top-9 z-20 w-56 rounded-lg border border-line bg-canvas-raised p-1 shadow-lg">
+                <button type="button" role="menuitem" className={menuItem} disabled={busy !== null} onClick={() => void snooze()}>
+                  {busy === "snooze" ? "Guardando…" : "Recordar en 1 semana"}
+                </button>
+                {f.task ? (
+                  <button type="button" role="menuitem" className={menuItem} disabled={busy !== null} onClick={() => void markDone()}>
+                    {busy === "done" ? "Guardando…" : "Ya le escribí"}
+                  </button>
+                ) : null}
+                <button type="button" role="menuitem" className={`${menuItem} text-bad`} disabled={busy !== null}
+                  onClick={() => { setMenuOpen(false); onClose(f.card); }}>
+                  Cerrar sin respuesta
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+/* ────────────────────────────────────────────────── Forward row ── */
+
+function ForwardQueueRow({
+  item, index, navigate, mayDecide, onDone,
+}: {
+  item: ForwardedRequest;
+  index: number;
+  navigate: Navigate;
+  mayDecide: boolean;
+  onDone: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(item.institution ? "" : (item.customer.company ?? ""));
+  const [busy, setBusy] = useState<null | "create" | "dismiss">(null);
+  const [createKey] = useState(newCaseCommandKey);
+  const [dismissKey] = useState(newCaseCommandKey);
+  const c = item.customer;
+  const who = c.name ?? c.email ?? "Cliente sin nombre";
+  const via = item.relay === "marketplace" ? "marketplace" : item.origins.includes("labdelivery") ? "otro correo" : "reenvío";
+  const waitLabel = item.received_at ? replyWaitLabel(item.received_at, new Date()) : null;
+
+  async function create() {
+    setBusy("create");
+    try {
+      const receipt = await createRequestFromForward(
+        { forwarded_request_id: item.id, note: "Solicitud reenviada a contacto@",
+          ...(item.institution
+            ? { organization_id: item.institution.id, organization_version: item.institution.version }
+            : name.trim() ? { new_organization_name: name.trim() } : {}) },
+        createKey,
+      );
+      toast("Solicitud creada.");
+      onDone(item.id);
+      navigate("oportunidades", String(receipt.opportunity_id));
+    } catch (err) {
+      toast(caseRefusalText(err), "bad");
+    } finally { setBusy(null); }
+  }
+
+  async function dismiss() {
+    setBusy("dismiss");
+    try {
+      await dismissForwardedRequest({ forwarded_request_id: item.id, note: "No es una solicitud" }, dismissKey);
+      toast("Descartado.");
+      onDone(item.id);
+    } catch (err) {
+      toast(caseRefusalText(err), "bad");
+    } finally { setBusy(null); }
+  }
+
+  return (
+    <li
+      className={`crm-rise flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30`}
+      style={{ "--i": Math.min(index, 10) } as CSSProperties}
+      data-testid={`today-forward-${item.id}`}
+    >
+      <ChipBadge kind="forward" />
+      <div className="min-w-[12rem] flex-1 space-y-1.5">
+        <div>
+          <p className="text-[13px] font-medium text-ink">
+            {who}{c.company ? <span className="font-normal text-ink-muted"> · {c.company}</span> : null}
+          </p>
+          <p className="mt-0.5 text-[11px] text-ink-muted">
+            {item.requested_item ? <>Pide: <span className="text-ink">{item.requested_item}</span> · </> : null}
+            {waitLabel ? `${waitLabel} · ` : ""}vía {via}
+            {c.email && c.name ? ` · ${c.email}` : ""}
+          </p>
+        </div>
+        {open && mayDecide ? (
+          <div className="space-y-2 rounded-md border border-line bg-canvas-sunken/50 p-3">
+            {item.institution ? (
+              <p className="text-xs text-ink">
+                Institución: <span className="font-medium">{item.institution.name}</span>{" "}
+                <span className="text-ink-faint">(ya está en el CRM)</span>
+              </p>
+            ) : (
+              <FormField label="Institución" htmlFor={`fw-${item.id}`} hint="Se crea «por confirmar» si no existe. Déjalo vacío si es una persona sin empresa.">
+                <TextInput id={`fw-${item.id}`} value={name} placeholder="Nombre de la institución" onChange={setName} />
+              </FormField>
+            )}
+            <p className="text-[11px] text-ink-muted">
+              Se guarda en una nota: {[c.name, c.email, c.phone, c.rut ? `RUT ${c.rut}` : null].filter(Boolean).join(" · ") || "—"}
+            </p>
+            <Button variant="primary" onClick={() => void create()} busy={busy === "create"} busyLabel="Creando…" disabled={busy !== null}>
+              Crear
+            </Button>
+          </div>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 flex-wrap gap-2">
+        {item.gmail_url ? (
+          <a href={inSharedMailbox(item.gmail_url) ?? item.gmail_url} target="_blank" rel="noopener noreferrer"
+            className="inline-flex h-8 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong">
+            Abrir correo ↗
+          </a>
+        ) : null}
+        {mayDecide ? (
+          <>
+            <Button variant="secondary" onClick={() => void dismiss()} busy={busy === "dismiss"} busyLabel="Descartando…" disabled={busy !== null}>
+              Descartar
+            </Button>
+            <Button variant={open ? "quiet" : "primary"} aria-expanded={open} onClick={() => setOpen(!open)} disabled={busy !== null}>
+              {open ? "Cerrar" : "Crear solicitud"}
+            </Button>
+          </>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+/* ──────────────────────────────────────────── System summary line ── */
+
+/**
+ * «Mientras no estabas: N solicitudes abiertas · M correos archivados en su caso» — one compact
+ * line with a «Revisar» toggle that expands the full `AutomaticActionsPanel` inline.
+ * Hidden when there is nothing to report.
+ */
+function SystemSummaryLine({ navigate, onChanged }: { navigate: Navigate; onChanged: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [state, reload] = useResource(
+    useCallback(() => fetchJsonGet<{ items: AutomaticAction[] }>(operatorApiUrl("/v2/workspace/automatic-actions")), []),
+  );
+
+  if (state.kind !== "ready" || !Array.isArray(state.data?.items)) return null;
+  const rows = newsRows(state.data.items);
+  if (rows.length === 0) return null;
+
+  const opened = rows.filter((r) => r.items[0].kind === "opened").length;
+  const filed = rows.reduce((n, r) => n + (r.items[0].kind === "filed" ? r.items.length : 0), 0);
+  const summary = [
+    opened ? `${opened} ${opened === 1 ? "solicitud abierta" : "solicitudes abiertas"}` : null,
+    filed ? `${filed} ${filed === 1 ? "correo archivado en su caso" : "correos archivados en su caso"}` : null,
+  ].filter(Boolean).join(" · ");
+
+  return (
+    <div className="rounded-xl border border-line bg-canvas-raised" data-testid="today-system-summary">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
+        <p className="flex-1 text-[13px] text-ink-muted">
+          <span className="font-medium text-ink">Mientras no estabas:</span>{" "}
+          <span className="text-ink">{summary}</span>
+          <span className="text-ink-faint"> en los últimos dos días.</span>
+        </p>
+        <Button
+          variant="secondary"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "Ocultar" : "Revisar"}
+        </Button>
+      </div>
+      {expanded ? (
+        <div className="border-t border-line px-4 pb-4 pt-2">
+          <AutomaticActionsPanel navigate={navigate} onChanged={() => { onChanged(); reload(); }} />
         </div>
       ) : null}
     </div>
   );
 }
 
-/* ─────────────────────────────────────────────────────────────── «Más» ── */
+/* ──────────────────────────────────────────────────── Housekeeping link ── */
 
-const MORE_OPEN_KEY = "origenlab.hoy.more-open";
-
-/** Folded by default; remembers being opened on this browser. */
-function MoreSection({ count, children }: { count: number; children: ReactNode }) {
-  const [open, setOpen] = useState(() => {
-    try {
-      return window.localStorage.getItem(MORE_OPEN_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
+/**
+ * «N cosas por ordenar → Operaciones»: one line linking to the «Por decidir» area of
+ * OperacionesPage, which holds TriagePanel, OrgsPanel, FollowUpsPanel, etc.
+ */
+function HousekeepingLink({ count, navigate }: { count: number; navigate: Navigate }) {
   return (
-    <details
-      open={open}
-      onToggle={(e) => {
-        const now = (e.currentTarget as HTMLDetailsElement).open;
-        setOpen(now);
-        try {
-          window.localStorage.setItem(MORE_OPEN_KEY, now ? "1" : "0");
-        } catch {
-          /* private mode: the fold simply is not remembered */
-        }
-      }}
-      data-testid="today-more"
-      className="group rounded-xl border border-line bg-canvas-raised"
-    >
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] font-semibold text-ink [&::-webkit-details-marker]:hidden">
-        <span aria-hidden="true" className="text-ink-faint transition-transform group-open:rotate-90">▸</span>
-        Más
-        <span className="font-normal text-ink-muted">· seguimientos, correos sin caso, instituciones por confirmar</span>
-        {count > 0 ? <Badge tone="neutral" glyph={false}>{count}</Badge> : null}
-      </summary>
-      <div className="space-y-4 border-t border-line p-3">{children}</div>
-    </details>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────── aside ── */
-
-/** Institutions shown before «Ver N más». */
-const ORG_PREVIEW = 3;
-
-function OrgsPanel({
-  orgs,
-  navigate,
-  mayAuthor,
-  onChanged,
-}: {
-  orgs: OrgToConfirm[];
-  navigate: Navigate;
-  mayAuthor: boolean;
-  onChanged: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  if (orgs.length === 0) return null;
-  const shown = open ? orgs : orgs.slice(0, ORG_PREVIEW);
-  return (
-    <Panel title="Instituciones por confirmar" aside={<Badge tone="warn" glyph={false}>{orgs.length}</Badge>} bodyClassName="divide-y divide-line">
-      {shown.map((o) => (
-        <OrgRow key={o.organization_id} org={o} navigate={navigate} mayAuthor={mayAuthor} onChanged={onChanged} />
-      ))}
-      {orgs.length > ORG_PREVIEW ? (
-        <button type="button" onClick={() => setOpen(!open)} className="w-full px-3 py-2 text-left text-[12px] font-medium text-brand-700 hover:underline">
-          {open ? "Ver menos" : `Ver ${orgs.length - ORG_PREVIEW} más`}
-        </button>
-      ) : null}
-    </Panel>
-  );
-}
-
-function OrgRow({ org, navigate, mayAuthor, onChanged }: { org: OrgToConfirm; navigate: Navigate; mayAuthor: boolean; onChanged: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const { leaving, gone, leave } = useLeave(org);
-  const key = useRef(newCaseCommandKey());
-  const suggested = displayName(org.cases[0]).name;
-
-  async function confirm() {
-    if (org.version === null) return;
-    setBusy(true);
-    try {
-      await confirmOrganizationRecord({ organization_id: org.organization_id, expected_version: org.version }, key.current);
-      toast(`«${org.name}» confirmada.`);
-      leave();
-      onChanged();
-    } catch (err) {
-      key.current = newCaseCommandKey();
-      toast(caseRefusalText(err), "bad");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (gone) return null;
-  return (
-    <div className={`flex items-center gap-2 px-3 py-2 ${leaving ? "crm-row-out" : ""}`}>
-      <div className="min-w-[12rem] flex-1">
-        <button
-          type="button"
-          onClick={() => navigate("organizaciones", org.organization_id)}
-          className="max-w-full truncate text-left text-[13px] font-medium text-ink hover:text-brand-700"
-        >
-          {org.name}
-        </button>
-        <p className="truncate text-[11px] text-ink-muted">
-          {org.cases.length} {org.cases.length === 1 ? "caso" : "casos"}
-          {suggested !== org.name ? ` · ¿${suggested}?` : ""}
-        </p>
-      </div>
-      {mayAuthor && org.version !== null ? (
-        <Button onClick={() => void confirm()} busy={busy} busyLabel="…">
-          Confirmar
-        </Button>
-      ) : null}
+    <div className="rounded-xl border border-line bg-canvas-raised px-4 py-2.5" data-testid="today-housekeeping">
+      <button
+        type="button"
+        onClick={() => navigate("datos", null, "decidir")}
+        className="flex w-full items-center gap-2 text-left text-[13px] text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+      >
+        <Badge tone="neutral" glyph={false}>{count}</Badge>
+        <span>
+          {count === 1 ? "cosa" : "cosas"} por ordenar
+          <span className="ml-1 font-medium text-brand-700">→ Operaciones</span>
+        </span>
+      </button>
     </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── Empty state ── */
+
+/**
+ * «Todo al día» — shown when «Para ti» is empty. Shows the next 3 follow-ups as a quiet preview
+ * so the operator knows what is coming next.
+ */
+function EmptyState({ followUps, navigate }: { followUps: FollowUp[]; navigate: Navigate }) {
+  return (
+    <section className="rounded-xl border border-line bg-canvas-raised px-4 py-6 text-center" data-testid="today-empty">
+      <p className="text-[22px] font-semibold text-good">Todo al día</p>
+      <p className="mt-1 text-[13px] text-ink-muted">No hay nada que hacer ahora mismo.</p>
+      {followUps.length > 0 ? (
+        <div className="mt-4 text-left">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Próximos seguimientos</p>
+          <ul className="mt-1 space-y-0.5">
+            {followUps.map((f) => {
+              const quote = f.card.latest_revision?.quote_number ?? f.card.quote_numbers[0] ?? "";
+              const name = f.card.organization?.name ?? f.card.title;
+              return (
+                <li key={f.card.opportunity_id} className="flex items-center gap-2 text-[12px]">
+                  <button
+                    type="button"
+                    onClick={() => navigate("oportunidades", f.card.opportunity_id)}
+                    className="flex-1 truncate text-left text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                  >
+                    {name}
+                    {quote ? <span className="ml-1 text-ink-faint">{quote}</span> : null}
+                  </button>
+                  <span className="shrink-0 tabular-nums text-ink-faint">{f.days} días</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+    </section>
   );
 }

@@ -9,9 +9,10 @@ export type CrmSection =
   | "historial"
   | "datos";
 
-/** The tabs of «Datos» (admin only): what was technical in Revisión, plus suppliers and the Drive archive. */
-export type DatosTab = "bloqueos" | "no_importadas" | "evidencia" | "estado" | "acciones" | "proveedores" | "drive";
-const DATOS_TABS = new Set<string>(["bloqueos", "no_importadas", "evidencia", "estado", "acciones", "proveedores", "drive"]);
+/** The tabs of «Datos» (admin only): what was technical in Revisión, plus suppliers and the Drive archive.
+ *  «decidir» is the «Por ordenar» section linked from «Hoy». */
+export type DatosTab = "bloqueos" | "no_importadas" | "evidencia" | "estado" | "acciones" | "proveedores" | "drive" | "decidir";
+const DATOS_TABS = new Set<string>(["bloqueos", "no_importadas", "evidencia", "estado", "acciones", "proveedores", "drive", "decidir"]);
 
 export interface CrmNavItem {
   id: CrmSection;

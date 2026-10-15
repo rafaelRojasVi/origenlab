@@ -158,7 +158,8 @@ describe("today lists", () => {
     expect(within(row).getByRole("link", { name: /Abrir respuesta/ })).toBeInTheDocument();
     expect(within(row).queryByRole("button", { name: /No requiere respuesta/ })).toBeNull();
     expect(within(row).queryByRole("button", { name: /Pasar a Conversación/ })).toBeNull();
-    fireEvent.click(within(row).getByRole("button", { name: "Atendido" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(row).getByRole("menuitem", { name: "Atendido" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     const note = calls.find((c) => c.path === "/v2/commands/add-note");
     expect(note?.body).toMatchObject({ subject_kind: "opportunity", subject_id: paid.opportunity_id });
@@ -261,21 +262,28 @@ afterEach(() => {
 
 describe("«Tareas» on the page", () => {
   it("is one list: overdue first with the owner on escalated rows, then the rest due today", () => {
-    const mine = { ...task("mine4", "2026-10-02T12:00:00Z"), owner: "Ventas" };
+    // Each task on a SEPARATE case so the dedup-by-opportunity_id keeps all four rows.
+    // Order is by waitMs desc: theirs8 (8 d), theirs4 (4 d, plain DueTask), mine4 (3 d, mine), today (0).
+    const mine = { ...task("mine4", "2026-10-03T12:00:00Z"), owner: "Ventas" };
     const theirs8 = { ...task("theirs8", "2026-09-28T12:00:00Z"), owner: "Tatiana" };
     const theirs4 = { ...task("theirs4", "2026-10-02T12:00:00Z"), owner: "Tatiana" };
-    const today = { ...task("today", "2026-10-06T20:00:00Z"), owner: "Ventas" };
-    renderToday([card({ open_tasks: [mine, theirs8, theirs4, today] }, "2026-10-05T12:00:00Z")]);
-    const panel = screen.getByTestId("today-tasks");
-    expect(panel).toHaveTextContent("Tareas");
-    expect(panel).toHaveTextContent("vencidas primero");
+    const todayTask = { ...task("today", "2026-10-06T20:00:00Z"), owner: "Ventas" };
+    renderToday([
+      card({ open_tasks: [theirs8] }, "2026-10-05T12:00:00Z"),
+      card({ open_tasks: [mine] }, "2026-10-05T12:00:00Z"),
+      card({ open_tasks: [theirs4] }, "2026-10-05T12:00:00Z"),
+      card({ open_tasks: [todayTask] }, "2026-10-05T12:00:00Z"),
+    ]);
+    const panel = screen.getByTestId("today-para-ti");
+    expect(panel).toHaveTextContent("Para ti");
     expect(within(panel).getAllByTestId(/^today-task-/).map((e) => e.getAttribute("data-testid"))).toEqual([
-      "today-task-theirs8", "today-task-mine4", "today-task-theirs4", "today-task-today",
+      "today-task-theirs8", "today-task-theirs4", "today-task-mine4", "today-task-today",
     ]);
     expect(within(within(panel).getByTestId("today-task-theirs8")).getByTestId("today-owner-label")).toHaveTextContent("de Tatiana");
     expect(within(within(panel).getByTestId("today-task-mine4")).queryByTestId("today-owner-label")).toBeNull();
-    expect(within(panel).getAllByRole("button", { name: "Hecho" })).toHaveLength(4);
-    // One task list only.
+    // Actions (Hecho, +1 semana) are in the ⋯ menu, not direct buttons.
+    expect(screen.queryByRole("button", { name: "Hecho" })).toBeNull();
+    // Old section headings are gone.
     expect(screen.queryByText("Otras tareas de hoy")).toBeNull();
     expect(screen.queryByText("Vencidas")).toBeNull();
   });
@@ -300,14 +308,15 @@ describe("Hoy actions", () => {
       attention: [{ code: "case_without_requester", label: "Caso sin institución solicitante", blocking: true }],
     } as Partial<OpportunityCardData>);
     renderToday([blocked, quiet], "sales");
-    expect(screen.getAllByText("Caso sin institución solicitante")).toHaveLength(2); // one row each, never twice
-    const replies = screen.getByText("Te toca responder").closest("section, div[class*=rounded]") as HTMLElement;
-    expect(within(replies).getByText(/Escribió el/)).toBeInTheDocument();
-    expect(within(replies).getByRole("button", { name: "Resolver" })).toBeInTheDocument();
-    expect(within(replies).queryByRole("button", { name: "No requiere respuesta" })).not.toBeInTheDocument();
+    // Only the blocked case with a reply appears in the queue; the silent one is in housekeeping.
+    expect(screen.getAllByText("Caso sin institución solicitante")).toHaveLength(1);
+    const paraTi = screen.getByTestId("today-para-ti") as HTMLElement;
+    expect(within(paraTi).getByText(/Escribió/)).toBeInTheDocument();
+    expect(within(paraTi).getByRole("button", { name: "Resolver" })).toBeInTheDocument();
+    expect(within(paraTi).queryByRole("button", { name: "No requiere respuesta" })).not.toBeInTheDocument();
   });
 
-  it("a row the reload still returns comes back instead of staying hidden", async () => {
+  it("a cleared row stays gone for this session even when the reload still returns it", async () => {
     stub();
     const replied = card(
       { stage: "quoting", version: 4, last_contact: { outbound: null, inbound: { at: "2026-10-02T12:00:00Z", subject: null, url: null } } },
@@ -320,46 +329,57 @@ describe("Hoy actions", () => {
       </AuthSessionContext.Provider>
     );
     const { rerender } = render(tree([replied]));
-    fireEvent.click(screen.getByRole("button", { name: "Pasar a Conversación" }));
-    await waitFor(() => expect(screen.queryByText(/Respondió el/)).not.toBeInTheDocument());
-    // The reload: the case moved stage but is still a reply to answer.
+    const replyRow = screen.getByTestId(`today-reply-${replied.opportunity_id}`);
+    fireEvent.click(within(replyRow).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(replyRow).getByRole("menuitem", { name: "Pasar a Conversación" }));
+    await waitFor(() => expect(screen.queryByText(/Respondió/)).not.toBeInTheDocument());
+    // goneIds keeps the cleared item hidden for this session even if the reload still returns it.
     rerender(tree([{ ...replied, stage: "negotiating", version: 5 }]));
-    expect(await screen.findByText(/Respondió el/)).toBeInTheDocument();
+    expect(screen.queryByText(/Respondió/)).not.toBeInTheDocument();
   });
 
   it("a done task leaves at once, before any reload, and a refused one stays", async () => {
-    const c = card({ open_tasks: [task("t1", "2026-10-06T12:00:00Z", 2), task("t2", "2026-10-05T12:00:00Z", 1)] });
+    // Two separate cases so both rows appear (the queue dedupes by opportunity_id).
+    const c1 = card({ open_tasks: [task("t1", "2026-10-06T12:00:00Z", 2)] });
+    const c2 = card({ open_tasks: [task("t2", "2026-10-05T12:00:00Z", 1)] });
     stub();
-    const onChanged = renderToday([c]);
+    const onChanged = renderToday([c1, c2]);
     const row = screen.getByTestId("today-task-t1");
-    fireEvent.click(within(row).getByRole("button", { name: "Hecho" }));
-    await waitFor(() => expect(row).toHaveClass("crm-row-out"));
+    fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(row).getByRole("menuitem", { name: "Hecho" }));
+    // goneIds removes the row immediately once action succeeds (no flicker on reload).
     await waitFor(() => expect(screen.queryByTestId("today-task-t1")).not.toBeInTheDocument());
-    expect(onChanged).toHaveBeenCalled(); // the reload confirms behind it
+    expect(onChanged).toHaveBeenCalled();
 
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(
       JSON.stringify({ error: { code: "conflict", details: { code: "stale_version" } } }), { status: 409 }))));
     const kept = screen.getByTestId("today-task-t2");
-    fireEvent.click(within(kept).getByRole("button", { name: "Hecho" }));
+    fireEvent.click(within(kept).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(kept).getByRole("menuitem", { name: "Hecho" }));
     expect(await screen.findByTestId("toaster")).toBeInTheDocument();
-    expect(kept).not.toHaveClass("crm-row-out");
     expect(screen.getByTestId("today-task-t2")).toBeInTheDocument();
   });
 
   it("completes a task, and postpones another a week by writing it again and cancelling it", async () => {
+    // Two separate cases so both rows appear; actions are in the ⋯ menu.
     const calls = stub();
-    const c = card({ open_tasks: [task("t1", "2026-10-06T12:00:00Z", 2), task("t2", "2026-10-05T12:00:00Z", 1)] });
-    const onChanged = renderToday([c]);
-    fireEvent.click(within(screen.getByTestId("today-task-t1")).getByRole("button", { name: "Hecho" }));
+    const c1 = card({ open_tasks: [task("t1", "2026-10-06T12:00:00Z", 2)] });
+    const c2 = card({ open_tasks: [task("t2", "2026-10-05T12:00:00Z", 1)] });
+    const onChanged = renderToday([c1, c2]);
+    const t1row = screen.getByTestId("today-task-t1");
+    fireEvent.click(within(t1row).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(t1row).getByRole("menuitem", { name: "Hecho" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(calls.find((x) => x.path === "/v2/commands/complete-task")?.body).toEqual({ task_id: "t1", task_version: 2, note: "Hecho desde «Hoy»." });
 
-    fireEvent.click(within(screen.getByTestId("today-task-t2")).getByRole("button", { name: "+1 semana" }));
+    const t2row = screen.getByTestId("today-task-t2");
+    fireEvent.click(within(t2row).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(t2row).getByRole("menuitem", { name: "+1 semana" }));
     expect(await screen.findByTestId("toaster")).toHaveTextContent(/Pospuesta al 13 oct 2026/);
     const posts = calls.filter((x) => x.path.startsWith("/v2/commands/")).map((x) => x.path);
     expect(posts).toEqual(["/v2/commands/complete-task", "/v2/commands/create-task", "/v2/commands/cancel-task"]);
     expect(calls.find((x) => x.path === "/v2/commands/create-task")?.body).toMatchObject({
-      opportunity_id: c.opportunity_id,
+      opportunity_id: c2.opportunity_id,
       title: "Tarea t2",
       due_at: "2026-10-13T15:00:00.000Z",
     });
@@ -372,7 +392,9 @@ describe("Hoy actions", () => {
       last_contact: { outbound: null, inbound: { at: "2026-10-03T12:00:00Z", subject: "Re", url: "https://mail.example.cl/in" } },
     });
     renderToday([c]);
-    fireEvent.click(screen.getByRole("button", { name: "Pasar a Conversación" }));
+    const replyRow = screen.getByTestId(`today-reply-${c.opportunity_id}`);
+    fireEvent.click(within(replyRow).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(replyRow).getByRole("menuitem", { name: "Pasar a Conversación" }));
     expect(await screen.findByTestId("toaster")).toHaveTextContent("Pasó a «Conversación».");
     expect(calls.find((x) => x.path === "/v2/commands/advance-case-stage")?.body).toMatchObject({
       opportunity_id: c.opportunity_id,
@@ -389,7 +411,9 @@ describe("Hoy actions", () => {
     renderToday([a, b]);
     expect(screen.getAllByRole("link", { name: "Abrir respuesta ↗" })).toHaveLength(1);
     expect(screen.getByText(/También en/)).toHaveTextContent("Cliente Uno — cotización 01254-26");
-    fireEvent.click(screen.getByRole("button", { name: "No requiere respuesta" }));
+    const primaryRow = screen.getByTestId(`today-reply-${a.opportunity_id}`);
+    fireEvent.click(within(primaryRow).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(primaryRow).getByRole("menuitem", { name: "No requiere respuesta" }));
     expect(await screen.findByTestId("toaster")).toHaveTextContent("Listo.");
     const tasks = calls.filter((x) => x.path === "/v2/commands/create-task").map((x) => x.body?.opportunity_id);
     expect(tasks.sort()).toEqual(["case-a", "case-b"]);
@@ -402,7 +426,9 @@ describe("Hoy actions", () => {
       last_contact: { outbound: null, inbound: { at: "2026-10-03T12:00:00Z", subject: "Re", url: "https://mail.example.cl/in" } },
     });
     const onChanged = renderToday([c]);
-    fireEvent.click(screen.getByRole("button", { name: "No requiere respuesta" }));
+    const replyRow = screen.getByTestId(`today-reply-${c.opportunity_id}`);
+    fireEvent.click(within(replyRow).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(replyRow).getByRole("menuitem", { name: "No requiere respuesta" }));
     expect(await screen.findByTestId("toaster")).toHaveTextContent("Listo. Te lo recuerdo el");
     expect(calls.find((x) => x.path === "/v2/commands/create-task")?.body).toMatchObject({
       opportunity_id: c.opportunity_id,
@@ -414,11 +440,12 @@ describe("Hoy actions", () => {
 
   it("closes a 30-day silent case as «Sin respuesta» from the rhythm", async () => {
     const calls = stub();
-    const c = card({}, "2026-08-20T12:00:00Z");
+    // Exactly 30 days ago so isFollowUpDueToday passes (days === 30).
+    const c = card({}, "2026-09-06T12:00:00Z");
     renderToday([c]);
-    const rhythm = screen.getByTestId("today-rhythm-cerrar");
-    fireEvent.click(within(rhythm).getByRole("button", { name: "Más opciones" }));
-    fireEvent.click(within(rhythm).getByRole("menuitem", { name: "Cerrar sin respuesta" }));
+    const row = screen.getByTestId(`today-followup-${c.opportunity_id}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(row).getByRole("menuitem", { name: "Cerrar sin respuesta" }));
     const modal = screen.getByRole("dialog", { name: "Cerrar sin respuesta" });
     expect(within(modal).getByRole("button", { name: "Sin respuesta" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(within(modal).getByRole("button", { name: "Marcar perdida" }));
@@ -434,13 +461,14 @@ describe("Hoy actions", () => {
     const c = card({ open_tasks: [{ task_id: "s1", title: "Seguimiento de 01239-26", due_at: "2026-10-06T12:00:00Z", version: 3, owner: null }] }, "2026-09-01T12:00:00Z");
     (c.latest_revision as RevisionCard).gmail = { source_record_id: "s", message_id: "m", thread_id: "t", url: "https://mail.example.cl/m", subject: "Cotización Balanzas Ohaus" };
     const onChanged = renderToday([c]);
-    const row = within(screen.getByTestId("today-rhythm-cerrar")).getByTestId("today-task-s1");
+    // No today-rhythm-cerrar wrapper in the unified queue — the row is directly in today-para-ti.
+    const row = screen.getByTestId("today-task-s1");
     expect(within(row).getByTestId("today-product")).toHaveTextContent("Balanzas Ohaus");
     expect(within(row).getByRole("link", { name: /Responder en Gmail/ })).toHaveAttribute(
       "href",
       "https://mail.example.cl/m",
     );
-    // Nothing else due: the empty «Tareas» panel is not drawn.
+    // Nothing else due: the old separate «Tareas» panel is not drawn.
     expect(screen.queryByTestId("today-tasks")).not.toBeInTheDocument();
     fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
     fireEvent.click(within(row).getByRole("menuitem", { name: "Ya le escribí" }));
@@ -459,10 +487,11 @@ describe("Hoy actions", () => {
 
   it("a note is a reminder, not a contact: the case stays on its clock and shows the note under it", () => {
     stub();
-    const c = card({ last_note: { created_at: "2026-10-05T10:00:00Z", body: "Mandar correo esta semana", author: "Rafael" } }, "2026-09-01T12:00:00Z");
+    // Exactly 30 days ago so isFollowUpDueToday passes (days === 30).
+    const c = card({ last_note: { created_at: "2026-10-05T10:00:00Z", body: "Mandar correo esta semana", author: "Rafael" } }, "2026-09-06T12:00:00Z");
     renderToday([c]);
     const row = screen.getByTestId(`today-followup-${c.opportunity_id}`);
-    expect(within(row).getByText("35")).toBeInTheDocument();
+    expect(row).toHaveTextContent(/30 días sin respuesta/);
     expect(within(row).getByTestId("today-followup-note")).toHaveTextContent("Nota: Mandar correo esta semana · Rafael, 05 oct 2026");
   });
 
@@ -470,7 +499,8 @@ describe("Hoy actions", () => {
     stub();
     const fu = { task_id: "rem", title: "Seguimiento de 00001-26", due_at: "2026-10-06T09:00:00Z", version: 1, owner: "Rafael" };
     const reminded = card({ open_tasks: [fu] }, "2026-09-01T12:00:00Z");
-    const own = card({}, "2026-09-01T12:00:00Z");
+    // Exactly 30 days ago so isFollowUpDueToday passes without a task (days === 30).
+    const own = card({}, "2026-09-06T12:00:00Z");
     renderToday([reminded, own]);
     expect(within(screen.getByTestId("today-task-rem")).getByTestId("today-reminder-chip")).toHaveTextContent("Tu recordatorio");
     expect(within(screen.getByTestId(`today-followup-${own.opportunity_id}`)).queryByTestId("today-reminder-chip")).toBeNull();
@@ -478,7 +508,8 @@ describe("Hoy actions", () => {
 
   it("puts off an unscheduled follow-up a week by writing it a «Seguimiento …» task", async () => {
     const calls = stub();
-    const c = card({}, "2026-09-25T12:00:00Z");
+    // Exactly 3 days ago so isFollowUpDueToday passes (days === 3 = first threshold).
+    const c = card({}, "2026-10-03T12:00:00Z");
     renderToday([c]);
     const row = screen.getByTestId(`today-followup-${c.opportunity_id}`);
     fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
