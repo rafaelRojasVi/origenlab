@@ -62,7 +62,8 @@ insert into expected values
     ('crm', 'quote', 'origenlab_worker', 'S', null, 'S'),
     ('crm', 'quote_revision', 'origenlab_api', 'SIU', null, 'SIU'),
     ('crm', 'quote_revision', 'origenlab_worker', 'S', null, 'S'),
-    ('crm', 'quote_line', 'origenlab_api', 'SIU', null, 'SIU'),
+    -- 20261016100000: the quote editor replaces a draft's lines; the guard trigger keeps DELETE off issued revisions.
+    ('crm', 'quote_line', 'origenlab_api', 'SIUD', null, 'SIUD'),
     ('crm', 'quote_line', 'origenlab_worker', 'S', null, 'S'),
     ('comms', 'mailbox', 'origenlab_api', 'S', null, 'S'),
     ('comms', 'mailbox', 'origenlab_worker', 'SIU', null, 'SIU'),
@@ -179,8 +180,11 @@ select is(
     cross join (values ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) p(v)
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
+      -- the one reviewed exception: the API deletes lines of an authored draft (20261016100000)
+      and not (r.n = 'origenlab_api' and p.v = 'DELETE' and n.nspname = 'crm' and c.relname = 'quote_line')
       and has_table_privilege(r.n, c.oid, p.v)),
-  0, 'no runtime role holds DELETE, TRUNCATE, REFERENCES or TRIGGER on any table');
+  0, 'no runtime role holds DELETE, TRUNCATE, REFERENCES or TRIGGER on any table, bar the API on crm.quote_line');
+
 select is(
   (select count(*)::int
      from pg_class c join pg_namespace n on n.oid = c.relnamespace

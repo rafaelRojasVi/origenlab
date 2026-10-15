@@ -121,7 +121,7 @@ select results_eq(
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')),
-  35, 'the application schemas hold thirty-five functions: three Slice 0 helpers plus thirty-two declared later, including the retained private W10 unsubscribe helper introduced by the hard-bounce contact-control wrapper and the case-document guard');
+  36, 'the application schemas hold thirty-six functions: three Slice 0 helpers plus thirty-three declared later, including the retained private W10 unsubscribe helper introduced by the hard-bounce contact-control wrapper, the case-document guard and the quote-line draft guard');
 
 -- ── vocabulary ──────────────────────────────────────────────────────────────────────────────
 
