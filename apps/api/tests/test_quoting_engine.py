@@ -113,6 +113,18 @@ def test_missing_fx_is_refused():
     assert exc.value.code == "fx_missing:USD"
 
 
+def test_zero_quantity_is_refused():
+    with pytest.raises(EngineError) as exc:
+        compute(inp([item(1, qty="0")]))
+    assert exc.value.code == "quantity_invalid:1"
+
+
+def test_margin_of_100_percent_is_refused():
+    with pytest.raises(EngineError) as exc:
+        compute(inp([item(1, mode="margin", pct="1")]))
+    assert exc.value.code == "margin_pct_invalid:1"
+
+
 def test_clp_cost_needs_no_rate():
     r = compute(inp([item(1, cost="100000", cur="CLP", imported=False)], fx={}))
     assert r.lines[0].cost_clp_unit == D(100000)

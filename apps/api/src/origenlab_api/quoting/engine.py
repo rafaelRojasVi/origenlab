@@ -158,7 +158,16 @@ def _state(margin: Decimal | None, inp: EngineInput) -> str:
     return "on_target"
 
 
+def _guard(inp: EngineInput) -> None:
+    for l in inp.items:
+        if l.quantity <= 0:
+            raise EngineError(f"quantity_invalid:{l.line_no}")
+        if l.margin_mode == "margin" and l.margin_pct is not None and l.margin_pct >= ONE:
+            raise EngineError(f"margin_pct_invalid:{l.line_no}")
+
+
 def compute(inp: EngineInput) -> EngineResult:
+    _guard(inp)
     warnings: list[str] = []
     expenses_clp = sum((peso(e.amount * _rate(inp, e.currency)) for e in inp.expenses), ZERO)   # E7:E12
     costs = {l.line_no: _cost_clp(inp, l) for l in inp.items}
