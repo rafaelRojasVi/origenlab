@@ -49,10 +49,14 @@ import {
   historicalCount,
   organizationsToConfirm,
   wroteAfterWinning,
+  type CotizarQueueItem,
   type DueTask,
   type FollowUp,
+  type FollowUpQueueItem,
   type OverdueTask,
   type QueueItem,
+  type ReplyQueueItem,
+  type TaskQueueItem,
 } from "../today";
 import { fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";
 import { Badge, Button, FormField, Modal, TextInput, fmtDate, toast } from "../ui";
@@ -228,8 +232,154 @@ function ChipBadge({ kind }: { kind: keyof typeof CHIP }) {
   );
 }
 
+/* ──────────────────────────────────────── day-pill helpers ── */
+
+/** «2 h», «1 d», «16 d» — compact wait display for the section rows. */
+function formatWaitShort(ms: number): string {
+  if (ms <= 0) return "0 h";
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 24) return `${hours} h`;
+  return `${Math.floor(ms / 86_400_000)} d`;
+}
+
+function waitTone(ms: number): "good" | "warn" | "bad" {
+  const days = ms / 86_400_000;
+  if (days >= 14) return "bad";
+  if (days >= 3) return "warn";
+  return "good";
+}
+
+const PILL_CLS: Record<"good" | "warn" | "bad", string> = {
+  good: "bg-good-bg text-good",
+  warn: "bg-warn-bg text-warn",
+  bad:  "bg-bad-bg text-bad",
+};
+
+/**
+ * The days pill: «2 h», «1 d», «16 d» — green < 3 days, amber 3–13, red ≥ 14.
+ * Accessible: includes an `aria-label` for screen readers.
+ */
+function DayPill({ ms, label }: { ms: number; label?: string }) {
+  const tone = waitTone(ms);
+  const short = formatWaitShort(ms);
+  const ariaLabel = label ?? `${formatWaitFull(ms)} esperando`;
+  return (
+    <span
+      className={`inline-flex w-14 shrink-0 items-center justify-center rounded-full py-1 text-[12px] font-bold tabular-nums ${PILL_CLS[tone]}`}
+      aria-label={ariaLabel}
+      data-testid="day-pill"
+    >
+      {short}
+    </span>
+  );
+}
+
+function formatWaitFull(ms: number): string {
+  if (ms <= 0) return "0 horas";
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 24) return `${hours} ${hours === 1 ? "hora" : "horas"}`;
+  const days = Math.floor(ms / 86_400_000);
+  return `${days} ${days === 1 ? "día" : "días"}`;
+}
+
+/* ──────────────────────────────────────── section container ── */
+
+function QueueSection({ title, hint, count, children }: {
+  title: string;
+  hint?: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-xl border border-line bg-canvas-raised">
+      <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 pb-1 pt-3">
+        <h2 className="text-[14px] font-semibold text-ink">{title}</h2>
+        <span className="text-[12px] tabular-nums text-ink-muted">{count}</span>
+        {hint ? <span className="ml-1 text-[11.5px] text-ink-faint">{hint}</span> : null}
+      </header>
+      <ul className="divide-y divide-line">{children}</ul>
+    </section>
+  );
+}
+
+/* ──────────────────────────────────────── Cotizar row ── */
+
+function CotizarQueueRow({
+  item, index, navigate, mayDecide,
+}: {
+  item: CotizarQueueItem;
+  index: number;
+  navigate: Navigate;
+  mayDecide: boolean;
+  onChanged: () => void;
+  onClearItem: () => void;
+}) {
+  const { card } = item;
+  const { name } = displayName(card);
+  const contact = contactLine(card);
+  // The requested item: from the title after "Solicitud —", or the inbound email subject.
+  const solicitudItem = card.title.match(/^[Ss]olicitud\s*[—–-]+\s*(.+)$/)?.[1]?.trim()
+    ?? card.last_contact?.inbound?.subject?.trim()
+    ?? card.title;
+  const what = [solicitudItem, contact].filter(Boolean).join(" · ");
+  const originUrl = card.last_contact?.inbound?.url
+    ? (inSharedMailbox(card.last_contact.inbound.url) ?? card.last_contact.inbound.url)
+    : null;
+
+  return (
+    <li
+      className="crm-rise group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30"
+      style={{ "--i": Math.min(index, 10) } as CSSProperties}
+      data-testid={`today-cotizar-${card.opportunity_id}`}
+    >
+      <DayPill ms={item.waitMs} />
+      <button
+        type="button"
+        onClick={() => navigate("oportunidades", card.opportunity_id)}
+        className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+      >
+        <p className="truncate text-[14px] font-semibold text-ink group-hover:text-brand-700">{name}</p>
+        <p className="truncate text-[12px] text-ink-muted">{what}</p>
+      </button>
+      <div className="flex shrink-0 gap-2">
+        <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>
+          Cotizar
+        </Button>
+        {originUrl ? (
+          <a
+            href={originUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-8 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong"
+          >
+            Ver pedido ↗
+          </a>
+        ) : null}
+        {/* ⋯ placeholder — no secondary actions for cotizar yet */}
+        {mayDecide ? (
+          <button
+            type="button"
+            aria-label="Más opciones"
+            onClick={() => navigate("oportunidades", card.opportunity_id)}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          >
+            <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+              <circle cx="3.5" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="12.5" cy="8" r="1.3" />
+            </svg>
+          </button>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * Three sections (Cotizar / Responder / Seguimientos de hoy), then tasks and forwarded requests.
+ * Each section has a heading, hint and count; rows are oldest-wait-first within every section.
+ * A `data-testid="today-para-ti"` wrapper is kept so existing tests can still find the area.
+ */
 function ParaTiSection({
-  queue, forwards, goneIds, navigate, mayDecide, mayAuthor, onChanged, onClearItem, onFwdDone, onClose, now, me,
+  queue, forwards, goneIds, navigate, mayDecide, mayAuthor, onChanged, onClearItem, onFwdDone, onClose, now,
 }: {
   queue: QueueItem[];
   forwards: ForwardedRequest[];
@@ -245,83 +395,128 @@ function ParaTiSection({
   me: string | null;
 }) {
   if (queue.length === 0 && forwards.length === 0) return null;
+
+  const cotizarItems = queue.filter((q): q is CotizarQueueItem => q.kind === "cotizar" && !goneIds.has(q.opportunity_id));
+  const replyItems   = queue.filter((q): q is ReplyQueueItem   => q.kind === "reply"   && !goneIds.has(q.opportunity_id));
+  const followItems  = queue.filter((q): q is FollowUpQueueItem => q.kind === "followup" && !goneIds.has(q.opportunity_id));
+  const taskItems    = queue.filter((q): q is TaskQueueItem    => q.kind === "task"    && !goneIds.has(q.opportunity_id));
+  const liveForwards = forwards.filter(() => true); // already filtered by goneIds outside
+
   return (
-    <section data-testid="today-para-ti" className="overflow-hidden rounded-xl border border-line bg-canvas-raised">
-      <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 pb-1 pt-3">
-        <h2 className="text-[14px] font-semibold text-ink">Para ti</h2>
-        <span className="text-[12px] tabular-nums text-ink-muted">{queue.length + forwards.length}</span>
-        {me ? <span className="ml-auto text-[11px] text-ink-faint">ordenado por quién lleva más esperando</span> : null}
-      </header>
-      <ul className="divide-y divide-line">
-        {queue.map((item, i) => {
-          if (goneIds.has(item.opportunity_id)) return null;
-          if (item.kind === "reply") {
-            return (
-              <ReplyQueueRow
-                key={item.opportunity_id}
-                reply={item.reply}
-                index={i}
-                navigate={navigate}
-                mayDecide={mayDecide}
-                mayAuthor={mayAuthor}
-                onChanged={onChanged}
-                onClearItem={() => onClearItem(item.opportunity_id)}
-                now={now}
-              />
-            );
-          }
-          if (item.kind === "task") {
-            return (
-              <TaskQueueRow
-                key={item.opportunity_id}
-                due={item.due}
-                index={i}
-                navigate={navigate}
-                mayDecide={mayDecide}
-                onChanged={onChanged}
-                onClearItem={() => onClearItem(item.opportunity_id)}
-                now={now}
-              />
-            );
-          }
-          if (item.kind === "followup") {
-            return (
-              <FollowUpQueueRow
-                key={item.opportunity_id}
-                followUp={item.followUp}
-                index={i}
-                navigate={navigate}
-                mayDecide={mayDecide}
-                onChanged={onChanged}
-                onClearItem={() => onClearItem(item.opportunity_id)}
-                onClose={onClose}
-                now={now}
-              />
-            );
-          }
-          return null;
-        })}
-        {forwards.map((f, i) => (
-          <ForwardQueueRow
-            key={f.id}
-            item={f}
-            index={queue.length + i}
-            navigate={navigate}
-            mayDecide={mayDecide}
-            onDone={onFwdDone}
-          />
-        ))}
-      </ul>
-    </section>
+    <div data-testid="today-para-ti" className="space-y-4">
+      {/* ─── Cotizar ─── */}
+      {cotizarItems.length > 0 && (
+        <QueueSection
+          title="Cotizar"
+          hint="pidieron precio y aún no tienen cotización · la más antigua arriba"
+          count={cotizarItems.length}
+        >
+          {cotizarItems.map((item, i) => (
+            <CotizarQueueRow
+              key={item.opportunity_id}
+              item={item}
+              index={i}
+              navigate={navigate}
+              mayDecide={mayDecide}
+              onChanged={onChanged}
+              onClearItem={() => onClearItem(item.opportunity_id)}
+            />
+          ))}
+        </QueueSection>
+      )}
+
+      {/* ─── Responder ─── */}
+      {replyItems.length > 0 && (
+        <QueueSection
+          title="Responder"
+          hint="el cliente escribió y espera"
+          count={replyItems.length}
+        >
+          {replyItems.map((item, i) => (
+            <ReplyQueueRow
+              key={item.opportunity_id}
+              reply={item.reply}
+              waitMs={item.waitMs}
+              index={i}
+              navigate={navigate}
+              mayDecide={mayDecide}
+              mayAuthor={mayAuthor}
+              onChanged={onChanged}
+              onClearItem={() => onClearItem(item.opportunity_id)}
+              now={now}
+            />
+          ))}
+        </QueueSection>
+      )}
+
+      {/* ─── Seguimientos de hoy ─── */}
+      {followItems.length > 0 && (
+        <QueueSection
+          title="Seguimientos de hoy"
+          hint="cotización enviada, sin respuesta · ritmo 3 · 14 · 30 días"
+          count={followItems.length}
+        >
+          {followItems.map((item, i) => (
+            <FollowUpQueueRow
+              key={item.opportunity_id}
+              followUp={item.followUp}
+              waitMs={item.waitMs}
+              index={i}
+              navigate={navigate}
+              mayDecide={mayDecide}
+              onChanged={onChanged}
+              onClearItem={() => onClearItem(item.opportunity_id)}
+              onClose={onClose}
+              now={now}
+            />
+          ))}
+        </QueueSection>
+      )}
+
+      {/* ─── Tareas ─── */}
+      {taskItems.length > 0 && (
+        <QueueSection title="Tareas" count={taskItems.length}>
+          {taskItems.map((item, i) => (
+            <TaskQueueRow
+              key={item.opportunity_id}
+              due={item.due}
+              index={i}
+              navigate={navigate}
+              mayDecide={mayDecide}
+              onChanged={onChanged}
+              onClearItem={() => onClearItem(item.opportunity_id)}
+              now={now}
+            />
+          ))}
+        </QueueSection>
+      )}
+
+      {/* ─── Decidir (forwarded requests) ─── */}
+      {liveForwards.length > 0 && (
+        <QueueSection title="Decidir" count={liveForwards.length}>
+          {liveForwards.map((f, i) => (
+            <ForwardQueueRow
+              key={f.id}
+              item={f}
+              index={i}
+              navigate={navigate}
+              mayDecide={mayDecide}
+              onDone={onFwdDone}
+            />
+          ))}
+        </QueueSection>
+      )}
+    </div>
   );
 }
 
 /* ─────────────────────────────────────────────── Reply row ── */
 
 function ReplyQueueRow({
-  reply, index, navigate, mayDecide, mayAuthor, onChanged, onClearItem, now,
+  reply, waitMs, index, navigate, mayDecide, mayAuthor, onChanged, onClearItem, now,
 }: {
   reply: import("../today").Reply;
+  waitMs: number;
   index: number;
   navigate: Navigate;
   mayDecide: boolean;
@@ -342,9 +537,6 @@ function ReplyQueueRow({
   const won = wroteAfterWinning(card);
   const canMove = !blocking && mayDecide && card.stage === "quoting" && typeof card.version === "number";
   const product = quoteProduct(card);
-
-  // Elapsed time since the client wrote
-  const waitLabel = replyWaitLabel(reply.at, now);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -409,23 +601,30 @@ function ReplyQueueRow({
 
   if (gone) return null;
   const menuItem = "flex w-full items-center rounded px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-canvas-sunken focus:bg-canvas-sunken focus:outline-none disabled:opacity-50";
+  const { name } = displayName(card);
+  const what = [
+    won ? "Escribió tras ganar" : card.latest_revision ? "Respondió" : "Escribió",
+    ...(product ? [product] : []),
+    ...(contactLine(card) ? [contactLine(card)!] : []),
+  ].join(" · ");
   return (
     <li
-      className={`crm-rise group relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
+      className={`crm-rise group relative flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-reply-${card.opportunity_id}`}
     >
-      <ChipBadge kind="reply" />
-      <div className="min-w-[12rem] flex-1">
-        <CaseLink card={card} navigate={navigate} />
-        <p className="mt-0.5 truncate text-[11px] text-ink-muted">
-          <span className="font-medium text-warn">{won ? "Escribió tras ganar" : card.latest_revision ? "Respondió" : "Escribió"}</span>
-          {" · "}<span className="text-ink-faint">{waitLabel}</span>
-          {product ? ` · ${product}` : ""}
-          {contactLine(card) ? ` · ${contactLine(card)}` : ""}
-        </p>
+      <DayPill ms={waitMs} />
+      <div className="min-w-0 flex-1">
+        <button
+          type="button"
+          onClick={() => navigate("oportunidades", card.opportunity_id)}
+          className="block w-full min-w-0 truncate text-left text-[14px] font-semibold text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+        >
+          {name}
+        </button>
+        <p className="truncate text-[12px] text-ink-muted">{what}</p>
         {reply.others.length ? (
-          <p className="mt-0.5 text-[11px] text-ink-muted">
+          <p className="mt-0.5 truncate text-[11px] text-ink-muted">
             También en:{" "}
             {reply.others.map((o, i) => (
               <span key={o.opportunity_id}>
@@ -451,7 +650,7 @@ function ReplyQueueRow({
             rel="noopener noreferrer"
             className="inline-flex h-8 items-center rounded-md bg-brand-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
           >
-            Abrir respuesta ↗
+            Responder en Gmail ↗
           </a>
         ) : (
           <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>Abrir caso</Button>
@@ -632,9 +831,10 @@ function dueText(overdueDays: number): string {
 /* ─────────────────────────────────────────────── Follow-up row ── */
 
 function FollowUpQueueRow({
-  followUp, index, navigate, mayDecide, onChanged, onClearItem, onClose, now,
+  followUp, waitMs, index, navigate, mayDecide, onChanged, onClearItem, onClose, now,
 }: {
   followUp: FollowUp;
+  waitMs: number;
   index: number;
   navigate: Navigate;
   mayDecide: boolean;
@@ -702,26 +902,28 @@ function FollowUpQueueRow({
 
   if (gone) return null;
   const menuItem = "flex w-full items-center rounded px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-canvas-sunken focus:bg-canvas-sunken focus:outline-none disabled:opacity-50";
+  const { name } = displayName(f.card);
+  const what = [
+    ...(product ? [product] : []),
+    ...(quote ? [quote] : []),
+    ...(contactLine(f.card) ? [contactLine(f.card)!] : []),
+  ].join(" · ");
   return (
     <li
-      className={`crm-rise group relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
+      className={`crm-rise group relative flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={f.task ? `today-task-${f.task.task.task_id}` : `today-followup-${f.card.opportunity_id}`}
     >
-      <ChipBadge kind="followup" />
-      <div className="min-w-[12rem] flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate"><CaseLink card={f.card} navigate={navigate} /></span>
-          {product ? (
-            <span className="hidden max-w-[14rem] shrink truncate rounded-full bg-brand-50 px-1.5 py-px text-[10.5px] leading-4 text-brand-700 sm:inline" data-testid="today-product" title={product}>
-              {product}
-            </span>
-          ) : null}
-        </div>
-        <p className="truncate text-[11px] text-ink-muted">
-          <span className="tabular-nums font-medium text-warn">{f.days} días sin respuesta</span>
-          {quote ? ` · ${quote}` : ""}
-        </p>
+      <DayPill ms={waitMs} />
+      <div className="min-w-0 flex-1">
+        <button
+          type="button"
+          onClick={() => navigate("oportunidades", f.card.opportunity_id)}
+          className="block w-full min-w-0 truncate text-left text-[14px] font-semibold text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+        >
+          {name}
+        </button>
+        <p className="truncate text-[12px] text-ink-muted">{what}</p>
         {note || f.task ? (
           <p className="truncate text-[11.5px] text-ink" data-testid="today-followup-note">
             {f.task ? (
@@ -735,17 +937,17 @@ function FollowUpQueueRow({
         ) : null}
       </div>
       <div className="flex shrink-0 gap-2">
-        {/* Primary: respond on the thread or compose new */}
+        {/* Primary: «Escribir» — open the Gmail thread */}
         <a
           href={write}
           target="_blank"
           rel="noopener noreferrer"
           title={thread ? "Abre el hilo de la cotización en Gmail" : "Abre un correo nuevo en Gmail"}
-          aria-label={thread ? "Responder en Gmail" : "Nuevo correo en Gmail"}
-          className="inline-flex h-8 w-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-brand-600 text-xs sm:w-auto sm:px-3 font-semibold text-white shadow-sm hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
+          aria-label={thread ? "Escribir en Gmail" : "Nuevo correo en Gmail"}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-brand-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
         >
           <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M2.5 4h11v8h-11zM2.5 4.5 8 8.5l5.5-4" strokeLinejoin="round" /></svg>
-          <span className="hidden sm:inline">{thread ? "Responder en Gmail" : "Nuevo correo"}</span>
+          Escribir
         </a>
         {/* Secondary ⋯ */}
         {mayDecide ? (

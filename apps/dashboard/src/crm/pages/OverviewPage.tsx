@@ -8,7 +8,7 @@ import { QuoteNumberBox } from "../QuoteNumberBox";
 import { WEEKDAYS, todayInSantiago } from "../marketing/calendar";
 import { TodayBody } from "./TodayBody";
 import { HeroHeader } from "../HeroHeader";
-import { paraTiCount } from "../today";
+import { todayHeaderCounts } from "../today";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 
@@ -27,16 +27,16 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
   // «M hechas»: items the operator cleared from «Para ti» in this browser session.
   const [hechas, setHechas] = useState(0);
   const onCleared = useCallback(() => setHechas((n) => n + 1), []);
-  const [forwardCount, setForwardCount] = useState(0);
+  const [, setForwardCount] = useState(0);
 
   const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
-  const paraTi = pipeline.kind === "ready" ? paraTiCount(pipeline.data.items, new Date(), me, forwardCount) : null;
+  const headerCounts = pipeline.kind === "ready" ? todayHeaderCounts(pipeline.data.items, new Date(), me) : null;
 
   return (
     <div className="space-y-5">
       <HeroHeader
         name={session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? "") : ""}
-        counts={paraTi !== null ? { paraTi, hechas } : null}
+        counts={headerCounts !== null ? { ...headerCounts, hechas } : null}
       />
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => (

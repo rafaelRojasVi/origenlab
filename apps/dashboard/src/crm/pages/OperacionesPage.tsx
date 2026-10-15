@@ -15,7 +15,7 @@ import {
   type SentQuoteUnrecordedOnCase,
   type SentQuoteWithoutCase,
 } from "../operations";
-import { followUpsDue, historicalCount, organizationsToConfirm } from "../today";
+import { historicalCount, organizationsToConfirm } from "../today";
 import { Badge, Button, EmptyState, ExternalLink, PageHeader, Panel, ResourceGate, Segmented, Skeleton, fmtDateTime } from "../ui";
 import { useResource } from "../useResource";
 import { fetchPipeline } from "../crmApi";
@@ -315,7 +315,6 @@ function PorOrdenarSection({ navigate }: { navigate: (s: CrmSection, id?: string
   const items = pipeline.kind === "ready" ? pipeline.data.items : [];
   const orgs = organizationsToConfirm(items);
   const historical = historicalCount(items, now);
-  const followUps = followUpsDue(items, now);
   const blocked = items.filter((c) => c.status === "blocked");
   const peopleCount = people.kind === "ready" ? people.data.total : 0;
 
@@ -334,29 +333,7 @@ function PorOrdenarSection({ navigate }: { navigate: (s: CrmSection, id?: string
           ))}
         </Panel>
       ) : null}
-      {followUps.length > 0 ? (
-        <Panel title="Seguimientos pendientes" aside={<Badge tone="neutral" glyph={false}>{followUps.length}</Badge>} bodyClassName="divide-y divide-line">
-          {followUps.slice(0, 8).map((f) => (
-            <div key={f.card.opportunity_id} className="flex items-center gap-2 px-3 py-2 text-[13px]">
-              <span className="flex-1 truncate">
-                <button type="button" onClick={() => navigate("oportunidades", f.card.opportunity_id)}
-                  className="font-medium text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">
-                  {f.card.organization?.name ?? f.card.title}
-                </button>
-              </span>
-              <span className="text-[11px] text-ink-muted tabular-nums">{f.days} días</span>
-            </div>
-          ))}
-          {followUps.length > 8 ? (
-            <div className="px-3 py-2">
-              <button type="button" onClick={() => navigate("oportunidades")}
-                className="text-[12px] font-medium text-brand-700 hover:underline">
-                Ver todos en Oportunidades →
-              </button>
-            </div>
-          ) : null}
-        </Panel>
-      ) : null}
+      {/* Seguimientos pendientes removed: duplicated in Hoy (Seguimientos section) and Oportunidades. */}
       {peopleCount > 0 ? (
         <Panel title="Personas por agregar" aside={<Badge tone="neutral" glyph={false}>{peopleCount}</Badge>}>
           <p className="px-3 py-2 text-[13px] text-ink-muted">
