@@ -20,7 +20,7 @@ from origenlab_worker.triage_model import ModelRefused, _short
 
 DEFAULT_MEMORY_MODEL = "claude-haiku-5-5"
 EFFORT = "low"
-MAX_TOKENS = 1200
+MAX_TOKENS = 2400  # 1200 cut two of 59 memories on real mail (2026-10-15)
 MAX_FACTS = 15
 MAX_OPEN_QUESTIONS = 3
 SUMMARY_MAX = 600

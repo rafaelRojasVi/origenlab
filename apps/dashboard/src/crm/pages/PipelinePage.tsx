@@ -513,6 +513,9 @@ function OpportunityDrawer({
         </p>
       )}
 
+      {/* What the conversation says so far, first: the case memory (owner, 2026-10-15). */}
+      <CaseMemory opportunityId={card.opportunity_id} />
+
       <Section
         title={card.quotes.length === 1 ? "Cotización" : `Cotizaciones (${card.quotes.length})`}
       >
@@ -562,8 +565,6 @@ function OpportunityDrawer({
       <Section title="Correos del caso">
         <CaseThreads key={card.opportunity_id} opportunityId={card.opportunity_id} />
       </Section>
-
-      <CaseMemory opportunityId={card.opportunity_id} />
 
       {/* Re-read when the case's newest note changes: a reminder from «Recordarme…». */}
       <CaseNotes key={`${card.opportunity_id}:${card.last_note?.created_at ?? ""}`} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} />
