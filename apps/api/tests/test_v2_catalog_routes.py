@@ -277,6 +277,8 @@ def test_refusals_surface_in_the_production_envelope(status, code, envelope) -> 
     ("set-cost-parameter", {"key": "secret_markup"}),
     ("set-cost-parameter", {"reason": "  "}),
     ("set-cost-parameter", {"value": "-0.1"}),
+    ("set-cost-parameter", {"value_text": "texto"}),                       # both value and value_text
+    ("set-cost-parameter", {"key": "quote_default_warranty"}),             # a text key with a number
     ("record-fx-rate", {"reason": "   "}),
     ("record-fx-rate", {"currency": "CLP"}),
     ("record-fx-rate", {"clp_per_unit": "0"}),
@@ -289,6 +291,14 @@ def test_bad_bodies_are_422_in_the_production_envelope(command, patch) -> None:
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "validation_error"
     assert repo.calls == []
+
+
+def test_set_cost_parameter_takes_text_for_the_quote_defaults() -> None:
+    repo, client = _command_client()
+    body = {"key": "quote_default_warranty", "value_text": "[GARANTÍA]", "reason": "sintético"}
+    r = client.post("/v2/commands/set-cost-parameter", json=body, headers=_ikey())
+    assert r.status_code == 200, r.text
+    assert repo.calls[0]["fields"]["value_text"] == "[GARANTÍA]" and repo.calls[0]["fields"]["value"] is None
 
 
 def test_update_product_leaves_out_what_was_not_sent() -> None:

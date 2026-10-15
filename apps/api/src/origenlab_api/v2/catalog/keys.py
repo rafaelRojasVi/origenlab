@@ -26,7 +26,16 @@ PARAMETER_KEYS = (
     "default_markup_equipment", "default_markup_accessory", "default_markup_consumable",
     "default_markup_spare_part", "default_markup_service",
     "margin_target_min", "margin_target_max", "price_deviation_warn_pct", "iva_rate",
+    "quote_number_seed", "quote_default_delivery_terms", "quote_default_validity_days",
+    "quote_default_payment_terms", "quote_default_warranty", "quote_default_delivery_place",
+    "quote_default_installation",
 )
+#: The only `quote_default_*` key that is a number; the other quote defaults are printed text.
+QUOTE_DEFAULT_NUMERIC_KEY = "quote_default_validity_days"
+
+
+def parameter_is_text(key: str) -> bool:
+    return key.startswith("quote_default_") and key != QUOTE_DEFAULT_NUMERIC_KEY
 
 
 class LabdeliveryRefused(ValueError):
