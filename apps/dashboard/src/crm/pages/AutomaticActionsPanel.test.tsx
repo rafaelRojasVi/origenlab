@@ -98,3 +98,44 @@ describe("Hecho automáticamente", () => {
     await waitFor(() => expect(screen.queryByText("Hecho automáticamente")).toBeNull());
   });
 });
+
+describe("Hecho automáticamente, only what is news", () => {
+  const row = (n: number, over: Record<string, unknown>) => ({
+    receipt_id: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, applied_at: "2026-10-14T13:00:00+00:00",
+    rule_id: "R2", kind: "filed", source: "email", reasons: ["motivo"], case_id: `caso-${n}`,
+    case_title: `Caso ${n}`, quote_number: null, what: `Correo ${n}`, ...over });
+
+  it("leaves out a reply filed on its own thread, groups emails filed on one case, and shows five rows", async () => {
+    stub([
+      row(1, { rule_id: "R1", what: "Re: hilo conocido" }),
+      row(2, { case_id: "caso-g", case_title: "Caso ganado", what: "Transferencia 1" }),
+      row(3, { case_id: "caso-g", case_title: "Caso ganado", what: "Transferencia 2" }),
+      row(4, { case_id: "caso-g", case_title: "Caso ganado", what: "Transferencia 3" }),
+      ...[5, 6, 7, 8, 9, 10].map((n) => row(n, { kind: "opened", rule_id: "R7" })),
+    ]);
+    renderPanel();
+    const rows = await screen.findAllByTestId("automatic-row");
+    expect(rows).toHaveLength(5);
+    expect(screen.queryByText("Re: hilo conocido")).toBeNull();
+    const grouped = rows.find((r) => r.textContent?.includes("Caso ganado"))!;
+    expect(grouped).toHaveTextContent("3 correos archivados");
+    fireEvent.click(screen.getByRole("button", { name: "Ver 2 más" }));
+    expect(screen.getAllByTestId("automatic-row")).toHaveLength(7);
+  });
+
+  it("«Quitar» on a grouped row undoes every email in it", async () => {
+    stub([row(2, { case_id: "caso-g", what: "T1" }), row(3, { case_id: "caso-g", what: "T2" })]);
+    renderPanel();
+    const [grouped] = await screen.findAllByTestId("automatic-row");
+    fireEvent.click(within(grouped).getByRole("button", { name: "Quitar" }));
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts.map((p) => p.body.receipt_id).sort()).toEqual([row(2, {}).receipt_id, row(3, {}).receipt_id]);
+  });
+
+  it("renders nothing when the only actions were replies on known threads", async () => {
+    stub([row(1, { rule_id: "R1" })]);
+    renderPanel();
+    await waitFor(() => expect(screen.queryByTestId("automatic-row")).toBeNull());
+    expect(screen.queryByText("Hecho automáticamente")).toBeNull();
+  });
+});

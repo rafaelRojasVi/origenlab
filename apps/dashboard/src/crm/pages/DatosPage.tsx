@@ -62,6 +62,8 @@ const TAB_LABEL: Record<DatosTab, string> = {
   acciones: "Acciones automáticas",
   proveedores: "Proveedores",
   drive: "Archivo Drive",
+  // «decidir» is handled by OperacionesPage directly; DatosPage never renders it.
+  decidir: "Por ordenar",
 };
 
 /**
