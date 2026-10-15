@@ -497,7 +497,7 @@ class TriageDb:
     def opportunity_org_and_person(self, opportunity_id: str) -> tuple[str | None, str | None]:
         """(organization_id, person_id) for the primary org and contact of one case, or (None, None)."""
         with self._tx() as cur:
-            cur.execute(_OPPORTUNITY_ORG_AND_PERSON, (opportunity_id, opportunity_id))
+            cur.execute(_OPPORTUNITY_ORG_AND_PERSON, (opportunity_id,))
             row = cur.fetchone()
         if row is None:
             return None, None
@@ -818,39 +818,30 @@ values (%s, %s::uuid, %s, %s, %s, %s)
 on conflict (subject_kind, subject_id, version) do nothing
 """
 
+#: The case's requesting institution, and the person behind an address that wrote on the case (an
+#: email contact point with a person, matched on the sender of a linked email). (2026-10-15: the first
+#: version read a `contact_point.email_norm` column that does not exist.)
 _OPPORTUNITY_ORG_AND_PERSON = """
-select oo.organization_id::text,
+select o.organization_id::text,
        (select cp.person_id::text
           from crm.contact_point cp
-          join crm.opportunity_evidence oe2 on oe2.source_record_id = (
-              select a.source_record_id from evidence.assertion a
-               where a.kind = 'contact_address' and a.resolution = 'accepted'
-                 and exists (select 1 from crm.opportunity_evidence oe3
-                              where oe3.opportunity_id = %s::uuid
-                                and oe3.source_record_id = a.source_record_id
-                                and oe3.unlinked_at is null)
-               limit 1
-          )
-         where cp.email_norm = (
-               select a.value_norm from evidence.assertion a
-                where a.kind = 'contact_address' and a.resolution = 'accepted'
-                  and a.source_record_id = oe2.source_record_id
-               limit 1)
-           and cp.person_id is not null
+         where cp.kind = 'email' and cp.person_id is not null
+           and cp.value_norm in (
+               select lower(substring(sr.payload ->> 'sender' from '[^<>[:space:]]+@[^<>[:space:]]+'))
+                 from crm.opportunity_evidence oe
+                 join evidence.source_record sr on sr.id = oe.source_record_id
+                where oe.opportunity_id = o.id and oe.unlinked_at is null)
+         order by cp.created_at
          limit 1)
-  from crm.opportunity_organization oo
- where oo.opportunity_id = %s::uuid
- order by oo.created_at
- limit 1
+  from crm.opportunity o
+ where o.id = %s::uuid
 """
 
 _OPPORTUNITY_INSTITUTION_NAME = """
-select o.name
-  from crm.organization o
-  join crm.opportunity_organization oo on oo.organization_id = o.id
- where oo.opportunity_id = %s::uuid
- order by oo.created_at
- limit 1
+select org.name
+  from crm.opportunity o
+  join crm.organization org on org.id = o.organization_id
+ where o.id = %s::uuid
 """
 
 _OPPORTUNITY_QUOTE_NUMBERS = """
