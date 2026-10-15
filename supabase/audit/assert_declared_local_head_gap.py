@@ -62,6 +62,8 @@ EXPECTED_EXTRA_TABLES = {
     "opportunity_document",
     # 20261013120000_slice7_catalog_product_document.sql — DOMAIN.md §7 #57.
     "product_document",
+    # 20261015120000_slice7_case_memory.sql — DOMAIN.md §7 #58.
+    "subject_memory",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -273,6 +275,8 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     "catalog.product_document.product_document_created_by_operator_id_fkey",
     # 20261014100000_slice7_catalog_product_merge.sql — covered by the plain product_merged_into_idx.
     "catalog.product.product_merged_into_product_id_fkey",
+    # 20261015120000_slice7_case_memory.sql — covered by the plain subject_memory_source_record_idx.
+    "evidence.subject_memory.subject_memory_source_record_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -284,7 +288,7 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 # campaign-block keys, the eight sign-in keys, the sixteen slice-6 keys and the
 # ten slice-7 catalog and document-line keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 50
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 51
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -292,18 +296,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 54,
+        "relation_count": 55,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 53,
+        "table_count": 54,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 185,
+        "policy_count": 188,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -395,7 +399,7 @@ def main() -> int:
         refuse("a08 reports a table missing from current head")
 
     # Like a09 below, the audit lists at most twelve entries and then "...", and the
-    # twenty extra tables do not fit. What it names must all be reviewed
+    # twenty-one extra tables do not fit. What it names must all be reviewed
     # tables; only an untruncated list must name each of them, and a truncated
     # one must name exactly the twelve the audit prints — so a name the pattern
     # cannot read is refused rather than skipped. The exact count bounds what the
@@ -417,10 +421,10 @@ def main() -> int:
     if unreviewed_tables:
         refuse(f"a08 names unreviewed tables: {unreviewed_tables!r}")
 
-    if "20 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly twenty extra tables")
+    if "21 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly twenty-one extra tables")
 
-    # The 60 policy additions must belong to those same twenty reviewed tables:
+    # The 63 policy additions must belong to those same twenty-one reviewed tables:
     # four each for the three commercial-case tables and campaign_block (api
     # select/insert/update, worker select), one each for auth_principal and
     # operator_profile (api select: their throttle is written by
@@ -434,7 +438,8 @@ def main() -> int:
     # fx_rate and cost_parameter (api select, insert: both are append-only), three for
     # triage_review (api select, insert; worker select) and four for opportunity_document
     # (api select/insert/update, worker select; 20261012120000), three for product_document
-    # (api select/insert/update; 20261013120000).
+    # (api select/insert/update; 20261013120000), three for subject_memory (api select; worker
+    # select/insert; 20261015120000).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -456,8 +461,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "60 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly sixty extra policies")
+    if "63 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly sixty-three extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -481,7 +486,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 54, expected 34"],
+        "a04": ["relations in scope: observed 55, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "

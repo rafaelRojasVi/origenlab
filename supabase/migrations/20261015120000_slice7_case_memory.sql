@@ -59,8 +59,7 @@ create index subject_memory_subject_idx
 
 -- FK covering index (supabase/tests/090_foreign_key_indexes.sql).
 create index subject_memory_source_record_idx
-  on evidence.subject_memory (source_record_id)
-  where source_record_id is not null;
+  on evidence.subject_memory (source_record_id);
 
 -- Append-only: no UPDATE, no DELETE ever — reads the latest version, inserts the next.
 create trigger subject_memory_never_updated
