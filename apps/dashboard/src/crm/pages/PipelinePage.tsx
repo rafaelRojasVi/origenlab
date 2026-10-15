@@ -15,6 +15,8 @@ import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
 import { DecideCases } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import { endOfDay, isFollowUpTask } from "../today";
+import { contactLine } from "../caseDisplay";
+import { inSharedMailbox } from "../gmailLinks";
 import {
   HISTORICAL_STAGE_LABEL,
   STATUS_LABEL,
@@ -274,6 +276,106 @@ function Dot({ ok }: { ok: boolean }) {
   return <span aria-hidden="true" className={`inline-block h-1.5 w-1.5 rounded-full ${ok ? "bg-good" : "bg-line-strong"}`} />;
 }
 
+const PRE_QUOTE_STAGES_CARD = new Set(["lead", "qualifying", "qualified"]);
+
+/** True for an open case at a pre-quote stage with no sent quote — shows the «Por cotizar» card variant. */
+function isSolicitudSinCotizar(card: OpportunityCardData): boolean {
+  return (
+    !card.closed_at &&
+    PRE_QUOTE_STAGES_CARD.has(card.stage) &&
+    card.latest_revision === null
+  );
+}
+
+/** «Por cotizar» card: who, what they asked for, days waiting and two action buttons. */
+function SolicitudSinCotizarCard({
+  card,
+  index,
+  onOpen,
+}: {
+  card: OpportunityCardData;
+  index: number;
+  onOpen: (id: string) => void;
+}) {
+  const contact = contactLine(card);
+  const startAt = card.last_contact?.inbound?.at ?? card.created_at ?? null;
+  const waitMs = startAt ? Math.max(0, Date.now() - Date.parse(startAt)) : 0;
+  const waitDays = Math.floor(waitMs / 86_400_000);
+  const waitHours = Math.floor(waitMs / 3_600_000);
+  const waitLabel = waitHours < 24 ? `${waitHours} h` : `${waitDays} d`;
+  const waitToneClass = waitDays >= 14 ? "bg-bad-bg text-bad" : waitDays >= 3 ? "bg-warn-bg text-warn" : "bg-good-bg text-good";
+  const waitFullLabel = waitDays > 0 ? `${waitDays} ${waitDays === 1 ? "día" : "días"} esperando` : `${waitHours} ${waitHours === 1 ? "hora" : "horas"} esperando`;
+
+  const solicitudItem = card.title.match(/^[Ss]olicitud\s*[—–-]+\s*(.+)$/)?.[1]?.trim()
+    ?? card.last_contact?.inbound?.subject?.trim()
+    ?? card.title;
+  const originUrl = card.last_contact?.inbound?.url
+    ? (inSharedMailbox(card.last_contact.inbound.url) ?? card.last_contact.inbound.url)
+    : null;
+
+  return (
+    <article
+      data-testid={`opportunity-card-${card.opportunity_id}`}
+      style={{ animationDelay: `${Math.min(index, 12) * 18}ms` }}
+      className="crm-card-in group flex flex-col gap-2 rounded-md border border-brand-600/30 bg-canvas-raised px-3 py-2.5 shadow-[0_1px_1px_rgb(24_24_27/0.03)] transition-[box-shadow,border-color] duration-150 focus-within:border-brand-600/50 hover:border-brand-600/50 hover:shadow-sm"
+    >
+      {/* Header: «Por cotizar» chip + days pill */}
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-brand-700" data-testid="por-cotizar-chip">
+          Por cotizar
+        </span>
+        <span
+          className={`ml-auto inline-flex items-center rounded-full px-2 py-0.5 text-[11.5px] font-bold tabular-nums ${waitToneClass}`}
+          aria-label={waitFullLabel}
+          data-testid="por-cotizar-wait"
+        >
+          {waitLabel} esperando
+        </span>
+      </div>
+
+      {/* Institution + contact */}
+      <button
+        type="button"
+        onClick={() => onOpen(card.opportunity_id)}
+        aria-haspopup="dialog"
+        className="block w-full min-w-0 rounded-sm text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+      >
+        <span className="block truncate text-[13px] font-semibold leading-5 text-ink">
+          {card.organization?.name ?? <span className="text-bad">Sin institución</span>}
+        </span>
+        {contact ? <span className="block truncate text-xs leading-4 text-ink-muted">{contact}</span> : null}
+      </button>
+
+      {/* «Pide» box */}
+      <div className="rounded-md bg-canvas-sunken px-2.5 py-1.5 text-[12px]" data-testid="pide-box">
+        <span className="text-[11px] text-ink-faint">Pide</span>
+        <p className="mt-0.5 line-clamp-2 text-ink">{solicitudItem}</p>
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => onOpen(card.opportunity_id)}
+          className="inline-flex h-7 items-center rounded-md bg-brand-600 px-3 text-xs font-semibold text-white hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+        >
+          Cotizar
+        </button>
+        {originUrl ? (
+          <a
+            href={originUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-7 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs text-ink hover:border-line-strong"
+          >
+            Ver pedido ↗
+          </a>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
 export function OpportunityCard({
   card,
   index,
@@ -283,6 +385,11 @@ export function OpportunityCard({
   index: number;
   onOpen: (id: string) => void;
 }) {
+  // A case at a pre-quote stage with no sent quote uses the «Por cotizar» simplified card.
+  if (isSolicitudSinCotizar(card)) {
+    return <SolicitudSinCotizarCard card={card} index={index} onOpen={onOpen} />;
+  }
+
   const latest = card.latest_revision;
   const blocking = card.attention.find((a) => a.blocking);
   const status = STATUS_LABEL[card.status];

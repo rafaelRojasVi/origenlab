@@ -155,7 +155,7 @@ describe("today lists", () => {
     const calls = stub();
     const onChanged = renderToday([paid]);
     const row = screen.getByText(/Escribió tras ganar/).closest("div")!.parentElement!;
-    expect(within(row).getByRole("link", { name: /Abrir respuesta/ })).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: /Responder en Gmail/ })).toBeInTheDocument();
     expect(within(row).queryByRole("button", { name: /No requiere respuesta/ })).toBeNull();
     expect(within(row).queryByRole("button", { name: /Pasar a Conversación/ })).toBeNull();
     fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
@@ -275,7 +275,7 @@ describe("«Tareas» on the page", () => {
       card({ open_tasks: [todayTask] }, "2026-10-05T12:00:00Z"),
     ]);
     const panel = screen.getByTestId("today-para-ti");
-    expect(panel).toHaveTextContent("Para ti");
+    expect(panel).toHaveTextContent("Tareas");
     expect(within(panel).getAllByTestId(/^today-task-/).map((e) => e.getAttribute("data-testid"))).toEqual([
       "today-task-theirs8", "today-task-theirs4", "today-task-mine4", "today-task-today",
     ]);
@@ -409,7 +409,7 @@ describe("Hoy actions", () => {
     const a = card({ opportunity_id: "case-a", title: "Cotización 1176-26 — Cliente Uno", stage: "quoting", last_contact: mail });
     const b = card({ opportunity_id: "case-b", title: "Cliente Uno — cotización 01254-26", stage: "quoting", last_contact: mail });
     renderToday([a, b]);
-    expect(screen.getAllByRole("link", { name: "Abrir respuesta ↗" })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: /Responder en Gmail/ })).toHaveLength(1);
     expect(screen.getByText(/También en/)).toHaveTextContent("Cliente Uno — cotización 01254-26");
     const primaryRow = screen.getByTestId(`today-reply-${a.opportunity_id}`);
     fireEvent.click(within(primaryRow).getByRole("button", { name: "Más opciones" }));
@@ -463,8 +463,8 @@ describe("Hoy actions", () => {
     const onChanged = renderToday([c]);
     // No today-rhythm-cerrar wrapper in the unified queue — the row is directly in today-para-ti.
     const row = screen.getByTestId("today-task-s1");
-    expect(within(row).getByTestId("today-product")).toHaveTextContent("Balanzas Ohaus");
-    expect(within(row).getByRole("link", { name: /Responder en Gmail/ })).toHaveAttribute(
+    expect(row).toHaveTextContent("Balanzas Ohaus");
+    expect(within(row).getByRole("link", { name: /Escribir/ })).toHaveAttribute(
       "href",
       "https://mail.example.cl/m",
     );
@@ -491,7 +491,8 @@ describe("Hoy actions", () => {
     const c = card({ last_note: { created_at: "2026-10-05T10:00:00Z", body: "Mandar correo esta semana", author: "Rafael" } }, "2026-09-06T12:00:00Z");
     renderToday([c]);
     const row = screen.getByTestId(`today-followup-${c.opportunity_id}`);
-    expect(row).toHaveTextContent(/30 días sin respuesta/);
+    // The day pill shows «30 d» for 30 days waiting; no prose text.
+    expect(within(row).getByTestId("day-pill")).toHaveTextContent("30 d");
     expect(within(row).getByTestId("today-followup-note")).toHaveTextContent("Nota: Mandar correo esta semana · Rafael, 05 oct 2026");
   });
 
@@ -529,13 +530,14 @@ describe("«Para ti» queue", () => {
   const inbound = (at: string, url = `https://mail.example.cl/${at}`) =>
     ({ last_contact: { outbound: null, inbound: { at, subject: "Consulta", url } } }) as Partial<OpportunityCardData>;
 
-  it("puts clients waiting on us first, the newest request on top, then follow-ups", async () => {
+  it("puts clients waiting on us first, the oldest request on top, then follow-ups", async () => {
     const { buildParaTiQueue } = await import("../today");
     const fresh = card(inbound("2026-10-06T13:00:00Z"), "2026-10-01T12:00:00Z");
     const old = card(inbound("2026-09-28T12:00:00Z"), "2026-09-25T12:00:00Z");
     const silent14 = card({}, "2026-09-22T15:00:00Z");
     const order = buildParaTiQueue([silent14, old, fresh], NOW, null).map((q) => [q.kind, q.opportunity_id]);
-    expect(order).toEqual([["reply", fresh.opportunity_id], ["reply", old.opportunity_id], ["followup", silent14.opportunity_id]]);
+    // «old» has been waiting 8 days, «fresh» only 2 hours — oldest first within each section.
+    expect(order).toEqual([["reply", old.opportunity_id], ["reply", fresh.opportunity_id], ["followup", silent14.opportunity_id]]);
   });
 
   it("one email that answers two cases is one row: the other case takes no follow-up row", async () => {
@@ -553,5 +555,35 @@ describe("«Para ti» queue", () => {
     const c = card(inbound("2026-10-06T13:00:00Z"), "2026-10-01T12:00:00Z");
     expect(paraTiCount([c], NOW, null)).toBe(1);
     expect(paraTiCount([c], NOW, null, 2)).toBe(3);
+  });
+
+  it("puts a pre-quote case with no revision into «Cotizar» (rank 0) before any reply", async () => {
+    const { buildParaTiQueue } = await import("../today");
+    // A case at «qualifying» with no sent quote, with an inbound from yesterday.
+    const yesterday = new Date(NOW.getTime() - 86_400_000).toISOString();
+    const solicitud = card(
+      { ...inbound(yesterday), stage: "qualifying", latest_revision: null, quote_numbers: [], quotes: [] },
+    );
+    // A reply from 10 minutes ago — would normally rank first, but cotizar beats it.
+    const tenMinAgo = new Date(NOW.getTime() - 600_000).toISOString();
+    const reply = card(inbound(tenMinAgo));
+    const order = buildParaTiQueue([reply, solicitud], NOW, null).map((q) => q.kind);
+    expect(order[0]).toBe("cotizar");
+    expect(order[1]).toBe("reply");
+  });
+
+  it("todayHeaderCounts counts cotizar, responder and seguimientos separately", async () => {
+    const { todayHeaderCounts } = await import("../today");
+    const yesterday = new Date(NOW.getTime() - 86_400_000).toISOString();
+    const solicitud = card(
+      { ...inbound(yesterday), stage: "qualifying", latest_revision: null, quote_numbers: [], quotes: [] },
+    );
+    const tenMinAgo = new Date(NOW.getTime() - 600_000).toISOString();
+    const reply = card(inbound(tenMinAgo));
+    const silent14 = card({}, "2026-09-22T15:00:00Z"); // 14 days → follow-up
+    const counts = todayHeaderCounts([solicitud, reply, silent14], NOW, null);
+    expect(counts.cotizar).toBe(1);
+    expect(counts.responder).toBe(1);
+    expect(counts.seguimientos).toBe(1);
   });
 });

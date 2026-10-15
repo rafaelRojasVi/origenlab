@@ -244,7 +244,8 @@ describe("Resumen", () => {
     const row = within(paraTi).getByTestId("today-followup-11111111-1111-4111-8111-111111111111");
     expect(row).toHaveTextContent("3");
     // The thread, opened as the shared mailbox — not as whichever account the browser lists first.
-    expect(within(row).getByRole("link", { name: /Responder en Gmail/ })).toHaveAttribute(
+    // The follow-up's one button is «Escribir» (approved design 2026-10-15), still the shared-mailbox thread.
+    expect(within(row).getByRole("link", { name: /Escribir en Gmail/ })).toHaveAttribute(
       "href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/gm1",
     );
@@ -253,8 +254,8 @@ describe("Resumen", () => {
     // Valle is historical (undecided) → in housekeeping, not in the queue.
     expect(within(paraTi).queryByText("Universidad del Valle")).not.toBeInTheDocument();
     expect(await screen.findByTestId("today-housekeeping")).toHaveTextContent(/1.*cosa.*ordenar/);
-    // Header shows "1 para ti" (one follow-up), no old tiles.
-    expect(screen.getByTestId("hero-header")).toHaveTextContent("1 para ti");
+    // The header counts by section: one follow-up, nothing else due.
+    expect(screen.getByTestId("hero-header")).toHaveTextContent("1 seguimiento");
     expect(screen.queryByTestId("today-stats")).not.toBeInTheDocument();
   });
 
@@ -283,7 +284,7 @@ describe("Resumen", () => {
     expect(task).toHaveTextContent("Atrasada 1 día");
     const paraTi = screen.getByTestId("today-para-ti");
     expect(within(paraTi).getByText("Universidad del Valle")).toBeInTheDocument();
-    expect(within(paraTi).getByRole("link", { name: /Abrir respuesta/ })).toHaveAttribute("href", "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/in1");
+    expect(within(paraTi).getByRole("link", { name: /Responder en Gmail/ })).toHaveAttribute("href", "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/in1");
     // A case with an open task is planned: it does not appear separately as a follow-up.
     expect(screen.queryByTestId("today-followups")).not.toBeInTheDocument();
   });
@@ -340,8 +341,8 @@ describe("Hoy · orden", () => {
   it("puts today's work above the exchange rate and the quote number", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    // «Para ti» section heading (Andino is at 3-day threshold, so it shows).
-    const heading = await screen.findByRole("heading", { level: 2, name: "Para ti" });
+    // The first section heading (Andino is at the 3-day threshold, so «Seguimientos de hoy» shows).
+    const heading = await screen.findByRole("heading", { level: 2, name: "Seguimientos de hoy" });
     const usd = await screen.findByTestId("fx-USD");
     const quotes = await screen.findByTestId("quote-number-box");
     expect(heading.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

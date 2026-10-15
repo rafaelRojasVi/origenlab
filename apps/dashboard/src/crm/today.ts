@@ -24,6 +24,9 @@ import { conversation, lastTouch } from "./caseDisplay";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
 import { pausedUntil, stageBasis } from "./stage";
 
+/** Stages where no quote has been sent yet — the operator must still quote. */
+const PRE_QUOTE_STAGES = new Set(["lead", "qualifying", "qualified"]);
+
 const DAY_MS = 86_400_000;
 const CLOSED = new Set(["won", "lost", "abandoned"]);
 
@@ -248,6 +251,23 @@ export function todayCounts(cards: OpportunityCardData[], now: Date = new Date()
   return { replies: repliesToAnswer(cards, now).length, decide: historicalCount(cards, now), followUps: followUpsDue(cards, now).length };
 }
 
+/**
+ * Counts for «Hoy»'s hero header: cotizar, responder and seguimientos (the three main sections).
+ * `hechas` is tracked in the page's own state and not computed here.
+ */
+export function todayHeaderCounts(items: OpportunityCardData[], now: Date, me: string | null): {
+  cotizar: number;
+  responder: number;
+  seguimientos: number;
+} {
+  const queue = buildParaTiQueue(items, now, me);
+  return {
+    cotizar: queue.filter((q) => q.kind === "cotizar").length,
+    responder: queue.filter((q) => q.kind === "reply").length,
+    seguimientos: queue.filter((q) => q.kind === "followup").length,
+  };
+}
+
 /* ────────────────────────────────────────────────────────── «Para ti» queue ── */
 
 /** A follow-up shows on «Hoy» only the day it first crosses a rhythm boundary, or when the
@@ -257,6 +277,14 @@ export function isFollowUpDueToday(f: FollowUp): boolean {
   return f.days === RHYTHM[0].from || f.days === RHYTHM[1].from || f.days === RHYTHM[2].from;
 }
 
+/** A pre-quote open case with no sent quote: the operator must still write the quotation. */
+export interface CotizarQueueItem {
+  kind: "cotizar";
+  opportunity_id: string;
+  card: OpportunityCardData;
+  /** Milliseconds since the first known contact (inbound email or case creation). */
+  waitMs: number;
+}
 export interface ReplyQueueItem {
   kind: "reply";
   opportunity_id: string;
@@ -280,23 +308,38 @@ export interface FollowUpQueueItem {
   waitMs: number;
 }
 /** An item in the unified «Para ti» queue; one per opportunity. */
-export type QueueItem = ReplyQueueItem | TaskQueueItem | FollowUpQueueItem;
+export type QueueItem = CotizarQueueItem | ReplyQueueItem | TaskQueueItem | FollowUpQueueItem;
 
 /**
  * ONE merged list of what the operator needs to act on today, deduplicated by `opportunity_id`.
- * Priority per case: reply > overdue task > due task > follow-up due today.
- * Order (owner, 2026-10-15): clients waiting on us first, the newest request on top so a fresh lead
- * is never under a month-old silence; then tasks and follow-ups, longest wait first.
+ * Priority per case: cotizar > reply > overdue task > due task > follow-up due today.
+ * Order (owner, 2026-10-15): oldest wait first in every section — the case that has been
+ * waiting the longest is at the top within its section.
  * Forwarded requests are excluded: they have no case yet and are appended in `TodayBody`.
  */
 export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: string | null): QueueItem[] {
   const queue = new Map<string, QueueItem>();
+
+  // 0. Cotizar — open pre-quote cases with no sent quote, not paused, not blocked.
+  //    Cotizar takes priority over Responder: a new request that still needs a quote goes here.
+  for (const card of items) {
+    if (!isOpenCase(card)) continue;
+    if (!PRE_QUOTE_STAGES.has(card.stage)) continue;
+    if (card.latest_revision !== null) continue;
+    if (pausedUntil(card, now) !== null) continue;
+    if (card.attention.some((a) => a.blocking)) continue;
+    const id = card.opportunity_id;
+    const startAt = card.last_contact?.inbound?.at ?? card.created_at ?? null;
+    const waitMs = startAt ? Math.max(0, now.getTime() - Date.parse(startAt)) : 0;
+    queue.set(id, { kind: "cotizar", opportunity_id: id, card, waitMs });
+  }
 
   // 1. Replies — a client is waiting. One email that answers several cases is one row: the other
   // cases it names («También en…») take no row of their own below.
   const answered = new Set<string>();
   for (const reply of repliesToAnswer(items, now)) {
     const id = reply.card.opportunity_id;
+    if (queue.has(id)) continue; // cotizar takes priority
     for (const other of reply.others) answered.add(other.opportunity_id);
     queue.set(id, {
       kind: "reply",
@@ -307,7 +350,7 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
     });
   }
 
-  // 2. Tasks — overdue first, then due today; skip if the case already has a reply
+  // 2. Tasks — overdue first, then due today; skip if the case already has a cotizar/reply
   const overdueList = overdueTasks(items, now, me);
   const overdueIds = new Set(overdueList.map((o) => o.task.task_id));
   const taskList = tasksDue(items, now).filter((t) => !overdueIds.has(t.task.task_id));
@@ -325,9 +368,10 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
     queue.set(id, { kind: "followup", opportunity_id: id, card: f.card, followUp: f, waitMs: f.days * DAY_MS });
   }
 
-  const RANK: Record<QueueItem["kind"], number> = { reply: 0, task: 1, followup: 2 };
+  const RANK: Record<QueueItem["kind"], number> = { cotizar: 0, reply: 1, task: 2, followup: 3 };
+  // Within every section: oldest wait first (largest waitMs first).
   return [...queue.values()].sort((a, b) =>
-    RANK[a.kind] - RANK[b.kind] || (a.kind === "reply" ? a.waitMs - b.waitMs : b.waitMs - a.waitMs));
+    RANK[a.kind] - RANK[b.kind] || b.waitMs - a.waitMs);
 }
 
 /** Count for «N para ti» in the header; `forwards` are the forwarded requests still waiting. */
