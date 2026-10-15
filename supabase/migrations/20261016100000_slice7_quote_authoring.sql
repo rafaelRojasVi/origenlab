@@ -10,6 +10,10 @@
 --   * crm.quote_line_authored_draft_only() guards every insert, update and delete on a line:
 --     only while the revision is an authored draft, and one FX snapshot per cost currency.
 --     Approved, sent, void and historical-import revisions stay untouched by construction.
+--   * crm.quote_revision_authored_frozen() freezes an authored revision once it is approved, sent
+--     or void (WORKFLOWS §W3b): only approved → sent, approved | sent → void, the document hash
+--     and the sending evidence once, supersession once, version and updated_at may change; such a
+--     revision is never deleted.
 --   * origenlab_api may delete a draft's lines (the editor replaces them); the guard above is
 --     what keeps that from ever reaching an issued revision.
 --   * catalog.cost_parameter accepts the quote numbering seed and the default printed terms.
@@ -104,6 +108,68 @@ create trigger quote_line_authored_draft_only
 
 grant delete on crm.quote_line to origenlab_api;
 create policy origenlab_api_delete on crm.quote_line for delete to origenlab_api using (true);
+
+-- An issued authored revision is the document the client holds (WORKFLOWS §W3b: the approved
+-- snapshot is immutable, enforced by trigger). Once an authored revision is approved, sent or void,
+-- only these may change: status approved → sent (with its sending evidence, set once) and
+-- approved | sent → void; pdf_sha256 set once while approved or on the move to sent; supersession
+-- recorded once; version and updated_at. Every other column — totals, the party snapshot, the
+-- printed and pricing columns, approval, recipient, validity, anything added later — is frozen,
+-- and such a revision is never deleted. (The sent-evidence CHECK still demands the sending columns
+-- be empty on a non-sent authored row, so an authored `sent` revision cannot actually be voided:
+-- clearing its evidence is refused here. It is answered by a new revision.)
+create function crm.quote_revision_authored_frozen() returns trigger
+language plpgsql set search_path = pg_catalog
+as $$
+declare
+  v_mutable constant text[] := array['status', 'pdf_sha256', 'sent_at', 'sent_attempt_id', 'sent_message_id',
+                                     'superseded_by_revision_no', 'superseded_at', 'version', 'updated_at'];
+begin
+  if tg_op = 'DELETE' then
+    if old.origin = 'authored' and old.status in ('approved', 'sent', 'void') then
+      raise exception 'crm.quote_revision %: an issued revision is never deleted', old.id
+        using errcode = 'check_violation';
+    end if;
+    return old;
+  end if;
+  if old.origin <> 'authored' or old.status not in ('approved', 'sent', 'void') then
+    return new;
+  end if;
+
+  if (to_jsonb(new) - v_mutable) is distinct from (to_jsonb(old) - v_mutable) then
+    raise exception 'crm.quote_revision %: an issued revision is frozen', old.id using errcode = 'check_violation';
+  end if;
+  if new.status is distinct from old.status
+     and not ((old.status = 'approved' and new.status in ('sent', 'void')) or (old.status = 'sent' and new.status = 'void')) then
+    raise exception 'crm.quote_revision %: an issued revision moves only approved → sent and approved | sent → void, not % → %',
+      old.id, old.status, new.status using errcode = 'check_violation';
+  end if;
+  if (new.sent_at, new.sent_attempt_id, new.sent_message_id)
+       is distinct from (old.sent_at, old.sent_attempt_id, old.sent_message_id)
+     and not (old.status = 'approved' and new.status = 'sent'
+              and num_nonnulls(old.sent_at, old.sent_attempt_id, old.sent_message_id) = 0) then
+    raise exception 'crm.quote_revision %: the sending evidence is recorded once, on approved → sent', old.id
+      using errcode = 'check_violation';
+  end if;
+  if new.pdf_sha256 is distinct from old.pdf_sha256
+     and not (old.pdf_sha256 is null and old.status = 'approved' and new.status in ('approved', 'sent')) then
+    raise exception 'crm.quote_revision %: the document hash is recorded once, while approved', old.id
+      using errcode = 'check_violation';
+  end if;
+  if old.superseded_by_revision_no is not null
+     and (new.superseded_by_revision_no, new.superseded_at) is distinct from (old.superseded_by_revision_no, old.superseded_at) then
+    raise exception 'crm.quote_revision %: supersession is recorded once', old.id using errcode = 'check_violation';
+  end if;
+  return new;
+end;
+$$;
+comment on function crm.quote_revision_authored_frozen() is
+  'Guard on crm.quote_revision: an authored revision once approved, sent or void changes only by approved → sent (sending evidence once), approved | sent → void, pdf_sha256 once, supersession once, version/updated_at; never deleted. SECURITY INVOKER.';
+revoke all on function crm.quote_revision_authored_frozen() from public, anon, authenticated, service_role;
+
+create trigger quote_revision_authored_frozen
+  before update or delete on crm.quote_revision
+  for each row execute function crm.quote_revision_authored_frozen();
 
 alter table catalog.cost_parameter drop constraint cost_parameter_key_check;
 alter table catalog.cost_parameter add constraint cost_parameter_key_check check (key in (

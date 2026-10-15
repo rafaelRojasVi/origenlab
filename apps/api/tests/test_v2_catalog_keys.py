@@ -26,7 +26,8 @@ def _check_list(sql: str, constraint: str, column: str) -> tuple[str, ...]:
 
 
 PRODUCTS = "*slice7_catalog_products_suppliers*.sql"
-PRICING = "*slice7_catalog_pricing_inputs*.sql"
+# The parameter key CHECK was last rebuilt by the Cotizador migration (quote numbering and text defaults).
+PRICING = "*slice7_quote_authoring*.sql"
 
 
 @pytest.mark.parametrize(

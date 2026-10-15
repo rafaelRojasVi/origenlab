@@ -149,6 +149,9 @@ POST_SLICE0_FUNCTIONS = {
     # 20261016100000_slice7_quote_authoring.sql — the INVOKER trigger guard that lets a quote line
     # change only while its revision is an authored draft (pgTAP: 097_quote_authoring.sql).
     "crm.quote_line_authored_draft_only",
+    # Same migration — the INVOKER trigger guard that freezes an authored revision once it is
+    # approved, sent or void (WORKFLOWS §W3b; pgTAP: 097_quote_authoring.sql).
+    "crm.quote_revision_authored_frozen",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its

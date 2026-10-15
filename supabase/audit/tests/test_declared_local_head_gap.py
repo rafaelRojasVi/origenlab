@@ -84,10 +84,10 @@ def current_head_report():
         _check("a13", status="CORROBORATED", required=False),
         _check("a04", "FAIL", {"relation_count": 55},
                ["relations in scope: observed 55, expected 34"]),
-        _check("a05", "FAIL", {"function_count": 36, "security_definer_count": 3}, [
+        _check("a05", "FAIL", {"function_count": 37, "security_definer_count": 3}, [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             "3 entr(y|ies) are present here and not in the baseline: " + gap.EXPECTED_SECURITY_DEFINER,
-            "functions in scope: observed 36, expected 3"]),
+            "functions in scope: observed 37, expected 3"]),
         _check("a08", "FAIL", {"table_count": 54, "schema_count": 7}, [
             "tables: 21 entr(y|ies) are present here and not in the baseline: "
             + "; ".join(_table(t) for t in TABLES + SIGN_IN_TABLES + (SESSION_TABLE,)
@@ -137,7 +137,7 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_historical_guard_is_a_declared_post_slice0_function(self):
         self.assertIn("crm.quote_revision_historical_guard", gap.POST_SLICE0_FUNCTIONS)
         self.assertEqual(3, gap.SLICE0_FUNCTION_COUNT)
-        self.assertEqual(36, gap.EXPECTED_FUNCTION_COUNT)
+        self.assertEqual(37, gap.EXPECTED_FUNCTION_COUNT)
 
     def test_the_campaign_block_schema_is_declared(self):
         self.assertIn("campaign_block", gap.EXPECTED_EXTRA_TABLES)
@@ -408,14 +408,14 @@ class DeclaredGapTest(unittest.TestCase):
     def test_the_previous_head_count_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 35
-        self.assert_refused(report, "a05.function_count: observed 35, expected 36")
+        a05["summary"]["function_count"] = 36
+        self.assert_refused(report, "a05.function_count: observed 36, expected 37")
 
-    def test_an_undeclared_thirty_seventh_function_is_refused(self):
+    def test_an_undeclared_thirty_eighth_function_is_refused(self):
         report = current_head_report()
         a05 = check_of(report, "a05")
-        a05["summary"]["function_count"] = 37
-        self.assert_refused(report, "a05.function_count: observed 37, expected 36")
+        a05["summary"]["function_count"] = 38
+        self.assert_refused(report, "a05.function_count: observed 38, expected 37")
 
     def test_a_fourth_security_definer_function_is_refused(self):
         report = current_head_report()

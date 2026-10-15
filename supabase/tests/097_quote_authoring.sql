@@ -8,10 +8,10 @@ create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 grant origenlab_api to session_user with set true, inherit false;
 set role origenlab_owner;
-select plan(15);
+select plan(26);
 
 -- Fixture (rolled back): an operator, an organization, a case, a quote, one authored draft
--- revision and one approved revision.
+-- revision and two approved revisions.
 insert into platform.operator (id, auth_user_id, email_norm, display_name, role, status)
 values ('97000000-0000-4000-8000-0000000000a1', '97000000-0000-4000-8000-0000000000f1', 'admin97@example.test', 'Admin', 'admin', 'active');
 insert into crm.organization (id, kind, name, confirmation)
@@ -31,6 +31,12 @@ values ('97000000-0000-4000-8000-000000000081', '97000000-0000-4000-8000-0000000
   100, 0, 100, 19, 119, now(), '{"sold_to": {}}', 1, now(), '97000000-0000-4000-8000-0000000000a1');
 insert into crm.quote_revision (id, quote_id, revision_no, status, quote_currency, price_decimals)
 values ('97000000-0000-4000-8000-000000000082', '97000000-0000-4000-8000-000000000070', 2, 'draft', 'CLP', 0);
+-- Revision 3 is approved too: the one that supersedes revision 1, and the one voided below.
+insert into crm.quote_revision (id, quote_id, revision_no, status, quote_currency, price_decimals,
+  subtotal, discount_total, tax_base, tax_total, grand_total, totals_computed_at,
+  party_snapshot, party_snapshot_version, approved_at, approved_by_operator_id)
+values ('97000000-0000-4000-8000-000000000083', '97000000-0000-4000-8000-000000000070', 3, 'approved', 'CLP', 0,
+  100, 0, 100, 19, 119, now(), '{"sold_to": {}}', 1, now(), '97000000-0000-4000-8000-0000000000a1');
 
 select has_column('crm', 'quote_line', 'item_type', 'quote_line.item_type exists');
 select has_column('crm', 'quote_line', 'cost_observation_id', 'quote_line.cost_observation_id exists');
@@ -87,6 +93,30 @@ end
 $f$;
 select is(pg_temp.api_deletes('97000000-0000-4000-8000-000000000082', 3), 'deleted 1',
   'the API role deletes a line of its draft');
+
+-- An issued authored revision is frozen (crm.quote_revision_authored_frozen, WORKFLOWS §W3b).
+select throws_ok($$ update crm.quote_revision set subtotal = 200, tax_base = 200
+  where id = '97000000-0000-4000-8000-000000000081' $$, '23514', null, 'an approved revision''s totals are frozen');
+select throws_ok($$ update crm.quote_revision set payment_terms = 'otra cosa'
+  where id = '97000000-0000-4000-8000-000000000081' $$, '23514', null, 'an approved revision''s printed terms are frozen');
+select throws_ok($$ update crm.quote_revision set party_snapshot = '{"sold_to": {"x": 1}}'
+  where id = '97000000-0000-4000-8000-000000000081' $$, '23514', null, 'an approved revision''s party snapshot is frozen');
+select lives_ok($$ update crm.quote_revision set version = version + 1, updated_at = now()
+  where id = '97000000-0000-4000-8000-000000000081' $$, 'its version may advance');
+select lives_ok($$ update crm.quote_revision set superseded_by_revision_no = 3, superseded_at = now()
+  where id = '97000000-0000-4000-8000-000000000081' $$, 'an approved revision may be superseded');
+select throws_ok($$ update crm.quote_revision set superseded_by_revision_no = 2
+  where id = '97000000-0000-4000-8000-000000000081' $$, '23514', null, 'supersession is recorded once');
+select lives_ok($$ update crm.quote_revision set pdf_sha256 = repeat('c', 64)
+  where id = '97000000-0000-4000-8000-000000000081' $$, 'the document hash is recorded while approved');
+select throws_ok($$ update crm.quote_revision set pdf_sha256 = repeat('d', 64)
+  where id = '97000000-0000-4000-8000-000000000081' $$, '23514', null, 'the document hash is recorded once');
+select lives_ok($$ update crm.quote_revision set status = 'void'
+  where id = '97000000-0000-4000-8000-000000000083' $$, 'an approved revision may be voided');
+select throws_ok($$ update crm.quote_revision set status = 'approved'
+  where id = '97000000-0000-4000-8000-000000000083' $$, '23514', null, 'a void revision never comes back');
+select throws_ok($$ delete from crm.quote_revision where id = '97000000-0000-4000-8000-000000000083' $$,
+  '23514', null, 'an issued revision is never deleted');
 
 select * from finish();
 rollback;

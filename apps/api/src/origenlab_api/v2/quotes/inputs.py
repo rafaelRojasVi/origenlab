@@ -314,6 +314,41 @@ def draft_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]) -> Qu
                       recipient_participant_id=revision["recipient_participant_id"])
 
 
+def engine_input_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]],
+                           params: dict[str, Decimal | str]) -> EngineInput:
+    """The engine's input exactly as the revision was last saved — what approval prices.
+
+    Nothing is looked up again: no catalog cost (a line saved without one stays without one), no
+    exchange rate (each currency's rate is the one its lines carry — the day's rate or the
+    operator's override as it was saved), no regenerated expense (the stored expense lines are the
+    expenses), no principal rule (the stored principal is the principal; `imported` only feeds the
+    rules, so it is not needed). The frozen totals therefore equal the last save's.
+    """
+    fx: dict[str, FxRate] = {}
+    for row in lines:
+        currency = row["cost_currency"]
+        if currency and currency != "CLP" and row["fx_rate"] is not None:
+            fx.setdefault(currency, FxRate(currency, Decimal(row["fx_rate"]), _as_date(row["fx_as_of"]),
+                                           row["fx_source"]))
+    ordered = sorted(lines, key=lambda r: r["line_no"])
+    items = tuple(
+        ItemLine(r["line_no"], Decimal(r["quantity"]), r["item_type"] or "other", r["unit_cost"], r["cost_currency"],
+                 False, r["margin_mode"], None if r["margin_mode"] == "none" else r["margin_pct"],
+                 r["unit_price_qc"] if r["margin_mode"] == "none" else None, bool(r["is_principal"]))
+        for r in ordered if r["line_kind"] == "item")
+    expenses = tuple(
+        ExpenseLine(r["line_no"], r["description"], r["unit_cost"] or Decimal(0), r["cost_currency"] or "CLP",
+                    r["expense_method"] or "manual", r["calc_inputs"])
+        for r in ordered if r["line_kind"] == "logistics")
+    return EngineInput(
+        fx=fx, items=items, expenses=expenses, principal_rule="manual",
+        allocation_mode=revision["expense_allocation_mode"], iva_rate=Decimal(revision["tax_rate"]),
+        principal_threshold_eur=_decimal_param(params, "principal_threshold_eur"),
+        margin_target_min=_decimal_param(params, "margin_target_min"),
+        margin_target_max=_decimal_param(params, "margin_target_max"),
+    )
+
+
 def _as_date(value: Any) -> dt.date:
     if isinstance(value, dt.datetime):
         return value.date()
@@ -428,5 +463,5 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
 
 
 __all__ = ["DEFAULT_MARKUP_KEYS", "FxResolver", "PRICE_KIND_PRIORITY", "Resolved", "ResolvedItem",
-           "default_markup", "draft_from_rows", "expense_target", "fx_override_reasons", "fx_overrides_from_row",
+           "default_markup", "draft_from_rows", "engine_input_from_rows", "expense_target", "fx_override_reasons", "fx_overrides_from_row",
            "load_parameters", "resolve_draft", "result_json"]
