@@ -7,7 +7,14 @@ serials. "Known" is everything that could already be on a customer's desk: every
 
 Minting takes a transaction-scoped advisory lock so two operators saving at once cannot be handed the
 same number; the lock is released when the caller's transaction ends, so the caller must insert the
-`crm.quote` row in that same transaction (the unique key on `quote_number` is the backstop).
+`crm.quote` row in that same transaction (the unique key on `quote_number` is the backstop). The caller's
+transaction must be READ COMMITTED (PostgreSQL's default): under REPEATABLE READ the snapshot predates the
+lock and would not see the quote the previous holder just committed.
+
+Mail-proposed numbers are a regex over attachment file names of every captured message, inbound too, so
+a supplier's "Proforma CN 90210.pdf" must not become our counter: a mail serial counts only when it is
+within `MAIL_SERIAL_MAX_AHEAD` of what the CRM and the seed already know. Serials stop at 99999 (the
+printed form has five digits).
 """
 from __future__ import annotations
 
@@ -23,6 +30,11 @@ from origenlab_api.v2.crm_workspace import MAIL_QUOTE_NUMBERS_SQL
 #: Serials never handed out.
 RESERVED_SERIALS = frozenset({1500})
 
+#: A serial seen only in mail counts when it is at most this far above the highest CRM serial or the seed.
+MAIL_SERIAL_MAX_AHEAD = 200
+MAX_SERIAL = 99999
+IGNORED_LISTED = 20
+
 SANTIAGO = ZoneInfo("America/Santiago")
 
 #: `01268-26`, `1268-26`, `01268A-26` — a serial of up to five digits, an optional revision letter,
@@ -33,6 +45,8 @@ _PRINTED = re.compile(r"^(\d{1,5})[A-Z]?-\d{2}$")
 _CN = re.compile(r"^CN\s?(\d{1,5})[A-Z]?$")
 
 _NOT_CONFIGURED = "Falta configurar la numeración de cotizaciones (parámetro quote_number_seed)."
+_BAD_SEED = _NOT_CONFIGURED + " (inicio inválido)"
+_EXHAUSTED = "La numeración llegó a 99999; configura un nuevo inicio."
 
 SEED_SQL = """
 select value_numeric from catalog.cost_parameter
@@ -105,16 +119,37 @@ def santiago_yy(now: datetime) -> int:
 def _seed(cur: Any) -> int | None:
     cur.execute(SEED_SQL)
     row = cur.fetchone()
-    return None if row is None else int(row[0])
+    if row is None:
+        return None
+    value = row[0]
+    if value != int(value) or not 1 <= int(value) <= MAX_SERIAL:
+        raise CommandRefused(409, "quote_numbering_not_configured", _BAD_SEED)
+    return int(value)
 
 
-def _known_serials(cur: Any) -> set[int]:
-    serials: set[int] = set()
+def _known_serials(cur: Any, seed: int | None) -> tuple[set[int], list[str]]:
+    """Every serial to avoid, and the mail numbers ignored for being far above everything else."""
+    crm: set[int] = set()
     cur.execute("select quote_number from crm.quote")
-    serials.update(s for (n,) in cur.fetchall() if (s := parse_serial(n)) is not None)
+    crm.update(s for (n,) in cur.fetchall() if (s := parse_serial(n)) is not None)
+    ceiling = max(seed or 0, max(crm, default=0)) + MAIL_SERIAL_MAX_AHEAD
+    mail: set[int] = set()
+    ignored: list[str] = []
     cur.execute(MAIL_QUOTE_NUMBERS_SQL)
-    serials.update(s for (n, *_rest) in cur.fetchall() if (s := parse_serial(n)) is not None)
-    return serials
+    for n, *_rest in cur.fetchall():
+        serial = parse_serial(n)
+        if serial is None:
+            continue
+        if serial <= ceiling:
+            mail.add(serial)
+        else:
+            ignored.append(str(n))
+    return crm | mail, ignored
+
+
+def _next(known: set[int], seed: int) -> int | None:
+    serial = next_serial(known, seed)
+    return serial if serial <= MAX_SERIAL else None
 
 
 def allocate_quote_number(cur: Any, now: datetime) -> str:
@@ -123,16 +158,22 @@ def allocate_quote_number(cur: Any, now: datetime) -> str:
     seed = _seed(cur)
     if seed is None:
         raise CommandRefused(409, "quote_numbering_not_configured", _NOT_CONFIGURED)
-    return format_number(next_serial(_known_serials(cur), seed), santiago_yy(now))
+    known, _ignored = _known_serials(cur, seed)
+    serial = _next(known, seed)
+    if serial is None:
+        raise CommandRefused(409, "quote_numbering_exhausted", _EXHAUSTED)
+    return format_number(serial, santiago_yy(now))
 
 
 def numbering_status(cur: Any, now: datetime) -> dict[str, Any]:
     """What the next number would be, without taking the lock or reserving anything."""
     seed = _seed(cur)
-    known = _known_serials(cur)
+    known, ignored = _known_serials(cur, seed)
+    serial = None if seed is None else _next(known, seed)
     return {
         "configured": seed is not None,
         "seed": seed,
-        "next_number": None if seed is None else format_number(next_serial(known, seed), santiago_yy(now)),
+        "next_number": None if serial is None else format_number(serial, santiago_yy(now)),
         "highest_known": max(known) if known else None,
+        "ignored_mail_numbers": ignored[:IGNORED_LISTED],
     }

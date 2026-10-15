@@ -130,7 +130,7 @@ def test_no_seed_refuses(db) -> None:
     assert (exc.value.status_code, exc.value.code) == (409, "quote_numbering_not_configured")
     with psycopg.connect(runtime_dsn(db)) as conn, conn.cursor() as cur:
         assert numbering_status(cur, NOW) == {"configured": False, "seed": None, "next_number": None,
-                                              "highest_known": None}
+                                              "highest_known": None, "ignored_mail_numbers": []}
 
 
 @needs_db
@@ -155,13 +155,52 @@ def test_an_existing_quote_and_the_reserved_serial_are_skipped(db) -> None:
 
 
 @needs_db
-def test_a_number_proposed_from_sent_mail_counts_as_known(db) -> None:
+def test_numbers_proposed_from_sent_mail_count_as_known(db) -> None:
     _seed(db, 1300)
-    _mail(db, ["01600-26", "not a number", "2026"])
-    assert _allocate(db) == "01601-26"
+    _mail(db, ["CN01350", "not a number", "2026"])  # the form the capture really produces
+    assert _allocate(db) == "01351-26"
+    _mail(db, ["01400-26"])
     with psycopg.connect(runtime_dsn(db)) as conn, conn.cursor() as cur:
-        assert numbering_status(cur, NOW) == {"configured": True, "seed": 1300, "next_number": "01601-26",
-                                              "highest_known": 1600}
+        assert numbering_status(cur, NOW) == {"configured": True, "seed": 1300, "next_number": "01401-26",
+                                              "highest_known": 1400, "ignored_mail_numbers": []}
+
+
+@needs_db
+def test_the_printed_form_in_mail_counts_too(db) -> None:
+    _seed(db, 1550)
+    _mail(db, ["01600-26"])
+    assert _allocate(db) == "01601-26"
+
+
+@needs_db
+def test_a_far_off_number_from_mail_is_ignored_and_listed(db) -> None:
+    _seed(db, 1300)
+    _mail(db, ["CN90210"])  # e.g. a supplier's file name
+    assert _allocate(db) == "01300-26"
+    with psycopg.connect(runtime_dsn(db)) as conn, conn.cursor() as cur:
+        status = numbering_status(cur, NOW)
+    assert status["ignored_mail_numbers"] == ["CN90210"] and status["next_number"] == "01300-26"
+
+
+@needs_db
+@pytest.mark.parametrize("seed", ["1300.5", "100000", "0"])
+def test_a_bad_seed_refuses(db, seed) -> None:
+    _seed(db, seed)
+    with pytest.raises(CommandRefused) as exc:
+        _allocate(db)
+    assert (exc.value.status_code, exc.value.code) == (409, "quote_numbering_not_configured")
+    assert exc.value.message.endswith("(inicio inválido)")
+
+
+@needs_db
+def test_running_past_99999_refuses(db) -> None:
+    _seed(db, 99998)
+    _quote(db, "99999-26")
+    with pytest.raises(CommandRefused) as exc:
+        _allocate(db)
+    assert (exc.value.status_code, exc.value.code) == (409, "quote_numbering_exhausted")
+    with psycopg.connect(runtime_dsn(db)) as conn, conn.cursor() as cur:
+        assert numbering_status(cur, NOW)["next_number"] is None
 
 
 @needs_db
