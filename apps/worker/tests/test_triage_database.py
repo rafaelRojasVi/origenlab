@@ -474,3 +474,27 @@ def test_an_email_a_person_removed_from_a_case_teaches_the_matcher_not_that_case
     with triage_conn(target) as conn:
         past = TriageDb(conn).past_decisions(f"otra@cli-q-{tag}.invalid")
     assert [(p.subject, p.opportunity_id, p.verdict) for p in past] == [("Consulta de plazo", oid, "rejected")]
+
+
+def test_the_memory_backfill_lists_business_mail_filed_on_an_open_case_oldest_first(dsn, target, mailbox_id) -> None:
+    tag = uuid.uuid4().hex[:6]
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-m-{tag}@example.test",))[0][0]
+    oid = owner_rows(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) "
+                          "values (%s, 'lead', %s) returning id::text", (f"Caso memoria {tag}", operator))[0][0]
+    store = Store()
+    ids = []
+    for n in range(2):
+        sid = source_record(dsn, capture(target, mailbox_id, store, f"mb-{tag}-{n}",
+                                         make_raw(subject=f"Solicitud de cotización {n}",
+                                                  date=f"Mon, 1{2 + n} Oct 2026 10:00:00 -0300",
+                                                  message_id=f"<{uuid.uuid4().hex}@cliente.invalid>")))
+        with triage_conn(target) as conn:
+            triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL))
+        owner_rows(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
+                        "linked_by_operator_id) values (%s, %s, 'mentions', %s) returning id", (oid, sid, operator))
+        ids.append(sid)
+    with triage_conn(target) as conn:
+        pending = TriageDb(conn).pending_memory_backfill(since_days=36500, limit=500)
+    assert [p for p in pending if p in ids] == ids  # both, the older first

@@ -860,25 +860,24 @@ select q.quote_number
  where q.opportunity_id = %s::uuid
 """
 
+#: Business mail (a HUMAN_CLASSES triage reading) filed on an open case that has no memory yet, oldest
+#: first, so each case's memory is written in the order its conversation happened. (2026-10-15: the
+#: first version filtered on case_match decisions the matcher never writes, and its `like 'triage:v%'`
+#: broke the placeholders — it never returned a row.)
 _MEMORY_BACKFILL_PENDING = """
-select distinct sr.id::text
+select sr.id::text
   from evidence.source_record sr
-  join evidence.assertion a on a.source_record_id = sr.id
-   and a.kind = 'message_triage' and a.value_norm = 'case_match:v1'
-   and a.value->>'decision' in ('linked', 'new_case_linked')
-  join evidence.assertion ao on ao.source_record_id = sr.id
-   and ao.kind = 'message_triage' and ao.value_norm like 'triage:v%'
-   and ao.value->>'class' = any(%(human_classes)s)
  where sr.kind = 'gmail_message'
    and sr.created_at > now() - make_interval(days => %(days)s)
-   and not exists (
-       select 1 from evidence.subject_memory sm
-        join crm.opportunity_evidence oe on oe.opportunity_id = sm.subject_id
-        where sm.subject_kind = 'opportunity'
-          and oe.source_record_id = sr.id
-          and oe.unlinked_at is null
-   )
- order by 1 desc
+   and exists (select 1 from evidence.assertion ao
+                where ao.source_record_id = sr.id and ao.kind = 'message_triage'
+                  and ao.value_norm ~ '^triage:v[0-9]+$' and ao.value->>'class' = any(%(human_classes)s))
+   and exists (select 1 from crm.opportunity_evidence oe
+                 join crm.opportunity o on o.id = oe.opportunity_id and o.closed_at is null
+                where oe.source_record_id = sr.id and oe.unlinked_at is null
+                  and not exists (select 1 from evidence.subject_memory sm
+                                   where sm.subject_kind = 'opportunity' and sm.subject_id = o.id))
+ order by coalesce(sr.payload->>'sent_at', sr.created_at::text), sr.id
  limit %(limit)s
 """
 
