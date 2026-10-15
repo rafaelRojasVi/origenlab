@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { fetchFx, fetchPipeline } from "../crmApi";
 import type { CrmSection, DatosTab } from "../crmRoute";
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
@@ -7,9 +7,8 @@ import { useResource, type ResourceState } from "../useResource";
 import { QuoteNumberBox } from "../QuoteNumberBox";
 import { WEEKDAYS, todayInSantiago } from "../marketing/calendar";
 import { TodayBody } from "./TodayBody";
-import { TriagePanel } from "./TriagePanel";
 import { HeroHeader } from "../HeroHeader";
-import { todayCounts } from "../today";
+import { paraTiCount } from "../today";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 
@@ -25,11 +24,19 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
   const [fx, reloadFx] = useResource(fetchFx);
   const [pipeline, reloadPipeline, refreshing] = useResource(fetchPipeline);
   const [people] = useResource(fetchPersonSuggestions);
+  // «M hechas»: items the operator cleared from «Para ti» in this browser session.
+  const [hechas, setHechas] = useState(0);
+  const onCleared = useCallback(() => setHechas((n) => n + 1), []);
+  const [forwardCount, setForwardCount] = useState(0);
+
+  const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
+  const paraTi = pipeline.kind === "ready" ? paraTiCount(pipeline.data.items, new Date(), me, forwardCount) : null;
+
   return (
     <div className="space-y-5">
       <HeroHeader
         name={session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? "") : ""}
-        counts={pipeline.kind === "ready" ? todayCounts(pipeline.data.items) : null}
+        counts={paraTi !== null ? { paraTi, hechas } : null}
       />
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => (
@@ -37,6 +44,8 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
             items={p.items}
             navigate={navigate}
             onChanged={reloadPipeline}
+            onCleared={onCleared}
+            onForwardCount={setForwardCount}
             refreshing={refreshing}
             people={people}
             aside={
@@ -45,7 +54,6 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
                 <FxSection state={fx} reload={reloadFx} />
               </>
             }
-            after={<TriagePanel cards={p.items} onCaseChanged={reloadPipeline} />}
           />
         )}
       </ResourceGate>

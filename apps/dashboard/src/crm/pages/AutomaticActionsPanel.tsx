@@ -1,10 +1,12 @@
 /**
  * Hoy · «Hecho automáticamente» (owner, 2026-10-14: the system acts by itself, a person removes what
- * is wrong). What the automatic email rules did in the last two days: the requests they opened (a
- * client asking for a price, a forwarded request) and the emails they filed on a case (by thread or
- * by the quote number they name — a payment notice on its won case). Each row says why, opens the
- * case, and «Quitar» undoes it (sales or admin): a wrong request is closed as a correction, a wrong
- * filing is unlinked. Nothing renders when the system did nothing.
+ * is wrong). Only what is news: the requests the automatic email rules opened and the emails they
+ * filed on a case by a quote number, a forward or the context matcher — not a reply filed on a thread
+ * already in a case (R1), which is the conversation going on and never needed a person (owner,
+ * 2026-10-15: «that's so much»). Emails filed on one case by one rule are one row («3 correos
+ * archivados»); five rows show, the rest behind «Ver N más». Each row says why, opens the case, and
+ * «Quitar» undoes it — every email of a grouped row (sales or admin). Nothing renders when there is
+ * no news.
  */
 import { useCallback, useState } from "react";
 import { fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";
@@ -26,6 +28,38 @@ export interface AutomaticAction {
   what: string | null;
 }
 
+/** Rules whose filings are routine — a reply on a thread already in a case — and stay off Hoy. */
+const ROUTINE_RULES = new Set(["R1"]);
+const ROWS_SHOWN = 5;
+
+interface Row {
+  key: string;
+  items: AutomaticAction[];
+}
+
+/** One row per opened request; one row per (case, rule) for the emails filed there. Newest first. */
+export function newsRows(items: AutomaticAction[]): Row[] {
+  const rows: Row[] = [];
+  const filed = new Map<string, Row>();
+  for (const it of items) {
+    if (ROUTINE_RULES.has(it.rule_id ?? "")) continue;
+    if (it.kind === "filed" && it.case_id) {
+      const key = `${it.case_id}|${it.rule_id}`;
+      const row = filed.get(key);
+      if (row) {
+        row.items.push(it);
+        continue;
+      }
+      const fresh = { key, items: [it] };
+      filed.set(key, fresh);
+      rows.push(fresh);
+    } else {
+      rows.push({ key: it.receipt_id, items: [it] });
+    }
+  }
+  return rows;
+}
+
 const fetchAutomatic = () =>
   fetchJsonGet<{ items: AutomaticAction[] }>(operatorApiUrl("/v2/workspace/automatic-actions"));
 
@@ -35,48 +69,66 @@ export function AutomaticActionsPanel({ navigate, onChanged }: { navigate: Navig
   const load = useCallback(fetchAutomatic, []);
   const [state, reload] = useResource(load, [load]);
   const [gone, setGone] = useState<Set<string>>(new Set());
+  const [all, setAll] = useState(false);
   const mayDecide = useMayRunCaseCommands();
   if (state.kind !== "ready" || !Array.isArray(state.data?.items)) return null;
-  const items = state.data.items.filter((i) => !gone.has(i.receipt_id));
-  if (items.length === 0) return null;
-  const opened = items.filter((i) => i.kind === "opened").length;
-  const filed = items.length - opened;
+  const rows = newsRows(state.data.items.filter((i) => !gone.has(i.receipt_id)));
+  if (rows.length === 0) return null;
+  const opened = rows.filter((r) => r.items[0].kind === "opened").length;
+  const filed = rows.reduce((n, r) => n + (r.items[0].kind === "filed" ? r.items.length : 0), 0);
   const summary = [
     opened ? `${opened} ${opened === 1 ? "solicitud abierta" : "solicitudes abiertas"}` : null,
     filed ? `${filed} ${filed === 1 ? "correo archivado en su caso" : "correos archivados en su caso"}` : null,
   ].filter(Boolean).join(" y ");
+  const shown = all ? rows : rows.slice(0, ROWS_SHOWN);
   return (
     <Panel
       title="Hecho automáticamente"
-      aside={<Badge tone="info" glyph={false}>{items.length}</Badge>}
+      aside={<Badge tone="info" glyph={false}>{rows.length}</Badge>}
       bodyClassName="divide-y divide-line"
     >
       <p className="px-4 pt-2 text-[11px] text-ink-muted">
         {summary} en los últimos dos días. Si algo no corresponde, «Quitar» lo deshace.
       </p>
-      {items.map((it) => (
-        <AutomaticRow key={it.receipt_id} item={it} mayDecide={mayDecide} navigate={navigate}
-          onRemoved={() => { setGone((g) => new Set(g).add(it.receipt_id)); onChanged(); reload(); }} />
+      {shown.map((row) => (
+        <AutomaticRow key={row.key} items={row.items} mayDecide={mayDecide} navigate={navigate}
+          onRemoved={() => {
+            setGone((g) => new Set([...g, ...row.items.map((i) => i.receipt_id)]));
+            onChanged();
+            reload();
+          }} />
       ))}
+      {rows.length > ROWS_SHOWN ? (
+        <div className="px-4 py-2">
+          <button type="button" onClick={() => setAll(!all)} aria-expanded={all}
+                  className="text-xs font-medium text-brand-700 hover:underline">
+            {all ? "Ver menos" : `Ver ${rows.length - ROWS_SHOWN} más`}
+          </button>
+        </div>
+      ) : null}
     </Panel>
   );
 }
 
-function AutomaticRow({ item, mayDecide, navigate, onRemoved }: {
-  item: AutomaticAction;
+function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
+  items: AutomaticAction[];
   mayDecide: boolean;
   navigate: Navigate;
   onRemoved: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [key] = useState(newCaseCommandKey);
+  const [keys] = useState(() => new Map(items.map((i) => [i.receipt_id, newCaseCommandKey()])));
+  const item = items[0];
   const opened = item.kind === "opened";
+  const many = items.length > 1;
 
   async function remove() {
     setBusy(true);
     try {
-      await removeAutomaticAction({ receipt_id: item.receipt_id }, key);
-      toast(opened ? "Solicitud quitada." : "Correo quitado del caso.");
+      for (const it of items) {
+        await removeAutomaticAction({ receipt_id: it.receipt_id }, keys.get(it.receipt_id) ?? newCaseCommandKey());
+      }
+      toast(opened ? "Solicitud quitada." : many ? "Correos quitados del caso." : "Correo quitado del caso.");
       onRemoved();
     } catch (err) {
       toast(caseRefusalText(err), "bad");
@@ -85,12 +137,16 @@ function AutomaticRow({ item, mayDecide, navigate, onRemoved }: {
     }
   }
 
+  const label = opened ? "Solicitud abierta" : many ? `${items.length} correos archivados` : "Archivado en el caso";
   return (
     <div data-testid="automatic-row" className="flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2.5">
       <div className="min-w-[12rem] flex-1">
         <p className="flex flex-wrap items-center gap-x-2 text-[13px] font-medium text-ink">
-          <Badge tone={opened ? "good" : "neutral"} glyph={false}>{opened ? "Solicitud abierta" : "Archivado en el caso"}</Badge>
-          <span className="truncate">{item.what ?? item.case_title ?? "Correo"}</span>
+          <Badge tone={opened ? "good" : "neutral"} glyph={false}>{label}</Badge>
+          <span className="truncate" title={many ? items.map((i) => i.what).join(" · ") : undefined}>
+            {item.what ?? item.case_title ?? "Correo"}
+            {many ? <span className="font-normal text-ink-muted"> y {items.length - 1} más</span> : null}
+          </span>
         </p>
         <p className="mt-0.5 text-[11px] text-ink-muted">
           {item.case_title ? <>{opened ? "Caso" : "En"} «{item.case_title}» · </> : null}
