@@ -36,6 +36,7 @@ export const CASE_COMMAND_PATHS = {
   completeFromSentQuote: "/v2/commands/complete-case-from-sent-quote",
   createRequestFromForward: "/v2/commands/create-request-from-forward",
   dismissForwardedRequest: "/v2/commands/dismiss-forwarded-request",
+  removeAutomaticAction: "/v2/commands/remove-automatic-action",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -319,6 +320,10 @@ export const createRequestFromForward = (body: CreateRequestFromForwardBody, ide
 export const dismissForwardedRequest = (body: { forwarded_request_id: string; note: string },
                                         idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.dismissForwardedRequest, body, idempotencyKey);
+
+/** «Quitar» on Hoy: undo one action the automatic email rules took (sales or admin). */
+export const removeAutomaticAction = (body: { receipt_id: string }, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.removeAutomaticAction, body, idempotencyKey);
 
 export interface ResolveCurrentRevisionBody {
   opportunity_id: string;

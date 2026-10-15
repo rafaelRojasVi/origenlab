@@ -157,3 +157,31 @@ def set_auto_mail_rules(
         return auto.set_enabled(operator, body.enabled, body.note, key)
     except CommandRefused as exc:
         raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
+
+
+class RemoveAutomaticActionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: Annotated[str, Field(min_length=36, max_length=36)]
+
+
+@mail_rules_preview_router.get("/automatic-actions")
+def automatic_actions(_: Operator, repo: Repo) -> dict[str, Any]:
+    """«Hecho automáticamente» on Hoy: what the automatic run did in the last two days, not undone."""
+    return {"items": repo.recent_automatic(hours=48)}
+
+
+@mail_rules_command_router.post("/remove-automatic-action")
+def remove_automatic_action(
+    body: RemoveAutomaticActionBody,
+    operator: Deciding,
+    repo: Repo,
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """«Quitar» (sales or admin): undo one action the automatic run took (owner, 2026-10-14: the
+    system acts, a person removes what is wrong). A person's «Aplicar» is not removed here."""
+    try:
+        require_idempotency_key(idempotency_key)
+        return repo.remove_automatic(operator, body.receipt_id)
+    except CommandRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc

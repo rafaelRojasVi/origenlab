@@ -2782,3 +2782,21 @@ password), reads the bank's Latin-1 replies, and has the euro series by default
 was loaded into hosted `catalog.fx_rate` from the BDE on 14 Oct (provider `bde`, new rows only),
 after mindicador answered 15 of 43 needed days; every quote of the model checked now has its
 margin (§2.7.115). The token on Render is an owner step (`docs/OPERATIONS.md` §14.1).
+
+### 2.7.117 Hoy acts by itself: forwards, body quote numbers, AI-read requests, «Quitar», 2026-10-14 — built, deploys on merge
+
+Owner, 2026-10-14: Hoy was «super messy»; the system should act and a person remove what is wrong.
+Worker: the triage stores the quote numbers of the sender's own text as `message_triage`
+`quote_refs:v1` (tokens only; a phone-shaped «2299-1234» refused by year), and `quote-refs-backfill`
+reads past mail (dry run by default). Rules (`mail_rules.py`, DOMAIN.md «Who acts»): R2 files by a
+body number and keeps a won case's later mail without reopening it; R7 opens a request on the AI
+reading's `quote_request` and never on a supplier's offer; **R11** joins a forwarded request to its
+customer's open case or opens one; the timer now runs R1, R2, R7, R9, R11. API:
+`GET /v2/workspace/automatic-actions` and `POST /v2/commands/remove-automatic-action` (sales or
+admin, automatic actions only), both on the proxy allowlist. Hoy: «Te toca responder», «Hecho
+automáticamente» (Abrir caso · Quitar), the forwards still waiting, due tasks, and «Más» folded
+(follow-ups, emails with no case, people, cases to decide, institutions, blocked). No schema change.
+Hosted the same day, through the CRM commands: `ohaus.com`, `soviquim.cl` and `hielscher.com` added
+to OHAUS, Soviquim and Hielscher Ultrasonics (the last also classified `manufacturer`), so their
+mail is supplier mail. Dry run on hosted before merge: 7 automatic actions (3 bank-transfer emails
+filed on their won case, 4 forwards placed), 8 supplier offers no longer opening a request.

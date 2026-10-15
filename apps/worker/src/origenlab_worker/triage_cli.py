@@ -51,6 +51,7 @@ from origenlab_worker.triage import (
     SweepCounts,
     TriageDb,
     backfill_forwards,
+    backfill_quote_refs,
     triage_one,
 )
 from origenlab_worker.triage_model import DEFAULT_MODEL, anthropic_reader
@@ -158,7 +159,22 @@ def run_triage_once(args: Any, env: Mapping[str, str], started: float, *,
 def run_forward_backfill(args: Any, env: Mapping[str, str], started: float, *,
                          open_connection: OpenConnection = _open_triage_connection,
                          store_factory: Callable[[StorageConfig], Any] | None = None) -> int:
-    line: dict[str, Any] = {"event": "forward_backfill", "mode": "apply" if args.apply else "dry_run",
+    return _run_backfill("forward_backfill", "pending_forwards", backfill_forwards, args, env, started,
+                         open_connection=open_connection, store_factory=store_factory)
+
+
+def run_quote_refs_backfill(args: Any, env: Mapping[str, str], started: float, *,
+                            open_connection: OpenConnection = _open_triage_connection,
+                            store_factory: Callable[[StorageConfig], Any] | None = None) -> int:
+    """Past emails read for the quote numbers their body names (`quote_refs:v1`); dry run by default."""
+    return _run_backfill("quote_refs_backfill", "pending_quote_refs", backfill_quote_refs, args, env, started,
+                         open_connection=open_connection, store_factory=store_factory)
+
+
+def _run_backfill(event: str, pending: str, backfill: Callable[..., dict[str, int]], args: Any,
+                  env: Mapping[str, str], started: float, *, open_connection: OpenConnection,
+                  store_factory: Callable[[StorageConfig], Any] | None) -> int:
+    line: dict[str, Any] = {"event": event, "mode": "apply" if args.apply else "dry_run",
                             "exit": EXIT_OK, "error": None}
     try:
         storage = StorageConfig.from_env(env)
@@ -169,8 +185,8 @@ def run_forward_backfill(args: Any, env: Mapping[str, str], started: float, *,
         limit = max(1, min(int(args.limit), 2000))
         with open_connection(database) as conn:
             db = TriageDb(conn)
-            line.update(backfill_forwards(db, store, db.pending_forwards(since_days=since, limit=limit),
-                                          apply=bool(args.apply)))
+            line.update(backfill(db, store, getattr(db, pending)(since_days=since, limit=limit),
+                                 apply=bool(args.apply)))
     except ConfigRefused as exc:
         line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
     except Exception as exc:  # noqa: BLE001 — the class, never the text

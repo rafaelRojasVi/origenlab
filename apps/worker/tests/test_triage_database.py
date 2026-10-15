@@ -125,6 +125,7 @@ def test_a_captured_request_is_pending_then_recorded_once(dsn, target, mailbox_i
         (sid,),
     )
     assert rows == [
+        ("message_triage", "quote_refs:v1", "unresolved", None, None, None),
         ("message_triage", REQUESTER_VALUE_NORM, "unresolved", None, None, "none"),
         ("message_triage", VALUE_NORM, "unresolved", "quote_request", "off", None),
     ]
@@ -312,3 +313,37 @@ def test_a_captured_forward_is_read_for_who_asked_by_the_triage_and_the_backfill
     assert (kind, status) == ("forwarded_request", "pending")
     assert payload["original_email"] == "pedro@universidad-ficticia.cl" and payload["origin"] == "origenlab"
     assert payload["forwarded_message_id"] == sid and payload["reading"] == FORWARDED_VALUE_NORM
+
+
+def test_quote_numbers_in_the_body_are_stored_as_tokens_and_the_backfill_reads_older_mail(dsn, target, mailbox_id) -> None:
+    from origenlab_worker.quote_refs import QUOTE_REFS_VALUE_NORM
+    from origenlab_worker.triage import backfill_quote_refs
+
+    def inbound(body: str) -> bytes:
+        msg = EmailMessage()
+        msg["From"] = "Pagos <pagos@empresa-ficticia.cl>"
+        msg["To"] = MAILBOX
+        msg["Subject"] = "Aviso de transferencia"
+        msg["Message-ID"] = f"<{uuid.uuid4().hex}@empresa-ficticia.invalid>"
+        msg.set_content(body)
+        return msg.as_bytes()
+
+    store = Store()
+    fresh = source_record(dsn, capture(target, mailbox_id, store, f"qr-{uuid.uuid4().hex[:8]}",
+                                       inbound("Transferencia por cotización N°09259-26.")))
+    older = source_record(dsn, capture(target, mailbox_id, store, f"qr-{uuid.uuid4().hex[:8]}",
+                                       inbound("Pago de la CN09262, saludos.")))
+    with triage_conn(target) as conn:
+        db = TriageDb(conn)
+        triage_one(db, store, fresh, ModelSettings(None, DEFAULT_MODEL))
+        # `older` stands for mail triaged before this reading existed: only the backfill reads it.
+        assert older in db.pending_quote_refs(since_days=36500, limit=500)
+        assert backfill_quote_refs(db, store, [older], apply=False) == {"found": 1, "with_numbers": 1, "recorded": 0,
+                                                                         "skipped": 0}
+        assert backfill_quote_refs(db, store, [older], apply=True)["recorded"] == 1
+        assert older not in db.pending_quote_refs(since_days=36500, limit=500)
+    rows = dict(owner_rows(dsn, "select source_record_id::text, value from evidence.assertion "
+                                "where kind = 'message_triage' and value_norm = %s and source_record_id = any(%s::uuid[])",
+                           (QUOTE_REFS_VALUE_NORM, [fresh, older])))
+    assert rows[fresh] == {"version": 1, "tokens": ["09259-26"]}
+    assert rows[older] == {"version": 1, "tokens": ["CN09262"]}

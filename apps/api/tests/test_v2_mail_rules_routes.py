@@ -47,6 +47,14 @@ class _FakeRepo:
         self.calls.append(("undo", receipt_id, note))
         return {"undoes_receipt_id": receipt_id}
 
+    def recent_automatic(self, hours=48):
+        self.calls.append(("recent", hours))
+        return [{"receipt_id": RECEIPT, "rule_id": "R11", "kind": "opened"}]
+
+    def remove_automatic(self, operator, receipt_id):
+        self.calls.append(("remove", operator.role, receipt_id))
+        return {"undoes_receipt_id": receipt_id}
+
 
 class _FakeAuto:
     def __init__(self):
@@ -151,3 +159,28 @@ def test_preview_mounts_with_v2_and_apply_only_with_commands(monkeypatch) -> Non
     paths = set(app.openapi()["paths"])
     assert {PREVIEW, APPLY, UNDO, SWITCH} <= paths
     assert app.state.auto_mail_rules.interval_seconds == 300
+
+
+AUTOMATIC = "/v2/workspace/automatic-actions"
+REMOVE = "/v2/commands/remove-automatic-action"
+
+
+@pytest.mark.parametrize("role", ["sales", "admin", "viewer"])
+def test_every_profile_sees_what_the_system_did_by_itself(role) -> None:
+    repo = _FakeRepo()
+    body = _client(repo, role).get(AUTOMATIC, headers=HEADERS).json()
+    assert body["items"][0]["rule_id"] == "R11" and repo.calls == [("recent", 48)]
+
+
+@pytest.mark.parametrize("role", ["sales", "admin"])
+def test_sales_and_admin_remove_an_automatic_action_with_one_click(role) -> None:
+    repo = _FakeRepo()
+    r = _client(repo, role).post(REMOVE, json={"receipt_id": RECEIPT}, headers=KEY)
+    assert r.status_code == 200 and repo.calls == [("remove", role, RECEIPT)]
+
+
+def test_a_viewer_cannot_remove_and_a_key_is_required() -> None:
+    repo = _FakeRepo()
+    assert _client(repo, "viewer").post(REMOVE, json={"receipt_id": RECEIPT}, headers=KEY).status_code == 403
+    assert _client(repo, "sales").post(REMOVE, json={"receipt_id": RECEIPT}, headers=HEADERS).status_code in (400, 422, 428)
+    assert repo.calls == []

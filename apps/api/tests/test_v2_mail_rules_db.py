@@ -648,7 +648,7 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     assert unchanged.value.code == "auto_mail_rules_unchanged"
     state = auto.state()
     assert (state["enabled"], state["changed_by"], state["note"], state["rules"]) == (
-        True, "Admin Ficticio", "probado en vista previa", ["R1", "R2", "R7", "R9"])
+        True, "Admin Ficticio", "probado en vista previa", ["R1", "R11", "R2", "R7", "R9"])
 
     # One pass: R1/R2 link and R7 opens the RFQ lead; R4 still waits for a person.
     result = auto.run_once()
@@ -698,3 +698,133 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     assert _one(db, "select operator_id::text from platform.command_receipt "
                     "where command_name = 'apply_mail_rule' and response_body ->> 'evidence_id' = %s", later)[0] == other
     auto.set_enabled(_operator(other), False, "fin de la prueba", f"auto-off2-{world['tag']}")
+
+
+def _reading(conn, source_record_id, value_norm, value):
+    conn.execute("insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+                 "values (%s, 'message_triage', %s, %s::jsonb)", (source_record_id, value_norm, json.dumps(value)))
+
+
+def test_a_payment_notice_naming_the_quote_in_its_body_is_filed_on_the_won_case_and_undoes(db, world) -> None:
+    repo = _repo(db)
+    op = _operator(world["admin"])
+    case_id = _apply_only(db, world, world["e_known"])["case_id"]
+    with _owner(db) as conn:
+        order = _mail(conn, thread=world["t1"], direction_hint=None, sender=f"compras@{world['client_domain']}",
+                      recipients="contacto@origenlab.cl", subject="Orden de compra", documents=[_doc("OC 4500123.pdf")])
+    _apply_only(db, world, order)
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id) == ("won",)
+
+    with _owner(db) as conn:
+        notice = _mail(conn, thread=f"thread-pay-{world['tag']}", direction_hint=None,
+                       sender="transferencias@banco-ficticio.test", recipients="contacto@origenlab.cl",
+                       subject="Aviso de transferencia de fondos")
+        _reading(conn, notice, "quote_refs:v1", {"version": 1, "tokens": [world["number"]]})
+    filed = _apply_only(db, world, notice)
+    assert (filed["rule_id"], filed["case_id"]) == ("R2", case_id)
+    assert _one(db, "select stage, closed_at is not null from crm.opportunity where id = %s", case_id) == ("won", True)
+    assert _one(db, "select count(*) from crm.opportunity_evidence where opportunity_id = %s and source_record_id = %s "
+                    "and unlinked_at is null", case_id, notice) == (1,)
+
+    repo.undo(op, filed["command_receipt_id"], "no era de este caso")
+    assert _one(db, "select unlinked_at is not null from crm.opportunity_evidence "
+                    "where opportunity_id = %s and source_record_id = %s", case_id, notice) == (True,)
+
+
+def test_the_ai_reading_opens_a_request_whose_subject_has_no_quote_word(db, world) -> None:
+    with _owner(db) as conn:
+        ask = _mail(conn, thread=f"thread-ai-{world['tag']}", direction_hint=None,
+                    sender=f"ana@laboratorio-{world['tag']}.test", recipients="contacto@origenlab.cl",
+                    subject="Consulta por equipos")
+        _requester_check(conn, ask)
+        _reading(conn, ask, "triage:v3", {"class": "business_other", "reading": {"intent": "quote_request"}})
+    opened = _apply_only(db, world, ask)
+    assert opened["rule_id"] == "R7"
+    assert any("IA" in r for r in opened["reasons"])
+    assert _one(db, "select stage from crm.opportunity where id = %s", opened["case_id"]) == ("lead",)
+
+
+def _forward(conn, email, *, origin="origenlab", company=None, item="Gradillas"):
+    """A request forwarded to contacto@: our copy (a gmail_message record) and the worker's reading."""
+    gid = uuid.uuid4().hex[:12]
+    mid = conn.execute("insert into evidence.source_record (kind, dedupe_key, payload) values ('gmail_message', %s, "
+                       "%s::jsonb) returning id::text",
+                       (f"gmail_message:fw-{gid}", json.dumps({"gmail_message_id": gid,
+                                                                "sent_at": "2026-10-13T12:00:00+00:00"}))).fetchone()[0]
+    payload = {"original_email": email, "original_name": "Ana Ficticia", "company": company, "requested_item": item,
+               "origin": origin, "subject": f"Fwd: {item}", "forwarded_message_id": mid, "reading": "forwarded:v1"}
+    fid = conn.execute("insert into evidence.source_record (kind, dedupe_key, payload) values ('forwarded_request', %s, "
+                       "%s::jsonb) returning id::text", (f"forwarded_request:{mid}", json.dumps(payload))).fetchone()[0]
+    return fid, mid
+
+
+def test_r11_a_new_customers_forward_becomes_a_request_and_quitar_removes_it(db, world) -> None:
+    repo = _repo(db)
+    with _owner(db) as conn:
+        fid, mid = _forward(conn, f"ana@nuevo-{world['tag']}.test", company=f"Laboratorio Nuevo {world['tag']}")
+    opened = _apply_only(db, world, fid)
+    assert opened["rule_id"] == "R11"
+    case_id = opened["case_id"]
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id) == ("lead",)
+    assert _one(db, "select review_status from evidence.source_record where id = %s", fid) == ("promoted",)
+    assert _one(db, "select count(*) from crm.opportunity_evidence where opportunity_id = %s and source_record_id = %s",
+                case_id, mid) == (1,)
+
+    repo.undo(_operator(world["admin"]), opened["command_receipt_id"], "no era una solicitud")
+    assert _one(db, "select stage, close_reason from crm.opportunity where id = %s", case_id) == (
+        "abandoned", "discarded_by_correction")
+    assert _one(db, "select review_status from evidence.source_record where id = %s", fid) == ("rejected",)
+    assert not any(a["evidence_id"] == fid for a in repo.preview()["actions"])
+
+
+def test_r11_a_forward_from_a_customer_already_on_a_case_joins_it_and_quitar_hands_it_back(db, world) -> None:
+    repo = _repo(db)
+    case_id = _apply_only(db, world, world["e_known"])["case_id"]
+    with _owner(db) as conn:
+        reply = _mail(conn, thread=world["t1"], direction_hint=None, sender=f"Compras <compras@{world['client_domain']}>",
+                      recipients="contacto@origenlab.cl", subject="RE: Cotización")
+    _apply_only(db, world, reply)
+    with _owner(db) as conn:
+        fid, mid = _forward(conn, f"compras@{world['client_domain']}")
+        lab, lab_mid = _forward(conn, f"compras@{world['client_domain']}", origin="labdelivery")
+    joined = _apply_only(db, world, fid)
+    assert (joined["rule_id"], joined["case_id"]) == ("R11", case_id)
+    assert _one(db, "select count(*) from crm.opportunity_evidence where opportunity_id = %s and source_record_id = %s "
+                    "and unlinked_at is null", case_id, mid) == (1,)
+    # Its Labdelivery-mailbox copy is the same request: handled with it, and never linked.
+    assert _one(db, "select review_status from evidence.source_record where id = %s", lab) == ("promoted",)
+    assert _one(db, "select count(*) from crm.opportunity_evidence where source_record_id = %s", lab_mid) == (0,)
+
+    repo.undo(_operator(world["admin"]), joined["command_receipt_id"], "era otra solicitud")
+    assert _one(db, "select unlinked_at is not null from crm.opportunity_evidence "
+                    "where opportunity_id = %s and source_record_id = %s", case_id, mid) == (True,)
+    assert _one(db, "select review_status from evidence.source_record where id = %s", fid) == ("pending",)
+
+
+def test_hoy_lists_the_automatic_actions_and_sales_removes_only_those(db, world) -> None:
+    from origenlab_api.v2.commands import CommandRefused
+
+    repo = _repo(db)
+    with _owner(db) as conn:
+        fid, _ = _forward(conn, f"luis@otro-{world['tag']}.test", item="Pipetas")
+        seller = conn.execute(
+            "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+            "values (gen_random_uuid(), %s, 'Vendedora', 'sales', 'active') returning id::text",
+            (f"v-{world['tag']}@example.test",)).fetchone()[0]
+    actions, _display, _snapshot = repo.plan()
+    action = next(a for a in actions if a.evidence_id == fid)
+    auto = repo.apply_planned(_operator(world["admin"]), action, automatic=True)
+    manual = _apply_only(db, world, world["e_known"])  # «Aplicar» by an admin: not removable from Hoy
+
+    listed = {i["receipt_id"]: i for i in repo.recent_automatic(hours=48)}
+    assert auto["command_receipt_id"] in listed and manual["command_receipt_id"] not in listed
+    item = listed[auto["command_receipt_id"]]
+    assert (item["rule_id"], item["kind"], item["case_id"]) == ("R11", "opened", auto["case_id"])
+    assert "Pipetas" in item["what"]
+
+    with pytest.raises(CommandRefused) as refused:
+        repo.remove_automatic(_operator(seller, "sales"), manual["command_receipt_id"])
+    assert refused.value.code == "not_automatic"
+    repo.remove_automatic(_operator(seller, "sales"), auto["command_receipt_id"])
+    assert _one(db, "select stage from crm.opportunity where id = %s", auto["case_id"]) == ("abandoned",)
+    assert auto["command_receipt_id"] not in {i["receipt_id"] for i in repo.recent_automatic(hours=48)}

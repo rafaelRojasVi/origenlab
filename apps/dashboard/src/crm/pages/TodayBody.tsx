@@ -57,6 +57,7 @@ import { Badge, Button, Modal, Panel, fmtDate, toast } from "../ui";
 import { type ResourceState } from "../useResource";
 import { useLeave } from "../useLeave";
 import { CaseMoveForm } from "./CaseMove";
+import { AutomaticActionsPanel } from "./AutomaticActionsPanel";
 import { ForwardedRequestsPanel } from "./ForwardedRequestsPanel";
 
 type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
@@ -125,46 +126,49 @@ export function TodayBody({
     <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
-          {/* Three lists and the new mail (owner decision 2026-10-10): who wrote, who to chase, what
-              is due — then the emails no case holds. Everything else sits in the side column. */}
+          {/* Owner, 2026-10-14 («this is getting super messy»): what needs a person first — who wrote,
+              what the system did by itself (with «Quitar»), what is still waiting — and everything
+              else folded under «Más». */}
           <RepliesPanel replies={replies} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
-          {/* Requests Tatiana forwarded from another mailbox (spec 2026-10-14); renders nothing when none wait. */}
+          <AutomaticActionsPanel navigate={navigate} onChanged={onChanged} />
+          {/* Forwards the automatic run handed back or could not place; renders nothing when none wait. */}
           <ForwardedRequestsPanel navigate={navigate} onChanged={onChanged} />
-          <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
           <TasksPanel overdue={overdue} tasks={tasks} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} now={at} />
-          {after}
-        </div>
-        <aside className="min-w-0 space-y-4 lg:sticky lg:top-4 lg:self-start">
-          {aside}
-          <PeopleCount state={people} navigate={navigate} />
-          {historical > 0 ? (
-            <section className="crm-rise rounded-xl border border-info/30 bg-info-bg/40 p-4" data-testid="today-historical">
-              <h2 className="text-[14px] font-semibold text-ink">
-                {historical} {historical === 1 ? "caso" : "casos"} por decidir
-              </h2>
-              <p className="mt-1 text-xs leading-5 text-ink-muted">
-                Siguen «sin decidir»: nadie ha dicho si siguen vivos. Cada uno trae una propuesta a partir del correo.
-              </p>
-              <Button className="mt-3" variant="primary" onClick={() => navigate("oportunidades")}>
-                Decidirlos en Oportunidades
-              </Button>
-            </section>
-          ) : null}
-          <OrgsPanel orgs={orgs} navigate={navigate} mayAuthor={mayAuthor} onChanged={onChanged} />
-          {blocked.length > 0 ? (
-            <Panel title="Bloqueados" aside={<Badge tone="bad" glyph={false}>{blocked.length}</Badge>} bodyClassName="divide-y divide-line">
-              {blocked.map((c) => (
-                <div key={c.opportunity_id} className="flex items-center gap-2 px-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <CaseLink card={c} navigate={navigate} />
-                    <span className="block truncate text-[11px] text-bad">{c.attention.find((a) => a.blocking)?.label}</span>
+          <MoreSection count={followUps.length + orgs.length + blocked.length + historical}>
+            <FollowUpsPanel followUps={followUps} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClose={setClosing} now={at} />
+            {after}
+            <PeopleCount state={people} navigate={navigate} />
+            {historical > 0 ? (
+              <section className="crm-rise rounded-xl border border-info/30 bg-info-bg/40 p-4" data-testid="today-historical">
+                <h2 className="text-[14px] font-semibold text-ink">
+                  {historical} {historical === 1 ? "caso" : "casos"} por decidir
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-ink-muted">
+                  Siguen «sin decidir»: nadie ha dicho si siguen vivos. Cada uno trae una propuesta a partir del correo.
+                </p>
+                <Button className="mt-3" variant="primary" onClick={() => navigate("oportunidades")}>
+                  Decidirlos en Oportunidades
+                </Button>
+              </section>
+            ) : null}
+            <OrgsPanel orgs={orgs} navigate={navigate} mayAuthor={mayAuthor} onChanged={onChanged} />
+            {blocked.length > 0 ? (
+              <Panel title="Bloqueados" aside={<Badge tone="bad" glyph={false}>{blocked.length}</Badge>} bodyClassName="divide-y divide-line">
+                {blocked.map((c) => (
+                  <div key={c.opportunity_id} className="flex items-center gap-2 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <CaseLink card={c} navigate={navigate} />
+                      <span className="block truncate text-[11px] text-bad">{c.attention.find((a) => a.blocking)?.label}</span>
+                    </div>
+                    <Button onClick={() => navigate("oportunidades", c.opportunity_id)}>Resolver</Button>
                   </div>
-                  <Button onClick={() => navigate("oportunidades", c.opportunity_id)}>Resolver</Button>
-                </div>
-              ))}
-            </Panel>
-          ) : null}
-        </aside>
+                ))}
+              </Panel>
+            ) : null}
+          </MoreSection>
+        </div>
+        {/* Tools at hand, not tasks: the next quote number and the day's exchange rates. */}
+        <aside className="min-w-0 space-y-4 lg:sticky lg:top-4 lg:self-start">{aside}</aside>
       </div>
 
       {closing ? (
@@ -929,6 +933,45 @@ function FollowUpMenu({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────── «Más» ── */
+
+const MORE_OPEN_KEY = "origenlab.hoy.more-open";
+
+/** Folded by default; remembers being opened on this browser. */
+function MoreSection({ count, children }: { count: number; children: ReactNode }) {
+  const [open, setOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem(MORE_OPEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  return (
+    <details
+      open={open}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        setOpen(now);
+        try {
+          window.localStorage.setItem(MORE_OPEN_KEY, now ? "1" : "0");
+        } catch {
+          /* private mode: the fold simply is not remembered */
+        }
+      }}
+      data-testid="today-more"
+      className="group rounded-xl border border-line bg-canvas-raised"
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] font-semibold text-ink [&::-webkit-details-marker]:hidden">
+        <span aria-hidden="true" className="text-ink-faint transition-transform group-open:rotate-90">▸</span>
+        Más
+        <span className="font-normal text-ink-muted">· seguimientos, correos sin caso, instituciones por confirmar</span>
+        {count > 0 ? <Badge tone="neutral" glyph={false}>{count}</Badge> : null}
+      </summary>
+      <div className="space-y-4 border-t border-line p-3">{children}</div>
+    </details>
   );
 }
 

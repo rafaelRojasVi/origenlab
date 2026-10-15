@@ -71,7 +71,12 @@ from origenlab_worker.quote_reader import (
 )
 from origenlab_worker.storage import S3EmlStore, StorageConfig
 from origenlab_worker.triage import DEFAULT_SINCE_DAYS
-from origenlab_worker.triage_cli import run_forward_backfill, run_triage_once, run_triage_worker
+from origenlab_worker.triage_cli import (
+    run_forward_backfill,
+    run_quote_refs_backfill,
+    run_triage_once,
+    run_triage_worker,
+)
 
 ENV_DATABASE_URL = "ORIGENLAB_WORKER_DATABASE_URL"
 ENV_EXPECTED_HOST = "ORIGENLAB_WORKER_DATABASE_EXPECTED_HOST"
@@ -278,6 +283,10 @@ def _parser() -> argparse.ArgumentParser:
     fwd.add_argument("--since-days", type=int, default=60, help="look back this many days")
     fwd.add_argument("--limit", type=int, default=500, help="at most this many messages")
     fwd.add_argument("--apply", action="store_true", help="write the readings (default: read and count only)")
+    refs = commands.add_parser("quote-refs-backfill", help="read past emails for the quote numbers their body names")
+    refs.add_argument("--since-days", type=int, default=30, help="look back this many days")
+    refs.add_argument("--limit", type=int, default=2000, help="at most this many messages")
+    refs.add_argument("--apply", action="store_true", help="write the readings (default: read and count only)")
     return parser
 
 
@@ -420,6 +429,8 @@ def main(
         return run_triage_once(args, env, started)
     if args.command == "forward-backfill":
         return run_forward_backfill(args, env, started)
+    if args.command == "quote-refs-backfill":
+        return run_quote_refs_backfill(args, env, started)
     if args.command == "triage-child":  # pragma: no cover - supervised until SIGTERM
         return run_triage_worker(env, started)
     backfill = args.query is not None

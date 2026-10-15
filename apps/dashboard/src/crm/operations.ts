@@ -102,8 +102,8 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     ejemplo: "Tatiana responde en el hilo de un caso con «CN09876-Empresa Ficticia.pdf» → el caso pasa a «Enviada» con la cotización 09876.",
   },
   R2: {
-    cuando: "Un correo nombra un número de cotización (en el PDF o en el asunto) que pertenece a un solo caso abierto.",
-    hace: "Vincula el correo a ese caso.",
+    cuando: "Un correo nombra un número de cotización (en el PDF, en el asunto o en el texto del correo) que pertenece a un solo caso abierto o ganado.",
+    hace: "Vincula el correo a ese caso. Un caso ganado recibe sus correos posteriores (pago, orden, despacho) sin reabrirse.",
     automatica: true,
     ejemplo: "Un cliente escribe «Consulta por la cotización 09876-26» → el correo queda en el caso de esa cotización.",
   },
@@ -132,7 +132,7 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     ejemplo: "«Gracias, nos quedamos con otro proveedor» → caso perdido.",
   },
   R7: {
-    cuando: "Llega una solicitud de cotización clara que no pertenece a ningún hilo conocido.",
+    cuando: "Llega una solicitud de cotización clara que no pertenece a ningún hilo conocido: palabras de cotización en el asunto, o la lectura del correo (IA) dice que pide precio. Nunca una respuesta («Re:») ni la oferta de un proveedor.",
     hace: "Abre un caso en «Solicitada». Si el remitente usa un correo gratuito, el caso queda sin institución hasta que una persona la confirme.",
     automatica: true,
     ejemplo: "«Solicito cotización de una balanza» desde un correo nuevo → caso «Solicitada».",
@@ -155,6 +155,12 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: false,
     ejemplo: "«CN09876-Instituto Ficticio (IFI).pdf» enviado a un Gmail → institución «Instituto Ficticio (IFI)» por confirmar.",
   },
+  R11: {
+    cuando: "Llega a contacto@ una solicitud reenviada desde otro correo (un marketplace, el correo de Labdelivery, un proveedor que pasa un contacto).",
+    hace: "Si el cliente ya tiene un caso abierto, la suma a ese caso; si no, abre una «Solicitada» con sus datos. Nunca vincula un correo del buzón de Labdelivery.",
+    automatica: true,
+    ejemplo: "«Fwd: Solicitud cotización Gradillas» de un cliente con caso abierto → queda en ese caso.",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -168,6 +174,7 @@ const RULE_WHY: Record<string, string> = {
   R7: "solicitud de cotización",
   R9: "institución que nombra el PDF",
   R10: "institución del PDF «por confirmar»",
+  R11: "solicitud reenviada a contacto@",
 };
 
 /** One Spanish sentence for what the system did. */
@@ -183,6 +190,8 @@ export function actionSentence(a: OpsAction): string {
     verb = `Marcó perdido ${target}`;
   } else if (rule === "R7") {
     verb = `Abrió una solicitud: ${target}`;
+  } else if (rule === "R11") {
+    verb = `Atendió una solicitud reenviada: ${target}`;
   } else {
     verb = `Vinculó un correo a${a.case_title ? `l caso «${a.case_title}»` : " un caso"}`;
   }

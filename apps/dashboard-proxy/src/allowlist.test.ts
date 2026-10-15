@@ -872,6 +872,22 @@ describe("mail triage review", () => {
   });
 });
 
+describe("Hoy: what the system did by itself, and «Quitar» (2026-10-14)", () => {
+  it("allows the list as an exact GET and the removal as an exact POST, and nothing near them", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/automatic-actions")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/automatic-actions")).toBe(false);
+    expect(isAllowedPostPath("/v2/commands/remove-automatic-action")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/commands/remove-automatic-action")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/remove-automatic-action")).toBe(131_072);
+    for (const path of ["/v2/workspace/automatic-actions/x", "/v2/commands/remove-automatic-action/",
+                        "/v2/commands/remove-automatic-actions"]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+});
+
 describe("email → cases rules (admin only upstream)", () => {
   it("allows the dry run as an exact GET and the two commands as exact POSTs", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } = await import("./allowlist");

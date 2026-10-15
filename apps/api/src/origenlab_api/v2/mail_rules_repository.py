@@ -56,17 +56,25 @@ from origenlab_api.v2.command_core import DEFAULT_COMMAND_TIMEOUT_MS
 from origenlab_api.v2.commands import CommandRefused, as_uuid
 from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
 from origenlab_api.v2.identity import OperatorIdentity
+from origenlab_api.v2 import forwarded_requests
 from origenlab_api.v2.mail_rules import (
+    ATTACH_FORWARD,
     AUTO,
+    CREATE_REQUEST_FROM_FORWARD_STEP,
+    LINK_AFTER_CLOSE,
+    OWN_DOMAINS,
     SYSTEM_LABEL,
     CaseQuote,
     CaseState,
+    ForwardRequest,
     MailDocument,
     MailEvidence,
     Organization,
     PlannedAction,
     QuoteRevision,
     Snapshot,
+    addresses,
+    domain_of,
     mail_direction,
     plan,
 )
@@ -112,7 +120,7 @@ def _json(value: Any) -> Any:
 #: they must not hide a live email from the rules.
 _EVIDENCE_SQL = """
 select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
-       requester.value as requester_match
+       requester.value as requester_match, quote_refs.value as quote_refs, ai.intent as model_intent
   from evidence.source_record sr
   join lateral (select cm.direction, cm.provider_thread_id from comms.message cm
                  where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
@@ -126,6 +134,18 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
         order by a.created_at desc
         limit 1
   ) requester on true
+  left join lateral (
+       select a.value from evidence.assertion a
+        where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = 'quote_refs:v1'
+        limit 1
+  ) quote_refs on true
+  left join lateral (
+       -- The newest triage reading's AI intent, when the model read the email.
+       select a.value -> 'reading' ->> 'intent' as intent from evidence.assertion a
+        where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm ~ '^triage:v[0-9]+$'
+        order by substring(a.value_norm from 9)::int desc
+        limit 1
+  ) ai on true
  where sr.kind = 'gmail_message' and not sr.is_quarantined
    and sr.review_status <> 'rejected'
    and sr.payload ->> 'staging_source_record_sha256' is null
@@ -135,7 +155,7 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
 """
 _LINKS_SQL = """
 select oe.source_record_id::text as source_record_id, oe.opportunity_id::text as opportunity_id,
-       sr.payload ->> 'gmail_thread_id' as thread_id
+       sr.payload ->> 'gmail_thread_id' as thread_id, sr.payload ->> 'sender' as sender
   from crm.opportunity_evidence oe
   join evidence.source_record sr on sr.id = oe.source_record_id
  where oe.unlinked_at is null and oe.source_record_id is not null
@@ -173,6 +193,22 @@ select distinct m.provider_thread_id
    and not exists (select 1 from evidence.source_record sr
                     where sr.dedupe_key = 'gmail_message:' || m.provider_message_id)
 """
+#: Rules whose action opens a case; the rest file an email in one.
+OPENING_RULES: frozenset[str] = frozenset({"R3", "R4", "R7", "R10"})
+REMOVED_FROM_HOY = "Quitado desde Hoy: la acción automática no correspondía"
+_RECENT_AUTOMATIC_SQL = """
+select r.id::text as receipt_id, r.completed_at, r.response_body, sr.kind, sr.payload
+  from platform.command_receipt r
+  left join evidence.source_record sr on sr.id::text = r.response_body ->> 'evidence_id'
+ where r.command_name = %s and r.status = 'completed'
+   and r.response_body ->> 'trigger' = 'automatic'
+   and r.completed_at > now() - make_interval(hours => %s)
+   and not exists (select 1 from platform.command_receipt u
+                    where u.command_name = %s and u.status = 'completed'
+                      and u.response_body ->> 'undoes_receipt_id' = r.id::text)
+ order by r.completed_at desc
+ limit %s
+"""
 _APPLIED_EVIDENCE_SQL = """
 select distinct response_body ->> 'evidence_id'
   from platform.command_receipt
@@ -194,10 +230,14 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
     links = rows()
     linked_cases: dict[str, list[str]] = {}
     case_threads: dict[str, set[str]] = {}
+    case_people: dict[str, set[str]] = {}
     for link in links:
         linked_cases.setdefault(link["source_record_id"], []).append(link["opportunity_id"])
         if link["thread_id"]:
             case_threads.setdefault(link["opportunity_id"], set()).add(link["thread_id"])
+        for address in addresses([link.get("sender")]):
+            if domain_of(address) not in OWN_DOMAINS:
+                case_people.setdefault(link["opportunity_id"], set()).add(address)
 
     cur.execute(_CAMPAIGN_THREADS_SQL)
     campaign_threads = {r[0] for r in cur.fetchall()}
@@ -226,6 +266,8 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
             requester_checked=bool(requester),
             requester_organization_id=(requester.get("organization_id") if requester_matched else None),
             requester_organization_name=(requester.get("organization_name") if requester_matched else None),
+            body_quote_tokens=tuple(str(t) for t in ((_json(r.get("quote_refs")) or {}).get("tokens") or ())),
+            model_intent=r.get("model_intent"),
         ))
         display[r["id"]] = {"subject": p.get("subject_raw"), "sent_at": p.get("sent_at"),
                             "direction": direction}
@@ -250,7 +292,8 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
         CaseState(id=r["id"], title=r["title"], stage=r["stage"], version=int(r["version"]),
                   organization_id=r["organization_id"], closed=bool(r["closed"]),
                   thread_ids=tuple(sorted(case_threads.get(r["id"], ()))),
-                  quotes=tuple(by_case.get(r["id"], ())))
+                  quotes=tuple(by_case.get(r["id"], ())),
+                  people=tuple(sorted(case_people.get(r["id"], ()))))
         for r in rows()
     )
 
@@ -264,8 +307,19 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
 
     cur.execute(_APPLIED_EVIDENCE_SQL, (APPLY_COMMAND,))
     applied = frozenset(r[0] for r in cur.fetchall() if r[0])
+
+    # R11: the pending forwarded requests, their copies merged as «Hoy» shows them.
+    cur.execute(forwarded_requests.READ_SQL)
+    forwards = []
+    for g in forwarded_requests.group_forwards(rows()):
+        c = g["customer"]
+        forwards.append(ForwardRequest(id=g["id"], ids=tuple(g["ids"]), customer_email=c.get("email"),
+                                       customer_name=c.get("name"), company=c.get("company"),
+                                       requested_item=g.get("requested_item"), origins=tuple(g.get("origins") or ())))
+        display[g["id"]] = {"subject": f"Reenviado: {g.get('requested_item') or c.get('email') or ''}",
+                            "sent_at": g.get("received_at"), "direction": "inbound"}
     return Snapshot(evidence=tuple(evidence), cases=cases, organizations=organizations,
-                    applied_evidence_ids=applied), display
+                    applied_evidence_ids=applied, forwards=tuple(forwards)), display
 
 
 # ─────────────────────────────────────────────────────────────── the repository ──
@@ -361,6 +415,50 @@ class MailRulesRepository(V2CaseCommandRepository):
                     "undo_note": r["undo_note"],
                 })
             return out
+
+    # ------------------------------------------------------------------ «Hoy»: what the system did by itself
+
+    def recent_automatic(self, hours: int = 48, limit: int = 50) -> list[dict[str, Any]]:
+        """The automatic run's actions of the last `hours`, not undone, newest first — «Hecho
+        automáticamente» on Hoy, each with what it acted on (a subject or a forwarded request) and
+        whether it opened a case or filed the email in one."""
+        with self._read() as cur:
+            cur.execute(_RECENT_AUTOMATIC_SQL, (APPLY_COMMAND, max(1, min(int(hours), 24 * 14)), UNDO_COMMAND,
+                                                max(1, min(int(limit), 200))))
+            cols = [d[0] for d in cur.description]
+            out = []
+            for row in cur.fetchall():
+                r = dict(zip(cols, row, strict=True))
+                body = _json(r["response_body"]) or {}
+                created = body.get("created") or {}
+                opened = body.get("rule_id") in OPENING_RULES or bool(created.get("opportunity_id"))
+                payload = _json(r["payload"]) or {}
+                what = (payload.get("subject_raw") if r["kind"] == "gmail_message" else
+                        " · ".join(x for x in (payload.get("requested_item"), payload.get("original_name")
+                                               or payload.get("original_email")) if x))
+                out.append({
+                    "receipt_id": r["receipt_id"],
+                    "applied_at": r["completed_at"].isoformat() if r["completed_at"] else None,
+                    "rule_id": body.get("rule_id"), "reasons": body.get("reasons") or [],
+                    "case_id": body.get("case_id"), "case_title": body.get("case_title"),
+                    "quote_number": body.get("quote_number"), "kind": "opened" if opened else "filed",
+                    "what": what or None, "source": "forward" if r["kind"] == "forwarded_request" else "email",
+                })
+            return out
+
+    def remove_automatic(self, operator: OperatorIdentity, receipt_id: str) -> dict[str, Any]:
+        """«Quitar» on Hoy (sales or admin): undo one action the automatic run took. A person's
+        «Aplicar» stays an admin's to undo, in Historial."""
+        receipt_id = as_uuid(receipt_id, "receipt_id")
+        with self._read() as cur:
+            cur.execute("select response_body ->> 'trigger' from platform.command_receipt "
+                        "where id = %s and command_name = %s and status = 'completed'", (receipt_id, APPLY_COMMAND))
+            row = cur.fetchone()
+        if row is None:
+            raise CommandRefused(404, "applied_action_not_found", "no applied email action with that receipt")
+        if row[0] != "automatic":
+            raise CommandRefused(403, "not_automatic", "only what the system did by itself is removed from Hoy")
+        return self.undo(operator, receipt_id, REMOVED_FROM_HOY)
 
     # ------------------------------------------------------------------ apply
 
@@ -577,6 +675,22 @@ class MailRulesRepository(V2CaseCommandRepository):
         if rule in ("R1", "R2", "R5", "R6", "R9"):
             for link_id in created.get("opportunity_evidence_ids") or []:
                 run(UNLINK_CASE_EVIDENCE, {"opportunity_evidence_id": link_id, "reason": note, "note": note})
+        if rule == "R11":
+            forwards = created.get("forwarded_request_ids") or []
+            if created.get("opportunity_id"):
+                # A request R11 opened: it was not one. Closed as a correction, never reopened.
+                run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": self._case_version(cur, case_id),
+                                         "stage": "abandoned", "close_reason": DISCARDED_BY_CORRECTION, "note": note})
+                if created.get("organization_id"):
+                    kept = self._retire_mail_organization(cur, created["organization_id"], action, note, run)
+                forwarded_requests.set_forward_status(cur, forwards, "rejected")
+                done.append({"command": "forwarded_request_rejected", "forwarded_request_ids": forwards})
+            else:
+                # It joined the wrong case: unlinked, and back in «Solicitudes reenviadas» for a person.
+                for link_id in created.get("opportunity_evidence_ids") or []:
+                    run(UNLINK_CASE_EVIDENCE, {"opportunity_evidence_id": link_id, "reason": note, "note": note})
+                forwarded_requests.set_forward_status(cur, forwards, "pending")
+                done.append({"command": "forwarded_request_pending", "forwarded_request_ids": forwards})
         if rule in ("R3", "R4", "R7", "R10"):
             if rule in ("R3", "R4", "R10") and created.get("quote_revision_id"):
                 cur.execute("select version, status from crm.quote_revision where id = %s",
@@ -653,6 +767,9 @@ class MailRulesRepository(V2CaseCommandRepository):
             RECORD_CASE_WON: record_case_won,
             UNLINK_CASE_EVIDENCE: MailRulesRepository._unlink_case_evidence,
             CORRECT_CASE_STAGE: MailRulesRepository._correct_case_stage,
+            LINK_AFTER_CLOSE: MailRulesRepository._link_after_close,
+            ATTACH_FORWARD: forwarded_requests.attach_forward_to_case,
+            CREATE_REQUEST_FROM_FORWARD_STEP: forwarded_requests.create_request_from_forward,
         }
         if command not in local:
             raise CommandRefused(500, "unknown_step", f"no handler for step '{command}'")
@@ -663,6 +780,25 @@ class MailRulesRepository(V2CaseCommandRepository):
     def _register_mail_organization(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                                     receipt_id: str) -> dict[str, Any]:
         return register_machine_organization(self, cur, operator, fields, receipt_id)
+
+    def _link_after_close(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
+                          receipt_id: str) -> dict[str, Any]:
+        """R2 on a **won** case: the email is filed and the case stays closed (owner, 2026-10-14 — a
+        payment, an order or a delivery note is still that sale's). `link_case_evidence` refuses a
+        closed case for a person; the machine may add this one kind of evidence, never edit."""
+        case_id = as_uuid(fields["opportunity_id"], "opportunity_id")
+        cur.execute("select stage, version from crm.opportunity where id = %s for update", (case_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise CommandRefused(404, "case_not_found", "no such commercial case")
+        if row[0] != "won":
+            raise CommandRefused(409, "case_not_won", "only a won case takes mail after it closed")
+        evidence_id, event_id = self._link_evidence_row(
+            cur, case_id=case_id, subject_column="source_record_id",
+            subject_id=as_uuid(fields["source_record_id"], "source_record_id"), relation=fields["relation"],
+            operator=operator, receipt_id=receipt_id, note=fields["note"])
+        return {"command": LINK_AFTER_CLOSE, "opportunity_id": case_id, "opportunity_version": int(row[1]),
+                "opportunity_evidence_id": evidence_id, "stage": row[0], "event_ids": [event_id]}
 
     def _unlink_case_evidence(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                               receipt_id: str) -> dict[str, Any]:
@@ -825,8 +961,15 @@ def _absorb(ctx: dict[str, Any], created: dict[str, Any], command: str, result: 
         created["organization_id"] = result["organization_id"]
     if command == OPEN_COMMERCIAL_CASE:
         created["opportunity_id"] = result["opportunity_id"]
-    elif command == LINK_CASE_EVIDENCE:
+    elif command in (LINK_CASE_EVIDENCE, LINK_AFTER_CLOSE):
         created["opportunity_evidence_ids"].append(result["opportunity_evidence_id"])
+    if command in (ATTACH_FORWARD, CREATE_REQUEST_FROM_FORWARD_STEP):
+        created["opportunity_evidence_ids"].extend(result.get("opportunity_evidence_ids") or [])
+        created["forwarded_request_ids"] = list(result.get("forwarded_request_ids") or [])
+    if command == CREATE_REQUEST_FROM_FORWARD_STEP:
+        created["opportunity_id"] = result["opportunity_id"]
+        if result.get("organization_created"):
+            created["organization_id"] = result["organization_id"]
     if command == RECORD_HISTORICAL_QUOTATION:
         created["quote_revision_id"] = result["quote_revision_id"]
         created["quote_id"] = result["quote_id"]

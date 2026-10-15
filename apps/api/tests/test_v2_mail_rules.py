@@ -926,3 +926,122 @@ def test_a_person_written_before_the_institution_in_one_part_is_never_the_instit
     assert institution_segment("Instituto Ficticio de Ensayos (IFDE)") == "Instituto Ficticio de Ensayos (IFDE)"
     assert institution_segment("Pedro Ficticio - Empresa Ficticia SA") == "Empresa Ficticia SA"
 
+
+
+# ------------------------------------------------------------------ 2026-10-14: body numbers and the AI reading
+
+
+def inbound(**over) -> MailEvidence:
+    base = dict(id="e-9", thread_id="t-9", direction="inbound", sender="Pagos <pagos@banco-ficticio.test>",
+                recipients=("contacto@origenlab.cl",), subject="Aviso de transferencia de fondos",
+                sent_at="2026-10-13T15:00:00+00:00", documents=(), requester_checked=True)
+    base.update(over)
+    return MailEvidence(**base)
+
+
+def test_a_payment_notice_naming_its_quote_in_the_body_is_filed_on_that_case() -> None:
+    a = only(Snapshot(evidence=(inbound(body_quote_tokens=("09259-26",)),),
+                      cases=(case(quotes=(quote("09259-26"),)),), organizations=(org(),)))
+    assert (a.rule_id, a.mode, a.case_id) == ("R2", "auto", "c-1")
+    assert a.commands[0]["command"] == "link_case_evidence"
+    assert any("texto del correo" in r for r in a.reasons)
+
+
+def test_a_won_case_still_gets_its_payment_and_order_mail_without_reopening() -> None:
+    won = case(stage="won", closed=True, quotes=(quote("09259-26"),))
+    a = only(Snapshot(evidence=(inbound(body_quote_tokens=("09259-26",)),), cases=(won,), organizations=(org(),)))
+    assert (a.rule_id, a.mode, a.case_id) == ("R2", "auto", "c-1")
+    assert [c["command"] for c in a.commands] == ["link_case_evidence_after_close"]
+
+
+def test_a_lost_case_is_not_filed_into_so_the_reply_stays_visible() -> None:
+    lost = case(stage="lost", closed=True, quotes=(quote("09259-26"),))
+    a = only(Snapshot(evidence=(inbound(body_quote_tokens=("09259-26",)),), cases=(lost,), organizations=(org(),)))
+    assert (a.rule_id, a.mode) == ("R8", "none")
+
+
+def test_the_subject_number_outranks_the_body_number() -> None:
+    one, two = case(id="c-1", quotes=(quote("01200-26"),)), case(id="c-2", quotes=(quote("09259-26"),))
+    a = only(Snapshot(evidence=(inbound(subject="Consulta cotización 01200-26", body_quote_tokens=("09259-26",)),),
+                      cases=(one, two), organizations=(org(),)))
+    assert (a.rule_id, a.case_id) == ("R2", "c-1")
+
+
+def test_a_client_asking_for_a_price_in_the_body_opens_a_request_when_the_ai_reads_it_so() -> None:
+    a = only(Snapshot(evidence=(inbound(sender="Ana <ana@laboratorio-ficticio.test>", subject="Consulta equipos",
+                                        model_intent="quote_request"),),
+                      cases=(), organizations=()))
+    assert (a.rule_id, a.mode) == ("R7", "auto")
+    assert a.commands[0]["command"] == "open_commercial_case"
+    assert any("IA" in r for r in a.reasons)
+
+
+def test_a_reply_is_never_a_new_request_even_when_the_ai_says_so() -> None:
+    a = only(Snapshot(evidence=(inbound(sender="Ana <ana@laboratorio-ficticio.test>", subject="Re: Consulta equipos",
+                                        model_intent="quote_request"),),
+                      cases=(), organizations=()))
+    assert (a.rule_id, a.mode) == ("R8", "none")
+
+
+def test_a_supplier_offer_with_quotation_words_does_not_open_a_request() -> None:
+    a = only(Snapshot(evidence=(inbound(sender="Ventas <ventas@fabrica-ficticia.test>",
+                                        subject="Cotización equipos de laboratorio", model_intent="supplier_offer"),),
+                      cases=(), organizations=()))
+    assert (a.rule_id, a.mode) == ("R8", "none")
+    assert any("proveedor" in r for r in a.reasons)
+
+
+# ------------------------------------------------------------------ R11: forwarded requests
+
+
+def forward(**over):
+    from origenlab_api.v2.mail_rules import ForwardRequest
+
+    base = dict(id="f-1", ids=("f-1",), customer_email="ana@laboratorio-ficticio.test", customer_name="Ana Ficticia",
+                company=None, requested_item="Gradillas", origins=("origenlab",))
+    base.update(over)
+    return ForwardRequest(**base)
+
+
+def test_a_forwarded_request_whose_customer_already_writes_on_an_open_case_joins_that_case() -> None:
+    c = case(id="c-7", people=("ana@laboratorio-ficticio.test",))
+    [a] = plan(Snapshot(evidence=(), cases=(c,), organizations=(), forwards=(forward(),)))
+    assert (a.rule_id, a.mode, a.case_id, a.evidence_id) == ("R11", "auto", "c-7", "f-1")
+    assert a.commands[0]["command"] == "attach_forward_to_case"
+
+
+def test_a_forwarded_request_of_an_institution_with_one_open_case_joins_it() -> None:
+    o = org(id="o-5", domains=("laboratorio-ficticio.test",))
+    [a] = plan(Snapshot(evidence=(), cases=(case(id="c-5", organization_id="o-5"),), organizations=(o,),
+                        forwards=(forward(),)))
+    assert (a.rule_id, a.case_id) == ("R11", "c-5")
+
+
+def test_a_new_customer_gets_a_request_named_after_the_known_institution_or_the_company_the_forward_names() -> None:
+    o = org(id="o-5", domains=("laboratorio-ficticio.test",))
+    [known] = plan(Snapshot(evidence=(), cases=(), organizations=(o,), forwards=(forward(),)))
+    assert known.commands[0]["command"] == "create_request_from_forward"
+    assert known.commands[0]["inputs"]["organization_id"] == "o-5"
+    [named] = plan(Snapshot(evidence=(), cases=(), organizations=(),
+                            forwards=(forward(customer_email="e@gmail.com", company="Laboratorio Ficticio EIRL"),)))
+    assert named.commands[0]["inputs"]["new_organization_name"] == "Laboratorio Ficticio EIRL"
+    [bare] = plan(Snapshot(evidence=(), cases=(), organizations=(), forwards=(forward(customer_email="e@gmail.com"),)))
+    assert "organization_id" not in bare.commands[0]["inputs"] and "new_organization_name" not in bare.commands[0]["inputs"]
+
+
+def test_a_forward_from_a_supplier_domain_opens_nothing_and_an_applied_one_is_not_planned_again() -> None:
+    supplier = org(id="o-9", domains=("laboratorio-ficticio.test",), is_supplier=True)
+    [a] = plan(Snapshot(evidence=(), cases=(), organizations=(supplier,), forwards=(forward(),)))
+    assert (a.rule_id, a.mode) == ("R8", "none")
+    assert plan(Snapshot(evidence=(), cases=(), organizations=(), forwards=(forward(),),
+                         applied_evidence_ids=frozenset({"f-1"}))) == []
+
+
+def test_a_forward_from_a_domain_the_ai_reads_as_offering_products_opens_nothing() -> None:
+    offer = inbound(id="e-5", sender="Ventas <info@fabrica-ficticia.test>", subject="New products",
+                    model_intent="supplier_offer")
+    actions = {a.evidence_id: a for a in plan(Snapshot(
+        evidence=(offer,), cases=(), organizations=(),
+        forwards=(forward(customer_email="info@fabrica-ficticia.test", customer_name=None),)))}
+    assert (actions["f-1"].rule_id, actions["f-1"].mode) == ("R8", "none")
+    assert any("proveedor" in r for r in actions["f-1"].reasons)
