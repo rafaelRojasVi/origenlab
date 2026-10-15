@@ -1,6 +1,7 @@
 import { CaseDocumentsBlock } from "./CaseDocuments";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchCaseNotes, fetchPipeline } from "../crmApi";
+import { fetchCaseMemory, fetchCaseNotes, fetchPipeline } from "../crmApi";
+import type { CaseMemoryResponse } from "../crmApi";
 import { crmHash } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
@@ -562,6 +563,8 @@ function OpportunityDrawer({
         <CaseThreads key={card.opportunity_id} opportunityId={card.opportunity_id} />
       </Section>
 
+      <CaseMemory opportunityId={card.opportunity_id} />
+
       {/* Re-read when the case's newest note changes: a reminder from «Recordarme…». */}
       <CaseNotes key={`${card.opportunity_id}:${card.last_note?.created_at ?? ""}`} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} />
     </Drawer>
@@ -588,5 +591,65 @@ function CaseNotes({ opportunityId, mayAuthor }: { opportunityId: string; mayAut
         </p>
       ) : null}
     </>
+  );
+}
+
+const FACT_KIND_LABEL: Record<string, string> = {
+  quote: "Cotización", amount: "Monto", product: "Producto",
+  person: "Persona", institution: "Institución", date: "Fecha", other: "Otro",
+};
+
+const NEXT_ACTION_LABEL: Record<string, string> = {
+  responder: "Responder", esperar: "Esperar respuesta", seguimiento: "Seguimiento",
+  vincular: "Vincular", marcar_ganado: "Marcar ganado", marcar_perdido: "Marcar perdido",
+  confirmar_institucion: "Confirmar institución", crear_solicitud: "Crear solicitud", nada: "Sin acción",
+};
+
+const CONFIDENCE_TONE: Record<string, string> = {
+  high: "text-good", medium: "text-ink-muted", low: "text-ink-faint",
+};
+
+/** The machine memory the triage worker keeps per case («Lo que sabemos»). Hidden when no memory. */
+function CaseMemory({ opportunityId }: { opportunityId: string }) {
+  const load = useCallback(() => fetchCaseMemory(opportunityId), [opportunityId]);
+  const [state] = useResource(load, [opportunityId]);
+  if (state.kind !== "ready") return null;
+  const { case_memory: mem } = state.data as CaseMemoryResponse;
+  if (!mem) return null;
+
+  return (
+    <Section title="Lo que sabemos">
+      <p className="text-[13px] text-ink" data-testid="case-memory-summary">{mem.summary}</p>
+
+      {mem.facts.length > 0 && (
+        <ul className="mt-1.5 flex flex-wrap gap-1">
+          {mem.facts.map((f, i) => (
+            <li key={i} className="rounded bg-canvas-sunken px-2 py-0.5 text-[11px]">
+              <span className="text-ink-faint">{FACT_KIND_LABEL[f.k] ?? f.k}: </span>
+              <span className="text-ink">{f.v}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {(mem.open_questions?.length ?? 0) > 0 && (
+        <ul className="mt-1.5 space-y-0.5 text-[12px] text-ink-muted">
+          {mem.open_questions.map((q, i) => (
+            <li key={i}>? {q}</li>
+          ))}
+        </ul>
+      )}
+
+      {mem.next_step && (
+        <p className="mt-1.5 text-[12px]" data-testid="case-memory-next-step">
+          <span className="text-ink-faint">Siguiente: </span>
+          <span className="font-medium text-ink">{NEXT_ACTION_LABEL[mem.next_step.action] ?? mem.next_step.action}</span>
+          {" — "}
+          <span className={CONFIDENCE_TONE[mem.next_step.confidence] ?? "text-ink-muted"}>
+            {mem.next_step.why}
+          </span>
+        </p>
+      )}
+    </Section>
   );
 }

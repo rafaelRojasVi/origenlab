@@ -94,10 +94,22 @@ class PastDecision:
     verdict: str  # 'linked' | 'rejected' (the suggested case was not it)
 
 
-def dossier(card: CaseCard) -> dict[str, Any]:
-    return {"id": card.opportunity_id, "title": card.title, "stage": card.stage, "institution": card.institution,
-            "closed": bool(card.closed_at), "quote_numbers": list(card.quote_numbers[:6]),
-            "products": list(card.interests[:5]), "people": list(card.addresses[:4])}
+def dossier(card: CaseCard, memory: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The case snapshot shown to the model.  When the triage worker has already written a memory
+    for this case, pass it here and the model sees a ``memory_summary`` and ``memory_next_step``
+    that give it running context without having to re-read the full email history."""
+    base: dict[str, Any] = {
+        "id": card.opportunity_id, "title": card.title, "stage": card.stage,
+        "institution": card.institution, "closed": bool(card.closed_at),
+        "quote_numbers": list(card.quote_numbers[:6]),
+        "products": list(card.interests[:5]), "people": list(card.addresses[:4]),
+    }
+    if memory:
+        if memory.get("summary"):
+            base["memory_summary"] = memory["summary"]
+        if memory.get("next_step"):
+            base["memory_next_step"] = memory["next_step"]
+    return base
 
 
 def offered_cases(layer1: MatchResult, cases: Sequence[CaseCard]) -> list[CaseCard]:

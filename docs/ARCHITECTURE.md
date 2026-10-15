@@ -707,6 +707,17 @@ sweep reads what it captured. The LLM call is the worker's (§2), with the messa
 untrusted data and the answer validated against a closed schema
 ([`OPERATIONS.md`](OPERATIONS.md) §8.11).
 
+After the context matcher records its reading, the triage worker optionally updates a **machine
+memory** (`evidence.subject_memory`, [`DOMAIN.md`](DOMAIN.md) §7 #58) for the linked case, its
+institution and its primary contact. The memory is compact JSONB — a `summary` (≤ 600 chars in
+Spanish), `facts` (≤ 15 key-value facts), `open_questions` (≤ 3) and a `next_step` — kept as
+append-only versioned rows: the writer inserts version `n + 1`, never updates. It is gated behind
+`ORIGENLAB_WORKER_MEMORY_ENABLED` (default off, [`OPERATIONS.md`](OPERATIONS.md) §8.11b). The
+context matcher's dossier and the triage model's linked-case context both include the latest memory
+summary and next_step when one exists, giving the model running context without re-reading the full
+thread. The API exposes the latest memory at `GET /v2/workspace/cases/{id}/memory` and the
+dashboard shows it as «Lo que sabemos» in the case drawer.
+
 ## 9. Observability
 
 | Signal | Source |

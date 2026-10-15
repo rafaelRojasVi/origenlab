@@ -466,6 +466,63 @@ class TriageDb:
                 cur.fetchone()
         return len(analysis.auto_block_addresses)
 
+    # Memory methods -------------------------------------------------------
+
+    def latest_subject_memory(self, subject_kind: str, subject_id: str) -> dict[str, Any] | None:
+        """The most recent memory for this subject, or None if none exists yet.
+
+        Returns the stored `memory` jsonb plus the version number injected as ``_version``
+        so the writer can compute the next version without a separate query.
+        """
+        with self._tx() as cur:
+            cur.execute(_LATEST_SUBJECT_MEMORY, (subject_kind, subject_id))
+            row = cur.fetchone()
+        if row is None:
+            return None
+        memory, version = row
+        return {**dict(memory), "_version": version}
+
+    def insert_subject_memory(self, subject_kind: str, subject_id: str, version: int,
+                               memory: dict[str, Any], *, source_record_id: str | None = None,
+                               model: str | None = None) -> None:
+        """Append a new memory version (idempotent on conflict)."""
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(_INSERT_SUBJECT_MEMORY, (
+                subject_kind, subject_id, version, Jsonb(memory),
+                source_record_id, model,
+            ))
+
+    def opportunity_org_and_person(self, opportunity_id: str) -> tuple[str | None, str | None]:
+        """(organization_id, person_id) for the primary org and contact of one case, or (None, None)."""
+        with self._tx() as cur:
+            cur.execute(_OPPORTUNITY_ORG_AND_PERSON, (opportunity_id, opportunity_id))
+            row = cur.fetchone()
+        if row is None:
+            return None, None
+        return row[0], row[1]
+
+    def opportunity_institution_name(self, opportunity_id: str) -> str | None:
+        with self._tx() as cur:
+            cur.execute(_OPPORTUNITY_INSTITUTION_NAME, (opportunity_id,))
+            row = cur.fetchone()
+        return row[0] if row else None
+
+    def opportunity_quote_numbers(self, opportunity_id: str) -> list[str]:
+        with self._tx() as cur:
+            cur.execute(_OPPORTUNITY_QUOTE_NUMBERS, (opportunity_id,))
+            return [r[0] for r in cur.fetchall()]
+
+    def pending_memory_backfill(self, *, since_days: int, limit: int) -> list[str]:
+        """Emails already matched to a case that have no case memory written yet."""
+        with self._tx() as cur:
+            cur.execute(_MEMORY_BACKFILL_PENDING,
+                        {"human_classes": list(HUMAN_CLASSES), "days": since_days, "limit": limit})
+            return [row[0] for row in cur.fetchall()]
+
+    # End memory methods ---------------------------------------------------
+
 
 def case_row(c: tuple) -> dict[str, Any]:
     """One `CASE_CARDS_SQL` row as a plain dict (the shape of the eval's `cases.jsonl`)."""
@@ -676,6 +733,8 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
         db.record_delivery_failure(message.source_record_id, analyze_bounce(raw))
     record_forward_reading(db, message.source_record_id, raw, mail.sender, mail.subject)
     record_quote_refs(db, message.source_record_id, mail)
+    if verdict.triage_class in HUMAN_CLASSES and (match is None or match.decision != "rejected"):
+        record_memory_reading(db, message, match, mail.body, cases)
     decision = match.decision if match else ("unavailable" if verdict.triage_class in HUMAN_CLASSES else None)
     return TriageResult("recorded", verdict.triage_class, state, written, decision)
 
@@ -742,6 +801,89 @@ select sr.id::text
  limit %s
 """
 
+# Memory SQL ---------------------------------------------------------------
+
+_LATEST_SUBJECT_MEMORY = """
+select memory, version
+  from evidence.subject_memory
+ where subject_kind = %s and subject_id = %s::uuid
+ order by version desc
+ limit 1
+"""
+
+_INSERT_SUBJECT_MEMORY = """
+insert into evidence.subject_memory
+  (subject_kind, subject_id, version, memory, source_record_id, model)
+values (%s, %s::uuid, %s, %s, %s, %s)
+on conflict (subject_kind, subject_id, version) do nothing
+"""
+
+_OPPORTUNITY_ORG_AND_PERSON = """
+select oo.organization_id::text,
+       (select cp.person_id::text
+          from crm.contact_point cp
+          join crm.opportunity_evidence oe2 on oe2.source_record_id = (
+              select a.source_record_id from evidence.assertion a
+               where a.kind = 'contact_address' and a.resolution = 'accepted'
+                 and exists (select 1 from crm.opportunity_evidence oe3
+                              where oe3.opportunity_id = %s::uuid
+                                and oe3.source_record_id = a.source_record_id
+                                and oe3.unlinked_at is null)
+               limit 1
+          )
+         where cp.email_norm = (
+               select a.value_norm from evidence.assertion a
+                where a.kind = 'contact_address' and a.resolution = 'accepted'
+                  and a.source_record_id = oe2.source_record_id
+               limit 1)
+           and cp.person_id is not null
+         limit 1)
+  from crm.opportunity_organization oo
+ where oo.opportunity_id = %s::uuid
+ order by oo.created_at
+ limit 1
+"""
+
+_OPPORTUNITY_INSTITUTION_NAME = """
+select o.name
+  from crm.organization o
+  join crm.opportunity_organization oo on oo.organization_id = o.id
+ where oo.opportunity_id = %s::uuid
+ order by oo.created_at
+ limit 1
+"""
+
+_OPPORTUNITY_QUOTE_NUMBERS = """
+select q.quote_number
+  from crm.quote q
+  join crm.opportunity opp on opp.id = q.opportunity_id
+ where q.opportunity_id = %s::uuid
+"""
+
+_MEMORY_BACKFILL_PENDING = """
+select distinct sr.id::text
+  from evidence.source_record sr
+  join evidence.assertion a on a.source_record_id = sr.id
+   and a.kind = 'message_triage' and a.value_norm = 'case_match:v1'
+   and a.value->>'decision' in ('linked', 'new_case_linked')
+  join evidence.assertion ao on ao.source_record_id = sr.id
+   and ao.kind = 'message_triage' and ao.value_norm like 'triage:v%'
+   and ao.value->>'class' = any(%(human_classes)s)
+ where sr.kind = 'gmail_message'
+   and sr.created_at > now() - make_interval(days => %(days)s)
+   and not exists (
+       select 1 from evidence.subject_memory sm
+        join crm.opportunity_evidence oe on oe.opportunity_id = sm.subject_id
+        where sm.subject_kind = 'opportunity'
+          and oe.source_record_id = sr.id
+          and oe.unlinked_at is null
+   )
+ order by 1 desc
+ limit %(limit)s
+"""
+
+# End memory SQL -----------------------------------------------------------
+
 
 def backfill_forwards(db: Any, store: EmlStore, source_record_ids: Sequence[str], *, apply: bool) -> dict[str, int]:
     """The forwards of the last days, read again for who really asked — and nothing else: the
@@ -797,6 +939,50 @@ def record_forward_reading(db: Any, source_record_id: str, raw: bytes, sender: s
         return False
 
 
+def record_memory_reading(
+    db: Any,
+    message: PendingMessage,
+    match: Any | None,
+    email_body: str,
+    linked_cases: list[Any],
+) -> None:
+    """Update the memory for any case this email belongs to, plus its institution and person.
+
+    Runs after the main triage recording, fully isolated: whatever fails here is logged by class
+    and swallowed, so no downstream step (Drive, queue, worker loop) ever waits on it.
+    The switch `ORIGENLAB_WORKER_MEMORY_ENABLED` is checked first; the default is off.
+    """
+    from origenlab_worker.memory import memory_enabled, memory_model, record_memory
+    from origenlab_worker.triage_model import anthropic_reader
+
+    if not memory_enabled():
+        return
+    try:
+        model = memory_model()
+        api_key = os.environ.get("ORIGENLAB_WORKER_ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            return
+        reader = anthropic_reader(api_key)
+        # Which cases to update: the one the matcher placed the email on, or all linked ones.
+        if match is not None and getattr(match, "opportunity_id", None):
+            case_ids = [match.opportunity_id]
+        else:
+            case_ids = [c.opportunity_id for c in linked_cases]
+        for oid in case_ids:
+            org_id, person_id = db.opportunity_org_and_person(oid)
+            inst_name = db.opportunity_institution_name(oid)
+            quote_nums = db.opportunity_quote_numbers(oid)
+            stage = next((c.stage for c in linked_cases if c.opportunity_id == oid), None)
+            record_memory(
+                db, reader, message.source_record_id, email_body,
+                opportunity_id=oid, organization_id=org_id, person_id=person_id,
+                stage=stage, quote_numbers=quote_nums, institution_name=inst_name,
+                model=model,
+            )
+    except Exception as exc:  # noqa: BLE001 - never let memory break the triage
+        logger.warning("memory reading skipped: %s", type(exc).__name__)
+
+
 class ModelUnavailable(RuntimeError):
     """The model call failed (network, rate limit, 5xx): nothing was recorded; the job retries."""
 
@@ -826,5 +1012,7 @@ class SweepCounts:
 
 __all__ = ["CASE_CARDS_SQL", "HUMAN_CLASSES", "case_row", "match_message", "DEFAULT_SINCE_DAYS", "OUTCOMES", "VALUE_NORM", "REQUESTER_VALUE_NORM", "ModelSettings",
            "backfill_quote_refs", "record_quote_refs",
+           "backfill_forwards", "record_forward_reading",
+           "record_memory_reading",
            "ModelUnavailable", "is_permanent_api_error", "PendingMessage", "SweepCounts", "TriageDb",
            "TriageResult", "match_requester_organization", "mentions_for", "reading_value", "triage_one"]
