@@ -25,6 +25,12 @@ IMPORT_IVA_RATE = Decimal("0.19")
 # most conservative (fully regulated) tier is charged.
 DANGEROUS_GOODS_SURCHARGE = "dg_fully_regulated"
 
+# Per-piece surcharge thresholds. The rate-card file prices the surcharges but does not state
+# the thresholds; these are DHL Express's published rule (piece over 70 kg actual weight, or
+# any side over 120 cm).
+OVERWEIGHT_PIECE_KG = Decimal(70)
+OVERSIZE_PIECE_CM = Decimal(120)
+
 _PROFILE_LINES = (
     ("Flete", "profile_freight_clp"),
     ("Agente de aduana", "profile_agent_clp"),
@@ -106,6 +112,14 @@ def dhl_expenses(
         dangerous = any(i.dangerous for i in group)
         if dangerous:
             freight_usd += card.surcharge_usd(DANGEROUS_GOODS_SURCHARGE)
+        overweight = sum((i.quantity for i in group if i.weight_kg > OVERWEIGHT_PIECE_KG), Decimal(0))
+        oversize = sum(
+            (i.quantity for i in group
+             if any(d is not None and d > OVERSIZE_PIECE_CM for d in (i.length_cm, i.width_cm, i.height_cm))),
+            Decimal(0),
+        )
+        freight_usd += overweight * card.surcharge_usd("overweight_piece")
+        freight_usd += oversize * card.surcharge_usd("oversize_piece")
         freight_clp = peso(freight_usd * usd_rate)
 
         fob_usd = sum((i.fob_usd * i.quantity for i in group), Decimal(0))
@@ -118,6 +132,7 @@ def dhl_expenses(
             "supplier_key": supplier, "origin_country": origin, "zone": zone, "chargeable_kg": _s(kg),
             "published_usd": _s(base_usd), "discount_pct": _s(params["dhl_import_discount_pct"]),
             "fuel_pct": _s(params["dhl_fuel_surcharge_pct"]), "dangerous": dangerous,
+            "overweight_pieces": _s(overweight), "oversize_pieces": _s(oversize),
             "freight_usd": _s(freight_usd), "fob_usd": _s(fob_usd), "cif_usd": _s(cif_usd),
             "usd_rate": _s(usd_rate), "rate_card": card.version,
             "cash_advance_iva_clp": _s(iva_clp),     # information only, never an amount

@@ -2,7 +2,7 @@ from decimal import Decimal as D
 
 import pytest
 
-from origenlab_api.quoting.dhl_rates import RateCard
+from origenlab_api.quoting.dhl_rates import RateCard, chargeable_weight_kg
 from origenlab_api.quoting.engine import EngineError, peso
 from origenlab_api.quoting.expenses import ShipmentItem, dhl_expenses, expenses_for, profile_expenses
 
@@ -93,6 +93,32 @@ def test_dangerous_goods_adds_the_card_surcharge_once_per_group():
     base = card.published_import_usd(card.zone_for("DE"), D(20))
     assert f_dg.amount == peso((base * D("0.5") * D("1.2") + card.surcharge_usd("dg_fully_regulated")) * 900)
     assert f_dg.amount > f_plain.amount
+
+
+def test_overweight_pieces_pay_the_card_surcharge_per_piece():
+    card = RateCard.load()
+    lines, _ = dhl_expenses([ship(kg="80", qty=2)], PARAMS, D(900), card)
+    freight = next(l for l in lines if l.label.startswith("Flete DHL"))
+    base = card.published_import_usd(card.zone_for("DE"), D(160))
+    assert freight.amount == peso((base * D("0.5") * D("1.2") + 2 * card.surcharge_usd("overweight_piece")) * 900)
+    assert freight.calc_inputs["overweight_pieces"] == "2" and freight.calc_inputs["oversize_pieces"] == "0"
+
+
+def test_oversize_pieces_pay_the_card_surcharge_per_piece():
+    card = RateCard.load()
+    big = ShipmentItem(1, D(3), D(10), D(130), D(40), D(40), "DE", D(1000), False, "s1")
+    lines, _ = dhl_expenses([big], PARAMS, D(900), card)
+    freight = next(l for l in lines if l.label.startswith("Flete DHL"))
+    kg = 3 * chargeable_weight_kg(D(10), D(130), D(40), D(40))
+    base = card.published_import_usd(card.zone_for("DE"), kg)
+    assert freight.amount == peso((base * D("0.5") * D("1.2") + 3 * card.surcharge_usd("oversize_piece")) * 900)
+    assert freight.calc_inputs["oversize_pieces"] == "3" and freight.calc_inputs["overweight_pieces"] == "0"
+
+
+def test_ordinary_pieces_pay_no_size_surcharge():
+    lines, _ = dhl_expenses([ship(kg="70")], PARAMS, D(900), RateCard.load())
+    freight = next(l for l in lines if l.label.startswith("Flete DHL"))
+    assert freight.calc_inputs["overweight_pieces"] == "0" and freight.calc_inputs["oversize_pieces"] == "0"
 
 
 def test_missing_weight_falls_back_to_profile():
