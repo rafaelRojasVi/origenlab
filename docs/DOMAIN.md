@@ -661,7 +661,12 @@ else (R7, R8) stays a proposal in Revisión.
   offers R4's steps with the name instead of a domain (institution «por confirmar», case in
   «Enviada», quote) and, like R4, waits for «Aplicar». R3–R6 always wait for «Aplicar».
   **2026-10-14 (owner: «the system acts by itself, I remove what is wrong»).** The timer runs
-  **R1, R2, R7, R9 and R11**. R2 also reads the quote numbers of the sender's own text (the
+  **R1, R2, R7, R9, R11 and R12**. **R12** (2026-10-15): an inbound email no thread or quote number
+  places joins the case the worker's context matcher (`case_match:v1`) is sure of — rules «exact»,
+  or the AI's pick with confidence «high» — before R7 would open a second request; a supplier
+  writing about a client's deal goes to the client's case the same way; a won case keeps it
+  closed, a lost or abandoned case is never chosen; a medium or low pick stays a suggestion. The
+  emails people take off a case are fed back to the AI as «not this case». R2 also reads the quote numbers of the sender's own text (the
   worker's `message_triage` `quote_refs:v1`: tokens only, never the body) when neither a PDF nor
   the subject names one, and may file an email on a **won** case — a payment notice, an order, a
   delivery note — through a link that adds evidence and leaves the case closed (lost and abandoned

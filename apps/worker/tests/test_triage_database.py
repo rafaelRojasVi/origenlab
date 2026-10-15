@@ -452,3 +452,25 @@ def test_a_rejection_names_the_case_the_person_was_shown(dsn, target, mailbox_id
     with triage_conn(target) as conn:
         past = TriageDb(conn).past_decisions(f"x@prov-n-{tag}.invalid")
     assert [(p.opportunity_id, p.verdict) for p in past] == [(shown, "rejected")]
+
+
+def test_an_email_a_person_removed_from_a_case_teaches_the_matcher_not_that_case(dsn, target, mailbox_id) -> None:
+    # «Quitar» on Hoy (or unlinking by hand) sets unlinked_at: the next pick sees it as rejected.
+    tag = uuid.uuid4().hex[:6]
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-q-{tag}@example.test",))[0][0]
+    oid = owner_rows(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) "
+                          "values (%s, 'lead', %s) returning id::text", (f"Caso quitado {tag}", operator))[0][0]
+    store = Store()
+    gid = capture(target, mailbox_id, store, f"pq-{tag}",
+                  make_raw(frm=f"Eva <eva@cli-q-{tag}.invalid>", subject="Consulta de plazo",
+                           message_id=f"<{uuid.uuid4().hex}@cli.invalid>"))
+    link = owner_rows(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
+                           "linked_by_operator_id) values (%s, %s, 'mentions', %s) returning id::text",
+                      (oid, source_record(dsn, gid), operator))[0][0]
+    owner_rows(dsn, "update crm.opportunity_evidence set unlinked_at = now(), unlink_reason = 'Quitado desde Hoy' "
+                    "where id = %s returning id", (link,))
+    with triage_conn(target) as conn:
+        past = TriageDb(conn).past_decisions(f"otra@cli-q-{tag}.invalid")
+    assert [(p.subject, p.opportunity_id, p.verdict) for p in past] == [("Consulta de plazo", oid, "rejected")]

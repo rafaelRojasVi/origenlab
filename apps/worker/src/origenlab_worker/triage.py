@@ -233,6 +233,15 @@ select * from (
     join crm.opportunity_evidence oe on oe.source_record_id = s.source_record_id and oe.unlinked_at is null
     join crm.opportunity o on o.id = oe.opportunity_id
   union all
+  -- An email a person took off a case («Quitar» on Hoy, or unlinked by hand): not that case.
+  select s.sender, s.subject, o.id::text, o.title, 'rejected', oe.unlinked_at
+    from sent s
+    join crm.opportunity_evidence oe on oe.source_record_id = s.source_record_id and oe.unlinked_at is not null
+    join crm.opportunity o on o.id = oe.opportunity_id
+   where not exists (select 1 from crm.opportunity_evidence again
+                      where again.source_record_id = oe.source_record_id
+                        and again.opportunity_id = oe.opportunity_id and again.unlinked_at is null)
+  union all
   select s.sender, s.subject, o.id::text, o.title, 'rejected', r.reviewed_at
     from sent s
     join evidence.assertion a on a.source_record_id = s.source_record_id and a.kind = 'message_triage'
