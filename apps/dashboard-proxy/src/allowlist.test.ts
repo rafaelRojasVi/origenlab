@@ -693,6 +693,24 @@ describe("CRM part A: confirm an institution, suggested people", () => {
     }
   });
 
+  it("allows GET of the case memory by exact UUID and /memory tail, never a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    const path = `/v2/workspace/cases/${uuid}/memory`;
+    expect(isAllowedUpstreamPath(path)).toBe(true);
+    expect(isAllowedPostPath(path)).toBe(false);
+    for (const bad of [
+      `/v2/workspace/cases/${uuid}/memory/`,
+      `/v2/workspace/cases/${uuid}/memory/x`,
+      `/v2/workspace/cases/${uuid.toUpperCase()}/memory`,
+      "/v2/workspace/cases/not-a-uuid/memory",
+      // Old /opportunities/ prefix must not match
+      `/v2/workspace/opportunities/${uuid}/memory`,
+    ]) {
+      expect(isAllowedUpstreamPath(bad), bad).toBe(false);
+    }
+  });
+
   it("forwards GET of the quote reader's refusals by its exact path, never as a POST", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     expect(isAllowedUpstreamPath("/v2/workspace/quote-readings")).toBe(true);

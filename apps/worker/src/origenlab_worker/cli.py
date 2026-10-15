@@ -73,6 +73,7 @@ from origenlab_worker.storage import S3EmlStore, StorageConfig
 from origenlab_worker.triage import DEFAULT_SINCE_DAYS
 from origenlab_worker.triage_cli import (
     run_forward_backfill,
+    run_memory_backfill,
     run_quote_refs_backfill,
     run_triage_once,
     run_triage_worker,
@@ -287,6 +288,11 @@ def _parser() -> argparse.ArgumentParser:
     refs.add_argument("--since-days", type=int, default=30, help="look back this many days")
     refs.add_argument("--limit", type=int, default=2000, help="at most this many messages")
     refs.add_argument("--apply", action="store_true", help="write the readings (default: read and count only)")
+    mem = commands.add_parser("memory-backfill",
+                              help="write first memory for past HUMAN_CLASSES emails matched to a case")
+    mem.add_argument("--since-days", type=int, default=60, help="look back this many days")
+    mem.add_argument("--limit", type=int, default=500, help="at most this many messages")
+    mem.add_argument("--apply", action="store_true", help="write the memories (default: count only)")
     return parser
 
 
@@ -431,6 +437,8 @@ def main(
         return run_forward_backfill(args, env, started)
     if args.command == "quote-refs-backfill":
         return run_quote_refs_backfill(args, env, started)
+    if args.command == "memory-backfill":
+        return run_memory_backfill(args, env, started)
     if args.command == "triage-child":  # pragma: no cover - supervised until SIGTERM
         return run_triage_worker(env, started)
     backfill = args.query is not None

@@ -2122,6 +2122,37 @@ origenlab-worker forward-backfill --since-days 60 --apply    # writes the readin
 Run it as a one-off job on the worker service (it needs the worker's database and Storage settings).
 Output is one JSON line of counts (`found`, `readable`, `recorded`, `skipped`), never an address.
 
+### 8.11b Case memory (running machine summary per case)
+
+After the triage records its reading of a HUMAN_CLASSES email (a deal email a person wrote), the
+worker optionally writes or updates a machine memory for the linked case, its institution and its
+primary contact. The memory is a compact JSONB of `summary`, `facts`, `open_questions` and
+`next_step` kept in `evidence.subject_memory` (append-only, version per subject).
+
+**Env vars** (set on the worker service):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ORIGENLAB_WORKER_MEMORY_ENABLED` | off | `true` to activate the writer; anything else leaves it off |
+| `ORIGENLAB_WORKER_MEMORY_MODEL` | `claude-haiku-5-5` | model id; overrides the default — must be a valid Claude model |
+
+The writer runs inside its own `try`; a failure never breaks the triage, capture, quote reading or
+Drive filing. The memory is read by the context matcher (each case's dossier includes
+`memory_summary` and `memory_next_step`) and by the triage model (linked cases include the summary).
+
+**Backfill** of emails already matched to a case but without a memory (requires the API key):
+
+```
+origenlab-worker memory-backfill --since-days 60            # dry run: counts only
+origenlab-worker memory-backfill --since-days 60 --apply    # writes the memories
+```
+
+Output is one JSON line (`found`, `updated`, `skipped`, `no_cases`). Never logs an address or body.
+
+**Read** the memory for a case: `GET /v2/workspace/cases/{opportunity_id}/memory` — returns the
+latest case memory, institution memory, and (when available) person memory. The dashboard shows
+«Lo que sabemos» in the case drawer when a memory exists.
+
 ### 8.12 Quote PDFs read into lines (`quote-read`)
 
 After `drive-file`, the cron runs `origenlab-worker quote-read`

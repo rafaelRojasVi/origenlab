@@ -2347,6 +2347,60 @@ class CrmWorkspaceRepository:
             notes = self._rows(cur)
         return {"opportunity_id": opportunity_id, "notes": notes}
 
+    def opportunity_memory(self, opportunity_id: str) -> dict[str, Any] | None:
+        """The latest machine memory for one case, plus institution and person memories if any.
+
+        Returns `None` when the case does not exist (route answers 404).
+        Returns an object with ``case_memory``, ``institution_memory`` and ``person_memory``
+        keys; any key is ``null`` when no memory has been written yet (switch off or no emails
+        processed yet).
+        """
+        with self._read() as cur:
+            cur.execute("select 1 from crm.opportunity where id = %s::uuid", (opportunity_id,))
+            if cur.fetchone() is None:
+                return None
+            # Case memory.
+            cur.execute(
+                """
+                select sm.memory, sm.version, sm.model, sm.created_at::text, sm.source_record_id::text
+                  from evidence.subject_memory sm
+                 where sm.subject_kind = 'opportunity' and sm.subject_id = %s::uuid
+                 order by sm.version desc
+                 limit 1
+                """,
+                (opportunity_id,),
+            )
+            row = cur.fetchone()
+            case_memory = (
+                {**dict(row[0]), "version": row[1], "model": row[2],
+                 "written_at": row[3], "source_record_id": row[4]}
+                if row else None
+            )
+            # Institution memory — from the primary linked org.
+            cur.execute(
+                """
+                select sm.memory, sm.version, sm.model, sm.created_at::text, oo.organization_id::text
+                  from crm.opportunity_organization oo
+                  join evidence.subject_memory sm
+                    on sm.subject_kind = 'organization' and sm.subject_id = oo.organization_id
+                 where oo.opportunity_id = %s::uuid
+                 order by oo.created_at, sm.version desc
+                 limit 1
+                """,
+                (opportunity_id,),
+            )
+            row = cur.fetchone()
+            institution_memory = (
+                {**dict(row[0]), "version": row[1], "model": row[2],
+                 "written_at": row[3], "organization_id": row[4]}
+                if row else None
+            )
+        return {
+            "opportunity_id": opportunity_id,
+            "case_memory": case_memory,
+            "institution_memory": institution_memory,
+        }
+
     def opportunity_threads(self, opportunity_id: str) -> dict[str, Any] | None:
         """Every captured email on the Gmail threads of one case, grouped by thread (`case_threads`).
 

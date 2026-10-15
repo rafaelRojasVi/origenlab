@@ -104,6 +104,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // session required, the same UUID-shaped segment and a literal `/threads` tail. Senders come
   // by name or domain only (v2/crm_workspace.py `case_threads`).
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/threads$/,
+  // The machine memory for one case (summary, facts, next step) written by the triage worker.
+  // GET-only, operator session required; a UUID-shaped segment and the literal `/memory` tail.
+  // Returns 200 with case_memory: null when no memory exists yet; 404 when the case itself is gone.
+  /^\/v2\/workspace\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/memory$/,
   // The quote PDFs the quote reader refused (Datos → «Acciones automáticas»): GET-only, exact path.
   /^\/v2\/workspace\/quote-readings$/,
   // Strict read-only candidates for a PDF quoted in a different Gmail thread.

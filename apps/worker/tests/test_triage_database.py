@@ -474,3 +474,72 @@ def test_an_email_a_person_removed_from_a_case_teaches_the_matcher_not_that_case
     with triage_conn(target) as conn:
         past = TriageDb(conn).past_decisions(f"otra@cli-q-{tag}.invalid")
     assert [(p.subject, p.opportunity_id, p.verdict) for p in past] == [("Consulta de plazo", oid, "rejected")]
+
+
+def test_the_memory_backfill_lists_business_mail_filed_on_an_open_case_oldest_first(dsn, target, mailbox_id) -> None:
+    tag = uuid.uuid4().hex[:6]
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-m-{tag}@example.test",))[0][0]
+    oid = owner_rows(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) "
+                          "values (%s, 'lead', %s) returning id::text", (f"Caso memoria {tag}", operator))[0][0]
+    store = Store()
+    ids = []
+    for n in range(2):
+        sid = source_record(dsn, capture(target, mailbox_id, store, f"mb-{tag}-{n}",
+                                         make_raw(subject=f"Solicitud de cotización {n}",
+                                                  date=f"Mon, 1{2 + n} Oct 2026 10:00:00 -0300",
+                                                  message_id=f"<{uuid.uuid4().hex}@cliente.invalid>")))
+        with triage_conn(target) as conn:
+            triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL))
+        owner_rows(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
+                        "linked_by_operator_id) values (%s, %s, 'mentions', %s) returning id", (oid, sid, operator))
+        ids.append(sid)
+    with triage_conn(target) as conn:
+        pending = TriageDb(conn).pending_memory_backfill(since_days=36500, limit=500)
+    assert [p for p in pending if p in ids] == ids  # both, the older first
+
+
+def test_the_memory_backfill_writes_case_institution_and_person_memories_on_a_real_database(dsn, target, mailbox_id) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from origenlab_worker.memory import backfill_memory
+
+    def reader(request):
+        memory = {"summary": "Pide una balanza; cliente nuevo.", "facts": [{"k": "product", "v": "Balanza"}],
+                  "open_questions": [], "next_step": {"action": "responder", "why": "Pidió precio.", "confidence": "high"}}
+        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(memory))])
+
+    tag = uuid.uuid4().hex[:6]
+    sender = f"ana-{tag}@cliente.invalid"
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-w-{tag}@example.test",))[0][0]
+    org = owner_rows(dsn, "insert into crm.organization (kind, name, confirmation) values ('institution', %s, 'confirmed') "
+                          "returning id::text", (f"Instituto Ficticio {tag}",))[0][0]
+    person = owner_rows(dsn, "insert into crm.person (display_name, confirmation) values (%s, 'confirmed') returning id::text", (f"Ana {tag}",))[0][0]
+    owner_rows(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                    "values ('email', %s, %s, %s, 'personal', 'confirmed') returning id", (sender, sender, person))
+    # The case and its confirmed requesting institution are written together (the agreement trigger).
+    oid = owner_rows(dsn, "with o as (insert into crm.opportunity (title, stage, owner_operator_id, organization_id) "
+                          "values (%s, 'lead', %s, %s) returning id), "
+                          "oo as (insert into crm.opportunity_organization (opportunity_id, organization_id, role, "
+                          "valid_from, confirmation, confirmed_by_operator_id) "
+                          "select id, %s, 'requesting_institution', current_date, 'confirmed', %s from o) "
+                          "select id::text from o", (f"Caso {tag}", operator, org, org, operator))[0][0]
+    store = Store()
+    sid = source_record(dsn, capture(target, mailbox_id, store, f"mw-{tag}",
+                                     make_raw(frm=f"Ana <{sender}>", subject="Solicitud de cotización balanza",
+                                              message_id=f"<{uuid.uuid4().hex}@cliente.invalid>")))
+    with triage_conn(target) as conn:
+        triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL))
+    owner_rows(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, linked_by_operator_id) "
+                    "values (%s, %s, 'mentions', %s) returning id", (oid, sid, operator))
+    with triage_conn(target) as conn:
+        db = TriageDb(conn)
+        counts = backfill_memory(db, store, reader, [sid], apply=True, model="claude-haiku-5-5")
+    assert counts["updated"] == 3, counts
+    kinds = dict(owner_rows(dsn, "select subject_kind, subject_id::text from evidence.subject_memory "
+                                 "where subject_id = any(%s::uuid[])", ([oid, org, person],)))
+    assert kinds == {"opportunity": oid, "organization": org, "person": person}

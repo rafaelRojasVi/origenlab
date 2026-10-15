@@ -186,6 +186,22 @@ def get_opportunity_threads(opportunity_id: UUID, _: Operator, repo: Repo) -> An
     return body
 
 
+@workspace_router.get("/cases/{opportunity_id}/memory")
+def get_case_memory(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
+    """The latest machine memory for one case: a running summary, facts, open questions and next
+    step the triage worker writes after processing each HUMAN_CLASSES email on the case's thread.
+    Also returns the institution memory for the case's primary organisation when one exists.
+
+    A read only; nothing is written here. Returns 404 when the case does not exist; returns 200
+    with ``case_memory: null`` when the case exists but no memory has been written yet (the switch
+    is off or no emails have been triaged yet).
+    """
+    body = repo.opportunity_memory(str(opportunity_id))
+    if body is None:
+        raise HTTPException(status_code=404, detail="no such case")
+    return body
+
+
 @workspace_router.get("/quote-readings")
 def get_quote_readings(_: Operator, repo: Repo) -> Any:
     """The quote PDFs the quote reader refused (Datos → «Acciones automáticas»): quotation, revision,
