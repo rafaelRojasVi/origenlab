@@ -194,6 +194,47 @@ def _run_backfill(event: str, pending: str, backfill: Callable[..., dict[str, in
     return _emit(line, started)
 
 
+def run_memory_backfill(args: Any, env: Mapping[str, str], started: float, *,
+                        open_connection: OpenConnection = _open_triage_connection,
+                        store_factory: Callable[[StorageConfig], Any] | None = None,
+                        reader_factory: Callable[[str], Any] = anthropic_reader) -> int:
+    """Past HUMAN_CLASSES emails matched to a case that have no memory yet — write their first memory.
+
+    Requires a valid `ORIGENLAB_WORKER_ANTHROPIC_API_KEY` (the memory writer calls Claude).
+    Dry run by default; pass `--apply` to write.  The model defaults to
+    `ORIGENLAB_WORKER_MEMORY_MODEL` (default `claude-haiku-5-5`).
+    """
+    from origenlab_worker.memory import backfill_memory, memory_model as _model_name
+
+    line: dict[str, Any] = {"event": "memory_backfill", "mode": "apply" if args.apply else "dry_run",
+                            "exit": EXIT_OK, "error": None}
+    try:
+        storage = StorageConfig.from_env(env)
+        database = remote_worker_target(env.get(ENV_DATABASE_URL) or "", expected_host=env.get(ENV_EXPECTED_HOST),
+                                        ca_file=write_ca_file(env.get(ENV_CA_PEM) or ""))
+        key = (env.get(ENV_ANTHROPIC_API_KEY) or "").strip()
+        if not key:
+            raise ConfigRefused("anthropic_api_key_missing")
+        reader = reader_factory(key)
+        store = (store_factory or (lambda s: S3EmlStore(s.client())))(storage)
+        model = _model_name()
+        since = max(1, min(int(args.since_days), 3650))
+        limit = max(1, min(int(args.limit), 2000))
+        line["model"] = model
+        with open_connection(database) as conn:
+            db = TriageDb(conn)
+            pending = db.pending_memory_backfill(since_days=since, limit=limit)
+            line["found"] = len(pending)
+            if args.apply:
+                counts = backfill_memory(db, store, reader, pending, apply=True, model=model)
+                line.update(counts)
+    except ConfigRefused as exc:
+        line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
+    except Exception as exc:  # noqa: BLE001 — the class, never the text
+        line.update(mode="failed", exit=EXIT_FAILED, error=type(exc).__name__)
+    return _emit(line, started)
+
+
 def _idle_until_terminated() -> None:
     """Paused on Render: a Background Worker that exits is restarted in a loop, so it idles."""
     stop = threading.Event()

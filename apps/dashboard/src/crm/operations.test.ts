@@ -7,8 +7,8 @@ const base: OpsAction = {
 };
 
 describe("rule guide", () => {
-  it("explains exactly R1–R12, in full", () => {
-    expect(Object.keys(RULE_GUIDE)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12"]);
+  it("explains exactly R1–R13, in full", () => {
+    expect(Object.keys(RULE_GUIDE)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13"]);
     for (const [id, g] of Object.entries(RULE_GUIDE)) {
       for (const field of [g.cuando, g.hace, g.ejemplo]) expect(field.trim().length, id).toBeGreaterThan(10);
     }
@@ -16,7 +16,7 @@ describe("rule guide", () => {
 
   it("marks as automatic only the rules the API runs on its timer", () => {
     const auto = Object.entries(RULE_GUIDE).filter(([, g]) => g.automatica).map(([id]) => id);
-    expect(auto).toEqual(["R1", "R2", "R7", "R9", "R11", "R12"]);
+    expect(auto).toEqual(["R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13"]);
   });
 });
 

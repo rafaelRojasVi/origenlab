@@ -2814,3 +2814,43 @@ este caso». New on 2026-10-15: rule **R12** (automatic) links the email when th
 (layer 1 «exact» or a «high» pick), before R7 would open a second request — also a supplier's mail
 about a client's deal; a won case keeps it closed; it lists on Hoy with «Quitar». The emails people
 take off a case now count as rejections in the examples the AI reads. No schema change.
+
+### 2.7.119 Case memory: running machine summary per case, institution and person, 2026-10-15 — built, deploys on merge
+
+Migration `20261015120000` (`supabase/migrations/20261015120000_slice7_case_memory.sql`) adds
+`evidence.subject_memory`: an append-only table the triage worker writes after each HUMAN_CLASSES
+email it processes. Each row holds a `memory` JSONB with `summary` (≤ 600 chars in Spanish),
+`facts` (≤ 15 key-value facts keyed `quote|amount|product|person|institution|date|other`),
+`open_questions` (≤ 3), and `next_step` (action, why, confidence). Organisation and person
+memories carry `summary` + `facts` only (no next_step). Version numbers are per-subject; the table
+is append-only (no UPDATE/DELETE grants; triggers as defence-in-depth).
+
+The writer runs in the triage worker after `record_forward_reading` and `record_quote_refs`,
+isolated in `try/except` so a failure never breaks the triage. It is gated behind
+`ORIGENLAB_WORKER_MEMORY_ENABLED=true` (default off). The model defaults to `claude-haiku-5-5`
+and can be overridden via `ORIGENLAB_WORKER_MEMORY_MODEL`. A backfill CLI
+(`origenlab-worker memory-backfill --since-days 60 [--apply]`) writes the first memory for past
+emails already matched to a case.
+
+The context matcher's `dossier()` now includes `memory_summary` and `memory_next_step` when
+available. The triage model's `user_content()` includes `memory_summary` and `memory_next_step`
+for each linked case.
+
+API: `GET /v2/workspace/cases/{id}/memory` (through `ContactRedactingRoute`) returns the latest
+case, institution and person memories. Proxy allowlist: `/v2/workspace/cases/…/memory`. Dashboard:
+«Lo que sabemos» section in the OpportunityDrawer (hidden when no memory exists). pgTAP: 17 tests
+in `supabase/tests/096_case_memory.sql`.
+
+The release on merge applies the migration to hosted. The writer stays off until
+`ORIGENLAB_WORKER_MEMORY_ENABLED=true` is set on the Render worker.
+
+### 2.7.120 A sent quote lands on the client's open request (R13); R3/R4 automatic, 2026-10-15 — built, deploys on merge
+
+Found on 15 Oct: quotes sent on a new thread never reached the request the client had made
+(S&B Analítica's 01266-26 would have opened a second case), and quotes to new clients waited for
+an admin's «Aplicar» (Panimex 01265-26, Grupo Bimbo 01267-26). Rule **R13** files such a quote on
+the client's open request without a quote — matched by a recipient who wrote on it or asked through
+a forwarded request, the institution's domain, or the institution the PDF names — walks it to
+«Enviada» and records the quote; two candidates stay a proposal. R3 and R4 are now automatic, so a
+quote to a client with no open request opens its case by itself; all three undo with «Quitar». The
+snapshot counts a forwarded request's customer as a person of its case. No schema change.

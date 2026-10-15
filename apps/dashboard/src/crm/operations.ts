@@ -110,13 +110,13 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
   R3: {
     cuando: "OrigenLab envía una cotización nueva a una dirección de una institución que ya está en el CRM.",
     hace: "Abre un caso para esa institución, en «Enviada», con la cotización.",
-    automatica: false,
+    automatica: true,
     ejemplo: "Se envía «CN09876.pdf» a compras@institucion-ficticia.cl → caso nuevo de Institución Ficticia.",
   },
   R4: {
     cuando: "Como R3, pero el dominio del destinatario no corresponde a ninguna institución del CRM.",
     hace: "Crea la institución «por confirmar» con ese dominio, su caso en «Enviada» y la cotización.",
-    automatica: false,
+    automatica: true,
     ejemplo: "Se envía una cotización a lab@nuevo-cliente.cl → institución «nuevo-cliente.cl» por confirmar.",
   },
   R5: {
@@ -167,6 +167,12 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: true,
     ejemplo: "Un cliente escribe desde un hilo nuevo «¿plazo de entrega de la centrífuga?» → queda en su caso abierto de la centrífuga.",
   },
+  R13: {
+    cuando: "OrigenLab envía una cotización nueva en un hilo nuevo, y el cliente ya tiene una solicitud abierta sin cotización (escribió él, la pidió por un reenvío, su dominio es el de la institución o el PDF nombra la institución).",
+    hace: "Vincula el correo a esa solicitud, la pasa a «Enviada» y registra la cotización, en vez de abrir un caso nuevo.",
+    automatica: true,
+    ejemplo: "Se envía «CN01266 – S&B Analítica» a Esteban, que pidió tabletas por LabX → queda en su solicitud.",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -182,6 +188,7 @@ const RULE_WHY: Record<string, string> = {
   R10: "institución del PDF «por confirmar»",
   R11: "solicitud reenviada a contacto@",
   R12: "el sistema reconoce el caso",
+  R13: "responde la solicitud del cliente",
 };
 
 /** One Spanish sentence for what the system did. */

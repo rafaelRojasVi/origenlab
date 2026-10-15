@@ -810,7 +810,9 @@ def test_r9_records_a_sent_quote_on_the_one_open_case_of_the_institution_the_pdf
         cases=(case(id="c-ifde", stage="qualified", organization_id="o-ifde"),),
         organizations=(org(**IFDE),),
     ))
-    assert (action.rule_id, action.mode, action.case_id, action.quote_number) == ("R9", "auto", "c-ifde", "09876-26")
+    # A case with no quote yet is a request waiting for its first one: R13 (2026-10-15) takes it before
+    # R9, with the same three steps.
+    assert (action.rule_id, action.mode, action.case_id, action.quote_number) == ("R13", "auto", "c-ifde", "09876-26")
     assert action.context["from_stage"] == "qualified"
     assert [c["command"] for c in action.commands] == [
         "link_case_evidence", "advance_case_stage", "record_historical_quotation"]
@@ -857,7 +859,7 @@ def test_r9_is_automatic_and_undone_like_r1() -> None:
     from origenlab_api.v2 import mail_rules_repository
     assert "R9" in AUTOMATIC_RULES and "R9" in RULE_IDS
     source = inspect.getsource(mail_rules_repository.MailRulesRepository._undo_steps)
-    assert 'rule in ("R1", "R9") and created.get("quote_revision_id")' in source
+    assert 'rule in ("R1", "R9", "R13") and created.get("quote_revision_id")' in source
 
 
 
@@ -1095,3 +1097,45 @@ def test_a_pick_of_a_lost_case_or_a_case_not_in_the_snapshot_does_nothing() -> N
     lost = case(stage="lost", closed=True)
     assert only(Snapshot(evidence=(inbound(case_match=_pick("c-1")),), cases=(lost,), organizations=(org(),))).rule_id != "R12"
     assert only(Snapshot(evidence=(inbound(case_match=_pick("c-404")),), cases=(case(),), organizations=(org(),))).rule_id != "R12"
+
+
+# ------------------------------------------------------------------ R13: a sent quote finds the client's open request
+
+
+def sent(to, filename="CN09266-Esteban Ficticio – Laboratorio Ficticio EIRL.pdf", token="CN09266", **over):
+    return mail(id="e-13", thread_id="t-new", recipients=(to,), subject="Cotización tabletas",
+                documents=(MailDocument(filename=filename, sha256=PDF_SHA, cn_tokens=(token,)),), **over)
+
+
+def request_case(**over):
+    base = dict(id="c-req", title="Solicitud — tabletas", stage="lead", organization_id="o-lab", quotes=(),
+                people=("esteban@lab-ficticio.test",))
+    base.update(over)
+    return case(**base)
+
+
+LAB = dict(id="o-lab", name="Laboratorio Ficticio EIRL", domains=(), confirmation="confirmed")
+
+
+def test_a_quote_sent_to_the_person_who_asked_lands_on_their_request_instead_of_a_new_case() -> None:
+    a = only(Snapshot(evidence=(sent("Esteban <esteban@lab-ficticio.test>"),), cases=(request_case(),),
+                      organizations=(org(**LAB),)))
+    assert (a.rule_id, a.mode, a.case_id, a.quote_number) == ("R13", "auto", "c-req", "09266-26")
+    assert [c["command"] for c in a.commands] == [
+        "link_case_evidence", "advance_case_stage", "advance_case_stage", "advance_case_stage", "record_historical_quotation"]
+
+
+def test_the_institution_the_pdf_names_finds_the_request_when_the_address_is_new() -> None:
+    a = only(Snapshot(evidence=(sent("otra@lab-ficticio.test"),), cases=(request_case(people=()),),
+                      organizations=(org(**LAB),)))
+    assert (a.rule_id, a.case_id) == ("R13", "c-req")
+
+
+def test_a_request_that_already_has_a_quote_or_two_candidates_is_not_guessed() -> None:
+    quoted = request_case(quotes=(quote("09100-26"),))
+    a = only(Snapshot(evidence=(sent("Esteban <esteban@lab-ficticio.test>"),), cases=(quoted,),
+                      organizations=(org(**LAB),)))
+    assert a.rule_id != "R13"
+    two = (request_case(), request_case(id="c-req2"))
+    b = only(Snapshot(evidence=(sent("Esteban <esteban@lab-ficticio.test>"),), cases=two, organizations=(org(**LAB),)))
+    assert (b.rule_id, b.mode) == ("R13", "proposal")

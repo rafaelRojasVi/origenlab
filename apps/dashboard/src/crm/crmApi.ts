@@ -49,6 +49,8 @@ export const WORKSPACE_PATHS = {
     `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/quote-candidates`,
   casePurchaseOrderCandidates: (opportunityId: string) =>
     `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/purchase-order-candidates`,
+  caseMemory: (opportunityId: string) =>
+    `/v2/workspace/cases/${encodeURIComponent(opportunityId)}/memory`,
 } as const;
 
 export const fetchOverview = () => fetchJsonGet<WorkspaceOverview>(operatorApiUrl(WORKSPACE_PATHS.overview));
@@ -71,6 +73,30 @@ export const fetchCaseQuoteCandidates = (opportunityId: string) =>
 /** This read never changes a sale; the operator must inspect the attached PO PDF. */
 export const fetchCasePurchaseOrderCandidates = (opportunityId: string) =>
   fetchJsonGet<CasePurchaseOrderCandidatesResponse>(operatorApiUrl(WORKSPACE_PATHS.casePurchaseOrderCandidates(opportunityId)));
+
+/** Types for the machine memory the triage worker writes per case and institution. */
+export type MemoryFact = { k: string; v: string; source_record_id?: string | null };
+export type MemoryNextStep = { action: string; why: string; confidence: "high" | "medium" | "low" };
+export type SubjectMemory = {
+  summary: string;
+  facts: MemoryFact[];
+  open_questions: string[];
+  next_step: MemoryNextStep | null;
+  version: number;
+  model: string | null;
+  written_at: string | null;
+  source_record_id?: string | null;
+  organization_id?: string | null;
+};
+export type CaseMemoryResponse = {
+  opportunity_id: string;
+  case_memory: SubjectMemory | null;
+  institution_memory: SubjectMemory | null;
+};
+/** The latest machine memory for one case. Returns 404 when the case does not exist. */
+export const fetchCaseMemory = (opportunityId: string) =>
+  fetchJsonGet<CaseMemoryResponse>(operatorApiUrl(WORKSPACE_PATHS.caseMemory(opportunityId)));
+
 export const fetchProviders = () => fetchJsonGet<ProvidersResponse>(operatorApiUrl(WORKSPACE_PATHS.providers));
 export const fetchEquipmentInterests = () =>
   fetchJsonGet<EquipmentInterestsResponse>(operatorApiUrl(WORKSPACE_PATHS.equipmentInterests));

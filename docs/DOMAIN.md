@@ -661,7 +661,7 @@ else (R7, R8) stays a proposal in Revisión.
   offers R4's steps with the name instead of a domain (institution «por confirmar», case in
   «Enviada», quote) and, like R4, waits for «Aplicar». R3–R6 always wait for «Aplicar».
   **2026-10-14 (owner: «the system acts by itself, I remove what is wrong»).** The timer runs
-  **R1, R2, R7, R9, R11 and R12**. **R12** (2026-10-15): an inbound email no thread or quote number
+  **R1, R2, R3, R4, R7, R9, R11, R12 and R13**. **R13** (2026-10-15): a quote sent on a new thread lands on the client's open request that has no quote yet (a recipient wrote on it or asked through a forward, a recipient's domain is its institution's, or the PDF names it) instead of opening a second case; R3 and R4 then open a case only for a client with no open request, by themselves, undone with «Quitar». **R12** (2026-10-15): an inbound email no thread or quote number
   places joins the case the worker's context matcher (`case_match:v1`) is sure of — rules «exact»,
   or the AI's pick with confidence «high» — before R7 would open a second request; a supplier
   writing about a client's deal goes to the client's case the same way; a won case keeps it
@@ -1086,13 +1086,14 @@ proxy). A price list carries dealer costs, so the API leaves it out for the view
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|
 | 57 | `catalog.product_document` | a Drive file documenting the catalog | `kind ∈ {datasheet, price_list}`; `datasheet` ⇔ `product_id`, `price_list` ⇔ `supplier_organization_id`; a Drive-shaped `drive_file_id`, once per subject; `source ∈ {drive_manifest, operator}` with the manifest in `origin_source_record_id`; never deleted — a superseded file is retired (`status`) |
+| 58 | `evidence.subject_memory` | running machine memory per case, institution or person | append-only; `subject_kind ∈ {opportunity, organization, person}`; `subject_id` carries NO FK (rebuildable projection rule); version ≥ 1; `memory` JSONB must be an object; unique `(subject_kind, subject_id, version)`; `origenlab_worker` insert+select, `origenlab_api` select; RLS enabled, not forced |
 
 Domain events added: `product.document_recorded` / `product.document_retired` for a data sheet
 (aggregate `product`) and `organization.price_list_recorded` / `organization.price_list_retired`
 for a price list (aggregate `organization`).
 
-Counts by schema: `crm` 22, `comms` 4, `outbound` 9, `evidence` 4,
-`catalog` 7, `procurement` 1, `platform` 6 — **53**.
+Counts by schema: `crm` 22, `comms` 4, `outbound` 9, `evidence` 5,
+`catalog` 7, `procurement` 1, `platform` 6 — **54**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

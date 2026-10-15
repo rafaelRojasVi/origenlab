@@ -164,9 +164,26 @@ class LinkedCase:
 
 
 def user_content(mail: MailText, verdict: RuleVerdict, candidates: Sequence[ProductCandidate],
-                 cases: Sequence[LinkedCase] = ()) -> str:
-    """The volatile part of the request, after the cached system prompt."""
+                 cases: Sequence[LinkedCase] = (),
+                 case_memories: dict[str, dict[str, Any]] | None = None) -> str:
+    """The volatile part of the request, after the cached system prompt.
+
+    ``case_memories`` is an optional mapping of ``opportunity_id → memory`` written by the triage
+    worker on a previous email of the same Gmail thread.  When present, each linked case also shows
+    its ``memory_summary`` (≤ 600 chars) and ``memory_next_step`` so the model has running context.
+    """
     catalog = [{"id": c.product_id, "model": c.model_number, "name": c.name} for c in candidates]
+    linked: list[dict[str, Any]] = []
+    for c in cases:
+        entry: dict[str, Any] = {"title": c.title, "stage": c.stage}
+        if case_memories:
+            mem = case_memories.get(c.opportunity_id)
+            if mem:
+                if mem.get("summary"):
+                    entry["memory_summary"] = mem["summary"]
+                if mem.get("next_step"):
+                    entry["memory_next_step"] = mem["next_step"]
+        linked.append(entry)
     context = {
         "rule_class": verdict.triage_class,
         "sender_domain": verdict.sender_domain,
@@ -174,7 +191,7 @@ def user_content(mail: MailText, verdict: RuleVerdict, candidates: Sequence[Prod
         "attachment_names": list(mail.attachment_names),
         "quote_numbers_seen": list(verdict.quote_numbers),
         "body_truncated": mail.body_truncated,
-        "linked_cases": [{"title": c.title, "stage": c.stage} for c in cases],
+        "linked_cases": linked,
     }
     return (
         "CONTEXT\n" + json.dumps(context, ensure_ascii=False)
@@ -184,8 +201,13 @@ def user_content(mail: MailText, verdict: RuleVerdict, candidates: Sequence[Prod
 
 
 def build_request(mail: MailText, verdict: RuleVerdict, candidates: Sequence[ProductCandidate], *,
-                  model: str = DEFAULT_MODEL, cases: Sequence[LinkedCase] = ()) -> dict[str, Any]:
-    """The keyword arguments of `client.beta.messages.create` for one message."""
+                  model: str = DEFAULT_MODEL, cases: Sequence[LinkedCase] = (),
+                  case_memories: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """The keyword arguments of `client.beta.messages.create` for one message.
+
+    ``case_memories`` is forwarded to ``user_content`` — it enriches each linked case's entry with
+    the memory summary and next_step from a previous email of the same thread.
+    """
     model = check_model_id(model)
     request: dict[str, Any] = {
         "model": model,
@@ -193,7 +215,7 @@ def build_request(mail: MailText, verdict: RuleVerdict, candidates: Sequence[Pro
         # The system prompt is identical for every message: cache it. A prefix shorter than the
         # model's minimum is simply not cached — never an error.
         "system": [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-        "messages": [{"role": "user", "content": user_content(mail, verdict, candidates, cases)}],
+        "messages": [{"role": "user", "content": user_content(mail, verdict, candidates, cases, case_memories)}],
         "output_config": {"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
     }
     if supports_adaptive_thinking(model):

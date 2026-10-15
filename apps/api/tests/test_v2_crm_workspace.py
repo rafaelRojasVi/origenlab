@@ -627,6 +627,7 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/drive",
         "/v2/workspace/review",
         "/v2/workspace/fx",
+        "/v2/workspace/cases/{opportunity_id}/memory",
     }
 
 

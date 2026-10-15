@@ -216,6 +216,16 @@ select r.id::text as receipt_id, r.completed_at, r.response_body, sr.kind, sr.pa
  order by r.completed_at desc
  limit %s
 """
+_FORWARD_PEOPLE_SQL = """
+select distinct o.id::text, f.payload ->> 'original_email'
+  from evidence.source_record f
+  join crm.opportunity o
+    on o.origin_source_record_id = f.id
+    or exists (select 1 from crm.opportunity_evidence oe
+                where oe.opportunity_id = o.id and oe.unlinked_at is null
+                  and oe.source_record_id::text = f.payload ->> 'forwarded_message_id')
+ where f.kind = 'forwarded_request' and f.review_status = 'promoted'
+"""
 _APPLIED_EVIDENCE_SQL = """
 select distinct response_body ->> 'evidence_id'
   from platform.command_receipt
@@ -312,6 +322,17 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
                      is_supplier=bool(r["is_supplier"]) or r["kind"] in ("supplier", "manufacturer"))
         for r in rows()
     )
+
+    # The customer of a forwarded request is a person of the case it opened or joined (R13): the
+    # request's own email came from Tatiana, so the sender of the linked copy is never the customer.
+    cur.execute(_FORWARD_PEOPLE_SQL)
+    by_case = {c.id: c for c in cases}
+    extra: dict[str, set[str]] = {}
+    for case_id, email in cur.fetchall():
+        if case_id in by_case and email:
+            extra.setdefault(case_id, set()).add(email.strip().lower())
+    if extra:
+        cases = tuple(replace(c, people=tuple(sorted(set(c.people) | extra.get(c.id, set())))) for c in cases)
 
     cur.execute(_APPLIED_EVIDENCE_SQL, (APPLY_COMMAND,))
     applied = frozenset(r[0] for r in cur.fetchall() if r[0])
@@ -656,7 +677,7 @@ class MailRulesRepository(V2CaseCommandRepository):
             if rule == "R5" and action.get("from_stage") == "quoting":
                 run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": self._case_version(cur, case_id),
                                          "stage": "quoting", "note": note})
-        if rule in ("R1", "R9") and created.get("quote_revision_id"):
+        if rule in ("R1", "R9", "R13") and created.get("quote_revision_id"):
             # R1 can now recognize a new sent CN PDF on an existing thread. Undo the quote first,
             # then walk the ordinary reversible stage edges back to where the case was before the
             # email action. No privileged stage correction is needed for these open stages.
@@ -680,7 +701,7 @@ class MailRulesRepository(V2CaseCommandRepository):
                     "stage": stage,
                     "note": note,
                 })
-        if rule in ("R1", "R2", "R5", "R6", "R9", "R12"):
+        if rule in ("R1", "R2", "R5", "R6", "R9", "R12", "R13"):
             for link_id in created.get("opportunity_evidence_ids") or []:
                 run(UNLINK_CASE_EVIDENCE, {"opportunity_evidence_id": link_id, "reason": note, "note": note})
         if rule == "R11":

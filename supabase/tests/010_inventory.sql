@@ -1,4 +1,4 @@
--- Slice 0/2 — inventory proofs: seven schemas, exactly the reviewed 53 tables, ownership, RLS
+-- Slice 0/2 — inventory proofs: seven schemas, exactly the reviewed 54 tables, ownership, RLS
 -- posture, no SECURITY DEFINER function, pinned search_path, `public` empty, forbidden columns
 -- absent, send flags false. docs/DOMAIN.md §7; docs/ARCHITECTURE.md §3, §6.1, §6.2.
 begin;
@@ -19,7 +19,7 @@ select is(
       and nspowner = 'origenlab_owner'::regrole),
   7, 'all seven application schemas are owned by origenlab_owner');
 
--- Exactly the reviewed 53 application tables (DOMAIN.md §7, §7.1, §7.2, §7.3).
+-- Exactly the reviewed 54 application tables (DOMAIN.md §7, §7.1, §7.2, §7.3).
 select set_eq(
   $$ select n.nspname || '.' || c.relname
        from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -45,9 +45,10 @@ select set_eq(
     'crm.note', 'crm.organization_product_line',
     'catalog.product_image', 'catalog.supplier_terms',
     'catalog.fx_rate', 'catalog.cost_parameter', 'evidence.document_line',
-    'evidence.triage_review', 'crm.opportunity_document', 'catalog.product_document'
+    'evidence.triage_review', 'crm.opportunity_document', 'catalog.product_document',
+    'evidence.subject_memory'
   ],
-  'exactly the reviewed 53 application tables exist');
+  'exactly the reviewed 54 application tables exist');
 
 select results_eq(
   $$ select n.nspname::text collate "default", count(*)::int
@@ -55,8 +56,8 @@ select results_eq(
       where c.relkind = 'r'
         and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       group by 1 order by 1 $$,
-  $$ values ('catalog', 7), ('comms', 4), ('crm', 22), ('evidence', 4), ('outbound', 9), ('platform', 6), ('procurement', 1) $$,
-  'counts by schema: crm 22, comms 4, outbound 9, evidence 4, catalog 7, procurement 1, platform 6');
+  $$ values ('catalog', 7), ('comms', 4), ('crm', 22), ('evidence', 5), ('outbound', 9), ('platform', 6), ('procurement', 1) $$,
+  'counts by schema: crm 22, comms 4, outbound 9, evidence 5, catalog 7, procurement 1, platform 6');
 
 -- No views, materialized views, partitions or foreign tables in Slice 0.
 select is(
@@ -147,13 +148,13 @@ select hasnt_column('crm', 'external_identifier', 'entity_id', 'external_identif
 select hasnt_column('crm', 'address', 'parent_type', 'address is bound by a typed FK, not a parent_type/parent_id pair');
 select col_not_null('crm', 'address', 'organization_id', 'address.organization_id is NOT NULL');
 
--- RLS enabled on all 53 tables and never forced (the owner crosses it by ownership).
+-- RLS enabled on all 54 tables and never forced (the owner crosses it by ownership).
 select is(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and c.relrowsecurity),
-  53, 'RLS is enabled on all 53 tables');
+  54, 'RLS is enabled on all 54 tables');
 select is(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r'
@@ -173,7 +174,7 @@ select is(
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and obj_description(c.oid, 'pg_class') like 'DOMAIN.md §7 #%'),
-  53, 'every table is commented with its DOMAIN.md §7 inventory number');
+  54, 'every table is commented with its DOMAIN.md §7 inventory number');
 
 select * from finish();
 rollback;
