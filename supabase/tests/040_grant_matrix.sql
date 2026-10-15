@@ -152,9 +152,13 @@ insert into expected values
     -- 20261013120000: catalog.product_document — api reads, records and retires (status only);
     -- the worker has no access.
     ('catalog', 'product_document', 'origenlab_api', 'SI', array['status', 'version', 'updated_at'], 'SIU'),
-    ('catalog', 'product_document', 'origenlab_worker', '', null, '');
+    ('catalog', 'product_document', 'origenlab_worker', '', null, ''),
+    -- 20261015120000: evidence.subject_memory — append-only machine memory per case/org/person:
+    -- the worker inserts new versions and reads; the api reads for the /memory endpoint.
+    ('evidence', 'subject_memory', 'origenlab_api', 'S', null, 'S'),
+    ('evidence', 'subject_memory', 'origenlab_worker', 'SI', null, 'SI');
 
-select is((select count(*)::int from expected), 106, 'the matrix covers all 53 tables for both runtime roles');
+select is((select count(*)::int from expected), 108, 'the matrix covers all 54 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

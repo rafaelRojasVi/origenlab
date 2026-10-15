@@ -233,9 +233,13 @@ insert into expected_policies values
     -- 20261013120000: catalog.product_document — api reads, records and retires.
     ('catalog', 'product_document', 'origenlab_api', 'SELECT'),
     ('catalog', 'product_document', 'origenlab_api', 'INSERT'),
-    ('catalog', 'product_document', 'origenlab_api', 'UPDATE');
+    ('catalog', 'product_document', 'origenlab_api', 'UPDATE'),
+    -- 20261015120000: evidence.subject_memory — append-only machine memory.
+    ('evidence', 'subject_memory', 'origenlab_api',    'SELECT'),
+    ('evidence', 'subject_memory', 'origenlab_worker', 'SELECT'),
+    ('evidence', 'subject_memory', 'origenlab_worker', 'INSERT');
 
-select is((select count(*)::int from expected_policies), 185, 'the matrix implies 185 policies');
+select is((select count(*)::int from expected_policies), 188, 'the matrix implies 188 policies');
 
 -- Posture.
 select is(
