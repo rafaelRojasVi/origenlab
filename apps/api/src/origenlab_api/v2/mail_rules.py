@@ -18,6 +18,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R8 | everything else (supplier, a reply to our own supplier RFQ, campaign thread, Labdelivery, nothing matched) | none |
 | R9 | outbound, a NEW CN number in a PDF, no recipient names an institution (free-mail), and the PDF's own name names exactly one institution (`CN09876-<institución>.pdf`, as the Cotizador writes it) | auto when that institution has exactly one open case: link + «Enviada» + quote; otherwise a proposal |
 | R10 | as R9, but the institution the PDF names is not in the CRM | «Aplicar» only: institution «por confirmar» (named as the PDF names it, no domain) + case in «Enviada» + quote |
+| R12 | inbound, no thread or quote number placed it, and the context matcher (`case_match:v1`, the worker's triage) is sure: layer 1 «exact», or the AI's pick with confidence «high» — also for a supplier writing about a client's deal | auto: link to that open case (a won case keeps it closed); a medium or low pick stays a suggestion |
 | R11 | a request forwarded to contacto@ (`forwarded_request`, read by the worker), still pending | auto: joins the one open case whose emails come from that customer, or of the customer's institution; otherwise a request (`create_request_from_forward`) with the known institution, the company the forward names, or none. Never a supplier's domain; never links a Labdelivery-mailbox email |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
@@ -51,7 +52,7 @@ from email.utils import getaddresses
 from typing import Any
 from zoneinfo import ZoneInfo
 
-RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11")
+RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: OrigenLab's own domains: never an institution, never a recipient that counts.
@@ -145,6 +146,8 @@ class MailEvidence:
     #: Quote numbers the sender's own text names, as the worker read them (`quote_refs:v1`): R2
     #: reads them when neither a PDF nor the subject names a number.
     body_quote_tokens: tuple[str, ...] = ()
+    #: The context matcher's reading (`case_match:v1`): decision, candidates and the AI's pick (R12).
+    case_match: Mapping[str, Any] | None = None
     #: The AI reading's intent (`triage:vN` value.reading.intent), when the model read this email:
     #: «quote_request» lets R7 open a request whose subject has no quote word; «supplier_offer»
     #: keeps a supplier's own quotation from opening one.
@@ -709,6 +712,11 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
         return _signal_rules(e, linked if len(linked) == 1 else [], ix, already_linked=True)
 
     if supplier_domains and not thread_cases:
+        # A supplier writing about a client's deal belongs on the client's case (owner, 2026-10-10)
+        # — only when the context matcher is sure.
+        placed = _context_rule(e, ix)
+        if placed is not None:
+            return placed
         return PlannedAction(e.id, "R8", NONE, (
             f"dominio de proveedor ({', '.join(supplier_domains)}): no se crea institución ni caso",))
     if not thread_cases and ix.answers_our_rfq(e, domains):
@@ -777,7 +785,51 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
 
     if e.direction == "outbound":
         return _creation_rules(e, ix, domains)
+    # Before a new request opens: the context matcher may know the case already (R12).
+    placed = _context_rule(e, ix)
+    if placed is not None:
+        return placed
     return _inbound_rules(e, ix, domains)
+
+
+_SIGNAL_ES = {"pdf_quote": "número de cotización del PDF", "thread_pdf_quote": "cotización del hilo",
+              "text_quote": "número de cotización en el texto", "same_thread": "mismo hilo",
+              "domain": "dominio de la institución", "institution_name": "nombre de la institución",
+              "product": "producto del caso", "sender_on_case": "la persona ya escribe en el caso"}
+
+
+def _context_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R12: the context matcher is sure — layer 1 «exact», or the AI's pick with confidence «high».
+    The email joins that case (open, or won and kept closed). Anything less stays a suggestion."""
+    m = e.case_match or {}
+    if e.direction != "inbound" or not m:
+        return None
+    pick = m.get("pick") or {}
+    candidates = m.get("candidates") or []
+    case_id: str | None = None
+    reasons: list[str] = []
+    if pick.get("confidence") == "high" and pick.get("choice") in ix.cases:
+        case_id = str(pick["choice"])
+        reasons = [f"la IA lo reconoce como del caso: {pick.get('reason_es') or 'sin detalle'}"]
+    elif m.get("decision") == "exact" and len(candidates) >= 1 and candidates[0].get("opportunity_id") in ix.cases:
+        case_id = str(candidates[0]["opportunity_id"])
+        signals = ", ".join(_SIGNAL_ES.get(x, x) for x in candidates[0].get("signals") or [])
+        reasons = [f"el contexto del correo coincide con el caso ({signals})"]
+    if case_id is None:
+        return None
+    c = ix.cases[case_id]
+    if c.closed and c.stage != "won":
+        return None  # a lost or abandoned case: a client writing again stays visible
+    note = _note("R12", reasons)
+    if c.closed:
+        reasons.append("el caso está ganado: se archiva el correo sin reabrirlo")
+        step = {"command": LINK_AFTER_CLOSE, "inputs": {"opportunity_id": "@case", "relation": "mentions",
+                                                        "source_record_id": e.id, "note": note}}
+    else:
+        step = _link_step(c, e.id, "mentions", note)
+    return PlannedAction(e.id, "R12", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+                         organization_id=c.organization_id, commands=(step,),
+                         context={"case": c.id, "case_version": c.version})
 
 
 def _link_rule(e: MailEvidence, rule_id: str, cases: list[CaseState], why: str,

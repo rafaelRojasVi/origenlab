@@ -2800,3 +2800,17 @@ Hosted the same day, through the CRM commands: `ohaus.com`, `soviquim.cl` and `h
 to OHAUS, Soviquim and Hielscher Ultrasonics (the last also classified `manufacturer`), so their
 mail is supplier mail. Dry run on hosted before merge: 7 automatic actions (3 bank-transfer emails
 filed on their won case, 4 forwards placed), 8 supplier offers no longer opening a request.
+
+### 2.7.118 The context matcher places emails on their case, and learns from «Quitar», 2026-10-15 — built, deploys on merge
+
+The context matcher built 2026-10-10 on `feat/context-matcher-v1` (never merged; spec private at
+`~/data/origenlab-v2-migration/specs/2026-10-10-context-matcher-design.md`) is now on main: the
+worker's triage stores `message_triage` `case_match:v1` for mail a person wrote about a deal —
+layer 1 scores the cases by the quote number on the PDF, the thread, a quote number in the text,
+the institution's domain or name, the product and the people; when layer 1 is not sure and the
+model is on, Claude picks among the cases it is shown, with the operators' earlier links and
+rejections as examples. «Correos sin caso» shows «Parece del caso X» with «Vincular» / «No es de
+este caso». New on 2026-10-15: rule **R12** (automatic) links the email when the matcher is sure
+(layer 1 «exact» or a «high» pick), before R7 would open a second request — also a supplier's mail
+about a client's deal; a won case keeps it closed; it lists on Hoy with «Quitar». The emails people
+take off a case now count as rejections in the examples the AI reads. No schema change.

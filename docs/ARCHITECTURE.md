@@ -697,7 +697,12 @@ statement. It is a single-purpose task queue — one periodic sweep and one job 
 message — not a workflow engine or an event bus (§12). The jobs propose: each one records
 `message_triage` and `product_mention` `evidence.assertion` rows ([`DOMAIN.md`](DOMAIN.md) §7
 #25) and nothing else; no case, stage, interest or reply follows from them without an operator
-or the API's email → cases rules. The capture cron (D1) is unchanged and does not enqueue: the
+or the API's email → cases rules. One of those rows, `case_match:v1`, is the context matcher's
+suggestion of the case a person's email belongs to (rules first; with the model on, Claude picks
+among the cases it is shown, reading back the operators' earlier links and «no es de este caso»
+answers and the emails people took off a case as examples). When it is sure — rules «exact», or
+Claude's pick with confidence «high» — the API's rule R12 links the email to that case by itself
+(listed on «Hoy» with «Quitar»); a medium or low pick stays a one-click suggestion. The capture cron (D1) is unchanged and does not enqueue: the
 sweep reads what it captured. The LLM call is the worker's (§2), with the message sent as
 untrusted data and the answer validated against a closed schema
 ([`OPERATIONS.md`](OPERATIONS.md) §8.11).

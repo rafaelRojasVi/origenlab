@@ -302,3 +302,86 @@ def test_only_a_triage_suggestion_is_reviewed_and_a_refusal_writes_nothing(world
         _review(world, {"assertion_id": str(uuid.uuid4()), "verdict": "approved"})
     assert missing.value.code == "suggestion_not_found"
     assert _owner(world, "select count(*) from evidence.triage_review where assertion_id = %s", other) == [(0,)]
+
+
+def _unlinked_reading(world, case_match: dict) -> tuple[str, str]:
+    """A read email on its own thread (no case holds it) with a `case_match:v1` suggestion."""
+    from psycopg.types.json import Jsonb
+
+    tag = uuid.uuid4().hex[:10]
+    gid = f"cm-{tag}"
+    sid = _owner(world, "insert into evidence.source_record (kind, dedupe_key, payload) values "
+                        "('gmail_message', %s, %s) returning id::text",
+                 f"gmail_message:{gid}", Jsonb({"gmail_message_id": gid, "gmail_thread_id": f"thr-{gid}"}))[0][0]
+    mailbox = _owner(world, "select id from comms.mailbox limit 1")[0][0]
+    _owner(world, "insert into comms.message (mailbox_id, provider_message_id, provider_thread_id, direction, "
+                  "internal_date, subject, parse_status) values (%s, %s, %s, 'inbound', now(), 'Re: despacho', "
+                  "'parsed') returning id", mailbox, gid, f"thr-{gid}")
+    read = _owner(world, "insert into evidence.assertion (source_record_id, kind, value_norm, value) values "
+                         "(%s, 'message_triage', 'triage:v1', %s) returning id::text",
+                  sid, Jsonb({"class": "quote_followup", "needs_model": True, "model_state": "off"}))[0][0]
+    cm = _owner(world, "insert into evidence.assertion (source_record_id, kind, value_norm, value) values "
+                       "(%s, 'message_triage', 'case_match:v1', %s) returning id::text", sid, Jsonb(case_match))[0][0]
+    return read, cm
+
+
+@needs_db
+def test_an_unlinked_email_carries_its_case_suggestion_with_the_cases_current_version(world) -> None:
+    discarded = _owner(world, "insert into crm.opportunity (title, stage, owner_operator_id) "
+                              "values ('Descartado', 'lead', %s) returning id::text", world["operator_id"])[0][0]
+    _owner(world, "update crm.opportunity set stage = 'abandoned', close_reason = 'discarded_by_correction', "
+                  "closed_at = now() where id = %s returning id", discarded)
+    read, cm = _unlinked_reading(world, {
+        "case_match_version": 1, "decision": "propose", "quote_numbers": [], "new_case_quote": None,
+        "pick_state": "ran",
+        "pick": {"choice": world["case_id"], "confidence": "medium", "reason_es": "Mismo producto.", "new_case": None},
+        "candidates": [{"opportunity_id": discarded, "score": 3, "signals": ["domain"]},
+                       {"opportunity_id": world["case_id"], "score": 3, "signals": ["product"]}]})
+    items = {i["assertion_id"]: i for i in _repo(world).readings(status="pending", limit=200)["items"]}
+    match = items[read]["case_match"]
+    assert match["assertion_id"] == cm and match["decision"] == "propose"
+    assert [s["opportunity_id"] for s in match["suggestions"]] == [world["case_id"]]  # discarded left out, no repeat
+    first = match["suggestions"][0]
+    assert first["from"] == "model" and first["reason_es"] == "Mismo producto." and first["version"] >= 1
+    assert first["signals"] == ["product"] and first["stage"] == "lead"
+    # The email already on a case carries none.
+    assert items[world["read"]]["case_match"] is None
+
+
+@needs_db
+def test_a_rejected_suggestion_is_not_offered_again_and_a_new_case_proposal_keeps_its_number(world) -> None:
+    read, cm = _unlinked_reading(world, {
+        "case_match_version": 1, "decision": "propose", "quote_numbers": [], "new_case_quote": None,
+        "pick_state": "off", "candidates": [{"opportunity_id": world["case_id"], "score": 3, "signals": ["domain"]}]})
+    _review(world, {"assertion_id": cm, "verdict": "rejected", "corrected": {}, "note": "No es de este caso"})
+    items = {i["assertion_id"]: i for i in _repo(world).readings(status="pending", limit=200)["items"]}
+    assert items[read]["case_match"] is None
+    read2, _cm2 = _unlinked_reading(world, {
+        "case_match_version": 1, "decision": "new_case", "quote_numbers": ["09136-26"],
+        "new_case_quote": "09136-26", "pick_state": "off", "candidates": []})
+    items = {i["assertion_id"]: i for i in _repo(world).readings(status="pending", limit=200)["items"]}
+    assert items[read2]["case_match"]["decision"] == "new_case"
+    assert items[read2]["case_match"]["new_case_quote"] == "09136-26" and items[read2]["case_match"]["suggestions"] == []
+
+
+def test_a_suggestion_with_a_malformed_case_id_is_ignored() -> None:
+    from origenlab_api.v2.triage_review import _suggestion_ids
+
+    value = {"pick": {"choice": "not-a-uuid"}, "candidates": [{"opportunity_id": "00000000-0000-0000-0000-000000000001"}]}
+    assert _suggestion_ids(value) == ["00000000-0000-0000-0000-000000000001"]
+
+
+def test_when_the_model_ran_its_answer_wins() -> None:
+    from origenlab_api.v2.triage_review import case_match_view
+
+    case = {"opportunity_id": "00000000-0000-0000-0000-00000000000a", "title": "A", "stage": "lead", "version": 1,
+            "closed": False}
+    cases = {case["opportunity_id"]: case}
+    row = {"case_match_id": "cm", "cases": [], "case_match_verdict": None}
+    said_none = {"decision": "propose", "pick_state": "ran", "pick": {"choice": "none", "reason_es": "x"},
+                 "candidates": [{"opportunity_id": case["opportunity_id"], "signals": ["domain"]}]}
+    assert case_match_view({**row, "case_match_value": said_none}, cases) is None
+    picked = {"decision": "new_case", "new_case_quote": "09136-26", "pick_state": "ran",
+              "pick": {"choice": case["opportunity_id"], "reason_es": "Mismo producto."}, "candidates": []}
+    view = case_match_view({**row, "case_match_value": picked}, cases)
+    assert view["decision"] == "propose" and view["suggestions"][0]["from"] == "model"

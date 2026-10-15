@@ -53,6 +53,21 @@ def test_the_model_sample_needs_a_key(tmp_path, monkeypatch) -> None:
         ev.main([str(_folder(tmp_path)), "--model-sample", "3"])
 
 
+def test_the_export_writes_one_case_per_row_with_what_a_person_would_look_at() -> None:
+    from datetime import datetime, timezone
+
+    ex = load_script("triage_export")
+    at = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    row = ex.case_row(("o-1", "Balanza", "quoting", at, None, None, "Universidad Ficticia", ["uni.test"], ["09147-26"],
+                       ["t1"], ["ana@uni.test"], ["Balanza analítica", None]))
+    assert row == {"opportunity_id": "o-1", "title": "Balanza", "stage": "quoting", "created_at": at.isoformat(),
+                   "closed_at": None, "close_reason": None, "institution": "Universidad Ficticia", "domains": ["uni.test"],
+                   "quote_numbers": ["09147-26"], "threads": ["t1"], "addresses": ["ana@uni.test"],
+                   "interests": ["Balanza analítica"]}
+    assert "discarded_by_correction" in ex._CASES and "120 days" in ex._CASES
+    assert "provider_thread_id" in ex._MESSAGES
+
+
 def test_the_export_refuses_a_folder_inside_the_repository() -> None:
     ex = load_script("triage_export")
     with pytest.raises(SystemExit, match="outside the repository"):
@@ -119,3 +134,98 @@ def test_a_model_that_fails_does_not_stop_the_others(tmp_path, capsys, monkeypat
     assert summary["agreement"][0]["compared"] == 0
     report = [json.loads(x) for x in (folder / "report.jsonl").read_text().splitlines()]
     assert report[0]["readings"]["claude-haiku-5-5"] == "error_RuntimeError"
+
+
+def test_truth_mode_scores_the_context_matcher_with_counts_only(tmp_path, capsys) -> None:
+    ev = load_script("triage_eval")
+    (tmp_path / "eml").mkdir()
+    rows = [("a", make_raw(subject="Re: despacho puntas", pdf_name="Cotización 09153A.pdf"), "t-9"),
+            ("b", make_raw(frm="x@proveedor.invalid", subject="Certificado de calibración"), "t-8")]
+    lines = []
+    for sid, raw, thread in rows:
+        (tmp_path / "eml" / f"{sid}.eml").write_bytes(raw)
+        lines.append(json.dumps({"source_record_id": sid, "direction": "inbound", "labels": ["INBOX"],
+                                 "internal_date": "2026-10-06T10:00:00+00:00", "thread_id": thread,
+                                 "sender": "ana@cliente.invalid", "recipients": ["contacto@origenlab.cl"]}))
+    (tmp_path / "messages.jsonl").write_text("\n".join(lines) + "\n")
+    (tmp_path / "catalog.jsonl").write_text("")
+    (tmp_path / "cases.jsonl").write_text(json.dumps(
+        {"opportunity_id": "o-1", "title": "Caso", "stage": "won", "closed_at": "2026-10-01T00:00:00+00:00",
+         "institution": None, "domains": [], "quote_numbers": ["09153-26"], "threads": ["t-1"],
+         "addresses": [], "interests": []}) + "\n")
+    truth = tmp_path / "truth.jsonl"
+    truth.write_text(json.dumps({"source_record_id": "a", "case_id": "o-1", "reviewed_by": "owner"}) + "\n"
+                     + json.dumps({"source_record_id": "b", "case_id": None, "reviewed_by": None}) + "\n")
+    assert ev.main([str(tmp_path), "--truth", str(truth)]) == 0
+    out = capsys.readouterr().out
+    assert "despacho" not in out and "Certificado" not in out
+    score = json.loads(out.splitlines()[-1])
+    assert score["event"] == "triage_eval_truth"
+    assert score["existing_case_rows"] == 1 and score["top1_right"] == 1 and score["thread_only_right"] == 0
+    assert score["none_rows"] == 1 and score["false_link"] == 0 and score["owner_reviewed_wrong"] == 0
+    report = [json.loads(x) for x in (tmp_path / "report.jsonl").read_text().splitlines()]
+    assert report[0]["case_match"]["decision"] == "exact"
+
+
+def test_truth_mode_reads_the_quote_pdf_sent_earlier_on_the_thread(tmp_path, capsys) -> None:
+    ev = load_script("triage_eval")
+    (tmp_path / "eml").mkdir()
+    rows = [("sent", "outbound", make_raw(frm="contacto@origenlab.cl", subject="Cotización", pdf_name="CN09136.pdf")),
+            ("reply", "inbound", make_raw(subject="Re: Cotización — transferencia realizada"))]
+    lines = []
+    for sid, direction, raw in rows:
+        (tmp_path / "eml" / f"{sid}.eml").write_bytes(raw)
+        lines.append(json.dumps({"source_record_id": sid, "direction": direction, "labels": ["INBOX"],
+                                 "internal_date": "2026-10-06T10:00:00+00:00", "thread_id": "t-1",
+                                 "sender": "ana@cliente.invalid", "recipients": []}))
+    (tmp_path / "messages.jsonl").write_text("\n".join(lines) + "\n")
+    (tmp_path / "catalog.jsonl").write_text("")
+    (tmp_path / "cases.jsonl").write_text("")
+    truth = tmp_path / "truth.jsonl"
+    truth.write_text(json.dumps({"source_record_id": "reply", "case_id": None, "missing_case": "x"}) + "\n")
+    assert ev.main([str(tmp_path), "--truth", str(truth)]) == 0
+    score = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert score["new_case_rows"] == 1 and score["new_case_proposed"] == 1
+
+
+def test_truth_mode_with_a_pick_sample_scores_the_model_and_the_combination(tmp_path, capsys, monkeypatch) -> None:
+    ev = load_script("triage_eval")
+    monkeypatch.setenv("ORIGENLAB_WORKER_ANTHROPIC_API_KEY", "k")
+    picks: list[dict] = []
+
+    def fake_reader(_key: str):
+        def read(request):
+            picks.append(request)
+            return SimpleNamespace(stop_reason="end_turn", usage=SimpleNamespace(input_tokens=50, output_tokens=5),
+                                   content=[SimpleNamespace(type="text", text=json.dumps(
+                                       {"choice": "o-1", "confidence": "medium", "reason_es": "Mismo producto.",
+                                        "new_case": None}))])
+        return read
+
+    monkeypatch.setattr(ev, "anthropic_reader", fake_reader)
+    (tmp_path / "eml").mkdir()
+    rows = [("a", make_raw(frm="ivan@prov.invalid", subject="Re: centrífuga price")),
+            ("b", make_raw(frm="sam@prov.invalid", subject="Re: centrífuga lead time"))]
+    lines = []
+    for sid, raw in rows:
+        (tmp_path / "eml" / f"{sid}.eml").write_bytes(raw)
+        lines.append(json.dumps({"source_record_id": sid, "direction": "inbound", "labels": ["INBOX"],
+                                 "internal_date": "2026-10-06T10:00:00+00:00", "thread_id": f"t-{sid}",
+                                 "sender": f"{'paul' if sid == 'a' else 'sam'}@prov.invalid", "recipients": []}))
+    (tmp_path / "messages.jsonl").write_text("\n".join(lines) + "\n")
+    (tmp_path / "catalog.jsonl").write_text("")
+    (tmp_path / "cases.jsonl").write_text(json.dumps(
+        {"opportunity_id": "o-1", "title": "Centrífuga", "stage": "qualified", "closed_at": None, "institution": None,
+         "domains": [], "quote_numbers": [], "threads": [], "addresses": [], "interests": ["Centrífuga 24 tubos"]}) + "\n")
+    truth = tmp_path / "truth.jsonl"
+    truth.write_text("".join(json.dumps({"source_record_id": sid, "case_id": "o-1", "reviewed_by": "owner"}) + "\n"
+                             for sid in ("a", "b")))
+    assert ev.main([str(tmp_path), "--truth", str(truth), "--pick-sample", "5"]) == 0
+    lines_out = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
+    rules, combined = lines_out[1], lines_out[2]
+    assert rules["top1_right"] == 0 and combined["event"] == "triage_eval_truth_combined"
+    assert combined["top1_right"] == 2 and combined["pick_calls"] == 2 and combined["pick_input_tokens"] == 100
+    assert combined["pick_medium_right"] == 2  # by confidence: what R12 (high only) hangs on
+    # Leave-one-out: each email is shown the other's owner decision from the same domain, never its own.
+    assert "Re: centrífuga lead time" in picks[0]["messages"][0]["content"]
+    assert "Re: centrífuga price" not in picks[0]["messages"][0]["content"].split("<email>")[0]

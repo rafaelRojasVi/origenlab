@@ -648,7 +648,7 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     assert unchanged.value.code == "auto_mail_rules_unchanged"
     state = auto.state()
     assert (state["enabled"], state["changed_by"], state["note"], state["rules"]) == (
-        True, "Admin Ficticio", "probado en vista previa", ["R1", "R11", "R2", "R7", "R9"])
+        True, "Admin Ficticio", "probado en vista previa", ["R1", "R11", "R12", "R2", "R7", "R9"])
 
     # One pass: R1/R2 link and R7 opens the RFQ lead; R4 still waits for a person.
     result = auto.run_once()
@@ -828,3 +828,22 @@ def test_hoy_lists_the_automatic_actions_and_sales_removes_only_those(db, world)
     repo.remove_automatic(_operator(seller, "sales"), auto["command_receipt_id"])
     assert _one(db, "select stage from crm.opportunity where id = %s", auto["case_id"]) == ("abandoned",)
     assert auto["command_receipt_id"] not in {i["receipt_id"] for i in repo.recent_automatic(hours=48)}
+
+
+def test_r12_the_context_matcher_places_a_new_thread_on_its_case_and_quitar_unlinks_it(db, world) -> None:
+    repo = _repo(db)
+    case_id = _apply_only(db, world, world["e_known"])["case_id"]
+    with _owner(db) as conn:
+        ask = _mail(conn, thread=f"thread-ctx-{world['tag']}", direction_hint=None,
+                    sender=f"Compras <compras@{world['client_domain']}>", recipients="contacto@origenlab.cl",
+                    subject="Cotización: ¿plazo de entrega?")
+        _requester_check(conn, ask)
+        _reading(conn, ask, "case_match:v1", {"decision": "propose", "pick_state": "ran",
+                 "candidates": [{"opportunity_id": case_id, "score": 5, "signals": ["domain", "product"]}],
+                 "pick": {"choice": case_id, "confidence": "high", "reason_es": "mismo producto y contacto"}})
+    placed = _apply_only(db, world, ask)
+    assert (placed["rule_id"], placed["case_id"]) == ("R12", case_id)
+    assert _one(db, "select count(*) from crm.opportunity where title like %s", "%¿plazo%") == (0,)  # no new request
+    repo.undo(_operator(world["admin"]), placed["command_receipt_id"], "no era")
+    assert _one(db, "select unlinked_at is not null from crm.opportunity_evidence "
+                    "where opportunity_id = %s and source_record_id = %s", case_id, ask) == (True,)

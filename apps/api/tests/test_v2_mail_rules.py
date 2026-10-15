@@ -1045,3 +1045,53 @@ def test_a_forward_from_a_domain_the_ai_reads_as_offering_products_opens_nothing
         forwards=(forward(customer_email="info@fabrica-ficticia.test", customer_name=None),)))}
     assert (actions["f-1"].rule_id, actions["f-1"].mode) == ("R8", "none")
     assert any("proveedor" in r for r in actions["f-1"].reasons)
+
+
+# ------------------------------------------------------------------ R12: the context matcher places it
+
+
+def _pick(case_id, confidence="high", reason="mismo producto y misma persona que el caso"):
+    return {"decision": "propose", "candidates": [{"opportunity_id": case_id, "score": 5, "signals": ["domain", "product"]}],
+            "pick_state": "ran", "pick": {"choice": case_id, "confidence": confidence, "reason_es": reason}}
+
+
+def test_a_client_writing_on_a_new_thread_joins_the_case_the_ai_is_sure_of_instead_of_a_new_request() -> None:
+    a = only(Snapshot(evidence=(inbound(sender="Ana <ana@cliente.test>", subject="Cotización centrífuga, ¿plazo?",
+                                        case_match=_pick("c-1")),),
+                      cases=(case(),), organizations=(org(),)))
+    assert (a.rule_id, a.mode, a.case_id) == ("R12", "auto", "c-1")
+    assert a.commands[0]["command"] == "link_case_evidence"
+    assert any("mismo producto" in r for r in a.reasons)
+
+
+def test_a_medium_pick_stays_a_suggestion_and_r7_still_opens_the_request() -> None:
+    a = only(Snapshot(evidence=(inbound(sender="Ana <ana@cliente.test>", subject="Cotización centrífuga",
+                                        case_match=_pick("c-1", "medium")),),
+                      cases=(case(),), organizations=(org(),)))
+    assert a.rule_id == "R7"
+
+
+def test_layer_one_exact_also_places_it_and_a_won_case_keeps_it_closed() -> None:
+    exact = {"decision": "exact", "candidates": [{"opportunity_id": "c-1", "score": 6, "signals": ["text_quote"]}],
+             "pick_state": "not_needed"}
+    a = only(Snapshot(evidence=(inbound(case_match=exact),), cases=(case(stage="won", closed=True),),
+                      organizations=(org(),)))
+    assert (a.rule_id, a.mode) == ("R12", "auto")
+    assert a.commands[0]["command"] == "link_case_evidence_after_close"
+
+
+def test_a_supplier_answering_about_a_clients_deal_goes_to_the_clients_case_when_the_ai_is_sure() -> None:
+    supplier = org(id="o-9", domains=("fabrica.test",), is_supplier=True)
+    a = only(Snapshot(evidence=(inbound(sender="Ventas <ventas@fabrica.test>", subject="Precio centrífuga",
+                                        case_match=_pick("c-1")),),
+                      cases=(case(),), organizations=(org(), supplier)))
+    assert (a.rule_id, a.case_id) == ("R12", "c-1")
+    no_pick = only(Snapshot(evidence=(inbound(sender="Ventas <ventas@fabrica.test>", subject="Precio centrífuga"),),
+                            cases=(case(),), organizations=(org(), supplier)))
+    assert no_pick.rule_id == "R8"
+
+
+def test_a_pick_of_a_lost_case_or_a_case_not_in_the_snapshot_does_nothing() -> None:
+    lost = case(stage="lost", closed=True)
+    assert only(Snapshot(evidence=(inbound(case_match=_pick("c-1")),), cases=(lost,), organizations=(org(),))).rule_id != "R12"
+    assert only(Snapshot(evidence=(inbound(case_match=_pick("c-404")),), cases=(case(),), organizations=(org(),))).rule_id != "R12"

@@ -38,6 +38,53 @@ export interface TriageCase {
   close_reason?: string | null;
 }
 
+/** One case the context matcher thinks an email belongs to (`triage_review.case_match_view`). */
+export interface TriageSuggestion {
+  opportunity_id: string;
+  title: string | null;
+  stage: string;
+  version: number;
+  closed: boolean;
+  /** Layer-1 signals: pdf_quote, thread_pdf_quote, text_quote, same_thread, domain, institution_name, product, sender_on_case. */
+  signals: string[];
+  from: "rules" | "model";
+  reason_es: string | null;
+}
+
+/** The context matcher's suggestion for an email no case holds; null once answered. */
+export interface TriageCaseMatch {
+  assertion_id: string;
+  decision: "exact" | "propose" | "new_case" | "none";
+  new_case_quote: string | null;
+  new_case: { institution: string | null; contact: string | null; quote_number: string | null } | null;
+  quote_numbers: string[];
+  suggestions: TriageSuggestion[];
+}
+
+/** Why a case was suggested, as a person would say it. */
+export const SIGNAL_LABEL: Record<string, string> = {
+  pdf_quote: "cotización en el PDF",
+  thread_pdf_quote: "cotización enviada en el mismo hilo",
+  text_quote: "número de cotización",
+  same_thread: "mismo hilo",
+  domain: "misma institución",
+  institution_name: "nombra la institución",
+  product: "mismo producto",
+  sender_on_case: "la persona está en el caso",
+};
+
+/** The reason line of a suggestion: the model's own words when it chose, otherwise the signals. */
+export function suggestionReason(s: TriageSuggestion): string {
+  if (s.from === "model" && s.reason_es) return s.reason_es;
+  return s.signals.map((k) => SIGNAL_LABEL[k] ?? k).join(", ");
+}
+
+/** The email has something to propose: a case it looks like, or a deal with no case. */
+export function hasCaseMatch(r: TriageReading): boolean {
+  const m = r.case_match;
+  return !!m && (m.suggestions.length > 0 || m.decision === "new_case");
+}
+
 export interface TriageReview {
   verdict: TriageVerdict;
   corrected: TriageCorrection;
@@ -77,6 +124,8 @@ export interface TriageReading {
   cases: TriageCase[];
   transitions: { opportunity_id: string; current_stage: string; transition_allowed: boolean }[];
   review: TriageReview | null;
+  /** Absent from an older API. */
+  case_match?: TriageCaseMatch | null;
 }
 
 export interface TriageReadings {
@@ -285,8 +334,12 @@ function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCa
   if (holdingCases(r, cards, now).length > 0) return wonProposal(r, cards) || reopenProposal(r, cards, now) ? null : "en un caso";
   const [local = "", domain = ""] = (r.sender ?? "").toLowerCase().split("@");
   if (domain.includes("labdelivery")) return "reenvío antiguo";
-  if (r.sender_is_supplier || r.intent === "supplier_offer") return "proveedor";
-  if (AUTOMATIC_SENDER.test(local) || AUTOMATIC_CLASSES.has(r.class ?? "")) return "aviso automático";
+  // A supplier's price for a client's deal is asked about when the matcher can place it on a case or
+  // sees a deal with no case; a platform's notice only when there is a case to suggest.
+  if ((r.sender_is_supplier || r.intent === "supplier_offer") && !hasCaseMatch(r)) return "proveedor";
+  const suggestsCase = (r.case_match?.suggestions.length ?? 0) > 0;
+  if ((AUTOMATIC_SENDER.test(local) || AUTOMATIC_CLASSES.has(r.class ?? "")) && !suggestsCase) return "aviso automático";
+  if (hasCaseMatch(r)) return null;
   return null;
 }
 

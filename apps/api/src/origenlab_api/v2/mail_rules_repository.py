@@ -120,7 +120,8 @@ def _json(value: Any) -> Any:
 #: they must not hide a live email from the rules.
 _EVIDENCE_SQL = """
 select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
-       requester.value as requester_match, quote_refs.value as quote_refs, ai.intent as model_intent
+       requester.value as requester_match, quote_refs.value as quote_refs, ai.intent as model_intent,
+       case_match.value as case_match
   from evidence.source_record sr
   join lateral (select cm.direction, cm.provider_thread_id from comms.message cm
                  where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
@@ -146,6 +147,12 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
         order by substring(a.value_norm from 9)::int desc
         limit 1
   ) ai on true
+  left join lateral (
+       select a.value from evidence.assertion a
+        where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = 'case_match:v1'
+        order by a.created_at desc
+        limit 1
+  ) case_match on true
  where sr.kind = 'gmail_message' and not sr.is_quarantined
    and sr.review_status <> 'rejected'
    and sr.payload ->> 'staging_source_record_sha256' is null
@@ -268,6 +275,7 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
             requester_organization_name=(requester.get("organization_name") if requester_matched else None),
             body_quote_tokens=tuple(str(t) for t in ((_json(r.get("quote_refs")) or {}).get("tokens") or ())),
             model_intent=r.get("model_intent"),
+            case_match=_json(r.get("case_match")) or None,
         ))
         display[r["id"]] = {"subject": p.get("subject_raw"), "sent_at": p.get("sent_at"),
                             "direction": direction}
@@ -672,7 +680,7 @@ class MailRulesRepository(V2CaseCommandRepository):
                     "stage": stage,
                     "note": note,
                 })
-        if rule in ("R1", "R2", "R5", "R6", "R9"):
+        if rule in ("R1", "R2", "R5", "R6", "R9", "R12"):
             for link_id in created.get("opportunity_evidence_ids") or []:
                 run(UNLINK_CASE_EVIDENCE, {"opportunity_evidence_id": link_id, "reason": note, "note": note})
         if rule == "R11":

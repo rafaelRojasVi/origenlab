@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import {
-  WonFlowError, markCaseWon, moveCase, newCaseCommandKey, openCommercialCase, stagePath,
+  WonFlowError, linkCaseQuoteEvidence, markCaseWon, moveCase, newCaseCommandKey, openCommercialCase, stagePath,
   useMayRunCaseCommands,
 } from "../caseCommands";
 import type { OpportunityCardData } from "../crmTypes";
@@ -19,6 +19,7 @@ import {
   reviewTriage,
   sortInbox,
   stageLabel,
+  suggestionReason,
   wonProposal,
   type HiddenReason,
   type ReopenProposal,
@@ -54,7 +55,9 @@ const PREVIEW = 5;
  * revision to win against. Other emails already on a case, from a supplier, automatic notices and
  * older messages of the same thread are not asked about, only counted. «Revisadas» lists the
  * verdicts already given. `onCaseChanged` is called after a case was won or opened, so the board
- * behind the panel reloads.
+ * behind the panel reloads. When the context matcher placed the email (`case_match`), the row says
+ * «Parece del caso X» with why, and offers «Vincular» / «No es de este caso»; when it saw a deal with
+ * no case, «Abrir caso» carries the quote number. A supplier's email with a suggestion is asked about.
  */
 export function TriagePanel({ cards = [], onCaseChanged }: {
   cards?: readonly OpportunityCardData[];
@@ -352,7 +355,75 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const openKey = useRef(newCaseCommandKey());
+  const linkKey = useRef(newCaseCommandKey());
+  const [pick, setPick] = useState(0);
   const url = gmailUrl(r);
+  const match = r.case_match ?? null;
+  const suggestion = match?.suggestions[pick] ?? null;
+  /** `link-case-evidence` refuses a closed case: there the answer is «Es de ese caso», nothing linked. */
+  const closedCase = !!suggestion?.closed;
+  const newDeal = match?.decision === "new_case";
+  const quote = newDeal ? match?.new_case_quote ?? null : null;
+
+  /** «Vincular»: the link is the decision; answering the suggestion follows. */
+  async function link() {
+    if (!match || !suggestion) return;
+    setBusy(true);
+    try {
+      await linkCaseQuoteEvidence({
+        opportunity_id: suggestion.opportunity_id, opportunity_version: suggestion.version, relation: "mentions",
+        source_record_id: r.source_record_id, note: "Vinculado desde Hoy: sugerencia de caso",
+      }, linkKey.current);
+    } catch (err) {
+      toast(refusalMessage(err, "No se pudo vincular."), "bad");
+      setBusy(false);
+      return;
+    }
+    try {
+      await reviewTriage({ assertion_id: match.assertion_id, verdict: "approved", corrected: {}, note: "Vinculado al caso sugerido" });
+      toast(`Correo vinculado a «${suggestion.title ?? "el caso"}».`);
+      leave();
+      onDone();
+    } catch (err) {
+      toast(`Se vinculó, pero la sugerencia no quedó respondida: ${refusalMessage(err, "rechazado")}`, "bad");
+    } finally {
+      setBusy(false);
+      onCaseChanged();
+    }
+  }
+
+  /** «Es de ese caso» on a closed case: both readings answered, the email leaves «Hoy»; nothing linked. */
+  async function belongsToClosed() {
+    if (!match || !suggestion) return;
+    setBusy(true);
+    try {
+      await reviewTriage({ assertion_id: match.assertion_id, verdict: "approved", corrected: {},
+        note: `Es del caso cerrado · ${suggestion.opportunity_id}` });
+      await reviewTriage({ assertion_id: r.assertion_id, verdict: "approved", corrected: {},
+        note: `Es del caso cerrado «${suggestion.title ?? ""}»` });
+      leave();
+      onDone();
+    } catch (err) {
+      toast(refusalMessage(err, "No se pudo guardar la respuesta."), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** «No es de este caso»: answers the suggestion only; the email stays to be decided. */
+  async function notThisCase() {
+    if (!match) return;
+    setBusy(true);
+    try {
+      await reviewTriage({ assertion_id: match.assertion_id, verdict: "rejected", corrected: {},
+        note: suggestion ? `No es de este caso · ${suggestion.opportunity_id}` : "No es de este caso" });
+      onDone();
+    } catch (err) {
+      toast(refusalMessage(err, "No se pudo guardar la respuesta."), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function discard() {
     setBusy(true);
@@ -373,7 +444,7 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
    */
   async function openCase() {
     setBusy(true);
-    const title = openCaseTitle(r);
+    const title = quote ? `${openCaseTitle(r)} · ${quote}` : openCaseTitle(r);
     try {
       await openCommercialCase(
         { title, origin_source_record_id: r.source_record_id, note: "Abierto desde Hoy: solicitud de cotización recibida por correo" },
@@ -412,8 +483,14 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
           <GmailLink url={url} />
           {mayDecide ? (
             <>
-              {openable ? (
-                <Button variant="primary" onClick={() => void openCase()} busy={busy} busyLabel="…">Abrir caso</Button>
+              {suggestion && !closedCase ? (
+                <Button variant="primary" onClick={() => void link()} busy={busy} busyLabel="…">Vincular</Button>
+              ) : null}
+              {suggestion && closedCase ? (
+                <Button variant="primary" onClick={() => void belongsToClosed()} busy={busy} busyLabel="…">Es de ese caso</Button>
+              ) : null}
+              {openable || newDeal ? (
+                <Button variant={suggestion ? "quiet" : "primary"} onClick={() => void openCase()} busy={busy} busyLabel="…">Abrir caso</Button>
               ) : null}
               <Button variant="quiet" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Cerrar" : "Revisar"}</Button>
               <Button onClick={() => void discard()} busy={busy} busyLabel="…">Descartar</Button>
@@ -421,6 +498,28 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
           ) : null}
         </div>
       </div>
+      {suggestion ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2.5 text-[12px] text-ink-muted">
+          <p className="min-w-0 flex-1">
+            Parece del {closedCase ? "caso cerrado" : "caso"} <span className="font-medium text-ink">{suggestion.title ?? "sin título"}</span>
+            {" · "}{suggestionReason(suggestion)}
+          </p>
+          {mayDecide ? (
+            <span className="flex shrink-0 gap-3">
+              {(match?.suggestions.length ?? 0) > 1 ? (
+                <button type="button" className="text-brand-700 hover:underline"
+                  onClick={() => setPick((pick + 1) % (match?.suggestions.length ?? 1))}>Otra opción</button>
+              ) : null}
+              <button type="button" className="text-brand-700 hover:underline" disabled={busy}
+                onClick={() => void notThisCase()}>No es de este caso</button>
+            </span>
+          ) : null}
+        </div>
+      ) : newDeal ? (
+        <p className="px-4 pb-2.5 text-[12px] text-ink-muted">
+          Negocio sin caso{quote ? ` · cotización ${quote}` : ""}{match?.new_case?.institution ? ` · ${match.new_case.institution}` : ""}
+        </p>
+      ) : null}
       {open ? (
         <div className="px-4 pb-3">
           <ReadingCard reading={r} stages={vocabulary?.stages ?? DEFAULT_STAGES}

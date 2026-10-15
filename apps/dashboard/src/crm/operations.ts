@@ -161,6 +161,12 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: true,
     ejemplo: "«Fwd: Solicitud cotización Gradillas» de un cliente con caso abierto → queda en ese caso.",
   },
+  R12: {
+    cuando: "Llega un correo que ni el hilo ni un número de cotización ubican, y el sistema reconoce su caso con seguridad: la IA lo elige con confianza alta (por la persona, la institución, el producto) o las señales del correo coinciden exactamente. También el correo de un proveedor sobre el negocio de un cliente.",
+    hace: "Lo vincula a ese caso en vez de abrir otra solicitud. Si la confianza es media o baja, queda como sugerencia «Parece del caso…» en Correos sin caso. Cada «Quitar» le enseña a la IA que ese no era el caso.",
+    automatica: true,
+    ejemplo: "Un cliente escribe desde un hilo nuevo «¿plazo de entrega de la centrífuga?» → queda en su caso abierto de la centrífuga.",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -175,6 +181,7 @@ const RULE_WHY: Record<string, string> = {
   R9: "institución que nombra el PDF",
   R10: "institución del PDF «por confirmar»",
   R11: "solicitud reenviada a contacto@",
+  R12: "el sistema reconoce el caso",
 };
 
 /** One Spanish sentence for what the system did. */
