@@ -764,7 +764,8 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
         # A sent quote on an already-known customer thread used to be swallowed by R1 as a mere
         # link. Treat that strong outbound signal as part of R1, but only for one open case whose
         # requesting institution is already resolved; free-mail must never invent an institution.
-        if len(thread_cases) == 1 and not exact:
+        # Numbers already on that case (`exact`) are only linked; the rule records the new ones.
+        if len(thread_cases) == 1:
             sent_quote = _thread_sent_quote_rule(e, ix, thread_cases[0])
             if sent_quote is not None:
                 return sent_quote
@@ -974,13 +975,12 @@ def _thread_sent_quote_rule(e: MailEvidence, ix: _Index, c: CaseState) -> Planne
             key = gmail_quote_key(token, e.sent_at)
             if key is not None:
                 pdf_keys.setdefault(key, (token, doc))
+    # Numbers the CRM already holds (or this pass already claimed) are not new: only the rest count.
+    pdf_keys = {k: v for k, v in pdf_keys.items() if k not in ix.by_quote_key and k not in ix.claimed_keys}
     if not pdf_keys:
         return None
     if len(pdf_keys) >= 2:
-        numbers = ", ".join(canonical_quote_number(k) for k in sorted(pdf_keys))
-        return PlannedAction(e.id, "R1", PROPOSAL, (
-            f"el hilo ya pertenece al caso, pero el correo lleva varios números nuevos ({numbers}): un humano decide",),
-            case_id=c.id, case_title=c.title, organization_id=c.organization_id)
+        return _thread_sent_quotes(e, ix, c, pdf_keys)
     key, (token, doc) = next(iter(pdf_keys.items()))
     number = canonical_quote_number(key)
     if key in ix.by_quote_key or key in ix.claimed_keys:
@@ -1013,6 +1013,51 @@ def _thread_sent_quote_rule(e: MailEvidence, ix: _Index, c: CaseState) -> Planne
         organization_id=c.organization_id, quote_number=number, commands=tuple(steps),
         context={"case": c.id, "case_version": c.version, "from_stage": c.stage},
     )
+
+def _thread_sent_quotes(e: MailEvidence, ix: _Index, c: CaseState,
+                        pdf_keys: dict[tuple[int, int], tuple[str, MailDocument]]) -> PlannedAction:
+    """R1 with several new CN PDFs in one email on the case's thread: alternatives for the same
+    request (owner 2026-10-16). Each is recorded as its own sent quote on that case. Anything that
+    would make one of them doubtful — its correlative under another year, no requester, a stage
+    that is not quoting — leaves the whole email to a person, as for a single number."""
+    keys = sorted(pdf_keys)
+    numbers = [canonical_quote_number(k) for k in keys]
+    listed = ", ".join(numbers)
+
+    def ask(reason: str) -> PlannedAction:
+        return PlannedAction(e.id, "R1", PROPOSAL, (reason,), case_id=c.id, case_title=c.title,
+                             organization_id=c.organization_id, quote_number=numbers[0])
+
+    for key, number in zip(keys, numbers):
+        elsewhere = [n for n, y in ix.by_correlative.get(key[1], []) if y != key[0]]
+        if elsewhere:
+            return ask(f"el hilo ya pertenece al caso, pero el correlativo de {number} existe como "
+                       f"{', '.join(sorted(elsewhere))}: un humano decide")
+    if c.organization_id is None:
+        return ask(f"se enviaron las cotizaciones {listed} en el hilo del caso, pero falta confirmar "
+                   "la institución solicitante")
+    if c.stage not in ("lead", "qualifying", "qualified", "quoting", "negotiating"):
+        return ask(f"se enviaron las cotizaciones {listed}, pero el caso está en {c.stage}: un humano decide")
+
+    reasons = ["mismo hilo de Gmail que el caso",
+               f"cotizaciones nuevas {listed} enviadas juntas por contacto@ (alternativas del mismo pedido)"]
+    note = _note("R1", reasons)
+    first_token, first_doc = pdf_keys[keys[0]]
+    steps = list(_sent_quote_steps(c, e, first_doc, numbers[0], first_token,
+                                   _derivation(first_token, e.sent_at), note))
+    steps[-1]["inputs"]["ledger_decision_id"] = f"mail-rule:{e.id}:{numbers[0]}"
+    for key, number in zip(keys[1:], numbers[1:]):
+        token, doc = pdf_keys[key]
+        steps.append(_record_sent_quote_step(e, doc, number, token, _derivation(token, e.sent_at), note,
+                                             ledger_decision_id=f"mail-rule:{e.id}:{number}"))
+    for key in keys:
+        ix.claimed_keys[key] = e.id
+    return PlannedAction(
+        e.id, "R1", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+        organization_id=c.organization_id, quote_number=numbers[0], commands=tuple(steps),
+        context={"case": c.id, "case_version": c.version, "from_stage": c.stage},
+    )
+
 
 def _derivation(token: str, sent_at: str | None) -> dict[str, Any]:
     digits = re.sub(r"^(CN|COT)?\s*-?\s*", "", token.strip(), flags=re.IGNORECASE)
@@ -1272,13 +1317,19 @@ def _sent_quote_steps(c: CaseState, e: MailEvidence, doc: MailDocument, number: 
     return (
         _link_step(c, e.id, "mentions", note),
         *(_advance_step(stage, note) for stage in _TO_QUOTING[c.stage]),
-        {"command": "record_historical_quotation", "inputs": {
-            "opportunity_id": "@case", "quote_number": number, "printed_quote_numbers": [token],
-            "quote_number_derivation": derivation,
-            "document_sha256": doc.sha256, "sent_at": e.sent_at, "origin_source_record_id": e.id,
-            "ledger_decision_id": f"mail-rule:{e.id}", "filename": doc.filename, "note": note,
-        }},
+        _record_sent_quote_step(e, doc, number, token, derivation, note),
     )
+
+
+def _record_sent_quote_step(e: MailEvidence, doc: MailDocument, number: str, token: str,
+                            derivation: dict[str, Any], note: str, *,
+                            ledger_decision_id: str | None = None) -> dict[str, Any]:
+    return {"command": "record_historical_quotation", "inputs": {
+        "opportunity_id": "@case", "quote_number": number, "printed_quote_numbers": [token],
+        "quote_number_derivation": derivation,
+        "document_sha256": doc.sha256, "sent_at": e.sent_at, "origin_source_record_id": e.id,
+        "ledger_decision_id": ledger_decision_id or f"mail-rule:{e.id}", "filename": doc.filename, "note": note,
+    }}
 
 
 def _case_with_quote_steps(e: MailEvidence, doc: MailDocument, number: str, token: str,

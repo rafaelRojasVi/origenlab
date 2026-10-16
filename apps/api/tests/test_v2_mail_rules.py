@@ -277,6 +277,62 @@ def test_r1_does_not_record_a_sent_quote_until_the_requester_is_resolved() -> No
     assert action.commands == ()
 
 
+TWO_QUOTES = (
+    MailDocument(filename="CN01270-cliente-T18.pdf", sha256="b" * 64, cn_tokens=("CN01270",)),
+    MailDocument(filename="CN01271-cliente-T10.pdf", sha256="c" * 64, cn_tokens=("CN01271",)),
+    MailDocument(filename="ficha-tecnica.pdf", sha256="d" * 64, cn_tokens=()),
+)
+
+
+def test_r1_records_every_new_sent_quote_of_one_email_on_the_thread_s_case() -> None:
+    # Two alternatives (T18, T10) sent together on the case's own thread: both are recorded.
+    action = only(Snapshot(
+        evidence=(mail(thread_id="t-1", documents=TWO_QUOTES),),
+        cases=(case(stage="lead", thread_ids=("t-1",)),),
+        organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode) == ("R1", "auto")
+    names = [c["command"] for c in action.commands]
+    assert names == ["link_case_evidence", "advance_case_stage", "advance_case_stage", "advance_case_stage",
+                     "record_historical_quotation", "record_historical_quotation"]
+    records = [c["inputs"] for c in action.commands if c["command"] == "record_historical_quotation"]
+    assert [(r["quote_number"], r["document_sha256"]) for r in records] == [("01270-26", "b" * 64), ("01271-26", "c" * 64)]
+    assert len({r["ledger_decision_id"] for r in records}) == 2
+    assert action.quote_number == "01270-26"
+    assert any("01270-26" in reason and "01271-26" in reason for reason in action.reasons)
+
+
+def test_r1_records_only_the_new_numbers_when_one_of_them_is_already_known() -> None:
+    action = only(Snapshot(
+        evidence=(mail(thread_id="t-1", documents=TWO_QUOTES),),
+        cases=(case(stage="quoting", thread_ids=("t-1",), quotes=(quote("01270-26"),)),),
+        organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode, action.quote_number) == ("R1", "auto", "01271-26")
+    records = [c["inputs"]["quote_number"] for c in action.commands if c["command"] == "record_historical_quotation"]
+    assert records == ["01271-26"]
+
+
+def test_r1_still_asks_when_one_of_several_numbers_exists_as_another_year() -> None:
+    action = only(Snapshot(
+        evidence=(mail(thread_id="t-1", documents=TWO_QUOTES),),
+        cases=(case(stage="quoting", thread_ids=("t-1",)), case(id="c-2", quotes=(quote("01271-25"),))),
+        organizations=(org(),),
+    ))
+    assert (action.rule_id, action.mode) == ("R1", "proposal")
+    assert action.commands == ()
+
+
+def test_r1_with_several_new_numbers_waits_for_the_requester() -> None:
+    action = only(Snapshot(
+        evidence=(mail(thread_id="t-1", documents=TWO_QUOTES),),
+        cases=(case(stage="lead", organization_id=None, thread_ids=("t-1",)),),
+        organizations=(),
+    ))
+    assert (action.rule_id, action.mode) == ("R1", "proposal")
+    assert any("institución solicitante" in reason for reason in action.reasons)
+
+
 # ------------------------------------------------------------------ R3 / R4
 
 

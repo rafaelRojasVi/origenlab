@@ -37,6 +37,11 @@ def _one(db, sql, *args):
     return row
 
 
+def _all(db, sql, *args):
+    with _owner(db) as conn:
+        return conn.execute(sql, args).fetchall()
+
+
 def _repo(db):
     import psycopg
 
@@ -265,6 +270,47 @@ def test_r7_request_then_r1_sent_quote_walks_en_estudio_to_enviada_and_undoes(db
     assert _one(db, "select stage from crm.opportunity where id = %s", case_id)[0] == "qualified"
     assert _one(db, "select status from crm.quote_revision where id = %s",
                 applied["created"]["quote_revision_id"])[0] == "void"
+
+
+def test_r1_two_alternatives_in_one_email_are_both_sent_quotes_of_the_thread_s_case_and_undo_together(db, world) -> None:
+    # The 2026-10-16 shape: one reply on the request's thread carries two quotes (T18 and T10)
+    # plus a data sheet. Both are recorded as sent on that case; undo voids both.
+    repo = _repo(db)
+    op = _operator(world["admin"])
+    with _owner(db) as conn:
+        request = _mail(
+            conn, thread=f"t-two-{world['tag']}", direction_hint=None,
+            sender=f"quimica@{world['client_domain']}", recipients="contacto@origenlab.cl",
+            subject="Solicitud de cotización de homogeneizador",
+        )
+    case_id = _apply_only(db, world, request)["case_id"]
+    first, second = int(world["number"][1:-3]) + 7, int(world["number"][1:-3]) + 8
+    with _owner(db) as conn:
+        sent = _mail(
+            conn, thread=f"t-two-{world['tag']}", direction_hint="external",
+            sender="Tatiana <contacto@origenlab.cl>", recipients=f"quimica@{world['client_domain']}",
+            subject="RE: Solicitud de cotización de homogeneizador",
+            documents=[_doc(f"CN0{first}-cliente-T18.pdf", [f"CN0{first}"]),
+                       _doc(f"CN0{second}-cliente-T10.pdf", [f"CN0{second}"]),
+                       _doc("ficha-tecnica.pdf", [])],
+        )
+    planned = _action(repo.preview(), sent)
+    assert (planned["rule_id"], planned["mode"]) == ("R1", "auto")
+    applied = _apply_only(db, world, sent)
+    revisions = applied["created"]["quote_revision_ids"]
+    assert len(revisions) == 2
+    assert sorted(r[0] for r in _all(db, "select q.quote_number from crm.quote q where q.opportunity_id = %s", case_id)) == [
+        f"0{first}-26", f"0{second}-26"]
+    assert {_one(db, "select status from crm.quote_revision where id = %s", r)[0] for r in revisions} == {"sent"}
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id)[0] == "quoting"
+    assert all(a["evidence_id"] != sent for a in repo.preview()["actions"])  # applied, not planned again
+
+    undone = repo.undo(op, applied["command_receipt_id"], "las cotizaciones no eran de este caso")
+    assert [step["command"] for step in undone["steps"]] == [
+        "void_historical_quote_revision", "void_historical_quote_revision", "advance_case_stage", "unlink_case_evidence",
+    ]
+    assert {_one(db, "select status from crm.quote_revision where id = %s", r)[0] for r in revisions} == {"void"}
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id)[0] == "qualified"
 
 
 def test_r9_a_quote_sent_to_gmail_reaches_the_case_of_the_institution_its_pdf_names_and_undoes(db, world) -> None:
