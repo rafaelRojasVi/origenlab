@@ -47,6 +47,28 @@ const FX_SOURCE: Record<string, string> = {
   supplier_quote: "cotización del proveedor",
 };
 
+/**
+ * The price history's `client_type` (the catalog's `CLIENT_TYPES`, plus the CRM's own words for an
+ * institution), in Spanish; anything else reads «Otro».
+ */
+const CLIENT_TYPE: Record<string, string> = {
+  university: "Universidad",
+  public_health: "Salud pública",
+  public_other: "Institución pública",
+  public_institution: "Institución pública",
+  private_company: "Empresa privada",
+  research_center: "Centro de investigación",
+  hospital_clinic: "Clínica u hospital",
+  individual: "Persona natural",
+  unknown: "Otro",
+  other: "Otro",
+};
+
+export function clientTypeLabel(type: string | null | undefined): string | null {
+  if (!type) return null;
+  return CLIENT_TYPE[type] ?? "Otro";
+}
+
 const HISTORY_ROWS = 4;
 const REASON_MIN = 3;
 const REASON_MAX = 500;
@@ -610,7 +632,7 @@ function HistoryRows({ history }: { history: PriceHistory | null }) {
           className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-2 border-t border-line py-1.5 text-[13px]"
         >
           <span className="tabular-nums text-ink-muted">{fmtDay(r.date)}</span>
-          <span className="truncate">{r.case?.institution ?? r.client_type ?? "—"}</span>
+          <span className="truncate">{r.case?.institution ?? clientTypeLabel(r.client_type) ?? "—"}</span>
           <span className="font-mono tabular-nums">{formatMoney(r.unit_price ?? r.line_total, r.currency) ?? "—"}</span>
         </li>
       ))}

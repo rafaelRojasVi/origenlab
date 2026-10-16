@@ -129,6 +129,18 @@ describe("ClientSection", () => {
     expect(latest.draft.recipient).toEqual({ email: "compras@ejemplo.cl", name: null });
   });
 
+  it("says the address is missing when a name was typed without one, once the field is left", () => {
+    const latest = setup();
+    fireEvent.change(screen.getByLabelText("Para"), { target: { value: "other" } });
+    const name = screen.getByLabelText("Nombre (opcional)");
+    fireEvent.change(name, { target: { value: "Otra Persona" } });
+    expect(latest.draft.recipient).toEqual({ email: "", name: "Otra Persona" });
+    expect(screen.queryByText("El correo del destinatario no es válido.")).not.toBeInTheDocument();
+    fireEvent.blur(name);
+    expect(screen.getByText("El correo del destinatario no es válido.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Correo")).toHaveAttribute("aria-invalid", "true");
+  });
+
   it("says nothing about an empty address left behind", () => {
     setup();
     fireEvent.change(screen.getByLabelText("Para"), { target: { value: "other" } });

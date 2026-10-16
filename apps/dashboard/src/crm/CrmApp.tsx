@@ -358,6 +358,7 @@ const ICON_PATHS: Record<CrmSection, string> = {
   marketing: "M2.5 6.5v3h2l5 3v-9l-5 3zM11.5 6a2.5 2.5 0 0 1 0 4",
   historial: "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM10.5 10.5 14 14M5 7l1.5 1.5L9.5 5.5",
   datos: "M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z",
+  // Not in the menu: the Cotizador opens from a case, so it draws no icon.
   cotizar: "",
 };
 

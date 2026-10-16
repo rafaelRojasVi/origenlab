@@ -10,7 +10,7 @@ import type { PriceHistory } from "../catalog/catalogApi";
 import { initialDraftState, setFxOverride, type DraftEditorState } from "./draftEditor";
 import { QuoteRefusal, type Computed, type QuoteDraft, type QuoteWorkspace } from "./quoteApi";
 import { computedFixture, workspaceFixture } from "./quoteFixtures";
-import { SummaryRail } from "./SummaryRail";
+import { clientTypeLabel, SummaryRail } from "./SummaryRail";
 
 const INDEX: CatalogIndex = {
   version: "v1",
@@ -63,7 +63,7 @@ function history(over: Partial<PriceHistory> = {}): PriceHistory {
     items: [
       row("2025-01-10", "900000", "Instituto Uno"),
       row("2025-06-02", "1200000", "Laboratorio Dos"),
-      row("2025-03-15", "1000000", null, "universidad"),
+      row("2025-03-15", "1000000", null, "private_company"),
       row("2025-09-20", "1150000", "Centro Cuatro"),
       row("2025-11-05", "1100000", "Empresa Cinco"),
     ],
@@ -394,7 +394,9 @@ describe("SummaryRail — the principal model before", () => {
     expect(rows).toHaveLength(4);
     expect(rows[0]).toHaveTextContent("Empresa Cinco");
     expect(rows[0]).toHaveTextContent("$ 1.100.000");
-    expect(rows[3]).toHaveTextContent("universidad");
+    // A row with no case names the kind of client, in Spanish.
+    expect(rows[3]).toHaveTextContent("Empresa privada");
+    expect(rows[3]).not.toHaveTextContent("private_company");
     expect(within(card).queryByText("Instituto Uno")).not.toBeInTheDocument();
   });
 
@@ -422,5 +424,25 @@ describe("SummaryRail — the principal model before", () => {
     setup({ state: stateFor({ computed: priced({ principal_line_no: null }) }) });
     await settled();
     expect(screen.getByText("Marca un equipo principal para ver sus precios anteriores.")).toBeInTheDocument();
+  });
+});
+
+describe("clientTypeLabel", () => {
+  it("names every client type the price history carries, in Spanish", () => {
+    const cases: [string, string][] = [
+      ["university", "Universidad"],
+      ["public_health", "Salud pública"],
+      ["public_other", "Institución pública"],
+      ["public_institution", "Institución pública"],
+      ["private_company", "Empresa privada"],
+      ["research_center", "Centro de investigación"],
+      ["hospital_clinic", "Clínica u hospital"],
+      ["individual", "Persona natural"],
+      ["unknown", "Otro"],
+      ["other", "Otro"],
+      ["algo_nuevo", "Otro"],
+    ];
+    for (const [type, label] of cases) expect(clientTypeLabel(type)).toBe(label);
+    expect(clientTypeLabel(null)).toBeNull();
   });
 });

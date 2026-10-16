@@ -41,7 +41,7 @@ export function QuoteNumberBox({ pipeline, compact = false }: {
   );
   const loading = pipeline.kind === "loading" || drive.kind === "loading" || mail.kind === "loading" || numbering.kind === "loading";
   const mailMissing = mail.kind !== "ready" && mail.kind !== "loading";
-  const { last: knownLast, next: clientNext } = lastAndNext(known, year);
+  const { last, next: clientNext } = lastAndNext(known, year);
   const server = numbering.kind === "ready" ? numbering.data : null;
   const serverNext = server?.configured && server.next_number ? parseQuoteNumber(server.next_number, year) : null;
   const unconfigured = server !== null && !server.configured;
@@ -49,8 +49,7 @@ export function QuoteNumberBox({ pipeline, compact = false }: {
   // «Último número» stays the client-side value; the server's highest_known only replaces it when larger
   // (display only). Its serial series spans years, so it is shown without one.
   const highest = server?.configured && server.highest_known ? server.highest_known : 0;
-  const serverLast = highest > (knownLast?.correlative ?? 0) ? `CN${String(highest).padStart(5, "0")}` : null;
-  const last = knownLast;
+  const serverLast = highest > (last?.correlative ?? 0) ? `CN${String(highest).padStart(5, "0")}` : null;
   const next = serverNext ? server!.next_number! : clientNext;
   const parsed = typed.trim() ? parseQuoteNumber(typed, year) : null;
   const uses = parsed ? findUses(known, parsed) : [];

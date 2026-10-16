@@ -53,7 +53,7 @@ export function ClientSection({
   draft: QuoteDraft;
   invalid: DraftProblem[];
   disabled: boolean;
-  /** Why the server refused the last save's recipient, verbatim; null when it did not. */
+  /** Why the server refused the last save's recipient, in Spanish (`quoteRefusalText`); null when it did not. */
   refusal?: string | null;
   edit: (fn: (draft: QuoteDraft) => QuoteDraft) => void;
 }) {
@@ -86,7 +86,11 @@ export function ClientSection({
           ? SAVED
           : "";
   const typedEmail = (recipient?.email ?? "").trim();
-  const emailProblem = emailLeft && typedEmail ? (invalid.find((p) => p.field === "recipient.email")?.message_es ?? null) : null;
+  const typedName = (recipient?.name ?? "").trim();
+  // Said once a field is left with something in it: a bad address, or a name with no address
+  // (the draft would not be saved, and nothing else would say why).
+  const emailProblem =
+    emailLeft && (typedEmail || typedName) ? (invalid.find((p) => p.field === "recipient.email")?.message_es ?? null) : null;
 
   function choose(v: string) {
     setEmailLeft(false);
@@ -170,6 +174,7 @@ export function ClientSection({
                 value={recipient?.name ?? ""}
                 disabled={disabled}
                 onChange={(e) => typeAddress(recipient?.email ?? "", e.target.value)}
+                onBlur={() => setEmailLeft(true)}
                 className={FIELD_CLS}
               />
             </div>
