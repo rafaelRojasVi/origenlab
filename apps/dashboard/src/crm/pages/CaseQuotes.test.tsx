@@ -153,7 +153,7 @@ describe("«Abrir en Cotizador»", () => {
   it("links a quote of this app to the Cotizador, never a historical one", () => {
     render(<QuoteList card={card({ quotes: [...card().quotes, authored] })} mayOpenCotizador />);
     const links = screen.getAllByRole("link", { name: /Abrir en Cotizador/ });
-    expect(links.map((a) => a.getAttribute("href"))).toEqual(["#/crm/cotizar/q-a"]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["#/crm/cotizador/q-a"]);
   });
 
   it("is not offered to someone who may not open the Cotizador", () => {

@@ -623,7 +623,7 @@ describe("«Cotizar» in Hoy opens the Cotizador", () => {
     const navigate = renderWith([c], "sales");
     const row = await screen.findByTestId(`today-cotizar-${c.opportunity_id}`);
     fireEvent.click(within(row).getByRole("button", { name: "Cotizar" }));
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith("cotizar", "99999999-9999-4999-8999-999999999999"));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("cotizador", "99999999-9999-4999-8999-999999999999"));
     expect(calls.filter((x) => x.method === "POST").map((x) => x.path)).toEqual(["/v2/commands/create-quote"]);
   });
 
@@ -642,7 +642,7 @@ describe("«Cotizar» in Hoy opens the Cotizador", () => {
     const navigate = renderWith([c], "sales");
     const row = await screen.findByTestId(`today-cotizar-${c.opportunity_id}`);
     fireEvent.click(within(row).getByRole("button", { name: "Continuar cotización" }));
-    expect(navigate).toHaveBeenCalledWith("cotizar", "88888888-8888-4888-8888-888888888888");
+    expect(navigate).toHaveBeenCalledWith("cotizador", "88888888-8888-4888-8888-888888888888");
     expect(calls.filter((x) => x.path.startsWith("/v2/commands/"))).toEqual([]);
   });
 
@@ -669,6 +669,6 @@ describe("«Cotizar» in Hoy opens the Cotizador", () => {
     const row = await screen.findByTestId(`today-cotizar-${c.opportunity_id}`);
     fireEvent.click(within(row).getByRole("button", { name: "Cotizar" }));
     expect(await screen.findByText(/^Falta configurar la numeración de cotizaciones/)).toBeInTheDocument();
-    expect(navigate).not.toHaveBeenCalledWith("cotizar", expect.anything());
+    expect(navigate).not.toHaveBeenCalledWith("cotizador", expect.anything());
   });
 });

@@ -328,7 +328,7 @@ function CotizarQueueRow({
     : null;
   // Sales and admin go straight to the Cotizador (the open draft, else a new quote); anyone else
   // opens the case, as before.
-  const toCotizador = useCallback((quoteId: string) => navigate("cotizar", quoteId), [navigate]);
+  const toCotizador = useCallback((quoteId: string) => navigate("cotizador", quoteId), [navigate]);
   const quote = useOpenOrCreateQuote(toCotizador);
 
   return (

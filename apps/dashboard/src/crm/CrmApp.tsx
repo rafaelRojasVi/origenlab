@@ -15,11 +15,12 @@ import { OverviewPage } from "./pages/OverviewPage";
 import { PeoplePage } from "./pages/PeoplePage";
 import { PipelinePage } from "./pages/PipelinePage";
 import { CatalogPage } from "./pages/CatalogPage";
-import { CotizadorPage } from "./pages/CotizadorPage";
+import { CotizadorModulePage } from "./pages/CotizadorModulePage";
+import { useMayOpenCotizador } from "./quotes/openOrCreateQuote";
 
 /**
- * The dashboard: one shell, one navigation, one sign-in. The eight CRM sections over the V2
- * durable core are the whole navigation.
+ * The dashboard: one shell, one navigation, one sign-in. The CRM sections over the V2 durable
+ * core are the whole navigation (Cotizador only for sales and admin; Operaciones' admin tabs inside).
  */
 const NAV_COLLAPSED_KEY = "crm.nav.collapsed";
 
@@ -51,7 +52,7 @@ export function CrmApp({ route }: { route: ShellRoute }) {
   }, []);
   const title = sectionTitle(route.section);
   // The Tablero and the Cotizador use the whole screen; reading pages keep a comfortable line length.
-  const wide = route.section === "oportunidades" || route.section === "cotizar";
+  const wide = route.section === "oportunidades" || route.section === "cotizador";
   // A «Datos» tab is part of the address: a link to another tab remounts the page on it.
   const routeKey = route.tab ? `${route.section}/${route.tab}` : route.section;
 
@@ -107,8 +108,9 @@ function Section({
       return <PeoplePage key={id ?? "all"} navigate={navigate} initialId={id} />;
     case "catalogo":
       return <CatalogPage id={id} navigate={navigate} />;
-    case "cotizar":
-      return <CotizadorPage key={id ?? "none"} quoteId={id} navigate={navigate} />;
+    case "cotizador":
+      // Not keyed by the quote: the module stays mounted while its tabs change.
+      return <CotizadorModulePage quoteId={id} navigate={navigate} />;
     case "marketing":
       return <MarketingPage />;
     case "historial":
@@ -291,10 +293,10 @@ function SideNav({
   onToggle: () => void;
 }) {
   const groups = ["comercial", "control"] as const;
-  // The Cotizador opens from a case, so the Oportunidades entry stays lit while it is open.
-  const activeCrm = route.section === "cotizar" ? "oportunidades" : route.section;
+  const activeCrm = route.section;
   const { session } = useAuthSession();
   const admin = session.kind === "signed_in" && session.operator.role === "admin";
+  const mayQuote = useMayOpenCotizador();
   return (
     <nav
       id="crm-sidenav"
@@ -321,7 +323,7 @@ function SideNav({
         <div key={g} className={collapsed ? "mb-4 lg:mb-2 lg:border-t lg:border-line lg:pt-2 lg:first-of-type:border-t-0" : "mb-4"}>
           <p className={`px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint ${collapsed ? "lg:sr-only" : ""}`}>{CRM_GROUP_LABEL[g]}</p>
           <ul className="space-y-px">
-            {CRM_NAV.filter((n) => n.group === g && (!n.adminOnly || admin)).map((n) => (
+            {CRM_NAV.filter((n) => n.group === g && (!n.adminOnly || admin) && (!n.quoting || mayQuote)).map((n) => (
               <li key={n.id}>
                 <NavLink
                   href={`#/crm/${n.id}`}
@@ -358,8 +360,7 @@ const ICON_PATHS: Record<CrmSection, string> = {
   marketing: "M2.5 6.5v3h2l5 3v-9l-5 3zM11.5 6a2.5 2.5 0 0 1 0 4",
   historial: "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM10.5 10.5 14 14M5 7l1.5 1.5L9.5 5.5",
   datos: "M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z",
-  // Not in the menu: the Cotizador opens from a case, so it draws no icon.
-  cotizar: "",
+  cotizador: "M4 2.5h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1ZM5.5 5h5M5.5 8h1M9.5 8h1M5.5 10.5h1M9.5 10.5h1",
 };
 
 const NAV_ICON: Record<CrmSection, ReactNode> = Object.fromEntries(

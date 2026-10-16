@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addFreeLine, removeItem, updateItem } from "./draftEditor";
 import { QuoteRefusal, type Computed, type QuoteDraft, type QuoteWorkspace } from "./quoteApi";
 import { computedFixture, workspaceFixture } from "./quoteFixtures";
+import { tabEditor } from "./tabEditors";
 import { PREVIEW_DELAY_MS, SAVE_DELAY_MS, useQuoteDraft, type QuoteDraftApi } from "./useQuoteDraft";
 
 interface Deferred<T> {
@@ -748,5 +749,34 @@ describe("useQuoteDraft — a reload keeps one set of row ids", () => {
     expect(hook.result.current.state.computedKeys).toEqual(after);
     typeQty("4");
     expect(hook.result.current.state.draft.items.map((i) => i.uid)).toEqual(after);
+  });
+});
+
+describe("useQuoteDraft — the Cotizador module's tab registry", () => {
+  it("registers under its quote: pending after an edit, flush saves it, and gone on unmount", async () => {
+    const { hook, saves, typeQty } = setup();
+    const entry = tabEditor("q-1");
+    expect(entry).toBeDefined();
+    expect(entry!.hasPendingSave()).toBe(false);
+    typeQty("4");
+    expect(tabEditor("q-1")!.hasPendingSave()).toBe(true);
+    let ok: boolean | undefined;
+    const flushing = tabEditor("q-1")!.flush().then((v) => (ok = v));
+    await settle();
+    expect(saves).toHaveLength(1);
+    saves[0].d.resolve(saved(4));
+    await settle();
+    await flushing;
+    expect(ok).toBe(true);
+    expect(tabEditor("q-1")!.hasPendingSave()).toBe(false);
+    hook.unmount();
+    expect(tabEditor("q-1")).toBeUndefined();
+  });
+
+  it("a flush that cannot save (an incomplete draft) says false", async () => {
+    const { typeQty } = setup();
+    typeQty("");
+    expect(await tabEditor("q-1")!.flush()).toBe(false);
+    expect(tabEditor("q-1")!.hasPendingSave()).toBe(true);
   });
 });

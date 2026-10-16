@@ -1,6 +1,6 @@
 /**
  * «Cotizar» from Hoy, from a request's card and from the case: open the case's open draft if it
- * has one, else create a quote (`create-quote`) and open it in the Cotizador.
+ * has one, else create a quote (`create-quote`) and open it as a tab of the Cotizador module.
  *
  * "Open draft" = a quote of the case whose newest revision is a draft or in review of this app
  * (`origin = 'authored'`); a historical import is never edited here. The pipeline read carries
@@ -95,7 +95,7 @@ export function createRefusalText(e: unknown): string {
 }
 
 const toCotizador = (quoteId: string) => {
-  window.location.hash = crmHash("cotizar", quoteId);
+  window.location.hash = crmHash("cotizador", quoteId);
   window.scrollTo?.({ top: 0 });
 };
 

@@ -9,7 +9,7 @@
  * by position, so removing or reordering lines never shows one row another's numbers; a line the
  * API has not priced yet shows none. The catalog index carries no cost, by design.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
 import type { IndexItem } from "../catalog/catalogSearch";
 import {
@@ -134,11 +134,13 @@ export function ProductsSection({
     add(byId.get(product_id) ?? suggestedItem(product_id, name, model));
 
   const grid = clientView ? GRID_CLIENT : GRID_FULL;
+  // Unique per pane: the Cotizador module keeps several quotes in the page at once.
+  const headingId = useId();
 
   return (
-    <section aria-labelledby="cotizador-productos" className="overflow-hidden rounded-xl border border-line bg-canvas-raised">
+    <section aria-labelledby={headingId} className="overflow-hidden rounded-xl border border-line bg-canvas-raised">
       <header className="flex flex-wrap items-center justify-between gap-3 px-5 pb-3 pt-4">
-        <h2 id="cotizador-productos" className="text-[17px] font-semibold text-ink">
+        <h2 id={headingId} className="text-[17px] font-semibold text-ink">
           Productos
         </h2>
         <span className="text-[12.5px] text-ink-muted">

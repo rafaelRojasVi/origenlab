@@ -1,0 +1,307 @@
+/**
+ * The Cotizador module: many quotes open as tabs. Routed for real (`useShellRoute` over the
+ * address), with the API answered by path. Every value below is invented: this repository is public.
+ */
+import "@testing-library/jest-dom";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuthSessionState } from "../../api/authClient";
+import { AuthSessionContext } from "../../context/AuthSessionContext";
+import { clearCatalogIndexMemory } from "../catalog/catalogIndex";
+import { crmHash } from "../crmRoute";
+import { computedFixture, workspaceFixture } from "../quotes/quoteFixtures";
+import { forgetTabEditors } from "../quotes/tabEditors";
+import { MAX_TABS, tabsStorageKey } from "../quotes/tabStore";
+import { SAVE_DELAY_MS } from "../quotes/useQuoteDraft";
+import { useShellRoute } from "../shellRoute";
+import { Toaster } from "../ui";
+import { clearResourceCache } from "../useResource";
+import { CotizadorModulePage } from "./CotizadorModulePage";
+
+const Q = (n: number) => `6bafddfa-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const nOf = (quoteId: string) => Number(quoteId.slice(-12));
+const OP = "op-sales";
+
+function workspace(n: number) {
+  const ws = workspaceFixture({ id: `r-${n}`, label: `${String(40 + n).padStart(5, "0")}-26` });
+  return {
+    ...ws,
+    quote: { ...ws.quote, id: Q(n), quote_number: `${String(40 + n).padStart(5, "0")}-26`, opportunity_id: `o-${n}` },
+    case: { ...ws.case, id: `o-${n}`, institution: { id: `i-${n}`, name: `Universidad Ejemplo ${n}`, rut: null } },
+  };
+}
+
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+const CATALOG = { version: "v1", fields: ["id", "model_number", "name"], suppliers: [], items: [] };
+
+type Call = { method: string; path: string; body: { revision_id?: string } | null };
+
+function stubApi(onSave: (revisionId: string, call: number) => Response = () => json({ revision_id: "r", version: 4, computed: computedFixture() })) {
+  const calls: Call[] = [];
+  let saves = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(raw, "http://localhost").pathname;
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ method: init?.method ?? "GET", path, body });
+      if (path === "/v2/catalog/index") return Promise.resolve(json(CATALOG));
+      if (path === "/v2/quotes/preview") return Promise.resolve(json({ computed: computedFixture("200000") }));
+      if (path === "/v2/commands/save-quote-draft") return Promise.resolve(onSave(body.revision_id, ++saves));
+      const m = /^\/v2\/quotes\/([0-9a-f-]{36})$/.exec(path);
+      if (m) return Promise.resolve(json(workspace(nOf(m[1]))));
+      return Promise.resolve(json({}, 404));
+    }),
+  );
+  const reads = (n: number) => calls.filter((c) => c.method === "GET" && c.path === `/v2/quotes/${Q(n)}`).length;
+  const savesOf = (n: number) => calls.filter((c) => c.path === "/v2/commands/save-quote-draft" && c.body?.revision_id === `r-${n}`).length;
+  return { calls, reads, savesOf };
+}
+
+const session: AuthSessionState = {
+  kind: "signed_in",
+  method: "google_profile",
+  operator: { operatorId: OP, email: "ventas@example.cl", displayName: "Ventas", role: "sales" },
+  caseCommandsEnabled: true,
+  crmAuthoringEnabled: true,
+};
+
+function Routed() {
+  const route = useShellRoute();
+  return (
+    <CotizadorModulePage
+      quoteId={route.section === "cotizador" ? route.id : null}
+      navigate={(section, id) => {
+        window.location.hash = crmHash(section, id);
+      }}
+    />
+  );
+}
+
+function renderModule(hash: string) {
+  window.location.hash = hash;
+  return render(
+    <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
+      <Routed />
+      <Toaster />
+    </AuthSessionContext.Provider>,
+  );
+}
+
+const tablist = () => screen.getByRole("tablist", { name: "Cotizaciones abiertas" });
+const quoteTabs = () => within(tablist()).getAllByRole("tab").slice(1);
+const tabOf = (label: string) => within(tablist()).getByRole("tab", { name: new RegExp(label) });
+const shown = () => screen.getByRole("tabpanel");
+/** The tab shown changes asynchronously (the address first): look again until it is the quote. */
+async function showsQuote(label: string) {
+  await waitFor(() => expect(within(shown()).getByRole("heading", { level: 1, name: `Cotización ${label}` })).toBeInTheDocument());
+}
+async function shownField(label: string) {
+  return waitFor(() => within(shown()).getByLabelText(label));
+}
+
+function seed(ns: number[], active: number | null) {
+  localStorage.setItem(
+    tabsStorageKey(OP),
+    JSON.stringify({
+      v: 1,
+      tabs: ns.map((n) => ({ id: Q(n), meta: { label: `CN000${40 + n}`, client: `Guardado ${n}`, status: "draft" } })),
+      active: active === null ? null : Q(active),
+    }),
+  );
+}
+
+function fakeTimers() {
+  vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["setTimeout", "clearTimeout"] });
+}
+async function autosave() {
+  await act(async () => {
+    vi.advanceTimersByTime(SAVE_DELAY_MS + 50);
+  });
+}
+
+beforeEach(() => {
+  window.location.hash = "";
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  clearResourceCache();
+  clearCatalogIndexMemory();
+  forgetTabEditors();
+  localStorage.clear();
+  sessionStorage.clear();
+});
+
+describe("Cotizador module — tabs", () => {
+  it("opens the address's quote as a tab after «Todas», and names it once its workspace loads", async () => {
+    const api = stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    expect(within(tablist()).getAllByRole("tab")[0]).toHaveTextContent("Todas");
+    await showsQuote("CN00041");
+    const tab = tabOf("CN00041");
+    expect(tab).toHaveAttribute("aria-selected", "true");
+    expect(tab).toHaveTextContent("Universidad Ejemplo 1");
+    expect(tab).toHaveTextContent("Borrador");
+    expect(within(tab).getByTestId("cotizador-tab-dot")).toHaveAttribute("data-status", "draft");
+    expect(api.reads(1)).toBe(1);
+    expect(JSON.parse(localStorage.getItem(tabsStorageKey(OP))!).tabs[0].meta).toEqual({
+      label: "CN00041",
+      client: "Universidad Ejemplo 1",
+      status: "draft",
+    });
+  });
+
+  it("restores the tabs on reload, reading only the tab shown; another reads the first time it is shown, then stays mounted", async () => {
+    seed([1, 2, 3], 2);
+    const api = stubApi();
+    renderModule("#/crm/cotizador");
+    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(2)}`));
+    await showsQuote("CN00042");
+    expect(quoteTabs()).toHaveLength(3);
+    // Restored tabs say what was stored until they are shown.
+    expect(tabOf("CN00043")).toHaveTextContent("Guardado 3");
+    expect(api.reads(1) + api.reads(3)).toBe(0);
+    expect(api.reads(2)).toBe(1);
+
+    fireEvent.click(tabOf("CN00043"));
+    await showsQuote("CN00043");
+    await waitFor(() => expect(tabOf("CN00043")).toHaveTextContent("Universidad Ejemplo 3"));
+    fireEvent.click(tabOf("CN00042"));
+    await waitFor(() => expect(tabOf("CN00042")).toHaveAttribute("aria-selected", "true"));
+    expect(within(shown()).getByRole("heading", { level: 1, name: "Cotización CN00042" })).toBeInTheDocument();
+    // Both stay in the page; neither is read again.
+    expect(document.getElementById(`cotizador-panel-${Q(3)}`)).not.toBeNull();
+    expect(document.getElementById(`cotizador-panel-${Q(3)}`)).not.toBeVisible();
+    expect(api.reads(2)).toBe(1);
+    expect(api.reads(3)).toBe(1);
+    expect(api.reads(1)).toBe(0);
+  });
+
+  it("never opens the same quote twice: opening it again shows its tab", async () => {
+    stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    await showsQuote("CN00041");
+    act(() => void (window.location.hash = `#/crm/cotizador/${Q(2)}`));
+    await showsQuote("CN00042");
+    act(() => void (window.location.hash = `#/crm/cotizador/${Q(1).toUpperCase()}`));
+    await waitFor(() => expect(tabOf("CN00041")).toHaveAttribute("aria-selected", "true"));
+    expect(quoteTabs()).toHaveLength(2);
+  });
+
+  it("«Todas» shows the list pane; «+ Nueva» is there, off, until its dialog arrives", async () => {
+    stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    await showsQuote("CN00041");
+    fireEvent.click(within(tablist()).getByRole("tab", { name: "Todas" }));
+    await waitFor(() => expect(within(shown()).getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeInTheDocument());
+    expect(window.location.hash).toBe("#/crm/cotizador");
+    expect(screen.getByRole("button", { name: "+ Nueva" })).toBeDisabled();
+  });
+
+  it(`opens at most ${MAX_TABS}: a ninth closes the oldest tab with nothing pending`, async () => {
+    seed([1, 2, 3, 4, 5, 6, 7, 8], 8);
+    stubApi();
+    renderModule(`#/crm/cotizador/${Q(9)}`);
+    await showsQuote("CN00049");
+    const labels = quoteTabs().map((t) => t.textContent ?? "");
+    expect(labels).toHaveLength(MAX_TABS);
+    expect(labels.some((l) => l.includes("CN00041"))).toBe(false);
+    expect(labels[MAX_TABS - 1]).toContain("CN00049");
+  });
+
+  it("moves between tabs with the arrows, and Supr closes the focused one", async () => {
+    seed([1, 2], 1);
+    stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    await showsQuote("CN00041");
+    const todas = within(tablist()).getByRole("tab", { name: "Todas" });
+    expect(tabOf("CN00041")).toHaveAttribute("tabindex", "0");
+    expect(todas).toHaveAttribute("tabindex", "-1");
+    todas.focus();
+    fireEvent.keyDown(todas, { key: "ArrowRight" });
+    expect(tabOf("CN00041")).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "End" });
+    expect(tabOf("CN00042")).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+    expect(todas).toHaveFocus();
+    fireEvent.keyDown(todas, { key: "ArrowLeft" });
+    fireEvent.keyDown(document.activeElement!, { key: "Delete" });
+    await waitFor(() => expect(quoteTabs()).toHaveLength(1));
+    expect(within(tablist()).queryByRole("tab", { name: /CN00042/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("Cotizador module — panes keep their edits", () => {
+  it("an edit survives a switch, and its autosave runs while the tab is hidden", async () => {
+    fakeTimers();
+    const api = stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "3" } });
+    act(() => void (window.location.hash = `#/crm/cotizador/${Q(2)}`));
+    await showsQuote("CN00042");
+    await autosave();
+    await waitFor(() => expect(api.savesOf(1)).toBe(1));
+    fireEvent.click(tabOf("CN00041"));
+    await waitFor(() => expect(within(shown()).getByLabelText("Cantidad de la línea 1")).toHaveValue("3"));
+    expect(api.reads(1)).toBe(1);
+  });
+
+  it("closing a tab sends its pending save first", async () => {
+    const api = stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "5" } });
+    expect(api.savesOf(1)).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
+    await waitFor(() => expect(quoteTabs()).toHaveLength(0));
+    expect(api.savesOf(1)).toBe(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador"));
+    expect(JSON.parse(localStorage.getItem(tabsStorageKey(OP))!).tabs).toEqual([]);
+  });
+
+  it("asks «No se pudo guardar. ¿Cerrar igual?» when that save fails, and keeps the tab unless told yes", async () => {
+    const api = stubApi(() => json({ detail: "boom" }, 500));
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
+    const dialog = await screen.findByRole("dialog", { name: "No se pudo guardar. ¿Cerrar igual?" });
+    expect(api.savesOf(1)).toBe(1);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Seguir editando" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(quoteTabs()).toHaveLength(1);
+    expect(within(shown()).getByLabelText("Cantidad de la línea 1")).toHaveValue("5");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cerrar igual" }));
+    await waitFor(() => expect(quoteTabs()).toHaveLength(0));
+  });
+
+  it("a quote frozen by another tab's approval never freezes another quote open beside it", async () => {
+    fakeTimers();
+    const api = stubApi((revisionId) =>
+      revisionId === "r-1"
+        ? json({ detail: { code: "not_a_draft", message: "only a draft revision is edited" } }, 409)
+        : json({ revision_id: revisionId, version: 4, computed: computedFixture() }),
+    );
+    renderModule(`#/crm/cotizador/${Q(2)}`);
+    await showsQuote("CN00042");
+    act(() => void (window.location.hash = `#/crm/cotizador/${Q(1)}`));
+    await showsQuote("CN00041");
+    fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "2" } });
+    await autosave();
+    expect(await within(shown()).findByText("Esta cotización cambió en otra pestaña (se aprobó o anuló).")).toBeInTheDocument();
+    expect(within(shown()).getByLabelText("Cantidad de la línea 1")).toBeDisabled();
+
+    fireEvent.click(tabOf("CN00042"));
+    await waitFor(() => expect(within(shown()).getByRole("heading", { level: 1, name: "Cotización CN00042" })).toBeInTheDocument());
+    expect(within(shown()).queryByText(/cambió en otra pestaña/)).not.toBeInTheDocument();
+    const qty = within(shown()).getByLabelText("Cantidad de la línea 1");
+    expect(qty).toBeEnabled();
+    fireEvent.change(qty, { target: { value: "4" } });
+    await autosave();
+    await waitFor(() => expect(api.savesOf(2)).toBe(1));
+    expect(await within(shown()).findByText(/guardado automáticamente/)).toBeInTheDocument();
+  });
+});

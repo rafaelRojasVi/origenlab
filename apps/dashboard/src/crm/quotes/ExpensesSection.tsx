@@ -10,7 +10,7 @@
  *
  * Every amount shown is the API's `computed` (or, in Manual, what the operator typed), only formatted.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
 import { formatMoney } from "../money";
 import {
@@ -249,6 +249,8 @@ export function ExpensesSection({
 
   // Leaving Manual with amounts typed asks first: a derived method drops them (they would count twice).
   const [confirmLeave, setConfirmLeave] = useState<Method | null>(null);
+  // Unique per pane: the Cotizador module keeps several quotes in the page at once.
+  const ids = useId();
   const apply = (m: Method) =>
     // Only priced numbers are copied: while `computed` prices an older draft (another method, or a
     // preview that failed) Manual starts from what the draft holds, never from stale amounts.
@@ -260,10 +262,10 @@ export function ExpensesSection({
   };
 
   return (
-    <section aria-labelledby="cotizador-gastos" className="flex flex-col gap-3 rounded-xl border border-line bg-canvas-raised px-5 py-4">
+    <section aria-labelledby={`${ids}-gastos`} className="flex flex-col gap-3 rounded-xl border border-line bg-canvas-raised px-5 py-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-0.5">
-          <h2 id="cotizador-gastos" className="text-[17px] font-semibold text-ink">
+          <h2 id={`${ids}-gastos`} className="text-[17px] font-semibold text-ink">
             Gastos de importación
           </h2>
           <span className="text-[12.5px] text-ink-muted">{where}</span>
@@ -272,14 +274,14 @@ export function ExpensesSection({
           {!manual && !disabled && computed && computed.expenses.length > 0 ? (
             <span className="flex items-center gap-1.5">
               {stale ? (
-                <span id="cotizador-gastos-espera" className="text-[12px] text-ink-muted">
+                <span id={`${ids}-espera`} className="text-[12px] text-ink-muted">
                   Espera el cálculo
                 </span>
               ) : null}
               <button
                 type="button"
                 disabled={stale}
-                aria-describedby={stale ? "cotizador-gastos-espera" : undefined}
+                aria-describedby={stale ? `${ids}-espera` : undefined}
                 onClick={() => choose("manual")}
                 className="h-11 rounded-md px-3 text-[13.5px] font-semibold text-brand-700 hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
