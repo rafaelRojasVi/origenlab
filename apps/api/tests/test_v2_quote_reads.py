@@ -940,14 +940,16 @@ def test_a_person_is_offered_by_an_address_a_quote_may_go_to(world) -> None:
 
 @needs_db
 def test_the_command_reads_a_client_s_open_cases_as_the_dialog_shows_them(world) -> None:
-    """`client_open_cases` (what `create-quote` decides on) and the suggestions agree, uncapped."""
-    from origenlab_api.v2.quotes.reads import client_institution, client_open_cases
-
+    """The dialog sends a person row as `{person_id}`; `create-quote` then decides on exactly the open
+    cases the row showed — the institution's, those the person takes part in, and those where the
+    participant names only an address of theirs — uncapped."""
     dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
     clinic = _org(dsn, "institution", f"Policlínico {tag}")
     for n in range(3):
         _titled_case(world, clinic, f"Caso {n} {tag}")
     elsewhere = _titled_case(world, _org(dsn, "institution", "Otra"), f"Caso ajeno {tag}", participant=False)
+    by_address = _titled_case(world, _org(dsn, "institution", "Otra más"), f"Caso por correo {tag}",
+                              participant=False)
     person = _owner(dsn, "insert into crm.person (display_name, confirmation) values (%s, 'machine_proposed') "
                          "returning id::text", (f"Dora Prueba {tag}",))[0][0]
     point = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
@@ -957,12 +959,13 @@ def test_the_command_reads_a_client_s_open_cases_as_the_dialog_shows_them(world)
                 "values (%s, %s, current_date - 10, 'machine_proposed')", (person, clinic))
     _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, person_id, role, is_primary, valid_from, "
                 "confirmation) values (%s, %s, 'end_user', false, current_date, 'machine_proposed')", (elsewhere, person))
+    _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, contact_point_id, role, is_primary, "
+                "valid_from, confirmation) values (%s, %s, 'quote_recipient', true, current_date, 'machine_proposed')",
+           (by_address, point))
 
     [shown] = _clients(world, f"dora-{tag}")["people"]
-    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
-        institution = client_institution(cur, person_id=person, point_organization_id=None)
-        cases = client_open_cases(cur, organization_id=institution["organization_id"], person_id=person,
-                                  contact_point_id=point)
-    assert institution["organization_id"] == shown["organization"]["id"] == clinic
-    assert institution["is_supplier"] is False
-    assert [c["id"] for c in cases] == [c["id"] for c in shown["open_cases"]] and len(cases) == 4
+    assert shown["organization"]["id"] == clinic and len(shown["open_cases"]) == 5
+    with pytest.raises(CommandRefused) as exc:
+        _run(world, "create-quote", {"client": {"person_id": person}})
+    assert exc.value.code == "case_choice_needed"
+    assert [c["id"] for c in exc.value.details["candidates"]] == [c["id"] for c in shown["open_cases"]]

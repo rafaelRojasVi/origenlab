@@ -78,9 +78,9 @@ from origenlab_api.v2.quotes.inputs import (
     resolve_draft,
     result_json,
 )
-from origenlab_api.v2.mail_rules import mail_direction
+from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, mail_direction
 from origenlab_api.v2.quotes.numbering import SANTIAGO, numbering_status, revision_label
-from origenlab_api.v2.quotes.recipients import UNOFFERABLE_DOMAINS, not_a_recipient
+from origenlab_api.v2.quotes.recipients import PERSON_ADDRESS_ORDER, not_a_recipient
 
 #: R-A5: a model is suggested beside the principal when it is on at least this share of the past
 #: quote documents that carry the principal, and the principal was quoted at least `KIT_MIN_DOCUMENTS` times.
@@ -162,9 +162,10 @@ select l.*, p.model_key as product_model_key
  order by l.line_no
 """
 
-# The case's current participants: the participant's own email address, else the person's (an
-# active one first) — the same address approval prints — and the same name (`commands._RECIPIENT_SQL`).
-_PARTICIPANTS_SQL = """
+# The case's current participants: the participant's own email address, else the person's
+# (`recipients.PERSON_ADDRESS_ORDER`) — the same address approval prints — and the same name
+# (`commands._RECIPIENT_SQL`).
+_PARTICIPANTS_SQL = f"""
 select p.id::text as id, p.person_id::text as person_id, coalesce(p.contact_point_id, cp.id)::text as contact_point_id,
        coalesce(pe.display_name, cpe.display_name, case when p.person_id is null then p.note end,
                 cp.value_display) as name,
@@ -175,7 +176,7 @@ select p.id::text as id, p.person_id::text as person_id, coalesce(p.contact_poin
     select c.id, c.value_norm, c.value_display, c.person_id from crm.contact_point c
      where c.kind = 'email'
        and (c.id = p.contact_point_id or (p.contact_point_id is null and c.person_id = p.person_id))
-     order by (c.status = 'active') desc, c.created_at, c.id
+     order by {PERSON_ADDRESS_ORDER}
      limit 1) cp on true
   left join crm.person cpe on cpe.id = cp.person_id
  where p.opportunity_id = %s::uuid and p.valid_to is null
@@ -373,17 +374,11 @@ _CLIENT_INSTITUTION_JOINS = """
   left join crm.organization org on org.id = coalesce(m.merged_into_organization_id, m.id) and org.status = 'active'
 """
 
-# An address no quote may go to (`recipients.not_a_recipient`, as far as SQL can tell): OrigenLab's
-# own or Labdelivery's domain, a subdomain of one, or an address naming Labdelivery. Only used to
-# order: the rule itself is applied to what is offered.
-_UNOFFERABLE_ADDRESS = """(split_part(c.value_norm, '@', 2) = any(%(unofferable_domains)s)
-          or split_part(c.value_norm, '@', 2) like any(%(unofferable_subdomains)s)
-          or regexp_replace(c.value_norm, '[^a-z0-9]', '', 'g') like '%%labdelivery%%')"""
 
 # People by name or by an active email address of theirs, and addresses with no person by the
-# address. Each with one active email — an address a quote may go to before one it may not, then
-# one matching the text — and its institution (`_CLIENT_INSTITUTION_JOINS`), never a supplier's (a
-# supplier's people are no client).
+# address. Each with the active email that stands for them (`recipients.PERSON_ADDRESS_ORDER`: one a
+# quote may go to, then the oldest — the one `create-quote` and approval take too) and its
+# institution (`_CLIENT_INSTITUTION_JOINS`), never a supplier's (a supplier's people are no client).
 _CLIENT_PEOPLE_SQL = f"""
 with found as (
   select p.id as person_id, null::uuid as contact_point_id, p.display_name as name
@@ -405,7 +400,7 @@ select f.person_id::text as person_id, e.id::text as contact_point_id, f.name, e
     select c.id, c.value_norm, c.organization_id from crm.contact_point c
      where c.kind = 'email' and c.status = 'active'
        and (c.id = f.contact_point_id or (f.contact_point_id is null and c.person_id = f.person_id))
-     order by {_UNOFFERABLE_ADDRESS} asc, (c.value_norm ilike %(pattern)s) desc, c.created_at, c.id
+     order by {PERSON_ADDRESS_ORDER}
      limit 1) e on true
 {_CLIENT_INSTITUTION_JOINS.format(person="f.person_id", point_org="e.organization_id")}
  where (org.id is null or {_NOT_A_SUPPLIER.format(org="org.id")})
@@ -415,8 +410,9 @@ select f.person_id::text as person_id, e.id::text as contact_point_id, f.name, e
 """
 
 # The open cases of every suggestion at once: an institution's (the cases whose requesting
-# institution is it or a twin merged into it), a person's and an address's (the cases they are a
-# current participant of). `requested_at` is when the case's own email was captured, else when
+# institution is it or a twin merged into it), a person's (the cases they are a current participant
+# of — the participant naming the person, or only an address of theirs) and an address's (the cases
+# it is a current participant of). `requested_at` is when the case's own email was captured, else when
 # the case was opened.
 _CLIENT_CASES_SQL = """
 with open_case as (
@@ -433,6 +429,11 @@ union all
 select 'person', p.person_id::text, c.id::text, c.title, c.stage, c.requested_at
   from crm.opportunity_participant p join open_case c on c.id = p.opportunity_id
  where p.valid_to is null and p.person_id = any(%(people)s::uuid[])
+union all
+select 'person', a.person_id::text, c.id::text, c.title, c.stage, c.requested_at
+  from crm.opportunity_participant p join open_case c on c.id = p.opportunity_id
+  join crm.contact_point a on a.id = p.contact_point_id
+ where p.valid_to is null and a.person_id = any(%(people)s::uuid[])
 union all
 select 'contact_point', p.contact_point_id::text, c.id::text, c.title, c.stage, c.requested_at
   from crm.opportunity_participant p join open_case c on c.id = p.opportunity_id
@@ -658,7 +659,7 @@ def _decode_cursor(cursor: str) -> tuple[datetime, str]:
 
 
 def _pattern(text: str | None) -> str | None:
-    """`%text%` for ILIKE with the text's own `%`, `_` and `\` taken literally; None for no search."""
+    r"""`%text%` for ILIKE with the text's own `%`, `_` and `\` taken literally; None for no search."""
     text = (text or "").strip()
     return f"%{_like_escape(text)}%" if text else None
 
@@ -690,9 +691,7 @@ def _open_cases(by_key: dict[tuple[str, str], list[dict[str, Any]]], *keys: tupl
 
 
 def _client_params() -> dict[str, Any]:
-    domains = sorted(UNOFFERABLE_DOMAINS)
-    return {"supplier_roles": list(SUPPLIER_RELATIONSHIP_ROLES), "unofferable_domains": domains,
-            "unofferable_subdomains": [f"%.{d}" for d in domains]}
+    return {"supplier_roles": list(SUPPLIER_RELATIONSHIP_ROLES)}
 
 
 def client_institution(cur: Any, *, person_id: str | None, point_organization_id: str | None) -> dict[str, Any]:
@@ -701,6 +700,32 @@ def client_institution(cur: Any, *, person_id: str | None, point_organization_id
     cur.execute(_CLIENT_INSTITUTION_SQL, {**_client_params(), "person": person_id, "point_org": point_organization_id})
     names = [d[0] for d in cur.description]
     return dict(zip(names, cur.fetchone(), strict=True))
+
+
+# The institutions an email domain names: active, not merged away, not a supplier or manufacturer.
+_CLIENT_DOMAIN_SQL = f"""
+select o.id::text as id, o.name
+  from crm.organization_domain d join crm.organization o on o.id = d.organization_id
+ where d.domain_norm = %(domain)s and d.removed_at is null
+   and o.status = 'active' and o.merged_into_organization_id is null
+   and {_NOT_A_SUPPLIER.format(org="o.id")}
+ order by o.created_at, o.id
+ limit 2
+"""
+
+
+def client_institution_by_domain(cur: Any, email: str | None) -> dict[str, Any] | None:
+    """The one institution whose domain is this address's (controller ruling 2026-10-16): only
+    active, non-merged institutions that are no supplier or manufacturer count, and never for a
+    free-mail domain (`mail_rules.FREE_MAIL_DOMAINS`, the list `register-organization`'s callers
+    use). `{id, name}` when exactly one matches, else None."""
+    domain = (email or "").rpartition("@")[2].strip().lower()
+    if not domain or domain in FREE_MAIL_DOMAINS:
+        return None
+    cur.execute(_CLIENT_DOMAIN_SQL, {**_client_params(), "domain": domain})
+    names = [d[0] for d in cur.description]
+    found = [dict(zip(names, r, strict=True)) for r in cur.fetchall()]
+    return found[0] if len(found) == 1 else None
 
 
 def client_open_cases(cur: Any, *, organization_id: str | None = None, person_id: str | None = None,

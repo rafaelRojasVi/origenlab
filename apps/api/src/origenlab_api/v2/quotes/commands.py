@@ -28,9 +28,10 @@ the revision as it is (`crm.quote_revision_authored_frozen`, `crm.quote_line_aut
 `void-quote-revision` voids a draft or an approved revision, never one already sent.
 
 **Locks.** `create-quote` locks the case row (so a case being closed cannot get a quote in the same
-instant) and mints the number under the numbering advisory lock; its events open two new streams.
-From a client (no case named), it first takes the client's advisory lock and finds or opens the case
-under it ("create-quote for a client", below) — before the case lock and the numbering lock.
+instant) and mints the number under the numbering advisory lock, the last lock it takes; its events
+open two new streams. From a client (no case named) the full order is: the client's advisory locks →
+its contact point / person rows → the institution's row → the case → the numbering lock
+("create-quote for a client", below).
 `save-quote-draft`, `approve-quote-revision` and `void-quote-revision` lock the revision row, which
 owns the `quote_revision` stream they append to; a save that picks a recipient then holds the
 picked contact point `for update` (or the person `for share`), as `create-person` holds an address
@@ -78,8 +79,8 @@ from origenlab_api.v2.quotes.inputs import (
 )
 from origenlab_api.v2.quotes.numbering import SANTIAGO, allocate_quote_number, revision_label
 from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS
-from origenlab_api.v2.quotes.reads import client_institution, client_open_cases
-from origenlab_api.v2.quotes.recipients import not_a_recipient
+from origenlab_api.v2.quotes.reads import client_institution, client_institution_by_domain, client_open_cases
+from origenlab_api.v2.quotes.recipients import PERSON_ADDRESS_ORDER, not_a_recipient
 
 #: Revision columns filled from `quote_default_*` text parameters when a quote is created.
 _DEFAULT_TEXTS = {
@@ -165,19 +166,28 @@ def _iva(params: dict[str, Decimal | str]) -> Decimal:
 #
 # `create-quote` with `client` instead of a case (spec 2026-10-16 §3, plan R1–R3): the client is
 # resolved — an institution (the survivor of a merge), a person and their institution, an email
-# address and whoever owns it, or a new institution registered as `register-organization` does —
-# and then its open cases are read with the rule the new-quote dialog shows them by
-# (`reads.client_open_cases`): exactly one is used; several are a 409 `case_choice_needed` carrying
-# them, and the operator sends the chosen one back as `opportunity_id`; none (or `new_case`) opens
-# one through `V2CaseCommandRepository._open_case_for_client`, with the institution as requesting
-# one. A person or an address becomes the quote's recipient (`_recipient_for`, the save's path).
+# address and whoever owns it (an address the CRM lacks: the one institution its domain names), or
+# a new institution registered as `register-organization` does — and then its open cases are read
+# with the rule the new-quote dialog shows them by (`reads.client_open_cases`): exactly one is used;
+# several are a 409 `case_choice_needed` carrying them, and the operator sends the chosen one back
+# as `opportunity_id`; none (or `new_case`) opens one through
+# `V2CaseCommandRepository._open_case_for_client`, with the institution as requesting one. A person
+# or an address becomes the quote's recipient (`_recipient_for`, the save's path).
 #
-# **Two clicks for one client at once.** The client's open cases are read under a transaction
-# advisory lock per client (`_client_lock`), so two `create-quote`s for the same client queue
-# there: the second reads after the first committed, finds the case it opened and quotes on it.
-# Two quotes, two numbers, one new case — never two cases nor a quote without one. Locks are taken
-# address → person → institution, never the other way, so two clients sharing a person or an
-# institution cannot deadlock; the numbering lock comes after all of them.
+# **Locks, in the one order every create-quote takes them** (and no other command inverts):
+#
+# 1. the client's transaction advisory locks (`_client_lock`) — a new institution's name, the
+#    address, the person, the institution, in that order. Two `create-quote`s for the same client
+#    queue here: the second reads the cases after the first committed, finds the case it opened and
+#    quotes on it — two quotes, two numbers, one new case, never a quote without one;
+# 2. the client's rows: the contact point `for update`, then its person `for share` — the order
+#    `create-person` takes them (an address, then the person it is given to) — read unlocked
+#    first to know which locks to take, and refused `client_changed_concurrently` (409, nothing
+#    written) when locking shows another owner or institution than that first read;
+# 3. the institution's row (`_open_case_for_client` → `_add_case_organization`, a new case only) —
+#    after the person, as `link-person-organization` takes them;
+# 4. the case (`for update`);
+# 5. last, the global numbering lock (`allocate_quote_number`) — the recipient is made before it.
 
 _CLIENT_NOTE = "Cotización creada desde el Cotizador."
 
@@ -192,6 +202,11 @@ def _supplier_refused() -> CommandRefused:
                           "para ella se crea desde su caso, con la excepción justificada.")
 
 
+def _client_changed() -> CommandRefused:
+    return CommandRefused(409, "client_changed_concurrently",
+                          "Los datos de este cliente cambiaron mientras se creaba la cotización; inténtalo de nuevo.")
+
+
 @dataclass
 class _Client:
     organization_id: str | None = None
@@ -203,12 +218,13 @@ class _Client:
     organization_created: bool = False
 
 
-def _organization_client(self: "V2QuoteRepository", cur: Any, organization_id: str) -> tuple[str, str]:
-    """The institution (the survivor of a merge), locked as a client; refused when it is archived,
-    of Labdelivery or OrigenLab's own, or one of OrigenLab's suppliers (R3)."""
+def _organization_checked(self: "V2QuoteRepository", cur: Any, organization_id: str) -> tuple[str, str]:
+    """The institution (the survivor of a merge), refused when it is archived, of Labdelivery or
+    OrigenLab's own, or one of OrigenLab's suppliers (R3). Reads only: no lock."""
     cur.execute("select s.id::text as id, s.name, s.status, coalesce((select array_agg(d.domain_norm) "
-                "from crm.organization_domain d where d.organization_id = s.id), '{}') as domains "
-                "from crm.organization m join crm.organization s on s.id = coalesce(m.merged_into_organization_id, m.id) "
+                "from crm.organization_domain d where d.organization_id = s.id and d.removed_at is null), '{}') "
+                "as domains from crm.organization m "
+                "join crm.organization s on s.id = coalesce(m.merged_into_organization_id, m.id) "
                 "where m.id = %s::uuid", (organization_id,))
     found = _one(cur)
     if found is None:
@@ -221,42 +237,65 @@ def _organization_client(self: "V2QuoteRepository", cur: Any, organization_id: s
         _keep_address_rules(f"x@{domain}")
     if self._is_one_of_our_suppliers(cur, found["id"]):
         raise _supplier_refused()
-    _client_lock(cur, f"organization:{found['id']}")
     return found["id"], found["name"]
 
 
-def _with_institution(self: "V2QuoteRepository", cur: Any, client: _Client, point_organization_id: str | None) -> None:
-    """The person's (or the address's) institution, as the dialog shows it, locked as a client."""
-    found = client_institution(cur, person_id=client.person_id, point_organization_id=point_organization_id)
-    if found["organization_id"] is None:
-        return
+def _institution_of(cur: Any, person_id: str | None, point_organization_id: str | None) -> dict[str, Any]:
+    """The person's (or the address's) institution as the dialog shows it; a supplier's is refused."""
+    found = client_institution(cur, person_id=person_id, point_organization_id=point_organization_id)
     if found["is_supplier"]:
         raise _supplier_refused()
-    client.organization_id, client.organization_name = _organization_client(self, cur, found["organization_id"])
+    return found
+
+
+_PERSON_SQL = ("select s.id::text as id, s.status, s.display_name from crm.person m "
+               "join crm.person s on s.id = coalesce(m.merged_into_person_id, m.id) where m.id = %s::uuid")
+
+_ADDRESS_SQL = ("select c.id::text as id, c.status, c.organization_id::text as organization_id, "
+                "s.id::text as person_id, s.status as person_status, s.display_name "
+                "from crm.contact_point c left join crm.person m on m.id = c.person_id "
+                "left join crm.person s on s.id = coalesce(m.merged_into_person_id, m.id) "
+                "where c.kind = 'email' and c.value_norm = %s")
+
+
+def _person_institution(cur: Any, person_id: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """The address that stands for the person (`recipients.PERSON_ADDRESS_ORDER`) and the institution
+    they are a client of: their affiliation's, else that address's own."""
+    cur.execute(_PERSON_ADDRESS_SQL, (person_id,))
+    address = _one(cur)
+    return address, _institution_of(cur, person_id, address["organization_id"] if address else None)
 
 
 def _person_client(self: "V2QuoteRepository", cur: Any, person_id: str) -> _Client:
-    cur.execute("select s.id::text as id, s.status, s.display_name from crm.person m "
-                "join crm.person s on s.id = coalesce(m.merged_into_person_id, m.id) where m.id = %s::uuid",
-                (person_id,))
+    cur.execute(_PERSON_SQL, (person_id,))
     found = _one(cur)
     if found is None:
         raise CommandRefused(404, "person_not_found", "no such person")
     if found["status"] != "active":
         raise CommandRefused(409, "archived_subject", "that person is archived")
+    _, institution = _person_institution(cur, found["id"])
     _client_lock(cur, f"person:{found['id']}")
-    cur.execute(_PERSON_ADDRESS_SQL, (found["id"],))
-    address = _one(cur)
+    if institution["organization_id"] is not None:
+        _client_lock(cur, f"organization:{institution['organization_id']}")
+    cur.execute(_PERSON_SQL + " for share of s", (person_id,))
+    locked = _one(cur)
+    if locked is None or locked["id"] != found["id"] or locked["status"] != "active":
+        raise _client_changed()
+    address, now = _person_institution(cur, found["id"])
+    if now["organization_id"] != institution["organization_id"]:
+        raise _client_changed()
     _keep_address_rules(address["value_norm"] if address else None, found["display_name"])
-    client = _Client(person_id=found["id"], label=found["display_name"],
-                     pick=DraftRecipient(person_id=found["id"]))
-    _with_institution(self, cur, client, address["organization_id"] if address else None)
+    client = _Client(person_id=found["id"], label=found["display_name"], pick=DraftRecipient(person_id=found["id"]))
+    if institution["organization_id"] is not None:
+        client.organization_id, client.organization_name = _organization_checked(
+            self, cur, institution["organization_id"])
     return client
 
 
 def _address_client(self: "V2QuoteRepository", cur: Any, *, contact_point_id: str | None, email: str | None,
                     name: str | None) -> _Client:
-    """An address — an email contact point, or an address typed — and whoever owns it."""
+    """An address — an email contact point, or an address typed — and whoever owns it; an address
+    the CRM lacks is the client of the one institution its domain names, if any."""
     if contact_point_id is not None:
         cur.execute("select value_norm from crm.contact_point where id = %s::uuid and kind = 'email'",
                     (contact_point_id,))
@@ -268,49 +307,80 @@ def _address_client(self: "V2QuoteRepository", cur: Any, *, contact_point_id: st
     email = normalize_email(email)
     _keep_address_rules(email, name)
     _client_lock(cur, f"email:{email}")
-    cur.execute("select c.id::text as id, c.status, c.organization_id::text as organization_id, "
-                "s.id::text as person_id, s.status as person_status, s.display_name "
-                "from crm.contact_point c left join crm.person m on m.id = c.person_id "
-                "left join crm.person s on s.id = coalesce(m.merged_into_person_id, m.id) "
-                "where c.kind = 'email' and c.value_norm = %s", (email,))
+    cur.execute(_ADDRESS_SQL, (email,))
     point = _one(cur)
     if point is None:  # an address the CRM lacks: the quote's recipient creates it
-        return _Client(label=name or email, pick=DraftRecipient(email=email, name=name))
+        client = _Client(label=name or email, pick=DraftRecipient(email=email, name=name))
+        by_domain = client_institution_by_domain(cur, email)
+        if by_domain is not None:
+            client.organization_id, client.organization_name = _organization_checked(self, cur, by_domain["id"])
+            _client_lock(cur, f"organization:{client.organization_id}")
+        return client
     if point["status"] != "active":
         raise CommandRefused(409, "contact_point_inactive", "this email address is deactivated in the CRM")
+    person = point["person_id"] if point["person_status"] == "active" else None
+    institution = _institution_of(cur, person, point["organization_id"])
+    if person is not None:
+        _client_lock(cur, f"person:{person}")
+    if institution["organization_id"] is not None:
+        _client_lock(cur, f"organization:{institution['organization_id']}")
+    cur.execute(_ADDRESS_SQL + " for update of c", (email,))
+    locked = _one(cur)
+    if person is not None:
+        cur.execute(_PERSON_SQL + " for share of s", (person,))
+    if locked is None or (locked["id"], locked["status"], locked["person_id"], locked["organization_id"]) != (
+            point["id"], point["status"], point["person_id"], point["organization_id"]):
+        raise _client_changed()
+    if _institution_of(cur, person, point["organization_id"])["organization_id"] != institution["organization_id"]:
+        raise _client_changed()
     _keep_address_rules(email, point["display_name"])
-    client = _Client(contact_point_id=point["id"], label=point["display_name"] or name or email,
+    client = _Client(contact_point_id=point["id"], person_id=person, label=point["display_name"] or name or email,
                      pick=DraftRecipient(contact_point_id=point["id"]))
-    if point["person_id"] is not None and point["person_status"] == "active":
-        client.person_id = point["person_id"]
-        _client_lock(cur, f"person:{point['person_id']}")
-    _with_institution(self, cur, client, point["organization_id"])
+    if institution["organization_id"] is not None:
+        client.organization_id, client.organization_name = _organization_checked(
+            self, cur, institution["organization_id"])
     return client
+
+
+def _name_ambiguous(rows: list[dict[str, Any]]) -> CommandRefused:
+    return CommandRefused(409, "organization_name_ambiguous",
+                          "Hay varias instituciones con ese nombre: elige una de ellas.",
+                          details={"candidates": [{"id": r["id"], "name": r["name"]} for r in rows]})
 
 
 def _new_organization_client(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
                              new: dict[str, Any], note: str) -> _Client:
-    """A new institution (plan R2) — or the one active institution already of that name — registered
-    through `register-organization`'s own path: classification `customer`, the email's domain (a
-    free-mail one excepted). Its email, if given, is the quote's recipient."""
+    """A new institution (plan R2). Not a second one: the one active institution of exactly that
+    name, else the one its email's domain names (`reads.client_institution_by_domain`), is used
+    instead; two or more of that name are refused `organization_name_ambiguous`, with them. A new
+    one is registered through `register-organization`'s own path: classification `customer`, the
+    email's domain (a free-mail one excepted). Its email, if given, is the quote's recipient."""
     name, email = new["name"], new.get("email")
     if email is not None:
         _keep_address_rules(email)
     _client_lock(cur, f"new-organization:{name.casefold()}")
-    cur.execute("select id::text as id from crm.organization where status = 'active' "
-                "and merged_into_organization_id is null and lower(name) = lower(%s) order by created_at limit 2",
+    if email is not None:
+        _client_lock(cur, f"email:{email}")
+    cur.execute("select id::text as id, name from crm.organization where status = 'active' "
+                "and merged_into_organization_id is null and lower(name) = lower(%s) order by created_at, id limit 20",
                 (name,))
     same = _all(cur)
+    if len(same) > 1:
+        raise _name_ambiguous(same)
+    existing = same[0]["id"] if same else (client_institution_by_domain(cur, email) or {}).get("id")
     pick = DraftRecipient(email=email) if email is not None else None
-    if len(same) == 1:
-        organization_id, organization_name = _organization_client(self, cur, same[0]["id"])
+    if existing is not None:
+        organization_id, organization_name = _organization_checked(self, cur, existing)
+        _client_lock(cur, f"organization:{organization_id}")
+    if email is not None:  # the address's row before any institution's (`create-person`'s order)
+        cur.execute("select 1 from crm.contact_point where kind = 'email' and value_norm = %s for update", (email,))
+    if existing is not None:
         return _Client(organization_id=organization_id, organization_name=organization_name, pick=pick)
     domain = email.rpartition("@")[2] if email is not None else None
     made = _handle_register_organization(self, cur, operator, {
         "name": name, "legal_name": None, "kind": new.get("kind") or "company", "classification": "customer",
         "domain": domain if domain and domain not in FREE_MAIL_DOMAINS else None, "product_lines": [],
         "note": note}, receipt_id)
-    _client_lock(cur, f"organization:{made['organization_id']}")
     return _Client(organization_id=made["organization_id"], organization_name=name, pick=pick,
                    organization_created=True)
 
@@ -318,7 +388,8 @@ def _new_organization_client(self: "V2QuoteRepository", cur: Any, operator: Oper
 def _resolve_client(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
                     client: QuoteClient, note: str) -> _Client:
     if client.organization_id is not None:
-        organization_id, name = _organization_client(self, cur, str(client.organization_id))
+        organization_id, name = _organization_checked(self, cur, str(client.organization_id))
+        _client_lock(cur, f"organization:{organization_id}")
         return _Client(organization_id=organization_id, organization_name=name)
     if client.person_id is not None:
         return _person_client(self, cur, str(client.person_id))
@@ -381,6 +452,17 @@ def _handle_create_quote(self: "V2QuoteRepository", cur: Any, operator: Operator
     if case["closed_at"] is not None:
         raise CommandRefused(409, "case_closed", "this case is closed; a closed case gets no new quote")
 
+    # The recipient first: its row locks come before the numbering lock, the last one taken.
+    revision_id = str(uuid.uuid4())  # the recipient's `participant.added` names the revision it is for
+    if client is not None and client.pick is not None:
+        recipient: str | None = _recipient_for(self, cur, operator, receipt_id, client.pick, None, case_id=case_id,
+                                               revision_id=revision_id, today=santiago_today(self._clock()),
+                                               case_closed=False)
+    else:
+        cur.execute(_PRIMARY_PARTICIPANT_SQL, (case_id,))
+        primary = _one(cur)
+        recipient = primary["id"] if primary else None
+
     number = allocate_quote_number(cur, self._clock())
     try:
         cur.execute(
@@ -402,15 +484,6 @@ def _handle_create_quote(self: "V2QuoteRepository", cur: Any, operator: Operator
     params = load_parameters(cur)
     defaults = {column: _text(v.strip()) if isinstance(v := params.get(key), str) else None
                 for column, key in _DEFAULT_TEXTS.items()}
-    revision_id = str(uuid.uuid4())  # the recipient's `participant.added` names the revision it is for
-    if client is not None and client.pick is not None:
-        recipient: str | None = _recipient_for(self, cur, operator, receipt_id, client.pick, None, case_id=case_id,
-                                               revision_id=revision_id, today=santiago_today(self._clock()),
-                                               case_closed=False)
-    else:
-        cur.execute(_PRIMARY_PARTICIPANT_SQL, (case_id,))
-        primary = _one(cur)
-        recipient = primary["id"] if primary else None
     cur.execute(
         """
         insert into crm.quote_revision
@@ -575,12 +648,14 @@ select id::text as id
  limit 1
 """
 
-# A person's address as a participant of theirs would print it (`_RECIPIENT_SQL`): an active one first;
-# with the institution the address names, which a person with no affiliation is a client of.
-_PERSON_ADDRESS_SQL = """
-select value_norm, organization_id::text as organization_id from crm.contact_point
- where kind = 'email' and person_id = %s::uuid
- order by (status = 'active') desc, created_at, id
+# A person's address as a participant of theirs would print it (`_RECIPIENT_SQL`), in the order
+# `recipients.PERSON_ADDRESS_ORDER` gives (an active one, one a quote may go to, the oldest) — the
+# address the new-quote dialog shows for them; with the institution the address names, which a
+# person with no affiliation is a client of.
+_PERSON_ADDRESS_SQL = f"""
+select c.value_norm, c.organization_id::text as organization_id from crm.contact_point c
+ where c.kind = 'email' and c.person_id = %s::uuid
+ order by {PERSON_ADDRESS_ORDER}
  limit 1
 """
 
@@ -874,7 +949,7 @@ select o.id::text as id, o.name,
 # address, else the person's (an active one first); the name of the participant's person, else of
 # the address's person, else — for an address with no person — the name it was picked by (the
 # participant's note, `_recipient`), else the address as displayed.
-_RECIPIENT_SQL = """
+_RECIPIENT_SQL = f"""
 select p.id::text as participant_id,
        coalesce(pe.display_name, cpe.display_name, case when p.person_id is null then p.note end,
                 cp.value_display) as name,
@@ -885,7 +960,7 @@ select p.id::text as participant_id,
     select c.value_norm, c.value_display, c.person_id from crm.contact_point c
      where c.kind = 'email'
        and (c.id = p.contact_point_id or (p.contact_point_id is null and c.person_id = p.person_id))
-     order by (c.status = 'active') desc, c.created_at, c.id
+     order by {PERSON_ADDRESS_ORDER}
      limit 1) cp on true
   left join crm.person cpe on cpe.id = cp.person_id
  where p.id = %s::uuid and p.opportunity_id = %s::uuid and p.valid_to is null
