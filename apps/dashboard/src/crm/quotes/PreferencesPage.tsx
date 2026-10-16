@@ -47,9 +47,16 @@ type Save = (body: SetCostParameterBody, key: string) => Promise<unknown>;
 /** One key per attempt: the same body retried (the dialog closed and reopened included) keeps it. */
 type KeyRef = { current: { sig: string; key: string } | null };
 
-/** A refusal in Spanish (`quoteRefusalText`); the quote wording of a 422 would speak of «la cotización». */
+/** Local wording where the quote one would speak of «la cotización» or of quoting. */
+const HERE: Record<string, string> = {
+  validation_error: "El servidor no aceptó el valor; revísalo y vuelve a intentarlo.",
+  role_may_not_view_costs: "Sólo ventas y administración pueden cambiar las preferencias.",
+  forbidden: "Sólo ventas y administración pueden cambiar las preferencias.",
+};
+
+/** A refusal in Spanish (`quoteRefusalText`), in this page's words where they differ (`HERE`). */
 function refusalText(e: unknown): string {
-  if (e instanceof QuoteRefusal && e.code === "validation_error") return "El servidor no aceptó el valor; revísalo y vuelve a intentarlo.";
+  if (e instanceof QuoteRefusal && e.code && HERE[e.code]) return HERE[e.code];
   return quoteRefusalText(e, "No se pudo guardar. Intenta de nuevo.");
 }
 
@@ -168,6 +175,7 @@ function PreferenceFieldEditor({
   const inputProps = {
     id,
     value: text,
+    placeholder: field.placeholder,
     disabled: readOnly,
     "aria-invalid": problem ? true : undefined,
     "aria-describedby": [hintId, problem ? problemId : null].filter(Boolean).join(" "),

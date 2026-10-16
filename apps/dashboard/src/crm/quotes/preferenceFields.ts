@@ -11,7 +11,7 @@
  * decimals (six on the ratio) and 999 %, an amount at most twelve digits, so nothing is rounded
  * silently or overflows. The margin band's two ends are checked against each other
  * (`bandProblem`) before anything is sent. An unset parameter is not an error: the engine falls back
- * (docs/OPERATIONS.md §14.8), and the field says to what.
+ * (docs/OPERATIONS.md §14.8), and the field says to what — in its hint, and as its placeholder.
  */
 import { formatMoney } from "../money";
 import { decimalToPercentText, percentTextToDecimal, amountTextToDecimal } from "./quoteFormat";
@@ -25,6 +25,8 @@ export interface PreferenceField {
   hint?: string;
   /** What the engine uses while the parameter is unset. */
   unset: string;
+  /** That fallback as the empty field's placeholder («40 %»); none when nothing falls back. */
+  placeholder?: string;
   /** Only administration may change it (`role_may_not_set_numbering` for anyone else). */
   adminOnly?: boolean;
 }
@@ -42,23 +44,24 @@ export const PREFERENCE_GROUPS: PreferenceGroup[] = [
     title: "Recargos por defecto",
     note: "Se escriben en cada línea nueva que tiene costo y no tiene recargo; cambiarlos no recalcula un borrador guardado. Una línea «Otro» usa el recargo de Accesorios.",
     fields: [
-      { key: "default_markup_equipment", label: "Equipos", kind: "percent", hint: MARKUP_HINT, unset: "se usa 40 %" },
-      { key: "default_markup_accessory", label: "Accesorios", kind: "percent", hint: MARKUP_HINT, unset: "se usa 45 %" },
-      { key: "default_markup_consumable", label: "Insumos", kind: "percent", hint: MARKUP_HINT, unset: "se usa 45 %" },
-      { key: "default_markup_spare_part", label: "Repuestos", kind: "percent", hint: MARKUP_HINT, unset: "se usa 45 %" },
-      { key: "default_markup_service", label: "Servicios", kind: "percent", hint: MARKUP_HINT, unset: "se usa 45 %" },
+      { key: "default_markup_equipment", label: "Equipos", kind: "percent", hint: MARKUP_HINT, unset: "se usa 40 %", placeholder: "40 %" },
+      { key: "default_markup_accessory", label: "Accesorios", kind: "percent", hint: MARKUP_HINT, unset: "se usa 45 %", placeholder: "45 %" },
+      { key: "default_markup_consumable", label: "Insumos", kind: "percent", hint: MARKUP_HINT, unset: "se usa 45 %", placeholder: "45 %" },
+      { key: "default_markup_spare_part", label: "Repuestos", kind: "percent", hint: MARKUP_HINT, unset: "se usa 45 %", placeholder: "45 %" },
+      { key: "default_markup_service", label: "Servicios", kind: "percent", hint: MARKUP_HINT, unset: "se usa 45 %", placeholder: "45 %" },
     ],
   },
   {
     title: "Margen objetivo",
     fields: [
-      { key: "margin_target_min", label: "Mínimo", kind: "percent", hint: "bajo esto: «Bajo el objetivo»", unset: "se usa 25 %" },
-      { key: "margin_target_max", label: "Máximo", kind: "percent", hint: "sobre esto: «Sobre el objetivo»", unset: "se usa 45 %" },
+      { key: "margin_target_min", label: "Mínimo", kind: "percent", hint: "bajo esto: «Bajo el objetivo»", unset: "se usa 25 %", placeholder: "25 %" },
+      { key: "margin_target_max", label: "Máximo", kind: "percent", hint: "sobre esto: «Sobre el objetivo»", unset: "se usa 45 %", placeholder: "45 %" },
       {
         key: "price_deviation_warn_pct",
         label: "Desviación de precio",
         kind: "percent",
-        hint: "aviso si se aleja del histórico",
+        // Stored for the warning a later delivery builds (docs/STATUS.md §2.7.123 «Not built»).
+        hint: "se guarda; el aviso todavía no está construido",
         unset: "no hay aviso",
       },
     ],
@@ -78,7 +81,7 @@ export const PREFERENCE_GROUPS: PreferenceGroup[] = [
     note: "Se copian en cada cotización nueva. Lo que va entre corchetes es un espacio por completar: no se aprueba una cotización que todavía lo tenga.",
     fields: [
       { key: "quote_default_delivery_terms", label: "Plazo de entrega", kind: "text", unset: "queda vacío" },
-      { key: "quote_default_validity_days", label: "Validez (días)", kind: "days", unset: "se usa 30 días" },
+      { key: "quote_default_validity_days", label: "Validez (días)", kind: "days", unset: "se usa 30 días", placeholder: "30" },
       { key: "quote_default_payment_terms", label: "Forma de pago", kind: "text", unset: "queda vacío" },
       { key: "quote_default_warranty", label: "Garantía", kind: "text", unset: "queda vacío" },
       { key: "quote_default_delivery_place", label: "Lugar de entrega", kind: "text", unset: "queda vacío" },

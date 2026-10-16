@@ -404,8 +404,14 @@ export interface QuoteListRow {
   origin: string;
   opportunity: { id: string; title: string | null; closed: boolean };
   client: { organization_id: string; name: string } | null;
+  /** The first item descriptions and how many there are: the revision's own, or its read PDF's (`amount_source`). */
   items: { first: string[]; count: number };
+  /** The revision's own total, IVA included; null without one (an imported quote). */
   grand_total: Decimal | null;
+  /** The neto its PDF said, when the revision has no totals or lines of its own and the PDF was read. */
+  net_total?: Decimal | null;
+  /** Where `items` and the amount come from: the revision itself, its read PDF, or nowhere (null). Absent from an older API. */
+  amount_source?: "revision" | "pdf_read" | null;
   currency: string | null;
   updated_at: string;
 }
@@ -509,6 +515,8 @@ export interface CreatedQuote {
   opportunity_id?: string;
   case_created?: boolean;
   organization_id?: string | null;
+  /** The institution's name, as the CRM has it (null without one). */
+  organization_name?: string | null;
   organization_created?: boolean;
 }
 

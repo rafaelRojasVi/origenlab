@@ -48,6 +48,8 @@ const ENGLISH: [string, string, string][] = [
   ["organization_name_ambiguous", "several of that name", "varias instituciones con ese nombre"],
   ["query_too_short", "type at least two characters", "al menos dos letras"],
   ["role_may_not_decide", "this role may not run commands", "Sólo ventas y administración pueden crear o cambiar cotizaciones."],
+  // A 403 with no command code of its own (the API's generic one, or the Worker's).
+  ["forbidden", "Forbidden", "Tu perfil no puede hacer esta acción."],
 ];
 
 describe("quoteRefusalText", () => {

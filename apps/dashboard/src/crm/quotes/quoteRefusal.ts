@@ -74,6 +74,8 @@ const SPANISH: Record<string, string> = {
   idempotency_conflict: "Esta acción todavía se está procesando; espera un momento y vuelve a intentarlo.",
   idempotency_key_reused: "Esta acción ya se usó para otra cosa; vuelve a intentarlo.",
   command_already_failed: "El intento anterior falló; vuelve a intentarlo.",
+  // A 403 with no command code of its own (the API's generic code, or the Worker's).
+  forbidden: "Tu perfil no puede hacer esta acción.",
 };
 
 /** The engine's codes that name a line or a currency (`fx_missing:EUR`, `quantity_invalid:3`). */

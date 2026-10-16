@@ -24,12 +24,14 @@ import { CotizadorPage, NoQuoteAccess } from "./CotizadorPage";
  * Each tab's pane is the one-quote page (`CotizadorPage`). A pane stays mounted, hidden, once it
  * has been shown, so its autosave timers and unsaved edits survive a switch; a tab restored from
  * this computer mounts (and reads its quote) only the first time it is shown, so a reload reads one
- * quote, not eight. Closing a tab sends its pending save first and asks when that fails; a ninth
- * tab closes the oldest one with nothing pending, and asks when every tab has something pending.
+ * quote, not eight. Closing a tab sends its pending save first and asks when that fails (Supr or
+ * ⌫ on a focused tab closes it too); the focus moves to the tab now selected only when it was on
+ * the closed tab, its × or its pane. A ninth tab closes the oldest one with nothing pending, and
+ * asks when every tab has something pending.
  *
- * «Preferencias» (`#/crm/cotizador/preferencias`, the header's button and the list's) is a fixed
- * pane, not a tab: the company's defaults (`PreferencesPage`). While it is shown no tab is
- * selected and the tab shown last is left for «Todas»; a tab is one click away.
+ * «Preferencias» (`#/crm/cotizador/preferencias`, the list's button) is a fixed pane, not a tab:
+ * the company's defaults (`PreferencesPage`). While it is shown no tab is selected; «Todas» goes
+ * back to the list, a tab is one click away, and a quote made with «+ Nueva» there is shown.
  *
  * Sales and administration only: anyone else (the menu hides it) is told so, and nothing is read.
  */
@@ -57,7 +59,21 @@ const NO_COMMANDS = "Crear cotizaciones está desactivado en este servidor.";
 const tabDomId = (id: string | null) => `cotizador-tab-${id ?? "todas"}`;
 const panelDomId = (id: string | null) => `cotizador-panel-${id ?? "todas"}`;
 
-type Asking = { kind: "discard" | "evict"; tab: QuoteTab; resolve: (yes: boolean) => void };
+type Asking = { kind: "discard" | "evict"; tab: QuoteTab; resolve: (yes: boolean) => void; n: number };
+
+/** Each question is a dialog of its own (a fresh one sets the focus again), even for the same tab. */
+const askKey = (a: Asking) => `${a.kind}:${a.tab.id}:${a.n}`;
+
+/**
+ * Whether the focus was where a closed tab took it from: nowhere (the page's start), the tab or
+ * its × (outside the tablist, `CloseButtons`), or inside its pane.
+ */
+function focusWasOn(id: string): boolean {
+  const at = document.activeElement;
+  if (!at || at === document.body || !at.isConnected) return true;
+  if (at.id === tabDomId(id) || (at as HTMLElement).dataset?.closeFor === id) return true;
+  return !!document.getElementById(panelDomId(id))?.contains(at);
+}
 
 function CotizadorModule({
   operatorId,
@@ -80,11 +96,12 @@ function CotizadorModule({
     };
   }, []);
   /** The address of the tab shown, replaced (not pushed) so a closed tab is not one «back» away twice;
-   *  only while the module is on screen and the address is still the module's. */
-  const showInAddress = useCallback((active: string | null) => {
+   *  only while the module is on screen and the address is still the module's. While «Preferencias»
+   *  is shown, a late close or open does not take the operator away — unless they asked for the
+   *  tab (`leavePane`: a quote just created, a row opened), which is then shown. */
+  const showInAddress = useCallback((active: string | null, leavePane = false) => {
     const here = parseCrmHash(window.location.hash);
-    // Not while «Preferencias» is shown: a late close or open does not take the operator away.
-    if (!alive.current || here.section !== "cotizador" || here.pane) return;
+    if (!alive.current || here.section !== "cotizador" || (here.pane && !leavePane)) return;
     const target = crmHash("cotizador", active);
     if (window.location.hash !== target) window.location.replace(target);
   }, []);
@@ -93,9 +110,10 @@ function CotizadorModule({
   const queue = useRef<Asking[]>([]);
   const [asking, setAsking] = useState<Asking | null>(null);
   const ask = useMemo<TabsAsk>(() => {
+    let asked = 0;
     const enqueue = (kind: Asking["kind"]) => (tab: QuoteTab) =>
       new Promise<boolean>((resolve) => {
-        queue.current.push({ kind, tab, resolve });
+        queue.current.push({ kind, tab, resolve, n: ++asked });
         if (queue.current.length === 1) setAsking(queue.current[0]);
       });
     return { discard: enqueue("discard"), evict: enqueue("evict") };
@@ -122,14 +140,19 @@ function CotizadorModule({
   // time is put back in the address; after that it means «Todas». (Keyed on the address seen
   // last, so running twice for one address — React's development double run — does nothing more.)
   const lastRoute = useRef<string | null | undefined>(undefined);
+  const onPrefs = useRef(false);
   useEffect(() => {
     if (prefs) {
       // «Preferencias» is no tab: none is selected, and «Todas» afterwards means the list.
       lastRoute.current = null;
+      onPrefs.current = true;
       activate(null);
       return;
     }
-    if (lastRoute.current === routeId) return;
+    // Leaving «Preferencias» for `#/crm/cotizador` is «Todas», whatever opened behind the pane meanwhile.
+    const fromPrefs = onPrefs.current;
+    onPrefs.current = false;
+    if (lastRoute.current === routeId && !(fromPrefs && !routeId)) return;
     const first = lastRoute.current === undefined;
     lastRoute.current = routeId;
     if (routeId) {
@@ -159,8 +182,9 @@ function CotizadorModule({
     async (id: string) => {
       const wasShown = peek().active === id;
       if (!(await close(id)) || !alive.current) return;
-      // The focus goes to the tab now selected («Todas» when none is left), not to the page's start.
-      document.getElementById(tabDomId(peek().active))?.focus();
+      // Where the focus was is gone (the page's start, the closed tab or its ×, the closed pane):
+      // it goes to the tab now selected («Todas» when none is left). Anywhere else it stays.
+      if (focusWasOn(id)) document.getElementById(tabDomId(peek().active))?.focus();
       if (wasShown) showInAddress(peek().active);
     },
     [close, peek, showInAddress],
@@ -175,14 +199,15 @@ function CotizadorModule({
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   // A row of «Todas»: open (or show) its tab, with the label, client and state the row knows.
+  // Asked for by the operator, so shown even from «Preferencias».
   const openFromList = useCallback(
     async (id: string, meta: TabMeta) => {
-      if (await open(id, meta, { stillWanted: () => alive.current })) showInAddress(peek().active);
+      if (await open(id, meta, { stillWanted: () => alive.current })) showInAddress(peek().active, true);
     },
     [open, peek, showInAddress],
   );
 
-  // Arrows move between tabs (Home / End to the ends); Enter or Space shows one; Supr closes it.
+  // Arrows move between tabs (Home / End to the ends); Enter or Space shows one; Supr or ⌫ closes it.
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const list = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
     const at = list.indexOf(document.activeElement as HTMLButtonElement);
@@ -192,7 +217,7 @@ function CotizadorModule({
     else if (e.key === "ArrowLeft") to = (at - 1 + list.length) % list.length;
     else if (e.key === "Home") to = 0;
     else if (e.key === "End") to = list.length - 1;
-    else if (e.key === "Delete") {
+    else if (e.key === "Delete" || e.key === "Backspace") {
       const id = list[at].dataset.quoteId;
       if (id) {
         e.preventDefault();
@@ -246,16 +271,6 @@ function CotizadorModule({
             </span>
           )}
         </span>
-        {/* A fixed pane of the module, not a tab: the company's defaults. */}
-        <Button
-          variant="quiet"
-          data-module-preferences
-          aria-current={prefs ? "page" : undefined}
-          onClick={showPreferences}
-          className={`mb-0.5 ml-auto min-h-[44px] shrink-0 px-3 text-[13.5px] font-semibold${prefs ? " text-brand-700 underline underline-offset-4" : ""}`}
-        >
-          Preferencias
-        </Button>
       </div>
 
       <section role="tabpanel" id={panelDomId(null)} aria-labelledby={tabDomId(null)} hidden={prefs || state.active !== null}>
@@ -289,7 +304,7 @@ function CotizadorModule({
           }}
         />
       ) : null}
-      {asking ? <AskDialog asking={asking} onAnswer={answer} /> : null}
+      {asking ? <AskDialog key={askKey(asking)} asking={asking} onAnswer={answer} /> : null}
     </div>
   );
 }
@@ -322,7 +337,7 @@ function QuoteTabButton({
       data-quote-id={tab.id}
       aria-selected={selected}
       aria-controls={hasPanel ? panelDomId(tab.id) : undefined}
-      aria-keyshortcuts="Delete"
+      aria-keyshortcuts="Delete Backspace"
       tabIndex={selected ? 0 : -1}
       onClick={onShow}
       // The right padding leaves room for the × laid over the chip.
@@ -386,6 +401,7 @@ function CloseButtons({
             key={t.id}
             type="button"
             tabIndex={-1}
+            data-close-for={t.id}
             aria-label={`Cerrar ${t.meta?.label ?? "Cotización"}`}
             title="Cerrar"
             onClick={() => onClose(t.id)}

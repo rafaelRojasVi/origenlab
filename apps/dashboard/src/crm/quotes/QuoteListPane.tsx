@@ -13,7 +13,9 @@ import { MAX_TABS, type TabMeta } from "./tabStore";
  * newest change first. A filter (Borradores by default), a search that waits 300 ms after the last
  * key, a counts line, and «Cargar más» by the API's cursor. A row opens the quote as a tab
  * (`onOpen`, with the label, client and state the tab shows); an imported quote says «importada»
- * and opens read-only (the quote page edits authored drafts only). Every number is the API's.
+ * and opens read-only (the quote page edits authored drafts only). An imported quote with no totals
+ * of its own shows what its read PDF said — its products and its neto, «neto leído del PDF»
+ * (`amount_source: pdf_read`) — and «—» when its PDF was never read. Every number is the API's.
  *
  * Only the newest request counts: changing the filter or the search abandons what is in flight
  * (aborted, and a token keeps a late answer out anyway) and starts again from the first page.
@@ -318,7 +320,9 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew, new
             <tbody>
               {rows.map((r) => {
                 const st = statusOf(r.status);
-                const total = formatMoney(r.grand_total, r.currency);
+                // An imported quote without totals of its own shows the neto its PDF said (the API's, no IVA added here).
+                const fromPdf = r.amount_source === "pdf_read" && r.grand_total == null;
+                const total = formatMoney(fromPdf ? r.net_total : r.grand_total, r.currency);
                 const name = quoteLabel({ label: r.label, quote_number: r.quote_number });
                 const imported = r.origin === "historical_import";
                 return (
@@ -359,7 +363,10 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew, new
                     <td className="px-3 py-3 align-middle">
                       <Badge tone={st.tone}>{st.label}</Badge>
                     </td>
-                    <td className="px-3 py-3 text-right align-middle font-mono tabular-nums">{total ?? "—"}</td>
+                    <td className="px-3 py-3 text-right align-middle font-mono tabular-nums">
+                      {total ?? "—"}
+                      {fromPdf && total ? <span className="block font-sans text-[11.5px] text-ink-muted">neto leído del PDF</span> : null}
+                    </td>
                     <td className="whitespace-nowrap px-[18px] py-3 text-right align-middle text-[13px] text-ink-muted">
                       <time dateTime={r.updated_at}>{quoteWhen(r.updated_at)}</time>
                     </td>

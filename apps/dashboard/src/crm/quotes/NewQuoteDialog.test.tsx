@@ -8,6 +8,7 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CLIENT_SEARCH_DELAY_MS, NewQuoteDialog } from "./NewQuoteDialog";
 import type { QuoteClientSuggestions } from "./quoteApi";
+import { Toaster } from "../ui";
 
 const ORG_ONE = "aaaaaaaa-0000-4000-8000-000000000001";
 const ORG_TWO = "aaaaaaaa-0000-4000-8000-000000000002";
@@ -622,5 +623,53 @@ describe("after the quote is made", () => {
     fireEvent.click(createButton());
     const tab = await screen.findByRole("tab", { name: "CN00042" });
     await waitFor(() => expect(tab).toHaveFocus());
+  });
+});
+
+describe("a new client the CRM already had (M5)", () => {
+  const answer = (over: Record<string, unknown>) => () =>
+    json({ ok: true, quote_id: NEW_QUOTE, quote_number: "00042-26", revision_id: "r-new", version: 1, opportunity_id: CASE_1, ...over });
+
+  async function createNew(name: string) {
+    render(
+      <>
+        <NewQuoteDialog onClose={vi.fn()} onCreated={vi.fn()} now={() => NOW} />
+        <Toaster />
+      </>,
+    );
+    await search(name);
+    await pick(new RegExp(`\\+ Cliente nuevo «${name}»`));
+    fireEvent.click(createButton());
+  }
+
+  it("says the existing institution and its open case were used", async () => {
+    stub({ create: answer({ organization_id: "i-7", organization_name: "Universidad Ejemplo 7", organization_created: false, case_created: false }) });
+    await createNew("Universidad Ejemplo 7");
+    expect(await screen.findByText("Se usó la institución existente «Universidad Ejemplo 7» y su caso abierto.")).toBeInTheDocument();
+  });
+
+  it("says only the institution when a Solicitud was opened for it", async () => {
+    stub({ create: answer({ organization_id: "i-7", organization_name: "Universidad Ejemplo 7", organization_created: false, case_created: true }) });
+    await createNew("Universidad Ejemplo 7");
+    expect(await screen.findByText("Se usó la institución existente «Universidad Ejemplo 7».")).toBeInTheDocument();
+  });
+
+  it("says nothing when the institution is new", async () => {
+    const onCreated = vi.fn();
+    stub({ create: answer({ organization_id: "i-8", organization_name: "Laboratorio Nuevo", organization_created: true, case_created: true }) });
+    render(
+      <>
+        <NewQuoteDialog onClose={vi.fn()} onCreated={onCreated} now={() => NOW} />
+        <Toaster />
+      </>,
+    );
+    await search("Laboratorio Nuevo");
+    await pick(/\+ Cliente nuevo «Laboratorio Nuevo»/);
+    // Toasts are app-wide: count those already shown by the tests before.
+    const before = screen.queryAllByText(/institución existente/).length;
+    fireEvent.click(createButton());
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(screen.queryAllByText(/institución existente/)).toHaveLength(before);
+    expect(screen.queryByText(/«Laboratorio Nuevo»\./)).not.toBeInTheDocument();
   });
 });

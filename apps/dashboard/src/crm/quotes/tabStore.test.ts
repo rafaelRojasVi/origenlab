@@ -281,4 +281,25 @@ describe("useQuoteTabs — fix round 1", () => {
     await act(async () => expect(await hook.result.current.open(id(9), meta(9), { stillWanted: () => false })).toBe(false));
     expect(hook.result.current.state.tabs.map((t) => t.id)).not.toContain(id(9));
   });
+
+  it("keeps the oldest tab, unsaved, when the operator moved on while asked to make room", async () => {
+    const flushes: string[] = [];
+    for (let n = 1; n <= MAX_TABS; n++) {
+      registerTabEditor(id(n), { hasPendingSave: () => true, flush: () => (flushes.push(id(n)), Promise.resolve(true)) });
+    }
+    let wanted = true;
+    const hook = renderHook(() =>
+      useQuoteTabs(OP, {
+        discard: vi.fn(),
+        // The operator says yes, but by then the address has moved on.
+        evict: () => ((wanted = false), Promise.resolve(true)),
+      }),
+    );
+    await act(async () => {
+      for (let n = 1; n <= MAX_TABS; n++) await hook.result.current.open(id(n), meta(n));
+    });
+    await act(async () => expect(await hook.result.current.open(id(9), meta(9), { stillWanted: () => wanted })).toBe(false));
+    expect(hook.result.current.state.tabs.map((t) => t.id)).toContain(id(1));
+    expect(flushes).toEqual([]);
+  });
 });

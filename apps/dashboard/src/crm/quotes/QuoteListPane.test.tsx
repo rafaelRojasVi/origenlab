@@ -276,6 +276,31 @@ describe("QuoteListPane", () => {
     expect(authored).not.toHaveTextContent("importada");
   });
 
+  it("an imported quote shows what its read PDF said: its products and the neto, labelled; unread stays «—»", async () => {
+    stubApi(() =>
+      page([
+        row(1, {
+          origin: "historical_import", status: "sent", grand_total: null, net_total: "250000", amount_source: "pdf_read",
+          items: { first: ["Centrífuga de ejemplo", "Rotor"], count: 4 },
+        }),
+        row(2, { origin: "historical_import", status: "sent", grand_total: null, net_total: null, amount_source: null, items: { first: [], count: 0 } }),
+        row(3, { amount_source: "revision" }),
+      ]),
+    );
+    render(<QuoteListPane onOpen={vi.fn()} />);
+    await screen.findByText("Centrífuga de ejemplo, Rotor +2 más");
+    const [read, unread, authored] = rowsOf();
+    const cells = (r: HTMLElement) => within(r).getAllByRole("cell");
+    // The neto as the API said it — no IVA added in the browser — and where it comes from.
+    expect(cells(read)[4]).toHaveTextContent("$ 250.000");
+    expect(cells(read)[4]).toHaveTextContent("neto leído del PDF");
+    expect(cells(unread)[2]).toHaveTextContent("—");
+    expect(cells(unread)[4]).toHaveTextContent("—");
+    expect(cells(unread)[4]).not.toHaveTextContent("PDF");
+    expect(cells(authored)[4]).toHaveTextContent("$ 2.940.000");
+    expect(cells(authored)[4]).not.toHaveTextContent("PDF");
+  });
+
   it("says the list is empty in the words of the filter, and of a search that found nothing", async () => {
     stubApi(() => page([], null, { draft: 0, approved: 0, sent: 0, void: 0, all: 0 }));
     render(<QuoteListPane onOpen={vi.fn()} />);

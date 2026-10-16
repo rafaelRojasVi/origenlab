@@ -442,6 +442,49 @@ describe("Cotizador module — fix round 1", () => {
     await waitFor(() => expect(within(tablist()).getByRole("tab", { name: "Todas" })).toHaveFocus());
   });
 
+  it("closing another tab leaves the focus where the operator is working (final wave)", async () => {
+    seed([1, 2], 1);
+    stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    const qty = await shownField("Cantidad de la línea 1");
+    qty.focus();
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00042" }));
+    await waitFor(() => expect(quoteTabs()).toHaveLength(1));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(qty).toHaveFocus();
+  });
+
+  it("Backspace on a focused tab closes it, like Supr", async () => {
+    seed([1, 2], 1);
+    stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    await showsQuote("CN00041");
+    tabOf("CN00042").focus();
+    fireEvent.keyDown(tabOf("CN00042"), { key: "Backspace" });
+    await waitFor(() => expect(quoteTabs()).toHaveLength(1));
+    expect(within(tablist()).queryByRole("tab", { name: /CN00042/ })).not.toBeInTheDocument();
+  });
+
+  it("each question starts with the focus on its first button", async () => {
+    stubApi(() => json({ detail: "boom" }, 500));
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "5" } });
+    act(() => void (window.location.hash = `#/crm/cotizador/${Q(2)}`));
+    await showsQuote("CN00042");
+    fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "6" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00042" }));
+    const first = await screen.findByRole("dialog", { name: "No se pudo guardar. ¿Cerrar igual?" });
+    await waitFor(() => expect(first).toHaveTextContent("CN00041"));
+    const closeAnyway = within(first).getByRole("button", { name: "Cerrar igual" });
+    closeAnyway.focus();
+    fireEvent.click(closeAnyway);
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("CN00042"));
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Seguir editando" })).toHaveFocus();
+  });
+
   it("a restored tab whose quote is gone says so, and can be closed (M6)", async () => {
     seed([7], 7);
     stubApi(undefined, [7]);
@@ -470,16 +513,20 @@ describe("Cotizador module — «Preferencias»", () => {
     expect(await screen.findByLabelText("Equipos")).toHaveValue("40");
     expect(quoteTabs()).toHaveLength(0);
     expect(api.calls.some((c) => c.path.startsWith("/v2/quotes/") && c.path !== "/v2/quotes/clients")).toBe(false);
-    expect(screen.getByRole("button", { name: "Preferencias" })).toHaveAttribute("aria-current", "page");
+    // The strip holds the tabs and «+ Nueva»; «Preferencias» is the list header's (e1).
+    expect(screen.queryByRole("button", { name: "Preferencias" })).toBeNull();
+    expect(screen.getByRole("button", { name: "+ Nueva" })).toBeInTheDocument();
     expect(window.location.hash).toBe("#/crm/cotizador/preferencias");
   });
 
-  it("the header's and the list's «Preferencias» open it; «Todas» goes back to the list", async () => {
+  it("the list's «Preferencias» opens it — the only one, the strip has none (e1); «Todas» goes back to the list", async () => {
     stubApi();
     renderModule("#/crm/cotizador");
     // The list's own button (in the «Todas» panel).
     const listButton = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Preferencias" });
     expect(listButton).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: "Preferencias" })).toEqual([listButton]);
+    expect(document.querySelector("[data-module-preferences]")).toBeNull();
     fireEvent.click(listButton);
     await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador/preferencias"));
     expect(await screen.findByRole("heading", { level: 1, name: "Preferencias del Cotizador" })).toBeInTheDocument();
@@ -489,12 +536,26 @@ describe("Cotizador module — «Preferencias»", () => {
     await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador"));
     await waitFor(() => expect(prefsHeading()).toBeNull());
     expect(screen.getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeVisible();
+  });
 
-    // The header's button, beside «+ Nueva».
-    const headerButton = screen.getAllByRole("button", { name: "Preferencias" }).find((b) => b.getAttribute("data-module-preferences") !== null)!;
-    expect(headerButton.className).toContain("min-h-[44px]");
-    fireEvent.click(headerButton);
-    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador/preferencias"));
+  it("«+ Nueva» from «Preferencias»: the quote made is shown, in the address, and «Todas» then shows the list (I1)", async () => {
+    stubApi();
+    renderModule("#/crm/cotizador/preferencias");
+    expect(await screen.findByRole("heading", { level: 1, name: "Preferencias del Cotizador" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "+ Nueva" }));
+    const dialog = screen.getByRole("dialog", { name: "Nueva cotización" });
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Cliente" }), { target: { value: "Universidad" } });
+    fireEvent.click(await within(dialog).findByRole("option", { name: /Universidad Ejemplo 9/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Crear y abrir" }));
+    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(9)}`));
+    await showsQuote("CN00049");
+    expect(tabOf("CN00049")).toHaveAttribute("aria-selected", "true");
+    expect(prefsHeading()).toBeNull();
+
+    fireEvent.click(within(tablist()).getByRole("tab", { name: "Todas" }));
+    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador"));
+    await waitFor(() => expect(within(shown()).getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeInTheDocument());
+    expect(within(tablist()).getByRole("tab", { name: "Todas" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("opened directly with restored tabs, it stays on «Preferencias»; a quote tab is one click away", async () => {

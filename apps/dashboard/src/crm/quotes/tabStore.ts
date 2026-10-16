@@ -241,7 +241,10 @@ export function useQuoteTabs(operatorId: string, ask: TabsAsk, initial?: string 
         commit(closeTab(ref.current, free.id));
       } else {
         const oldest = ref.current.tabs[0];
-        if (!(await askRef.current.evict(oldest)) || !(await close(oldest.id))) return false;
+        if (!(await askRef.current.evict(oldest))) return false;
+        // Told yes, but the operator may have moved on while asked: then the oldest stays open.
+        if (opts?.stillWanted && !opts.stillWanted()) return false;
+        if (!(await close(oldest.id))) return false;
       }
       // While the operator was asked, they may have gone to another tab (or left), and something
       // else may have opened tabs.

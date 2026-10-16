@@ -111,8 +111,18 @@ describe("PreferencesPage — the current values", () => {
     expect(screen.getByLabelText("Forma de pago")).toHaveValue("Contado [CONDICIÓN]");
     expect(screen.getByText(/Vigente: 40 %/)).toBeInTheDocument();
     expect(screen.getByText(/Vigente: \$ 150\.000/)).toBeInTheDocument();
-    // Unset: empty, and what the engine uses instead.
+    // Unset: empty, and what the engine uses instead — as the placeholder too (e4).
     expect(screen.getByLabelText("Accesorios")).toHaveValue("");
+    expect(screen.getByLabelText("Accesorios")).toHaveAttribute("placeholder", "45 %");
+    expect(screen.getByLabelText("Equipos")).toHaveAttribute("placeholder", "40 %");
+    expect(screen.getByLabelText("Máximo")).toHaveAttribute("placeholder", "45 %");
+    expect(screen.getByLabelText("Validez (días)")).toHaveAttribute("placeholder", "30");
+    // Nothing falls back for these: no placeholder.
+    expect(screen.getByLabelText("Desviación de precio")).not.toHaveAttribute("placeholder");
+    expect(screen.getByLabelText("Inicio de la numeración")).not.toHaveAttribute("placeholder");
+    // The deviation warning is stored, not built yet (M3): the hint does not promise it.
+    expect(screen.getByText(/Sin definir: no hay aviso/)).toHaveTextContent("se guarda; el aviso todavía no está construido");
+    expect(screen.queryByText(/aviso si se aleja del histórico/)).toBeNull();
     expect(screen.getAllByText(/Sin definir: se usa 45 %/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Sin definir: no hay aviso/)).toBeInTheDocument();
     for (const title of ["Recargos por defecto", "Margen objetivo", "Gastos de importación (perfil)", "Condiciones por defecto", "Numeración"]) {
@@ -296,6 +306,25 @@ describe("PreferencesPage — numbering is administration's", () => {
     await change("Inicio de la numeración", "120");
     giveReason("Nuevo inicio");
     expect(await within(dialog()).findByRole("alert")).toHaveTextContent("Sólo administración fija el inicio de la numeración.");
+  });
+});
+
+describe("PreferencesPage — who may change them", () => {
+  it.each([
+    ["role_may_not_view_costs", "the command's own code"],
+    ["forbidden", "a bare 403"],
+  ])("a 403 %s (%s) says who may change the preferences, not who may quote", async (code) => {
+    stubApi(() =>
+      code === "forbidden"
+        ? json({ error: { code: "forbidden", message: "Forbidden", details: {}, request_id: "req-1" } }, 403)
+        : refusal(403, "forbidden", code, "sales or admin only"),
+    );
+    renderPage();
+    await change("Equipos", "41");
+    giveReason("Ajuste de prueba");
+    const alert = await within(dialog()).findByRole("alert");
+    expect(alert).toHaveTextContent("Sólo ventas y administración pueden cambiar las preferencias.");
+    expect(alert).not.toHaveTextContent("cotizar");
   });
 });
 

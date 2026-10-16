@@ -16,13 +16,15 @@
  *   (`case_choice_needed`, `organization_name_ambiguous`): a refusal leaves no receipt, so the
  *   retry with the choice keeps it. A network failure, a gateway error or a body that is not the
  *   API's may have run: the next click with the same request repeats the same command.
+ * - A «+ Cliente nuevo» the API resolved to an institution it already had is said once the tab
+ *   opens: «Se usó la institución existente «X»» (and «y su caso abierto» when it used that case).
  *
  * Refusals are said in Spanish (`quoteRefusalText`). The browser never prices anything here.
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { KIND_OPTIONS } from "../authoring/NewOrganizationForm";
 import { daysSince } from "../caseDisplay";
-import { Button, FormField, Modal, SelectInput } from "../ui";
+import { Button, FormField, Modal, SelectInput, toast } from "../ui";
 import { createRefusalText, definitive } from "./openOrCreateQuote";
 import {
   QuoteRefusal,
@@ -30,6 +32,7 @@ import {
   fetchQuoteClients,
   newQuoteCommandKey,
   type CreateQuoteForClient,
+  type CreatedQuote,
   type NewClientKind,
   type QuoteClientCase,
   type QuoteClientOrganization,
@@ -161,6 +164,17 @@ function useClientSuggestions(term: string, enabled: boolean): { found: Found | 
   return { found: found && found.term === term ? found : null, retry: () => setTick((t) => t + 1) };
 }
 
+/**
+ * «+ Cliente nuevo» that the API resolved to an institution the CRM already had (same name, or its
+ * address's domain): said once the tab is open, with its open case when that one was used without
+ * the operator choosing it. Null for any other client, or a truly new institution.
+ */
+function reusedText(client: Client, made: CreatedQuote, chose: boolean): string | null {
+  if (client.kind !== "new" || made.organization_created !== false || !made.organization_id) return null;
+  const name = made.organization_name || client.name;
+  return `Se usó la institución existente «${name}»${made.case_created === false && !chose ? " y su caso abierto" : ""}.`;
+}
+
 export function NewQuoteDialog({
   onClose,
   onCreated,
@@ -279,6 +293,8 @@ export function NewQuoteDialog({
         status: "draft",
       });
       focusTabWhenShown(made.quote_id);
+      const reused = reusedText(client, made, askedCases !== null);
+      if (reused) toast(reused, "warn");
     } catch (e) {
       if (!mounted.current) return;
       const code = e instanceof QuoteRefusal ? e.code : null;
