@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SESSION_REFUSED_EVENT } from "../../api/operatorClient";
+import { OperatorApiError, SESSION_REFUSED_EVENT } from "../../api/operatorClient";
 import {
   QUOTE_COMMAND_PATHS,
   QuoteRefusal,
@@ -193,6 +193,7 @@ describe("refusals", () => {
     stub(() => json({ detail: { code: "role_may_not_view_costs", message: "sales or admin only" } }, 403));
     const err = await fetchQuoteWorkspace(QUOTE_ID).catch((e) => e);
     expect(err).toBeInstanceOf(QuoteRefusal);
+    expect(err).toBeInstanceOf(OperatorApiError);
     expect(err.status).toBe(403);
     expect(err.code).toBe("role_may_not_view_costs");
   });

@@ -13,7 +13,7 @@
  * (a viewer gets 403 `role_may_not_view_costs`) and the commands need
  * `ORIGENLAB_V2_COMMANDS_ENABLED`.
  */
-import { notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
+import { OperatorApiError, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
 import type { PriceHistory } from "../catalog/catalogApi";
 
 /** A number as the API prints it: a decimal string, never a JS number. */
@@ -21,11 +21,14 @@ export type Decimal = string;
 
 /* ── the draft the editor sends ───────────────────────────────────────────── */
 
+/** The API's `ItemType`; absent means the product's kind, else "other". */
+export type QuoteItemType = "equipment" | "accessory" | "consumable" | "spare_part" | "service" | "other";
+
 export interface QuoteDraftItem {
   product_id?: string | null;
   description: string;
   quantity: Decimal;
-  item_type?: string | null;
+  item_type?: QuoteItemType | null;
   unit_cost?: Decimal | null;
   cost_currency?: "CLP" | "EUR" | "USD" | null;
   supplier_organization_id?: string | null;
@@ -242,7 +245,7 @@ export interface QuoteWorkspace {
   current: QuoteWorkspaceCurrent | null;
   suggestions: {
     mentioned: { product_id: string | null; model: string | null; name: string; model_key: string }[];
-    kits: { model_key: string; product_id: string; name: string; share: Decimal; documents: number }[];
+    kits: { model_key: string; product_id: string | null; name: string; share: Decimal; documents: number }[];
   };
   /** Null when the principal line has no product with a model key. */
   price_history: PriceHistory | null;
@@ -262,15 +265,16 @@ export interface QuoteNumbering {
 /**
  * The API or Worker refused a quote request. `code` is the machine code from
  * `{detail:{code,message}}` (API) or `{error:{code,message}}` (Worker), or null when the body
- * is not an envelope. A viewer is 403 with `role_may_not_view_costs`.
+ * is not an envelope. It is an `OperatorApiError`, so `classifyError` (and `ResourceGate`) treats it
+ * like any other API refusal. A viewer is 403 with `role_may_not_view_costs`.
  */
-export class QuoteRefusal extends Error {
+export class QuoteRefusal extends OperatorApiError {
   constructor(
-    public readonly status: number,
+    status: number,
     public readonly code: string | null,
     message: string,
   ) {
-    super(message);
+    super(message, status);
     this.name = "QuoteRefusal";
   }
 }
