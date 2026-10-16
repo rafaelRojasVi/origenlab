@@ -74,6 +74,7 @@ from origenlab_api.v2.quotes.inputs import (
     result_json,
 )
 from origenlab_api.v2.quotes.numbering import SANTIAGO, allocate_quote_number, revision_label
+from origenlab_api.v2.quotes.recipients import not_a_recipient
 
 #: Revision columns filled from `quote_default_*` text parameters when a quote is created.
 _DEFAULT_TEXTS = {
@@ -289,60 +290,52 @@ def _locked_draft(cur: Any, revision_id: str, expected_version: int) -> dict[str
     return revision
 
 
-def _check_recipient(cur: Any, participant_id: str, opportunity_id: str) -> None:
-    cur.execute("select 1 from crm.opportunity_participant where id = %s::uuid and opportunity_id = %s::uuid "
-                "and valid_to is null", (participant_id, opportunity_id))
-    if cur.fetchone() is None:
-        raise CommandRefused(422, "recipient_not_on_case", "the recipient is not a current participant of this case")
+_ADDRESS_REFUSALS = {"labdelivery_refused": "input of Labdelivery origin is refused",
+                     "recipient_own_address": "Esa dirección es de OrigenLab, no del cliente."}
 
 
-#: Addresses a quote never goes to: OrigenLab's own, and Labdelivery's (refused outright before this).
-NOT_A_RECIPIENT_DOMAINS = frozenset({"origenlab.cl", "labdelivery.cl"})
+def _keep_address_rules(email: str | None, name: str | None = None) -> None:
+    """Every pick, however it names the recipient, is held to the address it prints (`recipients`)."""
+    reason = not_a_recipient(email, name)
+    if reason is not None:
+        raise CommandRefused(422, reason, _ADDRESS_REFUSALS[reason])
 
 
 def _unknown_recipient(what: str) -> CommandRefused:
     return CommandRefused(422, "recipient_unknown", f"no such {what} to send the quote to")
 
 
-def _recipient_contact_point(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
-                             *, contact_point_id: str | None = None,
-                             email: str | None = None) -> tuple[str, str | None]:
-    """The email contact point picked (by id, or by its address), as (id, its person), locked.
-
-    An address the CRM does not hold yet becomes a contact point the way the CRM authoring
-    commands create one (`crm_authoring._create_contact_point`, with its `contact_point.created`
-    event): `unattributed`, since picking an address as a quote's recipient says nothing about
-    who owns it. A deactivated address is refused, as `create-person` refuses it.
-    """
-    if contact_point_id is not None:
-        cur.execute("select id::text as id, person_id::text as person_id, status from crm.contact_point "
-                    "where id = %s::uuid and kind = 'email' for update", (contact_point_id,))
-    else:
-        assert email is not None  # noqa: S101 - DraftRecipient gives exactly one
-        email = normalize_email(email)
-        if email.rpartition("@")[2] in NOT_A_RECIPIENT_DOMAINS:
-            raise CommandRefused(422, "recipient_own_address", "Esa dirección es de OrigenLab, no del cliente.")
-        cur.execute("select id::text as id, person_id::text as person_id, status from crm.contact_point "
-                    "where kind = 'email' and value_norm = %s for update", (email,))
-    found = _one(cur)
-    if found is None:
-        if email is None:
-            raise _unknown_recipient("email contact point")
-        try:
-            created = _create_contact_point(self, cur, operator, receipt_id, kind="email", value_norm=email,
-                                            value_display=email, person_id=None, organization_id=None,
-                                            usage="unattributed")
-        except psycopg.errors.UniqueViolation as exc:  # the same address created elsewhere just now
-            raise _recipient_raced() from exc
-        return created, None
-    if found["status"] != "active":
-        raise CommandRefused(409, "contact_point_inactive", "this email address is deactivated in the CRM")
-    return found["id"], found["person_id"]
-
-
 def _recipient_raced() -> CommandRefused:
     return CommandRefused(409, "recipient_changed_concurrently",
                           "the case's people changed while saving; save again")
+
+
+def _picked_address(cur: Any, *, contact_point_id: str | None, email: str | None,
+                    name: str | None) -> tuple[str | None, str | None, str]:
+    """The email contact point picked — by id, or by its address — as (id or None when the CRM
+    does not hold the address yet, the person it belongs to, the address), locked `for update` as
+    `create-person` locks an address it claims. The address rules hold on both forms; a
+    deactivated address is refused, as `create-person` refuses it."""
+    if contact_point_id is not None:
+        cur.execute("select c.id::text as id, c.person_id::text as person_id, c.status, c.value_norm, "
+                    "pe.display_name from crm.contact_point c left join crm.person pe on pe.id = c.person_id "
+                    "where c.id = %s::uuid and c.kind = 'email' for update of c", (contact_point_id,))
+        found = _one(cur)
+        if found is None:
+            raise _unknown_recipient("email contact point")
+        _keep_address_rules(found["value_norm"], found["display_name"])
+    else:
+        assert email is not None  # noqa: S101 - DraftRecipient gives exactly one
+        email = normalize_email(email)
+        _keep_address_rules(email, name)
+        cur.execute("select id::text as id, person_id::text as person_id, status, value_norm from crm.contact_point "
+                    "where kind = 'email' and value_norm = %s for update", (email,))
+        found = _one(cur)
+        if found is None:
+            return None, None, email
+    if found["status"] != "active":
+        raise CommandRefused(409, "contact_point_inactive", "this email address is deactivated in the CRM")
+    return found["id"], found["person_id"], found["value_norm"]
 
 
 # The case's current participant for the pick: the same address (a contact-point pick), or the
@@ -356,34 +349,61 @@ select id::text as id
  limit 1
 """
 
+# A person's address as a participant of theirs would print it (`_RECIPIENT_SQL`): an active one first.
+_PERSON_ADDRESS_SQL = """
+select value_norm from crm.contact_point
+ where kind = 'email' and person_id = %s::uuid
+ order by (status = 'active') desc, created_at, id
+ limit 1
+"""
+
 
 def _recipient(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
-               draft: QuoteDraft, revision: dict[str, Any], today: date) -> str | None:
+               draft: QuoteDraft, revision: dict[str, Any], today: date, *, case_closed: bool) -> str | None:
     """The participant the draft names as its recipient — made one first when it is not yet.
 
-    A participant id is only checked (a current participant of this case). A person (the survivor
-    of a merge), or an address picked from the case's emails (a contact point, or an address the
-    CRM does not hold yet), is looked for among the case's current participants — the same
-    person, or the same address; a quote recipient first — and used when found. Otherwise it
-    becomes one: a `quote_recipient` participant of that person or that address, confirmed by
-    this operator from today (Santiago), primary when the case has no primary recipient yet,
-    with a `participant.added` event. For an address no person owns, the name it was picked by
-    is kept as the participant's `note`; approval prints it (`_RECIPIENT_SQL`).
+    Every form is held to the address rules (`recipients.not_a_recipient`) on the address the
+    quote would print: no OrigenLab address (subdomains included), nothing of Labdelivery.
+
+    A participant id is checked: a current participant of this case. A person (the survivor of a
+    merge), or an address picked from the case's emails (a contact point, or an address the CRM
+    does not hold yet), is looked for among the case's current participants — the same person, or
+    the same address; a quote recipient first — and used when found. Otherwise it becomes one,
+    unless the case is closed (`case_closed`, before anything is written): a `quote_recipient`
+    participant confirmed by this operator from today (Santiago), primary when the case has no
+    primary recipient yet, with a `participant.added` event.
+
+    - A person pick: the person's row.
+    - An address pick: the address's row (an address the CRM lacks becomes an `unattributed`
+      contact point first, through `crm_authoring._create_contact_point` and its
+      `contact_point.created` event — picking it says nothing about who owns it). When a person
+      owns the address and is not yet a quote recipient of the case, the row names that person
+      too, so the person's card counts it; when they already are one (under another address), the
+      address stays a row of its own — the same person cannot be the same role twice at once.
+    - For an address no person owns, the name it was picked by is kept as the participant's
+      `note`; approval prints it (`_RECIPIENT_SQL`).
     """
     case_id = revision["opportunity_id"]
-    if draft.recipient is None or draft.recipient.participant_id is not None:
-        picked = draft.recipient.participant_id if draft.recipient else draft.recipient_participant_id
-        if picked is None:
-            return None
-        _check_recipient(cur, str(picked), case_id)
-        return str(picked)
-
     pick = draft.recipient
+    picked_participant = pick.participant_id if pick is not None else draft.recipient_participant_id
+    if pick is None and picked_participant is None:
+        return None
+    if picked_participant is not None:
+        cur.execute(_RECIPIENT_SQL, (str(picked_participant), case_id))
+        found = _one(cur)
+        if found is None:
+            raise CommandRefused(422, "recipient_not_on_case",
+                                 "the recipient is not a current participant of this case")
+        _keep_address_rules(found["email"], found["name"])
+        return str(picked_participant)
+
+    assert pick is not None  # noqa: S101 - one of the two forms is set
     person: str | None = None  # the person picked
-    contact_point: str | None = None  # or the address picked …
+    contact_point: str | None = None  # or the address picked (None: not in the CRM yet) …
     address_person: str | None = None  # … and the person it belongs to, if any
+    address: str | None = None
     if pick.person_id is not None:
-        cur.execute("select s.id::text as id, s.status from crm.person m "
+        cur.execute("select s.id::text as id, s.status, s.display_name from crm.person m "
                     "join crm.person s on s.id = coalesce(m.merged_into_person_id, m.id) "
                     "where m.id = %s::uuid for share of s", (str(pick.person_id),))
         found = _one(cur)
@@ -392,21 +412,39 @@ def _recipient(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, 
         if found["status"] != "active":
             raise CommandRefused(409, "archived_subject", "that person is archived")
         person = found["id"]
+        cur.execute(_PERSON_ADDRESS_SQL, (person,))
+        own = _one(cur)
+        _keep_address_rules(own["value_norm"] if own else None, found["display_name"])
     else:
-        contact_point, address_person = _recipient_contact_point(
-            self, cur, operator, receipt_id,
-            contact_point_id=str(pick.contact_point_id) if pick.contact_point_id else None, email=pick.email)
+        contact_point, address_person, address = _picked_address(
+            cur, contact_point_id=str(pick.contact_point_id) if pick.contact_point_id else None,
+            email=pick.email, name=pick.name)
 
-    cur.execute(_CURRENT_PARTICIPANT_SQL, {"case": case_id, "contact_point": contact_point, "person": person})
-    existing = _one(cur)
-    if existing is not None:
-        return existing["id"]
+    if person is not None or contact_point is not None:
+        cur.execute(_CURRENT_PARTICIPANT_SQL, {"case": case_id, "contact_point": contact_point, "person": person})
+        existing = _one(cur)
+        if existing is not None:
+            return existing["id"]
+    if case_closed:
+        raise CommandRefused(409, "case_closed", "this case is closed; it gets no new recipient")
+
+    if pick.email is not None and contact_point is None:
+        try:
+            contact_point = _create_contact_point(self, cur, operator, receipt_id, kind="email", value_norm=address,
+                                                  value_display=address, person_id=None, organization_id=None,
+                                                  usage="unattributed")
+        except psycopg.errors.UniqueViolation as exc:  # the same address created elsewhere just now
+            raise _recipient_raced() from exc
+    if address_person is not None:
+        cur.execute("select exists (select 1 from crm.opportunity_participant where opportunity_id = %s::uuid "
+                    "and role = 'quote_recipient' and person_id = %s::uuid and valid_to is null) as already",
+                    (case_id, address_person))
+        if not _one(cur)["already"]:  # type: ignore[index]
+            person = address_person
 
     cur.execute("select exists (select 1 from crm.opportunity_participant where opportunity_id = %s::uuid "
                 "and role = 'quote_recipient' and is_primary and valid_to is null) as taken", (case_id,))
     primary = not _one(cur)["taken"]  # type: ignore[index]
-    # An address is its own participant (the person it belongs to gives it its name), so a person
-    # already on the case under another address is never a second row of the same subject and role.
     note = pick.name if contact_point is not None and address_person is None else None
     try:
         cur.execute(
@@ -432,13 +470,33 @@ def _recipient(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, 
     return participant["id"]
 
 
+def _lock_case_and_quote(cur: Any, revision_id: str, *, quote_lock: str) -> dict[str, Any]:
+    """The revision's case `for share` (it cannot be closed underneath), then its quote — the order
+    every quote-wide command takes, before the revision itself is locked. The revision's quote and
+    case never change, so reading them unlocked first is safe."""
+    cur.execute("select r.quote_id::text as quote_id, q.opportunity_id::text as case_id from crm.quote_revision r "
+                "join crm.quote q on q.id = r.quote_id where r.id = %s::uuid", (revision_id,))
+    owner = _one(cur)
+    if owner is None:
+        raise CommandRefused(404, "revision_not_found", "no such quote revision")
+    cur.execute("select closed_at, organization_id::text as organization_id from crm.opportunity "
+                "where id = %s::uuid for share", (owner["case_id"],))
+    case = _one(cur)
+    assert case is not None  # noqa: S101 - crm.quote.opportunity_id is a foreign key
+    cur.execute(f"select 1 from crm.quote where id = %s::uuid for {quote_lock}",  # noqa: S608 - a constant
+                (owner["quote_id"],))
+    return {**owner, **case}
+
+
 def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
                              fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
     revision_id, expected_version = fields["revision_id"], fields["expected_version"]
     draft = QuoteDraft.model_validate(fields["draft"])
+    case = _lock_case_and_quote(cur, revision_id, quote_lock="share")
     revision = _locked_draft(cur, revision_id, expected_version)
     today = santiago_today(self._clock())
-    recipient = _recipient(self, cur, operator, receipt_id, draft, revision, today)
+    recipient = _recipient(self, cur, operator, receipt_id, draft, revision, today,
+                           case_closed=case["closed_at"] is not None)
     # The revision's own tax rate (set at creation) prices its IVA, so tax_total agrees with tax_rate.
     params = {**load_parameters(cur), "iva_rate": Decimal(revision["tax_rate"])}
     try:
@@ -747,16 +805,7 @@ def _handle_approve_quote_revision(self: "V2QuoteRepository", cur: Any, operator
     # the quote, its revisions; create-quote-revision: the quote), so approval never deadlocks with
     # them: the case `for share` (it cannot be closed underneath), the quote, then this revision and,
     # in `_supersede_current`, the earlier ones. The revision's quote and case never change.
-    cur.execute("select r.quote_id::text as quote_id, q.opportunity_id::text as case_id from crm.quote_revision r "
-                "join crm.quote q on q.id = r.quote_id where r.id = %s::uuid", (revision_id,))
-    owner = _one(cur)
-    if owner is None:
-        raise CommandRefused(404, "revision_not_found", "no such quote revision")
-    cur.execute("select closed_at, organization_id::text as organization_id from crm.opportunity "
-                "where id = %s::uuid for share", (owner["case_id"],))
-    case = _one(cur)
-    assert case is not None  # noqa: S101 - crm.quote.opportunity_id is a foreign key
-    cur.execute("select 1 from crm.quote where id = %s::uuid for update", (owner["quote_id"],))
+    case = _lock_case_and_quote(cur, revision_id, quote_lock="update")
     _locked_draft(cur, revision_id, expected_version)
     cur.execute(_APPROVAL_REVISION_SQL, (revision_id,))
     revision = _one(cur)

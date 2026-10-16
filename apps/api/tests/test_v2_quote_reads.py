@@ -183,6 +183,38 @@ def test_the_recipient_candidates_are_the_people_on_the_case_s_emails(world) -> 
 
 
 @needs_db
+def test_the_recipient_candidates_keep_every_address_rule_and_the_newest_comes_first(world) -> None:
+    dsn, operator = world["dsn"], world["operator"]
+    case = _case(dsn, operator, world["institution"], participant=False)
+    created = _run(world, "create-quote", {"opportunity_id": case})
+    tag = uuid.uuid4().hex[:6]
+
+    def address(name: str) -> str:
+        return f"{name}-{tag}@cliente-ficticio.test"
+
+    # Newest first by the instant, not by the text: 23:00 at -03:00 is after 01:00 UTC the next day.
+    case_email(dsn, case, operator, sender=address("antes"), sent_at="2026-10-11T01:00:00+00:00")
+    case_email(dsn, case, operator, sender=address("despues"), sent_at="2026-10-10T23:00:00-03:00")
+    case_email(dsn, case, operator, sender=address("sin-fecha"), sent_at=None)  # captured now: newest
+    # OrigenLab's own subdomains are OrigenLab.
+    case_email(dsn, case, operator, sender=f"Interno <alguien-{tag}@correo.origenlab.cl>")
+    # A deactivated address is not offered (the save would refuse it).
+    inactive = address("inactiva")
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation, status, "
+                "deactivated_at, deactivated_by_operator_id) values ('email', %s, %s, 'unattributed', "
+                "'machine_proposed', 'inactive', now(), %s)", (inactive, inactive, operator.operator_id))
+    case_email(dsn, case, operator, sender=inactive)
+    # A rejected or quarantined linked email names nobody, and brings no thread with it.
+    for kw in ({"review_status": "rejected"}, {"quarantined": True}):
+        thread = uuid.uuid4().hex
+        case_email(dsn, case, operator, sender=address("descartado"), thread=thread, **kw)
+        case_email(dsn, case, operator, sender=address("en-su-hilo"), thread=thread, linked=False)
+
+    contacts = _reads(dsn).workspace(created["quote_id"])["case"]["contacts"]
+    assert [c["email"] for c in contacts] == [address("sin-fecha"), address("despues"), address("antes")]
+
+
+@needs_db
 def test_workspace_revision_list_carries_labels_and_totals(world) -> None:
     _, created = _new_quote(world)
     saved = _save(world, created, _draft(world))

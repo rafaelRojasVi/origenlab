@@ -573,7 +573,8 @@ def test_draft_from_rows_reprices_exactly_what_was_saved(world) -> None:
     assert rebuilt.fx_overrides == [DraftFxOverride(currency="USD", clp_per_unit=Decimal("950"),
                                                     reason="tipo de cambio del agente")]
     assert rebuilt.terms.validity_days == 20 and rebuilt.terms.terms_extra[0].label_es == "Capacitación"
-    assert rebuilt.recipient_participant_id is not None
+    assert rebuilt.recipient is not None and rebuilt.recipient.participant_id is not None
+    assert rebuilt.recipient_participant_id is None
     assert [i.margin_mode for i in rebuilt.items] == ["markup", "none", "margin"]
 
     with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
@@ -1159,15 +1160,21 @@ def test_draft_from_rows_under_the_manual_principal_rule(world) -> None:
 # ------------------------------------------------------------------ the recipient, picked from the case's emails
 
 def case_email(dsn: str, case: str, operator: OperatorIdentity, *, sender: str, recipients: str = "",
-               thread: str | None = None, linked: bool = True, outbound: bool = False) -> str:
-    """A captured Gmail message (invented headers), linked to the case unless not."""
+               thread: str | None = None, linked: bool = True, outbound: bool = False,
+               sent_at: str | None = "now", review_status: str = "pending", quarantined: bool = False) -> str:
+    """A captured Gmail message (invented headers), linked to the case unless not. `sent_at=None`
+    leaves the header out (the record's capture time stands in)."""
     gid = uuid.uuid4().hex
-    payload = {"gmail_message_id": gid, "gmail_thread_id": thread or gid, "sender": sender,
-               "recipients": recipients, "sent_at": datetime.now(UTC).isoformat()}
+    payload = {"gmail_message_id": gid, "gmail_thread_id": thread or gid, "sender": sender, "recipients": recipients}
+    if sent_at is not None:
+        payload["sent_at"] = datetime.now(UTC).isoformat() if sent_at == "now" else sent_at
     if outbound:
         payload["direction_hint"] = "sent"
-    sid = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload) values ('gmail_message', %s, %s) "
-                      "returning id::text", (f"gmail_message:{gid}", Jsonb(payload)))[0][0]
+    sid = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, review_status, is_quarantined, "
+                      "quarantine_reason, quarantined_at) values ('gmail_message', %s, %s, %s, %s, %s, %s) "
+                      "returning id::text",
+                 (f"gmail_message:{gid}", Jsonb(payload), review_status, quarantined,
+                  "prueba" if quarantined else None, datetime.now(UTC) if quarantined else None))[0][0]
     if linked:
         _owner(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
                     "linked_by_operator_id) values (%s, %s, 'mentions', %s)", (case, sid, operator.operator_id))
@@ -1297,10 +1304,66 @@ def test_picking_a_person_s_address_prints_the_person_s_name(world) -> None:
                 "values ('email', %s, %s, %s, 'personal', 'machine_proposed')", (address, address, person))
     saved = _save(world, created, _approvable_draft(world, {"email": address, "name": "Otro Nombre"}))
     [participant] = _participants(dsn, case)
+    [(point,)] = _owner(dsn, "select id::text from crm.contact_point where value_norm = %s", (address,))
+    # The person was no recipient of the case: the row names both, so the person's card counts it.
+    assert (participant["person_id"], participant["contact_point_id"]) == (person, point)
     assert participant["note"] is None  # the person names the address; the header's name is not kept
     _approve(world, created["revision_id"], saved["version"])
     assert _revision(dsn, created["revision_id"])["party_snapshot"]["recipient"] == {
         "participant_id": participant["id"], "name": "Doctora Ficticia", "email": address}
+
+
+@needs_db
+def test_a_person_already_a_recipient_gets_the_picked_address_as_its_own_participant(world) -> None:
+    dsn = world["dsn"]
+    case = _case(dsn, world["operator"], world["institution"])
+    [existing] = _participants(dsn, case)
+    second = _address("segunda")
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                "values ('email', %s, %s, %s, 'personal', 'machine_proposed')", (second, second, existing["person_id"]))
+    created = _run(world, "create-quote", {"opportunity_id": case})
+    saved = _save(world, created, _approvable_draft(world, {"email": second}))
+    added = next(p for p in _participants(dsn, case) if p["id"] != existing["id"])
+    assert saved["recipient_participant_id"] == added["id"]
+    assert (added["person_id"], added["is_primary"]) == (None, False)  # the person is a recipient already
+    _approve(world, created["revision_id"], saved["version"])
+    assert _revision(dsn, created["revision_id"])["party_snapshot"]["recipient"] == {
+        "participant_id": added["id"], "name": "Persona Ficticia", "email": second}
+
+
+@needs_db
+def test_the_saved_recipient_reads_back_as_a_pick_the_editor_can_send_again(world) -> None:
+    from origenlab_api.v2.quotes.reads import V2QuoteReads
+
+    dsn = world["dsn"]
+    case, created = _bare_quote(world)
+    address = _address("ida-vuelta")
+    saved = _save(world, created, _approvable_draft(world, {"email": address, "name": "Persona Ficticia"}))
+    reads = V2QuoteReads(psycopg.connect, runtime_dsn(dsn), fx_resolver=fake_fx, clock=lambda: NOW)
+    draft = reads.workspace(created["quote_id"])["current"]["draft"]
+    assert draft["recipient"] == {"participant_id": saved["recipient_participant_id"], "person_id": None,
+                                  "contact_point_id": None, "email": None, "name": None}
+    assert draft["recipient_participant_id"] is None
+    again = _save(world, created, draft, version=saved["version"])
+    assert again["recipient_participant_id"] == saved["recipient_participant_id"]
+    assert len(_participants(dsn, case)) == 1
+
+
+@needs_db
+def test_a_closed_case_gets_no_new_recipient(world) -> None:
+    dsn = world["dsn"]
+    case, created = _bare_quote(world)
+    _owner(dsn, "update crm.opportunity set stage = 'lost', closed_at = now(), close_reason = 'precio' "
+                "where id = %s", (case,))
+    address = _address("cerrado")
+    refused = _refused(world, "save-quote-draft", {"revision_id": created["revision_id"],
+                                                   "expected_version": created["version"],
+                                                   "draft": _approvable_draft(world, {"email": address})})
+    assert (refused.status_code, refused.code) == (409, "case_closed")
+    assert _participants(dsn, case) == []
+    assert _owner(dsn, "select count(*) from crm.contact_point where value_norm = %s", (address,)) == [(0,)]
+    # A draft that names nobody new still saves.
+    assert _save(world, created, {"items": [_catalog_item(world)]})["ok"] is True
 
 
 @needs_db
@@ -1334,7 +1397,24 @@ def test_recipient_refusals(world) -> None:
     assert refused({"contact_point_id": str(uuid.uuid4())}) == (422, "recipient_unknown")
     assert refused({"person_id": str(uuid.uuid4())}) == (422, "recipient_unknown")
     assert refused({"email": "ventas@origenlab.cl"}) == (422, "recipient_own_address")
+    assert refused({"email": "ventas@correo.origenlab.cl"}) == (422, "recipient_own_address")
     assert refused({"email": "persona@labdelivery.cl"}) == (422, "labdelivery_refused")
+    # Every branch keeps the address rules: the id of an address is checked as the address is.
+    own = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values "
+                      "('email', %s, 'x', 'unattributed', 'machine_proposed') returning id::text",
+                 (f"interno-{uuid.uuid4().hex[:6]}@origenlab.cl",))[0][0]
+    assert refused({"contact_point_id": own}) == (422, "recipient_own_address")
+    lab = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values "
+                      "('email', %s, 'x', 'unattributed', 'machine_proposed') returning id::text",
+                 (f"p-{uuid.uuid4().hex[:6]}@cliente.labdelivery.cl",))[0][0]
+    assert refused({"contact_point_id": lab}) == (422, "labdelivery_refused")
+    for address, expected in ((f"yo-{uuid.uuid4().hex[:6]}@origenlab.cl", "recipient_own_address"),
+                              (f"yo-{uuid.uuid4().hex[:6]}@labdelivery.cl", "labdelivery_refused")):
+        person = _owner(dsn, "insert into crm.person (display_name, confirmation) values ('Persona Interna', "
+                             "'machine_proposed') returning id::text")[0][0]
+        _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                    "values ('email', %s, %s, %s, 'personal', 'machine_proposed')", (address, address, person))
+        assert refused({"person_id": person}) == (422, expected)
     other_case = _case(dsn, operator, world["institution"])
     [elsewhere] = _participants(dsn, other_case)
     assert refused({"participant_id": elsewhere["id"]}) == (422, "recipient_not_on_case")
@@ -1346,3 +1426,41 @@ def test_recipient_refusals(world) -> None:
     # Nothing was written by any refusal.
     assert _participants(dsn, case) == []
     assert _revision(dsn, created["revision_id"])["version"] == created["version"]
+
+
+@needs_db
+def test_a_participant_at_a_labdelivery_address_is_no_recipient(world) -> None:
+    dsn = world["dsn"]
+    case, created = _bare_quote(world)
+    lab = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values "
+                      "('email', %s, 'x', 'unattributed', 'machine_proposed') returning id::text",
+                 (f"p-{uuid.uuid4().hex[:6]}@labdelivery.cl",))[0][0]
+    participant = _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, contact_point_id, role, "
+                              "valid_from, confirmation) values (%s, %s, 'quote_recipient', current_date, "
+                              "'machine_proposed') returning id::text", (case, lab))[0][0]
+    for recipient in ({"participant_id": participant}, None):
+        draft = _approvable_draft(world, recipient) if recipient else {
+            **_approvable_draft(world, {}), "recipient": None, "recipient_participant_id": participant}
+        exc = _refused(world, "save-quote-draft", {"revision_id": created["revision_id"],
+                                                   "expected_version": created["version"], "draft": draft})
+        assert (exc.status_code, exc.code) == (422, "labdelivery_refused")
+
+
+@needs_db
+def test_save_locks_the_case_before_the_quote_and_its_revision(world) -> None:
+    """The order approval takes: the case first (`for share`, so it cannot be closed underneath)."""
+    created = _new_quote(world)
+    [(case,)] = _owner(world["dsn"], "select opportunity_id::text from crm.quote where id = %s", (created["quote_id"],))
+    body = QUOTE_BODIES["save-quote-draft"](revision_id=created["revision_id"], expected_version=created["version"],
+                                            draft={"items": [_catalog_item(world)]})
+    with psycopg.connect(world["dsn"]) as holder, holder.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute("select 1 from crm.opportunity where id = %s for update", (case,))
+        repo = V2QuoteRepository(psycopg.connect, runtime_dsn(world["dsn"]), fx_resolver=fake_fx, clock=lambda: NOW,
+                                 statement_timeout_ms=300)
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            repo.execute(command_name="save-quote-draft", operator=world["operator"],
+                         fields=body.model_dump(mode="json"), idempotency_key=uuid.uuid4().hex,
+                         digest=request_digest("save-quote-draft", body))
+        holder.rollback()
+    assert _save(world, created, {"items": [_catalog_item(world)]})["ok"] is True

@@ -63,6 +63,7 @@ from origenlab_api.v2.quotes.inputs import (
 )
 from origenlab_api.v2.mail_rules import mail_direction
 from origenlab_api.v2.quotes.numbering import SANTIAGO, numbering_status, revision_label
+from origenlab_api.v2.quotes.recipients import not_a_recipient
 
 #: R-A5: a model is suggested beside the principal when it is on at least this share of the past
 #: quote documents that carry the principal, and the principal was quoted at least `KIT_MIN_DOCUMENTS` times.
@@ -71,8 +72,6 @@ KIT_MIN_DOCUMENTS = 3
 KIT_LIMIT = 6
 MENTION_LIMIT = 12
 CONTACT_LIMIT = 20
-#: Never offered as a quote's recipient (`commands.NOT_A_RECIPIENT_DOMAINS`): OrigenLab, Labdelivery.
-_NOT_A_RECIPIENT_DOMAINS = frozenset({"origenlab.cl", "labdelivery.cl"})
 PRICE_HISTORY_LIMIT = 20
 
 # The documents that quote the principal, then every other model on them with the share of those
@@ -159,8 +158,10 @@ select p.id::text as id, p.person_id::text as person_id, coalesce(p.contact_poin
 # the case, of a quote revision recorded from one, or on the thread of either (the threads the
 # pipeline's contact reads, crm_workspace._SQL_PIPELINE_CONTACT), with who sent it and to whom, and
 # the customer of each forwarded request the case came from or holds (mail_rules_repository
-# ._FORWARD_PEOPLE_SQL). Python decides the direction and parses the headers (`recipient_candidates`).
-_CASE_PEOPLE_SQL = """
+# ._FORWARD_PEOPLE_SQL). Only a live email (neither quarantined nor rejected) names anyone or brings
+# its thread in. `at` is an instant: the Date header when it is ISO 8601, else when it was captured.
+# Python decides the direction and parses the headers (`email_people`).
+_CASE_PEOPLE_SQL = r"""
 with linked as (
     select oe.source_record_id as id from crm.opportunity_evidence oe
      where oe.opportunity_id = %(case)s::uuid and oe.unlinked_at is null and oe.source_record_id is not null
@@ -171,6 +172,7 @@ with linked as (
     select distinct sr.payload->>'gmail_thread_id' as thread_id
       from linked l join evidence.source_record sr on sr.id = l.id
      where sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' is not null
+       and not sr.is_quarantined and sr.review_status <> 'rejected'
 ), emails as (
     select l.id from linked l
     union
@@ -182,12 +184,16 @@ select 'email' as kind, sr.payload->>'sender' as sender, sr.payload->>'recipient
        (select cm.direction from comms.message cm
          where cm.provider_message_id = sr.payload->>'gmail_message_id'
          order by cm.created_at limit 1) as comms_direction,
-       null as name, null as origin, coalesce(sr.payload->>'sent_at', sr.acquired_at::text) as at
+       null as name, null as origin,
+       case when sr.payload->>'sent_at' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}'
+            then (sr.payload->>'sent_at')::timestamptz else sr.acquired_at end as at
   from emails e join evidence.source_record sr on sr.id = e.id
  where sr.kind = 'gmail_message' and not sr.is_quarantined and sr.review_status <> 'rejected'
 union all
 select 'forwarded_request', null, f.payload->>'original_email', null, null, f.payload->>'original_name',
-       f.payload->>'origin', coalesce(f.payload->>'sent_at', f.acquired_at::text)
+       f.payload->>'origin',
+       case when f.payload->>'sent_at' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}'
+            then (f.payload->>'sent_at')::timestamptz else f.acquired_at end
   from evidence.source_record f
   join crm.opportunity o on o.id = %(case)s::uuid
  where f.kind = 'forwarded_request' and f.review_status = 'promoted' and not f.is_quarantined
@@ -198,13 +204,14 @@ select 'forwarded_request', null, f.payload->>'original_email', null, null, f.pa
                            or oe.source_record_id::text = f.payload->>'forwarded_message_id')))
 """
 
-# What the CRM already holds for those addresses: the contact point and the person it belongs to.
+# What the CRM already holds for those addresses: the contact point, whether it is active, and the
+# person it belongs to. A deactivated address is not offered: the save would refuse it.
 _KNOWN_ADDRESSES_SQL = """
 select c.value_norm as email, c.id::text as contact_point_id, c.person_id::text as person_id,
-       pe.display_name as name
+       pe.display_name as name, c.status
   from crm.contact_point c
   left join crm.person pe on pe.id = c.person_id
- where c.kind = 'email' and c.status = 'active' and c.value_norm = any(%s)
+ where c.kind = 'email' and c.value_norm = any(%s)
 """
 
 _MEMORY_SQL = """
@@ -333,11 +340,8 @@ def _santiago_today(now: datetime) -> dt.date:
 
 
 def _offerable(email: str | None, name: str | None) -> bool:
-    """An address a quote may go to: well formed, not OrigenLab's, nothing of Labdelivery."""
-    if not email or "@" not in email:
-        return False
-    return (email.rpartition("@")[2] not in _NOT_A_RECIPIENT_DOMAINS
-            and not is_labdelivery(email) and not is_labdelivery(name))
+    """An address a quote may go to: well formed, and allowed by the save's own rule (`recipients`)."""
+    return bool(email) and "@" in email and not_a_recipient(email, name) is None
 
 
 def _header_pairs(raw: str | None) -> list[tuple[str | None, str]]:
@@ -357,7 +361,8 @@ def email_people(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     inbound email's sender), whom OrigenLab wrote to (an outbound email's recipients), and the
     customer of a forwarded request (not one forwarded from the Labdelivery mailbox). Pure."""
     seen: dict[str, dict[str, Any]] = {}
-    for r in sorted(rows, key=lambda r: str(r.get("at") or ""), reverse=True):
+    oldest = datetime.min.replace(tzinfo=UTC)
+    for r in sorted(rows, key=lambda r: r.get("at") or oldest, reverse=True):
         if r["kind"] == "forwarded_request":
             if r.get("origin") == "labdelivery":
                 continue
@@ -382,13 +387,12 @@ def recipient_candidates(participants: list[dict[str, Any]], people: list[dict[s
     emails (`email_people`) not already among them — each with the contact point and person the
     CRM holds for its address, if any. Pure."""
     by_address = {k["email"]: k for k in known}
+    inactive = {k["email"] for k in known if k.get("status") not in (None, "active")}
     out: list[dict[str, Any]] = []
     taken_addresses: set[str] = set()
     taken_people: set[str] = set()
     for p in participants:
-        if p["email"] is not None and not _offerable(p["email"], p["name"]):
-            continue
-        if p["email"] is None and is_labdelivery(p["name"]):
+        if not_a_recipient(p["email"], p["name"]) is not None:
             continue
         out.append({"participant_id": p["id"], "person_id": p["person_id"], "contact_point_id": p["contact_point_id"],
                     "name": p["name"], "email": p["email"], "source": "participant"})
@@ -398,7 +402,7 @@ def recipient_candidates(participants: list[dict[str, Any]], people: list[dict[s
             taken_people.add(p["person_id"])
     for person in people:
         crm = by_address.get(person["email"]) or {}
-        if person["email"] in taken_addresses or (crm.get("person_id") and crm["person_id"] in taken_people):
+        if person["email"] in inactive or person["email"] in taken_addresses or (crm.get("person_id") and crm["person_id"] in taken_people):
             continue
         out.append({"participant_id": None, "person_id": crm.get("person_id"),
                     "contact_point_id": crm.get("contact_point_id"), "name": crm.get("name") or person["name"],

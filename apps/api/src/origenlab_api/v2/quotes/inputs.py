@@ -33,6 +33,7 @@ from origenlab_api.v2.quotes.draft import (
     DraftExpenseLine,
     DraftFxOverride,
     DraftItemLine,
+    DraftRecipient,
     DraftTerm,
     DraftTerms,
     QuoteDraft,
@@ -339,7 +340,9 @@ def draft_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]) -> Qu
     return QuoteDraft(items=items, manual_expenses=expenses, expense_method=revision["expense_method"],
                       allocation_mode=revision["expense_allocation_mode"], principal_rule=revision["principal_rule"],
                       fx_overrides=fx_overrides_from_row(revision["fx_override_reasons"]), terms=terms,
-                      recipient_participant_id=revision["recipient_participant_id"])
+                      # The current form, so an editor can send the draft back unchanged.
+                      recipient=(DraftRecipient(participant_id=revision["recipient_participant_id"])
+                                 if revision["recipient_participant_id"] is not None else None))
 
 
 def engine_input_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]],
