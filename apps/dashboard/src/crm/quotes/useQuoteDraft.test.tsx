@@ -363,6 +363,18 @@ describe("useQuoteDraft — leaving the page (Review Focus 5)", () => {
     expect(fireBeforeUnload()).toBe(false);
   });
 
+  it("warns on beforeunload during a conflict, since the local edits will be discarded", async () => {
+    const { hook, saves, typeQty } = setup();
+    typeQty("2");
+    await advance(SAVE_DELAY_MS);
+    await act(async () => saves[0].d.reject(new QuoteRefusal(409, "stale_version", "x")));
+    await settle();
+    expect(hook.result.current.state.saveState).toBe("conflict");
+    expect(hook.result.current.pending).toBe(true);
+    expect(fireBeforeUnload()).toBe(true);
+    expect(saves).toHaveLength(1); // the warning sends nothing
+  });
+
   it("an unmount during a save with a queued follow-up still sends the follow-up", async () => {
     const { hook, saves, typeQty } = setup();
     typeQty("2");

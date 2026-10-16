@@ -116,6 +116,31 @@ describe("draft helpers", () => {
     expect("recipient_participant_id" in sendableDraft(both)).toBe(false);
   });
 
+  it("sends cleared optional numbers and choices as null, and such a draft passes the shape check", () => {
+    const d = updateItem(draftFixture(), 0, {
+      unit_cost: " ",
+      cost_currency: "" as never,
+      margin_pct: "",
+      typed_unit_price: "",
+      item_type: "" as never,
+      product_id: "",
+      supplier_organization_id: "",
+      cost_observation_id: "",
+    });
+    expect(draftProblems(d)).toEqual([]);
+    expect(sendableDraft(d).items[0]).toMatchObject({
+      unit_cost: null,
+      cost_currency: null,
+      margin_pct: null,
+      typed_unit_price: null,
+      item_type: null,
+      product_id: null,
+      supplier_organization_id: null,
+      cost_observation_id: null,
+      quantity: "1",
+    });
+  });
+
   it("sends an empty line note as null", () => {
     const d = updateItem(draftFixture(), 0, { line_note_es: "" });
     expect(sendableDraft(d).items[0].line_note_es).toBeNull();
@@ -242,6 +267,18 @@ describe("draftProblems", () => {
     expect(at("1.1234567")).toBe("Máximo 6 decimales.");
     expect(at("1.5000000")).toBeUndefined(); // trailing zeros do not count, as on the API
     expect(at("2.5")).toBeUndefined();
+  });
+
+  it("refuses more whole digits than the column holds: 12 for (18,6), 10 for the FX rate (18,8)", () => {
+    const qty = (quantity: string) => draftProblems(updateItem(draftFixture(), 0, { quantity }));
+    const cost = (unit_cost: string) => draftProblems(updateItem(draftFixture(), 0, { unit_cost, cost_currency: "EUR" }));
+    expect(cost("999999999999")).toEqual([]);
+    expect(cost("1000000000000")).toEqual([{ index: 0, field: "items.unit_cost", message_es: "Número demasiado grande." }]);
+    expect(cost("1000000000000.5").map((p) => p.message_es)).toEqual(["Número demasiado grande."]);
+    expect(qty("0.5")).toEqual([]);
+    const fx = (rate: string) => draftProblems(setFxOverride(draftFixture(), "USD", rate, "tasa del día"));
+    expect(fx("9999999999.5")).toEqual([]);
+    expect(fx("10000000000").map((p) => p.message_es)).toEqual(["Número demasiado grande."]);
   });
 
   it("checks cost, margin and typed price the way the API does", () => {

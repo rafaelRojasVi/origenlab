@@ -68,7 +68,7 @@ export interface QuoteDraftEditor {
   editable: boolean;
   /** What the API would refuse in the current draft; nothing is sent while this is not empty. */
   invalid: DraftProblem[];
-  /** Edits not saved yet (dirty, saving, failed or incomplete): guard navigation while true. */
+  /** Edits not saved yet (dirty, saving, failed, in conflict or incomplete): guard navigation while true. */
   pending: boolean;
   edit: (fn: (draft: QuoteDraft) => QuoteDraft) => void;
   flush: () => Promise<FlushResult>;
@@ -278,8 +278,13 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
   );
 
   const invalid = useMemo(() => draftProblems(state.draft), [state.draft]);
+  // A conflict always holds the local edits its save carried; «Ver cambios» discards them.
   const pending =
-    state.saveState === "dirty" || state.saveState === "saving" || state.saveState === "error" || (invalid.length > 0 && state.editSeq > 0);
+    state.saveState === "dirty" ||
+    state.saveState === "saving" ||
+    state.saveState === "error" ||
+    state.saveState === "conflict" ||
+    (invalid.length > 0 && state.editSeq > 0);
   useEffect(() => {
     if (!pending) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {

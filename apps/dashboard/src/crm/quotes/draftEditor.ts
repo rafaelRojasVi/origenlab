@@ -77,8 +77,9 @@ const EMPTY_DRAFT: QuoteDraft = {
 /**
  * The draft as the API takes it. The workspace still reports the older `recipient_participant_id`;
  * the API refuses a draft carrying both it and `recipient` (422), so it becomes a `recipient`
- * pick when there is none, and is dropped. A blank line note or recipient name is sent as none
- * (the API strips whitespace and refuses an empty one).
+ * pick when there is none, and is dropped. A cleared optional field (cost, currency, recargo,
+ * typed price, type, ids, line note) and a blank recipient name are sent as none: the API refuses
+ * "" for a decimal, an enum or a UUID, and strips whitespace before refusing an empty text.
  */
 export function sendableDraft(draft: QuoteDraft & { recipient_participant_id?: string | null }): QuoteDraft {
   const { recipient_participant_id: legacy, ...rest } = draft;
@@ -90,10 +91,29 @@ export function sendableDraft(draft: QuoteDraft & { recipient_participant_id?: s
   return {
     ...rest,
     recipient,
-    items: rest.items.map((item) =>
-      typeof item.line_note_es === "string" && !item.line_note_es.trim() ? { ...item, line_note_es: null } : item,
-    ),
+    items: rest.items.map(clearBlankOptionals),
   };
+}
+
+const OPTIONAL_ITEM_FIELDS = [
+  "product_id",
+  "item_type",
+  "unit_cost",
+  "cost_currency",
+  "supplier_organization_id",
+  "cost_observation_id",
+  "margin_pct",
+  "typed_unit_price",
+  "line_note_es",
+] as const;
+
+function clearBlankOptionals(item: QuoteDraftItem): QuoteDraftItem {
+  let out = item;
+  for (const key of OPTIONAL_ITEM_FIELDS) {
+    const value = item[key];
+    if (typeof value === "string" && !value.trim()) out = { ...out, [key]: null };
+  }
+  return out;
 }
 
 export function initialDraftState(workspace: QuoteWorkspace): DraftEditorState {
@@ -268,13 +288,21 @@ const DECIMAL = /^-?(\d+\.?\d*|\.\d+)$/;
 
 /**
  * Checks a decimal string like the API's `Decimal` fields: a plain number (point for decimals),
- * at most `places` decimals (trailing zeros do not count) and 18 digits in total. Returns the
- * problem in Spanish, or null. `min`/`max` bound the value; `minExclusive` makes `min` strict.
+ * at most `places` decimals (trailing zeros do not count) and, when the column has a precision
+ * (`digits`, 18 by default; null for none), at most `digits` in total and `digits − places`
+ * before the point, as pydantic does. Returns the problem in Spanish, or null. `min`/`max` bound
+ * the value; `minExclusive` makes `min` strict.
  */
 function decimalProblem(
   raw: string | null | undefined,
   what: string,
-  { places = 6, min = 0, minExclusive = false, max }: { places?: number; min?: number; minExclusive?: boolean; max?: number } = {},
+  {
+    places = 6,
+    digits = 18,
+    min = 0,
+    minExclusive = false,
+    max,
+  }: { places?: number; digits?: number | null; min?: number; minExclusive?: boolean; max?: number } = {},
 ): string | null {
   const text = (raw ?? "").trim();
   if (!text) return `Escribe ${what}.`;
@@ -282,7 +310,8 @@ function decimalProblem(
   const [int = "", frac = ""] = text.replace(/^-/, "").split(".");
   const decimals = frac.replace(/0+$/, "");
   if (decimals.length > places) return `Máximo ${places} decimales.`;
-  if (int.replace(/^0+/, "").length + decimals.length > 18) return `${capital(what)} tiene demasiados dígitos.`;
+  const whole = int.replace(/^0+/, "").length;
+  if (digits !== null && (whole > digits - places || whole + decimals.length > digits)) return "Número demasiado grande.";
   const value = Number(text);
   if (minExclusive ? value <= min : value < min) {
     return min === 0 && minExclusive ? `${capital(what)} debe ser mayor que cero.` : `${capital(what)} no puede ser negativo.`;
@@ -317,7 +346,7 @@ export function draftProblems(draft: QuoteDraft): DraftProblem[] {
     if (hasCost !== !!item.cost_currency) add("items.unit_cost", `Indica el costo y su moneda juntos (línea ${n}).`, i);
     else if (hasCost) add("items.unit_cost", decimalProblem(item.unit_cost, "el costo"), i);
     if (!blank(item.margin_pct)) {
-      const bad = decimalProblem(item.margin_pct, "el recargo");
+      const bad = decimalProblem(item.margin_pct, "el recargo", { digits: null }); // numeric(9,6) is bounded by le=10
       add("items.margin_pct", bad ?? (Number(item.margin_pct) > 10 ? `El recargo de la línea ${n} no puede pasar de 1000 %.` : null), i);
     }
     if (item.margin_mode === "margin" && (blank(item.margin_pct) || Number(item.margin_pct) >= 1)) {
