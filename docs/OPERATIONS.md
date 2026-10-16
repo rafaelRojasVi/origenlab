@@ -2533,13 +2533,16 @@ feature stays **inactive until a quote number seed exists**, because `create-quo
 
    | Key | Value |
    |---|---|
-   | `quote_number_seed` | **the number the dashboard shows as «Siguiente»** (the Hoy number box), as an integer 1–99999 — e.g. `1300` for `01300-26`. The next quote gets `max(seed, highest known + 1)`; set it once, then leave it. Serial 1500 is skipped; mail-proposed numbers more than 200 above the highest CRM number or the seed are ignored (DOMAIN §7.9) |
+   | `quote_number_seed` | **the number the dashboard shows as «Siguiente»** (the Hoy number box), as an integer 1–99999 — e.g. `42` for `00042-26`. The next quote gets `max(seed, highest known + 1)`; set it once, then leave it. Serial 1500 is skipped; mail-proposed numbers more than 200 above the highest CRM number or the seed are ignored (DOMAIN §7.9) |
    | `profile_freight_clp`, `profile_agent_clp`, `profile_customs_clp`, `profile_transport_clp` | the Plantilla's four flat import-expense amounts, in CLP. A quote priced by the `profile` method (the default) carries them only when at least one line ships from abroad; missing keys are skipped with a warning |
    | `quote_default_delivery_terms`, `quote_default_payment_terms`, `quote_default_warranty`, `quote_default_delivery_place`, `quote_default_installation` | the five printed default texts (`value_text`, up to 1000 characters), copied into each new quote's draft. Square brackets are placeholders: approval refuses a condition still containing «[…]» |
-   | `quote_default_validity_days` | offer validity, days (1–365); the revision's own value wins; `valid_until` = approval day (Santiago) + validity |
+   | `quote_default_validity_days` | offer validity, days (an integer 1–365, else 30); the revision's own value wins; `valid_until` = approval day (Santiago) + validity |
    | `default_markup_equipment`, `default_markup_accessory`, `default_markup_consumable`, `default_markup_spare_part`, `default_markup_service` | fractions (0.35 = 35%): the markup written onto an item line that has a cost and no percentage typed. Stored on the line, so changing a parameter never reprices a saved draft |
    | `margin_target_min`, `margin_target_max` | fractions: the band the quote's gross margin is classified against (`below_target` / `on_target` / `above_target`) |
 
+   **When a parameter is unset the engine falls back, it does not stop:** markup 40% for equipment
+   and 45% for every other item type (an `other` item uses the accessory markup), margin band 25–45%,
+   `principal_threshold_eur` 3000, validity 30 days, IVA 0.19; unset printed texts stay empty.
    `iva_rate` (default 0.19) and `principal_threshold_eur` (for the `first_eur_equipment_over_threshold`
    rule) already exist from catalog 1a (§14).
 3. **For the `dhl_calc` method** (flete computed from weights instead of the flat profile) the nine

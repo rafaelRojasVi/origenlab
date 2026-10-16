@@ -400,7 +400,7 @@ earlier one.
   point is never used for money, FX or totals.**
 
 ```text
-unit_cost_qc        = unit_cost × fx_rate
+unit_cost_qc        = round(unit_cost × fx_rate)   [to the peso, BEFORE expenses are added]
 allocated_cost_qc   = Σ logistics lines allocated to this item
 landed_unit_cost_qc = unit_cost_qc + allocated_cost_qc / qty
 unit_price_qc       = round(landed / (1 − margin_pct))   [margin]
@@ -422,10 +422,9 @@ discounts price on their own.
   to it** — that is, when a logistics line relies on the default allocation
   target. Approval fails if such a line exists and no principal is set. A
   revision with no allocated logistics needs no principal.
-- `approve_revision` computes and stores every derived column in one SQL
-  function, and a check trigger recomputes from the stored inputs and rejects
-  the approval on any difference. Both run `SECURITY INVOKER`, as the
-  operator's own command inside the FastAPI transaction.
+- `approve-quote-revision` is a Python command (W3-Cotizador below). It re-prices the revision's
+  stored lines and FX snapshots with the engine, stores every derived column, and refuses
+  `draft_needs_saving` when the recomputed line prices differ from the stored ones.
 
 **The Cotizador's rounding (built 2026-10-15).** The engine
 (`apps/api/src/origenlab_api/quoting/engine.py`, the Plantilla Maestra in `Decimal`) rounds every CLP
@@ -495,44 +494,33 @@ authored draft is approved directly.
 <a id="m-wf-snapshot"></a>
 #### W3b — Party snapshot
 
-> **Amended 2026-10-15 — the key set below was a proposal; the shape actually written replaces it.**
-> `approve-quote-revision` writes `party_snapshot_version = 1` with exactly these keys and no
-> others: `institution` `{id, name, rut}` (the case's organization — the survivor of a merge — and
-> its first RUT, or null); `recipient` `{participant_id, name, email}`; `terms` `{delivery_terms,
-> payment_terms, warranty_terms_es, delivery_place_es, installation_terms_es, client_notes_es,
-> validity_days, terms_extra}`; `quote_number`; `revision_label` (`01268A-26` form); `approved_by`
-> (the approving operator's display name); `approved_at` (the Santiago date); `valid_until`. It
-> carries **no cost, price or margin** — the PDF reads it. There is no `sold_to`, `billing_address`,
-> `delivery_address`, `signatory` or `currency` key: addresses and a signatory are not part of the
-> Cotizador, and the currency and FX live on the frozen revision and lines. The table below is
-> kept as the earlier proposal, and a change to the written shape is a new
-> `party_snapshot_version`. Immutability is enforced by the trigger `crm.quote_revision_authored_frozen`
-> (DOMAIN §7.9), which freezes every column of an approved, sent or void authored revision
-> except the sending evidence, the document hash and supersession, each once.
-
 Every revision carries `party_snapshot jsonb` with `party_snapshot_version`:
-**NULL while `draft` or `in_review`, written by `approve_revision` in the same
+**NULL while `draft` or `in_review`, written by `approve-quote-revision` in the same
 transaction that freezes FX and totals, and immutable from then on.** The
-trigger that rejects line and price changes on an `approved` or `sent`
-revision rejects snapshot changes too. The closed key set is validated by a
-`SECURITY INVOKER` check function, exactly as the `crm.domain_event` payload
-is ([`DATA.md`](DATA.md) §1.1); a new key or a changed meaning is a new
-`party_snapshot_version` by migration.
+trigger `crm.quote_revision_authored_frozen` (DOMAIN §7.9) rejects any change to
+an approved, sent or void authored revision's columns, the snapshot included.
+The written shape is version 1; a new key or a changed meaning is a new
+`party_snapshot_version`.
 
 | Key | Captured from | Content |
 |---|---|---|
-| `sold_to` | the opportunity's organization and its `rut` external identifier | legal name, tax identifier scheme and value, organization id |
-| `billing_address`, `delivery_address` | the revision's `billing_address_id`, `delivery_address_id` (delivery optional) | every structured `crm.address` field plus the address id |
-| `recipient` | the current primary `quote_recipient` participant | display name, email `value_norm`, person id, contact point id, participant id |
-| `signatory` | the current primary `signatory` participant, when one exists | as `recipient`; otherwise absent |
-| `terms` | the revision's own columns | `payment_terms`, `valid_until`, `delivery_terms`, `tax_rate`, `tax_note` |
-| `currency` | the revision and its lines, already frozen by W3a | `quote_currency`, `price_decimals`, and the distinct `(cost_currency, fx_rate, fx_as_of, fx_source)` tuples used |
+| `institution` | the case's organization (the survivor of a merge) and its first `rut` external identifier | `{id, name, rut}`; `rut` null when none |
+| `recipient` | the revision's `recipient_participant_id`, a current participant of the case | `{participant_id, name, email}` — the person's name and the participant's own email address, else the person's |
+| `terms` | the revision's own columns | `delivery_terms`, `payment_terms`, `warranty_terms_es`, `delivery_place_es`, `installation_terms_es`, `client_notes_es`, `validity_days`, `terms_extra` |
+| `quote_number`, `revision_label` | the quote and the revision number | `00042-26`, then `00042A-26` for revision 2 |
+| `approved_by`, `approved_at`, `valid_until` | the approving operator and the Santiago day | display name; ISO dates |
+
+The snapshot carries **no cost, price or margin** (the PDF reads it); the currency and the
+exchange rates live on the frozen revision and lines. This is the shape written; it replaces the
+earlier proposed key set (`sold_to`, addresses, `signatory`, `currency`), which the Cotizador does
+not write.
 
 - **The PDF and every later read of an issued revision render from the
-  snapshot only.** `billing_address_id`, `delivery_address_id`,
-  `recipient_participant_id` and `signatory_participant_id` on the revision
-  are nullable typed FKs kept as lineage: they answer "which rows were used",
-  never "what does the document say".
+  snapshot only.** `recipient_participant_id` on the revision is a nullable
+  typed FK kept as lineage: it answers "which row was used", never "what does
+  the document say". `billing_address_id`, `delivery_address_id` and
+  `signatory_participant_id` exist as the same kind of lineage FK, but the
+  Cotizador does not write them yet: they stay NULL on an authored revision.
 - **A superseded address or an ended participant changes nothing on an issued
   revision.** Correcting a party on a quotation is a new revision, which
   captures its own snapshot at its own approval.
@@ -682,8 +670,7 @@ line against the PDF's layout text. A line that disagrees is `disputed`; the imp
 `review-document-line`, supplying the corrected quantity and prices and a note; the line becomes
 `reviewed`, once. Verified and single-source lines need no action.
 
-Catalog 1a ships no price calculation. The rounding amendment to the quotation price rule (§W3a)
-belongs to catalog 1b.
+Catalog 1a ships no price calculation; the quote arithmetic is §W3a.
 
 ### W9 — Ambiguous send resolution
 

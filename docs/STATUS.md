@@ -2866,7 +2866,7 @@ an operator beyond the API and the Worker's allowlist.
   release on merge: columns on `crm.quote_line` and `crm.quote_revision`, two triggers
   (`quote_line_authored_draft_only`, `quote_revision_authored_frozen`), `origenlab_api` DELETE on
   quote lines, seven new `catalog.cost_parameter` keys, events `quote_revision.opened` and
-  `quote_revision.draft_saved`. **No new table (58).** Inventory: migrations **60**, policies
+  `quote_revision.draft_saved`. **No new table (54).** Inventory: migrations **60**, policies
   **189**, foreign keys **172** (139 unconditionally covered), functions **37**. The Slice 0 evidence
   set moved in the same change (gap checker, pgTAP, replay, chain and clean-room expectations).
 - **Engine.** `apps/api/src/origenlab_api/quoting/` — the Plantilla Maestra's pricing in `Decimal`
@@ -2879,7 +2879,7 @@ an operator beyond the API and the Worker's allowlist.
   `ORIGENLAB_V2_QUOTING_ENABLED` (already `true` on Render), sales and admin only. Proxy: those exact
   paths; `save-quote-draft` and the preview accept 256 KiB bodies.
 - **Behaviour changes to know.** `set-cost-parameter` now takes `value_text` for the five printed
-  `quote_default_*` texts (a numeric body's digest is unchanged). Approval writes a party snapshot
+  `quote_default_*` texts (a numeric body now hashes with `value_text: null`, so its request digest changes; this matters only for a retry of an old `Idempotency-Key` across the deploy). Approval writes a party snapshot
   of a different shape than the one WORKFLOWS §W3b first proposed; §W3b was amended to the written
   shape.
 - **Not active until an owner step.** `create-quote` is refused `quote_numbering_not_configured`

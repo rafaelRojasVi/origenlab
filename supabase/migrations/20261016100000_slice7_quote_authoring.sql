@@ -66,7 +66,7 @@ alter table crm.quote_revision
     ('highest_cost_imported_equipment', 'first_eur_equipment_over_threshold', 'manual')),
   add constraint quote_revision_fx_override_reasons_object check (jsonb_typeof(fx_override_reasons) = 'object');
 
-comment on column crm.quote_revision.terms_extra is 'Extra printed condition lines (JSON array of strings) added by the operator for this revision.';
+comment on column crm.quote_revision.terms_extra is 'Extra printed conditions added by the operator for this revision (JSON array of {label_es, text_es}).';
 comment on column crm.quote_revision.validity_days is 'Offer validity in days; NULL means the quote_default_validity_days parameter applies.';
 comment on column crm.quote_revision.expense_method is 'How import expenses were obtained for this revision: dhl_calc, profile or manual.';
 comment on column crm.quote_revision.expense_allocation_mode is 'principal (all expenses on the principal item) or proportional_cost (spread by cost).';

@@ -1100,7 +1100,7 @@ for a price list (aggregate `organization`).
 
 ### 7.9 The Cotizador's authored quotes — built 2026-10-15
 
-Migration `20261016100000_slice7_quote_authoring.sql`. **No new table** (the inventory stays 58);
+Migration `20261016100000_slice7_quote_authoring.sql`. **No new table** (the inventory stays 54);
 three tables gain columns, two triggers guard them, one CHECK gains keys and one gains two events.
 Every column below is nullable or defaulted, so historical and imported rows carry none of them.
 
@@ -1121,7 +1121,7 @@ Every column below is nullable or defaulted, so historical and imported rows car
 |---|---|
 | `terms_extra` | JSON array of extra printed conditions, each `{label_es, text_es}`; default `[]` |
 | `warranty_terms_es`, `delivery_place_es`, `installation_terms_es`, `client_notes_es` | the printed conditions (`delivery_terms` and `payment_terms` already existed) |
-| `validity_days` | 1–365, or NULL (the `quote_default_validity_days` parameter applies); `valid_until` is set at approval |
+| `validity_days` | 1–365, or NULL (the `quote_default_validity_days` parameter applies, and 30 days when that is unset or not an integer from 1 to 365); `valid_until` is set at approval |
 | `expense_method` | `dhl_calc` \| `profile` (default) \| `manual` — how import expenses were obtained |
 | `expense_allocation_mode` | `principal` (default: every expense on the principal item) \| `proportional_cost` (spread by cost) |
 | `principal_rule` | `highest_cost_imported_equipment` (default) \| `first_eur_equipment_over_threshold` \| `manual` |
@@ -1167,7 +1167,7 @@ approval's supersession the existing `quote_revision.superseded`, and each negot
 `quote_number_seed` (number) and the printed defaults `quote_default_delivery_terms`,
 `quote_default_payment_terms`, `quote_default_warranty`, `quote_default_delivery_place`,
 `quote_default_installation` (text, sent as `value_text`) and `quote_default_validity_days`
-(number, clamped to 1–365). The engine also reads keys that already existed (§7.5): the four
+(number; an integer 1–365, else 30 days applies). The engine also reads keys that already existed (§7.5): the four
 `profile_*_clp` amounts, `principal_threshold_eur`, the five `default_markup_*`, `margin_target_min` /
 `margin_target_max`, `price_deviation_warn_pct`, `iva_rate` and the nine DHL parameters.
 
