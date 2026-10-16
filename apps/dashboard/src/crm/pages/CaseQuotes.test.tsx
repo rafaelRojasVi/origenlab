@@ -145,3 +145,19 @@ describe("several quotations on one case", () => {
       .toHaveAttribute("href", "https://drive.google.com/file/d/f98/view");
   });
 });
+
+describe("«Abrir en Cotizador»", () => {
+  const authored = { quote_id: "q-a", quote_number: "00042-26", number_origin: "minted",
+    revisions: [rev({ revision_id: "r-a", revision_no: 1, status: "approved", origin: "authored", quote_number: "00042-26" })] };
+
+  it("links a quote of this app to the Cotizador, never a historical one", () => {
+    render(<QuoteList card={card({ quotes: [...card().quotes, authored] })} mayOpenCotizador />);
+    const links = screen.getAllByRole("link", { name: /Abrir en Cotizador/ });
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["#/crm/cotizar/q-a"]);
+  });
+
+  it("is not offered to someone who may not open the Cotizador", () => {
+    render(<QuoteList card={card({ quotes: [authored] })} />);
+    expect(screen.queryByRole("link", { name: /Abrir en Cotizador/ })).not.toBeInTheDocument();
+  });
+});

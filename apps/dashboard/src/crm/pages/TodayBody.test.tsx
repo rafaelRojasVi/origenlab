@@ -5,6 +5,7 @@ import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { followUpsDue, organizationsToConfirm, overdueTasks, repliesToAnswer, tasksDue } from "../today";
+import { forgetCreatedQuotes } from "../quotes/openOrCreateQuote";
 import { Toaster } from "../ui";
 import { clearResourceCache } from "../useResource";
 import { TodayBody } from "./TodayBody";
@@ -258,6 +259,7 @@ function renderToday(items: OpportunityCardData[], role = "sales") {
 afterEach(() => {
   vi.unstubAllGlobals();
   clearResourceCache();
+  forgetCreatedQuotes();
 });
 
 describe("«Tareas» on the page", () => {
@@ -585,5 +587,69 @@ describe("«Para ti» queue", () => {
     expect(counts.cotizar).toBe(1);
     expect(counts.responder).toBe(1);
     expect(counts.seguimientos).toBe(1);
+  });
+});
+
+describe("«Cotizar» in Hoy opens the Cotizador", () => {
+  const solicitud = () =>
+    card({
+      stage: "qualifying", latest_revision: null, quote_numbers: [], quotes: [],
+      last_contact: { outbound: null, inbound: { at: "2026-10-05T12:00:00Z", subject: "Solicitud de equipo", url: null } },
+    });
+
+  function renderWith(items: OpportunityCardData[], role: string) {
+    const navigate = vi.fn();
+    render(
+      <AuthSessionContext.Provider value={{ session: session(role), signOut: async () => true }}>
+        <TodayBody items={items} navigate={navigate} onChanged={() => undefined} now={NOW} />
+        <Toaster />
+      </AuthSessionContext.Provider>,
+    );
+    return navigate;
+  }
+
+  it("sales: creates the quote and opens it", async () => {
+    const c = solicitud();
+    const calls: { path: string; method: string }[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      calls.push({ path, method: init?.method ?? "GET" });
+      const body = path === "/v2/commands/create-quote"
+        ? { ok: true, quote_id: "99999999-9999-4999-8999-999999999999", quote_number: "00042-26", revision_id: "r", version: 1 }
+        : { items: [], total: 0 };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }));
+    const navigate = renderWith([c], "sales");
+    const row = await screen.findByTestId(`today-cotizar-${c.opportunity_id}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Cotizar" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("cotizar", "99999999-9999-4999-8999-999999999999"));
+    expect(calls.filter((x) => x.method === "POST").map((x) => x.path)).toEqual(["/v2/commands/create-quote"]);
+  });
+
+  it("a viewer keeps the old behaviour: the case opens, nothing is created", async () => {
+    const c = solicitud();
+    const calls = stub();
+    const navigate = renderWith([c], "viewer");
+    const row = await screen.findByTestId(`today-cotizar-${c.opportunity_id}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Cotizar" }));
+    expect(navigate).toHaveBeenCalledWith("oportunidades", c.opportunity_id);
+    expect(calls.filter((x) => x.path.startsWith("/v2/commands/"))).toEqual([]);
+  });
+
+  it("a refusal is said in a toast and nothing opens", async () => {
+    const c = solicitud();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      return Promise.resolve(path === "/v2/commands/create-quote"
+        ? new Response(JSON.stringify({ detail: { code: "quote_numbering_not_configured", message: "Falta configurar la numeración de cotizaciones (parámetro quote_number_seed)." } }), { status: 409, headers: { "Content-Type": "application/json" } })
+        : new Response(JSON.stringify({ items: [], total: 0 }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }));
+    const navigate = renderWith([c], "admin");
+    const row = await screen.findByTestId(`today-cotizar-${c.opportunity_id}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Cotizar" }));
+    expect(await screen.findByText(/^Falta configurar la numeración de cotizaciones/)).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalledWith("cotizar", expect.anything());
   });
 });
