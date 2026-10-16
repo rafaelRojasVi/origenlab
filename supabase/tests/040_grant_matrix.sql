@@ -184,7 +184,6 @@ select is(
       and not (r.n = 'origenlab_api' and p.v = 'DELETE' and n.nspname = 'crm' and c.relname = 'quote_line')
       and has_table_privilege(r.n, c.oid, p.v)),
   0, 'no runtime role holds DELETE, TRUNCATE, REFERENCES or TRIGGER on any table, bar the API on crm.quote_line');
-
 select is(
   (select count(*)::int
      from pg_class c join pg_namespace n on n.oid = c.relnamespace

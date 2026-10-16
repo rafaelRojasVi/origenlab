@@ -2846,9 +2846,9 @@ The release on merge applies the migration to hosted. The writer stays off until
 
 ### 2.7.120 A sent quote lands on the client's open request (R13); R3/R4 automatic, 2026-10-15 — built, deploys on merge
 
-Found on 15 Oct: quotes sent on a new thread never reached the request the client had made
-(S&B Analítica's 01266-26 would have opened a second case), and quotes to new clients waited for
-an admin's «Aplicar» (Panimex 01265-26, Grupo Bimbo 01267-26). Rule **R13** files such a quote on
+Found on 15 Oct: quotes sent on a new thread never reached the request the client had made (a
+client's sent quote would have opened a second case), and quotes to new clients waited for an
+admin's «Aplicar». Rule **R13** files such a quote on
 the client's open request without a quote — matched by a recipient who wrote on it or asked through
 a forwarded request, the institution's domain, or the institution the PDF names — walks it to
 «Enviada» and records the quote; two candidates stay a proposal. R3 and R4 are now automatic, so a
@@ -2881,13 +2881,22 @@ an operator beyond the API and the Worker's allowlist.
 - **Behaviour changes to know.** `set-cost-parameter` now takes `value_text` for the five printed
   `quote_default_*` texts (a numeric body now hashes with `value_text: null`, so its request digest changes; this matters only for a retry of an old `Idempotency-Key` across the deploy). Approval writes a party snapshot
   of a different shape than the one WORKFLOWS §W3b first proposed; §W3b was amended to the written
-  shape.
+  shape. `set-cost-parameter` (and the cost-parameter importer, which validates with it) refuses a
+  `quote_number_seed` that is not a whole number 1–99999 and a `quote_default_validity_days` that
+  is not a whole number 1–365. The approval response carries `negotiated_costs_skipped`.
 - **Not active until an owner step.** `create-quote` is refused `quote_numbering_not_configured`
   until `quote_number_seed` is set to the number Hoy shows as «Siguiente», and the profile amounts
   and default texts are best set at the same time: [`OPERATIONS.md`](OPERATIONS.md) §14.8.
 - **Known and deferred.** Approving a copied revision without saving first freezes the source
-  revision's exchange-rate snapshots (the editor must show them). `dhl_calc` charges the strictest
+  revision's exchange-rate snapshots; the workspace flags it (`needs_saving`, with the `saved`
+  figures approval would freeze), and the editor must show it. DHL-calculation duties treat every
+  EU or US origin as qualifying for the free-trade rate (`duty_rate_fta`), without checking the
+  certificate of origin, so the duty may be underestimated. `dhl_calc` charges the strictest
   dangerous-goods tier and uses DHL's published 70 kg / 120 cm surcharge thresholds, until a product
   carries a tier. A real Excel quote more than 200 serials ahead of everything else is not counted by
   the numbering (the unique key still refuses a duplicate). Logistics lines (DHL labels carry supplier
-  names) must never be printed on the client's PDF.
+  names) must never be printed on the client's PDF. Carried to the next PRs (editor, PDF and send):
+  an Excel PDF sent for a number the Cotizador minted can land on the authored quote through R1/R13;
+  the mail rules' "the case has a quote" predicates also see authored drafts and voided revisions;
+  the existing case lists show a draft's `grand_total` and need a status filter; `create-quote` does
+  not move the case to «quoting».
