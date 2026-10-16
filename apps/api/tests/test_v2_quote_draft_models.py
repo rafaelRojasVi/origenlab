@@ -143,3 +143,12 @@ def test_numbers_carry_the_precision_of_their_columns() -> None:
             DraftFxOverride(currency="EUR", clp_per_unit=bad, reason="prueba")
     with pytest.raises(ValidationError):
         DraftExpenseLine(label="Flete", amount="1000000000000")
+
+
+def test_the_create_quote_note_is_capped_like_other_command_notes() -> None:
+    oid = str(uuid.uuid4())
+    assert CreateQuoteBody(opportunity_id=oid, note="x" * 500).note == "x" * 500
+    assert CreateQuoteBody(opportunity_id=oid, note="  Nota  ").note == "Nota"
+    for note in ("", "   ", "x" * 501):
+        with pytest.raises(ValidationError):
+            CreateQuoteBody(opportunity_id=oid, note=note)

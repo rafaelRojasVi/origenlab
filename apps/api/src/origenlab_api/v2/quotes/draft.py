@@ -106,7 +106,7 @@ class QuoteDraft(_Model):
 
 
 class CreateQuoteBody(_Model):
-    note: str | None = None
+    note: Annotated[str | None, StringConstraints(min_length=1, max_length=500)] = None
     opportunity_id: UUID
 
 
