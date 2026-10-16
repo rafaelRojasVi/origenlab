@@ -1034,3 +1034,78 @@ describe("Catalog 1a", () => {
     }
   });
 });
+
+describe("Cotizador PR A", () => {
+  const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+  const GET_PATHS = ["/v2/quotes/numbering", `/v2/quotes/${uuid}`];
+  const JSON_COMMANDS = [
+    "create-quote",
+    "save-quote-draft",
+    "approve-quote-revision",
+    "void-quote-revision",
+    "create-quote-revision",
+  ].map((name) => `/v2/commands/${name}`);
+  const PREVIEW = "/v2/quotes/preview";
+
+  it("allows the quote reads, with a query string, and never as a POST", () => {
+    for (const path of GET_PATHS) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(`${path}?x=1`), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("allows the preview as a POST only, never as a GET", () => {
+    expect(isAllowedPostPath(PREVIEW)).toBe(true);
+    expect(isAllowedPostPath(`${PREVIEW}?x=1`)).toBe(true);
+    expect(isAllowedUpstreamPath(PREVIEW)).toBe(false);
+    expect(isAllowedUpstreamPath(`${PREVIEW}?x=1`)).toBe(false);
+  });
+
+  it("allows the five JSON commands as exact POST paths, never as GET", () => {
+    for (const path of JSON_COMMANDS) {
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedPostPath(`${path}?x=1`), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
+  it("refuses the quote reads' neighbours", () => {
+    for (const path of [
+      `/v2/quotes/${uuid.toUpperCase()}`,
+      `/v2/quotes/${uuid}/`,
+      `/v2/quotes/${uuid}/extra`,
+      `/v2/quotes/${uuid}/revisions`,
+      "/v2/quotes/not-a-uuid",
+      "/v2/quotes/",
+      "/v2/quotes",
+      "/v2/quotes/numbering/",
+      "/v2/quotes/numbering/extra",
+      "/v2/quotes/Numbering",
+      "/v2/quotes/preview/x",
+      "/v2/quotes/preview/",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
+  it("refuses the preview's and the commands' neighbours as POST", () => {
+    for (const path of [
+      "/v2/quotes/preview/",
+      "/v2/quotes/preview/x",
+      "/v2/quotes/Preview",
+      "/v2/quotes/numbering",
+      `/v2/quotes/${uuid}`,
+      "/v2/quotes",
+      "/v2/commands/create-quote/",
+      "/v2/commands/Create-Quote",
+      "/v2/commands/create-quote/extra",
+      "/v2/commands/create-quotes",
+      "/v2/commands/save-quote-draft/",
+      "/v2/commands/issue-quote-revision",
+      "/v2/commands/delete-quote",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+});

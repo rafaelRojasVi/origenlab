@@ -108,6 +108,7 @@ insert into expected_policies values
     ('crm', 'quote_line', 'origenlab_api', 'SELECT'),
     ('crm', 'quote_line', 'origenlab_api', 'INSERT'),
     ('crm', 'quote_line', 'origenlab_api', 'UPDATE'),
+    ('crm', 'quote_line', 'origenlab_api', 'DELETE'),  -- 20261016100000: a draft's lines are replaced
     ('crm', 'quote_line', 'origenlab_worker', 'SELECT'),
     ('comms', 'mailbox', 'origenlab_api', 'SELECT'),
     ('comms', 'mailbox', 'origenlab_worker', 'SELECT'),
@@ -239,7 +240,7 @@ insert into expected_policies values
     ('evidence', 'subject_memory', 'origenlab_worker', 'SELECT'),
     ('evidence', 'subject_memory', 'origenlab_worker', 'INSERT');
 
-select is((select count(*)::int from expected_policies), 188, 'the matrix implies 188 policies');
+select is((select count(*)::int from expected_policies), 189, 'the matrix implies 189 policies');
 
 -- Posture.
 select is(

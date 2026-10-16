@@ -125,8 +125,9 @@ select set_eq(
         'platform.auth_session_guard',
         'platform.auth_event_actor_guard', 'platform.hmac_sha256',
         'platform.begin_pin_attempt', 'platform.finish_pin_attempt',
-        'evidence.document_line_review_guard', 'crm.opportunity_document_immutable'],
-  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the four W10/contact-control functions, the three campaign-block functions, the archived-campaign guard, the campaign-content-archive guard, the note guard, the three sign-in version guards, the session guard, the audit-actor guard, the HMAC helper, the two PIN-attempt definers, the document-line review guard and the case-document guard exist');
+        'evidence.document_line_review_guard', 'crm.opportunity_document_immutable',
+        'crm.quote_line_authored_draft_only', 'crm.quote_revision_authored_frozen'],
+  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the four W10/contact-control functions, the three campaign-block functions, the archived-campaign guard, the campaign-content-archive guard, the note guard, the three sign-in version guards, the session guard, the audit-actor guard, the HMAC helper, the two PIN-attempt definers, the document-line review guard, the case-document guard, the quote-line draft guard and the issued-revision freeze exist');
 
 -- `public` holds nothing.
 select is(

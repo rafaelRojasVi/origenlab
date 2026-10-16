@@ -529,11 +529,11 @@ def _handle_set_cost_parameter(self: "V2CatalogRepository", cur: Any, operator: 
     _execute_mapped(
         cur,
         """
-        insert into catalog.cost_parameter (key, value_numeric, valid_from, set_by_operator_id, reason)
-        values (%s, %s::numeric, clock_timestamp(), %s::uuid, %s)
+        insert into catalog.cost_parameter (key, value_numeric, value_json, valid_from, set_by_operator_id, reason)
+        values (%s, %s::numeric, to_jsonb(%s::text), clock_timestamp(), %s::uuid, %s)
         returning id::text as id
         """,
-        (key, fields["value"], operator.operator_id, fields["reason"]),
+        (key, fields.get("value"), fields.get("value_text"), operator.operator_id, fields["reason"]),
         unique={_PARAMETER_CHANGED: ("parameter_changed", "this parameter was changed at the same instant; retry")},
     )
     row = _one(cur)

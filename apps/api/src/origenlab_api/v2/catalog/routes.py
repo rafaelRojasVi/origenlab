@@ -23,13 +23,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from origenlab_api.v2.catalog.fx import FxUnavailable
-from origenlab_api.v2.catalog.keys import PARAMETER_KEYS, model_key as normalize_model_key, PRODUCT_KINDS, LabdeliveryRefused, refuse_labdelivery
+from origenlab_api.v2.catalog.keys import INTEGER_PARAMETER_RANGES, PARAMETER_KEYS, parameter_is_text, model_key as normalize_model_key, PRODUCT_KINDS, LabdeliveryRefused, refuse_labdelivery
 from origenlab_api.v2.catalog.reads import V2CatalogReads
 from origenlab_api.v2.catalog.redaction import redact_costs
 from origenlab_api.v2.catalog.storage import (
@@ -317,7 +317,10 @@ class SetSupplierTermsBody(_Base):
 
 class SetCostParameterBody(_Base):
     key: str
-    value: Decimal = Field(ge=0)
+    #: Numeric parameters. Exactly one of `value` / `value_text` is sent, by the kind of the key.
+    value: Decimal | None = Field(default=None, ge=0)
+    #: Printed default text for the `quote_default_*` keys other than `quote_default_validity_days`.
+    value_text: Annotated[str | None, StringConstraints(min_length=1, max_length=1000)] = None
     reason: Annotated[str, StringConstraints(min_length=3, max_length=500)]
     #: The current row the operator saw; if another row has become current since, 409 `parameter_changed`.
     expected_current_id: UUID | None = None
@@ -328,6 +331,22 @@ class SetCostParameterBody(_Base):
         if v not in PARAMETER_KEYS:
             raise ValueError("unknown cost parameter")
         return v
+
+    @model_validator(mode="after")
+    def _one_value_of_the_right_kind(self) -> "SetCostParameterBody":
+        if self.value is not None and self.value_text is not None:
+            raise ValueError("send value or value_text, not both")
+        if parameter_is_text(self.key):
+            if self.value_text is None:
+                raise ValueError("this parameter takes value_text")
+        elif self.value is None:
+            raise ValueError("this parameter takes value")
+        bounds = INTEGER_PARAMETER_RANGES.get(self.key)
+        value = self.value
+        if bounds is not None and value is not None and (value != value.to_integral_value()
+                                                         or not bounds[0] <= value <= bounds[1]):
+            raise ValueError(f"this parameter takes a whole number from {bounds[0]} to {bounds[1]}")
+        return self
 
 
 class RecordFxRateBody(_Base):

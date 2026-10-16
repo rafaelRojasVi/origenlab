@@ -2846,11 +2846,67 @@ The release on merge applies the migration to hosted. The writer stays off until
 
 ### 2.7.120 A sent quote lands on the client's open request (R13); R3/R4 automatic, 2026-10-15 — built, deploys on merge
 
-Found on 15 Oct: quotes sent on a new thread never reached the request the client had made
-(S&B Analítica's 01266-26 would have opened a second case), and quotes to new clients waited for
-an admin's «Aplicar» (Panimex 01265-26, Grupo Bimbo 01267-26). Rule **R13** files such a quote on
+Found on 15 Oct: quotes sent on a new thread never reached the request the client had made (a
+client's sent quote would have opened a second case), and quotes to new clients waited for an
+admin's «Aplicar». Rule **R13** files such a quote on
 the client's open request without a quote — matched by a recipient who wrote on it or asked through
 a forwarded request, the institution's domain, or the institution the PDF names — walks it to
 «Enviada» and records the quote; two candidates stay a proposal. R3 and R4 are now automatic, so a
 quote to a client with no open request opens its case by itself; all three undo with «Quitar». The
 snapshot counts a forwarded request's customer as a person of its case. No schema change.
+
+### 2.7.121 The Cotizador's quote authoring (PR A: engine, commands, reads), 2026-10-15 — built, deploys on merge; inactive until `quote_number_seed` is set
+
+Spec `~/data/origenlab-v2-migration/specs/2026-10-15-cotizador-design.md` (private); the design is in
+[`DOMAIN.md`](DOMAIN.md) §7.9 and [`WORKFLOWS.md`](WORKFLOWS.md) §W3a–W3b. What exists now is the
+server half only: **no dashboard editor and no quote PDF yet** (later PRs), so nothing is visible to
+an operator beyond the API and the Worker's allowlist.
+
+- **Schema.** Migration `20261016100000_slice7_quote_authoring.sql`, applied to production by the
+  release on merge: columns on `crm.quote_line` and `crm.quote_revision`, two triggers
+  (`quote_line_authored_draft_only`, `quote_revision_authored_frozen`), `origenlab_api` DELETE on
+  quote lines, seven new `catalog.cost_parameter` keys, events `quote_revision.opened` and
+  `quote_revision.draft_saved`. **No new table (54).** Inventory: migrations **60**, policies
+  **189**, foreign keys **172** (139 unconditionally covered), functions **37**. The Slice 0 evidence
+  set moved in the same change (gap checker, pgTAP, replay, chain and clean-room expectations).
+- **Engine.** `apps/api/src/origenlab_api/quoting/` — the Plantilla Maestra's pricing in `Decimal`
+  (unit cost rounded to the peso before expenses), the profile and DHL-calculation import expenses,
+  the packaged DHL Express Chile 2026 rate card. A parity runner against the owner's costing sheets
+  (private, not committed) matched 75 of 75 checked values across three sheets.
+- **API.** `apps/api/src/origenlab_api/v2/quotes/`: `GET /v2/quotes/numbering`, `GET /v2/quotes/{id}`,
+  `POST /v2/quotes/preview` (a read), and the commands `create-quote`, `save-quote-draft`,
+  `approve-quote-revision`, `void-quote-revision`, `create-quote-revision`; all behind
+  `ORIGENLAB_V2_QUOTING_ENABLED` (already `true` on Render), sales and admin only. Proxy: those exact
+  paths; `save-quote-draft` and the preview accept 256 KiB bodies.
+- **The recipient comes from the case's emails.** The hosted CRM has no
+  `crm.opportunity_participant` row (no V2 command wrote one), so approval's `no_recipient` would
+  refuse every real case. The workspace now lists `case.contacts` — the participants, then the
+  people on the case's emails and forwarded requests, without OrigenLab or Labdelivery addresses —
+  and `save-quote-draft` takes `recipient` (`{participant_id}`, `{person_id}`, `{contact_point_id}`
+  or `{email, name?}`): a pick not yet on the case becomes a confirmed `quote_recipient` participant
+  (event `participant.added`), and an address the CRM lacks an `unattributed` contact point (event
+  `contact_point.created`), in the save's transaction. This is the first V2 command that writes
+  participants. No schema change: `origenlab_api` already had INSERT on both tables.
+  [`WORKFLOWS.md`](WORKFLOWS.md) §W3-Cotizador.
+- **Behaviour changes to know.** `set-cost-parameter` now takes `value_text` for the five printed
+  `quote_default_*` texts (a numeric body now hashes with `value_text: null`, so its request digest changes; this matters only for a retry of an old `Idempotency-Key` across the deploy). Approval writes a party snapshot
+  of a different shape than the one WORKFLOWS §W3b first proposed; §W3b was amended to the written
+  shape. `set-cost-parameter` (and the cost-parameter importer, which validates with it) refuses a
+  `quote_number_seed` that is not a whole number 1–99999 and a `quote_default_validity_days` that
+  is not a whole number 1–365. The approval response carries `negotiated_costs_skipped`.
+- **Not active until an owner step.** `create-quote` is refused `quote_numbering_not_configured`
+  until `quote_number_seed` is set to the number Hoy shows as «Siguiente», and the profile amounts
+  and default texts are best set at the same time: [`OPERATIONS.md`](OPERATIONS.md) §14.8.
+- **Known and deferred.** Approving a copied revision without saving first freezes the source
+  revision's exchange-rate snapshots; the workspace flags it (`needs_saving`, with the `saved`
+  figures approval would freeze), and the editor must show it. DHL-calculation duties treat every
+  EU or US origin as qualifying for the free-trade rate (`duty_rate_fta`), without checking the
+  certificate of origin, so the duty may be underestimated. `dhl_calc` charges the strictest
+  dangerous-goods tier and uses DHL's published 70 kg / 120 cm surcharge thresholds, until a product
+  carries a tier. A real Excel quote more than 200 serials ahead of everything else is not counted by
+  the numbering (the unique key still refuses a duplicate). Logistics lines (DHL labels carry supplier
+  names) must never be printed on the client's PDF. Carried to the next PRs (editor, PDF and send):
+  an Excel PDF sent for a number the Cotizador minted can land on the authored quote through R1/R13;
+  the mail rules' "the case has a quote" predicates also see authored drafts and voided revisions;
+  the existing case lists show a draft's `grand_total` and need a status filter; `create-quote` does
+  not move the case to «quoting».

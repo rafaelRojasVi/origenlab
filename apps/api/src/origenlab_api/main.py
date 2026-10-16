@@ -405,6 +405,33 @@ def _mount_catalog(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> 
     app.state.catalog_storage = _build_catalog_storage(settings)
     app.include_router(catalog_read_router)
     app.include_router(catalog_command_router)
+    _mount_quotes(app, settings, dsn, connect)
+
+
+def _mount_quotes(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
+    """The Cotizador's reads and commands, under the catalog's switch (called from `_mount_catalog`).
+
+    Both read the stored exchange rate on their own transaction's cursor (`inputs.resolve_draft`).
+    On a miss the reads ask the full resolver (a provider, whose answer is stored, so opening a
+    draft warms today's rate); the commands refuse (`no_provider`): no write transaction waits on
+    a provider or holds a second connection.
+    """
+    from origenlab_api.v2.quotes.commands import V2QuoteRepository
+    from origenlab_api.v2.quotes.inputs import no_provider
+    from origenlab_api.v2.quotes.reads import V2QuoteReads
+    from origenlab_api.v2.quotes.routes import quote_command_router, quote_read_router
+
+    def fx_resolver(currency: str, day: Any) -> dict:
+        return app.state.catalog_fx.rate(currency, day)
+
+    app.state.quote_reads = V2QuoteReads(
+        connect, dsn, fx_resolver=fx_resolver, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.state.quote_repository = V2QuoteRepository(
+        connect, dsn, fx_resolver=no_provider, statement_timeout_ms=settings.v2_statement_timeout_ms,
+    )
+    app.include_router(quote_read_router)
+    app.include_router(quote_command_router)
 
 
 def _build_catalog_storage(settings: Settings, bucket: str = "catalog") -> Any:

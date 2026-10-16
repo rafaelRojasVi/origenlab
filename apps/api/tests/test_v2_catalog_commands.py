@@ -430,6 +430,47 @@ def test_set_cost_parameter_refuses_a_changed_current_row(disposable_database, o
     assert _reads(dsn).parameters()["current"]["default_markup_service"]["value"] == "0.220000"
 
 
+@needs_db
+def test_set_cost_parameter_stores_a_quote_default_as_text(disposable_database, operator) -> None:
+    dsn = disposable_database
+    out = _run(dsn, operator, "set-cost-parameter", {"key": "quote_default_warranty", "value_text": "[GARANTÍA]",
+                                                      "reason": "texto sintético"})
+    [(value_json, value_numeric)] = _owner(dsn, "select value_json::text, value_numeric from catalog.cost_parameter "
+                                                "where id = %s", (out["cost_parameter_id"],))
+    assert (value_json, value_numeric) == ('"[GARANTÍA]"', None)
+    # The parameters read returns the text, not a null.
+    assert _reads(dsn).parameters()["current"]["quote_default_warranty"]["value"] == "[GARANTÍA]"
+
+
+@needs_db
+def test_set_cost_parameter_stores_the_quote_numeric_keys_as_numbers(disposable_database, operator) -> None:
+    dsn = disposable_database
+    out = _run(dsn, operator, "set-cost-parameter", {"key": "quote_number_seed", "value": 1300,
+                                                      "reason": "semilla sintética"})
+    [(value_json, value_numeric)] = _owner(dsn, "select value_json, value_numeric from catalog.cost_parameter "
+                                                "where id = %s", (out["cost_parameter_id"],))
+    assert (value_json, value_numeric) == (None, Decimal("1300"))
+    _run(dsn, operator, "set-cost-parameter", {"key": "quote_default_validity_days", "value": 30, "reason": "sintético"})
+
+
+def test_set_cost_parameter_body_wants_the_right_kind_of_value() -> None:
+    from pydantic import ValidationError
+
+    for bad in (
+        {"key": "quote_default_warranty", "value": "1"},                       # text key, numeric value
+        {"key": "quote_default_warranty", "value": "1", "value_text": "x"},    # both
+        {"key": "iva_rate"},                                                    # neither
+        {"key": "iva_rate", "value_text": "x"},                                 # numeric key, text value
+        {"key": "quote_number_seed", "value_text": "x"},
+        {"key": "quote_default_validity_days", "value_text": "30"},
+        {"key": "quote_default_warranty", "value_text": ""},
+        {"key": "quote_default_warranty", "value_text": "x" * 1001},
+    ):
+        with pytest.raises(ValidationError):
+            SetCostParameterBody(**bad, reason="sintético")
+    SetCostParameterBody(key="quote_default_warranty", value_text="x" * 1000, reason="sintético")
+
+
 # ------------------------------------------------------------------ record-fx-rate
 
 @needs_db
@@ -673,6 +714,17 @@ def test_labdelivery_in_any_free_text_field_of_any_catalog_command_is_refused(co
     with pytest.raises(CommandRefused) as exc:
         repo.execute(command_name=command, operator=operator, fields=body.model_dump(mode="json"),
                      idempotency_key=uuid.uuid4().hex, digest=request_digest(command, body))
+    assert (exc.value.status_code, exc.value.code) == (422, "labdelivery_refused")
+
+
+def test_labdelivery_in_a_quote_default_text_is_refused() -> None:
+    body = SetCostParameterBody(key="quote_default_warranty", value_text=_LAB, reason="sintético")
+    operator = OperatorIdentity(operator_id="00000000-0000-4000-8000-000000000001", email_norm="op@example.test",
+                                display_name="Op", role="sales", status="active")
+    repo = V2CatalogRepository(_no_transaction, "postgresql://unused@127.0.0.1/unused")
+    with pytest.raises(CommandRefused) as exc:
+        repo.execute(command_name="set-cost-parameter", operator=operator, fields=body.model_dump(mode="json"),
+                     idempotency_key=uuid.uuid4().hex, digest=request_digest("set-cost-parameter", body))
     assert (exc.value.status_code, exc.value.code) == (422, "labdelivery_refused")
 
 

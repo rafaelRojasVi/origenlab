@@ -367,15 +367,17 @@ three tables are empty.
 
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|
-| 1 | operator · `create_quote` | opportunity has an organization and is non-terminal | `crm.quote` with a unique number | event | terminal stage or no organization → refused |
-| 2 | operator · `create_revision` | no open revision for this quote | revision `draft`, lines and party references (addresses, recipient, signatory, terms) copied from the previous revision if any | event | second open revision → refused |
-| 3 | operator · `edit_lines` / `edit_parties` | revision `draft` | lines changed / `billing_address_id`, `delivery_address_id`, recipient and signatory participants, terms changed | — | revision `approved`/`sent` → trigger rejects |
-| 4 | operator · `submit_for_review` | `draft`; ≥1 priced line | `in_review` | event | — |
-| 5 | approver · `approve_revision` | `in_review`; every derived total recomputes to the stored value; a current `billing_address_id`; a current primary `quote_recipient` participant with an email contact point | `approved`; FX, totals **and the party snapshot** frozen (W3b); the previous approved/sent revision gains `superseded_by_revision_no` | event | any total mismatch, superseded address or missing recipient → **approval refused** |
-| 6 | worker · `render_pdf` | `approved` | `pdf_sha256` written through `crm.record_quote_pdf`, which can write no other column; the PDF renders from the snapshot only | Storage object + hash | render failure → retry; status unchanged |
-| 7 | operator · `send_quote` | `approved`; `pdf_sha256` present; `transactional_enabled`; no `purpose = all` block on the snapshot's recipient address or its domain | transactional send (W5) to the snapshot's recipient; on acceptance `sent` with `sent_attempt_id` | attempt row, event | any precondition false → refused |
-| 7' | operator · `link_sent_message` | `approved`; a Gmail message whose attachment hash equals `pdf_sha256` | `sent` with `sent_message_id` | event | hash mismatch → refused |
-| 8 | operator · `close_opportunity(won, quote, revision_no)` | revision `sent`; opportunity `negotiating` | opportunity `won`; `closed_at` set | event | quote not sent → refused |
+| 1 | operator · `create-quote` | the case exists and is open | `crm.quote` with a minted unique number, and revision 1 as an empty authored `draft` | events | closed case or numbering not configured → refused |
+| 2 | operator · `create-quote-revision` | no open draft on the quote; an approved or sent authored revision to copy | the next revision as a `draft`: conditions, pricing choices, recipient and lines copied from the newest issued revision | event | an open draft → `draft_open` |
+| 3 | operator · `save-quote-draft` | revision `draft`, at the version shown | the whole draft replaced — lines, printed conditions, recipient — and priced by the engine on the server | event | not a draft → refused; a line change on an issued revision → the trigger rejects it |
+| 4 | operator · `approve-quote-revision` | `draft` (an authored revision has no `in_review` step); the stored lines reprice to their stored prices; the case has an institution; the recipient is still a current participant; no placeholder left | `approved`; totals, validity **and the party snapshot** frozen (W3b); the previous approved/sent revision gains `superseded_by_revision_no` | events | every reason joined in one refusal (W3-Cotizador) |
+| 5 | worker · `render_pdf` | `approved` | `pdf_sha256` written through `crm.record_quote_pdf`, which can write no other column; the PDF renders from the snapshot only | Storage object + hash | render failure → retry; status unchanged |
+| 6 | operator · `send_quote` | `approved`; `pdf_sha256` present; `transactional_enabled`; no `purpose = all` block on the snapshot's recipient address or its domain | transactional send (W5) to the snapshot's recipient; on acceptance `sent` with `sent_attempt_id` | attempt row, event | any precondition false → refused |
+| 6' | operator · `link_sent_message` | `approved`; a Gmail message whose attachment hash equals `pdf_sha256` | `sent` with `sent_message_id` | event | hash mismatch → refused |
+| 7 | operator · `close_opportunity(won, quote, revision_no)` | revision `sent`; opportunity `negotiating` | opportunity `won`; `closed_at` set | event | quote not sent → refused |
+
+Steps 1–4 are built: their exact preconditions, refusals and events are in
+W3-Cotizador below. Steps 5–7 are not built yet.
 
 **The final sent PDF, its SHA-256 and its sending evidence are immutable.**
 Google Drive remains a working workspace for drafting; **it is never the
@@ -400,7 +402,7 @@ earlier one.
   point is never used for money, FX or totals.**
 
 ```text
-unit_cost_qc        = unit_cost × fx_rate
+unit_cost_qc        = round(unit_cost × fx_rate)   [to the peso, BEFORE expenses are added]
 allocated_cost_qc   = Σ logistics lines allocated to this item
 landed_unit_cost_qc = unit_cost_qc + allocated_cost_qc / qty
 unit_price_qc       = round(landed / (1 − margin_pct))   [margin]
@@ -422,37 +424,143 @@ discounts price on their own.
   to it** — that is, when a logistics line relies on the default allocation
   target. Approval fails if such a line exists and no principal is set. A
   revision with no allocated logistics needs no principal.
-- `approve_revision` computes and stores every derived column in one SQL
-  function, and a check trigger recomputes from the stored inputs and rejects
-  the approval on any difference. Both run `SECURITY INVOKER`, as the
-  operator's own command inside the FastAPI transaction.
+- `approve-quote-revision` is a Python command (W3-Cotizador below). It re-prices the revision's
+  stored lines and FX snapshots with the engine, stores every derived column, and refuses
+  `draft_needs_saving` when the recomputed line prices differ from the stored ones.
+
+**The Cotizador's rounding (built 2026-10-15).** The engine
+(`apps/api/src/origenlab_api/quoting/engine.py`, the Plantilla Maestra in `Decimal`) rounds every CLP
+amount to the peso, half away from zero (`ROUND_HALF_UP`), and in this order: the **unit cost in
+CLP is rounded to the peso first** (`peso(unit_cost × fx_rate)`), and only then are expenses added;
+each expense line is rounded to the peso in CLP; the **unit base** (`cost + allocated expenses ÷
+qty`) is *not* rounded; the unit price (`peso(base × (1 + markup))`, or `peso(base ÷ (1 − margin))`
+for margin mode, or the operator's typed price rounded) and the line total (`peso(qty × price)`)
+are; IVA is `peso(net × rate)`. A margin of 100% or more and a quantity of zero are refused. Expenses
+go to the revision's principal item (`principal` mode) or are spread by cost
+(`proportional_cost`, floored to the peso with the remainder on the principal); a quote-level margin
+is `(net − cost base) ÷ net` and is classified `loss`, `below_target`, `on_target`, `above_target`
+or `no_cost` against `margin_target_min` / `margin_target_max`.
+
+#### W3-Cotizador — Draft → approve, as built
+
+An **authored** revision is written by five V2 commands (sales or admin operator, `Idempotency-Key`,
+receipt, events; `docs/OPERATIONS.md` §14.8 activates them). There is no `in_review` step: an
+authored draft is approved directly.
+
+| Step | Command | What it does | Refused with |
+|---|---|---|---|
+| 1 | `create-quote` | locks the case, mints the number (DOMAIN §7.9), creates the quote and revision 1 as an empty `draft` (quote currency CLP, 0 decimals, IVA from `iva_rate`, the `quote_default_*` texts, the case's current primary participant as recipient — a `quote_recipient` by preference); events `quote.created`, `quote_revision.opened` | `case_not_found`, `case_closed`, `quote_numbering_not_configured`, `quote_numbering_exhausted` |
+| 2 | `save-quote-draft` (`expected_version`) | takes the **whole draft** (items, manual expenses, expense method, allocation mode, principal rule, FX overrides with a reason, printed terms, recipient), prices it with the engine on the server, **replaces all the revision's lines**, writes the printed and pricing columns, the totals and `version + 1`; event `quote_revision.draft_saved`. A recipient picked from the case's emails becomes a participant first (below): events `participant.added` and, for an address the CRM lacked, `contact_point.created` | `revision_not_found`, `stale_version`, `not_a_draft`, `case_closed` (only when a new recipient would be added), `recipient_not_on_case`, `recipient_unknown`, `recipient_own_address`, `contact_point_inactive`, `archived_subject`, `recipient_changed_concurrently`, `fx_unavailable`, `cost_observation_not_found`, `amount_too_large`, engine errors (`quantity_invalid`, `margin_pct_invalid`, …) as 422, `labdelivery_refused` |
+| 3 | `approve-quote-revision` (`expected_version`) | prices the **stored** lines (below), runs the approval checks, records negotiated costs, freezes totals, validity and the party snapshot (W3b), supersedes the earlier issued revision; events `quote_revision.transitioned`, `quote_revision.superseded`, `product.cost_recorded` | the reasons below; `case_closed`, `draft_needs_saving` |
+| 4 | `create-quote-revision` | copies the newest approved or sent authored revision — conditions, pricing choices, lines — into the next draft (revision 2 prints as `…A`); event `quote_revision.opened` | `draft_open`, `nothing_to_revise`, `quote_not_found`, `revision_letters_exhausted` |
+| 5 | `void-quote-revision` (`expected_version`, reason) | `draft`, `in_review` or `approved` → `void`; event `quote_revision.transitioned` with the reason | `already_sent` («Ya se envió: crea una nueva revisión.»), `already_void`, `superseded`, `not_authored`, `stale_version` |
+
+- **The recipient is picked from the case's people.** The workspace lists them in `case.contacts`:
+  the case's current participants first, then — once each, newest email first — the sender of each
+  inbound email and the recipients of each email OrigenLab sent, among the emails linked to the
+  case, those its quote revisions were recorded from, and every email on their threads; and the
+  customer of each forwarded request the case came from or holds. Only a live email (neither
+  quarantined nor rejected) names anyone or brings its thread in; "newest" is the instant of its
+  Date header, else of its capture. Never an OrigenLab address (`origenlab.cl` and its
+  subdomains), nothing of Labdelivery (a Labdelivery-mailbox forward is skipped whole), no
+  deactivated address. Each carries `participant_id`, `person_id`,
+  `contact_point_id` (null when the CRM holds none), `name`, `email` and `source` (`participant`,
+  `email_from`, `email_to`, `forwarded_request`). The save takes `recipient` — exactly one of
+  `{participant_id}`, `{person_id}`, `{contact_point_id}` or `{email, name?}` (the older
+  `recipient_participant_id` still works; a saved draft reads back as `recipient: {participant_id}`,
+  so the editor can send it back unchanged). Every form is held to the same address rules on the
+  address it would print (`recipient_own_address`, `labdelivery_refused`). A pick that is not a
+  current participant becomes one in the save's transaction — refused `case_closed` on a closed
+  case, before anything is written (the save locks the case `for share`, then the quote, then the
+  revision, as approval does): role `quote_recipient`, `confirmed` by the operator, from today
+  (Santiago), primary when the case has no primary recipient; the same person or the same address
+  already on the case is reused, so saving again adds nothing. An address the CRM does not hold
+  becomes an `unattributed` email contact point — picking it says nothing about who owns it. An
+  address a person owns names that person too, unless the person is already a quote recipient of
+  the case (then the address is a row of its own); when no person owns it, the name it was picked
+  by is kept as the participant's `note`. Approval
+  prints, as the recipient's name, the participant's person, else the address's person, else that
+  picked name, else the address.
+- **Commands use only stored exchange rates.** A command never fetches a rate: it takes the newest
+  stored one within 7 days of the day (Santiago). Opening or previewing a draft — a read — is what
+  fetches and stores the day's Banco Central rate, so the first save on a day with none stored is
+  refused `fx_unavailable` until the draft was opened or previewed. The preview
+  (`POST /v2/quotes/preview`) takes the same body as the save, writes nothing and needs no
+  `Idempotency-Key`. A read never asks the provider while it holds a database connection: on a
+  miss it closes its transaction, fetches, and reads once more.
+- **One rate per currency per revision**, enforced by trigger (DOMAIN §7.9). An operator may
+  replace the EUR or USD rate by typing a CLP rate **and a reason**; both are stored on the revision
+  (`fx_override_reasons`).
+- **Approval prices what was saved.** It recomputes from the revision's *stored* line FX snapshots
+  and overrides, stored expense lines and principal — it looks nothing up again — so the frozen
+  totals equal what the operator last saw. If a recomputation differs from the stored prices
+  (the engine changed since the save) it is refused `draft_needs_saving`; to use today's rate the
+  operator saves again. Lines are not rewritten at approval (their ids survive). The workspace
+  (`GET /v2/quotes/{id}`) prices a draft live, at today's rate and parameters, so it also returns
+  what approval would freeze — `saved` (the stored totals and each item line's stored
+  `unit_price_qc` / `line_total_qc`) — and `needs_saving`, true when the live figures differ from
+  the saved ones (a copied revision still carrying its source's rates, a newer rate stored).
+- **Approval refuses, in Spanish, with every reason joined by « · »** (the first reason's code is
+  the error code): `no_items` «Agrega al menos un producto.»; `unpriced_line` «La línea N no tiene
+  precio (falta costo o precio).»; `principal_missing` «Hay gastos de importación pero ningún equipo
+  principal; elige uno.» (any expense above zero, a manual one included); `fx_missing` «Falta el
+  tipo de cambio de X.»; `no_institution` «El caso no tiene institución.»; `no_recipient` «Elige a
+  quién va dirigida.» (the recipient must still be a current participant of the case);
+  `placeholder_left` «Completa «campo»: aún tiene un texto entre corchetes.» — checked on the
+  printed conditions, the extra conditions and the line notes, **not** on product descriptions (a
+  bracket in a model name is the product's).
+- **Negotiated costs are recorded.** A unit cost the operator typed for a catalog product and a
+  named supplier becomes a `negotiated` `catalog.supplier_product` observation (provenance «Cotización
+  <label>»; event `product.cost_recorded`) and the line points at it. An identical observation
+  (same supplier, product, currency, price) is reused, so a copied revision does not record the same
+  cost twice. As `record-supplier-cost` would, the cost goes to the product the line's product
+  survives as when it was merged since the save, and only to a live supplier: a supplier archived or
+  merged since the save gets no observation, approval still succeeds, and its response lists each
+  skipped line in `negotiated_costs_skipped` (`{line_no, reason}`, reason `supplier_archived` or
+  `supplier_merged`).
+- **Supersession.** Approving revision N sets `superseded_by_revision_no` on every earlier approved
+  or sent revision of the quote that has none (event `quote_revision.superseded`). **Voiding an
+  approved revision does not resurrect** the one it superseded: the operator opens a new revision.
+  A superseded revision cannot be voided. An authored revision that is `sent` is never voided — a
+  new revision answers it. A closed case gets no new quote and no approval, but may still open a
+  revision (approval then refuses).
+- **Costs are for sales and admin only.** A viewer gets `403 role_may_not_view_costs` on every
+  `/v2/quotes/*` read and `403 role_may_not_decide` on the commands. Event payloads carry no cost,
+  price or margin — only a saved draft's net total.
 
 <a id="m-wf-snapshot"></a>
 #### W3b — Party snapshot
 
 Every revision carries `party_snapshot jsonb` with `party_snapshot_version`:
-**NULL while `draft` or `in_review`, written by `approve_revision` in the same
+**NULL while `draft` or `in_review`, written by `approve-quote-revision` in the same
 transaction that freezes FX and totals, and immutable from then on.** The
-trigger that rejects line and price changes on an `approved` or `sent`
-revision rejects snapshot changes too. The closed key set is validated by a
-`SECURITY INVOKER` check function, exactly as the `crm.domain_event` payload
-is ([`DATA.md`](DATA.md) §1.1); a new key or a changed meaning is a new
-`party_snapshot_version` by migration.
+trigger `crm.quote_revision_authored_frozen` (DOMAIN §7.9) freezes an approved,
+sent or void authored revision: only `status` (approved → sent, approved | sent →
+void), `pdf_sha256` (once), the sending evidence (once, on approved → sent),
+supersession (once), `version` and `updated_at` may change. Every other column —
+the snapshot, the totals, the printed and pricing columns — is rejected.
+The written shape is version 1; a new key or a changed meaning is a new
+`party_snapshot_version`.
 
 | Key | Captured from | Content |
 |---|---|---|
-| `sold_to` | the opportunity's organization and its `rut` external identifier | legal name, tax identifier scheme and value, organization id |
-| `billing_address`, `delivery_address` | the revision's `billing_address_id`, `delivery_address_id` (delivery optional) | every structured `crm.address` field plus the address id |
-| `recipient` | the current primary `quote_recipient` participant | display name, email `value_norm`, person id, contact point id, participant id |
-| `signatory` | the current primary `signatory` participant, when one exists | as `recipient`; otherwise absent |
-| `terms` | the revision's own columns | `payment_terms`, `valid_until`, `delivery_terms`, `tax_rate`, `tax_note` |
-| `currency` | the revision and its lines, already frozen by W3a | `quote_currency`, `price_decimals`, and the distinct `(cost_currency, fx_rate, fx_as_of, fx_source)` tuples used |
+| `institution` | the case's organization (the survivor of a merge) and its first `rut` external identifier | `{id, name, rut}`; `rut` null when none |
+| `recipient` | the revision's `recipient_participant_id`, a current participant of the case | `{participant_id, name, email}` — the participant's own email address, else the person's; the name of the participant's person, else of the address's person, else the name the address was picked by (W3-Cotizador), else the address |
+| `terms` | the revision's own columns | `delivery_terms`, `payment_terms`, `warranty_terms_es`, `delivery_place_es`, `installation_terms_es`, `client_notes_es`, `validity_days`, `terms_extra` |
+| `quote_number`, `revision_label` | the quote and the revision number | `00042-26`, then `00042A-26` for revision 2 |
+| `approved_by`, `approved_at`, `valid_until` | the approving operator and the Santiago day | display name; ISO dates |
+
+The snapshot carries **no cost, price or margin** (the PDF reads it); the currency and the
+exchange rates live on the frozen revision and lines. This is the shape written; it replaces the
+earlier proposed key set (`sold_to`, addresses, `signatory`, `currency`), which the Cotizador does
+not write.
 
 - **The PDF and every later read of an issued revision render from the
-  snapshot only.** `billing_address_id`, `delivery_address_id`,
-  `recipient_participant_id` and `signatory_participant_id` on the revision
-  are nullable typed FKs kept as lineage: they answer "which rows were used",
-  never "what does the document say".
+  snapshot only.** `recipient_participant_id` on the revision is a nullable
+  typed FK kept as lineage: it answers "which row was used", never "what does
+  the document say". `billing_address_id`, `delivery_address_id` and
+  `signatory_participant_id` exist as the same kind of lineage FK, but the
+  Cotizador does not write them yet: they stay NULL on an authored revision.
 - **A superseded address or an ended participant changes nothing on an issued
   revision.** Correcting a party on a quotation is a new revision, which
   captures its own snapshot at its own approval.
@@ -602,8 +710,7 @@ line against the PDF's layout text. A line that disagrees is `disputed`; the imp
 `review-document-line`, supplying the corrected quantity and prices and a note; the line becomes
 `reviewed`, once. Verified and single-source lines need no action.
 
-Catalog 1a ships no price calculation. The rounding amendment to the quotation price rule (§W3a)
-belongs to catalog 1b.
+Catalog 1a ships no price calculation; the quote arithmetic is §W3a.
 
 ### W9 — Ambiguous send resolution
 

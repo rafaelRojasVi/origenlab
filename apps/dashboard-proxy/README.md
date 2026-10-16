@@ -45,6 +45,9 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/commands/create-task`, `/v2/commands/complete-task`, `/v2/commands/cancel-task` | The W11 tasks behind «En pausa hasta…» (create), «Hecho» (complete) and «Retomar ahora» (cancel), in the same `CASE_COMMAND_POST_PATHS` list and under the same guard and upstream requirements (the task version shown, not the case's). A task never changes the case's stage or version |
 | `/v2/commands/<name>` for the 29 CRM-authoring commands (person, organization — `confirm-organization-record` included —, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not in this list. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
 | `/v2/commands/{create-product,update-product,confirm-product-content,record-supplier-cost,set-supplier-terms,set-cost-parameter,record-fx-rate,update-product-image,review-document-line}` | Catalog commands: 9 exact paths, JSON, body ≤ 64 KiB — see *Catalog 1a* below |
+| `/v2/commands/{create-quote,save-quote-draft,approve-quote-revision,void-quote-revision,create-quote-revision}` | Cotizador commands: 5 exact paths, JSON, same guards as the catalog commands (`save-quote-draft` body ≤ 256 KiB, the rest 64 KiB) — see *Cotizador* below |
+| GET `/v2/quotes/numbering`, `/v2/quotes/<uuid>` | Cotizador reads (sales and admin upstream) — see *Cotizador* below |
+| POST `/v2/quotes/preview` | Cotizador live preview: a POST that reads, no `Idempotency-Key` — see *Cotizador* below |
 | `/v2/commands/add-product-image` | Catalog image upload: one of the two multipart POSTs, body ≤ 8 MiB + 64 KiB — see *Catalog 1a* below |
 | `/v2/commands/attach-case-document` | A case's purchase order from the computer (2026-10-12): the second multipart POST, same guard as the image upload, body ≤ 20 MiB + 64 KiB. Upstream: active `sales`/`admin`, `Idempotency-Key`, a note; behind `ORIGENLAB_V2_COMMANDS_ENABLED` and Storage |
 | `/v2/commands/attach-case-document-from-email`, `/v2/commands/remove-case-document` | Copy a case email's purchase order into the case's documents, or remove one with its reason (`CASE_COMMAND_POST_PATHS`, JSON ≤ 16 KiB, same guard as the case commands) |
@@ -160,6 +163,21 @@ required `Idempotency-Key` (a custom header, which forces one) plus the Origin a
 - Two multipart commands, `add-product-image` and `attach-case-document` (≤ 20 MiB + 64 KiB): `multipart/form-data; boundary=...` (a type without
   a boundary is 415), body ≤ 8 MiB + 64 KiB (`CATALOG_UPLOAD_MAX_BYTES`). The API caps the file at
   8 MiB itself. JSON to this path and multipart to a JSON command are both 415.
+
+## Cotizador
+
+Two exact GET paths (`/v2/quotes/numbering`, `/v2/quotes/<uuid>`, lower-case UUID) and six POST
+paths. Roles (sales and admin; a viewer is refused) are enforced upstream.
+
+- Five JSON commands (`create-quote`, `save-quote-draft`, `approve-quote-revision`,
+  `void-quote-revision`, `create-quote-revision`) join `CATALOG_COMMAND_POST_PATHS`: `catalogCommandRefusal`,
+  `Idempotency-Key` required. Body ≤ 64 KiB, except `save-quote-draft`: ≤ 256 KiB
+  (`QUOTE_COMMAND_MAX_BYTES`), because the API accepts a draft of up to ~139 KB (60 items, 500-char
+  descriptions, 1000-char notes, every field); a realistic 60-line draft is ~52 KB
+  (`src/quoteCommands.test.ts`).
+- `POST /v2/quotes/preview` computes a quote from a draft and writes nothing, so it has its own
+  list (`QUOTE_PREVIEW_POST_PATHS`) and guard (`quotePreviewRefusal`): allowed `Origin`, no
+  cross-site `Sec-Fetch-Site`, `application/json` only, body ≤ 256 KiB (`QUOTE_COMMAND_MAX_BYTES`) — and no `Idempotency-Key`.
 
 ## Response hardening
 

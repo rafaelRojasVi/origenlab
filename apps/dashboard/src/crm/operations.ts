@@ -171,7 +171,7 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     cuando: "OrigenLab envía una cotización nueva en un hilo nuevo, y el cliente ya tiene una solicitud abierta sin cotización (escribió él, la pidió por un reenvío, su dominio es el de la institución o el PDF nombra la institución).",
     hace: "Vincula el correo a esa solicitud, la pasa a «Enviada» y registra la cotización, en vez de abrir un caso nuevo.",
     automatica: true,
-    ejemplo: "Se envía «CN01266 – S&B Analítica» a Esteban, que pidió tabletas por LabX → queda en su solicitud.",
+    ejemplo: "Se envía «CN00042 – Laboratorio Ejemplo» a la persona que pidió el equipo por un reenvío → queda en su solicitud.",
   },
 };
 

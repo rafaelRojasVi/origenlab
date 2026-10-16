@@ -76,6 +76,10 @@ EXPECTED_EXTRA_TABLES = {
 # The one exception to SECURITY INVOKER is EXPECTED_SECURITY_DEFINER below.
 SLICE0_FUNCTION_COUNT = 3
 
+# Tables that exist in the baseline but gained a policy afterwards: a09 may name them among the extra
+# policies without them being new tables (a08). crm.quote_line: the API delete policy, 20261016100000.
+EXPECTED_EXTRA_POLICY_ONLY_TABLES = {"quote_line"}
+
 POST_SLICE0_FUNCTIONS = {
     # 20260922170000_slice3_crm_commercial_case.sql
     "crm.opportunity_organization_supplier_exception_required",
@@ -142,6 +146,12 @@ POST_SLICE0_FUNCTIONS = {
     # 20261012120000_slice7_case_documents.sql — the INVOKER trigger guard that lets a case
     # document change only by one removal (pgTAP: 093_case_documents.sql).
     "crm.opportunity_document_immutable",
+    # 20261016100000_slice7_quote_authoring.sql — the INVOKER trigger guard that lets a quote line
+    # change only while its revision is an authored draft (pgTAP: 097_quote_authoring.sql).
+    "crm.quote_line_authored_draft_only",
+    # Same migration — the INVOKER trigger guard that freezes an authored revision once it is
+    # approved, sent or void (WORKFLOWS §W3b; pgTAP: 097_quote_authoring.sql).
+    "crm.quote_revision_authored_frozen",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
@@ -277,6 +287,10 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     "catalog.product.product_merged_into_product_id_fkey",
     # 20261015120000_slice7_case_memory.sql — covered by the plain subject_memory_source_record_idx.
     "evidence.subject_memory.subject_memory_source_record_id_fkey",
+    # 20261016100000_slice7_quote_authoring.sql — both covered by plain unconditional indexes:
+    # quote_line_supplier_organization_idx and quote_line_cost_observation_idx.
+    "crm.quote_line.quote_line_supplier_organization_id_fkey",
+    "crm.quote_line.quote_line_cost_observation_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -288,7 +302,7 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 # campaign-block keys, the eight sign-in keys, the sixteen slice-6 keys and the
 # ten slice-7 catalog and document-line keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 51
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 53
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -307,7 +321,7 @@ EXPECTED_SUMMARIES = {
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 188,
+        "policy_count": 189,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -424,7 +438,8 @@ def main() -> int:
     if "21 entr(y|ies) are present here and not in the baseline" not in a08_text:
         refuse("a08 does not report exactly twenty-one extra tables")
 
-    # The 63 policy additions must belong to those same twenty-one reviewed tables:
+    # The 64 policy additions must belong to those same twenty-one reviewed tables, plus one on an
+    # existing table (crm.quote_line, below):
     # four each for the three commercial-case tables and campaign_block (api
     # select/insert/update, worker select), one each for auth_principal and
     # operator_profile (api select: their throttle is written by
@@ -439,7 +454,8 @@ def main() -> int:
     # triage_review (api select, insert; worker select) and four for opportunity_document
     # (api select/insert/update, worker select; 20261012120000), three for product_document
     # (api select/insert/update; 20261013120000), three for subject_memory (api select; worker
-    # select/insert; 20261015120000).
+    # select/insert; 20261015120000) and one delete on quote_line (api; 20261016100000 — an existing
+    # Slice 0 table, so it is the one entry not on a reviewed new table).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -461,8 +477,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "63 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly sixty-three extra policies")
+    if "64 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly sixty-four extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -473,7 +489,7 @@ def main() -> int:
     if a09_text.rstrip().endswith("...") and len(a09_named) != 12:
         refuse(f"a09 is truncated but names {len(a09_named)} tables, expected twelve")
     named = set(a09_named)
-    unexpected = sorted(named - EXPECTED_EXTRA_TABLES)
+    unexpected = sorted(named - EXPECTED_EXTRA_TABLES - EXPECTED_EXTRA_POLICY_ONLY_TABLES)
     if unexpected:
         refuse(f"a09 names policies on unreviewed tables: {unexpected!r}")
     if not a09_text.rstrip().endswith("..."):

@@ -174,6 +174,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // searches in the browser, and up to sixty signed image URLs at once (`?ids=`). GET-only, JSON.
   /^\/v2\/catalog\/index$/,
   /^\/v2\/catalog\/images\/urls$/,
+  // Cotizador (`apps/api` v2/quotes/routes.py; sales and admin only upstream, a viewer gets 403):
+  // the next quote number to offer, and one quote with its revisions. Exact paths, GET-only. The
+  // preview is a POST that reads; it is listed with the POSTs (QUOTE_PREVIEW_POST_PATHS), never here.
+  /^\/v2\/quotes\/numbering$/,
+  /^\/v2\/quotes\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to
   // these paths only.
@@ -411,7 +416,37 @@ export const CATALOG_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/record-fx-rate$/,
   /^\/v2\/commands\/update-product-image$/,
   /^\/v2\/commands\/review-document-line$/,
+  // Cotizador (`apps/api` v2/quotes/routes.py): create a quote, save its draft, approve or void a
+  // revision, open a new revision. The same JSON command guard; only `save-quote-draft` carries a
+  // larger body limit (QUOTE_COMMAND_MAX_BYTES, see `catalogCommandMaxBytes`).
+  /^\/v2\/commands\/create-quote$/,
+  /^\/v2\/commands\/save-quote-draft$/,
+  /^\/v2\/commands\/approve-quote-revision$/,
+  /^\/v2\/commands\/void-quote-revision$/,
+  /^\/v2\/commands\/create-quote-revision$/,
 ];
+
+/**
+ * The Cotizador's live preview: a POST that only reads (it computes a quote from a draft body and
+ * writes nothing), so it carries no `Idempotency-Key`. It still must pass `quotePreviewRefusal` in
+ * index.ts: an allowed `Origin`, no cross-site `Sec-Fetch-Site`, a JSON body within
+ * `QUOTE_COMMAND_MAX_BYTES`. One exact path.
+ */
+export const QUOTE_PREVIEW_POST_PATHS: readonly RegExp[] = [/^\/v2\/quotes\/preview$/];
+
+/**
+ * The two Cotizador bodies that carry a whole draft: `save-quote-draft` and the preview. The API
+ * accepts a draft of up to ~139 KB (measured; 60 items, 500-char descriptions, 1000-char notes, every
+ * field), so these two get 256 KiB; every other JSON command keeps CATALOG_COMMAND_MAX_BYTES.
+ */
+export const QUOTE_COMMAND_MAX_BYTES = 262_144;
+
+const QUOTE_DRAFT_BODY_PATHS: readonly RegExp[] = [/^\/v2\/commands\/save-quote-draft$/, ...QUOTE_PREVIEW_POST_PATHS];
+
+export function isAllowedQuotePreviewPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return QUOTE_PREVIEW_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
 
 /** 64 KiB: enough for any catalog JSON body. */
 export const CATALOG_COMMAND_MAX_BYTES = 65_536;
@@ -431,10 +466,11 @@ export const CATALOG_UPLOAD_POST_PATHS: readonly RegExp[] = [
 export const CATALOG_UPLOAD_MAX_BYTES = 8_388_608 + 65_536;
 export const CASE_DOCUMENT_UPLOAD_MAX_BYTES = 20_971_520 + 65_536;
 
-/** The body limit for one catalog command path: the upload's, or the JSON commands'. */
+/** The body limit for one catalog command path: the upload's, a quote draft's, or the JSON commands'. */
 export function catalogCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
   if (CASE_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly)) return CASE_DOCUMENT_UPLOAD_MAX_BYTES;
+  if (QUOTE_DRAFT_BODY_PATHS.some((pattern) => pattern.test(pathOnly))) return QUOTE_COMMAND_MAX_BYTES;
   return CATALOG_UPLOAD_POST_PATHS.some((pattern) => pattern.test(pathOnly))
     ? CATALOG_UPLOAD_MAX_BYTES
     : CATALOG_COMMAND_MAX_BYTES;
@@ -488,6 +524,7 @@ export function isAllowedPostPath(pathname: string): boolean {
     isAllowedCaseCommandPostPath(pathname) ||
     isAllowedCatalogCommandPostPath(pathname) ||
     isAllowedCatalogUploadPostPath(pathname) ||
+    isAllowedQuotePreviewPostPath(pathname) ||
     isAllowedAuthPostPath(pathname)
   );
 }
