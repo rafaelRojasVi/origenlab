@@ -70,6 +70,14 @@ describe("«Enviar prueba»", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Límite de pruebas alcanzado. Intenta más tarde.");
   });
 
+  it("does not show «Not Found» when this environment has no test-send route", async () => {
+    stub({ status: 404, body: { error: { code: "not_found", message: "Not Found", details: {}, request_id: "r1" } } });
+    render(asRole("admin", <TestSendPanel target={TARGET} config={CONFIG} />));
+    fireEvent.change(screen.getByLabelText("Enviar una prueba a"), { target: { value: "ana@example.invalid" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar prueba" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No se pudo enviar la prueba.");
+  });
+
   it("accepts only one plain mailbox — the API's rule, the reviewer's probes included", () => {
     stub({ status: 200, body: {} });
     render(asRole("admin", <TestSendPanel target={TARGET} config={CONFIG} />));

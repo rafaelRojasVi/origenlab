@@ -7,7 +7,6 @@
  * by (email, rule), so a second press applies nothing new.
  */
 import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../api/operatorClient";
-import { envelopeOfError } from "../api/refusalEnvelope";
 
 export const MAIL_RULES_PATHS = {
   preview: "/v2/workspace/mail-rules/preview",
@@ -156,13 +155,12 @@ export const undoMailRuleAction = (receiptId: string, note: string) =>
 export const setAutoMailRules = (enabled: boolean, note: string) =>
   postJson<{ enabled: boolean }>(MAIL_RULES_PATHS.setAuto, { enabled, note });
 
-/** The refusal's own message (`envelopeOfError`) when there is one, else a fixed sentence. */
+/** The API's `detail.message` when there is one, else a fixed sentence. */
 export function refusalMessage(err: unknown, fallback: string): string {
   if (err instanceof OperatorApiError) {
-    const env = envelopeOfError(err);
-    if (env.message) return env.message;
     try {
       const detail = JSON.parse(err.message)?.detail;
+      if (detail?.message) return String(detail.message);
       if (typeof detail === "string") return detail;
     } catch {
       /* not JSON */

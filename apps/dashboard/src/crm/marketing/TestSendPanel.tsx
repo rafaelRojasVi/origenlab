@@ -1,6 +1,6 @@
 import { useCallback, useId, useState } from "react";
 import { OperatorApiError } from "../../api/operatorClient";
-import { envelopeOfError } from "../../api/refusalEnvelope";
+import { commandMissing, envelopeOfError, refusalOfError } from "../../api/refusalEnvelope";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { fmtDate } from "../ui";
 import { useResource } from "../useResource";
@@ -40,7 +40,8 @@ function errorText(err: unknown): string {
       return "Límite de pruebas alcanzado. Intenta más tarde.";
     }
     if (err.status === 403) return "Sólo un perfil de administración puede enviar pruebas.";
-    if (detail.message) return detail.message;
+    // A command's own words; a route this environment lacks says «Not Found», which helps no one.
+    if (detail.message && !commandMissing(refusalOfError(err))) return detail.message;
   }
   return "No se pudo enviar la prueba.";
 }
