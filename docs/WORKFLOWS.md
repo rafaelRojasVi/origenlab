@@ -450,11 +450,28 @@ authored draft is approved directly.
 | Step | Command | What it does | Refused with |
 |---|---|---|---|
 | 1 | `create-quote` | locks the case, mints the number (DOMAIN §7.9), creates the quote and revision 1 as an empty `draft` (quote currency CLP, 0 decimals, IVA from `iva_rate`, the `quote_default_*` texts, the case's current primary participant as recipient — a `quote_recipient` by preference); events `quote.created`, `quote_revision.opened` | `case_not_found`, `case_closed`, `quote_numbering_not_configured`, `quote_numbering_exhausted` |
-| 2 | `save-quote-draft` (`expected_version`) | takes the **whole draft** (items, manual expenses, expense method, allocation mode, principal rule, FX overrides with a reason, printed terms, recipient), prices it with the engine on the server, **replaces all the revision's lines**, writes the printed and pricing columns, the totals and `version + 1`; event `quote_revision.draft_saved` | `stale_version`, `not_a_draft`, `recipient_not_on_case`, `fx_unavailable`, `cost_observation_not_found`, `amount_too_large`, engine errors (`quantity_invalid`, `margin_pct_invalid`, …) as 422, `labdelivery_refused` |
+| 2 | `save-quote-draft` (`expected_version`) | takes the **whole draft** (items, manual expenses, expense method, allocation mode, principal rule, FX overrides with a reason, printed terms, recipient), prices it with the engine on the server, **replaces all the revision's lines**, writes the printed and pricing columns, the totals and `version + 1`; event `quote_revision.draft_saved`. A recipient picked from the case's emails becomes a participant first (below): events `participant.added` and, for an address the CRM lacked, `contact_point.created` | `stale_version`, `not_a_draft`, `recipient_not_on_case`, `recipient_unknown`, `recipient_own_address`, `contact_point_inactive`, `archived_subject`, `recipient_changed_concurrently`, `fx_unavailable`, `cost_observation_not_found`, `amount_too_large`, engine errors (`quantity_invalid`, `margin_pct_invalid`, …) as 422, `labdelivery_refused` |
 | 3 | `approve-quote-revision` (`expected_version`) | prices the **stored** lines (below), runs the approval checks, records negotiated costs, freezes totals, validity and the party snapshot (W3b), supersedes the earlier issued revision; events `quote_revision.transitioned`, `quote_revision.superseded`, `product.cost_recorded` | the reasons below; `case_closed`, `draft_needs_saving` |
 | 4 | `create-quote-revision` | copies the newest approved or sent authored revision — conditions, pricing choices, lines — into the next draft (revision 2 prints as `…A`); event `quote_revision.opened` | `draft_open`, `nothing_to_revise`, `quote_not_found`, `revision_letters_exhausted` |
 | 5 | `void-quote-revision` (`expected_version`, reason) | `draft`, `in_review` or `approved` → `void`; event `quote_revision.transitioned` with the reason | `already_sent` («Ya se envió: crea una nueva revisión.»), `already_void`, `superseded`, `not_authored`, `stale_version` |
 
+- **The recipient is picked from the case's people.** The workspace lists them in `case.contacts`:
+  the case's current participants first, then — once each, newest email first — the sender of each
+  inbound email and the recipients of each email OrigenLab sent, among the emails linked to the
+  case, those its quote revisions were recorded from, and every email on their threads; and the
+  customer of each forwarded request the case came from or holds; never an `origenlab.cl` address, nothing of Labdelivery
+  (a Labdelivery-mailbox forward is skipped whole). Each carries `participant_id`, `person_id`,
+  `contact_point_id` (null when the CRM holds none), `name`, `email` and `source` (`participant`,
+  `email_from`, `email_to`, `forwarded_request`). The save takes `recipient` — exactly one of
+  `{participant_id}`, `{person_id}`, `{contact_point_id}` or `{email, name?}` (the older
+  `recipient_participant_id` still works). A pick that is not a current participant becomes one in
+  the save's transaction: role `quote_recipient`, `confirmed` by the operator, from today
+  (Santiago), primary when the case has no primary recipient; the same person or the same address
+  already on the case is reused, so saving again adds nothing. An address the CRM does not hold
+  becomes an `unattributed` email contact point — picking it says nothing about who owns it — and,
+  when no person owns it, the name it was picked by is kept as the participant's `note`. Approval
+  prints, as the recipient's name, the participant's person, else the address's person, else that
+  picked name, else the address.
 - **Commands use only stored exchange rates.** A command never fetches a rate: it takes the newest
   stored one within 7 days of the day (Santiago). Opening or previewing a draft — a read — is what
   fetches and stores the day's Banco Central rate, so the first save on a day with none stored is
@@ -519,7 +536,7 @@ The written shape is version 1; a new key or a changed meaning is a new
 | Key | Captured from | Content |
 |---|---|---|
 | `institution` | the case's organization (the survivor of a merge) and its first `rut` external identifier | `{id, name, rut}`; `rut` null when none |
-| `recipient` | the revision's `recipient_participant_id`, a current participant of the case | `{participant_id, name, email}` — the person's name and the participant's own email address, else the person's |
+| `recipient` | the revision's `recipient_participant_id`, a current participant of the case | `{participant_id, name, email}` — the participant's own email address, else the person's; the name of the participant's person, else of the address's person, else the name the address was picked by (W3-Cotizador), else the address |
 | `terms` | the revision's own columns | `delivery_terms`, `payment_terms`, `warranty_terms_es`, `delivery_place_es`, `installation_terms_es`, `client_notes_es`, `validity_days`, `terms_extra` |
 | `quote_number`, `revision_label` | the quote and the revision number | `00042-26`, then `00042A-26` for revision 2 |
 | `approved_by`, `approved_at`, `valid_until` | the approving operator and the Santiago day | display name; ISO dates |

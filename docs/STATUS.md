@@ -2878,6 +2878,16 @@ an operator beyond the API and the Worker's allowlist.
   `approve-quote-revision`, `void-quote-revision`, `create-quote-revision`; all behind
   `ORIGENLAB_V2_QUOTING_ENABLED` (already `true` on Render), sales and admin only. Proxy: those exact
   paths; `save-quote-draft` and the preview accept 256 KiB bodies.
+- **The recipient comes from the case's emails.** The hosted CRM has no
+  `crm.opportunity_participant` row (no V2 command wrote one), so approval's `no_recipient` would
+  refuse every real case. The workspace now lists `case.contacts` — the participants, then the
+  people on the case's emails and forwarded requests, without OrigenLab or Labdelivery addresses —
+  and `save-quote-draft` takes `recipient` (`{participant_id}`, `{person_id}`, `{contact_point_id}`
+  or `{email, name?}`): a pick not yet on the case becomes a confirmed `quote_recipient` participant
+  (event `participant.added`), and an address the CRM lacks an `unattributed` contact point (event
+  `contact_point.created`), in the save's transaction. This is the first V2 command that writes
+  participants. No schema change: `origenlab_api` already had INSERT on both tables.
+  [`WORKFLOWS.md`](WORKFLOWS.md) §W3-Cotizador.
 - **Behaviour changes to know.** `set-cost-parameter` now takes `value_text` for the five printed
   `quote_default_*` texts (a numeric body now hashes with `value_text: null`, so its request digest changes; this matters only for a retry of an old `Idempotency-Key` across the deploy). Approval writes a party snapshot
   of a different shape than the one WORKFLOWS §W3b first proposed; §W3b was amended to the written
