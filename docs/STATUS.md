@@ -2992,3 +2992,26 @@ A «Con ficha» toggle next to the Catálogo filters keeps only products with an
 (not a price list, not a retired sheet). It filters the cost-free index in the browser on the
 `has_datasheet` flag the index already carried, narrows the supplier and kind counts, lives in the
 address as `&ficha=1` and is cleared by «Limpiar filtros». Dashboard only: no API or proxy change.
+
+### 2.7.126 Quote reader v2: the old template footer no longer blocks reading; a neto with its optional lines is accepted, 2026-10-16 — built, deploys on merge
+
+Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is now
+`quote_read:v2`) and the quote-history importer:
+
+- **Labdelivery refuses only as the issuer.** OrigenLab's old quote template printed a page footer
+  (the old address line, then `Celular: (09) … www.labdelivery.cl`) under an OrigenLab header, and
+  any mention of Labdelivery refused the whole document. `keys.labdelivery_issued(text)` now exempts
+  only that footer's web address, matched exactly by its two-line shape; Labdelivery anywhere else
+  (letterhead, issuer, title, signature, a line, a variant spelling, the address alone) still
+  refuses. The reader (`not_origenlab_quote`) and the importer (`skipped_labdelivery_letterhead`)
+  both use it, and the model's prompt counts only the letterhead, issuer or signature and is told
+  never to copy the footer. Nothing of the footer is stored: every string written — each line's
+  and now also the document payload's — is still refused one by one by `is_labdelivery`.
+- **A neto that includes the optional lines is accepted.** When the printed neto is more than 1 %
+  off the non-optional lines but within 1 % of all lines with the optional ones, the document is
+  read with the neto as printed and its `quote_document` payload carries `net_includes_optional:
+  true` (absent otherwise); the run's log line counts them. Any other mismatch is still
+  `net_mismatch`.
+- **Re-read.** The candidates key a refusal by reader version and ISO week, so last week's v1
+  refusals no longer block: the first v2 runs re-read them (at most `--limit` per run). No migration, API-route or
+  dashboard change; worker and importer script only.

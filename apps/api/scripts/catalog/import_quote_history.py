@@ -33,9 +33,11 @@ item labels) that names the client, or holds an e-mail address or a phone number
 Refusals (exit 11, naming the file's basename and the field): a malformed extraction, a date that
 is neither ISO nor `DD-MM-YYYY` / `DD/MM/YYYY`, an extraction whose `sha256` is not its file name,
 a missing text file, and anything of Labdelivery origin in a path, the extraction JSON or a string
-the plan would write. A layout text that carries Labdelivery letterhead or footer is skipped and
+the plan would write. A layout text Labdelivery issued — its name anywhere but the old OrigenLab
+template's footer line (`keys.labdelivery_issued`, owner decision 2026-10-16) — is skipped and
 counted (`skipped_labdelivery_letterhead`), never written; so is a document the extraction says
-OrigenLab did not issue. Verified lines are counted by why they matched (`verified_<reason>`;
+OrigenLab did not issue. That footer is never read into the plan: only the extraction's lines are,
+each string still refused. Verified lines are counted by why they matched (`verified_<reason>`;
 `evidence.document_line` has no column for it). A document already present (by `dedupe_key`) is never
 touched; apply reports it `already_present`, or `present_different` when it says something else.
 
@@ -71,7 +73,7 @@ from origenlab_api.v2.catalog.history_check import (  # noqa: E402
 )
 from origenlab_api.v2.catalog.keys import (  # noqa: E402
     LabdeliveryRefused,
-    is_labdelivery,
+    labdelivery_issued,
     model_key,
     refuse_labdelivery,
 )
@@ -175,10 +177,11 @@ def build_quote_history_plan(extractions: list[Path], text_dir: Path) -> tuple[i
         _refuse_labdelivery(text_path.name, str(text_path.resolve()), text_path.name)
         text = text_path.read_text(encoding="utf-8")
         records += [record, importing.input_record(text_path, "quote_text")]
-        if is_labdelivery(text):
-            # Labdelivery letterhead or footer in the document itself: skipped, never written, and
-            # its extraction never read (owner ruling 2026-10-05). A written string of Labdelivery
-            # origin in any other document still refuses.
+        if labdelivery_issued(text):
+            # Labdelivery's letterhead or issuer in the document itself: skipped, never written, and
+            # its extraction never read (owner rulings 2026-10-05 and 2026-10-16 — the old OrigenLab
+            # template's footer alone is not Labdelivery's). A written string of Labdelivery origin
+            # in any other document still refuses.
             counts["skipped_labdelivery_letterhead"] += 1
             skipped.append({"path_sha256": record["path_sha256"], "reason": "labdelivery_letterhead"})
             continue

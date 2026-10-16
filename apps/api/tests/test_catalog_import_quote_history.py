@@ -17,6 +17,7 @@ import pytest
 
 from origenlab_api.v2.catalog import importing
 from origenlab_api.v2.catalog.commands import V2CatalogRepository
+from origenlab_api.v2.catalog.keys import is_labdelivery
 from origenlab_api.v2.catalog.reads import V2CatalogReads
 from origenlab_api.v2.catalog.routes import ReviewDocumentLineBody
 from origenlab_api.v2.commands import request_digest
@@ -217,6 +218,37 @@ def test_a_reseller_text_whose_extraction_names_the_reseller_is_skipped(tmp_path
     plan, _ = _load(tmp_path / "out")
     assert plan["items"] == [] and plan["counts"]["skipped_labdelivery_letterhead"] == 1
     assert [s["reason"] for s in plan["skipped"]] == ["labdelivery_letterhead"]
+
+
+#: The old OrigenLab template's page footer, in its real shape, with an invented address and numbers.
+OLD_FOOTER = ("      Calle Inventada 123, Of. 45, Comuna Ficticia, Santiago, Chile. Teléfono (56-2) 21234567\n"
+              "      Celular: (09) 81234567 www.labdelivery.cl\n")
+
+
+def test_an_origenlab_quote_on_the_old_template_footer_is_planned_and_the_footer_never_written(tmp_path) -> None:
+    """Owner decision 2026-10-16: the footer alone is not a Labdelivery document."""
+    old, issued = _sha(), _sha()
+    _write_doc(tmp_path / "in", _extraction(old, [_line("1", "ACME-1", 1000)]),
+               _docx_text([("1", "ACME-1", "1.000")]) + "\n" + OLD_FOOTER)
+    _write_doc(tmp_path / "in", _extraction(issued, [_line("1", "ACME-2", 2000)]),
+               _docx_text([("1", "ACME-2", "2.000")], letterhead="LABDELIVERY – PERSONA FICTICIA") + OLD_FOOTER)
+    assert _plan(tmp_path / "in", tmp_path / "out") == 0
+    plan, _ = _load(tmp_path / "out")
+    assert [i["key"] for i in plan["items"]] == [f"quote_document:{old}"]
+    assert plan["counts"]["skipped_labdelivery_letterhead"] == 1
+    assert [s["reason"] for s in plan["skipped"]] == ["labdelivery_letterhead"]
+    written = json.dumps(plan["items"], ensure_ascii=False)  # what apply writes (the counts name the skip)
+    assert not is_labdelivery(written)
+    whole = (tmp_path / "out" / "plan.json").read_text(encoding="utf-8")
+    assert "Calle Inventada" not in whole and "81234567" not in whole and "www.labdelivery" not in whole
+
+
+def test_an_old_footer_document_whose_extraction_copies_the_footer_into_a_line_is_refused(tmp_path) -> None:
+    sha = _sha()
+    line = _line("1", "ACME-1", 1000, description="Celular: (09) 81234567 www.labdelivery.cl")
+    _write_doc(tmp_path / "in", _extraction(sha, [line]), _docx_text([("1", "ACME-1", "1.000")]) + OLD_FOOTER)
+    assert _plan(tmp_path / "in", tmp_path / "out") == _common.EXIT_REFUSED
+    assert not (tmp_path / "out" / "plan.json").exists()
 
 
 def test_item_and_total_matches_are_counted_by_reason(tmp_path) -> None:

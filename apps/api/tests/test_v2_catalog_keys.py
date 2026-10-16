@@ -4,7 +4,13 @@ from pathlib import Path
 import pytest
 
 from origenlab_api.v2.catalog import keys
-from origenlab_api.v2.catalog.keys import LabdeliveryRefused, is_labdelivery, model_key, refuse_labdelivery
+from origenlab_api.v2.catalog.keys import (
+    LabdeliveryRefused,
+    is_labdelivery,
+    labdelivery_issued,
+    model_key,
+    refuse_labdelivery,
+)
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "supabase" / "migrations"
 
@@ -103,3 +109,42 @@ def test_labdelivery_more_variants(text):
 ])
 def test_labdelivery_no_false_positive_in_words(text):
     assert not is_labdelivery(text)
+
+
+# ── labdelivery_issued: the old OrigenLab template's footer is not a Labdelivery document ─────
+# Invented address and numbers, in the footer's real shape (two lines, as `pdftotext -layout` prints).
+
+FOOTER = ("      Calle Inventada 123, Of. 45, Comuna Ficticia, Santiago, Chile. Teléfono (56-2) 21234567\n"
+          "      Celular: (09) 81234567 www.labdelivery.cl\n")
+HEADER = ("                                                  Persona Ficticia - OrigenLab\n"
+          "OrigenLab                                            contacto@origenlab.cl\n"
+          "Equipos para laboratorio\n\n      COTIZACIÓN N°00000-26\n")
+BODY = "   1     ACME-1     Equipo sintético de prueba            $ 1.000\n"
+
+
+def test_a_page_whose_only_labdelivery_mention_is_the_old_footer_is_not_labdelivery_issued():
+    page = HEADER + BODY + "\n\n" + FOOTER
+    assert is_labdelivery(page)  # the string check still sees it
+    assert not labdelivery_issued(page)
+    assert not labdelivery_issued(page + "\f" + BODY + FOOTER)  # one footer per page
+    assert not labdelivery_issued(FOOTER.replace("\n      Celular", " Celular"))  # both on one line
+    assert not labdelivery_issued(FOOTER.replace("\n", "\r\n"))
+    assert not labdelivery_issued(None) and not labdelivery_issued("")
+
+
+@pytest.mark.parametrize("page", [
+    "LABDELIVERY – PERSONA FICTICIA\nGiro: Equipos para laboratorio\n" + BODY + FOOTER,  # letterhead + footer
+    HEADER.replace("OrigenLab  ", "Labdelivery") + BODY + FOOTER,  # issuer
+    HEADER + "COTIZACIÓN LAB DELIVERY\n" + BODY + FOOTER,  # title
+    HEADER + BODY + FOOTER + "Saluda atentamente,\nPersona Ficticia\nLabdelivery\n",  # signature
+    HEADER + BODY.replace("ACME-1", "Labdelivery") + FOOTER,  # a line
+    HEADER + BODY + "Celular: (09) 81234567 www.labdelivery.cl\n",  # the web address without the address line
+    HEADER + BODY + FOOTER.replace("Calle Inventada", "Labdelivery Calle"),  # the address names it
+    HEADER + BODY + FOOTER.replace("Celular", "Fono"),  # another wording
+    HEADER + BODY + FOOTER.replace("www.labdelivery.cl", "www.labdelivery.cl LABDELIVERY"),  # more on the line
+    HEADER + BODY + FOOTER.replace("labdelivery.cl", "lab-delivery.cl"),  # a variant is not the footer
+    HEADER + BODY + FOOTER.replace("\n      Celular", "\n\n      Celular"),  # not the next line
+], ids=["letterhead", "issuer", "title", "signature", "line", "url_alone", "address_names_it", "other_wording",
+        "more_on_the_line", "variant", "not_the_next_line"])
+def test_labdelivery_anywhere_but_the_exact_footer_is_labdelivery_issued(page):
+    assert labdelivery_issued(page)

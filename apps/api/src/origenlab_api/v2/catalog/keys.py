@@ -1,4 +1,5 @@
-"""Pure catalog helpers: model keys, closed vocabularies, and the Labdelivery refusal (spec S5)."""
+"""Pure catalog helpers: model keys, closed vocabularies, and the Labdelivery refusal (spec S5) — of
+any string (`is_labdelivery`) and of a document Labdelivery issued (`labdelivery_issued`)."""
 from __future__ import annotations
 
 import re
@@ -81,3 +82,33 @@ def refuse_labdelivery(*parts: str | None) -> None:
     for part in parts:
         if is_labdelivery(part):
             raise LabdeliveryRefused("input of Labdelivery origin is refused")
+
+
+_H = r"[^\S\n]"  # horizontal whitespace: a footer pattern never spans more than the one line break it names
+#: The old OrigenLab template's page footer, as `pdftotext -layout` prints it: an address line that
+#: ends `…, Santiago, Chile. Teléfono (56-2) <number>`, then (on the next line, or the same one) the
+#: line `Celular: (09) <number> www.labdelivery.cl` and nothing else. Only the web address of that
+#: second line is exempt; the address, the numbers and every other line are still checked.
+_OLD_TEMPLATE_FOOTER = re.compile(
+    rf"^{_H}*[^\n]*,{_H}*Santiago,{_H}*Chile\.{_H}*Tel[eé]fono{_H}*\(56-2\){_H}*\d[\d ]{{5,10}}\d{_H}*"
+    rf"(?:\n{_H}*|{_H}+)Celular:{_H}*\(09\){_H}*\d[\d ]{{5,9}}\d{_H}+(?P<url>www\.labdelivery\.cl){_H}*$",
+    re.MULTILINE,
+)
+
+
+def labdelivery_issued(text: str | None) -> bool:
+    """True when Labdelivery appears in a document anywhere other than the old OrigenLab template's
+    footer line (`_OLD_TEMPLATE_FOOTER`): its letterhead, its issuer, a title, a line, a signature.
+
+    Owner decision 2026-10-16: OrigenLab's old quote template printed that footer under an
+    OrigenLab header, so a footer-only mention is not a Labdelivery document; a Labdelivery
+    letterhead or issuer always is, footer or not. Nothing of the footer is ever stored — the
+    callers write only what they read elsewhere, each string still refused by `is_labdelivery`.
+    """
+    if not text:
+        return False
+    normal = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n").replace("\f", "\n")
+    cut = [(m.start("url"), m.end("url")) for m in _OLD_TEMPLATE_FOOTER.finditer(normal)]
+    for start, end in reversed(cut):
+        normal = normal[:start] + normal[end:]
+    return is_labdelivery(normal)

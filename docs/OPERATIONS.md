@@ -2170,15 +2170,15 @@ would be silent, so a model without poppler is refused as configuration (`pdftot
 model off nothing is written: the run counts `model_off`.
 
 **Refusals** (nothing written; one `quote_read` observation per PDF, `value_norm
-quote_read:v1:<ISO week>:<pdf sha256>`,
+<reader version>:<ISO week>:<pdf sha256>` — the version is `quote_read:v2` since 2026-10-16,
 listed in Datos → «Acciones automáticas» → «Cotizaciones no leídas»; retried after 7–14 days, or at
 once after a reader version bump):
 
 | Code | Meaning |
 |---|---|
-| `not_origenlab_quote` | the model says it is not an OrigenLab quotation, or Labdelivery appears in it |
+| `not_origenlab_quote` | the model says it is not an OrigenLab quotation, or Labdelivery issued it: its name anywhere in the text but the old OrigenLab template's footer line (`Celular: (09) … www.labdelivery.cl` under the old address line — exempt since v2; its web address is the only thing exempted, never stored), or in any string the reader would write |
 | `too_many_disputed` | more than a third of the cross-checked lines disagree with the PDF's text |
-| `net_mismatch` | the printed neto is more than 1 % off the sum of the non-optional lines |
+| `net_mismatch` | the printed neto is more than 1 % off the sum of the non-optional lines, and also off the sum of all lines with the optional ones (since v2 a neto that matches only with them is read as printed and the document's payload carries `net_includes_optional: true`; the run's log counts them) |
 | `model_refused` / `unreadable` | the model refused or truncated, the answer did not validate, or no line carries a total |
 | `no_text_layer` | poppler read no text (a scanned page): nothing to cross-check or to find a Labdelivery letterhead in |
 | `request_failed` / `write_failed` | the API refused the PDF for good (a 4xx other than 408/409/429), or a value cannot be stored |
