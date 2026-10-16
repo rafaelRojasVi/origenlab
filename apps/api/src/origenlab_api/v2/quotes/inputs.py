@@ -25,7 +25,7 @@ from typing import Any
 from origenlab_api.quoting.dhl_rates import RateCard
 from origenlab_api.quoting.engine import EngineInput, EngineResult, ExpenseLine, FxRate, ItemLine
 from origenlab_api.quoting.expenses import ShipmentItem, expenses_for
-from origenlab_api.v2.catalog.fx import FxUnavailable
+from origenlab_api.v2.catalog.fx import FxUnavailable, PricingFx
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.quotes.draft import (
     DraftExpenseLine,
@@ -38,6 +38,22 @@ from origenlab_api.v2.quotes.draft import (
 
 #: (currency, day) -> {"clp_per_unit", "as_of", "source", ...}; raises FxUnavailable.
 FxResolver = Callable[[str, dt.date], dict]
+
+
+def _never_written(rows: list[dict]) -> None:  # pragma: no cover - no provider, so nothing to cache
+    raise AssertionError("a stored-only resolver has nothing to write")
+
+
+def stored_fx_resolver(reads: Any, today: Callable[[], dt.date]) -> FxResolver:
+    """The rate a command prices with: the stored one only, never a provider over HTTP.
+
+    The catalog's `PricingFx` with no providers: the newest stored rate on or before the day
+    (a manual one first, then Banco Central), within the same `FX_WINDOW_DAYS` the reads apply,
+    else `FxUnavailable`. A write transaction therefore never waits on a provider; the reads
+    (opening a draft, every preview) use the full resolver, which fetches and stores today's rate,
+    so by the time the operator saves, the rate the preview showed is the one in the store.
+    """
+    return PricingFx(reads, _never_written, [], today).rate
 
 DEFAULT_MARKUP_KEYS = {
     "equipment": "default_markup_equipment",
@@ -464,4 +480,4 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
 
 __all__ = ["DEFAULT_MARKUP_KEYS", "FxResolver", "PRICE_KIND_PRIORITY", "Resolved", "ResolvedItem",
            "default_markup", "draft_from_rows", "engine_input_from_rows", "expense_target", "fx_override_reasons", "fx_overrides_from_row",
-           "load_parameters", "resolve_draft", "result_json"]
+           "load_parameters", "resolve_draft", "result_json", "stored_fx_resolver"]
