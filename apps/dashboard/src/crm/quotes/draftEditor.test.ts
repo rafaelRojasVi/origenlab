@@ -3,6 +3,7 @@ import type { IndexItem } from "../catalog/catalogSearch";
 import {
   addCatalogItem,
   addFreeLine,
+  computedLineFor,
   draftProblems,
   draftReducer,
   initialDraftState,
@@ -47,6 +48,7 @@ describe("draft helpers", () => {
       margin_mode: "markup",
       margin_pct: null,
       is_principal: false,
+      uid: expect.any(String),
     });
   });
 
@@ -314,5 +316,62 @@ describe("draftProblems", () => {
     expect(fields(extra)).toEqual([["terms_extra.label_es", 0], ["terms_extra.text_es", 1]]);
     expect(fields(setRecipient(draftFixture(), { email: "no-es-correo" }))).toEqual([["recipient.email", null]]);
     expect(fields(setRecipient(draftFixture(), { email: "persona@example.com" }))).toEqual([]);
+  });
+});
+
+describe("line identity (client-only uid)", () => {
+  const uids = (d: QuoteDraft) => d.items.map((i) => i.uid);
+
+  it("gives every loaded line a uid, and the workspace's computed the same keys", () => {
+    const s = initialDraftState(workspaceFixture());
+    expect(uids(s.draft).every((u) => typeof u === "string" && u.length > 0)).toBe(true);
+    expect(new Set(uids(s.draft)).size).toBe(2);
+    expect(s.computedKeys).toEqual(uids(s.draft));
+  });
+
+  it("new lines get a fresh uid; an edit keeps it; the API never sees it", () => {
+    const base = initialDraftState(workspaceFixture()).draft;
+    const added = addFreeLine(addCatalogItem(base, hit()));
+    expect(new Set(uids(added)).size).toBe(4);
+    expect(updateItem(added, 0, { quantity: "4" }).items[0].uid).toBe(added.items[0].uid);
+    const flagged = updateItem(added, 0, { input_problems: { quantity: "x" } });
+    const sent = sendableDraft(flagged);
+    for (const item of sent.items) {
+      expect("uid" in item).toBe(false);
+      expect("input_problems" in item).toBe(false);
+    }
+  });
+
+  it("keeps the uids of the draft each preview and save priced", () => {
+    let s = initialDraftState(workspaceFixture());
+    s = draftReducer(s, { type: "edit", fn: (d) => removeItem(d, 0) });
+    s = draftReducer(s, { type: "previewStarted", seq: 1 });
+    s = draftReducer(s, { type: "previewDone", seq: 1, draftSeq: 1, computed: computedFixture("1"), keys: ["k-2"] });
+    expect(s.computedKeys).toEqual(["k-2"]);
+    s = draftReducer(s, { type: "edit", fn: (d) => d });
+    s = draftReducer(s, { type: "saveStarted", keys: ["k-9"] });
+    s = draftReducer(s, { type: "saveDone", version: 9, computed: computedFixture("2"), at: 1 });
+    expect(s.computedKeys).toEqual(["k-9"]);
+  });
+
+  it("finds a row's priced line by its uid, not its position", () => {
+    const priced = {
+      ...computedFixture(),
+      lines: [
+        { line_no: 1, unit_price: "100" },
+        { line_no: 2, unit_price: "200" },
+      ] as unknown as ReturnType<typeof computedFixture>["lines"],
+    };
+    expect(computedLineFor(priced, ["a", "b"], "b")?.unit_price).toBe("200");
+    expect(computedLineFor(priced, ["a", "b"], "c")).toBeNull();
+    expect(computedLineFor(null, ["a"], "a")).toBeNull();
+    expect(computedLineFor(priced, ["a", "b"], undefined)).toBeNull();
+  });
+
+  it("reports what the operator typed that cannot be read as the quantity's problem", () => {
+    const d = updateItem(draftFixture(), 1, { quantity: "1.000", input_problems: { quantity: "Usa coma para decimales (1,5) — ¿quisiste decir 1000?" } });
+    expect(draftProblems(d)).toEqual([
+      { index: 1, field: "items.quantity", message_es: "Usa coma para decimales (1,5) — ¿quisiste decir 1000?" },
+    ]);
   });
 });

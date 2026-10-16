@@ -50,4 +50,12 @@ describe("SaveStatus", () => {
     const { container } = render(<SaveStatus saveState="conflict" lastSavedAt={null} onRetry={() => undefined} />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("says why the save was refused, and still offers the retry", () => {
+    const onRetry = vi.fn();
+    render(<SaveStatus saveState="error" lastSavedAt={null} message="Falta configurar la numeración." onRetry={onRetry} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("no se pudo guardar: Falta configurar la numeración. · Reintentar");
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(onRetry).toHaveBeenCalled();
+  });
 });

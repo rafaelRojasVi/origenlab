@@ -226,7 +226,9 @@ describe("Cotizador page — the draft editor", () => {
     stubApi((n) => (n === 1 ? json({ detail: "boom" }, 500) : json({ revision_id: "r-1", version: 4, computed: computedFixture() })));
     renderPage();
     fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Reintentar" }, { timeout: 3000 }));
+    const retry = await screen.findByRole("button", { name: "Reintentar" }, { timeout: 3000 });
+    expect(screen.queryByText(/boom/)).not.toBeInTheDocument();
+    fireEvent.click(retry);
     expect(await screen.findByText(/guardado automáticamente/)).toBeInTheDocument();
   });
 
@@ -248,5 +250,20 @@ describe("Cotizador page — the draft editor", () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Vista cliente" }));
     expect(screen.queryByRole("columnheader", { name: "Costo unit." })).not.toBeInTheDocument();
+  });
+
+  it("shows a refused recipient under «Para», and points the save line there", async () => {
+    stubApi(() => json({ detail: { code: "recipient_own_address", message: "Esa dirección es de OrigenLab." } }, 422));
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
+    expect(await screen.findByText("Esa dirección es de OrigenLab.", undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.getByText(/no se pudo guardar: revisa «Para»/)).toBeInTheDocument();
+  });
+
+  it("says the server's reason for any other refusal", async () => {
+    stubApi(() => json({ detail: { code: "numbering_not_configured", message: "Falta configurar la numeración." } }, 422));
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
+    expect(await screen.findByText(/no se pudo guardar: Falta configurar la numeración\./, undefined, { timeout: 3000 })).toBeInTheDocument();
   });
 });

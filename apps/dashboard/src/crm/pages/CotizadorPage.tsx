@@ -4,7 +4,7 @@ import { crmHash, type CrmSection } from "../crmRoute";
 import { ClientSection } from "../quotes/ClientSection";
 import { isEditable } from "../quotes/draftEditor";
 import { ProductsSection } from "../quotes/ProductsSection";
-import { fetchQuoteWorkspace, type QuoteWorkspace } from "../quotes/quoteApi";
+import { QuoteRefusal, fetchQuoteWorkspace, type QuoteWorkspace } from "../quotes/quoteApi";
 import { quoteLabel } from "../quotes/quoteLabel";
 import { SaveStatus } from "../quotes/SaveStatus";
 import { useQuoteDraft } from "../quotes/useQuoteDraft";
@@ -100,12 +100,21 @@ export function CotizadorPage({ quoteId, navigate }: { quoteId: string | null; n
   return <CotizadorWorkspace workspace={state.data} navigate={navigate} />;
 }
 
+/** A save refused because of whom the quote goes to: said under «Para». */
+function isRecipientRefusal(code: string | null): boolean {
+  return !!code && (code.startsWith("recipient_") || code === "labdelivery_refused");
+}
+
 function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace; navigate: Navigate }) {
   const editor = useQuoteDraft(workspace);
   const [clientView, setClientView] = useState(false);
   const { state } = editor;
   const authored = isEditable(state.workspace);
   const disabled = !editor.editable;
+  const refusal = state.error instanceof QuoteRefusal ? state.error : null;
+  const recipientRefusal = refusal && isRecipientRefusal(refusal.code) ? refusal.message : null;
+  // Only an API envelope's message is the server's words; a bare body (a proxy error page) is not shown.
+  const saveMessage = recipientRefusal ? "revisa «Para»" : refusal?.code ? refusal.message : null;
   return (
     <div className="space-y-[18px]">
       <CotizadorHeader
@@ -117,6 +126,7 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
               saveState={state.saveState}
               lastSavedAt={state.lastSavedAt}
               incomplete={editor.invalid.length > 0}
+              message={saveMessage}
               onRetry={() => void editor.retry()}
             />
           ) : null
@@ -131,12 +141,15 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
               draft={state.draft}
               invalid={editor.invalid}
               disabled={disabled}
+              refusal={recipientRefusal}
               edit={editor.edit}
             />
             <ProductsSection
               workspace={state.workspace}
               draft={state.draft}
               computed={state.computed}
+              computedKeys={state.computedKeys}
+              stale={editor.stale}
               invalid={editor.invalid}
               disabled={disabled}
               clientView={clientView}

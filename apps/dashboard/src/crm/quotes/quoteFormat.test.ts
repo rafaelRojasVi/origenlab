@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decimalToPercentText, formatPct, percentTextToDecimal, priceTextToDecimal, quantityTextToDecimal } from "./quoteFormat";
+import { amountTextToDecimal, decimalToPercentText, formatPct, percentTextToDecimal, priceTextToDecimal, readQuantity } from "./quoteFormat";
 
 describe("quote number formatting", () => {
   it("prints an API ratio as a percentage with one decimal, es-CL", () => {
@@ -32,17 +32,29 @@ describe("quote number formatting", () => {
     expect(percentTextToDecimal("4x")).toBe("4x");
   });
 
-  it("reads a typed price the Chilean way", () => {
+  it("reads a typed price the Chilean way, without floating point", () => {
     expect(priceTextToDecimal("1.500.000")).toBe("1500000");
     expect(priceTextToDecimal("$ 1.500.000")).toBe("1500000");
     expect(priceTextToDecimal("1500000")).toBe("1500000");
+    expect(priceTextToDecimal("1.500.000,5")).toBe("1500000.5");
+    expect(priceTextToDecimal("12345678901234567,25")).toBe("12345678901234567.25");
+    expect(priceTextToDecimal("007")).toBe("7");
     expect(priceTextToDecimal("")).toBeNull();
     expect(priceTextToDecimal("mil")).toBe("mil");
   });
 
-  it("reads a typed quantity with a decimal comma", () => {
-    expect(quantityTextToDecimal("2,5")).toBe("2.5");
-    expect(quantityTextToDecimal(" 3 ")).toBe("3");
-    expect(quantityTextToDecimal("")).toBe("");
+  it("reads a cost in any currency the same way", () => {
+    expect(amountTextToDecimal("€ 6.900,50")).toBe("6900.50");
+    expect(amountTextToDecimal("US$ 1299.75")).toBe("1299.75");
+    expect(amountTextToDecimal("980")).toBe("980");
+  });
+
+  it("reads a typed quantity with a decimal comma, and refuses a dot that may be thousands", () => {
+    expect(readQuantity("2,5")).toEqual({ value: "2.5", problem: null });
+    expect(readQuantity(" 3 ")).toEqual({ value: "3", problem: null });
+    expect(readQuantity("2.5")).toEqual({ value: "2.5", problem: null });
+    expect(readQuantity("")).toEqual({ value: "", problem: null });
+    expect(readQuantity("1.000")).toEqual({ value: "1.000", problem: "Usa coma para decimales (1,5) — ¿quisiste decir 1000?" });
+    expect(readQuantity("12.500").problem).toBe("Usa coma para decimales (1,5) — ¿quisiste decir 12500?");
   });
 });

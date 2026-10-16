@@ -90,8 +90,8 @@ function computed(): Computed {
 function draft(): QuoteDraft {
   return {
     items: [
-      { product_id: "p-1", description: "Agitador de prueba", quantity: "1", item_type: "equipment", margin_mode: "markup", margin_pct: "0.4", is_principal: false },
-      { product_id: null, description: "Servicio de prueba", quantity: "2", item_type: null, margin_mode: "markup", margin_pct: null, is_principal: false },
+      { uid: "u1", product_id: "p-1", description: "Agitador de prueba", quantity: "1", item_type: "equipment", margin_mode: "markup", margin_pct: "0.4", is_principal: false },
+      { uid: "u2", product_id: null, description: "Servicio de prueba", quantity: "2", item_type: null, margin_mode: "markup", margin_pct: null, is_principal: false },
     ],
     manual_expenses: [],
     expense_method: "profile",
@@ -111,8 +111,10 @@ async function setup({
   workspace = ws(),
   initial = draft(),
   priced = computed(),
+  keys = ["u1", "u2"],
+  stale = false,
   clientView = false,
-}: { workspace?: QuoteWorkspace; initial?: QuoteDraft; priced?: Computed | null; clientView?: boolean } = {}) {
+}: { workspace?: QuoteWorkspace; initial?: QuoteDraft; priced?: Computed | null; keys?: string[]; stale?: boolean; clientView?: boolean } = {}) {
   const latest: { draft: QuoteDraft } = { draft: initial };
   const edit = vi.fn();
   function Harness() {
@@ -124,6 +126,8 @@ async function setup({
         workspace={workspace}
         draft={d}
         computed={priced}
+        computedKeys={keys}
+        stale={stale}
         invalid={draftProblems(d)}
         disabled={false}
         clientView={view}
@@ -249,6 +253,8 @@ describe("ProductsSection — the table", () => {
           workspace={ws()}
           draft={draft()}
           computed={c}
+          computedKeys={["u1", "u2"]}
+          stale={false}
           invalid={[]}
           disabled={false}
           clientView={false}
@@ -354,5 +360,120 @@ describe("ProductsSection — the table", () => {
   it("says when the quote has no lines yet", async () => {
     await setup({ initial: { ...draft(), items: [] }, priced: { ...computed(), lines: [] } });
     expect(screen.getByText(/Busca un producto del catálogo/)).toBeInTheDocument();
+  });
+});
+
+describe("ProductsSection — each row keeps its own numbers", () => {
+  it("after a line above is removed, the next row shows its own prices, not the removed one's", async () => {
+    await setup();
+    fireEvent.click(screen.getByRole("button", { name: "Más acciones de la línea 1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Quitar" }));
+    const row = screen.getByRole("row", { name: /Servicio de prueba/ });
+    expect(within(row).queryByText("$ 11.620.000")).not.toBeInTheDocument();
+    expect(within(row).queryByText("En rango")).not.toBeInTheDocument();
+    expect(within(row).getByText("Sin costo")).toBeInTheDocument();
+  });
+
+  it("two lines of the same product each keep their price", async () => {
+    const c = computed();
+    c.lines = [
+      { ...c.lines[0], unit_price: "100", line_total: "100" },
+      { ...c.lines[0], line_no: 2, unit_price: "200", line_total: "200", is_principal: false },
+    ];
+    const same = draft();
+    same.items = [same.items[0], { ...same.items[0], uid: "u2" }];
+    await setup({ initial: same, priced: c });
+    fireEvent.click(screen.getByRole("button", { name: "Más acciones de la línea 1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Quitar" }));
+    expect(screen.getByLabelText("Precio unitario de la línea 1")).toHaveValue("$ 200");
+  });
+
+  it("dims the numbers and marks them busy while the prices are for an older draft", async () => {
+    await setup({ stale: true });
+    const row = screen.getByRole("row", { name: /Agitador de prueba/ });
+    expect(within(row).getByText("$ 11.620.000").closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("finds the principal by the draft the API priced", async () => {
+    const c = computed();
+    c.lines = [{ ...c.lines[0], product_id: null, line_no: 1, is_principal: true }, { ...c.lines[1], line_no: 2, is_principal: false }];
+    await setup({
+      priced: c,
+      keys: ["u2", "u1"],
+      workspace: ws({ kits: [{ model_key: "SN22", product_id: "p-3", name: "Sonda de prueba", share: "0.6", documents: 5 }], mentioned: [] }),
+    });
+    expect(screen.getByText("Suele ir con Servicio de prueba:")).toBeInTheDocument();
+    const free = screen.getByRole("row", { name: /Servicio de prueba/ });
+    expect(within(free).getByText("Equipo principal · absorbe los gastos")).toBeInTheDocument();
+    expect(within(free).queryByText("Sin costo")).not.toBeInTheDocument();
+  });
+
+  it("a row's open note moves with the row", async () => {
+    await setup();
+    fireEvent.click(screen.getByRole("button", { name: "Más acciones de la línea 2" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Nota para el cliente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Más acciones de la línea 1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Quitar" }));
+    expect(screen.getByLabelText("Nota para el cliente, línea 1 (sale en el PDF)")).toBeInTheDocument();
+  });
+});
+
+describe("ProductsSection — costs typed by hand", () => {
+  it("a free line takes a cost and its currency", async () => {
+    const { latest } = await setup();
+    fireEvent.change(screen.getByLabelText("Moneda del costo de la línea 2"), { target: { value: "EUR" } });
+    expect(latest.draft.items[1].cost_currency ?? null).toBeNull();
+    const cost = screen.getByLabelText("Costo unitario de la línea 2");
+    fireEvent.focus(cost);
+    fireEvent.change(cost, { target: { value: "980,5" } });
+    expect(latest.draft.items[1]).toMatchObject({ unit_cost: "980.5", cost_currency: "EUR", cost_observation_id: null });
+    fireEvent.change(screen.getByLabelText("Moneda del costo de la línea 2"), { target: { value: "USD" } });
+    expect(latest.draft.items[1].cost_currency).toBe("USD");
+    fireEvent.change(cost, { target: { value: "" } });
+    expect(latest.draft.items[1]).toMatchObject({ unit_cost: null, cost_currency: null });
+  });
+
+  it("a catalog line the API found no cost for takes one", async () => {
+    const c = computed();
+    c.lines[0] = { ...c.lines[0], unit_cost: null, cost_currency: null, cost_clp_unit: null, margin_state: "no_cost" };
+    const { latest } = await setup({ priced: c });
+    const cost = screen.getByLabelText("Costo unitario de la línea 1");
+    fireEvent.change(cost, { target: { value: "1.200" } });
+    expect(latest.draft.items[0]).toMatchObject({ unit_cost: "1200", cost_currency: "CLP" });
+  });
+
+  it("a catalog line with a known cost keeps it until «cambiar costo», and «usar costo del catálogo» goes back", async () => {
+    const { latest } = await setup();
+    expect(screen.queryByLabelText("Costo unitario de la línea 1")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "cambiar costo" }));
+    expect(screen.getByLabelText("Moneda del costo de la línea 1")).toHaveValue("EUR");
+    const cost = screen.getByLabelText("Costo unitario de la línea 1");
+    fireEvent.change(cost, { target: { value: "7000" } });
+    expect(latest.draft.items[0]).toMatchObject({ unit_cost: "7000", cost_currency: "EUR", cost_observation_id: null });
+    fireEvent.click(screen.getByRole("button", { name: "usar costo del catálogo" }));
+    expect(latest.draft.items[0]).toMatchObject({ unit_cost: null, cost_currency: null });
+    expect(screen.queryByLabelText("Costo unitario de la línea 1")).not.toBeInTheDocument();
+  });
+});
+
+describe("ProductsSection — details", () => {
+  it("«Vista cliente» also hides the supplier and the principal badge", async () => {
+    await setup({ clientView: true });
+    const row = screen.getByRole("row", { name: /Agitador de prueba/ });
+    expect(within(row).getByText("AG-100")).toBeInTheDocument();
+    expect(within(row).queryByText(/Proveedor Uno/)).not.toBeInTheDocument();
+    expect(within(row).queryByText("Equipo principal · absorbe los gastos")).not.toBeInTheDocument();
+  });
+
+  it("asks about «1.000» as a quantity instead of guessing", async () => {
+    const { latest } = await setup();
+    const qty = screen.getByLabelText("Cantidad de la línea 1");
+    fireEvent.focus(qty);
+    fireEvent.change(qty, { target: { value: "1.000" } });
+    expect(screen.getByText("Usa coma para decimales (1,5) — ¿quisiste decir 1000?")).toBeInTheDocument();
+    expect(draftProblems(latest.draft)).toHaveLength(1);
+    fireEvent.change(qty, { target: { value: "1000" } });
+    expect(latest.draft.items[0].quantity).toBe("1000");
+    expect(draftProblems(latest.draft)).toEqual([]);
   });
 });

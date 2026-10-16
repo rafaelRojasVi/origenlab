@@ -9,6 +9,7 @@
 import type { IndexItem } from "../catalog/catalogSearch";
 import type {
   Computed,
+  ComputedLine,
   QuoteDraft,
   QuoteDraftItem,
   QuoteDraftTerms,
@@ -24,6 +25,10 @@ export interface DraftEditorState {
   draft: QuoteDraft;
   version: number;
   computed: Computed | null;
+  /** The `uid` of each line of the draft `computed` priced, in order: line_no n is `computedKeys[n-1]`. */
+  computedKeys: string[];
+  /** The uids of the draft the save in flight carries. */
+  savingKeys: string[] | null;
   saveState: SaveState;
   lastSavedAt: number | null;
   /** Why the last save failed: a `QuoteRefusal`, or a network error. */
@@ -44,9 +49,9 @@ export interface DraftEditorState {
 export type DraftAction =
   | { type: "edit"; fn: (draft: QuoteDraft) => QuoteDraft }
   | { type: "previewStarted"; seq: number }
-  | { type: "previewDone"; seq: number; draftSeq: number; computed: Computed }
+  | { type: "previewDone"; seq: number; draftSeq: number; computed: Computed; keys?: string[] }
   | { type: "previewFailed"; seq: number; error: QuoteRefusal | Error }
-  | { type: "saveStarted" }
+  | { type: "saveStarted"; keys?: string[] }
   | { type: "saveDone"; version: number; computed: Computed; at: number }
   | { type: "saveFailed"; error: QuoteRefusal | Error }
   | { type: "reset"; workspace: QuoteWorkspace };
@@ -81,6 +86,29 @@ const EMPTY_DRAFT: QuoteDraft = {
  * typed price, type, ids, line note) and a blank recipient name are sent as none: the API refuses
  * "" for a decimal, an enum or a UUID, and strips whitespace before refusing an empty text.
  */
+let uidSeq = 0;
+/** A new line identity, unique in this page's life. */
+export function newLineUid(): string {
+  uidSeq += 1;
+  return `line-${uidSeq}`;
+}
+
+/** The draft with a uid on every line (a line that has one keeps it). */
+export function withUids(draft: QuoteDraft): QuoteDraft {
+  if (draft.items.every((i) => i.uid)) return draft;
+  return { ...draft, items: draft.items.map((i) => (i.uid ? i : { ...i, uid: newLineUid() })) };
+}
+
+export const lineUids = (draft: QuoteDraft): string[] => draft.items.map((i) => i.uid ?? "");
+
+/** The priced line of the row with this uid, from the draft `computed` priced (by `keys`); null when it was not priced. */
+export function computedLineFor(computed: Computed | null, keys: string[], uid: string | undefined): ComputedLine | null {
+  if (!computed || !uid) return null;
+  const at = keys.indexOf(uid);
+  if (at < 0) return null;
+  return computed.lines.find((l) => l.line_no === at + 1) ?? null;
+}
+
 export function sendableDraft(draft: QuoteDraft & { recipient_participant_id?: string | null }): QuoteDraft {
   const { recipient_participant_id: legacy, ...rest } = draft;
   let recipient = rest.recipient ?? (legacy ? { participant_id: legacy } : null);
@@ -108,7 +136,8 @@ const OPTIONAL_ITEM_FIELDS = [
 ] as const;
 
 function clearBlankOptionals(item: QuoteDraftItem): QuoteDraftItem {
-  let out = item;
+  const { uid: _uid, input_problems: _typed, ...sent } = item;
+  let out: QuoteDraftItem = sent;
   for (const key of OPTIONAL_ITEM_FIELDS) {
     const value = item[key];
     if (typeof value === "string" && !value.trim()) out = { ...out, [key]: null };
@@ -118,10 +147,13 @@ function clearBlankOptionals(item: QuoteDraftItem): QuoteDraftItem {
 
 export function initialDraftState(workspace: QuoteWorkspace): DraftEditorState {
   const cur = workspace.current;
+  const draft = withUids(sendableDraft(cur?.draft ?? EMPTY_DRAFT));
   return {
-    draft: sendableDraft(cur?.draft ?? EMPTY_DRAFT),
+    draft,
     version: cur?.version ?? 0,
     computed: cur?.computed ?? null,
+    computedKeys: lineUids(draft),
+    savingKeys: null,
     saveState: "idle",
     lastSavedAt: null,
     error: null,
@@ -147,12 +179,18 @@ export function draftReducer(state: DraftEditorState, action: DraftAction): Draf
       return action.seq > state.previewSeq ? { ...state, previewSeq: action.seq } : state;
     case "previewDone":
       if (action.seq < state.previewSeq || action.draftSeq < state.computedSeq) return state;
-      return { ...state, computed: action.computed, computedSeq: action.draftSeq, previewError: null };
+      return {
+        ...state,
+        computed: action.computed,
+        computedKeys: action.keys ?? state.computedKeys,
+        computedSeq: action.draftSeq,
+        previewError: null,
+      };
     case "previewFailed":
       if (action.seq < state.previewSeq) return state;
       return { ...state, previewError: action.error };
     case "saveStarted":
-      return { ...state, saveState: "saving", savingSeq: state.editSeq, error: null };
+      return { ...state, saveState: "saving", savingSeq: state.editSeq, savingKeys: action.keys ?? null, error: null };
     case "saveDone": {
       // The response priced the draft as it was sent: it replaces what is shown unless that
       // already prices a newer draft (a preview of a later edit). Edits since keep it dirty.
@@ -162,15 +200,23 @@ export function draftReducer(state: DraftEditorState, action: DraftAction): Draf
         ...state,
         version: action.version,
         computed: newer ? action.computed : state.computed,
+        computedKeys: newer ? (state.savingKeys ?? state.computedKeys) : state.computedKeys,
         computedSeq: newer ? pricedSeq : state.computedSeq,
         saveState: pricedSeq === state.editSeq ? "saved" : "dirty",
         lastSavedAt: action.at,
         savingSeq: null,
+        savingKeys: null,
         error: null,
       };
     }
     case "saveFailed":
-      return { ...state, saveState: isConflict(action.error) ? "conflict" : "error", error: action.error, savingSeq: null };
+      return {
+        ...state,
+        saveState: isConflict(action.error) ? "conflict" : "error",
+        error: action.error,
+        savingSeq: null,
+        savingKeys: null,
+      };
     case "reset":
       return initialDraftState(action.workspace);
   }
@@ -191,6 +237,7 @@ export function addCatalogItem(draft: QuoteDraft, hit: IndexItem): QuoteDraft {
     margin_mode: "markup",
     margin_pct: null,
     is_principal: false,
+    uid: newLineUid(),
   };
   return { ...draft, items: [...draft.items, item] };
 }
@@ -205,6 +252,7 @@ export function addFreeLine(draft: QuoteDraft): QuoteDraft {
     margin_mode: "markup",
     margin_pct: null,
     is_principal: false,
+    uid: newLineUid(),
   };
   return { ...draft, items: [...draft.items, item] };
 }
@@ -341,7 +389,7 @@ export function draftProblems(draft: QuoteDraft): DraftProblem[] {
     const n = i + 1;
     if (blank(item.description)) add("items.description", `Escribe la descripción de la línea ${n}.`, i);
     else if (tooLong(item.description, 500)) add("items.description", `La descripción de la línea ${n} es demasiado larga (máximo 500).`, i);
-    add("items.quantity", decimalProblem(item.quantity, "la cantidad", { minExclusive: true, max: 100000 }), i);
+    add("items.quantity", item.input_problems?.quantity ?? decimalProblem(item.quantity, "la cantidad", { minExclusive: true, max: 100000 }), i);
     const hasCost = !blank(item.unit_cost);
     if (hasCost !== !!item.cost_currency) add("items.unit_cost", `Indica el costo y su moneda juntos (línea ${n}).`, i);
     else if (hasCost) add("items.unit_cost", decimalProblem(item.unit_cost, "el costo"), i);

@@ -20,7 +20,7 @@ import type { OpportunityCardData } from "../crmTypes";
 import { ageTone, contactLine, conversation, displayName, quoteProduct } from "../caseDisplay";
 import { AGE_BUCKETS, BOARD_COLUMNS, activityTimestamp, ageBucket, boardColumnOf, byLatestActivity, pausedUntil, type BoardColumnKey } from "../stage";
 import { fmtDate } from "../ui";
-import { formatMoney } from "./CaseQuotes";
+import { formatMoney } from "../money";
 
 export type BoardSort = "recent" | "oldest" | "replied" | "name";
 

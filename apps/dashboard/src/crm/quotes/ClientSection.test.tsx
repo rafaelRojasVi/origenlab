@@ -23,7 +23,7 @@ function ws(over: Partial<QuoteWorkspace["case"]> = {}): QuoteWorkspace {
   };
 }
 
-function setup(workspace = ws(), initial: QuoteDraft = draftFixture(), disabled = false) {
+function setup(workspace = ws(), initial: QuoteDraft = draftFixture(), disabled = false, refusal: string | null = null) {
   const latest: { draft: QuoteDraft } = { draft: initial };
   function Harness() {
     const [draft, setDraft] = useState(initial);
@@ -34,6 +34,7 @@ function setup(workspace = ws(), initial: QuoteDraft = draftFixture(), disabled 
         draft={draft}
         invalid={draftProblems(draft)}
         disabled={disabled}
+        refusal={refusal}
         edit={(fn) => setDraft((d) => fn(d))}
       />
     );
@@ -76,6 +77,9 @@ describe("ClientSection", () => {
     const email = screen.getByLabelText("Correo");
     fireEvent.change(email, { target: { value: "otra@" } });
     expect(latest.draft.recipient).toEqual({ email: "otra@", name: null });
+    // Not while typing: only once the field has content and loses the focus.
+    expect(screen.queryByText("El correo del destinatario no es válido.")).not.toBeInTheDocument();
+    fireEvent.blur(email);
     expect(screen.getByText("El correo del destinatario no es válido.")).toBeInTheDocument();
     fireEvent.change(email, { target: { value: "otra@ejemplo.cl" } });
     fireEvent.change(screen.getByLabelText("Nombre (opcional)"), { target: { value: "Otra Persona" } });
@@ -109,5 +113,26 @@ describe("ClientSection", () => {
   it("locks the pick while the editor is frozen", () => {
     setup(ws(), draftFixture(), true);
     expect(screen.getByLabelText("Para")).toBeDisabled();
+  });
+
+  it("does not jump to a contact while an address is typed", () => {
+    const latest = setup();
+    fireEvent.change(screen.getByLabelText("Para"), { target: { value: "other" } });
+    fireEvent.change(screen.getByLabelText("Correo"), { target: { value: "compras@ejemplo.cl" } });
+    expect(screen.getByLabelText("Para")).toHaveValue("other");
+    expect(screen.getByLabelText("Correo")).toHaveValue("compras@ejemplo.cl");
+    expect(latest.draft.recipient).toEqual({ email: "compras@ejemplo.cl", name: null });
+  });
+
+  it("says nothing about an empty address left behind", () => {
+    setup();
+    fireEvent.change(screen.getByLabelText("Para"), { target: { value: "other" } });
+    fireEvent.blur(screen.getByLabelText("Correo"));
+    expect(screen.queryByText("El correo del destinatario no es válido.")).not.toBeInTheDocument();
+  });
+
+  it("shows why the server refused the recipient", () => {
+    setup(ws(), { ...draftFixture(), recipient: { participant_id: "pa-1" } }, false, "Esa dirección es de OrigenLab.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Esa dirección es de OrigenLab.");
   });
 });

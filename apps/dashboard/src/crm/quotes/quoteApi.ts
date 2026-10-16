@@ -38,6 +38,13 @@ export interface QuoteDraftItem {
   typed_unit_price?: Decimal | null;
   is_principal?: boolean;
   line_note_es?: string | null;
+  /**
+   * Client-only, never sent (`sendableDraft` strips them; the API forbids extra fields): the line's
+   * identity in the editor, which ties it to its priced line, and what the operator typed that
+   * cannot be read (shown as the field's problem; nothing is sent while it stands).
+   */
+  uid?: string;
+  input_problems?: { quantity?: string };
 }
 
 export interface QuoteDraftExpense {

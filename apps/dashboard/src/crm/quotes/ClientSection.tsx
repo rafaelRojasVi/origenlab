@@ -6,7 +6,9 @@
  * case's emails) or «Otro correo…», a typed address with an optional name. The API takes exactly
  * one of participant / person / contact point / email, and a name only with an email; the pick
  * sent follows that rule. Whether an address may receive quotes (OrigenLab's own, Labdelivery) is
- * the server's to say.
+ * the server's to say: its refusal (`refusal`) shows under «Para». While an address is typed the
+ * pick stays «Otro correo…» even when it matches a contact, and «no válido» waits until the field
+ * has content and loses the focus.
  */
 import { useId, useState } from "react";
 import type { DraftProblem } from "./draftEditor";
@@ -44,25 +46,38 @@ export function ClientSection({
   draft,
   invalid,
   disabled,
+  refusal = null,
   edit,
 }: {
   workspace: QuoteWorkspace;
   draft: QuoteDraft;
   invalid: DraftProblem[];
   disabled: boolean;
+  /** Why the server refused the last save's recipient, verbatim; null when it did not. */
+  refusal?: string | null;
   edit: (fn: (draft: QuoteDraft) => QuoteDraft) => void;
 }) {
   const ids = useId();
   const { institution, contacts, lo_que_pidio } = workspace.case;
   const [typing, setTyping] = useState(false);
+  const [emailLeft, setEmailLeft] = useState(false);
   const recipient = draft.recipient ?? null;
 
   const matched = recipient ? contacts.findIndex((c) => samePick(pickOf(c), recipient)) : -1;
-  const value =
-    matched >= 0 ? String(matched) : recipient?.email !== undefined && recipient?.email !== null ? OTHER : recipient ? SAVED : typing ? OTHER : "";
-  const emailProblem = invalid.find((p) => p.field === "recipient.email")?.message_es ?? null;
+  const value = typing
+    ? OTHER
+    : matched >= 0
+      ? String(matched)
+      : recipient?.email !== undefined && recipient?.email !== null
+        ? OTHER
+        : recipient
+          ? SAVED
+          : "";
+  const typedEmail = (recipient?.email ?? "").trim();
+  const emailProblem = emailLeft && typedEmail ? (invalid.find((p) => p.field === "recipient.email")?.message_es ?? null) : null;
 
   function choose(v: string) {
+    setEmailLeft(false);
     if (v === OTHER) {
       setTyping(true);
       edit((d) => setRecipient(d, null));
@@ -126,6 +141,7 @@ export function ClientSection({
                 disabled={disabled}
                 aria-invalid={emailProblem ? true : undefined}
                 onChange={(e) => typeAddress(e.target.value, recipient?.name ?? "")}
+                onBlur={() => setEmailLeft(true)}
                 placeholder="nombre@institucion.cl"
                 className={FIELD_CLS}
               />
@@ -145,6 +161,11 @@ export function ClientSection({
             </div>
             {emailProblem ? <p className="text-[12px] text-bad">{emailProblem}</p> : null}
           </div>
+        ) : null}
+        {refusal ? (
+          <p role="alert" className="mt-1 text-[12.5px] text-bad">
+            {refusal}
+          </p>
         ) : null}
       </div>
 

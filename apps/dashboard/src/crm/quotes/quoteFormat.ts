@@ -4,8 +4,6 @@
  * as a percentage; a typed percentage becomes the API's ratio by moving the decimal point in the
  * string, so «45,5» is exactly "0.455".
  */
-import { parseAmount } from "../fx";
-
 /** «28,6 %» from "0.2857": es-CL, one decimal. Null when there is nothing to show. */
 export function formatPct(ratio: string | null | undefined): string | null {
   if (ratio == null || ratio === "") return null;
@@ -52,15 +50,37 @@ export function percentTextToDecimal(text: string): string | null {
   return shiftPoint(t, -2) ?? text.trim();
 }
 
-/** A typed price («1.500.000», «$ 1.500.000», «1500000») as a decimal string; null when empty. */
-export function priceTextToDecimal(text: string): string | null {
-  const t = text.trim();
-  if (!t) return null;
-  const n = parseAmount(t);
-  return n === null ? t : String(n);
+const MONEY_PREFIX = /^(clp|usd|eur|us\$|€|\$)/i;
+
+/**
+ * A typed amount («1.500.000», «$ 1.500.000», «€ 6.900,50», «1299.75») as a decimal string, read
+ * as text (no float): a comma is the decimal mark and dots before it group thousands; with no
+ * comma, dots in groups of three are thousands, and a single other dot is the decimal mark.
+ * Null when empty; anything else goes through as typed, for the editor's check to name.
+ */
+export function amountTextToDecimal(text: string): string | null {
+  const raw = text.trim();
+  if (!raw) return null;
+  const s = raw.replace(/\s+/g, "").replace(MONEY_PREFIX, "");
+  let out: string | null = null;
+  if (/^(\d{1,3}(\.\d{3})+|\d+),\d+$/.test(s)) out = s.replace(/\./g, "").replace(",", ".");
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) out = s.replace(/\./g, "");
+  else if (/^\d+(\.\d+)?$/.test(s)) out = s;
+  return out === null ? raw : out.replace(/^0+(?=\d)/, "");
 }
 
-/** A typed quantity: a decimal comma becomes the API's point. Empty stays empty (the editor asks for it). */
-export function quantityTextToDecimal(text: string): string {
-  return text.trim().replace(",", ".");
+/** A typed price in the quote's currency: see `amountTextToDecimal`. */
+export const priceTextToDecimal = amountTextToDecimal;
+
+/**
+ * A typed quantity: a decimal comma becomes the API's point. «1.000» (a dot and exactly three
+ * digits) may be a thousand written the Chilean way or one with three decimals; it is not guessed —
+ * `problem` asks. Empty stays empty (the editor asks for it).
+ */
+export function readQuantity(text: string): { value: string; problem: string | null } {
+  const t = text.trim();
+  if (/^\d{1,3}(\.\d{3})+$/.test(t)) {
+    return { value: t, problem: `Usa coma para decimales (1,5) — ¿quisiste decir ${t.replace(/\./g, "")}?` };
+  }
+  return { value: t.replace(",", "."), problem: null };
 }

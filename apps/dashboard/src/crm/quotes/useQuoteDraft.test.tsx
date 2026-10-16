@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { addFreeLine, updateItem } from "./draftEditor";
+import { addFreeLine, removeItem, updateItem } from "./draftEditor";
 import { QuoteRefusal, type Computed, type QuoteDraft, type QuoteWorkspace } from "./quoteApi";
 import { computedFixture, workspaceFixture } from "./quoteFixtures";
 import { PREVIEW_DELAY_MS, SAVE_DELAY_MS, useQuoteDraft, type QuoteDraftApi } from "./useQuoteDraft";
@@ -539,5 +539,27 @@ describe("useQuoteDraft — retry and reload", () => {
     await advance(SAVE_DELAY_MS);
     expect(saves).toHaveLength(2);
     expect(saves[1].args[1]).toBe(8);
+  });
+});
+
+describe("useQuoteDraft — rows and their prices", () => {
+  it("says the prices are stale from an edit until a preview of that edit answers, and keeps the keys it priced", async () => {
+    const { hook, previews, edit } = setup();
+    const before = hook.result.current.state.draft.items.map((i) => i.uid);
+    expect(hook.result.current.stale).toBe(false);
+    edit((d) => removeItem(d, 0));
+    expect(hook.result.current.stale).toBe(true);
+    await advance(PREVIEW_DELAY_MS);
+    expect(previews[0].draft.items.some((i) => "uid" in i)).toBe(false);
+    await act(async () => previews[0].d.resolve({ computed: computedFixture("9") }));
+    await settle();
+    expect(hook.result.current.stale).toBe(false);
+    expect(hook.result.current.state.computedKeys).toEqual([before[1]]);
+  });
+
+  it("gives a line added without a uid one", () => {
+    const { hook, edit } = setup();
+    edit((d) => ({ ...d, items: [...d.items, { description: "x", quantity: "1", margin_mode: "markup" }] }));
+    expect(typeof hook.result.current.state.draft.items[2].uid).toBe("string");
   });
 });

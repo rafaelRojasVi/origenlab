@@ -2,7 +2,7 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { OpportunityCardData, QuoteContents, RevisionCard } from "../crmTypes";
-import { CaseLinks, CaseMoneySummary, QuoteList, formatMoney } from "./CaseQuotes";
+import { CaseLinks, CaseMoneySummary, QuoteList } from "./CaseQuotes";
 
 // Every value below is invented; the repository is public.
 const CONTENTS: QuoteContents = {
@@ -52,15 +52,6 @@ function card(over: Partial<OpportunityCardData> = {}): OpportunityCardData {
     ...over,
   } as OpportunityCardData;
 }
-
-describe("formatMoney", () => {
-  it("groups pesos without decimals and other currencies with two", () => {
-    expect(formatMoney("1190000", "CLP")).toBe("$ 1.190.000");
-    expect(formatMoney("1299.75", "USD")).toBe("US$ 1.299,75");
-    expect(formatMoney(null, "CLP")).toBeNull();
-    expect(formatMoney("no", "CLP")).toBeNull();
-  });
-});
 
 describe("case panel money and quotations", () => {
   it("shows the quotation's neto large with IVA, total and when it was sent", () => {

@@ -1,6 +1,6 @@
 /**
  * The Cotizador header's autosave line (canvas «guardado automáticamente hace 4 s»): saved and
- * how long ago, saving, edits waiting, or a failed save with «Reintentar». A conflict says nothing
+ * how long ago, saving, edits waiting, or a failed save with its reason and «Reintentar». A conflict says nothing
  * here: the page shows its banner instead.
  */
 import { useEffect, useState } from "react";
@@ -30,12 +30,15 @@ export function SaveStatus({
   lastSavedAt,
   onRetry,
   incomplete = false,
+  message = null,
 }: {
   saveState: SaveState;
   lastSavedAt: number | null;
   onRetry: () => void;
   /** The draft has something to fill in first: nothing is saved until then. */
   incomplete?: boolean;
+  /** Why the save was refused (the API's words, or where to look); null for a plain failure. */
+  message?: string | null;
 }) {
   const ticking = saveState === "saved" && lastSavedAt !== null;
   const now = useNow(ticking);
@@ -46,7 +49,7 @@ export function SaveStatus({
   if (saveState === "error") {
     return (
       <span role="alert" className="text-[12.5px] text-bad">
-        no se pudo guardar ·{" "}
+        {message ? `no se pudo guardar: ${message}` : "no se pudo guardar"} ·{" "}
         <button type="button" onClick={onRetry} className="font-semibold text-brand-700 underline hover:text-brand-900">
           Reintentar
         </button>

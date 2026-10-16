@@ -3,16 +3,21 @@
  * draft (quantity, recargo, a typed price, a free line's description, the client note); every
  * number shown is the API's `computed` line, only formatted. Typing a price prices the line by
  * hand (`margin_mode: "none"`, «por precio»); «volver a recargo» goes back to the recargo it had.
+ *
+ * A cost is typed (amount + currency) on a free line, on a catalog line the API found no cost for,
+ * or after «cambiar costo»; a typed cost replaces the catalog's (`cost_observation_id` cleared) and
+ * «usar costo del catálogo» drops it. While the prices are for an older draft (`stale`), the
+ * numbers are dimmed and marked busy.
  */
 import { useEffect, useRef, useState } from "react";
-import { formatMoney } from "../pages/CaseQuotes";
+import { formatMoney } from "../money";
 import type { DraftProblem } from "./draftEditor";
 import type { ComputedLine, QuoteDraftItem } from "./quoteApi";
-import { decimalToPercentText, formatPct, percentTextToDecimal, priceTextToDecimal, quantityTextToDecimal } from "./quoteFormat";
+import { amountTextToDecimal, decimalToPercentText, formatPct, percentTextToDecimal, priceTextToDecimal, readQuantity } from "./quoteFormat";
 import { ProductImage } from "../catalog/ProductImage";
 
 /** Product · Cant. · Costo unit. · Recargo · Precio unit. · Total · Margen · menu. */
-export const GRID_FULL = "grid-cols-[minmax(0,1fr)_72px_132px_104px_140px_140px_96px_40px]";
+export const GRID_FULL = "grid-cols-[minmax(0,1fr)_72px_176px_104px_140px_140px_96px_40px]";
 /** «Vista cliente»: no cost, recargo or margin. */
 export const GRID_CLIENT = "grid-cols-[minmax(0,1fr)_72px_140px_140px_40px]";
 
@@ -83,6 +88,64 @@ function NumberInput({
   );
 }
 
+const COST_CURRENCIES = ["CLP", "EUR", "USD"] as const;
+type CostCurrency = (typeof COST_CURRENCIES)[number];
+const asCurrency = (c: string | null | undefined): CostCurrency | null =>
+  (COST_CURRENCIES as readonly string[]).includes(c ?? "") ? (c as CostCurrency) : null;
+
+/** A typed cost: the amount and its currency go together (the API refuses one without the other). */
+function CostInputs({
+  n,
+  item,
+  line,
+  disabled,
+  onPatch,
+}: {
+  n: number;
+  item: QuoteDraftItem;
+  line: ComputedLine | null;
+  disabled: boolean;
+  onPatch: (patch: Partial<QuoteDraftItem>) => void;
+}) {
+  const [picked, setPicked] = useState<CostCurrency>(asCurrency(item.cost_currency) ?? asCurrency(line?.cost_currency) ?? "CLP");
+  const currency = asCurrency(item.cost_currency) ?? picked;
+  const amount = item.unit_cost ?? "";
+  return (
+    <span className="flex items-center gap-1">
+      <span className="min-w-0 flex-1">
+        <NumberInput
+          label={`Costo unitario de la línea ${n}`}
+          display={amount ? (formatMoney(amount, currency) ?? amount) : ""}
+          editValue={amount}
+          placeholder="costo"
+          disabled={disabled}
+          onChange={(t) => {
+            const value = amountTextToDecimal(t);
+            onPatch(value === null ? { unit_cost: null, cost_currency: null } : { unit_cost: value, cost_currency: currency, cost_observation_id: null });
+          }}
+        />
+      </span>
+      <select
+        aria-label={`Moneda del costo de la línea ${n}`}
+        value={currency}
+        disabled={disabled}
+        onChange={(e) => {
+          const next = e.target.value as CostCurrency;
+          setPicked(next);
+          if (item.unit_cost) onPatch({ cost_currency: next, cost_observation_id: null });
+        }}
+        className="h-8 w-[58px] shrink-0 rounded-md border border-line-strong bg-canvas-raised px-1 text-[12.5px] text-ink focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:opacity-50"
+      >
+        {COST_CURRENCIES.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
 const qtyText = (q: string) => {
   const n = Number(q);
   return q.trim() && Number.isFinite(n) ? n.toLocaleString("es-CL", { maximumFractionDigits: 6, useGrouping: false }) : q;
@@ -96,6 +159,7 @@ export function LineRow({
   currency,
   problems,
   clientView,
+  stale,
   disabled,
   focusDescription,
   onPatch,
@@ -110,6 +174,8 @@ export function LineRow({
   currency: string;
   problems: DraftProblem[];
   clientView: boolean;
+  /** The prices shown are for an older draft: dimmed and marked busy until the API answers. */
+  stale: boolean;
   disabled: boolean;
   /** A new free line: put the cursor in its description. */
   focusDescription: boolean;
@@ -123,6 +189,7 @@ export function LineRow({
   const principal = line ? line.is_principal : !!item.is_principal;
   const [menu, setMenu] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
+  const [costOpen, setCostOpen] = useState(false);
   const description = useRef<HTMLInputElement>(null);
   const note = useRef<HTMLTextAreaElement>(null);
   const menuBox = useRef<HTMLDivElement>(null);
@@ -163,6 +230,10 @@ export function LineRow({
   const rowProblems = problems.filter((p) => p.field.startsWith("items."));
   const showNote = noteOpen || !!item.line_note_es;
   const recargoDefault = item.margin_pct ? undefined : decimalToPercentText(line?.margin_pct) || undefined;
+  const typedCost = item.unit_cost != null || item.cost_currency != null;
+  const costInputs = free || typedCost || costOpen || (line !== null && !line.cost_currency);
+  const busy = stale ? { "aria-busy": true as const } : {};
+  const dim = stale ? " opacity-50" : "";
 
   return (
     <div role="row" aria-label={`Línea ${n}: ${item.description || "sin descripción"}`} className="border-b border-line/70">
@@ -187,15 +258,15 @@ export function LineRow({
                 {item.description}
               </span>
             )}
-            {product?.code || product?.supplier || free ? (
+            {product?.code || (product?.supplier && !clientView) || free ? (
               <span className="truncate text-[12.5px] text-ink-muted">
                 {product?.code ? <span className="font-mono">{product.code}</span> : null}
-                {product?.code && product?.supplier ? " · " : null}
-                {product?.supplier ?? null}
+                {product?.code && product?.supplier && !clientView ? " · " : null}
+                {clientView ? null : (product?.supplier ?? null)}
                 {free && !product?.code ? "Línea libre (sin catálogo)" : null}
               </span>
             ) : null}
-            {principal ? (
+            {principal && !clientView ? (
               <span className="self-start rounded-md bg-brand-50 px-1.5 py-0.5 text-[11.5px] font-semibold text-brand-700">
                 Equipo principal · absorbe los gastos
               </span>
@@ -209,19 +280,48 @@ export function LineRow({
             display={qtyText(item.quantity)}
             editValue={qtyText(item.quantity)}
             disabled={disabled}
-            onChange={(t) => onPatch({ quantity: quantityTextToDecimal(t) })}
+            onChange={(t) => {
+              const { value, problem } = readQuantity(t);
+              onPatch({ quantity: value, input_problems: problem ? { quantity: problem } : undefined });
+            }}
           />
         </div>
 
         {clientView ? null : (
-          <div role="cell" className="flex flex-col items-end gap-0.5 text-right">
-            {line?.unit_cost ? (
+          <div role="cell" {...busy} className="flex flex-col items-end gap-0.5 text-right">
+            {costInputs ? (
               <>
-                <span className="font-mono text-[13.5px] tabular-nums text-ink">{money(line.unit_cost, line.cost_currency)}</span>
-                {costClp ? <span className="text-xs tabular-nums text-ink-muted">{costClp}</span> : null}
+                <CostInputs n={n} item={item} line={line} disabled={disabled} onPatch={onPatch} />
+                {costClp && line?.unit_cost ? <span className={`text-xs tabular-nums text-ink-muted${dim}`}>{costClp}</span> : null}
+                {!free && (typedCost || costOpen) ? (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => {
+                      setCostOpen(false);
+                      onPatch({ unit_cost: null, cost_currency: null });
+                    }}
+                    className="text-[12px] font-semibold text-brand-700 hover:underline disabled:opacity-50"
+                  >
+                    usar costo del catálogo
+                  </button>
+                ) : null}
+              </>
+            ) : line?.unit_cost ? (
+              <>
+                <span className={`font-mono text-[13.5px] tabular-nums text-ink${dim}`}>{money(line.unit_cost, line.cost_currency)}</span>
+                {costClp ? <span className={`text-xs tabular-nums text-ink-muted${dim}`}>{costClp}</span> : null}
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setCostOpen(true)}
+                  className="text-[12px] font-semibold text-brand-700 hover:underline disabled:opacity-50"
+                >
+                  cambiar costo
+                </button>
               </>
             ) : (
-              <span className="text-[13px] text-ink-faint">{line ? "sin costo" : "—"}</span>
+              <span className="text-[13px] text-ink-faint">—</span>
             )}
           </div>
         )}
@@ -254,7 +354,7 @@ export function LineRow({
           </div>
         )}
 
-        <div role="cell">
+        <div role="cell" {...busy} className={dim.trim()}>
           <NumberInput
             label={`Precio unitario de la línea ${n}`}
             display={money(line?.unit_price) ?? (byPrice ? (money(item.typed_unit_price) ?? "") : "")}
@@ -264,12 +364,12 @@ export function LineRow({
           />
         </div>
 
-        <div role="cell" className="text-right font-mono text-[14px] font-medium tabular-nums text-ink">
+        <div role="cell" {...busy} className={`text-right font-mono text-[14px] font-medium tabular-nums text-ink${dim}`}>
           {money(line?.line_total) ?? <span className="text-ink-faint">—</span>}
         </div>
 
         {clientView ? null : (
-          <div role="cell" className="flex flex-col items-end gap-1">
+          <div role="cell" {...busy} className={`flex flex-col items-end gap-1${dim}`}>
             {line?.gross_margin ? <span className="font-mono text-[12.5px] tabular-nums text-ink">{formatPct(line.gross_margin)}</span> : null}
             {state ? (
               <span className={`inline-flex h-[22px] items-center rounded-full px-2 text-[12px] font-semibold ${state.cls}`}>{state.label}</span>

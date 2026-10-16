@@ -5,7 +5,9 @@ import {
   initialDraftState,
   isConflict,
   isEditable,
+  lineUids,
   sendableDraft,
+  withUids,
   type DraftEditorState,
   type DraftProblem,
 } from "./draftEditor";
@@ -66,6 +68,8 @@ export interface QuoteDraftEditor {
   state: DraftEditorState;
   /** An authored draft, not frozen by a conflict. */
   editable: boolean;
+  /** The prices shown are for an older draft (an edit since has not been priced yet). */
+  stale: boolean;
   /** What the API would refuse in the current draft; nothing is sent while this is not empty. */
   invalid: DraftProblem[];
   /** Edits not saved yet (dirty, saving, failed, in conflict or incomplete): guard navigation while true. */
@@ -132,7 +136,7 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
         const seq = editSeqRef.current;
         const key = keyRef.current?.seq === seq ? keyRef.current.key : newQuoteCommandKey();
         keyRef.current = { seq, key };
-        dispatch({ type: "saveStarted" });
+        dispatch({ type: "saveStarted", keys: lineUids(draftRef.current) });
         try {
           const res = await apiRef.current.saveQuoteDraft(revisionId, versionRef.current, sendableDraft(draftRef.current), key);
           if (gen !== genRef.current) return;
@@ -171,6 +175,7 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
     abortRef.current = ctrl;
     const seq = ++previewSeqRef.current;
     const draftSeq = editSeqRef.current;
+    const keys = lineUids(draftRef.current);
     const gen = genRef.current;
     const revisionId = workspaceRef.current.current?.id ?? "";
     dispatch({ type: "previewStarted", seq });
@@ -178,7 +183,7 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
       (res) => {
         if (gen !== genRef.current) return;
         if (abortRef.current === ctrl) abortRef.current = null;
-        dispatch({ type: "previewDone", seq, draftSeq, computed: res.computed });
+        dispatch({ type: "previewDone", seq, draftSeq, computed: res.computed, keys });
       },
       (e) => {
         if (gen !== genRef.current || ctrl.signal.aborted || isAbort(e)) return;
@@ -191,7 +196,7 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
   const edit = useCallback(
     (fn: (draft: QuoteDraft) => QuoteDraft) => {
       if (!editableRef.current || stoppedRef.current) return;
-      const next = fn(draftRef.current);
+      const next = withUids(fn(draftRef.current));
       draftRef.current = next;
       editSeqRef.current += 1;
       dispatch({ type: "edit", fn: () => next });
@@ -299,6 +304,7 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
   return {
     state,
     editable: isEditable(state.workspace) && state.saveState !== "conflict",
+    stale: state.computedSeq < state.editSeq,
     invalid,
     pending,
     edit,
