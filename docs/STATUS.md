@@ -2913,16 +2913,20 @@ an operator beyond the API and the Worker's allowlist.
 
 ### 2.7.122 The Cotizador screen (PR B: the dashboard editor), 2026-10-16 — built, deploys with the dashboard on merge; inactive in practice until `quote_number_seed` is set
 
-Stacked on PR #761 (§2.7.121): it needs those endpoints, so it merges after it. Dashboard only — no
-schema change.
+Stacked on PR #761 (§2.7.121): it needs those endpoints, so it merges after it. Dashboard, plus one
+API read change (the workspace's recipient candidates leave out automatic senders) — no schema change.
 The screen is `#/crm/cotizar/<quoteId>` ([`WORKFLOWS.md`](WORKFLOWS.md) §W3-Cotizador, «The screen»):
 Cliente (recipient picker), Productos (catalog search, kit and mention chips, free lines with a cost,
-markup or typed price, Vista cliente), Gastos de importación (Perfil, DHL, Manual), Condiciones, and a
-right rail with totals, the margin band, the exchange-rate override, Avisos and the price history. The
-draft autosaves 1.2 s after an edit and the preview recomputes 300 ms after one; a change by someone
-else shows «Otra persona cambió este borrador» with «Ver cambios»; an incomplete draft is held back
-with the reason in Spanish; approve saves first and lists every refusal; void takes a reason; an
-approved or sent revision opens read-only, with «Nueva revisión».
+markup or typed price, each line in two tiers so it fits beside the rail), Gastos de importación
+(Perfil, DHL, Manual), Condiciones, and a right rail with totals, the margin band, the exchange-rate
+override, Avisos and the price history (client types in Spanish). The draft autosaves 1.2 s after an
+edit and the preview recomputes 300 ms after one; a change by someone else shows «Otra persona cambió
+este borrador» with «Ver cambios», and a draft approved or voided in another tab freezes the same way
+(«Ver estado actual»); an incomplete draft is held back with the reason in Spanish; every refusal is
+said in Spanish by its code; approve saves first and lists its reasons; void takes a reason and saves
+the draft's pending edits first; an approved or sent revision opens read-only, with «Nueva revisión».
+«Vista cliente» is in the header, for the draft and an issued revision. Recipient candidates leave out
+automatic senders (no-reply, mailer-daemon, notifications, `*.google.com`).
 
 - **Entry points.** Hoy «Cotizar» / «Continuar cotización», the Solicitud card, and the case drawer
   («Nueva cotización», «Abrir borrador», «Abrir en Cotizador»). A case whose latest revision is an
