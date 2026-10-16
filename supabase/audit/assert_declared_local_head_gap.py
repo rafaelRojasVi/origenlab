@@ -64,6 +64,8 @@ EXPECTED_EXTRA_TABLES = {
     "product_document",
     # 20261015120000_slice7_case_memory.sql — DOMAIN.md §7 #58.
     "subject_memory",
+    # 20261016200000_slice7_catalog_product_model_alias.sql — DOMAIN.md §7 #59.
+    "product_model_alias",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -152,6 +154,10 @@ POST_SLICE0_FUNCTIONS = {
     # Same migration — the INVOKER trigger guard that freezes an authored revision once it is
     # approved, sent or void (WORKFLOWS §W3b; pgTAP: 097_quote_authoring.sql).
     "crm.quote_revision_authored_frozen",
+    # 20261016200000_slice7_catalog_product_model_alias.sql — the INVOKER trigger guard that keeps
+    # one active alias per maker and key, never a model of the same maker, and lets an alias change
+    # only by being retired once (pgTAP: 098_catalog_product_model_alias.sql).
+    "catalog.product_model_alias_guard",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
@@ -291,6 +297,12 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     # quote_line_supplier_organization_idx and quote_line_cost_observation_idx.
     "crm.quote_line.quote_line_supplier_organization_id_fkey",
     "crm.quote_line.quote_line_cost_observation_id_fkey",
+    # 20261016200000_slice7_catalog_product_model_alias.sql — all four covered by plain unconditional
+    # indexes: product_model_alias_{product,origin,created_by,retired_by}_idx.
+    "catalog.product_model_alias.product_model_alias_product_id_fkey",
+    "catalog.product_model_alias.product_model_alias_origin_source_record_id_fkey",
+    "catalog.product_model_alias.product_model_alias_created_by_operator_id_fkey",
+    "catalog.product_model_alias.product_model_alias_retired_by_operator_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -302,7 +314,7 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 # campaign-block keys, the eight sign-in keys, the sixteen slice-6 keys and the
 # ten slice-7 catalog and document-line keys by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 53
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 57
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -310,18 +322,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 55,
+        "relation_count": 56,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 54,
+        "table_count": 55,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 189,
+        "policy_count": 193,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -413,7 +425,7 @@ def main() -> int:
         refuse("a08 reports a table missing from current head")
 
     # Like a09 below, the audit lists at most twelve entries and then "...", and the
-    # twenty-one extra tables do not fit. What it names must all be reviewed
+    # twenty-two extra tables do not fit. What it names must all be reviewed
     # tables; only an untruncated list must name each of them, and a truncated
     # one must name exactly the twelve the audit prints — so a name the pattern
     # cannot read is refused rather than skipped. The exact count bounds what the
@@ -435,10 +447,10 @@ def main() -> int:
     if unreviewed_tables:
         refuse(f"a08 names unreviewed tables: {unreviewed_tables!r}")
 
-    if "21 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly twenty-one extra tables")
+    if "22 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly twenty-two extra tables")
 
-    # The 64 policy additions must belong to those same twenty-one reviewed tables, plus one on an
+    # The 68 policy additions must belong to those same twenty-two reviewed tables, plus one on an
     # existing table (crm.quote_line, below):
     # four each for the three commercial-case tables and campaign_block (api
     # select/insert/update, worker select), one each for auth_principal and
@@ -454,8 +466,9 @@ def main() -> int:
     # triage_review (api select, insert; worker select) and four for opportunity_document
     # (api select/insert/update, worker select; 20261012120000), three for product_document
     # (api select/insert/update; 20261013120000), three for subject_memory (api select; worker
-    # select/insert; 20261015120000) and one delete on quote_line (api; 20261016100000 — an existing
-    # Slice 0 table, so it is the one entry not on a reviewed new table).
+    # select/insert; 20261015120000), one delete on quote_line (api; 20261016100000 — an existing
+    # Slice 0 table, so it is the one entry not on a reviewed new table) and four for
+    # product_model_alias (api select/insert/update, worker select; 20261016200000).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -477,8 +490,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "64 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly sixty-four extra policies")
+    if "68 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly sixty-eight extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -502,7 +515,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 55, expected 34"],
+        "a04": ["relations in scope: observed 56, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "

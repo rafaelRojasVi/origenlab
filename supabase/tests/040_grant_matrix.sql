@@ -157,9 +157,13 @@ insert into expected values
     -- 20261015120000: evidence.subject_memory — append-only machine memory per case/org/person:
     -- the worker inserts new versions and reads; the api reads for the /memory endpoint.
     ('evidence', 'subject_memory', 'origenlab_api', 'S', null, 'S'),
-    ('evidence', 'subject_memory', 'origenlab_worker', 'SI', null, 'SI');
+    ('evidence', 'subject_memory', 'origenlab_worker', 'SI', null, 'SI'),
+    -- 20261016200000: catalog.product_model_alias — api reads, adds and retires (only the two
+    -- retirement columns); the worker reads (the mail triage matches models by alias).
+    ('catalog', 'product_model_alias', 'origenlab_api', 'SI', array['retired_at', 'retired_by_operator_id'], 'SIU'),
+    ('catalog', 'product_model_alias', 'origenlab_worker', 'S', null, 'S');
 
-select is((select count(*)::int from expected), 108, 'the matrix covers all 54 tables for both runtime roles');
+select is((select count(*)::int from expected), 110, 'the matrix covers all 55 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

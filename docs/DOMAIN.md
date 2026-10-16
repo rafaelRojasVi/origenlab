@@ -1196,8 +1196,29 @@ integer from 1 to 99999 is refused too. With no seed set, creating a quote is re
 key on `quote_number` is the backstop. Revision 1 prints the number itself; revision 2 is `…A`, up to
 `…Z` (27).
 
+### 7.10 Model aliases — built 2026-10-16
+
+A quote line or an email names a model as it is printed («XQ100»), while the catalog may store the
+maker's item number as `model_number` («30000001») or another spelling, so `model_key` equality
+missed the link. Migration `20261016200000_slice7_catalog_product_model_alias.sql`.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 59 | `catalog.product_model_alias` | another name a product's model is printed under | `alias_key` is the `model_key` normalisation of `alias` (generated, same expression); at most one **active** alias per maker and key — two makers may share a printed code, one maker never maps one alias to two products; never equal to a `model_key` of the same maker; `source ∈ {import, operator}`, `import` ⇔ the manifest in `origin_source_record_id`; never deleted or rewritten — retired once (`retired_at`, `retired_by_operator_id`); trigger `product_model_alias_guard` (SECURITY INVOKER) under a per-(maker, key) advisory lock; `origenlab_api` select/insert/update (retirement columns only), `origenlab_worker` select |
+
+**Reads.** Every read that links a line or a text to a product by model key also follows an active
+alias (`origenlab_api/v2/catalog/aliases.py`): catalog search, a product's price history, costs and
+kit suggestions, the Cotizador workspace's principal history and kits, data sheets matched by the
+documents importer, and the mail triage's product candidates (worker). A key that names more than one
+product through an alias (two makers, or the model of one and the alias of another) links to none of
+them through it; a product's own `model_key` reads as before. `evidence.document_line.model_key` is
+unchanged — the alias is resolved at read time.
+
+Domain events added: `product.model_alias_added` and `product.model_alias_retired` (aggregate
+`product`).
+
 Counts by schema: `crm` 22, `comms` 4, `outbound` 9, `evidence` 5,
-`catalog` 7, `procurement` 1, `platform` 6 — **54**.
+`catalog` 8, `procurement` 1, `platform` 6 — **55**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

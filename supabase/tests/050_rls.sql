@@ -238,9 +238,14 @@ insert into expected_policies values
     -- 20261015120000: evidence.subject_memory — append-only machine memory.
     ('evidence', 'subject_memory', 'origenlab_api',    'SELECT'),
     ('evidence', 'subject_memory', 'origenlab_worker', 'SELECT'),
-    ('evidence', 'subject_memory', 'origenlab_worker', 'INSERT');
+    ('evidence', 'subject_memory', 'origenlab_worker', 'INSERT'),
+    -- 20261016200000: catalog.product_model_alias — api reads, adds and retires; the worker reads.
+    ('catalog', 'product_model_alias', 'origenlab_api', 'SELECT'),
+    ('catalog', 'product_model_alias', 'origenlab_api', 'INSERT'),
+    ('catalog', 'product_model_alias', 'origenlab_api', 'UPDATE'),
+    ('catalog', 'product_model_alias', 'origenlab_worker', 'SELECT');
 
-select is((select count(*)::int from expected_policies), 189, 'the matrix implies 189 policies');
+select is((select count(*)::int from expected_policies), 193, 'the matrix implies 193 policies');
 
 -- Posture.
 select is(

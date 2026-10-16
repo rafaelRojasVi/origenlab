@@ -108,6 +108,7 @@ union all select 'evidence.triage_review', count(*)::text from evidence.triage_r
 union all select 'crm.opportunity_document', count(*)::text from crm.opportunity_document
 union all select 'catalog.product_document', count(*)::text from catalog.product_document
 union all select 'evidence.subject_memory', count(*)::text from evidence.subject_memory
+union all select 'catalog.product_model_alias', count(*)::text from catalog.product_model_alias
 ;
 
 commit;
