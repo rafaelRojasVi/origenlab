@@ -3,14 +3,15 @@ import { useAuthSession } from "../../context/AuthSessionContext";
 import { crmHash, type CrmSection } from "../crmRoute";
 import { REVISION_STATUS } from "../quotes/IssuedView";
 import { useMayOpenCotizador } from "../quotes/openOrCreateQuote";
-import { MAX_TABS, useQuoteTabs, type QuoteTab, type TabStatus, type TabsAsk } from "../quotes/tabStore";
-import { Button, EmptyState, Modal, Skeleton } from "../ui";
+import { QuoteListPane } from "../quotes/QuoteListPane";
+import { MAX_TABS, useQuoteTabs, type QuoteTab, type TabMeta, type TabStatus, type TabsAsk } from "../quotes/tabStore";
+import { Button, Modal, Skeleton } from "../ui";
 import { CotizadorPage, NoQuoteAccess } from "./CotizadorPage";
 
 /**
  * «Cotizador»: many quotes open at once, as tabs (R4), at `#/crm/cotizador[/<quoteId>]`.
  *
- * «Todas» comes first (the list of quotes; Task 4), then up to eight open quotes — each tab says
+ * «Todas» comes first (the list of quotes), then up to eight open quotes — each tab says
  * the quote's CN number, its client and its state (a dot: amber draft, green approved, blue sent,
  * grey voided) — then «+ Nueva» (the new-quote dialog; Task 5). The address names the tab shown:
  * a click on a tab, an entry point elsewhere («Cotizar» in Hoy, a request, a case) or the old
@@ -108,6 +109,14 @@ function CotizadorModule({ operatorId, routeId, navigate }: { operatorId: string
 
   const show = (id: string | null) => navigate("cotizador", id);
 
+  // A row of «Todas»: open (or show) its tab, with the label, client and state the row knows.
+  const openFromList = useCallback(
+    async (id: string, meta: TabMeta) => {
+      if (await open(id, meta)) showInAddress(peek().active);
+    },
+    [open, peek],
+  );
+
   // Arrows move between tabs (Home / End to the ends); Enter or Space shows one; Supr closes it.
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const list = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
@@ -163,7 +172,7 @@ function CotizadorModule({ operatorId, routeId, navigate }: { operatorId: string
       </div>
 
       <section role="tabpanel" id={panelDomId(null)} aria-labelledby={tabDomId(null)} hidden={state.active !== null}>
-        <AllQuotesPane />
+        <QuoteListPane active={state.active === null} onOpen={(id, meta) => void openFromList(id, meta)} />
       </section>
       {state.tabs.map((t) =>
         mounted.has(t.id) ? (
@@ -234,21 +243,6 @@ function TabChip({
       >
         <span aria-hidden="true">×</span>
       </button>
-    </div>
-  );
-}
-
-/** «Todas»: the list of quotes arrives with Task 4. */
-function AllQuotesPane() {
-  return (
-    <div className="space-y-[18px]">
-      <h1 className="text-2xl font-bold tracking-tight text-ink">Cotizaciones</h1>
-      <EmptyState title="La lista de cotizaciones llega en la siguiente entrega.">
-        Mientras tanto, abre una cotización desde Hoy, una solicitud o un caso: queda aquí como pestaña.
-      </EmptyState>
-      <p className="text-[12.5px] text-ink-muted">
-        Las pestañas quedan abiertas en este computador hasta que las cierres (hasta {MAX_TABS}); cada una guarda sola.
-      </p>
     </div>
   );
 }

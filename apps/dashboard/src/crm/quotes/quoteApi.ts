@@ -358,11 +358,12 @@ export function newQuoteCommandKey(): string {
     : `quote-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(operatorApiUrl(path), {
     method: "GET",
     credentials: "include",
     headers: { Accept: "application/json" },
+    signal,
   });
   if (!res.ok) throw await refusalOf(res);
   return (await res.json()) as T;
@@ -381,6 +382,45 @@ async function post<T>(path: string, body: unknown, idempotencyKey: string | nul
   });
   if (!res.ok) throw await refusalOf(res);
   return (await res.json()) as T;
+}
+
+/* ── GET /v2/quotes (the module's list) ───────────────────────────────────── */
+
+export type QuoteListStatus = "draft" | "approved" | "sent" | "all";
+
+/** One quote at its current revision. `status` is its bucket: an in-review revision is a draft. */
+export interface QuoteListRow {
+  quote_id: string;
+  quote_number: string;
+  /** The printed label («00042A-26»), or null for a historical number outside the series' form. */
+  label: string | null;
+  status: "draft" | "approved" | "sent" | "void";
+  /** `authored` here, `historical_import` for a quote brought in from before the app. */
+  origin: string;
+  opportunity: { id: string; title: string | null; closed: boolean };
+  client: { organization_id: string; name: string } | null;
+  items: { first: string[]; count: number };
+  grand_total: Decimal | null;
+  currency: string | null;
+  updated_at: string;
+}
+
+export interface QuoteListPage {
+  rows: QuoteListRow[];
+  /** How many quotes each status has under the same search (the filter does not narrow them). */
+  counts: { draft: number; approved: number; sent: number; void: number; all: number };
+  next_cursor: string | null;
+}
+
+/** One page of the list, newest first. A cursor the API did not give answers 422 `bad_cursor`. */
+export function fetchQuoteList(
+  { status, q, cursor, limit = 50 }: { status: QuoteListStatus; q?: string; cursor?: string | null; limit?: number },
+  signal?: AbortSignal,
+): Promise<QuoteListPage> {
+  const params = new URLSearchParams({ status, limit: String(limit) });
+  if (q) params.set("q", q);
+  if (cursor) params.set("cursor", cursor);
+  return get<QuoteListPage>(`/v2/quotes?${params.toString()}`, signal);
 }
 
 /* ── reads ────────────────────────────────────────────────────────────────── */

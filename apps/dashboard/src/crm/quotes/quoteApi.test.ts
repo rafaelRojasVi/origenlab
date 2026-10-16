@@ -6,6 +6,7 @@ import {
   approveQuoteRevision,
   createQuote,
   createQuoteRevision,
+  fetchQuoteList,
   fetchQuoteNumbering,
   fetchQuoteWorkspace,
   newQuoteCommandKey,
@@ -237,5 +238,34 @@ describe("refusals", () => {
     await fetchQuoteWorkspace(QUOTE_ID).catch(() => undefined);
     window.removeEventListener(SESSION_REFUSED_EVENT, heard);
     expect(heard).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the quote list", () => {
+  it("GETs a page with the status and limit, and the search and cursor only when given", async () => {
+    const calls = stub(() => json({ rows: [], counts: {}, next_cursor: null }));
+    await fetchQuoteList({ status: "draft" });
+    await fetchQuoteList({ status: "all", q: "balanza ñ&=", cursor: "abc.def" });
+    expect(calls[0].path).toBe("/v2/quotes");
+    expect(calls[0].init.method).toBe("GET");
+    expect(calls[0].init.credentials).toBe("include");
+    const urls = (fetch as unknown as { mock: { calls: [string][] } }).mock.calls.map(([u]) => new URL(u, "http://x"));
+    expect(urls[0].searchParams.get("status")).toBe("draft");
+    expect(urls[0].searchParams.get("limit")).toBe("50");
+    expect(urls[0].searchParams.has("q")).toBe(false);
+    expect(urls[0].searchParams.has("cursor")).toBe(false);
+    expect(urls[1].searchParams.get("status")).toBe("all");
+    expect(urls[1].searchParams.get("q")).toBe("balanza ñ&=");
+    expect(urls[1].searchParams.get("cursor")).toBe("abc.def");
+  });
+
+  it("passes the abort signal on, and raises the API's 422 bad_cursor as a refusal", async () => {
+    const controller = new AbortController();
+    const calls = stub(() => json({ error: { code: "bad_cursor", message: "that cursor is not one this list gave" } }, 422));
+    const err = await fetchQuoteList({ status: "sent", cursor: "forged" }, controller.signal).catch((e) => e);
+    expect(calls[0].init.signal).toBe(controller.signal);
+    expect(err).toBeInstanceOf(QuoteRefusal);
+    expect(err.status).toBe(422);
+    expect(err.code).toBe("bad_cursor");
   });
 });
