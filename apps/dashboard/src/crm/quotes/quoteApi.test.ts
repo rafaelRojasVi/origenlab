@@ -6,6 +6,7 @@ import {
   approveQuoteRevision,
   createQuote,
   createQuoteRevision,
+  fetchQuoteClients,
   fetchQuoteList,
   fetchQuoteNumbering,
   fetchQuoteWorkspace,
@@ -127,6 +128,16 @@ describe("commands", () => {
     expect(out.quote_number).toBe("00042-26");
   });
 
+  it("createQuote sends a client, the chosen case or a new one, with the given key", async () => {
+    const calls = stub(() => json({ quote_id: QUOTE_ID, quote_number: "00042-26", revision_id: REVISION_ID, version: 1, opportunity_id: CASE_ID }));
+    await createQuote({ client: { organization_id: CASE_ID }, opportunity_id: CASE_ID }, "key-c");
+    await createQuote({ client: { new_organization: { name: "Laboratorio Ejemplo", kind: "laboratory" } }, new_case: true }, "key-d");
+    expect(calls.map((c) => c.path)).toEqual(["/v2/commands/create-quote", "/v2/commands/create-quote"]);
+    expect(headerOf(calls[0].init, "Idempotency-Key")).toBe("key-c");
+    expect(bodyOf(calls[0].init)).toEqual({ client: { organization_id: CASE_ID }, opportunity_id: CASE_ID });
+    expect(bodyOf(calls[1].init)).toEqual({ client: { new_organization: { name: "Laboratorio Ejemplo", kind: "laboratory" } }, new_case: true });
+  });
+
   it("saveQuoteDraft sends revision, version and draft", async () => {
     const calls = stub(() => json(receipt));
     await saveQuoteDraft(REVISION_ID, 1, DRAFT, "key-2");
@@ -216,6 +227,15 @@ describe("refusals", () => {
     expect(err.validationErrors).toEqual(errors);
   });
 
+  it("keeps a command refusal's details, which sit next to its code", async () => {
+    const candidates = [{ id: CASE_ID, title: "Balanza analítica", stage: "qualifying", requested_at: null }];
+    stub(() => json({ detail: { candidates, code: "case_choice_needed", message: "elige uno" } }, 409));
+    const err = await createQuote({ client: { organization_id: CASE_ID } }, "k").catch((e) => e);
+    expect(err.code).toBe("case_choice_needed");
+    expect(err.message).toBe("elige uno");
+    expect(err.details).toEqual({ candidates });
+  });
+
   it("has no validation errors when the refusal carries none", async () => {
     stub(() => json({ detail: { code: "stale_version", message: "x" } }, 409));
     const err = await saveQuoteDraft(REVISION_ID, 1, DRAFT, "k").catch((e) => e);
@@ -267,5 +287,20 @@ describe("the quote list", () => {
     expect(err).toBeInstanceOf(QuoteRefusal);
     expect(err.status).toBe(422);
     expect(err.code).toBe("bad_cursor");
+  });
+});
+
+describe("the new-quote dialog's client suggestions", () => {
+  it("GETs them for the text typed, with the abort signal", async () => {
+    const controller = new AbortController();
+    const calls = stub(() => json({ organizations: [], people: [] }));
+    const out = await fetchQuoteClients("lab ñ&=", controller.signal);
+    expect(calls[0].path).toBe("/v2/quotes/clients");
+    expect(calls[0].init.method).toBe("GET");
+    expect(calls[0].init.credentials).toBe("include");
+    expect(calls[0].init.signal).toBe(controller.signal);
+    const url = new URL((fetch as unknown as { mock: { calls: [string][] } }).mock.calls[0][0], "http://x");
+    expect(url.searchParams.get("q")).toBe("lab ñ&=");
+    expect(out).toEqual({ organizations: [], people: [] });
   });
 });

@@ -24,11 +24,22 @@ const SPANISH: Record<string, string> = {
   bad_cursor: "La lista cambió; se volvió a cargar desde el inicio.",
   bad_status: "Ese estado de cotizaciones no existe.",
   role_may_not_view_costs: "Sólo ventas y administración pueden cotizar.",
+  // «Nueva cotización»: the client and its case.
+  case_choice_needed: "Este cliente tiene varios casos abiertos: elige uno, o abre una Solicitud nueva.",
+  case_not_of_client: "Ese caso no es de este cliente; elige otro.",
+  organization_name_ambiguous: "Hay varias instituciones con ese nombre: elige una de ellas.",
+  organization_not_found: "Esa institución ya no está en el CRM; búscala de nuevo.",
+  person_not_found: "Esa persona ya no está en el CRM; búscala de nuevo.",
+  contact_point_not_found: "Esa dirección ya no está en el CRM; búscala de nuevo.",
+  supplier_exception_required:
+    "OrigenLab le compra a esta institución (es proveedora o fabricante): su cotización se crea desde su caso, con la excepción justificada.",
+  client_changed_concurrently: "Los datos de este cliente cambiaron mientras se creaba la cotización; vuelve a intentarlo.",
+  query_too_short: "Escribe al menos dos letras para la búsqueda.",
   // «Para».
   recipient_unknown: "Esa persona o dirección ya no está en el CRM; elige otra.",
   recipient_not_on_case: "Esa persona ya no participa en el caso; elige otra.",
   contact_point_inactive: "Esa dirección está desactivada en el CRM; elige otra.",
-  archived_subject: "Esa persona está archivada; elige otra.",
+  archived_subject: "Esa persona o institución está archivada; elige otra.",
   recipient_changed_concurrently: "Cambió quién participa en el caso mientras se guardaba; vuelve a intentarlo.",
   recipient_own_address: "Esa dirección es de OrigenLab, no del cliente.",
   // Revisions.

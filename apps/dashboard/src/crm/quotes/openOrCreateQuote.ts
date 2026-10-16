@@ -104,9 +104,10 @@ const STILL_RUNNING = new Set(["command_in_progress", "idempotency_conflict"]);
 
 /**
  * The API answered for certain: a refusal of its own (4xx with a code). Anything else may have
- * run, and so may a create the API says is still in progress under this key.
+ * run, and so may a create the API says is still in progress under this key. «Nueva cotización»
+ * keeps its key by the same rule.
  */
-function definitive(e: unknown): boolean {
+export function definitive(e: unknown): boolean {
   return e instanceof QuoteRefusal && !!e.code && !STILL_RUNNING.has(e.code) && e.status >= 400 && e.status < 500;
 }
 

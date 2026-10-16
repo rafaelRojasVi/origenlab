@@ -318,8 +318,11 @@ function envelopeOf(raw: unknown): Envelope {
   const body = raw as { detail?: unknown; error?: unknown };
   for (const part of [body.detail, body.error]) {
     if (part && typeof part === "object" && "code" in part && (part as { code: unknown }).code) {
-      const { code, message, details } = part as { code: unknown; message?: unknown; details?: unknown };
-      const kept = details && typeof details === "object" && Object.keys(details).length > 0 ? (details as Record<string, unknown>) : null;
+      // A command's refusal puts its details next to the code (`{code, message, candidates}`); the
+      // Worker's and a 422's nest them under `details`. Both end up in `details`.
+      const { code, message, details, ...beside } = part as { code: unknown; message?: unknown; details?: unknown };
+      const merged = { ...beside, ...(details && typeof details === "object" ? (details as Record<string, unknown>) : {}) };
+      const kept = Object.keys(merged).length > 0 ? merged : null;
       return { code: String(code), message: typeof message === "string" ? message : null, details: kept };
     }
   }
@@ -423,6 +426,43 @@ export function fetchQuoteList(
   return get<QuoteListPage>(`/v2/quotes?${params.toString()}`, signal);
 }
 
+/* ── GET /v2/quotes/clients (the new-quote dialog's suggestions) ───────────── */
+
+/** An open case of a suggested client. `requested_at`: when its email came in, else when it was opened. */
+export interface QuoteClientCase {
+  id: string;
+  title: string | null;
+  stage: string;
+  requested_at: string | null;
+}
+
+export interface QuoteClientOrganization {
+  id: string;
+  name: string;
+  kind: string | null;
+  domains: string[];
+  open_cases: QuoteClientCase[];
+}
+
+/** A person (`person_id`), or an address with no person (`contact_point_id` only). */
+export interface QuoteClientPerson {
+  person_id: string | null;
+  contact_point_id: string | null;
+  name: string | null;
+  email: string | null;
+  organization: { id: string; name: string } | null;
+  open_cases: QuoteClientCase[];
+}
+
+export interface QuoteClientSuggestions {
+  organizations: QuoteClientOrganization[];
+  people: QuoteClientPerson[];
+}
+
+/** Up to eight institutions and eight people for `q` (two characters at least; shorter is 422 `query_too_short`). */
+export const fetchQuoteClients = (q: string, signal?: AbortSignal): Promise<QuoteClientSuggestions> =>
+  get<QuoteClientSuggestions>(`/v2/quotes/clients?${new URLSearchParams({ q }).toString()}`, signal);
+
 /* ── reads ────────────────────────────────────────────────────────────────── */
 
 export const fetchQuoteWorkspace = (quoteId: string): Promise<QuoteWorkspace> =>
@@ -436,11 +476,43 @@ export const previewQuote = (revisionId: string, draft: QuoteDraft, signal?: Abo
 
 /* ── commands ─────────────────────────────────────────────────────────────── */
 
-export const createQuote = (
-  opportunityId: string,
-  key: string = newQuoteCommandKey(),
-): Promise<{ quote_id: string; quote_number: string; revision_id: string; version: number }> =>
-  post(QUOTE_COMMAND_PATHS.create, { opportunity_id: opportunityId }, key);
+/** The kinds a new institution may be (`NewOrganizationKind` upstream). */
+export type NewClientKind = "company" | "university" | "public_institution" | "hospital" | "laboratory" | "other";
+
+/** Whom a quote is for when no case is named: exactly one of these. */
+export type QuoteClientPick =
+  | { organization_id: string }
+  | { person_id: string }
+  | { contact_point_id: string }
+  | { email: string; name?: string }
+  | { new_organization: { name: string; kind?: NewClientKind; email?: string } };
+
+/**
+ * A quote for a client: the API finds the client's open case (`opportunity_id` names the one
+ * chosen) or opens a Solicitud (`new_case`, or when the client has none). Several open cases and
+ * none chosen is a 409 `case_choice_needed` with `details.candidates`.
+ */
+export interface CreateQuoteForClient {
+  client: QuoteClientPick;
+  opportunity_id?: string;
+  new_case?: true;
+}
+
+export interface CreatedQuote {
+  quote_id: string;
+  quote_number: string;
+  revision_id: string;
+  version: number;
+  /** For a client: the case used or opened, and whether it (or the institution) was made now. */
+  opportunity_id?: string;
+  case_created?: boolean;
+  organization_id?: string | null;
+  organization_created?: boolean;
+}
+
+/** A quote on a case (`opportunityId`), or for a client (`CreateQuoteForClient`). */
+export const createQuote = (target: string | CreateQuoteForClient, key: string = newQuoteCommandKey()): Promise<CreatedQuote> =>
+  post(QUOTE_COMMAND_PATHS.create, typeof target === "string" ? { opportunity_id: target } : target, key);
 
 export const saveQuoteDraft = (
   revisionId: string,

@@ -36,6 +36,15 @@ const ENGLISH: [string, string, string][] = [
   ["bad_cursor", "that cursor is not one this list gave", "La lista cambió; se volvió a cargar desde el inicio."],
   ["bad_status", "no such quote status", "Ese estado de cotizaciones no existe."],
   ["command_in_progress", "a command with this Idempotency-Key is still running", "todavía se está procesando"],
+  ["case_not_of_client", "that case is not this client's", "no es de este cliente"],
+  ["organization_not_found", "no such organization", "Esa institución ya no está en el CRM"],
+  ["person_not_found", "no such person", "Esa persona ya no está en el CRM"],
+  ["contact_point_not_found", "no such email contact point", "Esa dirección ya no está en el CRM"],
+  ["supplier_exception_required", "supplier", "proveedora o fabricante"],
+  ["client_changed_concurrently", "the client changed", "cambiaron mientras se creaba"],
+  ["case_choice_needed", "several open cases", "varios casos abiertos"],
+  ["organization_name_ambiguous", "several of that name", "varias instituciones con ese nombre"],
+  ["query_too_short", "type at least two characters", "al menos dos letras"],
 ];
 
 describe("quoteRefusalText", () => {

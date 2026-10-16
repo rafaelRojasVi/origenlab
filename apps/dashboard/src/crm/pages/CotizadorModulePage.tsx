@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
+import { useMayRunCaseCommands } from "../caseCommands";
 import { crmHash, parseCrmHash, type CrmSection } from "../crmRoute";
+import { NewQuoteDialog } from "../quotes/NewQuoteDialog";
 import { REVISION_STATUS } from "../quotes/IssuedView";
 import { useMayOpenCotizador } from "../quotes/openOrCreateQuote";
 import { QuoteListPane } from "../quotes/QuoteListPane";
@@ -13,7 +15,8 @@ import { CotizadorPage, NoQuoteAccess } from "./CotizadorPage";
  *
  * «Todas» comes first (the list of quotes), then up to eight open quotes — each tab says
  * the quote's CN number, its client and its state (a dot: amber draft, green approved, blue sent,
- * grey voided) — then «+ Nueva» (the new-quote dialog; Task 5). The address names the tab shown:
+ * grey voided) — then «+ Nueva» (`NewQuoteDialog`: a client, and the API finds or opens its case;
+ * the quote made opens as a tab). The address names the tab shown:
  * a click on a tab, an entry point elsewhere («Cotizar» in Hoy, a request, a case) or the old
  * `#/crm/cotizar/<id>` all open the quote here, and a quote already open is only shown again.
  *
@@ -43,6 +46,8 @@ const DOT: Record<TabStatus, string> = {
   sent: "bg-info",
   void: "bg-ink-faint",
 };
+
+const NO_COMMANDS = "Crear cotizaciones está desactivado en este servidor.";
 
 const tabDomId = (id: string | null) => `cotizador-tab-${id ?? "todas"}`;
 const panelDomId = (id: string | null) => `cotizador-panel-${id ?? "todas"}`;
@@ -137,6 +142,10 @@ function CotizadorModule({ operatorId, routeId, navigate }: { operatorId: string
   );
 
   const show = (id: string | null) => navigate("cotizador", id);
+  // «+ Nueva» and the list's «Nueva cotización»: only with the commands on (sales and admin).
+  const mayCreate = useMayRunCaseCommands();
+  const [creating, setCreating] = useState(false);
+  const startNew = mayCreate ? () => setCreating(true) : undefined;
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   // A row of «Todas»: open (or show) its tab, with the label, client and state the row knows.
@@ -194,19 +203,27 @@ function CotizadorModule({ operatorId, routeId, navigate }: { operatorId: string
         </div>
         <CloseButtons tabs={state.tabs} scrollerRef={scrollerRef} onClose={(id) => void closeOne(id)} />
         </div>
-        {/* Task 5 builds the new-quote dialog: until then the button is there, off, and says so. */}
-        <span title="Llega en la siguiente entrega" className="inline-flex shrink-0">
-          <Button variant="quiet" disabled className="mb-0.5 min-h-[44px] px-3 text-[13.5px] font-semibold" aria-describedby="cotizador-nueva-later">
+        <span className="inline-flex shrink-0">
+          <Button
+            variant="quiet"
+            onClick={startNew}
+            disabled={!startNew}
+            title={startNew ? undefined : NO_COMMANDS}
+            aria-describedby={startNew ? undefined : "cotizador-nueva-off"}
+            className="mb-0.5 min-h-[44px] px-3 text-[13.5px] font-semibold"
+          >
             + Nueva
           </Button>
-          <span id="cotizador-nueva-later" className="sr-only">
-            Llega en la siguiente entrega
-          </span>
+          {startNew ? null : (
+            <span id="cotizador-nueva-off" className="sr-only">
+              {NO_COMMANDS}
+            </span>
+          )}
         </span>
       </div>
 
       <section role="tabpanel" id={panelDomId(null)} aria-labelledby={tabDomId(null)} hidden={state.active !== null}>
-        <QuoteListPane active={state.active === null} onOpen={(id, meta) => void openFromList(id, meta)} />
+        <QuoteListPane active={state.active === null} onOpen={(id, meta) => void openFromList(id, meta)} onNew={startNew} />
       </section>
       {state.tabs.map((t) =>
         mounted.has(t.id) ? (
@@ -216,6 +233,15 @@ function CotizadorModule({ operatorId, routeId, navigate }: { operatorId: string
         ) : null,
       )}
 
+      {creating ? (
+        <NewQuoteDialog
+          onClose={() => setCreating(false)}
+          onCreated={(id, meta) => {
+            setCreating(false);
+            void openFromList(id, meta);
+          }}
+        />
+      ) : null}
       {asking ? <AskDialog asking={asking} onAnswer={answer} /> : null}
     </div>
   );

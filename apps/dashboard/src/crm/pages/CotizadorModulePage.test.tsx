@@ -32,6 +32,10 @@ function workspace(n: number) {
 }
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+const CLIENT = {
+  id: "aaaaaaaa-0000-4000-8000-000000000009", name: "Universidad Ejemplo 9", kind: "university", domains: [],
+  open_cases: [{ id: "o-9", title: "Balanza analítica", stage: "qualifying", requested_at: null }],
+};
 const CATALOG = { version: "v1", fields: ["id", "model_number", "name"], suppliers: [], items: [] };
 
 type Call = { method: string; path: string; body: { revision_id?: string } | null };
@@ -52,6 +56,9 @@ function stubApi(
       if (path === "/v2/catalog/index") return Promise.resolve(json(CATALOG));
       if (path === "/v2/quotes/preview") return Promise.resolve(json({ computed: computedFixture("200000") }));
       if (path === "/v2/commands/save-quote-draft") return Promise.resolve(onSave(body.revision_id, ++saves));
+      if (path === "/v2/quotes/clients") return Promise.resolve(json({ organizations: [CLIENT], people: [] }));
+      if (path === "/v2/commands/create-quote")
+        return Promise.resolve(json({ ok: true, quote_id: Q(9), quote_number: "00049-26", revision_id: "r-9", version: 1, opportunity_id: "o-9" }));
       const m = /^\/v2\/quotes\/([0-9a-f-]{36})$/.exec(path);
       if (m && missing.includes(nOf(m[1]))) return Promise.resolve(json({ detail: { code: "quote_not_found", message: "no" } }, 404));
       if (m) return Promise.resolve(json(workspace(nOf(m[1]))));
@@ -196,14 +203,54 @@ describe("Cotizador module — tabs", () => {
     expect(quoteTabs()).toHaveLength(2);
   });
 
-  it("«Todas» shows the list pane; «+ Nueva» is there, off, until its dialog arrives", async () => {
+  it("«Todas» shows the list pane", async () => {
     stubApi();
     renderModule(`#/crm/cotizador/${Q(1)}`);
     await showsQuote("CN00041");
     fireEvent.click(within(tablist()).getByRole("tab", { name: "Todas" }));
     await waitFor(() => expect(within(shown()).getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeInTheDocument());
     expect(window.location.hash).toBe("#/crm/cotizador");
+  });
+
+  it("«+ Nueva» opens «Nueva cotización»; the quote it creates opens as a tab, in the address", async () => {
+    const api = stubApi();
+    renderModule("#/crm/cotizador");
+    fireEvent.click(screen.getByRole("button", { name: "+ Nueva" }));
+    const dialog = screen.getByRole("dialog", { name: "Nueva cotización" });
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Cliente" }), { target: { value: "Universidad" } });
+    fireEvent.click(await within(dialog).findByRole("option", { name: /Universidad Ejemplo 9/ }));
+    expect(within(dialog).getByRole("radio", { name: /Balanza analítica/ })).toBeChecked();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Crear y abrir" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Nueva cotización" })).not.toBeInTheDocument());
+    await waitFor(() => expect(tabOf("CN00049")).toHaveAttribute("aria-selected", "true"));
+    expect(tabOf("CN00049")).toHaveTextContent("Universidad Ejemplo 9");
+    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(9)}`));
+    await showsQuote("CN00049");
+    expect(api.calls.find((c) => c.path === "/v2/commands/create-quote")?.body).toEqual({
+      client: { organization_id: CLIENT.id },
+      opportunity_id: "o-9",
+    });
+  });
+
+  it("the list's «Nueva cotización» opens the same dialog, and Esc closes it", async () => {
+    stubApi();
+    renderModule("#/crm/cotizador");
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva cotización" }));
+    expect(screen.getByRole("dialog", { name: "Nueva cotización" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Nueva cotización" })).not.toBeInTheDocument();
+  });
+
+  it("«+ Nueva» is off, and says why, when the commands are off", async () => {
+    stubApi();
+    window.location.hash = "#/crm/cotizador";
+    render(
+      <AuthSessionContext.Provider value={{ session: { ...session, caseCommandsEnabled: false }, signOut: async () => true }}>
+        <Routed />
+      </AuthSessionContext.Provider>,
+    );
     expect(screen.getByRole("button", { name: "+ Nueva" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "+ Nueva" })).toHaveAccessibleDescription("Crear cotizaciones está desactivado en este servidor.");
   });
 
   it(`opens at most ${MAX_TABS}: a ninth closes the oldest tab with nothing pending`, async () => {
