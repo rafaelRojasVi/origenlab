@@ -240,9 +240,12 @@ def _organization_checked(self: "V2QuoteRepository", cur: Any, organization_id: 
     return found["id"], found["name"]
 
 
-def _institution_of(cur: Any, person_id: str | None, point_organization_id: str | None) -> dict[str, Any]:
-    """The person's (or the address's) institution as the dialog shows it; a supplier's is refused."""
-    found = client_institution(cur, person_id=person_id, point_organization_id=point_organization_id)
+def _institution_of(cur: Any, person_id: str | None, point_organization_id: str | None,
+                    point_email: str | None = None) -> dict[str, Any]:
+    """The person's (or the address's) institution as the dialog shows it — for an address with no
+    person and no institution, its domain's (`reads.client_institution`); a supplier's is refused."""
+    found = client_institution(cur, person_id=person_id, point_organization_id=point_organization_id,
+                               point_email=point_email)
     if found["is_supplier"]:
         raise _supplier_refused()
     return found
@@ -295,7 +298,8 @@ def _person_client(self: "V2QuoteRepository", cur: Any, person_id: str) -> _Clie
 def _address_client(self: "V2QuoteRepository", cur: Any, *, contact_point_id: str | None, email: str | None,
                     name: str | None) -> _Client:
     """An address — an email contact point, or an address typed — and whoever owns it; an address
-    the CRM lacks is the client of the one institution its domain names, if any."""
+    the CRM lacks, or holds with no person and no institution, is the client of the one
+    institution its domain names, if any (`reads.client_institution_by_domain`, the same rule)."""
     if contact_point_id is not None:
         cur.execute("select value_norm from crm.contact_point where id = %s::uuid and kind = 'email'",
                     (contact_point_id,))
@@ -319,7 +323,7 @@ def _address_client(self: "V2QuoteRepository", cur: Any, *, contact_point_id: st
     if point["status"] != "active":
         raise CommandRefused(409, "contact_point_inactive", "this email address is deactivated in the CRM")
     person = point["person_id"] if point["person_status"] == "active" else None
-    institution = _institution_of(cur, person, point["organization_id"])
+    institution = _institution_of(cur, person, point["organization_id"], email)
     if person is not None:
         _client_lock(cur, f"person:{person}")
     if institution["organization_id"] is not None:
@@ -331,7 +335,7 @@ def _address_client(self: "V2QuoteRepository", cur: Any, *, contact_point_id: st
     if locked is None or (locked["id"], locked["status"], locked["person_id"], locked["organization_id"]) != (
             point["id"], point["status"], point["person_id"], point["organization_id"]):
         raise _client_changed()
-    if _institution_of(cur, person, point["organization_id"])["organization_id"] != institution["organization_id"]:
+    if _institution_of(cur, person, point["organization_id"], email)["organization_id"] != institution["organization_id"]:
         raise _client_changed()
     _keep_address_rules(email, point["display_name"])
     client = _Client(contact_point_id=point["id"], person_id=person, label=point["display_name"] or name or email,
@@ -513,6 +517,7 @@ def _handle_create_quote(self: "V2QuoteRepository", cur: Any, operator: Operator
            "version": revision["version"], "opportunity_id": case_id}
     if client is not None:
         out.update({"case_created": case_created, "organization_id": client.organization_id,
+                    "organization_name": client.organization_name,
                     "organization_created": client.organization_created, "recipient_participant_id": recipient})
     return out
 

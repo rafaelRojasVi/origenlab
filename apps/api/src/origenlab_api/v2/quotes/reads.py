@@ -79,6 +79,7 @@ from origenlab_api.v2.quotes.inputs import (
     result_json,
 )
 from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, mail_direction
+from origenlab_api.v2.quote_documents import QUOTE_DOCUMENT_COLUMNS, quote_contents, quote_document_join
 from origenlab_api.v2.quotes.numbering import SANTIAGO, numbering_status, revision_label
 from origenlab_api.v2.quotes.recipients import PERSON_ADDRESS_ORDER, not_a_recipient
 
@@ -279,17 +280,18 @@ select distinct on (a.value_norm)
 # voided, else the newest: `_current`'s order, chosen here for every quote at once with
 # `distinct on`. Its institution through a merge, as the workspace. The search matches the
 # number, the institution's name, the case's title and the current revision's line
-# descriptions (ILIKE, wildcards escaped). `bucket` is the status a row is counted and filtered
-# under: an `in_review` revision is still a draft.
+# descriptions — its own, or those read from its PDF (`quote_documents`) — (ILIKE, wildcards
+# escaped). `bucket` is the status a row is counted and filtered under: an `in_review` revision is
+# still a draft.
 _LIST_BASE_SQL = """
 with cur as (
   select distinct on (r.quote_id) r.quote_id, r.id as revision_id, r.revision_no, r.status, r.origin,
-         r.grand_total, r.quote_currency, r.updated_at
+         r.grand_total, r.quote_currency, r.pdf_sha256, r.updated_at
     from crm.quote_revision r
    order by r.quote_id, (r.status in ('draft', 'in_review')) desc, (r.status <> 'void') desc, r.revision_no desc
 ), listed as (
   select q.id, q.quote_number, c.revision_id, c.revision_no, c.status, c.origin, c.grand_total, c.quote_currency,
-         greatest(q.updated_at, c.updated_at) as updated_at,
+         c.pdf_sha256, greatest(q.updated_at, c.updated_at) as updated_at,
          case when c.status = 'in_review' then 'draft' else c.status end as bucket,
          o.id as opportunity_id, o.title, o.closed_at,
          inst.id as institution_id, inst.name as institution_name
@@ -302,13 +304,19 @@ with cur as (
       or q.quote_number ilike %(pattern)s or inst.name ilike %(pattern)s or o.title ilike %(pattern)s
       or exists (select 1 from crm.quote_line l
                   where l.quote_revision_id = c.revision_id and l.description ilike %(pattern)s)
+      or exists (select 1 from evidence.source_record d join evidence.document_line l on l.source_record_id = d.id
+                  where d.dedupe_key = 'quote_document:' || lower(c.pdf_sha256) and d.kind = 'quote_document'
+                    and l.description ilike %(pattern)s)
 )
 """
 
 # The page (newest first, after the cursor), then each row's item lines: the first descriptions
-# and how many there are — the lateral runs for the page's rows only.
+# and how many there are — the lateral runs for the page's rows only. A row with neither totals nor
+# lines of its own (a historical import) also carries what its PDF said, when it was read
+# (`quote_documents`: the case panel's columns), in the same statement.
 _LIST_ROWS_SQL = _LIST_BASE_SQL + """
-select p.*, coalesce(it.descriptions, '{}'::text[]) as descriptions, coalesce(it.n, 0) as item_count
+select p.*, coalesce(it.descriptions, '{}'::text[]) as descriptions, coalesce(it.n, 0) as item_count,
+       """ + QUOTE_DOCUMENT_COLUMNS + """
   from (select l.* from listed l
          where (%(bucket)s::text is null or l.bucket = %(bucket)s)
            and (%(after_at)s::timestamptz is null
@@ -319,6 +327,7 @@ select p.*, coalesce(it.descriptions, '{}'::text[]) as descriptions, coalesce(it
     select (array_agg(x.description order by x.line_no))[1:%(items)s] as descriptions, count(*) as n
       from crm.quote_line x
      where x.quote_revision_id = p.revision_id and x.line_kind = 'item') it on true
+  """ + quote_document_join("p.pdf_sha256") + """ and p.grand_total is null and it.n = 0
  order by p.updated_at desc, p.id desc
 """
 
@@ -343,12 +352,13 @@ _NOT_A_SUPPLIER = """not exists (select 1 from crm.organization_relationship r
 _CLIENT_ORGS_SQL = f"""
 select o.id::text as id, o.name, o.kind,
        coalesce((select array_agg(d.domain_norm order by d.domain_norm)
-                   from crm.organization_domain d where d.organization_id = o.id), '{{}}'::text[]) as domains
+                   from crm.organization_domain d where d.organization_id = o.id and d.removed_at is null),
+                '{{}}'::text[]) as domains
   from crm.organization o
  where o.status = 'active' and o.merged_into_organization_id is null
    and (o.name ilike %(pattern)s or o.legal_name ilike %(pattern)s
         or exists (select 1 from crm.organization_domain d
-                    where d.organization_id = o.id and d.domain_norm ilike %(pattern)s))
+                    where d.organization_id = o.id and d.removed_at is null and d.domain_norm ilike %(pattern)s))
    and {_NOT_A_SUPPLIER.format(org="o.id")}
  order by (o.name ilike %(prefix)s) desc,
           exists (select 1 from crm.opportunity op
@@ -358,19 +368,38 @@ select o.id::text as id, o.name, o.kind,
  limit %(limit)s
 """
 
+# The one institution an email domain names (controller ruling 2026-10-16): active, not merged
+# away, no supplier or manufacturer, holding the domain (not removed) — only when exactly one
+# does, and never for a free-mail domain (`mail_rules.FREE_MAIL_DOMAINS`, `%(free_mail)s`).
+# `{domain}` is the SQL naming the domain; `{guard}` a condition that must hold too (empty: none).
+_DOMAIN_INSTITUTION_SQL = f"""
+select (array_agg(distinct o.id))[1] as id
+  from crm.organization_domain d join crm.organization o on o.id = d.organization_id
+ where {{guard}} d.domain_norm = {{domain}} and d.removed_at is null
+   and not ({{domain}} = any(%(free_mail)s::text[]))
+   and o.status = 'active' and o.merged_into_organization_id is null
+   and {_NOT_A_SUPPLIER.format(org="o.id")}
+having count(distinct o.id) = 1
+"""
+
 # A person's institution, or an address's: the person's current affiliation (a confirmed one
-# first, the newest), else the address's own institution — the survivor of a merge, and only while
-# active. `{person}` and `{point_org}` are the column or parameter naming the person and the
-# address's organization. The suggestions (`_CLIENT_PEOPLE_SQL`) and `create-quote`
+# first, the newest), else the address's own institution, else — for an address with neither a
+# person nor an institution — the one its domain names (`_DOMAIN_INSTITUTION_SQL`, the rule an
+# address the CRM lacks follows); the survivor of a merge, and only while active. `{person}`,
+# `{point_org}` and `{point_email}` are the column or parameter naming the person, the address's
+# organization and the address. The suggestions (`_CLIENT_PEOPLE_SQL`) and `create-quote`
 # (`_CLIENT_INSTITUTION_SQL`) read it here, so the dialog and the command agree on whose cases a
-# person's are.
+# person's (or an address's) are.
 _CLIENT_INSTITUTION_JOINS = """
   left join lateral (
     select a.organization_id from crm.affiliation a
      where a.person_id = {person} and (a.valid_to is null or a.valid_to > current_date)
      order by (a.confirmation = 'confirmed') desc, a.valid_from desc, a.created_at desc, a.id
      limit 1) af on true
-  left join crm.organization m on m.id = coalesce(af.organization_id, {point_org})
+  left join lateral (""" + _DOMAIN_INSTITUTION_SQL.format(
+    guard="{person} is null and {point_org} is null and",
+    domain="substring({point_email} from '@([^@]*)$')") + """) dm on true
+  left join crm.organization m on m.id = coalesce(af.organization_id, {point_org}, dm.id)
   left join crm.organization org on org.id = coalesce(m.merged_into_organization_id, m.id) and org.status = 'active'
 """
 
@@ -402,7 +431,7 @@ select f.person_id::text as person_id, e.id::text as contact_point_id, f.name, e
        and (c.id = f.contact_point_id or (f.contact_point_id is null and c.person_id = f.person_id))
      order by {PERSON_ADDRESS_ORDER}
      limit 1) e on true
-{_CLIENT_INSTITUTION_JOINS.format(person="f.person_id", point_org="e.organization_id")}
+{_CLIENT_INSTITUTION_JOINS.format(person="f.person_id", point_org="e.organization_id", point_email="e.value_norm")}
  where (org.id is null or {_NOT_A_SUPPLIER.format(org="org.id")})
  order by (coalesce(f.name, e.value_norm) ilike %(prefix)s) desc, lower(coalesce(f.name, e.value_norm)),
           f.person_id, e.id
@@ -445,8 +474,8 @@ select 'contact_point', p.contact_point_id::text, c.id::text, c.title, c.stage, 
 _CLIENT_INSTITUTION_SQL = f"""
 select org.id::text as organization_id, org.name as organization_name,
        (org.id is not null and not ({_NOT_A_SUPPLIER.format(org="org.id")})) as is_supplier
-  from (select %(person)s::uuid as person_id, %(point_org)s::uuid as point_org) f
-{_CLIENT_INSTITUTION_JOINS.format(person="f.person_id", point_org="f.point_org")}
+  from (select %(person)s::uuid as person_id, %(point_org)s::uuid as point_org, %(point_email)s::text as point_email) f
+{_CLIENT_INSTITUTION_JOINS.format(person="f.person_id", point_org="f.point_org", point_email="f.point_email")}
 """
 
 #: The revision columns `current` carries besides its draft or stored lines.
@@ -664,6 +693,25 @@ def _pattern(text: str | None) -> str | None:
     return f"%{_like_escape(text)}%" if text else None
 
 
+def _list_amounts(row: dict[str, Any]) -> dict[str, Any]:
+    """A list row's products and amount: the revision's own (`amount_source: revision`) when it has
+    totals or lines; else what its PDF said when it was read (`pdf_read`: the read lines' first
+    descriptions, expenses left out, and the neto — never IVA); else nothing (None)."""
+    own = {"first": list(row["descriptions"]), "count": int(row["item_count"])}
+    if row["grand_total"] is not None or own["count"]:
+        return {"items": own, "grand_total": row["grand_total"], "net_total": None,
+                "currency": row["quote_currency"], "amount_source": "revision"}
+    read = quote_contents(row)
+    if read is None:
+        return {"items": own, "grand_total": None, "net_total": None, "currency": row["quote_currency"],
+                "amount_source": None}
+    products = [line["description"].strip() for line in read["lines"]
+                if line.get("kind") != "freight" and (line.get("description") or "").strip()]
+    return {"items": {"first": products[:QUOTE_LIST_ITEMS], "count": len(products)}, "grand_total": None,
+            "net_total": read["net_total"], "currency": read["currency"] or row["quote_currency"],
+            "amount_source": "pdf_read"}
+
+
 def _offerable_domain(domain: str) -> bool:
     return not_a_recipient(f"x@{domain}") is None
 
@@ -691,41 +739,38 @@ def _open_cases(by_key: dict[tuple[str, str], list[dict[str, Any]]], *keys: tupl
 
 
 def _client_params() -> dict[str, Any]:
-    return {"supplier_roles": list(SUPPLIER_RELATIONSHIP_ROLES)}
+    return {"supplier_roles": list(SUPPLIER_RELATIONSHIP_ROLES), "free_mail": sorted(FREE_MAIL_DOMAINS)}
 
 
-def client_institution(cur: Any, *, person_id: str | None, point_organization_id: str | None) -> dict[str, Any]:
+def client_institution(cur: Any, *, person_id: str | None, point_organization_id: str | None,
+                       point_email: str | None = None) -> dict[str, Any]:
     """The institution a person (or an address) belongs to, as the suggestions show it:
-    `{organization_id, organization_name, is_supplier}`, all None/False when there is none."""
-    cur.execute(_CLIENT_INSTITUTION_SQL, {**_client_params(), "person": person_id, "point_org": point_organization_id})
+    `{organization_id, organization_name, is_supplier}`, all None/False when there is none. An
+    address (`point_email`) with no person and no institution of its own is its domain's."""
+    cur.execute(_CLIENT_INSTITUTION_SQL, {**_client_params(), "person": person_id, "point_org": point_organization_id,
+                                          "point_email": point_email})
     names = [d[0] for d in cur.description]
     return dict(zip(names, cur.fetchone(), strict=True))
 
 
-# The institutions an email domain names: active, not merged away, not a supplier or manufacturer.
-_CLIENT_DOMAIN_SQL = f"""
-select o.id::text as id, o.name
-  from crm.organization_domain d join crm.organization o on o.id = d.organization_id
- where d.domain_norm = %(domain)s and d.removed_at is null
-   and o.status = 'active' and o.merged_into_organization_id is null
-   and {_NOT_A_SUPPLIER.format(org="o.id")}
- order by o.created_at, o.id
- limit 2
-"""
+# The institution an address the CRM lacks names by its domain (`_DOMAIN_INSTITUTION_SQL`).
+_CLIENT_DOMAIN_SQL = ("select o.id::text as id, o.name from crm.organization o where o.id = ("
+                      + _DOMAIN_INSTITUTION_SQL.format(guard="", domain="%(domain)s") + ")")
 
 
 def client_institution_by_domain(cur: Any, email: str | None) -> dict[str, Any] | None:
     """The one institution whose domain is this address's (controller ruling 2026-10-16): only
     active, non-merged institutions that are no supplier or manufacturer count, and never for a
     free-mail domain (`mail_rules.FREE_MAIL_DOMAINS`, the list `register-organization`'s callers
-    use). `{id, name}` when exactly one matches, else None."""
+    use). `{id, name}` when exactly one matches, else None. The same rule as a held address's
+    (`_CLIENT_INSTITUTION_JOINS`)."""
     domain = (email or "").rpartition("@")[2].strip().lower()
-    if not domain or domain in FREE_MAIL_DOMAINS:
+    if not domain:
         return None
     cur.execute(_CLIENT_DOMAIN_SQL, {**_client_params(), "domain": domain})
     names = [d[0] for d in cur.description]
     found = [dict(zip(names, r, strict=True)) for r in cur.fetchall()]
-    return found[0] if len(found) == 1 else None
+    return found[0] if found else None
 
 
 def client_open_cases(cur: Any, *, organization_id: str | None = None, person_id: str | None = None,
@@ -885,8 +930,7 @@ class V2QuoteReads:
                 "opportunity": {"id": str(r["opportunity_id"]), "title": r["title"], "closed": r["closed_at"] is not None},
                 "client": ({"organization_id": str(r["institution_id"]), "name": r["institution_name"]}
                            if r["institution_id"] else None),
-                "items": {"first": list(r["descriptions"]), "count": int(r["item_count"])},
-                "grand_total": r["grand_total"], "currency": r["quote_currency"], "updated_at": r["updated_at"],
+                **_list_amounts(r), "updated_at": r["updated_at"],
             } for r in page],
             "counts": {k: int(counts[k]) for k in (*QUOTE_LIST_STATUSES, "all")},
             "next_cursor": _encode_cursor(page[-1]["updated_at"], page[-1]["id"]) if more else None,

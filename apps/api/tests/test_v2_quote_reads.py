@@ -698,7 +698,8 @@ def test_the_quote_list_shows_each_quote_at_its_current_revision_with_counts(wor
         "opportunity": {"id": draft_case, "title": f"Caso borrador {tag}", "closed": False},
         "client": {"organization_id": institution, "name": row["client"]["name"]},
         "items": {"first": ["Equipo ficticio FX-100", "Línea libre", "Tercera línea"], "count": 4},
-        "grand_total": row["grand_total"], "currency": "CLP", "updated_at": row["updated_at"],
+        "grand_total": row["grand_total"], "net_total": None, "currency": "CLP", "amount_source": "revision",
+        "updated_at": row["updated_at"],
     }
     assert row["client"]["name"].startswith(f"Instituto Lista {tag}")
     assert Decimal(row["grand_total"]) == Decimal(saved["computed"]["totals"]["total"])
@@ -707,6 +708,7 @@ def test_the_quote_list_shows_each_quote_at_its_current_revision_with_counts(wor
     hist = by_id[historical]
     assert (hist["status"], hist["origin"], hist["label"]) == ("sent", "historical_import", None)
     assert hist["items"] == {"first": [], "count": 0} and Decimal(hist["grand_total"]) == 119000
+    assert hist["amount_source"] == "revision"
 
     only_drafts = _list(world, q=tag, status="draft")
     assert [r["quote_id"] for r in only_drafts["rows"]] == [draft["quote_id"]]
@@ -969,3 +971,115 @@ def test_the_command_reads_a_client_s_open_cases_as_the_dialog_shows_them(world)
         _run(world, "create-quote", {"client": {"person_id": person}})
     assert exc.value.code == "case_choice_needed"
     assert [c["id"] for c in exc.value.details["candidates"]] == [c["id"] for c in shown["open_cases"]]
+
+
+# ------------------------------------------------------------------ the Cotizador module: final fix wave
+
+def _read_document(dsn: str, sha: str, *, currency: str | None = "CLP", net_total: str | None = None,
+                   lines: list[tuple[str, str | None, str]] = ()) -> None:
+    """The `quote_document` evidence a reader leaves for a PDF: its payload and its lines
+    (description, kind, line total)."""
+    payload = {k: v for k, v in (("currency", currency), ("net_total", net_total)) if v is not None}
+    sid = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload) values ('quote_document', %s, "
+                      "%s) returning id::text", (f"quote_document:{sha}", Jsonb(payload)))[0][0]
+    for n, (description, kind, total) in enumerate(lines, start=1):
+        _owner(dsn, "insert into evidence.document_line (source_record_id, line_no, kind, description, qty, "
+                    "line_total, currency, extractor, check_status) values (%s, %s, %s, %s, 1, %s, %s, 'test', "
+                    "'verified')", (sid, n, kind, description, total, currency or "CLP"))
+
+
+def _historical_unpriced(world: dict, case: str, number: str, sha: str) -> str:
+    """An imported quote whose revision has no totals of its own (the import stores none)."""
+    dsn = world["dsn"]
+    record = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload) values ('quote_document', "
+                         "%s, '{}'::jsonb) returning id", (f"hist-{uuid.uuid4().hex}",))[0][0]
+    quote = _owner(dsn, "insert into crm.quote (opportunity_id, quote_number, number_origin) values (%s, %s, "
+                        "'printed_historical') returning id::text", (case, number))[0][0]
+    _owner(dsn, "insert into crm.quote_revision (quote_id, revision_no, status, origin, quote_currency, price_decimals, "
+                "pdf_sha256, sent_at, origin_source_record_id) values (%s, 1, 'sent', 'historical_import', "
+                "'CLP', 0, %s, now(), %s)", (quote, sha, record))
+    return quote
+
+
+@needs_db
+def test_a_historical_quote_lists_what_its_read_pdf_says(world) -> None:
+    """e2: without authored totals or lines, a row carries the read PDF's first items and its neto,
+    marked `amount_source: pdf_read`; an unread PDF keeps nothing. Still one page statement."""
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    institution = _org(dsn, "institution", f"Instituto Leído {tag}")
+    read_sha, sum_sha, unread_sha = (uuid.uuid4().hex + uuid.uuid4().hex for _ in range(3))
+    read = _historical_unpriced(world, _titled_case(world, institution, "Caso leído"), f"L{tag}", read_sha)
+    _read_document(dsn, read_sha, net_total="250000", lines=[
+        (f"Centrífuga leída {tag}", "equipment", "200000"), ("Rotor", "accessory", "40000"),
+        ("Tubos", "consumable", "10000"), ("Flete", "freight", "5000"), ("Capacitación", "service", "0")])
+    summed = _historical_unpriced(world, _titled_case(world, institution, "Caso sumado"), f"S{tag}", sum_sha)
+    _read_document(dsn, sum_sha, currency="USD", lines=[("Balanza", "equipment", "1200.50")])
+    unread = _historical_unpriced(world, _titled_case(world, institution, "Caso sin leer"), f"U{tag}", unread_sha)
+    _, authored = _new_quote({**world, "institution": institution})
+    _save(world, authored, _draft(world))
+
+    by_id = {r["quote_id"]: r for r in _list(world, q=f"Instituto Leído {tag}")["rows"]}
+    row = by_id[read]
+    assert row["items"] == {"first": [f"Centrífuga leída {tag}", "Rotor", "Tubos"], "count": 4}
+    assert (row["amount_source"], row["net_total"], row["currency"], row["grand_total"]) == (
+        "pdf_read", "250000", "CLP", None)
+    assert (by_id[summed]["amount_source"], by_id[summed]["net_total"], by_id[summed]["currency"]) == (
+        "pdf_read", "1200.50", "USD")
+    assert by_id[summed]["items"] == {"first": ["Balanza"], "count": 1}
+    nothing = by_id[unread]
+    assert (nothing["amount_source"], nothing["net_total"], nothing["items"]) == (None, None, {"first": [], "count": 0})
+    mine = by_id[authored["quote_id"]]
+    assert (mine["amount_source"], mine["net_total"]) == ("revision", None)
+    assert mine["items"]["count"] == 2 and mine["grand_total"] is not None
+
+    # The search reaches the read lines too.
+    assert {r["quote_id"] for r in _list(world, q=f"centrífuga leída {tag}")["rows"]} == {read}
+
+    counting = _Counting()
+    reads = V2QuoteReads(counting.connect, runtime_dsn(dsn), fx_resolver=_never, clock=lambda: NOW)
+    reads.quote_list(status="all", q=f"Instituto Leído {tag}", limit=50, cursor=None)
+    assert counting.statements <= 3, counting.statements
+
+
+@needs_db
+def test_client_suggestions_leave_out_removed_domains(world) -> None:
+    """A4: a removed domain is neither listed nor searched (the command ignores it already)."""
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    org = _org(dsn, "institution", f"Centro Dominios {tag}")
+    _owner(dsn, "insert into crm.organization_domain (organization_id, domain_norm, scope) values (%s, %s, 'shared')",
+           (org, f"vigente-{tag}.test"))
+    _owner(dsn, "insert into crm.organization_domain (organization_id, domain_norm, scope, removed_at, "
+                "removed_by_operator_id, remove_reason) values (%s, %s, 'shared', now(), %s, 'ya no es suyo')",
+           (org, f"quitado-{tag}.test", world["operator"].operator_id))
+    [found] = _clients(world, f"Centro Dominios {tag}")["organizations"]
+    assert found["domains"] == [f"vigente-{tag}.test"]
+    assert _clients(world, f"quitado-{tag}")["organizations"] == []
+    assert [o["id"] for o in _clients(world, f"vigente-{tag}")["organizations"]] == [org]
+
+
+@needs_db
+def test_a_held_address_without_an_institution_shows_its_domain_s_institution_and_cases(world) -> None:
+    """e3: the suggestions apply the command's domain rule (`create-quote`) to an address with no
+    person and no institution."""
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    clinic = _org(dsn, "institution", f"Clínica Dominio {tag}")
+    _owner(dsn, "insert into crm.organization_domain (organization_id, domain_norm, scope) values (%s, %s, 'shared')",
+           (clinic, f"clinica-dominio-{tag}.test"))
+    case = _titled_case(world, clinic, f"Caso de la clínica {tag}", participant=False)
+    address = f"laboratorio-{tag}@clinica-dominio-{tag}.test"
+    point = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values "
+                        "('email', %s, %s, 'unattributed', 'machine_proposed') returning id::text",
+                   (address, address))[0][0]
+    free = f"laboratorio-{tag}@gmail.com"
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values "
+                "('email', %s, %s, 'unattributed', 'machine_proposed')", (free, free))
+
+    by_email = {p["email"]: p for p in _clients(world, f"laboratorio-{tag}")["people"]}
+    held = by_email[address]
+    assert (held["contact_point_id"], held["organization"]["id"]) == (point, clinic)
+    assert held["organization"]["name"].startswith(f"Clínica Dominio {tag}")
+    assert [c["id"] for c in held["open_cases"]] == [case]
+    assert (by_email[free]["organization"], by_email[free]["open_cases"]) == (None, [])
+    # The command decides on the same institution and case.
+    out = _run(world, "create-quote", {"client": {"contact_point_id": point}})
+    assert (out["organization_id"], out["opportunity_id"]) == (clinic, case)

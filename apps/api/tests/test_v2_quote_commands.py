@@ -2007,3 +2007,64 @@ def test_the_recipient_is_made_before_the_numbering_lock(world) -> None:
         holder.rollback()
     thread.join(30)
     assert result and isinstance(result[0], dict), result
+
+
+# ------------------------------------------------------------------ create-quote for a client: final fix wave
+
+def _removed_domain(dsn: str, organization: str, domain: str, operator_id: str) -> None:
+    _owner(dsn, "insert into crm.organization_domain (organization_id, domain_norm, scope, removed_at, "
+                "removed_by_operator_id, remove_reason) values (%s, %s, 'shared', now(), %s, 'ya no es suyo')",
+           (organization, domain, operator_id))
+
+
+@needs_db
+def test_a_held_address_with_no_person_or_institution_is_the_client_of_its_domain_s_institution(world) -> None:
+    """e3: the unknown-email domain rule applies to an address the CRM holds without a person or an
+    institution — the one active, non-merged, non-supplier institution whose domain it is."""
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    clinic = _org(dsn, "institution", "Clínica Retenida")
+    _domain(dsn, clinic, f"retenida-{tag}.test")
+    case = _case(dsn, world["operator"], clinic, participant=False)
+    point = _unattributed(dsn, f"laboratorio@retenida-{tag}.test")
+    out = _run(world, "create-quote", {"client": {"contact_point_id": point}})
+    assert (out["opportunity_id"], out["organization_id"], out["case_created"]) == (case, clinic, False)
+    again = _run(world, "create-quote", {"client": {"email": f"laboratorio@retenida-{tag}.test"}})
+    assert (again["opportunity_id"], again["organization_id"]) == (case, clinic)
+
+    # A removed domain, a supplier's, or one shared by two institutions names none.
+    gone = _org(dsn, "institution", "Clínica sin dominio")
+    _removed_domain(dsn, gone, f"quitado-{tag}.test", world["operator"].operator_id)
+    vendor = _org(dsn, "institution", "Proveedora retenida")
+    _domain(dsn, vendor, f"proveedora-{tag}.test")
+    _supplier(dsn, vendor)
+    twin_a, twin_b = _org(dsn, "institution", "Gemela A"), _org(dsn, "institution", "Gemela B")
+    _domain(dsn, twin_a, f"gemelas-{tag}.test")
+    _domain(dsn, twin_b, f"gemelas-{tag}.test")
+    for address in (f"x@quitado-{tag}.test", f"x@proveedora-{tag}.test", f"x@gemelas-{tag}.test"):
+        held = _unattributed(dsn, address)
+        made = _run(world, "create-quote", {"client": {"contact_point_id": held}})
+        assert (made["organization_id"], made["case_created"]) == (None, True), address
+
+
+@needs_db
+def test_an_unknown_address_on_a_removed_domain_names_no_institution(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    gone = _org(dsn, "institution", "Instituto de dominio quitado")
+    _removed_domain(dsn, gone, f"viejo-{tag}.test", world["operator"].operator_id)
+    out = _run(world, "create-quote", {"client": {"email": f"nadie@viejo-{tag}.test"}})
+    assert (out["organization_id"], out["case_created"]) == (None, True)
+
+
+@needs_db
+def test_create_quote_names_the_institution_it_used(world) -> None:
+    """A5: the dialog tells the operator when «+ Cliente nuevo» resolved to an institution the CRM
+    already had — the answer names it."""
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    known = _org(dsn, "institution", f"Instituto Nombrado {tag}")
+    [(name,)] = _owner(dsn, "select name from crm.organization where id = %s", (known,))
+    out = _run(world, "create-quote", {"client": {"new_organization": {"name": name.lower()}}})
+    assert (out["organization_id"], out["organization_created"], out["organization_name"]) == (known, False, name)
+    made = _run(world, "create-quote", {"client": {"new_organization": {"name": f"Instituto Nuevo {tag}"}}})
+    assert (made["organization_created"], made["organization_name"]) == (True, f"Instituto Nuevo {tag}")
+    bare = _run(world, "create-quote", {"client": {"email": _address("sin-institucion")}})
+    assert (bare["organization_id"], bare["organization_name"]) == (None, None)
