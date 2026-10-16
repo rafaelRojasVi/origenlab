@@ -69,17 +69,38 @@ function productsText(r: QuoteListRow): string {
 
 const RESTARTED = "La lista cambió; se volvió a cargar desde el inicio.";
 
-/** A button that is not wired yet: off, and says why to a screen reader as well. */
-function LaterButton({ onClick, variant, className, children }: { onClick?: () => void; variant?: "primary"; className: string; children: ReactNode }) {
+const NOT_YET = "Llega en la siguiente entrega";
+
+/** A button without a handler: off, and says why (`offReason`, else «not yet») to a screen reader as well. */
+function LaterButton({
+  onClick,
+  offReason = NOT_YET,
+  variant,
+  className,
+  children,
+}: {
+  onClick?: () => void;
+  offReason?: string;
+  variant?: "primary";
+  className: string;
+  children: ReactNode;
+}) {
   const why = useId();
   return (
     <>
-      <Button variant={variant} onClick={onClick} disabled={!onClick} aria-describedby={onClick ? undefined : why} className={className}>
+      <Button
+        variant={variant}
+        onClick={onClick}
+        disabled={!onClick}
+        aria-describedby={onClick ? undefined : why}
+        title={onClick || offReason === NOT_YET ? undefined : offReason}
+        className={className}
+      >
         {children}
       </Button>
       {onClick ? null : (
         <span id={why} className="sr-only">
-          Llega en la siguiente entrega
+          {offReason}
         </span>
       )}
     </>
@@ -92,9 +113,11 @@ export interface QuoteListPaneProps {
   onOpen: (quoteId: string, meta: TabMeta) => void;
   onPreferences?: () => void;
   onNew?: () => void;
+  /** Why «Nueva cotización» is off when there is no `onNew` (the module's «+ Nueva» reason). */
+  newOffReason?: string;
 }
 
-export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: QuoteListPaneProps) {
+export function QuoteListPane({ active = true, onOpen, onPreferences, onNew, newOffReason }: QuoteListPaneProps) {
   const [status, setStatus] = useState<QuoteListStatus>("draft");
   const [text, setText] = useState("");
   const [term, setTerm] = useState("");
@@ -212,7 +235,7 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: Q
           <LaterButton onClick={onPreferences} className="min-h-[44px] px-4 text-[14px] font-semibold">
             Preferencias
           </LaterButton>
-          <LaterButton variant="primary" onClick={onNew} className="min-h-[44px] px-[18px] text-[14px] font-semibold">
+          <LaterButton variant="primary" onClick={onNew} offReason={newOffReason} className="min-h-[44px] px-[18px] text-[14px] font-semibold">
             Nueva cotización
           </LaterButton>
         </div>

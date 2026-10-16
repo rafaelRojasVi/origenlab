@@ -347,6 +347,16 @@ describe("QuoteListPane", () => {
     expect(onNew).toHaveBeenCalledOnce();
   });
 
+  it("«Nueva cotización» off with a reason says that reason, not «Llega en la siguiente entrega»", async () => {
+    stubApi();
+    render(<QuoteListPane onOpen={vi.fn()} onPreferences={vi.fn()} newOffReason="Crear cotizaciones está desactivado en este servidor." />);
+    await screen.findByText("CN00041");
+    const off = screen.getByRole("button", { name: "Nueva cotización" });
+    expect(off).toBeDisabled();
+    expect(off).toHaveAccessibleDescription("Crear cotizaciones está desactivado en este servidor.");
+    expect(off).toHaveAttribute("title", "Crear cotizaciones está desactivado en este servidor.");
+  });
+
   describe("late answers that must not land (a transport that ignores abort)", () => {
     it("a «Cargar más» page arriving after a filter change does not append", async () => {
       const api = stubHeld();

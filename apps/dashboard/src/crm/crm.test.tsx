@@ -409,7 +409,7 @@ describe("dashboard shell", () => {
 });
 
 describe("no write path in the CRM workspace", () => {
-  // Four exceptions, pinned by src/test/noWritePolicy.test.ts:
+  // The exceptions, pinned by src/test/noWritePolicy.test.ts:
   //  - the campaign-draft client (marketingApi.ts) POSTs to campaign commands.
   //  - the CRM authoring client (crmAuthoringApi.ts) POSTs to CRM authoring commands.
   const DRAFT_CLIENT = "./marketing/marketingApi.ts";
@@ -422,6 +422,8 @@ describe("no write path in the CRM workspace", () => {
   const CASE_DOCUMENTS_CLIENT = "./caseDocuments.ts";
   //  - the quote client (quotes/quoteApi.ts) POSTs the five quote commands and the preview (2026-10-16).
   const QUOTE_API_CLIENT = "./quotes/quoteApi.ts";
+  //  - the Cotizador preferences client (quotes/preferencesApi.ts) POSTs set-cost-parameter (2026-10-16).
+  const PREFERENCES_CLIENT = "./quotes/preferencesApi.ts";
 
   it("never issues a non-GET request or references a command route", () => {
     const sources = import.meta.glob(["./**/*.ts", "./**/*.tsx", "!./**/*.test.tsx", "!./**/*.test.ts"], {
@@ -434,7 +436,7 @@ describe("no write path in the CRM workspace", () => {
     for (const [f, src] of Object.entries(sources)) {
       if (
         f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT || f === CASE_COMMANDS_CLIENT ||
-        f === CASE_DOCUMENTS_CLIENT || f === QUOTE_API_CLIENT
+        f === CASE_DOCUMENTS_CLIENT || f === QUOTE_API_CLIENT || f === PREFERENCES_CLIENT
       ) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);

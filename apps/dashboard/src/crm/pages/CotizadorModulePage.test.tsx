@@ -38,6 +38,11 @@ const CLIENT = {
 };
 const CATALOG = { version: "v1", fields: ["id", "model_number", "name"], suppliers: [], items: [] };
 
+const PARAMETERS = {
+  current: { default_markup_equipment: { id: "p-1", value: "0.40", valid_from: "2026-10-01T15:00:00Z", set_by: null, reason: "Prueba" } },
+  history: [],
+};
+
 type Call = { method: string; path: string; body: { revision_id?: string } | null };
 
 function stubApi(
@@ -54,6 +59,7 @@ function stubApi(
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       calls.push({ method: init?.method ?? "GET", path, body });
       if (path === "/v2/catalog/index") return Promise.resolve(json(CATALOG));
+      if (path === "/v2/catalog/parameters") return Promise.resolve(json(PARAMETERS));
       if (path === "/v2/quotes/preview") return Promise.resolve(json({ computed: computedFixture("200000") }));
       if (path === "/v2/commands/save-quote-draft") return Promise.resolve(onSave(body.revision_id, ++saves));
       if (path === "/v2/quotes/clients") return Promise.resolve(json({ organizations: [CLIENT], people: [] }));
@@ -85,6 +91,7 @@ function Routed() {
   return (
     <CotizadorModulePage
       quoteId={route.section === "cotizador" ? route.id : null}
+      pane={route.pane}
       navigate={(section, id) => {
         window.location.hash = crmHash(section, id);
       }}
@@ -251,6 +258,10 @@ describe("Cotizador module — tabs", () => {
     );
     expect(screen.getByRole("button", { name: "+ Nueva" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "+ Nueva" })).toHaveAccessibleDescription("Crear cotizaciones está desactivado en este servidor.");
+    // The list's «Nueva cotización» gives the same reason, not «Llega en la siguiente entrega».
+    const listNew = screen.getByRole("button", { name: "Nueva cotización" });
+    expect(listNew).toBeDisabled();
+    expect(listNew).toHaveAccessibleDescription("Crear cotizaciones está desactivado en este servidor.");
   });
 
   it(`opens at most ${MAX_TABS}: a ninth closes the oldest tab with nothing pending`, async () => {
@@ -446,5 +457,60 @@ describe("Cotizador module — fix round 1", () => {
     await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(1)}`));
     await showsQuote("CN00041");
     expect(quoteTabs()).toHaveLength(1);
+  });
+});
+
+describe("Cotizador module — «Preferencias»", () => {
+  const prefsHeading = () => screen.queryByRole("heading", { level: 1, name: "Preferencias del Cotizador" });
+
+  it("#/crm/cotizador/preferencias shows the fixed pane: no quote is read, no tab is opened", async () => {
+    const api = stubApi();
+    renderModule("#/crm/cotizador/preferencias");
+    expect(await screen.findByRole("heading", { level: 1, name: "Preferencias del Cotizador" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Equipos")).toHaveValue("40");
+    expect(quoteTabs()).toHaveLength(0);
+    expect(api.calls.some((c) => c.path.startsWith("/v2/quotes/") && c.path !== "/v2/quotes/clients")).toBe(false);
+    expect(screen.getByRole("button", { name: "Preferencias" })).toHaveAttribute("aria-current", "page");
+    expect(window.location.hash).toBe("#/crm/cotizador/preferencias");
+  });
+
+  it("the header's and the list's «Preferencias» open it; «Todas» goes back to the list", async () => {
+    stubApi();
+    renderModule("#/crm/cotizador");
+    // The list's own button (in the «Todas» panel).
+    const listButton = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Preferencias" });
+    expect(listButton).toBeEnabled();
+    fireEvent.click(listButton);
+    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador/preferencias"));
+    expect(await screen.findByRole("heading", { level: 1, name: "Preferencias del Cotizador" })).toBeInTheDocument();
+    expect(within(tablist()).getByRole("tab", { name: "Todas" })).toHaveAttribute("aria-selected", "false");
+
+    fireEvent.click(within(tablist()).getByRole("tab", { name: "Todas" }));
+    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador"));
+    await waitFor(() => expect(prefsHeading()).toBeNull());
+    expect(screen.getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeVisible();
+
+    // The header's button, beside «+ Nueva».
+    const headerButton = screen.getAllByRole("button", { name: "Preferencias" }).find((b) => b.getAttribute("data-module-preferences") !== null)!;
+    expect(headerButton.className).toContain("min-h-[44px]");
+    fireEvent.click(headerButton);
+    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador/preferencias"));
+  });
+
+  it("opened directly with restored tabs, it stays on «Preferencias»; a quote tab is one click away", async () => {
+    seed([1, 2], 2);
+    const api = stubApi();
+    renderModule("#/crm/cotizador/preferencias");
+    expect(await screen.findByRole("heading", { level: 1, name: "Preferencias del Cotizador" })).toBeInTheDocument();
+    await act(async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    expect(window.location.hash).toBe("#/crm/cotizador/preferencias");
+    expect(quoteTabs()).toHaveLength(2);
+    // The restored tab is not read behind the pane.
+    expect(api.reads(1) + api.reads(2)).toBe(0);
+    fireEvent.click(tabOf("CN00041"));
+    await showsQuote("CN00041");
+    expect(prefsHeading()).toBeNull();
   });
 });

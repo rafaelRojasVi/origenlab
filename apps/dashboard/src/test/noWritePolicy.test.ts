@@ -64,6 +64,9 @@ describe("dashboard read-only policy", () => {
   //    approve-quote-revision, void-quote-revision, create-quote-revision; sales or admin upstream,
   //    each with an Idempotency-Key) and to `/v2/quotes/preview`, which prices a draft and writes
   //    nothing. The browser never computes a price: every figure comes back from the API.
+  //  - crm/quotes/preferencesApi.ts's POST to set-cost-parameter: «Preferencias» of the Cotizador
+  //    (sales or admin; the numbering seed admin only), with an Idempotency-Key, a reason and the
+  //    current row seen. It sets a company default; it prices and sends nothing.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const MAIL_RULES_FILE = "../crm/mailRules.ts";
   const MAIL_RULES_PATHS = [
@@ -108,6 +111,8 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/create-quote-revision",
   ];
   const QUOTE_PREVIEW_PATH = "/v2/quotes/preview";
+  const PREFERENCES_FILE = "../crm/quotes/preferencesApi.ts";
+  const PREFERENCES_PATHS = ["/v2/commands/set-cost-parameter"];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
   const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";
@@ -218,6 +223,17 @@ describe("dashboard read-only policy", () => {
         }
         continue;
       }
+      if (path === PREFERENCES_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify(PREFERENCES_PATHS)) {
+          hits.push(`${path} (preferences paths mismatch: found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
       if (path === CASE_DOCUMENTS_FILE) {
         const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
         if (methods.length !== 1 || methods[0] !== "POST") {
@@ -263,7 +279,7 @@ describe("dashboard read-only policy", () => {
   });
 
   it("names no V2 command outside the campaign, CRM authoring, email-rules, case-command and quote clients", () => {
-    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE]);
+    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE, PREFERENCES_FILE]);
     const hits = entries
       .filter(([path, text]) => !owners.has(path) && /\/v2\/commands\//.test(text))
       .map(([path]) => path);

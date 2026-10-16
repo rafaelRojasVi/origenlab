@@ -156,6 +156,30 @@ describe("SummaryRail — totals and margin", () => {
     expect(band.querySelector("[data-marker]")).toHaveStyle({ left: "calc(29.37% - 6px)" });
   });
 
+  it("draws the target band from the workspace's preferences (params), not from constants", async () => {
+    const params = { markups: {}, margin_target_min: "0.30", margin_target_max: "0.505", price_deviation_warn_pct: "0.15" };
+    setup({ state: stateFor({}, {}, { params } as unknown as Partial<QuoteWorkspace>) });
+    await settled();
+    const totals = screen.getByRole("region", { name: "Totales" });
+    expect(within(totals).getByText("objetivo 30–50,5 %")).toBeInTheDocument();
+    expect(within(totals).getByRole("img", { name: /objetivo 30–50,5 %/ })).toBeInTheDocument();
+    const band = totals.querySelector("[data-band]");
+    expect(band).toHaveStyle({ left: "30%", width: "calc(50.5% - 30%)" });
+  });
+
+  it("keeps the documented 25–45 % band when the workspace has no params or a null bound", async () => {
+    const params = { markups: {}, margin_target_min: null, margin_target_max: "0.5", price_deviation_warn_pct: null };
+    const first = setup({ state: stateFor({}, {}, { params } as unknown as Partial<QuoteWorkspace>) });
+    await settled();
+    expect(within(screen.getByRole("region", { name: "Totales" })).getByText("objetivo 25–50 %")).toBeInTheDocument();
+    first.view.unmount();
+    setup();
+    await settled();
+    const totals = screen.getByRole("region", { name: "Totales" });
+    expect(within(totals).getByText("objetivo 25–45 %")).toBeInTheDocument();
+    expect(totals.querySelector("[data-band]")).toHaveStyle({ left: "25%", width: "calc(45% - 25%)" });
+  });
+
   it("says when the margin is below the target, in words and not only in colour", async () => {
     setup({ state: stateFor({ computed: priced({ totals: { ...priced().totals, margin: "0.12", margin_state: "below_target" } }) }) });
     await settled();

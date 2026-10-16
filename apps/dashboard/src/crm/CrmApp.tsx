@@ -5,7 +5,7 @@ import { Toaster } from "./ui";
 import { googleLoginUrl } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { REDACTION_NOTICE, contactAddressesRedacted } from "./redaction";
-import { CRM_GROUP_LABEL, CRM_NAV, crmHash, sectionTitle, type CrmSection, type DatosTab } from "./crmRoute";
+import { CRM_GROUP_LABEL, CRM_NAV, crmHash, sectionTitle, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
 import { HistoryPage } from "./pages/HistoryPage";
 import { OperacionesPage } from "./pages/OperacionesPage";
 import type { ShellRoute } from "./shellRoute";
@@ -79,7 +79,7 @@ export function CrmApp({ route }: { route: ShellRoute }) {
         <SideNav route={route} navigate={navigate} open={menuOpen} collapsed={collapsed} onToggle={toggleCollapsed} />
         <main id="crm-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pb-10 pt-4 focus:outline-none sm:px-6">
           <div key={routeKey} className="animate-fade-in-up">
-            <Section section={route.section} id={route.id} tab={route.tab} navigate={navigate} />
+            <Section section={route.section} id={route.id} tab={route.tab} pane={route.pane} navigate={navigate} />
           </div>
         </main>
       </div>
@@ -92,11 +92,13 @@ function Section({
   section,
   id,
   tab,
+  pane,
   navigate,
 }: {
   section: CrmSection;
   id: string | null;
   tab?: DatosTab;
+  pane?: CotizadorPane;
   navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 }) {
   switch (section) {
@@ -110,7 +112,7 @@ function Section({
       return <CatalogPage id={id} navigate={navigate} />;
     case "cotizador":
       // Not keyed by the quote: the module stays mounted while its tabs change.
-      return <CotizadorModulePage quoteId={id} navigate={navigate} />;
+      return <CotizadorModulePage quoteId={id} pane={pane} navigate={navigate} />;
     case "marketing":
       return <MarketingPage />;
     case "historial":

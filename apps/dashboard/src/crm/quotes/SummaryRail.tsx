@@ -22,16 +22,36 @@ import { Button } from "../ui";
 import { draftProblems, isEditable, principalItemOf, rowOfLine, setFxOverride, type DraftEditorState } from "./draftEditor";
 import type { QuoteDraft, QuoteWorkspace } from "./quoteApi";
 import { quoteRefusalText } from "./quoteRefusal";
-import { amountTextToDecimal, decimalEditText, formatPct } from "./quoteFormat";
+import type { QuotePreferences } from "./preferencesApi";
+import { amountTextToDecimal, decimalEditText, decimalToPercentText, formatPct } from "./quoteFormat";
 import type { FlushResult } from "./useQuoteDraft";
 
 /**
- * The margin's target band. The engine takes it from the cost parameters `margin_target_min` /
- * `margin_target_max` (0.25 / 0.45 by default), but the workspace does not expose them yet, so the
- * bar draws the defaults; `margin_state` (the words under the number) is always the API's.
+ * The margin's target band: the workspace's `params` (the cost parameters `margin_target_min` /
+ * `margin_target_max` as the engine applies them, «Preferencias»), else the engine's documented
+ * fallback 0.25 / 0.45 (an older API, or a null bound). `margin_state` (the words by the number) is
+ * always the API's. Placed on the string: "0.275" → 27.5 %, no float.
  */
-const TARGET_MIN_PCT = 25;
-const TARGET_MAX_PCT = 45;
+const TARGET_MIN_FALLBACK = "0.25";
+const TARGET_MAX_FALLBACK = "0.45";
+
+type Band = { minText: string; maxText: string; minCss: string; maxCss: string };
+
+/** A ratio as a CSS percentage ("0.275" → "27.5"), at most 100; null when it is not a plain decimal. */
+function bandPoint(ratio: string | null | undefined): { text: string; css: string } | null {
+  if (ratio == null) return null;
+  const text = decimalToPercentText(String(ratio).trim());
+  const css = text.replace(",", ".");
+  if (!/^\d+(\.\d+)?$/.test(css)) return null;
+  const int = css.split(".")[0];
+  return int.length > 3 || Number(int) >= 100 ? { text, css: "100" } : { text, css };
+}
+
+export function targetBand(params: QuotePreferences | undefined): Band {
+  const min = bandPoint(params?.margin_target_min) ?? bandPoint(TARGET_MIN_FALLBACK)!;
+  const max = bandPoint(params?.margin_target_max) ?? bandPoint(TARGET_MAX_FALLBACK)!;
+  return { minText: min.text, maxText: max.text, minCss: min.css, maxCss: max.css };
+}
 
 const MARGIN_STATE: Record<string, { label: string; cls: string }> = {
   no_cost: { label: "Sin costo", cls: "text-[#a9bdb7]" },
@@ -241,22 +261,29 @@ function TotalsCard({
         <span className="font-mono text-[26px] font-medium tabular-nums">{money(total)}</span>
       </div>
       {editable && !totals ? <p className="text-[12.5px] text-[#a9bdb7]">Todavía no hay precios calculados.</p> : null}
-      {totals && !clientView ? <MarginBlock totals={totals} currency={currency} /> : null}
+      {totals && !clientView ? (
+        <MarginBlock totals={totals} currency={currency} band={targetBand((state.workspace as WorkspaceWithParams).params)} />
+      ) : null}
     </section>
   );
 }
 
+/** The workspace with the preferences the API adds to it (`GET /v2/quotes/{id}` → `params`). */
+type WorkspaceWithParams = QuoteWorkspace & { params?: QuotePreferences };
+
 function MarginBlock({
   totals,
   currency,
+  band,
 }: {
   totals: NonNullable<DraftEditorState["computed"]>["totals"];
   currency: string;
+  band: Band;
 }) {
   const pct = formatPct(totals.margin);
   const at = markerPct(totals.margin);
   const st = MARGIN_STATE[totals.margin_state] ?? { label: totals.margin_state, cls: "text-[#f4f6f5]" };
-  const target = `objetivo ${TARGET_MIN_PCT}–${TARGET_MAX_PCT} %`;
+  const target = `objetivo ${band.minText}–${band.maxText} %`;
   const bandLabel = pct ? `Margen bruto ${pct} en una escala de 0 a 100 %; ${target}` : `Sin margen: falta el costo de alguna línea; ${target}`;
   return (
     <div className="flex flex-col gap-2 rounded-[10px] bg-[#1f2425] p-3">
@@ -269,8 +296,9 @@ function MarginBlock({
       </div>
       <div role="img" aria-label={bandLabel} className="relative h-2.5 rounded-full bg-[#2c3433]">
         <div
+          data-band
           className="absolute inset-y-0 rounded-full bg-[#134e4a]"
-          style={{ left: `${TARGET_MIN_PCT}%`, width: `${TARGET_MAX_PCT - TARGET_MIN_PCT}%` }}
+          style={{ left: `${band.minCss}%`, width: `calc(${band.maxCss}% - ${band.minCss}%)` }}
         />
         {at === null ? null : (
           <div
