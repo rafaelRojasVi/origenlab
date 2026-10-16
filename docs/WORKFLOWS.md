@@ -616,29 +616,48 @@ state. It only calls the reads and commands above and owns no rule.
 
 - **Tabs.** `#/crm/cotizador` is the list («Todas»); `#/crm/cotizador/<quoteId>` opens or activates
   that quote's tab. Up to eight quotes stay open at once, stored per operator on this computer
-  (`localStorage` key `cotizador:tabs:<operator_id>`: the quote id, its number, client name and
-  state — never an address or a cost). Each tab is the screen above with its own autosave; hidden
+  (`localStorage` key `cotizador:tabs:<operator_id>`: the quote id, its number, the client label
+  and the state — never a cost; the client label is the client's name, or its email address when
+  that is all the CRM has, as the tab shows it). Each tab is the screen above with its own autosave; hidden
   tabs stay mounted, so switching keeps unsaved edits and timers, and «/» goes to the shown tab only.
   After a reload only the active tab loads; the others load the first time they are opened. Closing
-  a tab saves it first and asks «No se pudo guardar. ¿Cerrar igual?» when it cannot. Opening a ninth
-  closes the oldest tab with nothing pending, or asks when every tab has something pending. The same
+  a tab (its ×, or Supr or ⌫ on the focused tab) saves it first and asks «No se pudo guardar.
+  ¿Cerrar igual?» when it cannot; the focus moves to the tab now selected only when it was on the
+  closed tab or its pane. Opening a ninth closes the oldest tab with nothing pending, or asks when
+  every tab has something pending (and keeps the oldest when the operator moved on while asked). The same
   quote is never open twice. Hoy «Cotizar», the Solicitud card and the case drawer open quotes here.
+  The tab strip ends with «+ Nueva»; «Preferencias» is the list's.
 - **Lista «Todas».** `GET /v2/quotes` — Borradores (default), Aprobadas, Enviadas or Todas, a
-  search over number, institution, case title and product descriptions, newest first, «Cargar más»
-  by cursor. One row per quote (its open draft, else its newest issued revision), with a counts line.
-  Imported (historical) quotes show «importada» and open read-only.
+  search over number, institution, case title and product descriptions (a quote's own lines, or
+  those read from its PDF), newest first, «Cargar más» by cursor. One row per quote (its open draft,
+  else its newest issued revision), with a counts line. Imported (historical) quotes show
+  «importada» and open read-only; one without totals or lines of its own shows what its PDF said
+  when it was read (`amount_source: "pdf_read"`: the first item descriptions, the neto as
+  «neto leído del PDF» — the case panel's `quote_document` reading, `v2/quote_documents.py`), and
+  «—» when its PDF was never read.
 - **Nueva cotización.** A client search (`GET /v2/quotes/clients`: institutions — never suppliers
-  or manufacturers — then people, with their open cases), or «+ Cliente nuevo «texto»» with a kind
-  and an optional email. Then the case: the client's open cases, preselected when there is one, or
-  «Abrir una Solicitud nueva». «Crear y abrir» sends `create-quote` with `client` (above) and opens
-  the new quote as a tab; `case_choice_needed` and `organization_name_ambiguous` show their
-  candidates to choose from.
+  or manufacturers, never by a removed domain — then people, with their open cases), or
+  «+ Cliente nuevo «texto»» with a kind and an optional email. An address the CRM holds with no
+  person and no institution is shown as, and quoted for, the one institution its domain names —
+  the rule an address the CRM lacks follows (active, not merged, no supplier, never a free-mail
+  domain), one SQL fragment the suggestions and `create-quote` share. Then the case: the client's
+  open cases, preselected when there is one, or «Abrir una Solicitud nueva». «Crear y abrir» sends
+  `create-quote` with `client` (above) and opens the new quote as a tab — from «Preferencias» too,
+  which it leaves; `case_choice_needed` and `organization_name_ambiguous` show their candidates to
+  choose from. When a «+ Cliente nuevo» turned out to be an institution the CRM had, a notice says
+  «Se usó la institución existente «X»» (and «y su caso abierto» when its case was used).
+- **Refusals.** Every command's refusal is read from the API's envelope — the command's own code
+  in `error.details.code`, else the generic `error.code`, else an older `detail.code` — by one
+  parser (`apps/dashboard/src/api/refusalEnvelope.ts`) shared by the Cotizador, the case commands,
+  CRM authoring and marketing.
 - **Preferencias** (`#/crm/cotizador/preferencias`). The company's defaults, read from
   `GET /v2/catalog/parameters` and saved one field at a time with `set-cost-parameter` (a reason of at
   least 3 characters; the parameter's current row as `expected_current_id`, so a concurrent change is
   refused `parameter_changed` — «Otra persona lo cambió; recarga.»), each with its «Historial»:
   Recargos por defecto, Margen objetivo, Gastos de importación (perfil), Condiciones por defecto, and
-  Numeración (`quote_number_seed`; admin only, read-only for sales). A quote can still be changed by
+  Numeración (`quote_number_seed`; admin only, read-only for sales). An unset field is empty, with
+  the engine's fallback as its placeholder and «Sin definir: se usa …» under it. «Desviación de
+  precio» is stored only: nothing warns on it yet. A quote can still be changed by
   hand; a change never reprices a saved draft. The rail's margin band reads the same values (the
   workspace's `params`).
 
