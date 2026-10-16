@@ -3,7 +3,7 @@
  * loaded once (`catalogIndex.ts`) and typing filters it with no request (`catalogSearch.ts`): the
  * model code first, then words, accent-insensitive and typo-tolerant. A supplier rail and kind
  * chips scope the list, each with live counts; the supplier, kind and search live in the address
- * (`#/crm/catalogo?s=&k=&q=`) so a view survives a reload. A row opens the product panel
+ * (`#/crm/catalogo?s=&k=&q=&ficha=1`) so a view survives a reload. A row opens the product panel
  * (`#/crm/catalogo/<uuid>`) with its photo, Drive documents, supplier prices (never to a viewer),
  * quoted-price history and the day's rates; sales and admin also see the costing parameters.
  *
@@ -87,13 +87,17 @@ interface Filters {
   q: string;
   supplier: string;
   kind: string;
+  /** «Con ficha»: only products with a data sheet. */
+  ficha: boolean;
 }
 
-/** The catalog's own part of the address: `#/crm/catalogo?s=<supplier>&k=<kind>&q=<text>`. */
+const NO_FILTERS: Filters = { q: "", supplier: "", kind: "", ficha: false };
+
+/** The catalog's own part of the address: `#/crm/catalogo?s=<supplier>&k=<kind>&q=<text>&ficha=1`. */
 function readFilters(): Filters {
   const query = window.location.hash.split("?")[1] ?? "";
   const p = new URLSearchParams(query);
-  return { q: p.get("q") ?? "", supplier: p.get("s") ?? "", kind: p.get("k") ?? "" };
+  return { q: p.get("q") ?? "", supplier: p.get("s") ?? "", kind: p.get("k") ?? "", ficha: p.get("ficha") === "1" };
 }
 
 function writeFilters(f: Filters): void {
@@ -103,6 +107,7 @@ function writeFilters(f: Filters): void {
   if (f.supplier) p.set("s", f.supplier);
   if (f.kind) p.set("k", f.kind);
   if (f.q.trim()) p.set("q", f.q.trim());
+  if (f.ficha) p.set("ficha", "1");
   const next = p.toString() ? `${path}?${p}` : path;
   if (next !== window.location.hash) window.history.replaceState(window.history.state, "", next);
 }
@@ -130,8 +135,8 @@ function ProductsView({ openId, navigate }: { openId: string | null; navigate: N
 
   const engine = useMemo(() => (state.kind === "ready" ? createCatalogSearch(state.index.items) : null), [state]);
   const result = useMemo(
-    () => engine?.search(deferredQ, { supplierId: filters.supplier || undefined, kind: filters.kind || undefined }, MAX_HITS),
-    [engine, deferredQ, filters.supplier, filters.kind],
+    () => engine?.search(deferredQ, { supplierId: filters.supplier || undefined, kind: filters.kind || undefined, hasDatasheet: filters.ficha }, MAX_HITS),
+    [engine, deferredQ, filters.supplier, filters.kind, filters.ficha],
   );
   useEffect(() => setActive(0), [result]);
 
@@ -211,6 +216,18 @@ function ProductsView({ openId, navigate }: { openId: string | null; navigate: N
                 ...KIND_TABS.map((t) => ({ value: t.value, label: t.label, count: byKind[t.value] ?? 0 })),
               ]}
             />
+            <button
+              type="button"
+              aria-pressed={filters.ficha}
+              onClick={() => update({ ficha: !filters.ficha })}
+              className={`inline-flex min-h-[44px] items-center rounded-md border px-3 text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 ${
+                filters.ficha
+                  ? "border-brand-600 bg-brand-50 text-brand-700"
+                  : "border-line bg-canvas-raised text-ink-muted hover:text-ink"
+              }`}
+            >
+              Con ficha
+            </button>
           </div>
           {state.kind === "loading" || !result ? (
             <Skeleton rows={10} />
@@ -225,10 +242,20 @@ function ProductsView({ openId, navigate }: { openId: string | null; navigate: N
               </p>
               {result.total === 0 ? (
                 <div className="space-y-2">
-                  <EmptyState title={filters.q.trim() ? `Sin resultados para «${filters.q.trim()}»` : "Sin productos en este filtro"}>
-                    Prueba con el código sin espacios, otra palabra u otro proveedor.
+                  <EmptyState
+                    title={
+                      filters.q.trim()
+                        ? `Sin resultados para «${filters.q.trim()}»`
+                        : filters.ficha
+                          ? "Ningún producto tiene ficha todavía en este filtro"
+                          : "Sin productos en este filtro"
+                    }
+                  >
+                    {filters.ficha
+                      ? "Quita «Con ficha» o prueba con otro proveedor o tipo de producto."
+                      : "Prueba con el código sin espacios, otra palabra u otro proveedor."}
                   </EmptyState>
-                  <Button onClick={() => setFilters({ q: "", supplier: "", kind: "" })}>Limpiar filtros</Button>
+                  <Button className="min-h-[44px] px-4" onClick={() => setFilters(NO_FILTERS)}>Limpiar filtros</Button>
                 </div>
               ) : (
                 <ResultList hits={result.hits} query={deferredQ} active={active} onOpen={open} onHover={setActive} />

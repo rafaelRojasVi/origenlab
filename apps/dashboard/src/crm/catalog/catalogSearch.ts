@@ -10,6 +10,7 @@
  *    every word required, prefix on the word being typed, typo tolerance only for words of four
  *    letters or more that carry no digit.
  *
+ * «Con ficha» keeps only products whose data sheet is in Drive and narrows every count below.
  * Facets: the supplier counts ignore the supplier scope (but keep the kind) and the kind counts
  * ignore the kind scope (but keep the supplier), so each control shows what clicking it gives.
  */
@@ -34,6 +35,8 @@ export interface IndexItem {
 export interface SearchScope {
   supplierId?: string;
   kind?: string;
+  /** Only products with an active data sheet («Con ficha»); it narrows every count, like the rest. */
+  hasDatasheet?: boolean;
 }
 
 export interface SearchResult {
@@ -119,6 +122,7 @@ export function createCatalogSearch(items: IndexItem[]) {
     let total = 0;
     let allSuppliers = 0;
     for (const item of ordered) {
+      if (scope.hasDatasheet && !item.has_datasheet) continue;
       const kindOk = !scope.kind || item.kind === scope.kind;
       const supplierOk = !scope.supplierId || item.supplier_ids.includes(scope.supplierId);
       if (kindOk) {

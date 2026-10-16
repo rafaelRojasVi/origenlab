@@ -2985,3 +2985,10 @@ action ([`DOMAIN.md`](DOMAIN.md) §3.6.6); numbers already on the case are only 
 number (its correlative under another year), no requesting institution, or a closed/won stage
 still leaves the email to a person. «Deshacer» voids every quote the action recorded. API only.
 
+
+### 2.7.125 Catálogo: filter «Con ficha», 2026-10-16 — built, deploys on merge
+
+A «Con ficha» toggle next to the Catálogo filters keeps only products with an active data sheet
+(not a price list, not a retired sheet). It filters the cost-free index in the browser on the
+`has_datasheet` flag the index already carried, narrows the supplier and kind counts, lives in the
+address as `&ficha=1` and is cleared by «Limpiar filtros». Dashboard only: no API or proxy change.

@@ -249,6 +249,37 @@ describe("Catálogo list", () => {
     expect(within(rows()[0]).getByText("Balanza analítica")).toBeInTheDocument();
   });
 
+  it("«Con ficha» keeps only products with a data sheet, remembers it in the address and clears", async () => {
+    stub();
+    renderCatalog();
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    const toggle = screen.getByRole("button", { name: "Con ficha" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(within(rows()[0]).getByText("Agitador de ejemplo")).toBeInTheDocument();
+    expect(within(rows()[0]).getByLabelText("Tiene ficha técnica")).toBeInTheDocument();
+    expect(window.location.hash).toContain("ficha=1");
+    // The supplier rail counts what clicking it would give with the filter on.
+    const rail = screen.getByRole("navigation", { name: "Proveedores" });
+    expect(within(rail).getByRole("button", { name: /Otro Proveedor\s*0/ })).toBeInTheDocument();
+    fireEvent.click(within(rail).getByRole("button", { name: /Otro Proveedor/ }));
+    expect(await screen.findByText("Ningún producto tiene ficha todavía en este filtro")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar filtros" }));
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(screen.getByRole("button", { name: "Con ficha" })).toHaveAttribute("aria-pressed", "false");
+    expect(window.location.hash).not.toContain("ficha");
+  });
+
+  it("restores «Con ficha» from the address", async () => {
+    window.history.replaceState(null, "", "#/crm/catalogo?ficha=1");
+    stub();
+    renderCatalog();
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(screen.getByRole("button", { name: "Con ficha" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("moves with the arrow keys and opens with Enter; «/» focuses the search; Escape clears it", async () => {
     stub();
     const navigate = renderCatalog();
