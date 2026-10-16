@@ -263,6 +263,31 @@ def test_an_exact_model_number_becomes_a_product_mention(dsn, target, mailbox_id
         [(key, pid, "catalog_model_key")]
 
 
+def test_a_model_printed_as_an_alias_becomes_a_mention_of_its_product(dsn, target, mailbox_id) -> None:
+    # The catalog stores the maker's item number; the email prints the model (DOMAIN.md §7 #59).
+    maker = owner_rows(dsn, "insert into crm.organization (kind, name, confirmation) values ('manufacturer', %s, "
+                            "'machine_proposed') returning id::text", (f"Fabricante Ejemplo {uuid.uuid4().hex[:6]}",))[0][0]
+    item = f"3{uuid.uuid4().int % 10**7:07d}"
+    alias = f"XQ{uuid.uuid4().hex[:4]}7"
+    pid = owner_rows(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, name) "
+                          "values (%s, %s, 'Balanza analítica') returning id::text", (maker, item))[0][0]
+    op = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                         "values (gen_random_uuid(), %s, 'Alias Prueba', 'sales', 'active') returning id::text",
+                    (f"alias-{uuid.uuid4().hex[:8]}@example.test",))[0][0]
+    owner_rows(dsn, "insert into catalog.product_model_alias (product_id, alias, source, created_by_operator_id) "
+                    "values (%s, %s, 'operator', %s) returning id", (pid, alias, op))
+    store = Store()
+    gid = capture(target, mailbox_id, store, f"tr-{uuid.uuid4().hex[:8]}",
+                  make_raw(subject=f"Cotizar balanza {alias}", message_id=f"<{uuid.uuid4().hex}@cliente.invalid>"))
+    sid = source_record(dsn, gid)
+    with triage_conn(target) as conn:
+        result = triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL))
+    assert result.mentions == 1
+    assert owner_rows(dsn, "select value_norm, value->>'catalog_product_id', value->>'source' from evidence.assertion "
+                           "where source_record_id = %s and kind = 'product_mention'", (sid,)) == \
+        [(item, pid, "catalog_model_key")]
+
+
 def test_the_full_text_query_runs_on_the_real_index(target) -> None:
     from origenlab_worker.catalog_match import match_products
 

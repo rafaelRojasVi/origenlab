@@ -2992,3 +2992,26 @@ A «Con ficha» toggle next to the Catálogo filters keeps only products with an
 (not a price list, not a retired sheet). It filters the cost-free index in the browser on the
 `has_datasheet` flag the index already carried, narrows the supplier and kind counts, lives in the
 address as `&ficha=1` and is cleared by «Limpiar filtros». Dashboard only: no API or proxy change.
+
+
+### 2.7.126 Model aliases: a model as printed reaches its catalog product, 2026-10-16 — built, migration not applied
+
+Table #59 `catalog.product_model_alias` (migration `20261016200000`; [`DOMAIN.md`](DOMAIN.md)
+§7.10): the other names a product's model is printed under, so a quote line or an email that prints
+«XQ100» links to the product stored as the maker's item number. One active alias per maker and key,
+never a model of the same maker, retired never deleted (guard trigger
+`catalog.product_model_alias_guard`); events `product.model_alias_added/_retired`. Inventory: tables
+**55** (`catalog` 8), policies **193**, foreign keys **176** (143 unconditionally covered),
+functions **38**, migrations **61**; the Slice 0 evidence set moved in the same change.
+
+- **Reads** follow an active alias wherever a line or text is linked by model key: catalog search,
+  product price history / costs / kits, the Cotizador workspace's principal history and kits, the
+  documents importer's data sheets, and the worker's mail-triage product candidates. An alias key
+  that names two products links neither.
+- **Importer** `scripts/catalog/import_model_aliases.py` (`add_model_alias`;
+  [`OPERATIONS.md`](OPERATIONS.md) §14.9).
+- **Not yet.** The migration is not applied on hosted (it must be, before the API and worker deploy:
+  the worker's connection probe now requires SELECT on the table); no alias is loaded. The private
+  manifests are prepared outside the repository. The dashboard's in-browser catalog index does not
+  carry aliases yet, so typing a printed model in «Catálogo» or the Cotizador's product search still
+  finds only the stored model; the server search (`/v2/catalog/products?q=`) does.

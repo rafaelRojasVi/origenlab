@@ -37,10 +37,24 @@ class _Cur:
 
 
 def test_an_exact_model_match_skips_the_full_text_query() -> None:
-    cur = _Cur([("p1", "UP200Ht", "UP200HT", "Homogeneizador")], [])
+    cur = _Cur([("p1", "UP200Ht", "UP200HT", "Homogeneizador", "UP200HT")], [])
     found = match_products(cur, "Cotizar UP200Ht", "")
     assert [(c.product_id, c.how) for c in found] == [("p1", "model_key")]
     assert len(cur.calls) == 1
+
+
+def test_a_model_printed_as_an_alias_matches_its_product_and_names_the_token() -> None:
+    # The product is stored under the maker's item number; the message prints the model.
+    cur = _Cur([("p4", "30000001", "30000001", "Balanza XQ100", "XQ100")], [])
+    found = match_products(cur, "Cotizar balanza XQ-100", "")
+    assert [(c.product_id, c.model_key, c.how, c.evidence) for c in found] == [("p4", "30000001", "model_key", "XQ100")]
+    assert cur.calls[0]["keys"] == ["XQ100"]
+
+
+def test_a_product_named_by_its_model_and_an_alias_is_one_candidate() -> None:
+    cur = _Cur([("p4", "30000001", "30000001", "Balanza XQ100", "30000001"),
+                ("p4", "30000001", "30000001", "Balanza XQ100", "XQ100")], [])
+    assert [c.product_id for c in match_products(cur, "XQ100 ref 30000001", "")] == ["p4"]
 
 
 def test_without_a_model_match_the_full_text_index_is_asked_with_an_or_query() -> None:

@@ -2566,6 +2566,27 @@ feature stays **inactive until a quote number seed exists**, because `create-quo
    (which must equal the Hoy number box), `highest_known` and any `ignored_mail_numbers`. A bad seed
    (not an integer 1–99999) answers 409 rather than a number.
 
+### 14.9 Model aliases (a model as printed)
+
+`catalog.product_model_alias` lets a quote line or an email that prints a model («XQ100») reach the
+product stored under its maker's item number («30000001») or another spelling (DOMAIN.md §7.10).
+Aliases are loaded from a private manifest by `apps/api/scripts/catalog/import_model_aliases.py`,
+with the same plan → apply → verify → rollback and hosted route as §14.5:
+
+```json
+{"aliases": [
+  {"maker": "<the manufacturer organization's name>", "model_number": "<as stored>",
+   "alias": "<as printed>", "reason": "<where it was seen>"}]}
+```
+
+The plan needs no database; it refuses an alias that is the product's own model and a manifest in
+which one maker maps one alias to two models. At apply the product is the maker's (folded name, not
+merged) one product with exactly that `model_number`; anything else is `unmatched` and writes
+nothing. An alias the maker already gives another product, or that is a model of the same maker, is
+`present_different` (the database refuses it as well). Verify before apply lists what would be
+written (`missing`), and verify after it `present`. An alias an operator retired after the import is
+never brought back (`kept_later_value`) and blocks that manifest's rollback.
+
 ## 15. Production release contract (PR #679; built, activation blocked)
 
 Schema and code release are one guarded operation: independently approved main merge,

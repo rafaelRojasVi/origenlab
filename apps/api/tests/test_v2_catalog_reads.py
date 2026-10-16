@@ -285,6 +285,63 @@ def test_detail_carries_history_and_kits(disposable_database):
     assert detail["kit_suggestions"][0]["model_key"] == "DETPROBE2"
 
 
+# -- model aliases (DOMAIN.md §7 #59): a line printed «XQ100» is about the product stored as 30000001
+
+def _alias(dsn, prod, alias: str, operator=None, *, retired: bool = False) -> None:
+    op = operator or _operator(dsn)
+    _owner(dsn, "insert into catalog.product_model_alias (product_id, alias, source, created_by_operator_id) "
+                "values (%s, %s, 'operator', %s)", (prod, alias, op))
+    if retired:
+        _owner(dsn, "update catalog.product_model_alias set retired_at = now(), retired_by_operator_id = %s "
+                    "where product_id = %s and alias = %s", (op, prod, alias))
+
+
+@needs_db
+def test_an_aliased_line_joins_the_products_price_history_kits_and_costs(disposable_database):
+    dsn = disposable_database
+    supplier = _org(dsn, "supplier")
+    _, prod = _seed_product(dsn, model="30000101", name="Balance", name_es="Balanza XQ101")
+    _obs(dsn, prod, supplier, as_of="2026-01-01T00:00Z", price="500")
+    _alias(dsn, prod, "XQ 101")
+    _, other = _seed_product(dsn, model="50000101", name="o", name_es="Otra balanza")
+    _alias(dsn, other, "ZQ-909")  # another product's alias names nothing here
+    _history_fixture(dsn, "XQ-101", "XQPROBE-1")  # every line prints the model, none the item number
+    _qline(dsn, _quote(dsn, "2026-04-10", "T-D"), 1, "30000101", "1300.0000")  # one prints the item number
+    reads = _reads(dsn)
+    detail = reads.product_detail(prod)
+    assert [i["line_total"] for i in detail["price_history"]["items"]] == [
+        "1300.0000", "1200.0000", "1100.0000", "1000.0000"]
+    assert [c["price"] for c in detail["price_history"]["costs"]] == ["500.000000"]
+    assert detail["kit_suggestions"][0]["model_key"] == "XQPROBE1"
+    # By key: the alias and the item number read the same history.
+    for key in ("XQ101", "30000101"):
+        assert len(reads.price_history(key)["items"]) == 4, key
+        assert reads.kit_suggestions(key)[0]["model_key"] == "XQPROBE1", key
+    # Search finds the product by what is printed.
+    assert [i["id"] for i in reads.search_products("XQ-101", None, None, 20, 0)["items"]] == [str(prod)]
+
+
+@needs_db
+def test_an_ambiguous_or_retired_alias_links_nothing(disposable_database):
+    dsn = disposable_database
+    _, a = _seed_product(dsn, model="30000202", name="a", name_es="Balanza A")
+    _, b = _seed_product(dsn, model="40000202", name="b", name_es="Balanza B")  # another maker
+    _alias(dsn, a, "XQ202")
+    _alias(dsn, b, "XQ202")  # two makers print the same code
+    _, c = _seed_product(dsn, model="30000303", name="c", name_es="Balanza C")
+    _alias(dsn, c, "XQ303", retired=True)
+    _qline(dsn, _quote(dsn, "2026-05-10", "T-E"), 1, "XQ202", "100.0000")
+    _qline(dsn, _quote(dsn, "2026-05-11", "T-F"), 1, "XQ303", "200.0000")
+    reads = _reads(dsn)
+    assert reads.product_detail(a)["price_history"]["items"] == []
+    assert reads.product_detail(b)["price_history"]["items"] == []
+    assert reads.product_detail(c)["price_history"]["items"] == []
+    # The key still reads its own lines, as any unknown model does — but no product's costs.
+    ambiguous = reads.price_history("XQ202")
+    assert len(ambiguous["items"]) == 1 and ambiguous["costs"] == []
+    assert reads.price_history("30000202")["items"] == []
+
+
 # -- Catálogo v2: the search index, documents in Drive, batch image paths
 
 def _index_row(out: dict, product_id) -> dict:
