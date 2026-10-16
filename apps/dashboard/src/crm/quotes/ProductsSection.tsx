@@ -22,7 +22,7 @@ import {
   updateItem,
   type DraftProblem,
 } from "./draftEditor";
-import { GRID_CLIENT, GRID_FULL, LineRow, type LineProduct } from "./LineRow";
+import { GRID_CLIENT, GRID_FULL, GRID_GAP, LineRow, type LineProduct } from "./LineRow";
 import { ProductSearch } from "./ProductSearch";
 import type { Computed, ComputedLine, QuoteDraft, QuoteWorkspace } from "./quoteApi";
 
@@ -199,37 +199,43 @@ export function ProductsSection({
         </div>
       </div>
 
+      {/* Two tiers per line (LineRow): it fits a 760 px column; narrower, it scrolls sideways. */}
       <div className="overflow-x-auto">
-        <div role="table" aria-label="Líneas de la cotización" className={clientView ? "min-w-[640px]" : "min-w-[960px]"}>
-          <div role="row" className={`grid ${grid} gap-3 border-y border-line/80 bg-canvas-sunken px-5 py-2 text-xs font-semibold text-ink-muted`}>
-            <span role="columnheader">Producto</span>
-            <span role="columnheader" className="text-right">
-              Cant.
+        <div role="table" aria-label="Líneas de la cotización" className={clientView ? "min-w-[480px]" : "min-w-[732px]"}>
+          <div role="row" className="border-y border-line/80 bg-canvas-sunken px-5 py-2 text-xs font-semibold text-ink-muted">
+            {/* Tier 1 is the product itself; its header is for screen readers. */}
+            <span role="columnheader" className="sr-only">
+              Producto
             </span>
-            {clientView ? null : (
+            <div className={`grid ${grid} ${GRID_GAP}`}>
               <span role="columnheader" className="text-right">
-                Costo unit.
+                Cant.
               </span>
-            )}
-            {clientView ? null : (
+              {clientView ? null : (
+                <span role="columnheader" className="text-right">
+                  Costo unit.
+                </span>
+              )}
+              {clientView ? null : (
+                <span role="columnheader" className="text-right">
+                  Recargo
+                </span>
+              )}
               <span role="columnheader" className="text-right">
-                Recargo
+                Precio unit.
               </span>
-            )}
-            <span role="columnheader" className="text-right">
-              Precio unit.
-            </span>
-            <span role="columnheader" className="text-right">
-              Total
-            </span>
-            {clientView ? null : (
               <span role="columnheader" className="text-right">
-                Margen
+                Total
               </span>
-            )}
-            <span role="columnheader">
-              <span className="sr-only">Acciones</span>
-            </span>
+              {clientView ? null : (
+                <span role="columnheader" className="text-right">
+                  Margen
+                </span>
+              )}
+              <span role="columnheader">
+                <span className="sr-only">Acciones</span>
+              </span>
+            </div>
           </div>
           {draft.items.length === 0 ? (
             <p className="px-5 py-6 text-[13px] text-ink-muted">Busca un producto del catálogo o agrega una línea libre.</p>

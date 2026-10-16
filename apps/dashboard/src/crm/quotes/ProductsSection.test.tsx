@@ -239,6 +239,36 @@ describe("ProductsSection — the table", () => {
     expect(within(free).getByText("Sin costo")).toBeInTheDocument();
   });
 
+  it("two tiers: the product on its own line, then one labelled cell per column header, in the same order", async () => {
+    await setup();
+    const table = screen.getByRole("table", { name: "Líneas de la cotización" });
+    const [header, ...rows] = within(table).getAllByRole("row");
+    const headers = within(header).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toEqual(["Producto", "Cant.", "Costo unit.", "Recargo", "Precio unit.", "Total", "Margen", "Acciones"]);
+    for (const row of rows) {
+      const cells = within(row).getAllByRole("cell");
+      expect(cells).toHaveLength(headers.length);
+      // Tier 1 is the product alone (name, code · supplier, badge); tier 2 holds the numbers.
+      expect(cells[0].parentElement).toBe(row);
+      for (const cell of cells.slice(1)) expect(cell.parentElement).not.toBe(row);
+    }
+    // The numbers' columns are the same grid in the header and in every row, and fit 760 px.
+    const grids = [header, ...rows].map((r) => within(r).getAllByRole(r === header ? "columnheader" : "cell")[1].parentElement!.className.split(" ").find((c) => c.startsWith("grid-cols-")));
+    expect(new Set(grids).size).toBe(1);
+    expect(grids[0]).toBeTruthy();
+    expect(table.className).not.toMatch(/min-w-\[9\d\dpx\]/);
+    // The principal badge reads on one line.
+    expect(screen.getByText("Equipo principal · absorbe los gastos")).toHaveClass("whitespace-nowrap");
+  });
+
+  it("the client view keeps the two tiers with the client's columns only", async () => {
+    await setup({ clientView: true });
+    const table = screen.getByRole("table", { name: "Líneas de la cotización" });
+    const [header, row] = within(table).getAllByRole("row");
+    expect(within(header).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Producto", "Cant.", "Precio unit.", "Total", "Acciones"]);
+    expect(within(row).getAllByRole("cell")).toHaveLength(5);
+  });
+
   it("names every margin state in words", async () => {
     const states: [string, string][] = [
       ["loss", "Pérdida"],

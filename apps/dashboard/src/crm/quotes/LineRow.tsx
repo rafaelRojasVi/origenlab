@@ -16,10 +16,18 @@ import type { ComputedLine, QuoteDraftItem } from "./quoteApi";
 import { amountTextToDecimal, decimalToPercentText, formatPct, percentTextToDecimal, priceTextToDecimal, readQuantity } from "./quoteFormat";
 import { ProductImage } from "../catalog/ProductImage";
 
-/** Product · Cant. · Costo unit. · Recargo · Precio unit. · Total · Margen · menu. */
-export const GRID_FULL = "grid-cols-[minmax(0,1fr)_72px_176px_104px_140px_140px_96px_40px]";
+/**
+ * A row is two tiers (I1): the product on a line of its own (thumb, name, code · supplier, the
+ * principal badge), then the numbers on this grid — Cant. · Costo unit. · Recargo · Precio unit. ·
+ * Total · Margen · menu. The header's numbers use the same grid. Its minimum (692 px plus the row's
+ * padding) fits a 760 px column beside the summary rail with no horizontal scroll; the cost, price
+ * and total columns take what is left.
+ */
+export const GRID_FULL = "grid-cols-[64px_minmax(9.5rem,1.4fr)_80px_minmax(7rem,1fr)_minmax(7rem,1fr)_88px_36px]";
 /** «Vista cliente»: no cost, recargo or margin. */
-export const GRID_CLIENT = "grid-cols-[minmax(0,1fr)_72px_140px_140px_40px]";
+export const GRID_CLIENT = "grid-cols-[64px_minmax(7rem,1fr)_minmax(7rem,1fr)_36px]";
+/** The tier-2 grid's spacing, the same in the header. */
+export const GRID_GAP = "gap-2";
 
 const MARGIN_STATE: Record<string, { label: string; cls: string }> = {
   no_cost: { label: "Sin costo", cls: "bg-canvas-sunken text-ink-muted" },
@@ -154,7 +162,7 @@ function CostInputs({
           setPicked(next);
           if (item.unit_cost) onPatch({ cost_currency: next, cost_observation_id: null });
         }}
-        className="h-8 w-[58px] shrink-0 rounded-md border border-line-strong bg-canvas-raised px-1 text-[12.5px] text-ink focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:opacity-50"
+        className="h-8 w-[56px] shrink-0 rounded-md border border-line-strong bg-canvas-raised px-1 text-[12.5px] text-ink focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:opacity-50"
       >
         {COST_CURRENCIES.map((c) => (
           <option key={c} value={c}>
@@ -258,44 +266,50 @@ export function LineRow({
   const dim = stale ? " opacity-50" : "";
 
   return (
-    <div role="row" aria-label={`Línea ${n}: ${item.description || "sin descripción"}`} className="border-b border-line/70">
-      <div className={`grid ${clientView ? GRID_CLIENT : GRID_FULL} items-center gap-3 px-5 py-3`}>
-        <div role="cell" className="flex min-w-0 items-center gap-3">
-          <ProductImage imageId={product?.imageId ?? null} kind={product?.kind ?? item.item_type ?? null} alt="" size="thumb" />
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            {free ? (
-              <input
-                ref={description}
-                type="text"
-                aria-label={`Descripción de la línea ${n}`}
-                aria-invalid={rowProblems.some((p) => p.field === "items.description") || undefined}
-                value={item.description}
-                disabled={disabled}
-                placeholder="Qué es: servicio, flete, repuesto…"
-                onChange={(e) => onPatch({ description: e.target.value })}
-                className="h-8 w-full min-w-0 rounded-md border border-line-strong bg-canvas-raised px-2 text-[14px] font-semibold text-ink placeholder:font-normal placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:opacity-50"
-              />
-            ) : (
-              <span className="truncate text-[14px] font-semibold text-ink" title={item.description}>
-                {item.description}
-              </span>
-            )}
-            {product?.code || (product?.supplier && !clientView) || free ? (
-              <span className="truncate text-[12.5px] text-ink-muted">
-                {product?.code ? <span className="font-mono">{product.code}</span> : null}
-                {product?.code && product?.supplier && !clientView ? " · " : null}
-                {clientView ? null : (product?.supplier ?? null)}
-                {free && !product?.code ? "Línea libre (sin catálogo)" : null}
-              </span>
-            ) : null}
-            {principal && !clientView ? (
-              <span className="self-start rounded-md bg-brand-50 px-1.5 py-0.5 text-[11.5px] font-semibold text-brand-700">
-                Equipo principal · absorbe los gastos
-              </span>
-            ) : null}
-          </div>
+    <div role="row" aria-label={`Línea ${n}: ${item.description || "sin descripción"}`} className="border-b border-line/70 px-5 py-3">
+      {/* Tier 1: the product, full width. */}
+      <div role="cell" className="flex min-w-0 items-center gap-3">
+        <ProductImage imageId={product?.imageId ?? null} kind={product?.kind ?? item.item_type ?? null} alt="" size="thumb" />
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          {free ? (
+            <input
+              ref={description}
+              type="text"
+              aria-label={`Descripción de la línea ${n}`}
+              aria-invalid={rowProblems.some((p) => p.field === "items.description") || undefined}
+              value={item.description}
+              disabled={disabled}
+              placeholder="Qué es: servicio, flete, repuesto…"
+              onChange={(e) => onPatch({ description: e.target.value })}
+              className="h-8 w-full min-w-0 rounded-md border border-line-strong bg-canvas-raised px-2 text-[14px] font-semibold text-ink placeholder:font-normal placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:opacity-50"
+            />
+          ) : (
+            <span className="truncate text-[14px] font-semibold text-ink" title={item.description}>
+              {item.description}
+            </span>
+          )}
+          {product?.code || (product?.supplier && !clientView) || free || (principal && !clientView) ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+              {product?.code || (product?.supplier && !clientView) || free ? (
+                <span className="min-w-0 truncate text-[12.5px] text-ink-muted">
+                  {product?.code ? <span className="font-mono">{product.code}</span> : null}
+                  {product?.code && product?.supplier && !clientView ? " · " : null}
+                  {clientView ? null : (product?.supplier ?? null)}
+                  {free && !product?.code ? "Línea libre (sin catálogo)" : null}
+                </span>
+              ) : null}
+              {principal && !clientView ? (
+                <span className="whitespace-nowrap rounded-md bg-brand-50 px-1.5 py-0.5 text-[11.5px] font-semibold text-brand-700">
+                  Equipo principal · absorbe los gastos
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
+      </div>
 
+      {/* Tier 2: the numbers, under the header's columns. */}
+      <div className={`mt-2 grid ${clientView ? GRID_CLIENT : GRID_FULL} items-start ${GRID_GAP}`}>
         <div role="cell">
           <NumberInput
             label={`Cantidad de la línea ${n}`}
@@ -459,8 +473,9 @@ export function LineRow({
         </div>
       </div>
 
+      {/* The line's note and problems: under both tiers, not a column of their own. */}
       {showNote || rowProblems.length ? (
-        <div role="cell" className="space-y-1.5 px-5 pb-3 pl-[76px]">
+        <div className="mt-2 space-y-1.5 pl-[52px]">
           {showNote ? (
             <label className="flex flex-col gap-1 text-[12.5px] text-ink-muted">
               <span>Nota para el cliente, línea {n} (sale en el PDF)</span>
