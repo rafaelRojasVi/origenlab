@@ -317,6 +317,21 @@ describe("SummaryRail — avisos", () => {
     expect(screen.getByText("No hay tipo de cambio para USD.")).toBeInTheDocument();
   });
 
+  it("says an English reason from the API in Spanish, never in English", async () => {
+    setup({ state: stateFor({ computed: null, computed_error: { code: "fx_missing:EUR", message: "the draft cannot be priced (fx_missing:EUR)" } }) });
+    await settled();
+    const card = screen.getByRole("region", { name: "Avisos" });
+    expect(within(card).getByText("Falta el tipo de cambio de EUR.")).toBeInTheDocument();
+    expect(within(card).queryByText(/cannot be priced/)).not.toBeInTheDocument();
+  });
+
+  it("says a refused preview's engine code in Spanish", async () => {
+    setup({ state: stateFor({}, { previewError: new QuoteRefusal(422, "quantity_invalid:1", "the draft cannot be priced (quantity_invalid:1)") }) });
+    await settled();
+    expect(screen.getByText("La cantidad de la línea 1 no es válida.")).toBeInTheDocument();
+    expect(screen.queryByText(/cannot be priced/)).not.toBeInTheDocument();
+  });
+
   it("has no card when there is nothing to say", async () => {
     setup();
     await settled();

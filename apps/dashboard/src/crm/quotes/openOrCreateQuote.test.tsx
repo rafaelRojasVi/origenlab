@@ -235,6 +235,35 @@ describe("useOpenOrCreateQuote", () => {
     expect(quoteToOpen(card([voided]))).toBeNull();
   });
 
+  it("keeps the key while the API says the same create is still running", async () => {
+    for (const code of ["command_in_progress", "idempotency_conflict"]) {
+      forgetCreatedQuotes();
+      const answers = [() => refused(409, code, "still running"), created];
+      const keys: (string | null)[] = [];
+      vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        keys.push(((init?.headers ?? {}) as Record<string, string>)["Idempotency-Key"] ?? null);
+        return Promise.resolve(answers[keys.length - 1]());
+      }));
+      const go = vi.fn();
+      const { result, unmount } = renderHook(() => useOpenOrCreateQuote(go));
+      await act(() => result.current.run(card()));
+      await act(() => result.current.run(card()));
+      expect(keys).toHaveLength(2);
+      expect(keys[1]).toBe(keys[0]);
+      expect(go).toHaveBeenCalledWith(NEW_QUOTE);
+      unmount();
+    }
+  });
+
+  it("says an English refusal in Spanish, never the API's words", async () => {
+    stub(() => refused(409, "quote_numbering_exhausted", "numbering exhausted"));
+    const { result } = renderHook(() => useOpenOrCreateQuote(vi.fn()));
+    render(<Toaster />);
+    await act(() => result.current.run(card()));
+    expect(await screen.findByText("La numeración de cotizaciones se agotó; configura un nuevo inicio.")).toBeInTheDocument();
+    expect(screen.queryByText(/numbering exhausted/)).not.toBeInTheDocument();
+  });
+
   it("says the API's own Spanish reason when it refuses", async () => {
     stub(() => refused(409, "quote_numbering_not_configured", "Falta configurar la numeración de cotizaciones (parámetro quote_number_seed)."));
     const go = vi.fn();

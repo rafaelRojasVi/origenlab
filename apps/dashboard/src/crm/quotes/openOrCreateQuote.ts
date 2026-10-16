@@ -13,8 +13,8 @@
  * repeats the same command, so the server never mints a second number for it. A page whose copy
  * of the case predates a quote created from it in this session opens that quote. The API decides
  * whether the case may get a quote (closed, numbering not configured…); its reason is said in a
- * toast, in Spanish. A button that is gone when the answer comes (the user went elsewhere) does
- * not navigate.
+ * toast, in Spanish. «Still running» (`command_in_progress`, `idempotency_conflict`) keeps the
+ * key. A button that is gone when the answer comes (the user went elsewhere) does not navigate.
  *
  * Callers offer this only to sales and admin with the commands enabled (`useMayRunCaseCommands`);
  * anyone else keeps the old behaviour (open the case).
@@ -26,6 +26,7 @@ import { crmHash } from "../crmRoute";
 import type { OpportunityCardData, QuoteCard, RevisionCard } from "../crmTypes";
 import { toast } from "../ui";
 import { QuoteRefusal, createQuote, newQuoteCommandKey } from "./quoteApi";
+import { quoteRefusalText } from "./quoteRefusal";
 
 const OPEN = new Set(["draft", "in_review"]);
 
@@ -86,20 +87,11 @@ export function quoteToOpen(card: OpportunityCardData): string | null {
   return made && !card.quotes.some((q) => q.quote_id === made) ? made : null;
 }
 
-/** English API reasons said in Spanish; any other refusal is said in the API's own words. */
-const SPANISH: Record<string, string> = {
-  case_closed: "Este caso está cerrado; no recibe cotizaciones nuevas.",
-  case_not_found: "Este caso ya no existe.",
-  quote_number_taken: "Ese número de cotización se acaba de usar; vuelve a intentarlo.",
-  role_may_not_view_costs: "Sólo ventas y administración pueden cotizar.",
-};
-
 const FALLBACK = "No se pudo crear la cotización.";
 
-/** What to say when `create-quote` failed. A body that is not the API's envelope is not shown. */
+/** What to say when `create-quote` failed, in Spanish (`quoteRefusalText`). A body that is not the API's envelope is not shown. */
 export function createRefusalText(e: unknown): string {
-  if (e instanceof QuoteRefusal && e.code) return SPANISH[e.code] ?? (e.message.trim() || FALLBACK);
-  return FALLBACK;
+  return quoteRefusalText(e, FALLBACK);
 }
 
 const toCotizador = (quoteId: string) => {
@@ -107,9 +99,15 @@ const toCotizador = (quoteId: string) => {
   window.scrollTo?.({ top: 0 });
 };
 
-/** The API answered for certain: a refusal of its own (4xx with a code). Anything else may have run. */
+/** The same command may still be running on the server: retrying it must keep its key. */
+const STILL_RUNNING = new Set(["command_in_progress", "idempotency_conflict"]);
+
+/**
+ * The API answered for certain: a refusal of its own (4xx with a code). Anything else may have
+ * run, and so may a create the API says is still in progress under this key.
+ */
 function definitive(e: unknown): boolean {
-  return e instanceof QuoteRefusal && !!e.code && e.status >= 400 && e.status < 500;
+  return e instanceof QuoteRefusal && !!e.code && !STILL_RUNNING.has(e.code) && e.status >= 400 && e.status < 500;
 }
 
 /**

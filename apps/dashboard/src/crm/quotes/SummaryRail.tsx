@@ -19,7 +19,8 @@ import { distinctQuotes } from "../catalog/SalesSummary";
 import { formatMoney } from "../money";
 import { Button } from "../ui";
 import { draftProblems, isEditable, principalItemOf, rowOfLine, setFxOverride, type DraftEditorState } from "./draftEditor";
-import { QuoteRefusal, type QuoteDraft, type QuoteWorkspace } from "./quoteApi";
+import type { QuoteDraft, QuoteWorkspace } from "./quoteApi";
+import { quoteRefusalText } from "./quoteRefusal";
 import { amountTextToDecimal, decimalEditText, formatPct } from "./quoteFormat";
 import type { FlushResult } from "./useQuoteDraft";
 
@@ -445,12 +446,10 @@ function notices(state: DraftEditorState, editable: boolean): string[] {
   const out: string[] = [];
   const cur = state.workspace.current;
   // The workspace's reason holds until something newer was priced here.
-  if (cur?.computed_error && state.computedSeq === 0) out.push(cur.computed_error.message);
+  if (cur?.computed_error && state.computedSeq === 0) out.push(quoteRefusalText(cur.computed_error, "Este borrador no se pudo calcular."));
   const pe = state.previewError;
-  if (pe) {
-    // Only an API envelope's message is the server's words (as for the save line).
-    out.push(pe instanceof QuoteRefusal && pe.code ? pe.message : "No se pudo actualizar el cálculo; se muestran los últimos precios.");
-  }
+  // In Spanish (`quoteRefusalText`); a body that is not the API's envelope is not shown.
+  if (pe) out.push(quoteRefusalText(pe, "No se pudo actualizar el cálculo; se muestran los últimos precios."));
   for (const w of state.computed?.warnings ?? []) {
     if (w.startsWith("dhl_fallback:") || w.startsWith("profile_parameter_missing:")) continue;
     if (w === "principal_missing") {
