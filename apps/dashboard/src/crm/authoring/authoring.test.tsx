@@ -386,7 +386,7 @@ describe("stale_version handling", () => {
       vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === "POST") {
           return new Response(
-            JSON.stringify({ detail: { code: "stale_version", message: "Version mismatch" } }),
+            JSON.stringify({ error: { code: "conflict", message: "Version mismatch", details: { code: "stale_version", message: "Version mismatch" }, request_id: "req-ejemplo" } }),
             { status: 409, headers: { "Content-Type": "application/json" } },
           );
         }

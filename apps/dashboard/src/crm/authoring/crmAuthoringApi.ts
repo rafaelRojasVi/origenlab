@@ -6,6 +6,7 @@
  */
 
 import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
+import { refusalOfError } from "../../api/refusalEnvelope";
 
 /* ── command paths ─────────────────────────────────────────────────────── */
 
@@ -308,22 +309,12 @@ async function postCommand<T>(path: string, body: unknown, idempotencyKey: strin
   return res.json() as Promise<T>;
 }
 
-/** The API's refusal `{detail: {code, message}}`, when the error carries one. */
-export function refusalOf(err: unknown): { code: string; message: string } | null {
-  if (!(err instanceof OperatorApiError)) return null;
-  if (err.message.includes("path_not_allowed")) return { code: "path_not_allowed", message: err.message };
-  try {
-    const parsed = JSON.parse(err.message) as { detail?: unknown };
-    const d = parsed.detail;
-    if (d && typeof d === "object" && "code" in d && "message" in d) {
-      return { code: String((d as { code: unknown }).code), message: String((d as { message: unknown }).message) };
-    }
-    if (typeof d === "string") return { code: `http_${err.status}`, message: d };
-  } catch {
-    /* not JSON */
-  }
-  return { code: `http_${err.status}`, message: err.message };
-}
+/**
+ * The API's refusal, when the error carries one: the command's own code and message (the API's
+ * `{error:{details:{code,message}}}`), else the generic code, else an older `{detail}`; with the
+ * HTTP status (`refusalOfError`, shared by every CRM screen).
+ */
+export const refusalOf = refusalOfError;
 
 /* ── reads ───────────────────────────────────────────────────────────────── */
 

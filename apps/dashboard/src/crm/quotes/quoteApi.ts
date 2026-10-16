@@ -16,6 +16,7 @@
  */
 import { OperatorApiError, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
 import type { PriceHistory } from "../catalog/catalogApi";
+import { parseRefusalEnvelope } from "../../api/refusalEnvelope";
 
 /** A number as the API prints it: a decimal string, never a JS number. */
 export type Decimal = string;
@@ -295,10 +296,13 @@ export interface QuoteNumbering {
 /* ── refusals ─────────────────────────────────────────────────────────────── */
 
 /**
- * The API or Worker refused a quote request. `code` is the machine code from
- * `{detail:{code,message}}` (API) or `{error:{code,message}}` (Worker), or null when the body
- * is not an envelope. It is an `OperatorApiError`, so `classifyError` (and `ResourceGate`) treats it
- * like any other API refusal. A viewer is 403 with `role_may_not_view_costs`.
+ * The API or Worker refused a quote request. `code` is the command's own machine code: the API
+ * answers `{error:{code:<generic: forbidden, conflict, validation_error…>, message, details:{code,
+ * message, …}, request_id}}` (errors.py), so it is `error.details.code`, else the generic
+ * `error.code` (a body validation error, the Worker's `{error:{code,message}}`), else an older
+ * `{detail:{code,message}}`; null when the body is not an envelope (`parseRefusalEnvelope`). It is
+ * an `OperatorApiError`, so `classifyError` (and `ResourceGate`) treats it like any other API
+ * refusal. A viewer is 403 with `role_may_not_view_costs`.
  */
 export class QuoteRefusal extends OperatorApiError {
   constructor(
@@ -326,46 +330,6 @@ export interface QuoteValidationError {
   type: string;
 }
 
-type Envelope = { code: string | null; message: string | null; details: Record<string, unknown> | null };
-
-const NOT_DETAILS = new Set(["code", "message", "details", "request_id"]);
-
-/** The keys of `obj` that are details (not the code, the message or the request's id). */
-function detailsOf(...objs: unknown[]): Record<string, unknown> | null {
-  const out: Record<string, unknown> = {};
-  for (const obj of objs) {
-    if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
-    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) if (!NOT_DETAILS.has(k)) out[k] = v;
-  }
-  return Object.keys(out).length > 0 ? out : null;
-}
-
-/**
- * The refusal's own code and message. The API's error handler wraps every refusal as
- * `{error:{code:<generic: conflict, validation_error, not_found…>, message, details:{code, message,
- * …details}, request_id}}`: the command's own code is `details.code`, and the generic one is only
- * a fallback (a body validation error, the Worker's `{error:{code,message}}`). An older
- * `{detail:{code, message, …details}}` is read too. The details kept (`candidates`,
- * `validation_errors`…) leave out the code, the message and the request id.
- */
-function envelopeOf(raw: unknown): Envelope {
-  if (!raw || typeof raw !== "object") return { code: null, message: null, details: null };
-  const body = raw as { detail?: unknown; error?: unknown };
-  for (const part of [body.error, body.detail]) {
-    if (!part || typeof part !== "object") continue;
-    const { code, message, details } = part as { code?: unknown; message?: unknown; details?: unknown };
-    const inner = details && typeof details === "object" ? (details as { code?: unknown; message?: unknown }) : null;
-    if (inner && typeof inner.code === "string" && inner.code) {
-      const said = typeof inner.message === "string" ? inner.message : typeof message === "string" ? message : null;
-      return { code: inner.code, message: said, details: detailsOf(inner) };
-    }
-    if (code) {
-      return { code: String(code), message: typeof message === "string" ? message : null, details: detailsOf(part, inner) };
-    }
-  }
-  return { code: null, message: null, details: null };
-}
-
 async function refusalOf(res: Response): Promise<QuoteRefusal> {
   notifyIfSessionRefused(res.status);
   const text = await res.text().catch(() => "");
@@ -375,7 +339,7 @@ async function refusalOf(res: Response): Promise<QuoteRefusal> {
   } catch {
     /* not JSON */
   }
-  const { code, message, details } = envelopeOf(parsed);
+  const { code, message, details } = parseRefusalEnvelope(parsed);
   return new QuoteRefusal(res.status, code, message || text || res.statusText || `HTTP ${res.status}`, details);
 }
 

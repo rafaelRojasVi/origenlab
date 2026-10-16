@@ -826,7 +826,7 @@ describe("Bajas (W10)", () => {
                      key: headers.get("Idempotency-Key") });
         if (method === "POST") {
           if (commandStatus !== 200) {
-            return jsonResponse({ detail: { code: "review_not_pending", message: "this request is rejected, not pending" } }, commandStatus);
+            return jsonResponse({ error: { code: "conflict", message: "this request is rejected, not pending", details: { code: "review_not_pending", message: "this request is rejected, not pending" }, request_id: "req-ejemplo" } }, commandStatus);
           }
           if (url.pathname === UNSUBSCRIBE_REVIEW_PATHS.confirmTriage) {
             readings = [];

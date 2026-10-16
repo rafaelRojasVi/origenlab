@@ -221,7 +221,11 @@ function stubRefusing(create: { status: number; body: unknown } | "pending", opt
   return { calls, release: (r: Response) => release(r) };
 }
 
-const refusal = (code: string) => ({ status: 409, body: { detail: { code, message: "texto del API" } } });
+/** The API's envelope (errors.py): the generic code outside, the command's own in `details`. */
+const refusal = (code: string) => ({
+  status: 409,
+  body: { error: { code: "conflict", message: "texto del API", details: { code, message: "texto del API" }, request_id: "req-ejemplo" } },
+});
 const anaRow = (list: HTMLElement) => within(list).getByText("Ana Pérez Soto").closest("li")!;
 
 describe("refusals", () => {
@@ -239,7 +243,7 @@ describe("refusals", () => {
   });
 
   it("an unknown code gets a Spanish fallback that keeps the code for support", async () => {
-    stubRefusing({ status: 422, body: { detail: { code: "codigo_raro", message: "raw english text" } } });
+    stubRefusing({ status: 422, body: { error: { code: "validation_error", message: "raw english text", details: { code: "codigo_raro", message: "raw english text" }, request_id: "req-ejemplo" } } });
     render(withRole("sales", <PeoplePage navigate={() => undefined} />));
     const list = await screen.findByRole("list", { name: "Personas sugeridas" });
     fireEvent.click(within(anaRow(list)).getByRole("button", { name: "Crear persona" }));

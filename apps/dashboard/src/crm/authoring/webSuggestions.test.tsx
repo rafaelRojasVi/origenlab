@@ -231,7 +231,7 @@ describe("«Sugerencias de la web»", () => {
       { status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "r1", version: 4 } },
       { status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "r2", version: 5 } },
       { status: 200, body: { ok: true, replayed: false, idempotency_key: "key", command_receipt_id: "r3", version: 6 } },
-      { status: 409, body: { detail: { code: "identifier_taken", message: "that identifier is recorded on another record" } } },
+      { status: 409, body: { error: { code: "conflict", message: "that identifier is recorded on another record", details: { code: "identifier_taken", message: "that identifier is recorded on another record" }, request_id: "req-ejemplo" } } },
     ]);
     render(withRole("sales", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor admin={false} />));
     fireEvent.click(await screen.findByRole("button", { name: "Aplicar todo y confirmar" }));
@@ -244,7 +244,7 @@ describe("«Sugerencias de la web»", () => {
 
   it("a version that moved under the operator is said plainly, and nothing else is sent", async () => {
     const posts = stubApi(fixture(), [
-      { status: 409, body: { detail: { code: "stale_version", message: "organization was modified since you loaded it" } } },
+      { status: 409, body: { error: { code: "conflict", message: "organization was modified since you loaded it", details: { code: "stale_version", message: "organization was modified since you loaded it" }, request_id: "req-ejemplo" } } },
     ]);
     render(withRole("sales", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor admin={false} />));
     fireEvent.click(await screen.findByRole("button", { name: "Aplicar Tipo" }));
@@ -304,7 +304,7 @@ describe("review fixes", () => {
     });
     const posts = stubApi(
       card,
-      [ok(4), ok(5), ok(6), { status: 409, body: { detail: { code: "stale_version", message: "x" } } }],
+      [ok(4), ok(5), ok(6), { status: 409, body: { error: { code: "conflict", message: "x", details: { code: "stale_version", message: "x" }, request_id: "req-ejemplo" } } }],
       (path, body, version) => {
         card.organization.version = version;
         if (path === "update-organization") {
