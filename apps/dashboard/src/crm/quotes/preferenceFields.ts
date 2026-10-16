@@ -7,7 +7,10 @@
  * The keys and their ranges are the API's (`v2/catalog/keys.py`): percentages are ratios, the
  * `profile_*_clp` amounts are pesos, validity is whole days 1–365, the seed a whole number
  * 1–99999 (administration only), and the other `quote_default_*` keys are printed text up to 1000
- * characters, sent as `value_text`. An unset parameter is not an error: the engine falls back
+ * characters, sent as `value_text`. The column is `numeric(18,6)`: a percentage takes at most four
+ * decimals (six on the ratio) and 999 %, an amount at most twelve digits, so nothing is rounded
+ * silently or overflows. The margin band's two ends are checked against each other
+ * (`bandProblem`) before anything is sent. An unset parameter is not an error: the engine falls back
  * (docs/OPERATIONS.md §14.8), and the field says to what.
  */
 import { formatMoney } from "../money";
@@ -84,7 +87,7 @@ export const PREFERENCE_GROUPS: PreferenceGroup[] = [
   },
   {
     title: "Numeración",
-    note: "El número que tendrá la próxima cotización. Se fija una vez; la serie sigue sola desde ahí.",
+    note: "La próxima cotización lleva el mayor entre este número y el más alto ya usado + 1: un valor menor que ése no tiene efecto, y cambiarlo después sólo puede adelantar el inicio. La serie sigue sola desde ahí.",
     fields: [
       {
         key: "quote_number_seed",
@@ -100,6 +103,11 @@ export const PREFERENCE_GROUPS: PreferenceGroup[] = [
 
 export const TEXT_MAX = 1000;
 const RANGES: Partial<Record<PreferenceKind, [number, number]>> = { days: [1, 365], seed: [1, 99999] };
+/** `numeric(18,6)`: six decimals on a ratio are four on a percentage. */
+export const PERCENT_DECIMALS = 4;
+export const PERCENT_MAX = 999;
+/** Twelve integer digits: up to $ 999.999.999.999. */
+export const CLP_DIGITS = 12;
 
 const PLAIN = /^\d+(?:\.\d+)?$/;
 
@@ -147,6 +155,10 @@ export function editTextOf(kind: PreferenceKind, value: unknown): string {
 
 export type Parsed = { ok: true; value: string } | { ok: false; problem: string };
 
+const PERCENT_TOO_FINE = `Usa como máximo ${PERCENT_DECIMALS} decimales en un porcentaje.`;
+const PERCENT_TOO_BIG = `Un porcentaje va de 0 a ${PERCENT_MAX} %.`;
+const CLP_TOO_BIG = `El monto es demasiado grande: como máximo ${CLP_DIGITS} dígitos.`;
+
 const PROBLEM: Record<PreferenceKind, string> = {
   percent: "Escribe un porcentaje, por ejemplo 40 o 12,5.",
   clp: "Escribe un monto en pesos, sin decimales; por ejemplo 1.234.567.",
@@ -164,13 +176,20 @@ export function parsePreference(kind: PreferenceKind, text: string): Parsed {
   }
   if (kind === "percent") {
     const t = text.replace(/\s+/g, "").replace(/%$/, "");
-    if (!/^\d+(?:[.,]\d+)?$/.test(t)) return bad;
+    const m = /^(\d+)(?:[.,](\d+))?$/.exec(t);
+    if (!m) return bad;
+    const int = m[1].replace(/^0+(?=\d)/, "");
+    const frac = (m[2] ?? "").replace(/0+$/, "");
+    if (frac.length > PERCENT_DECIMALS) return { ok: false, problem: PERCENT_TOO_FINE };
+    // Integer comparison on at most three digits.
+    if (int.length > 3 || Number(int) > PERCENT_MAX || (Number(int) === PERCENT_MAX && frac)) return { ok: false, problem: PERCENT_TOO_BIG };
     const ratio = normalDecimal(percentTextToDecimal(t));
     return ratio === null ? bad : { ok: true, value: ratio };
   }
   if (kind === "clp") {
     const amount = normalDecimal(amountTextToDecimal(text));
-    return amount === null || amount.includes(".") ? bad : { ok: true, value: amount };
+    if (amount === null || amount.includes(".")) return bad;
+    return amount.length > CLP_DIGITS ? { ok: false, problem: CLP_TOO_BIG } : { ok: true, value: amount };
   }
   const m = /^\s*(\d+)\s*(?:d[ií]as?)?\s*$/i.exec(text);
   const range = RANGES[kind];
@@ -188,4 +207,39 @@ export function sameValue(kind: PreferenceKind, parsed: string, value: unknown):
   if (kind === "text") return typeof value === "string" && value.trim() === parsed;
   const a = normalDecimal(parsed);
   return a !== null && a === normalDecimal(value);
+}
+
+/** Compares two plain non-negative decimal strings (-1, 0, 1) on their digits; null if either is not one. */
+export function compareDecimal(a: unknown, b: unknown): -1 | 0 | 1 | null {
+  const x = normalDecimal(a);
+  const y = normalDecimal(b);
+  if (x === null || y === null) return null;
+  const [xi, xf = ""] = x.split(".");
+  const [yi, yf = ""] = y.split(".");
+  if (xi.length !== yi.length) return xi.length < yi.length ? -1 : 1;
+  if (xi !== yi) return xi < yi ? -1 : 1;
+  const n = Math.max(xf.length, yf.length);
+  const xp = xf.padEnd(n, "0");
+  const yp = yf.padEnd(n, "0");
+  return xp === yp ? 0 : xp < yp ? -1 : 1;
+}
+
+/** The engine's band while a bound is unset (docs/OPERATIONS.md §14.8). */
+export const MARGIN_TARGET_FALLBACK = { margin_target_min: "0.25", margin_target_max: "0.45" } as const;
+
+/**
+ * Why `value` for one end of the margin band cannot be saved against the other end's current value
+ * (or its fallback): the minimum above the maximum, or the maximum below the minimum. Null when
+ * fine, or when `key` is not a band key. Equal ends are allowed.
+ */
+export function bandProblem(key: string, value: string, current: Record<string, { value: unknown } | undefined>): string | null {
+  if (key !== "margin_target_min" && key !== "margin_target_max") return null;
+  const other = key === "margin_target_min" ? "margin_target_max" : "margin_target_min";
+  const raw = current[other]?.value;
+  const otherValue = normalDecimal(raw) ?? MARGIN_TARGET_FALLBACK[other];
+  const order = compareDecimal(value, otherValue);
+  const shown = displayPreference("percent", otherValue);
+  if (key === "margin_target_min" && order === 1) return `El mínimo no puede ser mayor que el máximo (${shown}).`;
+  if (key === "margin_target_max" && order === -1) return `El máximo no puede ser menor que el mínimo (${shown}).`;
+  return null;
 }

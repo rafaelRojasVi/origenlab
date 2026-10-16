@@ -24,6 +24,7 @@ const PARAMS: CostParameters = {
     quote_number_seed: { id: "p-seed-1", value: "42", valid_from: "2026-09-01T15:00:00Z", set_by: "Admin Ejemplo", reason: "Inicio de prueba" },
   },
   history: [
+    { key: "quote_default_payment_terms", id: "p-pay-1", value: "Contado [CONDICIÓN]", valid_from: "2026-09-01T15:00:00Z", set_by: null, reason: "Inicial" },
     { key: "default_markup_equipment", id: "p-eq-2", value: "0.40", valid_from: "2026-10-01T15:00:00Z", set_by: "Admin Ejemplo", reason: "Política de prueba" },
     { key: "default_markup_equipment", id: "p-eq-1", value: "0.35", valid_from: "2026-09-01T15:00:00Z", set_by: "Ventas Ejemplo", reason: "Valor inicial" },
     { key: "margin_target_min", id: "p-min-1", value: "0.125", valid_from: "2026-09-01T15:00:00Z", set_by: "Admin Ejemplo", reason: "Inicial" },
@@ -201,6 +202,20 @@ describe("PreferencesPage — saving", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("the same change, after closing and reopening the dialog, keeps the key of an uncertain failure", async () => {
+    const api = stubApi((n) => (n === 1 ? new Response("Bad gateway", { status: 502 }) : json({ ok: true })));
+    renderPage();
+    await change("Equipos", "50");
+    giveReason("Ajuste de prueba");
+    await within(dialog()).findByRole("alert");
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Equipos" }));
+    giveReason("Ajuste de prueba");
+    await waitFor(() => expect(api.posts).toHaveLength(2));
+    expect(api.posts[1].key).toBe(api.posts[0].key);
+  });
+
   it("an uncertain failure keeps the Idempotency-Key for the same retry; a refusal does not", async () => {
     const api = stubApi((n) => (n === 1 ? new Response("Bad gateway", { status: 502 }) : n === 2 ? json({ ok: true }) : json({ ok: true })));
     renderPage();
@@ -221,6 +236,35 @@ describe("PreferencesPage — saving", () => {
     fireEvent.click(within(dialog()).getByRole("button", { name: "Guardar" }));
     await waitFor(() => expect(api.posts).toHaveLength(2));
     expect(api.posts[1].key).not.toBe(api.posts[0].key);
+  });
+});
+
+describe("PreferencesPage — the margin band's ends", () => {
+  it("refuses a minimum above the maximum before asking for a reason", async () => {
+    const api = stubApi();
+    renderPage();
+    // The maximum is unset: the engine's 45 % applies.
+    await change("Mínimo", "50");
+    expect(screen.getByRole("alert")).toHaveTextContent("El mínimo no puede ser mayor que el máximo (45 %).");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.posts).toHaveLength(0);
+  });
+
+  it("refuses a maximum below the current minimum", async () => {
+    const api = stubApi();
+    renderPage();
+    await change("Máximo", "10");
+    expect(screen.getByRole("alert")).toHaveTextContent("El máximo no puede ser menor que el mínimo (12,5 %).");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.posts).toHaveLength(0);
+  });
+
+  it("names a percentage with too many decimals before asking for a reason", async () => {
+    stubApi();
+    renderPage();
+    await change("Equipos", "12,34567");
+    expect(screen.getByRole("alert")).toHaveTextContent("Usa como máximo 4 decimales en un porcentaje.");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 
@@ -260,10 +304,13 @@ describe("PreferencesPage — «Historial»", () => {
     stubApi();
     renderPage();
     await field("Equipos");
-    const toggle = screen.getByRole("button", { name: "Historial de Equipos" });
+    // The accessible name carries the visible count; aria-controls only while the list exists.
+    const toggle = screen.getByRole("button", { name: "Historial de Equipos (2)" });
     expect(toggle).toHaveTextContent("Historial (2)");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).not.toHaveAttribute("aria-controls");
     fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-controls", screen.getByRole("list", { name: "Historial de Equipos" }).id);
     const list = screen.getByRole("list", { name: "Historial de Equipos" });
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
@@ -273,6 +320,15 @@ describe("PreferencesPage — «Historial»", () => {
     expect(rows[1]).toHaveTextContent("Ventas Ejemplo");
     expect(rows[1]).toHaveTextContent("«Valor inicial»");
     expect(rows[1]).toHaveTextContent("2026");
+  });
+
+  it("a row without an operator says «carga inicial»", async () => {
+    stubApi();
+    renderPage();
+    await field("Forma de pago");
+    fireEvent.click(screen.getByRole("button", { name: "Historial de Forma de pago (1)" }));
+    const list = screen.getByRole("list", { name: "Historial de Forma de pago" });
+    expect(within(list).getByRole("listitem")).toHaveTextContent("carga inicial");
   });
 
   it("says when a field has no history", async () => {

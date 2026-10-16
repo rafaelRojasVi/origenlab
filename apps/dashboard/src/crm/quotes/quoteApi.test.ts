@@ -13,6 +13,7 @@ import {
   newQuoteCommandKey,
   previewQuote,
   saveQuoteDraft,
+  setCostParameter,
   voidQuoteRevision,
   type QuoteDraft,
 } from "./quoteApi";
@@ -108,14 +109,33 @@ describe("preview", () => {
 describe("commands", () => {
   const receipt = { revision_id: REVISION_ID, version: 2, computed: {} };
 
-  it("pins the five command paths", () => {
+  it("pins the six command paths", () => {
     expect(QUOTE_COMMAND_PATHS).toEqual({
       create: "/v2/commands/create-quote",
       save: "/v2/commands/save-quote-draft",
       approve: "/v2/commands/approve-quote-revision",
       void: "/v2/commands/void-quote-revision",
       revise: "/v2/commands/create-quote-revision",
+      setParameter: "/v2/commands/set-cost-parameter",
     });
+  });
+
+  it("setCostParameter sends the body and the key; a refusal reads the command's code from error.details", async () => {
+    const calls = stub(() => json({ ok: true, cost_parameter_id: "p-2", key: "iva_rate" }));
+    const body = { key: "default_markup_service", value: "0.3", reason: "sintético", expected_current_id: "p-1" };
+    await setCostParameter(body, "key-p");
+    expect(calls[0].path).toBe("/v2/commands/set-cost-parameter");
+    expect(calls[0].init.method).toBe("POST");
+    expect(new Headers(calls[0].init.headers).get("Idempotency-Key")).toBe("key-p");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual(body);
+
+    stub(() =>
+      json({ error: { code: "conflict", message: "outer", details: { code: "parameter_changed", message: "inner" }, request_id: "r" } }, 409),
+    );
+    const refused = await setCostParameter(body, "key-p").catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(QuoteRefusal);
+    expect((refused as QuoteRefusal).code).toBe("parameter_changed");
+    expect((refused as QuoteRefusal).status).toBe(409);
   });
 
   it("createQuote sends the case and the given key", async () => {

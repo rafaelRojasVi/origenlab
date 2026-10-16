@@ -1,6 +1,6 @@
 /**
  * What the Cotizador says when the quote API refuses something, in Spanish: one place for every
- * screen (the save line, «Para», «Avisos», approve / void / revise, «Cotizar»).
+ * screen (the save line, «Para», «Avisos», approve / void / revise, «Cotizar», «Preferencias»).
  *
  * The machine `code` decides. The API's own text is said only when it is already Spanish (some
  * refusals carry the specifics the operator needs: the currency without a rate, the revision that
@@ -65,6 +65,9 @@ const SPANISH: Record<string, string> = {
   quote_numbering_not_configured: "Falta configurar la numeración de cotizaciones.",
   quote_numbering_exhausted: "La numeración de cotizaciones se agotó; configura un nuevo inicio.",
   quote_number_taken: "Ese número de cotización se acaba de usar; vuelve a intentarlo.",
+  // «Preferencias» (set-cost-parameter).
+  parameter_changed: "Otra persona lo cambió; recarga.",
+  role_may_not_set_numbering: "Sólo administración fija el inicio de la numeración.",
   // The request itself.
   validation_error: "El servidor no aceptó algunos datos de la cotización; revisa los campos y vuelve a intentarlo.",
   command_in_progress: "Esta acción todavía se está procesando; espera un momento y vuelve a intentarlo.",

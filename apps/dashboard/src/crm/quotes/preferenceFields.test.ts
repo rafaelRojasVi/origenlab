@@ -5,6 +5,8 @@
 import { describe, expect, it } from "vitest";
 import {
   PREFERENCE_GROUPS,
+  bandProblem,
+  compareDecimal,
   displayPreference,
   editTextOf,
   parsePreference,
@@ -50,6 +52,22 @@ describe("percentages — the API's ratio as a decimal string", () => {
     }
   });
 
+  it("takes at most four decimals (six on the ratio: numeric(18,6)), never rounding silently", () => {
+    expect(parsePreference("percent", "12,3456")).toEqual({ ok: true, value: "0.123456" });
+    expect(parsePreference("percent", "12,34560")).toEqual({ ok: true, value: "0.123456" });
+    for (const text of ["12,34567", "0,00001", "1.23456"]) {
+      expect(parsePreference("percent", text)).toEqual({ ok: false, problem: "Usa como máximo 4 decimales en un porcentaje." });
+    }
+  });
+
+  it("goes up to 999 %", () => {
+    expect(parsePreference("percent", "999")).toEqual({ ok: true, value: "9.99" });
+    expect(parsePreference("percent", "0999")).toEqual({ ok: true, value: "9.99" });
+    for (const text of ["999,5", "1000", "123456789"]) {
+      expect(parsePreference("percent", text)).toEqual({ ok: false, problem: "Un porcentaje va de 0 a 999 %." });
+    }
+  });
+
   it("refuses what is not a percentage, in Spanish", () => {
     for (const text of ["", "abc", "-5", "1,2,3", "12,5,", "40 %%x"]) {
       const out = parsePreference("percent", text);
@@ -74,6 +92,12 @@ describe("peso amounts", () => {
     expect(parsePreference("clp", "1234567")).toEqual({ ok: true, value: "1234567" });
     expect(parsePreference("clp", "1.234.567,00")).toEqual({ ok: true, value: "1234567" });
     expect(parsePreference("clp", "0")).toEqual({ ok: true, value: "0" });
+  });
+
+  it("takes at most twelve integer digits, so nothing overflows numeric(18,6)", () => {
+    expect(parsePreference("clp", "999.999.999.999")).toEqual({ ok: true, value: "999999999999" });
+    expect(parsePreference("clp", "1.000.000.000.000")).toEqual({ ok: false, problem: "El monto es demasiado grande: como máximo 12 dígitos." });
+    expect(parsePreference("clp", "0001234")).toEqual({ ok: true, value: "1234" });
   });
 
   it("asks for whole pesos", () => {
@@ -124,6 +148,38 @@ describe("sameValue: an unchanged field has nothing to save", () => {
   });
 });
 
+describe("compareDecimal: on the digits, no float", () => {
+  it.each<[string, string, -1 | 0 | 1]>([
+    ["0.25", "0.45", -1],
+    ["0.45", "0.25", 1],
+    ["0.4", "0.40", 0],
+    ["1", "0.999999", 1],
+    ["0.1", "0.099999", 1],
+    ["10", "9.5", 1],
+    ["0.000001", "0", 1],
+  ])("%s vs %s → %s", (a, b, out) => expect(compareDecimal(a, b)).toBe(out));
+
+  it("is null for what is not a plain decimal", () => expect(compareDecimal("abc", "1")).toBeNull());
+});
+
+describe("bandProblem: the margin band's ends never cross", () => {
+  const current = { margin_target_max: { value: "0.40" } };
+  it("refuses a minimum above the current maximum, or the fallback 45 % when it is unset", () => {
+    expect(bandProblem("margin_target_min", "0.5", current)).toBe("El mínimo no puede ser mayor que el máximo (40 %).");
+    expect(bandProblem("margin_target_min", "0.5", {})).toBe("El mínimo no puede ser mayor que el máximo (45 %).");
+    expect(bandProblem("margin_target_min", "0.4", current)).toBeNull();
+    expect(bandProblem("margin_target_min", "0.125", current)).toBeNull();
+  });
+
+  it("refuses a maximum below the current minimum, or the fallback 25 % when it is unset", () => {
+    expect(bandProblem("margin_target_max", "0.2", { margin_target_min: { value: "0.30" } })).toBe("El máximo no puede ser menor que el mínimo (30 %).");
+    expect(bandProblem("margin_target_max", "0.2", {})).toBe("El máximo no puede ser menor que el mínimo (25 %).");
+    expect(bandProblem("margin_target_max", "0.25", {})).toBeNull();
+  });
+
+  it("says nothing for any other key", () => expect(bandProblem("default_markup_equipment", "9", {})).toBeNull());
+});
+
 describe("the groups", () => {
   it("cover the spec's fields with the API's keys, and only the seed is admin-only", () => {
     const keys = PREFERENCE_GROUPS.flatMap((g) => g.fields.map((f) => f.key));
@@ -150,5 +206,10 @@ describe("the groups", () => {
     ]);
     const adminOnly = PREFERENCE_GROUPS.flatMap((g) => g.fields).filter((f) => f.adminOnly).map((f) => f.key);
     expect(adminOnly).toEqual(["quote_number_seed"]);
+    // numbering.py: max(seed, highest known + 1); a lower seed has no effect.
+    const seedNote = PREFERENCE_GROUPS.find((g) => g.title === "Numeración")!.note!;
+    expect(seedNote).toMatch(/mayor entre este número y el más alto ya usado \+ 1/);
+    expect(seedNote).toMatch(/un valor menor que ése no tiene efecto/);
+    expect(seedNote).toMatch(/sólo puede adelantar el inicio/);
   });
 });

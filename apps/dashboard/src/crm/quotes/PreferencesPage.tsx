@@ -14,7 +14,9 @@
  * Only administration sets the numbering seed: anyone else sees it read-only, with the reason.
  * Viewers never get here (the module is sales and admin only), and the read refuses them anyway.
  * A save that may have run (network failure, gateway error) keeps its `Idempotency-Key` for the
- * same retry (`definitive`), as «Cotizar» does. Values are formatted on the string, no float.
+ * same retry (`definitive`), as «Cotizar» does — also across closing and reopening the reason
+ * dialog, while the body is the same. The margin band's ends are checked against each other before
+ * the reason is asked (`bandProblem`). Values are formatted on the string, no float.
  */
 import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
@@ -25,14 +27,15 @@ import { definitive } from "./openOrCreateQuote";
 import {
   PREFERENCE_GROUPS,
   TEXT_MAX,
+  bandProblem,
   displayPreference,
   editTextOf,
   parsePreference,
   sameValue,
   type PreferenceField,
 } from "./preferenceFields";
-import { preferenceRefusalText, setCostParameter, type SetCostParameterBody } from "./preferencesApi";
-import { QuoteRefusal, newQuoteCommandKey } from "./quoteApi";
+import { QuoteRefusal, newQuoteCommandKey, setCostParameter, type SetCostParameterBody } from "./quoteApi";
+import { quoteRefusalText } from "./quoteRefusal";
 
 export const REASON_MIN = 3;
 const REASON_MAX = 500;
@@ -41,6 +44,14 @@ const FIELD_CLS =
   "w-full min-w-0 rounded-lg border border-line-strong bg-canvas-raised px-3 text-[14px] text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 aria-[invalid=true]:border-bad disabled:cursor-not-allowed disabled:bg-canvas-sunken disabled:text-ink-muted";
 
 type Save = (body: SetCostParameterBody, key: string) => Promise<unknown>;
+/** One key per attempt: the same body retried (the dialog closed and reopened included) keeps it. */
+type KeyRef = { current: { sig: string; key: string } | null };
+
+/** A refusal in Spanish (`quoteRefusalText`); the quote wording of a 422 would speak of «la cotización». */
+function refusalText(e: unknown): string {
+  if (e instanceof QuoteRefusal && e.code === "validation_error") return "El servidor no aceptó el valor; revísalo y vuelve a intentarlo.";
+  return quoteRefusalText(e, "No se pudo guardar. Intenta de nuevo.");
+}
 
 export function PreferencesPage({ save = setCostParameter }: { save?: Save }) {
   const { session } = useAuthSession();
@@ -69,6 +80,7 @@ export function PreferencesPage({ save = setCostParameter }: { save?: Save }) {
                       field={f}
                       current={current}
                       history={historyOf(params, f.key)}
+                      all={params.current}
                       readOnly={!!f.adminOnly && !isAdmin}
                       save={save}
                       onSaved={reload}
@@ -111,6 +123,7 @@ function PreferenceFieldEditor({
   field,
   current,
   history,
+  all,
   readOnly,
   save,
   onSaved,
@@ -118,6 +131,8 @@ function PreferenceFieldEditor({
   field: PreferenceField;
   current: CostParameter | null;
   history: CostParameter[];
+  /** Every current parameter: the band's ends are checked against each other. */
+  all: Record<string, CostParameter | undefined>;
   readOnly: boolean;
   save: Save;
   onSaved: () => void;
@@ -128,6 +143,7 @@ function PreferenceFieldEditor({
   const [problem, setProblem] = useState<string | null>(null);
   const [asking, setAsking] = useState<{ value: string } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const keyRef = useRef<{ sig: string; key: string } | null>(null);
   const parsed = parsePreference(field.kind, text);
   const changed = parsed.ok ? !sameValue(field.kind, parsed.value, current?.value) : text.trim() !== initial.trim();
   const shown = displayPreference(field.kind, current?.value);
@@ -138,6 +154,11 @@ function PreferenceFieldEditor({
   const onSave = () => {
     if (!parsed.ok) {
       setProblem(parsed.problem);
+      return;
+    }
+    const crossed = bandProblem(field.key, parsed.value, all);
+    if (crossed) {
+      setProblem(crossed);
       return;
     }
     setProblem(null);
@@ -186,8 +207,8 @@ function PreferenceFieldEditor({
           variant="quiet"
           className="min-h-[44px] px-3 text-[13px]"
           aria-expanded={showHistory}
-          aria-controls={historyId}
-          aria-label={`Historial de ${field.label}`}
+          aria-controls={showHistory ? historyId : undefined}
+          aria-label={`Historial de ${field.label}${history.length ? ` (${history.length})` : ""}`}
           onClick={() => setShowHistory((v) => !v)}
         >
           Historial{history.length ? ` (${history.length})` : ""}
@@ -205,6 +226,7 @@ function PreferenceFieldEditor({
             expected_current_id: current?.id ?? null,
           }}
           save={save}
+          keyRef={keyRef}
           onCancel={() => setAsking(null)}
           onSaved={() => {
             setAsking(null);
@@ -248,7 +270,7 @@ function HistoryList({
             {h.id === current?.id ? <span className="text-[11.5px] font-semibold text-good">vigente</span> : null}
           </div>
           <p className="text-ink-muted">
-            {fmtDateTime(h.valid_from)} · {h.set_by ?? "sin nombre"}
+            {fmtDateTime(h.valid_from)} · {h.set_by ?? "carga inicial"}
           </p>
           {h.reason ? <p className="text-ink">«{h.reason}»</p> : null}
         </li>
@@ -263,6 +285,7 @@ function ReasonDialog({
   to,
   body,
   save,
+  keyRef,
   onCancel,
   onSaved,
   onReload,
@@ -272,6 +295,7 @@ function ReasonDialog({
   to: string;
   body: Omit<SetCostParameterBody, "reason">;
   save: Save;
+  keyRef: KeyRef;
   onCancel: () => void;
   onSaved: () => void;
   onReload: () => void;
@@ -282,8 +306,6 @@ function ReasonDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [changed, setChanged] = useState(false);
-  // One key per attempt; the same attempt retried after an uncertain failure keeps it.
-  const keyRef = useRef<{ sig: string; key: string } | null>(null);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -305,7 +327,7 @@ function ReasonDialog({
     } catch (err) {
       if (definitive(err)) keyRef.current = null;
       if (err instanceof QuoteRefusal && (err.code === "parameter_changed" || (err.status === 409 && err.code === "conflict"))) setChanged(true);
-      else setError(preferenceRefusalText(err));
+      else setError(refusalText(err));
     } finally {
       setBusy(false);
     }

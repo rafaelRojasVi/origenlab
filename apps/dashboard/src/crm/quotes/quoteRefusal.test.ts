@@ -32,6 +32,8 @@ const ENGLISH: [string, string, string][] = [
   ["dhl_parameter_missing:dhl_fuel_pct", "cannot be priced", "«dhl_fuel_pct»"],
   ["stale_version", "the draft was modified since you loaded it", "Otra persona cambió esta cotización"],
   ["role_may_not_view_costs", "sales or admin only", "Sólo ventas y administración pueden cotizar."],
+  ["parameter_changed", "this parameter was changed since you loaded it; reload and decide again", "Otra persona lo cambió; recarga."],
+  ["role_may_not_set_numbering", "only admin", "Sólo administración fija el inicio de la numeración."],
   ["revision_not_found", "no such quote revision", "Esta revisión ya no existe."],
   ["bad_cursor", "that cursor is not one this list gave", "La lista cambió; se volvió a cargar desde el inicio."],
   ["bad_status", "no such quote status", "Ese estado de cotizaciones no existe."],

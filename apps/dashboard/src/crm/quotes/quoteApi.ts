@@ -1,12 +1,13 @@
 /**
- * The one client for the quote API: the workspace and numbering reads, the live preview and the
- * five quote commands (create, save a draft, approve, void, new revision).
+ * The one client for the quote API: the workspace and numbering reads, the live preview, the
+ * five quote commands (create, save a draft, approve, void, new revision) and «Preferencias»
+ * (`set-cost-parameter`).
  *
  * The browser never prices a quote. Every number it shows is a string the API computed (the
  * `computed` block of a preview, a save or the workspace, or a stored total); `Decimal` below is
  * only a name for that string. Do not parse it into a float to calculate with.
  *
- * This module owns the six POST paths: the five `/v2/commands/<…>` strings and
+ * This module owns the seven POST paths: the six `/v2/commands/<…>` strings and
  * `/v2/quotes/preview`, pinned by `src/test/noWritePolicy.test.ts`, through one internal
  * `post()`. The preview writes nothing (it prices a draft and answers), so it carries no
  * `Idempotency-Key`; every command carries one. Upstream everything here is sales/admin only
@@ -266,6 +267,20 @@ export interface QuoteWorkspace {
   };
   /** Null when the principal line has no product with a model key. */
   price_history: PriceHistory | null;
+  /** The company's preferences as the rail applies them (`inputs.quote_preferences`); absent from an older API. */
+  params?: QuotePreferences;
+}
+
+/**
+ * `params` of the workspace: each the current cost parameter, else the engine's fallback (40 %
+ * equipment, 45 % the rest; a 25–45 % band). Ratios as decimal strings ("0.25" = 25 %). The
+ * deviation warning has no fallback: null, nothing warns.
+ */
+export interface QuotePreferences {
+  markups?: Partial<Record<QuoteItemType, Decimal>>;
+  margin_target_min?: Decimal | null;
+  margin_target_max?: Decimal | null;
+  price_deviation_warn_pct?: Decimal | null;
 }
 
 /** `GET /v2/quotes/numbering`: what the next number would be, without reserving it. */
@@ -372,6 +387,7 @@ export const QUOTE_COMMAND_PATHS = {
   approve: "/v2/commands/approve-quote-revision",
   void: "/v2/commands/void-quote-revision",
   revise: "/v2/commands/create-quote-revision",
+  setParameter: "/v2/commands/set-cost-parameter",
 } as const;
 
 const PREVIEW_PATH = "/v2/quotes/preview";
@@ -564,3 +580,26 @@ export const createQuoteRevision = (
   key: string = newQuoteCommandKey(),
 ): Promise<{ revision_id: string; revision_no: number; revision_label?: string }> =>
   post(QUOTE_COMMAND_PATHS.revise, { quote_id: quoteId }, key);
+
+/* ── «Preferencias»: one cost parameter ───────────────────────────────────── */
+
+/**
+ * `set-cost-parameter`: a new current value with its reason; the previous one stays as history.
+ * Numbers go in `value` (a decimal string), the printed `quote_default_*` texts in `value_text`.
+ * `expected_current_id` is the current row the operator saw (null when the parameter is unset);
+ * another one current since is a 409 `parameter_changed`. Only administration sets
+ * `quote_number_seed` (403 `role_may_not_set_numbering`). Mounted with the catalog
+ * (`ORIGENLAB_V2_QUOTING_ENABLED`), sales and admin.
+ */
+export interface SetCostParameterBody {
+  key: string;
+  value?: Decimal;
+  value_text?: string;
+  reason: string;
+  expected_current_id: string | null;
+}
+
+export const setCostParameter = (
+  body: SetCostParameterBody,
+  key: string = newQuoteCommandKey(),
+): Promise<{ ok: true; cost_parameter_id: string; key: string }> => post(QUOTE_COMMAND_PATHS.setParameter, body, key);

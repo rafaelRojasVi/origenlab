@@ -158,7 +158,7 @@ describe("SummaryRail — totals and margin", () => {
 
   it("draws the target band from the workspace's preferences (params), not from constants", async () => {
     const params = { markups: {}, margin_target_min: "0.30", margin_target_max: "0.505", price_deviation_warn_pct: "0.15" };
-    setup({ state: stateFor({}, {}, { params } as unknown as Partial<QuoteWorkspace>) });
+    setup({ state: stateFor({}, {}, { params }) });
     await settled();
     const totals = screen.getByRole("region", { name: "Totales" });
     expect(within(totals).getByText("objetivo 30–50,5 %")).toBeInTheDocument();
@@ -169,7 +169,7 @@ describe("SummaryRail — totals and margin", () => {
 
   it("keeps the documented 25–45 % band when the workspace has no params or a null bound", async () => {
     const params = { markups: {}, margin_target_min: null, margin_target_max: "0.5", price_deviation_warn_pct: null };
-    const first = setup({ state: stateFor({}, {}, { params } as unknown as Partial<QuoteWorkspace>) });
+    const first = setup({ state: stateFor({}, {}, { params }) });
     await settled();
     expect(within(screen.getByRole("region", { name: "Totales" })).getByText("objetivo 25–50 %")).toBeInTheDocument();
     first.view.unmount();
@@ -178,6 +178,26 @@ describe("SummaryRail — totals and margin", () => {
     const totals = screen.getByRole("region", { name: "Totales" });
     expect(within(totals).getByText("objetivo 25–45 %")).toBeInTheDocument();
     expect(totals.querySelector("[data-band]")).toHaveStyle({ left: "25%", width: "calc(45% - 25%)" });
+  });
+
+  it("an inverted band (minimum above maximum) is not drawn: the rail says it is ill-defined", async () => {
+    const params = { markups: {}, margin_target_min: "0.5", margin_target_max: "0.3", price_deviation_warn_pct: null };
+    setup({ state: stateFor({}, {}, { params }) });
+    await settled();
+    const totals = screen.getByRole("region", { name: "Totales" });
+    expect(totals.querySelector("[data-band]")).toBeNull();
+    expect(within(totals).getByText("Banda de margen mal definida en Preferencias")).toBeInTheDocument();
+    expect(within(totals).getByRole("img", { name: /Banda de margen mal definida en Preferencias/ })).toBeInTheDocument();
+    // The margin itself is still the API's.
+    expect(within(totals).getByText("29,4 %")).toBeInTheDocument();
+    expect(totals.querySelector("[data-marker]")).not.toBeNull();
+  });
+
+  it("an unset maximum below the minimum counts with the 45 % fallback", async () => {
+    const params = { markups: {}, margin_target_min: "0.5", margin_target_max: null, price_deviation_warn_pct: null };
+    setup({ state: stateFor({}, {}, { params }) });
+    await settled();
+    expect(screen.getByText("Banda de margen mal definida en Preferencias")).toBeInTheDocument();
   });
 
   it("says when the margin is below the target, in words and not only in colour", async () => {

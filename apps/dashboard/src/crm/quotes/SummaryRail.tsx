@@ -20,9 +20,9 @@ import { distinctQuotes } from "../catalog/SalesSummary";
 import { formatMoney } from "../money";
 import { Button } from "../ui";
 import { draftProblems, isEditable, principalItemOf, rowOfLine, setFxOverride, type DraftEditorState } from "./draftEditor";
-import type { QuoteDraft, QuoteWorkspace } from "./quoteApi";
+import type { QuoteDraft, QuotePreferences, QuoteWorkspace } from "./quoteApi";
 import { quoteRefusalText } from "./quoteRefusal";
-import type { QuotePreferences } from "./preferencesApi";
+import { MARGIN_TARGET_FALLBACK, compareDecimal } from "./preferenceFields";
 import { amountTextToDecimal, decimalEditText, decimalToPercentText, formatPct } from "./quoteFormat";
 import type { FlushResult } from "./useQuoteDraft";
 
@@ -30,12 +30,14 @@ import type { FlushResult } from "./useQuoteDraft";
  * The margin's target band: the workspace's `params` (the cost parameters `margin_target_min` /
  * `margin_target_max` as the engine applies them, «Preferencias»), else the engine's documented
  * fallback 0.25 / 0.45 (an older API, or a null bound). `margin_state` (the words by the number) is
- * always the API's. Placed on the string: "0.275" → 27.5 %, no float.
+ * always the API's. Placed on the string: "0.275" → 27.5 %, no float. A band whose minimum is above
+ * its maximum (set before «Preferencias» checked it) is not drawn: the rail says it is ill-defined.
  */
-const TARGET_MIN_FALLBACK = "0.25";
-const TARGET_MAX_FALLBACK = "0.45";
+const TARGET_MIN_FALLBACK = MARGIN_TARGET_FALLBACK.margin_target_min;
+const TARGET_MAX_FALLBACK = MARGIN_TARGET_FALLBACK.margin_target_max;
+export const BAND_INVERTED = "Banda de margen mal definida en Preferencias";
 
-type Band = { minText: string; maxText: string; minCss: string; maxCss: string };
+type Band = { inverted: false; minText: string; maxText: string; minCss: string; maxCss: string } | { inverted: true };
 
 /** A ratio as a CSS percentage ("0.275" → "27.5"), at most 100; null when it is not a plain decimal. */
 function bandPoint(ratio: string | null | undefined): { text: string; css: string } | null {
@@ -48,9 +50,12 @@ function bandPoint(ratio: string | null | undefined): { text: string; css: strin
 }
 
 export function targetBand(params: QuotePreferences | undefined): Band {
-  const min = bandPoint(params?.margin_target_min) ?? bandPoint(TARGET_MIN_FALLBACK)!;
-  const max = bandPoint(params?.margin_target_max) ?? bandPoint(TARGET_MAX_FALLBACK)!;
-  return { minText: min.text, maxText: max.text, minCss: min.css, maxCss: max.css };
+  const minRatio = bandPoint(params?.margin_target_min) ? String(params!.margin_target_min) : TARGET_MIN_FALLBACK;
+  const maxRatio = bandPoint(params?.margin_target_max) ? String(params!.margin_target_max) : TARGET_MAX_FALLBACK;
+  if (compareDecimal(minRatio, maxRatio) === 1) return { inverted: true };
+  const min = bandPoint(minRatio)!;
+  const max = bandPoint(maxRatio)!;
+  return { inverted: false, minText: min.text, maxText: max.text, minCss: min.css, maxCss: max.css };
 }
 
 const MARGIN_STATE: Record<string, { label: string; cls: string }> = {
@@ -262,14 +267,11 @@ function TotalsCard({
       </div>
       {editable && !totals ? <p className="text-[12.5px] text-[#a9bdb7]">Todavía no hay precios calculados.</p> : null}
       {totals && !clientView ? (
-        <MarginBlock totals={totals} currency={currency} band={targetBand((state.workspace as WorkspaceWithParams).params)} />
+        <MarginBlock totals={totals} currency={currency} band={targetBand(state.workspace.params)} />
       ) : null}
     </section>
   );
 }
-
-/** The workspace with the preferences the API adds to it (`GET /v2/quotes/{id}` → `params`). */
-type WorkspaceWithParams = QuoteWorkspace & { params?: QuotePreferences };
 
 function MarginBlock({
   totals,
@@ -283,7 +285,7 @@ function MarginBlock({
   const pct = formatPct(totals.margin);
   const at = markerPct(totals.margin);
   const st = MARGIN_STATE[totals.margin_state] ?? { label: totals.margin_state, cls: "text-[#f4f6f5]" };
-  const target = `objetivo ${band.minText}–${band.maxText} %`;
+  const target = band.inverted ? BAND_INVERTED : `objetivo ${band.minText}–${band.maxText} %`;
   const bandLabel = pct ? `Margen bruto ${pct} en una escala de 0 a 100 %; ${target}` : `Sin margen: falta el costo de alguna línea; ${target}`;
   return (
     <div className="flex flex-col gap-2 rounded-[10px] bg-[#1f2425] p-3">
@@ -295,11 +297,13 @@ function MarginBlock({
         </span>
       </div>
       <div role="img" aria-label={bandLabel} className="relative h-2.5 rounded-full bg-[#2c3433]">
-        <div
-          data-band
-          className="absolute inset-y-0 rounded-full bg-[#134e4a]"
-          style={{ left: `${band.minCss}%`, width: `calc(${band.maxCss}% - ${band.minCss}%)` }}
-        />
+        {band.inverted ? null : (
+          <div
+            data-band
+            className="absolute inset-y-0 rounded-full bg-[#134e4a]"
+            style={{ left: `${band.minCss}%`, width: `calc(${band.maxCss}% - ${band.minCss}%)` }}
+          />
+        )}
         {at === null ? null : (
           <div
             data-marker
@@ -310,7 +314,7 @@ function MarginBlock({
       </div>
       <div className="flex justify-between text-[11.5px] text-[#a9bdb7]">
         <span>0 %</span>
-        <span>{target}</span>
+        <span className={band.inverted ? "text-amber-300" : undefined}>{target}</span>
         <span>100 %</span>
       </div>
       <span className="text-[12.5px] text-[#a9bdb7]">
