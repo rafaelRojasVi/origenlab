@@ -436,6 +436,29 @@ describe("the API's refusals", () => {
     expect(second.key).toBe(first.key);
   });
 
+  it("a new client the API finds with several cases: «Abrir una Solicitud nueva» then sends new_case, with the same key", async () => {
+    const candidates = [
+      { id: CASE_2, title: "Centrífuga", stage: "qualifying", requested_at: daysAgo(5) },
+      { id: CASE_3, title: "Agitador", stage: "quoting", requested_at: daysAgo(1) },
+    ];
+    const api = stub({
+      clients: () => json(EMPTY),
+      create: (n) => (n === 1 ? refused(409, "case_choice_needed", "Este cliente tiene varios casos abiertos: elige uno, o abre uno nuevo.", { candidates }) : created()),
+    });
+    const { onCreated } = renderDialog();
+    await search("Laboratorio Doble");
+    await pick(/\+ Cliente nuevo «Laboratorio Doble»/);
+    fireEvent.click(createButton());
+    await screen.findByRole("radio", { name: /Centrífuga/ });
+    fireEvent.click(screen.getByRole("radio", { name: /Abrir una Solicitud nueva/ }));
+    fireEvent.click(createButton());
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
+    const [first, second] = api.creates();
+    expect(first.body).toEqual({ client: { new_organization: { name: "Laboratorio Doble", kind: "company" } } });
+    expect(second.body).toEqual({ client: { new_organization: { name: "Laboratorio Doble", kind: "company" } }, new_case: true });
+    expect(second.key).toBe(first.key);
+  });
+
   it("organization_name_ambiguous lists the institutions of that name, and the operator picks one", async () => {
     const twins = [
       { id: ORG_ONE, name: "Laboratorio Ejemplo" },

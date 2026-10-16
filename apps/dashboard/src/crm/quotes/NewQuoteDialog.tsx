@@ -249,9 +249,11 @@ export function NewQuoteDialog({
       const email = newEmail.trim().toLowerCase();
       pick = { new_organization: { name: client.name, kind, ...(email ? { email } : {}) } };
     }
-    // A new client goes without `new_case`: the API may find it is an institution it holds (same
-    // name, the address's domain) and use its one open case; a truly new one gets a Solicitud anyway.
-    if (choice === "new") return client.kind === "new" ? { client: pick } : { client: pick, new_case: true };
+    // A new client goes without `new_case` until the API has asked: it may find an institution it
+    // holds (same name, the address's domain) and use its one open case; a truly new one gets a
+    // Solicitud anyway. Once it listed several cases, «Abrir una Solicitud nueva» must say so, or
+    // the same question comes back.
+    if (choice === "new") return client.kind === "new" && askedCases === null ? { client: pick } : { client: pick, new_case: true };
     if (choice === "auto") return { client: pick };
     return { client: pick, opportunity_id: choice };
   }
