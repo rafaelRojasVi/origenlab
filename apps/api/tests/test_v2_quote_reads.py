@@ -30,6 +30,7 @@ from test_v2_quote_commands import (
     _revision,
     _run,
     fake_fx,
+    no_fx,
 )
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
 
@@ -322,11 +323,14 @@ FUTURE = datetime(2026, 11, 20, 15, 0, tzinfo=UTC)  # stored rates dated here st
 
 
 class _Counting:
-    """A `connect` that counts connections and statements (every `execute`, pipelined or not)."""
+    """A `connect` that counts connections and statements (every `execute`, pipelined or not), and
+    the most connections open at once."""
 
     def __init__(self) -> None:
         self.connections = 0
         self.statements = 0
+        self.open = 0
+        self.most_open = 0
 
     def connect(self, dsn, **kwargs):
         self.connections += 1
@@ -337,7 +341,16 @@ class _Counting:
                 counter.statements += 1
                 return super().execute(query, params, **kw)
 
-        return psycopg.connect(dsn, cursor_factory=_Cursor, **kwargs)
+        class _Connection(psycopg.Connection):
+            def close(self) -> None:
+                if not self.closed:
+                    counter.open -= 1
+                super().close()
+
+        conn = _Connection.connect(dsn, cursor_factory=_Cursor, **kwargs)
+        self.open += 1
+        self.most_open = max(self.most_open, self.open)
+        return conn
 
 
 def _never(currency, on):
@@ -438,3 +451,87 @@ def test_save_with_nothing_stored_is_409_and_asks_no_provider(stored_rates) -> N
                   "draft": _two_currency_draft(world)})
     assert (exc.value.status_code, exc.value.code) == (409, "fx_unavailable")
     assert _revision(world["dsn"], created["revision_id"])["version"] == created["version"]
+
+
+LATER = datetime(2027, 6, 10, 15, 0, tzinfo=UTC)  # far from every other test's stored rates
+
+
+@needs_db
+def test_a_draft_priced_differently_today_needs_saving_and_approval_freezes_the_save(world) -> None:
+    """The workspace prices a draft live (today's rate, today's parameters); approval freezes what was
+    saved. The workspace says so: `saved` is what approval would freeze, `needs_saving` whether the
+    live figures differ from it."""
+    dsn = world["dsn"]
+    _owner(dsn, "insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider) "
+                "values ('2027-06-09', 'EUR', 1000, 'bcentral', 'bde')")
+    _, created = _new_quote(world)
+    saved = _command(world, psycopg.connect, lambda: LATER, "save-quote-draft",
+                     {"revision_id": created["revision_id"], "expected_version": created["version"],
+                      "draft": _draft(world)})
+    reads = V2QuoteReads(psycopg.connect, runtime_dsn(dsn), fx_resolver=_never, clock=lambda: LATER)
+
+    def figures(computed: dict) -> dict:
+        totals = computed["totals"]
+        return {"totals": {k: Decimal(totals[k]) for k in ("net", "iva", "total")},
+                "lines": [{"line_no": r["line_no"], "unit_price_qc": Decimal(r["unit_price"]),
+                           "line_total_qc": Decimal(r["line_total"])} for r in computed["lines"]]}
+
+    current = reads.workspace(created["quote_id"])["current"]
+    assert current["needs_saving"] is False
+    assert _numbers(current["saved"]) == figures(saved["computed"])
+
+    _owner(dsn, "insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider) "
+                "values ('2027-06-10', 'EUR', 1100, 'bcentral', 'bde')")
+    current = reads.workspace(created["quote_id"])["current"]
+    assert [f["clp_per_unit"] for f in current["computed"]["fx"]] == ["1100.000000"]
+    assert current["needs_saving"] is True
+    assert _numbers(current["saved"]) == figures(saved["computed"])  # still the save, not today's
+
+    _command(world, psycopg.connect, lambda: LATER, "approve-quote-revision",
+             {"revision_id": created["revision_id"], "expected_version": saved["version"]})
+    rev = _revision(dsn, created["revision_id"])
+    assert {"net": rev["subtotal"], "iva": rev["tax_total"], "total": rev["grand_total"]} == figures(
+        saved["computed"])["totals"]
+
+
+@needs_db
+def test_a_rate_miss_asks_the_provider_with_no_connection_held(world) -> None:
+    """On a stored-rate miss the read transaction is closed before the provider is asked (its HTTP
+    call and its own write of the answer), then the draft is priced again in a fresh one."""
+    counting = _Counting()
+    seen = []
+
+    def provider(currency, on):
+        seen.append((currency, counting.open))
+        with counting.connect(runtime_dsn(world["dsn"])) as conn:  # where PricingFx stores its answer
+            conn.execute("select 1")
+        return fake_fx(currency, on)
+
+    miss = datetime(2027, 9, 1, 15, 0, tzinfo=UTC)  # nothing stored within the window
+    reads = V2QuoteReads(counting.connect, runtime_dsn(world["dsn"]), fx_resolver=provider, clock=lambda: miss)
+    out = reads.preview(PreviewQuoteBody(draft=_two_currency_draft(world)))
+    assert {f["currency"]: f["clp_per_unit"] for f in out["computed"]["fx"]} == {"EUR": "1000", "USD": "900"}
+    assert seen == [("EUR", 0), ("USD", 0)]  # every missing currency in one pass, none while reading
+    assert counting.most_open == 1 and counting.connections == 4  # read, two provider writes, read again
+
+    _, created = _new_quote(world)
+    _save(world, created, _draft(world))
+    seen.clear()
+    current = reads.workspace(created["quote_id"])["current"]
+    assert current["computed_error"] is None and current["computed"]["fx"][0]["clp_per_unit"] == "1000"
+    assert seen == [("EUR", 0)] and counting.most_open == 1
+
+
+@needs_db
+def test_a_rate_no_provider_has_is_still_refused_after_the_one_retry(world) -> None:
+    calls = []
+
+    def unavailable(currency, on):
+        calls.append(currency)
+        return no_fx(currency, on)
+
+    miss = datetime(2027, 9, 1, 15, 0, tzinfo=UTC)
+    reads = V2QuoteReads(psycopg.connect, runtime_dsn(world["dsn"]), fx_resolver=unavailable, clock=lambda: miss)
+    with pytest.raises(CommandRefused) as exc:
+        reads.preview(PreviewQuoteBody(draft=_draft(world)))
+    assert (exc.value.status_code, exc.value.code) == (409, "fx_unavailable") and calls == ["EUR"]

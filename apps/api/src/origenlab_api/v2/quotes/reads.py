@@ -14,13 +14,21 @@ stored rates).
 
 **Exchange rates.** `resolve_draft` reads the stored rates on this transaction's cursor. Only a
 currency with nothing stored in the window reaches the injected resolver — here the full
-`PricingFx.rate`, which asks a provider and stores its answer on its own connection (once per
-currency and day). Opening a draft or previewing one therefore warms today's rate before the
-operator saves; the commands, on a miss, refuse (`inputs.no_provider`).
+`PricingFx.rate`, which asks a provider (HTTP, up to 5 s a provider) and stores its answer on its
+own connection (once per currency and day). That never happens inside a read transaction: inside
+one, a miss is only noted (`_FxPrefetch`) and the pass priced with a placeholder is thrown away;
+the transaction closes, the resolver is asked for every noted currency with no connection held by
+this request, and the read runs once more in a fresh transaction with those answers — at most one
+retry; a currency still without a rate then is `fx_unavailable`. Opening a draft or previewing one
+therefore warms today's rate before the operator saves; the commands, on a miss, refuse
+(`inputs.no_provider`).
 
 **Workspace** (`GET /v2/quotes/{id}`): the quote, its case (institution and RUT, the current
 participants, «Lo que pidió» from the case memory), every revision with its printed label, and the
-current one — a draft comes back as the `QuoteDraft` it was saved from plus its live computation;
+current one — a draft comes back as the `QuoteDraft` it was saved from plus its live computation
+(today's rates and parameters), what was saved (`saved`: the stored totals and each item line's
+stored prices — what approval freezes, since it prices the saved lines as they are) and
+`needs_saving`, true when the live figures differ from the saved ones (or nothing was priced yet);
 an issued revision as its stored totals, lines and frozen `party_snapshot`. Suggestions are only
 offered, never added: the products the case's emails mention (`product_mention` assertions) and the
 models that usually go with the principal (`kit_suggestions`, R-A5). The principal's quoted-price
@@ -37,6 +45,7 @@ from decimal import Decimal
 from typing import Any
 
 from origenlab_api.quoting.engine import EngineError, compute
+from origenlab_api.v2.catalog.fx import FxUnavailable
 from origenlab_api.v2.catalog.keys import is_labdelivery, model_key
 from origenlab_api.v2.catalog.reads import V2CatalogReads, _plain
 from origenlab_api.v2.commands import CommandRefused
@@ -182,6 +191,71 @@ _LINE_FIELDS = (
 )
 
 
+class _FxPrefetch:
+    """The resolver a read transaction prices with: it never asks a provider.
+
+    It answers from the rates fetched before this pass. Before any fetch, a currency it cannot
+    answer is noted and given a placeholder rate, so one pass finds every missing currency; a pass
+    that noted one is thrown away (`V2QuoteReads._fx_bounded`). On the last pass (`final`) a
+    currency it cannot answer is unavailable.
+    """
+
+    _PLACEHOLDER = "1"
+
+    def __init__(self) -> None:
+        self.fetched: dict[tuple[str, dt.date], dict | FxUnavailable] = {}
+        self.missed: set[tuple[str, dt.date]] = set()
+        self.final = False
+
+    def __call__(self, currency: str, day: dt.date) -> dict:
+        found = self.fetched.get((currency, day))
+        if isinstance(found, FxUnavailable):
+            raise found
+        if found is not None:
+            return found
+        if self.final:
+            raise FxUnavailable(f"no {currency} rate for {day.isoformat()}")
+        self.missed.add((currency, day))
+        return {"clp_per_unit": self._PLACEHOLDER, "as_of": day, "source": "bcentral"}
+
+    def fetch(self, resolver: FxResolver) -> None:
+        """Ask `resolver` for every currency the last pass missed — with no transaction open."""
+        for currency, day in sorted(self.missed):
+            try:
+                self.fetched[(currency, day)] = resolver(currency, day)
+            except FxUnavailable as exc:
+                self.fetched[(currency, day)] = exc
+        self.missed.clear()
+        self.final = True
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    return None if value is None else Decimal(str(value))
+
+
+def _saved_view(revision: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any]:
+    """What the draft's last save stored, which approval freezes: its totals and each item line's prices."""
+    return {"totals": {"net": revision["subtotal"], "iva": revision["tax_total"], "total": revision["grand_total"]},
+            "lines": [{"line_no": r["line_no"], "unit_price_qc": r["unit_price_qc"],
+                       "line_total_qc": r["line_total_qc"]}
+                      for r in sorted(lines, key=lambda r: r["line_no"]) if r["line_kind"] == "item"]}
+
+
+def _differs(computed: dict[str, Any] | None, saved: dict[str, Any]) -> bool:
+    """Whether the live computation differs from the save, figure by figure (a draft never priced differs)."""
+    if computed is None:
+        return True
+    totals = computed["totals"]
+    live_totals = {k: _decimal_or_none(totals[k]) for k in ("net", "iva", "total")}
+    if live_totals != {k: _decimal_or_none(v) for k, v in saved["totals"].items()}:
+        return True
+    live = [(r["line_no"], _decimal_or_none(r["unit_price"]), _decimal_or_none(r["line_total"]))
+            for r in computed["lines"]]
+    stored = [(r["line_no"], _decimal_or_none(r["unit_price_qc"]), _decimal_or_none(r["line_total_qc"]))
+              for r in saved["lines"]]
+    return live != stored
+
+
 def _label(quote_number: str, revision_no: int) -> str | None:
     """The printed label, or None for a historical number that does not follow the series' form."""
     try:
@@ -238,13 +312,32 @@ class V2QuoteReads:
     def _params(rows: list[dict[str, Any]]) -> dict[str, Decimal | str]:
         return parameters_from((r["key"], r["value_numeric"], r["value_json"]) for r in rows)
 
+    def _fx_bounded(self, once: Callable[[_FxPrefetch], Any]) -> Any:
+        """`once(fx)` reads in its own transaction; on a rate miss it runs once more after the fetch.
+
+        A pass that missed a rate is discarded whatever it returned or refused: it priced with a
+        placeholder. The fetch runs between the two transactions, so the provider's HTTP call and
+        its write of the answer never wait while this request holds a pooled connection.
+        """
+        fx = _FxPrefetch()
+        try:
+            out = once(fx)
+        except CommandRefused:
+            if not fx.missed:
+                raise
+        else:
+            if not fx.missed:
+                return out
+        fx.fetch(self._fx_resolver)
+        return once(fx)
+
     def _priced(self, cur: Any, draft: QuoteDraft, tax_rate: Decimal | None,
-                params: dict[str, Decimal | str]) -> dict[str, Any]:
+                params: dict[str, Decimal | str], fx: FxResolver) -> dict[str, Any]:
         params = dict(params)
         if tax_rate is not None:
             params["iva_rate"] = Decimal(tax_rate)
         try:
-            resolved = resolve_draft(cur, draft, params, self._fx_resolver, self._today())
+            resolved = resolve_draft(cur, draft, params, fx, self._today())
             result = compute(resolved.engine_input)
         except EngineError as exc:
             raise CommandRefused(422, exc.code, f"the draft cannot be priced ({exc.code})") from exc
@@ -252,6 +345,9 @@ class V2QuoteReads:
 
     def preview(self, body: PreviewQuoteBody) -> dict[str, Any]:
         """The draft priced as a save would price it; nothing is written."""
+        return self._fx_bounded(lambda fx: self._preview_once(body, fx))
+
+    def _preview_once(self, body: PreviewQuoteBody, fx: FxResolver) -> dict[str, Any]:
         revision_id = str(body.revision_id) if body.revision_id else None
         with self._read() as cur:
             queries: dict[str, tuple[str, tuple[Any, ...]]] = {"params": (PARAMETERS_SQL, ())}
@@ -264,7 +360,7 @@ class V2QuoteReads:
                     raise CommandRefused(404, "revision_not_found", "no such quote revision")
                 tax_rate = rows["revision"][0]["tax_rate"]
             return {"revision_id": revision_id,
-                    "computed": self._priced(cur, body.draft, tax_rate, self._params(rows["params"]))}
+                    "computed": self._priced(cur, body.draft, tax_rate, self._params(rows["params"]), fx)}
 
     # -- kit suggestions (R-A5)
 
@@ -300,6 +396,9 @@ class V2QuoteReads:
         pipeline (revisions, current lines, participants, memory, mentions, parameters); for a
         draft, `resolve_draft`'s four statements; then one pipeline for the principal's history and kits.
         """
+        return self._fx_bounded(lambda fx: self._workspace_once(quote_id, fx))
+
+    def _workspace_once(self, quote_id: uuid.UUID | str, fx: FxResolver) -> dict[str, Any] | None:
         qid = str(quote_id)
         with self._read() as cur:
             cur.execute(_QUOTE_SQL, (qid,))
@@ -320,7 +419,7 @@ class V2QuoteReads:
             current_row = self._current(revisions)
             lines = rows["lines"]
             params = self._params(rows["params"])
-            current = self._current_json(cur, quote, current_row, lines, params) if current_row else None
+            current = self._current_json(cur, quote, current_row, lines, params, fx) if current_row else None
 
             principal_key = self._principal_key(current, lines)
             history, kits = None, []
@@ -363,7 +462,8 @@ class V2QuoteReads:
                                              r["revision_no"]))
 
     def _current_json(self, cur: Any, quote: dict[str, Any], revision: dict[str, Any],
-                      lines: list[dict[str, Any]], params: dict[str, Decimal | str]) -> dict[str, Any]:
+                      lines: list[dict[str, Any]], params: dict[str, Decimal | str],
+                      fx: FxResolver) -> dict[str, Any]:
         out: dict[str, Any] = {k: revision.get(k) for k in _REVISION_FIELDS}
         out["label"] = _label(quote["quote_number"], revision["revision_no"])
         if revision["origin"] == "authored" and revision["status"] == "draft":
@@ -372,10 +472,12 @@ class V2QuoteReads:
             out["computed"] = None
             out["computed_error"] = None
             try:
-                out["computed"] = self._priced(cur, draft, revision["tax_rate"], params)
+                out["computed"] = self._priced(cur, draft, revision["tax_rate"], params, fx)
             except CommandRefused as exc:
                 # The page still opens: the draft is shown with why it cannot be priced right now.
                 out["computed_error"] = {"code": exc.code, "message": exc.message}
+            out["saved"] = _saved_view(revision, lines)
+            out["needs_saving"] = _differs(out["computed"], out["saved"])
         else:
             out["lines"] = [{k: line.get(k) for k in _LINE_FIELDS} for line in lines]
             out["party_snapshot"] = revision.get("party_snapshot")
