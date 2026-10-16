@@ -217,6 +217,40 @@ describe("useQuoteDraft — autosave", () => {
     expect(saves).toHaveLength(0);
   });
 
+  it("saveNow saves an unedited draft at once (B4: prices changed since the last save)", async () => {
+    const { hook, saves } = setup();
+    let result: { ok: boolean; version: number } | undefined;
+    act(() => {
+      void hook.result.current.saveNow().then((r) => (result = r));
+    });
+    await settle();
+    expect(saves).toHaveLength(1);
+    expect(saves[0].args[1]).toBe(3);
+    expect(hook.result.current.state.saveState).toBe("saving");
+    await act(async () => saves[0].d.resolve(saved(4, "555")));
+    await settle();
+    expect(result).toEqual({ ok: true, version: 4 });
+    expect(hook.result.current.state.saveState).toBe("saved");
+    expect(hook.result.current.state.computed?.totals.net).toBe("555");
+  });
+
+  it("saveNow with edits pending sends them once, like flush", async () => {
+    const { hook, saves, typeQty } = setup();
+    typeQty("2");
+    act(() => void hook.result.current.saveNow());
+    await settle();
+    expect(saves).toHaveLength(1);
+    expect(saves[0].args[2].items[0].quantity).toBe("2");
+  });
+
+  it("saveNow does nothing on a revision that is not an authored draft", async () => {
+    const { hook, saves } = setup(workspaceFixture({ status: "approved" }));
+    await act(async () => {
+      await hook.result.current.saveNow();
+    });
+    expect(saves).toHaveLength(0);
+  });
+
   it("retries a failed save with the same key; a new edit gets a new key", async () => {
     const { hook, saves, typeQty } = setup();
     typeQty("2");

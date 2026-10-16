@@ -8,6 +8,7 @@ import { ProductsSection } from "../quotes/ProductsSection";
 import { QuoteRefusal, fetchQuoteWorkspace, type QuoteWorkspace } from "../quotes/quoteApi";
 import { quoteLabel } from "../quotes/quoteLabel";
 import { SaveStatus } from "../quotes/SaveStatus";
+import { SummaryRail } from "../quotes/SummaryRail";
 import { TermsSection } from "../quotes/TermsSection";
 import { useQuoteDraft } from "../quotes/useQuoteDraft";
 import { useResource } from "../useResource";
@@ -19,8 +20,9 @@ import { useResource } from "../useResource";
  * Every number on the page comes from the API; the browser never prices.
  *
  * An authored draft is edited in place (`useQuoteDraft`: live preview, autosave); the header says
- * whether it is saved. «Vista cliente» (B7) hides costs and margins, and the whole «Gastos de
- * importación» card, for screen sharing.
+ * whether it is saved. The right rail (`SummaryRail`) shows the totals, margin, exchange rates,
+ * warnings and the principal model's past prices. «Vista cliente» (B7) hides costs and margins,
+ * the whole «Gastos de importación» card and the rail's internal cards, for screen sharing.
  */
 type Navigate = (section: CrmSection, id?: string | null) => void;
 
@@ -136,43 +138,54 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
         }
       />
       {state.saveState === "conflict" ? <ConflictBanner onReload={editor.reload} /> : null}
-      {authored ? (
+      {state.workspace.current ? (
         <div className="flex flex-wrap items-start gap-[18px]">
-          <div className="flex min-w-0 flex-[999_1_760px] flex-col gap-[18px]">
-            <ClientSection
-              workspace={state.workspace}
-              draft={state.draft}
-              invalid={editor.invalid}
-              disabled={disabled}
-              refusal={recipientRefusal}
-              edit={editor.edit}
-            />
-            <ProductsSection
-              workspace={state.workspace}
-              draft={state.draft}
-              computed={state.computed}
-              computedKeys={state.computedKeys}
-              stale={editor.stale}
-              invalid={editor.invalid}
-              disabled={disabled}
-              clientView={clientView}
-              onClientViewChange={setClientView}
-              edit={editor.edit}
-            />
-            {/* Internal: import expenses are never shown to the client, not even in screen sharing. */}
-            {clientView ? null : (
-              <ExpensesSection
+          {authored ? (
+            <div className="flex min-w-0 flex-[999_1_760px] flex-col gap-[18px]">
+              <ClientSection
+                workspace={state.workspace}
+                draft={state.draft}
+                invalid={editor.invalid}
+                disabled={disabled}
+                refusal={recipientRefusal}
+                edit={editor.edit}
+              />
+              <ProductsSection
+                workspace={state.workspace}
                 draft={state.draft}
                 computed={state.computed}
                 computedKeys={state.computedKeys}
                 stale={editor.stale}
                 invalid={editor.invalid}
                 disabled={disabled}
+                clientView={clientView}
+                onClientViewChange={setClientView}
                 edit={editor.edit}
               />
-            )}
-            <TermsSection draft={state.draft} invalid={editor.invalid} disabled={disabled} edit={editor.edit} />
-          </div>
+              {/* Internal: import expenses are never shown to the client, not even in screen sharing. */}
+              {clientView ? null : (
+                <ExpensesSection
+                  draft={state.draft}
+                  computed={state.computed}
+                  computedKeys={state.computedKeys}
+                  stale={editor.stale}
+                  invalid={editor.invalid}
+                  disabled={disabled}
+                  edit={editor.edit}
+                />
+              )}
+              <TermsSection draft={state.draft} invalid={editor.invalid} disabled={disabled} edit={editor.edit} />
+            </div>
+          ) : null}
+          {/* Beside the editor on a wide screen, under it on a narrow one; an issued revision shows its stored totals. */}
+          <SummaryRail
+            state={state}
+            stale={editor.stale}
+            disabled={disabled}
+            clientView={clientView}
+            edit={editor.edit}
+            onSaveNow={editor.saveNow}
+          />
         </div>
       ) : null}
     </div>

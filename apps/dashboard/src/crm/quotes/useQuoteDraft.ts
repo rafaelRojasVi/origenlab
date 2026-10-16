@@ -76,6 +76,11 @@ export interface QuoteDraftEditor {
   pending: boolean;
   edit: (fn: (draft: QuoteDraft) => QuoteDraft) => void;
   flush: () => Promise<FlushResult>;
+  /**
+   * Saves now even when nothing was edited (B4 «Guardar ahora»: the saved totals are older than
+   * today's rates or parameters, and a save stores the new ones). Pending edits go in that save.
+   */
+  saveNow: () => Promise<FlushResult>;
   /** After a failed save ("error"), sends it again with the same key; otherwise reports the state. */
   retry: () => Promise<FlushResult>;
   reload: () => Promise<QuoteWorkspace>;
@@ -215,6 +220,16 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
     return status();
   }, [runSave]);
 
+  const saveNow = useCallback((): Promise<FlushResult> => {
+    if (!editableRef.current || stoppedRef.current) return Promise.resolve(status());
+    if (editSeqRef.current === savedSeqRef.current && !inFlightRef.current) {
+      // Nothing edited: mark the same draft as an edit, so the save loop sends it.
+      editSeqRef.current += 1;
+      dispatch({ type: "edit", fn: (d) => d });
+    }
+    return flush();
+  }, [flush]);
+
   const retry = useCallback(
     (): Promise<FlushResult> => (lastErrorRef.current && !stoppedRef.current ? flush() : Promise.resolve(status())),
     [flush],
@@ -309,6 +324,7 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
     pending,
     edit,
     flush,
+    saveNow,
     retry,
     reload,
     approve,

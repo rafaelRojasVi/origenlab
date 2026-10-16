@@ -121,6 +121,18 @@ export function computedLineFor(computed: Computed | null, keys: string[], uid: 
   return computed.lines.find((l) => l.line_no === at + 1) ?? null;
 }
 
+/**
+ * The row (1-based, as the table shows it) of the API's line `lineNo`, found by uid in the draft
+ * `computedKeys` priced: lines removed or moved since keep their warnings on the right row. Null
+ * when that line is no longer in the draft; the API's own number when the priced draft is unknown.
+ */
+export function rowOfLine(draft: QuoteDraft, computedKeys: string[], lineNo: number): number | null {
+  const uid = computedKeys[lineNo - 1];
+  if (!uid) return lineNo;
+  const at = draft.items.findIndex((i) => i.uid === uid);
+  return at < 0 ? null : at + 1;
+}
+
 export function sendableDraft(draft: QuoteDraft & { recipient_participant_id?: string | null }): QuoteDraft {
   const { recipient_participant_id: legacy, ...rest } = draft;
   let recipient = rest.recipient ?? (legacy ? { participant_id: legacy } : null);

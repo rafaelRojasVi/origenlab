@@ -7,6 +7,7 @@ import {
   addManualExpense,
   principalItemOf,
   removeExtraTerm,
+  rowOfLine,
   removeManualExpense,
   updateExtraTerm,
   updateManualExpense,
@@ -449,5 +450,22 @@ describe("expense and condition rows", () => {
     expect(principalItemOf(d, { ...computedFixture(), principal_line_no: null }, keys)).toBeNull();
     const marked = setPrincipal(d, 1);
     expect(principalItemOf(marked, null, keys)?.description).toBe("Servicio de prueba");
+  });
+});
+
+describe("rowOfLine", () => {
+  it("is the row the table shows for a priced line, found by uid, not by position", () => {
+    const d = withUids(draftFixture());
+    const keys = d.items.map((i) => i.uid ?? "");
+    expect(rowOfLine(d, keys, 1)).toBe(1);
+    expect(rowOfLine(d, keys, 2)).toBe(2);
+    // The first line was removed since that price: line 2 is now the table's row 1, line 1 is gone.
+    const removed = removeItem(d, 0);
+    expect(rowOfLine(removed, keys, 2)).toBe(1);
+    expect(rowOfLine(removed, keys, 1)).toBeNull();
+  });
+
+  it("trusts the API's number when the priced draft is unknown", () => {
+    expect(rowOfLine(withUids(draftFixture()), [], 3)).toBe(3);
   });
 });

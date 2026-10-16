@@ -3,7 +3,7 @@
  * invented. A viewer is refused by the API (403 `role_may_not_view_costs`); a missing quote is a 404.
  */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
@@ -180,7 +180,7 @@ function editableWorkspace() {
 
 const CATALOG = { version: "v1", fields: ["id", "model_number", "name"], suppliers: [], items: [] };
 
-function stubApi(onSave: (call: number) => Response) {
+function stubApi(onSave: (call: number) => Response, workspace: () => unknown = editableWorkspace) {
   const calls: { method: string; path: string; body: unknown }[] = [];
   let saves = 0;
   vi.stubGlobal(
@@ -193,7 +193,7 @@ function stubApi(onSave: (call: number) => Response) {
       if (path === "/v2/catalog/index") return Promise.resolve(json(CATALOG));
       if (path === "/v2/quotes/preview") return Promise.resolve(json({ computed: computedFixture("200000") }));
       if (path === "/v2/commands/save-quote-draft") return Promise.resolve(onSave(++saves));
-      return Promise.resolve(json(editableWorkspace()));
+      return Promise.resolve(json(workspace()));
     }),
   );
   return calls;
@@ -300,5 +300,48 @@ describe("Cotizador page — the draft editor", () => {
     renderPage();
     fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
     expect(await screen.findByText(/no se pudo guardar: Falta configurar la numeración\./, undefined, { timeout: 3000 })).toBeInTheDocument();
+  });
+
+  it("shows the totals and the margin beside the editor, and hides the margin in «Vista cliente»", async () => {
+    stubApi(() => json({}));
+    renderPage();
+    const totals = await screen.findByRole("region", { name: "Totales" });
+    expect(within(totals).getByText("Total").nextSibling).toHaveTextContent("$ 119.000");
+    expect(within(totals).getByText("Margen bruto")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Vista cliente" }));
+    expect(screen.queryByText("Margen bruto")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Totales" })).getByText("Total")).toBeInTheDocument();
+  });
+
+  it("«Guardar ahora» saves a draft whose prices changed since its last save (B4)", async () => {
+    const stale = () => {
+      const ws = editableWorkspace();
+      return { ...ws, current: { ...ws.current!, needs_saving: true, totals_computed_at: "2026-10-10T12:00:00Z" } };
+    };
+    const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }), stale);
+    renderPage();
+    const banner = await screen.findByText(/Los precios cambiaron desde el último guardado/);
+    expect(banner).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar ahora" }));
+    await waitFor(() => expect(screen.queryByText(/Los precios cambiaron desde el último guardado/)).not.toBeInTheDocument());
+    const save = calls.find((c) => c.path === "/v2/commands/save-quote-draft");
+    expect(save?.body).toMatchObject({ revision_id: "r-1", expected_version: 3 });
+  });
+});
+
+describe("Cotizador page — an issued revision", () => {
+  it("shows its stored totals", async () => {
+    const issued = () => {
+      const ws = editableWorkspace();
+      return {
+        ...ws,
+        current: { ...ws.current!, status: "approved", subtotal: "500000", tax_total: "95000", grand_total: "595000", draft: undefined, computed: undefined, lines: [] },
+      };
+    };
+    stubApi(() => json({}), issued);
+    renderPage();
+    const totals = await screen.findByRole("region", { name: "Totales" });
+    expect(within(totals).getByText("Total").nextSibling).toHaveTextContent("$ 595.000");
+    expect(screen.queryByText("Margen bruto")).not.toBeInTheDocument();
   });
 });
