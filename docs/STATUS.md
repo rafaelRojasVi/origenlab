@@ -2992,3 +2992,15 @@ A «Con ficha» toggle next to the Catálogo filters keeps only products with an
 (not a price list, not a retired sheet). It filters the cost-free index in the browser on the
 `has_datasheet` flag the index already carried, narrows the supplier and kind counts, lives in the
 address as `&ficha=1` and is cleared by «Limpiar filtros». Dashboard only: no API or proxy change.
+
+### 2.7.126 Products created from sent quotes (importer), 2026-10-16 — built; plan written, not applied
+
+`apps/api/scripts/catalog/import_quote_products.py` ([`OPERATIONS.md`](OPERATIONS.md) §14.3) creates
+the catalog products that sent quotes name but the catalog lacked, as the owner approved them on
+2026-10-16: their maker organizations (reused when one exists, else kind `manufacturer`), the
+`manufacturer` role on every maker and on the existing makers that lacked it, each new maker's
+domain (`shared`), and the products (`content_origin = 'import'`, Spanish name, «desde
+cotización» as the `product.created` note). No cost is written; model aliases are not part of it.
+Two plan actions join the catalog plan model (`add_org_role`, `add_org_domain`; other importers'
+plans keep their bytes) and rollback now also removes the roles and domains a manifest wrote. The
+hosted apply is the owner's step; until it runs, the catalog has none of these products.

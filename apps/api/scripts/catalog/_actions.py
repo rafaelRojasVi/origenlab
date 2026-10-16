@@ -4,8 +4,9 @@ Shared by every catalog importer (`_common.py` drives it). The SQL mirrors the c
 (`origenlab_api/v2/catalog/commands.py`) — same columns, same locks, same events through the same
 `_append_event` — with three differences that make an import an import:
 
-* rows carry the manifest: `crm.organization.origin_source_record_id` and
-  `catalog.supplier_product.origin_source_record_id` point at it, products are
+* rows carry the manifest: `crm.organization.origin_source_record_id`,
+  `crm.organization_relationship.origin_source_record_id`, `crm.organization_domain.origin_source_record_id`
+  and `catalog.supplier_product.origin_source_record_id` point at it, products are
   `content_origin = 'import'`, and **every event payload names it** (`origin_source_record_id`).
   That payload is how a rollback finds the products, terms and parameters it loaded — tables
   with no provenance column — and it never matches a row by name or key;
@@ -117,12 +118,20 @@ def _find_org(ctx: Context, fields: dict[str, Any]) -> str | None:
     return org_id
 
 
+def _refuse_if_must_exist(fields: dict[str, Any]) -> None:
+    """An organization the plan only names (`must_exist`: a maker it reuses) is never created."""
+    if fields.get("must_exist"):
+        raise ImportRefused(f"organization {fields['name']!r} must already exist and does not; "
+                            "it is reused by this plan, never created")
+
+
 def _apply_create_org(ctx: Context, item: importing.PlanItem) -> str:
     fields = item["fields"]
     found = _find_org(ctx, fields)
     if found is not None:
         ctx.ids[item["key"]] = found
         return "already_present"
+    _refuse_if_must_exist(fields)
     ctx.cur.execute(
         "insert into crm.organization (kind, name, confirmation, origin_source_record_id) "
         "values (%s, %s, 'machine_proposed', %s::uuid) returning id::text as id",
@@ -163,15 +172,17 @@ def _apply_create_product(ctx: Context, item: importing.PlanItem) -> str:
         _classify_if_unset(ctx, found, fields)
         return "already_present"
     ctx.cur.execute(
-        "insert into catalog.product (manufacturer_organization_id, model_number, name, description, product_kind, "
-        "category_es, content_origin, created_by_operator_id) values (%s::uuid, %s, %s, %s, %s, %s, 'import', %s::uuid) "
-        "returning id::text as id",
-        (maker_id, fields["model_number"], fields.get("name"), fields.get("description"), fields.get("product_kind"),
-         fields.get("category_es"), ctx.operator.operator_id))
+        "insert into catalog.product (manufacturer_organization_id, model_number, name, name_es, description, "
+        "product_kind, category_es, content_origin, created_by_operator_id) "
+        "values (%s::uuid, %s, %s, %s, %s, %s, %s, 'import', %s::uuid) returning id::text as id",
+        (maker_id, fields["model_number"], fields.get("name"), fields.get("name_es"), fields.get("description"),
+         fields.get("product_kind"), fields.get("category_es"), ctx.operator.operator_id))
     product_id = _row(ctx.cur)["id"]
     ctx.ids[item["key"]] = product_id
-    _event(ctx, "product", product_id, "product.created",
-           {"model_number": fields["model_number"], "content_origin": "import"})
+    payload: dict[str, Any] = {"model_number": fields["model_number"], "content_origin": "import"}
+    if fields.get("note"):
+        payload["note"] = fields["note"]  # why it was created (the quote-products importer: «desde cotización»)
+    _event(ctx, "product", product_id, "product.created", payload)
     return "inserted"
 
 
@@ -201,6 +212,83 @@ def _verify_create_product(ctx: Context, item: importing.PlanItem) -> tuple[str,
         return "missing", [], None
     ctx.ids[item["key"]] = found
     return "present", [], found
+
+
+# ------------------------------------------------------------------ organization roles and domains
+
+def _lock_org(ctx: Context, org_id: str) -> None:
+    """The lock every organization command holds while it appends (`_live_party`)."""
+    ctx.cur.execute("select id from crm.organization where id = %s::uuid for no key update", (org_id,))
+
+
+def _role_in_force(ctx: Context, org_id: str, role: str) -> str | None:
+    """The relationship of `role` in force today or later — the rows add-organization-classification
+    treats as already present (the same role may not overlap itself in time)."""
+    ctx.cur.execute("select id::text from crm.organization_relationship where organization_id = %s::uuid "
+                    "and role = %s and (valid_to is null or valid_to > current_date) order by valid_from, id limit 1",
+                    (org_id, role))
+    row = ctx.cur.fetchone()
+    return None if row is None else row[0]
+
+
+def _apply_add_org_role(ctx: Context, item: importing.PlanItem) -> str:
+    """add-organization-classification's row and event, only if the role is not in force already.
+
+    The role is the relationship row (`crm.organization_relationship`), as the CRM records every
+    classification; the organization row itself is not changed (its version stays)."""
+    fields = item["fields"]
+    org_id, role = ctx.ids[fields["organization"]], fields["role"]
+    _lock_org(ctx, org_id)
+    if _role_in_force(ctx, org_id, role) is not None:
+        return "already_present"
+    ctx.cur.execute(
+        "insert into crm.organization_relationship (organization_id, role, valid_from, note, origin_source_record_id) "
+        "values (%s::uuid, %s, current_date, %s, %s::uuid) returning id::text as id",
+        (org_id, role, fields.get("note"), ctx.manifest_id))
+    relationship_id = _row(ctx.cur)["id"]
+    _event(ctx, "organization_relationship", relationship_id, "relationship.changed",
+           {"organization_id": org_id, "role": role, "action": "opened"})
+    return "inserted"
+
+
+def _verify_add_org_role(ctx: Context, item: importing.PlanItem) -> tuple[str, list[str], str | None]:
+    org_id = ctx.ids.get(item["fields"]["organization"])
+    found = None if org_id is None else _role_in_force(ctx, org_id, item["fields"]["role"])
+    return ("missing", [], None) if found is None else ("present", [], found)
+
+
+def _find_domain(ctx: Context, org_id: str, domain: str) -> dict[str, Any] | None:
+    ctx.cur.execute("select id::text as id, removed_at is not null as removed from crm.organization_domain "
+                    "where organization_id = %s::uuid and domain_norm = %s", (org_id, domain))
+    return _row(ctx.cur)
+
+
+def _apply_add_org_domain(ctx: Context, item: importing.PlanItem) -> str:
+    """A `shared` domain (add-organization-domain's default scope), only if the organization lacks it.
+
+    A domain an operator removed from this organization is never restored by an import
+    (`present_different`)."""
+    fields = item["fields"]
+    org_id, domain = ctx.ids[fields["organization"]], fields["domain"]
+    _lock_org(ctx, org_id)
+    existing = _find_domain(ctx, org_id, domain)
+    if existing is not None:
+        return "present_different" if existing["removed"] else "already_present"
+    ctx.cur.execute(
+        "insert into crm.organization_domain (organization_id, domain_norm, scope, origin_source_record_id) "
+        "values (%s::uuid, %s, 'shared', %s::uuid) returning id::text as id", (org_id, domain, ctx.manifest_id))
+    _row(ctx.cur)
+    _event(ctx, "organization", org_id, "organization.domain_added",
+           {"organization_id": org_id, "domain_norm": domain, "scope": "shared"})
+    return "inserted"
+
+
+def _verify_add_org_domain(ctx: Context, item: importing.PlanItem) -> tuple[str, list[str], str | None]:
+    org_id = ctx.ids.get(item["fields"]["organization"])
+    row = None if org_id is None else _find_domain(ctx, org_id, item["fields"]["domain"])
+    if row is None:
+        return "missing", [], None
+    return ("present_different" if row["removed"] else "present"), [], row["id"]
 
 
 # ------------------------------------------------------------------ supplier cost observations
@@ -585,11 +673,13 @@ def _verify_merge_maker(ctx: Context, item: importing.PlanItem) -> tuple[str, li
     return ("present", [], drop_id) if active_left == 0 else ("different", ["active products left"], drop_id)
 
 
-_APPLY = {"create_org": _apply_create_org, "create_product": _apply_create_product,
+_APPLY = {"create_org": _apply_create_org, "add_org_role": _apply_add_org_role,
+          "add_org_domain": _apply_add_org_domain, "create_product": _apply_create_product,
           "add_observation": _apply_add_observation, "set_terms": _apply_set_terms,
           "set_cost_parameter": _apply_set_cost_parameter, "add_quote_document": _apply_add_quote_document,
           "add_product_document": _apply_add_product_document, "merge_maker": _apply_merge_maker}
-_VERIFY = {"create_org": _verify_create_org, "create_product": _verify_create_product,
+_VERIFY = {"create_org": _verify_create_org, "add_org_role": _verify_add_org_role,
+           "add_org_domain": _verify_add_org_domain, "create_product": _verify_create_product,
            "add_observation": _verify_add_observation, "set_terms": _verify_set_terms,
            "set_cost_parameter": _verify_set_cost_parameter, "add_quote_document": _verify_add_quote_document,
            "add_product_document": _verify_add_product_document, "merge_maker": _verify_merge_maker}
@@ -605,11 +695,12 @@ def verify_item(ctx: Context, item: importing.PlanItem) -> dict[str, Any]:
 
 
 def preflight(cur: Any, plan: importing.Plan) -> None:
-    """Refusals found read-only before anything is written: unknown, ambiguous or archived organizations."""
+    """Refusals found read-only before anything is written: unknown, ambiguous or archived organizations,
+    and a reused one (`must_exist`) that is not there."""
     ctx = Context(cur=cur, operator=None, manifest_id=None)
     for item in plan["items"]:
-        if item["action"] == "create_org":
-            _find_org(ctx, item["fields"])
+        if item["action"] == "create_org" and _find_org(ctx, item["fields"]) is None:
+            _refuse_if_must_exist(item["fields"])
 
 
 def record_manifest_event(ctx: Context, plan: importing.Plan, plan_sha: str) -> int:
@@ -635,6 +726,8 @@ OWNED_TABLES = (
     ("catalog.supplier_terms", "supplier_organization_id"),
     ("catalog.cost_parameter", "id"),
     ("catalog.product", "id"),
+    ("crm.organization_relationship", "id"),
+    ("crm.organization_domain", "id"),
     ("crm.organization", "id"),
     ("evidence.document_line", "id"),
     ("evidence.source_record", "id"),
@@ -657,6 +750,12 @@ def collect_owned(cur: Any, manifest_id: str) -> dict[str, list[str]]:
 
     cur.execute("select id::text from crm.organization where origin_source_record_id = %s::uuid", (manifest_id,))
     orgs = sorted(r[0] for r in cur.fetchall())
+    cur.execute("select id::text from crm.organization_relationship where origin_source_record_id = %s::uuid",
+                (manifest_id,))
+    relationships = sorted(r[0] for r in cur.fetchall())
+    cur.execute("select id::text from crm.organization_domain where origin_source_record_id = %s::uuid",
+                (manifest_id,))
+    domains = sorted(r[0] for r in cur.fetchall())
     cur.execute("select id::text from catalog.supplier_product where origin_source_record_id = %s::uuid",
                 (manifest_id,))
     observations = sorted(r[0] for r in cur.fetchall())
@@ -675,6 +774,8 @@ def collect_owned(cur: Any, manifest_id: str) -> dict[str, list[str]]:
         "catalog.supplier_terms": created_by("organization.supplier_terms_set"),
         "catalog.cost_parameter": created_by("cost_parameter.set"),
         "catalog.product": created_by("product.created"),
+        "crm.organization_relationship": relationships,
+        "crm.organization_domain": domains,
         "crm.organization": orgs,
         "evidence.document_line": lines,
         "evidence.source_record": [manifest_id, *documents],
@@ -786,6 +887,18 @@ def rollback_blockers(cur: Any, owned: dict[str, list[str]], verified: list[dict
                     " and later.valid_from > mine.valid_from and later.id::text <> all(%s))", (params, params))
         blockers += [{"table": "catalog.cost_parameter", "id": r[0], "reason": "a later value was set"}
                      for r in cur.fetchall()]
+    relationships = owned.get("crm.organization_relationship", [])
+    if relationships:
+        cur.execute("select id::text, updated_at <> created_at or valid_to is not null "
+                    "from crm.organization_relationship where id::text = any(%s) for update", (relationships,))
+        blockers += [{"table": "crm.organization_relationship", "id": i, "reason": "changed since the apply"}
+                     for i, changed in cur.fetchall() if changed]
+    domains = owned.get("crm.organization_domain", [])
+    if domains:
+        cur.execute("select id::text, removed_at is not null from crm.organization_domain "
+                    "where id::text = any(%s) for update", (domains,))
+        blockers += [{"table": "crm.organization_domain", "id": i, "reason": "removed since the apply"}
+                     for i, removed in cur.fetchall() if removed]
     lines = owned.get("evidence.document_line", [])
     if lines:
         cur.execute("select id::text, check_status, updated_at <> created_at from evidence.document_line "
