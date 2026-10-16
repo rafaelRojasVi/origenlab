@@ -39,6 +39,7 @@ history comes from the catalog reads.
 from __future__ import annotations
 
 import datetime as dt
+import re
 import uuid
 from email.utils import getaddresses
 from collections.abc import Callable
@@ -339,9 +340,28 @@ def _santiago_today(now: datetime) -> dt.date:
     return now.astimezone(SANTIAGO).date()
 
 
+#: A machine that sends mail, by its address's local part: no-reply in any spelling (alone or as
+#: a part, `alertas-noreply`, `noreply+tag`), bounces and notification senders. Deliberately narrow:
+#: a mailbox a person reads (`ventas@`, `contacto@`, `info@`) is still someone to quote to.
+_AUTOMATIC_LOCAL = re.compile(
+    r"(?:^|[-_.])(?:no-?reply|do-?not-?reply)(?:[-_.+]|$)|^(?:mailer-daemon|postmaster|notifications?)(?:\+|$)"
+)
+#: Google's own notification senders (Gemini notes, Calendar) and every `*.google.com` sender
+#: (Docs comments, Calendar invitations): a person at google.com itself is still offered.
+_AUTOMATIC_ADDRESSES = frozenset({"gemini-notes@google.com", "calendar-notification@google.com"})
+
+
+def _automatic_sender(email: str) -> bool:
+    """A notification or no-reply address on a case's emails: nobody a quote goes to."""
+    local, _, domain = email.strip().lower().rpartition("@")
+    return (email.strip().lower() in _AUTOMATIC_ADDRESSES or domain.endswith(".google.com")
+            or bool(_AUTOMATIC_LOCAL.search(local)))
+
+
 def _offerable(email: str | None, name: str | None) -> bool:
-    """An address a quote may go to: well formed, and allowed by the save's own rule (`recipients`)."""
-    return bool(email) and "@" in email and not_a_recipient(email, name) is None
+    """An address a quote may go to: well formed, not an automatic sender, and allowed by the
+    save's own rule (`recipients`)."""
+    return bool(email) and "@" in email and not _automatic_sender(email) and not_a_recipient(email, name) is None
 
 
 def _header_pairs(raw: str | None) -> list[tuple[str | None, str]]:

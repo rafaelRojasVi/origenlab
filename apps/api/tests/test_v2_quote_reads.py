@@ -614,3 +614,24 @@ def test_a_rate_no_provider_has_is_still_refused_after_the_one_retry(world) -> N
     with pytest.raises(CommandRefused) as exc:
         reads.preview(PreviewQuoteBody(draft=_draft(world)))
     assert (exc.value.status_code, exc.value.code) == (409, "fx_unavailable") and calls == ["EUR"]
+
+
+def test_automatic_senders_are_never_offered_as_recipients() -> None:
+    """Notification and no-reply senders on a case's emails are nobody to quote to; a generic
+    mailbox a person reads (ventas@, contacto@, info@) still is. Pure: no database."""
+    from origenlab_api.v2.quotes.reads import email_people
+
+    automatic = [
+        "no-reply@cliente-ficticio.test", "noreply@cliente-ficticio.test", "donotreply@cliente-ficticio.test",
+        "do-not-reply@cliente-ficticio.test", "alertas-noreply@cliente-ficticio.test",
+        "noreply+abc@cliente-ficticio.test", "MAILER-DAEMON@cliente-ficticio.test",
+        "postmaster@cliente-ficticio.test", "notifications@cliente-ficticio.test",
+        "notification@cliente-ficticio.test", "gemini-notes@google.com", "calendar-notification@google.com",
+        "comments-noreply@docs.google.com", "avisos@calendar.google.com",
+    ]
+    people = ["ventas@cliente-ficticio.test", "contacto@cliente-ficticio.test", "info@cliente-ficticio.test",
+              "persona@google.com", "noreplyca@cliente-ficticio.test"]
+    rows = [{"kind": "email", "sender": f"Alguien <{a}>", "direction_hint": "inbound", "comms_direction": "inbound",
+             "recipients": "contacto@origenlab.cl", "at": None} for a in automatic + people]
+    offered = {p["email"] for p in email_people(rows)}
+    assert offered == set(people)
