@@ -24,6 +24,7 @@ const SPANISH: Record<string, string> = {
   bad_cursor: "La lista cambió; se volvió a cargar desde el inicio.",
   bad_status: "Ese estado de cotizaciones no existe.",
   role_may_not_view_costs: "Sólo ventas y administración pueden cotizar.",
+  role_may_not_decide: "Sólo ventas y administración pueden crear o cambiar cotizaciones.",
   // «Nueva cotización»: the client and its case.
   case_choice_needed: "Este cliente tiene varios casos abiertos: elige uno, o abre una Solicitud nueva.",
   case_not_of_client: "Ese caso no es de este cliente; elige otro.",

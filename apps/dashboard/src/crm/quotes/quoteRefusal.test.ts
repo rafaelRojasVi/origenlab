@@ -45,6 +45,7 @@ const ENGLISH: [string, string, string][] = [
   ["case_choice_needed", "several open cases", "varios casos abiertos"],
   ["organization_name_ambiguous", "several of that name", "varias instituciones con ese nombre"],
   ["query_too_short", "type at least two characters", "al menos dos letras"],
+  ["role_may_not_decide", "this role may not run commands", "Sólo ventas y administración pueden crear o cambiar cotizaciones."],
 ];
 
 describe("quoteRefusalText", () => {

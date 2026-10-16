@@ -313,17 +313,39 @@ export interface QuoteValidationError {
 
 type Envelope = { code: string | null; message: string | null; details: Record<string, unknown> | null };
 
+const NOT_DETAILS = new Set(["code", "message", "details", "request_id"]);
+
+/** The keys of `obj` that are details (not the code, the message or the request's id). */
+function detailsOf(...objs: unknown[]): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {};
+  for (const obj of objs) {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) if (!NOT_DETAILS.has(k)) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * The refusal's own code and message. The API's error handler wraps every refusal as
+ * `{error:{code:<generic: conflict, validation_error, not_found…>, message, details:{code, message,
+ * …details}, request_id}}`: the command's own code is `details.code`, and the generic one is only
+ * a fallback (a body validation error, the Worker's `{error:{code,message}}`). An older
+ * `{detail:{code, message, …details}}` is read too. The details kept (`candidates`,
+ * `validation_errors`…) leave out the code, the message and the request id.
+ */
 function envelopeOf(raw: unknown): Envelope {
   if (!raw || typeof raw !== "object") return { code: null, message: null, details: null };
   const body = raw as { detail?: unknown; error?: unknown };
-  for (const part of [body.detail, body.error]) {
-    if (part && typeof part === "object" && "code" in part && (part as { code: unknown }).code) {
-      // A command's refusal puts its details next to the code (`{code, message, candidates}`); the
-      // Worker's and a 422's nest them under `details`. Both end up in `details`.
-      const { code, message, details, ...beside } = part as { code: unknown; message?: unknown; details?: unknown };
-      const merged = { ...beside, ...(details && typeof details === "object" ? (details as Record<string, unknown>) : {}) };
-      const kept = Object.keys(merged).length > 0 ? merged : null;
-      return { code: String(code), message: typeof message === "string" ? message : null, details: kept };
+  for (const part of [body.error, body.detail]) {
+    if (!part || typeof part !== "object") continue;
+    const { code, message, details } = part as { code?: unknown; message?: unknown; details?: unknown };
+    const inner = details && typeof details === "object" ? (details as { code?: unknown; message?: unknown }) : null;
+    if (inner && typeof inner.code === "string" && inner.code) {
+      const said = typeof inner.message === "string" ? inner.message : typeof message === "string" ? message : null;
+      return { code: inner.code, message: said, details: detailsOf(inner) };
+    }
+    if (code) {
+      return { code: String(code), message: typeof message === "string" ? message : null, details: detailsOf(part, inner) };
     }
   }
   return { code: null, message: null, details: null };

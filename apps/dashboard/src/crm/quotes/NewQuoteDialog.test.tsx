@@ -4,6 +4,7 @@
  */
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CLIENT_SEARCH_DELAY_MS, NewQuoteDialog } from "./NewQuoteDialog";
 import type { QuoteClientSuggestions } from "./quoteApi";
@@ -50,6 +51,9 @@ const SUGGESTIONS: QuoteClientSuggestions = {
 const EMPTY: QuoteClientSuggestions = { organizations: [], people: [] };
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+/** The API's real refusal envelope (`apps/api` errors.py): a generic code, the command's own under `details`. */
+const refused = (status: number, code: string, message: string, extra: Record<string, unknown> = {}) =>
+  json({ error: { code: status === 409 ? "conflict" : "validation_error", message, details: { code, message, ...extra }, request_id: "req-ejemplo" } }, status);
 const created = () => json({ ok: true, quote_id: NEW_QUOTE, quote_number: "00042-26", revision_id: "r-new", version: 1, opportunity_id: CASE_1 });
 
 interface Call {
@@ -202,6 +206,47 @@ describe("the client search", () => {
     expect(within(caseGroup()).getAllByRole("radio")).toHaveLength(3);
   });
 
+  it("Esc folds the suggestions first; a second Esc closes the dialog; typing unfolds them", async () => {
+    stub();
+    const { onClose } = renderDialog();
+    await search("Labo");
+    await screen.findByRole("listbox");
+    fireEvent.keyDown(clientBox(), { key: "Escape" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(clientBox()).toHaveAttribute("aria-expanded", "false");
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(clientBox(), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+    fireEvent.change(clientBox(), { target: { value: "Labor" } });
+    expect(clientBox()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("while it searches, the combobox controls the listbox, and «Buscando…» is said apart", async () => {
+    const answer = deferred<Response>();
+    stub({ clients: () => answer.promise });
+    renderDialog();
+    await search("Labo");
+    expect(screen.getByText("Buscando…")).toHaveAttribute("role", "status");
+    const controlled = document.getElementById(clientBox().getAttribute("aria-controls") ?? "");
+    expect(controlled).not.toBeNull();
+    expect(controlled).toHaveAttribute("role", "listbox");
+    await act(async () => {
+      answer.resolve(json(SUGGESTIONS));
+    });
+    expect(await screen.findByRole("option", { name: /Laboratorio Ejemplo/ })).toBeInTheDocument();
+  });
+
+  it("after a failed search a new client can still be offered", async () => {
+    const api = stub({ clients: () => new Response("down", { status: 502 }) });
+    renderDialog();
+    await search("Laboratorio Nuevo");
+    await screen.findByText("No se pudo buscar clientes.");
+    await pick(/\+ Cliente nuevo «Laboratorio Nuevo»/);
+    fireEvent.click(createButton());
+    await waitFor(() => expect(api.creates()).toHaveLength(1));
+    expect(api.creates()[0].body).toEqual({ client: { new_organization: { name: "Laboratorio Nuevo", kind: "company" } } });
+  });
+
   it("says when the search failed, and searches again", async () => {
     let n = 0;
     const api = stub({ clients: () => (++n === 1 ? new Response("down", { status: 502 }) : json(SUGGESTIONS)) });
@@ -309,7 +354,7 @@ describe("the client sent", () => {
     expect(api.creates()[0].body).toEqual({ client: { email: "nueva@ejemplo.test" } });
   });
 
-  it("a new client is a new institution, with its kind and an optional address, on a new Solicitud", async () => {
+  it("a new client is a new institution, with its kind and an optional address; the API finds or opens its case", async () => {
     const api = stub({ clients: () => json(EMPTY) });
     const { onCreated } = renderDialog();
     await search("Laboratorio Nuevo");
@@ -326,8 +371,9 @@ describe("the client sent", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
     expect(api.creates()[0].body).toEqual({
       client: { new_organization: { name: "Laboratorio Nuevo", kind: "laboratory", email: "contacto@nuevo-ejemplo.test" } },
-      new_case: true,
     });
+    // No `new_case`: an institution the API turns out to hold keeps its one open case.
+    expect(api.creates()[0].body).not.toHaveProperty("new_case");
     expect(onCreated).toHaveBeenCalledWith(NEW_QUOTE, { label: "CN00042", client: "Laboratorio Nuevo", status: "draft" });
   });
 
@@ -343,7 +389,7 @@ describe("the client sent", () => {
     fireEvent.change(email, { target: { value: "" } });
     fireEvent.click(createButton());
     await waitFor(() => expect(api.creates()).toHaveLength(1));
-    expect(api.creates()[0].body).toEqual({ client: { new_organization: { name: "Clínica Nueva", kind: "company" } }, new_case: true });
+    expect(api.creates()[0].body).toEqual({ client: { new_organization: { name: "Clínica Nueva", kind: "company" } } });
   });
 
   it("typing again forgets the client chosen", async () => {
@@ -368,7 +414,7 @@ describe("the API's refusals", () => {
       clients: () => json(EMPTY),
       create: (n) =>
         n === 1
-          ? json({ detail: { candidates, code: "case_choice_needed", message: "Este cliente tiene varios casos abiertos: elige uno, o abre uno nuevo." } }, 409)
+          ? refused(409, "case_choice_needed", "Este cliente tiene varios casos abiertos: elige uno, o abre uno nuevo.", { candidates })
           : created(),
     });
     const { onCreated } = renderDialog();
@@ -377,7 +423,9 @@ describe("the API's refusals", () => {
     fireEvent.click(createButton());
     await screen.findByRole("radio", { name: /Centrífuga/ });
     expect(screen.getByRole("radio", { name: /Agitador/ })).toHaveAccessibleName(/pidió precio hace 1 día$/);
-    expect(screen.getByText(/varios casos abiertos/)).toBeInTheDocument();
+    // Said in the live region, and the focus moves to the cases to choose from.
+    expect(screen.getByRole("status")).toHaveTextContent("Este cliente tiene varios casos abiertos: elige uno, o abre una Solicitud nueva.");
+    await waitFor(() => expect(caseGroup()).toHaveFocus());
     expect(screen.queryByRole("radio", { name: /Su caso abierto/ })).not.toBeInTheDocument();
     expect(createButton()).toBeDisabled();
     fireEvent.click(screen.getByRole("radio", { name: /Centrífuga/ }));
@@ -402,7 +450,7 @@ describe("the API's refusals", () => {
         ),
       create: (n) =>
         n === 1
-          ? json({ detail: { candidates: twins, code: "organization_name_ambiguous", message: "Hay varias instituciones con ese nombre: elige una de ellas." } }, 409)
+          ? refused(409, "organization_name_ambiguous", "Hay varias instituciones con ese nombre: elige una de ellas.", { candidates: twins })
           : created(),
     });
     renderDialog();
@@ -410,6 +458,8 @@ describe("the API's refusals", () => {
     await pick(/\+ Cliente nuevo «Laboratorio Ejemplo»/);
     fireEvent.click(createButton());
     const choices = await screen.findByRole("group", { name: "¿Cuál de ellas?" });
+    await waitFor(() => expect(choices).toHaveFocus());
+    expect(screen.getByRole("status")).toHaveTextContent("Hay varias instituciones con ese nombre: elige una de ellas.");
     await waitFor(() => expect(within(choices).getByRole("button", { name: /gemelo-ejemplo\.test/ })).toBeInTheDocument());
     fireEvent.click(within(choices).getByRole("button", { name: /gemelo-ejemplo\.test/ }));
     expect(screen.queryByRole("group", { name: "¿Cuál de ellas?" })).not.toBeInTheDocument();
@@ -444,11 +494,26 @@ describe("the API's refusals", () => {
     expect(new Set(keys).size).toBe(1);
   });
 
+  it("command_in_progress (the same command may still finish) keeps the key", async () => {
+    const api = stub({
+      create: (n) => (n === 1 ? refused(409, "command_in_progress", "a command with this Idempotency-Key is still running") : created()),
+    });
+    const { onCreated } = renderDialog();
+    await search("Labo");
+    await pick(/Laboratorio Ejemplo/);
+    fireEvent.click(createButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent("todavía se está procesando");
+    fireEvent.click(createButton());
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
+    const [first, second] = api.creates();
+    expect(second.key).toBe(first.key);
+  });
+
   it("a refusal for certain is said in Spanish, and the next click is a new command", async () => {
     const api = stub({
       create: (n) =>
         n === 1
-          ? json({ detail: { code: "supplier_exception_required", message: "OrigenLab le compra a esta institución…" } }, 422)
+          ? refused(422, "supplier_exception_required", "OrigenLab le compra a esta institución…")
           : created(),
     });
     renderDialog();
@@ -494,5 +559,45 @@ describe("the dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(onClose).toHaveBeenCalledTimes(2);
     expect(createButton().className).toContain("min-h-[44px]");
+  });
+});
+
+describe("after the quote is made", () => {
+  it("the focus goes to the new quote's tab once it is shown, not to the hidden button that opened the dialog", async () => {
+    stub();
+    function Host() {
+      const [open, setOpen] = useState(true);
+      const [tab, setTab] = useState<string | null>(null);
+      return (
+        <>
+          <div hidden={tab !== null}>
+            <button type="button" onClick={() => setOpen(true)}>
+              Nueva cotización
+            </button>
+          </div>
+          {tab ? (
+            <button type="button" role="tab" aria-selected="true" data-quote-id={tab}>
+              CN00042
+            </button>
+          ) : null}
+          {open ? (
+            <NewQuoteDialog
+              now={() => NOW}
+              onClose={() => setOpen(false)}
+              onCreated={(id) => {
+                setOpen(false);
+                setTimeout(() => setTab(id), 30);
+              }}
+            />
+          ) : null}
+        </>
+      );
+    }
+    render(<Host />);
+    await search("Labo");
+    await pick(/Laboratorio Ejemplo/);
+    fireEvent.click(createButton());
+    const tab = await screen.findByRole("tab", { name: "CN00042" });
+    await waitFor(() => expect(tab).toHaveFocus());
   });
 });

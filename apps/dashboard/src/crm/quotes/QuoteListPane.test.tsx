@@ -231,7 +231,7 @@ describe("QuoteListPane", () => {
     const api = stubApi((url) => {
       if (!url.searchParams.get("cursor")) return page([row(1)], "forged");
       return refuse === "bad_cursor"
-        ? json({ error: { code: "bad_cursor", message: "that cursor is not one this list gave" } }, 422)
+        ? json({ error: { code: "validation_error", message: "that cursor is not one this list gave", details: { code: "bad_cursor", message: "that cursor is not one this list gave" }, request_id: "req-ejemplo" } }, 422)
         : json({}, 500);
     });
     render(<QuoteListPane onOpen={vi.fn()} />);
@@ -301,7 +301,7 @@ describe("QuoteListPane", () => {
   });
 
   it("explains a refusal for a role that may not quote", async () => {
-    stubApi(() => json({ error: { code: "role_may_not_view_costs", message: "this role may not view quotes" } }, 403));
+    stubApi(() => json({ error: { code: "forbidden", message: "this role may not view quotes", details: { code: "role_may_not_view_costs", message: "this role may not view quotes" }, request_id: "req-ejemplo" } }, 403));
     render(<QuoteListPane onOpen={vi.fn()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Sólo ventas y administración pueden cotizar.");
   });

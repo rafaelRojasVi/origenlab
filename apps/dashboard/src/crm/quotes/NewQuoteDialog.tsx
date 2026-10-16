@@ -72,21 +72,23 @@ function personSide(p: QuoteClientPerson): string {
   return "dirección sin persona";
 }
 
-function optionsFor(term: string, found: QuoteClientSuggestions | null): Option[] {
+/** The rows for `term` once its search answered; after a failed search, only the typed address or a new client. */
+function optionsFor(term: string, found: Found | null): Option[] {
   if (!found) return [];
-  const out: Option[] = found.organizations.map((org) => ({
+  const data: QuoteClientSuggestions = found.data ?? { organizations: [], people: [] };
+  const out: Option[] = data.organizations.map((org) => ({
     key: `org:${org.id}`,
     client: { kind: "organization", org, casesKnown: true },
     main: org.name,
     side: `institución · ${casesLine(org.open_cases.length)}`,
   }));
-  for (const p of found.people) {
+  for (const p of data.people) {
     if (!p.person_id && !p.contact_point_id) continue;
     out.push({ key: `person:${p.person_id ?? p.contact_point_id}`, client: { kind: "person", person: p }, main: p.email ?? p.name ?? "Sin nombre", side: personSide(p) });
   }
   const typed = term.toLowerCase();
   if (isEmail(term)) {
-    if (!found.people.some((p) => p.email?.toLowerCase() === typed)) {
+    if (!data.people.some((p) => p.email?.toLowerCase() === typed)) {
       out.push({ key: "email", client: { kind: "email", email: typed }, main: `Usar la dirección ${typed}`, side: null, strong: true });
     }
   } else {
@@ -185,6 +187,15 @@ export function NewQuoteDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef<{ key: string; body: string | null } | null>(null);
+  /** Where the focus goes once the API asked to choose: the cases, or the institutions of that name. */
+  const [focusTo, setFocusTo] = useState<"cases" | "twins" | null>(null);
+  const casesRef = useRef<HTMLFieldSetElement>(null);
+  const twinsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusTo === "cases") casesRef.current?.focus();
+    else if (focusTo === "twins") twinsRef.current?.focus();
+    if (focusTo) setFocusTo(null);
+  }, [focusTo]);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -195,8 +206,10 @@ export function NewQuoteDialog({
 
   const term = text.trim();
   const { found, retry } = useClientSuggestions(term, client === null);
-  const options = useMemo(() => optionsFor(term, found?.data ?? null), [term, found]);
-  const listOpen = client === null && term.length >= MIN_SEARCH;
+  const options = useMemo(() => optionsFor(term, found), [term, found]);
+  // Esc folds the suggestions first (the Modal's Esc then closes the dialog); typing unfolds them.
+  const [folded, setFolded] = useState(false);
+  const listOpen = client === null && term.length >= MIN_SEARCH && !folded;
   const listId = `${ids}-clientes`;
 
   function choose(next: Client, cases: QuoteClientCase[] | null = knownCases(next)) {
@@ -212,6 +225,7 @@ export function NewQuoteDialog({
 
   function retype(value: string) {
     setText(value);
+    setFolded(false);
     setClient(null);
     setChoice(null);
     setAskedCases(null);
@@ -235,7 +249,9 @@ export function NewQuoteDialog({
       const email = newEmail.trim().toLowerCase();
       pick = { new_organization: { name: client.name, kind, ...(email ? { email } : {}) } };
     }
-    if (choice === "new") return { client: pick, new_case: true };
+    // A new client goes without `new_case`: the API may find it is an institution it holds (same
+    // name, the address's domain) and use its one open case; a truly new one gets a Solicitud anyway.
+    if (choice === "new") return client.kind === "new" ? { client: pick } : { client: pick, new_case: true };
     if (choice === "auto") return { client: pick };
     return { client: pick, opportunity_id: choice };
   }
@@ -260,6 +276,7 @@ export function NewQuoteDialog({
         client: clientName(client),
         status: "draft",
       });
+      focusTabWhenShown(made.quote_id);
     } catch (e) {
       if (!mounted.current) return;
       const code = e instanceof QuoteRefusal ? e.code : null;
@@ -272,8 +289,10 @@ export function NewQuoteDialog({
         if (code === "case_choice_needed") {
           setAskedCases(list as QuoteClientCase[]);
           setChoice(null);
+          setFocusTo("cases");
         } else {
           showTwins(list as { id: string; name: string }[]);
+          setFocusTo("twins");
         }
       } else {
         if (definitive(e)) pending.current = null;
@@ -306,6 +325,13 @@ export function NewQuoteDialog({
   }
 
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape" && listOpen) {
+      // Only the suggestions close; the dialog stays (the Modal listens on the document).
+      e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation();
+      setFolded(true);
+      return;
+    }
     if (!listOpen || !options.length) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -357,9 +383,13 @@ export function NewQuoteDialog({
           ) : null}
         </div>
 
+        {/* Said when the API asks the operator to choose (one case, or one of the institutions of a name). */}
+        <p role="status" className={notice ? "text-[13px] text-ink" : "sr-only"}>
+          {notice ?? ""}
+        </p>
+
         {twins ? (
-          <div role="group" aria-label="¿Cuál de ellas?" className="space-y-1.5">
-            <p className="text-[13px] text-ink">{notice}</p>
+          <div ref={twinsRef} tabIndex={-1} role="group" aria-label="¿Cuál de ellas?" className="space-y-1.5 focus:outline-none">
             <div className="overflow-hidden rounded-[10px] border border-line">
               {twins.map((t, i) => {
                 const info = twinInfo.get(t.id);
@@ -405,8 +435,7 @@ export function NewQuoteDialog({
 
         {client && !twins ? (
           <>
-            {askedCases && notice ? <p className="text-[13px] text-ink">{notice}</p> : null}
-            <fieldset className="m-0 flex flex-col gap-2 border-0 p-0" disabled={busy}>
+            <fieldset ref={casesRef} tabIndex={-1} className="m-0 flex flex-col gap-2 border-0 p-0 focus:outline-none" disabled={busy}>
               <legend className="mb-1.5 text-[13px] text-ink-muted">Caso</legend>
               {cases === null ? (
                 <CaseRadio name={`${ids}-caso`} checked={choice === "auto"} onChoose={() => setChoice("auto")}>
@@ -458,6 +487,30 @@ export function NewQuoteDialog({
   );
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Once the dialog is gone, the Modal gives the focus back to the button that opened it — which the
+ * new tab may have just hidden («Nueva cotización» in «Todas»). The focus goes to the quote's tab
+ * instead, once it is shown (the module's `[role=tab][data-quote-id]`), unless the operator has put
+ * it somewhere visible meanwhile. Gives up after about a second.
+ */
+function focusTabWhenShown(quoteId: string) {
+  if (!UUID.test(quoteId)) return;
+  const selector = `[role="tab"][data-quote-id="${quoteId.toLowerCase()}"]`;
+  let tries = 0;
+  const step = () => {
+    const tab = document.querySelector<HTMLElement>(selector);
+    if (tab && tab.getAttribute("aria-selected") === "true") {
+      const here = document.activeElement as HTMLElement | null;
+      if (!here || here === document.body || here.closest("[hidden]") || !here.isConnected) tab.focus();
+      return;
+    }
+    if (++tries < 40) setTimeout(step, 25);
+  };
+  setTimeout(step, 0);
+}
+
 function SuggestionList({
   id,
   options,
@@ -477,15 +530,13 @@ function SuggestionList({
   onHover: (i: number) => void;
   onPick: (o: Option) => void;
 }) {
-  if (loading) {
-    return (
-      <p id={id} role="status" className="px-1 text-[12.5px] text-ink-muted">
-        Buscando…
-      </p>
-    );
-  }
   return (
     <div className="space-y-1.5">
+      {loading ? (
+        <p role="status" className="px-1 text-[12.5px] text-ink-muted">
+          Buscando…
+        </p>
+      ) : null}
       {failed ? (
         <p role="alert" className="text-[12.5px] text-bad">
           No se pudo buscar clientes.{" "}
@@ -494,7 +545,7 @@ function SuggestionList({
           </button>
         </p>
       ) : null}
-      <ul id={id} role="listbox" aria-label="Clientes" className="max-h-72 overflow-y-auto rounded-[10px] border border-line">
+      <ul id={id} role="listbox" aria-label="Clientes" className={options.length ? "max-h-72 overflow-y-auto rounded-[10px] border border-line" : "hidden"}>
         {options.map((o, i) => (
           <li
             key={o.key}
