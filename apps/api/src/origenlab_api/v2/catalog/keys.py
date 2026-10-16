@@ -32,6 +32,12 @@ PARAMETER_KEYS = (
 )
 #: The only `quote_default_*` key that is a number; the other quote defaults are printed text.
 QUOTE_DEFAULT_NUMERIC_KEY = "quote_default_validity_days"
+#: The parameters that are whole numbers, with their inclusive range: the series' next number has
+#: five digits (`numbering.py`), and a validity is printed in days, at most a year.
+INTEGER_PARAMETER_RANGES = {
+    "quote_number_seed": (1, 99999),
+    QUOTE_DEFAULT_NUMERIC_KEY: (1, 365),
+}
 
 
 def parameter_is_text(key: str) -> bool:

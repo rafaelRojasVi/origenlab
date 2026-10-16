@@ -29,7 +29,7 @@ from starlette.datastructures import FormData, UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from origenlab_api.v2.catalog.fx import FxUnavailable
-from origenlab_api.v2.catalog.keys import PARAMETER_KEYS, parameter_is_text, model_key as normalize_model_key, PRODUCT_KINDS, LabdeliveryRefused, refuse_labdelivery
+from origenlab_api.v2.catalog.keys import INTEGER_PARAMETER_RANGES, PARAMETER_KEYS, parameter_is_text, model_key as normalize_model_key, PRODUCT_KINDS, LabdeliveryRefused, refuse_labdelivery
 from origenlab_api.v2.catalog.reads import V2CatalogReads
 from origenlab_api.v2.catalog.redaction import redact_costs
 from origenlab_api.v2.catalog.storage import (
@@ -341,6 +341,11 @@ class SetCostParameterBody(_Base):
                 raise ValueError("this parameter takes value_text")
         elif self.value is None:
             raise ValueError("this parameter takes value")
+        bounds = INTEGER_PARAMETER_RANGES.get(self.key)
+        value = self.value
+        if bounds is not None and value is not None and (value != value.to_integral_value()
+                                                         or not bounds[0] <= value <= bounds[1]):
+            raise ValueError(f"this parameter takes a whole number from {bounds[0]} to {bounds[1]}")
         return self
 
 
