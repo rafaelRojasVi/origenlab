@@ -24,9 +24,10 @@ the revision as it is (`crm.quote_revision_authored_frozen`, `crm.quote_line_aut
 **Locks.** `create-quote` locks the case row (so a case being closed cannot get a quote in the same
 instant) and mints the number under the numbering advisory lock; its events open two new streams.
 `save-quote-draft`, `approve-quote-revision` and `void-quote-revision` lock the revision row, which
-owns the `quote_revision` stream they append to; approval also holds the case `for share` (it cannot
-be closed underneath), locks the revision it supersedes and the products whose stream gets a cost.
-`create-quote-revision` locks the quote, so two cannot open the same next revision.
+owns the `quote_revision` stream they append to. Approval takes the order «Elegir revisión vigente»
+takes — the case (`for share`: it cannot be closed underneath), then the quote, then the revision
+and the one it supersedes — and then the products whose stream gets a cost and their suppliers
+(`for share`). `create-quote-revision` locks the quote, so two cannot open the same next revision.
 
 **Nothing of Labdelivery origin** enters a quote: `execute` refuses any submitted string that names
 it, before a transaction opens. Event payloads carry no cost, price or margin — only the net total
@@ -45,7 +46,7 @@ from typing import Any
 import psycopg
 
 from origenlab_api.quoting.engine import EngineError, EngineResult, compute
-from origenlab_api.v2.catalog.commands import _submitted_text
+from origenlab_api.v2.catalog.commands import _live_party, _submitted_text
 from origenlab_api.v2.catalog.keys import LabdeliveryRefused, refuse_labdelivery
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
@@ -495,24 +496,49 @@ select id::text as id from catalog.supplier_product
 """
 
 
+#: Why a typed cost was not recorded, by the refusal `_live_party` gives its supplier.
+_DEAD_SUPPLIER = {"organization_merged": "supplier_merged", "archived_subject": "supplier_archived",
+                  "supplier_not_found": "supplier_not_found"}
+
+
 def _record_negotiated_costs(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
-                             lines: list[dict[str, Any]], label: str, revision_id: str, receipt_id: str) -> None:
+                             lines: list[dict[str, Any]], label: str, revision_id: str,
+                             receipt_id: str) -> list[dict[str, Any]]:
     """A cost the operator typed for a catalog product and a named supplier becomes a `negotiated`
     observation (10-05 D6), and the line names it from then on — written while the lines are still
     a draft, so a revision copied from this one does not record the same cost twice. The same cost
     already observed is reused, not recorded again; two different costs for one product and
     supplier in one revision are two observations (`clock_timestamp()` keeps their as_of apart).
+
+    As `record-supplier-cost` would: the cost goes to the product the line's product survives as
+    (merged since the save: one hop, as the draft resolves it), and only a live supplier gets one —
+    held `for share` so it is not archived or merged underneath. A cost whose supplier was archived
+    or merged since the save is not recorded, and approval still goes ahead: the returned list
+    names each skipped line and why (`supplier_archived`, `supplier_merged`).
     """
     typed = [r for r in lines if r["line_kind"] == "item" and r["cost_observation_id"] is None
              and r["product_id"] and r["supplier_organization_id"] and r["unit_cost"] is not None
              and r["cost_currency"]]
     if not typed:
-        return
-    # The product's stream gets the event: lock it as record-supplier-cost does, in id order.
+        return []
+    cur.execute("select id::text as id, coalesce(merged_into_product_id, id)::text as survivor "
+                "from catalog.product where id = any(%s::uuid[])", (sorted({str(r["product_id"]) for r in typed}),))
+    survivor = {r["id"]: r["survivor"] for r in _all(cur)}
+    # The product's stream gets the event: lock it as record-supplier-cost does, in id order, then the suppliers.
     cur.execute("select id from catalog.product where id = any(%s::uuid[]) order by id for no key update",
-                (sorted({str(r["product_id"]) for r in typed}),))
+                (sorted(set(survivor.values())),))
+    dead: dict[str, str] = {}
+    for supplier in sorted({str(r["supplier_organization_id"]) for r in typed}):
+        try:
+            _live_party(cur, supplier, not_found_code="supplier_not_found", what="supplier")
+        except CommandRefused as exc:
+            dead[supplier] = _DEAD_SUPPLIER.get(exc.code, exc.code)
+    skipped = []
     for row in typed:
-        supplier, product = str(row["supplier_organization_id"]), str(row["product_id"])
+        supplier, product = str(row["supplier_organization_id"]), survivor[str(row["product_id"])]
+        if supplier in dead:
+            skipped.append({"line_no": row["line_no"], "reason": dead[supplier]})
+            continue
         cur.execute(_SAME_NEGOTIATED_SQL, (supplier, product, row["cost_currency"], row["unit_cost"]))
         found = _one(cur)
         if found is None:
@@ -537,6 +563,7 @@ def _record_negotiated_costs(self: "V2QuoteRepository", cur: Any, operator: Oper
                                operator=operator, receipt_id=receipt_id)
         cur.execute("update crm.quote_line set cost_observation_id = %s::uuid, updated_at = now() "
                     "where id = %s::uuid", (found["id"], row["id"]))
+    return skipped
 
 
 def _supersede_current(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, revision: dict[str, Any],
@@ -566,14 +593,24 @@ def _supersede_current(self: "V2QuoteRepository", cur: Any, operator: OperatorId
 def _handle_approve_quote_revision(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
                                    fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
     revision_id, expected_version = fields["revision_id"], fields["expected_version"]
+    # Locks in the order every quote-wide command takes them («Elegir revisión vigente»: the case,
+    # the quote, its revisions; create-quote-revision: the quote), so approval never deadlocks with
+    # them: the case `for share` (it cannot be closed underneath), the quote, then this revision and,
+    # in `_supersede_current`, the earlier ones. The revision's quote and case never change.
+    cur.execute("select r.quote_id::text as quote_id, q.opportunity_id::text as case_id from crm.quote_revision r "
+                "join crm.quote q on q.id = r.quote_id where r.id = %s::uuid", (revision_id,))
+    owner = _one(cur)
+    if owner is None:
+        raise CommandRefused(404, "revision_not_found", "no such quote revision")
+    cur.execute("select closed_at, organization_id::text as organization_id from crm.opportunity "
+                "where id = %s::uuid for share", (owner["case_id"],))
+    case = _one(cur)
+    assert case is not None  # noqa: S101 - crm.quote.opportunity_id is a foreign key
+    cur.execute("select 1 from crm.quote where id = %s::uuid for update", (owner["quote_id"],))
     _locked_draft(cur, revision_id, expected_version)
     cur.execute(_APPROVAL_REVISION_SQL, (revision_id,))
     revision = _one(cur)
     assert revision is not None  # noqa: S101 - locked just above
-    cur.execute("select closed_at, organization_id::text as organization_id from crm.opportunity "
-                "where id = %s::uuid for share", (revision["case_id"],))
-    case = _one(cur)
-    assert case is not None  # noqa: S101 - crm.quote.opportunity_id is a foreign key
     if case["closed_at"] is not None:
         raise CommandRefused(409, "case_closed", "this case is closed; its quote is not approved")
 
@@ -606,7 +643,7 @@ def _handle_approve_quote_revision(self: "V2QuoteRepository", cur: Any, operator
         raise CommandRefused(409, "draft_needs_saving", "Guarda el borrador de nuevo: sus precios cambiaron.")
 
     label = _label(revision["quote_number"], revision["revision_no"])
-    _record_negotiated_costs(self, cur, operator, lines, label, revision_id, receipt_id)
+    skipped = _record_negotiated_costs(self, cur, operator, lines, label, revision_id, receipt_id)
     today = santiago_today(self._clock())
     validity = terms.validity_days or _validity_days(params)
     valid_until = today + timedelta(days=validity)
@@ -637,7 +674,7 @@ def _handle_approve_quote_revision(self: "V2QuoteRepository", cur: Any, operator
                        operator=operator, receipt_id=receipt_id)
     _supersede_current(self, cur, operator, revision, receipt_id)
     return {"ok": True, "revision_id": revision_id, "version": updated["version"],
-            "quote_number": revision["quote_number"], "revision_label": label}
+            "quote_number": revision["quote_number"], "revision_label": label, "negotiated_costs_skipped": skipped}
 
 
 # ------------------------------------------------------------------ void-quote-revision

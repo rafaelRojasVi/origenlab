@@ -994,6 +994,68 @@ def test_negotiated_costs_reuse_an_identical_one_and_keep_two_different_ones(wor
     assert len(_events(dsn, "product", accessory)) == 2
 
 
+@needs_db
+def test_negotiated_costs_skip_a_dead_supplier_and_follow_a_product_merge(world) -> None:
+    """Between save and approval the supplier may be archived or merged, the product merged into a
+    twin. Approval still succeeds: a dead supplier's cost is not recorded (the response says why),
+    and a merged product's cost is recorded on the product it survives as."""
+    dsn, operator = world["dsn"], world["operator"]
+    archived, merged, survivor_supplier = (_org(dsn, "supplier", name) for name in (
+        "Proveedor Archivado", "Proveedor Fusionado", "Proveedor Sobreviviente"))
+    loser, survivor = (_accessory(world, f"MRG-{uuid.uuid4().hex[:6]}") for _ in range(2))
+
+    def typed(product: str, supplier: str, cost: str) -> dict:
+        return {"product_id": product, "description": "Accesorio negociado", "quantity": "1",
+                "unit_cost": cost, "cost_currency": "EUR", "supplier_organization_id": supplier}
+
+    created, saved = _approvable(world, items=[_catalog_item(world), typed(loser, world["supplier"], "61"),
+                                               typed(survivor, archived, "62"), typed(survivor, merged, "63")])
+    _owner(dsn, "update catalog.product set active = false, merged_into_product_id = %s where id = %s",
+           (survivor, loser))
+    _owner(dsn, "update crm.organization set status = 'archived', archived_at = now(), "
+                "archived_by_operator_id = %s, archive_reason = 'duplicado' where id = %s",
+           (operator.operator_id, archived))
+    _owner(dsn, "update crm.organization set merged_into_organization_id = %s where id = %s",
+           (survivor_supplier, merged))
+
+    out = _approve(world, created["revision_id"], saved["version"])
+    assert out["ok"] is True
+    assert out["negotiated_costs_skipped"] == [
+        {"line_no": 3, "reason": "supplier_archived"}, {"line_no": 4, "reason": "supplier_merged"}]
+    [recorded] = _rows(dsn, "select id::text as id, product_id::text as product, price from catalog.supplier_product "
+                            "where product_id in (%s, %s) and price_kind = 'negotiated'", (loser, survivor))
+    assert (recorded["product"], recorded["price"]) == (survivor, Decimal("61"))
+    assert _events(dsn, "product", loser) == []
+    assert [e[0] for e in _events(dsn, "product", survivor)] == ["product.cost_recorded"]
+    lines = _lines(dsn, created["revision_id"])
+    assert [str(r["cost_observation_id"]) if r["cost_observation_id"] else None for r in lines[1:4]] == [
+        recorded["id"], None, None]
+
+    # Nothing to skip: the response says so with an empty list.
+    created, saved = _approvable(world)
+    assert _approve(world, created["revision_id"], saved["version"])["negotiated_costs_skipped"] == []
+
+
+@needs_db
+def test_approval_locks_the_quote_before_its_revisions(world) -> None:
+    """The order every quote-wide command takes (create-quote-revision, «Elegir revisión vigente»):
+    the quote row first, then its revisions — so approval and those never deadlock."""
+    created, saved = _approvable(world)
+    with psycopg.connect(world["dsn"]) as holder, holder.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute("select 1 from crm.quote where id = %s for update", (created["quote_id"],))
+        repo = V2QuoteRepository(psycopg.connect, runtime_dsn(world["dsn"]), fx_resolver=fake_fx, clock=lambda: NOW,
+                                 statement_timeout_ms=300)
+        body = QUOTE_BODIES["approve-quote-revision"](revision_id=created["revision_id"],
+                                                      expected_version=saved["version"])
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            repo.execute(command_name="approve-quote-revision", operator=world["operator"],
+                         fields=body.model_dump(mode="json"), idempotency_key=uuid.uuid4().hex,
+                         digest=request_digest("approve-quote-revision", body))
+        holder.rollback()
+    assert _approve(world, created["revision_id"], saved["version"])["ok"] is True
+
+
 def _send(dsn: str, revision_id: str) -> None:
     """What the mail path will do: an approved revision becomes sent with its message (synthetic)."""
     mailbox = _owner(dsn, "insert into comms.mailbox (address_norm) values (%s) returning id",
