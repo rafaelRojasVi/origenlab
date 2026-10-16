@@ -66,6 +66,16 @@ class _FakeReads:
         self._maybe_refuse()
         return {"computed": {"totals": {"net": "140"}}}
 
+    def quote_list(self, *, status, q, limit, cursor):
+        self.calls.append(("quote_list", status, q, limit, cursor))
+        self._maybe_refuse()
+        return {"rows": [], "counts": {"draft": 0, "approved": 0, "sent": 0, "void": 0, "all": 0}, "next_cursor": None}
+
+    def client_suggestions(self, q):
+        self.calls.append(("client_suggestions", q))
+        self._maybe_refuse()
+        return {"organizations": [], "people": []}
+
 
 class _FakeRepo:
     def __init__(self, refusal: CommandRefused | None = None):
@@ -97,7 +107,8 @@ def _ikey():
 
 
 READS = [("get", "/v2/quotes/numbering", None), ("get", f"/v2/quotes/{QID}", None),
-         ("post", "/v2/quotes/preview", {"draft": DRAFT})]
+         ("post", "/v2/quotes/preview", {"draft": DRAFT}), ("get", "/v2/quotes", None),
+         ("get", "/v2/quotes/clients?q=ab", None)]
 
 
 # ------------------------------------------------------------------ reads
@@ -132,6 +143,40 @@ def test_unknown_quote_is_404_in_the_production_envelope() -> None:
     assert r.status_code == 404
     err = r.json()["error"]
     assert err["code"] == "not_found" and err["details"]["code"] == "quote_not_found"
+
+
+def test_the_quote_list_passes_its_query_through() -> None:
+    reads, _, client = _client()
+    r = client.get("/v2/quotes", headers=HEADERS)
+    assert r.status_code == 200, r.text
+    assert reads.calls == [("quote_list", "all", None, 50, None)]
+    r = client.get("/v2/quotes?status=draft&q=balanza&limit=10&cursor=abc", headers=HEADERS)
+    assert r.status_code == 200, r.text
+    assert reads.calls[-1] == ("quote_list", "draft", "balanza", 10, "abc")
+
+
+@pytest.mark.parametrize("query", ["status=borrador", "limit=0", "limit=101", "q=" + "x" * 201])
+def test_the_quote_list_refuses_a_bad_query(query) -> None:
+    reads, _, client = _client()
+    r = client.get(f"/v2/quotes?{query}", headers=HEADERS)
+    assert r.status_code == 422
+    assert reads.calls == []
+
+
+def test_a_bad_cursor_is_422_in_the_production_envelope() -> None:
+    _, _, client = _client(reads=_FakeReads(CommandRefused(422, "bad_cursor", "that cursor is not one this list gave")))
+    r = client.get("/v2/quotes?cursor=x", headers=HEADERS)
+    assert r.status_code == 422
+    assert r.json()["error"]["details"]["code"] == "bad_cursor"
+
+
+def test_client_suggestions_need_two_characters() -> None:
+    reads, _, client = _client()
+    for query in ("", "?q=", "?q=a", "?q=%20a%20", "?q=" + "x" * 121):
+        assert client.get(f"/v2/quotes/clients{query}", headers=HEADERS).status_code == 422, query
+    assert reads.calls == []
+    assert client.get("/v2/quotes/clients?q=%20ab%20", headers=HEADERS).status_code == 200
+    assert reads.calls == [("client_suggestions", "ab")]
 
 
 def test_a_quote_id_that_is_not_a_uuid_is_422() -> None:
@@ -289,6 +334,25 @@ def test_command_refusals_surface_in_the_envelope(status, code, envelope) -> Non
     r = client.post("/v2/commands/create-quote", json=COMMAND_BODIES["create-quote"], headers=_ikey())
     assert r.status_code == status
     assert r.json()["error"]["code"] == envelope and r.json()["error"]["details"]["code"] == code
+
+
+def test_a_case_choice_carries_its_candidates_in_the_envelope() -> None:
+    candidates = [{"id": CASE, "title": "Caso ficticio", "stage": "lead", "requested_at": "2026-10-15T12:00:00+00:00"}]
+    refusal = CommandRefused(409, "case_choice_needed", "elige uno", details={"candidates": candidates})
+    _, _, client = _client(repo=_FakeRepo(refusal))
+    r = client.post("/v2/commands/create-quote", json={"client": {"organization_id": CASE}}, headers=_ikey())
+    assert r.status_code == 409
+    details = r.json()["error"]["details"]
+    assert (details["code"], details["message"], details["candidates"]) == ("case_choice_needed", "elige uno",
+                                                                             candidates)
+
+
+def test_details_never_replace_the_code_or_the_message() -> None:
+    from origenlab_api.v2.command_routes import _detail
+
+    refusal = CommandRefused(409, "case_choice_needed", "elige uno", details={"code": "otro", "message": "otro"})
+    assert _detail(refusal) == {"code": "case_choice_needed", "message": "elige uno"}
+    assert _detail(CommandRefused(404, "case_not_found", "no")) == {"code": "case_not_found", "message": "no"}
 
 
 # ------------------------------------------------------------------ mounting and FX wiring

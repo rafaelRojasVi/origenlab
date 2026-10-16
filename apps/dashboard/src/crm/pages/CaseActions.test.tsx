@@ -507,7 +507,7 @@ describe("case drawer actions", () => {
       pipelines: [page([card()])],
       onPost: () => ({
         status: 409,
-        body: { detail: { code: "case_version_conflict", message: "this case changed since it was shown to you" } },
+        body: { error: { code: "conflict", message: "this case changed since it was shown to you", details: { code: "case_version_conflict", message: "this case changed since it was shown to you" }, request_id: "req-ejemplo" } },
       }),
     });
     const dialog = await openDrawer(session("sales"));
@@ -644,7 +644,7 @@ describe("case drawer actions", () => {
       onPost: (call) =>
         call.path === "/v2/commands/advance-case-stage"
           ? { body: receipt("advance_case_stage", "negotiating", 6, "eeeeeeee-0001") }
-          : { status: 409, body: { detail: { code: "quote_revision_not_current", message: "only a sent, current revision is won" } } },
+          : { status: 409, body: { error: { code: "conflict", message: "only a sent, current revision is won", details: { code: "quote_revision_not_current", message: "only a sent, current revision is won" }, request_id: "req-ejemplo" } } },
     });
     const dialog = await openDrawer(session("sales"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Marcar ganada" }));
@@ -1078,7 +1078,7 @@ describe("case drawer actions", () => {
       pipelines: [page([card({ stage: "negotiating" })])],
       onPost: (_call, n) =>
         n === 0
-          ? { status: 503, body: { detail: { code: "database_unavailable", message: "try again" } } }
+          ? { status: 503, body: { error: { code: "backend_unavailable", message: "try again", details: { code: "database_unavailable", message: "try again" }, request_id: "req-ejemplo" } } }
           : { body: receipt("record_case_won", "won", 6, "abababab-0001") },
     });
     const dialog = await openDrawer(session("sales"));
@@ -1226,7 +1226,7 @@ describe("case drawer actions", () => {
       pipelines: [page([card()])],
       onPost: () => ({
         status: 409,
-        body: { detail: { code: "number_on_other_opportunity", message: "this printed number is already a quote on another case" } },
+        body: { error: { code: "conflict", message: "this printed number is already a quote on another case", details: { code: "number_on_other_opportunity", message: "this printed number is already a quote on another case" }, request_id: "req-ejemplo" } },
       }),
     });
     const dialog = await openDrawer(session("sales"));

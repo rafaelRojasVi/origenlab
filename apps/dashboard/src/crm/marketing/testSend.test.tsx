@@ -55,7 +55,7 @@ describe("«Enviar prueba»", () => {
   });
 
   it("says plainly when the limit is reached", async () => {
-    stub({ status: 429, body: { detail: { code: "test_send_limit", message: "límite", next_allowed_at: "2026-10-05T13:00:00Z" } } });
+    stub({ status: 429, body: { error: { code: "rate_limited", message: "límite", details: { code: "test_send_limit", message: "límite", next_allowed_at: "2026-10-05T13:00:00Z" }, request_id: "r1" } } });
     render(asRole("admin", <TestSendPanel target={TARGET} config={CONFIG} />));
     fireEvent.change(screen.getByLabelText("Enviar una prueba a"), { target: { value: "ana@example.invalid" } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar prueba" }));
@@ -68,6 +68,14 @@ describe("«Enviar prueba»", () => {
     fireEvent.change(screen.getByLabelText("Enviar una prueba a"), { target: { value: "ana@example.invalid" } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar prueba" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Límite de pruebas alcanzado. Intenta más tarde.");
+  });
+
+  it("does not show «Not Found» when this environment has no test-send route", async () => {
+    stub({ status: 404, body: { error: { code: "not_found", message: "Not Found", details: {}, request_id: "r1" } } });
+    render(asRole("admin", <TestSendPanel target={TARGET} config={CONFIG} />));
+    fireEvent.change(screen.getByLabelText("Enviar una prueba a"), { target: { value: "ana@example.invalid" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar prueba" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No se pudo enviar la prueba.");
   });
 
   it("accepts only one plain mailbox — the API's rule, the reviewer's probes included", () => {

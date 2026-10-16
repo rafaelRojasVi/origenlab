@@ -738,7 +738,7 @@ describe("Cotizador page — leaving with unsaved edits (Review Focus 5)", () =>
     );
     fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "" } });
     page.unmount();
-    expect(await screen.findByText("Tus últimos cambios en la cotización no se guardaron: el borrador estaba incompleto.")).toBeInTheDocument();
+    expect(await screen.findByText("Tus últimos cambios en la cotización CN00042 no se guardaron: el borrador estaba incompleto.")).toBeInTheDocument();
   });
 
   it("leaves at once when everything is saved", async () => {

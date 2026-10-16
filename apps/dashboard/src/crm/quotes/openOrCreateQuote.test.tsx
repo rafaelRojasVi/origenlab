@@ -67,8 +67,14 @@ const created = () =>
     status: 200, headers: { "Content-Type": "application/json" },
   });
 
+/** The API's real refusal envelope (errors.py): a generic code by status, the command's own under `details`. */
 const refused = (status: number, code: string, message: string) =>
-  new Response(JSON.stringify({ detail: { code, message } }), { status, headers: { "Content-Type": "application/json" } });
+  new Response(
+    JSON.stringify({
+      error: { code: status === 409 ? "conflict" : status === 404 ? "not_found" : "validation_error", message, details: { code, message }, request_id: "req-ejemplo" },
+    }),
+    { status, headers: { "Content-Type": "application/json" } },
+  );
 
 afterEach(() => {
   vi.unstubAllGlobals();

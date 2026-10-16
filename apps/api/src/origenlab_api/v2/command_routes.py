@@ -100,8 +100,8 @@ CommandRepo = Annotated[V2CommandRepository, Depends(get_command_repository)]
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 
 
-def _detail(exc: CommandRefused) -> dict[str, str]:
-    return {"code": exc.code, "message": exc.message}
+def _detail(exc: CommandRefused) -> dict[str, Any]:
+    return {**(exc.details or {}), "code": exc.code, "message": exc.message}
 
 
 def _run(

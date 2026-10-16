@@ -1,6 +1,6 @@
 /**
  * «Cotizar» from Hoy, from a request's card and from the case: open the case's open draft if it
- * has one, else create a quote (`create-quote`) and open it in the Cotizador.
+ * has one, else create a quote (`create-quote`) and open it as a tab of the Cotizador module.
  *
  * "Open draft" = a quote of the case whose newest revision is a draft or in review of this app
  * (`origin = 'authored'`); a historical import is never edited here. The pipeline read carries
@@ -95,7 +95,7 @@ export function createRefusalText(e: unknown): string {
 }
 
 const toCotizador = (quoteId: string) => {
-  window.location.hash = crmHash("cotizar", quoteId);
+  window.location.hash = crmHash("cotizador", quoteId);
   window.scrollTo?.({ top: 0 });
 };
 
@@ -104,9 +104,10 @@ const STILL_RUNNING = new Set(["command_in_progress", "idempotency_conflict"]);
 
 /**
  * The API answered for certain: a refusal of its own (4xx with a code). Anything else may have
- * run, and so may a create the API says is still in progress under this key.
+ * run, and so may a create the API says is still in progress under this key. «Nueva cotización»
+ * keeps its key by the same rule.
  */
-function definitive(e: unknown): boolean {
+export function definitive(e: unknown): boolean {
   return e instanceof QuoteRefusal && !!e.code && !STILL_RUNNING.has(e.code) && e.status >= 400 && e.status < 500;
 }
 

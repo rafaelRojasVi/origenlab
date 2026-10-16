@@ -45,6 +45,8 @@ export function ProductSearch({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "/" || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target)) return;
+      // Several quotes can be mounted at once (the Cotizador module's tabs): only the one shown answers.
+      if (!input.current || input.current.closest("[hidden]")) return;
       e.preventDefault();
       input.current?.focus();
     };

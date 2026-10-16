@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CRM_NAV, crmHash, sectionTitle } from "./crmRoute";
+import { COTIZADOR_PREFERENCES, CRM_NAV, crmHash, sectionTitle } from "./crmRoute";
 import { LEGACY_REDIRECTS, parseShellHash, redirectHash } from "./shellRoute";
 
 describe("shell route", () => {
@@ -60,19 +60,42 @@ describe("shell route", () => {
 describe("Cotizador route", () => {
   const id = "6bafddfa-0000-4000-8000-0000000000d1";
 
-  it("opens a quote by its id and round-trips through crmHash", () => {
-    expect(parseShellHash(`#/crm/cotizar/${id}`)).toEqual({ section: "cotizar", id });
-    expect(crmHash("cotizar", id)).toBe(`#/crm/cotizar/${id}`);
-    expect(redirectHash(`#/crm/cotizar/${id}`)).toBeNull();
+  it("opens the module, and a quote in it by its id, round-tripping through crmHash", () => {
+    expect(parseShellHash("#/crm/cotizador")).toEqual({ section: "cotizador", id: null });
+    expect(parseShellHash(`#/crm/cotizador/${id}`)).toEqual({ section: "cotizador", id });
+    expect(crmHash("cotizador", id)).toBe(`#/crm/cotizador/${id}`);
+    expect(redirectHash(`#/crm/cotizador/${id}`)).toBeNull();
   });
 
-  it("is a hidden section: titled «Cotizador», absent from the navigation", () => {
-    expect(sectionTitle("cotizar")).toBe("Cotizador");
-    expect(sectionTitle("oportunidades")).toBe("Oportunidades");
-    expect(CRM_NAV.some((n) => (n.id as string) === "cotizar")).toBe(false);
+  it("«Preferencias» is a fixed pane of the module, never a quote id", () => {
+    expect(COTIZADOR_PREFERENCES).toBe("preferencias");
+    expect(parseShellHash("#/crm/cotizador/preferencias")).toEqual({ section: "cotizador", id: null, pane: "preferencias" });
+    expect(parseShellHash("#/crm/cotizador/preferencias?x=1")).toEqual({ section: "cotizador", id: null, pane: "preferencias" });
+    expect(crmHash("cotizador", COTIZADOR_PREFERENCES)).toBe("#/crm/cotizador/preferencias");
+    expect(redirectHash("#/crm/cotizador/preferencias")).toBeNull();
+    // Only the module has it; anything else in that place is still no id at all.
+    expect(parseShellHash("#/crm/catalogo/preferencias")).toEqual({ section: "catalogo", id: null });
+    expect(parseShellHash("#/crm/cotizador/otra-cosa")).toEqual({ section: "cotizador", id: null });
+  });
+
+  it("is in the navigation between Oportunidades and Organizaciones, titled «Cotizador», for sales and admin", () => {
+    const ids = CRM_NAV.map((n) => n.id);
+    expect(ids.indexOf("cotizador")).toBe(ids.indexOf("oportunidades") + 1);
+    expect(ids.indexOf("organizaciones")).toBe(ids.indexOf("cotizador") + 1);
+    expect(sectionTitle("cotizador")).toBe("Cotizador");
+    expect(CRM_NAV.find((n) => n.id === "cotizador")?.quoting).toBe(true);
+  });
+
+  it("redirects the old one-quote address to the module's tab", () => {
+    expect(redirectHash(`#/crm/cotizar/${id}`)).toBe(`#/crm/cotizador/${id}`);
+    expect(redirectHash(`#/crm/cotizar/${id.toUpperCase()}`)).toBe(`#/crm/cotizador/${id}`);
+    expect(redirectHash("#/crm/cotizar")).toBe("#/crm/cotizador");
+    expect(redirectHash("#/crm/cotizar/nope")).toBe("#/crm/cotizador");
+    // Read before the redirect lands, it already opens the module.
+    expect(parseShellHash(`#/crm/cotizar/${id}`)).toEqual({ section: "cotizador", id });
   });
 
   it("drops an id that is not a UUID", () => {
-    expect(parseShellHash("#/crm/cotizar/nope")).toEqual({ section: "cotizar", id: null });
+    expect(parseShellHash("#/crm/cotizador/nope")).toEqual({ section: "cotizador", id: null });
   });
 });

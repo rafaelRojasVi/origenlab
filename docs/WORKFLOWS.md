@@ -341,6 +341,7 @@ participant, so steps 3–5 above remain unimplemented.
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|
 | 1 | operator · `open_commercial_case` | an `evidence.source_record` that exists and is not quarantined | `crm.opportunity` at `stage = lead`, `organization_id` NULL, **and** its `origin` evidence link, in one transaction | `opportunity.created`, `case_evidence.linked` | no such record → 404; quarantined → 409 |
+| 1′ | operator · `create-quote` with a client (§W3-Cotizador; no command of its own) | the client has no open case, or the operator asked for a new one | `crm.opportunity` at `stage = lead` with **no** origin document — the quote created in the same transaction is its reason — and, when the client is an institution, its `requesting_institution` through step 3's path | `opportunity.created` (`origin_source_record_id` null) + step 3's events | a supplier/manufacturer client → `supplier_exception_required` |
 | 2 | operator · `link_case_evidence` | exactly one typed subject, which must already exist; the case is open | `crm.opportunity_evidence` row | `case_evidence.linked` | the same `(case, subject, relation)` twice → `evidence_already_linked`; a subject that does not exist → 404 |
 | 3 | operator · `add_case_organization` | the case and the institution at the versions shown; the part is not already current | `crm.opportunity_organization` row, `confirmed` with the operator named; for `requesting_institution`, `crm.opportunity.organization_id` in the same transaction | `case_organization.added` (+ `opportunity.organization_set`) | a second requester → `case_already_has_a_requesting_institution`; a registered supplier/manufacturer as requester without a motive → `supplier_exception_required`; a motive nobody needed → `supplier_exception_is_not_needed` |
 | 4 | operator · `set_case_organization_role` | the row is current and belongs to this case | a `machine_proposed` row is confirmed in place; **or** the current row is closed (`valid_to`) and a new part is opened, both in one transaction | `case_organization.role_confirmed`, or `case_organization.ended` + `case_organization.added` | already confirmed in that part → `case_organization_role_unchanged`; taking the requester away from a case at `qualified` or later → refused |
@@ -367,7 +368,7 @@ three tables are empty.
 
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|
-| 1 | operator · `create-quote` | the case exists and is open | `crm.quote` with a minted unique number, and revision 1 as an empty authored `draft` | events | closed case or numbering not configured → refused |
+| 1 | operator · `create-quote` | the case exists and is open — or a client is named and the case is found from it (the client's one open case; the one chosen among several; or a new `lead` case for it) | `crm.quote` with a minted unique number, and revision 1 as an empty authored `draft`; from a client, also the new case, institution or recipient participant it needed | events | closed case or numbering not configured → refused; several open cases and none chosen → `case_choice_needed` with the candidates; a supplier → refused |
 | 2 | operator · `create-quote-revision` | no open draft on the quote; an approved or sent authored revision to copy | the next revision as a `draft`: conditions, pricing choices, recipient and lines copied from the newest issued revision | event | an open draft → `draft_open` |
 | 3 | operator · `save-quote-draft` | revision `draft`, at the version shown | the whole draft replaced — lines, printed conditions, recipient — and priced by the engine on the server | event | not a draft → refused; a line change on an issued revision → the trigger rejects it |
 | 4 | operator · `approve-quote-revision` | `draft` (an authored revision has no `in_review` step); the stored lines reprice to their stored prices; the case has an institution; the recipient is still a current participant; no placeholder left | `approved`; totals, validity **and the party snapshot** frozen (W3b); the previous approved/sent revision gains `superseded_by_revision_no` | events | every reason joined in one refusal (W3-Cotizador) |
@@ -449,12 +450,53 @@ authored draft is approved directly.
 
 | Step | Command | What it does | Refused with |
 |---|---|---|---|
-| 1 | `create-quote` | locks the case, mints the number (DOMAIN §7.9), creates the quote and revision 1 as an empty `draft` (quote currency CLP, 0 decimals, IVA from `iva_rate`, the `quote_default_*` texts, the case's current primary participant as recipient — a `quote_recipient` by preference); events `quote.created`, `quote_revision.opened` | `case_not_found`, `case_closed`, `quote_numbering_not_configured`, `quote_numbering_exhausted` |
+| 1 | `create-quote` | locks the case, mints the number (DOMAIN §7.9), creates the quote and revision 1 as an empty `draft` (quote currency CLP, 0 decimals, IVA from `iva_rate`, the `quote_default_*` texts, the case's current primary participant as recipient — a `quote_recipient` by preference); events `quote.created`, `quote_revision.opened`. **From a client** (`client` instead of `opportunity_id`, below) it first finds or opens the case | `case_not_found`, `case_closed`, `quote_numbering_not_configured`, `quote_numbering_exhausted`; from a client also `case_choice_needed` (409, `details.candidates`), `case_not_of_client`, `supplier_exception_required`, `organization_name_ambiguous` (409, `details.candidates`), `client_changed_concurrently`, `organization_not_found`, `person_not_found`, `contact_point_not_found`, `archived_subject`, `contact_point_inactive`, `recipient_own_address`, `labdelivery_refused` |
 | 2 | `save-quote-draft` (`expected_version`) | takes the **whole draft** (items, manual expenses, expense method, allocation mode, principal rule, FX overrides with a reason, printed terms, recipient), prices it with the engine on the server, **replaces all the revision's lines**, writes the printed and pricing columns, the totals and `version + 1`; event `quote_revision.draft_saved`. A recipient picked from the case's emails becomes a participant first (below): events `participant.added` and, for an address the CRM lacked, `contact_point.created` | `revision_not_found`, `stale_version`, `not_a_draft`, `case_closed` (only when a new recipient would be added), `recipient_not_on_case`, `recipient_unknown`, `recipient_own_address`, `contact_point_inactive`, `archived_subject`, `recipient_changed_concurrently`, `fx_unavailable`, `cost_observation_not_found`, `amount_too_large`, engine errors (`quantity_invalid`, `margin_pct_invalid`, …) as 422, `labdelivery_refused` |
 | 3 | `approve-quote-revision` (`expected_version`) | prices the **stored** lines (below), runs the approval checks, records negotiated costs, freezes totals, validity and the party snapshot (W3b), supersedes the earlier issued revision; events `quote_revision.transitioned`, `quote_revision.superseded`, `product.cost_recorded` | the reasons below; `case_closed`, `draft_needs_saving` |
 | 4 | `create-quote-revision` | copies the newest approved or sent authored revision — conditions, pricing choices, lines — into the next draft (revision 2 prints as `…A`); event `quote_revision.opened` | `draft_open`, `nothing_to_revise`, `quote_not_found`, `revision_letters_exhausted` |
 | 5 | `void-quote-revision` (`expected_version`, reason) | `draft`, `in_review` or `approved` → `void`; event `quote_revision.transitioned` with the reason | `already_sent` («Ya se envió: crea una nueva revisión.»), `already_void`, `superseded`, `not_authored`, `stale_version` |
 
+- **A quote can start from a client** (the Cotizador's «Nueva cotización», spec 2026-10-16 §3).
+  `create-quote` takes `client` instead of `opportunity_id` — exactly one of `{organization_id}`,
+  `{person_id}`, `{contact_point_id}`, `{email, name?}` or `{new_organization: {name, kind?, email?}}`
+  (kind `company` by default, or `university`, `public_institution`, `hospital`, `laboratory`,
+  `other`) — with, optionally, `opportunity_id` (the case chosen; it must be one of the client's
+  open cases, else `case_not_of_client`) or `new_case: true`. In one transaction: the client is
+  resolved — an institution as the survivor of a merge; a person (the survivor of a merge, or the
+  owner of an address) with their institution, the current affiliation first, else that of the
+  address that stands for them (an active one, then one a quote may go to, then the oldest — the
+  address the dialog shows, the workspace lists and approval prints); an address the CRM does not
+  hold, the one institution whose domain is the address's (active, not merged, no supplier or
+  manufacturer, never a free-mail domain; several or none → no institution); a new institution —
+  the one active institution of exactly that name, else the one its email's domain names, else
+  registered as `register-organization` registers one (`confirmed`, classification `customer`,
+  the email's domain unless a free-mail one). Two or more active institutions of that name are
+  refused 409 `organization_name_ambiguous` with `details.candidates: [{id, name}]`, never a third.
+  `create-quote` registers an institution this way even with CRM authoring switched off, as
+  «Crear solicitud» from a forwarded request does. An archived, Labdelivery, OrigenLab-own or
+  supplier/manufacturer client is refused (`supplier_exception_required`: a quote for a supplier
+  is created from its case, with the justified exception). Then the client's **open cases** —
+  those whose requesting institution is the institution (or a twin merged into it), and those the
+  person or the address is a current participant of (for a person, a participant naming them or
+  only an address of theirs); the same rule `GET /v2/quotes/clients` shows them by: exactly one → the quote
+  goes on it; several and none chosen → 409 `case_choice_needed`, nothing written (the receipt
+  neither, so the same `Idempotency-Key` can carry the choice), with
+  `details.candidates: [{id, title, stage, requested_at}]`; none, or `new_case` → a new case at
+  `lead` with no origin document, titled «‹institución› — cotización» (the person's name or the
+  address without one), owned by the operator, the institution named its `requesting_institution`
+  (events `opportunity.created`, `case_organization.added`, `opportunity.organization_set`). A
+  person or an address client becomes the quote's recipient exactly as a save's pick does (below).
+  The response adds `opportunity_id`, `case_created`, `organization_id`, `organization_created`
+  and `recipient_participant_id`. **Locks**, always in this order: the client's transaction
+  advisory locks (a new institution's name → the address → the person → the institution) → the
+  client's rows (the contact point `for update`, then its person `for share`, as `create-person`
+  takes them) → the institution's row (a new case only; after the person, as
+  `link-person-organization` takes them) → the case → the numbering lock, last (the recipient is
+  made before it). Rows are read unlocked first to know which locks to take; when locking shows
+  another owner or institution, the command is refused 409 `client_changed_concurrently` and
+  writes nothing. **Two creates for one client at once** queue on the advisory locks: the second
+  reads the cases after the first committed and quotes on the case it opened — two quotes, two
+  numbers, one new case.
 - **The recipient is picked from the case's people.** The workspace lists them in `case.contacts`:
   the case's current participants first, then — once each, newest email first — the sender of each
   inbound email and the recipients of each email OrigenLab sent, among the emails linked to the
@@ -528,7 +570,8 @@ authored draft is approved directly.
   `/v2/quotes/*` read and `403 role_may_not_decide` on the commands. Event payloads carry no cost,
   price or margin — only a saved draft's net total.
 
-**The screen (built 2026-10-16).** The Cotizador page is `#/crm/cotizar/<quoteId>` in the dashboard; it
+**The screen (built 2026-10-16).** The Cotizador page is `#/crm/cotizador/<quoteId>` in the dashboard (a tab of
+the module below; the older `#/crm/cotizar/<quoteId>` redirects there); it
 only calls the commands and reads above and owns no rule.
 
 - **Entry points.** Hoy «Cotizar» (or «Continuar cotización» when a draft exists), the Solicitud card,
@@ -566,6 +609,57 @@ only calls the commands and reads above and owns no rule.
 - **Vista cliente.** A toggle in the page header, on the draft and on an issued revision, that shows
   the quote as the client will read it: no costs, margins, Avisos, price history, approval's reasons
   or why an exchange rate was set by hand (those carry cost talk and other clients' prices).
+
+**The module (built 2026-10-16).** «Cotizador» is a section of the left menu, between
+Oportunidades and Organizaciones; viewers do not see it, and a viewer's deep link shows the no-access
+state. It only calls the reads and commands above and owns no rule.
+
+- **Tabs.** `#/crm/cotizador` is the list («Todas»); `#/crm/cotizador/<quoteId>` opens or activates
+  that quote's tab. Up to eight quotes stay open at once, stored per operator on this computer
+  (`localStorage` key `cotizador:tabs:<operator_id>`: the quote id, its number, the client label
+  and the state — never a cost; the client label is the client's name, or its email address when
+  that is all the CRM has, as the tab shows it). Each tab is the screen above with its own autosave; hidden
+  tabs stay mounted, so switching keeps unsaved edits and timers, and «/» goes to the shown tab only.
+  After a reload only the active tab loads; the others load the first time they are opened. Closing
+  a tab (its ×, or Supr or ⌫ on the focused tab) saves it first and asks «No se pudo guardar.
+  ¿Cerrar igual?» when it cannot; the focus moves to the tab now selected only when it was on the
+  closed tab or its pane. Opening a ninth closes the oldest tab with nothing pending, or asks when
+  every tab has something pending (and keeps the oldest when the operator moved on while asked). The same
+  quote is never open twice. Hoy «Cotizar», the Solicitud card and the case drawer open quotes here.
+  The tab strip ends with «+ Nueva»; «Preferencias» is the list's.
+- **Lista «Todas».** `GET /v2/quotes` — Borradores (default), Aprobadas, Enviadas or Todas, a
+  search over number, institution, case title and product descriptions (a quote's own lines, or
+  those read from its PDF), newest first, «Cargar más» by cursor. One row per quote (its open draft,
+  else its newest issued revision), with a counts line. Imported (historical) quotes show
+  «importada» and open read-only; one without totals or lines of its own shows what its PDF said
+  when it was read (`amount_source: "pdf_read"`: the first item descriptions, the neto as
+  «neto leído del PDF» — the case panel's `quote_document` reading, `v2/quote_documents.py`), and
+  «—» when its PDF was never read.
+- **Nueva cotización.** A client search (`GET /v2/quotes/clients`: institutions — never suppliers
+  or manufacturers, never by a removed domain — then people, with their open cases), or
+  «+ Cliente nuevo «texto»» with a kind and an optional email. An address the CRM holds with no
+  person and no institution is shown as, and quoted for, the one institution its domain names —
+  the rule an address the CRM lacks follows (active, not merged, no supplier, never a free-mail
+  domain), one SQL fragment the suggestions and `create-quote` share. Then the case: the client's
+  open cases, preselected when there is one, or «Abrir una Solicitud nueva». «Crear y abrir» sends
+  `create-quote` with `client` (above) and opens the new quote as a tab — from «Preferencias» too,
+  which it leaves; `case_choice_needed` and `organization_name_ambiguous` show their candidates to
+  choose from. When a «+ Cliente nuevo» turned out to be an institution the CRM had, a notice says
+  «Se usó la institución existente «X»» (and «y su caso abierto» when its case was used).
+- **Refusals.** Every command's refusal is read from the API's envelope — the command's own code
+  in `error.details.code`, else the generic `error.code`, else an older `detail.code` — by one
+  parser (`apps/dashboard/src/api/refusalEnvelope.ts`) shared by the Cotizador, the case commands,
+  CRM authoring and marketing.
+- **Preferencias** (`#/crm/cotizador/preferencias`). The company's defaults, read from
+  `GET /v2/catalog/parameters` and saved one field at a time with `set-cost-parameter` (a reason of at
+  least 3 characters; the parameter's current row as `expected_current_id`, so a concurrent change is
+  refused `parameter_changed` — «Otra persona lo cambió; recarga.»), each with its «Historial»:
+  Recargos por defecto, Margen objetivo, Gastos de importación (perfil), Condiciones por defecto, and
+  Numeración (`quote_number_seed`; admin only, read-only for sales). An unset field is empty, with
+  the engine's fallback as its placeholder and «Sin definir: se usa …» under it. «Desviación de
+  precio» is stored only: nothing warns on it yet. A quote can still be changed by
+  hand; a change never reprices a saved draft. The rail's margin band reads the same values (the
+  workspace's `params`).
 
 <a id="m-wf-snapshot"></a>
 #### W3b — Party snapshot

@@ -235,10 +235,10 @@ export function TermsSection({
 
   return (
     <section
-      aria-labelledby="cotizador-condiciones"
+      aria-labelledby={`${ids}-condiciones`}
       className="flex flex-col gap-3 rounded-xl border border-line bg-canvas-raised px-5 py-4"
     >
-      <h2 id="cotizador-condiciones" className="text-[17px] font-semibold text-ink">
+      <h2 id={`${ids}-condiciones`} className="text-[17px] font-semibold text-ink">
         Condiciones
       </h2>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

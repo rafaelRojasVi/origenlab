@@ -2915,7 +2915,7 @@ an operator beyond the API and the Worker's allowlist.
 
 Stacked on PR #761 (§2.7.121): it needs those endpoints, so it merges after it. Dashboard, plus one
 API read change (the workspace's recipient candidates leave out automatic senders) — no schema change.
-The screen is `#/crm/cotizar/<quoteId>` ([`WORKFLOWS.md`](WORKFLOWS.md) §W3-Cotizador, «The screen»):
+The screen is `#/crm/cotizar/<quoteId>` (now a tab at `#/crm/cotizador/<quoteId>`, §2.7.123) ([`WORKFLOWS.md`](WORKFLOWS.md) §W3-Cotizador, «The screen»):
 Cliente (recipient picker), Productos (catalog search, kit and mention chips, free lines with a cost,
 markup or typed price, each line in two tiers so it fits beside the rail), Gastos de importación
 (Perfil, DHL, Manual), Condiciones, and a right rail with totals, the margin band, the exchange-rate
@@ -2941,3 +2941,38 @@ automatic senders (no-reply, mailer-daemon, notifications, `*.google.com`).
   a network failure after a server commit can show a false conflict on the next save; the list and
   length caps the API enforces are not mirrored in the editor (a refusal shows instead); a case whose
   newest revision is void is not «por cotizar».
+
+### 2.7.123 The Cotizador module: many quotes open as tabs, quotes started from a client, company preferences, 2026-10-16 — built, deploys on merge; inactive in practice until `quote_number_seed` is set
+
+API and dashboard; no schema change.
+([`WORKFLOWS.md`](WORKFLOWS.md) §W3-Cotizador, «The module» and «A quote can start from a client»)
+
+- **API.**
+  - `GET /v2/quotes` is the list (status filter, search, cursor, counts).
+  - `GET /v2/quotes/clients` gives client suggestions with their open cases.
+  - The quote workspace gains `params` (default markups, margin band, price deviation).
+  - `create-quote` accepts a `client` instead of a case: it uses the client's single open case, refuses `case_choice_needed` with the candidates when there are several, or opens a case (`stage = lead`, no origin document) when there are none. A new institution is registered as `register-organization` registers one.
+  - `quote_number_seed` is settable by admin only (`403 role_may_not_set_numbering`).
+  - A command refusal may carry `details` (the candidates), in the error envelope's `details`.
+  - The list fills a historical quote's products and neto from its read PDF (`amount_source: "pdf_read"`, the case panel's reading, now `v2/quote_documents.py`), and its search matches the read lines.
+  - An address held with no person and no institution is the client of the one institution its domain names, in the suggestions and in `create-quote` alike (one SQL fragment). Removed domains are never shown or searched. `create-quote` answers the `organization_name` it used.
+  - The two GETs are on the dashboard Worker's allowlist.
+- **Dashboard.**
+  - «Cotizador» is in the menu between Oportunidades and Organizaciones.
+  - Up to eight quotes are open as tabs. They persist per operator on this computer, and each keeps its own autosave.
+  - The «Todas» list.
+  - The «Nueva cotización» dialog.
+  - The «Preferencias» page saves each value with a reason and shows its history.
+  - `#/crm/cotizar/<id>` redirects to `#/crm/cotizador/<id>`.
+- **Fixed on the way.** The dashboard read a quote refusal's generic code (`conflict`,
+  `validation_error`) instead of the command's own code, which sits in the envelope's
+  `details.code`. That broke three things, all present since §2.7.122:
+  - The specific Spanish refusal texts never showed.
+  - «Cotizar» did not recognise `command_in_progress`, so a click during a create still running could make a second quote.
+  - The list's `bad_cursor` notice never showed.
+  - The same bug, outside the Cotizador, was live too: the case commands (`caseRefusalCode`, so `isStaleRefusal` never matched and a stale drawer did not refetch), CRM authoring and marketing (`refusalOf`) read only the old `{detail}` shape. All of them now use one parser (`apps/dashboard/src/api/refusalEnvelope.ts`).
+- **Not built.**
+  - The quote PDF and the send (PR C) are not built.
+  - There is no `default_markup_other` key: an «Otro» item uses the accessory markup, and Preferencias says so.
+  - The price-deviation warning: `price_deviation_warn_pct` is stored and read into the workspace's `params`, but nothing compares a price with its history yet. Preferencias says so.
+

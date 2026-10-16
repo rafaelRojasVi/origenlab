@@ -353,12 +353,12 @@ describe("dashboard shell", () => {
     window.location.hash = "";
   });
 
-  it("shows an admin the eight sections in order and marks the current one", async () => {
+  it("shows an admin the nine sections in order and marks the current one", async () => {
     signedInAt(`#/crm/oportunidades`);
     const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "#/crm/resumen", "#/crm/oportunidades", "#/crm/organizaciones", "#/crm/personas",
+      "#/crm/resumen", "#/crm/oportunidades", "#/crm/cotizador", "#/crm/organizaciones", "#/crm/personas",
       "#/crm/catalogo", "#/crm/marketing", "#/crm/historial", "#/crm/datos",
     ]);
     expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual([
@@ -409,7 +409,7 @@ describe("dashboard shell", () => {
 });
 
 describe("no write path in the CRM workspace", () => {
-  // Four exceptions, pinned by src/test/noWritePolicy.test.ts:
+  // The exceptions, pinned by src/test/noWritePolicy.test.ts:
   //  - the campaign-draft client (marketingApi.ts) POSTs to campaign commands.
   //  - the CRM authoring client (crmAuthoringApi.ts) POSTs to CRM authoring commands.
   const DRAFT_CLIENT = "./marketing/marketingApi.ts";
@@ -420,7 +420,7 @@ describe("no write path in the CRM workspace", () => {
   const CASE_COMMANDS_CLIENT = "./caseCommands.ts";
   //  - the case-document client (caseDocuments.ts) POSTs a case's purchase order (2026-10-12).
   const CASE_DOCUMENTS_CLIENT = "./caseDocuments.ts";
-  //  - the quote client (quotes/quoteApi.ts) POSTs the five quote commands and the preview (2026-10-16).
+  //  - the quote client (quotes/quoteApi.ts) POSTs the five quote commands, the preview and set-cost-parameter (2026-10-16).
   const QUOTE_API_CLIENT = "./quotes/quoteApi.ts";
 
   it("never issues a non-GET request or references a command route", () => {

@@ -32,8 +32,24 @@ const ENGLISH: [string, string, string][] = [
   ["dhl_parameter_missing:dhl_fuel_pct", "cannot be priced", "«dhl_fuel_pct»"],
   ["stale_version", "the draft was modified since you loaded it", "Otra persona cambió esta cotización"],
   ["role_may_not_view_costs", "sales or admin only", "Sólo ventas y administración pueden cotizar."],
+  ["parameter_changed", "this parameter was changed since you loaded it; reload and decide again", "Otra persona lo cambió; recarga."],
+  ["role_may_not_set_numbering", "only admin", "Sólo administración fija el inicio de la numeración."],
   ["revision_not_found", "no such quote revision", "Esta revisión ya no existe."],
+  ["bad_cursor", "that cursor is not one this list gave", "La lista cambió; se volvió a cargar desde el inicio."],
+  ["bad_status", "no such quote status", "Ese estado de cotizaciones no existe."],
   ["command_in_progress", "a command with this Idempotency-Key is still running", "todavía se está procesando"],
+  ["case_not_of_client", "that case is not this client's", "no es de este cliente"],
+  ["organization_not_found", "no such organization", "Esa institución ya no está en el CRM"],
+  ["person_not_found", "no such person", "Esa persona ya no está en el CRM"],
+  ["contact_point_not_found", "no such email contact point", "Esa dirección ya no está en el CRM"],
+  ["supplier_exception_required", "supplier", "proveedora o fabricante"],
+  ["client_changed_concurrently", "the client changed", "cambiaron mientras se creaba"],
+  ["case_choice_needed", "several open cases", "varios casos abiertos"],
+  ["organization_name_ambiguous", "several of that name", "varias instituciones con ese nombre"],
+  ["query_too_short", "type at least two characters", "al menos dos letras"],
+  ["role_may_not_decide", "this role may not run commands", "Sólo ventas y administración pueden crear o cambiar cotizaciones."],
+  // A 403 with no command code of its own (the API's generic one, or the Worker's).
+  ["forbidden", "Forbidden", "Tu perfil no puede hacer esta acción."],
 ];
 
 describe("quoteRefusalText", () => {

@@ -44,6 +44,8 @@ _DUPLICATE_MODEL = frozenset({"product_one_model_key_per_manufacturer", "product
 _DUPLICATE_OBSERVATION = frozenset({"supplier_product_observation_key"})
 _TERMS_EXIST = frozenset({"supplier_terms_pkey"})
 _PARAMETER_CHANGED = frozenset({"cost_parameter_key_valid_from"})
+#: The one parameter only an admin may set: where the quote numbering starts.
+NUMBERING_SEED_KEY = "quote_number_seed"
 
 #: The product columns an operator edits, in the order the change list reports them.
 _PRODUCT_FIELDS = (
@@ -510,8 +512,13 @@ def _handle_set_cost_parameter(self: "V2CatalogRepository", cur: Any, operator: 
     one key are serialised by a transaction advisory lock on the key; under it, a stale
     `expected_current_id` is refused instead of silently superseded. `valid_from` is the wall
     clock, not the transaction's `now()`, so it is always later than the row it supersedes.
+
+    Where the quote numbering starts (`quote_number_seed`) is administration's alone: any other
+    role is refused before anything is read or written (403 `role_may_not_set_numbering`).
     """
     key, expected_current_id = fields["key"], fields.get("expected_current_id")
+    if key == NUMBERING_SEED_KEY and operator.role != "admin":
+        raise CommandRefused(403, "role_may_not_set_numbering", "Sólo administración fija el inicio de la numeración.")
     cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"catalog.cost_parameter:{key}",))
     cur.execute(
         """

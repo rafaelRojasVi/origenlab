@@ -32,30 +32,65 @@ describe("header quick links", () => {
   });
 });
 
-describe("the hidden Cotizador section", () => {
+describe("the Cotizador section", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     clearResourceCache();
+    localStorage.clear();
   });
 
-  it("opens with its own title, keeps Oportunidades lit and has no menu entry of its own", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 404 }))));
-    const session: AuthSessionState = {
-      kind: "signed_in",
-      method: "google_profile",
-      operator: { operatorId: "op-sales", email: "ventas@example.cl", displayName: "Ventas", role: "sales" },
-      caseCommandsEnabled: true,
-      crmAuthoringEnabled: true,
-    };
+  const QUOTE = "6bafddfa-0000-4000-8000-0000000000d1";
+  const session = (role: string): AuthSessionState => ({
+    kind: "signed_in",
+    method: "google_profile",
+    operator: { operatorId: `op-${role}`, email: "ventas@example.cl", displayName: "Ventas", role },
+    caseCommandsEnabled: true,
+    crmAuthoringEnabled: true,
+  });
+  function stubFetch() {
+    const paths: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        paths.push(new URL(raw, "http://localhost").pathname);
+        return Promise.resolve(new Response("{}", { status: 404 }));
+      }),
+    );
+    return paths;
+  }
+
+  it("is in the menu for sales, between Oportunidades and Organizaciones, lit while open", async () => {
+    stubFetch();
     render(
-      <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
-        <CrmApp route={{ section: "cotizar", id: "6bafddfa-0000-4000-8000-0000000000d1" }} />
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <CrmApp route={{ section: "cotizador", id: QUOTE }} />
       </AuthSessionContext.Provider>,
     );
     expect(document.title).toBe("Cotizador · OrigenLab");
     const menu = within(screen.getByRole("navigation", { name: "Secciones del panel" }));
-    expect(menu.getByRole("link", { name: "Oportunidades" })).toHaveAttribute("aria-current", "page");
-    expect(menu.queryByRole("link", { name: "Cotizador" })).not.toBeInTheDocument();
+    const names = menu.getAllByRole("link").map((a) => a.textContent);
+    expect(names.indexOf("Cotizador")).toBe(names.indexOf("Oportunidades") + 1);
+    expect(names.indexOf("Organizaciones")).toBe(names.indexOf("Cotizador") + 1);
+    expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("aria-current", "page");
+    expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("href", "#/crm/cotizador");
+    expect(screen.getByRole("tablist", { name: "Cotizaciones abiertas" })).toBeInTheDocument();
     expect(await screen.findByText("Esta cotización no existe.")).toBeInTheDocument();
+  });
+
+  it("is hidden from a viewer, and a viewer's deep link says only sales and administration quote, reading nothing", async () => {
+    const paths = stubFetch();
+    render(
+      <AuthSessionContext.Provider value={{ session: session("viewer"), signOut: async () => true }}>
+        <CrmApp route={{ section: "cotizador", id: QUOTE }} />
+      </AuthSessionContext.Provider>,
+    );
+    const menu = within(screen.getByRole("navigation", { name: "Secciones del panel" }));
+    expect(menu.queryByRole("link", { name: "Cotizador" })).not.toBeInTheDocument();
+    expect(menu.getByRole("link", { name: "Oportunidades" })).toBeInTheDocument();
+    expect(screen.getByText("Sólo ventas y administración pueden cotizar.")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(paths.some((p) => p.startsWith("/v2/quotes"))).toBe(false);
+    expect(localStorage.getItem("cotizador:tabs:op-viewer")).toBeNull();
   });
 });

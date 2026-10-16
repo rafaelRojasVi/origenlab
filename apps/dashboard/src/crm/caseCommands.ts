@@ -20,6 +20,7 @@ import { OperatorApiError, notifyIfSessionRefused, operatorApiUrl } from "../api
 import { useAuthSession } from "../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "./crmTypes";
 import { STAGE_LABEL } from "./stage";
+import { envelopeOfError } from "../api/refusalEnvelope";
 
 export const CASE_COMMAND_PATHS = {
   advanceStage: "/v2/commands/advance-case-stage",
@@ -580,20 +581,14 @@ const REFUSAL_ES: Record<string, string> = {
   task_is_not_open: "Esa tarea ya estaba cerrada.",
 };
 
-/** The refusal code of an API or Worker error envelope (`{detail: {code}}` / `{error: {code}}`). */
+/**
+ * The refusal code of an API or Worker error: the command's own (`error.details.code` in the API's
+ * envelope), else the generic `error.code`, else an older `detail.code` (`parseRefusalEnvelope`).
+ */
 export function caseRefusalCode(err: unknown): string | null {
   if (err instanceof WonFlowError) return caseRefusalCode(err.cause);
   if (!(err instanceof OperatorApiError)) return null;
-  let code: string | null = err.message.includes("path_not_allowed") ? "path_not_allowed" : null;
-  try {
-    const parsed = JSON.parse(err.message) as { detail?: unknown; error?: { code?: unknown } };
-    const d = parsed.detail;
-    if (d && typeof d === "object" && "code" in d) code = String((d as { code: unknown }).code);
-    else if (parsed.error && typeof parsed.error === "object" && parsed.error.code) code = String(parsed.error.code);
-  } catch {
-    /* not JSON */
-  }
-  return code;
+  return envelopeOfError(err).code ?? (err.message.includes("path_not_allowed") ? "path_not_allowed" : null);
 }
 
 /** A refusal that means "what you saw is out of date": the drawer refetches before a retry. */

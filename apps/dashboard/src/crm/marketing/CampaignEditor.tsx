@@ -4,6 +4,7 @@ import { AuthorOnlyNotice } from "./AuthorOnlyNotice";
 import { useMayAuthorCampaigns } from "./authoring";
 import { EmailFrame } from "./EmailFrame";
 import { TEMPLATES, renderTemplate, type TemplateId } from "./emailTemplates";
+import { commandMissing } from "../../api/refusalEnvelope";
 import { createCampaignDraft, refusalOf, saveCampaignDraft, type DraftFields } from "./marketingApi";
 import type { CampaignContent, EquipmentTaxonomy } from "./marketingTypes";
 
@@ -175,7 +176,7 @@ function CampaignEditorForm({
     } catch (err) {
       const r = refusalOf(err);
       setError(
-        r?.code === "path_not_allowed" || r?.code === "http_404"
+        commandMissing(r)
           ? "El guardado no está disponible en este entorno. El borrador sigue sólo en esta pestaña."
           : r?.code === "stale_version"
             ? `${r.message}`

@@ -22,6 +22,7 @@ import { Badge, EmptyState, Panel, ResourceGate, Segmented, Skeleton, StatLine, 
 import { useResource } from "../useResource";
 import { AuthorOnlyNotice } from "./AuthorOnlyNotice";
 import { useMayAuthorCampaigns } from "./authoring";
+import { commandMissing } from "../../api/refusalEnvelope";
 import { fetchFreezePreview, fetchFrozenRecipients, freezeCampaignAudience, refusalOf } from "./marketingApi";
 import type {
   CampaignContent,
@@ -224,7 +225,7 @@ function FreezeFlow({
     } catch (err) {
       const refusal = refusalOf(err);
       setError(
-        refusal?.code === "path_not_allowed" || refusal?.code === "http_404" || refusal?.code === "http_405"
+        commandMissing(refusal)
           ? "El congelamiento no está habilitado en este entorno."
           : refusal?.message ?? (err instanceof Error ? err.message : String(err)),
       );

@@ -21,6 +21,7 @@ import {
   type QuoteDraft,
   type QuoteWorkspace,
 } from "./quoteApi";
+import { registerTabEditor } from "./tabEditors";
 
 /**
  * The quote editor's engine (rulings B2/B3): local edits, a live preview and an autosave.
@@ -42,6 +43,9 @@ import {
  *   again could never succeed, so nothing is retried.
  * - Leaving: unmounting sends a pending save; `beforeunload` warns while edits are unsaved, and
  *   `pending` tells the page to guard its own navigation.
+ * - Tabs: while mounted, the editor is registered under its quote (`tabEditors`), so the Cotizador
+ *   module can ask a pane whether a save is pending and send it before closing its tab. Each
+ *   editor's state (and its freeze) is its own: two quotes open at once never affect each other.
  *
  * The page must `flush()` (or use `approve()`) before any command that needs the saved draft. A new
  * `workspace` prop resets the editor, except for the same revision while edits are pending or at
@@ -347,6 +351,20 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [pending, flush]);
+
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
+  const quoteId = state.workspace.quote.id;
+  useEffect(
+    () =>
+      registerTabEditor(quoteId, {
+        hasPendingSave: () => pendingRef.current || unsaved() || inFlightRef.current !== null,
+        flush: () => flush().then((r) => r.ok),
+      }),
+    // `unsaved` reads refs only: any render's copy answers the same.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [quoteId, flush],
+  );
 
   return {
     state,

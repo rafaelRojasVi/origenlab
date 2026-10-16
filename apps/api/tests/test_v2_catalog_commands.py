@@ -442,11 +442,41 @@ def test_set_cost_parameter_stores_a_quote_default_as_text(disposable_database, 
     assert _reads(dsn).parameters()["current"]["quote_default_warranty"]["value"] == "[GARANTÍA]"
 
 
+@pytest.fixture(scope="module")
+def admin(disposable_database) -> OperatorIdentity:
+    email = f"admin-{uuid.uuid4().hex[:8]}@example.test"
+    op_id = _owner(
+        disposable_database,
+        "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+        "values (gen_random_uuid(), %s, 'Administración Prueba', 'admin', 'active') returning id::text",
+        (email,),
+    )[0][0]
+    return OperatorIdentity(operator_id=op_id, email_norm=email, display_name="Administración Prueba",
+                            role="admin", status="active")
+
+
 @needs_db
-def test_set_cost_parameter_stores_the_quote_numeric_keys_as_numbers(disposable_database, operator) -> None:
+def test_only_an_admin_sets_the_numbering_seed(disposable_database, operator, admin) -> None:
     dsn = disposable_database
-    out = _run(dsn, operator, "set-cost-parameter", {"key": "quote_number_seed", "value": 1300,
-                                                      "reason": "semilla sintética"})
+    [(before,)] = _owner(dsn, "select count(*) from catalog.cost_parameter where key = 'quote_number_seed'")
+    [(receipts,)] = _owner(dsn, "select count(*) from platform.command_receipt")
+    refused = _refused(dsn, operator, "set-cost-parameter", {"key": "quote_number_seed", "value": 1400,
+                                                             "reason": "semilla sintética"})
+    assert (refused.status_code, refused.code) == (403, "role_may_not_set_numbering")
+    assert refused.message == "Sólo administración fija el inicio de la numeración."
+    assert _owner(dsn, "select count(*) from catalog.cost_parameter where key = 'quote_number_seed'") == [(before,)]
+    assert _owner(dsn, "select count(*) from platform.command_receipt") == [(receipts,)]
+    # Every other parameter stays the sales role's to set.
+    _run(dsn, operator, "set-cost-parameter", {"key": "default_markup_consumable", "value": "0.3",
+                                               "reason": "sintético"})
+    _run(dsn, admin, "set-cost-parameter", {"key": "quote_number_seed", "value": 1400, "reason": "semilla sintética"})
+
+
+@needs_db
+def test_set_cost_parameter_stores_the_quote_numeric_keys_as_numbers(disposable_database, operator, admin) -> None:
+    dsn = disposable_database
+    out = _run(dsn, admin, "set-cost-parameter", {"key": "quote_number_seed", "value": 1300,
+                                                   "reason": "semilla sintética"})
     [(value_json, value_numeric)] = _owner(dsn, "select value_json, value_numeric from catalog.cost_parameter "
                                                 "where id = %s", (out["cost_parameter_id"],))
     assert (value_json, value_numeric) == (None, Decimal("1300"))

@@ -6,14 +6,18 @@ import {
   approveQuoteRevision,
   createQuote,
   createQuoteRevision,
+  fetchQuoteClients,
+  fetchQuoteList,
   fetchQuoteNumbering,
   fetchQuoteWorkspace,
   newQuoteCommandKey,
   previewQuote,
   saveQuoteDraft,
+  setCostParameter,
   voidQuoteRevision,
   type QuoteDraft,
 } from "./quoteApi";
+import { isConflict, isGone } from "./draftEditor";
 
 const QUOTE_ID = "11111111-1111-4111-8111-111111111111";
 const REVISION_ID = "22222222-2222-4222-8222-222222222222";
@@ -105,14 +109,33 @@ describe("preview", () => {
 describe("commands", () => {
   const receipt = { revision_id: REVISION_ID, version: 2, computed: {} };
 
-  it("pins the five command paths", () => {
+  it("pins the six command paths", () => {
     expect(QUOTE_COMMAND_PATHS).toEqual({
       create: "/v2/commands/create-quote",
       save: "/v2/commands/save-quote-draft",
       approve: "/v2/commands/approve-quote-revision",
       void: "/v2/commands/void-quote-revision",
       revise: "/v2/commands/create-quote-revision",
+      setParameter: "/v2/commands/set-cost-parameter",
     });
+  });
+
+  it("setCostParameter sends the body and the key; a refusal reads the command's code from error.details", async () => {
+    const calls = stub(() => json({ ok: true, cost_parameter_id: "p-2", key: "iva_rate" }));
+    const body = { key: "default_markup_service", value: "0.3", reason: "sintético", expected_current_id: "p-1" };
+    await setCostParameter(body, "key-p");
+    expect(calls[0].path).toBe("/v2/commands/set-cost-parameter");
+    expect(calls[0].init.method).toBe("POST");
+    expect(new Headers(calls[0].init.headers).get("Idempotency-Key")).toBe("key-p");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual(body);
+
+    stub(() =>
+      json({ error: { code: "conflict", message: "outer", details: { code: "parameter_changed", message: "inner" }, request_id: "r" } }, 409),
+    );
+    const refused = await setCostParameter(body, "key-p").catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(QuoteRefusal);
+    expect((refused as QuoteRefusal).code).toBe("parameter_changed");
+    expect((refused as QuoteRefusal).status).toBe(409);
   });
 
   it("createQuote sends the case and the given key", async () => {
@@ -124,6 +147,16 @@ describe("commands", () => {
     expect(headerOf(calls[0].init, "Idempotency-Key")).toBe("key-1");
     expect(bodyOf(calls[0].init)).toEqual({ opportunity_id: CASE_ID });
     expect(out.quote_number).toBe("00042-26");
+  });
+
+  it("createQuote sends a client, the chosen case or a new one, with the given key", async () => {
+    const calls = stub(() => json({ quote_id: QUOTE_ID, quote_number: "00042-26", revision_id: REVISION_ID, version: 1, opportunity_id: CASE_ID }));
+    await createQuote({ client: { organization_id: CASE_ID }, opportunity_id: CASE_ID }, "key-c");
+    await createQuote({ client: { new_organization: { name: "Laboratorio Ejemplo", kind: "laboratory" } }, new_case: true }, "key-d");
+    expect(calls.map((c) => c.path)).toEqual(["/v2/commands/create-quote", "/v2/commands/create-quote"]);
+    expect(headerOf(calls[0].init, "Idempotency-Key")).toBe("key-c");
+    expect(bodyOf(calls[0].init)).toEqual({ client: { organization_id: CASE_ID }, opportunity_id: CASE_ID });
+    expect(bodyOf(calls[1].init)).toEqual({ client: { new_organization: { name: "Laboratorio Ejemplo", kind: "laboratory" } }, new_case: true });
   });
 
   it("saveQuoteDraft sends revision, version and draft", async () => {
@@ -171,14 +204,33 @@ describe("commands", () => {
   });
 });
 
+/**
+ * What the API really sends for a refusal (`apps/api` errors.py `http_exception_handler`): a generic
+ * code by status, with the command's own code and message, and its details, under `details`.
+ */
+const GENERIC: Record<number, string> = { 401: "unauthorized", 403: "forbidden", 404: "not_found", 409: "conflict", 422: "validation_error" };
+const refusal = (status: number, code: string, message: string, extra: Record<string, unknown> = {}) =>
+  json({ error: { code: GENERIC[status] ?? "validation_error", message, details: { code, message, ...extra }, request_id: "req-ejemplo" } }, status);
+
 describe("refusals", () => {
-  it("parses the API envelope {detail:{code,message}}", async () => {
-    stub(() => json({ detail: { code: "stale_version", message: "version changed" } }, 409));
+  it("reads the command's own code and message from the API's envelope, not the generic code", async () => {
+    stub(() => refusal(409, "stale_version", "version changed"));
     const err = await saveQuoteDraft(REVISION_ID, 1, DRAFT, "k").catch((e) => e);
     expect(err).toBeInstanceOf(QuoteRefusal);
     expect(err.status).toBe(409);
     expect(err.code).toBe("stale_version");
     expect(err.message).toBe("version changed");
+    expect(err.details).toBeNull();
+  });
+
+  it("a real-envelope conflict on a save is still the editor's conflict (`isConflict`, what useQuoteDraft asks)", async () => {
+    stub(() => refusal(409, "stale_version", "the draft was modified since you loaded it"));
+    const conflict = await saveQuoteDraft(REVISION_ID, 1, DRAFT, "k").catch((e) => e);
+    expect(isConflict(conflict)).toBe(true);
+    stub(() => refusal(409, "not_a_draft", "only a draft revision is edited"));
+    const gone = await saveQuoteDraft(REVISION_ID, 1, DRAFT, "k").catch((e) => e);
+    expect(isConflict(gone)).toBe(false);
+    expect(isGone(gone)).toBe(true);
   });
 
   it("parses the Worker envelope {error:{code,message}}", async () => {
@@ -189,8 +241,17 @@ describe("refusals", () => {
     expect(err.code).toBe("path_not_allowed");
   });
 
+  it("still reads an older {detail:{code,message,…}} envelope, its details beside the code", async () => {
+    const candidates = [{ id: CASE_ID, name: "Laboratorio Ejemplo" }];
+    stub(() => json({ detail: { candidates, code: "organization_name_ambiguous", message: "elige una" } }, 409));
+    const err = await createQuote({ client: { new_organization: { name: "Laboratorio Ejemplo" } } }, "k").catch((e) => e);
+    expect(err.code).toBe("organization_name_ambiguous");
+    expect(err.message).toBe("elige una");
+    expect(err.details).toEqual({ candidates });
+  });
+
   it("maps a viewer's 403 on a read to role_may_not_view_costs", async () => {
-    stub(() => json({ detail: { code: "role_may_not_view_costs", message: "sales or admin only" } }, 403));
+    stub(() => refusal(403, "role_may_not_view_costs", "sales or admin only"));
     const err = await fetchQuoteWorkspace(QUOTE_ID).catch((e) => e);
     expect(err).toBeInstanceOf(QuoteRefusal);
     expect(err).toBeInstanceOf(OperatorApiError);
@@ -199,15 +260,15 @@ describe("refusals", () => {
   });
 
   it("refuses a preview with a code too", async () => {
-    stub(() => json({ detail: { code: "labdelivery_refused", message: "x" } }, 422));
+    stub(() => refusal(422, "labdelivery_refused", "x"));
     const err = await previewQuote(REVISION_ID, DRAFT).catch((e) => e);
     expect(err).toBeInstanceOf(QuoteRefusal);
     expect(err.code).toBe("labdelivery_refused");
   });
 
-  it("keeps the API's validation errors of a 422 for the page to show", async () => {
+  it("keeps the API's validation errors of a 422 for the page to show (no command code: the generic one)", async () => {
     const errors = [{ loc: ["body", "draft", "items", "1", "description"], msg: "String should have at least 1 character", type: "string_too_short" }];
-    stub(() => json({ error: { code: "validation_error", message: "Request validation failed", details: { validation_errors: errors } } }, 422));
+    stub(() => json({ error: { code: "validation_error", message: "Request validation failed", details: { validation_errors: errors }, request_id: "req-ejemplo" } }, 422));
     const err = await saveQuoteDraft(REVISION_ID, 1, DRAFT, "k").catch((e) => e);
     expect(err).toBeInstanceOf(QuoteRefusal);
     expect(err.code).toBe("validation_error");
@@ -215,8 +276,17 @@ describe("refusals", () => {
     expect(err.validationErrors).toEqual(errors);
   });
 
+  it("keeps a command refusal's details, without its code, message or request id", async () => {
+    const candidates = [{ id: CASE_ID, title: "Balanza analítica", stage: "qualifying", requested_at: null }];
+    stub(() => refusal(409, "case_choice_needed", "elige uno", { candidates }));
+    const err = await createQuote({ client: { organization_id: CASE_ID } }, "k").catch((e) => e);
+    expect(err.code).toBe("case_choice_needed");
+    expect(err.message).toBe("elige uno");
+    expect(err.details).toEqual({ candidates });
+  });
+
   it("has no validation errors when the refusal carries none", async () => {
-    stub(() => json({ detail: { code: "stale_version", message: "x" } }, 409));
+    stub(() => refusal(409, "stale_version", "x"));
     const err = await saveQuoteDraft(REVISION_ID, 1, DRAFT, "k").catch((e) => e);
     expect(err.details).toBeNull();
     expect(err.validationErrors).toEqual([]);
@@ -231,11 +301,55 @@ describe("refusals", () => {
   });
 
   it("announces a refused session on 401", async () => {
-    stub(() => json({ detail: { code: "profile_required", message: "x" } }, 401));
+    stub(() => refusal(401, "profile_required", "x"));
     const heard = vi.fn();
     window.addEventListener(SESSION_REFUSED_EVENT, heard);
     await fetchQuoteWorkspace(QUOTE_ID).catch(() => undefined);
     window.removeEventListener(SESSION_REFUSED_EVENT, heard);
     expect(heard).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the quote list", () => {
+  it("GETs a page with the status and limit, and the search and cursor only when given", async () => {
+    const calls = stub(() => json({ rows: [], counts: {}, next_cursor: null }));
+    await fetchQuoteList({ status: "draft" });
+    await fetchQuoteList({ status: "all", q: "balanza ñ&=", cursor: "abc.def" });
+    expect(calls[0].path).toBe("/v2/quotes");
+    expect(calls[0].init.method).toBe("GET");
+    expect(calls[0].init.credentials).toBe("include");
+    const urls = (fetch as unknown as { mock: { calls: [string][] } }).mock.calls.map(([u]) => new URL(u, "http://x"));
+    expect(urls[0].searchParams.get("status")).toBe("draft");
+    expect(urls[0].searchParams.get("limit")).toBe("50");
+    expect(urls[0].searchParams.has("q")).toBe(false);
+    expect(urls[0].searchParams.has("cursor")).toBe(false);
+    expect(urls[1].searchParams.get("status")).toBe("all");
+    expect(urls[1].searchParams.get("q")).toBe("balanza ñ&=");
+    expect(urls[1].searchParams.get("cursor")).toBe("abc.def");
+  });
+
+  it("passes the abort signal on, and raises the API's 422 bad_cursor as a refusal", async () => {
+    const controller = new AbortController();
+    const calls = stub(() => refusal(422, "bad_cursor", "that cursor is not one this list gave"));
+    const err = await fetchQuoteList({ status: "sent", cursor: "forged" }, controller.signal).catch((e) => e);
+    expect(calls[0].init.signal).toBe(controller.signal);
+    expect(err).toBeInstanceOf(QuoteRefusal);
+    expect(err.status).toBe(422);
+    expect(err.code).toBe("bad_cursor");
+  });
+});
+
+describe("the new-quote dialog's client suggestions", () => {
+  it("GETs them for the text typed, with the abort signal", async () => {
+    const controller = new AbortController();
+    const calls = stub(() => json({ organizations: [], people: [] }));
+    const out = await fetchQuoteClients("lab ñ&=", controller.signal);
+    expect(calls[0].path).toBe("/v2/quotes/clients");
+    expect(calls[0].init.method).toBe("GET");
+    expect(calls[0].init.credentials).toBe("include");
+    expect(calls[0].init.signal).toBe(controller.signal);
+    const url = new URL((fetch as unknown as { mock: { calls: [string][] } }).mock.calls[0][0], "http://x");
+    expect(url.searchParams.get("q")).toBe("lab ñ&=");
+    expect(out).toEqual({ organizations: [], people: [] });
   });
 });

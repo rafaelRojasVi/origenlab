@@ -177,6 +177,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // Cotizador (`apps/api` v2/quotes/routes.py; sales and admin only upstream, a viewer gets 403):
   // the next quote number to offer, and one quote with its revisions. Exact paths, GET-only. The
   // preview is a POST that reads; it is listed with the POSTs (QUOTE_PREVIEW_POST_PATHS), never here.
+  // The Cotizador module adds the quote list (`?status=&q=&limit=&cursor=`) and the new-quote
+  // dialog's client suggestions (`?q=`): two more exact paths, GET-only.
+  /^\/v2\/quotes$/,
+  /^\/v2\/quotes\/clients$/,
   /^\/v2\/quotes\/numbering$/,
   /^\/v2\/quotes\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET

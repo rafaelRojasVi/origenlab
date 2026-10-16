@@ -515,6 +515,81 @@ class V2CaseCommandRepository(CommandTransaction):
             "event_ids": events,
         }
 
+    def _open_case_for_client(
+        self,
+        cur: Any,
+        operator: OperatorIdentity,
+        receipt_id: str,
+        *,
+        title: str,
+        organization_id: str | None,
+        note: str,
+    ) -> dict[str, Any]:
+        """A case an operator opens to quote a client, with no document behind it (plan R1).
+
+        Internal only — no HTTP command reaches it: `create-quote` calls it when the client it
+        was given has no open case (or the operator asked for a new one). The case is what
+        `_open_commercial_case` opens — at `OPENING_STAGE`, owned by the operator, with
+        `opportunity.created` — except that there is no origin record to link: the reason it
+        exists is the quote created in the same transaction. When the client is an institution
+        it becomes the requesting one through `_add_case_organization`, so the supplier refusal
+        and the deferred agreement check run exactly as when an operator names it by hand.
+        """
+        cur.execute(
+            """
+            insert into crm.opportunity (title, stage, owner_operator_id)
+            values (%s, %s, %s)
+            returning id::text as id, version
+            """,
+            (title, OPENING_STAGE, operator.operator_id),
+        )
+        case = self._row(cur)
+        assert case is not None  # noqa: S101 - `returning` on a successful insert
+        events = [
+            self._append_event(
+                cur,
+                aggregate_kind="opportunity",
+                aggregate_id=case["id"],
+                event_type="opportunity.created",
+                payload={
+                    "title": title,
+                    "stage": OPENING_STAGE,
+                    "owner_operator_id": operator.operator_id,
+                    "origin_source_record_id": None,
+                    "source_kind": None,
+                    "note": note,
+                },
+                operator=operator,
+                receipt_id=receipt_id,
+            )
+        ]
+        version = int(case["version"])
+        if organization_id is not None:
+            organization = self._live_organization(cur, organization_id)
+            added = self._add_case_organization(
+                cur,
+                operator,
+                {
+                    "opportunity_id": case["id"],
+                    "opportunity_version": version,
+                    "organization_id": organization_id,
+                    "organization_version": int(organization["version"]),
+                    "role": REQUESTING_INSTITUTION,
+                    "supplier_exception_reason": None,
+                    "note": note,
+                },
+                receipt_id,
+            )
+            version = int(added["opportunity_version"])
+            events.extend(added["event_ids"])
+        return {
+            "opportunity_id": case["id"],
+            "opportunity_version": version,
+            "stage": OPENING_STAGE,
+            "organization_id": organization_id,
+            "event_ids": events,
+        }
+
     def _link_case_evidence(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
     ) -> dict[str, Any]:

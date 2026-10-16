@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { OperatorApiError } from "../../api/operatorClient";
 import { Badge, Button, ConfirmDialog, Skeleton, toast } from "../ui";
 import { crmHash, type CrmSection } from "../crmRoute";
@@ -19,13 +19,17 @@ import { quoteLabel } from "../quotes/quoteLabel";
 import { quoteRefusalLines, quoteRefusalText } from "../quotes/quoteRefusal";
 import { SaveStatus } from "../quotes/SaveStatus";
 import { SummaryRail } from "../quotes/SummaryRail";
+import { takeDiscarded } from "../quotes/tabEditors";
+import { tabMetaOf, type TabMeta } from "../quotes/tabStore";
 import { TermsSection } from "../quotes/TermsSection";
 import { useQuoteDraft } from "../quotes/useQuoteDraft";
 import { useResource } from "../useResource";
 
 /**
- * «Cotizador»: the workspace of one quote, at `#/crm/cotizar/<quoteId>`. It is not in the menu —
- * it opens from a case. Only sales and administration may quote (the API answers 403
+ * «Cotizador»: the workspace of one quote — one tab of the Cotizador module
+ * (`CotizadorModulePage`, `#/crm/cotizador/<quoteId>`), which keeps several mounted at once and
+ * shows one. `onMeta` tells the module's tab the quote's label, client and state each time the
+ * workspace loads or changes. Only sales and administration may quote (the API answers 403
  * `role_may_not_view_costs` to anyone else), and the page says so instead of showing a generic error.
  * Every number on the page comes from the API; the browser never prices.
  *
@@ -87,21 +91,32 @@ function CotizadorSkeleton() {
   );
 }
 
-export function CotizadorPage({ quoteId, navigate }: { quoteId: string | null; navigate: Navigate }) {
+/** What anyone but sales and administration sees instead of a quote. */
+export function NoQuoteAccess() {
+  return (
+    <div role="alert" className="rounded-lg border border-warn/30 bg-warn-bg px-4 py-4">
+      <p className="text-[13px] font-semibold text-warn">Sólo ventas y administración pueden cotizar.</p>
+      <p className="mt-1 text-xs text-ink-muted">Si necesitas cotizar, pide a administración que cambie tu rol.</p>
+    </div>
+  );
+}
+
+export function CotizadorPage({
+  quoteId,
+  navigate,
+  onMeta,
+}: {
+  quoteId: string | null;
+  navigate: Navigate;
+  onMeta?: (meta: TabMeta) => void;
+}) {
   const [state, reload] = useResource(
     () => (quoteId ? fetchQuoteWorkspace(quoteId) : Promise.reject(new Error("quote_id_missing"))),
     [quoteId],
   );
   if (!quoteId) return <NotFound navigate={navigate} />;
   if (state.kind === "loading") return <CotizadorSkeleton />;
-  if (state.kind === "permission") {
-    return (
-      <div role="alert" className="rounded-lg border border-warn/30 bg-warn-bg px-4 py-4">
-        <p className="text-[13px] font-semibold text-warn">Sólo ventas y administración pueden cotizar.</p>
-        <p className="mt-1 text-xs text-ink-muted">Si necesitas cotizar, pide a administración que cambie tu rol.</p>
-      </div>
-    );
-  }
+  if (state.kind === "permission") return <NoQuoteAccess />;
   if (state.kind === "unavailable") return <NotFound navigate={navigate} />;
   if (state.kind === "error") {
     return (
@@ -118,7 +133,7 @@ export function CotizadorPage({ quoteId, navigate }: { quoteId: string | null; n
       </div>
     );
   }
-  return <CotizadorWorkspace workspace={state.data} navigate={navigate} />;
+  return <CotizadorWorkspace workspace={state.data} navigate={navigate} onMeta={onMeta} />;
 }
 
 /** A save refused because of whom the quote goes to: said under «Para». */
@@ -163,7 +178,15 @@ function voidable(r: { origin: string; status: string; superseded_by_revision_no
   return !!r && r.origin === "authored" && (r.status === "draft" || r.status === "approved") && r.superseded_by_revision_no == null;
 }
 
-function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace; navigate: Navigate }) {
+function CotizadorWorkspace({
+  workspace,
+  navigate,
+  onMeta,
+}: {
+  workspace: QuoteWorkspace;
+  navigate: Navigate;
+  onMeta?: (meta: TabMeta) => void;
+}) {
   const editor = useQuoteDraft(workspace);
   const [clientView, setClientView] = useState(false);
   const [viewingId, setViewingId] = useState<string | null>(null);
@@ -193,25 +216,39 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
   const labelOf = (revisionNo: number, label?: string | null) =>
     quoteLabel({ label, quote_number: ws.quote.quote_number, revision_no: revisionNo });
 
-  // Leaving another way (the menu, a link elsewhere) unmounts the page: the editor then sends what
-  // it can, but an incomplete draft or one in conflict cannot be sent — say so on the next page.
+  // The module's tab shows this quote as it is now (a restored tab's stored label may be old).
+  const meta = tabMetaOf(ws);
+
+  // Leaving another way (the menu, a link elsewhere, closing its tab) unmounts the page: the editor
+  // then sends what it can, but an incomplete draft or one in conflict cannot be sent — say so on
+  // the next page, naming the quote (several can be open). Not after «Salir igual» / «Cerrar igual».
   const lossRef = useRef<string | null>(null);
   const confirmedRef = useRef(false);
+  const lost = `Tus últimos cambios en la cotización ${meta.label} no se guardaron`;
   lossRef.current = !editor.pending
     ? null
     : state.saveState === "conflict"
       ? isGone(state.error)
-        ? "Tus últimos cambios en la cotización no se guardaron: se aprobó o anuló en otra pestaña."
-        : "Tus últimos cambios en la cotización no se guardaron: otra persona la había cambiado."
+        ? `${lost}: se aprobó o anuló en otra pestaña.`
+        : `${lost}: otra persona la había cambiado.`
       : editor.invalid.length > 0
-        ? "Tus últimos cambios en la cotización no se guardaron: el borrador estaba incompleto."
+        ? `${lost}: el borrador estaba incompleto.`
         : null;
+  const quoteIdRef = useRef(ws.quote.id);
+  quoteIdRef.current = ws.quote.id;
   useEffect(
     () => () => {
-      if (lossRef.current && !confirmedRef.current) toast(lossRef.current, "warn");
+      const closedAnyway = takeDiscarded(quoteIdRef.current);
+      if (lossRef.current && !confirmedRef.current && !closedAnyway) toast(lossRef.current, "warn");
     },
     [],
   );
+
+  const onMetaRef = useRef(onMeta);
+  onMetaRef.current = onMeta;
+  useEffect(() => {
+    onMetaRef.current?.({ label: meta.label, client: meta.client, status: meta.status });
+  }, [meta.label, meta.client, meta.status]);
 
   // A reason listed for an earlier attempt is not left standing once the draft changes.
   useEffect(() => {
@@ -303,6 +340,8 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
   };
 
   const currentLabel = cur ? labelOf(cur.revision_no, cur.label) : labelOf(1);
+  // Unique per pane: the module keeps several quotes in the page at once.
+  const pdfLaterId = `${useId()}-pdf-later`;
   // I3: «Vista cliente» is the page's, for the draft and an issued revision alike.
   const clientToggle = cur ? <ClientViewToggle on={clientView} onChange={setClientView} /> : null;
   const actions = cur ? (
@@ -321,10 +360,10 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
         ) : null}
         {/* B6: the PDF arrives in the next delivery; the button is there, off, and says so. */}
         <span title="Llega en la siguiente entrega" className="inline-flex">
-          <Button className="min-h-[44px] px-4 text-[14px]" disabled aria-describedby="cotizador-pdf-later">
+          <Button className="min-h-[44px] px-4 text-[14px]" disabled aria-describedby={pdfLaterId}>
             Vista previa PDF
           </Button>
-          <span id="cotizador-pdf-later" className="sr-only">
+          <span id={pdfLaterId} className="sr-only">
             Llega en la siguiente entrega
           </span>
         </span>
@@ -485,9 +524,10 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
 
 /** The API's reasons for refusing a command, one per line, under the header. */
 function ProblemList({ problems }: { problems: Problems }) {
+  const titleId = useId();
   return (
-    <div role="alert" aria-labelledby="cotizador-problems-title" className="rounded-lg border border-bad/30 bg-bad-bg px-4 py-3">
-      <p id="cotizador-problems-title" className="text-[13px] font-semibold text-bad">
+    <div role="alert" aria-labelledby={titleId} className="rounded-lg border border-bad/30 bg-bad-bg px-4 py-3">
+      <p id={titleId} className="text-[13px] font-semibold text-bad">
         {problems.title}
       </p>
       <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-[13px] text-ink">

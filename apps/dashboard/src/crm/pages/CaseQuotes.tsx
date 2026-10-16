@@ -296,7 +296,7 @@ function QuoteBlock({ q, defaultOpen, latest, documents = [], mayOpenCotizador =
         </button>
         {mayOpenCotizador && isAuthoredQuote(q) ? (
           <a
-            href={crmHash("cotizar", q.quote_id)}
+            href={crmHash("cotizador", q.quote_id)}
             aria-label={`Abrir en Cotizador la cotización ${q.quote_number}`}
             className="mt-1 inline-flex min-h-[32px] items-center gap-1 rounded-md px-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
           >

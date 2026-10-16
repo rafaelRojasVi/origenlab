@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { crmHash, isCrmHash, parseCrmHash, type CrmSection, type DatosTab } from "./crmRoute";
+import { crmHash, isCrmHash, movedCrmHash, parseCrmHash, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
 
 /**
  * One dashboard, one navigation, one sign-in: the CRM under `#/crm/*`. The bare root opens
@@ -13,6 +13,8 @@ export interface ShellRoute {
   id: string | null;
   /** «Datos» opened through an old Proveedores / Archivo Drive link. */
   tab?: DatosTab;
+  /** The Cotizador's fixed pane «Preferencias». */
+  pane?: CotizadorPane;
 }
 
 /** Earlier-panel hash (without `#/` and query) → the CRM section that replaced it. */
@@ -57,9 +59,9 @@ function legacyCaseId(query: string | undefined): string | null {
   return CASE_ID.test(value) ? value.toLowerCase() : null;
 }
 
-/** The hash a non-CRM address should be replaced with, or null when it is already a CRM route. */
+/** The hash an address should be replaced with: a non-CRM one, or a CRM one that moved; else null. */
 export function redirectHash(hash: string): string | null {
-  if (isCrmHash(hash)) return null;
+  if (isCrmHash(hash)) return movedCrmHash(hash);
   const [path, query] = hash.replace(/^#\/?/, "").split("?");
   const section = LEGACY_REDIRECTS[path.trim().toLowerCase()] ?? "resumen";
   // Only Oportunidades opens a single record; other sections land on their list.

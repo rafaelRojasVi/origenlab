@@ -1,6 +1,6 @@
 /**
  * What the Cotizador says when the quote API refuses something, in Spanish: one place for every
- * screen (the save line, «Para», «Avisos», approve / void / revise, «Cotizar»).
+ * screen (the save line, «Para», «Avisos», approve / void / revise, «Cotizar», «Preferencias»).
  *
  * The machine `code` decides. The API's own text is said only when it is already Spanish (some
  * refusals carry the specifics the operator needs: the currency without a rate, the revision that
@@ -21,12 +21,26 @@ const SPANISH: Record<string, string> = {
   not_a_draft: "Esta revisión ya no es un borrador: se aprobó o se anuló.",
   not_authored: "Una cotización histórica no se cambia desde aquí.",
   stale_version: "Otra persona cambió esta cotización. Recarga la página para ver la versión guardada.",
+  bad_cursor: "La lista cambió; se volvió a cargar desde el inicio.",
+  bad_status: "Ese estado de cotizaciones no existe.",
   role_may_not_view_costs: "Sólo ventas y administración pueden cotizar.",
+  role_may_not_decide: "Sólo ventas y administración pueden crear o cambiar cotizaciones.",
+  // «Nueva cotización»: the client and its case.
+  case_choice_needed: "Este cliente tiene varios casos abiertos: elige uno, o abre una Solicitud nueva.",
+  case_not_of_client: "Ese caso no es de este cliente; elige otro.",
+  organization_name_ambiguous: "Hay varias instituciones con ese nombre: elige una de ellas.",
+  organization_not_found: "Esa institución ya no está en el CRM; búscala de nuevo.",
+  person_not_found: "Esa persona ya no está en el CRM; búscala de nuevo.",
+  contact_point_not_found: "Esa dirección ya no está en el CRM; búscala de nuevo.",
+  supplier_exception_required:
+    "OrigenLab le compra a esta institución (es proveedora o fabricante): su cotización se crea desde su caso, con la excepción justificada.",
+  client_changed_concurrently: "Los datos de este cliente cambiaron mientras se creaba la cotización; vuelve a intentarlo.",
+  query_too_short: "Escribe al menos dos letras para la búsqueda.",
   // «Para».
   recipient_unknown: "Esa persona o dirección ya no está en el CRM; elige otra.",
   recipient_not_on_case: "Esa persona ya no participa en el caso; elige otra.",
   contact_point_inactive: "Esa dirección está desactivada en el CRM; elige otra.",
-  archived_subject: "Esa persona está archivada; elige otra.",
+  archived_subject: "Esa persona o institución está archivada; elige otra.",
   recipient_changed_concurrently: "Cambió quién participa en el caso mientras se guardaba; vuelve a intentarlo.",
   recipient_own_address: "Esa dirección es de OrigenLab, no del cliente.",
   // Revisions.
@@ -51,12 +65,17 @@ const SPANISH: Record<string, string> = {
   quote_numbering_not_configured: "Falta configurar la numeración de cotizaciones.",
   quote_numbering_exhausted: "La numeración de cotizaciones se agotó; configura un nuevo inicio.",
   quote_number_taken: "Ese número de cotización se acaba de usar; vuelve a intentarlo.",
+  // «Preferencias» (set-cost-parameter).
+  parameter_changed: "Otra persona lo cambió; recarga.",
+  role_may_not_set_numbering: "Sólo administración fija el inicio de la numeración.",
   // The request itself.
   validation_error: "El servidor no aceptó algunos datos de la cotización; revisa los campos y vuelve a intentarlo.",
   command_in_progress: "Esta acción todavía se está procesando; espera un momento y vuelve a intentarlo.",
   idempotency_conflict: "Esta acción todavía se está procesando; espera un momento y vuelve a intentarlo.",
   idempotency_key_reused: "Esta acción ya se usó para otra cosa; vuelve a intentarlo.",
   command_already_failed: "El intento anterior falló; vuelve a intentarlo.",
+  // A 403 with no command code of its own (the API's generic code, or the Worker's).
+  forbidden: "Tu perfil no puede hacer esta acción.",
 };
 
 /** The engine's codes that name a line or a currency (`fx_missing:EUR`, `quantity_invalid:3`). */

@@ -349,7 +349,6 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/review",
       "/v2/review/summary/extra",
       "/v2/tasks",
-      "/v2/quotes",
       "/v2/opportunities",
       // The record queue is one literal path. Nothing else under it is reachable, so a
       // per-record sub-resource -- the shape a promote command would take -- is refused.
@@ -1037,7 +1036,7 @@ describe("Catalog 1a", () => {
 
 describe("Cotizador PR A", () => {
   const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
-  const GET_PATHS = ["/v2/quotes/numbering", `/v2/quotes/${uuid}`];
+  const GET_PATHS = ["/v2/quotes/numbering", `/v2/quotes/${uuid}`, "/v2/quotes", "/v2/quotes/clients"];
   const JSON_COMMANDS = [
     "create-quote",
     "save-quote-draft",
@@ -1078,7 +1077,14 @@ describe("Cotizador PR A", () => {
       `/v2/quotes/${uuid}/revisions`,
       "/v2/quotes/not-a-uuid",
       "/v2/quotes/",
-      "/v2/quotes",
+      "/v2/quotes//",
+      "/v2/Quotes",
+      "/v2/quotesx",
+      "/v2/quotes/clients/",
+      "/v2/quotes/clients/extra",
+      `/v2/quotes/clients/${uuid}`,
+      "/v2/quotes/Clients",
+      "/v2/quotes/client",
       "/v2/quotes/numbering/",
       "/v2/quotes/numbering/extra",
       "/v2/quotes/Numbering",

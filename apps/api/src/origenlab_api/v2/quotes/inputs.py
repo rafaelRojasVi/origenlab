@@ -195,6 +195,20 @@ def default_markup(item_type: str, params: dict[str, Decimal | str]) -> Decimal:
     return _MARKUP_FALLBACK_EQUIPMENT if item_type == "equipment" else _MARKUP_FALLBACK_OTHER
 
 
+def quote_preferences(params: dict[str, Decimal | str]) -> dict[str, Any]:
+    """The company's pricing preferences as the Cotizador applies them: the default markup of each
+    item type, the margin target band and the price-deviation warning — each the current parameter,
+    else the same fallback the engine prices with (40% equipment, 45% everything else; a 25–45%
+    band). The deviation warning has no fallback: unset, it is None and nothing warns."""
+    deviation = params.get("price_deviation_warn_pct")
+    return {
+        "markups": {item_type: default_markup(item_type, params) for item_type in DEFAULT_MARKUP_KEYS},
+        "margin_target_min": _decimal_param(params, "margin_target_min"),
+        "margin_target_max": _decimal_param(params, "margin_target_max"),
+        "price_deviation_warn_pct": deviation if isinstance(deviation, Decimal) else None,
+    }
+
+
 @lru_cache(maxsize=1)
 def _rate_card() -> RateCard:
     return RateCard.load()
@@ -502,4 +516,5 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
 
 __all__ = ["DEFAULT_MARKUP_KEYS", "FxResolver", "PRICE_KIND_PRIORITY", "Resolved", "ResolvedItem",
            "default_markup", "draft_from_rows", "engine_input_from_rows", "expense_target", "fx_override_reasons", "fx_overrides_from_row",
-           "PARAMETERS_SQL", "load_parameters", "no_provider", "parameters_from", "resolve_draft", "result_json"]
+           "PARAMETERS_SQL", "load_parameters", "no_provider", "parameters_from", "quote_preferences", "resolve_draft",
+           "result_json"]

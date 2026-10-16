@@ -9,7 +9,7 @@
  * The workspace carries the full detail of the current revision only; an older one is shown from
  * its entry in `revisions` (number, status, total, dates), and the page says so.
  */
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { fmtDay } from "../catalog/catalogApi";
 import { formatMoney } from "../money";
 import { Badge } from "../ui";
@@ -118,6 +118,8 @@ function lifeLines(
 
 export function IssuedView({ workspace }: { workspace: QuoteWorkspace }) {
   const cur = workspace.current;
+  // Unique per pane: the Cotizador module keeps several quotes in the page at once.
+  const ids = useId();
   if (!cur) return null;
   const snapshot = readSnapshot(cur.party_snapshot);
   const currency = cur.quote_currency ?? "CLP";
@@ -137,8 +139,8 @@ export function IssuedView({ workspace }: { workspace: QuoteWorkspace }) {
         </div>
       ) : null}
       {institution || snapshot?.recipient ? (
-        <section aria-labelledby="cotizador-cliente-emitida" className={CARD}>
-          <h2 id="cotizador-cliente-emitida" className="text-[17px] font-semibold text-ink">
+        <section aria-labelledby={`${ids}-cliente`} className={CARD}>
+          <h2 id={`${ids}-cliente`} className="text-[17px] font-semibold text-ink">
             Cliente
           </h2>
           <dl className="grid grid-cols-1 gap-3 text-[13.5px] md:grid-cols-2">
@@ -159,15 +161,15 @@ export function IssuedView({ workspace }: { workspace: QuoteWorkspace }) {
           </dl>
         </section>
       ) : null}
-      <section aria-labelledby="cotizador-productos-emitida" className="overflow-hidden rounded-xl border border-line bg-canvas-raised">
-        <h2 id="cotizador-productos-emitida" className="px-5 pb-3 pt-4 text-[17px] font-semibold text-ink">
+      <section aria-labelledby={`${ids}-productos`} className="overflow-hidden rounded-xl border border-line bg-canvas-raised">
+        <h2 id={`${ids}-productos`} className="px-5 pb-3 pt-4 text-[17px] font-semibold text-ink">
           Productos
         </h2>
         <StoredLines lines={items} currency={currency} />
       </section>
       {fixed.length || snapshot?.validityDays != null || snapshot?.extra.length ? (
-        <section aria-labelledby="cotizador-condiciones-emitida" className={CARD}>
-          <h2 id="cotizador-condiciones-emitida" className="text-[17px] font-semibold text-ink">
+        <section aria-labelledby={`${ids}-condiciones`} className={CARD}>
+          <h2 id={`${ids}-condiciones`} className="text-[17px] font-semibold text-ink">
             Condiciones
           </h2>
           <dl className="grid grid-cols-1 gap-3 text-[13.5px] md:grid-cols-2">

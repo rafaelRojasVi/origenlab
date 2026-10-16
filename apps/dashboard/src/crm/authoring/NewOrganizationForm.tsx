@@ -6,7 +6,8 @@ import { useRef, useState } from "react";
 import { FormField, SelectInput, TextInput } from "../ui";
 import { PRODUCT_LINES, newIdempotencyKey, refusalOf, registerOrganization, type ProductLineId } from "./crmAuthoringApi";
 
-const KIND_OPTIONS = [
+/** An institution's kinds, in Spanish (the CRM's; «Nueva cotización» offers the same). */
+export const KIND_OPTIONS = [
   { value: "company", label: "Empresa" },
   { value: "university", label: "Universidad" },
   { value: "public_institution", label: "Institución pública" },

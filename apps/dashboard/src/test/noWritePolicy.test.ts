@@ -64,6 +64,9 @@ describe("dashboard read-only policy", () => {
   //    approve-quote-revision, void-quote-revision, create-quote-revision; sales or admin upstream,
   //    each with an Idempotency-Key) and to `/v2/quotes/preview`, which prices a draft and writes
   //    nothing. The browser never computes a price: every figure comes back from the API.
+  //    It also POSTs set-cost-parameter for «Preferencias» of the Cotizador (sales or admin; the
+  //    numbering seed admin only), with an Idempotency-Key, a reason and the current row seen: a
+  //    company default, which prices and sends nothing.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const MAIL_RULES_FILE = "../crm/mailRules.ts";
   const MAIL_RULES_PATHS = [
@@ -106,6 +109,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/approve-quote-revision",
     "/v2/commands/void-quote-revision",
     "/v2/commands/create-quote-revision",
+    "/v2/commands/set-cost-parameter",
   ];
   const QUOTE_PREVIEW_PATH = "/v2/quotes/preview";
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";

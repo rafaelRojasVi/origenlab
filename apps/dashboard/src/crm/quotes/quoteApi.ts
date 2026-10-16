@@ -1,12 +1,13 @@
 /**
- * The one client for the quote API: the workspace and numbering reads, the live preview and the
- * five quote commands (create, save a draft, approve, void, new revision).
+ * The one client for the quote API: the workspace and numbering reads, the live preview, the
+ * five quote commands (create, save a draft, approve, void, new revision) and «Preferencias»
+ * (`set-cost-parameter`).
  *
  * The browser never prices a quote. Every number it shows is a string the API computed (the
  * `computed` block of a preview, a save or the workspace, or a stored total); `Decimal` below is
  * only a name for that string. Do not parse it into a float to calculate with.
  *
- * This module owns the six POST paths: the five `/v2/commands/<…>` strings and
+ * This module owns the seven POST paths: the six `/v2/commands/<…>` strings and
  * `/v2/quotes/preview`, pinned by `src/test/noWritePolicy.test.ts`, through one internal
  * `post()`. The preview writes nothing (it prices a draft and answers), so it carries no
  * `Idempotency-Key`; every command carries one. Upstream everything here is sales/admin only
@@ -15,6 +16,7 @@
  */
 import { OperatorApiError, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
 import type { PriceHistory } from "../catalog/catalogApi";
+import { parseRefusalEnvelope } from "../../api/refusalEnvelope";
 
 /** A number as the API prints it: a decimal string, never a JS number. */
 export type Decimal = string;
@@ -266,6 +268,20 @@ export interface QuoteWorkspace {
   };
   /** Null when the principal line has no product with a model key. */
   price_history: PriceHistory | null;
+  /** The company's preferences as the rail applies them (`inputs.quote_preferences`); absent from an older API. */
+  params?: QuotePreferences;
+}
+
+/**
+ * `params` of the workspace: each the current cost parameter, else the engine's fallback (40 %
+ * equipment, 45 % the rest; a 25–45 % band). Ratios as decimal strings ("0.25" = 25 %). The
+ * deviation warning has no fallback: null, nothing warns.
+ */
+export interface QuotePreferences {
+  markups?: Partial<Record<QuoteItemType, Decimal>>;
+  margin_target_min?: Decimal | null;
+  margin_target_max?: Decimal | null;
+  price_deviation_warn_pct?: Decimal | null;
 }
 
 /** `GET /v2/quotes/numbering`: what the next number would be, without reserving it. */
@@ -280,10 +296,13 @@ export interface QuoteNumbering {
 /* ── refusals ─────────────────────────────────────────────────────────────── */
 
 /**
- * The API or Worker refused a quote request. `code` is the machine code from
- * `{detail:{code,message}}` (API) or `{error:{code,message}}` (Worker), or null when the body
- * is not an envelope. It is an `OperatorApiError`, so `classifyError` (and `ResourceGate`) treats it
- * like any other API refusal. A viewer is 403 with `role_may_not_view_costs`.
+ * The API or Worker refused a quote request. `code` is the command's own machine code: the API
+ * answers `{error:{code:<generic: forbidden, conflict, validation_error…>, message, details:{code,
+ * message, …}, request_id}}` (errors.py), so it is `error.details.code`, else the generic
+ * `error.code` (a body validation error, the Worker's `{error:{code,message}}`), else an older
+ * `{detail:{code,message}}`; null when the body is not an envelope (`parseRefusalEnvelope`). It is
+ * an `OperatorApiError`, so `classifyError` (and `ResourceGate`) treats it like any other API
+ * refusal. A viewer is 403 with `role_may_not_view_costs`.
  */
 export class QuoteRefusal extends OperatorApiError {
   constructor(
@@ -311,21 +330,6 @@ export interface QuoteValidationError {
   type: string;
 }
 
-type Envelope = { code: string | null; message: string | null; details: Record<string, unknown> | null };
-
-function envelopeOf(raw: unknown): Envelope {
-  if (!raw || typeof raw !== "object") return { code: null, message: null, details: null };
-  const body = raw as { detail?: unknown; error?: unknown };
-  for (const part of [body.detail, body.error]) {
-    if (part && typeof part === "object" && "code" in part && (part as { code: unknown }).code) {
-      const { code, message, details } = part as { code: unknown; message?: unknown; details?: unknown };
-      const kept = details && typeof details === "object" && Object.keys(details).length > 0 ? (details as Record<string, unknown>) : null;
-      return { code: String(code), message: typeof message === "string" ? message : null, details: kept };
-    }
-  }
-  return { code: null, message: null, details: null };
-}
-
 async function refusalOf(res: Response): Promise<QuoteRefusal> {
   notifyIfSessionRefused(res.status);
   const text = await res.text().catch(() => "");
@@ -335,7 +339,7 @@ async function refusalOf(res: Response): Promise<QuoteRefusal> {
   } catch {
     /* not JSON */
   }
-  const { code, message, details } = envelopeOf(parsed);
+  const { code, message, details } = parseRefusalEnvelope(parsed);
   return new QuoteRefusal(res.status, code, message || text || res.statusText || `HTTP ${res.status}`, details);
 }
 
@@ -347,6 +351,7 @@ export const QUOTE_COMMAND_PATHS = {
   approve: "/v2/commands/approve-quote-revision",
   void: "/v2/commands/void-quote-revision",
   revise: "/v2/commands/create-quote-revision",
+  setParameter: "/v2/commands/set-cost-parameter",
 } as const;
 
 const PREVIEW_PATH = "/v2/quotes/preview";
@@ -358,11 +363,12 @@ export function newQuoteCommandKey(): string {
     : `quote-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(operatorApiUrl(path), {
     method: "GET",
     credentials: "include",
     headers: { Accept: "application/json" },
+    signal,
   });
   if (!res.ok) throw await refusalOf(res);
   return (await res.json()) as T;
@@ -383,6 +389,88 @@ async function post<T>(path: string, body: unknown, idempotencyKey: string | nul
   return (await res.json()) as T;
 }
 
+/* ── GET /v2/quotes (the module's list) ───────────────────────────────────── */
+
+export type QuoteListStatus = "draft" | "approved" | "sent" | "all";
+
+/** One quote at its current revision. `status` is its bucket: an in-review revision is a draft. */
+export interface QuoteListRow {
+  quote_id: string;
+  quote_number: string;
+  /** The printed label («00042A-26»), or null for a historical number outside the series' form. */
+  label: string | null;
+  status: "draft" | "approved" | "sent" | "void";
+  /** `authored` here, `historical_import` for a quote brought in from before the app. */
+  origin: string;
+  opportunity: { id: string; title: string | null; closed: boolean };
+  client: { organization_id: string; name: string } | null;
+  /** The first item descriptions and how many there are: the revision's own, or its read PDF's (`amount_source`). */
+  items: { first: string[]; count: number };
+  /** The revision's own total, IVA included; null without one (an imported quote). */
+  grand_total: Decimal | null;
+  /** The neto its PDF said, when the revision has no totals or lines of its own and the PDF was read. */
+  net_total?: Decimal | null;
+  /** Where `items` and the amount come from: the revision itself, its read PDF, or nowhere (null). Absent from an older API. */
+  amount_source?: "revision" | "pdf_read" | null;
+  currency: string | null;
+  updated_at: string;
+}
+
+export interface QuoteListPage {
+  rows: QuoteListRow[];
+  /** How many quotes each status has under the same search (the filter does not narrow them). */
+  counts: { draft: number; approved: number; sent: number; void: number; all: number };
+  next_cursor: string | null;
+}
+
+/** One page of the list, newest first. A cursor the API did not give answers 422 `bad_cursor`. */
+export function fetchQuoteList(
+  { status, q, cursor, limit = 50 }: { status: QuoteListStatus; q?: string; cursor?: string | null; limit?: number },
+  signal?: AbortSignal,
+): Promise<QuoteListPage> {
+  const params = new URLSearchParams({ status, limit: String(limit) });
+  if (q) params.set("q", q);
+  if (cursor) params.set("cursor", cursor);
+  return get<QuoteListPage>(`/v2/quotes?${params.toString()}`, signal);
+}
+
+/* ── GET /v2/quotes/clients (the new-quote dialog's suggestions) ───────────── */
+
+/** An open case of a suggested client. `requested_at`: when its email came in, else when it was opened. */
+export interface QuoteClientCase {
+  id: string;
+  title: string | null;
+  stage: string;
+  requested_at: string | null;
+}
+
+export interface QuoteClientOrganization {
+  id: string;
+  name: string;
+  kind: string | null;
+  domains: string[];
+  open_cases: QuoteClientCase[];
+}
+
+/** A person (`person_id`), or an address with no person (`contact_point_id` only). */
+export interface QuoteClientPerson {
+  person_id: string | null;
+  contact_point_id: string | null;
+  name: string | null;
+  email: string | null;
+  organization: { id: string; name: string } | null;
+  open_cases: QuoteClientCase[];
+}
+
+export interface QuoteClientSuggestions {
+  organizations: QuoteClientOrganization[];
+  people: QuoteClientPerson[];
+}
+
+/** Up to eight institutions and eight people for `q` (two characters at least; shorter is 422 `query_too_short`). */
+export const fetchQuoteClients = (q: string, signal?: AbortSignal): Promise<QuoteClientSuggestions> =>
+  get<QuoteClientSuggestions>(`/v2/quotes/clients?${new URLSearchParams({ q }).toString()}`, signal);
+
 /* ── reads ────────────────────────────────────────────────────────────────── */
 
 export const fetchQuoteWorkspace = (quoteId: string): Promise<QuoteWorkspace> =>
@@ -396,11 +484,45 @@ export const previewQuote = (revisionId: string, draft: QuoteDraft, signal?: Abo
 
 /* ── commands ─────────────────────────────────────────────────────────────── */
 
-export const createQuote = (
-  opportunityId: string,
-  key: string = newQuoteCommandKey(),
-): Promise<{ quote_id: string; quote_number: string; revision_id: string; version: number }> =>
-  post(QUOTE_COMMAND_PATHS.create, { opportunity_id: opportunityId }, key);
+/** The kinds a new institution may be (`NewOrganizationKind` upstream). */
+export type NewClientKind = "company" | "university" | "public_institution" | "hospital" | "laboratory" | "other";
+
+/** Whom a quote is for when no case is named: exactly one of these. */
+export type QuoteClientPick =
+  | { organization_id: string }
+  | { person_id: string }
+  | { contact_point_id: string }
+  | { email: string; name?: string }
+  | { new_organization: { name: string; kind?: NewClientKind; email?: string } };
+
+/**
+ * A quote for a client: the API finds the client's open case (`opportunity_id` names the one
+ * chosen) or opens a Solicitud (`new_case`, or when the client has none). Several open cases and
+ * none chosen is a 409 `case_choice_needed` with `details.candidates`.
+ */
+export interface CreateQuoteForClient {
+  client: QuoteClientPick;
+  opportunity_id?: string;
+  new_case?: true;
+}
+
+export interface CreatedQuote {
+  quote_id: string;
+  quote_number: string;
+  revision_id: string;
+  version: number;
+  /** For a client: the case used or opened, and whether it (or the institution) was made now. */
+  opportunity_id?: string;
+  case_created?: boolean;
+  organization_id?: string | null;
+  /** The institution's name, as the CRM has it (null without one). */
+  organization_name?: string | null;
+  organization_created?: boolean;
+}
+
+/** A quote on a case (`opportunityId`), or for a client (`CreateQuoteForClient`). */
+export const createQuote = (target: string | CreateQuoteForClient, key: string = newQuoteCommandKey()): Promise<CreatedQuote> =>
+  post(QUOTE_COMMAND_PATHS.create, typeof target === "string" ? { opportunity_id: target } : target, key);
 
 export const saveQuoteDraft = (
   revisionId: string,
@@ -430,3 +552,26 @@ export const createQuoteRevision = (
   key: string = newQuoteCommandKey(),
 ): Promise<{ revision_id: string; revision_no: number; revision_label?: string }> =>
   post(QUOTE_COMMAND_PATHS.revise, { quote_id: quoteId }, key);
+
+/* ── «Preferencias»: one cost parameter ───────────────────────────────────── */
+
+/**
+ * `set-cost-parameter`: a new current value with its reason; the previous one stays as history.
+ * Numbers go in `value` (a decimal string), the printed `quote_default_*` texts in `value_text`.
+ * `expected_current_id` is the current row the operator saw (null when the parameter is unset);
+ * another one current since is a 409 `parameter_changed`. Only administration sets
+ * `quote_number_seed` (403 `role_may_not_set_numbering`). Mounted with the catalog
+ * (`ORIGENLAB_V2_QUOTING_ENABLED`), sales and admin.
+ */
+export interface SetCostParameterBody {
+  key: string;
+  value?: Decimal;
+  value_text?: string;
+  reason: string;
+  expected_current_id: string | null;
+}
+
+export const setCostParameter = (
+  body: SetCostParameterBody,
+  key: string = newQuoteCommandKey(),
+): Promise<{ ok: true; cost_parameter_id: string; key: string }> => post(QUOTE_COMMAND_PATHS.setParameter, body, key);
