@@ -60,6 +60,10 @@ describe("dashboard read-only policy", () => {
   //  - caseDocuments.ts's POST to the three purchase-order commands (owner request 2026-10-12):
   //    attach a case's OC from the computer (multipart) or from a case email, and remove one.
   //    Sales or admin upstream; the file is stored privately, never served from here.
+  //  - crm/quotes/quoteApi.ts's POST to the five quote commands (create-quote, save-quote-draft,
+  //    approve-quote-revision, void-quote-revision, create-quote-revision; sales or admin upstream,
+  //    each with an Idempotency-Key) and to `/v2/quotes/preview`, which prices a draft and writes
+  //    nothing. The browser never computes a price: every figure comes back from the API.
   // No other dashboard source file may issue POST/PUT/PATCH/DELETE.
   const MAIL_RULES_FILE = "../crm/mailRules.ts";
   const MAIL_RULES_PATHS = [
@@ -95,6 +99,15 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/attach-case-document-from-email",
     "/v2/commands/remove-case-document",
   ];
+  const QUOTE_API_FILE = "../crm/quotes/quoteApi.ts";
+  const QUOTE_API_PATHS = [
+    "/v2/commands/create-quote",
+    "/v2/commands/save-quote-draft",
+    "/v2/commands/approve-quote-revision",
+    "/v2/commands/void-quote-revision",
+    "/v2/commands/create-quote-revision",
+  ];
+  const QUOTE_PREVIEW_PATH = "/v2/quotes/preview";
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
   const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";
@@ -190,6 +203,21 @@ describe("dashboard read-only policy", () => {
         }
         continue;
       }
+      if (path === QUOTE_API_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...QUOTE_API_PATHS].sort())) {
+          hits.push(`${path} (quote command paths mismatch: found ${commandPaths.join(", ")})`);
+        }
+        const quotePosts = [...text.matchAll(/["'](\/v2\/quotes\/(?:preview|numbering))["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(quotePosts) !== JSON.stringify(["/v2/quotes/numbering", QUOTE_PREVIEW_PATH])) {
+          hits.push(`${path} (quote paths mismatch: found ${quotePosts.join(", ")})`);
+        }
+        continue;
+      }
       if (path === CASE_DOCUMENTS_FILE) {
         const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
         if (methods.length !== 1 || methods[0] !== "POST") {
@@ -234,8 +262,8 @@ describe("dashboard read-only policy", () => {
     expect(hits).toEqual([]);
   });
 
-  it("names no V2 command outside the campaign, CRM authoring, email-rules and case-command clients", () => {
-    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE]);
+  it("names no V2 command outside the campaign, CRM authoring, email-rules, case-command and quote clients", () => {
+    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE]);
     const hits = entries
       .filter(([path, text]) => !owners.has(path) && /\/v2\/commands\//.test(text))
       .map(([path]) => path);
@@ -291,8 +319,12 @@ describe("dashboard read-only policy", () => {
   // that sends, approves, activates or dispatches — or a plain «Enviar» button — is still refused.
   const SEND_CAPABILITY =
     /gmail\.googleapis|googleapis\.com\/gmail|\/v2\/commands\/(?:send|approve|activate|dispatch)|>\s*Enviar(?:\s+campaña)?\s*</i;
+  // Owner decision 2026-10-16 (Cotizador): «Aprobar» freezes a quote revision's prices
+  // (/v2/commands/approve-quote-revision). It sends nothing: the PDF and the email are separate.
   const withoutSanctionedTestSend = (text: string) =>
-    text.replace(/\/v2\/commands\/send-campaign-test(?![\w-])/g, "");
+    text
+      .replace(/\/v2\/commands\/send-campaign-test(?![\w-])/g, "")
+      .replace(/\/v2\/commands\/approve-quote-revision(?![\w-])/g, "");
 
   it("has no send capability except the admin-only test send of one campaign to one address", () => {
     const hits = entries
@@ -312,5 +344,17 @@ describe("dashboard read-only policy", () => {
       expect(SEND_CAPABILITY.test(withoutSanctionedTestSend(`"${probe}"`)), probe).toBe(true);
     }
     expect(SEND_CAPABILITY.test(withoutSanctionedTestSend(`"/v2/commands/send-campaign-test"`))).toBe(false);
+  });
+
+  it("carves out exactly the quote-approval path, never a longer one that starts with it", () => {
+    for (const probe of [
+      "/v2/commands/approve-quote-revision-and-send",
+      "/v2/commands/approve-quote-revision_all",
+      "/v2/commands/approve-quote-revisions",
+      "/v2/commands/approve-campaign",
+    ]) {
+      expect(SEND_CAPABILITY.test(withoutSanctionedTestSend(`"${probe}"`)), probe).toBe(true);
+    }
+    expect(SEND_CAPABILITY.test(withoutSanctionedTestSend(`"/v2/commands/approve-quote-revision"`))).toBe(false);
   });
 });
