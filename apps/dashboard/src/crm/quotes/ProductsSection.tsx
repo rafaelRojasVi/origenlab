@@ -1,8 +1,8 @@
 /**
  * The Cotizador's «Productos» card (canvas): search the catalog, take a suggestion («Suele ir con
  * <principal>:» from the case's kits, «Mencionado en el correo:» from its emails) or add a free
- * line, then edit each line in the table. «Vista cliente» (ruling B7) hides costs, recargo and
- * margin, for sharing the screen with the client.
+ * line, then edit each line in the table. «Vista cliente» (ruling B7, switched in the page's
+ * header) hides costs, recargo and margin, for sharing the screen with the client.
  *
  * Every number in the table is the API's `computed` (preview, save or workspace). A row finds its
  * priced line by its client-only `uid` in `computedKeys` (the draft that `computed` priced), never
@@ -65,7 +65,6 @@ export function ProductsSection({
   invalid,
   disabled,
   clientView,
-  onClientViewChange,
   edit,
   loadIndex = loadCatalogIndex,
 }: {
@@ -78,8 +77,8 @@ export function ProductsSection({
   stale: boolean;
   invalid: DraftProblem[];
   disabled: boolean;
+  /** «Vista cliente», switched in the page's header. */
   clientView: boolean;
-  onClientViewChange: (on: boolean) => void;
   edit: (fn: (draft: QuoteDraft) => QuoteDraft) => void;
   loadIndex?: () => Promise<CatalogIndex>;
 }) {
@@ -142,21 +141,9 @@ export function ProductsSection({
         <h2 id="cotizador-productos" className="text-[17px] font-semibold text-ink">
           Productos
         </h2>
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-[12.5px] text-ink-muted">
-            {clientView ? "Vista cliente: sin costos ni márgenes" : "Costos y márgenes: sólo ventas y administración"}
-          </span>
-          <button
-            type="button"
-            aria-pressed={clientView}
-            onClick={() => onClientViewChange(!clientView)}
-            className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-[13px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
-              clientView ? "border-brand-700 bg-brand-700 text-white" : "border-line-strong bg-canvas-raised text-ink hover:bg-canvas-sunken"
-            }`}
-          >
-            Vista cliente
-          </button>
-        </div>
+        <span className="text-[12.5px] text-ink-muted">
+          {clientView ? "Vista cliente: sin costos ni márgenes" : "Costos y márgenes: sólo ventas y administración"}
+        </span>
       </header>
 
       <div className="flex flex-col gap-2.5 px-5 pb-3.5">

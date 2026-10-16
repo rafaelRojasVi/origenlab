@@ -71,6 +71,17 @@ export function isConflict(error: unknown): boolean {
   return !!e && e.status === 409 && e.code === "stale_version";
 }
 
+/** The revision is no draft any more (approved or voided in another tab), or is gone: no save will ever succeed. */
+export function isGone(error: unknown): boolean {
+  const e = error as { status?: unknown; code?: unknown } | null;
+  return !!e && ((e.status === 409 && e.code === "not_a_draft") || (e.status === 404 && e.code === "revision_not_found"));
+}
+
+/** A refusal that freezes the editor until it reloads: someone else's save, or a draft that is no draft any more. */
+export function freezesEditor(error: unknown): boolean {
+  return isConflict(error) || isGone(error);
+}
+
 const EMPTY_DRAFT: QuoteDraft = {
   items: [],
   manual_expenses: [],
@@ -238,7 +249,7 @@ export function draftReducer(state: DraftEditorState, action: DraftAction): Draf
     case "saveFailed":
       return {
         ...state,
-        saveState: isConflict(action.error) ? "conflict" : "error",
+        saveState: freezesEditor(action.error) ? "conflict" : "error",
         error: action.error,
         savingSeq: null,
         savingKeys: null,

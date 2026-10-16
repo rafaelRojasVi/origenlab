@@ -3,13 +3,14 @@
  * invented. A viewer is refused by the API (403 `role_may_not_view_costs`); a missing quote is a 404.
  */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { clearCatalogIndexMemory } from "../catalog/catalogIndex";
 import type { QuoteDraft } from "../quotes/quoteApi";
 import { computedFixture, workspaceFixture } from "../quotes/quoteFixtures";
+import { SAVE_DELAY_MS } from "../quotes/useQuoteDraft";
 import { Toaster } from "../ui";
 import { clearResourceCache } from "../useResource";
 import { CotizadorPage } from "./CotizadorPage";
@@ -82,6 +83,7 @@ function renderPage(role = "sales", quoteId: string | null = QUOTE_ID) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   clearResourceCache();
   clearCatalogIndexMemory();
@@ -214,6 +216,20 @@ function stubApi(
   return calls;
 }
 
+/**
+ * The autosave waits SAVE_DELAY_MS after the last edit. Tests that need it do not wait on the wall
+ * clock: the page's timers are fake (and still advance, so Testing Library's polling runs), and
+ * `autosave()` moves them past the delay at once.
+ */
+function fakeTimers() {
+  vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["setTimeout", "clearTimeout"] });
+}
+async function autosave() {
+  await act(async () => {
+    vi.advanceTimersByTime(SAVE_DELAY_MS + 50);
+  });
+}
+
 describe("Cotizador page — the draft editor", () => {
   it("shows the client and the products of an authored draft, saved", async () => {
     stubApi(() => json({}));
@@ -226,33 +242,39 @@ describe("Cotizador page — the draft editor", () => {
   });
 
   it("saves an edit by itself and says so", async () => {
+    fakeTimers();
     const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }));
     renderPage();
     const qty = await screen.findByLabelText("Cantidad de la línea 1");
     fireEvent.focus(qty);
     fireEvent.change(qty, { target: { value: "3" } });
     expect(screen.getByText("sin guardar")).toBeInTheDocument();
-    expect(await screen.findByText(/guardado automáticamente hace \d+ s/, undefined, { timeout: 3000 })).toBeInTheDocument();
+    await autosave();
+    expect(await screen.findByText(/guardado automáticamente hace \d+ s/)).toBeInTheDocument();
     const save = calls.find((c) => c.path === "/v2/commands/save-quote-draft");
     expect(save?.body).toMatchObject({ revision_id: "r-1", expected_version: 3 });
     expect((save?.body as { draft: { items: { quantity: string }[] } }).draft.items[0].quantity).toBe("3");
   });
 
   it("offers a retry when the save fails", async () => {
+    fakeTimers();
     stubApi((n) => (n === 1 ? json({ detail: "boom" }, 500) : json({ revision_id: "r-1", version: 4, computed: computedFixture() })));
     renderPage();
     fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
-    const retry = await screen.findByRole("button", { name: "Reintentar" }, { timeout: 3000 });
+    await autosave();
+    const retry = await screen.findByRole("button", { name: "Reintentar" });
     expect(screen.queryByText(/boom/)).not.toBeInTheDocument();
     fireEvent.click(retry);
     expect(await screen.findByText(/guardado automáticamente/)).toBeInTheDocument();
   });
 
   it("stops on someone else's save and reloads on «Ver cambios»", async () => {
+    fakeTimers();
     const calls = stubApi(() => json({ detail: { code: "stale_version", message: "otra versión" } }, 409));
     renderPage();
     fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
-    expect(await screen.findByText("Otra persona cambió este borrador.", undefined, { timeout: 3000 })).toBeInTheDocument();
+    await autosave();
+    expect(await screen.findByText("Otra persona cambió este borrador.")).toBeInTheDocument();
     expect(screen.getByLabelText("Cantidad de la línea 1")).toBeDisabled();
     const reads = calls.filter((c) => c.path === `/v2/quotes/${QUOTE_ID}`).length;
     fireEvent.click(screen.getByRole("button", { name: "Ver cambios" }));
@@ -272,6 +294,7 @@ describe("Cotizador page — the draft editor", () => {
   });
 
   it("saves a condition and a switch to manual expenses, without the editor's row ids", async () => {
+    fakeTimers();
     const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }));
     renderPage();
     // «Editar montos» first: once an edit is waiting for its price, it waits too (nothing stale is copied).
@@ -280,7 +303,8 @@ describe("Cotizador page — the draft editor", () => {
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar otra condición" }));
     fireEvent.change(screen.getByLabelText("Nombre de la condición 1"), { target: { value: "Embalaje" } });
     fireEvent.change(screen.getByLabelText("Texto de la condición 1"), { target: { value: "Caja de madera" } });
-    expect(await screen.findByText(/guardado automáticamente/, undefined, { timeout: 3000 })).toBeInTheDocument();
+    await autosave();
+    expect(await screen.findByText(/guardado automáticamente/)).toBeInTheDocument();
     const save = calls.filter((c) => c.path === "/v2/commands/save-quote-draft").pop();
     const sent = (save?.body as { draft: QuoteDraft }).draft;
     expect(sent.expense_method).toBe("manual");
@@ -293,28 +317,34 @@ describe("Cotizador page — the draft editor", () => {
   });
 
   it("keeps the expenses and conditions read-only after someone else's save", async () => {
+    fakeTimers();
     stubApi(() => json({ detail: { code: "stale_version", message: "otra versión" } }, 409));
     renderPage();
     fireEvent.change(await screen.findByLabelText("Plazo de entrega"), { target: { value: "4 semanas" } });
-    expect(await screen.findByText("Otra persona cambió este borrador.", undefined, { timeout: 3000 })).toBeInTheDocument();
+    await autosave();
+    expect(await screen.findByText("Otra persona cambió este borrador.")).toBeInTheDocument();
     expect(screen.getByLabelText("Plazo de entrega")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Perfil" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Editar montos" })).not.toBeInTheDocument();
   });
 
   it("shows a refused recipient under «Para», and points the save line there", async () => {
+    fakeTimers();
     stubApi(() => json({ detail: { code: "recipient_own_address", message: "Esa dirección es de OrigenLab." } }, 422));
     renderPage();
     fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
-    expect(await screen.findByText("Esa dirección es de OrigenLab.", undefined, { timeout: 3000 })).toBeInTheDocument();
+    await autosave();
+    expect(await screen.findByText("Esa dirección es de OrigenLab.")).toBeInTheDocument();
     expect(screen.getByText(/no se pudo guardar: revisa «Para»/)).toBeInTheDocument();
   });
 
   it("says the server's reason for any other refusal", async () => {
+    fakeTimers();
     stubApi(() => json({ detail: { code: "numbering_not_configured", message: "Falta configurar la numeración." } }, 422));
     renderPage();
     fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
-    expect(await screen.findByText(/no se pudo guardar: Falta configurar la numeración\./, undefined, { timeout: 3000 })).toBeInTheDocument();
+    await autosave();
+    expect(await screen.findByText(/no se pudo guardar: Falta configurar la numeración\./)).toBeInTheDocument();
   });
 
   it("shows the totals and the margin beside the editor, and hides the margin in «Vista cliente»", async () => {
@@ -716,5 +746,183 @@ describe("Cotizador page — leaving with unsaved edits (Review Focus 5)", () =>
     const navigate = renderPage();
     fireEvent.click(await screen.findByRole("link", { name: /Caso de prueba/ }));
     expect(navigate).toHaveBeenCalledWith("oportunidades", CASE_ID);
+  });
+});
+
+/* ── final review wave ─────────────────────────────────────────────────────── */
+
+describe("Cotizador page — refusals in Spanish", () => {
+  it("says an English save refusal in Spanish, never the API's words", async () => {
+    fakeTimers();
+    stubApi(() => json({ detail: { code: "product_not_found", message: "no such product" } }, 404));
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
+    await autosave();
+    expect(await screen.findByText(/no se pudo guardar: Un producto de la cotización ya no está en el catálogo/)).toBeInTheDocument();
+    expect(screen.queryByText(/no such product/)).not.toBeInTheDocument();
+  });
+
+  it("says an English recipient refusal in Spanish under «Para»", async () => {
+    fakeTimers();
+    stubApi(() => json({ detail: { code: "recipient_not_on_case", message: "the recipient is not a current participant of this case" } }, 422));
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
+    await autosave();
+    expect(await screen.findByText("Esa persona ya no participa en el caso; elige otra.")).toBeInTheDocument();
+    expect(screen.getByText(/no se pudo guardar: revisa «Para»/)).toBeInTheDocument();
+    expect(screen.queryByText(/not a current participant/)).not.toBeInTheDocument();
+  });
+
+  it("says an English void refusal in Spanish, in the dialog", async () => {
+    stubApi(() => json({}), () => issuedWorkspace(), {
+      [VOID]: () => json({ detail: { code: "superseded", message: "superseded by a later revision" } }, 409),
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Anular" }));
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.change(within(dialog).getByLabelText(/Motivo/), { target: { value: "Error" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Anular" }));
+    expect(await within(dialog).findByText("Ya fue reemplazada por una revisión posterior.")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/superseded by/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Cotizador page — approved or voided in another tab (I6)", () => {
+  for (const [code, status] of [["not_a_draft", 409], ["revision_not_found", 404]] as const) {
+    it(`a save refused with ${code} freezes the editor and offers the current state`, async () => {
+      fakeTimers();
+      let saves = 0;
+      const calls = stubApi(() => {
+        saves += 1;
+        return json({ detail: { code, message: "only a draft revision is edited" } }, status);
+      });
+      renderPage();
+      fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
+      await autosave();
+      expect(await screen.findByText("Esta cotización cambió en otra pestaña (se aprobó o anuló).")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Cantidad de la línea 1")).toBeDisabled();
+      // Nothing more is sent: no endless retries.
+      await autosave();
+      expect(saves).toBe(1);
+      const reads = calls.filter((c) => c.path === `/v2/quotes/${QUOTE_ID}`).length;
+      fireEvent.click(screen.getByRole("button", { name: "Ver estado actual" }));
+      await waitFor(() => expect(calls.filter((c) => c.path === `/v2/quotes/${QUOTE_ID}`).length).toBe(reads + 1));
+      await waitFor(() => expect(screen.queryByText("Esta cotización cambió en otra pestaña (se aprobó o anuló).")).not.toBeInTheDocument());
+    });
+  }
+});
+
+describe("Cotizador page — «Vista cliente» in the header, on every view (I3)", () => {
+  const history = {
+    model_key: "AG100",
+    median_last_5: "1100000",
+    items: [{ date: "2025-06-02", line_total: "1200000", qty: "1", unit_price: "1200000", currency: "CLP", check_status: null, client_type: "private_company", document_number: "00002-25", case: null }],
+  };
+
+  it("an issued revision in «Vista cliente» shows no cost, margin or past prices", async () => {
+    stubApi(() => json({}), () => ({ ...issuedWorkspace(), price_history: history }));
+    renderPage();
+    await screen.findByRole("table", { name: "Líneas aprobadas" });
+    expect(screen.getByRole("region", { name: "Agitador de prueba antes" })).toBeInTheDocument();
+    const toggle = within(screen.getByTestId("cotizador-actions")).getByRole("button", { name: "Vista cliente" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("region", { name: "Agitador de prueba antes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Avisos" })).not.toBeInTheDocument();
+    const page = document.body.textContent ?? "";
+    for (const internal of [/costo/i, /margen/i, /recargo/i, /mediana/i, /Empresa privada/, /\bantes\b/]) expect(page).not.toMatch(internal);
+    // The client's side stays.
+    expect(screen.getByRole("region", { name: "Totales" })).toBeInTheDocument();
+    expect(screen.getByText("Agitador de prueba")).toBeInTheDocument();
+  });
+
+  it("the draft's toggle is in the header too", async () => {
+    stubApi(() => json({}));
+    renderPage();
+    await screen.findByRole("heading", { level: 2, name: "Productos" });
+    const toggle = within(screen.getByTestId("cotizador-actions")).getByRole("button", { name: "Vista cliente" });
+    fireEvent.click(toggle);
+    expect(screen.queryByRole("columnheader", { name: "Costo unit." })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Vista cliente" })).toHaveLength(1);
+  });
+
+  it("hides approval's reasons in «Vista cliente» (they speak of costs)", async () => {
+    stubApi(() => json({}), editableWorkspace, {
+      [APPROVE]: () => json({ detail: { code: "unpriced_line", message: "La línea 1 no tiene precio (falta costo o precio)." } }, 409),
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Aprobar" }));
+    expect(await screen.findByRole("alert", { name: "No se pudo aprobar" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Vista cliente" }));
+    expect(screen.queryByRole("alert", { name: "No se pudo aprobar" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Cotizador page — voiding an older revision with the draft open (I4)", () => {
+  const withDraft = () => {
+    const ws = editableWorkspace();
+    return {
+      ...ws,
+      revisions: revisionsOf([
+        { id: "r-0", revision_no: 1, status: "approved", version: 3, grand_total: "595000" },
+        { id: "r-1", revision_no: 2, status: "draft" },
+      ]),
+      current: { ...ws.current!, id: "r-1", revision_no: 2, label: "00042A-26" },
+    };
+  };
+
+  async function voidOlder() {
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Revisiones" })).getByRole("button", { name: /CN00042\b.*Aprobada/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Anular CN00042" }));
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.change(within(dialog).getByLabelText(/Motivo/), { target: { value: "Duplicada" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Anular" }));
+  }
+
+  it("saves the draft's pending edits first", async () => {
+    const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture() }), withDraft, {
+      [VOID]: () => json({ ok: true, revision_id: "r-0", version: 4 }),
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "3" } });
+    await voidOlder();
+    await waitFor(() => expect(calls.some((c) => c.path === VOID)).toBe(true));
+    const posts = calls.filter((c) => c.method === "POST" && c.path.startsWith("/v2/commands/")).map((c) => c.path);
+    expect(posts).toEqual(["/v2/commands/save-quote-draft", VOID]);
+    expect(calls.find((c) => c.path === VOID)?.body).toMatchObject({ revision_id: "r-0", expected_version: 3 });
+  });
+
+  it("asks before voiding when the draft's edits cannot be saved, and keeps them when told not to", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const calls = stubApi(() => json({}), withDraft, { [VOID]: () => json({ ok: true, revision_id: "r-0", version: 4 }) });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "" } });
+    await voidOlder();
+    await waitFor(() => expect(confirm).toHaveBeenCalledWith("Hay cambios sin guardar en el borrador. ¿Anular igual?"));
+    expect(calls.some((c) => c.path === VOID)).toBe(false);
+    // The edit is still there.
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Revisiones" })).getByRole("button", { name: /CN00042A/ }));
+    expect(screen.getByLabelText("Cantidad de la línea 1")).toHaveValue("");
+    confirm.mockRestore();
+  });
+});
+
+describe("Cotizador page — while a command runs (M1)", () => {
+  it("the editor's inputs are off while approving", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    stubApi(() => json({}), (read) => (read === 1 ? editableWorkspace() : issuedWorkspace()), { [APPROVE]: () => held.then(() => approved()) });
+    renderPage();
+    const qty = await screen.findByLabelText("Cantidad de la línea 1");
+    expect(qty).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Aprobar" }));
+    await waitFor(() => expect(screen.getByLabelText("Cantidad de la línea 1")).toBeDisabled());
+    expect(screen.getByLabelText("Plazo de entrega")).toBeDisabled();
+    release();
+    expect(await screen.findByText("Cotización aprobada · CN00042")).toBeInTheDocument();
   });
 });

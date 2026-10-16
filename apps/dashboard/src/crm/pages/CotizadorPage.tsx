@@ -3,7 +3,7 @@ import { OperatorApiError } from "../../api/operatorClient";
 import { Badge, Button, ConfirmDialog, Skeleton, toast } from "../ui";
 import { crmHash, type CrmSection } from "../crmRoute";
 import { ClientSection } from "../quotes/ClientSection";
-import { isEditable } from "../quotes/draftEditor";
+import { isEditable, isGone } from "../quotes/draftEditor";
 import { ExpensesSection } from "../quotes/ExpensesSection";
 import { IssuedView, RevisionSummary, RevisionSwitcher, statusOf } from "../quotes/IssuedView";
 import { ProductsSection } from "../quotes/ProductsSection";
@@ -16,6 +16,7 @@ import {
   type QuoteWorkspace,
 } from "../quotes/quoteApi";
 import { quoteLabel } from "../quotes/quoteLabel";
+import { quoteRefusalLines, quoteRefusalText } from "../quotes/quoteRefusal";
 import { SaveStatus } from "../quotes/SaveStatus";
 import { SummaryRail } from "../quotes/SummaryRail";
 import { TermsSection } from "../quotes/TermsSection";
@@ -30,16 +31,21 @@ import { useResource } from "../useResource";
  *
  * An authored draft is edited in place (`useQuoteDraft`: live preview, autosave); the header says
  * whether it is saved. The right rail (`SummaryRail`) shows the totals, margin, exchange rates,
- * warnings and the principal model's past prices. «Vista cliente» (B7) hides costs and margins,
- * the whole «Gastos de importación» card and the rail's internal cards, for screen sharing.
+ * warnings and the principal model's past prices. «Vista cliente» (B7), in the header for the draft
+ * and an issued revision alike, hides costs and margins, the whole «Gastos de importación» card,
+ * the rail's internal cards and approval's reasons, for screen sharing. Refusals are said in
+ * Spanish (`quoteRefusalText`).
  *
  * Commands (Task 7): «Aprobar» saves what is pending first and approves with the version that
  * save returned (Review Focus 3); the API's reasons for refusing are listed under the header.
  * An issued revision is read-only (`IssuedView`); «Nueva revisión» opens the next draft and
  * «Anular» voids a draft or an approved revision with a reason. With more than one revision a
  * list lets the operator look at an older one (its summary: the workspace details the current one
- * only). The way back to the case saves pending edits first, and asks before leaving edits that
- * cannot be saved (an incomplete draft, a failed save, a conflict).
+ * only). Voiding any revision saves the draft's pending edits first, and asks before voiding over
+ * edits that cannot be saved. The way back to the case saves pending edits first, and asks before
+ * leaving edits that cannot be saved (an incomplete draft, a failed save, a conflict). While a
+ * command runs, the editor's inputs are off. A draft approved or voided in another tab freezes the
+ * editor like a conflict.
  */
 type Navigate = (section: CrmSection, id?: string | null) => void;
 
@@ -120,28 +126,13 @@ function isRecipientRefusal(code: string | null): boolean {
   return !!code && (code.startsWith("recipient_") || code === "labdelivery_refused");
 }
 
-/** English API messages the page says in Spanish; every other refusal is shown in the API's words. */
-const SPANISH: Record<string, string> = {
-  stale_version: "Otra persona cambió esta cotización. Recarga la página para ver la versión guardada.",
-  draft_open: "Ya hay un borrador abierto: edítalo o anúlalo primero.",
-  nothing_to_revise: "No hay una revisión aprobada o enviada desde la cual empezar otra.",
-  already_void: "Esta revisión ya está anulada.",
-  not_authored: "Una cotización histórica no se anula desde aquí.",
-  revision_not_found: "Esta revisión ya no existe.",
-  quote_not_found: "Esta cotización ya no existe.",
-};
-
 /**
- * What to say about a refusal, as a list: the API joins several reasons with « · ». A body that is
- * not the API's envelope (a proxy page, a network failure) is not shown; `fallback` is said instead.
+ * What to say about a refusal, as a list, in Spanish (`quoteRefusalLines`: approval joins several
+ * reasons with « · »). A body that is not the API's envelope (a proxy page, a network failure) is
+ * not shown; `fallback` is said instead.
  */
 function refusalLines(e: unknown, fallback: string): string[] {
-  if (e instanceof QuoteRefusal) {
-    if (!e.code) return [fallback];
-    if (SPANISH[e.code]) return [SPANISH[e.code]];
-    const parts = e.message.split(" · ").map((t) => t.trim()).filter(Boolean);
-    return parts.length ? parts : [fallback];
-  }
+  if (e instanceof QuoteRefusal) return quoteRefusalLines(e, fallback);
   // The editor's own Spanish reasons (an incomplete draft, a save that did not go through).
   if (e instanceof Error && e.constructor === Error && !(e instanceof OperatorApiError)) return [e.message];
   return [fallback];
@@ -189,11 +180,15 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
   const ws = state.workspace;
   const cur = ws.current;
   const authored = isEditable(ws);
-  const disabled = !editor.editable;
+  // M1: nothing is edited while a command runs on this quote.
+  const commandRunning = approving || revising || voiding;
+  const disabled = !editor.editable || commandRunning;
   const refusal = state.error instanceof QuoteRefusal ? state.error : null;
-  const recipientRefusal = refusal && isRecipientRefusal(refusal.code) ? refusal.message : null;
-  // Only an API envelope's message is the server's words; a bare body (a proxy error page) is not shown.
-  const saveMessage = recipientRefusal ? "revisa «Para»" : refusal?.code ? refusal.message : null;
+  const recipientRefusal = refusal && isRecipientRefusal(refusal.code) ? quoteRefusalText(refusal) : null;
+  // In Spanish; a bare body (a proxy error page) has no code and is not shown.
+  const saveMessage = recipientRefusal ? "revisa «Para»" : refusal?.code ? quoteRefusalText(refusal) : null;
+  const frozen = state.saveState === "conflict";
+  const gone = frozen && isGone(state.error);
   const viewed = viewingId && viewingId !== cur?.id ? ws.revisions.find((r) => r.id === viewingId) ?? null : null;
   const labelOf = (revisionNo: number, label?: string | null) =>
     quoteLabel({ label, quote_number: ws.quote.quote_number, revision_no: revisionNo });
@@ -205,7 +200,9 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
   lossRef.current = !editor.pending
     ? null
     : state.saveState === "conflict"
-      ? "Tus últimos cambios en la cotización no se guardaron: otra persona la había cambiado."
+      ? isGone(state.error)
+        ? "Tus últimos cambios en la cotización no se guardaron: se aprobó o anuló en otra pestaña."
+        : "Tus últimos cambios en la cotización no se guardaron: otra persona la había cambiado."
       : editor.invalid.length > 0
         ? "Tus últimos cambios en la cotización no se guardaron: el borrador estaba incompleto."
         : null;
@@ -265,8 +262,14 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
     setVoiding(true);
     setVoidError(null);
     try {
-      // A draft's pending save goes first: voiding needs its latest version.
-      const version = target.currentDraft ? (await editor.flush()).version : target.version;
+      // The draft's pending save always goes first: voiding the draft needs its latest version, and
+      // voiding an older revision reloads the page, which would drop edits not saved yet (I4).
+      const flushed = await editor.flush().catch(() => ({ ok: false, version: state.version }));
+      if (!target.currentDraft && !flushed.ok && editor.pending && !window.confirm("Hay cambios sin guardar en el borrador. ¿Anular igual?")) {
+        setVoidTarget(null);
+        return;
+      }
+      const version = target.currentDraft ? flushed.version : target.version;
       const why = reason.trim();
       await voidQuoteRevision(target.id, version, why, voidKey.for(`${target.id}@${version}@${why}`));
       voidKey.done();
@@ -300,14 +303,17 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
   };
 
   const currentLabel = cur ? labelOf(cur.revision_no, cur.label) : labelOf(1);
+  // I3: «Vista cliente» is the page's, for the draft and an issued revision alike.
+  const clientToggle = cur ? <ClientViewToggle on={clientView} onChange={setClientView} /> : null;
   const actions = cur ? (
     authored ? (
       <>
+        {clientToggle}
         {voidable(cur) ? (
           <Button
             variant="danger"
             className="min-h-[44px] px-4 text-[14px]"
-            disabled={approving}
+            disabled={commandRunning}
             onClick={() => askVoid({ id: cur.id, label: currentLabel, status: cur.status, version: state.version, currentDraft: true })}
           >
             Anular
@@ -327,7 +333,7 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
           className="min-h-[44px] px-[18px] text-[14px]"
           busy={approving}
           busyLabel="Aprobando…"
-          disabled={!editor.editable}
+          disabled={!editor.editable || revising || voiding}
           onClick={() => void approve()}
         >
           Aprobar
@@ -335,11 +341,12 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
       </>
     ) : (
       <>
+        {clientToggle}
         {voidable(cur) ? (
           <Button
             variant="danger"
             className="min-h-[44px] px-4 text-[14px]"
-            disabled={revising}
+            disabled={commandRunning}
             onClick={() => askVoid({ id: cur.id, label: currentLabel, status: cur.status, version: cur.version, currentDraft: false })}
           >
             Anular
@@ -351,6 +358,7 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
             className="min-h-[44px] px-[18px] text-[14px]"
             busy={revising}
             busyLabel="Abriendo…"
+            disabled={approving || voiding}
             onClick={() => void revise()}
           >
             Nueva revisión
@@ -379,8 +387,9 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
           ) : null
         }
       />
-      {problems && state.saveState !== "conflict" ? <ProblemList problems={problems} /> : null}
-      {state.saveState === "conflict" ? <ConflictBanner onReload={editor.reload} /> : null}
+      {/* Approval's reasons speak of costs and prices: not in «Vista cliente». */}
+      {problems && !frozen && !clientView ? <ProblemList problems={problems} /> : null}
+      {frozen ? <ConflictBanner gone={gone} onReload={editor.reload} /> : null}
       <RevisionSwitcher workspace={ws} selectedId={viewed ? viewed.id : cur?.id ?? null} onSelect={(id) => setViewingId(id === cur?.id ? null : id)} />
       {viewed ? (
         <RevisionSummary
@@ -391,6 +400,7 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
               <Button
                 variant="danger"
                 className="min-h-[44px] px-4 text-[14px]"
+                disabled={commandRunning}
                 aria-label={`Anular ${labelOf(viewed.revision_no, viewed.label)}`}
                 onClick={() =>
                   askVoid({ id: viewed.id, label: labelOf(viewed.revision_no, viewed.label), status: viewed.status, version: viewed.version, currentDraft: false })
@@ -422,7 +432,6 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
                 invalid={editor.invalid}
                 disabled={disabled}
                 clientView={clientView}
-                onClientViewChange={setClientView}
                 edit={editor.edit}
               />
               {/* Internal: import expenses are never shown to the client, not even in screen sharing. */}
@@ -490,14 +499,22 @@ function ProblemList({ problems }: { problems: Problems }) {
   );
 }
 
-/** B3: someone else saved this draft; nothing more is sent until the operator loads their version. */
-function ConflictBanner({ onReload }: { onReload: () => Promise<unknown> }) {
+/**
+ * B3: someone else saved this draft; nothing more is sent until the operator loads their version.
+ * I6 (`gone`): the draft was approved or voided in another tab, so no save can succeed — the same
+ * freeze, and the way out is the quote's current state.
+ */
+function ConflictBanner({ gone, onReload }: { gone: boolean; onReload: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
   return (
     <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warn/30 bg-warn-bg px-4 py-3">
       <div>
-        <p className="text-[13px] font-semibold text-warn">Otra persona cambió este borrador.</p>
-        <p className="mt-0.5 text-xs text-ink-muted">Tus últimos cambios no se guardaron. Abre la versión guardada para seguir.</p>
+        <p className="text-[13px] font-semibold text-warn">
+          {gone ? "Esta cotización cambió en otra pestaña (se aprobó o anuló)." : "Otra persona cambió este borrador."}
+        </p>
+        <p className="mt-0.5 text-xs text-ink-muted">
+          {gone ? "Tus últimos cambios no se guardaron: el borrador ya no se puede editar." : "Tus últimos cambios no se guardaron. Abre la versión guardada para seguir."}
+        </p>
       </div>
       <Button
         variant="primary"
@@ -507,13 +524,30 @@ function ConflictBanner({ onReload }: { onReload: () => Promise<unknown> }) {
         onClick={() => {
           setBusy(true);
           onReload()
-            .catch((e: unknown) => toast(e instanceof Error ? e.message : "No se pudo abrir la versión guardada.", "bad"))
+            .catch((e: unknown) => toast(quoteRefusalText(e, "No se pudo abrir la versión guardada."), "bad"))
             .finally(() => setBusy(false));
         }}
       >
-        Ver cambios
+        {gone ? "Ver estado actual" : "Ver cambios"}
       </Button>
     </div>
+  );
+}
+
+/** «Vista cliente» (B7): hides costs, margins and internal cards, for sharing the screen with the client. */
+function ClientViewToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      title={on ? "Vista cliente: sin costos ni márgenes" : "Oculta costos y márgenes para compartir la pantalla"}
+      onClick={() => onChange(!on)}
+      className={`inline-flex min-h-[44px] items-center gap-2 rounded-md border px-4 text-[14px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+        on ? "border-brand-700 bg-brand-700 text-white" : "border-line-strong bg-canvas-raised text-ink hover:bg-canvas-sunken"
+      }`}
+    >
+      Vista cliente
+    </button>
   );
 }
 

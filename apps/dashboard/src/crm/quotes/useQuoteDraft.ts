@@ -3,7 +3,7 @@ import {
   draftProblems,
   draftReducer,
   initialDraftState,
-  isConflict,
+  freezesEditor,
   isEditable,
   lineUids,
   sendableDraft,
@@ -37,7 +37,9 @@ import {
  *   no description, a cleared quantity…), nothing is previewed or saved; `invalid` lists the
  *   problems in Spanish and the state stays "dirty".
  * - Conflict: `409 stale_version` (someone else saved) freezes the editor (no edits, previews or
- *   saves) until `reload()`, which loads the workspace again and discards the local edits.
+ *   saves) until `reload()`, which loads the workspace again and discards the local edits. So do
+ *   `409 not_a_draft` and `404 revision_not_found` (approved or voided in another tab): saving
+ *   again could never succeed, so nothing is retried.
  * - Leaving: unmounting sends a pending save; `beforeunload` warns while edits are unsaved, and
  *   `pending` tells the page to guard its own navigation.
  *
@@ -159,7 +161,7 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
           const error = asError(e);
           lastErrorRef.current = error;
           dispatch({ type: "saveFailed", error });
-          if (isConflict(error)) {
+          if (freezesEditor(error)) {
             // Freeze: nothing more is sent until the operator reloads.
             stoppedRef.current = true;
             clearTimers();

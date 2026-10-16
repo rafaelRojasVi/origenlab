@@ -8,7 +8,8 @@
  * margin bar only places the API's margin on a 0–100 % scale.
  *
  * «Vista cliente» (B7) keeps the totals and the rates and hides what is internal: the margin, the
- * warnings (they speak of costs) and the past prices (other clients' names and prices).
+ * warnings (they speak of costs), the past prices (other clients' names and prices) and why a rate
+ * was set by hand. Refusals are said in Spanish (`quoteRefusalText`).
  * B4: when the saved totals are older than today's rates or parameters, a banner asks to save, and
  * «Guardar ahora» saves at once (the autosave only runs after an edit).
  */
@@ -107,7 +108,7 @@ export function SummaryRail({
     <aside aria-label="Resumen de la cotización" className="flex min-w-0 max-w-[400px] flex-[1_1_320px] flex-col gap-3.5">
       {editable ? <PricesChanged state={state} disabled={disabled} onSaveNow={onSaveNow} /> : null}
       <TotalsCard state={state} editable={editable} stale={stale} clientView={clientView} />
-      <FxCard state={state} editable={editable} disabled={disabled} edit={edit} />
+      <FxCard state={state} editable={editable} disabled={disabled} clientView={clientView} edit={edit} />
       {clientView ? null : <NoticesCard state={state} editable={editable} />}
       {clientView ? null : <HistoryCard state={state} editable={editable} index={index} loadPriceHistory={loadPriceHistory} />}
     </aside>
@@ -293,11 +294,14 @@ function FxCard({
   state,
   editable,
   disabled,
+  clientView,
   edit,
 }: {
   state: DraftEditorState;
   editable: boolean;
   disabled: boolean;
+  /** «Vista cliente»: a manual rate says «manual», not why (the reason is internal). */
+  clientView: boolean;
   edit: (fn: (draft: QuoteDraft) => QuoteDraft) => void;
 }) {
   const headingId = useId();
@@ -313,7 +317,9 @@ function FxCard({
         const override = editable ? state.draft.fx_overrides.find((o) => o.currency === r.currency) : undefined;
         const changeable = editable && (r.currency === "EUR" || r.currency === "USD");
         const source = override
-          ? `manual: ${override.reason}`
+          ? clientView
+            ? "manual"
+            : `manual: ${override.reason}`
           : [FX_SOURCE[r.source ?? ""] ?? r.source, r.as_of ? fmtDay(r.as_of) : null].filter(Boolean).join(", ");
         return (
           <div key={r.currency} className="flex flex-col gap-1">

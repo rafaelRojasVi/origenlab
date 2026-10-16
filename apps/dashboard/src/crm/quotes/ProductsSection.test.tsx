@@ -124,6 +124,11 @@ async function setup({
     latest.draft = d;
     latest.setPriced = setShown;
     return (
+      <>
+      {/* The page's header switches «Vista cliente» (CotizadorPage); here, a stand-in. */}
+      <button type="button" aria-pressed={view} onClick={() => setView((v) => !v)}>
+        Vista cliente
+      </button>
       <ProductsSection
         workspace={workspace}
         draft={d}
@@ -133,13 +138,13 @@ async function setup({
         invalid={draftProblems(d)}
         disabled={false}
         clientView={view}
-        onClientViewChange={setView}
         loadIndex={() => Promise.resolve(INDEX)}
         edit={(fn) => {
           edit(fn);
           setD((prev) => fn(prev));
         }}
       />
+      </>
     );
   }
   render(<Harness />);
@@ -290,7 +295,6 @@ describe("ProductsSection — the table", () => {
           invalid={[]}
           disabled={false}
           clientView={false}
-          onClientViewChange={() => undefined}
           loadIndex={() => Promise.resolve(INDEX)}
           edit={() => undefined}
         />,

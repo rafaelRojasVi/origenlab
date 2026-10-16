@@ -267,6 +267,15 @@ describe("SummaryRail — exchange rates", () => {
     expect(applied(state.draft).fx_overrides).toEqual([]);
   });
 
+  it("«Vista cliente» does not say why a rate was changed by hand", async () => {
+    const base = stateFor({ computed: priced({ fx: [{ currency: "EUR", clp_per_unit: "1105.5", as_of: "2026-10-16", source: "manual" }] }) });
+    const state = { ...base, draft: setFxOverride(base.draft, "EUR", "1105.5", "tasa del proveedor") };
+    setup({ state, clientView: true });
+    await settled();
+    expect(screen.queryByText(/tasa del proveedor/)).not.toBeInTheDocument();
+    expect(screen.getByText("EUR")).toBeInTheDocument();
+  });
+
   it("no change while the editor is frozen", async () => {
     setup({ disabled: true });
     await settled();

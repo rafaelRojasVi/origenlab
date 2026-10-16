@@ -304,6 +304,23 @@ describe("useQuoteDraft — autosave", () => {
 });
 
 describe("useQuoteDraft — conflicts", () => {
+  it.each([
+    [409, "not_a_draft"],
+    [404, "revision_not_found"],
+  ])("a %i %s (approved or voided elsewhere) freezes the editor like a conflict", async (status, code) => {
+    const { hook, saves, typeQty } = setup();
+    typeQty("2");
+    await advance(SAVE_DELAY_MS);
+    await act(async () => saves[0].d.reject(new QuoteRefusal(status, code, "only a draft revision is edited")));
+    await settle();
+    expect(hook.result.current.state.saveState).toBe("conflict");
+    expect(hook.result.current.editable).toBe(false);
+    typeQty("9");
+    await advance(SAVE_DELAY_MS * 3);
+    await act(async () => void (await hook.result.current.retry()));
+    expect(saves).toHaveLength(1);
+  });
+
   it("a 409 stale_version freezes the editor; reload discards local edits and resumes (B3)", async () => {
     const { hook, saves, previews, reloads, typeQty } = setup();
     typeQty("2");
