@@ -29,6 +29,8 @@ the revision as it is (`crm.quote_revision_authored_frozen`, `crm.quote_line_aut
 
 **Locks.** `create-quote` locks the case row (so a case being closed cannot get a quote in the same
 instant) and mints the number under the numbering advisory lock; its events open two new streams.
+From a client (no case named), it first takes the client's advisory lock and finds or opens the case
+under it ("create-quote for a client", below) — before the case lock and the numbering lock.
 `save-quote-draft`, `approve-quote-revision` and `void-quote-revision` lock the revision row, which
 owns the `quote_revision` stream they append to; a save that picks a recipient then holds the
 picked contact point `for update` (or the person `for share`), as `create-person` holds an address
@@ -46,6 +48,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -56,12 +59,12 @@ import psycopg
 
 from origenlab_api.quoting.engine import EngineError, EngineResult, compute
 from origenlab_api.v2.catalog.commands import _live_party, _submitted_text
-from origenlab_api.v2.catalog.keys import LabdeliveryRefused, refuse_labdelivery
-from origenlab_api.v2.command_core import CommandTransaction
+from origenlab_api.v2.catalog.keys import LabdeliveryRefused, is_labdelivery, refuse_labdelivery
+from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
 from origenlab_api.v2.commands import CommandRefused, normalize_email
-from origenlab_api.v2.crm_authoring import _create_contact_point
+from origenlab_api.v2.crm_authoring import _create_contact_point, _handle_register_organization
 from origenlab_api.v2.identity import OperatorIdentity
-from origenlab_api.v2.quotes.draft import DraftTerms, QuoteDraft
+from origenlab_api.v2.quotes.draft import DraftRecipient, DraftTerms, QuoteClient, QuoteDraft
 from origenlab_api.v2.quotes.inputs import (
     FxResolver,
     Resolved,
@@ -74,6 +77,8 @@ from origenlab_api.v2.quotes.inputs import (
     result_json,
 )
 from origenlab_api.v2.quotes.numbering import SANTIAGO, allocate_quote_number, revision_label
+from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS
+from origenlab_api.v2.quotes.reads import client_institution, client_open_cases
 from origenlab_api.v2.quotes.recipients import not_a_recipient
 
 #: Revision columns filled from `quote_default_*` text parameters when a quote is created.
@@ -156,9 +161,219 @@ def _iva(params: dict[str, Decimal | str]) -> Decimal:
     return value if isinstance(value, Decimal) and 0 <= value < 1 else _DEFAULT_IVA
 
 
+# ------------------------------------------------------------------ create-quote for a client
+#
+# `create-quote` with `client` instead of a case (spec 2026-10-16 §3, plan R1–R3): the client is
+# resolved — an institution (the survivor of a merge), a person and their institution, an email
+# address and whoever owns it, or a new institution registered as `register-organization` does —
+# and then its open cases are read with the rule the new-quote dialog shows them by
+# (`reads.client_open_cases`): exactly one is used; several are a 409 `case_choice_needed` carrying
+# them, and the operator sends the chosen one back as `opportunity_id`; none (or `new_case`) opens
+# one through `V2CaseCommandRepository._open_case_for_client`, with the institution as requesting
+# one. A person or an address becomes the quote's recipient (`_recipient_for`, the save's path).
+#
+# **Two clicks for one client at once.** The client's open cases are read under a transaction
+# advisory lock per client (`_client_lock`), so two `create-quote`s for the same client queue
+# there: the second reads after the first committed, finds the case it opened and quotes on it.
+# Two quotes, two numbers, one new case — never two cases nor a quote without one. Locks are taken
+# address → person → institution, never the other way, so two clients sharing a person or an
+# institution cannot deadlock; the numbering lock comes after all of them.
+
+_CLIENT_NOTE = "Cotización creada desde el Cotizador."
+
+
+def _client_lock(cur: Any, key: str) -> None:
+    cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"quote-client:{key}",))
+
+
+def _supplier_refused() -> CommandRefused:
+    return CommandRefused(422, "supplier_exception_required",
+                          "OrigenLab le compra a esta institución (es proveedora o fabricante); una cotización "
+                          "para ella se crea desde su caso, con la excepción justificada.")
+
+
+@dataclass
+class _Client:
+    organization_id: str | None = None
+    organization_name: str | None = None
+    person_id: str | None = None
+    contact_point_id: str | None = None
+    label: str | None = None  # names the new case when there is no institution
+    pick: DraftRecipient | None = None  # whom the quote goes to, when the client is a person or an address
+    organization_created: bool = False
+
+
+def _organization_client(self: "V2QuoteRepository", cur: Any, organization_id: str) -> tuple[str, str]:
+    """The institution (the survivor of a merge), locked as a client; refused when it is archived,
+    of Labdelivery or OrigenLab's own, or one of OrigenLab's suppliers (R3)."""
+    cur.execute("select s.id::text as id, s.name, s.status, coalesce((select array_agg(d.domain_norm) "
+                "from crm.organization_domain d where d.organization_id = s.id), '{}') as domains "
+                "from crm.organization m join crm.organization s on s.id = coalesce(m.merged_into_organization_id, m.id) "
+                "where m.id = %s::uuid", (organization_id,))
+    found = _one(cur)
+    if found is None:
+        raise CommandRefused(404, "organization_not_found", "no such organization")
+    if found["status"] != "active":
+        raise CommandRefused(409, "archived_subject", "that institution is archived")
+    if is_labdelivery(found["name"]):
+        raise CommandRefused(422, "labdelivery_refused", "input of Labdelivery origin is refused")
+    for domain in found["domains"]:
+        _keep_address_rules(f"x@{domain}")
+    if self._is_one_of_our_suppliers(cur, found["id"]):
+        raise _supplier_refused()
+    _client_lock(cur, f"organization:{found['id']}")
+    return found["id"], found["name"]
+
+
+def _with_institution(self: "V2QuoteRepository", cur: Any, client: _Client, point_organization_id: str | None) -> None:
+    """The person's (or the address's) institution, as the dialog shows it, locked as a client."""
+    found = client_institution(cur, person_id=client.person_id, point_organization_id=point_organization_id)
+    if found["organization_id"] is None:
+        return
+    if found["is_supplier"]:
+        raise _supplier_refused()
+    client.organization_id, client.organization_name = _organization_client(self, cur, found["organization_id"])
+
+
+def _person_client(self: "V2QuoteRepository", cur: Any, person_id: str) -> _Client:
+    cur.execute("select s.id::text as id, s.status, s.display_name from crm.person m "
+                "join crm.person s on s.id = coalesce(m.merged_into_person_id, m.id) where m.id = %s::uuid",
+                (person_id,))
+    found = _one(cur)
+    if found is None:
+        raise CommandRefused(404, "person_not_found", "no such person")
+    if found["status"] != "active":
+        raise CommandRefused(409, "archived_subject", "that person is archived")
+    _client_lock(cur, f"person:{found['id']}")
+    cur.execute(_PERSON_ADDRESS_SQL, (found["id"],))
+    address = _one(cur)
+    _keep_address_rules(address["value_norm"] if address else None, found["display_name"])
+    client = _Client(person_id=found["id"], label=found["display_name"],
+                     pick=DraftRecipient(person_id=found["id"]))
+    _with_institution(self, cur, client, address["organization_id"] if address else None)
+    return client
+
+
+def _address_client(self: "V2QuoteRepository", cur: Any, *, contact_point_id: str | None, email: str | None,
+                    name: str | None) -> _Client:
+    """An address — an email contact point, or an address typed — and whoever owns it."""
+    if contact_point_id is not None:
+        cur.execute("select value_norm from crm.contact_point where id = %s::uuid and kind = 'email'",
+                    (contact_point_id,))
+        found = _one(cur)
+        if found is None:
+            raise CommandRefused(404, "contact_point_not_found", "no such email contact point")
+        email = found["value_norm"]
+    assert email is not None  # noqa: S101 - QuoteClient gives exactly one
+    email = normalize_email(email)
+    _keep_address_rules(email, name)
+    _client_lock(cur, f"email:{email}")
+    cur.execute("select c.id::text as id, c.status, c.organization_id::text as organization_id, "
+                "s.id::text as person_id, s.status as person_status, s.display_name "
+                "from crm.contact_point c left join crm.person m on m.id = c.person_id "
+                "left join crm.person s on s.id = coalesce(m.merged_into_person_id, m.id) "
+                "where c.kind = 'email' and c.value_norm = %s", (email,))
+    point = _one(cur)
+    if point is None:  # an address the CRM lacks: the quote's recipient creates it
+        return _Client(label=name or email, pick=DraftRecipient(email=email, name=name))
+    if point["status"] != "active":
+        raise CommandRefused(409, "contact_point_inactive", "this email address is deactivated in the CRM")
+    _keep_address_rules(email, point["display_name"])
+    client = _Client(contact_point_id=point["id"], label=point["display_name"] or name or email,
+                     pick=DraftRecipient(contact_point_id=point["id"]))
+    if point["person_id"] is not None and point["person_status"] == "active":
+        client.person_id = point["person_id"]
+        _client_lock(cur, f"person:{point['person_id']}")
+    _with_institution(self, cur, client, point["organization_id"])
+    return client
+
+
+def _new_organization_client(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
+                             new: dict[str, Any], note: str) -> _Client:
+    """A new institution (plan R2) — or the one active institution already of that name — registered
+    through `register-organization`'s own path: classification `customer`, the email's domain (a
+    free-mail one excepted). Its email, if given, is the quote's recipient."""
+    name, email = new["name"], new.get("email")
+    if email is not None:
+        _keep_address_rules(email)
+    _client_lock(cur, f"new-organization:{name.casefold()}")
+    cur.execute("select id::text as id from crm.organization where status = 'active' "
+                "and merged_into_organization_id is null and lower(name) = lower(%s) order by created_at limit 2",
+                (name,))
+    same = _all(cur)
+    pick = DraftRecipient(email=email) if email is not None else None
+    if len(same) == 1:
+        organization_id, organization_name = _organization_client(self, cur, same[0]["id"])
+        return _Client(organization_id=organization_id, organization_name=organization_name, pick=pick)
+    domain = email.rpartition("@")[2] if email is not None else None
+    made = _handle_register_organization(self, cur, operator, {
+        "name": name, "legal_name": None, "kind": new.get("kind") or "company", "classification": "customer",
+        "domain": domain if domain and domain not in FREE_MAIL_DOMAINS else None, "product_lines": [],
+        "note": note}, receipt_id)
+    _client_lock(cur, f"organization:{made['organization_id']}")
+    return _Client(organization_id=made["organization_id"], organization_name=name, pick=pick,
+                   organization_created=True)
+
+
+def _resolve_client(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
+                    client: QuoteClient, note: str) -> _Client:
+    if client.organization_id is not None:
+        organization_id, name = _organization_client(self, cur, str(client.organization_id))
+        return _Client(organization_id=organization_id, organization_name=name)
+    if client.person_id is not None:
+        return _person_client(self, cur, str(client.person_id))
+    if client.new_organization is not None:
+        return _new_organization_client(self, cur, operator, receipt_id, client.new_organization.model_dump(), note)
+    return _address_client(self, cur, contact_point_id=str(client.contact_point_id) if client.contact_point_id else None,
+                           email=client.email, name=client.name)
+
+
+def _case_choice_needed(cases: list[dict[str, Any]]) -> CommandRefused:
+    return CommandRefused(
+        409, "case_choice_needed", "Este cliente tiene varios casos abiertos: elige uno, o abre uno nuevo.",
+        details={"candidates": [
+            {"id": c["id"], "title": c["title"], "stage": c["stage"],
+             "requested_at": c["requested_at"].isoformat() if c["requested_at"] is not None else None}
+            for c in cases]})
+
+
+def _case_for_client(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
+                     receipt_id: str) -> tuple[str, _Client, bool]:
+    """The case a client's new quote goes on, opened when needed: (case id, the client, opened)."""
+    note = fields.get("note") or _CLIENT_NOTE
+    client = _resolve_client(self, cur, operator, receipt_id, QuoteClient.model_validate(fields["client"]), note)
+    cases = client_open_cases(cur, organization_id=client.organization_id, person_id=client.person_id,
+                              contact_point_id=client.contact_point_id)
+    chosen = fields.get("opportunity_id")
+    if chosen is not None:
+        if chosen not in {c["id"] for c in cases}:
+            cur.execute("select closed_at from crm.opportunity where id = %s::uuid", (chosen,))
+            found = _one(cur)
+            if found is None:
+                raise CommandRefused(404, "case_not_found", "no such commercial case")
+            if found["closed_at"] is not None:
+                raise CommandRefused(409, "case_closed", "this case is closed; a closed case gets no new quote")
+            raise CommandRefused(422, "case_not_of_client", "Ese caso no es de este cliente.")
+        return chosen, client, False
+    if not fields.get("new_case"):
+        if len(cases) == 1:
+            return cases[0]["id"], client, False
+        if len(cases) > 1:
+            raise _case_choice_needed(cases)
+    named = client.organization_name or client.label or "Cliente"
+    opened = self._open_case_for_client(cur, operator, receipt_id, title=f"{named} — cotización"[:200],
+                                        organization_id=client.organization_id, note=note)
+    return opened["opportunity_id"], client, True
+
+
 def _handle_create_quote(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
                          fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
-    case_id = fields["opportunity_id"]
+    client: _Client | None = None
+    case_created = False
+    if fields.get("client") is not None:
+        case_id, client, case_created = _case_for_client(self, cur, operator, fields, receipt_id)
+    else:
+        case_id = fields["opportunity_id"]
     cur.execute("select id::text as id, closed_at from crm.opportunity where id = %s::uuid for update", (case_id,))
     case = _one(cur)
     if case is None:
@@ -187,21 +402,28 @@ def _handle_create_quote(self: "V2QuoteRepository", cur: Any, operator: Operator
     params = load_parameters(cur)
     defaults = {column: _text(v.strip()) if isinstance(v := params.get(key), str) else None
                 for column, key in _DEFAULT_TEXTS.items()}
-    cur.execute(_PRIMARY_PARTICIPANT_SQL, (case_id,))
-    recipient = _one(cur)
+    revision_id = str(uuid.uuid4())  # the recipient's `participant.added` names the revision it is for
+    if client is not None and client.pick is not None:
+        recipient: str | None = _recipient_for(self, cur, operator, receipt_id, client.pick, None, case_id=case_id,
+                                               revision_id=revision_id, today=santiago_today(self._clock()),
+                                               case_closed=False)
+    else:
+        cur.execute(_PRIMARY_PARTICIPANT_SQL, (case_id,))
+        primary = _one(cur)
+        recipient = primary["id"] if primary else None
     cur.execute(
         """
         insert into crm.quote_revision
-            (quote_id, revision_no, status, origin, quote_currency, price_decimals, tax_rate,
+            (id, quote_id, revision_no, status, origin, quote_currency, price_decimals, tax_rate,
              delivery_terms, payment_terms, warranty_terms_es, delivery_place_es, installation_terms_es,
              validity_days, recipient_participant_id, created_by_operator_id)
-        values (%(quote_id)s::uuid, 1, 'draft', 'authored', 'CLP', 0, %(tax_rate)s::numeric,
+        values (%(id)s::uuid, %(quote_id)s::uuid, 1, 'draft', 'authored', 'CLP', 0, %(tax_rate)s::numeric,
                 %(delivery_terms)s, %(payment_terms)s, %(warranty_terms_es)s, %(delivery_place_es)s,
                 %(installation_terms_es)s, %(validity_days)s, %(recipient)s::uuid, %(operator)s::uuid)
         returning id::text as id, version
         """,
-        {"quote_id": quote["id"], "tax_rate": _iva(params), **defaults, "validity_days": _validity_days(params),
-         "recipient": recipient["id"] if recipient else None, "operator": operator.operator_id},
+        {"id": revision_id, "quote_id": quote["id"], "tax_rate": _iva(params), **defaults,
+         "validity_days": _validity_days(params), "recipient": recipient, "operator": operator.operator_id},
     )
     revision = _one(cur)
     assert revision is not None  # noqa: S101 - `returning` on a successful insert
@@ -214,8 +436,12 @@ def _handle_create_quote(self: "V2QuoteRepository", cur: Any, operator: Operator
     self._append_event(cur, aggregate_kind="quote_revision", aggregate_id=revision["id"],
                        event_type="quote_revision.opened", payload={"quote_id": quote["id"], "revision_no": 1},
                        operator=operator, receipt_id=receipt_id)
-    return {"ok": True, "quote_id": quote["id"], "quote_number": number, "revision_id": revision["id"],
-            "version": revision["version"]}
+    out = {"ok": True, "quote_id": quote["id"], "quote_number": number, "revision_id": revision["id"],
+           "version": revision["version"], "opportunity_id": case_id}
+    if client is not None:
+        out.update({"case_created": case_created, "organization_id": client.organization_id,
+                    "organization_created": client.organization_created, "recipient_participant_id": recipient})
+    return out
 
 
 # ------------------------------------------------------------------ save-quote-draft
@@ -349,9 +575,10 @@ select id::text as id
  limit 1
 """
 
-# A person's address as a participant of theirs would print it (`_RECIPIENT_SQL`): an active one first.
+# A person's address as a participant of theirs would print it (`_RECIPIENT_SQL`): an active one first;
+# with the institution the address names, which a person with no affiliation is a client of.
 _PERSON_ADDRESS_SQL = """
-select value_norm from crm.contact_point
+select value_norm, organization_id::text as organization_id from crm.contact_point
  where kind = 'email' and person_id = %s::uuid
  order by (status = 'active') desc, created_at, id
  limit 1
@@ -383,11 +610,19 @@ def _recipient(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, 
     - For an address no person owns, the name it was picked by is kept as the participant's
       `note`; approval prints it (`_RECIPIENT_SQL`).
     """
-    case_id = revision["opportunity_id"]
     pick = draft.recipient
     picked_participant = pick.participant_id if pick is not None else draft.recipient_participant_id
     if pick is None and picked_participant is None:
         return None
+    return _recipient_for(self, cur, operator, receipt_id, pick, picked_participant,
+                          case_id=revision["opportunity_id"], revision_id=revision["id"], today=today,
+                          case_closed=case_closed)
+
+
+def _recipient_for(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
+                   pick: DraftRecipient | None, picked_participant: Any, *, case_id: str, revision_id: str,
+                   today: date, case_closed: bool) -> str:
+    """`_recipient` for one pick — also how `create-quote` makes a client the quote's recipient."""
     if picked_participant is not None:
         cur.execute(_RECIPIENT_SQL, (str(picked_participant), case_id))
         found = _one(cur)
@@ -465,7 +700,7 @@ def _recipient(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, 
                        event_type="participant.added",
                        payload={"opportunity_id": case_id, "role": "quote_recipient", "person_id": person,
                                 "contact_point_id": contact_point, "is_primary": primary,
-                                "quote_revision_id": revision["id"]},
+                                "quote_revision_id": revision_id},
                        operator=operator, receipt_id=receipt_id)
     return participant["id"]
 
@@ -987,8 +1222,10 @@ def _handle_create_quote_revision(self: "V2QuoteRepository", cur: Any, operator:
             "revision_label": label, "version": revision["version"]}
 
 
-class V2QuoteRepository(CommandTransaction):
-    """The quote commands, each in one transaction."""
+class V2QuoteRepository(V2CaseCommandRepository):
+    """The quote commands, each in one transaction. A case repository too — not for its commands
+    (`_HANDLERS` is the quotes' own) but for the moves `create-quote` reuses when it opens a case
+    for a client (`_open_case_for_client`, `_add_case_organization`, the supplier lookup)."""
 
     def __init__(self, connect: Any, dsn: str, *, fx_resolver: FxResolver, statement_timeout_ms: int = 30_000,
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:

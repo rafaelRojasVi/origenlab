@@ -153,13 +153,19 @@ class CommandRefused(Exception):
     Refusals carry a machine-readable `code` as well as a sentence, because the dashboard
     has to tell "you may not do this" apart from "somebody else already did this" without
     parsing prose.
+
+    `details`, when given, travels beside `code` and `message` in the error envelope's
+    `details` — what the operator chooses from next (e.g. `create-quote`'s candidate cases on
+    `case_choice_needed`). It never replaces `code` or `message`.
     """
 
-    def __init__(self, status_code: int, code: str, message: str) -> None:
+    def __init__(self, status_code: int, code: str, message: str,
+                 details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.details = details
 
 
 def as_uuid(value: str, what: str) -> str:

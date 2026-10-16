@@ -783,8 +783,13 @@ def test_a_cursor_the_list_did_not_issue_is_refused(world) -> None:
     def encoded(value) -> str:
         return base64.urlsafe_b64encode(json.dumps(value).encode()).decode()
 
+    moment = "2026-10-15T12:00:00+00:00"
     for bad in ("nonsense", encoded({"x": 1}), encoded(["2026-10-15T12:00:00", str(uuid.uuid4())]),
-                encoded(["2026-10-15T12:00:00+00:00", "no-uuid"]), encoded([1, 2])):
+                encoded([moment, "no-uuid"]), encoded([1, 2]),
+                # Forged types: an id that is no string, a pair that is no list, one item too many.
+                encoded([moment, 5]), encoded([moment, None]), encoded([moment, [1]]), encoded([moment, 10**40]),
+                encoded({moment: str(uuid.uuid4()), "b": 1}), encoded([moment, str(uuid.uuid4()), 1]),
+                encoded("ab"), encoded(None)):
         with pytest.raises(CommandRefused) as exc:
             _list(world, cursor=bad)
         assert (exc.value.status_code, exc.value.code) == (422, "bad_cursor")
@@ -917,3 +922,47 @@ def test_the_workspace_carries_the_preference_values_with_their_fallbacks(world)
     assert Decimal(params["markups"]["service"]) == Decimal("0.3")
     assert Decimal(params["price_deviation_warn_pct"]) == Decimal("0.15")
     assert params["markups"]["equipment"] == "0.40"
+
+
+@needs_db
+def test_a_person_is_offered_by_an_address_a_quote_may_go_to(world) -> None:
+    """Of a person's addresses, one of OrigenLab's or Labdelivery's is never the one shown when the
+    person has another (it would hide them from the list)."""
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values (%s, 'machine_proposed') "
+                         "returning id::text", (f"Carla Prueba {tag}",))[0][0]
+    for address in (f"carla-{tag}@origenlab.cl", f"carla-{tag}@labdelivery.cl", f"carla-{tag}@cliente-ficticio.test"):
+        _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                    "values ('email', %s, %s, %s, 'personal', 'machine_proposed')", (address, address, person))
+    [found] = _clients(world, f"Carla Prueba {tag}")["people"]
+    assert (found["person_id"], found["email"]) == (person, f"carla-{tag}@cliente-ficticio.test")
+
+
+@needs_db
+def test_the_command_reads_a_client_s_open_cases_as_the_dialog_shows_them(world) -> None:
+    """`client_open_cases` (what `create-quote` decides on) and the suggestions agree, uncapped."""
+    from origenlab_api.v2.quotes.reads import client_institution, client_open_cases
+
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    clinic = _org(dsn, "institution", f"Policlínico {tag}")
+    for n in range(3):
+        _titled_case(world, clinic, f"Caso {n} {tag}")
+    elsewhere = _titled_case(world, _org(dsn, "institution", "Otra"), f"Caso ajeno {tag}", participant=False)
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values (%s, 'machine_proposed') "
+                         "returning id::text", (f"Dora Prueba {tag}",))[0][0]
+    point = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                        "values ('email', %s, %s, %s, 'personal', 'machine_proposed') returning id::text",
+                   (f"dora-{tag}@cliente-ficticio.test", f"dora-{tag}@cliente-ficticio.test", person))[0][0]
+    _owner(dsn, "insert into crm.affiliation (person_id, organization_id, valid_from, confirmation) "
+                "values (%s, %s, current_date - 10, 'machine_proposed')", (person, clinic))
+    _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, person_id, role, is_primary, valid_from, "
+                "confirmation) values (%s, %s, 'end_user', false, current_date, 'machine_proposed')", (elsewhere, person))
+
+    [shown] = _clients(world, f"dora-{tag}")["people"]
+    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
+        institution = client_institution(cur, person_id=person, point_organization_id=None)
+        cases = client_open_cases(cur, organization_id=institution["organization_id"], person_id=person,
+                                  contact_point_id=point)
+    assert institution["organization_id"] == shown["organization"]["id"] == clinic
+    assert institution["is_supplier"] is False
+    assert [c["id"] for c in cases] == [c["id"] for c in shown["open_cases"]] and len(cases) == 4

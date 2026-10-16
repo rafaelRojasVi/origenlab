@@ -336,6 +336,25 @@ def test_command_refusals_surface_in_the_envelope(status, code, envelope) -> Non
     assert r.json()["error"]["code"] == envelope and r.json()["error"]["details"]["code"] == code
 
 
+def test_a_case_choice_carries_its_candidates_in_the_envelope() -> None:
+    candidates = [{"id": CASE, "title": "Caso ficticio", "stage": "lead", "requested_at": "2026-10-15T12:00:00+00:00"}]
+    refusal = CommandRefused(409, "case_choice_needed", "elige uno", details={"candidates": candidates})
+    _, _, client = _client(repo=_FakeRepo(refusal))
+    r = client.post("/v2/commands/create-quote", json={"client": {"organization_id": CASE}}, headers=_ikey())
+    assert r.status_code == 409
+    details = r.json()["error"]["details"]
+    assert (details["code"], details["message"], details["candidates"]) == ("case_choice_needed", "elige uno",
+                                                                             candidates)
+
+
+def test_details_never_replace_the_code_or_the_message() -> None:
+    from origenlab_api.v2.command_routes import _detail
+
+    refusal = CommandRefused(409, "case_choice_needed", "elige uno", details={"code": "otro", "message": "otro"})
+    assert _detail(refusal) == {"code": "case_choice_needed", "message": "elige uno"}
+    assert _detail(CommandRefused(404, "case_not_found", "no")) == {"code": "case_not_found", "message": "no"}
+
+
 # ------------------------------------------------------------------ mounting and FX wiring
 
 QUOTE_PATHS = {"/v2/quotes/numbering", "/v2/quotes/{quote_id}", "/v2/quotes/preview",

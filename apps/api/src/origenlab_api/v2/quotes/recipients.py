@@ -10,6 +10,8 @@ from origenlab_api.v2.catalog.keys import is_labdelivery
 from origenlab_api.v2.mail_rules import OWN_DOMAINS
 
 LABDELIVERY_DOMAINS: frozenset[str] = frozenset({"labdelivery.cl"})
+#: Every domain (and its subdomains) no quote goes to.
+UNOFFERABLE_DOMAINS: frozenset[str] = OWN_DOMAINS | LABDELIVERY_DOMAINS
 
 
 def _under(domain: str, domains: frozenset[str]) -> bool:

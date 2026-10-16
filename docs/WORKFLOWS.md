@@ -341,6 +341,7 @@ participant, so steps 3–5 above remain unimplemented.
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|
 | 1 | operator · `open_commercial_case` | an `evidence.source_record` that exists and is not quarantined | `crm.opportunity` at `stage = lead`, `organization_id` NULL, **and** its `origin` evidence link, in one transaction | `opportunity.created`, `case_evidence.linked` | no such record → 404; quarantined → 409 |
+| 1′ | operator · `create-quote` with a client (§W3-Cotizador; no command of its own) | the client has no open case, or the operator asked for a new one | `crm.opportunity` at `stage = lead` with **no** origin document — the quote created in the same transaction is its reason — and, when the client is an institution, its `requesting_institution` through step 3's path | `opportunity.created` (`origin_source_record_id` null) + step 3's events | a supplier/manufacturer client → `supplier_exception_required` |
 | 2 | operator · `link_case_evidence` | exactly one typed subject, which must already exist; the case is open | `crm.opportunity_evidence` row | `case_evidence.linked` | the same `(case, subject, relation)` twice → `evidence_already_linked`; a subject that does not exist → 404 |
 | 3 | operator · `add_case_organization` | the case and the institution at the versions shown; the part is not already current | `crm.opportunity_organization` row, `confirmed` with the operator named; for `requesting_institution`, `crm.opportunity.organization_id` in the same transaction | `case_organization.added` (+ `opportunity.organization_set`) | a second requester → `case_already_has_a_requesting_institution`; a registered supplier/manufacturer as requester without a motive → `supplier_exception_required`; a motive nobody needed → `supplier_exception_is_not_needed` |
 | 4 | operator · `set_case_organization_role` | the row is current and belongs to this case | a `machine_proposed` row is confirmed in place; **or** the current row is closed (`valid_to`) and a new part is opened, both in one transaction | `case_organization.role_confirmed`, or `case_organization.ended` + `case_organization.added` | already confirmed in that part → `case_organization_role_unchanged`; taking the requester away from a case at `qualified` or later → refused |
@@ -367,7 +368,7 @@ three tables are empty.
 
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|
-| 1 | operator · `create-quote` | the case exists and is open | `crm.quote` with a minted unique number, and revision 1 as an empty authored `draft` | events | closed case or numbering not configured → refused |
+| 1 | operator · `create-quote` | the case exists and is open — or a client is named and the case is found from it (the client's one open case; the one chosen among several; or a new `lead` case for it) | `crm.quote` with a minted unique number, and revision 1 as an empty authored `draft`; from a client, also the new case, institution or recipient participant it needed | events | closed case or numbering not configured → refused; several open cases and none chosen → `case_choice_needed` with the candidates; a supplier → refused |
 | 2 | operator · `create-quote-revision` | no open draft on the quote; an approved or sent authored revision to copy | the next revision as a `draft`: conditions, pricing choices, recipient and lines copied from the newest issued revision | event | an open draft → `draft_open` |
 | 3 | operator · `save-quote-draft` | revision `draft`, at the version shown | the whole draft replaced — lines, printed conditions, recipient — and priced by the engine on the server | event | not a draft → refused; a line change on an issued revision → the trigger rejects it |
 | 4 | operator · `approve-quote-revision` | `draft` (an authored revision has no `in_review` step); the stored lines reprice to their stored prices; the case has an institution; the recipient is still a current participant; no placeholder left | `approved`; totals, validity **and the party snapshot** frozen (W3b); the previous approved/sent revision gains `superseded_by_revision_no` | events | every reason joined in one refusal (W3-Cotizador) |
@@ -449,12 +450,39 @@ authored draft is approved directly.
 
 | Step | Command | What it does | Refused with |
 |---|---|---|---|
-| 1 | `create-quote` | locks the case, mints the number (DOMAIN §7.9), creates the quote and revision 1 as an empty `draft` (quote currency CLP, 0 decimals, IVA from `iva_rate`, the `quote_default_*` texts, the case's current primary participant as recipient — a `quote_recipient` by preference); events `quote.created`, `quote_revision.opened` | `case_not_found`, `case_closed`, `quote_numbering_not_configured`, `quote_numbering_exhausted` |
+| 1 | `create-quote` | locks the case, mints the number (DOMAIN §7.9), creates the quote and revision 1 as an empty `draft` (quote currency CLP, 0 decimals, IVA from `iva_rate`, the `quote_default_*` texts, the case's current primary participant as recipient — a `quote_recipient` by preference); events `quote.created`, `quote_revision.opened`. **From a client** (`client` instead of `opportunity_id`, below) it first finds or opens the case | `case_not_found`, `case_closed`, `quote_numbering_not_configured`, `quote_numbering_exhausted`; from a client also `case_choice_needed` (409, `details.candidates`), `case_not_of_client`, `supplier_exception_required`, `organization_not_found`, `person_not_found`, `contact_point_not_found`, `archived_subject`, `contact_point_inactive`, `recipient_own_address`, `labdelivery_refused` |
 | 2 | `save-quote-draft` (`expected_version`) | takes the **whole draft** (items, manual expenses, expense method, allocation mode, principal rule, FX overrides with a reason, printed terms, recipient), prices it with the engine on the server, **replaces all the revision's lines**, writes the printed and pricing columns, the totals and `version + 1`; event `quote_revision.draft_saved`. A recipient picked from the case's emails becomes a participant first (below): events `participant.added` and, for an address the CRM lacked, `contact_point.created` | `revision_not_found`, `stale_version`, `not_a_draft`, `case_closed` (only when a new recipient would be added), `recipient_not_on_case`, `recipient_unknown`, `recipient_own_address`, `contact_point_inactive`, `archived_subject`, `recipient_changed_concurrently`, `fx_unavailable`, `cost_observation_not_found`, `amount_too_large`, engine errors (`quantity_invalid`, `margin_pct_invalid`, …) as 422, `labdelivery_refused` |
 | 3 | `approve-quote-revision` (`expected_version`) | prices the **stored** lines (below), runs the approval checks, records negotiated costs, freezes totals, validity and the party snapshot (W3b), supersedes the earlier issued revision; events `quote_revision.transitioned`, `quote_revision.superseded`, `product.cost_recorded` | the reasons below; `case_closed`, `draft_needs_saving` |
 | 4 | `create-quote-revision` | copies the newest approved or sent authored revision — conditions, pricing choices, lines — into the next draft (revision 2 prints as `…A`); event `quote_revision.opened` | `draft_open`, `nothing_to_revise`, `quote_not_found`, `revision_letters_exhausted` |
 | 5 | `void-quote-revision` (`expected_version`, reason) | `draft`, `in_review` or `approved` → `void`; event `quote_revision.transitioned` with the reason | `already_sent` («Ya se envió: crea una nueva revisión.»), `already_void`, `superseded`, `not_authored`, `stale_version` |
 
+- **A quote can start from a client** (the Cotizador's «Nueva cotización», spec 2026-10-16 §3).
+  `create-quote` takes `client` instead of `opportunity_id` — exactly one of `{organization_id}`,
+  `{person_id}`, `{contact_point_id}`, `{email, name?}` or `{new_organization: {name, kind?, email?}}`
+  (kind `company` by default, or `university`, `public_institution`, `hospital`, `laboratory`,
+  `other`) — with, optionally, `opportunity_id` (the case chosen; it must be one of the client's
+  open cases, else `case_not_of_client`) or `new_case: true`. In one transaction: the client is
+  resolved — an institution as the survivor of a merge; a person (or the owner of an address) with
+  their institution, the current affiliation first, else the address's own; a new institution
+  registered as `register-organization` registers one (`confirmed`, classification `customer`,
+  the email's domain unless a free-mail one), or the one active institution already of that name.
+  An archived, Labdelivery, OrigenLab-own or supplier/manufacturer client is refused
+  (`supplier_exception_required`: a quote for a supplier is created from its case, with the
+  justified exception). Then the client's **open cases** — those whose requesting institution is
+  the institution (or a twin merged into it), and those the person or the address is a current
+  participant of; the same rule `GET /v2/quotes/clients` shows them by: exactly one → the quote
+  goes on it; several and none chosen → 409 `case_choice_needed`, nothing written (the receipt
+  neither, so the same `Idempotency-Key` can carry the choice), with
+  `details.candidates: [{id, title, stage, requested_at}]`; none, or `new_case` → a new case at
+  `lead` with no origin document, titled «‹institución› — cotización» (the person's name or the
+  address without one), owned by the operator, the institution named its `requesting_institution`
+  (events `opportunity.created`, `case_organization.added`, `opportunity.organization_set`). A
+  person or an address client becomes the quote's recipient exactly as a save's pick does (below).
+  The response adds `opportunity_id`, `case_created`, `organization_id`, `organization_created`
+  and `recipient_participant_id`. **Two creates for one client at once** queue on a per-client
+  transaction advisory lock (address → person → institution, before the numbering lock): the
+  second reads the cases after the first committed and quotes on the case it opened — two
+  quotes, two numbers, one new case.
 - **The recipient is picked from the case's people.** The workspace lists them in `case.contacts`:
   the case's current participants first, then — once each, newest email first — the sender of each
   inbound email and the recipients of each email OrigenLab sent, among the emails linked to the

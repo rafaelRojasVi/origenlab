@@ -1464,3 +1464,348 @@ def test_save_locks_the_case_before_the_quote_and_its_revision(world) -> None:
                          digest=request_digest("save-quote-draft", body))
         holder.rollback()
     assert _save(world, created, {"items": [_catalog_item(world)]})["ok"] is True
+
+
+# ------------------------------------------------------------------ create-quote for a client (plan R1–R3)
+
+def _person(dsn: str, name: str, *, address: str | None = None, organization: str | None = None) -> tuple[str, str | None]:
+    """A person (invented), with an email contact point and an affiliation when asked."""
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values (%s, 'machine_proposed') "
+                         "returning id::text", (name,))[0][0]
+    point = None
+    if address is not None:
+        point = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, "
+                            "confirmation) values ('email', %s, %s, %s, 'personal', 'machine_proposed') "
+                            "returning id::text", (address, address, person))[0][0]
+    if organization is not None:
+        _owner(dsn, "insert into crm.affiliation (person_id, organization_id, valid_from, confirmation) "
+                    "values (%s, %s, current_date - 10, 'machine_proposed')", (person, organization))
+    return person, point
+
+
+def _supplier(dsn: str, organization: str) -> None:
+    _owner(dsn, "insert into crm.organization_relationship (organization_id, role, valid_from) "
+                "values (%s, 'supplier', current_date - 30)", (organization,))
+
+
+def _tally(dsn: str) -> dict:
+    """Every row a client's create-quote may write."""
+    tables = ("crm.opportunity", "crm.opportunity_organization", "crm.opportunity_participant", "crm.quote",
+              "crm.quote_revision", "crm.organization", "crm.organization_relationship", "crm.organization_domain",
+              "crm.contact_point", "crm.domain_event", "platform.command_receipt")
+    return {t: _owner(dsn, f"select count(*) from {t}")[0][0] for t in tables}  # noqa: S608 - constants
+
+
+def _quote_case(dsn: str, quote_id: str) -> str:
+    return _owner(dsn, "select opportunity_id::text from crm.quote where id = %s", (quote_id,))[0][0]
+
+
+def _case_row(dsn: str, case: str) -> dict:
+    return _rows(dsn, "select title, stage, organization_id::text as organization_id, closed_at, "
+                      "origin_source_record_id from crm.opportunity where id = %s", (case,))[0]
+
+
+def test_create_quote_body_takes_a_case_or_a_client() -> None:
+    body = QUOTE_BODIES["create-quote"]
+    org = str(uuid.uuid4())
+    assert body(client={"organization_id": org}).client.organization_id is not None
+    assert body(client={"email": "Compras@Cliente-Ficticio.TEST", "name": "Compras"}).client.email == (
+        "compras@cliente-ficticio.test")
+    assert body(client={"new_organization": {"name": "Instituto Ficticio"}}).client.new_organization.kind == "company"
+    assert body(client={"organization_id": org}, opportunity_id=org).opportunity_id is not None
+    for bad in ({}, {"new_case": True, "opportunity_id": org},
+                {"client": {"organization_id": org}, "opportunity_id": org, "new_case": True},
+                {"client": {}}, {"client": {"organization_id": org, "person_id": org}},
+                {"client": {"person_id": org, "name": "Sin correo"}}, {"client": {"email": "no es correo"}},
+                {"client": {"new_organization": {"name": "X", "kind": "supplier"}}},
+                {"client": {"new_organization": {"name": "X", "email": "nada"}}},
+                {"client": {"organization_id": org, "extra": 1}}):
+        with pytest.raises(ValueError):
+            body(**bad)
+
+
+@needs_db
+def test_a_client_with_one_open_case_gets_the_quote_on_it(world) -> None:
+    dsn = world["dsn"]
+    clinic = _org(dsn, "institution", "Clínica Ficticia")
+    case = _case(dsn, world["operator"], clinic)
+    _case(dsn, world["operator"], clinic, closed=True)
+    before = _owner(dsn, "select count(*) from crm.opportunity")[0][0]
+    out = _run(world, "create-quote", {"client": {"organization_id": clinic}})
+    assert (out["opportunity_id"], out["case_created"], out["organization_id"]) == (case, False, clinic)
+    assert _quote_case(dsn, out["quote_id"]) == case
+    assert _owner(dsn, "select count(*) from crm.opportunity")[0][0] == before
+    # The case's own primary participant stays the recipient: an institution client names no one.
+    [participant] = _participants(dsn, case)
+    assert out["recipient_participant_id"] == participant["id"]
+
+
+@needs_db
+def test_several_open_cases_ask_which_and_the_choice_is_honoured_with_the_same_key(world) -> None:
+    dsn = world["dsn"]
+    clinic = _org(dsn, "institution", "Laboratorio Ficticio")
+    first, second = _case(dsn, world["operator"], clinic), _case(dsn, world["operator"], clinic)
+    # A twin merged into the clinic: its open case is the clinic's too (the survivor of a merge).
+    twin = _org(dsn, "institution", "Laboratorio Ficticio duplicado")
+    third = _case(dsn, world["operator"], twin)
+    _owner(dsn, "update crm.organization set merged_into_organization_id = %s where id = %s", (clinic, twin))
+
+    key = uuid.uuid4().hex
+    before = _tally(dsn)
+    refused = _refused(world, "create-quote", {"client": {"organization_id": clinic}}, key=key)
+    assert (refused.status_code, refused.code) == (409, "case_choice_needed")
+    candidates = refused.details["candidates"]
+    assert {c["id"] for c in candidates} == {first, second, third}
+    assert all(set(c) == {"id", "title", "stage", "requested_at"} and c["stage"] == "lead" for c in candidates)
+    assert all(isinstance(c["requested_at"], str) for c in candidates)
+    assert _tally(dsn) == before  # nothing written, the receipt included
+
+    # The same key, now with the case chosen: a new request, so it runs.
+    out = _run(world, "create-quote", {"client": {"organization_id": clinic}, "opportunity_id": second}, key=key)
+    assert (out["opportunity_id"], out["case_created"], out["replayed"]) == (second, False, False)
+    # Or a new case on purpose; named through the twin, the survivor is the client.
+    fresh = _run(world, "create-quote", {"client": {"organization_id": twin}, "new_case": True})
+    assert fresh["case_created"] is True and fresh["opportunity_id"] not in {first, second, third}
+    assert _case_row(dsn, fresh["opportunity_id"])["organization_id"] == clinic
+
+
+@needs_db
+def test_a_client_with_no_open_case_gets_a_new_solicitud_with_its_institution(world) -> None:
+    dsn, operator = world["dsn"], world["operator"]
+    clinic = _org(dsn, "institution", "Hospital Ficticio")
+    [(name,)] = _owner(dsn, "select name from crm.organization where id = %s", (clinic,))
+    _case(dsn, operator, clinic, closed=True)
+    out = _run(world, "create-quote", {"client": {"organization_id": clinic}, "note": "pidió por teléfono"})
+    case = out["opportunity_id"]
+    assert out["case_created"] is True and _quote_case(dsn, out["quote_id"]) == case
+    row = _case_row(dsn, case)
+    assert (row["title"], row["stage"], row["organization_id"], row["closed_at"], row["origin_source_record_id"]) == (
+        f"{name} — cotización", "lead", clinic, None, None)
+    [requesting] = _rows(dsn, "select organization_id::text as organization_id, role, confirmation, "
+                              "confirmed_by_operator_id::text as by from crm.opportunity_organization "
+                              "where opportunity_id = %s", (case,))
+    assert requesting == {"organization_id": clinic, "role": "requesting_institution", "confirmation": "confirmed",
+                          "by": operator.operator_id}
+    assert [e for e, _ in _events(dsn, "opportunity", case)] == ["opportunity.created", "opportunity.organization_set"]
+    assert _events(dsn, "opportunity", case)[0][1] == {
+        "title": f"{name} — cotización", "stage": "lead", "owner_operator_id": operator.operator_id,
+        "origin_source_record_id": None, "source_kind": None, "note": "pidió por teléfono"}
+    assert _participants(dsn, case) == [] and out["recipient_participant_id"] is None
+    # The next quote for the same client finds that case.
+    again = _run(world, "create-quote", {"client": {"organization_id": clinic}})
+    assert (again["opportunity_id"], again["case_created"]) == (case, False)
+
+
+@needs_db
+def test_a_person_client_gets_their_institution_s_case_or_a_new_one_and_is_the_recipient(world) -> None:
+    dsn, operator = world["dsn"], world["operator"]
+    clinic = _org(dsn, "institution", "Centro Ficticio")
+    person, point = _person(dsn, "Ana Ficticia", address=_address("ana"), organization=clinic)
+
+    out = _run(world, "create-quote", {"client": {"person_id": person}})
+    case = out["opportunity_id"]
+    assert (out["case_created"], out["organization_id"]) == (True, clinic)
+    assert _case_row(dsn, case)["organization_id"] == clinic
+    [participant] = _participants(dsn, case)
+    assert {k: participant[k] for k in ("person_id", "role", "is_primary", "confirmation", "confirmed_by")} == {
+        "person_id": person, "role": "quote_recipient", "is_primary": True, "confirmation": "confirmed",
+        "confirmed_by": operator.operator_id}
+    assert out["recipient_participant_id"] == participant["id"]
+    assert str(_revision(dsn, out["revision_id"])["recipient_participant_id"]) == participant["id"]
+    assert _events(dsn, "opportunity_participant", participant["id"])[0][1]["quote_revision_id"] == out["revision_id"]
+
+    # Again: the same case (the institution's, and theirs), the same participant.
+    again = _run(world, "create-quote", {"client": {"person_id": person}})
+    assert (again["opportunity_id"], again["case_created"]) == (case, False)
+    assert again["recipient_participant_id"] == participant["id"] and len(_participants(dsn, case)) == 1
+    # By their address: the same case; the address is picked as the save picks one — a row of its
+    # own, since the person already is the case's quote recipient.
+    by_address = _run(world, "create-quote", {"client": {"contact_point_id": point}})
+    assert (by_address["opportunity_id"], by_address["case_created"]) == (case, False)
+    assert {p["contact_point_id"] for p in _participants(dsn, case)} == {None, point}
+
+
+@needs_db
+def test_a_person_s_cases_include_those_they_take_part_in(world) -> None:
+    """R3: a person's open cases are their institution's and those they are a current participant of."""
+    dsn = world["dsn"]
+    elsewhere = _case(dsn, world["operator"], _org(dsn, "institution", "Otra Ficticia"), participant=False)
+    person, _ = _person(dsn, "Beto Ficticio", address=_address("beto"))
+    _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, person_id, role, is_primary, valid_from, "
+                "confirmation) values (%s, %s, 'end_user', false, current_date, 'machine_proposed')", (elsewhere, person))
+    out = _run(world, "create-quote", {"client": {"person_id": person}})
+    assert (out["opportunity_id"], out["case_created"], out["organization_id"]) == (elsewhere, False, None)
+    # Already a participant of that case: that participant is the recipient, as the save picks one.
+    [participant] = _participants(dsn, elsewhere)
+    assert (participant["person_id"], participant["role"]) == (person, "end_user")
+    assert out["recipient_participant_id"] == participant["id"]
+
+
+@needs_db
+def test_an_unknown_address_opens_a_case_without_institution_and_becomes_the_recipient(world) -> None:
+    dsn = world["dsn"]
+    address = _address("nuevo")
+    out = _run(world, "create-quote", {"client": {"email": address.upper(), "name": "Contacto Nuevo"}})
+    case = out["opportunity_id"]
+    assert (out["case_created"], out["organization_id"]) == (True, None)
+    row = _case_row(dsn, case)
+    assert (row["title"], row["organization_id"]) == ("Contacto Nuevo — cotización", None)
+    [point] = _rows(dsn, "select id::text as id, usage, person_id from crm.contact_point where value_norm = %s",
+                    (address,))
+    assert (point["usage"], point["person_id"]) == ("unattributed", None)
+    [participant] = _participants(dsn, case)
+    assert (participant["contact_point_id"], participant["note"], participant["role"]) == (
+        point["id"], "Contacto Nuevo", "quote_recipient")
+    # The same address again: its case now (it is that case's participant).
+    again = _run(world, "create-quote", {"client": {"email": address}})
+    assert (again["opportunity_id"], again["case_created"]) == (case, False)
+
+
+@needs_db
+def test_a_new_institution_is_registered_as_a_customer_with_its_domain(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    address = f"compras@instituto-{tag}.test"
+    out = _run(world, "create-quote", {"client": {"new_organization": {
+        "name": f"Instituto Ficticio {tag}", "kind": "university", "email": address}}})
+    org = out["organization_id"]
+    assert (out["organization_created"], out["case_created"]) == (True, True)
+    [made] = _rows(dsn, "select name, kind, confirmation, status from crm.organization where id = %s", (org,))
+    assert made == {"name": f"Instituto Ficticio {tag}", "kind": "university", "confirmation": "confirmed",
+                    "status": "active"}
+    assert _owner(dsn, "select role from crm.organization_relationship where organization_id = %s", (org,)) == [
+        ("customer",)]
+    assert _owner(dsn, "select domain_norm, scope from crm.organization_domain where organization_id = %s", (org,)) == [
+        (f"instituto-{tag}.test", "shared")]
+    assert [e for e, _ in _events(dsn, "organization", org)] == ["organization.created", "organization.domain_added"]
+    case = out["opportunity_id"]
+    row = _case_row(dsn, case)
+    assert (row["title"], row["organization_id"]) == (f"Instituto Ficticio {tag} — cotización", org)
+    [participant] = _participants(dsn, case)
+    assert participant["role"] == "quote_recipient" and participant["contact_point_id"] is not None
+
+    # The same name again is that institution, not a second one; a free-mail address gives no domain.
+    again = _run(world, "create-quote", {"client": {"new_organization": {"name": f"instituto ficticio {tag}"}}})
+    assert (again["organization_id"], again["organization_created"], again["opportunity_id"]) == (org, False, case)
+    free = _run(world, "create-quote", {"client": {"new_organization": {
+        "name": f"Empresa Ficticia {tag}", "email": f"empresa-{tag}@gmail.com"}}})
+    assert _owner(dsn, "select count(*) from crm.organization_domain where organization_id = %s",
+                  (free["organization_id"],)) == [(0,)]
+    [(kind,)] = _owner(dsn, "select kind from crm.organization where id = %s", (free["organization_id"],))
+    assert kind == "company"
+
+
+@needs_db
+def test_a_supplier_is_no_client(world) -> None:
+    dsn = world["dsn"]
+    supplier = _org(dsn, "institution", "Distribuidora Ficticia")
+    _supplier(dsn, supplier)
+    vendor, point = _person(dsn, "Vendedor Ficticio", address=_address("vendedor"), organization=supplier)
+    before = _tally(dsn)
+    for client in ({"organization_id": supplier}, {"person_id": vendor}, {"contact_point_id": point}):
+        refused = _refused(world, "create-quote", {"client": client})
+        assert (refused.status_code, refused.code) == (422, "supplier_exception_required"), client
+    assert _tally(dsn) == before
+
+
+@needs_db
+def test_a_case_of_another_client_is_refused(world) -> None:
+    dsn = world["dsn"]
+    clinic = _org(dsn, "institution", "Clínica Propia")
+    _case(dsn, world["operator"], clinic)
+    foreign = _case(dsn, world["operator"], _org(dsn, "institution", "Clínica Ajena"))
+    closed = _case(dsn, world["operator"], clinic, closed=True)
+    before = _tally(dsn)
+    for case, expected in ((foreign, (422, "case_not_of_client")), (closed, (409, "case_closed")),
+                           (str(uuid.uuid4()), (404, "case_not_found"))):
+        refused = _refused(world, "create-quote", {"client": {"organization_id": clinic}, "opportunity_id": case})
+        assert (refused.status_code, refused.code) == expected
+    assert _tally(dsn) == before
+
+
+@needs_db
+def test_client_refusals(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:6]
+    lab = _owner(dsn, "insert into crm.organization (kind, name, confirmation) values ('institution', %s, "
+                      "'machine_proposed') returning id::text", (f"Lab Delivery {tag}",))[0][0]
+    own = _org(dsn, "institution", "Interna")
+    _owner(dsn, "insert into crm.organization_domain (organization_id, domain_norm, scope) values (%s, %s, 'shared')",
+           (own, f"x{tag}.origenlab.cl"))
+    archived, _ = _person(dsn, "Persona Archivada")
+    _owner(dsn, "update crm.person set status = 'archived', archived_at = now(), archived_by_operator_id = %s, "
+                "archive_reason = 'prueba' where id = %s", (world["operator"].operator_id, archived))
+    before = _tally(dsn)
+    for client, expected in (
+        ({"organization_id": lab}, (422, "labdelivery_refused")),
+        ({"organization_id": own}, (422, "recipient_own_address")),
+        ({"organization_id": str(uuid.uuid4())}, (404, "organization_not_found")),
+        ({"person_id": str(uuid.uuid4())}, (404, "person_not_found")),
+        ({"person_id": archived}, (409, "archived_subject")),
+        ({"contact_point_id": str(uuid.uuid4())}, (404, "contact_point_not_found")),
+        ({"email": f"ventas-{tag}@origenlab.cl"}, (422, "recipient_own_address")),
+        ({"email": f"ventas-{tag}@correo.origenlab.cl"}, (422, "recipient_own_address")),
+        ({"email": f"pedidos-{tag}@labdelivery.cl"}, (422, "labdelivery_refused")),
+        ({"new_organization": {"name": f"Nueva {tag}", "email": f"a-{tag}@origenlab.cl"}},
+         (422, "recipient_own_address")),
+    ):
+        refused = _refused(world, "create-quote", {"client": client})
+        assert (refused.status_code, refused.code) == expected, client
+    assert _tally(dsn) == before
+
+
+@needs_db
+def test_a_client_create_quote_replays_without_writing_twice(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    raw = {"client": {"new_organization": {"name": f"Fundación Ficticia {tag}", "email": f"f@fundacion-{tag}.test"}}}
+    key = uuid.uuid4().hex
+    first = _run(world, "create-quote", raw, key=key)
+    after = _tally(dsn)
+    replay = _run(world, "create-quote", raw, key=key)
+    assert replay["replayed"] is True and replay["quote_id"] == first["quote_id"]
+    assert replay["opportunity_id"] == first["opportunity_id"] and _tally(dsn) == after
+
+
+@needs_db
+def test_two_creates_for_a_client_with_no_case_share_the_one_case_they_open(world) -> None:
+    """Review Focus 1. Both requests are held at the client's lock, then released together: the
+    first opens the case, the second (reading after the first committed) quotes on it. Two quotes,
+    two numbers, one case, no quote without a case."""
+    import threading
+
+    dsn = world["dsn"]
+    clinic = _org(dsn, "institution", "Instituto Concurrente")
+    operators = [world["operator"], _make_operator(dsn)]
+    results: list = [None, None]
+
+    def create(i: int) -> None:
+        body = QUOTE_BODIES["create-quote"](client={"organization_id": clinic})
+        try:
+            results[i] = _repo(dsn).execute(command_name="create-quote", operator=operators[i],
+                                            fields=body.model_dump(mode="json"), idempotency_key=uuid.uuid4().hex,
+                                            digest=request_digest("create-quote", body))
+        except Exception as exc:  # noqa: BLE001 - reported by the assertion below
+            results[i] = exc
+
+    with psycopg.connect(dsn, autocommit=True) as holder:
+        holder.execute("select pg_advisory_lock(hashtextextended(%s, 0))", (f"quote-client:organization:{clinic}",))
+        threads = [threading.Thread(target=create, args=(i,)) for i in (0, 1)]
+        for t in threads:
+            t.start()
+        for _ in range(200):  # both waiting on the client's lock
+            [(waiting,)] = holder.execute("select count(*) from pg_locks where locktype = 'advisory' and not granted "
+                                          "and objid = (hashtextextended(%s, 0) & 4294967295)::oid",
+                                          (f"quote-client:organization:{clinic}",)).fetchall()
+            if waiting == 2:
+                break
+            threading.Event().wait(0.05)
+        assert waiting == 2
+        holder.execute("select pg_advisory_unlock(hashtextextended(%s, 0))", (f"quote-client:organization:{clinic}",))
+        for t in threads:
+            t.join(30)
+
+    assert all(isinstance(r, dict) for r in results), results
+    assert sorted(r["case_created"] for r in results) == [False, True]
+    assert results[0]["opportunity_id"] == results[1]["opportunity_id"]
+    assert results[0]["quote_number"] != results[1]["quote_number"]
+    assert _owner(dsn, "select count(*) from crm.opportunity where organization_id = %s", (clinic,)) == [(1,)]
+    assert _owner(dsn, "select count(*) from crm.quote q join crm.opportunity o on o.id = q.opportunity_id "
+                       "where o.organization_id = %s", (clinic,)) == [(2,)]

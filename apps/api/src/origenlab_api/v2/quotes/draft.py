@@ -139,9 +139,70 @@ class QuoteDraft(_Model):
         return self
 
 
+def _email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.lower()
+    if not _EMAIL.match(value):
+        raise ValueError("email is not an email address")
+    return value
+
+
+#: The kinds the dashboard offers for a new institution (plan R2).
+NewOrganizationKind = Literal["company", "university", "public_institution", "hospital", "laboratory", "other"]
+
+
+class NewClientOrganization(_Model):
+    """An institution the CRM does not hold yet: registered as `register-organization` registers one."""
+    name: Annotated[str, StringConstraints(min_length=1, max_length=500)]
+    kind: NewOrganizationKind = "company"
+    email: Annotated[str | None, StringConstraints(min_length=3, max_length=320)] = None
+
+    @model_validator(mode="after")
+    def _valid_email(self) -> "NewClientOrganization":
+        self.email = _email(self.email)
+        return self
+
+
+class QuoteClient(_Model):
+    """Whom a new quote is for when no case is named: exactly one of an institution, a person, an
+    email contact point, an address (with, optionally, the name it goes by) or a new institution."""
+    organization_id: UUID | None = None
+    person_id: UUID | None = None
+    contact_point_id: UUID | None = None
+    email: Annotated[str | None, StringConstraints(min_length=3, max_length=320)] = None
+    name: Annotated[str | None, StringConstraints(min_length=1, max_length=200)] = None
+    new_organization: NewClientOrganization | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> "QuoteClient":
+        picked = [self.organization_id, self.person_id, self.contact_point_id, self.email, self.new_organization]
+        if sum(v is not None for v in picked) != 1:
+            raise ValueError("client takes exactly one of organization_id, person_id, contact_point_id, email, "
+                             "new_organization")
+        if self.name is not None and self.email is None:
+            raise ValueError("client name goes only with an email address")
+        self.email = _email(self.email)
+        return self
+
+
 class CreateQuoteBody(_Model):
+    """A quote on a case: the case named (`opportunity_id`), or found from the client (`client`) —
+    with `opportunity_id` then the client's open case chosen, or `new_case` for a new one."""
     note: Annotated[str | None, StringConstraints(min_length=1, max_length=500)] = None
-    opportunity_id: UUID
+    opportunity_id: UUID | None = None
+    client: QuoteClient | None = None
+    new_case: bool = False
+
+    @model_validator(mode="after")
+    def _a_case_or_a_client(self) -> "CreateQuoteBody":
+        if self.opportunity_id is None and self.client is None:
+            raise ValueError("give opportunity_id or client")
+        if self.new_case and self.client is None:
+            raise ValueError("new_case goes only with a client")
+        if self.new_case and self.opportunity_id is not None:
+            raise ValueError("give opportunity_id or new_case, not both")
+        return self
 
 
 class SaveQuoteDraftBody(_Model):

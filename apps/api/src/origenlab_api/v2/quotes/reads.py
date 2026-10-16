@@ -80,7 +80,7 @@ from origenlab_api.v2.quotes.inputs import (
 )
 from origenlab_api.v2.mail_rules import mail_direction
 from origenlab_api.v2.quotes.numbering import SANTIAGO, numbering_status, revision_label
-from origenlab_api.v2.quotes.recipients import not_a_recipient
+from origenlab_api.v2.quotes.recipients import UNOFFERABLE_DOMAINS, not_a_recipient
 
 #: R-A5: a model is suggested beside the principal when it is on at least this share of the past
 #: quote documents that carry the principal, and the principal was quoted at least `KIT_MIN_DOCUMENTS` times.
@@ -357,10 +357,33 @@ select o.id::text as id, o.name, o.kind,
  limit %(limit)s
 """
 
+# A person's institution, or an address's: the person's current affiliation (a confirmed one
+# first, the newest), else the address's own institution — the survivor of a merge, and only while
+# active. `{person}` and `{point_org}` are the column or parameter naming the person and the
+# address's organization. The suggestions (`_CLIENT_PEOPLE_SQL`) and `create-quote`
+# (`_CLIENT_INSTITUTION_SQL`) read it here, so the dialog and the command agree on whose cases a
+# person's are.
+_CLIENT_INSTITUTION_JOINS = """
+  left join lateral (
+    select a.organization_id from crm.affiliation a
+     where a.person_id = {person} and (a.valid_to is null or a.valid_to > current_date)
+     order by (a.confirmation = 'confirmed') desc, a.valid_from desc, a.created_at desc, a.id
+     limit 1) af on true
+  left join crm.organization m on m.id = coalesce(af.organization_id, {point_org})
+  left join crm.organization org on org.id = coalesce(m.merged_into_organization_id, m.id) and org.status = 'active'
+"""
+
+# An address no quote may go to (`recipients.not_a_recipient`, as far as SQL can tell): OrigenLab's
+# own or Labdelivery's domain, a subdomain of one, or an address naming Labdelivery. Only used to
+# order: the rule itself is applied to what is offered.
+_UNOFFERABLE_ADDRESS = """(split_part(c.value_norm, '@', 2) = any(%(unofferable_domains)s)
+          or split_part(c.value_norm, '@', 2) like any(%(unofferable_subdomains)s)
+          or regexp_replace(c.value_norm, '[^a-z0-9]', '', 'g') like '%%labdelivery%%')"""
+
 # People by name or by an active email address of theirs, and addresses with no person by the
-# address. Each with one active email (one matching the text first) and its institution: the
-# person's current affiliation (a confirmed one first, the newest), else the address's own
-# institution — through a merge, active, and not a supplier (a supplier's people are no client).
+# address. Each with one active email — an address a quote may go to before one it may not, then
+# one matching the text — and its institution (`_CLIENT_INSTITUTION_JOINS`), never a supplier's (a
+# supplier's people are no client).
 _CLIENT_PEOPLE_SQL = f"""
 with found as (
   select p.id as person_id, null::uuid as contact_point_id, p.display_name as name
@@ -382,15 +405,9 @@ select f.person_id::text as person_id, e.id::text as contact_point_id, f.name, e
     select c.id, c.value_norm, c.organization_id from crm.contact_point c
      where c.kind = 'email' and c.status = 'active'
        and (c.id = f.contact_point_id or (f.contact_point_id is null and c.person_id = f.person_id))
-     order by (c.value_norm ilike %(pattern)s) desc, c.created_at, c.id
+     order by {_UNOFFERABLE_ADDRESS} asc, (c.value_norm ilike %(pattern)s) desc, c.created_at, c.id
      limit 1) e on true
-  left join lateral (
-    select a.organization_id from crm.affiliation a
-     where a.person_id = f.person_id and (a.valid_to is null or a.valid_to > current_date)
-     order by (a.confirmation = 'confirmed') desc, a.valid_from desc, a.created_at desc, a.id
-     limit 1) af on true
-  left join crm.organization m on m.id = coalesce(af.organization_id, e.organization_id)
-  left join crm.organization org on org.id = coalesce(m.merged_into_organization_id, m.id) and org.status = 'active'
+{_CLIENT_INSTITUTION_JOINS.format(person="f.person_id", point_org="e.organization_id")}
  where (org.id is null or {_NOT_A_SUPPLIER.format(org="org.id")})
  order by (coalesce(f.name, e.value_norm) ilike %(prefix)s) desc, lower(coalesce(f.name, e.value_norm)),
           f.person_id, e.id
@@ -420,6 +437,15 @@ union all
 select 'contact_point', p.contact_point_id::text, c.id::text, c.title, c.stage, c.requested_at
   from crm.opportunity_participant p join open_case c on c.id = p.opportunity_id
  where p.valid_to is null and p.contact_point_id = any(%(points)s::uuid[])
+"""
+
+# One client's institution for `create-quote`: as the suggestions find it, with whether it is one
+# of OrigenLab's suppliers or manufacturers (then it is no client).
+_CLIENT_INSTITUTION_SQL = f"""
+select org.id::text as organization_id, org.name as organization_name,
+       (org.id is not null and not ({_NOT_A_SUPPLIER.format(org="org.id")})) as is_supplier
+  from (select %(person)s::uuid as person_id, %(point_org)s::uuid as point_org) f
+{_CLIENT_INSTITUTION_JOINS.format(person="f.person_id", point_org="f.point_org")}
 """
 
 #: The revision columns `current` carries besides its draft or stored lines.
@@ -618,12 +644,16 @@ def _encode_cursor(updated_at: datetime, quote_id: str) -> str:
 def _decode_cursor(cursor: str) -> tuple[datetime, str]:
     """The (updated_at, quote_id) a page ended at; anything this list did not issue is a 422."""
     try:
-        at, quote_id = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        decoded = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        if not (isinstance(decoded, list) and len(decoded) == 2 and all(isinstance(v, str) for v in decoded)):
+            raise ValueError("not a cursor")
+        at, quote_id = decoded
         moment = datetime.fromisoformat(at)
         if moment.tzinfo is None:
             raise ValueError("naive")
         return moment, str(uuid.UUID(quote_id))
-    except (binascii.Error, UnicodeDecodeError, ValueError, TypeError) as exc:
+    except (binascii.Error, UnicodeDecodeError, ValueError, TypeError, AttributeError, OverflowError,
+            RecursionError) as exc:
         raise CommandRefused(422, "bad_cursor", "that cursor is not one this list gave") from exc
 
 
@@ -645,7 +675,8 @@ def _cases_by_key(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict
     return out
 
 
-def _open_cases(by_key: dict[tuple[str, str], list[dict[str, Any]]], *keys: tuple[str, str | None]) -> list[dict[str, Any]]:
+def _open_cases(by_key: dict[tuple[str, str], list[dict[str, Any]]], *keys: tuple[str, str | None],
+                limit: int | None = CLIENT_OPEN_CASES) -> list[dict[str, Any]]:
     """The open cases under any of these keys, once each, the newest request first."""
     seen: dict[str, dict[str, Any]] = {}
     for via, key in keys:
@@ -655,7 +686,37 @@ def _open_cases(by_key: dict[tuple[str, str], list[dict[str, Any]]], *keys: tupl
             seen.setdefault(case["id"], case)
     oldest = datetime.min.replace(tzinfo=UTC)
     ordered = sorted(seen.values(), key=lambda c: (c["requested_at"] or oldest, c["id"]), reverse=True)
-    return ordered[:CLIENT_OPEN_CASES]
+    return ordered if limit is None else ordered[:limit]
+
+
+def _client_params() -> dict[str, Any]:
+    domains = sorted(UNOFFERABLE_DOMAINS)
+    return {"supplier_roles": list(SUPPLIER_RELATIONSHIP_ROLES), "unofferable_domains": domains,
+            "unofferable_subdomains": [f"%.{d}" for d in domains]}
+
+
+def client_institution(cur: Any, *, person_id: str | None, point_organization_id: str | None) -> dict[str, Any]:
+    """The institution a person (or an address) belongs to, as the suggestions show it:
+    `{organization_id, organization_name, is_supplier}`, all None/False when there is none."""
+    cur.execute(_CLIENT_INSTITUTION_SQL, {**_client_params(), "person": person_id, "point_org": point_organization_id})
+    names = [d[0] for d in cur.description]
+    return dict(zip(names, cur.fetchone(), strict=True))
+
+
+def client_open_cases(cur: Any, *, organization_id: str | None = None, person_id: str | None = None,
+                      contact_point_id: str | None = None) -> list[dict[str, Any]]:
+    """Every open case of one client (plan R3), the newest request first: the cases whose
+    requesting institution is the institution (or a twin merged into it), and those the person or
+    the address is a current participant of. The same statement and the same merge the
+    suggestions run (`_CLIENT_CASES_SQL`, `_open_cases`), without their cap, so `create-quote`
+    decides on what the dialog showed."""
+    cur.execute(_CLIENT_CASES_SQL, {"organizations": [organization_id] if organization_id else [],
+                                    "people": [person_id] if person_id else [],
+                                    "points": [contact_point_id] if contact_point_id else []})
+    names = [d[0] for d in cur.description]
+    by_key = _cases_by_key([dict(zip(names, r, strict=True)) for r in cur.fetchall()])
+    return _open_cases(by_key, ("person", person_id), ("contact_point", contact_point_id),
+                       ("organization", organization_id), limit=None)
 
 
 class V2QuoteReads:
@@ -815,7 +876,7 @@ class V2QuoteReads:
         round trips: the two searches in one pipeline, then every suggestion's open cases."""
         text = q.strip()
         params = {"pattern": _pattern(text), "prefix": f"{_like_escape(text)}%", "limit": CLIENT_FETCH,
-                  "supplier_roles": list(SUPPLIER_RELATIONSHIP_ROLES)}
+                  **_client_params()}
         with self._read() as cur:
             found = self._catalog._batch(cur, {"organizations": (_CLIENT_ORGS_SQL, params),
                                                "people": (_CLIENT_PEOPLE_SQL, params)})
