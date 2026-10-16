@@ -450,7 +450,7 @@ authored draft is approved directly.
 | Step | Command | What it does | Refused with |
 |---|---|---|---|
 | 1 | `create-quote` | locks the case, mints the number (DOMAIN §7.9), creates the quote and revision 1 as an empty `draft` (quote currency CLP, 0 decimals, IVA from `iva_rate`, the `quote_default_*` texts, the case's current primary participant as recipient — a `quote_recipient` by preference); events `quote.created`, `quote_revision.opened` | `case_not_found`, `case_closed`, `quote_numbering_not_configured`, `quote_numbering_exhausted` |
-| 2 | `save-quote-draft` (`expected_version`) | takes the **whole draft** (items, manual expenses, expense method, allocation mode, principal rule, FX overrides with a reason, printed terms, recipient), prices it with the engine on the server, **replaces all the revision's lines**, writes the printed and pricing columns, the totals and `version + 1`; event `quote_revision.draft_saved`. A recipient picked from the case's emails becomes a participant first (below): events `participant.added` and, for an address the CRM lacked, `contact_point.created` | `stale_version`, `not_a_draft`, `recipient_not_on_case`, `recipient_unknown`, `recipient_own_address`, `contact_point_inactive`, `archived_subject`, `recipient_changed_concurrently`, `fx_unavailable`, `cost_observation_not_found`, `amount_too_large`, engine errors (`quantity_invalid`, `margin_pct_invalid`, …) as 422, `labdelivery_refused` |
+| 2 | `save-quote-draft` (`expected_version`) | takes the **whole draft** (items, manual expenses, expense method, allocation mode, principal rule, FX overrides with a reason, printed terms, recipient), prices it with the engine on the server, **replaces all the revision's lines**, writes the printed and pricing columns, the totals and `version + 1`; event `quote_revision.draft_saved`. A recipient picked from the case's emails becomes a participant first (below): events `participant.added` and, for an address the CRM lacked, `contact_point.created` | `revision_not_found`, `stale_version`, `not_a_draft`, `case_closed` (only when a new recipient would be added), `recipient_not_on_case`, `recipient_unknown`, `recipient_own_address`, `contact_point_inactive`, `archived_subject`, `recipient_changed_concurrently`, `fx_unavailable`, `cost_observation_not_found`, `amount_too_large`, engine errors (`quantity_invalid`, `margin_pct_invalid`, …) as 422, `labdelivery_refused` |
 | 3 | `approve-quote-revision` (`expected_version`) | prices the **stored** lines (below), runs the approval checks, records negotiated costs, freezes totals, validity and the party snapshot (W3b), supersedes the earlier issued revision; events `quote_revision.transitioned`, `quote_revision.superseded`, `product.cost_recorded` | the reasons below; `case_closed`, `draft_needs_saving` |
 | 4 | `create-quote-revision` | copies the newest approved or sent authored revision — conditions, pricing choices, lines — into the next draft (revision 2 prints as `…A`); event `quote_revision.opened` | `draft_open`, `nothing_to_revise`, `quote_not_found`, `revision_letters_exhausted` |
 | 5 | `void-quote-revision` (`expected_version`, reason) | `draft`, `in_review` or `approved` → `void`; event `quote_revision.transitioned` with the reason | `already_sent` («Ya se envió: crea una nueva revisión.»), `already_void`, `superseded`, `not_authored`, `stale_version` |
@@ -459,17 +459,26 @@ authored draft is approved directly.
   the case's current participants first, then — once each, newest email first — the sender of each
   inbound email and the recipients of each email OrigenLab sent, among the emails linked to the
   case, those its quote revisions were recorded from, and every email on their threads; and the
-  customer of each forwarded request the case came from or holds; never an `origenlab.cl` address, nothing of Labdelivery
-  (a Labdelivery-mailbox forward is skipped whole). Each carries `participant_id`, `person_id`,
+  customer of each forwarded request the case came from or holds. Only a live email (neither
+  quarantined nor rejected) names anyone or brings its thread in; "newest" is the instant of its
+  Date header, else of its capture. Never an OrigenLab address (`origenlab.cl` and its
+  subdomains), nothing of Labdelivery (a Labdelivery-mailbox forward is skipped whole), no
+  deactivated address. Each carries `participant_id`, `person_id`,
   `contact_point_id` (null when the CRM holds none), `name`, `email` and `source` (`participant`,
   `email_from`, `email_to`, `forwarded_request`). The save takes `recipient` — exactly one of
   `{participant_id}`, `{person_id}`, `{contact_point_id}` or `{email, name?}` (the older
-  `recipient_participant_id` still works). A pick that is not a current participant becomes one in
-  the save's transaction: role `quote_recipient`, `confirmed` by the operator, from today
+  `recipient_participant_id` still works; a saved draft reads back as `recipient: {participant_id}`,
+  so the editor can send it back unchanged). Every form is held to the same address rules on the
+  address it would print (`recipient_own_address`, `labdelivery_refused`). A pick that is not a
+  current participant becomes one in the save's transaction — refused `case_closed` on a closed
+  case, before anything is written (the save locks the case `for share`, then the quote, then the
+  revision, as approval does): role `quote_recipient`, `confirmed` by the operator, from today
   (Santiago), primary when the case has no primary recipient; the same person or the same address
   already on the case is reused, so saving again adds nothing. An address the CRM does not hold
-  becomes an `unattributed` email contact point — picking it says nothing about who owns it — and,
-  when no person owns it, the name it was picked by is kept as the participant's `note`. Approval
+  becomes an `unattributed` email contact point — picking it says nothing about who owns it. An
+  address a person owns names that person too, unless the person is already a quote recipient of
+  the case (then the address is a row of its own); when no person owns it, the name it was picked
+  by is kept as the participant's `note`. Approval
   prints, as the recipient's name, the participant's person, else the address's person, else that
   picked name, else the address.
 - **Commands use only stored exchange rates.** A command never fetches a rate: it takes the newest

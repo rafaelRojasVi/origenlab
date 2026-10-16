@@ -264,6 +264,9 @@ for who is involved and in which role.
 technical, purchasing, finance, approver, quote_recipient, signatory, other}`,
 `is_primary`, `valid_from`, `valid_to` (NULL means current), `confirmation`,
 `confirmed_by`, `origin_source_record_id` (nullable, retained forever), `note`.
+For an address-only `quote_recipient` (no `person_id`) that `save-quote-draft` adds, `note` holds
+the display name the address was picked by, which approval prints as the recipient's name
+([`WORKFLOWS.md`](WORKFLOWS.md) §W3-Cotizador).
 
 - `num_nonnulls(person_id, contact_point_id) >= 1`. **A participant may begin
   as only a contact point** — an inbound address, a mailbox on a tender — and
