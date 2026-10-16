@@ -15,7 +15,7 @@ import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
 import { DecideCases } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
-import { endOfDay, isFollowUpTask } from "../today";
+import { awaitsQuote, endOfDay, isFollowUpTask } from "../today";
 import { contactLine } from "../caseDisplay";
 import { inSharedMailbox } from "../gmailLinks";
 import {
@@ -40,7 +40,6 @@ import {
   Section,
   Segmented,
   Skeleton,
-  Spinner,
   StatLine,
   fmtDate,
   initials,
@@ -286,7 +285,7 @@ function isSolicitudSinCotizar(card: OpportunityCardData): boolean {
   return (
     !card.closed_at &&
     PRE_QUOTE_STAGES_CARD.has(card.stage) &&
-    card.latest_revision === null
+    awaitsQuote(card)
   );
 }
 
@@ -360,16 +359,15 @@ function SolicitudSinCotizarCard({
 
       {/* Action buttons */}
       <div className="flex gap-2">
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          busy={quote.busy}
+          busyLabel="Creando…"
+          className="min-h-[44px]"
           onClick={() => (mayQuote ? void quote.run(card) : onOpen(card.opportunity_id))}
-          disabled={quote.busy}
-          aria-busy={quote.busy || undefined}
-          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-brand-600 px-3 text-xs font-semibold text-white hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-wait disabled:opacity-70"
         >
-          {quote.busy ? <Spinner /> : null}
-          Cotizar
-        </button>
+          {mayQuote && quoteToOpen(card) ? "Continuar cotización" : "Cotizar"}
+        </Button>
         {originUrl ? (
           <a
             href={originUrl}
@@ -636,7 +634,7 @@ function OpportunityDrawer({
 
       <Section
         title={card.quotes.length === 1 ? "Cotización" : `Cotizaciones (${card.quotes.length})`}
-        aside={mayQuote ? <NewQuoteButton card={card} /> : null}
+        aside={mayQuote && !card.closed_at ? <NewQuoteButton card={card} /> : null}
       >
         <QuoteList card={card} mayOpenCotizador={mayOpenCotizador} />
       </Section>

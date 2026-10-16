@@ -627,6 +627,25 @@ describe("«Cotizar» in Hoy opens the Cotizador", () => {
     expect(calls.filter((x) => x.method === "POST").map((x) => x.path)).toEqual(["/v2/commands/create-quote"]);
   });
 
+  it("a case whose quote is still a draft stays in «Cotizar»: «Continuar cotización» opens the draft, no POST", async () => {
+    const draftRev = { ...rev("2026-10-05T12:00:00Z"), revision_id: "r-draft", status: "draft", origin: "authored", sent_at: null, quote_number: "00042-26" };
+    const c = card({
+      stage: "qualifying", latest_revision: draftRev, quote_numbers: ["00042-26"],
+      quotes: [{ quote_id: "88888888-8888-4888-8888-888888888888", quote_number: "00042-26", number_origin: "minted", revisions: [draftRev] }],
+      last_contact: { outbound: null, inbound: { at: "2026-10-05T12:00:00Z", subject: "Solicitud de equipo", url: null } },
+    });
+    const sentRev = { ...draftRev, revision_id: "r-sent", status: "sent", sent_at: "2026-10-05T13:00:00Z" };
+    const sent = card({ stage: "qualifying", latest_revision: sentRev, quotes: [{ quote_id: "q-s", quote_number: "00042-26", number_origin: "minted", revisions: [sentRev] }] });
+    const { buildParaTiQueue } = await import("../today");
+    expect(buildParaTiQueue([c, sent], NOW, null).filter((q) => q.kind === "cotizar").map((q) => q.opportunity_id)).toEqual([c.opportunity_id]);
+    const calls = stub();
+    const navigate = renderWith([c], "sales");
+    const row = await screen.findByTestId(`today-cotizar-${c.opportunity_id}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Continuar cotización" }));
+    expect(navigate).toHaveBeenCalledWith("cotizar", "88888888-8888-4888-8888-888888888888");
+    expect(calls.filter((x) => x.path.startsWith("/v2/commands/"))).toEqual([]);
+  });
+
   it("a viewer keeps the old behaviour: the case opens, nothing is created", async () => {
     const c = solicitud();
     const calls = stub();

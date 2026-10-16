@@ -91,6 +91,15 @@ describe("which quote «Cotizar» opens", () => {
     expect(quoteToOpen(card([issued, voided, historical]))).toBeNull();
   });
 
+  it("with two open drafts, is the newest", () => {
+    const older = quote("q-41", [rev()], "00041-26");
+    const newer = quote("q-43", [rev()], "00043-26");
+    const nextYear = quote("q-1-27", [rev()], "00001-27");
+    expect(openDraftOf(card([newer, older]))?.quote_id).toBe("q-43");
+    expect(openDraftOf(card([older, newer]))?.quote_id).toBe("q-43");
+    expect(openDraftOf(card([older, nextYear, newer]))?.quote_id).toBe("q-1-27");
+  });
+
   it("knows a quote of this app from a historical one", () => {
     expect(isAuthoredQuote(quote("a", [rev({ status: "sent" })]))).toBe(true);
     expect(isAuthoredQuote(quote("h", [rev({ origin: "historical_import", status: "sent" })]))).toBe(false);
@@ -141,6 +150,67 @@ describe("useOpenOrCreateQuote", () => {
     await act(async () => release(created()));
     await waitFor(() => expect(go).toHaveBeenCalledWith(NEW_QUOTE));
     expect(go).toHaveBeenCalledTimes(1);
+  });
+
+  it("a retry after an answer that may have run repeats the same command (same key)", async () => {
+    const answers: (() => Response | Promise<Response>)[] = [
+      () => Promise.reject(new TypeError("Failed to fetch")),
+      () => new Response("<html>Gateway timeout</html>", { status: 504 }),
+      () => new Response(JSON.stringify({ detail: { code: "internal", message: "boom" } }), { status: 502, headers: { "Content-Type": "application/json" } }),
+      created,
+    ];
+    const keys: (string | null)[] = [];
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      keys.push(((init?.headers ?? {}) as Record<string, string>)["Idempotency-Key"] ?? null);
+      return Promise.resolve(answers[keys.length - 1]());
+    }));
+    const go = vi.fn();
+    const { result } = renderHook(() => useOpenOrCreateQuote(go));
+    for (let i = 0; i < 4; i += 1) await act(() => result.current.run(card()));
+    expect(keys).toHaveLength(4);
+    expect(new Set(keys).size).toBe(1);
+    expect(go).toHaveBeenCalledWith(NEW_QUOTE);
+    // A later create for the same case (once that quote is gone) is a new command.
+    stub(created);
+    const voided = quote(NEW_QUOTE, [rev({ status: "void", is_active: false })]);
+    await act(() => result.current.run(card([voided])));
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(1);
+    const next = ((vi.mocked(fetch).mock.calls[0][1]?.headers ?? {}) as Record<string, string>)["Idempotency-Key"];
+    expect(next).not.toBe(keys[0]);
+  });
+
+  it("two buttons for the same case cannot create at once", async () => {
+    let release: (r: Response) => void = () => undefined;
+    let posts = 0;
+    vi.stubGlobal("fetch", vi.fn(() => {
+      posts += 1;
+      return new Promise<Response>((resolve) => { release = resolve; });
+    }));
+    const goCard = vi.fn();
+    const goDrawer = vi.fn();
+    const cardButton = renderHook(() => useOpenOrCreateQuote(goCard)).result;
+    const drawerButton = renderHook(() => useOpenOrCreateQuote(goDrawer)).result;
+    let first: Promise<void> = Promise.resolve();
+    act(() => { first = cardButton.current.run(card()); });
+    await act(() => drawerButton.current.run(card()));
+    expect(posts).toBe(1);
+    await act(async () => { release(created()); await first; });
+    expect(goCard).toHaveBeenCalledWith(NEW_QUOTE);
+    expect(goDrawer).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate once the button is gone", async () => {
+    let release: (r: Response) => void = () => undefined;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { release = resolve; })));
+    const go = vi.fn();
+    const { result, unmount } = renderHook(() => useOpenOrCreateQuote(go));
+    let pending: Promise<void> = Promise.resolve();
+    act(() => { pending = result.current.run(card()); });
+    unmount();
+    await act(async () => { release(created()); await pending; });
+    expect(go).not.toHaveBeenCalled();
+    // The quote was made, though: the next «Cotizar» opens it.
+    expect(quoteToOpen(card())).toBe(NEW_QUOTE);
   });
 
   it("each click is its own command: a retry after a refusal carries a new key", async () => {

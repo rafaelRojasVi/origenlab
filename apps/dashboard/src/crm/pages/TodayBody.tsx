@@ -43,7 +43,7 @@ import { isMaskedAddress } from "../redaction";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import type { CrmSection, DatosTab } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
-import { useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
+import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import {
   buildParaTiQueue,
   followUpsDue,
@@ -353,7 +353,7 @@ function CotizarQueueRow({
           busyLabel="Creando…"
           onClick={() => (mayDecide ? void quote.run(card) : navigate("oportunidades", card.opportunity_id))}
         >
-          Cotizar
+          {mayDecide && quoteToOpen(card) ? "Continuar cotización" : "Cotizar"}
         </Button>
         {originUrl ? (
           <a
