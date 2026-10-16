@@ -47,6 +47,7 @@ function NumberInput({
   placeholder,
   disabled,
   onChange,
+  onFocus,
   suffix,
 }: {
   label: string;
@@ -55,6 +56,7 @@ function NumberInput({
   placeholder?: string;
   disabled: boolean;
   onChange: (text: string) => void;
+  onFocus?: () => void;
   suffix?: string;
 }) {
   const [text, setText] = useState<string | null>(null);
@@ -68,6 +70,7 @@ function NumberInput({
         placeholder={placeholder}
         disabled={disabled}
         onFocus={(e) => {
+          onFocus?.();
           setText(editValue);
           const el = e.currentTarget;
           if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => el.select());
@@ -100,12 +103,15 @@ function CostInputs({
   line,
   disabled,
   onPatch,
+  onEditing,
 }: {
   n: number;
   item: QuoteDraftItem;
   line: ComputedLine | null;
   disabled: boolean;
   onPatch: (patch: Partial<QuoteDraftItem>) => void;
+  /** The operator is working on the cost: keep the inputs even if it is cleared. */
+  onEditing: () => void;
 }) {
   const [picked, setPicked] = useState<CostCurrency>(asCurrency(item.cost_currency) ?? asCurrency(line?.cost_currency) ?? "CLP");
   const currency = asCurrency(item.cost_currency) ?? picked;
@@ -119,7 +125,9 @@ function CostInputs({
           editValue={amount}
           placeholder="costo"
           disabled={disabled}
+          onFocus={onEditing}
           onChange={(t) => {
+            onEditing();
             const value = amountTextToDecimal(t);
             onPatch(value === null ? { unit_cost: null, cost_currency: null } : { unit_cost: value, cost_currency: currency, cost_observation_id: null });
           }}
@@ -129,7 +137,9 @@ function CostInputs({
         aria-label={`Moneda del costo de la línea ${n}`}
         value={currency}
         disabled={disabled}
+        onFocus={onEditing}
         onChange={(e) => {
+          onEditing();
           const next = e.target.value as CostCurrency;
           setPicked(next);
           if (item.unit_cost) onPatch({ cost_currency: next, cost_observation_id: null });
@@ -228,6 +238,8 @@ export function LineRow({
         : null;
   const state = line ? (MARGIN_STATE[line.margin_state] ?? { label: line.margin_state, cls: "bg-canvas-sunken text-ink-muted" }) : null;
   const rowProblems = problems.filter((p) => p.field.startsWith("items."));
+  // A value with a problem is shown as typed, never re-formatted.
+  const priceProblem = rowProblems.some((p) => p.field === "items.typed_unit_price");
   const showNote = noteOpen || !!item.line_note_es;
   const recargoDefault = item.margin_pct ? undefined : decimalToPercentText(line?.margin_pct) || undefined;
   const typedCost = item.unit_cost != null || item.cost_currency != null;
@@ -277,8 +289,8 @@ export function LineRow({
         <div role="cell">
           <NumberInput
             label={`Cantidad de la línea ${n}`}
-            display={qtyText(item.quantity)}
-            editValue={qtyText(item.quantity)}
+            display={item.input_problems?.quantity ? item.quantity : qtyText(item.quantity)}
+            editValue={item.input_problems?.quantity ? item.quantity : qtyText(item.quantity)}
             disabled={disabled}
             onChange={(t) => {
               const { value, problem } = readQuantity(t);
@@ -291,7 +303,7 @@ export function LineRow({
           <div role="cell" {...busy} className="flex flex-col items-end gap-0.5 text-right">
             {costInputs ? (
               <>
-                <CostInputs n={n} item={item} line={line} disabled={disabled} onPatch={onPatch} />
+                <CostInputs n={n} item={item} line={line} disabled={disabled} onPatch={onPatch} onEditing={() => setCostOpen(true)} />
                 {costClp && line?.unit_cost ? <span className={`text-xs tabular-nums text-ink-muted${dim}`}>{costClp}</span> : null}
                 {!free && (typedCost || costOpen) ? (
                   <button
@@ -357,7 +369,11 @@ export function LineRow({
         <div role="cell" {...busy} className={dim.trim()}>
           <NumberInput
             label={`Precio unitario de la línea ${n}`}
-            display={money(line?.unit_price) ?? (byPrice ? (money(item.typed_unit_price) ?? "") : "")}
+            display={
+              priceProblem
+                ? (item.typed_unit_price ?? "")
+                : (money(line?.unit_price) ?? (byPrice ? (money(item.typed_unit_price) ?? "") : ""))
+            }
             editValue={(byPrice ? item.typed_unit_price : line?.unit_price) ?? ""}
             disabled={disabled}
             onChange={(t) => onPatch({ margin_mode: "none", typed_unit_price: priceTextToDecimal(t) })}

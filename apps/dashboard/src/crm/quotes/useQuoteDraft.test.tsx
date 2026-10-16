@@ -563,3 +563,30 @@ describe("useQuoteDraft — rows and their prices", () => {
     expect(typeof hook.result.current.state.draft.items[2].uid).toBe("string");
   });
 });
+
+describe("useQuoteDraft — a reload keeps one set of row ids", () => {
+  it("after «Ver cambios», an edit keeps every row's uid and its priced line", async () => {
+    const { hook, saves, reloads, typeQty } = setup();
+    typeQty("2");
+    await advance(SAVE_DELAY_MS);
+    await act(async () => saves[0].d.reject(new QuoteRefusal(409, "stale_version", "x")));
+    await settle();
+    act(() => void hook.result.current.reload());
+    await act(async () => reloads[0].resolve(workspaceFixture({ version: 8 })));
+    await settle();
+    const after = hook.result.current.state.draft.items.map((i) => i.uid);
+    expect(hook.result.current.state.computedKeys).toEqual(after);
+    typeQty("5");
+    expect(hook.result.current.state.draft.items.map((i) => i.uid)).toEqual(after);
+    expect(hook.result.current.state.computedKeys).toEqual(after);
+  });
+
+  it("a new workspace from the page keeps one set of uids too", async () => {
+    const { hook, typeQty } = setup();
+    hook.rerender({ ws: workspaceFixture({ version: 9 }) });
+    const after = hook.result.current.state.draft.items.map((i) => i.uid);
+    expect(hook.result.current.state.computedKeys).toEqual(after);
+    typeQty("4");
+    expect(hook.result.current.state.draft.items.map((i) => i.uid)).toEqual(after);
+  });
+});

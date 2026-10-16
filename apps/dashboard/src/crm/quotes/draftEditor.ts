@@ -54,7 +54,8 @@ export type DraftAction =
   | { type: "saveStarted"; keys?: string[] }
   | { type: "saveDone"; version: number; computed: Computed; at: number }
   | { type: "saveFailed"; error: QuoteRefusal | Error }
-  | { type: "reset"; workspace: QuoteWorkspace };
+  /** A fresh state built once by the caller (`initialDraftState`): the reducer makes no uids, as StrictMode runs it twice. */
+  | { type: "reset"; state: DraftEditorState };
 
 /** Only an authored draft is edited here; approved, sent, void and imported revisions are read-only. */
 export function isEditable(workspace: QuoteWorkspace): boolean {
@@ -218,7 +219,7 @@ export function draftReducer(state: DraftEditorState, action: DraftAction): Draf
         savingKeys: null,
       };
     case "reset":
-      return initialDraftState(action.workspace);
+      return action.state;
   }
 }
 

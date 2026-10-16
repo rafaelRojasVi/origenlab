@@ -10,7 +10,7 @@
  * pick stays «Otro correo…» even when it matches a contact, and «no válido» waits until the field
  * has content and loses the focus.
  */
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { DraftProblem } from "./draftEditor";
 import { setRecipient } from "./draftEditor";
 import type { QuoteDraft, QuoteRecipientPick, QuoteWorkspace, QuoteWorkspaceContact } from "./quoteApi";
@@ -61,6 +61,18 @@ export function ClientSection({
   const { institution, contacts, lo_que_pidio } = workspace.case;
   const [typing, setTyping] = useState(false);
   const [emailLeft, setEmailLeft] = useState(false);
+  // A reload (new workspace) drops what was half-typed here.
+  useEffect(() => {
+    setTyping(false);
+    setEmailLeft(false);
+  }, [workspace]);
+  // The server's refusal stands until the operator changes the pick (or a new one arrives).
+  const [refusalSeen, setRefusalSeen] = useState<string | null>(null);
+  useEffect(() => setRefusalSeen(null), [refusal]);
+  const shownRefusal = refusal && refusalSeen !== refusal ? refusal : null;
+  const changed = () => {
+    if (refusal) setRefusalSeen(refusal);
+  };
   const recipient = draft.recipient ?? null;
 
   const matched = recipient ? contacts.findIndex((c) => samePick(pickOf(c), recipient)) : -1;
@@ -78,6 +90,7 @@ export function ClientSection({
 
   function choose(v: string) {
     setEmailLeft(false);
+    changed();
     if (v === OTHER) {
       setTyping(true);
       edit((d) => setRecipient(d, null));
@@ -93,6 +106,7 @@ export function ClientSection({
   }
 
   function typeAddress(email: string, name: string) {
+    changed();
     const e = email.trim() ? email : "";
     edit((d) => setRecipient(d, e || name.trim() ? { email: e, name: name.trim() ? name : null } : null));
   }
@@ -162,9 +176,9 @@ export function ClientSection({
             {emailProblem ? <p className="text-[12px] text-bad">{emailProblem}</p> : null}
           </div>
         ) : null}
-        {refusal ? (
+        {shownRefusal ? (
           <p role="alert" className="mt-1 text-[12.5px] text-bad">
-            {refusal}
+            {shownRefusal}
           </p>
         ) : null}
       </div>

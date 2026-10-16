@@ -233,9 +233,16 @@ describe("draftReducer", () => {
   it("reset discards local edits", () => {
     let s = draftReducer(start(), { type: "edit", fn: (d) => removeItem(d, 0) });
     s = draftReducer(s, { type: "saveFailed", error: new QuoteRefusal(409, "stale_version", "x") });
-    s = draftReducer(s, { type: "reset", workspace: workspaceFixture({ version: 7 }) });
+    const fresh = initialDraftState(workspaceFixture({ version: 7 }));
+    s = draftReducer(s, { type: "reset", state: fresh });
     expect(s).toMatchObject({ version: 7, saveState: "idle", error: null });
     expect(s.draft.items).toHaveLength(2);
+  });
+
+  it("reset takes the state it is given: the reducer makes no new uids", () => {
+    const fresh = initialDraftState(workspaceFixture({ version: 7 }));
+    const s = draftReducer(start(), { type: "reset", state: fresh });
+    expect(s).toBe(fresh);
   });
 });
 

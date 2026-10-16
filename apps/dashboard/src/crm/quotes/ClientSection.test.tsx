@@ -1,6 +1,6 @@
 /** «Cliente / Para / Lo que pidió». Every value is invented. */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { ClientSection } from "./ClientSection";
@@ -24,13 +24,18 @@ function ws(over: Partial<QuoteWorkspace["case"]> = {}): QuoteWorkspace {
 }
 
 function setup(workspace = ws(), initial: QuoteDraft = draftFixture(), disabled = false, refusal: string | null = null) {
-  const latest: { draft: QuoteDraft } = { draft: initial };
+  const latest: { draft: QuoteDraft; reset: (w: QuoteWorkspace, d: QuoteDraft) => void } = { draft: initial, reset: () => undefined };
   function Harness() {
     const [draft, setDraft] = useState(initial);
+    const [shownWs, setShownWs] = useState(workspace);
     latest.draft = draft;
+    latest.reset = (w, d) => {
+      setShownWs(w);
+      setDraft(d);
+    };
     return (
       <ClientSection
-        workspace={workspace}
+        workspace={shownWs}
         draft={draft}
         invalid={draftProblems(draft)}
         disabled={disabled}
@@ -134,5 +139,20 @@ describe("ClientSection", () => {
   it("shows why the server refused the recipient", () => {
     setup(ws(), { ...draftFixture(), recipient: { participant_id: "pa-1" } }, false, "Esa dirección es de OrigenLab.");
     expect(screen.getByRole("alert")).toHaveTextContent("Esa dirección es de OrigenLab.");
+  });
+
+  it("a reloaded workspace drops a half-typed «Otro correo…»", () => {
+    const latest = setup();
+    fireEvent.change(screen.getByLabelText("Para"), { target: { value: "other" } });
+    act(() => latest.reset(ws(), draftFixture()));
+    expect(screen.getByLabelText("Para")).toHaveValue("");
+    expect(screen.queryByLabelText("Correo")).not.toBeInTheDocument();
+  });
+
+  it("the server's refusal goes away once the pick changes", () => {
+    setup(ws(), { ...draftFixture(), recipient: { participant_id: "pa-1" } }, false, "Esa dirección es de OrigenLab.");
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Para"), { target: { value: "1" } });
+    expect(screen.queryByText("Esa dirección es de OrigenLab.")).not.toBeInTheDocument();
   });
 });

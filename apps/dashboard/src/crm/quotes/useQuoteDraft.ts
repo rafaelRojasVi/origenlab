@@ -236,7 +236,7 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
     inFlightRef.current = null;
     queuedRef.current = false;
     lastErrorRef.current = null;
-    dispatch({ type: "reset", workspace: ws });
+    dispatch({ type: "reset", state: fresh });
   }, []);
 
   const reload = useCallback(async () => {

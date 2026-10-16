@@ -115,17 +115,19 @@ async function setup({
   stale = false,
   clientView = false,
 }: { workspace?: QuoteWorkspace; initial?: QuoteDraft; priced?: Computed | null; keys?: string[]; stale?: boolean; clientView?: boolean } = {}) {
-  const latest: { draft: QuoteDraft } = { draft: initial };
+  const latest: { draft: QuoteDraft; setPriced: (c: Computed | null) => void } = { draft: initial, setPriced: () => undefined };
   const edit = vi.fn();
   function Harness() {
     const [d, setD] = useState(initial);
     const [view, setView] = useState(clientView);
+    const [shown, setShown] = useState(priced);
     latest.draft = d;
+    latest.setPriced = setShown;
     return (
       <ProductsSection
         workspace={workspace}
         draft={d}
-        computed={priced}
+        computed={shown}
         computedKeys={keys}
         stale={stale}
         invalid={draftProblems(d)}
@@ -472,8 +474,38 @@ describe("ProductsSection — details", () => {
     fireEvent.change(qty, { target: { value: "1.000" } });
     expect(screen.getByText("Usa coma para decimales (1,5) — ¿quisiste decir 1000?")).toBeInTheDocument();
     expect(draftProblems(latest.draft)).toHaveLength(1);
+    // At rest it stays as typed, not re-read as «1».
+    fireEvent.blur(qty);
+    expect(qty).toHaveValue("1.000");
+    fireEvent.focus(qty);
     fireEvent.change(qty, { target: { value: "1000" } });
     expect(latest.draft.items[0].quantity).toBe("1000");
     expect(draftProblems(latest.draft)).toEqual([]);
+  });
+});
+
+describe("ProductsSection — a cost being cleared stays editable", () => {
+  it("clearing a typed cost on a catalog line keeps its inputs, even once the API priced it", async () => {
+    const c = computed();
+    c.lines[0] = { ...c.lines[0], unit_cost: null, cost_currency: null, cost_clp_unit: null, margin_state: "no_cost" };
+    const { latest } = await setup({ priced: c });
+    const cost = screen.getByLabelText("Costo unitario de la línea 1");
+    fireEvent.focus(cost);
+    fireEvent.change(cost, { target: { value: "1200" } });
+    // The preview answers with the typed cost.
+    act(() => latest.setPriced(computed()));
+    fireEvent.change(screen.getByLabelText("Costo unitario de la línea 1"), { target: { value: "" } });
+    expect(latest.draft.items[0]).toMatchObject({ unit_cost: null, cost_currency: null });
+    expect(screen.getByLabelText("Costo unitario de la línea 1")).toBeInTheDocument();
+  });
+
+  it("a price that cannot be read stays as typed", async () => {
+    await setup();
+    const price = screen.getByLabelText("Precio unitario de la línea 1");
+    fireEvent.focus(price);
+    fireEvent.change(price, { target: { value: "mil" } });
+    fireEvent.blur(price);
+    expect(price).toHaveValue("mil");
+    expect(screen.getByText(/El precio debe ser un número/)).toBeInTheDocument();
   });
 });
