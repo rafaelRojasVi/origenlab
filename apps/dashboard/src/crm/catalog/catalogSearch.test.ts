@@ -67,6 +67,23 @@ describe("catalogSearch", () => {
     expect(r.allSuppliers).toBe(1); // «Todos» in the rail: the kind scope, every supplier
   });
 
+  it("«Con ficha» keeps only products with a data sheet and narrows every count", () => {
+    const withSheets = createCatalogSearch([
+      item("a", "UP200St", "Procesador ultrasónico 200 W", { has_datasheet: true }),
+      item("b", "UP400St", "Procesador ultrasónico 400 W"),
+      item("c", "BAL-120", "Balanza analítica", { supplier_ids: ["s2"], has_datasheet: true }),
+      item("d", "S26d7", "Sonotrodo de titanio", { kind: "accessory" }),
+    ]);
+    const r = withSheets.search("", { hasDatasheet: true });
+    expect(r.hits.map((h) => h.id)).toEqual(["a", "c"]);
+    expect(r.total).toBe(2);
+    expect(r.bySupplier).toEqual({ s1: 1, s2: 1 });
+    expect(r.byKind).toEqual({ equipment: 2 });
+    expect(withSheets.search("procesador", { hasDatasheet: true }).hits.map((h) => h.id)).toEqual(["a"]);
+    expect(withSheets.search("", { hasDatasheet: false }).total).toBe(4);
+    expect(engine.search("", { hasDatasheet: true }).total).toBe(0); // none of `items` has one
+  });
+
   it("an empty query lists everything in index order", () =>
     expect(engine.search("  ").hits.map((h) => h.id)).toEqual(["a", "b", "c", "d"]));
 

@@ -307,6 +307,25 @@ def test_index_lists_active_products_without_costs(disposable_database):
 
 
 @needs_db
+def test_index_has_datasheet_only_for_an_active_datasheet(disposable_database):
+    """«Con ficha» filters the index on this flag: a retired sheet or a price list never sets it."""
+    dsn = disposable_database
+    supplier = _org(dsn, "supplier")
+    _, with_sheet = _seed_product(dsn, model="FIC-1", name="a", name_es="a")
+    _, retired = _seed_product(dsn, model="FIC-2", name="b", name_es="b")
+    _, bare = _seed_product(dsn, model="FIC-3", name="c", name_es="c")
+    insert = ("insert into catalog.product_document (product_id, kind, title, drive_file_id, mime_type, source, status) "
+              "values (%s, 'datasheet', 'x.pdf', %s, 'application/pdf', 'operator', %s)")
+    _owner(dsn, insert, (with_sheet, "SyntheticSheet0101", "active"))
+    _owner(dsn, insert, (retired, "SyntheticSheet0102", "retired"))
+    _owner(dsn, "insert into catalog.product_document (supplier_organization_id, kind, title, drive_file_id, mime_type, "
+                "source, as_of) values (%s, 'price_list', 'Lista.xlsx', 'SyntheticList00101', 'application/pdf', "
+                "'operator', '2026-01-01')", (supplier,))
+    out = _reads(dsn).catalog_index()
+    assert [_index_row(out, p)["has_datasheet"] for p in (with_sheet, retired, bare)] == [True, False, False]
+
+
+@needs_db
 def test_index_leaves_out_inactive_products(disposable_database):
     dsn = disposable_database
     _, prod = _seed_product(dsn, model="IDX-OFF", name="off", name_es="off")
