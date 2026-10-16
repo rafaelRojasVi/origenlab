@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { clearCatalogIndexMemory } from "../catalog/catalogIndex";
+import type { QuoteDraft } from "../quotes/quoteApi";
 import { computedFixture, workspaceFixture } from "../quotes/quoteFixtures";
 import { clearResourceCache } from "../useResource";
 import { CotizadorPage } from "./CotizadorPage";
@@ -248,8 +249,41 @@ describe("Cotizador page — the draft editor", () => {
   it("hides costs and margins in «Vista cliente»", async () => {
     stubApi(() => json({}));
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Vista cliente" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Gastos de importación" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Vista cliente" }));
     expect(screen.queryByRole("columnheader", { name: "Costo unit." })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "Gastos de importación" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Condiciones" })).toBeInTheDocument();
+  });
+
+  it("saves a condition and a switch to manual expenses, without the editor's row ids", async () => {
+    const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }));
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Plazo de entrega"), { target: { value: "4 semanas" } });
+    fireEvent.click(screen.getByRole("button", { name: "Editar montos" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar otra condición" }));
+    fireEvent.change(screen.getByLabelText("Nombre de la condición 1"), { target: { value: "Embalaje" } });
+    fireEvent.change(screen.getByLabelText("Texto de la condición 1"), { target: { value: "Caja de madera" } });
+    expect(await screen.findByText(/guardado automáticamente/, undefined, { timeout: 3000 })).toBeInTheDocument();
+    const save = calls.filter((c) => c.path === "/v2/commands/save-quote-draft").pop();
+    const sent = (save?.body as { draft: QuoteDraft }).draft;
+    expect(sent.expense_method).toBe("manual");
+    expect(sent.manual_expenses).toEqual([
+      { label: "Flete", amount: "150.5", currency: "USD" },
+      { label: "Desaduanaje", amount: "45000", currency: "CLP" },
+    ]);
+    expect(sent.terms).toMatchObject({ delivery_terms: "4 semanas", terms_extra: [{ label_es: "Embalaje", text_es: "Caja de madera" }] });
+    expect(JSON.stringify(sent)).not.toContain("uid");
+  });
+
+  it("keeps the expenses and conditions read-only after someone else's save", async () => {
+    stubApi(() => json({ detail: { code: "stale_version", message: "otra versión" } }, 409));
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Plazo de entrega"), { target: { value: "4 semanas" } });
+    expect(await screen.findByText("Otra persona cambió este borrador.", undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.getByLabelText("Plazo de entrega")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Perfil" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Editar montos" })).not.toBeInTheDocument();
   });
 
   it("shows a refused recipient under «Para», and points the save line there", async () => {

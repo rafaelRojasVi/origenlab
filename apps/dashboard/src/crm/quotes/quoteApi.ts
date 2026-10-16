@@ -51,6 +51,16 @@ export interface QuoteDraftExpense {
   label: string;
   amount: Decimal;
   currency: "CLP" | "EUR" | "USD";
+  /** Client-only, never sent: the row's identity in the editor (see `QuoteDraftItem.uid`). */
+  uid?: string;
+}
+
+/** A condition beyond the fixed ones («+ Agregar otra condición»). */
+export interface QuoteDraftTerm {
+  label_es: string;
+  text_es: string;
+  /** Client-only, never sent: the row's identity in the editor (see `QuoteDraftItem.uid`). */
+  uid?: string;
 }
 
 export interface QuoteDraftTerms {
@@ -61,7 +71,7 @@ export interface QuoteDraftTerms {
   delivery_place_es?: string | null;
   installation_terms_es?: string | null;
   client_notes_es?: string | null;
-  terms_extra: { label_es: string; text_es: string }[];
+  terms_extra: QuoteDraftTerm[];
 }
 
 /** Whom the quote goes to: a case participant, a CRM person or contact point, or a typed address. */

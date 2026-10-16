@@ -40,7 +40,7 @@ const CELL_INPUT =
   "h-8 w-full min-w-0 rounded-md border border-line-strong bg-canvas-raised px-2 text-right font-mono text-[13.5px] tabular-nums text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50";
 
 /** An input that shows a formatted value at rest and the raw one while it is edited. */
-function NumberInput({
+export function NumberInput({
   label,
   display,
   editValue,
@@ -49,6 +49,8 @@ function NumberInput({
   onChange,
   onFocus,
   suffix,
+  className = CELL_INPUT,
+  invalid = false,
 }: {
   label: string;
   display: string;
@@ -58,6 +60,8 @@ function NumberInput({
   onChange: (text: string) => void;
   onFocus?: () => void;
   suffix?: string;
+  className?: string;
+  invalid?: boolean;
 }) {
   const [text, setText] = useState<string | null>(null);
   return (
@@ -69,6 +73,7 @@ function NumberInput({
         value={text ?? display}
         placeholder={placeholder}
         disabled={disabled}
+        aria-invalid={invalid || undefined}
         onFocus={(e) => {
           onFocus?.();
           setText(editValue);
@@ -80,7 +85,7 @@ function NumberInput({
           setText(e.target.value);
           onChange(e.target.value);
         }}
-        className={`${CELL_INPUT}${suffix ? " pr-6" : ""}`}
+        className={`${className}${suffix ? " pr-6" : ""}`}
       />
       {suffix ? (
         <span aria-hidden="true" className="pointer-events-none absolute right-2 font-mono text-[12px] text-ink-muted">

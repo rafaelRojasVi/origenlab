@@ -3,10 +3,12 @@ import { Badge, Button, Skeleton, toast } from "../ui";
 import { crmHash, type CrmSection } from "../crmRoute";
 import { ClientSection } from "../quotes/ClientSection";
 import { isEditable } from "../quotes/draftEditor";
+import { ExpensesSection } from "../quotes/ExpensesSection";
 import { ProductsSection } from "../quotes/ProductsSection";
 import { QuoteRefusal, fetchQuoteWorkspace, type QuoteWorkspace } from "../quotes/quoteApi";
 import { quoteLabel } from "../quotes/quoteLabel";
 import { SaveStatus } from "../quotes/SaveStatus";
+import { TermsSection } from "../quotes/TermsSection";
 import { useQuoteDraft } from "../quotes/useQuoteDraft";
 import { useResource } from "../useResource";
 
@@ -17,7 +19,8 @@ import { useResource } from "../useResource";
  * Every number on the page comes from the API; the browser never prices.
  *
  * An authored draft is edited in place (`useQuoteDraft`: live preview, autosave); the header says
- * whether it is saved. «Vista cliente» (B7) hides costs and margins for screen sharing.
+ * whether it is saved. «Vista cliente» (B7) hides costs and margins, and the whole «Gastos de
+ * importación» card, for screen sharing.
  */
 type Navigate = (section: CrmSection, id?: string | null) => void;
 
@@ -156,6 +159,19 @@ function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace
               onClientViewChange={setClientView}
               edit={editor.edit}
             />
+            {/* Internal: import expenses are never shown to the client, not even in screen sharing. */}
+            {clientView ? null : (
+              <ExpensesSection
+                draft={state.draft}
+                computed={state.computed}
+                computedKeys={state.computedKeys}
+                stale={editor.stale}
+                invalid={editor.invalid}
+                disabled={disabled}
+                edit={editor.edit}
+              />
+            )}
+            <TermsSection draft={state.draft} invalid={editor.invalid} disabled={disabled} edit={editor.edit} />
           </div>
         </div>
       ) : null}

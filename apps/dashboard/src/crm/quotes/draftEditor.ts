@@ -11,7 +11,9 @@ import type {
   Computed,
   ComputedLine,
   QuoteDraft,
+  QuoteDraftExpense,
   QuoteDraftItem,
+  QuoteDraftTerm,
   QuoteDraftTerms,
   QuoteItemType,
   QuoteRecipientPick,
@@ -94,10 +96,19 @@ export function newLineUid(): string {
   return `line-${uidSeq}`;
 }
 
-/** The draft with a uid on every line (a line that has one keeps it). */
+const tagged = <T extends { uid?: string }>(rows: T[]): T[] =>
+  rows.every((r) => r.uid) ? rows : rows.map((r) => (r.uid ? r : { ...r, uid: newLineUid() }));
+
+/**
+ * The draft with a uid on every line, manual expense and extra condition (a row that has one keeps
+ * it): the editor's stable keys. `sendableDraft` strips them.
+ */
 export function withUids(draft: QuoteDraft): QuoteDraft {
-  if (draft.items.every((i) => i.uid)) return draft;
-  return { ...draft, items: draft.items.map((i) => (i.uid ? i : { ...i, uid: newLineUid() })) };
+  const items = tagged(draft.items);
+  const manual_expenses = tagged(draft.manual_expenses);
+  const terms_extra = tagged(draft.terms.terms_extra);
+  if (items === draft.items && manual_expenses === draft.manual_expenses && terms_extra === draft.terms.terms_extra) return draft;
+  return { ...draft, items, manual_expenses, terms: { ...draft.terms, terms_extra } };
 }
 
 export const lineUids = (draft: QuoteDraft): string[] => draft.items.map((i) => i.uid ?? "");
@@ -121,6 +132,8 @@ export function sendableDraft(draft: QuoteDraft & { recipient_participant_id?: s
     ...rest,
     recipient,
     items: rest.items.map(clearBlankOptionals),
+    manual_expenses: rest.manual_expenses.map(({ uid: _uid, ...e }) => e),
+    terms: { ...rest.terms, terms_extra: rest.terms.terms_extra.map(({ uid: _uid, ...t }) => t) },
   };
 }
 
@@ -266,6 +279,15 @@ export function removeItem(draft: QuoteDraft, index: number): QuoteDraft {
   return { ...draft, items: draft.items.filter((_, i) => i !== index) };
 }
 
+/**
+ * The principal line (it absorbs the import expenses): the one the API priced as principal (found
+ * by uid in `computedKeys`), else the one the operator marked. Null when there is none.
+ */
+export function principalItemOf(draft: QuoteDraft, computed: Computed | null, computedKeys: string[]): QuoteDraftItem | null {
+  const uid = computed?.principal_line_no ? computedKeys[computed.principal_line_no - 1] : undefined;
+  return (uid ? draft.items.find((i) => i.uid === uid) : draft.items.find((i) => i.is_principal)) ?? null;
+}
+
 /** The operator picks the principal line (it absorbs the import expenses): the rule becomes manual. */
 export function setPrincipal(draft: QuoteDraft, index: number): QuoteDraft {
   return {
@@ -299,7 +321,39 @@ export function setExpenseMethod(
   return { ...draft, expense_method: method, manual_expenses: [] };
 }
 
-type TermKey = Exclude<keyof QuoteDraftTerms, "terms_extra">;
+/** A new manual expense, empty: the editor asks for its name and amount before anything is sent. */
+export function addManualExpense(draft: QuoteDraft): QuoteDraft {
+  return { ...draft, manual_expenses: [...draft.manual_expenses, { label: "", amount: "", currency: "CLP", uid: newLineUid() }] };
+}
+
+export function updateManualExpense(draft: QuoteDraft, index: number, patch: Partial<QuoteDraftExpense>): QuoteDraft {
+  return { ...draft, manual_expenses: draft.manual_expenses.map((e, i) => (i === index ? { ...e, ...patch } : e)) };
+}
+
+export function removeManualExpense(draft: QuoteDraft, index: number): QuoteDraft {
+  return { ...draft, manual_expenses: draft.manual_expenses.filter((_, i) => i !== index) };
+}
+
+const withExtra = (draft: QuoteDraft, terms_extra: QuoteDraftTerm[]): QuoteDraft => ({
+  ...draft,
+  terms: { ...draft.terms, terms_extra },
+});
+
+/** «+ Agregar otra condición»: an empty name + text pair. */
+export function addExtraTerm(draft: QuoteDraft): QuoteDraft {
+  return withExtra(draft, [...draft.terms.terms_extra, { label_es: "", text_es: "", uid: newLineUid() }]);
+}
+
+export function updateExtraTerm(draft: QuoteDraft, index: number, patch: Partial<QuoteDraftTerm>): QuoteDraft {
+  return withExtra(draft, draft.terms.terms_extra.map((t, i) => (i === index ? { ...t, ...patch } : t)));
+}
+
+export function removeExtraTerm(draft: QuoteDraft, index: number): QuoteDraft {
+  return withExtra(draft, draft.terms.terms_extra.filter((_, i) => i !== index));
+}
+
+/** The fixed conditions (everything in `terms` but the extra ones). */
+export type TermKey = Exclude<keyof QuoteDraftTerms, "terms_extra">;
 
 export function setTerm<K extends TermKey>(draft: QuoteDraft, key: K, value: QuoteDraftTerms[K]): QuoteDraft {
   return { ...draft, terms: { ...draft.terms, [key]: value } };
@@ -409,6 +463,7 @@ export function draftProblems(draft: QuoteDraft): DraftProblem[] {
     if (tooLong(item.line_note_es, 1000)) add("items.line_note_es", `La nota de la línea ${n} es demasiado larga (máximo 1000).`, i);
   });
 
+  if (draft.manual_expenses.length > 20) add("manual_expenses", "Máximo 20 gastos de importación.");
   draft.manual_expenses.forEach((e, i) => {
     if (blank(e.label)) add("manual_expenses.label", "Escribe el nombre del gasto.", i);
     else if (tooLong(e.label, 120)) add("manual_expenses.label", "El nombre del gasto es demasiado largo (máximo 120).", i);
@@ -424,12 +479,15 @@ export function draftProblems(draft: QuoteDraft): DraftProblem[] {
 
   const t = draft.terms;
   const days = t.validity_days;
-  if (days !== null && days !== undefined && (!Number.isInteger(days) || days < 1 || days > 365)) {
+  if (days !== null && days !== undefined && !Number.isInteger(days)) {
+    add("terms.validity_days", "Escribe la validez en días, con un número entero.");
+  } else if (days !== null && days !== undefined && (days < 1 || days > 365)) {
     add("terms.validity_days", "La validez debe ser de 1 a 365 días.");
   }
   for (const key of ["delivery_terms", "payment_terms", "warranty_terms_es", "delivery_place_es", "installation_terms_es", "client_notes_es"] as const) {
     if (tooLong(t[key], 1000)) add(`terms.${key}`, "Este texto es demasiado largo (máximo 1000).");
   }
+  if (t.terms_extra.length > 12) add("terms_extra", "Máximo 12 condiciones adicionales.");
   t.terms_extra.forEach((x, i) => {
     if (blank(x.label_es)) add("terms_extra.label_es", "Escribe el nombre de la condición.", i);
     else if (tooLong(x.label_es, 80)) add("terms_extra.label_es", "El nombre de la condición es demasiado largo (máximo 80).", i);

@@ -12,7 +12,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
 import type { IndexItem } from "../catalog/catalogSearch";
-import { addCatalogItem, addFreeLine, computedLineFor, removeItem, setPrincipal, updateItem, type DraftProblem } from "./draftEditor";
+import {
+  addCatalogItem,
+  addFreeLine,
+  computedLineFor,
+  principalItemOf,
+  removeItem,
+  setPrincipal,
+  updateItem,
+  type DraftProblem,
+} from "./draftEditor";
 import { GRID_CLIENT, GRID_FULL, LineRow, type LineProduct } from "./LineRow";
 import { ProductSearch } from "./ProductSearch";
 import type { Computed, ComputedLine, QuoteDraft, QuoteWorkspace } from "./quoteApi";
@@ -115,10 +124,7 @@ export function ProductsSection({
 
   const add = useCallback((hit: IndexItem) => edit((d) => addCatalogItem(d, hit)), [edit]);
 
-  const principalUid = computed?.principal_line_no ? computedKeys[computed.principal_line_no - 1] : undefined;
-  const principalItem = principalUid
-    ? draft.items.find((i) => i.uid === principalUid)
-    : draft.items.find((i) => i.is_principal);
+  const principalItem = principalItemOf(draft, computed, computedKeys);
   const principalModel = principalItem
     ? ((principalItem.product_id && byId.get(principalItem.product_id)?.model_number) || principalItem.description)
     : null;

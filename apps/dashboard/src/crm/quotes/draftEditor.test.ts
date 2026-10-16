@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { IndexItem } from "../catalog/catalogSearch";
 import {
   addCatalogItem,
+  addExtraTerm,
   addFreeLine,
+  addManualExpense,
+  principalItemOf,
+  removeExtraTerm,
+  removeManualExpense,
+  updateExtraTerm,
+  updateManualExpense,
+  withUids,
   computedLineFor,
   draftProblems,
   draftReducer,
@@ -380,5 +388,66 @@ describe("line identity (client-only uid)", () => {
     expect(draftProblems(d)).toEqual([
       { index: 1, field: "items.quantity", message_es: "Usa coma para decimales (1,5) — ¿quisiste decir 1000?" },
     ]);
+  });
+});
+
+describe("expense and condition rows", () => {
+  it("adds, edits and removes a manual expense", () => {
+    let d = addManualExpense(draftFixture());
+    expect(d.manual_expenses).toEqual([expect.objectContaining({ label: "", amount: "", currency: "CLP" })]);
+    d = updateManualExpense(d, 0, { label: "Flete aéreo", amount: "120000" });
+    d = addManualExpense(d);
+    d = updateManualExpense(d, 1, { label: "Seguro", amount: "50", currency: "USD" });
+    expect(d.manual_expenses.map((e) => [e.label, e.amount, e.currency])).toEqual([
+      ["Flete aéreo", "120000", "CLP"],
+      ["Seguro", "50", "USD"],
+    ]);
+    d = removeManualExpense(d, 0);
+    expect(d.manual_expenses.map((e) => e.label)).toEqual(["Seguro"]);
+  });
+
+  it("adds, edits and removes an extra condition", () => {
+    let d = addExtraTerm(draftFixture());
+    expect(d.terms.terms_extra).toEqual([expect.objectContaining({ label_es: "", text_es: "" })]);
+    d = updateExtraTerm(d, 0, { label_es: "Embalaje", text_es: "Caja de madera" });
+    d = addExtraTerm(d);
+    d = updateExtraTerm(d, 1, { label_es: "Flete", text_es: "Incluido" });
+    d = removeExtraTerm(d, 0);
+    expect(d.terms.terms_extra.map((t) => [t.label_es, t.text_es])).toEqual([["Flete", "Incluido"]]);
+  });
+
+  it("gives expense and condition rows a uid the API never sees", () => {
+    const d = withUids(addExtraTerm(addManualExpense(draftFixture())));
+    expect(d.manual_expenses[0].uid).toMatch(/\S/);
+    expect(d.terms.terms_extra[0].uid).toMatch(/\S/);
+    expect(withUids(updateManualExpense(d, 0, { label: "x" })).manual_expenses[0].uid).toBe(d.manual_expenses[0].uid);
+    const sent = sendableDraft(d);
+    expect("uid" in sent.manual_expenses[0]).toBe(false);
+    expect("uid" in sent.terms.terms_extra[0]).toBe(false);
+  });
+
+  it("refuses more than 20 expenses and 12 extra conditions, as the API does", () => {
+    let d = draftFixture();
+    for (let i = 0; i < 21; i++) d = updateManualExpense(addManualExpense(d), i, { label: `Gasto ${i}`, amount: "1" });
+    for (let i = 0; i < 13; i++) d = updateExtraTerm(addExtraTerm(d), i, { label_es: `C${i}`, text_es: "t" });
+    expect(draftProblems(d)).toEqual([
+      { field: "manual_expenses", message_es: "Máximo 20 gastos de importación." },
+      { field: "terms_extra", message_es: "Máximo 12 condiciones adicionales." },
+    ]);
+  });
+
+  it("names validity days that are not a whole number", () => {
+    expect(draftProblems(setTerm(draftFixture(), "validity_days", Number.NaN))).toEqual([
+      { field: "terms.validity_days", message_es: "Escribe la validez en días, con un número entero." },
+    ]);
+  });
+
+  it("finds the principal line: the one the API priced as principal, else the one marked", () => {
+    const d = initialDraftState(workspaceFixture()).draft;
+    const keys = d.items.map((i) => i.uid ?? "");
+    expect(principalItemOf(d, { ...computedFixture(), principal_line_no: 2 }, keys)?.description).toBe("Servicio de prueba");
+    expect(principalItemOf(d, { ...computedFixture(), principal_line_no: null }, keys)).toBeNull();
+    const marked = setPrincipal(d, 1);
+    expect(principalItemOf(marked, null, keys)?.description).toBe("Servicio de prueba");
   });
 });
