@@ -19,6 +19,7 @@ import { quoteLabel } from "../quotes/quoteLabel";
 import { quoteRefusalLines, quoteRefusalText } from "../quotes/quoteRefusal";
 import { SaveStatus } from "../quotes/SaveStatus";
 import { SummaryRail } from "../quotes/SummaryRail";
+import { takeDiscarded } from "../quotes/tabEditors";
 import { tabMetaOf, type TabMeta } from "../quotes/tabStore";
 import { TermsSection } from "../quotes/TermsSection";
 import { useQuoteDraft } from "../quotes/useQuoteDraft";
@@ -215,28 +216,34 @@ function CotizadorWorkspace({
   const labelOf = (revisionNo: number, label?: string | null) =>
     quoteLabel({ label, quote_number: ws.quote.quote_number, revision_no: revisionNo });
 
-  // Leaving another way (the menu, a link elsewhere) unmounts the page: the editor then sends what
-  // it can, but an incomplete draft or one in conflict cannot be sent — say so on the next page.
+  // The module's tab shows this quote as it is now (a restored tab's stored label may be old).
+  const meta = tabMetaOf(ws);
+
+  // Leaving another way (the menu, a link elsewhere, closing its tab) unmounts the page: the editor
+  // then sends what it can, but an incomplete draft or one in conflict cannot be sent — say so on
+  // the next page, naming the quote (several can be open). Not after «Salir igual» / «Cerrar igual».
   const lossRef = useRef<string | null>(null);
   const confirmedRef = useRef(false);
+  const lost = `Tus últimos cambios en la cotización ${meta.label} no se guardaron`;
   lossRef.current = !editor.pending
     ? null
     : state.saveState === "conflict"
       ? isGone(state.error)
-        ? "Tus últimos cambios en la cotización no se guardaron: se aprobó o anuló en otra pestaña."
-        : "Tus últimos cambios en la cotización no se guardaron: otra persona la había cambiado."
+        ? `${lost}: se aprobó o anuló en otra pestaña.`
+        : `${lost}: otra persona la había cambiado.`
       : editor.invalid.length > 0
-        ? "Tus últimos cambios en la cotización no se guardaron: el borrador estaba incompleto."
+        ? `${lost}: el borrador estaba incompleto.`
         : null;
+  const quoteIdRef = useRef(ws.quote.id);
+  quoteIdRef.current = ws.quote.id;
   useEffect(
     () => () => {
-      if (lossRef.current && !confirmedRef.current) toast(lossRef.current, "warn");
+      const closedAnyway = takeDiscarded(quoteIdRef.current);
+      if (lossRef.current && !confirmedRef.current && !closedAnyway) toast(lossRef.current, "warn");
     },
     [],
   );
 
-  // The module's tab shows this quote as it is now (a restored tab's stored label may be old).
-  const meta = tabMetaOf(ws);
   const onMetaRef = useRef(onMeta);
   onMetaRef.current = onMeta;
   useEffect(() => {

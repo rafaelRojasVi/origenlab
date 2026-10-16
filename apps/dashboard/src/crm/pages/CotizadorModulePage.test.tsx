@@ -36,7 +36,10 @@ const CATALOG = { version: "v1", fields: ["id", "model_number", "name"], supplie
 
 type Call = { method: string; path: string; body: { revision_id?: string } | null };
 
-function stubApi(onSave: (revisionId: string, call: number) => Response = () => json({ revision_id: "r", version: 4, computed: computedFixture() })) {
+function stubApi(
+  onSave: (revisionId: string, call: number) => Response | Promise<Response> = () => json({ revision_id: "r", version: 4, computed: computedFixture() }),
+  missing: number[] = [],
+) {
   const calls: Call[] = [];
   let saves = 0;
   vi.stubGlobal(
@@ -50,6 +53,7 @@ function stubApi(onSave: (revisionId: string, call: number) => Response = () => 
       if (path === "/v2/quotes/preview") return Promise.resolve(json({ computed: computedFixture("200000") }));
       if (path === "/v2/commands/save-quote-draft") return Promise.resolve(onSave(body.revision_id, ++saves));
       const m = /^\/v2\/quotes\/([0-9a-f-]{36})$/.exec(path);
+      if (m && missing.includes(nOf(m[1]))) return Promise.resolve(json({ detail: { code: "quote_not_found", message: "no" } }, 404));
       if (m) return Promise.resolve(json(workspace(nOf(m[1]))));
       return Promise.resolve(json({}, 404));
     }),
@@ -67,8 +71,10 @@ const session: AuthSessionState = {
   crmAuthoringEnabled: true,
 };
 
+/** The module only while the address is the module's, as in the shell; anything else is «Hoy». */
 function Routed() {
   const route = useShellRoute();
+  if (route.section !== "cotizador") return <p>Fuera del módulo</p>;
   return (
     <CotizadorModulePage
       quoteId={route.section === "cotizador" ? route.id : null}
@@ -303,5 +309,95 @@ describe("Cotizador module — panes keep their edits", () => {
     await autosave();
     await waitFor(() => expect(api.savesOf(2)).toBe(1));
     expect(await within(shown()).findByText(/guardado automáticamente/)).toBeInTheDocument();
+  });
+});
+
+describe("Cotizador module — fix round 1", () => {
+  it("«/» focuses the catalog search of the quote shown, not of a hidden one mounted first (I1)", async () => {
+    stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    await showsQuote("CN00041");
+    act(() => void (window.location.hash = `#/crm/cotizador/${Q(2)}`));
+    await showsQuote("CN00042");
+    const search = await shownField("Agregar del catálogo");
+    fireEvent.keyDown(document.body, { key: "/" });
+    expect(search).toHaveFocus();
+  });
+
+  it("two closes whose saves both fail ask one after the other, and both can close (I2)", async () => {
+    stubApi(() => json({ detail: "boom" }, 500));
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "5" } });
+    act(() => void (window.location.hash = `#/crm/cotizador/${Q(2)}`));
+    await showsQuote("CN00042");
+    fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "6" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00042" }));
+    const first = await screen.findByRole("dialog", { name: "No se pudo guardar. ¿Cerrar igual?" });
+    await waitFor(() => expect(first).toHaveTextContent("CN00041"));
+    fireEvent.click(within(first).getByRole("button", { name: "Cerrar igual" }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("CN00042"));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cerrar igual" }));
+    await waitFor(() => expect(quoteTabs()).toHaveLength(0));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("a close that finishes after the operator left the module does not pull the address back (I3)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const api = stubApi(() => gate.then(() => json({ revision_id: "r-1", version: 4, computed: computedFixture() })));
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
+    await waitFor(() => expect(api.savesOf(1)).toBe(1));
+    act(() => void (window.location.hash = "#/crm/resumen"));
+    await screen.findByText("Fuera del módulo");
+    await act(async () => {
+      release();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(window.location.hash).toBe("#/crm/resumen");
+  });
+
+  it("no second warning after «Cerrar igual» on an incomplete draft (M1)", async () => {
+    stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cerrar igual" }));
+    await waitFor(() => expect(quoteTabs()).toHaveLength(0));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(screen.queryByText(/cotización CN00041 no se guardaron: el borrador estaba incompleto/)).not.toBeInTheDocument();
+  });
+
+  it("after a close the focus goes to the tab now selected, then to «Todas» (M2); the × is outside the tablist (M3)", async () => {
+    seed([1, 2], 1);
+    stubApi();
+    renderModule(`#/crm/cotizador/${Q(1)}`);
+    await showsQuote("CN00041");
+    expect(within(tablist()).queryByRole("button", { name: /Cerrar/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
+    await waitFor(() => expect(tabOf("CN00042")).toHaveFocus());
+    fireEvent.keyDown(tabOf("CN00042"), { key: "Delete" });
+    await waitFor(() => expect(within(tablist()).getByRole("tab", { name: "Todas" })).toHaveFocus());
+  });
+
+  it("a restored tab whose quote is gone says so, and can be closed (M6)", async () => {
+    seed([7], 7);
+    stubApi(undefined, [7]);
+    renderModule(`#/crm/cotizador/${Q(7)}`);
+    expect(await within(shown()).findByText("Esta cotización no existe.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00047" }));
+    await waitFor(() => expect(quoteTabs()).toHaveLength(0));
+  });
+
+  it("the old one-quote address lands on the quote's tab (M6)", async () => {
+    stubApi();
+    renderModule(`#/crm/cotizar/${Q(1)}`);
+    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(1)}`));
+    await showsQuote("CN00041");
+    expect(quoteTabs()).toHaveLength(1);
   });
 });

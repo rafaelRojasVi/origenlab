@@ -16,7 +16,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { QuoteWorkspace } from "./quoteApi";
 import { quoteLabel } from "./quoteLabel";
-import { tabEditor } from "./tabEditors";
+import { markDiscarded, tabEditor } from "./tabEditors";
 
 export type TabStatus = "draft" | "approved" | "sent" | "void";
 
@@ -156,8 +156,11 @@ export interface QuoteTabs {
   state: TabsState;
   /** The state right now, between renders (after an `open` or `close` resolved). */
   peek: () => TabsState;
-  /** Opens (or activates) `id`; false when it was not opened (the operator kept the tabs). */
-  open: (id: string, meta?: TabMeta | null) => Promise<boolean>;
+  /**
+   * Opens (or activates) `id`; false when it was not opened (the operator kept the tabs, or
+   * `stillWanted` said no once the operator had been asked — they had moved on meanwhile).
+   */
+  open: (id: string, meta?: TabMeta | null, opts?: { stillWanted?: () => boolean }) => Promise<boolean>;
   /** Closes `id` after its pending save; false when the operator kept it. */
   close: (id: string) => Promise<boolean>;
   activate: (id: string | null) => void;
@@ -211,7 +214,11 @@ export function useQuoteTabs(operatorId: string, ask: TabsAsk, initial?: string 
         const editor = tabEditor(id);
         if (editor?.hasPendingSave()) {
           const saved = await editor.flush().catch(() => false);
-          if (!saved && !(await askRef.current.discard(tab))) return false;
+          if (!saved) {
+            if (!(await askRef.current.discard(tab))) return false;
+            // Told «Cerrar igual»: the pane closing must not warn again about what was just accepted.
+            markDiscarded(id);
+          }
         }
         commit(closeTab(ref.current, id));
         return true;
@@ -223,7 +230,7 @@ export function useQuoteTabs(operatorId: string, ask: TabsAsk, initial?: string 
   );
 
   const open = useCallback(
-    async (id: string, meta?: TabMeta | null): Promise<boolean> => {
+    async (id: string, meta?: TabMeta | null, opts?: { stillWanted?: () => boolean }): Promise<boolean> => {
       const key = id.toLowerCase();
       if (ref.current.tabs.some((t) => t.id === key) || ref.current.tabs.length < MAX_TABS) {
         commit(openTab(ref.current, key, meta));
@@ -236,7 +243,9 @@ export function useQuoteTabs(operatorId: string, ask: TabsAsk, initial?: string 
         const oldest = ref.current.tabs[0];
         if (!(await askRef.current.evict(oldest)) || !(await close(oldest.id))) return false;
       }
-      // Something else may have opened tabs while the operator was asked.
+      // While the operator was asked, they may have gone to another tab (or left), and something
+      // else may have opened tabs.
+      if (opts?.stillWanted && !opts.stillWanted()) return false;
       if (!ref.current.tabs.some((t) => t.id === key) && ref.current.tabs.length >= MAX_TABS) return false;
       commit(openTab(ref.current, key, meta));
       return true;

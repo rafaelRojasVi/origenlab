@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
-import { crmHash, type CrmSection } from "../crmRoute";
+import { crmHash, parseCrmHash, type CrmSection } from "../crmRoute";
 import { REVISION_STATUS } from "../quotes/IssuedView";
 import { useMayOpenCotizador } from "../quotes/openOrCreateQuote";
 import { QuoteListPane } from "../quotes/QuoteListPane";
@@ -47,33 +47,52 @@ const DOT: Record<TabStatus, string> = {
 const tabDomId = (id: string | null) => `cotizador-tab-${id ?? "todas"}`;
 const panelDomId = (id: string | null) => `cotizador-panel-${id ?? "todas"}`;
 
-/** The address of the tab shown, replaced (not pushed) so a closed tab is not one «back» away twice. */
-function showInAddress(active: string | null): void {
-  const target = crmHash("cotizador", active);
-  if (window.location.hash !== target) window.location.replace(target);
-}
-
 type Asking = { kind: "discard" | "evict"; tab: QuoteTab; resolve: (yes: boolean) => void };
 
 function CotizadorModule({ operatorId, routeId, navigate }: { operatorId: string; routeId: string | null; navigate: Navigate }) {
+  // Work that finishes after the module is gone (a flush, a question) must not move the address.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  /** The address of the tab shown, replaced (not pushed) so a closed tab is not one «back» away twice;
+   *  only while the module is on screen and the address is still the module's. */
+  const showInAddress = useCallback((active: string | null) => {
+    if (!alive.current || parseCrmHash(window.location.hash).section !== "cotizador") return;
+    const target = crmHash("cotizador", active);
+    if (window.location.hash !== target) window.location.replace(target);
+  }, []);
+
+  // Questions wait in line: a second one (another tab closing) never drops the first.
+  const queue = useRef<Asking[]>([]);
   const [asking, setAsking] = useState<Asking | null>(null);
-  const ask = useMemo<TabsAsk>(
-    () => ({
-      discard: (tab) => new Promise<boolean>((resolve) => setAsking({ kind: "discard", tab, resolve })),
-      evict: (tab) => new Promise<boolean>((resolve) => setAsking({ kind: "evict", tab, resolve })),
-    }),
-    [],
-  );
+  const ask = useMemo<TabsAsk>(() => {
+    const enqueue = (kind: Asking["kind"]) => (tab: QuoteTab) =>
+      new Promise<boolean>((resolve) => {
+        queue.current.push({ kind, tab, resolve });
+        if (queue.current.length === 1) setAsking(queue.current[0]);
+      });
+    return { discard: enqueue("discard"), evict: enqueue("evict") };
+  }, []);
   const tabs = useQuoteTabs(operatorId, ask, routeId);
   const { state, open, close, activate, setMeta, peek } = tabs;
 
-  // A question left open when the module goes away is a «no».
-  const askingRef = useRef(asking);
-  askingRef.current = asking;
-  useEffect(() => () => askingRef.current?.resolve(false), []);
+  // Questions left open when the module goes away are a «no».
+  useEffect(
+    () => () => {
+      const left = queue.current;
+      queue.current = [];
+      left.forEach((q) => q.resolve(false));
+    },
+    [],
+  );
   const answer = (yes: boolean) => {
-    asking?.resolve(yes);
-    setAsking(null);
+    const current = queue.current.shift();
+    setAsking(queue.current[0] ?? null);
+    current?.resolve(yes);
   };
 
   // The address drives the tab shown. Without a quote in it, the first time, the tab shown last
@@ -85,36 +104,47 @@ function CotizadorModule({ operatorId, routeId, navigate }: { operatorId: string
     const first = lastRoute.current === undefined;
     lastRoute.current = routeId;
     if (routeId) {
-      void open(routeId).then((opened) => {
-        if (!opened) showInAddress(peek().active);
+      // The address may move on while the operator is asked to make room: then this quote is not wanted.
+      const stillWanted = () => alive.current && lastRoute.current === routeId;
+      void open(routeId, null, { stillWanted }).then((opened) => {
+        if (!opened && stillWanted()) showInAddress(peek().active);
       });
     } else if (first) {
       if (peek().active) showInAddress(peek().active);
     } else {
       activate(null);
     }
-  }, [routeId, open, activate, peek]);
+  }, [routeId, open, activate, peek, showInAddress]);
 
-  // Lazy panes: a pane mounts the first time its tab is shown, then stays.
+  // Lazy panes: a pane mounts the first time its tab is shown, then stays until its tab closes.
   const [mounted, setMounted] = useState<ReadonlySet<string>>(() => new Set(state.active ? [state.active] : []));
-  if (state.active && !mounted.has(state.active)) setMounted(new Set(mounted).add(state.active));
+  {
+    const openIds = new Set(state.tabs.map((t) => t.id));
+    let next: Set<string> | null = [...mounted].some((id) => !openIds.has(id)) ? new Set([...mounted].filter((id) => openIds.has(id))) : null;
+    if (state.active && !(next ?? mounted).has(state.active)) next = new Set(next ?? mounted).add(state.active);
+    if (next) setMounted(next);
+  }
 
   const closeOne = useCallback(
     async (id: string) => {
       const wasShown = peek().active === id;
-      if ((await close(id)) && wasShown) showInAddress(peek().active);
+      if (!(await close(id)) || !alive.current) return;
+      // The focus goes to the tab now selected («Todas» when none is left), not to the page's start.
+      document.getElementById(tabDomId(peek().active))?.focus();
+      if (wasShown) showInAddress(peek().active);
     },
-    [close, peek],
+    [close, peek, showInAddress],
   );
 
   const show = (id: string | null) => navigate("cotizador", id);
+  const scrollerRef = useRef<HTMLDivElement>(null);
 
   // A row of «Todas»: open (or show) its tab, with the label, client and state the row knows.
   const openFromList = useCallback(
     async (id: string, meta: TabMeta) => {
-      if (await open(id, meta)) showInAddress(peek().active);
+      if (await open(id, meta, { stillWanted: () => alive.current })) showInAddress(peek().active);
     },
-    [open, peek],
+    [open, peek, showInAddress],
   );
 
   // Arrows move between tabs (Home / End to the ends); Enter or Space shows one; Supr closes it.
@@ -143,7 +173,9 @@ function CotizadorModule({ operatorId, routeId, navigate }: { operatorId: string
   return (
     <div className="space-y-[18px]">
       <div className="flex items-end gap-1 border-b border-line">
-        <div role="tablist" aria-label="Cotizaciones abiertas" onKeyDown={onKeyDown} className="flex min-w-0 items-end gap-1 overflow-x-auto pt-1">
+        {/* The tablist owns only tabs; each tab's × sits over its chip, in a layer of its own (`CloseButtons`). */}
+        <div ref={scrollerRef} className="relative min-w-0 overflow-x-auto">
+        <div role="tablist" aria-label="Cotizaciones abiertas" onKeyDown={onKeyDown} className="flex w-max items-end gap-1 pt-1">
           <button
             type="button"
             role="tab"
@@ -157,8 +189,10 @@ function CotizadorModule({ operatorId, routeId, navigate }: { operatorId: string
             Todas
           </button>
           {state.tabs.map((t) => (
-            <TabChip key={t.id} tab={t} selected={state.active === t.id} hasPanel={mounted.has(t.id)} onShow={() => show(t.id)} onClose={() => void closeOne(t.id)} />
+            <QuoteTabButton key={t.id} tab={t} selected={state.active === t.id} hasPanel={mounted.has(t.id)} onShow={() => show(t.id)} />
           ))}
+        </div>
+        <CloseButtons tabs={state.tabs} scrollerRef={scrollerRef} onClose={(id) => void closeOne(id)} />
         </div>
         {/* Task 5 builds the new-quote dialog: until then the button is there, off, and says so. */}
         <span title="Llega en la siguiente entrega" className="inline-flex shrink-0">
@@ -194,56 +228,102 @@ function tabClass(selected: boolean): string {
   }`;
 }
 
-function TabChip({
+function QuoteTabButton({
   tab,
   selected,
   hasPanel,
   onShow,
-  onClose,
 }: {
   tab: QuoteTab;
   selected: boolean;
   hasPanel: boolean;
   onShow: () => void;
-  onClose: () => void;
 }) {
   const label = tab.meta?.label ?? "Cotización";
   const status = tab.meta?.status ?? null;
   return (
-    <div className={`${tabClass(selected)} pl-3.5 pr-1`} role="presentation">
-      <button
-        type="button"
-        role="tab"
-        id={tabDomId(tab.id)}
-        data-quote-id={tab.id}
-        aria-selected={selected}
-        aria-controls={hasPanel ? panelDomId(tab.id) : undefined}
-        aria-keyshortcuts="Delete"
-        tabIndex={selected ? 0 : -1}
-        onClick={onShow}
-        className="inline-flex h-full items-center gap-2 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-      >
-        <span className={`font-mono tabular-nums ${tab.meta ? "font-medium" : "text-ink-muted"}`}>{label}</span>
-        {tab.meta?.client ? <span className="max-w-[140px] truncate font-normal text-ink-muted">{tab.meta.client}</span> : null}
-        {status ? (
-          <>
-            <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${DOT[status]}`} data-testid="cotizador-tab-dot" data-status={status} />
-            <span className="sr-only">{REVISION_STATUS[status]?.label ?? ""}</span>
-          </>
-        ) : null}
-      </button>
-      {/* Not a tab stop of its own: on the keyboard, Supr closes the focused tab. */}
-      <button
-        type="button"
-        tabIndex={-1}
-        aria-label={`Cerrar ${label}`}
-        title="Cerrar"
-        onClick={onClose}
-        className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink"
-      >
-        <span aria-hidden="true">×</span>
-      </button>
-    </div>
+    <button
+      type="button"
+      role="tab"
+      id={tabDomId(tab.id)}
+      data-quote-id={tab.id}
+      aria-selected={selected}
+      aria-controls={hasPanel ? panelDomId(tab.id) : undefined}
+      aria-keyshortcuts="Delete"
+      tabIndex={selected ? 0 : -1}
+      onClick={onShow}
+      // The right padding leaves room for the × laid over the chip.
+      className={`${tabClass(selected)} gap-2 pl-3.5 pr-10 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600`}
+    >
+      <span className={`font-mono tabular-nums ${tab.meta ? "font-medium" : "text-ink-muted"}`}>{label}</span>
+      {tab.meta?.client ? <span className="max-w-[140px] truncate font-normal text-ink-muted">{tab.meta.client}</span> : null}
+      {status ? (
+        <>
+          <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${DOT[status]}`} data-testid="cotizador-tab-dot" data-status={status} />
+          <span className="sr-only">{REVISION_STATUS[status]?.label ?? ""}</span>
+        </>
+      ) : null}
+    </button>
+  );
+}
+
+type Spot = { left: number; top: number };
+const CLOSE_SIZE = 32;
+
+/**
+ * Each tab's ×, outside the tablist (it owns only tabs) and laid over the right end of its chip:
+ * placed from the tab's own box, again whenever the tabs change size. They scroll with the tabs
+ * (same scroll box). Not tab stops of their own: on the keyboard, Supr closes the focused tab.
+ */
+function CloseButtons({
+  tabs,
+  scrollerRef,
+  onClose,
+}: {
+  tabs: QuoteTab[];
+  scrollerRef: RefObject<HTMLDivElement | null>;
+  onClose: (id: string) => void;
+}) {
+  const [spots, setSpots] = useState<Record<string, Spot>>({});
+  useLayoutEffect(() => {
+    const place = () => {
+      const next: Record<string, Spot> = {};
+      for (const t of tabs) {
+        const el = document.getElementById(tabDomId(t.id));
+        if (!el) continue;
+        next[t.id] = { left: el.offsetLeft + el.offsetWidth - CLOSE_SIZE - 4, top: el.offsetTop + (el.offsetHeight - CLOSE_SIZE) / 2 };
+      }
+      setSpots((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+    };
+    place();
+    const box = scrollerRef.current;
+    if (!box || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(place);
+    ro.observe(box);
+    box.querySelectorAll('[role="tab"]').forEach((el) => ro.observe(el));
+    return () => ro.disconnect();
+  }, [tabs, scrollerRef]);
+  return (
+    <>
+      {tabs.map((t) => {
+        const spot = spots[t.id];
+        if (!spot) return null;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            tabIndex={-1}
+            aria-label={`Cerrar ${t.meta?.label ?? "Cotización"}`}
+            title="Cerrar"
+            onClick={() => onClose(t.id)}
+            style={{ left: spot.left, top: spot.top }}
+            className="absolute inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        );
+      })}
+    </>
   );
 }
 

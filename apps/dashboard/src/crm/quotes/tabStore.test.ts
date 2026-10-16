@@ -2,7 +2,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { workspaceFixture } from "./quoteFixtures";
-import { forgetTabEditors, registerTabEditor } from "./tabEditors";
+import { forgetTabEditors, markDiscarded, registerTabEditor, takeDiscarded } from "./tabEditors";
 import {
   EMPTY_TABS,
   MAX_TABS,
@@ -256,5 +256,29 @@ describe("useQuoteTabs", () => {
     expect(hook.result.current.state.tabs).toHaveLength(MAX_TABS);
     expect(hook.result.current.state.active).toBe(id(3));
     expect(evict).not.toHaveBeenCalled();
+  });
+});
+
+describe("useQuoteTabs — fix round 1", () => {
+  it("marks a tab closed with «Cerrar igual», so its pane does not warn again", async () => {
+    registerTabEditor(id(1), { hasPendingSave: () => true, flush: () => Promise.resolve(false) });
+    const hook = renderHook(() => useQuoteTabs(OP, { discard: () => Promise.resolve(true), evict: vi.fn() }));
+    await act(async () => void (await hook.result.current.open(id(1), meta(1))));
+    await act(async () => void (await hook.result.current.close(id(1))));
+    expect(takeDiscarded(id(1))).toBe(true);
+    expect(takeDiscarded(id(1))).toBe(false);
+    markDiscarded(id(2));
+    registerTabEditor(id(2), { hasPendingSave: () => false, flush: () => Promise.resolve(true) });
+    expect(takeDiscarded(id(2))).toBe(false);
+  });
+
+  it("does not open the ninth when the operator moved on while asked", async () => {
+    for (let n = 1; n <= MAX_TABS; n++) registerTabEditor(id(n), { hasPendingSave: () => true, flush: () => Promise.resolve(true) });
+    const hook = renderHook(() => useQuoteTabs(OP, { discard: vi.fn(), evict: () => Promise.resolve(true) }));
+    await act(async () => {
+      for (let n = 1; n <= MAX_TABS; n++) await hook.result.current.open(id(n), meta(n));
+    });
+    await act(async () => expect(await hook.result.current.open(id(9), meta(9), { stillWanted: () => false })).toBe(false));
+    expect(hook.result.current.state.tabs.map((t) => t.id)).not.toContain(id(9));
   });
 });
