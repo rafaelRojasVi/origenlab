@@ -528,6 +528,32 @@ authored draft is approved directly.
   `/v2/quotes/*` read and `403 role_may_not_decide` on the commands. Event payloads carry no cost,
   price or margin — only a saved draft's net total.
 
+**The screen (built 2026-10-16).** The Cotizador page is `#/crm/cotizar/<quoteId>` in the dashboard; it
+only calls the commands and reads above and owns no rule.
+
+- **Entry points.** Hoy «Cotizar» (or «Continuar cotización» when a draft exists), the Solicitud card,
+  and the case drawer («Nueva cotización», «Abrir borrador», «Abrir en Cotizador»; no «Nueva
+  cotización» on a closed case, and never a second quote while a draft is open). A case whose latest
+  revision is an authored draft stays «por cotizar». One click mints one quote, even when the
+  network fails and the click is retried. The number box in Hoy reads `GET /v2/quotes/numbering`.
+- **Editing.** Sections: Cliente (recipient picker over `case.contacts`, or any other address),
+  Productos (catalog search, kit and mention chips, free lines with a typed cost, markup or typed
+  price per line), Gastos de importación (Perfil, DHL or Manual — switching away from Manual clears
+  the manual expenses), Condiciones. The right rail shows the totals, the margin band, the
+  exchange-rate override (with its reason), Avisos and the price history.
+- **Autosave and preview.** An edit refreshes the preview after 300 ms and saves after 1.2 s
+  (`save-quote-draft` with the version it loaded). A draft the server could not price or save —
+  incomplete, a refused quantity — is held back and shows its reason in Spanish; nothing is lost
+  from the screen. Leaving the page saves what is pending and warns if it cannot.
+- **Conflicts.** A `stale_version` refusal freezes the editor behind «Otra persona cambió este
+  borrador», with «Ver cambios»; the screen never overwrites a newer save.
+- **Approval.** «Aprobar» saves first when the draft needs saving (and retries once on
+  `draft_needs_saving`), then approves; every refusal is listed in Spanish. «Anular» asks for a
+  reason. An approved, sent or void revision opens read-only, with «Nueva revisión» on the newest
+  issued one; older revisions show a summary only.
+- **Vista cliente.** A toggle that shows the quote as the client will read it: no costs, margins,
+  Avisos or price history (those carry cost talk and other clients' prices).
+
 <a id="m-wf-snapshot"></a>
 #### W3b — Party snapshot
 

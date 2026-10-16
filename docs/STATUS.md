@@ -2910,3 +2910,30 @@ an operator beyond the API and the Worker's allowlist.
   the mail rules' "the case has a quote" predicates also see authored drafts and voided revisions;
   the existing case lists show a draft's `grand_total` and need a status filter; `create-quote` does
   not move the case to «quoting».
+
+### 2.7.122 The Cotizador screen (PR B: the dashboard editor), 2026-10-16 — built, deploys with the dashboard on merge; inactive in practice until `quote_number_seed` is set
+
+Stacked on PR #761 (§2.7.121): it needs those endpoints, so it merges after it. Dashboard only — no
+schema change.
+The screen is `#/crm/cotizar/<quoteId>` ([`WORKFLOWS.md`](WORKFLOWS.md) §W3-Cotizador, «The screen»):
+Cliente (recipient picker), Productos (catalog search, kit and mention chips, free lines with a cost,
+markup or typed price, Vista cliente), Gastos de importación (Perfil, DHL, Manual), Condiciones, and a
+right rail with totals, the margin band, the exchange-rate override, Avisos and the price history. The
+draft autosaves 1.2 s after an edit and the preview recomputes 300 ms after one; a change by someone
+else shows «Otra persona cambió este borrador» with «Ver cambios»; an incomplete draft is held back
+with the reason in Spanish; approve saves first and lists every refusal; void takes a reason; an
+approved or sent revision opens read-only, with «Nueva revisión».
+
+- **Entry points.** Hoy «Cotizar» / «Continuar cotización», the Solicitud card, and the case drawer
+  («Nueva cotización», «Abrir borrador», «Abrir en Cotizador»). A case whose latest revision is an
+  authored draft still counts as «por cotizar». Each click creates one quote, even after a network
+  error. Hoy's number box now reads `GET /v2/quotes/numbering` instead of guessing.
+- **Not active until an owner step.** `create-quote` still refuses `quote_numbering_not_configured`
+  until `quote_number_seed` is set ([`OPERATIONS.md`](OPERATIONS.md) §14.8); until then Cotizar shows
+  that refusal in plain Spanish and creates nothing.
+- **Not built yet.** The quote PDF and the send (PR C): an approved quote stays «Aprobada» and nothing
+  is emailed. Vista cliente is a screen view, not the PDF.
+- **Known and deferred.** Row-menu keyboard handling and focus management in the product table;
+  a network failure after a server commit can show a false conflict on the next save; the list and
+  length caps the API enforces are not mirrored in the editor (a refusal shows instead); a case whose
+  newest revision is void is not «por cotizar».
