@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CATALOG_COMMAND_MAX_BYTES } from "./allowlist";
+import { CATALOG_COMMAND_MAX_BYTES, QUOTE_COMMAND_MAX_BYTES, catalogCommandMaxBytes } from "./allowlist";
 import { handleRequest } from "./index";
 import type { ProxyEnv } from "./proxy";
 
@@ -99,10 +99,100 @@ function syntheticDraft(lines: number): string {
 }
 
 describe("quote body size", () => {
-  it("a realistic sixty-line save-quote-draft fits the 64 KiB command limit", () => {
+  it("a realistic sixty-line save-quote-draft is well under even the 64 KiB limit", () => {
     const bytes = new TextEncoder().encode(syntheticDraft(60)).byteLength;
     console.info(`60-line synthetic save-quote-draft body: ${bytes} bytes (limit ${CATALOG_COMMAND_MAX_BYTES})`);
     expect(bytes).toBeLessThanOrEqual(CATALOG_COMMAND_MAX_BYTES);
+  });
+});
+
+/** A draft at every schema maximum: 60 items, 500-char descriptions, 1000-char notes, all fields. */
+function schemaMaximumDraft(): string {
+  const id = "96301691-af05-51ea-82e3-05f5fae40837";
+  const item = {
+    product_id: id,
+    description: "d".repeat(500),
+    quantity: "100000.000000",
+    item_type: "equipment",
+    unit_cost: "123456789.123456",
+    cost_currency: "USD",
+    supplier_organization_id: id,
+    cost_observation_id: id,
+    margin_mode: "markup",
+    margin_pct: "0.350000",
+    typed_unit_price: "123456789.123456",
+    is_principal: false,
+    line_note_es: "n".repeat(1000),
+  };
+  return JSON.stringify({
+    revision_id: id,
+    expected_version: 3,
+    draft: {
+      items: Array.from({ length: 60 }, () => item),
+      manual_expenses: Array.from({ length: 20 }, () => ({ label: "l".repeat(120), amount: "1000.000000", currency: "CLP" })),
+      expense_method: "profile",
+      allocation_mode: "principal",
+      principal_rule: "highest_cost",
+      fx_overrides: [{ currency: "USD", clp_per_unit: "950.12345678", reason: "r".repeat(200) }],
+      terms: {
+        delivery_terms: "x".repeat(1000),
+        validity_days: 30,
+        payment_terms: "y".repeat(1000),
+        warranty_terms_es: "z".repeat(1000),
+        delivery_place_es: "w".repeat(1000),
+        installation_terms_es: "v".repeat(1000),
+        client_notes_es: "u".repeat(1000),
+        terms_extra: Array.from({ length: 12 }, () => ({ label_es: "t".repeat(80), text_es: "t".repeat(1000) })),
+      },
+      recipient_participant_id: id,
+    },
+  });
+}
+
+describe("quote draft body limit", () => {
+  it("is 256 KiB for save-quote-draft and the preview, and 64 KiB for the other commands", () => {
+    expect(QUOTE_COMMAND_MAX_BYTES).toBe(262_144);
+    expect(catalogCommandMaxBytes("/v2/commands/save-quote-draft")).toBe(QUOTE_COMMAND_MAX_BYTES);
+    expect(catalogCommandMaxBytes("/v2/quotes/preview")).toBe(QUOTE_COMMAND_MAX_BYTES);
+    for (const name of ["create-quote", "approve-quote-revision", "void-quote-revision", "create-quote-revision"]) {
+      expect(catalogCommandMaxBytes(`/v2/commands/${name}`), name).toBe(CATALOG_COMMAND_MAX_BYTES);
+    }
+  });
+
+  it("allows a schema-maximum draft by size on both paths, and refuses 262,145 bytes", async () => {
+    const body = schemaMaximumDraft();
+    const size = new TextEncoder().encode(body).byteLength;
+    console.info(`schema-maximum draft body: ${size} bytes (limit ${QUOTE_COMMAND_MAX_BYTES})`);
+    expect(size).toBeGreaterThan(CATALOG_COMMAND_MAX_BYTES);
+    expect(size).toBeLessThanOrEqual(QUOTE_COMMAND_MAX_BYTES);
+    const over = "x".repeat(QUOTE_COMMAND_MAX_BYTES + 1);
+    const exact = "x".repeat(QUOTE_COMMAND_MAX_BYTES);
+    for (const [url, headers] of [
+      [SAVE, COMMAND_HEADERS],
+      [PREVIEW, PREVIEW_HEADERS],
+    ] as const) {
+      const fetchMock = stubUpstream();
+      const ok = await handleRequest(post(url, { ...headers, "Content-Length": String(size) }, body), TEST_ENV);
+      expect(ok.status, url).toBe(200);
+      const atLimit = await handleRequest(post(url, { ...headers, "Content-Length": String(exact.length) }, exact), TEST_ENV);
+      expect(atLimit.status, url).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const declared = await handleRequest(post(url, { ...headers, "Content-Length": String(over.length) }, over), TEST_ENV);
+      expect(declared.status, url).toBe(413);
+      const undeclared = await handleRequest(post(url, headers, over), TEST_ENV);
+      expect(undeclared.status, url).toBe(413);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it("keeps the other quote commands at 64 KiB", async () => {
+    const fetchMock = stubUpstream();
+    const big = "x".repeat(CATALOG_COMMAND_MAX_BYTES + 1);
+    for (const url of COMMANDS.filter((u) => u !== SAVE)) {
+      const res = await handleRequest(post(url, COMMAND_HEADERS, big), TEST_ENV);
+      expect(res.status, url).toBe(413);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -134,7 +224,7 @@ describe("quote commands", () => {
     }
   });
 
-  it("forwards the measured sixty-line draft and refuses a body over the limit", async () => {
+  it("forwards the measured sixty-line draft", async () => {
     const fetchMock = stubUpstream();
     const body = syntheticDraft(60);
     const ok = await handleRequest(
@@ -142,17 +232,6 @@ describe("quote commands", () => {
       TEST_ENV,
     );
     expect(ok.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    const big = "x".repeat(CATALOG_COMMAND_MAX_BYTES + 1);
-    const declared = await handleRequest(
-      post(SAVE, { ...COMMAND_HEADERS, "Content-Length": String(big.length) }, big),
-      TEST_ENV,
-    );
-    expect(declared.status).toBe(413);
-    // An undeclared oversize body is caught on the buffered length.
-    const undeclared = await handleRequest(post(SAVE, COMMAND_HEADERS, big), TEST_ENV);
-    expect(undeclared.status).toBe(413);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -193,19 +272,6 @@ describe("quote preview", () => {
         type,
       ).toBe("unsupported_media_type");
     }
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("refuses a body over the limit, declared or actual", async () => {
-    const fetchMock = stubUpstream();
-    const big = "x".repeat(CATALOG_COMMAND_MAX_BYTES + 1);
-    const declared = await handleRequest(
-      post(PREVIEW, { ...PREVIEW_HEADERS, "Content-Length": String(big.length) }, big),
-      TEST_ENV,
-    );
-    expect(declared.status).toBe(413);
-    const undeclared = await handleRequest(post(PREVIEW, PREVIEW_HEADERS, big), TEST_ENV);
-    expect(undeclared.status).toBe(413);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -45,7 +45,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/commands/create-task`, `/v2/commands/complete-task`, `/v2/commands/cancel-task` | The W11 tasks behind «En pausa hasta…» (create), «Hecho» (complete) and «Retomar ahora» (cancel), in the same `CASE_COMMAND_POST_PATHS` list and under the same guard and upstream requirements (the task version shown, not the case's). A task never changes the case's stage or version |
 | `/v2/commands/<name>` for the 29 CRM-authoring commands (person, organization — `confirm-organization-record` included —, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not in this list. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
 | `/v2/commands/{create-product,update-product,confirm-product-content,record-supplier-cost,set-supplier-terms,set-cost-parameter,record-fx-rate,update-product-image,review-document-line}` | Catalog commands: 9 exact paths, JSON, body ≤ 64 KiB — see *Catalog 1a* below |
-| `/v2/commands/{create-quote,save-quote-draft,approve-quote-revision,void-quote-revision,create-quote-revision}` | Cotizador commands: 5 exact paths, JSON, same guards and 64 KiB limit as the catalog commands — see *Cotizador* below |
+| `/v2/commands/{create-quote,save-quote-draft,approve-quote-revision,void-quote-revision,create-quote-revision}` | Cotizador commands: 5 exact paths, JSON, same guards as the catalog commands (`save-quote-draft` body ≤ 256 KiB, the rest 64 KiB) — see *Cotizador* below |
 | GET `/v2/quotes/numbering`, `/v2/quotes/<uuid>` | Cotizador reads (sales and admin upstream) — see *Cotizador* below |
 | POST `/v2/quotes/preview` | Cotizador live preview: a POST that reads, no `Idempotency-Key` — see *Cotizador* below |
 | `/v2/commands/add-product-image` | Catalog image upload: one of the two multipart POSTs, body ≤ 8 MiB + 64 KiB — see *Catalog 1a* below |
@@ -171,11 +171,13 @@ paths. Roles (sales and admin; a viewer is refused) are enforced upstream.
 
 - Five JSON commands (`create-quote`, `save-quote-draft`, `approve-quote-revision`,
   `void-quote-revision`, `create-quote-revision`) join `CATALOG_COMMAND_POST_PATHS`: `catalogCommandRefusal`,
-  `Idempotency-Key` required, body ≤ 64 KiB. A fully populated synthetic 60-line `save-quote-draft`
-  measures 52,490 bytes (`src/quoteCommands.test.ts`), so the family limit is unchanged.
+  `Idempotency-Key` required. Body ≤ 64 KiB, except `save-quote-draft`: ≤ 256 KiB
+  (`QUOTE_COMMAND_MAX_BYTES`), because the API accepts a draft of up to ~139 KB (60 items, 500-char
+  descriptions, 1000-char notes, every field); a realistic 60-line draft is ~52 KB
+  (`src/quoteCommands.test.ts`).
 - `POST /v2/quotes/preview` computes a quote from a draft and writes nothing, so it has its own
   list (`QUOTE_PREVIEW_POST_PATHS`) and guard (`quotePreviewRefusal`): allowed `Origin`, no
-  cross-site `Sec-Fetch-Site`, `application/json` only, body ≤ 64 KiB — and no `Idempotency-Key`.
+  cross-site `Sec-Fetch-Site`, `application/json` only, body ≤ 256 KiB (`QUOTE_COMMAND_MAX_BYTES`) — and no `Idempotency-Key`.
 
 ## Response hardening
 

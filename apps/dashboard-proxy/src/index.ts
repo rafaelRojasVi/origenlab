@@ -1,6 +1,5 @@
 import {
   AUTH_PROFILE_MAX_BYTES,
-  CATALOG_COMMAND_MAX_BYTES,
   CRM_AUTHORING_MAX_BYTES,
   catalogCommandMaxBytes,
   isAllowedAuthPostPath,
@@ -177,8 +176,8 @@ export function catalogCommandRefusal(request: Request): Refusal {
 
 /**
  * The guard for the Cotizador's live preview: a POST that reads. The same Origin, Sec-Fetch-Site,
- * JSON-only and size rules as the catalog commands, but no `Idempotency-Key` (nothing is written,
- * so there is nothing to replay). The size limit is the catalog JSON family's.
+ * JSON-only rules as the catalog commands, but no `Idempotency-Key` (nothing is written, so there
+ * is nothing to replay). The size limit is QUOTE_COMMAND_MAX_BYTES (a whole draft).
  */
 export function quotePreviewRefusal(request: Request): Refusal {
   const origin = originRefusal(request);
@@ -187,7 +186,7 @@ export function quotePreviewRefusal(request: Request): Refusal {
     return { status: 415, code: "unsupported_media_type" };
   }
   const length = Number(request.headers.get("Content-Length") || "0");
-  if (!Number.isFinite(length) || length > CATALOG_COMMAND_MAX_BYTES) {
+  if (!Number.isFinite(length) || length > catalogCommandMaxBytes(stripApiPrefix(new URL(request.url).pathname) ?? "")) {
     return { status: 413, code: "payload_too_large" };
   }
   return null;
@@ -329,7 +328,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   if (
     body !== undefined &&
     isAllowedQuotePreviewPostPath(upstreamPath as string) &&
-    body.byteLength > CATALOG_COMMAND_MAX_BYTES
+    body.byteLength > catalogCommandMaxBytes(upstreamPath as string)
   ) {
     return jsonError(request, 413, "payload_too_large");
   }
