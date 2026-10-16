@@ -436,7 +436,7 @@ export const QUOTE_PREVIEW_POST_PATHS: readonly RegExp[] = [/^\/v2\/quotes\/prev
 
 /**
  * The two Cotizador bodies that carry a whole draft: `save-quote-draft` and the preview. The API
- * accepts a draft of up to ~114 KB (60 items, 500-char descriptions, 1000-char notes, every
+ * accepts a draft of up to ~139 KB (measured; 60 items, 500-char descriptions, 1000-char notes, every
  * field), so these two get 256 KiB; every other JSON command keeps CATALOG_COMMAND_MAX_BYTES.
  */
 export const QUOTE_COMMAND_MAX_BYTES = 262_144;

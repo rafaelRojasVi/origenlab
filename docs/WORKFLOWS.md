@@ -427,8 +427,88 @@ discounts price on their own.
   the approval on any difference. Both run `SECURITY INVOKER`, as the
   operator's own command inside the FastAPI transaction.
 
+**The Cotizador's rounding (built 2026-10-15).** The engine
+(`apps/api/src/origenlab_api/quoting/engine.py`, the Plantilla Maestra in `Decimal`) rounds every CLP
+amount to the peso, half away from zero (`ROUND_HALF_UP`), and in this order: the **unit cost in
+CLP is rounded to the peso first** (`peso(unit_cost × fx_rate)`), and only then are expenses added;
+each expense line is rounded to the peso in CLP; the **unit base** (`cost + allocated expenses ÷
+qty`) is *not* rounded; the unit price (`peso(base × (1 + markup))`, or `peso(base ÷ (1 − margin))`
+for margin mode, or the operator's typed price rounded) and the line total (`peso(qty × price)`)
+are; IVA is `peso(net × rate)`. A margin of 100% or more and a quantity of zero are refused. Expenses
+go to the revision's principal item (`principal` mode) or are spread by cost
+(`proportional_cost`, floored to the peso with the remainder on the principal); a quote-level margin
+is `(net − cost base) ÷ net` and is classified `loss`, `below_target`, `on_target`, `above_target`
+or `no_cost` against `margin_target_min` / `margin_target_max`.
+
+#### W3-Cotizador — Draft → approve, as built
+
+An **authored** revision is written by five V2 commands (sales or admin operator, `Idempotency-Key`,
+receipt, events; `docs/OPERATIONS.md` §14.8 activates them). There is no `in_review` step: an
+authored draft is approved directly.
+
+| Step | Command | What it does | Refused with |
+|---|---|---|---|
+| 1 | `create-quote` | locks the case, mints the number (DOMAIN §7.9), creates the quote and revision 1 as an empty `draft` (quote currency CLP, 0 decimals, IVA from `iva_rate`, the `quote_default_*` texts, the case's current primary participant as recipient — a `quote_recipient` by preference); events `quote.created`, `quote_revision.opened` | `case_not_found`, `case_closed`, `quote_numbering_not_configured`, `quote_numbering_exhausted` |
+| 2 | `save-quote-draft` (`expected_version`) | takes the **whole draft** (items, manual expenses, expense method, allocation mode, principal rule, FX overrides with a reason, printed terms, recipient), prices it with the engine on the server, **replaces all the revision's lines**, writes the printed and pricing columns, the totals and `version + 1`; event `quote_revision.draft_saved` | `stale_version`, `not_a_draft`, `recipient_not_on_case`, `fx_unavailable`, `cost_observation_not_found`, `amount_too_large`, engine errors (`quantity_invalid`, `margin_pct_invalid`, …) as 422, `labdelivery_refused` |
+| 3 | `approve-quote-revision` (`expected_version`) | prices the **stored** lines (below), runs the approval checks, records negotiated costs, freezes totals, validity and the party snapshot (W3b), supersedes the earlier issued revision; events `quote_revision.transitioned`, `quote_revision.superseded`, `product.cost_recorded` | the reasons below; `case_closed`, `draft_needs_saving` |
+| 4 | `create-quote-revision` | copies the newest approved or sent authored revision — conditions, pricing choices, lines — into the next draft (revision 2 prints as `…A`); event `quote_revision.opened` | `draft_open`, `nothing_to_revise`, `quote_not_found`, `revision_letters_exhausted` |
+| 5 | `void-quote-revision` (`expected_version`, reason) | `draft`, `in_review` or `approved` → `void`; event `quote_revision.transitioned` with the reason | `already_sent` («Ya se envió: crea una nueva revisión.»), `already_void`, `superseded`, `not_authored`, `stale_version` |
+
+- **Commands use only stored exchange rates.** A command never fetches a rate: it takes the newest
+  stored one within 7 days of the day (Santiago). Opening or previewing a draft — a read — is what
+  fetches and stores the day's Banco Central rate, so the first save on a day with none stored is
+  refused `fx_unavailable` until the draft was opened or previewed. The preview
+  (`POST /v2/quotes/preview`) takes the same body as the save, writes nothing and needs no
+  `Idempotency-Key`.
+- **One rate per currency per revision**, enforced by trigger (DOMAIN §7.9). An operator may
+  replace the EUR or USD rate by typing a CLP rate **and a reason**; both are stored on the revision
+  (`fx_override_reasons`).
+- **Approval prices what was saved.** It recomputes from the revision's *stored* line FX snapshots
+  and overrides, stored expense lines and principal — it looks nothing up again — so the frozen
+  totals equal what the operator last saw. If a recomputation differs from the stored prices
+  (the engine changed since the save) it is refused `draft_needs_saving`; to use today's rate the
+  operator saves again. Lines are not rewritten at approval (their ids survive).
+- **Approval refuses, in Spanish, with every reason joined by « · »** (the first reason's code is
+  the error code): `no_items` «Agrega al menos un producto.»; `unpriced_line` «La línea N no tiene
+  precio (falta costo o precio).»; `principal_missing` «Hay gastos de importación pero ningún equipo
+  principal; elige uno.» (any expense above zero, a manual one included); `fx_missing` «Falta el
+  tipo de cambio de X.»; `no_institution` «El caso no tiene institución.»; `no_recipient` «Elige a
+  quién va dirigida.» (the recipient must still be a current participant of the case);
+  `placeholder_left` «Completa «campo»: aún tiene un texto entre corchetes.» — checked on the
+  printed conditions, the extra conditions and the line notes, **not** on product descriptions (a
+  bracket in a model name is the product's).
+- **Negotiated costs are recorded.** A unit cost the operator typed for a catalog product and a
+  named supplier becomes a `negotiated` `catalog.supplier_product` observation (provenance «Cotización
+  <label>»; event `product.cost_recorded`) and the line points at it. An identical observation
+  (same supplier, product, currency, price) is reused, so a copied revision does not record the same
+  cost twice.
+- **Supersession.** Approving revision N sets `superseded_by_revision_no` on every earlier approved
+  or sent revision of the quote that has none (event `quote_revision.superseded`). **Voiding an
+  approved revision does not resurrect** the one it superseded: the operator opens a new revision.
+  A superseded revision cannot be voided. An authored revision that is `sent` is never voided — a
+  new revision answers it. A closed case gets no new quote and no approval, but may still open a
+  revision (approval then refuses).
+- **Costs are for sales and admin only.** A viewer gets `403 role_may_not_view_costs` on every
+  `/v2/quotes/*` read and `403 role_may_not_decide` on the commands. Event payloads carry no cost,
+  price or margin — only a saved draft's net total.
+
 <a id="m-wf-snapshot"></a>
 #### W3b — Party snapshot
+
+> **Amended 2026-10-15 — the key set below was a proposal; the shape actually written replaces it.**
+> `approve-quote-revision` writes `party_snapshot_version = 1` with exactly these keys and no
+> others: `institution` `{id, name, rut}` (the case's organization — the survivor of a merge — and
+> its first RUT, or null); `recipient` `{participant_id, name, email}`; `terms` `{delivery_terms,
+> payment_terms, warranty_terms_es, delivery_place_es, installation_terms_es, client_notes_es,
+> validity_days, terms_extra}`; `quote_number`; `revision_label` (`01268A-26` form); `approved_by`
+> (the approving operator's display name); `approved_at` (the Santiago date); `valid_until`. It
+> carries **no cost, price or margin** — the PDF reads it. There is no `sold_to`, `billing_address`,
+> `delivery_address`, `signatory` or `currency` key: addresses and a signatory are not part of the
+> Cotizador, and the currency and FX live on the frozen revision and lines. The table below is
+> kept as the earlier proposal, and a change to the written shape is a new
+> `party_snapshot_version`. Immutability is enforced by the trigger `crm.quote_revision_authored_frozen`
+> (DOMAIN §7.9), which freezes every column of an approved, sent or void authored revision
+> except the sending evidence, the document hash and supersession, each once.
 
 Every revision carries `party_snapshot jsonb` with `party_snapshot_version`:
 **NULL while `draft` or `in_review`, written by `approve_revision` in the same

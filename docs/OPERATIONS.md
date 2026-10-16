@@ -2514,6 +2514,51 @@ nothing is deleted. The catalog reads follow both merges (cost history, supplier
 price lists). **Rollback is refused**: undo from the pre-apply backup. Run one merge per plan, the
 price-list maker first, so the kept product of each twin pair is the price-list one.
 
+### 14.8 Activating the Cotizador (quote authoring)
+
+Built 2026-10-15 ([`STATUS.md`](STATUS.md) §2.7.121). The code and migration
+`20261016100000_slice7_quote_authoring.sql` reach production with the release of the merge; the
+feature stays **inactive until a quote number seed exists**, because `create-quote` refuses with
+`quote_numbering_not_configured` (409, «Falta configurar la numeración de cotizaciones») until then.
+
+1. **The routes exist** behind `ORIGENLAB_V2_QUOTING_ENABLED` (the §14.1 switch, already `true` on
+   Render): `GET /v2/quotes/numbering`, `GET /v2/quotes/{id}`, `POST /v2/quotes/preview` and the five
+   commands `create-quote`, `save-quote-draft`, `approve-quote-revision`, `void-quote-revision`,
+   `create-quote-revision`. The dashboard Worker allows exactly those paths; `save-quote-draft` and
+   the preview accept bodies up to 256 KiB, every other command the usual limit. Sales and admin
+   only; a viewer gets 403.
+2. **Set the parameters** with `POST /v2/commands/set-cost-parameter` (an operator session;
+   `Idempotency-Key`, a `reason` of at least 3 characters; numbers in `value`,
+   texts in `value_text`; each key is append-only history, the newest valid row wins):
+
+   | Key | Value |
+   |---|---|
+   | `quote_number_seed` | **the number the dashboard shows as «Siguiente»** (the Hoy number box), as an integer 1–99999 — e.g. `1300` for `01300-26`. The next quote gets `max(seed, highest known + 1)`; set it once, then leave it. Serial 1500 is skipped; mail-proposed numbers more than 200 above the highest CRM number or the seed are ignored (DOMAIN §7.9) |
+   | `profile_freight_clp`, `profile_agent_clp`, `profile_customs_clp`, `profile_transport_clp` | the Plantilla's four flat import-expense amounts, in CLP. A quote priced by the `profile` method (the default) carries them only when at least one line ships from abroad; missing keys are skipped with a warning |
+   | `quote_default_delivery_terms`, `quote_default_payment_terms`, `quote_default_warranty`, `quote_default_delivery_place`, `quote_default_installation` | the five printed default texts (`value_text`, up to 1000 characters), copied into each new quote's draft. Square brackets are placeholders: approval refuses a condition still containing «[…]» |
+   | `quote_default_validity_days` | offer validity, days (1–365); the revision's own value wins; `valid_until` = approval day (Santiago) + validity |
+   | `default_markup_equipment`, `default_markup_accessory`, `default_markup_consumable`, `default_markup_spare_part`, `default_markup_service` | fractions (0.35 = 35%): the markup written onto an item line that has a cost and no percentage typed. Stored on the line, so changing a parameter never reprices a saved draft |
+   | `margin_target_min`, `margin_target_max` | fractions: the band the quote's gross margin is classified against (`below_target` / `on_target` / `above_target`) |
+
+   `iva_rate` (default 0.19) and `principal_threshold_eur` (for the `first_eur_equipment_over_threshold`
+   rule) already exist from catalog 1a (§14).
+3. **For the `dhl_calc` method** (flete computed from weights instead of the flat profile) the nine
+   DHL parameters must exist: `dhl_import_discount_pct`, `dhl_fuel_surcharge_pct` (revise monthly,
+   §14.3), `dhl_customs_clearance_fee_usd`, `courier_threshold_usd_fob`, `customs_agent_fee_clp`,
+   `duty_rate_general`, `duty_rate_fta`, `insurance_pct_of_fob`, `domestic_transport_clp`; each
+   shipped product also needs a weight and an origin country (dimensions when known). The rate card is packaged with the API
+   (`quoting/data/dhl_cl_import_2026.json`, version in each line's `calc_inputs`). Any missing input
+   makes the calculation fall back to the profile and says why (`dhl_fallback:<reason>`) — it never
+   guesses.
+4. **Exchange rates.** The commands use only **stored** rates (newest within 7 days). Opening or
+   previewing a draft fetches the day's Banco Central rate (§14.1) and stores it, so a draft is
+   normally opened before it is saved; if a save answers `fx_unavailable`, preview the draft once or
+   record the rate with `record-fx-rate`. Approval prices with the rates stored on the lines, so a
+   draft left overnight is approved at the rate it was last saved with — save again to refresh.
+5. **Check.** `GET /v2/quotes/numbering` answers `configured: true`, the `seed`, the `next_number`
+   (which must equal the Hoy number box), `highest_known` and any `ignored_mail_numbers`. A bad seed
+   (not an integer 1–99999) answers 409 rather than a number.
+
 ## 15. Production release contract (PR #679; built, activation blocked)
 
 Schema and code release are one guarded operation: independently approved main merge,

@@ -2854,3 +2854,40 @@ a forwarded request, the institution's domain, or the institution the PDF names 
 «Enviada» and records the quote; two candidates stay a proposal. R3 and R4 are now automatic, so a
 quote to a client with no open request opens its case by itself; all three undo with «Quitar». The
 snapshot counts a forwarded request's customer as a person of its case. No schema change.
+
+### 2.7.121 The Cotizador's quote authoring (PR A: engine, commands, reads), 2026-10-15 — built, deploys on merge; inactive until `quote_number_seed` is set
+
+Spec `~/data/origenlab-v2-migration/specs/2026-10-15-cotizador-design.md` (private); the design is in
+[`DOMAIN.md`](DOMAIN.md) §7.9 and [`WORKFLOWS.md`](WORKFLOWS.md) §W3a–W3b. What exists now is the
+server half only: **no dashboard editor and no quote PDF yet** (later PRs), so nothing is visible to
+an operator beyond the API and the Worker's allowlist.
+
+- **Schema.** Migration `20261016100000_slice7_quote_authoring.sql`, applied to production by the
+  release on merge: columns on `crm.quote_line` and `crm.quote_revision`, two triggers
+  (`quote_line_authored_draft_only`, `quote_revision_authored_frozen`), `origenlab_api` DELETE on
+  quote lines, seven new `catalog.cost_parameter` keys, events `quote_revision.opened` and
+  `quote_revision.draft_saved`. **No new table (58).** Inventory: migrations **60**, policies
+  **189**, foreign keys **172** (139 unconditionally covered), functions **37**. The Slice 0 evidence
+  set moved in the same change (gap checker, pgTAP, replay, chain and clean-room expectations).
+- **Engine.** `apps/api/src/origenlab_api/quoting/` — the Plantilla Maestra's pricing in `Decimal`
+  (unit cost rounded to the peso before expenses), the profile and DHL-calculation import expenses,
+  the packaged DHL Express Chile 2026 rate card. A parity runner against the owner's costing sheets
+  (private, not committed) matched 75 of 75 checked values across three sheets.
+- **API.** `apps/api/src/origenlab_api/v2/quotes/`: `GET /v2/quotes/numbering`, `GET /v2/quotes/{id}`,
+  `POST /v2/quotes/preview` (a read), and the commands `create-quote`, `save-quote-draft`,
+  `approve-quote-revision`, `void-quote-revision`, `create-quote-revision`; all behind
+  `ORIGENLAB_V2_QUOTING_ENABLED` (already `true` on Render), sales and admin only. Proxy: those exact
+  paths; `save-quote-draft` and the preview accept 256 KiB bodies.
+- **Behaviour changes to know.** `set-cost-parameter` now takes `value_text` for the five printed
+  `quote_default_*` texts (a numeric body's digest is unchanged). Approval writes a party snapshot
+  of a different shape than the one WORKFLOWS §W3b first proposed; §W3b was amended to the written
+  shape.
+- **Not active until an owner step.** `create-quote` is refused `quote_numbering_not_configured`
+  until `quote_number_seed` is set to the number Hoy shows as «Siguiente», and the profile amounts
+  and default texts are best set at the same time: [`OPERATIONS.md`](OPERATIONS.md) §14.8.
+- **Known and deferred.** Approving a copied revision without saving first freezes the source
+  revision's exchange-rate snapshots (the editor must show them). `dhl_calc` charges the strictest
+  dangerous-goods tier and uses DHL's published 70 kg / 120 cm surcharge thresholds, until a product
+  carries a tier. A real Excel quote more than 200 serials ahead of everything else is not counted by
+  the numbering (the unique key still refuses a duplicate). Logistics lines (DHL labels carry supplier
+  names) must never be printed on the client's PDF.

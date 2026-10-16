@@ -289,7 +289,7 @@ describe("quote preview", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("advertises POST and the JSON content type on its preflight, without the Idempotency-Key", async () => {
+  it("advertises POST and the JSON content type on its preflight", async () => {
     const res = await handleRequest(
       new Request(PREVIEW, { method: "OPTIONS", headers: { Origin: DASHBOARD } }),
       TEST_ENV,

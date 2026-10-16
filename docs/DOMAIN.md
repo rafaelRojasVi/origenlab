@@ -346,6 +346,12 @@ are lineage, never the rendering authority. A quote never carries an outcome;
 the opportunity records which revision won. Currency, FX, margin, snapshot and
 supersession rules are owned by [`WORKFLOWS.md`](WORKFLOWS.md) §W3a–W3b.
 
+**Authored quotes** (the Cotizador, built 2026-10-15). A revision with `origin = 'authored'` is
+written by five commands (`create-quote`, `save-quote-draft`, `approve-quote-revision`,
+`void-quote-revision`, `create-quote-revision`) and priced by one engine on the server; its lines,
+printed conditions, pricing choices and number are described in §7.9, its flow in
+[`WORKFLOWS.md`](WORKFLOWS.md) §W3a–W3b.
+
 **Historical quotations** — **[V2 DECISION]**, owner gates G1–G5/2026-09-25.1; schema in
 migration `20260925200000`. A quotation OrigenLab sent before V2 existed is recorded as found,
 never re-authored. `crm.quote.number_origin` says where the number came from: `minted` (V2's
@@ -1091,6 +1097,95 @@ proxy). A price list carries dealer costs, so the API leaves it out for the view
 Domain events added: `product.document_recorded` / `product.document_retired` for a data sheet
 (aggregate `product`) and `organization.price_list_recorded` / `organization.price_list_retired`
 for a price list (aggregate `organization`).
+
+### 7.9 The Cotizador's authored quotes — built 2026-10-15
+
+Migration `20261016100000_slice7_quote_authoring.sql`. **No new table** (the inventory stays 58);
+three tables gain columns, two triggers guard them, one CHECK gains keys and one gains two events.
+Every column below is nullable or defaulted, so historical and imported rows carry none of them.
+
+**`crm.quote_line` — what the engine needs** (#14):
+
+| Column | Meaning |
+|---|---|
+| `item_type` | item lines only: `equipment`, `accessory`, `consumable`, `spare_part`, `service`, `other` — the product's kind, or chosen for a free line |
+| `expense_method` | logistics and fee lines only: `dhl_calc`, `profile` or `manual` — where the amount came from |
+| `calc_inputs` | JSON object: the inputs a `dhl_calc` amount was computed from, so it can be explained and re-run |
+| `supplier_organization_id` | FK to `crm.organization`: the supplier the unit cost was quoted by, when known |
+| `cost_observation_id` | FK to `catalog.supplier_product`: the observation the unit cost came from, when one was used (a cost typed at approval is recorded as a `negotiated` observation and linked here) |
+| `line_note_es` | free Spanish note printed under the line; never blank |
+
+**`crm.quote_revision` — printed conditions and pricing choices** (#13):
+
+| Column | Meaning |
+|---|---|
+| `terms_extra` | JSON array of extra printed conditions, each `{label_es, text_es}`; default `[]` |
+| `warranty_terms_es`, `delivery_place_es`, `installation_terms_es`, `client_notes_es` | the printed conditions (`delivery_terms` and `payment_terms` already existed) |
+| `validity_days` | 1–365, or NULL (the `quote_default_validity_days` parameter applies); `valid_until` is set at approval |
+| `expense_method` | `dhl_calc` \| `profile` (default) \| `manual` — how import expenses were obtained |
+| `expense_allocation_mode` | `principal` (default: every expense on the principal item) \| `proportional_cost` (spread by cost) |
+| `principal_rule` | `highest_cost_imported_equipment` (default) \| `first_eur_equipment_over_threshold` \| `manual` |
+| `fx_override_reasons` | JSON object keyed by currency, `{"EUR": {"reason": "…", "clp_per_unit": "1012.50"}}` (synthetic): why the operator replaced the Banco Central rate **and the rate itself**, so it survives a draft with no line in that currency. There is no per-revision FX table |
+
+**Principal rules.** The principal is the item that carries the import expenses.
+`highest_cost_imported_equipment` takes the equipment line with the highest unit cost in CLP among
+the imported ones (ties go to the lower line number); `first_eur_equipment_over_threshold` takes
+the first equipment line costed in EUR above the `principal_threshold_eur` parameter; `manual`
+takes the line the operator marked `is_principal` (and is the only rule under which a line may be).
+
+**Expense methods.** `profile` is the Plantilla's flat amounts, four lines taken from the
+`profile_*` parameters (freight, customs agent, duties and customs, local transport). `dhl_calc`
+computes them from weights and dimensions against the DHL Express Chile 2026 import card, per
+supplier group, and falls back to the profile with a warning when an input is missing. `manual`
+takes the operator's own lines. Profile and DHL expenses exist only when at least one line ships
+from abroad.
+
+**Two triggers** (both `SECURITY INVOKER`, so the database keeps these true whatever the code does):
+
+- `crm.quote_line_authored_draft_only` — a line is inserted, changed or deleted only while its
+  revision is an **authored draft**; a line never moves to another revision; and within one
+  revision every line costed in the same currency carries the **same** `(fx_rate, fx_as_of,
+  fx_source)` — one rate per currency. `origenlab_api` therefore has DELETE on lines (a save
+  replaces them all), and a line can no longer be changed on an approved, sent, void or
+  historical revision.
+- `crm.quote_revision_authored_frozen` — once an authored revision is `approved`, `sent` or
+  `void`, only these change: `status` approved → sent and approved | sent → void, the sending
+  evidence once (on approved → sent), `pdf_sha256` once while approved, supersession once,
+  `version` and `updated_at`. Every other column — totals, party snapshot, printed and pricing
+  columns, recipient, validity — is frozen, and such a revision is never deleted. (The sent-evidence
+  CHECK demands empty sending columns on a non-sent authored row, so an authored `sent` revision is
+  answered by a new revision, not a void.)
+
+**Events.** `quote_revision.opened` (a revision created, by `create-quote` or
+`create-quote-revision`; payload names the quote, the revision number and, on a copy, its source)
+and `quote_revision.draft_saved` (payload: item count and the **net** — the client-facing figure;
+never a cost, price or margin). Approval and void write the existing `quote_revision.transitioned`,
+approval's supersession the existing `quote_revision.superseded`, and each negotiated cost
+`product.cost_recorded`.
+
+**New `catalog.cost_parameter` keys** (seven; the CHECK lists them, `set-cost-parameter` sets them):
+`quote_number_seed` (number) and the printed defaults `quote_default_delivery_terms`,
+`quote_default_payment_terms`, `quote_default_warranty`, `quote_default_delivery_place`,
+`quote_default_installation` (text, sent as `value_text`) and `quote_default_validity_days`
+(number, clamped to 1–365). The engine also reads keys that already existed (§7.5): the four
+`profile_*_clp` amounts, `principal_threshold_eur`, the five `default_markup_*`, `margin_target_min` /
+`margin_target_max`, `price_deviation_warn_pct`, `iva_rate` and the nine DHL parameters.
+
+**Numbering.** There is no numbering table. A new quote's number is `NNNNN-YY` (five-digit serial,
+Santiago two-digit year) where the serial is
+
+    next = max(quote_number_seed, highest known serial + 1)
+
+skipping every serial already known and **1500** (reserved, skipped — not refused). "Known" is every
+`crm.quote` number, whatever its origin, plus the numbers the Gmail readings proposed from sent
+mail — but a **mail-proposed number counts only within 200 of the highest CRM serial or the seed**
+(whichever is higher): the proposals are regex hits on attachment file names of every captured
+message, inbound too, so a supplier's «CN 90210» must not become the counter. Serials stop at
+**99999**: past it the command is refused (`quote_numbering_exhausted`), and a seed that is not an
+integer from 1 to 99999 is refused too. With no seed set, creating a quote is refused
+(`quote_numbering_not_configured`). Minting takes a transaction-scoped advisory lock and the unique
+key on `quote_number` is the backstop. Revision 1 prints the number itself; revision 2 is `…A`, up to
+`…Z` (27).
 
 Counts by schema: `crm` 22, `comms` 4, `outbound` 9, `evidence` 5,
 `catalog` 7, `procurement` 1, `platform` 6 — **54**.
