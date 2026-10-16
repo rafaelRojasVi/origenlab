@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { formatMoney } from "../money";
 import { Badge, Button, EmptyState, Skeleton } from "../ui";
 import { statusOf } from "./IssuedView";
@@ -18,7 +18,9 @@ import { MAX_TABS, type TabMeta } from "./tabStore";
  * Only the newest request counts: changing the filter or the search abandons what is in flight
  * (aborted, and a token keeps a late answer out anyway) and starts again from the first page.
  * Nothing is read while the pane is hidden; shown again, it refreshes in place — the rows stay
- * until the new answer replaces them.
+ * until the new answer replaces them, and «Cargar más» waits for it. Any new request (and the pane
+ * going hidden or away) bumps `generation` and aborts the page being appended, so a late page
+ * never lands on a list it does not belong to, whether or not the transport honours the abort.
  */
 export const SEARCH_DEBOUNCE_MS = 300;
 
@@ -44,6 +46,7 @@ export function countsLine(c: Counts): string {
   if (c.draft) parts.push(`${c.draft} ${c.draft === 1 ? "borrador" : "borradores"}`);
   if (c.approved) parts.push(`${c.approved} ${c.approved === 1 ? "aprobada" : "aprobadas"} sin enviar`);
   if (c.sent) parts.push(`${c.sent} ${c.sent === 1 ? "enviada" : "enviadas"}`);
+  if (!parts.length && c.void) parts.push(`${c.void} ${c.void === 1 ? "anulada" : "anuladas"}`);
   return parts.length ? parts.join(" · ") : "Sin cotizaciones";
 }
 
@@ -62,6 +65,25 @@ function productsText(r: QuoteListRow): string {
   const rest = r.items.count - r.items.first.length;
   if (!shown) return r.items.count ? `${r.items.count} productos` : "—";
   return rest > 0 ? `${shown} +${rest} más` : shown;
+}
+
+const RESTARTED = "La lista cambió; se volvió a cargar desde el inicio.";
+
+/** A button that is not wired yet: off, and says why to a screen reader as well. */
+function LaterButton({ onClick, variant, className, children }: { onClick?: () => void; variant?: "primary"; className: string; children: ReactNode }) {
+  const why = useId();
+  return (
+    <>
+      <Button variant={variant} onClick={onClick} disabled={!onClick} aria-describedby={onClick ? undefined : why} className={className}>
+        {children}
+      </Button>
+      {onClick ? null : (
+        <span id={why} className="sr-only">
+          Llega en la siguiente entrega
+        </span>
+      )}
+    </>
+  );
 }
 
 export interface QuoteListPaneProps {
@@ -83,11 +105,17 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: Q
   const [errorText, setErrorText] = useState("");
   const [more, setMore] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
   const [tick, setTick] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
 
   // The newest request's number: an answer from an older one is dropped on arrival.
   const generation = useRef(0);
   // The filter and search the rows on screen answer; the same again is a refresh in place.
   const loadedKey = useRef<string | null>(null);
+  // The page being appended, so it can be abandoned; and the notice the next first page shows.
+  const moreController = useRef<AbortController | null>(null);
+  const pendingNotice = useRef<string | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setTerm(text.trim()), SEARCH_DEBOUNCE_MS);
@@ -107,6 +135,10 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: Q
       setPhase("loading");
     }
     setMore({ busy: false, error: null });
+    setRefreshing(inPlace);
+    setRefreshFailed(false);
+    setNotice(pendingNotice.current);
+    pendingNotice.current = null;
     fetchQuoteList({ status, q: term || undefined }, controller.signal)
       .then((p) => {
         if (mine !== generation.current || controller.signal.aborted) return;
@@ -115,24 +147,36 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: Q
         setCounts(p.counts);
         setNext(p.next_cursor);
         setPhase("ready");
+        setRefreshing(false);
       })
       .catch((e: unknown) => {
         if (mine !== generation.current || controller.signal.aborted || isAbort(e)) return;
-        if (inPlace) return; // a refresh that failed leaves the rows as they were
+        if (inPlace) {
+          // A refresh that failed leaves the rows as they were, and says so quietly.
+          setRefreshing(false);
+          setRefreshFailed(true);
+          return;
+        }
         setErrorText(quoteRefusalText(e, "No se pudo cargar la lista de cotizaciones."));
         setPhase("error");
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      moreController.current?.abort();
+      moreController.current = null;
+      generation.current++;
+    };
   }, [active, status, term, tick]);
 
   const loadMore = useCallback(() => {
     if (!next || more.busy) return;
     const mine = generation.current;
     const controller = new AbortController();
+    moreController.current = controller;
     setMore({ busy: true, error: null });
     fetchQuoteList({ status, q: term || undefined, cursor: next }, controller.signal)
       .then((p) => {
-        if (mine !== generation.current) return;
+        if (mine !== generation.current || controller.signal.aborted) return;
         setRows((old) => {
           const seen = new Set(old.map((r) => r.quote_id));
           return [...old, ...p.rows.filter((r) => !seen.has(r.quote_id))];
@@ -142,10 +186,11 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: Q
         setMore({ busy: false, error: null });
       })
       .catch((e: unknown) => {
-        if (mine !== generation.current || isAbort(e)) return;
+        if (mine !== generation.current || controller.signal.aborted || isAbort(e)) return;
         // A cursor the API does not recognise: the list starts over rather than ending half way.
         if (e instanceof QuoteRefusal && e.code === "bad_cursor") {
           loadedKey.current = null;
+          pendingNotice.current = RESTARTED;
           setTick((n) => n + 1);
           return;
         }
@@ -154,13 +199,6 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: Q
   }, [next, more.busy, status, term]);
 
   const open = (r: QuoteListRow) => onOpen(r.quote_id, metaOfRow(r));
-  const onRowKey = (e: KeyboardEvent<HTMLTableRowElement>, r: QuoteListRow) => {
-    if (e.target !== e.currentTarget) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      open(r);
-    }
-  };
 
   const empty = phase === "ready" && rows.length === 0;
   return (
@@ -171,23 +209,12 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: Q
           {counts ? <span className="text-[13px] text-ink-muted">{countsLine(counts)}</span> : null}
         </div>
         <div className="flex gap-2">
-          <Button
-            onClick={onPreferences}
-            disabled={!onPreferences}
-            title={onPreferences ? undefined : "Llega en la siguiente entrega"}
-            className="min-h-[44px] px-4 text-[14px] font-semibold"
-          >
+          <LaterButton onClick={onPreferences} className="min-h-[44px] px-4 text-[14px] font-semibold">
             Preferencias
-          </Button>
-          <Button
-            variant="primary"
-            onClick={onNew}
-            disabled={!onNew}
-            title={onNew ? undefined : "Llega en la siguiente entrega"}
-            className="min-h-[44px] px-[18px] text-[14px] font-semibold"
-          >
+          </LaterButton>
+          <LaterButton variant="primary" onClick={onNew} className="min-h-[44px] px-[18px] text-[14px] font-semibold">
             Nueva cotización
-          </Button>
+          </LaterButton>
         </div>
       </div>
 
@@ -221,6 +248,16 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: Q
         />
       </div>
 
+      {notice ? (
+        <p role="status" className="text-[13px] text-ink-muted">
+          {notice}
+        </p>
+      ) : null}
+      {refreshFailed ? (
+        <p role="status" className="text-[12.5px] text-ink-muted">
+          No se pudo actualizar; se muestra la última lista cargada.
+        </p>
+      ) : null}
       {phase === "loading" ? <Skeleton rows={6} /> : null}
       {phase === "error" ? (
         <div role="alert" className="rounded-lg border border-bad/30 bg-bad-bg px-4 py-3">
@@ -259,19 +296,29 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: Q
               {rows.map((r) => {
                 const st = statusOf(r.status);
                 const total = formatMoney(r.grand_total, r.currency);
+                const name = quoteLabel({ label: r.label, quote_number: r.quote_number });
                 const imported = r.origin === "historical_import";
                 return (
                   <tr
                     key={r.quote_id}
-                    tabIndex={0}
                     onClick={() => open(r)}
-                    onKeyDown={(e) => onRowKey(e, r)}
-                    className="min-h-[44px] cursor-pointer border-t border-line hover:bg-canvas-sunken focus:outline-none focus-visible:bg-canvas-sunken focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600"
+                    className="cursor-pointer border-t border-line focus-within:bg-canvas-sunken hover:bg-canvas-sunken"
                   >
-                    <td className="px-[18px] py-3 align-middle">
-                      <span className="font-mono font-medium tabular-nums">{quoteLabel({ label: r.label, quote_number: r.quote_number })}</span>
+                    <td className="px-[18px] py-1.5 align-middle">
+                      {/* The keyboard's way in (Enter and Space are a button's own); a click anywhere on the row is a convenience. */}
+                      <button
+                        type="button"
+                        aria-label={`Abrir ${name}${r.client?.name ? `, ${r.client.name}` : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          open(r);
+                        }}
+                        className="inline-flex min-h-[44px] items-center rounded-md px-1 font-mono font-medium tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                      >
+                        {name}
+                      </button>
                       {imported ? (
-                        <span className="mt-1 block text-[11.5px] font-normal text-ink-muted" title="Cotización de antes de esta aplicación: se ve, no se edita">
+                        <span className="block px-1 text-[11.5px] font-normal text-ink-muted" title="Cotización de antes de esta aplicación: se ve, no se edita">
                           importada
                         </span>
                       ) : null}
@@ -308,7 +355,7 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew }: Q
       ) : null}
       {phase === "ready" && next ? (
         <div className="flex justify-center">
-          <Button busy={more.busy} busyLabel="Cargando…" onClick={loadMore} className="min-h-[44px] px-5 text-[14px]">
+          <Button busy={more.busy} busyLabel="Cargando…" disabled={refreshing} onClick={loadMore} className="min-h-[44px] px-5 text-[14px]">
             Cargar más
           </Button>
         </div>

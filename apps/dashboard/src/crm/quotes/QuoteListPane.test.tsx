@@ -53,7 +53,33 @@ function stubApi(answer: (url: URL) => QuoteListPage | Response | "hold" = () =>
   return { urls, held, last: () => urls[urls.length - 1] };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+/** With fake timers: let pending promises and renders settle, and move the clock on. */
+const flush = () => act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+const tick = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+
+/**
+ * A transport that holds every request open and ignores the abort signal: a late answer reaches the
+ * pane whatever it did, so only its own generation guard can keep the list right.
+ */
+function stubHeld() {
+  const held: Pending[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL) => {
+      const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(raw, "http://localhost");
+      return new Promise<Response>((resolve) => held.push({ url, resolve }));
+    }),
+  );
+  const find = (test: (u: URL) => boolean) => held.filter((h) => test(h.url));
+  const answer = (h: Pending, p: QuoteListPage) => act(async () => h.resolve(json(p)));
+  return { held, find, answer };
+}
 
 const rowsOf = () => within(screen.getByRole("table")).getAllByRole("row").slice(1);
 
@@ -90,6 +116,12 @@ describe("QuoteListPane", () => {
     expect(await screen.findByText("1 borrador · 1 enviada")).toBeInTheDocument();
   });
 
+  it("says «N anuladas» when only voided quotes exist", async () => {
+    stubApi(() => page([row(1, { status: "void" })], null, { draft: 0, approved: 0, sent: 0, void: 2, all: 2 }));
+    render(<QuoteListPane onOpen={vi.fn()} />);
+    expect(await screen.findByText("2 anuladas")).toBeInTheDocument();
+  });
+
   it("asks for the filter chosen, with its rows replacing the old ones", async () => {
     const api = stubApi((url) => (url.searchParams.get("status") === "sent" ? page([row(7, { status: "sent" })]) : page([row(1)])));
     render(<QuoteListPane onOpen={vi.fn()} />);
@@ -105,22 +137,40 @@ describe("QuoteListPane", () => {
   });
 
   it(`waits ${SEARCH_DEBOUNCE_MS} ms after the last key to search, and starts again from the first page`, async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const api = stubApi((url) => (url.searchParams.get("cursor") ? page([row(2)]) : page([row(1)], "cursor-1")));
     render(<QuoteListPane onOpen={vi.fn()} />);
-    await screen.findByText("CN00041");
+    await flush();
     fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
-    await screen.findByText("CN00042");
+    await flush();
+    expect(screen.getByText("CN00042")).toBeInTheDocument();
     const before = api.urls.length;
     const box = screen.getByRole("searchbox", { name: "Buscar" });
     fireEvent.change(box, { target: { value: "bal" } });
+    await tick(200);
     fireEvent.change(box, { target: { value: "balanza" } });
-    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS / 3));
+    await tick(SEARCH_DEBOUNCE_MS - 1);
     expect(api.urls).toHaveLength(before);
-    await waitFor(() => expect(api.urls).toHaveLength(before + 1));
+    await tick(1);
+    expect(api.urls).toHaveLength(before + 1);
     expect(api.last().searchParams.get("q")).toBe("balanza");
     expect(api.last().searchParams.has("cursor")).toBe(false);
-    await screen.findByText("CN00041");
+    expect(screen.getByText("CN00041")).toBeInTheDocument();
     expect(screen.queryByText("CN00042")).not.toBeInTheDocument();
+  });
+
+  it("does not search after the pane is gone: unmounting clears the pending timer", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const api = stubApi();
+    const { unmount } = render(<QuoteListPane onOpen={vi.fn()} />);
+    await flush();
+    const before = api.urls.length;
+    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar" }), { target: { value: "balanza" } });
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    await tick(SEARCH_DEBOUNCE_MS * 2);
+    expect(api.urls).toHaveLength(before);
   });
 
   it("never lets an older answer overwrite a newer one", async () => {
@@ -189,6 +239,7 @@ describe("QuoteListPane", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
     await waitFor(() => expect(api.urls.filter((u) => !u.searchParams.has("cursor"))).toHaveLength(2));
     await screen.findByText("CN00041");
+    expect(screen.getByRole("status")).toHaveTextContent("La lista cambió; se volvió a cargar desde el inicio.");
     refuse = "down";
     fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("No se pudieron cargar más cotizaciones");
@@ -196,18 +247,24 @@ describe("QuoteListPane", () => {
     expect(screen.getByRole("button", { name: "Cargar más" })).toBeEnabled();
   });
 
-  it("opens a row on click and on Enter, with the tab's label, client and state", async () => {
+  it("opens a row from its own button (a click on it opens once), named by number and client", async () => {
     stubApi(() => page([row(1), row(2, { status: "approved", client: null, opportunity: { id: "o-2", title: "Sonicador industrial", closed: false } })]));
     const onOpen = vi.fn();
     render(<QuoteListPane onOpen={onOpen} />);
     await screen.findByText("CN00041");
-    const [first, second] = rowsOf();
+    const first = screen.getByRole("button", { name: "Abrir CN00041, Universidad Ejemplo 1" });
+    // A real button: Enter and Space are its own, and it is the row's one tab stop.
+    expect(first.tagName).toBe("BUTTON");
+    expect(first).toHaveAttribute("type", "button");
+    expect(rowsOf().every((r) => !r.hasAttribute("tabindex"))).toBe(true);
     fireEvent.click(first);
+    expect(onOpen).toHaveBeenCalledTimes(1);
     expect(onOpen).toHaveBeenLastCalledWith("6bafddfa-0000-4000-8000-000000000001", { label: "CN00041", client: "Universidad Ejemplo 1", status: "draft" });
-    expect(second).toHaveAttribute("tabindex", "0");
-    fireEvent.keyDown(second, { key: "Enter" });
-    expect(onOpen).toHaveBeenLastCalledWith("6bafddfa-0000-4000-8000-000000000002", { label: "CN00042", client: "Sonicador industrial", status: "approved" });
+    // A click anywhere on the row does the same.
+    fireEvent.click(within(rowsOf()[1]).getByText("Aprobada"));
     expect(onOpen).toHaveBeenCalledTimes(2);
+    expect(onOpen).toHaveBeenLastCalledWith("6bafddfa-0000-4000-8000-000000000002", { label: "CN00042", client: "Sonicador industrial", status: "approved" });
+    expect(screen.getByRole("button", { name: "Abrir CN00042" })).toBeInTheDocument();
   });
 
   it("marks an imported quote «importada» and names a label outside the series as it is", async () => {
@@ -272,16 +329,153 @@ describe("QuoteListPane", () => {
     const onNew = vi.fn();
     const { rerender } = render(<QuoteListPane onOpen={vi.fn()} />);
     await screen.findByText("CN00041");
-    expect(screen.getByRole("button", { name: "Preferencias" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Nueva cotización" })).toBeDisabled();
+    for (const name of ["Preferencias", "Nueva cotización"]) {
+      const off = screen.getByRole("button", { name });
+      expect(off).toBeDisabled();
+      expect(off).not.toHaveAttribute("title");
+      expect(off).toHaveAccessibleDescription("Llega en la siguiente entrega");
+    }
     rerender(<QuoteListPane onOpen={vi.fn()} onPreferences={onPreferences} onNew={onNew} />);
     for (const name of ["Preferencias", "Nueva cotización"]) {
       expect(screen.getByRole("button", { name })).toBeEnabled();
       expect(screen.getByRole("button", { name }).className).toContain("min-h-[44px]");
+      expect(screen.getByRole("button", { name })).not.toHaveAccessibleDescription("Llega en la siguiente entrega");
     }
     fireEvent.click(screen.getByRole("button", { name: "Preferencias" }));
     fireEvent.click(screen.getByRole("button", { name: "Nueva cotización" }));
     expect(onPreferences).toHaveBeenCalledOnce();
     expect(onNew).toHaveBeenCalledOnce();
+  });
+
+  describe("late answers that must not land (a transport that ignores abort)", () => {
+    it("a «Cargar más» page arriving after a filter change does not append", async () => {
+      const api = stubHeld();
+      render(<QuoteListPane onOpen={vi.fn()} />);
+      await waitFor(() => expect(api.held).toHaveLength(1));
+      await api.answer(api.held[0], page([row(1)], "c1"));
+      fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+      await waitFor(() => expect(api.find((u) => u.searchParams.get("cursor") === "c1")).toHaveLength(1));
+      fireEvent.click(screen.getByRole("button", { name: "Enviadas" }));
+      await waitFor(() => expect(api.find((u) => u.searchParams.get("status") === "sent")).toHaveLength(1));
+      await api.answer(api.find((u) => u.searchParams.get("status") === "sent")[0], page([row(5, { status: "sent" })]));
+      await api.answer(api.find((u) => u.searchParams.get("cursor") === "c1")[0], page([row(2)]));
+      expect(screen.getByText("CN00045")).toBeInTheDocument();
+      expect(screen.queryByText("CN00042")).not.toBeInTheDocument();
+      expect(rowsOf()).toHaveLength(1);
+    });
+
+    it("a «Cargar más» page arriving after a search change does not append", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const api = stubHeld();
+      render(<QuoteListPane onOpen={vi.fn()} />);
+      await flush();
+      await api.answer(api.held[0], page([row(1)], "c1"));
+      fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+      await flush();
+      fireEvent.change(screen.getByRole("searchbox", { name: "Buscar" }), { target: { value: "sonicador" } });
+      await tick(SEARCH_DEBOUNCE_MS);
+      const searched = api.find((u) => u.searchParams.get("q") === "sonicador");
+      expect(searched).toHaveLength(1);
+      await api.answer(searched[0], page([row(6)]));
+      await api.answer(api.find((u) => u.searchParams.get("cursor") === "c1")[0], page([row(2)]));
+      expect(screen.getByText("CN00046")).toBeInTheDocument();
+      expect(screen.queryByText("CN00042")).not.toBeInTheDocument();
+    });
+
+    it("a stale search answer arriving after the newer search's does not replace it", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const api = stubHeld();
+      render(<QuoteListPane onOpen={vi.fn()} />);
+      await flush();
+      await api.answer(api.held[0], page([row(1)]));
+      const box = screen.getByRole("searchbox", { name: "Buscar" });
+      fireEvent.change(box, { target: { value: "bal" } });
+      await tick(SEARCH_DEBOUNCE_MS);
+      fireEvent.change(box, { target: { value: "balanza" } });
+      await tick(SEARCH_DEBOUNCE_MS);
+      const older = api.find((u) => u.searchParams.get("q") === "bal")[0];
+      const newer = api.find((u) => u.searchParams.get("q") === "balanza")[0];
+      expect(older && newer).toBeTruthy();
+      await api.answer(newer, page([row(3)]));
+      await api.answer(older, page([row(4)]));
+      expect(screen.getByText("CN00043")).toBeInTheDocument();
+      expect(screen.queryByText("CN00044")).not.toBeInTheDocument();
+    });
+
+    it("a refresh in place and a «Cargar más» that overlap: the old cursor's page never lands on the new first page", async () => {
+      const api = stubHeld();
+      const { rerender } = render(<QuoteListPane onOpen={vi.fn()} />);
+      await waitFor(() => expect(api.held).toHaveLength(1));
+      await api.answer(api.held[0], page([row(1)], "old"));
+      // «Cargar más» is in flight when the pane is hidden and shown again (a refresh in place).
+      fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+      await waitFor(() => expect(api.find((u) => u.searchParams.get("cursor") === "old")).toHaveLength(1));
+      rerender(<QuoteListPane active={false} onOpen={vi.fn()} />);
+      rerender(<QuoteListPane active onOpen={vi.fn()} />);
+      await waitFor(() => expect(api.find((u) => !u.searchParams.has("cursor"))).toHaveLength(2));
+      const refresh = api.find((u) => !u.searchParams.has("cursor"))[1];
+      // «Cargar más» waits for the refresh.
+      expect(screen.getByRole("button", { name: /Cargar más|Cargando/ })).toBeDisabled();
+      await api.answer(refresh, page([row(7)], "new"));
+      await api.answer(api.find((u) => u.searchParams.get("cursor") === "old")[0], page([row(2)]));
+      expect(screen.getByText("CN00047")).toBeInTheDocument();
+      expect(screen.queryByText("CN00042")).not.toBeInTheDocument();
+      expect(screen.queryByText("CN00041")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cargar más" })).toBeEnabled();
+    });
+
+    it("a page arriving while the pane is hidden does not append", async () => {
+      const api = stubHeld();
+      const { rerender } = render(<QuoteListPane onOpen={vi.fn()} />);
+      await waitFor(() => expect(api.held).toHaveLength(1));
+      await api.answer(api.held[0], page([row(1)], "c1"));
+      fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+      await waitFor(() => expect(api.held).toHaveLength(2));
+      rerender(<QuoteListPane active={false} onOpen={vi.fn()} />);
+      await api.answer(api.held[1], page([row(2)]));
+      rerender(<QuoteListPane active onOpen={vi.fn()} />);
+      expect(screen.queryByText("CN00042")).not.toBeInTheDocument();
+    });
+  });
+
+  it("aborts the page being appended when the filter changes and when the pane goes away", async () => {
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const url = new URL(raw, "http://localhost");
+        if (url.searchParams.get("cursor")) {
+          signals.push(init!.signal!);
+          return new Promise<Response>(() => {});
+        }
+        return Promise.resolve(json(page([row(1)], "c1")));
+      }),
+    );
+    const { unmount } = render(<QuoteListPane onOpen={vi.fn()} />);
+    await screen.findByText("CN00041");
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+    await waitFor(() => expect(signals).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Enviadas" }));
+    expect(signals[0].aborted).toBe(true);
+    await screen.findByText("CN00041");
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+    await waitFor(() => expect(signals).toHaveLength(2));
+    expect(signals[1].aborted).toBe(false);
+    unmount();
+    expect(signals[1].aborted).toBe(true);
+  });
+
+  it("says quietly that a refresh in place could not update, and keeps the rows", async () => {
+    let down = false;
+    stubApi(() => (down ? json({}, 500) : page([row(1)])));
+    const { rerender } = render(<QuoteListPane onOpen={vi.fn()} />);
+    await screen.findByText("CN00041");
+    rerender(<QuoteListPane active={false} onOpen={vi.fn()} />);
+    down = true;
+    rerender(<QuoteListPane active onOpen={vi.fn()} />);
+    expect(await screen.findByText(/No se pudo actualizar/)).toBeInTheDocument();
+    expect(screen.getByText("CN00041")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

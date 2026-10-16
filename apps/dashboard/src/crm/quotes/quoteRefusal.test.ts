@@ -33,6 +33,8 @@ const ENGLISH: [string, string, string][] = [
   ["stale_version", "the draft was modified since you loaded it", "Otra persona cambió esta cotización"],
   ["role_may_not_view_costs", "sales or admin only", "Sólo ventas y administración pueden cotizar."],
   ["revision_not_found", "no such quote revision", "Esta revisión ya no existe."],
+  ["bad_cursor", "that cursor is not one this list gave", "La lista cambió; se volvió a cargar desde el inicio."],
+  ["bad_status", "no such quote status", "Ese estado de cotizaciones no existe."],
   ["command_in_progress", "a command with this Idempotency-Key is still running", "todavía se está procesando"],
 ];
 

@@ -21,6 +21,8 @@ const SPANISH: Record<string, string> = {
   not_a_draft: "Esta revisión ya no es un borrador: se aprobó o se anuló.",
   not_authored: "Una cotización histórica no se cambia desde aquí.",
   stale_version: "Otra persona cambió esta cotización. Recarga la página para ver la versión guardada.",
+  bad_cursor: "La lista cambió; se volvió a cargar desde el inicio.",
+  bad_status: "Ese estado de cotizaciones no existe.",
   role_may_not_view_costs: "Sólo ventas y administración pueden cotizar.",
   // «Para».
   recipient_unknown: "Esa persona o dirección ya no está en el CRM; elige otra.",
