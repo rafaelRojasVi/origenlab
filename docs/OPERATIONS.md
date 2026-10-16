@@ -2527,7 +2527,8 @@ feature stays **inactive until a quote number seed exists**, because `create-quo
    `create-quote-revision`. The dashboard Worker allows exactly those paths; `save-quote-draft` and
    the preview accept bodies up to 256 KiB, every other command the usual limit. Sales and admin
    only; a viewer gets 403.
-2. **Set the parameters** with `POST /v2/commands/set-cost-parameter` (an operator session;
+2. **Set the parameters** with `POST /v2/commands/set-cost-parameter` (an operator session —
+   an **admin** one for `quote_number_seed`, which any other role is refused 403;
    `Idempotency-Key`, a `reason` of at least 3 characters; numbers in `value`,
    texts in `value_text`; each key is append-only history, the newest valid row wins):
 

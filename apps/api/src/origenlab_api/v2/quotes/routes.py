@@ -1,6 +1,6 @@
 """Quote routes, mounted only behind ORIGENLAB_V2_QUOTING_ENABLED (inside `main._mount_catalog`).
 
-Reads (`/v2/quotes/*`): the Cotizador is for sales and admin only — every answer carries costs and
+Reads (`/v2/quotes`, `/v2/quotes/*`): the Cotizador is for sales and admin only — every answer carries costs and
 margins — so a viewer gets 403 `role_may_not_view_costs` before anything is read (spec 2026-10-15
 §6: viewers do not get the Cotizador). `POST /v2/quotes/preview` is a read (R-A4): no
 Idempotency-Key, no receipt, no event, nothing written; its body is the same `QuoteDraft` the save
@@ -12,10 +12,10 @@ Commands (`/v2/commands/<quote-command>`): an active `sales` or `admin` operator
 """
 from __future__ import annotations
 
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from origenlab_api.v2.catalog.commands import _submitted_text
@@ -34,7 +34,7 @@ from origenlab_api.v2.quotes.draft import (
     SaveQuoteDraftBody,
     VoidQuoteBody,
 )
-from origenlab_api.v2.quotes.reads import V2QuoteReads
+from origenlab_api.v2.quotes.reads import QUOTE_LIST_MAX, V2QuoteReads
 
 quote_read_router = APIRouter(prefix="/v2/quotes")
 quote_command_router = APIRouter(prefix="/v2/commands", tags=["v2-quote-commands"])
@@ -54,7 +54,29 @@ def _refused(exc: CommandRefused) -> NoReturn:
     raise HTTPException(exc.status_code, detail=_detail(exc)) from exc
 
 
-# Declared before `/{quote_id}`: «numbering» is not a quote id.
+# The module's list and the new-quote dialog's suggestions. Declared before `/{quote_id}`, like
+# «numbering»: neither «clients» nor the bare path is a quote id.
+@quote_read_router.get("")
+def quote_list(request: Request, operator: Operator,
+               status: Literal["draft", "approved", "sent", "void", "all"] = "all",
+               q: str | None = Query(None, max_length=200), limit: int = Query(50, ge=1, le=QUOTE_LIST_MAX),
+               cursor: str | None = Query(None, max_length=200)) -> dict:
+    _may_view_costs(operator)
+    try:
+        return _reads(request).quote_list(status=status, q=q, limit=limit, cursor=cursor)
+    except CommandRefused as exc:  # a cursor this list did not issue
+        _refused(exc)
+
+
+@quote_read_router.get("/clients")
+def client_suggestions(request: Request, operator: Operator, q: str = Query("", max_length=120)) -> dict:
+    _may_view_costs(operator)
+    text = q.strip()
+    if len(text) < 2:
+        raise HTTPException(422, detail={"code": "query_too_short", "message": "type at least two characters"})
+    return _reads(request).client_suggestions(text)
+
+
 @quote_read_router.get("/numbering")
 def numbering(request: Request, operator: Operator) -> dict:
     _may_view_costs(operator)

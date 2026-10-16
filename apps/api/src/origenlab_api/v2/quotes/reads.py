@@ -34,11 +34,25 @@ stored prices — what approval freezes, since it prices the saved lines as they
 an issued revision as its stored totals, lines and frozen `party_snapshot`. Suggestions are only
 offered, never added: the products the case's emails mention (`product_mention` assertions) and the
 models that usually go with the principal (`kit_suggestions`, R-A5). The principal's quoted-price
-history comes from the catalog reads.
+history comes from the catalog reads. `params` is the company's preferences as the rail applies
+them (`inputs.quote_preferences`: default markups, margin band, price-deviation warning).
+
+**The module's list** (`GET /v2/quotes`): one row per quote at its current revision (`_current`'s
+rule, applied to every quote in one statement), newest first by a keyset cursor, with the count of
+each status under the same search — two statements in one pipeline, whatever the page holds.
+Imported quotes are listed too (`origin` `historical_import`).
+
+**Client suggestions** (`GET /v2/quotes/clients`, plan ruling R3): institutions and people a new
+quote can be for, each with its open cases — never a supplier or manufacturer (a current
+`organization_relationship` in those roles), an archived or merged institution, an inactive address,
+nor OrigenLab's own or Labdelivery's addresses (`recipients.not_a_recipient`).
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import datetime as dt
+import json
 import re
 import uuid
 from email.utils import getaddresses
@@ -51,7 +65,8 @@ from typing import Any
 from origenlab_api.quoting.engine import EngineError, compute
 from origenlab_api.v2.catalog.fx import FxUnavailable
 from origenlab_api.v2.catalog.keys import is_labdelivery, model_key
-from origenlab_api.v2.catalog.reads import V2CatalogReads, _plain
+from origenlab_api.v2.case_commands import SUPPLIER_RELATIONSHIP_ROLES
+from origenlab_api.v2.catalog.reads import V2CatalogReads, _like_escape, _plain
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.quotes.draft import PreviewQuoteBody, QuoteDraft
 from origenlab_api.v2.quotes.inputs import (
@@ -59,6 +74,7 @@ from origenlab_api.v2.quotes.inputs import (
     FxResolver,
     draft_from_rows,
     parameters_from,
+    quote_preferences,
     resolve_draft,
     result_json,
 )
@@ -74,6 +90,17 @@ KIT_LIMIT = 6
 MENTION_LIMIT = 12
 CONTACT_LIMIT = 20
 PRICE_HISTORY_LIMIT = 20
+#: The module's list: the statuses a row can show (`in_review` is listed as a draft), its page size
+#: bound, and the item descriptions a row shows.
+QUOTE_LIST_STATUSES = ("draft", "approved", "sent", "void")
+QUOTE_LIST_MAX = 100
+QUOTE_LIST_ITEMS = 3
+#: Client suggestions: at most this many institutions and this many people, each with at most
+#: `CLIENT_OPEN_CASES` open cases; the database is asked for `CLIENT_FETCH` of each so the address
+#: rules applied here (Labdelivery, OrigenLab's own) still leave a full list.
+CLIENT_LIMIT = 8
+CLIENT_FETCH = 24
+CLIENT_OPEN_CASES = 10
 
 # The documents that quote the principal, then every other model on them with the share of those
 # documents it is on; each with the active catalog product of that key (the survivor of a merge),
@@ -243,6 +270,156 @@ select distinct on (a.value_norm)
  where oe.opportunity_id = %s::uuid and oe.unlinked_at is null
    and not s.is_quarantined and s.review_status <> 'rejected'
  order by a.value_norm, (p.id is not null) desc, a.created_at
+"""
+
+# -- the Cotizador module's list (`GET /v2/quotes`)
+#
+# One row per quote at its current revision — the open draft, else the newest revision not
+# voided, else the newest: `_current`'s order, chosen here for every quote at once with
+# `distinct on`. Its institution through a merge, as the workspace. The search matches the
+# number, the institution's name, the case's title and the current revision's line
+# descriptions (ILIKE, wildcards escaped). `bucket` is the status a row is counted and filtered
+# under: an `in_review` revision is still a draft.
+_LIST_BASE_SQL = """
+with cur as (
+  select distinct on (r.quote_id) r.quote_id, r.id as revision_id, r.revision_no, r.status, r.origin,
+         r.grand_total, r.quote_currency, r.updated_at
+    from crm.quote_revision r
+   order by r.quote_id, (r.status in ('draft', 'in_review')) desc, (r.status <> 'void') desc, r.revision_no desc
+), listed as (
+  select q.id, q.quote_number, c.revision_id, c.revision_no, c.status, c.origin, c.grand_total, c.quote_currency,
+         greatest(q.updated_at, c.updated_at) as updated_at,
+         case when c.status = 'in_review' then 'draft' else c.status end as bucket,
+         o.id as opportunity_id, o.title, o.closed_at,
+         inst.id as institution_id, inst.name as institution_name
+    from crm.quote q
+    join cur c on c.quote_id = q.id
+    join crm.opportunity o on o.id = q.opportunity_id
+    left join crm.organization m on m.id = o.organization_id
+    left join crm.organization inst on inst.id = coalesce(m.merged_into_organization_id, m.id)
+   where %(pattern)s::text is null
+      or q.quote_number ilike %(pattern)s or inst.name ilike %(pattern)s or o.title ilike %(pattern)s
+      or exists (select 1 from crm.quote_line l
+                  where l.quote_revision_id = c.revision_id and l.description ilike %(pattern)s)
+)
+"""
+
+# The page (newest first, after the cursor), then each row's item lines: the first descriptions
+# and how many there are — the lateral runs for the page's rows only.
+_LIST_ROWS_SQL = _LIST_BASE_SQL + """
+select p.*, coalesce(it.descriptions, '{}'::text[]) as descriptions, coalesce(it.n, 0) as item_count
+  from (select l.* from listed l
+         where (%(bucket)s::text is null or l.bucket = %(bucket)s)
+           and (%(after_at)s::timestamptz is null
+                or (l.updated_at, l.id) < (%(after_at)s::timestamptz, %(after_id)s::uuid))
+         order by l.updated_at desc, l.id desc
+         limit %(limit)s) p
+  left join lateral (
+    select (array_agg(x.description order by x.line_no))[1:%(items)s] as descriptions, count(*) as n
+      from crm.quote_line x
+     where x.quote_revision_id = p.revision_id and x.line_kind = 'item') it on true
+ order by p.updated_at desc, p.id desc
+"""
+
+_LIST_COUNTS_SQL = _LIST_BASE_SQL + """
+select count(*) filter (where bucket = 'draft') as draft, count(*) filter (where bucket = 'approved') as approved,
+       count(*) filter (where bucket = 'sent') as sent, count(*) filter (where bucket = 'void') as void,
+       count(*) as "all"
+  from listed
+"""
+
+# -- client suggestions (`GET /v2/quotes/clients`, plan ruling R3)
+#
+# A supplier or manufacturer — a current `organization_relationship` row in those roles, the
+# lookup `case_command_repository._is_one_of_our_suppliers` makes — is never a client; neither is
+# an archived or merged institution.
+_NOT_A_SUPPLIER = """not exists (select 1 from crm.organization_relationship r
+                    where r.organization_id = {org} and r.role = any(%(supplier_roles)s)
+                      and (r.valid_to is null or r.valid_to > current_date))"""
+
+# Institutions by name, legal name or domain: a name starting with the text first, then those
+# with an open case (their own or a merged twin's), then by name.
+_CLIENT_ORGS_SQL = f"""
+select o.id::text as id, o.name, o.kind,
+       coalesce((select array_agg(d.domain_norm order by d.domain_norm)
+                   from crm.organization_domain d where d.organization_id = o.id), '{{}}'::text[]) as domains
+  from crm.organization o
+ where o.status = 'active' and o.merged_into_organization_id is null
+   and (o.name ilike %(pattern)s or o.legal_name ilike %(pattern)s
+        or exists (select 1 from crm.organization_domain d
+                    where d.organization_id = o.id and d.domain_norm ilike %(pattern)s))
+   and {_NOT_A_SUPPLIER.format(org="o.id")}
+ order by (o.name ilike %(prefix)s) desc,
+          exists (select 1 from crm.opportunity op
+                    left join crm.organization t on t.id = op.organization_id
+                   where op.closed_at is null and coalesce(t.merged_into_organization_id, t.id) = o.id) desc,
+          lower(o.name), o.id
+ limit %(limit)s
+"""
+
+# People by name or by an active email address of theirs, and addresses with no person by the
+# address. Each with one active email (one matching the text first) and its institution: the
+# person's current affiliation (a confirmed one first, the newest), else the address's own
+# institution — through a merge, active, and not a supplier (a supplier's people are no client).
+_CLIENT_PEOPLE_SQL = f"""
+with found as (
+  select p.id as person_id, null::uuid as contact_point_id, p.display_name as name
+    from crm.person p
+   where p.status = 'active' and p.merged_into_person_id is null
+     and (p.display_name ilike %(pattern)s
+          or exists (select 1 from crm.contact_point c
+                      where c.person_id = p.id and c.kind = 'email' and c.status = 'active'
+                        and c.value_norm ilike %(pattern)s))
+  union all
+  select null::uuid, c.id, null::text
+    from crm.contact_point c
+   where c.person_id is null and c.kind = 'email' and c.status = 'active' and c.value_norm ilike %(pattern)s
+)
+select f.person_id::text as person_id, e.id::text as contact_point_id, f.name, e.value_norm as email,
+       org.id::text as organization_id, org.name as organization_name
+  from found f
+  left join lateral (
+    select c.id, c.value_norm, c.organization_id from crm.contact_point c
+     where c.kind = 'email' and c.status = 'active'
+       and (c.id = f.contact_point_id or (f.contact_point_id is null and c.person_id = f.person_id))
+     order by (c.value_norm ilike %(pattern)s) desc, c.created_at, c.id
+     limit 1) e on true
+  left join lateral (
+    select a.organization_id from crm.affiliation a
+     where a.person_id = f.person_id and (a.valid_to is null or a.valid_to > current_date)
+     order by (a.confirmation = 'confirmed') desc, a.valid_from desc, a.created_at desc, a.id
+     limit 1) af on true
+  left join crm.organization m on m.id = coalesce(af.organization_id, e.organization_id)
+  left join crm.organization org on org.id = coalesce(m.merged_into_organization_id, m.id) and org.status = 'active'
+ where (org.id is null or {_NOT_A_SUPPLIER.format(org="org.id")})
+ order by (coalesce(f.name, e.value_norm) ilike %(prefix)s) desc, lower(coalesce(f.name, e.value_norm)),
+          f.person_id, e.id
+ limit %(limit)s
+"""
+
+# The open cases of every suggestion at once: an institution's (the cases whose requesting
+# institution is it or a twin merged into it), a person's and an address's (the cases they are a
+# current participant of). `requested_at` is when the case's own email was captured, else when
+# the case was opened.
+_CLIENT_CASES_SQL = """
+with open_case as (
+  select o.id, o.title, o.stage, o.organization_id, coalesce(sr.acquired_at, o.created_at) as requested_at
+    from crm.opportunity o
+    left join evidence.source_record sr on sr.id = o.origin_source_record_id
+   where o.closed_at is null
+)
+select 'organization' as via, coalesce(m.merged_into_organization_id, m.id)::text as key,
+       c.id::text as id, c.title, c.stage, c.requested_at
+  from open_case c join crm.organization m on m.id = c.organization_id
+ where coalesce(m.merged_into_organization_id, m.id) = any(%(organizations)s::uuid[])
+union all
+select 'person', p.person_id::text, c.id::text, c.title, c.stage, c.requested_at
+  from crm.opportunity_participant p join open_case c on c.id = p.opportunity_id
+ where p.valid_to is null and p.person_id = any(%(people)s::uuid[])
+union all
+select 'contact_point', p.contact_point_id::text, c.id::text, c.title, c.stage, c.requested_at
+  from crm.opportunity_participant p join open_case c on c.id = p.opportunity_id
+ where p.valid_to is null and p.contact_point_id = any(%(points)s::uuid[])
 """
 
 #: The revision columns `current` carries besides its draft or stored lines.
@@ -433,6 +610,54 @@ def recipient_candidates(participants: list[dict[str, Any]], people: list[dict[s
     return out
 
 
+def _encode_cursor(updated_at: datetime, quote_id: str) -> str:
+    raw = json.dumps([updated_at.isoformat(), str(quote_id)]).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, str]:
+    """The (updated_at, quote_id) a page ended at; anything this list did not issue is a 422."""
+    try:
+        at, quote_id = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        moment = datetime.fromisoformat(at)
+        if moment.tzinfo is None:
+            raise ValueError("naive")
+        return moment, str(uuid.UUID(quote_id))
+    except (binascii.Error, UnicodeDecodeError, ValueError, TypeError) as exc:
+        raise CommandRefused(422, "bad_cursor", "that cursor is not one this list gave") from exc
+
+
+def _pattern(text: str | None) -> str | None:
+    """`%text%` for ILIKE with the text's own `%`, `_` and `\` taken literally; None for no search."""
+    text = (text or "").strip()
+    return f"%{_like_escape(text)}%" if text else None
+
+
+def _offerable_domain(domain: str) -> bool:
+    return not_a_recipient(f"x@{domain}") is None
+
+
+def _cases_by_key(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    out: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in rows:
+        out.setdefault((r["via"], r["key"]), []).append(
+            {"id": r["id"], "title": r["title"], "stage": r["stage"], "requested_at": r["requested_at"]})
+    return out
+
+
+def _open_cases(by_key: dict[tuple[str, str], list[dict[str, Any]]], *keys: tuple[str, str | None]) -> list[dict[str, Any]]:
+    """The open cases under any of these keys, once each, the newest request first."""
+    seen: dict[str, dict[str, Any]] = {}
+    for via, key in keys:
+        if key is None:
+            continue
+        for case in by_key.get((via, key), []):
+            seen.setdefault(case["id"], case)
+    oldest = datetime.min.replace(tzinfo=UTC)
+    ordered = sorted(seen.values(), key=lambda c: (c["requested_at"] or oldest, c["id"]), reverse=True)
+    return ordered[:CLIENT_OPEN_CASES]
+
+
 class V2QuoteReads:
     def __init__(self, connect: Any, dsn: str, *, fx_resolver: FxResolver, statement_timeout_ms: int = 30_000,
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
@@ -550,6 +775,79 @@ class V2QuoteReads:
                         "documents": r["n"]})
         return out
 
+    # -- the module's list
+
+    def quote_list(self, *, status: str, q: str | None, limit: int, cursor: str | None) -> dict[str, Any]:
+        """One page of quotes, each at its current revision, newest first, with the count of each
+        status under the same search. Two statements in one pipeline, whatever the page holds."""
+        if status != "all" and status not in QUOTE_LIST_STATUSES:
+            raise CommandRefused(422, "bad_status", "no such quote status")
+        limit = max(1, min(int(limit), QUOTE_LIST_MAX))
+        after_at, after_id = _decode_cursor(cursor) if cursor else (None, None)
+        params = {"pattern": _pattern(q), "bucket": None if status == "all" else status,
+                  "after_at": after_at, "after_id": after_id, "limit": limit + 1, "items": QUOTE_LIST_ITEMS}
+        with self._read() as cur:
+            rows = self._catalog._batch(cur, {"rows": (_LIST_ROWS_SQL, params),
+                                              "counts": (_LIST_COUNTS_SQL, {"pattern": params["pattern"]})})
+        page = rows["rows"][:limit]
+        more = len(rows["rows"]) > limit
+        counts = rows["counts"][0]
+        return _plain({
+            "rows": [{
+                "quote_id": str(r["id"]), "quote_number": r["quote_number"],
+                "label": _label(r["quote_number"], r["revision_no"]), "status": r["bucket"], "origin": r["origin"],
+                "opportunity": {"id": str(r["opportunity_id"]), "title": r["title"], "closed": r["closed_at"] is not None},
+                "client": ({"organization_id": str(r["institution_id"]), "name": r["institution_name"]}
+                           if r["institution_id"] else None),
+                "items": {"first": list(r["descriptions"]), "count": int(r["item_count"])},
+                "grand_total": r["grand_total"], "currency": r["quote_currency"], "updated_at": r["updated_at"],
+            } for r in page],
+            "counts": {k: int(counts[k]) for k in (*QUOTE_LIST_STATUSES, "all")},
+            "next_cursor": _encode_cursor(page[-1]["updated_at"], page[-1]["id"]) if more else None,
+        })
+
+    # -- client suggestions (R3)
+
+    def client_suggestions(self, q: str) -> dict[str, Any]:
+        """Institutions and people a new quote can be for, each with its open cases. Never a
+        supplier or manufacturer, an archived or merged institution, an inactive address, nor
+        anything of OrigenLab's own or Labdelivery's (`recipients.not_a_recipient`). Two
+        round trips: the two searches in one pipeline, then every suggestion's open cases."""
+        text = q.strip()
+        params = {"pattern": _pattern(text), "prefix": f"{_like_escape(text)}%", "limit": CLIENT_FETCH,
+                  "supplier_roles": list(SUPPLIER_RELATIONSHIP_ROLES)}
+        with self._read() as cur:
+            found = self._catalog._batch(cur, {"organizations": (_CLIENT_ORGS_SQL, params),
+                                               "people": (_CLIENT_PEOPLE_SQL, params)})
+            organizations = [o for o in found["organizations"]
+                             if not is_labdelivery(o["name"]) and all(_offerable_domain(d) for d in o["domains"])
+                             ][:CLIENT_LIMIT]
+            people = [p for p in found["people"]
+                      if p["email"] and not_a_recipient(p["email"], p["name"]) is None
+                      and not is_labdelivery(p["organization_name"])][:CLIENT_LIMIT]
+            cases: list[dict[str, Any]] = []
+            org_ids = {o["id"] for o in organizations} | {p["organization_id"] for p in people if p["organization_id"]}
+            person_ids = {p["person_id"] for p in people if p["person_id"]}
+            point_ids = {p["contact_point_id"] for p in people if p["contact_point_id"]}
+            if org_ids or person_ids or point_ids:
+                cur.execute(_CLIENT_CASES_SQL, {"organizations": sorted(org_ids), "people": sorted(person_ids),
+                                                "points": sorted(point_ids)})
+                cases = self._rows(cur)
+        by_key = _cases_by_key(cases)
+        return _plain({
+            "organizations": [{"id": o["id"], "name": o["name"], "kind": o["kind"], "domains": list(o["domains"]),
+                               "open_cases": _open_cases(by_key, ("organization", o["id"]))}
+                              for o in organizations],
+            "people": [{"person_id": p["person_id"], "contact_point_id": p["contact_point_id"], "name": p["name"],
+                        "email": p["email"],
+                        "organization": ({"id": p["organization_id"], "name": p["organization_name"]}
+                                         if p["organization_id"] else None),
+                        "open_cases": _open_cases(by_key, ("person", p["person_id"]),
+                                                  ("contact_point", p["contact_point_id"]),
+                                                  ("organization", p["organization_id"]))}
+                       for p in people],
+        })
+
     # -- workspace
 
     def workspace(self, quote_id: uuid.UUID | str) -> dict[str, Any] | None:
@@ -623,6 +921,7 @@ class V2QuoteReads:
             "current": current,
             "suggestions": {"mentioned": self._mentions_from(rows["mentions"]), "kits": kits},
             "price_history": history,
+            "params": quote_preferences(params),
         })
 
     @staticmethod

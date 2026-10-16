@@ -46,7 +46,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/commands/<name>` for the 29 CRM-authoring commands (person, organization — `confirm-organization-record` included —, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not in this list. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
 | `/v2/commands/{create-product,update-product,confirm-product-content,record-supplier-cost,set-supplier-terms,set-cost-parameter,record-fx-rate,update-product-image,review-document-line}` | Catalog commands: 9 exact paths, JSON, body ≤ 64 KiB — see *Catalog 1a* below |
 | `/v2/commands/{create-quote,save-quote-draft,approve-quote-revision,void-quote-revision,create-quote-revision}` | Cotizador commands: 5 exact paths, JSON, same guards as the catalog commands (`save-quote-draft` body ≤ 256 KiB, the rest 64 KiB) — see *Cotizador* below |
-| GET `/v2/quotes/numbering`, `/v2/quotes/<uuid>` | Cotizador reads (sales and admin upstream) — see *Cotizador* below |
+| GET `/v2/quotes`, `/v2/quotes/clients`, `/v2/quotes/numbering`, `/v2/quotes/<uuid>` | Cotizador reads (sales and admin upstream) — see *Cotizador* below |
 | POST `/v2/quotes/preview` | Cotizador live preview: a POST that reads, no `Idempotency-Key` — see *Cotizador* below |
 | `/v2/commands/add-product-image` | Catalog image upload: one of the two multipart POSTs, body ≤ 8 MiB + 64 KiB — see *Catalog 1a* below |
 | `/v2/commands/attach-case-document` | A case's purchase order from the computer (2026-10-12): the second multipart POST, same guard as the image upload, body ≤ 20 MiB + 64 KiB. Upstream: active `sales`/`admin`, `Idempotency-Key`, a note; behind `ORIGENLAB_V2_COMMANDS_ENABLED` and Storage |
@@ -166,7 +166,8 @@ required `Idempotency-Key` (a custom header, which forces one) plus the Origin a
 
 ## Cotizador
 
-Two exact GET paths (`/v2/quotes/numbering`, `/v2/quotes/<uuid>`, lower-case UUID) and six POST
+Four exact GET paths (`/v2/quotes` — the module's list, `/v2/quotes/clients` — the new-quote
+dialog's client suggestions, `/v2/quotes/numbering`, `/v2/quotes/<uuid>`, lower-case UUID) and six POST
 paths. Roles (sales and admin; a viewer is refused) are enforced upstream.
 
 - Five JSON commands (`create-quote`, `save-quote-draft`, `approve-quote-revision`,

@@ -1167,7 +1167,8 @@ approval's supersession the existing `quote_revision.superseded`, and each negot
 `product.cost_recorded`.
 
 **New `catalog.cost_parameter` keys** (seven; the CHECK lists them, `set-cost-parameter` sets them):
-`quote_number_seed` (number) and the printed defaults `quote_default_delivery_terms`,
+`quote_number_seed` (number; set by an admin only — any other role is refused 403
+`role_may_not_set_numbering`) and the printed defaults `quote_default_delivery_terms`,
 `quote_default_payment_terms`, `quote_default_warranty`, `quote_default_delivery_place`,
 `quote_default_installation` (text, sent as `value_text`) and `quote_default_validity_days`
 (number; an integer 1–365, else 30 days applies). The engine also reads keys that already existed (§7.5): the four

@@ -17,6 +17,7 @@ from origenlab_api.v2.commands import CommandRefused, request_digest
 from origenlab_api.v2.quotes.commands import V2QuoteRepository
 from origenlab_api.v2.quotes.draft import QUOTE_BODIES, PreviewQuoteBody
 from origenlab_api.v2.quotes.inputs import no_provider
+from origenlab_api.v2.quotes.numbering import revision_label
 from origenlab_api.v2.quotes.reads import V2QuoteReads
 from test_v2_quote_commands import (
     NOW,
@@ -635,3 +636,284 @@ def test_automatic_senders_are_never_offered_as_recipients() -> None:
              "recipients": "contacto@origenlab.cl", "at": None} for a in automatic + people]
     offered = {p["email"] for p in email_people(rows)}
     assert offered == set(people)
+
+
+# ------------------------------------------------------------------ the Cotizador module: list, clients, params
+
+def _titled_case(world: dict, institution: str, title: str, *, closed: bool = False, participant: bool = True) -> str:
+    case = _case(world["dsn"], world["operator"], institution, closed=closed, participant=participant)
+    _owner(world["dsn"], "update crm.opportunity set title = %s where id = %s", (title, case))
+    return case
+
+
+def _historical(world: dict, case: str, number: str) -> str:
+    """An imported, sent quote (no lines in crm.quote_line), as the historical import leaves one."""
+    dsn = world["dsn"]
+    record = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload) values ('quote_document', "
+                         "%s, '{}'::jsonb) returning id", (f"hist-{uuid.uuid4().hex}",))[0][0]
+    quote = _owner(dsn, "insert into crm.quote (opportunity_id, quote_number, number_origin) values (%s, %s, "
+                        "'printed_historical') returning id::text", (case, number))[0][0]
+    _owner(dsn, "insert into crm.quote_revision (quote_id, revision_no, status, origin, quote_currency, price_decimals, "
+                "pdf_sha256, sent_at, origin_source_record_id, grand_total) values (%s, 1, 'sent', 'historical_import', "
+                "'CLP', 0, %s, now(), %s, 119000)", (quote, "c" * 64, record))
+    return quote
+
+
+def _list(world: dict, **kw) -> dict:
+    args = {"status": "all", "q": None, "limit": 50, "cursor": None, **kw}
+    return _reads(world["dsn"]).quote_list(**args)
+
+
+@needs_db
+def test_the_quote_list_shows_each_quote_at_its_current_revision_with_counts(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    institution = _org(dsn, "institution", f"Instituto Lista {tag}")
+    draft_case = _titled_case(world, institution, f"Caso borrador {tag}")
+    draft = _run(world, "create-quote", {"opportunity_id": draft_case})
+    saved = _save(world, draft, {**_draft(world), "items": [
+        *_draft(world)["items"],
+        {"description": "Tercera línea", "quantity": "1", "unit_cost": "10", "cost_currency": "CLP"},
+        {"description": "Cuarta línea", "quantity": "1", "unit_cost": "10", "cost_currency": "CLP"}]})
+    _, approved = _new_quote({**world, "institution": institution})
+    approved_saved = _save(world, approved, _draft(world))
+    _run(world, "approve-quote-revision", {"revision_id": approved["revision_id"],
+                                           "expected_version": approved_saved["version"]})
+    _, voided = _new_quote({**world, "institution": institution})
+    _run(world, "void-quote-revision", {"revision_id": voided["revision_id"], "expected_version": voided["version"],
+                                        "reason": "duplicada"})
+    historical = _historical(world, _titled_case(world, institution, f"Caso histórico {tag}"), f"H{tag}")
+
+    out = _list(world, q=tag)
+    assert out["counts"] == {"draft": 1, "approved": 1, "sent": 1, "void": 1, "all": 4}
+    assert out["next_cursor"] is None
+    rows = out["rows"]
+    assert [r["quote_id"] for r in rows] == [historical, voided["quote_id"], approved["quote_id"], draft["quote_id"]]
+    assert [r["updated_at"] for r in rows] == sorted((r["updated_at"] for r in rows), reverse=True)
+    by_id = {r["quote_id"]: r for r in rows}
+
+    row = by_id[draft["quote_id"]]
+    assert row == {
+        "quote_id": draft["quote_id"], "quote_number": draft["quote_number"], "label": draft["quote_number"],
+        "status": "draft", "origin": "authored",
+        "opportunity": {"id": draft_case, "title": f"Caso borrador {tag}", "closed": False},
+        "client": {"organization_id": institution, "name": row["client"]["name"]},
+        "items": {"first": ["Equipo ficticio FX-100", "Línea libre", "Tercera línea"], "count": 4},
+        "grand_total": row["grand_total"], "currency": "CLP", "updated_at": row["updated_at"],
+    }
+    assert row["client"]["name"].startswith(f"Instituto Lista {tag}")
+    assert Decimal(row["grand_total"]) == Decimal(saved["computed"]["totals"]["total"])
+    assert by_id[approved["quote_id"]]["status"] == "approved"
+    assert by_id[voided["quote_id"]]["status"] == "void"
+    hist = by_id[historical]
+    assert (hist["status"], hist["origin"], hist["label"]) == ("sent", "historical_import", None)
+    assert hist["items"] == {"first": [], "count": 0} and Decimal(hist["grand_total"]) == 119000
+
+    only_drafts = _list(world, q=tag, status="draft")
+    assert [r["quote_id"] for r in only_drafts["rows"]] == [draft["quote_id"]]
+    assert only_drafts["counts"] == out["counts"]  # counts are per status under the same search
+
+
+@needs_db
+def test_an_open_draft_over_an_issued_revision_is_the_listed_one(world) -> None:
+    tag = uuid.uuid4().hex[:8]
+    institution = _org(world["dsn"], "institution", f"Instituto Revisión {tag}")
+    _, created = _new_quote({**world, "institution": institution})
+    saved = _save(world, created, _draft(world))
+    _run(world, "approve-quote-revision", {"revision_id": created["revision_id"], "expected_version": saved["version"]})
+    _run(world, "create-quote-revision", {"quote_id": created["quote_id"]})
+    [row] = _list(world, q=tag)["rows"]
+    assert row["status"] == "draft" and row["label"] == revision_label(created["quote_number"], 2)
+    assert _list(world, q=tag)["counts"]["approved"] == 0
+
+
+@needs_db
+def test_the_quote_list_searches_number_institution_case_title_and_lines(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    institution = _org(dsn, "institution", f"Laboratorio Buscado {tag}")
+    plain = _org(dsn, "institution", "Otra Institución")
+    by_institution = _run(world, "create-quote", {"opportunity_id": _titled_case(world, institution, "Caso uno")})
+    by_title = _run(world, "create-quote", {"opportunity_id": _titled_case(world, plain, f"Centrífuga {tag}")})
+    by_line = _run(world, "create-quote", {"opportunity_id": _titled_case(world, plain, "Caso tres")})
+    _save(world, by_line, {"items": [{"description": f"Rotor especial {tag}", "quantity": "1", "unit_cost": "10",
+                                      "cost_currency": "CLP"}]})
+
+    def found(q: str) -> set[str]:
+        return {r["quote_id"] for r in _list(world, q=q)["rows"]}
+
+    assert found(tag) == {by_institution["quote_id"], by_title["quote_id"], by_line["quote_id"]}
+    assert found(f"laboratorio buscado {tag}") == {by_institution["quote_id"]}
+    assert found(f"centrífuga {tag}") == {by_title["quote_id"]}
+    assert found(f"ROTOR ESPECIAL {tag}") == {by_line["quote_id"]}
+    assert found(by_title["quote_number"]) == {by_title["quote_id"]}
+    # LIKE wildcards are text, not patterns.
+    assert found(f"%{tag}") == set() and found(f"Rotor_especial {tag}") == set()
+
+
+@needs_db
+def test_the_quote_list_pages_by_keyset_in_a_constant_number_of_statements(world) -> None:
+    tag = uuid.uuid4().hex[:8]
+    institution = _org(world["dsn"], "institution", f"Instituto Páginas {tag}")
+    made = [_new_quote({**world, "institution": institution})[1]["quote_id"] for _ in range(3)]
+
+    seen, cursor, pages = [], None, 0
+    while True:
+        out = _list(world, q=tag, limit=2, cursor=cursor)
+        seen += [r["quote_id"] for r in out["rows"]]
+        pages += 1
+        cursor = out["next_cursor"]
+        if cursor is None:
+            break
+    assert pages == 2 and seen == list(reversed(made))
+
+    def statements(limit: int) -> int:
+        counting = _Counting()
+        reads = V2QuoteReads(counting.connect, runtime_dsn(world["dsn"]), fx_resolver=_never, clock=lambda: NOW)
+        assert len(reads.quote_list(status="all", q=None, limit=limit, cursor=None)["rows"]) == limit
+        assert counting.connections == 1
+        return counting.statements
+
+    assert statements(1) == statements(3) <= 3
+
+
+@needs_db
+def test_a_cursor_the_list_did_not_issue_is_refused(world) -> None:
+    import base64
+    import json
+
+    def encoded(value) -> str:
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).decode()
+
+    for bad in ("nonsense", encoded({"x": 1}), encoded(["2026-10-15T12:00:00", str(uuid.uuid4())]),
+                encoded(["2026-10-15T12:00:00+00:00", "no-uuid"]), encoded([1, 2])):
+        with pytest.raises(CommandRefused) as exc:
+            _list(world, cursor=bad)
+        assert (exc.value.status_code, exc.value.code) == (422, "bad_cursor")
+
+
+def _supplier_role(dsn: str, organization: str, role: str = "supplier", *, ended: bool = False) -> None:
+    if ended:
+        _owner(dsn, "insert into crm.organization_relationship (organization_id, role, valid_from, valid_to) "
+                    "values (%s, %s, current_date - 30, current_date - 1)", (organization, role))
+    else:
+        _owner(dsn, "insert into crm.organization_relationship (organization_id, role, valid_from) "
+                    "values (%s, %s, current_date - 30)", (organization, role))
+
+
+def _clients(world: dict, q: str) -> dict:
+    return _reads(world["dsn"]).client_suggestions(q)
+
+
+@needs_db
+def test_client_suggestions_offer_institutions_with_their_open_cases_never_suppliers(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    clinic = _org(dsn, "institution", f"Clínica {tag}")
+    _owner(dsn, "insert into crm.organization_domain (organization_id, domain_norm, scope) values (%s, %s, 'exclusive')",
+           (clinic, f"clinica-{tag}.test"))
+    open_case = _titled_case(world, clinic, f"Balanza {tag}")
+    _titled_case(world, clinic, "Caso cerrado", closed=True)
+    # A twin merged into the clinic: its open case is the clinic's (the merge survivor), the twin is not offered.
+    twin = _org(dsn, "institution", f"Clínica {tag} duplicada")
+    twin_case = _titled_case(world, twin, f"Pipeta {tag}")
+    _owner(dsn, "update crm.organization set merged_into_organization_id = %s where id = %s", (clinic, twin))
+    supplier = _org(dsn, "institution", f"Clínica {tag} proveedora")
+    _supplier_role(dsn, supplier)
+    maker = _org(dsn, "institution", f"Clínica {tag} fabricante")
+    _supplier_role(dsn, maker, "manufacturer")
+    former = _org(dsn, "institution", f"Clínica {tag} ex proveedora")
+    _supplier_role(dsn, former, ended=True)
+    _owner(dsn, "insert into crm.organization (kind, name, confirmation, status, archived_at, archived_by_operator_id, "
+                "archive_reason) values ('institution', %s, 'machine_proposed', 'archived', now(), %s, 'duplicado')",
+           (f"Clínica {tag} archivada", world["operator"].operator_id))
+    _org(dsn, "institution", f"Lab Delivery Clínica {tag}")
+    own = _org(dsn, "institution", f"Clínica {tag} interna")
+    _owner(dsn, "insert into crm.organization_domain (organization_id, domain_norm, scope) values (%s, %s, 'shared')",
+           (own, f"x{tag}.origenlab.cl"))
+
+    orgs = _clients(world, tag)["organizations"]
+    assert {o["id"] for o in orgs} == {clinic, former}
+    [found] = [o for o in orgs if o["id"] == clinic]
+    assert found["kind"] == "institution" and found["domains"] == [f"clinica-{tag}.test"]
+    assert {c["id"] for c in found["open_cases"]} == {open_case, twin_case}
+    assert set(found["open_cases"][0]) == {"id", "title", "stage", "requested_at"}
+    # By a domain too.
+    assert [o["id"] for o in _clients(world, f"clinica-{tag}.te")["organizations"]] == [clinic]
+
+
+@needs_db
+def test_client_suggestions_offer_people_and_addresses_with_their_open_cases(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    clinic = _org(dsn, "institution", f"Hospital {tag}")
+    clinic_case = _titled_case(world, clinic, f"Caso hospital {tag}")
+    elsewhere = _titled_case(world, _org(dsn, "institution", "Otra"), f"Caso de otra {tag}", participant=False)
+
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values (%s, 'machine_proposed') "
+                         "returning id::text", (f"Ana Prueba {tag}",))[0][0]
+    point = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                        "values ('email', %s, %s, %s, 'personal', 'machine_proposed') returning id::text",
+                   (f"ana-{tag}@cliente-ficticio.test", f"ana-{tag}@cliente-ficticio.test", person))[0][0]
+    _owner(dsn, "insert into crm.affiliation (person_id, organization_id, valid_from, confirmation) "
+                "values (%s, %s, current_date - 10, 'machine_proposed')", (person, clinic))
+    _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, person_id, role, is_primary, valid_from, "
+                "confirmation) values (%s, %s, 'end_user', false, current_date, 'machine_proposed')", (elsewhere, person))
+    bare = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values "
+                       "('email', %s, %s, 'unattributed', 'machine_proposed') returning id::text",
+                  (f"compras-{tag}@cliente-ficticio.test", f"compras-{tag}@cliente-ficticio.test"))[0][0]
+    # Never offered: OrigenLab's own and Labdelivery's addresses, an inactive address, a supplier's person.
+    for address in (f"ventas-{tag}@origenlab.cl", f"pedidos-{tag}@labdelivery.cl"):
+        _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values "
+                    "('email', %s, %s, 'unattributed', 'machine_proposed')", (address, address))
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation, status, "
+                "deactivated_at, deactivated_by_operator_id) values ('email', %s, %s, 'unattributed', "
+                "'machine_proposed', 'inactive', now(), %s)",
+           (f"viejo-{tag}@cliente-ficticio.test", f"viejo-{tag}@cliente-ficticio.test", world["operator"].operator_id))
+    supplier = _org(dsn, "institution", "Proveedora de personas")
+    _supplier_role(dsn, supplier)
+    vendor = _owner(dsn, "insert into crm.person (display_name, confirmation) values (%s, 'machine_proposed') "
+                         "returning id::text", (f"Vendedor {tag}",))[0][0]
+    _owner(dsn, "insert into crm.affiliation (person_id, organization_id, valid_from, confirmation) "
+                "values (%s, %s, current_date - 10, 'machine_proposed')", (vendor, supplier))
+
+    people = _clients(world, tag)["people"]
+    by_email = {p["email"]: p for p in people}
+    assert set(by_email) == {f"ana-{tag}@cliente-ficticio.test", f"compras-{tag}@cliente-ficticio.test"}
+    ana = by_email[f"ana-{tag}@cliente-ficticio.test"]
+    assert (ana["person_id"], ana["contact_point_id"], ana["name"]) == (person, point, f"Ana Prueba {tag}")
+    assert ana["organization"]["id"] == clinic
+    assert {c["id"] for c in ana["open_cases"]} == {clinic_case, elsewhere}
+    compras = by_email[f"compras-{tag}@cliente-ficticio.test"]
+    assert (compras["person_id"], compras["contact_point_id"], compras["organization"]) == (None, bare, None)
+    assert compras["open_cases"] == []
+    # By part of the address.
+    assert [p["person_id"] for p in _clients(world, f"ana-{tag}")["people"]] == [person]
+
+
+@needs_db
+def test_client_suggestions_cap_each_list_and_read_in_a_few_statements(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    for n in range(10):
+        org = _org(dsn, "institution", f"Centro {tag} {n}")
+        _titled_case(world, org, f"Caso {n}")
+        _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) values "
+                    "('email', %s, %s, 'unattributed', 'machine_proposed')",
+               (f"centro{n}-{tag}@cliente-ficticio.test", f"centro{n}-{tag}@cliente-ficticio.test"))
+    counting = _Counting()
+    reads = V2QuoteReads(counting.connect, runtime_dsn(dsn), fx_resolver=_never, clock=lambda: NOW)
+    out = reads.client_suggestions(tag)
+    assert len(out["organizations"]) == 8 and len(out["people"]) == 8
+    assert all(len(o["open_cases"]) == 1 for o in out["organizations"])
+    assert counting.connections == 1 and counting.statements <= 4, counting.statements
+
+
+@needs_db
+def test_the_workspace_carries_the_preference_values_with_their_fallbacks(world) -> None:
+    _, created = _new_quote(world)
+    params = _reads(world["dsn"]).workspace(created["quote_id"])["params"]
+    assert params == {"markups": {"equipment": "0.40", "accessory": "0.45", "consumable": "0.45",
+                                  "spare_part": "0.45", "service": "0.45", "other": "0.45"},
+                      "margin_target_min": "0.25", "margin_target_max": "0.45", "price_deviation_warn_pct": None}
+    _param(world["dsn"], "default_markup_service", Decimal("0.3"))
+    _param(world["dsn"], "price_deviation_warn_pct", Decimal("0.15"))
+    params = _reads(world["dsn"]).workspace(created["quote_id"])["params"]
+    assert Decimal(params["markups"]["service"]) == Decimal("0.3")
+    assert Decimal(params["price_deviation_warn_pct"]) == Decimal("0.15")
+    assert params["markups"]["equipment"] == "0.40"
