@@ -18,7 +18,9 @@ export type ResourceState<T> =
 export function classifyError(err: unknown): Exclude<ResourceState<never>, { kind: "loading" } | { kind: "ready" }> {
   if (err instanceof OperatorApiError) {
     const text = err.message || "";
-    if (err.status === 404 || (err.status === 403 && text.includes("path_not_allowed"))) {
+    // A refusal that carries a parsed `code` (QuoteRefusal) has the envelope's message, not its raw body.
+    const code = (err as { code?: unknown }).code;
+    if (err.status === 404 || (err.status === 403 && (text.includes("path_not_allowed") || code === "path_not_allowed"))) {
       return { kind: "unavailable", message: text };
     }
     if (err.status === 401 || err.status === 403) {

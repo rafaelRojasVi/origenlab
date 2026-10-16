@@ -13,26 +13,14 @@
  */
 import { useState } from "react";
 import { ocLabel } from "../caseDocuments";
+import { crmHash } from "../crmRoute";
 import type { CaseDocument, CaseMoney, OpportunityCardData, QuoteCard, QuoteContents, QuoteLine, RevisionCard } from "../crmTypes";
 import { inSharedMailbox } from "../gmailLinks";
+import { formatMoney } from "../money";
+import { isAuthoredQuote } from "../quotes/openOrCreateQuote";
 import { Badge, LOCAL_DRIVE_TITLE, fmtDateTime, isSafeExternalHref } from "../ui";
 
 /* ── money ───────────────────────────────────────────────────────────────── */
-
-const CURRENCY_PREFIX: Record<string, string> = { CLP: "$", USD: "US$", EUR: "€" };
-
-/** «$ 1.190.000» for CLP (no decimals), «US$ 1.299,75» otherwise; es-CL grouping. */
-export function formatMoney(amount: string | null | undefined, currency: string | null | undefined): string | null {
-  if (amount == null || amount === "") return null;
-  const n = Number(amount);
-  if (!Number.isFinite(n)) return null;
-  const clp = currency === "CLP";
-  const text = n.toLocaleString("es-CL", {
-    minimumFractionDigits: clp ? 0 : 2,
-    maximumFractionDigits: clp ? 0 : 2,
-  });
-  return `${CURRENCY_PREFIX[currency ?? ""] ?? currency ?? ""} ${text}`.trim();
-}
 
 /** «1», «2,5»: a quantity without trailing zeros. */
 function formatQty(qty: string | null): string | null {
@@ -256,8 +244,8 @@ function revisionStatus(rev: RevisionCard): { label: string; tone: "good" | "bad
   return rev.status === "sent" ? { label: "Enviada", tone: "good" } : { label: rev.status, tone: "neutral" };
 }
 
-function QuoteBlock({ q, defaultOpen, latest, documents = [] }: {
-  q: QuoteCard; defaultOpen: boolean; latest: boolean; documents?: CaseDocument[];
+function QuoteBlock({ q, defaultOpen, latest, documents = [], mayOpenCotizador = false }: {
+  q: QuoteCard; defaultOpen: boolean; latest: boolean; documents?: CaseDocument[]; mayOpenCotizador?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const cur = currentRevision(q);
@@ -306,6 +294,16 @@ function QuoteBlock({ q, defaultOpen, latest, documents = [] }: {
           </span>
         ) : null}
         </button>
+        {mayOpenCotizador && isAuthoredQuote(q) ? (
+          <a
+            href={crmHash("cotizar", q.quote_id)}
+            aria-label={`Abrir en Cotizador la cotización ${q.quote_number}`}
+            className="mt-1 inline-flex min-h-[32px] items-center gap-1 rounded-md px-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          >
+            Abrir en Cotizador
+            <span aria-hidden="true">→</span>
+          </a>
+        ) : null}
       </header>
       {open ? (
       <div className="px-3 pb-3 pt-2">
@@ -354,7 +352,8 @@ function QuoteBlock({ q, defaultOpen, latest, documents = [] }: {
   );
 }
 
-export function QuoteList({ card }: { card: OpportunityCardData }) {
+/** `mayOpenCotizador`: a quote of this app links to the Cotizador (sales and admin only). */
+export function QuoteList({ card, mayOpenCotizador = false }: { card: OpportunityCardData; mayOpenCotizador?: boolean }) {
   if (card.quotes.length === 0) {
     return (
       <p className="rounded-lg border border-dashed border-line-strong px-3 py-3 text-xs text-ink-muted">
@@ -365,7 +364,7 @@ export function QuoteList({ card }: { card: OpportunityCardData }) {
   return (
     <div className="space-y-3">
       {quotesNewestFirst(card).map((q, i) => (
-        <QuoteBlock key={q.quote_id} q={q} defaultOpen={i === 0} latest={i === 0 && card.quotes.length > 1} documents={card.documents} />
+        <QuoteBlock key={q.quote_id} q={q} defaultOpen={i === 0} latest={i === 0 && card.quotes.length > 1} documents={card.documents} mayOpenCotizador={mayOpenCotizador} />
       ))}
     </div>
   );

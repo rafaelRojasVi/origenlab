@@ -311,6 +311,15 @@ export interface FollowUpQueueItem {
 export type QueueItem = CotizarQueueItem | ReplyQueueItem | TaskQueueItem | FollowUpQueueItem;
 
 /**
+ * Nothing sent yet: the case has no quote revision, or its newest is a draft (or in review) still
+ * being written in the Cotizador. Such a case stays «por cotizar» until a quote goes out.
+ */
+export function awaitsQuote(card: OpportunityCardData): boolean {
+  const r = card.latest_revision;
+  return r === null || (r.origin === "authored" && (r.status === "draft" || r.status === "in_review"));
+}
+
+/**
  * ONE merged list of what the operator needs to act on today, deduplicated by `opportunity_id`.
  * Priority per case: cotizar > reply > overdue task > due task > follow-up due today.
  * Order (owner, 2026-10-15): oldest wait first in every section — the case that has been
@@ -325,7 +334,7 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
   for (const card of items) {
     if (!isOpenCase(card)) continue;
     if (!PRE_QUOTE_STAGES.has(card.stage)) continue;
-    if (card.latest_revision !== null) continue;
+    if (!awaitsQuote(card)) continue;
     if (pausedUntil(card, now) !== null) continue;
     if (card.attention.some((a) => a.blocking)) continue;
     const id = card.opportunity_id;

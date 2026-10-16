@@ -5,7 +5,7 @@ import { Toaster } from "./ui";
 import { googleLoginUrl } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { REDACTION_NOTICE, contactAddressesRedacted } from "./redaction";
-import { CRM_GROUP_LABEL, CRM_NAV, crmHash, type CrmSection, type DatosTab } from "./crmRoute";
+import { CRM_GROUP_LABEL, CRM_NAV, crmHash, sectionTitle, type CrmSection, type DatosTab } from "./crmRoute";
 import { HistoryPage } from "./pages/HistoryPage";
 import { OperacionesPage } from "./pages/OperacionesPage";
 import type { ShellRoute } from "./shellRoute";
@@ -15,6 +15,7 @@ import { OverviewPage } from "./pages/OverviewPage";
 import { PeoplePage } from "./pages/PeoplePage";
 import { PipelinePage } from "./pages/PipelinePage";
 import { CatalogPage } from "./pages/CatalogPage";
+import { CotizadorPage } from "./pages/CotizadorPage";
 
 /**
  * The dashboard: one shell, one navigation, one sign-in. The eight CRM sections over the V2
@@ -48,7 +49,9 @@ export function CrmApp({ route }: { route: ShellRoute }) {
     window.location.hash = crmHash(section, id, tab);
     window.scrollTo?.({ top: 0 });
   }, []);
-  const title = CRM_NAV.find((n) => n.id === route.section)!.label;
+  const title = sectionTitle(route.section);
+  // The Tablero and the Cotizador use the whole screen; reading pages keep a comfortable line length.
+  const wide = route.section === "oportunidades" || route.section === "cotizar";
   // A «Datos» tab is part of the address: a link to another tab remounts the page on it.
   const routeKey = route.tab ? `${route.section}/${route.tab}` : route.section;
 
@@ -69,10 +72,9 @@ export function CrmApp({ route }: { route: ShellRoute }) {
       >
         Saltar al contenido
       </a>
-      <TopBar onMenu={() => setMenuOpen((v) => !v)} menuOpen={menuOpen} wide={route.section === "oportunidades"} />
+      <TopBar onMenu={() => setMenuOpen((v) => !v)} menuOpen={menuOpen} wide={wide} />
       <MailSyncBanner refreshKey={routeKey} />
-      {/* The Tablero uses the whole screen; reading pages keep a comfortable line length. */}
-      <div className={`mx-auto flex w-full ${route.section === "oportunidades" ? "max-w-none" : "max-w-[1600px]"}`}>
+      <div className={`mx-auto flex w-full ${wide ? "max-w-none" : "max-w-[1600px]"}`}>
         <SideNav route={route} navigate={navigate} open={menuOpen} collapsed={collapsed} onToggle={toggleCollapsed} />
         <main id="crm-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pb-10 pt-4 focus:outline-none sm:px-6">
           <div key={routeKey} className="animate-fade-in-up">
@@ -105,6 +107,8 @@ function Section({
       return <PeoplePage key={id ?? "all"} navigate={navigate} initialId={id} />;
     case "catalogo":
       return <CatalogPage id={id} navigate={navigate} />;
+    case "cotizar":
+      return <CotizadorPage key={id ?? "none"} quoteId={id} navigate={navigate} />;
     case "marketing":
       return <MarketingPage />;
     case "historial":
@@ -287,7 +291,8 @@ function SideNav({
   onToggle: () => void;
 }) {
   const groups = ["comercial", "control"] as const;
-  const activeCrm = route.section;
+  // The Cotizador opens from a case, so the Oportunidades entry stays lit while it is open.
+  const activeCrm = route.section === "cotizar" ? "oportunidades" : route.section;
   const { session } = useAuthSession();
   const admin = session.kind === "signed_in" && session.operator.role === "admin";
   return (
@@ -353,6 +358,8 @@ const ICON_PATHS: Record<CrmSection, string> = {
   marketing: "M2.5 6.5v3h2l5 3v-9l-5 3zM11.5 6a2.5 2.5 0 0 1 0 4",
   historial: "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM10.5 10.5 14 14M5 7l1.5 1.5L9.5 5.5",
   datos: "M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z",
+  // Not in the menu: the Cotizador opens from a case, so it draws no icon.
+  cotizar: "",
 };
 
 const NAV_ICON: Record<CrmSection, ReactNode> = Object.fromEntries(

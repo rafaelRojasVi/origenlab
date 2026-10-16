@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { OperatorApiError } from "../api/operatorClient";
 import type { AuthSessionState } from "../api/authClient";
 import { AuthSessionContext } from "../context/AuthSessionContext";
-import { clearResourceCache, useResource } from "./useResource";
+import { QuoteRefusal } from "./quotes/quoteApi";
+import { classifyError, clearResourceCache, useResource } from "./useResource";
 
 // Every value below is invented; the repository is public.
 function signedIn(operatorId: string, role = "admin", profileId: string | null = null): AuthSessionState {
@@ -166,5 +167,26 @@ describe("useResource refreshing", () => {
     expect(screen.getByTestId("probe")).toHaveTextContent("loading");
     await act(async () => loader.pending.resolve("rows of b"));
     expect(screen.getByTestId("probe")).toHaveTextContent("ready:rows of b");
+  });
+});
+
+describe("classifyError with quote refusals", () => {
+  it("treats a viewer's role_may_not_view_costs as permission", () => {
+    const state = classifyError(new QuoteRefusal(403, "role_may_not_view_costs", "sales or admin only"));
+    expect(state.kind).toBe("permission");
+  });
+
+  it("treats quote_not_found like any other 404", () => {
+    const refusal = classifyError(new QuoteRefusal(404, "quote_not_found", "quote not found"));
+    expect(refusal.kind).toBe(classifyError(new OperatorApiError("Not Found", 404)).kind);
+    expect(refusal.kind).toBe("unavailable");
+  });
+
+  it("treats a Worker path_not_allowed 403 as unavailable, whatever the message says", () => {
+    expect(classifyError(new QuoteRefusal(403, "path_not_allowed", "no")).kind).toBe("unavailable");
+  });
+
+  it("keeps a 409 conflict as a plain error", () => {
+    expect(classifyError(new QuoteRefusal(409, "stale_version", "version changed")).kind).toBe("error");
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CRM_NAV, crmHash, sectionTitle } from "./crmRoute";
 import { LEGACY_REDIRECTS, parseShellHash, redirectHash } from "./shellRoute";
 
 describe("shell route", () => {
@@ -53,5 +54,25 @@ describe("shell route", () => {
       "archivo", "system",
     ];
     for (const s of old) expect(LEGACY_REDIRECTS[s], s).toBeDefined();
+  });
+});
+
+describe("Cotizador route", () => {
+  const id = "6bafddfa-0000-4000-8000-0000000000d1";
+
+  it("opens a quote by its id and round-trips through crmHash", () => {
+    expect(parseShellHash(`#/crm/cotizar/${id}`)).toEqual({ section: "cotizar", id });
+    expect(crmHash("cotizar", id)).toBe(`#/crm/cotizar/${id}`);
+    expect(redirectHash(`#/crm/cotizar/${id}`)).toBeNull();
+  });
+
+  it("is a hidden section: titled «Cotizador», absent from the navigation", () => {
+    expect(sectionTitle("cotizar")).toBe("Cotizador");
+    expect(sectionTitle("oportunidades")).toBe("Oportunidades");
+    expect(CRM_NAV.some((n) => (n.id as string) === "cotizar")).toBe(false);
+  });
+
+  it("drops an id that is not a UUID", () => {
+    expect(parseShellHash("#/crm/cotizar/nope")).toEqual({ section: "cotizar", id: null });
   });
 });

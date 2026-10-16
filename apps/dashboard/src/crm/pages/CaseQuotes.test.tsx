@@ -2,7 +2,7 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { OpportunityCardData, QuoteContents, RevisionCard } from "../crmTypes";
-import { CaseLinks, CaseMoneySummary, QuoteList, formatMoney } from "./CaseQuotes";
+import { CaseLinks, CaseMoneySummary, QuoteList } from "./CaseQuotes";
 
 // Every value below is invented; the repository is public.
 const CONTENTS: QuoteContents = {
@@ -52,15 +52,6 @@ function card(over: Partial<OpportunityCardData> = {}): OpportunityCardData {
     ...over,
   } as OpportunityCardData;
 }
-
-describe("formatMoney", () => {
-  it("groups pesos without decimals and other currencies with two", () => {
-    expect(formatMoney("1190000", "CLP")).toBe("$ 1.190.000");
-    expect(formatMoney("1299.75", "USD")).toBe("US$ 1.299,75");
-    expect(formatMoney(null, "CLP")).toBeNull();
-    expect(formatMoney("no", "CLP")).toBeNull();
-  });
-});
 
 describe("case panel money and quotations", () => {
   it("shows the quotation's neto large with IVA, total and when it was sent", () => {
@@ -152,5 +143,21 @@ describe("several quotations on one case", () => {
     render(<CaseLinks card={three()} />);
     expect(within(screen.getByTestId("case-links")).getByRole("link", { name: /PDF 00998-26 r2/ }))
       .toHaveAttribute("href", "https://drive.google.com/file/d/f98/view");
+  });
+});
+
+describe("«Abrir en Cotizador»", () => {
+  const authored = { quote_id: "q-a", quote_number: "00042-26", number_origin: "minted",
+    revisions: [rev({ revision_id: "r-a", revision_no: 1, status: "approved", origin: "authored", quote_number: "00042-26" })] };
+
+  it("links a quote of this app to the Cotizador, never a historical one", () => {
+    render(<QuoteList card={card({ quotes: [...card().quotes, authored] })} mayOpenCotizador />);
+    const links = screen.getAllByRole("link", { name: /Abrir en Cotizador/ });
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["#/crm/cotizar/q-a"]);
+  });
+
+  it("is not offered to someone who may not open the Cotizador", () => {
+    render(<QuoteList card={card({ quotes: [authored] })} />);
+    expect(screen.queryByRole("link", { name: /Abrir en Cotizador/ })).not.toBeInTheDocument();
   });
 });

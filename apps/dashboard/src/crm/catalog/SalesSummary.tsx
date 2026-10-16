@@ -49,7 +49,7 @@ function costSource(c: NonNullable<QuotedPrice["cost"]>): string {
 }
 
 /** One row per quote, newest first: the same document read twice (number, date, price) shows once. */
-function distinct(items: QuotedPrice[]): QuotedPrice[] {
+export function distinctQuotes(items: QuotedPrice[]): QuotedPrice[] {
   const seen = new Set<string>();
   const newest = [...items].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
   return newest.filter((r) => {
@@ -62,7 +62,7 @@ function distinct(items: QuotedPrice[]): QuotedPrice[] {
 
 export function SalesSummary({ history }: { history: PriceHistory }) {
   const s = history.summary;
-  const items = useMemo(() => distinct(history.items), [history.items]);
+  const items = useMemo(() => distinctQuotes(history.items), [history.items]);
   const [all, setAll] = useState(false);
   if (items.length === 0) {
     return <p className="text-xs text-ink-faint">Este modelo no aparece en cotizaciones anteriores.</p>;

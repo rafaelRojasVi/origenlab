@@ -528,6 +528,45 @@ authored draft is approved directly.
   `/v2/quotes/*` read and `403 role_may_not_decide` on the commands. Event payloads carry no cost,
   price or margin — only a saved draft's net total.
 
+**The screen (built 2026-10-16).** The Cotizador page is `#/crm/cotizar/<quoteId>` in the dashboard; it
+only calls the commands and reads above and owns no rule.
+
+- **Entry points.** Hoy «Cotizar» (or «Continuar cotización» when a draft exists), the Solicitud card,
+  and the case drawer («Nueva cotización», «Abrir borrador», «Abrir en Cotizador»; no «Nueva
+  cotización» on a closed case, and never a second quote while a draft is open). A case whose latest
+  revision is an authored draft stays «por cotizar». One click mints one quote, even when the
+  network fails and the click is retried. The number box in Hoy reads `GET /v2/quotes/numbering`.
+- **Editing.** Sections: Cliente (recipient picker over `case.contacts` — automatic senders such as
+  no-reply, mailer-daemon, notification and `*.google.com` addresses are never offered — or any
+  other address), Productos (catalog search, kit and mention chips, free lines with a typed cost,
+  markup or typed price per line; each line is two tiers, the product on its own line and the
+  numbers under it, so the table fits beside the rail), Gastos de importación (Perfil, DHL or Manual — switching away from Manual clears
+  the manual expenses), Condiciones. The right rail shows the totals, the margin band, the
+  exchange-rate override (with its reason), Avisos and the price history.
+- **Autosave and preview.** An edit refreshes the preview after 300 ms and saves after 1.2 s
+  (`save-quote-draft` with the version it loaded). A draft the server could not price or save —
+  incomplete, a refused quantity — is held back and shows its reason in Spanish; nothing is lost
+  from the screen. Leaving the page saves what is pending and warns if it cannot.
+- **Conflicts.** A `stale_version` refusal freezes the editor behind «Otra persona cambió este
+  borrador», with «Ver cambios»; the screen never overwrites a newer save. A save refused with
+  `not_a_draft` or `revision_not_found` (approved or voided in another tab) freezes it the same way,
+  behind «Esta cotización cambió en otra pestaña (se aprobó o anuló)», with «Ver estado actual»; it
+  is not retried.
+- **Refusals.** The screen says every refusal it knows by its code, in Spanish (one helper,
+  `quoteRefusalText`): the save line, «Para», Avisos, approve, void, revise and «Cotizar». The API's
+  own text is shown only when it is already Spanish (approval's joined reasons, a missing rate's
+  currency, the revision that replaced this one); an unknown code with an English text gets a plain
+  Spanish fallback, never the English.
+- **Approval.** «Aprobar» saves first when the draft needs saving (and retries once on
+  `draft_needs_saving`), then approves; its reasons are listed under the header. «Anular» asks for a
+  reason; voiding any revision saves the draft's pending edits first, and asks «Hay cambios sin
+  guardar en el borrador. ¿Anular igual?» when they cannot be saved. The inputs are off while a
+  command runs. An approved, sent or void revision opens read-only, with «Nueva revisión» on the newest
+  issued one; older revisions show a summary only.
+- **Vista cliente.** A toggle in the page header, on the draft and on an issued revision, that shows
+  the quote as the client will read it: no costs, margins, Avisos, price history, approval's reasons
+  or why an exchange rate was set by hand (those carry cost talk and other clients' prices).
+
 <a id="m-wf-snapshot"></a>
 #### W3b — Party snapshot
 

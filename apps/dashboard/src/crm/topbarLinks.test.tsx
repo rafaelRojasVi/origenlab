@@ -1,7 +1,10 @@
 import "@testing-library/jest-dom";
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { TopBar } from "./CrmApp";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AuthSessionState } from "../api/authClient";
+import { AuthSessionContext } from "../context/AuthSessionContext";
+import { CrmApp, TopBar } from "./CrmApp";
+import { clearResourceCache } from "./useResource";
 
 describe("header quick links", () => {
   it("always shows Drive, Gmail and the website, each in a new tab, as the shared account", () => {
@@ -26,5 +29,33 @@ describe("header quick links", () => {
   it("never shows the internal «datos locales» chip", () => {
     render(<TopBar onMenu={() => undefined} menuOpen={false} />);
     expect(screen.queryByText(/datos locales/)).not.toBeInTheDocument();
+  });
+});
+
+describe("the hidden Cotizador section", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearResourceCache();
+  });
+
+  it("opens with its own title, keeps Oportunidades lit and has no menu entry of its own", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 404 }))));
+    const session: AuthSessionState = {
+      kind: "signed_in",
+      method: "google_profile",
+      operator: { operatorId: "op-sales", email: "ventas@example.cl", displayName: "Ventas", role: "sales" },
+      caseCommandsEnabled: true,
+      crmAuthoringEnabled: true,
+    };
+    render(
+      <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
+        <CrmApp route={{ section: "cotizar", id: "6bafddfa-0000-4000-8000-0000000000d1" }} />
+      </AuthSessionContext.Provider>,
+    );
+    expect(document.title).toBe("Cotizador · OrigenLab");
+    const menu = within(screen.getByRole("navigation", { name: "Secciones del panel" }));
+    expect(menu.getByRole("link", { name: "Oportunidades" })).toHaveAttribute("aria-current", "page");
+    expect(menu.queryByRole("link", { name: "Cotizador" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Esta cotización no existe.")).toBeInTheDocument();
   });
 });

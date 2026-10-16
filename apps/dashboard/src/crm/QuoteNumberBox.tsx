@@ -2,6 +2,7 @@ import { useId, useMemo, useState } from "react";
 import { fetchDriveArchive, fetchMailQuoteNumbers } from "./crmApi";
 import type { PipelineResponse } from "./crmTypes";
 import { todayInSantiago } from "./marketing/calendar";
+import { fetchQuoteNumbering } from "./quotes/quoteApi";
 import { findUses, knownQuoteNumbers, lastAndNext, parseQuoteNumber, type KnownNumber } from "./quoteNumbers";
 import { useResource, type ResourceState } from "./useResource";
 
@@ -23,6 +24,8 @@ export function QuoteNumberBox({ pipeline, compact = false }: {
 }) {
   const [drive] = useResource(fetchDriveArchive);
   const [mail] = useResource(fetchMailQuoteNumbers);
+  // The server's numbering (sales/admin only): a viewer's 403 or any failure leaves the client-side box as it was.
+  const [numbering] = useResource(fetchQuoteNumbering);
   const inputId = useId();
   const [typed, setTyped] = useState("");
   const [copied, setCopied] = useState(false);
@@ -36,9 +39,18 @@ export function QuoteNumberBox({ pipeline, compact = false }: {
       ),
     [pipeline, drive, mail],
   );
-  const loading = pipeline.kind === "loading" || drive.kind === "loading" || mail.kind === "loading";
+  const loading = pipeline.kind === "loading" || drive.kind === "loading" || mail.kind === "loading" || numbering.kind === "loading";
   const mailMissing = mail.kind !== "ready" && mail.kind !== "loading";
-  const { last, next } = lastAndNext(known, year);
+  const { last, next: clientNext } = lastAndNext(known, year);
+  const server = numbering.kind === "ready" ? numbering.data : null;
+  const serverNext = server?.configured && server.next_number ? parseQuoteNumber(server.next_number, year) : null;
+  const unconfigured = server !== null && !server.configured;
+  const exhausted = server !== null && server.configured && !server.next_number;
+  // «Último número» stays the client-side value; the server's highest_known only replaces it when larger
+  // (display only). Its serial series spans years, so it is shown without one.
+  const highest = server?.configured && server.highest_known ? server.highest_known : 0;
+  const serverLast = highest > (last?.correlative ?? 0) ? `CN${String(highest).padStart(5, "0")}` : null;
+  const next = serverNext ? server!.next_number! : clientNext;
   const parsed = typed.trim() ? parseQuoteNumber(typed, year) : null;
   const uses = parsed ? findUses(known, parsed) : [];
 
@@ -59,7 +71,12 @@ export function QuoteNumberBox({ pipeline, compact = false }: {
     >
       <div data-testid="quote-last" className="min-w-0">
         <p className="text-[12px] font-medium text-ink-muted">Último número</p>
-        {loading && !last ? (
+        {serverLast ? (
+          <>
+            <p className={`mt-0.5 whitespace-nowrap font-semibold leading-none tracking-tight text-ink tabular-nums ${compact ? "text-[18px]" : "text-[20px]"}`}>{serverLast}</p>
+            <p className="mt-1 max-w-[16rem] truncate text-[11px] text-ink-faint">Numeración del sistema</p>
+          </>
+        ) : loading && !last ? (
           <div className="crm-skeleton mt-1 h-6 w-28 rounded" />
         ) : (
           <>
@@ -71,16 +88,26 @@ export function QuoteNumberBox({ pipeline, compact = false }: {
       <div data-testid="quote-next" className="min-w-0">
         <p className="text-[12px] font-medium text-ink-muted">Siguiente</p>
         <div className="mt-0.5 flex items-center gap-2">
-          <p className={`whitespace-nowrap font-semibold leading-none tracking-tight text-brand-700 tabular-nums ${compact ? "text-[18px]" : "text-[20px]"}`}>{loading ? "…" : next}</p>
+          <p className={`whitespace-nowrap font-semibold leading-none tracking-tight text-brand-700 tabular-nums ${compact ? "text-[18px]" : "text-[20px]"}`}>{serverNext ? `CN${String(serverNext.correlative).padStart(5, "0")}` : exhausted ? "—" : loading ? "…" : next}</p>
           <button
             type="button"
             onClick={copy}
-            disabled={loading}
+            disabled={exhausted || (loading && !serverNext)}
             className="h-6 rounded-md border border-line px-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
           >
             {copied ? "Copiado" : "Copiar"}
           </button>
         </div>
+        {serverNext ? (
+          <>
+            <p className="mt-1 text-[11px] tabular-nums text-ink-muted">{next}</p>
+            <p className="text-[11px] text-ink-faint">La asigna el sistema al crear la cotización</p>
+          </>
+        ) : exhausted ? (
+          <p className="mt-1 text-[11px] text-ink-faint">La numeración llegó a 99999; un administrador debe fijar un nuevo inicio.</p>
+        ) : unconfigured ? (
+          <p className="mt-1 text-[11px] text-ink-faint">La numeración del sistema aún no está configurada; un administrador fija el inicio en Parámetros.</p>
+        ) : null}
       </div>
       <div className={`min-w-0 ${compact ? "col-span-2" : ""}`}>
         <label htmlFor={inputId} className="text-[12px] font-medium text-ink-muted">

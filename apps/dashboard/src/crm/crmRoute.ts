@@ -7,7 +7,8 @@ export type CrmSection =
   | "catalogo"
   | "marketing"
   | "historial"
-  | "datos";
+  | "datos"
+  | "cotizar";
 
 /** The tabs of «Datos» (admin only): what was technical in Revisión, plus suppliers and the Drive archive.
  *  «decidir» is the «Por ordenar» section linked from «Hoy». */
@@ -45,7 +46,15 @@ const MOVED: Record<string, { section: CrmSection; tab?: DatosTab }> = {
   drive: { section: "datos", tab: "drive" },
 };
 
-const SECTIONS = new Set<string>(CRM_NAV.map((n) => n.id));
+/** Routes that exist but have no navigation entry: the Cotizador opens from a case, never from the menu. */
+export const HIDDEN_SECTIONS: Partial<Record<CrmSection, string>> = { cotizar: "Cotizador" };
+
+/** The page title of any section, hidden or not. */
+export function sectionTitle(section: CrmSection): string {
+  return HIDDEN_SECTIONS[section] ?? CRM_NAV.find((n) => n.id === section)?.label ?? "OrigenLab";
+}
+
+const SECTIONS = new Set<string>([...CRM_NAV.map((n) => n.id), ...Object.keys(HIDDEN_SECTIONS)]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isCrmHash(hash: string): boolean {

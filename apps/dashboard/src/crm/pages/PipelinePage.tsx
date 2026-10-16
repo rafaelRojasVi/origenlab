@@ -14,7 +14,8 @@ import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./Case
 import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
 import { DecideCases } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
-import { endOfDay, isFollowUpTask } from "../today";
+import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
+import { awaitsQuote, endOfDay, isFollowUpTask } from "../today";
 import { contactLine } from "../caseDisplay";
 import { inSharedMailbox } from "../gmailLinks";
 import {
@@ -29,6 +30,7 @@ import {
 } from "../stage";
 import {
   Badge,
+  Button,
   Drawer,
   EmptyState,
   Modal,
@@ -283,7 +285,7 @@ function isSolicitudSinCotizar(card: OpportunityCardData): boolean {
   return (
     !card.closed_at &&
     PRE_QUOTE_STAGES_CARD.has(card.stage) &&
-    card.latest_revision === null
+    awaitsQuote(card)
   );
 }
 
@@ -312,6 +314,9 @@ function SolicitudSinCotizarCard({
   const originUrl = card.last_contact?.inbound?.url
     ? (inSharedMailbox(card.last_contact.inbound.url) ?? card.last_contact.inbound.url)
     : null;
+  // Sales and admin go straight to the Cotizador; anyone else opens the case, as before.
+  const mayQuote = useMayRunCaseCommands();
+  const quote = useOpenOrCreateQuote();
 
   return (
     <article
@@ -354,13 +359,15 @@ function SolicitudSinCotizarCard({
 
       {/* Action buttons */}
       <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={() => onOpen(card.opportunity_id)}
-          className="inline-flex h-7 items-center rounded-md bg-brand-600 px-3 text-xs font-semibold text-white hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+        <Button
+          variant="primary"
+          busy={quote.busy}
+          busyLabel="Creando…"
+          className="min-h-[44px]"
+          onClick={() => (mayQuote ? void quote.run(card) : onOpen(card.opportunity_id))}
         >
-          Cotizar
-        </button>
+          {mayQuote && quoteToOpen(card) ? "Continuar cotización" : "Cotizar"}
+        </Button>
         {originUrl ? (
           <a
             href={originUrl}
@@ -553,6 +560,8 @@ function OpportunityDrawer({
   initial?: { mode: Exclude<Mode, null>; target?: MoveTarget } | null;
 }) {
   const mayAuthor = useMayAuthorCrm();
+  const mayQuote = useMayRunCaseCommands();
+  const mayOpenCotizador = useMayOpenCotizador();
   if (!card) return null;
   // The case's follow-up reminder («Recordarme…»): when and where it shows, and the note it carries.
   const reminder = [...(card.open_tasks ?? [])].filter(isFollowUpTask).sort((a, b) => a.due_at.localeCompare(b.due_at))[0] ?? null;
@@ -625,8 +634,9 @@ function OpportunityDrawer({
 
       <Section
         title={card.quotes.length === 1 ? "Cotización" : `Cotizaciones (${card.quotes.length})`}
+        aside={mayQuote && !card.closed_at ? <NewQuoteButton card={card} /> : null}
       >
-        <QuoteList card={card} />
+        <QuoteList card={card} mayOpenCotizador={mayOpenCotizador} />
       </Section>
 
       <Section title="Contacto">
@@ -676,6 +686,20 @@ function OpportunityDrawer({
       {/* Re-read when the case's newest note changes: a reminder from «Recordarme…». */}
       <CaseNotes key={`${card.opportunity_id}:${card.last_note?.created_at ?? ""}`} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} />
     </Drawer>
+  );
+}
+
+/**
+ * The drawer's way into the Cotizador: «Abrir borrador» when the case has an open draft, else
+ * «Nueva cotización» (`create-quote`). Whether the case may get one is the API's to say.
+ */
+function NewQuoteButton({ card }: { card: OpportunityCardData }) {
+  const quote = useOpenOrCreateQuote();
+  const opensDraft = quoteToOpen(card) !== null;
+  return (
+    <Button variant="primary" busy={quote.busy} busyLabel="Creando…" onClick={() => void quote.run(card)}>
+      {opensDraft ? "Abrir borrador" : "Nueva cotización"}
+    </Button>
   );
 }
 

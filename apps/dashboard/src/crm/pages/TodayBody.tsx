@@ -43,6 +43,7 @@ import { isMaskedAddress } from "../redaction";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import type { CrmSection, DatosTab } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
+import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import {
   buildParaTiQueue,
   followUpsDue,
@@ -325,6 +326,10 @@ function CotizarQueueRow({
   const originUrl = card.last_contact?.inbound?.url
     ? (inSharedMailbox(card.last_contact.inbound.url) ?? card.last_contact.inbound.url)
     : null;
+  // Sales and admin go straight to the Cotizador (the open draft, else a new quote); anyone else
+  // opens the case, as before.
+  const toCotizador = useCallback((quoteId: string) => navigate("cotizar", quoteId), [navigate]);
+  const quote = useOpenOrCreateQuote(toCotizador);
 
   return (
     <li
@@ -342,8 +347,13 @@ function CotizarQueueRow({
         <p className="truncate text-[12px] text-ink-muted">{what}</p>
       </button>
       <div className="flex shrink-0 gap-2">
-        <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>
-          Cotizar
+        <Button
+          variant="primary"
+          busy={quote.busy}
+          busyLabel="Creando…"
+          onClick={() => (mayDecide ? void quote.run(card) : navigate("oportunidades", card.opportunity_id))}
+        >
+          {mayDecide && quoteToOpen(card) ? "Continuar cotización" : "Cotizar"}
         </Button>
         {originUrl ? (
           <a
