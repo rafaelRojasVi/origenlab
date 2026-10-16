@@ -2976,3 +2976,12 @@ API and dashboard; no schema change.
   - There is no `default_markup_other` key: an «Otro» item uses the accessory markup, and Preferencias says so.
   - The price-deviation warning: `price_deviation_warn_pct` is stored and read into the workspace's `params`, but nothing compares a price with its history yet. Preferencias says so.
 
+### 2.7.124 Two quotes sent together on a case's thread are both recorded (R1), 2026-10-16 — built, deploys on merge
+
+Rule R1 used to stop at «un humano decide» when one reply on a case's own Gmail thread carried two
+or more new CN PDFs (the 2026-10-16 case: alternatives T18 and T10 sent together), so neither
+reached «Enviadas». Now each new number becomes its own sent quote on that case in one automatic
+action ([`DOMAIN.md`](DOMAIN.md) §3.6.6); numbers already on the case are only linked; a doubtful
+number (its correlative under another year), no requesting institution, or a closed/won stage
+still leaves the email to a person. «Deshacer» voids every quote the action recorded. API only.
+

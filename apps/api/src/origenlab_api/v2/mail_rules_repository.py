@@ -678,15 +678,15 @@ class MailRulesRepository(V2CaseCommandRepository):
                 run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": self._case_version(cur, case_id),
                                          "stage": "quoting", "note": note})
         if rule in ("R1", "R9", "R13") and created.get("quote_revision_id"):
-            # R1 can now recognize a new sent CN PDF on an existing thread. Undo the quote first,
+            # R1 can now recognize a new sent CN PDF on an existing thread. Undo the quotes first,
             # then walk the ordinary reversible stage edges back to where the case was before the
             # email action. No privileged stage correction is needed for these open stages.
-            cur.execute("select version, status from crm.quote_revision where id = %s",
-                        (created["quote_revision_id"],))
-            rev = cur.fetchone()
-            if rev is not None and rev[1] == "sent":
-                run(VOID_HISTORICAL_QUOTE_REVISION, {"quote_revision_id": created["quote_revision_id"],
-                                                    "quote_revision_version": int(rev[0]), "note": note})
+            for revision_id in created.get("quote_revision_ids") or [created["quote_revision_id"]]:
+                cur.execute("select version, status from crm.quote_revision where id = %s", (revision_id,))
+                rev = cur.fetchone()
+                if rev is not None and rev[1] == "sent":
+                    run(VOID_HISTORICAL_QUOTE_REVISION, {"quote_revision_id": revision_id,
+                                                        "quote_revision_version": int(rev[0]), "note": note})
             rollback = {
                 "lead": ("qualified", "qualifying", "lead"),
                 "qualifying": ("qualified", "qualifying"),
@@ -1000,8 +1000,11 @@ def _absorb(ctx: dict[str, Any], created: dict[str, Any], command: str, result: 
         if result.get("organization_created"):
             created["organization_id"] = result["organization_id"]
     if command == RECORD_HISTORICAL_QUOTATION:
-        created["quote_revision_id"] = result["quote_revision_id"]
-        created["quote_id"] = result["quote_id"]
+        # One email may send several alternatives (R1): the first stays in the single keys older
+        # receipts carry; every one is listed, so undo voids them all.
+        created.setdefault("quote_revision_id", result["quote_revision_id"])
+        created.setdefault("quote_id", result["quote_id"])
+        created.setdefault("quote_revision_ids", []).append(result["quote_revision_id"])
 
 
 def _is_database_error(exc: Exception) -> bool:

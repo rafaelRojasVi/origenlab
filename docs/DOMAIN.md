@@ -666,7 +666,12 @@ else (R7, R8) stays a proposal in Revisión.
   institution — by its whole name, its name without the parenthetical, or a «(SIGLA)» of three or
   more letters — that has exactly one open case. That case gets the link, the walk to «Enviada»
   and the quote, undone like R1's. Two institutions, no open case or several open cases stay
-  proposals naming the candidates. **R10** — the PDF names an institution the CRM does not hold —
+  proposals naming the candidates. **R1 with several new quotes** (owner 2026-10-16): contacto@
+  replies on the case's own thread with two or more new CN PDFs (alternatives for one request) —
+  each is recorded as its own sent quote on that case, in one action; numbers the case already
+  holds are only linked; one correlative existing under another year, no requesting institution
+  or a stage past «negotiating» leaves the whole email a proposal. «Deshacer» voids every quote it
+  recorded. **R10** — the PDF names an institution the CRM does not hold —
   offers R4's steps with the name instead of a domain (institution «por confirmar», case in
   «Enviada», quote) and, like R4, waits for «Aplicar». R3–R6 always wait for «Aplicar».
   **2026-10-14 (owner: «the system acts by itself, I remove what is wrong»).** The timer runs
