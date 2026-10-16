@@ -1,5 +1,6 @@
 import { useCallback, useId, useState } from "react";
 import { OperatorApiError } from "../../api/operatorClient";
+import { envelopeOfError } from "../../api/refusalEnvelope";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { fmtDate } from "../ui";
 import { useResource } from "../useResource";
@@ -26,25 +27,20 @@ const HOUR_SANTIAGO = new Intl.DateTimeFormat("es-CL", {
 
 function errorText(err: unknown): string {
   if (err instanceof OperatorApiError) {
-    let detail: { message?: string; next_allowed_at?: string } | undefined;
-    try {
-      detail = JSON.parse(err.message)?.detail;
-    } catch {
-      /* not JSON */
-    }
+    const env = envelopeOfError(err);
+    const detail: { message?: string; next_allowed_at?: string } = {
+      message: env.message ?? undefined,
+      next_allowed_at: typeof env.details?.next_allowed_at === "string" ? env.details.next_allowed_at : undefined,
+    };
     if (err.status === 429) {
-      const at = detail?.next_allowed_at ? new Date(detail.next_allowed_at) : null;
+      const at = detail.next_allowed_at ? new Date(detail.next_allowed_at) : null;
       if (at && !Number.isNaN(at.getTime())) {
         return `Límite de pruebas alcanzado. La próxima se puede enviar a las ${HOUR_SANTIAGO.format(at)}.`;
       }
       return "Límite de pruebas alcanzado. Intenta más tarde.";
     }
     if (err.status === 403) return "Sólo un perfil de administración puede enviar pruebas.";
-    try {
-      if (detail?.message) return String(detail.message);
-    } catch {
-      /* not JSON */
-    }
+    if (detail.message) return detail.message;
   }
   return "No se pudo enviar la prueba.";
 }
