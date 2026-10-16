@@ -7,6 +7,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
+import { clearCatalogIndexMemory } from "../catalog/catalogIndex";
+import { computedFixture, workspaceFixture } from "../quotes/quoteFixtures";
 import { clearResourceCache } from "../useResource";
 import { CotizadorPage } from "./CotizadorPage";
 
@@ -79,6 +81,8 @@ function renderPage(role = "sales", quoteId: string | null = QUOTE_ID) {
 afterEach(() => {
   vi.unstubAllGlobals();
   clearResourceCache();
+  clearCatalogIndexMemory();
+  sessionStorage.clear();
 });
 
 describe("Cotizador page", () => {
@@ -155,5 +159,94 @@ describe("Cotizador page", () => {
     renderPage("sales", null);
     expect(screen.getByText("Esta cotización no existe.")).toBeInTheDocument();
     expect(urls).toEqual([]);
+  });
+});
+
+/** An authored draft the editor can change; the API answers by method and path. */
+function editableWorkspace() {
+  const ws = workspaceFixture();
+  return {
+    ...ws,
+    quote: { ...ws.quote, id: QUOTE_ID, opportunity_id: CASE_ID },
+    case: {
+      ...ws.case,
+      id: CASE_ID,
+      contacts: [{ participant_id: "pa-1", person_id: null, contact_point_id: null, name: "Ana Prueba", email: "ana@ejemplo.cl", source: "participant" }],
+      lo_que_pidio: "Un equipo de prueba.",
+    },
+  };
+}
+
+const CATALOG = { version: "v1", fields: ["id", "model_number", "name"], suppliers: [], items: [] };
+
+function stubApi(onSave: (call: number) => Response) {
+  const calls: { method: string; path: string; body: unknown }[] = [];
+  let saves = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(raw, "http://localhost").pathname;
+      const method = init?.method ?? "GET";
+      calls.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (path === "/v2/catalog/index") return Promise.resolve(json(CATALOG));
+      if (path === "/v2/quotes/preview") return Promise.resolve(json({ computed: computedFixture("200000") }));
+      if (path === "/v2/commands/save-quote-draft") return Promise.resolve(onSave(++saves));
+      return Promise.resolve(json(editableWorkspace()));
+    }),
+  );
+  return calls;
+}
+
+describe("Cotizador page — the draft editor", () => {
+  it("shows the client and the products of an authored draft, saved", async () => {
+    stubApi(() => json({}));
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 2, name: "Productos" })).toBeInTheDocument();
+    expect(screen.getByText("Institución de prueba")).toBeInTheDocument();
+    expect(screen.getByText("Un equipo de prueba.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Descripción de la línea 2")).toHaveValue("Servicio de prueba");
+    expect(screen.getByText("guardado")).toBeInTheDocument();
+  });
+
+  it("saves an edit by itself and says so", async () => {
+    const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }));
+    renderPage();
+    const qty = await screen.findByLabelText("Cantidad de la línea 1");
+    fireEvent.focus(qty);
+    fireEvent.change(qty, { target: { value: "3" } });
+    expect(screen.getByText("sin guardar")).toBeInTheDocument();
+    expect(await screen.findByText(/guardado automáticamente hace \d+ s/, undefined, { timeout: 3000 })).toBeInTheDocument();
+    const save = calls.find((c) => c.path === "/v2/commands/save-quote-draft");
+    expect(save?.body).toMatchObject({ revision_id: "r-1", expected_version: 3 });
+    expect((save?.body as { draft: { items: { quantity: string }[] } }).draft.items[0].quantity).toBe("3");
+  });
+
+  it("offers a retry when the save fails", async () => {
+    stubApi((n) => (n === 1 ? json({ detail: "boom" }, 500) : json({ revision_id: "r-1", version: 4, computed: computedFixture() })));
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Reintentar" }, { timeout: 3000 }));
+    expect(await screen.findByText(/guardado automáticamente/)).toBeInTheDocument();
+  });
+
+  it("stops on someone else's save and reloads on «Ver cambios»", async () => {
+    const calls = stubApi(() => json({ detail: { code: "stale_version", message: "otra versión" } }, 409));
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "2" } });
+    expect(await screen.findByText("Otra persona cambió este borrador.", undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.getByLabelText("Cantidad de la línea 1")).toBeDisabled();
+    const reads = calls.filter((c) => c.path === `/v2/quotes/${QUOTE_ID}`).length;
+    fireEvent.click(screen.getByRole("button", { name: "Ver cambios" }));
+    await waitFor(() => expect(screen.queryByText("Otra persona cambió este borrador.")).not.toBeInTheDocument());
+    expect(calls.filter((c) => c.path === `/v2/quotes/${QUOTE_ID}`).length).toBe(reads + 1);
+    expect(screen.getByLabelText("Cantidad de la línea 1")).toBeEnabled();
+  });
+
+  it("hides costs and margins in «Vista cliente»", async () => {
+    stubApi(() => json({}));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Vista cliente" }));
+    expect(screen.queryByRole("columnheader", { name: "Costo unit." })).not.toBeInTheDocument();
   });
 });

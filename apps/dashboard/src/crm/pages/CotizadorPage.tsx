@@ -1,7 +1,13 @@
-import { Badge, Skeleton } from "../ui";
+import { useState, type ReactNode } from "react";
+import { Badge, Button, Skeleton, toast } from "../ui";
 import { crmHash, type CrmSection } from "../crmRoute";
+import { ClientSection } from "../quotes/ClientSection";
+import { isEditable } from "../quotes/draftEditor";
+import { ProductsSection } from "../quotes/ProductsSection";
 import { fetchQuoteWorkspace, type QuoteWorkspace } from "../quotes/quoteApi";
 import { quoteLabel } from "../quotes/quoteLabel";
+import { SaveStatus } from "../quotes/SaveStatus";
+import { useQuoteDraft } from "../quotes/useQuoteDraft";
 import { useResource } from "../useResource";
 
 /**
@@ -9,6 +15,9 @@ import { useResource } from "../useResource";
  * it opens from a case. Only sales and administration may quote (the API answers 403
  * `role_may_not_view_costs` to anyone else), and the page says so instead of showing a generic error.
  * Every number on the page comes from the API; the browser never prices.
+ *
+ * An authored draft is edited in place (`useQuoteDraft`: live preview, autosave); the header says
+ * whether it is saved. «Vista cliente» (B7) hides costs and margins for screen sharing.
  */
 type Navigate = (section: CrmSection, id?: string | null) => void;
 
@@ -88,39 +97,115 @@ export function CotizadorPage({ quoteId, navigate }: { quoteId: string | null; n
       </div>
     );
   }
-  return <CotizadorHeader workspace={state.data} navigate={navigate} />;
+  return <CotizadorWorkspace workspace={state.data} navigate={navigate} />;
 }
 
-function CotizadorHeader({ workspace, navigate }: { workspace: QuoteWorkspace; navigate: Navigate }) {
+function CotizadorWorkspace({ workspace, navigate }: { workspace: QuoteWorkspace; navigate: Navigate }) {
+  const editor = useQuoteDraft(workspace);
+  const [clientView, setClientView] = useState(false);
+  const { state } = editor;
+  const authored = isEditable(state.workspace);
+  const disabled = !editor.editable;
+  return (
+    <div className="space-y-[18px]">
+      <CotizadorHeader
+        workspace={state.workspace}
+        navigate={navigate}
+        status={
+          authored ? (
+            <SaveStatus
+              saveState={state.saveState}
+              lastSavedAt={state.lastSavedAt}
+              incomplete={editor.invalid.length > 0}
+              onRetry={() => void editor.retry()}
+            />
+          ) : null
+        }
+      />
+      {state.saveState === "conflict" ? <ConflictBanner onReload={editor.reload} /> : null}
+      {authored ? (
+        <div className="flex flex-wrap items-start gap-[18px]">
+          <div className="flex min-w-0 flex-[999_1_760px] flex-col gap-[18px]">
+            <ClientSection
+              workspace={state.workspace}
+              draft={state.draft}
+              invalid={editor.invalid}
+              disabled={disabled}
+              edit={editor.edit}
+            />
+            <ProductsSection
+              workspace={state.workspace}
+              draft={state.draft}
+              computed={state.computed}
+              invalid={editor.invalid}
+              disabled={disabled}
+              clientView={clientView}
+              onClientViewChange={setClientView}
+              edit={editor.edit}
+            />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** B3: someone else saved this draft; nothing more is sent until the operator loads their version. */
+function ConflictBanner({ onReload }: { onReload: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warn/30 bg-warn-bg px-4 py-3">
+      <div>
+        <p className="text-[13px] font-semibold text-warn">Otra persona cambió este borrador.</p>
+        <p className="mt-0.5 text-xs text-ink-muted">Tus últimos cambios no se guardaron. Abre la versión guardada para seguir.</p>
+      </div>
+      <Button
+        variant="primary"
+        busy={busy}
+        busyLabel="Abriendo…"
+        className="min-h-[44px] px-4"
+        onClick={() => {
+          setBusy(true);
+          onReload()
+            .catch((e: unknown) => toast(e instanceof Error ? e.message : "No se pudo abrir la versión guardada.", "bad"))
+            .finally(() => setBusy(false));
+        }}
+      >
+        Ver cambios
+      </Button>
+    </div>
+  );
+}
+
+function CotizadorHeader({ workspace, navigate, status }: { workspace: QuoteWorkspace; navigate: Navigate; status: ReactNode }) {
   const { quote, case: opportunity, current, revisions } = workspace;
-  const status = STATUS[current?.status ?? revisions[revisions.length - 1]?.status ?? "draft"] ?? STATUS.draft;
+  const badge = STATUS[current?.status ?? revisions[revisions.length - 1]?.status ?? "draft"] ?? STATUS.draft;
   const label = quoteLabel({ label: current?.label, quote_number: quote.quote_number, revision_no: current?.revision_no });
   const caseTitle = opportunity.title || opportunity.institution?.name || "la oportunidad";
   const caseHref = crmHash("oportunidades", quote.opportunity_id);
   return (
-    <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0">
-          <a
-            href={caseHref}
-            onClick={(e) => {
-              e.preventDefault();
-              navigate("oportunidades", quote.opportunity_id);
-            }}
-            className="inline-block max-w-full truncate text-[13px] font-medium text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-          >
-            ← {caseTitle}
-          </a>
-          <div className="mt-1.5 flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight text-ink">
-              Cotización <span className="font-mono font-medium tabular-nums">{label}</span>
-            </h1>
-            <Badge tone={status.tone}>{status.label}</Badge>
-          </div>
+    <header className="flex flex-wrap items-end justify-between gap-4">
+      <div className="min-w-0">
+        <a
+          href={caseHref}
+          onClick={(e) => {
+            e.preventDefault();
+            navigate("oportunidades", quote.opportunity_id);
+          }}
+          className="inline-block max-w-full truncate text-[13px] font-medium text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+        >
+          ← {caseTitle}
+        </a>
+        <div className="mt-1.5 flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-ink">
+            Cotización <span className="font-mono font-medium tabular-nums">{label}</span>
+          </h1>
+          <Badge tone={badge.tone}>{badge.label}</Badge>
+          {status}
         </div>
-        {/* Later tasks put the actions here (preview, approve, send…). */}
-        <div className="flex flex-wrap gap-2" data-testid="cotizador-actions" />
-      </header>
-    </div>
+      </div>
+      {/* Later tasks put the actions here (preview, approve, send…). */}
+      <div className="flex flex-wrap gap-2" data-testid="cotizador-actions" />
+    </header>
   );
 }
