@@ -6,14 +6,17 @@ Every name, number, cost and rate is invented. The commands that build the quote
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import psycopg
 import pytest
 from psycopg.types.json import Jsonb
 
-from origenlab_api.v2.commands import CommandRefused
-from origenlab_api.v2.quotes.draft import PreviewQuoteBody
+from origenlab_api.v2.commands import CommandRefused, request_digest
+from origenlab_api.v2.quotes.commands import V2QuoteRepository
+from origenlab_api.v2.quotes.draft import QUOTE_BODIES, PreviewQuoteBody
+from origenlab_api.v2.quotes.inputs import no_provider
 from origenlab_api.v2.quotes.reads import V2QuoteReads
 from test_v2_quote_commands import (
     NOW,
@@ -253,6 +256,11 @@ def test_mentioned_products_come_from_the_case_emails_only(world) -> None:
                              "catalog_product_id": world["accessory"]})
     mention(linked, "CENTRIFUGA", {"source": "model", "model": None, "description": "una centrífuga",
                                    "catalog_product_id": "no-es-un-uuid"})
+    inactive = _owner(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, name_es, active, "
+                           "content_origin) select manufacturer_organization_id, 'INACT-9', 'Retirado', false, "
+                           "'operator' from catalog.product where id = %s returning id::text", (world["accessory"],))[0][0]
+    mention(linked, "INACT9", {"source": "model", "model": "INACT-9", "description": "equipo retirado",
+                               "catalog_product_id": inactive})
     mention(email(False), "OTRO1", {"source": "model", "model": "OTRO-1", "catalog_product_id": None})
     mention(email(True, unlinked=True), "OTRO2", {"source": "model", "model": "OTRO-2", "catalog_product_id": None})
 
@@ -260,6 +268,8 @@ def test_mentioned_products_come_from_the_case_emails_only(world) -> None:
     assert mentioned == [
         {"product_id": world["accessory"], "model": "ACC-7", "name": "Accesorio ficticio", "model_key": "ACC7"},
         {"product_id": None, "model": None, "name": "una centrífuga", "model_key": "CENTRIFUGA"},
+        # An inactive product is not offered as a product, only as what the email said (as for kits).
+        {"product_id": None, "model": "INACT-9", "name": "equipo retirado", "model_key": "INACT9"},
     ]
 
 
@@ -304,3 +314,127 @@ def test_the_workspace_offers_kits_and_history_of_the_principal(world) -> None:
     assert ws["current"]["computed"]["principal_line_no"] == 1
     assert [k["model_key"] for k in ws["suggestions"]["kits"]] == ["KITB"]
     assert ws["price_history"]["model_key"] == "FX100" and len(ws["price_history"]["items"]) == 3
+
+
+# ------------------------------------------------------------------ exchange rates on the caller's connection
+
+FUTURE = datetime(2026, 11, 20, 15, 0, tzinfo=UTC)  # stored rates dated here stay invisible to the NOW tests
+
+
+class _Counting:
+    """A `connect` that counts connections and statements (every `execute`, pipelined or not)."""
+
+    def __init__(self) -> None:
+        self.connections = 0
+        self.statements = 0
+
+    def connect(self, dsn, **kwargs):
+        self.connections += 1
+        counter = self
+
+        class _Cursor(psycopg.Cursor):
+            def execute(self, query, params=None, **kw):
+                counter.statements += 1
+                return super().execute(query, params, **kw)
+
+        return psycopg.connect(dsn, cursor_factory=_Cursor, **kwargs)
+
+
+def _never(currency, on):
+    raise AssertionError(f"the resolver was asked for {currency}: a stored rate should have answered")
+
+
+def _two_currency_draft(world: dict) -> dict:
+    usd = {"description": "Accesorio en dólares", "quantity": "1", "item_type": "accessory", "unit_cost": "50",
+           "cost_currency": "USD", "supplier_organization_id": world["supplier"]}
+    return {**_draft(world), "items": [*_draft(world)["items"], usd]}
+
+
+@pytest.fixture(scope="module")
+def stored_rates(world):
+    dsn, operator = world["dsn"], world["operator"]
+    for currency, rate in (("EUR", 1111), ("USD", 999)):
+        _owner(dsn, "insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider) "
+                    "values ('2026-11-18', %s, %s, 'bcentral', 'bde')", (currency, rate))
+    # A manual rate the same day comes first; an older one never.
+    _owner(dsn, "insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider, reason, "
+                "recorded_by_operator_id) values ('2026-11-18', 'EUR', 1200, 'manual', 'operator', 'prueba', %s)",
+           (operator.operator_id,))
+    _owner(dsn, "insert into catalog.fx_rate (rate_date, currency, clp_per_unit, source, provider) "
+                "values ('2026-11-10', 'USD', 1, 'bcentral', 'bde')")
+    return world
+
+
+@needs_db
+def test_preview_reads_stored_rates_on_its_own_connection_in_few_statements(stored_rates) -> None:
+    world = stored_rates
+    _, created = _new_quote(world)
+    counting = _Counting()
+    reads = V2QuoteReads(counting.connect, runtime_dsn(world["dsn"]), fx_resolver=_never, clock=lambda: FUTURE)
+    out = reads.preview(PreviewQuoteBody(revision_id=created["revision_id"], draft=_two_currency_draft(world)))
+    assert {f["currency"]: (f["clp_per_unit"], f["as_of"], f["source"]) for f in out["computed"]["fx"]} == {
+        "EUR": ("1200.000000", "2026-11-18", "manual"), "USD": ("999.000000", "2026-11-18", "bcentral")}
+    assert counting.connections == 1
+    assert counting.statements <= 10, counting.statements
+
+
+@needs_db
+def test_workspace_reads_on_one_connection(stored_rates) -> None:
+    world = stored_rates
+    _, created = _new_quote(world)
+    _save(world, created, _draft(world))
+    counting = _Counting()
+    reads = V2QuoteReads(counting.connect, runtime_dsn(world["dsn"]), fx_resolver=_never, clock=lambda: FUTURE)
+    assert reads.workspace(created["quote_id"])["current"]["computed"]["fx"][0]["clp_per_unit"] == "1200.000000"
+    assert counting.connections == 1
+
+
+@needs_db
+def test_a_stale_stored_rate_falls_back_to_the_resolver(stored_rates) -> None:
+    world = stored_rates
+    seen = []
+
+    def fallback(currency, on):
+        seen.append(currency)
+        return fake_fx(currency, on)
+
+    late = datetime(2026, 12, 10, 15, 0, tzinfo=UTC)  # 22 days after the newest stored rate
+    reads = V2QuoteReads(psycopg.connect, runtime_dsn(world["dsn"]), fx_resolver=fallback, clock=lambda: late)
+    reads.preview(PreviewQuoteBody(draft=_two_currency_draft(world)))
+    assert seen == ["EUR", "USD"]
+
+
+def _command(world: dict, connect, clock, command: str, raw: dict) -> dict:
+    body = QUOTE_BODIES[command](**raw)
+    repo = V2QuoteRepository(connect, runtime_dsn(world["dsn"]), fx_resolver=no_provider, clock=clock)
+    return repo.execute(command_name=command, operator=world["operator"], fields=body.model_dump(mode="json"),
+                        idempotency_key=uuid.uuid4().hex, digest=request_digest(command, body))
+
+
+@needs_db
+def test_save_prices_with_the_stored_rate_on_its_own_connection(stored_rates) -> None:
+    world = stored_rates
+    _, created = _new_quote(world)
+    counting = _Counting()
+    saved = _command(world, counting.connect, lambda: FUTURE, "save-quote-draft",
+                     {"revision_id": created["revision_id"], "expected_version": created["version"],
+                      "draft": _two_currency_draft(world)})
+    assert counting.connections == 1
+    assert {f["currency"]: f["clp_per_unit"] for f in saved["computed"]["fx"]} == {
+        "EUR": "1200.000000", "USD": "999.000000"}
+    # The preview of the same draft at the same moment shows the same figures the save stored.
+    reads = V2QuoteReads(psycopg.connect, runtime_dsn(world["dsn"]), fx_resolver=_never, clock=lambda: FUTURE)
+    preview = reads.preview(PreviewQuoteBody(revision_id=created["revision_id"], draft=_two_currency_draft(world)))
+    assert preview["computed"] == saved["computed"]
+
+
+@needs_db
+def test_save_with_nothing_stored_is_409_and_asks_no_provider(stored_rates) -> None:
+    world = stored_rates
+    _, created = _new_quote(world)
+    with pytest.raises(CommandRefused) as exc:
+        _command(world, psycopg.connect, lambda: datetime(2027, 3, 1, 15, 0, tzinfo=UTC), "save-quote-draft",
+                 {"revision_id": created["revision_id"], "expected_version": created["version"],
+                  "draft": _two_currency_draft(world)})
+    assert (exc.value.status_code, exc.value.code) == (409, "fx_unavailable")
+    assert _revision(world["dsn"], created["revision_id"])["version"] == created["version"]

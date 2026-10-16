@@ -2,13 +2,15 @@
 
 Reads only (the caller's transaction): `catalog.cost_parameter`, `catalog.product`,
 `catalog.supplier_product`, `catalog.supplier_terms`, `crm.organization`. Exchange rates come from
-the injected `FxResolver` (the catalog's `PricingFx.rate`) unless the draft overrides them.
+`catalog.fx_rate` on the caller's cursor (one statement, the catalog's choice and window) unless the
+draft overrides them; only a currency with nothing stored goes to the injected `FxResolver` (the
+reads: the catalog's `PricingFx.rate`, which may ask a provider; the commands: `no_provider`).
 
 What a line costs, when the operator did not type it: the product's newest observation (its own and
 those of the twins merged into it), non-stale first, newest day first, per-deal kinds before list
 kinds on the same day (10-05 spec §4.3) — from the line's supplier when it names one, or exactly
-the observation it names. The whole draft resolves in three statements whatever its length
-(products, observations, suppliers), so a preview stays fast over a remote database. A line is imported unless its supplier's terms say
+the observation it names. The whole draft resolves in four statements whatever its length
+(products, observations, suppliers, stored rates), so a preview stays fast over a remote database. A line is imported unless its supplier's terms say
 `domestic`; with no terms, a CLP cost is domestic and any other currency imported. Only imported
 lines ship, and a draft with nothing to ship gets no import expenses — only the manual lines the
 operator typed (10-05 spec §5.3: "domestic suppliers produce no import expense lines").
@@ -25,7 +27,7 @@ from typing import Any
 from origenlab_api.quoting.dhl_rates import RateCard
 from origenlab_api.quoting.engine import EngineInput, EngineResult, ExpenseLine, FxRate, ItemLine
 from origenlab_api.quoting.expenses import ShipmentItem, expenses_for
-from origenlab_api.v2.catalog.fx import FxUnavailable, PricingFx
+from origenlab_api.v2.catalog.fx import FX_WINDOW_DAYS, FxUnavailable
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.quotes.draft import (
     DraftExpenseLine,
@@ -36,24 +38,15 @@ from origenlab_api.v2.quotes.draft import (
     QuoteDraft,
 )
 
-#: (currency, day) -> {"clp_per_unit", "as_of", "source", ...}; raises FxUnavailable.
+#: (currency, day) -> {"clp_per_unit", "as_of", "source", ...}; raises FxUnavailable. Asked only for a
+#: currency with no stored rate in the window (`_STORED_FX_SQL`, read on the caller's cursor first).
 FxResolver = Callable[[str, dt.date], dict]
 
 
-def _never_written(rows: list[dict]) -> None:  # pragma: no cover - no provider, so nothing to cache
-    raise AssertionError("a stored-only resolver has nothing to write")
+def no_provider(currency: str, day: dt.date) -> dict:
+    """The commands' fallback: nothing stored is nothing — a write transaction never asks a provider."""
+    raise FxUnavailable(f"no stored {currency} rate for {day.isoformat()}")
 
-
-def stored_fx_resolver(reads: Any, today: Callable[[], dt.date]) -> FxResolver:
-    """The rate a command prices with: the stored one only, never a provider over HTTP.
-
-    The catalog's `PricingFx` with no providers: the newest stored rate on or before the day
-    (a manual one first, then Banco Central), within the same `FX_WINDOW_DAYS` the reads apply,
-    else `FxUnavailable`. A write transaction therefore never waits on a provider; the reads
-    (opening a draft, every preview) use the full resolver, which fetches and stores today's rate,
-    so by the time the operator saves, the rate the preview showed is the one in the store.
-    """
-    return PricingFx(reads, _never_written, [], today).rate
 
 DEFAULT_MARKUP_KEYS = {
     "equipment": "default_markup_equipment",
@@ -119,6 +112,17 @@ select r.line_no, o.id, o.supplier_id, o.price, o.currency
   ) o
 """
 
+# The stored rate of each currency, exactly as `V2CatalogReads.stored_fx` + `PricingFx._stored` choose
+# it: the newest rate_date on or before the day, a manual rate before Banco Central and BDE before
+# mindicador on that date; none when that date is more than FX_WINDOW_DAYS before the day. One
+# statement for every currency, on the caller's cursor — no second connection.
+_STORED_FX_SQL = """
+select distinct on (currency) currency, rate_date, clp_per_unit, source
+  from catalog.fx_rate
+ where currency = any(%(currencies)s::text[]) and rate_date <= %(day)s and rate_date >= %(day)s - %(window)s
+ order by currency, rate_date desc, (source = 'manual') desc, (provider = 'bde') desc, created_at desc, id desc
+"""
+
 _SUPPLIERS_SQL = """
 select o.id::text as id, o.name, t.route, t.origin_country
   from crm.organization o
@@ -158,11 +162,19 @@ class Resolved:
     warnings: list[str] = field(default_factory=list)
 
 
+PARAMETERS_SQL = _PARAMETERS_SQL
+
+
 def load_parameters(cur: Any) -> dict[str, Decimal | str]:
     """The current value of every parameter: numbers as Decimal, printed texts as str."""
     cur.execute(_PARAMETERS_SQL)
+    return parameters_from(cur.fetchall())
+
+
+def parameters_from(rows: Any) -> dict[str, Decimal | str]:
+    """`load_parameters` over rows already fetched (`(key, value_numeric, value_json)`), e.g. in a pipeline."""
     out: dict[str, Decimal | str] = {}
-    for key, numeric, json_value in cur.fetchall():
+    for key, numeric, json_value in rows:
         if numeric is not None:
             out[key] = Decimal(numeric)
         elif isinstance(json_value, str):
@@ -373,10 +385,17 @@ def _as_date(value: Any) -> dt.date:
     return dt.date.fromisoformat(str(value)[:10])
 
 
-def _resolve_fx(draft: QuoteDraft, currencies: set[str], fx_resolver: FxResolver,
+def _resolve_fx(cur: Any, draft: QuoteDraft, currencies: set[str], fx_resolver: FxResolver,
                 today: dt.date) -> dict[str, FxRate]:
+    """The operator's overrides; else the stored rate (one statement on `cur`); else `fx_resolver`."""
     out = {o.currency: FxRate(o.currency, o.clp_per_unit, today, "manual") for o in draft.fx_overrides}
-    for currency in sorted(currencies - set(out) - {"CLP"}):
+    wanted = sorted(currencies - set(out) - {"CLP"})
+    if not wanted:
+        return out
+    cur.execute(_STORED_FX_SQL, {"currencies": wanted, "day": today, "window": FX_WINDOW_DAYS})
+    for currency, rate_date, clp_per_unit, source in cur.fetchall():
+        out[currency] = FxRate(currency, Decimal(clp_per_unit), _as_date(rate_date), source)
+    for currency in [c for c in wanted if c not in out]:
         try:
             rate = fx_resolver(currency, today)
         except FxUnavailable as exc:
@@ -400,7 +419,7 @@ def resolve_draft(cur: Any, draft: QuoteDraft, params: dict[str, Decimal | str],
     currencies = {i.cost_currency for i in items if i.cost_currency} | {e.currency for e in draft.manual_expenses}
     if draft.expense_method == "dhl_calc" and shipping:
         currencies.add("USD")  # the DHL card and the FOB threshold are in dollars
-    fx = _resolve_fx(draft, currencies, fx_resolver, today)
+    fx = _resolve_fx(cur, draft, currencies, fx_resolver, today)
     usd = fx["USD"].clp_per_unit if "USD" in fx else None
 
     def fob(item: ResolvedItem) -> Decimal:
@@ -480,4 +499,4 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
 
 __all__ = ["DEFAULT_MARKUP_KEYS", "FxResolver", "PRICE_KIND_PRIORITY", "Resolved", "ResolvedItem",
            "default_markup", "draft_from_rows", "engine_input_from_rows", "expense_target", "fx_override_reasons", "fx_overrides_from_row",
-           "load_parameters", "resolve_draft", "result_json", "stored_fx_resolver"]
+           "PARAMETERS_SQL", "load_parameters", "no_provider", "parameters_from", "resolve_draft", "result_json"]

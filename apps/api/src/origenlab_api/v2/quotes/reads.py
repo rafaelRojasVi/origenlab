@@ -7,12 +7,16 @@ carries costs and margins.
 **Preview** (spec 2026-10-15 §5, R-A4) prices a draft exactly as `save-quote-draft` would —
 `inputs.resolve_draft` + `quoting.engine.compute` + `inputs.result_json` — and writes nothing: no
 receipt, no event, no row. Given a `revision_id` it prices with that revision's tax rate, as the
-save does, so the preview's totals are the ones the save will store. One read transaction: the
-set-up, the parameters, the revision (when named) and the three statements `resolve_draft` needs.
+save does, so the preview's totals are the ones the save will store. One read transaction on one
+connection, five round trips: the set-up, the parameters with the revision's tax rate (one
+pipeline), and the four statements `resolve_draft` needs (products, observations, suppliers,
+stored rates).
 
-**Exchange rates.** The reads are given the full resolver (`PricingFx.rate`: the stored rate, else
-a provider, whose answer is stored). Opening a draft or previewing one therefore warms today's rate
-before the operator saves; the commands price with the stored rate only (`inputs.stored_fx_resolver`).
+**Exchange rates.** `resolve_draft` reads the stored rates on this transaction's cursor. Only a
+currency with nothing stored in the window reaches the injected resolver — here the full
+`PricingFx.rate`, which asks a provider and stores its answer on its own connection (once per
+currency and day). Opening a draft or previewing one therefore warms today's rate before the
+operator saves; the commands, on a miss, refuse (`inputs.no_provider`).
 
 **Workspace** (`GET /v2/quotes/{id}`): the quote, its case (institution and RUT, the current
 participants, «Lo que pidió» from the case memory), every revision with its printed label, and the
@@ -37,7 +41,14 @@ from origenlab_api.v2.catalog.keys import is_labdelivery, model_key
 from origenlab_api.v2.catalog.reads import V2CatalogReads, _plain
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.quotes.draft import PreviewQuoteBody, QuoteDraft
-from origenlab_api.v2.quotes.inputs import FxResolver, draft_from_rows, load_parameters, resolve_draft, result_json
+from origenlab_api.v2.quotes.inputs import (
+    PARAMETERS_SQL,
+    FxResolver,
+    draft_from_rows,
+    parameters_from,
+    resolve_draft,
+    result_json,
+)
 from origenlab_api.v2.quotes.numbering import SANTIAGO, numbering_status, revision_label
 
 #: R-A5: a model is suggested beside the principal when it is on at least this share of the past
@@ -134,7 +145,7 @@ select sm.memory->>'summary' as summary
 """
 
 # What the case's live emails name: one row per normalised model, with the catalog product it
-# matched (the survivor of a merge) when there is one. A link a person removed, or a rejected or
+# matched (the survivor of a merge, when active — as for kits) when there is one. A link a person removed, or a rejected or
 # quarantined record, names nothing.
 _MENTIONS_SQL = """
 select distinct on (a.value_norm)
@@ -149,6 +160,7 @@ select distinct on (a.value_norm)
                              ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
                         then (a.value->>'catalog_product_id')::uuid end
   left join catalog.product p on p.id = coalesce(m.merged_into_product_id, m.id)
+        and p.active and p.merged_into_product_id is null
  where oe.opportunity_id = %s::uuid and oe.unlinked_at is null
    and not s.is_quarantined and s.review_status <> 'rejected'
  order by a.value_norm, (p.id is not null) desc, a.created_at
@@ -222,8 +234,13 @@ class V2QuoteReads:
 
     # -- preview
 
-    def _priced(self, cur: Any, draft: QuoteDraft, tax_rate: Decimal | None) -> dict[str, Any]:
-        params = load_parameters(cur)
+    @staticmethod
+    def _params(rows: list[dict[str, Any]]) -> dict[str, Decimal | str]:
+        return parameters_from((r["key"], r["value_numeric"], r["value_json"]) for r in rows)
+
+    def _priced(self, cur: Any, draft: QuoteDraft, tax_rate: Decimal | None,
+                params: dict[str, Decimal | str]) -> dict[str, Any]:
+        params = dict(params)
         if tax_rate is not None:
             params["iva_rate"] = Decimal(tax_rate)
         try:
@@ -235,16 +252,19 @@ class V2QuoteReads:
 
     def preview(self, body: PreviewQuoteBody) -> dict[str, Any]:
         """The draft priced as a save would price it; nothing is written."""
+        revision_id = str(body.revision_id) if body.revision_id else None
         with self._read() as cur:
+            queries: dict[str, tuple[str, tuple[Any, ...]]] = {"params": (PARAMETERS_SQL, ())}
+            if revision_id is not None:
+                queries["revision"] = ("select tax_rate from crm.quote_revision where id = %s::uuid", (revision_id,))
+            rows = self._catalog._batch(cur, queries)
             tax_rate = None
-            if body.revision_id is not None:
-                cur.execute("select tax_rate from crm.quote_revision where id = %s::uuid", (str(body.revision_id),))
-                row = cur.fetchone()
-                if row is None:
+            if revision_id is not None:
+                if not rows["revision"]:
                     raise CommandRefused(404, "revision_not_found", "no such quote revision")
-                tax_rate = row[0]
-            return {"revision_id": str(body.revision_id) if body.revision_id else None,
-                    "computed": self._priced(cur, body.draft, tax_rate)}
+                tax_rate = rows["revision"][0]["tax_rate"]
+            return {"revision_id": revision_id,
+                    "computed": self._priced(cur, body.draft, tax_rate, self._params(rows["params"]))}
 
     # -- kit suggestions (R-A5)
 
@@ -276,9 +296,9 @@ class V2QuoteReads:
     def workspace(self, quote_id: uuid.UUID | str) -> dict[str, Any] | None:
         """Everything the Cotizador page opens with, or None when the quote does not exist.
 
-        Round trips after the set-up: the quote with its case; one pipeline (revisions, current
-        lines, participants, memory, mentions); for a draft, the parameters and `resolve_draft`'s
-        three statements; then one pipeline for the principal's history and kits.
+        Round trips after the set-up, all on this one connection: the quote with its case; one
+        pipeline (revisions, current lines, participants, memory, mentions, parameters); for a
+        draft, `resolve_draft`'s four statements; then one pipeline for the principal's history and kits.
         """
         qid = str(quote_id)
         with self._read() as cur:
@@ -294,11 +314,13 @@ class V2QuoteReads:
                 "participants": (_PARTICIPANTS_SQL, (case_id,)),
                 "memory": (_MEMORY_SQL, (case_id,)),
                 "mentions": (_MENTIONS_SQL, (case_id,)),
+                "params": (PARAMETERS_SQL, ()),
             })
             revisions = rows["revisions"]
             current_row = self._current(revisions)
             lines = rows["lines"]
-            current = self._current_json(cur, quote, current_row, lines) if current_row else None
+            params = self._params(rows["params"])
+            current = self._current_json(cur, quote, current_row, lines, params) if current_row else None
 
             principal_key = self._principal_key(current, lines)
             history, kits = None, []
@@ -341,7 +363,7 @@ class V2QuoteReads:
                                              r["revision_no"]))
 
     def _current_json(self, cur: Any, quote: dict[str, Any], revision: dict[str, Any],
-                      lines: list[dict[str, Any]]) -> dict[str, Any]:
+                      lines: list[dict[str, Any]], params: dict[str, Decimal | str]) -> dict[str, Any]:
         out: dict[str, Any] = {k: revision.get(k) for k in _REVISION_FIELDS}
         out["label"] = _label(quote["quote_number"], revision["revision_no"])
         if revision["origin"] == "authored" and revision["status"] == "draft":
@@ -350,7 +372,7 @@ class V2QuoteReads:
             out["computed"] = None
             out["computed_error"] = None
             try:
-                out["computed"] = self._priced(cur, draft, revision["tax_rate"])
+                out["computed"] = self._priced(cur, draft, revision["tax_rate"], params)
             except CommandRefused as exc:
                 # The page still opens: the draft is shown with why it cannot be priced right now.
                 out["computed_error"] = {"code": exc.code, "message": exc.message}

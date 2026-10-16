@@ -314,36 +314,18 @@ def test_switch_off_answers_404_in_the_envelope() -> None:
                        headers=_ikey()).status_code == 404
 
 
-class _StoredReads:
-    def __init__(self, row):
-        self.row, self.calls = row, []
-
-    def stored_fx(self, currency, on):
-        self.calls.append((currency, on))
-        return self.row
-
-
-def test_the_command_resolver_reads_the_store_and_never_a_provider() -> None:
+def test_the_command_fallback_never_asks_a_provider() -> None:
     from origenlab_api.v2.catalog.fx import FxUnavailable
-    from origenlab_api.v2.quotes.inputs import stored_fx_resolver
+    from origenlab_api.v2.quotes.inputs import no_provider
 
-    today = dt.date(2026, 10, 15)
-    row = {"rate_date": dt.date(2026, 10, 14), "clp_per_unit": "1000.5", "source": "bcentral", "provider": "bde"}
-    reads = _StoredReads(row)
-    rate = stored_fx_resolver(reads, lambda: today)("EUR", today)
-    assert rate["clp_per_unit"] == Decimal("1000.5") and rate["as_of"] == dt.date(2026, 10, 14)
-    assert rate["source"] == "bcentral" and reads.calls == [("EUR", today)]
-    # No stored rate (or one older than the reads would show): refused, nothing fetched.
     with pytest.raises(FxUnavailable):
-        stored_fx_resolver(_StoredReads(None), lambda: today)("USD", today)
-    old = {**row, "rate_date": dt.date(2026, 9, 1)}
-    with pytest.raises(FxUnavailable):
-        stored_fx_resolver(_StoredReads(old), lambda: today)("EUR", today)
+        no_provider("USD", dt.date(2026, 10, 15))
 
 
-def test_mount_wires_the_full_fx_into_the_reads_and_the_stored_one_into_the_commands(monkeypatch) -> None:
+def test_mount_wires_the_full_fx_into_the_reads_and_no_provider_into_the_commands() -> None:
     from origenlab_api import main
     from origenlab_api.settings import Settings
+    from origenlab_api.v2.quotes.inputs import no_provider
 
     app = FastAPI()
     main._mount_catalog(app, Settings(_env_file=None, v2_database_url=LOOPBACK, v2_quoting_enabled=True),
@@ -352,21 +334,10 @@ def test_mount_wires_the_full_fx_into_the_reads_and_the_stored_one_into_the_comm
 
     class _Fx:
         def rate(self, currency, on):
-            seen.append(("full", currency, on))
+            seen.append((currency, on))
             return {"clp_per_unit": Decimal(1), "as_of": on, "source": "bcentral"}
 
-        def today(self):
-            return dt.date(2026, 10, 15)
-
-    app.state.catalog_fx = _Fx()
+    app.state.catalog_fx = _Fx()  # looked up at call time: always the app's current one
     app.state.quote_reads._fx_resolver("EUR", dt.date(2026, 10, 15))
-    assert seen == [("full", "EUR", dt.date(2026, 10, 15))]
-
-    stored = []
-    monkeypatch.setattr(app.state.catalog_reads, "stored_fx",
-                        lambda c, on: stored.append((c, on)) or None)
-    from origenlab_api.v2.catalog.fx import FxUnavailable
-
-    with pytest.raises(FxUnavailable):
-        app.state.quote_repository._fx_resolver("USD", dt.date(2026, 10, 15))
-    assert stored and seen == [("full", "EUR", dt.date(2026, 10, 15))]
+    assert seen == [("EUR", dt.date(2026, 10, 15))]
+    assert app.state.quote_repository._fx_resolver is no_provider
