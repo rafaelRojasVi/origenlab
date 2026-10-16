@@ -23,7 +23,8 @@ import {
 } from "./draftEditor";
 import { NumberInput } from "./LineRow";
 import type { Computed, QuoteDraft, QuoteDraftExpense } from "./quoteApi";
-import { amountTextToDecimal, formatPct } from "./quoteFormat";
+import { ConfirmDialog } from "../ui";
+import { amountTextToDecimal, decimalEditText, formatPct } from "./quoteFormat";
 
 type Method = QuoteDraft["expense_method"];
 
@@ -120,8 +121,12 @@ function ManualExpense({
   onRemove: () => void;
 }) {
   const n = index + 1;
-  const labelProblem = problems.find((p) => p.field === "manual_expenses.label")?.message_es ?? null;
-  const amountProblem = problems.find((p) => p.field === "manual_expenses.amount")?.message_es ?? null;
+  // A field's problem shows once it has content or was left: a row just added is not red on arrival
+  // (the draft still is not sent while it is incomplete).
+  const [left, setLeft] = useState({ label: false, amount: false });
+  const shown = (field: "label" | "amount") => left[field] || !!expense[field].trim();
+  const labelProblem = shown("label") ? (problems.find((p) => p.field === "manual_expenses.label")?.message_es ?? null) : null;
+  const amountProblem = shown("amount") ? (problems.find((p) => p.field === "manual_expenses.amount")?.message_es ?? null) : null;
   // A value with a problem is shown as typed, never re-formatted.
   const display = amountProblem ? expense.amount : (formatMoney(expense.amount, expense.currency) ?? expense.amount);
   return (
@@ -134,6 +139,7 @@ function ManualExpense({
         placeholder="Nombre del gasto"
         disabled={disabled}
         onChange={(e) => onPatch({ label: e.target.value })}
+        onBlur={() => setLeft((l) => ({ ...l, label: true }))}
         className={FIELD_CLS}
       />
       <div className="flex items-center gap-1.5">
@@ -141,11 +147,12 @@ function ManualExpense({
           <NumberInput
             label={`Monto del gasto ${n}`}
             display={display}
-            editValue={expense.amount}
+            editValue={amountProblem ? expense.amount : decimalEditText(expense.amount)}
             placeholder="monto"
             disabled={disabled}
             invalid={!!amountProblem}
             className={AMOUNT_CLS}
+            onBlur={() => setLeft((l) => ({ ...l, amount: true }))}
             onChange={(t) => onPatch({ amount: amountTextToDecimal(t) ?? "" })}
           />
         </span>
@@ -240,9 +247,16 @@ export function ExpensesSection({
   const listProblem = invalid.find((p) => p.field === "manual_expenses" && p.index === undefined)?.message_es ?? null;
   const dim = stale ? " opacity-50" : "";
 
+  // Leaving Manual with amounts typed asks first: a derived method drops them (they would count twice).
+  const [confirmLeave, setConfirmLeave] = useState<Method | null>(null);
+  const apply = (m: Method) =>
+    // Only priced numbers are copied: while `computed` prices an older draft (another method, or a
+    // preview that failed) Manual starts from what the draft holds, never from stale amounts.
+    edit((d) => setExpenseMethod(d, m, stale ? null : computed));
   const choose = (m: Method) => {
     if (m === draft.expense_method) return;
-    edit((d) => setExpenseMethod(d, m, computed));
+    if (manual && draft.manual_expenses.length > 0) setConfirmLeave(m);
+    else apply(m);
   };
 
   return (
@@ -256,13 +270,22 @@ export function ExpensesSection({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {!manual && !disabled && computed && computed.expenses.length > 0 ? (
-            <button
-              type="button"
-              onClick={() => choose("manual")}
-              className="h-11 rounded-md px-3 text-[13.5px] font-semibold text-brand-700 hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-            >
-              Editar montos
-            </button>
+            <span className="flex items-center gap-1.5">
+              {stale ? (
+                <span id="cotizador-gastos-espera" className="text-[12px] text-ink-muted">
+                  Espera el cálculo
+                </span>
+              ) : null}
+              <button
+                type="button"
+                disabled={stale}
+                aria-describedby={stale ? "cotizador-gastos-espera" : undefined}
+                onClick={() => choose("manual")}
+                className="h-11 rounded-md px-3 text-[13.5px] font-semibold text-brand-700 hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Editar montos
+              </button>
+            </span>
           ) : null}
           <MethodToggle value={draft.expense_method} disabled={disabled} onChange={choose} />
         </div>
@@ -333,6 +356,18 @@ export function ExpensesSection({
       ))}
       {draft.expense_method === "profile" && !notices.length ? (
         <span className="text-[12.5px] text-ink-muted">Con pesos en el catálogo, «DHL calculado» usa la tarifa DHL negociada.</span>
+      ) : null}
+      {confirmLeave ? (
+        <ConfirmDialog
+          title={`¿Volver a ${METHODS.find((m) => m.value === confirmLeave)?.label ?? confirmLeave}?`}
+          lines={["Se borrarán los gastos escritos a mano.", "El sistema vuelve a calcular los gastos con el método elegido."]}
+          confirmLabel="Borrar y cambiar"
+          onConfirm={() => {
+            apply(confirmLeave);
+            setConfirmLeave(null);
+          }}
+          onCancel={() => setConfirmLeave(null)}
+        />
       ) : null}
     </section>
   );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { amountTextToDecimal, decimalToPercentText, formatPct, percentTextToDecimal, priceTextToDecimal, readQuantity } from "./quoteFormat";
+import { amountTextToDecimal, decimalEditText, decimalToPercentText, formatPct, percentTextToDecimal, priceTextToDecimal, readQuantity } from "./quoteFormat";
 
 describe("quote number formatting", () => {
   it("prints an API ratio as a percentage with one decimal, es-CL", () => {
@@ -56,5 +56,16 @@ describe("quote number formatting", () => {
     expect(readQuantity("")).toEqual({ value: "", problem: null });
     expect(readQuantity("1.000")).toEqual({ value: "1.000", problem: "Usa coma para decimales (1,5) — ¿quisiste decir 1000?" });
     expect(readQuantity("12.500").problem).toBe("Usa coma para decimales (1,5) — ¿quisiste decir 12500?");
+  });
+});
+
+describe("decimalEditText", () => {
+  it("drops the API's trailing zeros and writes a decimal comma, without a float", () => {
+    expect(decimalEditText("620000.000000")).toBe("620000");
+    expect(decimalEditText("150.50")).toBe("150,5");
+    expect(decimalEditText("12345678901.123456")).toBe("12345678901,123456");
+    expect(decimalEditText("45000")).toBe("45000");
+    expect(decimalEditText("")).toBe("");
+    expect(decimalEditText("x")).toBe("x");
   });
 });

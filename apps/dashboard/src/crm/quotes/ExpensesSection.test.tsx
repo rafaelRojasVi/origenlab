@@ -137,6 +137,15 @@ describe("ExpensesSection — derived expenses", () => {
     expect(screen.getByText("Falta el parámetro profile_customs_clp del perfil.")).toBeInTheDocument();
   });
 
+  it("copies nothing while the amounts shown are for an older draft", async () => {
+    const { latest } = await setup({ stale: true });
+    const button = screen.getByRole("button", { name: "Editar montos" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription("Espera el cálculo");
+    fireEvent.click(method("Manual"));
+    expect(latest.draft).toMatchObject({ expense_method: "manual", manual_expenses: [] });
+  });
+
   it("«Editar montos» copies the computed expenses into manual ones (B5)", async () => {
     const { latest } = await setup();
     fireEvent.click(screen.getByRole("button", { name: "Editar montos" }));
@@ -173,22 +182,67 @@ describe("ExpensesSection — manual expenses", () => {
     ]);
   });
 
-  it("adds and removes an expense, and asks for what is missing next to it", async () => {
+  it("adds and removes an expense; a new row asks for what is missing only once left", async () => {
     const { latest } = await setup({ initial: manual(), computed: priced({ expenses: [] }) });
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto" }));
     expect(latest.draft.manual_expenses).toHaveLength(3);
     const third = screen.getByLabelText("Nombre del gasto 3").closest("li") as HTMLElement;
+    expect(within(third).queryByText(/Escribe/)).not.toBeInTheDocument();
+    expect(draftProblems(latest.draft).length).toBeGreaterThan(0);
+    fireEvent.blur(screen.getByLabelText("Nombre del gasto 3"));
     expect(within(third).getByText("Escribe el nombre del gasto.")).toBeInTheDocument();
+    expect(within(third).queryByText("Escribe el monto del gasto.")).not.toBeInTheDocument();
+    const amount = screen.getByLabelText("Monto del gasto 3");
+    fireEvent.focus(amount);
+    fireEvent.blur(amount);
     expect(within(third).getByText("Escribe el monto del gasto.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Quitar el gasto 1" }));
     expect(latest.draft.manual_expenses.map((e) => e.label)).toEqual(["Seguro", ""]);
   });
 
-  it("going back to a derived method drops the manual expenses, and says so beforehand", async () => {
+  it("edits an amount without the API's trailing zeros", async () => {
+    await setup({
+      initial: draft({
+        expense_method: "manual",
+        manual_expenses: [
+          { uid: "e1", label: "Flete", amount: "300000.000000", currency: "CLP" },
+          { uid: "e2", label: "Seguro", amount: "150.50", currency: "USD" },
+        ],
+      }),
+      computed: priced({ expenses: [] }),
+    });
+    const first = screen.getByLabelText("Monto del gasto 1");
+    expect(first).toHaveValue("$ 300.000");
+    fireEvent.focus(first);
+    expect(first).toHaveValue("300000");
+    const second = screen.getByLabelText("Monto del gasto 2");
+    fireEvent.focus(second);
+    expect(second).toHaveValue("150,5");
+  });
+
+  it("going back to a derived method asks first, then drops the manual expenses", async () => {
     const { latest } = await setup({ initial: manual(), computed: priced({ expenses: [] }) });
     expect(screen.getByText(/Si vuelves a Perfil o DHL calculado, estos montos se descartan/)).toBeInTheDocument();
     fireEvent.click(method("Perfil"));
-    expect(latest.draft).toMatchObject({ expense_method: "profile", manual_expenses: [] });
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText("Se borrarán los gastos escritos a mano.")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(latest.draft.expense_method).toBe("manual");
+    expect(latest.draft.manual_expenses).toHaveLength(2);
+    fireEvent.click(method("DHL calculado"));
+    const again = screen.getByRole("alertdialog");
+    fireEvent.click(within(again).getByRole("checkbox"));
+    fireEvent.click(within(again).getByRole("button", { name: "Borrar y cambiar" }));
+    expect(latest.draft).toMatchObject({ expense_method: "dhl_calc", manual_expenses: [] });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("leaves Manual without asking when no expense was written", async () => {
+    const { latest } = await setup({ initial: draft({ expense_method: "manual", manual_expenses: [] }), computed: priced({ expenses: [] }) });
+    fireEvent.click(method("Perfil"));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(latest.draft.expense_method).toBe("profile");
   });
 
   it("is read-only when the draft cannot be edited", async () => {

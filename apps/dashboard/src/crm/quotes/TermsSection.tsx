@@ -7,7 +7,7 @@
  * approving. What the API would refuse (a text over its length, validity outside 1–365 days, an
  * extra condition without its name or text) is said next to its field.
  */
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { addExtraTerm, removeExtraTerm, setTerm, updateExtraTerm, type DraftProblem, type TermKey } from "./draftEditor";
 import type { QuoteDraft, QuoteDraftTerm } from "./quoteApi";
 
@@ -51,6 +51,12 @@ const describedBy = (id: string, problem: string | null, value: string | null | 
 
 const flagged = (value: string | null | undefined) => (value && PLACEHOLDER.test(value) ? " border-warn bg-warn-bg/40" : "");
 
+/** Typed days: empty is none, whole digits a number, anything else NaN (the editor names the problem). */
+function readDays(text: string): number | null {
+  const t = text.trim();
+  return !t ? null : /^\d+$/.test(t) ? Number(t) : Number.NaN;
+}
+
 /** «Validez (días)»: whole days; what cannot be read stays as typed and is named as the problem. */
 function ValidityInput({
   id,
@@ -66,6 +72,10 @@ function ValidityInput({
   onChange: (days: number | null) => void;
 }) {
   const [typed, setTyped] = useState<string | null>(null);
+  // A value from outside (a reload, another save) replaces what was half-typed, unless it is what that text reads as.
+  useEffect(() => {
+    setTyped((t) => (t !== null && Object.is(readDays(t), value ?? null) ? t : null));
+  }, [value]);
   const shown = typed ?? (value === null || value === undefined || Number.isNaN(value) ? "" : String(value));
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -82,8 +92,7 @@ function ValidityInput({
           onChange={(e) => {
             const t = e.target.value;
             setTyped(t);
-            const trimmed = t.trim();
-            onChange(!trimmed ? null : /^\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN);
+            onChange(readDays(t));
           }}
           onBlur={() => {
             if (!problem) setTyped(null);

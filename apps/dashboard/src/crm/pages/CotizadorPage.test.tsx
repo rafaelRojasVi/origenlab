@@ -259,8 +259,9 @@ describe("Cotizador page — the draft editor", () => {
   it("saves a condition and a switch to manual expenses, without the editor's row ids", async () => {
     const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }));
     renderPage();
-    fireEvent.change(await screen.findByLabelText("Plazo de entrega"), { target: { value: "4 semanas" } });
-    fireEvent.click(screen.getByRole("button", { name: "Editar montos" }));
+    // «Editar montos» first: once an edit is waiting for its price, it waits too (nothing stale is copied).
+    fireEvent.click(await screen.findByRole("button", { name: "Editar montos" }));
+    fireEvent.change(screen.getByLabelText("Plazo de entrega"), { target: { value: "4 semanas" } });
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar otra condición" }));
     fireEvent.change(screen.getByLabelText("Nombre de la condición 1"), { target: { value: "Embalaje" } });
     fireEvent.change(screen.getByLabelText("Texto de la condición 1"), { target: { value: "Caja de madera" } });

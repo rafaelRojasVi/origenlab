@@ -84,3 +84,15 @@ export function readQuantity(text: string): { value: string; problem: string | n
   }
   return { value: t.replace(",", "."), problem: null };
 }
+
+/**
+ * An amount's edit text: the API's "620000.000000" as «620000», "150.50" as «150,5» — trailing
+ * zeros dropped and a decimal comma, read back by `amountTextToDecimal`. Done on the string, no float.
+ */
+export function decimalEditText(value: string | null | undefined): string {
+  const t = (value ?? "").trim();
+  const m = /^(\d+)\.(\d*)$/.exec(t);
+  if (!m) return t;
+  const frac = m[2].replace(/0+$/, "");
+  return frac ? `${m[1]},${frac}` : m[1];
+}

@@ -3,7 +3,7 @@
  * Every value is invented.
  */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { draftProblems } from "./draftEditor";
@@ -12,10 +12,11 @@ import { draftFixture } from "./quoteFixtures";
 import { TermsSection } from "./TermsSection";
 
 function setup(initial: QuoteDraft = draftFixture(), disabled = false) {
-  const latest = { draft: initial };
+  const latest: { draft: QuoteDraft; replace: (d: QuoteDraft) => void } = { draft: initial, replace: () => undefined };
   function Harness() {
     const [d, setD] = useState(initial);
     latest.draft = d;
+    latest.replace = setD;
     return <TermsSection draft={d} invalid={draftProblems(d)} disabled={disabled} edit={(fn) => setD((prev) => fn(prev))} />;
   }
   render(<Harness />);
@@ -59,6 +60,16 @@ describe("TermsSection", () => {
     expect(screen.getByText("Escribe la validez en días, con un número entero.")).toBeInTheDocument();
     fireEvent.change(days, { target: { value: "" } });
     expect(latest.draft.terms.validity_days).toBeNull();
+  });
+
+  it("a validity from outside (a reload) replaces what was half-typed", () => {
+    const latest = setup();
+    const days = screen.getByLabelText("Validez (días)");
+    fireEvent.change(days, { target: { value: "3x" } });
+    act(() => latest.replace(withTerms({ validity_days: 60 })));
+    expect(days).toHaveValue("60");
+    fireEvent.change(days, { target: { value: "45" } });
+    expect(days).toHaveValue("45");
   });
 
   it("marks a bracketed placeholder to be completed before approving", () => {

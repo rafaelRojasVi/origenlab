@@ -48,6 +48,7 @@ export function NumberInput({
   disabled,
   onChange,
   onFocus,
+  onBlur,
   suffix,
   className = CELL_INPUT,
   invalid = false,
@@ -59,6 +60,7 @@ export function NumberInput({
   disabled: boolean;
   onChange: (text: string) => void;
   onFocus?: () => void;
+  onBlur?: () => void;
   suffix?: string;
   className?: string;
   invalid?: boolean;
@@ -80,7 +82,10 @@ export function NumberInput({
           const el = e.currentTarget;
           if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => el.select());
         }}
-        onBlur={() => setText(null)}
+        onBlur={() => {
+          setText(null);
+          onBlur?.();
+        }}
         onChange={(e) => {
           setText(e.target.value);
           onChange(e.target.value);
