@@ -273,22 +273,40 @@ export class QuoteRefusal extends OperatorApiError {
     status: number,
     public readonly code: string | null,
     message: string,
+    /** The envelope's `details`, e.g. `{validation_errors}` on a 422; null when there are none. */
+    public readonly details: Record<string, unknown> | null = null,
   ) {
     super(message, status);
     this.name = "QuoteRefusal";
   }
+
+  /** What FastAPI said was wrong with the body (English, with the field's `loc`); empty when none. */
+  get validationErrors(): QuoteValidationError[] {
+    const raw = this.details?.validation_errors;
+    return Array.isArray(raw) ? (raw as QuoteValidationError[]) : [];
+  }
 }
 
-function envelopeOf(raw: unknown): { code: string | null; message: string | null } {
-  if (!raw || typeof raw !== "object") return { code: null, message: null };
+/** One entry of a 422's `details.validation_errors`. */
+export interface QuoteValidationError {
+  loc: string[];
+  msg: string;
+  type: string;
+}
+
+type Envelope = { code: string | null; message: string | null; details: Record<string, unknown> | null };
+
+function envelopeOf(raw: unknown): Envelope {
+  if (!raw || typeof raw !== "object") return { code: null, message: null, details: null };
   const body = raw as { detail?: unknown; error?: unknown };
   for (const part of [body.detail, body.error]) {
     if (part && typeof part === "object" && "code" in part && (part as { code: unknown }).code) {
-      const { code, message } = part as { code: unknown; message?: unknown };
-      return { code: String(code), message: typeof message === "string" ? message : null };
+      const { code, message, details } = part as { code: unknown; message?: unknown; details?: unknown };
+      const kept = details && typeof details === "object" && Object.keys(details).length > 0 ? (details as Record<string, unknown>) : null;
+      return { code: String(code), message: typeof message === "string" ? message : null, details: kept };
     }
   }
-  return { code: null, message: null };
+  return { code: null, message: null, details: null };
 }
 
 async function refusalOf(res: Response): Promise<QuoteRefusal> {
@@ -300,8 +318,8 @@ async function refusalOf(res: Response): Promise<QuoteRefusal> {
   } catch {
     /* not JSON */
   }
-  const { code, message } = envelopeOf(parsed);
-  return new QuoteRefusal(res.status, code, message || text || res.statusText || `HTTP ${res.status}`);
+  const { code, message, details } = envelopeOf(parsed);
+  return new QuoteRefusal(res.status, code, message || text || res.statusText || `HTTP ${res.status}`, details);
 }
 
 /* ── transport ────────────────────────────────────────────────────────────── */

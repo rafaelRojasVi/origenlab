@@ -3,6 +3,7 @@ import type { IndexItem } from "../catalog/catalogSearch";
 import {
   addCatalogItem,
   addFreeLine,
+  draftProblems,
   draftReducer,
   initialDraftState,
   isEditable,
@@ -141,8 +142,8 @@ describe("draftReducer", () => {
   it("ignores a preview older than the latest one started", () => {
     let s = draftReducer(start(), { type: "previewStarted", seq: 1 });
     s = draftReducer(s, { type: "previewStarted", seq: 2 });
-    s = draftReducer(s, { type: "previewDone", seq: 2, computed: computedFixture("222") });
-    s = draftReducer(s, { type: "previewDone", seq: 1, computed: computedFixture("111") });
+    s = draftReducer(s, { type: "previewDone", seq: 2, draftSeq: 0, computed: computedFixture("222") });
+    s = draftReducer(s, { type: "previewDone", seq: 1, draftSeq: 0, computed: computedFixture("111") });
     expect(s.computed?.totals.net).toBe("222");
   });
 
@@ -151,18 +152,39 @@ describe("draftReducer", () => {
     s = draftReducer(s, { type: "saveStarted" });
     expect(s.saveState).toBe("saving");
     s = draftReducer(s, { type: "saveDone", version: 4, computed: computedFixture("444"), at: 1000 });
-    expect(s).toMatchObject({ version: 4, saveState: "saved", lastSavedAt: 1000 });
+    expect(s).toMatchObject({ version: 4, saveState: "saved", lastSavedAt: 1000, computedSeq: 1 });
     expect(s.computed?.totals.net).toBe("444");
   });
 
-  it("a save answered after a newer edit keeps the draft dirty and its newer computed", () => {
+  it("a save answered after a newer edit keeps the draft dirty; its prices still beat older ones", () => {
     let s = draftReducer(start(), { type: "edit", fn: (d) => d });
     s = draftReducer(s, { type: "saveStarted" });
     s = draftReducer(s, { type: "edit", fn: (d) => updateItem(d, 0, { quantity: "5" }) });
     s = draftReducer(s, { type: "saveDone", version: 4, computed: computedFixture("444"), at: 1000 });
-    expect(s).toMatchObject({ version: 4, saveState: "dirty" });
-    expect(s.computed?.totals.net).toBe("100000");
+    expect(s).toMatchObject({ version: 4, saveState: "dirty", computedSeq: 1 });
+    expect(s.computed?.totals.net).toBe("444");
     expect(s.draft.items[0].quantity).toBe("5");
+  });
+
+  it("a save of an older draft does not replace the prices of a newer one", () => {
+    let s = draftReducer(start(), { type: "edit", fn: (d) => d });
+    s = draftReducer(s, { type: "saveStarted" });
+    s = draftReducer(s, { type: "edit", fn: (d) => updateItem(d, 0, { quantity: "5" }) });
+    s = draftReducer(s, { type: "previewStarted", seq: 1 });
+    s = draftReducer(s, { type: "previewDone", seq: 1, draftSeq: 2, computed: computedFixture("555") });
+    s = draftReducer(s, { type: "saveDone", version: 4, computed: computedFixture("444"), at: 1000 });
+    expect(s.computed?.totals.net).toBe("555");
+  });
+
+  it("a preview of an older draft does not replace the prices of a newer save", () => {
+    let s = draftReducer(start(), { type: "edit", fn: (d) => d });
+    s = draftReducer(s, { type: "previewStarted", seq: 1 });
+    s = draftReducer(s, { type: "edit", fn: (d) => d });
+    s = draftReducer(s, { type: "saveStarted" });
+    s = draftReducer(s, { type: "saveDone", version: 4, computed: computedFixture("444"), at: 1000 });
+    s = draftReducer(s, { type: "previewDone", seq: 1, draftSeq: 1, computed: computedFixture("111") });
+    expect(s.computed?.totals.net).toBe("444");
+    expect(s.saveState).toBe("saved");
   });
 
   it("a 409 stale_version is a conflict; any other refusal is an error", () => {
@@ -196,5 +218,64 @@ describe("isEditable", () => {
     expect(isEditable(workspaceFixture({ status: "approved" }))).toBe(false);
     expect(isEditable(workspaceFixture({ origin: "imported" }))).toBe(false);
     expect(isEditable({ ...workspaceFixture(), current: null })).toBe(false);
+  });
+});
+
+describe("draftProblems", () => {
+  const fields = (d: QuoteDraft) => draftProblems(d).map((p) => [p.field, p.index ?? null]);
+
+  it("finds nothing wrong in a complete draft", () => {
+    expect(draftProblems(draftFixture())).toEqual([]);
+  });
+
+  it("asks for a line's description, naming the line", () => {
+    const problems = draftProblems(updateItem(addFreeLine(draftFixture()), 2, { description: "   " }));
+    expect(problems).toEqual([{ index: 2, field: "items.description", message_es: "Escribe la descripción de la línea 3." }]);
+  });
+
+  it("checks the quantity: present, a number, above zero, at most 100.000, six decimals", () => {
+    const at = (quantity: string) => draftProblems(updateItem(draftFixture(), 0, { quantity }))[0]?.message_es;
+    expect(at("")).toMatch(/cantidad/i);
+    expect(at("1,5")).toMatch(/número/);
+    expect(at("0")).toBe("La cantidad debe ser mayor que cero.");
+    expect(at("100001")).toMatch(/100\.000/);
+    expect(at("1.1234567")).toBe("Máximo 6 decimales.");
+    expect(at("1.5000000")).toBeUndefined(); // trailing zeros do not count, as on the API
+    expect(at("2.5")).toBeUndefined();
+  });
+
+  it("checks cost, margin and typed price the way the API does", () => {
+    expect(fields(updateItem(draftFixture(), 0, { unit_cost: "10" }))).toEqual([["items.unit_cost", 0]]);
+    expect(fields(updateItem(draftFixture(), 0, { unit_cost: "-1", cost_currency: "EUR" }))).toEqual([["items.unit_cost", 0]]);
+    expect(fields(updateItem(draftFixture(), 0, { margin_mode: "none", typed_unit_price: null }))).toEqual([["items.typed_unit_price", 0]]);
+    expect(fields(updateItem(draftFixture(), 0, { margin_mode: "margin", margin_pct: "1" }))).toEqual([["items.margin_pct", 0]]);
+    expect(fields(updateItem(draftFixture(), 0, { margin_pct: "11" }))).toEqual([["items.margin_pct", 0]]);
+    expect(fields(updateItem(draftFixture(), 0, { margin_mode: "none", typed_unit_price: "1000.5" }))).toEqual([]);
+  });
+
+  it("asks for an expense's name and a valid amount", () => {
+    const d = { ...draftFixture(), manual_expenses: [{ label: " ", amount: "10", currency: "CLP" as const }, { label: "Flete", amount: "x", currency: "USD" as const }] };
+    expect(draftProblems(d)).toEqual([
+      { index: 0, field: "manual_expenses.label", message_es: "Escribe el nombre del gasto." },
+      expect.objectContaining({ index: 1, field: "manual_expenses.amount" }),
+    ]);
+  });
+
+  it("asks why the exchange rate changes, and for a rate above zero with at most 8 decimals", () => {
+    expect(draftProblems(setFxOverride(draftFixture(), "EUR", "1000", "ab"))).toEqual([
+      { index: 0, field: "fx_overrides.reason", message_es: "Indica por qué cambias el tipo de cambio (mínimo 3 letras)." },
+    ]);
+    expect(fields(setFxOverride(draftFixture(), "EUR", "0", "tasa del día"))).toEqual([["fx_overrides.clp_per_unit", 0]]);
+    expect(fields(setFxOverride(draftFixture(), "EUR", "1000.123456789", "tasa del día"))).toEqual([["fx_overrides.clp_per_unit", 0]]);
+    expect(fields(setFxOverride(draftFixture(), "EUR", "1000.12345678", "tasa del día"))).toEqual([]);
+  });
+
+  it("checks validity days, extra terms and the typed recipient address", () => {
+    expect(fields(setTerm(draftFixture(), "validity_days", 0))).toEqual([["terms.validity_days", null]]);
+    expect(fields(setTerm(draftFixture(), "validity_days", 400))).toEqual([["terms.validity_days", null]]);
+    const extra = { ...draftFixture(), terms: { terms_extra: [{ label_es: "", text_es: "algo" }, { label_es: "Otra", text_es: " " }] } };
+    expect(fields(extra)).toEqual([["terms_extra.label_es", 0], ["terms_extra.text_es", 1]]);
+    expect(fields(setRecipient(draftFixture(), { email: "no-es-correo" }))).toEqual([["recipient.email", null]]);
+    expect(fields(setRecipient(draftFixture(), { email: "persona@example.com" }))).toEqual([]);
   });
 });

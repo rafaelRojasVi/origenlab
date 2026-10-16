@@ -205,6 +205,23 @@ describe("refusals", () => {
     expect(err.code).toBe("labdelivery_refused");
   });
 
+  it("keeps the API's validation errors of a 422 for the page to show", async () => {
+    const errors = [{ loc: ["body", "draft", "items", "1", "description"], msg: "String should have at least 1 character", type: "string_too_short" }];
+    stub(() => json({ error: { code: "validation_error", message: "Request validation failed", details: { validation_errors: errors } } }, 422));
+    const err = await saveQuoteDraft(REVISION_ID, 1, DRAFT, "k").catch((e) => e);
+    expect(err).toBeInstanceOf(QuoteRefusal);
+    expect(err.code).toBe("validation_error");
+    expect(err.details).toEqual({ validation_errors: errors });
+    expect(err.validationErrors).toEqual(errors);
+  });
+
+  it("has no validation errors when the refusal carries none", async () => {
+    stub(() => json({ detail: { code: "stale_version", message: "x" } }, 409));
+    const err = await saveQuoteDraft(REVISION_ID, 1, DRAFT, "k").catch((e) => e);
+    expect(err.details).toBeNull();
+    expect(err.validationErrors).toEqual([]);
+  });
+
   it("keeps a null code for a body that is not an envelope", async () => {
     stub(() => new Response("upstream down", { status: 502 }));
     const err = await fetchQuoteNumbering().catch((e) => e);

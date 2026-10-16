@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { updateItem } from "./draftEditor";
+import { addFreeLine, updateItem } from "./draftEditor";
 import { QuoteRefusal, type Computed, type QuoteDraft, type QuoteWorkspace } from "./quoteApi";
 import { computedFixture, workspaceFixture } from "./quoteFixtures";
 import { PREVIEW_DELAY_MS, SAVE_DELAY_MS, useQuoteDraft, type QuoteDraftApi } from "./useQuoteDraft";
@@ -56,6 +56,12 @@ function fakeApi() {
 
 const saved = (version: number, net = "1"): SaveResult => ({ revision_id: "r-1", version, computed: computedFixture(net) });
 
+function fireBeforeUnload(): boolean {
+  const e = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(e);
+  return e.defaultPrevented;
+}
+
 /** Lets promise chains settle inside act (the timers are fake; promises are not). */
 async function settle() {
   await act(async () => {
@@ -72,8 +78,9 @@ async function advance(ms: number) {
 function setup(workspace: QuoteWorkspace = workspaceFixture()) {
   const fake = fakeApi();
   const hook = renderHook(({ ws }) => useQuoteDraft(ws, { api: fake.api }), { initialProps: { ws: workspace } });
-  const typeQty = (qty: string) => act(() => hook.result.current.edit((d) => updateItem(d, 0, { quantity: qty })));
-  return { ...fake, hook, typeQty };
+  const edit = (fn: (d: QuoteDraft) => QuoteDraft) => act(() => hook.result.current.edit(fn));
+  const typeQty = (qty: string) => edit((d) => updateItem(d, 0, { quantity: qty }));
+  return { ...fake, hook, edit, typeQty };
 }
 
 beforeEach(() => {
@@ -234,16 +241,21 @@ describe("useQuoteDraft — autosave", () => {
 });
 
 describe("useQuoteDraft — conflicts", () => {
-  it("a 409 stale_version stops autosave; reload discards local edits and resumes (B3)", async () => {
-    const { hook, saves, reloads, typeQty } = setup();
+  it("a 409 stale_version freezes the editor; reload discards local edits and resumes (B3)", async () => {
+    const { hook, saves, previews, reloads, typeQty } = setup();
     typeQty("2");
     await advance(SAVE_DELAY_MS);
     await act(async () => saves[0].d.reject(new QuoteRefusal(409, "stale_version", "the draft was modified since you loaded it")));
     await settle();
     expect(hook.result.current.state.saveState).toBe("conflict");
 
+    // Frozen: no edit, no preview, no save until the operator reloads.
+    expect(hook.result.current.editable).toBe(false);
+    const previewsBefore = previews.length;
     typeQty("9");
     await advance(SAVE_DELAY_MS * 3);
+    expect(hook.result.current.state.draft.items[0].quantity).toBe("2");
+    expect(previews).toHaveLength(previewsBefore);
     let flushed: unknown;
     await act(async () => {
       flushed = await hook.result.current.flush();
@@ -258,6 +270,7 @@ describe("useQuoteDraft — conflicts", () => {
     await settle();
     expect(hook.result.current.state).toMatchObject({ saveState: "idle", version: 8 });
     expect(hook.result.current.state.draft.items[0].quantity).toBe("1");
+    expect(hook.result.current.editable).toBe(true);
 
     typeQty("5");
     await advance(SAVE_DELAY_MS);
@@ -330,21 +343,39 @@ describe("useQuoteDraft — leaving the page (Review Focus 5)", () => {
     expect(saves[0].args[2].items[0].quantity).toBe("2");
   });
 
-  it("warns on beforeunload only while dirty or saving", async () => {
-    const { saves, typeQty } = setup();
-    const fire = () => {
-      const e = new Event("beforeunload", { cancelable: true });
-      window.dispatchEvent(e);
-      return e.defaultPrevented;
-    };
-    expect(fire()).toBe(false);
+  it("warns on beforeunload while dirty", async () => {
+    const { typeQty } = setup();
+    expect(fireBeforeUnload()).toBe(false);
     typeQty("2");
-    expect(fire()).toBe(true);
+    expect(fireBeforeUnload()).toBe(true);
+  });
+
+  it("warns on beforeunload while the timer's save is in flight, and not once it is saved", async () => {
+    const { hook, saves, typeQty } = setup();
+    typeQty("2");
     await advance(SAVE_DELAY_MS);
-    expect(fire()).toBe(true); // saving
-    await act(async () => saves[saves.length - 1].d.resolve(saved(4)));
+    expect(saves).toHaveLength(1); // started by the autosave timer, before any beforeunload
+    expect(hook.result.current.state.saveState).toBe("saving");
+    expect(fireBeforeUnload()).toBe(true);
+    await act(async () => saves[0].d.resolve(saved(4)));
     await settle();
-    expect(fire()).toBe(false);
+    expect(saves).toHaveLength(1);
+    expect(fireBeforeUnload()).toBe(false);
+  });
+
+  it("an unmount during a save with a queued follow-up still sends the follow-up", async () => {
+    const { hook, saves, typeQty } = setup();
+    typeQty("2");
+    await advance(SAVE_DELAY_MS);
+    typeQty("3");
+    hook.unmount();
+    await settle();
+    expect(saves).toHaveLength(1);
+    await act(async () => saves[0].d.resolve(saved(4)));
+    await settle();
+    expect(saves).toHaveLength(2);
+    expect(saves[1].args[1]).toBe(4);
+    expect(saves[1].args[2].items[0].quantity).toBe("3");
   });
 });
 
@@ -357,5 +388,144 @@ describe("useQuoteDraft — read-only revisions", () => {
     expect(saves).toHaveLength(0);
     expect(previews).toHaveLength(0);
     expect(hook.result.current.state.saveState).toBe("idle");
+  });
+});
+
+describe("useQuoteDraft — incomplete drafts", () => {
+  it("does not preview or save a draft the API would refuse, and says why in Spanish", async () => {
+    const { hook, saves, previews, edit } = setup();
+    edit(addFreeLine);
+    await advance(SAVE_DELAY_MS * 2);
+    expect(previews).toHaveLength(0);
+    expect(saves).toHaveLength(0);
+    expect(hook.result.current.state.saveState).toBe("dirty");
+    expect(hook.result.current.invalid).toEqual([
+      { index: 2, field: "items.description", message_es: "Escribe la descripción de la línea 3." },
+    ]);
+    expect(hook.result.current.pending).toBe(true);
+    expect(fireBeforeUnload()).toBe(true);
+
+    let flushed: unknown;
+    await act(async () => {
+      flushed = await hook.result.current.flush();
+    });
+    expect(flushed).toEqual({ ok: false, version: 3 });
+    expect(saves).toHaveLength(0);
+
+    edit((d) => updateItem(d, 2, { description: "Instalación" }));
+    expect(hook.result.current.invalid).toEqual([]);
+    await advance(SAVE_DELAY_MS);
+    expect(previews).toHaveLength(1);
+    expect(saves).toHaveLength(1);
+    expect(saves[0].args[2].items[2].description).toBe("Instalación");
+  });
+
+  it("approve refuses an incomplete draft with the first problem, without calling the API", async () => {
+    const { hook, saves, approvals, edit } = setup();
+    edit((d) => updateItem(d, 0, { quantity: "" }));
+    let error: unknown;
+    await act(async () => {
+      await hook.result.current.approve().catch((e) => (error = e));
+    });
+    expect(saves).toHaveLength(0);
+    expect(approvals).toHaveLength(0);
+    expect((error as Error).message).toMatch(/cantidad/i);
+  });
+
+  it("an unmount with an incomplete draft sends nothing", async () => {
+    const { hook, saves, edit } = setup();
+    edit(addFreeLine);
+    hook.unmount();
+    await settle();
+    expect(saves).toHaveLength(0);
+  });
+});
+
+describe("useQuoteDraft — older prices never win", () => {
+  it("a preview of an older draft answering after a flushed save keeps the save's prices", async () => {
+    const { hook, saves, previews, typeQty } = setup();
+    typeQty("2");
+    await advance(PREVIEW_DELAY_MS);
+    expect(previews).toHaveLength(1); // prices quantity 2, still in flight
+    typeQty("3");
+    act(() => void hook.result.current.flush());
+    await settle();
+    expect(saves[0].args[2].items[0].quantity).toBe("3");
+    await act(async () => saves[0].d.resolve(saved(4, "333")));
+    await settle();
+    await act(async () => previews[0].d.resolve({ computed: computedFixture("222") }));
+    await settle();
+    expect(hook.result.current.state.computed?.totals.net).toBe("333");
+    expect(hook.result.current.state.saveState).toBe("saved");
+  });
+});
+
+describe("useQuoteDraft — a new workspace from the page", () => {
+  it("does not reset unsaved edits for the same revision at a version we already have", async () => {
+    const { hook, saves, typeQty } = setup();
+    typeQty("2");
+    hook.rerender({ ws: workspaceFixture({ version: 3 }) });
+    expect(hook.result.current.state.draft.items[0].quantity).toBe("2");
+    await advance(SAVE_DELAY_MS);
+    await act(async () => saves[0].d.resolve(saved(4)));
+    await settle();
+    hook.rerender({ ws: workspaceFixture({ version: 3 }) }); // older than what we saved
+    expect(hook.result.current.state).toMatchObject({ version: 4, saveState: "saved" });
+    expect(hook.result.current.state.draft.items[0].quantity).toBe("2");
+  });
+
+  it("resets to a newer workspace when nothing is pending", async () => {
+    const { hook } = setup();
+    hook.rerender({ ws: workspaceFixture({ status: "approved", version: 5 }) });
+    expect(hook.result.current.state.version).toBe(5);
+    expect(hook.result.current.editable).toBe(false);
+  });
+});
+
+describe("useQuoteDraft — retry and reload", () => {
+  it("retry() sends the failed save again with the same key", async () => {
+    const { hook, saves, typeQty } = setup();
+    let idle: unknown;
+    await act(async () => {
+      idle = await hook.result.current.retry();
+    });
+    expect(idle).toEqual({ ok: true, version: 3 });
+    expect(saves).toHaveLength(0);
+
+    typeQty("2");
+    await advance(SAVE_DELAY_MS);
+    await act(async () => saves[0].d.reject(new QuoteRefusal(503, "backend_unavailable", "no disponible")));
+    await settle();
+    expect(hook.result.current.state.saveState).toBe("error");
+    let result: unknown;
+    act(() => {
+      void hook.result.current.retry().then((r) => (result = r));
+    });
+    await settle();
+    expect(saves).toHaveLength(2);
+    expect(saves[1].args[3]).toBe(saves[0].args[3]);
+    await act(async () => saves[1].d.resolve(saved(4)));
+    await settle();
+    expect(result).toEqual({ ok: true, version: 4 });
+    expect(hook.result.current.state.saveState).toBe("saved");
+  });
+
+  it("reload() while a save is in flight ignores that save's late answer", async () => {
+    const { hook, saves, reloads, typeQty } = setup();
+    typeQty("2");
+    await advance(SAVE_DELAY_MS);
+    act(() => void hook.result.current.reload());
+    await settle();
+    await act(async () => reloads[0].resolve(workspaceFixture({ version: 8 })));
+    await settle();
+    await act(async () => saves[0].d.resolve(saved(4, "444")));
+    await settle();
+    expect(hook.result.current.state).toMatchObject({ version: 8, saveState: "idle" });
+    expect(hook.result.current.state.computed?.totals.net).toBe("100000");
+
+    typeQty("5");
+    await advance(SAVE_DELAY_MS);
+    expect(saves).toHaveLength(2);
+    expect(saves[1].args[1]).toBe(8);
   });
 });
