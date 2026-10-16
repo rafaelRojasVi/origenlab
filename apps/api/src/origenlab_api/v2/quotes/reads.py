@@ -24,7 +24,9 @@ therefore warms today's rate before the operator saves; the commands, on a miss,
 (`inputs.no_provider`).
 
 **Workspace** (`GET /v2/quotes/{id}`): the quote, its case (institution and RUT, the current
-participants, «Lo que pidió» from the case memory), every revision with its printed label, and the
+participants, `contacts` — whom the quote can go to: the participants, then the people on the
+case's emails and forwarded requests, never OrigenLab's own addresses nor anything of Labdelivery
+(`recipient_candidates`) —, «Lo que pidió» from the case memory), every revision with its printed label, and the
 current one — a draft comes back as the `QuoteDraft` it was saved from plus its live computation
 (today's rates and parameters), what was saved (`saved`: the stored totals and each item line's
 stored prices — what approval freezes, since it prices the saved lines as they are) and
@@ -38,6 +40,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from email.utils import getaddresses
 from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -58,6 +61,7 @@ from origenlab_api.v2.quotes.inputs import (
     resolve_draft,
     result_json,
 )
+from origenlab_api.v2.mail_rules import mail_direction
 from origenlab_api.v2.quotes.numbering import SANTIAGO, numbering_status, revision_label
 
 #: R-A5: a model is suggested beside the principal when it is on at least this share of the past
@@ -66,6 +70,9 @@ KIT_MIN_SHARE = Decimal("0.30")
 KIT_MIN_DOCUMENTS = 3
 KIT_LIMIT = 6
 MENTION_LIMIT = 12
+CONTACT_LIMIT = 20
+#: Never offered as a quote's recipient (`commands.NOT_A_RECIPIENT_DOMAINS`): OrigenLab, Labdelivery.
+_NOT_A_RECIPIENT_DOMAINS = frozenset({"origenlab.cl", "labdelivery.cl"})
 PRICE_HISTORY_LIMIT = 20
 
 # The documents that quote the principal, then every other model on them with the share of those
@@ -128,21 +135,76 @@ select l.*, p.model_key as product_model_key
  order by l.line_no
 """
 
-# The case's current participants: the person's name and the participant's own email address,
-# else the person's (an active one first) — the same address approval prints.
+# The case's current participants: the participant's own email address, else the person's (an
+# active one first) — the same address approval prints — and the same name (`commands._RECIPIENT_SQL`).
 _PARTICIPANTS_SQL = """
-select p.id::text as id, coalesce(pe.display_name, cp.value_display) as name, cp.value_norm as email,
-       p.is_primary as primary, p.role
+select p.id::text as id, p.person_id::text as person_id, coalesce(p.contact_point_id, cp.id)::text as contact_point_id,
+       coalesce(pe.display_name, cpe.display_name, case when p.person_id is null then p.note end,
+                cp.value_display) as name,
+       cp.value_norm as email, p.is_primary as primary, p.role
   from crm.opportunity_participant p
   left join crm.person pe on pe.id = p.person_id
   left join lateral (
-    select c.value_norm, c.value_display from crm.contact_point c
+    select c.id, c.value_norm, c.value_display, c.person_id from crm.contact_point c
      where c.kind = 'email'
        and (c.id = p.contact_point_id or (p.contact_point_id is null and c.person_id = p.person_id))
      order by (c.status = 'active') desc, c.created_at, c.id
      limit 1) cp on true
+  left join crm.person cpe on cpe.id = cp.person_id
  where p.opportunity_id = %s::uuid and p.valid_to is null
  order by p.is_primary desc, (p.role = 'quote_recipient') desc, p.valid_from, p.created_at, p.id
+"""
+
+# The people on the case's emails, for «¿A quién va dirigida?»: every live captured email linked to
+# the case, of a quote revision recorded from one, or on the thread of either (the threads the
+# pipeline's contact reads, crm_workspace._SQL_PIPELINE_CONTACT), with who sent it and to whom, and
+# the customer of each forwarded request the case came from or holds (mail_rules_repository
+# ._FORWARD_PEOPLE_SQL). Python decides the direction and parses the headers (`recipient_candidates`).
+_CASE_PEOPLE_SQL = """
+with linked as (
+    select oe.source_record_id as id from crm.opportunity_evidence oe
+     where oe.opportunity_id = %(case)s::uuid and oe.unlinked_at is null and oe.source_record_id is not null
+    union
+    select qr.origin_source_record_id from crm.quote_revision qr join crm.quote q on q.id = qr.quote_id
+     where q.opportunity_id = %(case)s::uuid and qr.origin_source_record_id is not null
+), threads as (
+    select distinct sr.payload->>'gmail_thread_id' as thread_id
+      from linked l join evidence.source_record sr on sr.id = l.id
+     where sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' is not null
+), emails as (
+    select l.id from linked l
+    union
+    select sr.id from evidence.source_record sr join threads t on sr.payload->>'gmail_thread_id' = t.thread_id
+     where sr.kind = 'gmail_message'
+)
+select 'email' as kind, sr.payload->>'sender' as sender, sr.payload->>'recipients' as recipients,
+       sr.payload->>'direction_hint' as direction_hint,
+       (select cm.direction from comms.message cm
+         where cm.provider_message_id = sr.payload->>'gmail_message_id'
+         order by cm.created_at limit 1) as comms_direction,
+       null as name, null as origin, coalesce(sr.payload->>'sent_at', sr.acquired_at::text) as at
+  from emails e join evidence.source_record sr on sr.id = e.id
+ where sr.kind = 'gmail_message' and not sr.is_quarantined and sr.review_status <> 'rejected'
+union all
+select 'forwarded_request', null, f.payload->>'original_email', null, null, f.payload->>'original_name',
+       f.payload->>'origin', coalesce(f.payload->>'sent_at', f.acquired_at::text)
+  from evidence.source_record f
+  join crm.opportunity o on o.id = %(case)s::uuid
+ where f.kind = 'forwarded_request' and f.review_status = 'promoted' and not f.is_quarantined
+   and (o.origin_source_record_id = f.id
+        or exists (select 1 from crm.opportunity_evidence oe
+                    where oe.opportunity_id = o.id and oe.unlinked_at is null
+                      and (oe.source_record_id = f.id
+                           or oe.source_record_id::text = f.payload->>'forwarded_message_id')))
+"""
+
+# What the CRM already holds for those addresses: the contact point and the person it belongs to.
+_KNOWN_ADDRESSES_SQL = """
+select c.value_norm as email, c.id::text as contact_point_id, c.person_id::text as person_id,
+       pe.display_name as name
+  from crm.contact_point c
+  left join crm.person pe on pe.id = c.person_id
+ where c.kind = 'email' and c.status = 'active' and c.value_norm = any(%s)
 """
 
 _MEMORY_SQL = """
@@ -270,6 +332,83 @@ def _santiago_today(now: datetime) -> dt.date:
     return now.astimezone(SANTIAGO).date()
 
 
+def _offerable(email: str | None, name: str | None) -> bool:
+    """An address a quote may go to: well formed, not OrigenLab's, nothing of Labdelivery."""
+    if not email or "@" not in email:
+        return False
+    return (email.rpartition("@")[2] not in _NOT_A_RECIPIENT_DOMAINS
+            and not is_labdelivery(email) and not is_labdelivery(name))
+
+
+def _header_pairs(raw: str | None) -> list[tuple[str | None, str]]:
+    """(display name, lower-cased address) for each address in a header; a name that is an address is no name."""
+    out = []
+    for name, address in getaddresses([(raw or "").replace(";", ",")]):
+        address = address.strip().lower()
+        if "@" not in address:
+            continue
+        name = name.strip().strip('"').strip()
+        out.append((name if name and "@" not in name else None, address))
+    return out
+
+
+def email_people(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The addresses on a case's emails, newest first, once each: who wrote to OrigenLab (an
+    inbound email's sender), whom OrigenLab wrote to (an outbound email's recipients), and the
+    customer of a forwarded request (not one forwarded from the Labdelivery mailbox). Pure."""
+    seen: dict[str, dict[str, Any]] = {}
+    for r in sorted(rows, key=lambda r: str(r.get("at") or ""), reverse=True):
+        if r["kind"] == "forwarded_request":
+            if r.get("origin") == "labdelivery":
+                continue
+            pairs, source = [(r.get("name") or None, str(r.get("recipients") or "").strip().lower())], "forwarded_request"
+        elif mail_direction(r.get("sender"), r.get("direction_hint"), r.get("comms_direction")) == "inbound":
+            pairs, source = _header_pairs(r.get("sender")), "email_from"
+        else:
+            pairs, source = _header_pairs(r.get("recipients")), "email_to"
+        for name, address in pairs:
+            if not _offerable(address, name):
+                continue
+            if address in seen:
+                seen[address]["name"] = seen[address]["name"] or name
+                continue
+            seen[address] = {"email": address, "name": name, "source": source}
+    return list(seen.values())
+
+
+def recipient_candidates(participants: list[dict[str, Any]], people: list[dict[str, Any]],
+                         known: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Whom the quote can go to: the case's current participants first, then the people on its
+    emails (`email_people`) not already among them — each with the contact point and person the
+    CRM holds for its address, if any. Pure."""
+    by_address = {k["email"]: k for k in known}
+    out: list[dict[str, Any]] = []
+    taken_addresses: set[str] = set()
+    taken_people: set[str] = set()
+    for p in participants:
+        if p["email"] is not None and not _offerable(p["email"], p["name"]):
+            continue
+        if p["email"] is None and is_labdelivery(p["name"]):
+            continue
+        out.append({"participant_id": p["id"], "person_id": p["person_id"], "contact_point_id": p["contact_point_id"],
+                    "name": p["name"], "email": p["email"], "source": "participant"})
+        if p["email"]:
+            taken_addresses.add(p["email"])
+        if p["person_id"]:
+            taken_people.add(p["person_id"])
+    for person in people:
+        crm = by_address.get(person["email"]) or {}
+        if person["email"] in taken_addresses or (crm.get("person_id") and crm["person_id"] in taken_people):
+            continue
+        out.append({"participant_id": None, "person_id": crm.get("person_id"),
+                    "contact_point_id": crm.get("contact_point_id"), "name": crm.get("name") or person["name"],
+                    "email": person["email"], "source": person["source"]})
+        taken_addresses.add(person["email"])
+        if len(out) >= CONTACT_LIMIT:
+            break
+    return out
+
+
 class V2QuoteReads:
     def __init__(self, connect: Any, dsn: str, *, fx_resolver: FxResolver, statement_timeout_ms: int = 30_000,
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
@@ -393,8 +532,10 @@ class V2QuoteReads:
         """Everything the Cotizador page opens with, or None when the quote does not exist.
 
         Round trips after the set-up, all on this one connection: the quote with its case; one
-        pipeline (revisions, current lines, participants, memory, mentions, parameters); for a
-        draft, `resolve_draft`'s four statements; then one pipeline for the principal's history and kits.
+        pipeline (revisions, current lines, participants, the people on the case's emails, memory,
+        mentions, parameters); when its emails name anyone, what the CRM holds for those addresses;
+        for a draft, `resolve_draft`'s four statements; then one pipeline for the principal's
+        history and kits. Addresses are shown in full: only sales and admin reach this read.
         """
         return self._fx_bounded(lambda fx: self._workspace_once(quote_id, fx))
 
@@ -411,10 +552,16 @@ class V2QuoteReads:
                 "revisions": (_REVISIONS_SQL, (qid,)),
                 "lines": (_LINES_SQL, (qid,)),
                 "participants": (_PARTICIPANTS_SQL, (case_id,)),
+                "people": (_CASE_PEOPLE_SQL, {"case": case_id}),
                 "memory": (_MEMORY_SQL, (case_id,)),
                 "mentions": (_MENTIONS_SQL, (case_id,)),
                 "params": (PARAMETERS_SQL, ()),
             })
+            people = email_people(rows["people"])
+            known: list[dict[str, Any]] = []
+            if people:
+                cur.execute(_KNOWN_ADDRESSES_SQL, ([p["email"] for p in people],))
+                known = self._rows(cur)
             revisions = rows["revisions"]
             current_row = self._current(revisions)
             lines = rows["lines"]
@@ -440,6 +587,7 @@ class V2QuoteReads:
                                 if quote["institution_id"] else None),
                 "participants": [{k: p[k] for k in ("id", "name", "email", "primary", "role")}
                                  for p in rows["participants"]],
+                "contacts": recipient_candidates(rows["participants"], people, known),
                 "lo_que_pidio": memory,
             },
             "revisions": [{"id": r["id"], "revision_no": r["revision_no"],

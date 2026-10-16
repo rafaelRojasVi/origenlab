@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from origenlab_api.quoting.engine import compute, peso
 from origenlab_api.v2.catalog.fx import FxUnavailable
@@ -73,8 +74,9 @@ def _org(dsn: str, kind: str, name: str) -> str:
                        "returning id::text", (kind, f"{name} {uuid.uuid4().hex[:6]}"))[0][0]
 
 
-def _case(dsn: str, operator: OperatorIdentity, institution: str, *, closed: bool = False) -> str:
-    """A case (a lead) with its requesting institution, and one primary participant."""
+def _case(dsn: str, operator: OperatorIdentity, institution: str, *, closed: bool = False,
+          participant: bool = True) -> str:
+    """A case (a lead) with its requesting institution, and one primary participant (unless not)."""
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("set role origenlab_owner")
         cur.execute("insert into crm.opportunity (title, stage, owner_operator_id, organization_id) "
@@ -86,12 +88,13 @@ def _case(dsn: str, operator: OperatorIdentity, institution: str, *, closed: boo
         cur.execute("insert into crm.opportunity_organization (opportunity_id, organization_id, role, valid_from, "
                     "confirmation, confirmed_by_operator_id) values (%s, %s, 'requesting_institution', "
                     "current_date, 'confirmed', %s)", (case_id, institution, operator.operator_id))
-        cur.execute("insert into crm.person (display_name, confirmation) values ('Persona Ficticia', "
-                    "'machine_proposed') returning id")
-        person = cur.fetchone()[0]
-        cur.execute("insert into crm.opportunity_participant (opportunity_id, person_id, role, is_primary, "
-                    "valid_from, confirmation) values (%s, %s, 'quote_recipient', true, current_date, "
-                    "'machine_proposed')", (case_id, person))
+        if participant:
+            cur.execute("insert into crm.person (display_name, confirmation) values ('Persona Ficticia', "
+                        "'machine_proposed') returning id")
+            person = cur.fetchone()[0]
+            cur.execute("insert into crm.opportunity_participant (opportunity_id, person_id, role, is_primary, "
+                        "valid_from, confirmation) values (%s, %s, 'quote_recipient', true, current_date, "
+                        "'machine_proposed')", (case_id, person))
         conn.commit()
     return case_id
 
@@ -1151,3 +1154,195 @@ def test_draft_from_rows_under_the_manual_principal_rule(world) -> None:
     assert [i.is_principal for i in rebuilt.items] == [False, True]
     assert [r["is_principal"] for r in rows if r["line_kind"] == "item"] == [False, True]
     assert {r["allocated_to_line_no"] for r in rows if r["line_kind"] == "logistics"} == {2}
+
+
+# ------------------------------------------------------------------ the recipient, picked from the case's emails
+
+def case_email(dsn: str, case: str, operator: OperatorIdentity, *, sender: str, recipients: str = "",
+               thread: str | None = None, linked: bool = True, outbound: bool = False) -> str:
+    """A captured Gmail message (invented headers), linked to the case unless not."""
+    gid = uuid.uuid4().hex
+    payload = {"gmail_message_id": gid, "gmail_thread_id": thread or gid, "sender": sender,
+               "recipients": recipients, "sent_at": datetime.now(UTC).isoformat()}
+    if outbound:
+        payload["direction_hint"] = "sent"
+    sid = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload) values ('gmail_message', %s, %s) "
+                      "returning id::text", (f"gmail_message:{gid}", Jsonb(payload)))[0][0]
+    if linked:
+        _owner(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
+                    "linked_by_operator_id) values (%s, %s, 'mentions', %s)", (case, sid, operator.operator_id))
+    return sid
+
+
+def _address(tag: str) -> str:
+    return f"{tag}-{uuid.uuid4().hex[:8]}@cliente-ficticio.test"
+
+
+def _unattributed(dsn: str, address: str) -> str:
+    return _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) "
+                       "values ('email', %s, %s, 'unattributed', 'machine_proposed') returning id::text",
+                  (address, address))[0][0]
+
+
+def _participants(dsn: str, case: str) -> list[dict]:
+    return _rows(dsn, "select id::text as id, person_id::text as person_id, contact_point_id::text as contact_point_id, "
+                      "role, is_primary, valid_from, valid_to, confirmation, "
+                      "confirmed_by_operator_id::text as confirmed_by, note "
+                      "from crm.opportunity_participant where opportunity_id = %s order by created_at", (case,))
+
+
+def _bare_quote(world: dict) -> tuple[str, dict]:
+    """A quote on a case with no participant at all — as every case the hosted CRM holds today."""
+    case = _case(world["dsn"], world["operator"], world["institution"], participant=False)
+    created = _run(world, "create-quote", {"opportunity_id": case})
+    assert _revision(world["dsn"], created["revision_id"])["recipient_participant_id"] is None
+    return case, created
+
+
+def _approvable_draft(world: dict, recipient: dict) -> dict:
+    return {"items": [_catalog_item(world)], "terms": {"warranty_terms_es": WARRANTY}, "recipient": recipient}
+
+
+@needs_db
+def test_a_case_without_participants_cannot_be_approved_until_a_recipient_is_picked(world) -> None:
+    _, created = _bare_quote(world)
+    saved = _save(world, created, {"items": [_catalog_item(world)], "terms": {"warranty_terms_es": WARRANTY}})
+    assert saved["recipient_participant_id"] is None
+    refused = _approve_refused(world, created["revision_id"], saved["version"])
+    assert (refused.status_code, refused.code) == (409, "no_recipient")
+
+
+@needs_db
+def test_picking_a_contact_point_makes_it_the_case_s_quote_recipient(world) -> None:
+    dsn, operator = world["dsn"], world["operator"]
+    case, created = _bare_quote(world)
+    address = _address("compras")
+    point = _unattributed(dsn, address)
+    case_email(dsn, case, operator, sender=f"Compras Ficticias <{address}>")
+
+    saved = _save(world, created, _approvable_draft(world, {"contact_point_id": point}))
+    [participant] = _participants(dsn, case)
+    assert saved["recipient_participant_id"] == participant["id"]
+    assert {k: participant[k] for k in ("person_id", "contact_point_id", "role", "is_primary", "valid_from",
+                                        "valid_to", "confirmation", "confirmed_by", "note")} == {
+        "person_id": None, "contact_point_id": point, "role": "quote_recipient", "is_primary": True,
+        "valid_from": TODAY, "valid_to": None, "confirmation": "confirmed", "confirmed_by": operator.operator_id,
+        "note": None}
+    assert str(_revision(dsn, created["revision_id"])["recipient_participant_id"]) == participant["id"]
+    assert _events(dsn, "opportunity_participant", participant["id"]) == [("participant.added", {
+        "opportunity_id": case, "role": "quote_recipient", "person_id": None, "contact_point_id": point,
+        "is_primary": True, "quote_revision_id": created["revision_id"]})]
+
+    # Saving again with the same pick reuses the participant: nothing new is written for it.
+    again = _save(world, created, _approvable_draft(world, {"contact_point_id": point}), version=saved["version"])
+    assert again["recipient_participant_id"] == participant["id"] and len(_participants(dsn, case)) == 1
+    assert len(_events(dsn, "opportunity_participant", participant["id"])) == 1
+
+    out = _approve(world, created["revision_id"], again["version"])
+    assert out["ok"] is True
+    # An address nobody owns is printed by the address itself.
+    assert _revision(dsn, created["revision_id"])["party_snapshot"]["recipient"] == {
+        "participant_id": participant["id"], "name": address, "email": address}
+
+
+@needs_db
+def test_picking_an_address_the_crm_lacks_creates_its_contact_point(world) -> None:
+    dsn, operator = world["dsn"], world["operator"]
+    case, created = _bare_quote(world)
+    address = _address("laboratorio")
+    case_email(dsn, case, operator, sender=f"Persona Ficticia <{address}>")
+    raw = {"revision_id": created["revision_id"], "expected_version": created["version"],
+           "draft": _approvable_draft(world, {"email": address.upper(), "name": "Persona Ficticia"})}
+    key = uuid.uuid4().hex
+
+    first = _run(world, "save-quote-draft", raw, key=key)
+    [point] = _rows(dsn, "select id::text as id, person_id, organization_id, usage, confirmation, value_display "
+                         "from crm.contact_point where value_norm = %s", (address,))
+    assert (point["person_id"], point["organization_id"], point["usage"], point["confirmation"],
+            point["value_display"]) == (None, None, "unattributed", "confirmed", address)
+    assert _events(dsn, "contact_point", point["id"]) == [
+        ("contact_point.created", {"kind": "email", "contact_point_id": point["id"], "usage": "unattributed"})]
+    [participant] = _participants(dsn, case)
+    assert (participant["contact_point_id"], participant["note"], first["recipient_participant_id"]) == (
+        point["id"], "Persona Ficticia", participant["id"])
+
+    # The idempotent replay writes nothing twice.
+    again = _run(world, "save-quote-draft", raw, key=key)
+    assert again["replayed"] is True and again["recipient_participant_id"] == participant["id"]
+    assert _owner(dsn, "select count(*) from crm.contact_point where value_norm = %s", (address,)) == [(1,)]
+    assert len(_participants(dsn, case)) == 1
+    assert len(_events(dsn, "opportunity_participant", participant["id"])) == 1
+
+    # Another quote on the case picking the same address reuses both.
+    other = _run(world, "create-quote", {"opportunity_id": case})
+    assert str(_revision(dsn, other["revision_id"])["recipient_participant_id"]) == participant["id"]
+    _save(world, other, _approvable_draft(world, {"email": address}))
+    assert len(_participants(dsn, case)) == 1
+    assert _owner(dsn, "select count(*) from crm.domain_event where aggregate_kind = 'contact_point' "
+                       "and aggregate_id = %s", (point["id"],)) == [(1,)]
+
+    _approve(world, created["revision_id"], first["version"])
+    assert _revision(dsn, created["revision_id"])["party_snapshot"]["recipient"] == {
+        "participant_id": participant["id"], "name": "Persona Ficticia", "email": address}
+
+
+@needs_db
+def test_picking_a_person_s_address_prints_the_person_s_name(world) -> None:
+    dsn = world["dsn"]
+    case, created = _bare_quote(world)
+    address = _address("persona")
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values ('Doctora Ficticia', "
+                         "'machine_proposed') returning id::text")[0][0]
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                "values ('email', %s, %s, %s, 'personal', 'machine_proposed')", (address, address, person))
+    saved = _save(world, created, _approvable_draft(world, {"email": address, "name": "Otro Nombre"}))
+    [participant] = _participants(dsn, case)
+    assert participant["note"] is None  # the person names the address; the header's name is not kept
+    _approve(world, created["revision_id"], saved["version"])
+    assert _revision(dsn, created["revision_id"])["party_snapshot"]["recipient"] == {
+        "participant_id": participant["id"], "name": "Doctora Ficticia", "email": address}
+
+
+@needs_db
+def test_picking_a_person_reuses_their_current_participant(world) -> None:
+    dsn = world["dsn"]
+    case = _case(dsn, world["operator"], world["institution"])
+    [existing] = _participants(dsn, case)
+    created = _run(world, "create-quote", {"opportunity_id": case})
+    saved = _save(world, created, _approvable_draft(world, {"person_id": existing["person_id"]}))
+    assert saved["recipient_participant_id"] == existing["id"] and len(_participants(dsn, case)) == 1
+    # A person not on the case yet becomes a recipient, not the primary one: the case has one.
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values ('Segunda Persona', "
+                         "'machine_proposed') returning id::text")[0][0]
+    again = _save(world, created, _approvable_draft(world, {"person_id": person}), version=saved["version"])
+    added = next(p for p in _participants(dsn, case) if p["person_id"] == person)
+    assert again["recipient_participant_id"] == added["id"]
+    assert (added["role"], added["is_primary"], added["contact_point_id"]) == ("quote_recipient", False, None)
+
+
+@needs_db
+def test_recipient_refusals(world) -> None:
+    dsn, operator = world["dsn"], world["operator"]
+    case, created = _bare_quote(world)
+
+    def refused(recipient: dict) -> tuple[int, str]:
+        exc = _refused(world, "save-quote-draft", {"revision_id": created["revision_id"],
+                                                   "expected_version": created["version"],
+                                                   "draft": _approvable_draft(world, recipient)})
+        return exc.status_code, exc.code
+
+    assert refused({"contact_point_id": str(uuid.uuid4())}) == (422, "recipient_unknown")
+    assert refused({"person_id": str(uuid.uuid4())}) == (422, "recipient_unknown")
+    assert refused({"email": "ventas@origenlab.cl"}) == (422, "recipient_own_address")
+    assert refused({"email": "persona@labdelivery.cl"}) == (422, "labdelivery_refused")
+    other_case = _case(dsn, operator, world["institution"])
+    [elsewhere] = _participants(dsn, other_case)
+    assert refused({"participant_id": elsewhere["id"]}) == (422, "recipient_not_on_case")
+    inactive = _address("inactiva")
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation, status, "
+                "deactivated_at, deactivated_by_operator_id) values ('email', %s, %s, 'unattributed', "
+                "'machine_proposed', 'inactive', now(), %s)", (inactive, inactive, operator.operator_id))
+    assert refused({"email": inactive}) == (409, "contact_point_inactive")
+    # Nothing was written by any refusal.
+    assert _participants(dsn, case) == []
+    assert _revision(dsn, created["revision_id"])["version"] == created["version"]

@@ -266,6 +266,20 @@ def test_an_extra_field_is_422(command) -> None:
     assert repo.calls == []
 
 
+def test_save_takes_a_recipient_picked_from_the_case_s_emails() -> None:
+    _, repo, client = _client()
+    body = {**COMMAND_BODIES["save-quote-draft"],
+            "draft": {**DRAFT, "recipient": {"email": "Persona@Ejemplo.TEST", "name": "Persona Ficticia"}}}
+    r = client.post("/v2/commands/save-quote-draft", json=body, headers=_ikey())
+    assert r.status_code == 200, r.text
+    assert repo.calls[0]["fields"]["draft"]["recipient"] == {
+        "participant_id": None, "person_id": None, "contact_point_id": None, "email": "persona@ejemplo.test",
+        "name": "Persona Ficticia"}
+    two = {**body, "draft": {**DRAFT, "recipient": {"email": "a@ejemplo.test", "person_id": CASE}}}
+    r = client.post("/v2/commands/save-quote-draft", json=two, headers=_ikey())
+    assert r.status_code == 422 and r.json()["error"]["code"] == "validation_error" and len(repo.calls) == 1
+
+
 @pytest.mark.parametrize(("status", "code", "envelope"), [
     (404, "case_not_found", "not_found"), (409, "stale_version", "conflict"),
     (409, "no_items", "conflict"), (422, "labdelivery_refused", "validation_error"),

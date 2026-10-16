@@ -29,6 +29,7 @@ from test_v2_quote_commands import (
     _param,
     _revision,
     _run,
+    case_email,
     fake_fx,
     no_fx,
 )
@@ -133,6 +134,52 @@ def test_workspace_returns_the_draft_as_saved_and_its_live_computation(world) ->
     # Re-priced live, it equals the save.
     assert current["computed_error"] is None
     assert _numbers(current["computed"]) == _numbers(saved["computed"])
+
+
+@needs_db
+def test_the_recipient_candidates_are_the_people_on_the_case_s_emails(world) -> None:
+    dsn, operator = world["dsn"], world["operator"]
+    case = _case(dsn, operator, world["institution"], participant=False)
+    created = _run(world, "create-quote", {"opportunity_id": case})
+    tag = uuid.uuid4().hex[:6]
+    asker, buyer = f"persona-{tag}@cliente-ficticio.test", f"compras-{tag}@cliente-ficticio.test"
+    thread = uuid.uuid4().hex
+    # Inbound: its sender. Outbound on the same thread (not linked itself): its recipients, not OrigenLab's own.
+    case_email(dsn, case, operator, sender=f'"Persona Ficticia" <{asker}>', recipients="contacto@origenlab.cl",
+               thread=thread)
+    case_email(dsn, case, operator, sender="Ventas <ventas@origenlab.cl>", outbound=True, linked=False,
+               thread=thread, recipients=f"Compras <{buyer}>; {asker}, otra@labdelivery.cl")
+    # Nothing of Labdelivery, and nothing from an email of another case.
+    case_email(dsn, case, operator, sender=f"Lab Delivery <persona-{tag}@labdelivery.cl>")
+    case_email(dsn, case, operator, sender=f"Ajeno <ajeno-{tag}@cliente-ficticio.test>", linked=False)
+    point = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) "
+                        "values ('email', %s, %s, 'unattributed', 'machine_proposed') returning id::text",
+                   (buyer, buyer))[0][0]
+    customer = f"cliente-{tag}@cliente-ficticio.test"
+    forward = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, review_status) values "
+                          "('forwarded_request', %s, %s, 'promoted') returning id::text",
+                     (f"forwarded_request:{tag}", Jsonb({"original_email": customer, "original_name": "Cliente Reenviado",
+                                                         "origin": "contacto"})))[0][0]
+    _owner(dsn, "update crm.opportunity set origin_source_record_id = %s where id = %s", (forward, case))
+
+    contacts = _reads(dsn).workspace(created["quote_id"])["case"]["contacts"]
+    by_email = {c["email"]: c for c in contacts}
+    assert set(by_email) == {asker, buyer, customer}
+    # Listed once, from its newest email (OrigenLab's reply), with the name its own email gave it.
+    assert by_email[asker] == {"participant_id": None, "person_id": None, "contact_point_id": None,
+                               "name": "Persona Ficticia", "email": asker, "source": "email_to"}
+    assert by_email[buyer] == {"participant_id": None, "person_id": None, "contact_point_id": point,
+                               "name": "Compras", "email": buyer, "source": "email_to"}
+    assert by_email[customer]["source"] == "forwarded_request" and by_email[customer]["name"] == "Cliente Reenviado"
+    assert not any("labdelivery" in c["email"] or "origenlab" in c["email"] for c in contacts)
+
+    # Picked and saved, the address is a participant: listed first, once.
+    _run(world, "save-quote-draft", {"revision_id": created["revision_id"], "expected_version": created["version"],
+                                     "draft": {"recipient": {"email": asker, "name": "Persona Ficticia"}}})
+    contacts = _reads(dsn).workspace(created["quote_id"])["case"]["contacts"]
+    assert contacts[0]["source"] == "participant" and contacts[0]["email"] == asker
+    assert contacts[0]["name"] == "Persona Ficticia" and contacts[0]["participant_id"] is not None
+    assert [c["email"] for c in contacts].count(asker) == 1 and len(contacts) == 3
 
 
 @needs_db

@@ -10,6 +10,12 @@ resolves it against the catalog, the parameters and the day's exchange rates (`i
 written, the version bumped. The database decides the rest — lines change only on an authored draft
 and carry one exchange rate per currency (`crm.quote_line_authored_draft_only`).
 
+**The recipient.** A draft names whom it goes to by a current participant of the case, or by a
+person, a contact point or an address picked from the case's emails (`DraftRecipient`); a pick
+that is not a participant yet becomes a confirmed `quote_recipient` participant in the save's
+transaction (`_recipient`), and an address the CRM lacks becomes an `unattributed` contact point
+first, as the CRM authoring commands create one.
+
 **Approval prices what was saved.** `approve-quote-revision` prices the stored lines exactly as
 they are (`inputs.engine_input_from_rows`: their FX snapshots, their stored expense lines and
 principal — nothing looked up again), so the frozen totals equal the last save. It refuses with
@@ -24,7 +30,10 @@ the revision as it is (`crm.quote_revision_authored_frozen`, `crm.quote_line_aut
 **Locks.** `create-quote` locks the case row (so a case being closed cannot get a quote in the same
 instant) and mints the number under the numbering advisory lock; its events open two new streams.
 `save-quote-draft`, `approve-quote-revision` and `void-quote-revision` lock the revision row, which
-owns the `quote_revision` stream they append to. Approval takes the order «Elegir revisión vigente»
+owns the `quote_revision` stream they append to; a save that picks a recipient then holds the
+picked contact point `for update` (or the person `for share`), as `create-person` holds an address
+it claims. Two saves adding the same new recipient at once: the second is a 409
+(`recipient_changed_concurrently`), never a duplicate participant. Approval takes the order «Elegir revisión vigente»
 takes — the case (`for share`: it cannot be closed underneath), then the quote, then the revision
 and the one it supersedes — and then the products whose stream gets a cost and their suppliers
 (`for share`). `create-quote-revision` locks the quote, so two cannot open the same next revision.
@@ -49,7 +58,8 @@ from origenlab_api.quoting.engine import EngineError, EngineResult, compute
 from origenlab_api.v2.catalog.commands import _live_party, _submitted_text
 from origenlab_api.v2.catalog.keys import LabdeliveryRefused, refuse_labdelivery
 from origenlab_api.v2.command_core import CommandTransaction
-from origenlab_api.v2.commands import CommandRefused
+from origenlab_api.v2.commands import CommandRefused, normalize_email
+from origenlab_api.v2.crm_authoring import _create_contact_point
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.quotes.draft import DraftTerms, QuoteDraft
 from origenlab_api.v2.quotes.inputs import (
@@ -286,16 +296,149 @@ def _check_recipient(cur: Any, participant_id: str, opportunity_id: str) -> None
         raise CommandRefused(422, "recipient_not_on_case", "the recipient is not a current participant of this case")
 
 
+#: Addresses a quote never goes to: OrigenLab's own, and Labdelivery's (refused outright before this).
+NOT_A_RECIPIENT_DOMAINS = frozenset({"origenlab.cl", "labdelivery.cl"})
+
+
+def _unknown_recipient(what: str) -> CommandRefused:
+    return CommandRefused(422, "recipient_unknown", f"no such {what} to send the quote to")
+
+
+def _recipient_contact_point(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
+                             *, contact_point_id: str | None = None,
+                             email: str | None = None) -> tuple[str, str | None]:
+    """The email contact point picked (by id, or by its address), as (id, its person), locked.
+
+    An address the CRM does not hold yet becomes a contact point the way the CRM authoring
+    commands create one (`crm_authoring._create_contact_point`, with its `contact_point.created`
+    event): `unattributed`, since picking an address as a quote's recipient says nothing about
+    who owns it. A deactivated address is refused, as `create-person` refuses it.
+    """
+    if contact_point_id is not None:
+        cur.execute("select id::text as id, person_id::text as person_id, status from crm.contact_point "
+                    "where id = %s::uuid and kind = 'email' for update", (contact_point_id,))
+    else:
+        assert email is not None  # noqa: S101 - DraftRecipient gives exactly one
+        email = normalize_email(email)
+        if email.rpartition("@")[2] in NOT_A_RECIPIENT_DOMAINS:
+            raise CommandRefused(422, "recipient_own_address", "Esa dirección es de OrigenLab, no del cliente.")
+        cur.execute("select id::text as id, person_id::text as person_id, status from crm.contact_point "
+                    "where kind = 'email' and value_norm = %s for update", (email,))
+    found = _one(cur)
+    if found is None:
+        if email is None:
+            raise _unknown_recipient("email contact point")
+        try:
+            created = _create_contact_point(self, cur, operator, receipt_id, kind="email", value_norm=email,
+                                            value_display=email, person_id=None, organization_id=None,
+                                            usage="unattributed")
+        except psycopg.errors.UniqueViolation as exc:  # the same address created elsewhere just now
+            raise _recipient_raced() from exc
+        return created, None
+    if found["status"] != "active":
+        raise CommandRefused(409, "contact_point_inactive", "this email address is deactivated in the CRM")
+    return found["id"], found["person_id"]
+
+
+def _recipient_raced() -> CommandRefused:
+    return CommandRefused(409, "recipient_changed_concurrently",
+                          "the case's people changed while saving; save again")
+
+
+# The case's current participant for the pick: the same address (a contact-point pick), or the
+# same person (a person pick); a quote recipient first.
+_CURRENT_PARTICIPANT_SQL = """
+select id::text as id
+  from crm.opportunity_participant
+ where opportunity_id = %(case)s::uuid and valid_to is null
+   and (contact_point_id = %(contact_point)s::uuid or person_id = %(person)s::uuid)
+ order by (role = 'quote_recipient') desc, is_primary desc, valid_from, created_at, id
+ limit 1
+"""
+
+
+def _recipient(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
+               draft: QuoteDraft, revision: dict[str, Any], today: date) -> str | None:
+    """The participant the draft names as its recipient — made one first when it is not yet.
+
+    A participant id is only checked (a current participant of this case). A person (the survivor
+    of a merge), or an address picked from the case's emails (a contact point, or an address the
+    CRM does not hold yet), is looked for among the case's current participants — the same
+    person, or the same address; a quote recipient first — and used when found. Otherwise it
+    becomes one: a `quote_recipient` participant of that person or that address, confirmed by
+    this operator from today (Santiago), primary when the case has no primary recipient yet,
+    with a `participant.added` event. For an address no person owns, the name it was picked by
+    is kept as the participant's `note`; approval prints it (`_RECIPIENT_SQL`).
+    """
+    case_id = revision["opportunity_id"]
+    if draft.recipient is None or draft.recipient.participant_id is not None:
+        picked = draft.recipient.participant_id if draft.recipient else draft.recipient_participant_id
+        if picked is None:
+            return None
+        _check_recipient(cur, str(picked), case_id)
+        return str(picked)
+
+    pick = draft.recipient
+    person: str | None = None  # the person picked
+    contact_point: str | None = None  # or the address picked …
+    address_person: str | None = None  # … and the person it belongs to, if any
+    if pick.person_id is not None:
+        cur.execute("select s.id::text as id, s.status from crm.person m "
+                    "join crm.person s on s.id = coalesce(m.merged_into_person_id, m.id) "
+                    "where m.id = %s::uuid for share of s", (str(pick.person_id),))
+        found = _one(cur)
+        if found is None:
+            raise _unknown_recipient("person")
+        if found["status"] != "active":
+            raise CommandRefused(409, "archived_subject", "that person is archived")
+        person = found["id"]
+    else:
+        contact_point, address_person = _recipient_contact_point(
+            self, cur, operator, receipt_id,
+            contact_point_id=str(pick.contact_point_id) if pick.contact_point_id else None, email=pick.email)
+
+    cur.execute(_CURRENT_PARTICIPANT_SQL, {"case": case_id, "contact_point": contact_point, "person": person})
+    existing = _one(cur)
+    if existing is not None:
+        return existing["id"]
+
+    cur.execute("select exists (select 1 from crm.opportunity_participant where opportunity_id = %s::uuid "
+                "and role = 'quote_recipient' and is_primary and valid_to is null) as taken", (case_id,))
+    primary = not _one(cur)["taken"]  # type: ignore[index]
+    # An address is its own participant (the person it belongs to gives it its name), so a person
+    # already on the case under another address is never a second row of the same subject and role.
+    note = pick.name if contact_point is not None and address_person is None else None
+    try:
+        cur.execute(
+            """
+            insert into crm.opportunity_participant
+                (opportunity_id, person_id, contact_point_id, role, is_primary, valid_from, confirmation,
+                 confirmed_by_operator_id, note)
+            values (%s::uuid, %s::uuid, %s::uuid, 'quote_recipient', %s, %s, 'confirmed', %s::uuid, %s)
+            returning id::text as id
+            """,
+            (case_id, person, contact_point, primary, today, operator.operator_id, note),
+        )
+    except (psycopg.errors.UniqueViolation, psycopg.errors.ExclusionViolation) as exc:
+        raise _recipient_raced() from exc
+    participant = _one(cur)
+    assert participant is not None  # noqa: S101 - `returning` on a successful insert
+    self._append_event(cur, aggregate_kind="opportunity_participant", aggregate_id=participant["id"],
+                       event_type="participant.added",
+                       payload={"opportunity_id": case_id, "role": "quote_recipient", "person_id": person,
+                                "contact_point_id": contact_point, "is_primary": primary,
+                                "quote_revision_id": revision["id"]},
+                       operator=operator, receipt_id=receipt_id)
+    return participant["id"]
+
+
 def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
                              fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
     revision_id, expected_version = fields["revision_id"], fields["expected_version"]
     draft = QuoteDraft.model_validate(fields["draft"])
     revision = _locked_draft(cur, revision_id, expected_version)
-    recipient = str(draft.recipient_participant_id) if draft.recipient_participant_id else None
-    if recipient is not None:
-        _check_recipient(cur, recipient, revision["opportunity_id"])
-
     today = santiago_today(self._clock())
+    recipient = _recipient(self, cur, operator, receipt_id, draft, revision, today)
     # The revision's own tax rate (set at creation) prices its IVA, so tax_total agrees with tax_rate.
     params = {**load_parameters(cur), "iva_rate": Decimal(revision["tax_rate"])}
     try:
@@ -322,7 +465,7 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
                subtotal = %(net)s, discount_total = 0, tax_base = %(net)s, tax_total = %(iva)s,
                grand_total = %(total)s, totals_computed_at = now(), version = version + 1, updated_at = now()
          where id = %(id)s::uuid and version = %(version)s
-        returning version
+        returning version, recipient_participant_id::text as recipient_participant_id
         """,
         {"delivery_terms": _text(terms.delivery_terms), "payment_terms": _text(terms.payment_terms),
          "warranty_terms_es": _text(terms.warranty_terms_es), "delivery_place_es": _text(terms.delivery_place_es),
@@ -343,6 +486,7 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
                        payload={"items": len(resolved.items), "net": str(result.net)},
                        operator=operator, receipt_id=receipt_id)
     return {"ok": True, "revision_id": revision_id, "version": updated["version"],
+            "recipient_participant_id": updated["recipient_participant_id"],
             "computed": result_json(resolved, result)}
 
 
@@ -433,18 +577,24 @@ select o.id::text as id, o.name,
  where m.id = %s::uuid
 """
 
-# The recipient, while still a current participant of the case: the person's name and the
-# participant's own email address, else the person's (an active one first).
+# The recipient, while still a current participant of the case: the participant's own email
+# address, else the person's (an active one first); the name of the participant's person, else of
+# the address's person, else — for an address with no person — the name it was picked by (the
+# participant's note, `_recipient`), else the address as displayed.
 _RECIPIENT_SQL = """
-select p.id::text as participant_id, coalesce(pe.display_name, cp.value_display) as name, cp.value_norm as email
+select p.id::text as participant_id,
+       coalesce(pe.display_name, cpe.display_name, case when p.person_id is null then p.note end,
+                cp.value_display) as name,
+       cp.value_norm as email
   from crm.opportunity_participant p
   left join crm.person pe on pe.id = p.person_id
   left join lateral (
-    select c.value_norm, c.value_display from crm.contact_point c
+    select c.value_norm, c.value_display, c.person_id from crm.contact_point c
      where c.kind = 'email'
        and (c.id = p.contact_point_id or (p.contact_point_id is null and c.person_id = p.person_id))
      order by (c.status = 'active') desc, c.created_at, c.id
      limit 1) cp on true
+  left join crm.person cpe on cpe.id = cp.person_id
  where p.id = %s::uuid and p.opportunity_id = %s::uuid and p.valid_to is null
 """
 

@@ -152,3 +152,18 @@ def test_the_create_quote_note_is_capped_like_other_command_notes() -> None:
     for note in ("", "   ", "x" * 501):
         with pytest.raises(ValidationError):
             CreateQuoteBody(opportunity_id=oid, note=note)
+
+
+def test_the_recipient_is_exactly_one_pick() -> None:
+    pid = str(uuid.uuid4())
+    assert QuoteDraft(recipient={"contact_point_id": pid}).recipient.contact_point_id == uuid.UUID(pid)
+    picked = QuoteDraft(recipient={"email": "  Persona@Ejemplo.TEST ", "name": "Persona Ficticia"}).recipient
+    assert (picked.email, picked.name) == ("persona@ejemplo.test", "Persona Ficticia")
+    for bad in ({}, {"participant_id": pid, "person_id": pid}, {"email": "a@b.test", "contact_point_id": pid},
+                {"person_id": pid, "name": "Sin correo"}, {"email": "no-es-un-correo"}, {"email": "a@b.test", "x": 1}):
+        with pytest.raises(ValidationError):
+            QuoteDraft(recipient=bad)
+    # The older field still works, but not together with the new one.
+    assert QuoteDraft(recipient_participant_id=pid).recipient_participant_id == uuid.UUID(pid)
+    with pytest.raises(ValidationError, match="not both"):
+        QuoteDraft(recipient_participant_id=pid, recipient={"participant_id": pid})

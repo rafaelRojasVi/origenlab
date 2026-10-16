@@ -6,6 +6,7 @@ value the column cannot hold is a 422 here, never a 500 at the insert.
 """
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
@@ -80,6 +81,36 @@ class DraftTerms(_Model):
     terms_extra: list[DraftTerm] = Field(default_factory=list, max_length=12)
 
 
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class DraftRecipient(_Model):
+    """Whom the quote goes to: exactly one of a current participant of the case, a person, a
+    contact point, or an email address (with, optionally, the name the address was picked by).
+
+    Anything but a participant becomes one when the draft is saved (`commands._recipient`): a
+    `quote_recipient` participant of the case, unless that person or address already is one.
+    """
+    participant_id: UUID | None = None
+    person_id: UUID | None = None
+    contact_point_id: UUID | None = None
+    email: Annotated[str | None, StringConstraints(min_length=3, max_length=320)] = None
+    name: Annotated[str | None, StringConstraints(min_length=1, max_length=200)] = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> "DraftRecipient":
+        picked = [self.participant_id, self.person_id, self.contact_point_id, self.email]
+        if sum(v is not None for v in picked) != 1:
+            raise ValueError("recipient takes exactly one of participant_id, person_id, contact_point_id, email")
+        if self.name is not None and self.email is None:
+            raise ValueError("recipient name goes only with an email address")
+        if self.email is not None:
+            self.email = self.email.lower()
+            if not _EMAIL.match(self.email):
+                raise ValueError("recipient email is not an email address")
+        return self
+
+
 class QuoteDraft(_Model):
     items: list[DraftItemLine] = Field(default_factory=list, max_length=60)
     manual_expenses: list[DraftExpenseLine] = Field(default_factory=list, max_length=20)
@@ -90,10 +121,13 @@ class QuoteDraft(_Model):
     ] = "highest_cost_imported_equipment"
     fx_overrides: list[DraftFxOverride] = Field(default_factory=list, max_length=2)
     terms: DraftTerms = Field(default_factory=DraftTerms)
-    recipient_participant_id: UUID | None = None
+    recipient_participant_id: UUID | None = None  # the older form of recipient={participant_id}
+    recipient: DraftRecipient | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> "QuoteDraft":
+        if self.recipient is not None and self.recipient_participant_id is not None:
+            raise ValueError("give recipient or recipient_participant_id, not both")
         principals = sum(1 for item in self.items if item.is_principal)
         if principals > 1:
             raise ValueError("at most one item may be principal")
