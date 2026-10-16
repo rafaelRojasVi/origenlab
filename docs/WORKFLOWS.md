@@ -570,7 +570,8 @@ authored draft is approved directly.
   `/v2/quotes/*` read and `403 role_may_not_decide` on the commands. Event payloads carry no cost,
   price or margin — only a saved draft's net total.
 
-**The screen (built 2026-10-16).** The Cotizador page is `#/crm/cotizar/<quoteId>` in the dashboard; it
+**The screen (built 2026-10-16).** The Cotizador page is `#/crm/cotizador/<quoteId>` in the dashboard (a tab of
+the module below; the older `#/crm/cotizar/<quoteId>` redirects there); it
 only calls the commands and reads above and owns no rule.
 
 - **Entry points.** Hoy «Cotizar» (or «Continuar cotización» when a draft exists), the Solicitud card,
@@ -608,6 +609,38 @@ only calls the commands and reads above and owns no rule.
 - **Vista cliente.** A toggle in the page header, on the draft and on an issued revision, that shows
   the quote as the client will read it: no costs, margins, Avisos, price history, approval's reasons
   or why an exchange rate was set by hand (those carry cost talk and other clients' prices).
+
+**The module (built 2026-10-16).** «Cotizador» is a section of the left menu, between
+Oportunidades and Organizaciones; viewers do not see it, and a viewer's deep link shows the no-access
+state. It only calls the reads and commands above and owns no rule.
+
+- **Tabs.** `#/crm/cotizador` is the list («Todas»); `#/crm/cotizador/<quoteId>` opens or activates
+  that quote's tab. Up to eight quotes stay open at once, stored per operator on this computer
+  (`localStorage` key `cotizador:tabs:<operator_id>`: the quote id, its number, client name and
+  state — never an address or a cost). Each tab is the screen above with its own autosave; hidden
+  tabs stay mounted, so switching keeps unsaved edits and timers, and «/» goes to the shown tab only.
+  After a reload only the active tab loads; the others load the first time they are opened. Closing
+  a tab saves it first and asks «No se pudo guardar. ¿Cerrar igual?» when it cannot. Opening a ninth
+  closes the oldest tab with nothing pending, or asks when every tab has something pending. The same
+  quote is never open twice. Hoy «Cotizar», the Solicitud card and the case drawer open quotes here.
+- **Lista «Todas».** `GET /v2/quotes` — Borradores (default), Aprobadas, Enviadas or Todas, a
+  search over number, institution, case title and product descriptions, newest first, «Cargar más»
+  by cursor. One row per quote (its open draft, else its newest issued revision), with a counts line.
+  Imported (historical) quotes show «importada» and open read-only.
+- **Nueva cotización.** A client search (`GET /v2/quotes/clients`: institutions — never suppliers
+  or manufacturers — then people, with their open cases), or «+ Cliente nuevo «texto»» with a kind
+  and an optional email. Then the case: the client's open cases, preselected when there is one, or
+  «Abrir una Solicitud nueva». «Crear y abrir» sends `create-quote` with `client` (above) and opens
+  the new quote as a tab; `case_choice_needed` and `organization_name_ambiguous` show their
+  candidates to choose from.
+- **Preferencias** (`#/crm/cotizador/preferencias`). The company's defaults, read from
+  `GET /v2/catalog/parameters` and saved one field at a time with `set-cost-parameter` (a reason of at
+  least 3 characters; the parameter's current row as `expected_current_id`, so a concurrent change is
+  refused `parameter_changed` — «Otra persona lo cambió; recarga.»), each with its «Historial»:
+  Recargos por defecto, Margen objetivo, Gastos de importación (perfil), Condiciones por defecto, and
+  Numeración (`quote_number_seed`; admin only, read-only for sales). A quote can still be changed by
+  hand; a change never reprices a saved draft. The rail's margin band reads the same values (the
+  workspace's `params`).
 
 <a id="m-wf-snapshot"></a>
 #### W3b — Party snapshot
