@@ -243,6 +243,35 @@ describe("useQuoteDraft — autosave", () => {
     expect(saves[0].args[2].items[0].quantity).toBe("2");
   });
 
+  it("saveNow on an incomplete draft sends nothing and marks nothing as edited", async () => {
+    const { hook, saves, previews, edit } = setup();
+    edit((d) => updateItem(d, 0, { quantity: "" }));
+    const seq = hook.result.current.state.editSeq;
+    let result: { ok: boolean; version: number } | undefined;
+    await act(async () => {
+      result = await hook.result.current.saveNow();
+    });
+    await advance(SAVE_DELAY_MS);
+    expect(saves).toHaveLength(0);
+    expect(previews).toHaveLength(0);
+    expect(hook.result.current.state.editSeq).toBe(seq);
+    expect(result).toEqual({ ok: false, version: 3 });
+  });
+
+  it("saveNow on an unedited incomplete draft does not make it dirty", async () => {
+    const ws = workspaceFixture();
+    const draft = { ...ws.current!.draft!, items: ws.current!.draft!.items.map((i, n) => (n === 0 ? { ...i, description: "" } : i)) };
+    const { hook, saves } = setup(workspaceFixture({ draft }));
+    expect(hook.result.current.invalid.length).toBeGreaterThan(0);
+    await act(async () => {
+      await hook.result.current.saveNow();
+    });
+    expect(saves).toHaveLength(0);
+    expect(hook.result.current.state.editSeq).toBe(0);
+    expect(hook.result.current.state.saveState).not.toBe("dirty");
+    expect(hook.result.current.pending).toBe(false);
+  });
+
   it("saveNow does nothing on a revision that is not an authored draft", async () => {
     const { hook, saves } = setup(workspaceFixture({ status: "approved" }));
     await act(async () => {
@@ -350,6 +379,86 @@ describe("useQuoteDraft — approve", () => {
     await settle();
     expect(error).toBeInstanceOf(QuoteRefusal);
     expect((error as QuoteRefusal).message).toBe("Completa los textos entre corchetes");
+  });
+
+  it("saves an unedited draft whose prices changed before approving, with that save's version", async () => {
+    const { hook, saves, approvals } = setup(workspaceFixture({ needs_saving: true, totals_computed_at: "2026-10-10T12:00:00Z" }));
+    act(() => {
+      void hook.result.current.approve().catch(() => undefined);
+    });
+    await settle();
+    expect(saves).toHaveLength(1);
+    expect(saves[0].args[1]).toBe(3);
+    expect(approvals).toHaveLength(0);
+    await act(async () => saves[0].d.resolve(saved(4)));
+    await settle();
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].args.slice(0, 2)).toEqual(["r-1", 4]);
+  });
+
+  it("saves a never-priced draft before approving too", async () => {
+    const { hook, saves, approvals } = setup(workspaceFixture({ needs_saving: true, totals_computed_at: null }));
+    act(() => {
+      void hook.result.current.approve().catch(() => undefined);
+    });
+    await settle();
+    expect(saves).toHaveLength(1);
+    expect(approvals).toHaveLength(0);
+  });
+
+  it("approves without saving when nothing changed", async () => {
+    const { hook, saves, approvals } = setup();
+    act(() => {
+      void hook.result.current.approve().catch(() => undefined);
+    });
+    await settle();
+    expect(saves).toHaveLength(0);
+    expect(approvals[0].args.slice(0, 2)).toEqual(["r-1", 3]);
+  });
+
+  it("keeps one key while the same approval is retried; a new version gets a new one", async () => {
+    const { hook, saves, approvals, typeQty } = setup();
+    const attempt = async () => {
+      act(() => {
+        void hook.result.current.approve().catch(() => undefined);
+      });
+      await settle();
+    };
+    await attempt();
+    await act(async () => approvals[0].d.reject(new TypeError("network down")));
+    await settle();
+    await attempt();
+    expect(approvals).toHaveLength(2);
+    expect(approvals[1].args[2]).toBe(approvals[0].args[2]);
+    await act(async () => approvals[1].d.reject(new QuoteRefusal(409, "missing_recipient", "Falta el destinatario")));
+    await settle();
+    typeQty("2");
+    await attempt();
+    await act(async () => saves[0].d.resolve(saved(4)));
+    await settle();
+    expect(approvals).toHaveLength(3);
+    expect(approvals[2].args[1]).toBe(4);
+    expect(approvals[2].args[2]).not.toBe(approvals[0].args[2]);
+  });
+
+  it("a refusal because the prices moved since the save saves again and approves once more", async () => {
+    const { hook, saves, approvals } = setup();
+    let error: unknown = "none";
+    act(() => {
+      void hook.result.current.approve().catch((e) => (error = e));
+    });
+    await settle();
+    await act(async () => approvals[0].d.reject(new QuoteRefusal(409, "draft_needs_saving", "Guarda el borrador de nuevo")));
+    await settle();
+    expect(saves).toHaveLength(1);
+    await act(async () => saves[0].d.resolve(saved(4)));
+    await settle();
+    expect(approvals).toHaveLength(2);
+    expect(approvals[1].args[1]).toBe(4);
+    await act(async () => approvals[1].d.reject(new QuoteRefusal(409, "draft_needs_saving", "Guarda el borrador de nuevo")));
+    await settle();
+    expect(saves).toHaveLength(1); // only once
+    expect((error as QuoteRefusal).code).toBe("draft_needs_saving");
   });
 
   it("does not approve when the save before it hits a conflict", async () => {

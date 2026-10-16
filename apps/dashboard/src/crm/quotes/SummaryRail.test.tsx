@@ -335,6 +335,18 @@ describe("SummaryRail — prices changed since the last save (B4)", () => {
     expect(saveNow).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps «Guardar ahora» off while the draft is incomplete, and says why", async () => {
+    const base = workspaceFixture().current!.draft!;
+    const draft = { ...base, items: base.items.map((i, n) => (n === 0 ? { ...i, quantity: "" } : i)) };
+    const { saveNow } = setup({ state: stateFor({ needs_saving: true, totals_computed_at: "2026-10-10T12:00:00Z", draft }) });
+    await settled();
+    const button = screen.getByRole("button", { name: "Guardar ahora" });
+    expect(button).toBeDisabled();
+    expect(screen.getByText("Completa el borrador para guardarlo.")).toBeInTheDocument();
+    fireEvent.click(button);
+    expect(saveNow).not.toHaveBeenCalled();
+  });
+
   it("says nothing for a draft never priced, or once it was saved here", async () => {
     setup({ state: stateFor({ needs_saving: true, totals_computed_at: null }) });
     await settled();

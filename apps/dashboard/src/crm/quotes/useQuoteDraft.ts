@@ -17,8 +17,8 @@ import {
   newQuoteCommandKey,
   previewQuote,
   saveQuoteDraft,
+  QuoteRefusal,
   type QuoteDraft,
-  type QuoteRefusal,
   type QuoteWorkspace,
 } from "./quoteApi";
 
@@ -84,7 +84,11 @@ export interface QuoteDraftEditor {
   /** After a failed save ("error"), sends it again with the same key; otherwise reports the state. */
   retry: () => Promise<FlushResult>;
   reload: () => Promise<QuoteWorkspace>;
-  /** Saves pending edits first, then approves with the version that save returned. Throws the refusal. */
+  /**
+   * Saves pending edits first (or the whole draft, when the workspace says its stored prices are
+   * older than today's), then approves with the version that save returned, then reloads. Throws
+   * the refusal. Without `key`, one key is kept while the same revision and version is retried.
+   */
   approve: (key?: string) => ReturnType<typeof approveQuoteRevision>;
 }
 
@@ -106,6 +110,7 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
   const savedSeqRef = useRef(0);
   const stoppedRef = useRef(false);
   const keyRef = useRef<{ seq: number; key: string } | null>(null);
+  const approveKeyRef = useRef<{ sig: string; key: string } | null>(null);
   const inFlightRef = useRef<Promise<void> | null>(null);
   const queuedRef = useRef(false);
   const lastErrorRef = useRef<QuoteRefusal | Error | null>(null);
@@ -222,6 +227,9 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
 
   const saveNow = useCallback((): Promise<FlushResult> => {
     if (!editableRef.current || stoppedRef.current) return Promise.resolve(status());
+    // An incomplete draft is never sent, so nothing is marked as edited (it would read «sin
+    // guardar» for an edit nobody made); a save already in flight is still waited for.
+    if (incomplete()) return flush().then((r) => ({ ...r, ok: false }));
     if (editSeqRef.current === savedSeqRef.current && !inFlightRef.current) {
       // Nothing edited: mark the same draft as an edit, so the save loop sends it.
       editSeqRef.current += 1;
@@ -261,16 +269,38 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
   }, [resetTo]);
 
   const approve = useCallback(
-    async (key: string = newQuoteCommandKey()) => {
+    async (key?: string) => {
       const problems = draftProblems(draftRef.current);
       if (editableRef.current && problems.length > 0) throw new Error(problems[0].message_es);
-      const flushed = await flush();
-      if (!flushed.ok) throw lastErrorRef.current ?? new Error("El borrador no está guardado.");
-      const res = await apiRef.current.approveQuoteRevision(workspaceRef.current.current?.id ?? "", flushed.version, key);
-      await reload().catch(() => undefined);
-      return res;
+      // The API refuses to freeze stored prices that differ from today's (`draft_needs_saving`):
+      // a draft the workspace says needs saving, not saved in this page yet, is saved first; one
+      // refused for that reason anyway (the rates moved since our save) is saved and tried once more.
+      let force = !!workspaceRef.current.current?.needs_saving && savedSeqRef.current === 0;
+      for (let attempt = 0; ; attempt++) {
+        const flushed = force ? await saveNow() : await flush();
+        if (!flushed.ok) throw lastErrorRef.current ?? new Error("El borrador no está guardado.");
+        const revisionId = workspaceRef.current.current?.id ?? "";
+        // One key per approval: retrying the same revision at the same version reuses it, so a
+        // request that reached the API but whose answer was lost is replayed, not run twice.
+        const sig = `${revisionId}@${flushed.version}`;
+        const useKey = key ?? (approveKeyRef.current?.sig === sig ? approveKeyRef.current.key : newQuoteCommandKey());
+        approveKeyRef.current = { sig, key: useKey };
+        let res: Awaited<ReturnType<typeof approveQuoteRevision>>;
+        try {
+          res = await apiRef.current.approveQuoteRevision(revisionId, flushed.version, useKey);
+        } catch (e) {
+          if (attempt === 0 && e instanceof QuoteRefusal && e.code === "draft_needs_saving") {
+            force = true;
+            continue;
+          }
+          throw e;
+        }
+        approveKeyRef.current = null;
+        await reload().catch(() => undefined);
+        return res;
+      }
     },
-    [flush, reload],
+    [flush, saveNow, reload],
   );
 
   // A new workspace from the page (not our own reload) replaces the editor's state, unless it is

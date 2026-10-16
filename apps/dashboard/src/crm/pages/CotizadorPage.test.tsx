@@ -10,6 +10,7 @@ import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { clearCatalogIndexMemory } from "../catalog/catalogIndex";
 import type { QuoteDraft } from "../quotes/quoteApi";
 import { computedFixture, workspaceFixture } from "../quotes/quoteFixtures";
+import { Toaster } from "../ui";
 import { clearResourceCache } from "../useResource";
 import { CotizadorPage } from "./CotizadorPage";
 
@@ -74,6 +75,7 @@ function renderPage(role = "sales", quoteId: string | null = QUOTE_ID) {
   render(
     <AuthSessionContext.Provider value={{ session: session(role), signOut: async () => true }}>
       <CotizadorPage quoteId={quoteId} navigate={navigate} />
+      <Toaster />
     </AuthSessionContext.Provider>,
   );
   return navigate;
@@ -102,7 +104,6 @@ describe("Cotizador page", () => {
     const back = screen.getByRole("link", { name: /Universidad Ejemplo — agitador/ });
     expect(back).toHaveAttribute("href", `#/crm/oportunidades/${CASE_ID}`);
     expect(back.textContent).toMatch(/^←/);
-    expect(screen.getByTestId("cotizador-actions")).toBeEmptyDOMElement();
   });
 
   it("names a later revision with its letter and labels each status", async () => {
@@ -180,20 +181,34 @@ function editableWorkspace() {
 
 const CATALOG = { version: "v1", fields: ["id", "model_number", "name"], suppliers: [], items: [] };
 
-function stubApi(onSave: (call: number) => Response, workspace: () => unknown = editableWorkspace) {
-  const calls: { method: string; path: string; body: unknown }[] = [];
+type Call = { method: string; path: string; body: unknown; key: string | null };
+
+function stubApi(
+  onSave: (call: number) => Response | Promise<Response>,
+  workspace: (read: number) => unknown = editableWorkspace,
+  commands: Record<string, (body: unknown, call: number) => Response | Promise<Response>> = {},
+) {
+  const calls: Call[] = [];
   let saves = 0;
+  let reads = 0;
+  const counts: Record<string, number> = {};
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const path = new URL(raw, "http://localhost").pathname;
       const method = init?.method ?? "GET";
-      calls.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : null });
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ method, path, body, key: headers["Idempotency-Key"] ?? null });
       if (path === "/v2/catalog/index") return Promise.resolve(json(CATALOG));
       if (path === "/v2/quotes/preview") return Promise.resolve(json({ computed: computedFixture("200000") }));
       if (path === "/v2/commands/save-quote-draft") return Promise.resolve(onSave(++saves));
-      return Promise.resolve(json(workspace()));
+      if (commands[path]) {
+        counts[path] = (counts[path] ?? 0) + 1;
+        return Promise.resolve(commands[path](body, counts[path]));
+      }
+      return Promise.resolve(json(workspace(++reads)));
     }),
   );
   return calls;
@@ -343,5 +358,363 @@ describe("Cotizador page — an issued revision", () => {
     const totals = await screen.findByRole("region", { name: "Totales" });
     expect(within(totals).getByText("Total").nextSibling).toHaveTextContent("$ 595.000");
     expect(screen.queryByText("Margen bruto")).not.toBeInTheDocument();
+  });
+});
+
+/* ── approve, void and revise (Task 7) ─────────────────────────────────────── */
+
+const APPROVE = "/v2/commands/approve-quote-revision";
+const VOID = "/v2/commands/void-quote-revision";
+const REVISE = "/v2/commands/create-quote-revision";
+
+type Rev = { id: string; revision_no: number; status: string; version?: number; grand_total?: string | null; approved_at?: string | null; sent_at?: string | null; superseded_by_revision_no?: number | null };
+
+function revisionsOf(list: Rev[]) {
+  const letter = (n: number) => (n >= 2 ? String.fromCharCode(63 + n) : "");
+  return list.map((r) => ({
+    id: r.id,
+    revision_no: r.revision_no,
+    label: `00042${letter(r.revision_no)}-26`,
+    status: r.status,
+    origin: "authored",
+    version: r.version ?? 2,
+    grand_total: r.grand_total ?? null,
+    approved_at: r.approved_at ?? null,
+    sent_at: r.sent_at ?? null,
+    superseded_by_revision_no: r.superseded_by_revision_no ?? null,
+  }));
+}
+
+/** An issued revision: stored lines, stored totals and what approval froze for the client. */
+function issuedWorkspace(over: { status?: string; superseded_by_revision_no?: number | null; revisions?: Rev[]; revision_no?: number; id?: string } = {}) {
+  const ws = editableWorkspace();
+  const status = over.status ?? "approved";
+  const id = over.id ?? "r-1";
+  const revision_no = over.revision_no ?? 1;
+  const stored = (line_no: number, description: string, quantity: string, unit: string, total: string, kind = "item") => ({
+    line_no, line_kind: kind, description, product_id: null, quantity, item_type: "equipment", cost_currency: "CLP",
+    unit_cost: "1000", fx_rate: null, fx_as_of: null, fx_source: null, margin_mode: "markup", margin_pct: "0.3",
+    unit_price_qc: unit, line_total_qc: total, is_principal: line_no === 1, allocated_to_line_no: null,
+    expense_method: null, supplier_organization_id: null, cost_observation_id: null, line_note_es: line_no === 2 ? "Incluye traslado." : null,
+  });
+  return {
+    ...ws,
+    revisions: revisionsOf(over.revisions ?? [{ id, revision_no, status, version: 5, grand_total: "595000", approved_at: "2026-10-16T13:00:00Z", superseded_by_revision_no: over.superseded_by_revision_no ?? null }]),
+    current: {
+      ...ws.current!,
+      id,
+      revision_no,
+      label: revision_no === 1 ? "00042-26" : "00042A-26",
+      status,
+      version: 5,
+      subtotal: "500000",
+      tax_total: "95000",
+      grand_total: "595000",
+      valid_until: "2026-11-15",
+      approved_at: "2026-10-16T13:00:00Z",
+      superseded_by_revision_no: over.superseded_by_revision_no ?? null,
+      draft: undefined,
+      computed: undefined,
+      needs_saving: undefined,
+      lines: [
+        stored(1, "Agitador de prueba", "2", "200000", "400000"),
+        stored(2, "Servicio de prueba", "1", "100000", "100000"),
+        stored(3, "Flete", "1", "5000", "5000", "expense"),
+      ],
+      party_snapshot: {
+        institution: { id: "i-1", name: "Institución de prueba", rut: "76.000.000-0" },
+        recipient: { participant_id: "pa-1", name: "Ana Prueba", email: "ana@ejemplo.cl" },
+        terms: { delivery_terms: "4 semanas", payment_terms: "Contado", warranty_terms_es: null, delivery_place_es: null, installation_terms_es: null, client_notes_es: "Precios netos.", validity_days: 30, terms_extra: [{ label_es: "Embalaje", text_es: "Caja de madera" }] },
+        quote_number: "00042-26",
+        revision_label: "00042-26",
+        approved_by: "Rafa Prueba",
+        approved_at: "2026-10-16",
+        valid_until: "2026-11-15",
+      },
+    },
+  };
+}
+
+const approved = (version = 5) => json({ ok: true, revision_id: "r-1", version, quote_number: "00042-26", revision_label: "00042-26", negotiated_costs_skipped: [] });
+
+describe("Cotizador page — approving a draft", () => {
+  it("offers «Aprobar», and «Vista previa PDF» switched off until the next delivery (B6)", async () => {
+    stubApi(() => json({}));
+    renderPage();
+    const preview = await screen.findByRole("button", { name: "Vista previa PDF" });
+    expect(preview).toBeDisabled();
+    expect(preview.closest("[title]")).toHaveAttribute("title", "Llega en la siguiente entrega");
+    expect(screen.getByRole("button", { name: "Aprobar" })).toBeEnabled();
+  });
+
+  it("saves unsaved edits first, then approves with the version that save returned (Review Focus 3)", async () => {
+    let releaseSave!: () => void;
+    const saving = new Promise<void>((r) => (releaseSave = r));
+    const calls = stubApi(
+      () => saving.then(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") })),
+      (read) => (read === 1 ? editableWorkspace() : issuedWorkspace()),
+      { [APPROVE]: () => approved() },
+    );
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aprobar" }));
+    await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/save-quote-draft")).toBe(true));
+    // While the save is in flight the button waits for it; nothing is approved yet.
+    expect(screen.getByRole("button", { name: /Aprobando/ })).toBeDisabled();
+    expect(calls.some((c) => c.path === APPROVE)).toBe(false);
+    releaseSave();
+    expect(await screen.findByText("Cotización aprobada · CN00042")).toBeInTheDocument();
+    const paths = calls.filter((c) => c.method === "POST" && c.path.startsWith("/v2/commands/")).map((c) => c.path);
+    expect(paths).toEqual(["/v2/commands/save-quote-draft", APPROVE]);
+    expect(calls.find((c) => c.path === APPROVE)?.body).toEqual({ revision_id: "r-1", expected_version: 4 });
+    // Reloaded: the approved revision is read-only.
+    expect(await screen.findByText("Aprobada por Rafa Prueba el 16 oct 2026")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Cantidad de la línea 1")).not.toBeInTheDocument();
+  });
+
+  it("saves a draft whose prices changed since its last save before approving (B4)", async () => {
+    const stale = () => {
+      const ws = editableWorkspace();
+      return { ...ws, current: { ...ws.current!, needs_saving: true, totals_computed_at: "2026-10-10T12:00:00Z" } };
+    };
+    const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }), stale, { [APPROVE]: () => approved() });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Aprobar" }));
+    await waitFor(() => expect(calls.some((c) => c.path === APPROVE)).toBe(true));
+    const paths = calls.filter((c) => c.method === "POST" && c.path.startsWith("/v2/commands/")).map((c) => c.path);
+    expect(paths).toEqual(["/v2/commands/save-quote-draft", APPROVE]);
+    expect(calls.find((c) => c.path === APPROVE)?.body).toMatchObject({ expected_version: 4 });
+  });
+
+  it("lists every reason the API gave under the header", async () => {
+    const calls = stubApi(() => json({}), editableWorkspace, {
+      [APPROVE]: () => json({ detail: { code: "missing_recipient", message: "Elige a quién va la cotización · Completa el texto de «Forma de pago»" } }, 409),
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Aprobar" }));
+    const alert = await screen.findByRole("alert", { name: "No se pudo aprobar" });
+    const items = within(alert).getAllByRole("listitem").map((li) => li.textContent);
+    expect(items).toEqual(["Elige a quién va la cotización", "Completa el texto de «Forma de pago»"]);
+    expect(screen.getByRole("button", { name: "Aprobar" })).toBeEnabled();
+    // A second try is the same action at the same version: the same key.
+    fireEvent.click(screen.getByRole("button", { name: "Aprobar" }));
+    await waitFor(() => expect(calls.filter((c) => c.path === APPROVE)).toHaveLength(2));
+    const keys = calls.filter((c) => c.path === APPROVE).map((c) => c.key);
+    expect(keys[0]).toBeTruthy();
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it("does not ask the API to approve an incomplete draft, and says what is missing", async () => {
+    const calls = stubApi(() => json({}), editableWorkspace, { [APPROVE]: () => approved() });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aprobar" }));
+    const alert = await screen.findByRole("alert", { name: "No se pudo aprobar" });
+    expect(within(alert).getAllByRole("listitem").length).toBeGreaterThan(0);
+    expect(within(alert).getByText(/cantidad/i)).toBeInTheDocument();
+    expect(calls.some((c) => c.path === APPROVE || c.path === "/v2/commands/save-quote-draft")).toBe(false);
+  });
+});
+
+describe("Cotizador page — an approved revision, read-only", () => {
+  it("shows the stored lines, the recipient, the conditions and who approved it", async () => {
+    stubApi(() => json({}), () => issuedWorkspace());
+    renderPage();
+    const lines = await screen.findByRole("table", { name: "Líneas aprobadas" });
+    const rows = within(lines).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(2); // the expense line is internal
+    expect(within(rows[0]).getByText("Agitador de prueba")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("2")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("$ 200.000")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("$ 400.000")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Incluye traslado.")).toBeInTheDocument();
+    expect(screen.getByText("Ana Prueba")).toBeInTheDocument();
+    expect(screen.getByText("ana@ejemplo.cl")).toBeInTheDocument();
+    expect(screen.getByText("4 semanas")).toBeInTheDocument();
+    expect(screen.getByText("Contado")).toBeInTheDocument();
+    expect(screen.getByText("30 días")).toBeInTheDocument();
+    expect(screen.getByText("Caja de madera")).toBeInTheDocument();
+    expect(screen.getByText("Válida hasta el 15 nov 2026")).toBeInTheDocument();
+    expect(screen.getByText("Aprobada por Rafa Prueba el 16 oct 2026")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Aprobar" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Nueva revisión" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Anular" })).toBeInTheDocument();
+  });
+
+  it("«Nueva revisión» opens the next draft", async () => {
+    const draftB = () => {
+      const ws = editableWorkspace();
+      return {
+        ...ws,
+        revisions: revisionsOf([
+          { id: "r-1", revision_no: 1, status: "approved", grand_total: "595000" },
+          { id: "r-2", revision_no: 2, status: "draft" },
+        ]),
+        current: { ...ws.current!, id: "r-2", revision_no: 2, label: "00042A-26" },
+      };
+    };
+    const calls = stubApi(() => json({}), (read) => (read === 1 ? issuedWorkspace() : draftB()), {
+      [REVISE]: () => json({ ok: true, quote_id: QUOTE_ID, revision_id: "r-2", revision_no: 2, revision_label: "00042A-26", version: 1 }),
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva revisión" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Cotización CN00042A" })).toBeInTheDocument();
+    expect(calls.find((c) => c.path === REVISE)?.body).toEqual({ quote_id: QUOTE_ID });
+    expect(calls.find((c) => c.path === REVISE)?.key).toBeTruthy();
+    expect(screen.getByLabelText("Cantidad de la línea 1")).toBeEnabled();
+    expect(screen.getByText("Nueva revisión CN00042A abierta")).toBeInTheDocument();
+  });
+
+  it("a sent revision can be revised but not voided", async () => {
+    stubApi(() => json({}), () => issuedWorkspace({ status: "sent" }));
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Nueva revisión" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Anular" })).not.toBeInTheDocument();
+  });
+
+  it("«Anular» asks for a reason and voids with it", async () => {
+    const calls = stubApi(() => json({}), (read) => (read === 1 ? issuedWorkspace() : issuedWorkspace({ status: "void" })), {
+      [VOID]: () => json({ ok: true, revision_id: "r-1", version: 6 }),
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Anular" }));
+    const dialog = screen.getByRole("alertdialog");
+    const confirm = within(dialog).getByRole("button", { name: "Anular" });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText(/Motivo/), { target: { value: "El cliente pidió otro modelo" } });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(calls.find((c) => c.path === VOID)?.body).toEqual({ revision_id: "r-1", expected_version: 5, reason: "El cliente pidió otro modelo" });
+    expect(await screen.findByText("Anulada")).toBeInTheDocument();
+  });
+
+  it("says why the API refused to void, in the dialog", async () => {
+    stubApi(() => json({}), () => issuedWorkspace(), {
+      [VOID]: () => json({ detail: { code: "superseded", message: "Ya fue reemplazada por la revisión 2." } }, 409),
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Anular" }));
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.change(within(dialog).getByLabelText(/Motivo/), { target: { value: "Error" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Anular" }));
+    expect(await within(dialog).findByText("Ya fue reemplazada por la revisión 2.")).toBeInTheDocument();
+  });
+
+  it("a superseded revision says which one replaced it, and cannot be voided", async () => {
+    stubApi(() => json({}), () =>
+      issuedWorkspace({
+        superseded_by_revision_no: 2,
+        revisions: [
+          { id: "r-1", revision_no: 1, status: "approved", superseded_by_revision_no: 2, grand_total: "595000" },
+          { id: "r-2", revision_no: 2, status: "void", grand_total: "700000" },
+        ],
+      }),
+    );
+    renderPage();
+    expect(await screen.findByText("Reemplazada por CN00042A")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Anular" })).not.toBeInTheDocument();
+  });
+
+  it("voids a draft from its header, after its pending save", async () => {
+    const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture() }), editableWorkspace, {
+      [VOID]: () => json({ ok: true, revision_id: "r-1", version: 5 }),
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Anular" }));
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.change(within(dialog).getByLabelText(/Motivo/), { target: { value: "Duplicada" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Anular" }));
+    await waitFor(() => expect(calls.some((c) => c.path === VOID)).toBe(true));
+    expect(calls.find((c) => c.path === VOID)?.body).toMatchObject({ revision_id: "r-1", expected_version: 4 });
+  });
+});
+
+describe("Cotizador page — revisions", () => {
+  const two = () =>
+    issuedWorkspace({
+      id: "r-2",
+      revision_no: 2,
+      revisions: [
+        { id: "r-1", revision_no: 1, status: "approved", version: 3, grand_total: "595000", approved_at: "2026-10-10T13:00:00Z", superseded_by_revision_no: 2 },
+        { id: "r-2", revision_no: 2, status: "approved", version: 5, grand_total: "700000", approved_at: "2026-10-16T13:00:00Z" },
+      ],
+    });
+
+  it("lists the revisions and shows an older one's summary", async () => {
+    stubApi(() => json({}), two);
+    renderPage();
+    const list = await screen.findByRole("navigation", { name: "Revisiones" });
+    const older = within(list).getByRole("button", { name: /CN00042\b.*Aprobada/ });
+    expect(within(list).getByRole("button", { name: /CN00042A.*Aprobada/ })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(older);
+    expect(older).toHaveAttribute("aria-pressed", "true");
+    const summary = screen.getByRole("region", { name: "Revisión CN00042" });
+    expect(within(summary).getByText("$ 595.000")).toBeInTheDocument();
+    expect(within(summary).getByText("Reemplazada por CN00042A")).toBeInTheDocument();
+    expect(within(summary).getByText(/sólo su resumen/)).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Líneas aprobadas" })).not.toBeInTheDocument();
+  });
+
+  it("shows no list for a single revision", async () => {
+    stubApi(() => json({}), () => issuedWorkspace());
+    renderPage();
+    await screen.findByRole("table", { name: "Líneas aprobadas" });
+    expect(screen.queryByRole("navigation", { name: "Revisiones" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Cotizador page — leaving with unsaved edits (Review Focus 5)", () => {
+  it("the way back saves first, then leaves", async () => {
+    let releaseSave!: () => void;
+    const saving = new Promise<void>((r) => (releaseSave = r));
+    const calls = stubApi(() => saving.then(() => json({ revision_id: "r-1", version: 4, computed: computedFixture() })));
+    const navigate = renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("link", { name: /Caso de prueba/ }));
+    expect(await screen.findByText(/Guardando antes de salir…/)).toBeInTheDocument();
+    await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/save-quote-draft")).toBe(true));
+    expect(navigate).not.toHaveBeenCalled();
+    releaseSave();
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("oportunidades", CASE_ID));
+  });
+
+  it("asks before leaving an incomplete draft, and stays when told to", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    stubApi(() => json({}));
+    const navigate = renderPage();
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("link", { name: /Caso de prueba/ }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledWith("Hay cambios sin guardar. ¿Salir igual?"));
+    expect(navigate).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("link", { name: /Caso de prueba/ }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("oportunidades", CASE_ID));
+    confirm.mockRestore();
+  });
+
+  it("says so when the page closes another way (the menu) with edits that could not be saved", async () => {
+    stubApi(() => json({}));
+    render(<Toaster />);
+    const page = render(
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <CotizadorPage quoteId={QUOTE_ID} navigate={vi.fn()} />
+      </AuthSessionContext.Provider>,
+    );
+    fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "" } });
+    page.unmount();
+    expect(await screen.findByText("Tus últimos cambios en la cotización no se guardaron: el borrador estaba incompleto.")).toBeInTheDocument();
+  });
+
+  it("leaves at once when everything is saved", async () => {
+    stubApi(() => json({}));
+    const navigate = renderPage();
+    fireEvent.click(await screen.findByRole("link", { name: /Caso de prueba/ }));
+    expect(navigate).toHaveBeenCalledWith("oportunidades", CASE_ID);
   });
 });

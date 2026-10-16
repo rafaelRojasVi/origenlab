@@ -18,7 +18,7 @@ import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
 import { distinctQuotes } from "../catalog/SalesSummary";
 import { formatMoney } from "../money";
 import { Button } from "../ui";
-import { isEditable, principalItemOf, rowOfLine, setFxOverride, type DraftEditorState } from "./draftEditor";
+import { draftProblems, isEditable, principalItemOf, rowOfLine, setFxOverride, type DraftEditorState } from "./draftEditor";
 import { QuoteRefusal, type QuoteDraft, type QuoteWorkspace } from "./quoteApi";
 import { amountTextToDecimal, decimalEditText, formatPct } from "./quoteFormat";
 import type { FlushResult } from "./useQuoteDraft";
@@ -155,6 +155,8 @@ function PricesChanged({
   const cur = state.workspace.current;
   // Only a draft that was priced and saved before (B4); a save in this page stores today's prices.
   if (!cur?.needs_saving || cur.totals_computed_at == null || state.lastSavedAt !== null) return null;
+  // An incomplete draft is not sent (the editor names what is missing next to each field).
+  const incomplete = draftProblems(state.draft).length > 0;
   return (
     <div role="status" className="flex flex-col gap-2 rounded-[14px] border border-warn/30 bg-warn-bg px-4 py-3">
       <p className="text-[13px] leading-snug text-ink">
@@ -165,11 +167,12 @@ function PricesChanged({
         className="min-h-[44px] self-start px-4"
         busy={state.saveState === "saving"}
         busyLabel="Guardando…"
-        disabled={disabled}
+        disabled={disabled || incomplete}
         onClick={() => void onSaveNow()}
       >
         Guardar ahora
       </Button>
+      {incomplete ? <p className="text-[12.5px] text-ink-muted">Completa el borrador para guardarlo.</p> : null}
     </div>
   );
 }
