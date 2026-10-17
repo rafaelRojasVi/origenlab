@@ -82,8 +82,12 @@ from origenlab_api.v2.forwarded_requests import create_request_from_forward, dis
 from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
+from origenlab_api.v2.crm_authoring import _handle_register_organization
 from origenlab_api.v2.current_revision import resolve_current_revision
 from origenlab_api.v2.identity import OperatorIdentity
+from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS
+from origenlab_api.v2.quotes.reads import client_institution_by_domain
+from origenlab_api.v2.quotes.recipients import not_a_recipient
 
 #: The evidence-link subject columns, paired with the table each one points at and the name
 #: the refusal uses. Data rather than five branches, so a subject cannot be added to the
@@ -94,6 +98,62 @@ EVIDENCE_SUBJECTS: tuple[tuple[str, str, str], ...] = (
     ("message_id", "comms.message", "message"),
     ("notice_id", "procurement.notice", "procurement notice"),
 )
+
+
+# ------------------------------------------------------------------ a new institution, once
+#
+# The rule `create-quote` (a new client institution, or one a person is connected to) and
+# `add-case-organization` (`new_organization`) register an institution by: not a second one. The
+# one active institution of exactly that name (any case) is used, else the one institution the
+# domain names (`reads.client_institution_by_domain`); a name two or more share is refused
+# `organization_name_ambiguous`, with them. Otherwise it is registered through
+# `register-organization`'s own path, as a `customer`. Two commands naming the same new name
+# queue on one advisory lock (`lock_new_organization_name`), so the second finds the first's.
+
+_SAME_NAME_SQL = (
+    "select id::text as id, name from crm.organization where status = 'active' "
+    "and merged_into_organization_id is null and lower(name) = lower(%s) order by created_at, id limit 20"
+)
+
+
+def lock_new_organization_name(cur: Any, name: str) -> None:
+    """The transaction advisory lock a new institution's name is registered under."""
+    cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"quote-client:new-organization:{name.casefold()}",))
+
+
+def organization_name_ambiguous(rows: list[dict[str, Any]]) -> CommandRefused:
+    return CommandRefused(409, "organization_name_ambiguous",
+                          "Hay varias instituciones con ese nombre: elige una de ellas.",
+                          details={"candidates": [{"id": r["id"], "name": r["name"]} for r in rows]})
+
+
+def same_name_or_domain_organization(cur: Any, name: str, email: str | None) -> dict[str, Any] | None:
+    """`{id, name}` of the institution a new one of this name (and address) would duplicate, or None."""
+    cur.execute(_SAME_NAME_SQL, (name,))
+    columns = [d[0] for d in cur.description]
+    same = [dict(zip(columns, r, strict=True)) for r in cur.fetchall()]
+    if len(same) > 1:
+        raise organization_name_ambiguous(same)
+    if same:
+        return same[0]
+    return client_institution_by_domain(cur, email) if email is not None else None
+
+
+def register_customer_organization(repo: CommandTransaction, cur: Any, operator: OperatorIdentity,
+                                   receipt_id: str, *, name: str, kind: str, domain: str | None,
+                                   note: str) -> str:
+    """A new institution through `register-organization`'s path: confirmed, active, a `customer`,
+    with the domain unless it is a free-mail one. Its id."""
+    made = _handle_register_organization(repo, cur, operator, {
+        "name": name, "legal_name": None, "kind": kind, "classification": "customer",
+        "domain": domain if domain and domain not in FREE_MAIL_DOMAINS else None, "product_lines": [],
+        "note": note}, receipt_id)
+    return made["organization_id"]
+
+
+_NEW_ORGANIZATION_REFUSALS = {"labdelivery_refused": "input of Labdelivery origin is refused",
+                              "recipient_own_address": "Ese dominio es de OrigenLab, no de una institución cliente."}
 
 
 class V2CaseCommandRepository(CommandTransaction):
@@ -654,6 +714,11 @@ class V2CaseCommandRepository(CommandTransaction):
         one it is also `crm.opportunity.organization_id`, because §3.6.1 defines the column as
         that institution — and both move in this transaction or neither does.
         """
+        created = False
+        if fields.get("new_organization") is not None:
+            fields = {**fields, **self._named_new_organization(cur, operator, fields["new_organization"],
+                                                                fields["note"], receipt_id)}
+            created = fields["organization_created"]
         case = self._live_case(cur, fields["opportunity_id"], fields["opportunity_version"])
         organization = self._live_organization(cur, fields["organization_id"])
         if int(organization["version"]) != int(fields["organization_version"]):
@@ -695,13 +760,40 @@ class V2CaseCommandRepository(CommandTransaction):
             "opportunity_version": case_version,
             "opportunity_organization_id": case_organization_id,
             "organization_id": organization["id"],
+            "organization_name": organization["name"],
             "organization_version": int(organization["version"]),
             "role": fields["role"],
             "stage": case["stage"],
             "supplier_exception": fields["supplier_exception_reason"] is not None,
-            "created": ["opportunity_organization"],
+            "organization_created": created,
+            "created": (["organization"] if created else []) + ["opportunity_organization"],
             "event_ids": events,
         }
+
+    def _named_new_organization(self, cur: Any, operator: OperatorIdentity, new: dict[str, Any], note: str,
+                                receipt_id: str) -> dict[str, Any]:
+        """`add-case-organization` with `new_organization`: the institution it names — the one
+        already of that name or domain, else registered now (the rule above) — as the
+        `organization_id` / `organization_version` the rest of the command decides against.
+
+        The name's advisory lock is taken before the case row, as `create-quote` takes a client's
+        advisory locks before any row. A supplier found by name is refused as the requester exactly
+        as one named by id is (`supplier_exception_required`)."""
+        name, domain = new["name"], new.get("domain")
+        reason = not_a_recipient(f"x@{domain}" if domain else None, name)
+        if reason is not None:
+            raise CommandRefused(422, reason, _NEW_ORGANIZATION_REFUSALS[reason])
+        lock_new_organization_name(cur, name)
+        found = same_name_or_domain_organization(cur, name, f"x@{domain}" if domain else None)
+        if found is not None and not_a_recipient(None, found["name"]) is not None:
+            raise CommandRefused(422, "labdelivery_refused", _NEW_ORGANIZATION_REFUSALS["labdelivery_refused"])
+        organization_id = found["id"] if found is not None else register_customer_organization(
+            self, cur, operator, receipt_id, name=name, kind=new.get("kind") or "company", domain=domain, note=note)
+        cur.execute("select version from crm.organization where id = %s", (organization_id,))
+        version = self._row(cur)
+        assert version is not None  # noqa: S101 - found or just registered
+        return {"organization_id": organization_id, "organization_version": int(version["version"]),
+                "organization_created": found is None}
 
     def _set_case_organization_role(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str

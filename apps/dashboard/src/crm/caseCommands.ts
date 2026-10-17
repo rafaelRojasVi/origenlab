@@ -208,15 +208,21 @@ async function postCaseCommand(path: string, body: unknown, idempotencyKey: stri
   return receipt;
 }
 
-export interface AddCaseOrganizationBody {
+/** A new institution named while putting it on a case (`new_organization`): registered as a
+ * customer unless one of that name (or domain) exists, which is then used. */
+export interface NewCaseOrganization {
+  name: string;
+  kind?: "company" | "university" | "public_institution" | "hospital" | "laboratory" | "other";
+  domain?: string;
+}
+
+export type AddCaseOrganizationBody = {
   opportunity_id: string;
   opportunity_version: number;
-  organization_id: string;
-  organization_version: number;
   role: "requesting_institution";
   supplier_exception_reason?: string | null;
   note: string;
-}
+} & ({ organization_id: string; organization_version: number } | { new_organization: NewCaseOrganization });
 
 /** An explicit operator decision; never infer the requesting institution from email. */
 export const addCaseOrganization = (
@@ -537,6 +543,9 @@ const REFUSAL_ES: Record<string, string> = {
   case_organization_changed_concurrently: "Otra persona revisó la institución. Recarga el caso.",
   case_organization_role_unchanged: "Esta relación ya está confirmada.",
   case_already_has_a_requesting_institution: "Este caso ya tiene una institución solicitante. Recarga el caso.",
+  organization_name_ambiguous: "Hay varias instituciones con ese nombre: elige una de ellas.",
+  labdelivery_refused: "Hay un texto o una dirección de Labdelivery: no se usa en OrigenLab.",
+  recipient_own_address: "Ese dominio es de OrigenLab, no de una institución cliente.",
   supplier_exception_required: "Esta institución figura como proveedor. Se requiere una justificación explícita para registrar que también solicita en este caso.",
   supplier_exception_is_not_needed: "No corresponde registrar una excepción de proveedor para esta institución.",
   case_is_closed: "El caso ya está cerrado; un caso cerrado no se reabre.",

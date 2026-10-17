@@ -343,7 +343,7 @@ participant, so steps 3–5 above remain unimplemented.
 | 1 | operator · `open_commercial_case` | an `evidence.source_record` that exists and is not quarantined | `crm.opportunity` at `stage = lead`, `organization_id` NULL, **and** its `origin` evidence link, in one transaction | `opportunity.created`, `case_evidence.linked` | no such record → 404; quarantined → 409 |
 | 1′ | operator · `create-quote` with a client (§W3-Cotizador; no command of its own) | the client has no open case, or the operator asked for a new one | `crm.opportunity` at `stage = lead` with **no** origin document — the quote created in the same transaction is its reason — and, when the client is an institution, its `requesting_institution` through step 3's path | `opportunity.created` (`origin_source_record_id` null) + step 3's events | a supplier/manufacturer client → `supplier_exception_required` |
 | 2 | operator · `link_case_evidence` | exactly one typed subject, which must already exist; the case is open | `crm.opportunity_evidence` row | `case_evidence.linked` | the same `(case, subject, relation)` twice → `evidence_already_linked`; a subject that does not exist → 404 |
-| 3 | operator · `add_case_organization` | the case and the institution at the versions shown; the part is not already current | `crm.opportunity_organization` row, `confirmed` with the operator named; for `requesting_institution`, `crm.opportunity.organization_id` in the same transaction | `case_organization.added` (+ `opportunity.organization_set`) | a second requester → `case_already_has_a_requesting_institution`; a registered supplier/manufacturer as requester without a motive → `supplier_exception_required`; a motive nobody needed → `supplier_exception_is_not_needed` |
+| 3 | operator · `add_case_organization` | the case and the institution at the versions shown (`organization_id` + `organization_version`), or `new_organization: {name, kind?, domain?}` instead — the one active institution of exactly that name, else the one its domain names, else registered as `register-organization` registers one (`confirmed`, classification `customer`, the domain unless free mail); the part is not already current | `crm.opportunity_organization` row, `confirmed` with the operator named; for `requesting_institution`, `crm.opportunity.organization_id` in the same transaction; a new institution's rows first | `case_organization.added` (+ `opportunity.organization_set`; a new one: `organization.created`, `relationship.changed`, `organization.domain_added`) | a second requester → `case_already_has_a_requesting_institution`; a registered supplier/manufacturer as requester without a motive → `supplier_exception_required` (a supplier found by name too); a motive nobody needed → `supplier_exception_is_not_needed`; a name several share → 409 `organization_name_ambiguous` with `details.candidates`; Labdelivery or an OrigenLab domain → 422 |
 | 4 | operator · `set_case_organization_role` | the row is current and belongs to this case | a `machine_proposed` row is confirmed in place; **or** the current row is closed (`valid_to`) and a new part is opened, both in one transaction | `case_organization.role_confirmed`, or `case_organization.ended` + `case_organization.added` | already confirmed in that part → `case_organization_role_unchanged`; taking the requester away from a case at `qualified` or later → refused |
 | 5 | operator · `record_case_interest` | ≥1 of product, manufacturer, model text; product and manufacturer agree; quantity > 0 | `crm.opportunity_interest` row, `confirmed` | `case_interest.added` | a manufacturer the catalogue contradicts → refused; a price field → 422 (the request forbids unknown fields) |
 | 6 | operator · `advance_case_stage` | the transition is in §1.1; from `qualified` on, a human-confirmed requesting institution exists; `lost`/`abandoned` carry a motive | `stage`, `closed_at`, `close_reason`, `version + 1` | `opportunity.staged` (+ `opportunity.closed`) | `stage_transition_not_allowed`, `stage_requires_a_confirmed_requesting_institution`, `closing_a_case_needs_a_motive`, `won_requires_a_quote`, `case_is_closed` |
@@ -497,6 +497,22 @@ authored draft is approved directly.
   writes nothing. **Two creates for one client at once** queue on the advisory locks: the second
   reads the cases after the first committed and quotes on the case it opened — two quotes, two
   numbers, one new case.
+  **A person, a contact point or an address may name its institution** (`client.institution`:
+  `{organization_id}` or `{new_organization: {name, kind?}}`), for a client the CRM knows none of;
+  without it nothing changes. The institution is checked as any client institution (archived,
+  Labdelivery, OrigenLab-own, supplier → refused) and a new one is found or registered by the rule
+  above (same name, else registered as a `customer`; several of that name → 409
+  `organization_name_ambiguous` with them). A client that already has an institution is refused
+  409 `client_has_institution` unless it names that same one. The client's cases stay its own (the
+  person's or the address's, not the institution's); a new case gets it as its
+  `requesting_institution`; an existing case with no requesting institution gets it through
+  `add_case_organization`'s own path (one that names one keeps it); a person gets a confirmed
+  affiliation through `link-person-organization`'s handler (event `affiliation.opened`). **An
+  address no person owns is not attributed** — no operator command gives a bare contact point an
+  institution outside evidence review — so only its case is connected; a new institution takes the
+  address's domain (not free mail, not already an institution's), so the next quote to that domain
+  finds it. The response adds `institution_connected` and `affiliation_id`. The new institution's
+  name lock is the first of the client's advisory locks; the affiliation comes after the case.
 - **The recipient is picked from the case's people.** The workspace lists them in `case.contacts`:
   the case's current participants first, then — once each, newest email first — the sender of each
   inbound email and the recipients of each email OrigenLab sent, among the emails linked to the

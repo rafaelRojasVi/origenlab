@@ -152,10 +152,14 @@ def _email(value: str | None) -> str | None:
 NewOrganizationKind = Literal["company", "university", "public_institution", "hospital", "laboratory", "other"]
 
 
-class NewClientOrganization(_Model):
+class NewInstitution(_Model):
     """An institution the CRM does not hold yet: registered as `register-organization` registers one."""
     name: Annotated[str, StringConstraints(min_length=1, max_length=500)]
     kind: NewOrganizationKind = "company"
+
+
+class NewClientOrganization(NewInstitution):
+    """A new institution as the client itself, with (optionally) the address the quote goes to."""
     email: Annotated[str | None, StringConstraints(min_length=3, max_length=320)] = None
 
     @model_validator(mode="after")
@@ -164,15 +168,32 @@ class NewClientOrganization(_Model):
         return self
 
 
+class ClientInstitution(_Model):
+    """The institution a person, a contact point or an address with none is connected to while
+    quoting them: an existing one, or a new one (registered unless one of that name exists)."""
+    organization_id: UUID | None = None
+    new_organization: NewInstitution | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> "ClientInstitution":
+        if (self.organization_id is None) == (self.new_organization is None):
+            raise ValueError("institution takes exactly one of organization_id, new_organization")
+        return self
+
+
 class QuoteClient(_Model):
     """Whom a new quote is for when no case is named: exactly one of an institution, a person, an
-    email contact point, an address (with, optionally, the name it goes by) or a new institution."""
+    email contact point, an address (with, optionally, the name it goes by) or a new institution.
+
+    A person, a contact point or an address may name `institution` too — the one they belong to,
+    when the CRM knows none (`commands._connect_institution`)."""
     organization_id: UUID | None = None
     person_id: UUID | None = None
     contact_point_id: UUID | None = None
     email: Annotated[str | None, StringConstraints(min_length=3, max_length=320)] = None
     name: Annotated[str | None, StringConstraints(min_length=1, max_length=200)] = None
     new_organization: NewClientOrganization | None = None
+    institution: ClientInstitution | None = None
 
     @model_validator(mode="after")
     def _exactly_one(self) -> "QuoteClient":
@@ -180,6 +201,8 @@ class QuoteClient(_Model):
         if sum(v is not None for v in picked) != 1:
             raise ValueError("client takes exactly one of organization_id, person_id, contact_point_id, email, "
                              "new_organization")
+        if self.institution is not None and (self.organization_id is not None or self.new_organization is not None):
+            raise ValueError("institution goes only with a person, a contact point or an email")
         if self.name is not None and self.email is None:
             raise ValueError("client name goes only with an email address")
         self.email = _email(self.email)

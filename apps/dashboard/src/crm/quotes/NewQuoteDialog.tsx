@@ -18,6 +18,12 @@
  *   API's may have run: the next click with the same request repeats the same command.
  * - A «+ Cliente nuevo» the API resolved to an institution it already had is said once the tab
  *   opens: «Se usó la institución existente «X»» (and «y su caso abierto» when it used that case).
+ * - **Institución** (a person, or an address, the CRM knows no institution of): optional — an
+ *   institution held (searched with the same suggestions) or «+ Nueva institución «texto»» with its
+ *   kind, sent as `client.institution`. The API connects the person to it (an affiliation) and
+ *   names it on the case; without one the quote cannot be approved, and the field says so. When
+ *   its name is shared by several, the institutions of that name are listed to pick from, as for
+ *   a new client.
  *
  * Refusals are said in Spanish (`quoteRefusalText`). The browser never prices anything here.
  */
@@ -35,6 +41,7 @@ import {
   type CreatedQuote,
   type NewClientKind,
   type QuoteClientCase,
+  type QuoteClientInstitution,
   type QuoteClientOrganization,
   type QuoteClientPerson,
   type QuoteClientPick,
@@ -58,6 +65,15 @@ type Client =
   | { kind: "person"; person: QuoteClientPerson }
   | { kind: "email"; email: string }
   | { kind: "new"; name: string };
+
+/** The institution a person or an address is connected to: one held, or a new one. */
+type InstitutionPick = { kind: "existing"; id: string; name: string } | { kind: "new"; name: string };
+
+/** A person or an address the CRM knows no institution of: the dialog offers to name one. */
+function needsInstitution(c: Client | null): boolean {
+  if (c?.kind === "email") return true;
+  return c?.kind === "person" && !c.person.organization;
+}
 
 /** The case chosen: one of the client's, a new Solicitud, or the API's to find (`auto`). */
 type CaseChoice = string | "new" | "auto" | null;
@@ -109,8 +125,9 @@ function clientText(c: Client): string {
 }
 
 /** Whom the new tab names: the institution, else the person or the address (as the quote's page does). */
-function clientName(c: Client): string {
+function clientName(c: Client, institution: InstitutionPick | null = null): string {
   if (c.kind === "organization") return c.org.name;
+  if (institution && needsInstitution(c)) return institution.name;
   if (c.kind === "person") return c.person.organization?.name ?? c.person.name ?? c.person.email ?? "Cliente";
   if (c.kind === "email") return c.email;
   return c.name;
@@ -169,7 +186,10 @@ function useClientSuggestions(term: string, enabled: boolean): { found: Found | 
  * address's domain): said once the tab is open, with its open case when that one was used without
  * the operator choosing it. Null for any other client, or a truly new institution.
  */
-function reusedText(client: Client, made: CreatedQuote, chose: boolean): string | null {
+function reusedText(client: Client, made: CreatedQuote, chose: boolean, institution: InstitutionPick | null): string | null {
+  if (institution?.kind === "new" && made.institution_connected && made.organization_created === false && made.organization_id) {
+    return `Se usó la institución existente «${made.organization_name || institution.name}».`;
+  }
   if (client.kind !== "new" || made.organization_created !== false || !made.organization_id) return null;
   const name = made.organization_name || client.name;
   return `Se usó la institución existente «${name}»${made.case_created === false && !chose ? " y su caso abierto" : ""}.`;
@@ -197,6 +217,10 @@ export function NewQuoteDialog({
   /** The institutions of one name the API listed (`organization_name_ambiguous`). */
   const [twins, setTwins] = useState<{ id: string; name: string }[] | null>(null);
   const [twinInfo, setTwinInfo] = useState<Map<string, QuoteClientOrganization>>(new Map());
+  /** Whose name the twins share: the new client's, or the new institution's of a person or an address. */
+  const [twinsOf, setTwinsOf] = useState<"client" | "institution">("client");
+  const [institution, setInstitution] = useState<InstitutionPick | null>(null);
+  const [institutionKind, setInstitutionKind] = useState<NewClientKind>("company");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -232,6 +256,8 @@ export function NewQuoteDialog({
     setChoice(defaultChoice(cases));
     setAskedCases(null);
     setTwins(null);
+    setInstitution(null);
+    setInstitutionKind("company");
     setNotice(null);
     setError(null);
     setActive(0);
@@ -244,6 +270,7 @@ export function NewQuoteDialog({
     setChoice(null);
     setAskedCases(null);
     setTwins(null);
+    setInstitution(null);
     setNotice(null);
     setError(null);
     setActive(0);
@@ -256,10 +283,18 @@ export function NewQuoteDialog({
     if (!client || choice === null) return null;
     let pick: QuoteClientPick;
     if (client.kind === "organization") pick = { organization_id: client.org.id };
-    else if (client.kind === "person")
-      pick = client.person.person_id ? { person_id: client.person.person_id } : { contact_point_id: client.person.contact_point_id! };
-    else if (client.kind === "email") pick = { email: client.email };
-    else {
+    else if (client.kind === "person" || client.kind === "email") {
+      const connected: QuoteClientInstitution | null =
+        !institution || !needsInstitution(client)
+          ? null
+          : institution.kind === "existing"
+            ? { organization_id: institution.id }
+            : { new_organization: { name: institution.name, kind: institutionKind } };
+      const extra = connected ? { institution: connected } : {};
+      if (client.kind === "email") pick = { email: client.email, ...extra };
+      else if (client.person.person_id) pick = { person_id: client.person.person_id, ...extra };
+      else pick = { contact_point_id: client.person.contact_point_id!, ...extra };
+    } else {
       const email = newEmail.trim().toLowerCase();
       pick = { new_organization: { name: client.name, kind, ...(email ? { email } : {}) } };
     }
@@ -289,11 +324,11 @@ export function NewQuoteDialog({
       if (!mounted.current) return;
       onCreated(made.quote_id, {
         label: quoteLabel({ label: null, quote_number: made.quote_number, revision_no: 1 }),
-        client: clientName(client),
+        client: clientName(client, institution),
         status: "draft",
       });
       focusTabWhenShown(made.quote_id);
-      const reused = reusedText(client, made, askedCases !== null);
+      const reused = reusedText(client, made, askedCases !== null, institution);
       if (reused) toast(reused, "warn");
     } catch (e) {
       if (!mounted.current) return;
@@ -309,7 +344,9 @@ export function NewQuoteDialog({
           setChoice(null);
           setFocusTo("cases");
         } else {
-          showTwins(list as { id: string; name: string }[]);
+          const of = institution?.kind === "new" && needsInstitution(client) ? "institution" : "client";
+          setTwinsOf(of);
+          showTwins(list as { id: string; name: string }[], of === "institution" ? institution!.name : null);
           setFocusTo("twins");
         }
       } else {
@@ -322,10 +359,10 @@ export function NewQuoteDialog({
   }
 
   /** The institutions of that name, told apart by what the suggestions know of them (domains, cases). */
-  function showTwins(list: { id: string; name: string }[]) {
+  function showTwins(list: { id: string; name: string }[], named: string | null) {
     setTwins(list);
     setTwinInfo(new Map());
-    const name = list[0]?.name ?? (client?.kind === "new" ? client.name : "");
+    const name = list[0]?.name ?? named ?? (client?.kind === "new" ? client.name : "");
     if (name.trim().length < MIN_SEARCH) return;
     fetchQuoteClients(name.trim()).then(
       (data) => {
@@ -336,6 +373,13 @@ export function NewQuoteDialog({
   }
 
   function pickTwin(t: { id: string; name: string }) {
+    if (twinsOf === "institution") {
+      // The client stays; the institution it is connected to is the one chosen. The key stays too.
+      setInstitution({ kind: "existing", id: t.id, name: t.name });
+      setTwins(null);
+      setNotice(null);
+      return;
+    }
     const info = twinInfo.get(t.id);
     const org: QuoteClientOrganization = info ?? { id: t.id, name: t.name, kind: null, domains: [], open_cases: [] };
     // The key stays (`pending`): the retry carries the institution chosen.
@@ -451,6 +495,19 @@ export function NewQuoteDialog({
           </div>
         ) : null}
 
+        {client && !twins && needsInstitution(client) ? (
+          <InstitutionField
+            picked={institution}
+            kind={institutionKind}
+            busy={busy}
+            onPick={(next) => {
+              setInstitution(next);
+              setError(null);
+            }}
+            onKind={setInstitutionKind}
+          />
+        ) : null}
+
         {client && !twins ? (
           <>
             <fieldset ref={casesRef} tabIndex={-1} className="m-0 flex flex-col gap-2 border-0 p-0 focus:outline-none" disabled={busy}>
@@ -529,17 +586,129 @@ function focusTabWhenShown(quoteId: string) {
   setTimeout(step, 0);
 }
 
+/**
+ * «Institución» of a person or an address the CRM knows none of: a search over the same suggestions
+ * (institutions only) and «+ Nueva institución «texto»» with its kind. Optional; it says why it matters.
+ */
+function InstitutionField({
+  picked,
+  kind,
+  busy,
+  onPick,
+  onKind,
+}: {
+  picked: InstitutionPick | null;
+  kind: NewClientKind;
+  busy: boolean;
+  onPick: (next: InstitutionPick | null) => void;
+  onKind: (kind: NewClientKind) => void;
+}) {
+  const ids = useId();
+  const [text, setText] = useState("");
+  const term = text.trim();
+  const { found, retry } = useClientSuggestions(term, picked === null);
+  const options: Option[] = useMemo(() => {
+    if (!found) return [];
+    const orgs = (found.data?.organizations ?? []).map((org) => ({
+      key: `org:${org.id}`,
+      client: { kind: "organization" as const, org, casesKnown: true },
+      main: org.name,
+      side: org.domains.length ? org.domains.join(", ") : "institución",
+    }));
+    return [...orgs, { key: "new", client: { kind: "new" as const, name: term.slice(0, NAME_MAX) }, main: `+ Nueva institución «${term}»`, side: null, strong: true }];
+  }, [found, term]);
+  const listOpen = picked === null && term.length >= MIN_SEARCH;
+  const listId = `${ids}-instituciones`;
+  const hint = (
+    <p className="text-[12.5px] text-ink-muted">
+      Opcional, pero sin institución la cotización no se puede aprobar. Se asocia también a la persona y al caso.
+    </p>
+  );
+
+  if (picked) {
+    return (
+      <div className="space-y-1.5">
+        <p className="text-[13px] text-ink-muted">Institución</p>
+        <div className="flex items-center justify-between gap-3 rounded-[10px] border border-line px-3 py-2 text-[14px] text-ink">
+          <span className="min-w-0 truncate font-semibold">
+            {picked.kind === "new" ? `Nueva: ${picked.name}` : picked.name}
+          </span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setText(picked.name);
+              onPick(null);
+            }}
+            className="shrink-0 text-[13px] font-semibold text-brand-700 underline"
+          >
+            Cambiar institución
+          </button>
+        </div>
+        {picked.kind === "new" ? (
+          <FormField label="Tipo de la nueva institución" htmlFor={`${ids}-tipo`}>
+            <SelectInput id={`${ids}-tipo`} value={kind} onChange={(v) => onKind(v as NewClientKind)} options={KIND_OPTIONS} disabled={busy} />
+          </FormField>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={`${ids}-institucion`} className="block text-[13px] text-ink-muted">
+        Institución
+      </label>
+      <input
+        id={`${ids}-institucion`}
+        type="text"
+        role="combobox"
+        autoComplete="off"
+        aria-expanded={listOpen}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        value={text}
+        disabled={busy}
+        placeholder="¿De qué institución es?"
+        onChange={(e) => setText(e.target.value)}
+        className="h-11 w-full min-w-0 rounded-[10px] border-[1.5px] border-line-strong bg-canvas-raised px-3 text-[14.5px] text-ink placeholder:text-ink-faint focus:border-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30 disabled:opacity-60"
+      />
+      {listOpen ? (
+        <SuggestionList
+          id={listId}
+          label="Instituciones"
+          options={options}
+          active={-1}
+          loading={!found}
+          failed={!!found?.failed}
+          failedText="No se pudo buscar instituciones."
+          onRetry={retry}
+          onHover={() => undefined}
+          onPick={(o) =>
+            onPick(o.client.kind === "organization" ? { kind: "existing", id: o.client.org.id, name: o.client.org.name } : { kind: "new", name: term.slice(0, NAME_MAX) })
+          }
+        />
+      ) : null}
+      {hint}
+    </div>
+  );
+}
+
 function SuggestionList({
   id,
+  label = "Clientes",
   options,
   active,
   loading,
   failed,
+  failedText = "No se pudo buscar clientes.",
   onRetry,
   onHover,
   onPick,
 }: {
   id: string;
+  label?: string;
+  failedText?: string;
   options: Option[];
   active: number;
   loading: boolean;
@@ -557,13 +726,13 @@ function SuggestionList({
       ) : null}
       {failed ? (
         <p role="alert" className="text-[12.5px] text-bad">
-          No se pudo buscar clientes.{" "}
+          {failedText}{" "}
           <button type="button" onClick={onRetry} className="font-semibold text-brand-700 underline">
             Reintentar
           </button>
         </p>
       ) : null}
-      <ul id={id} role="listbox" aria-label="Clientes" className={options.length ? "max-h-72 overflow-y-auto rounded-[10px] border border-line" : "hidden"}>
+      <ul id={id} role="listbox" aria-label={label} className={options.length ? "max-h-72 overflow-y-auto rounded-[10px] border border-line" : "hidden"}>
         {options.map((o, i) => (
           <li
             key={o.key}
