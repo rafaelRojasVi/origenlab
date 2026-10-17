@@ -168,3 +168,26 @@ describe("ClientSection", () => {
     expect(screen.queryByText("Esa dirección es de OrigenLab.")).not.toBeInTheDocument();
   });
 });
+
+describe("«Agregar institución»", () => {
+  const noop = () => undefined;
+  it("is offered on a quote whose case has no institution, and opens the institution search", () => {
+    render(
+      <ClientSection workspace={ws({ institution: null, version: 3 })} draft={draftFixture()} invalid={[]} disabled={false}
+        edit={noop} onInstitutionAdded={noop} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Agregar institución" }));
+    expect(screen.getByLabelText("Buscar institución")).toBeInTheDocument();
+  });
+
+  it("is not offered when the case already has one, or the draft is frozen", () => {
+    const { rerender } = render(
+      <ClientSection workspace={ws({ version: 3 })} draft={draftFixture()} invalid={[]} disabled={false} edit={noop} onInstitutionAdded={noop} />,
+    );
+    expect(screen.queryByRole("button", { name: "Agregar institución" })).toBeNull();
+    rerender(
+      <ClientSection workspace={ws({ institution: null, version: 3 })} draft={draftFixture()} invalid={[]} disabled edit={noop} onInstitutionAdded={noop} />,
+    );
+    expect(screen.queryByRole("button", { name: "Agregar institución" })).toBeNull();
+  });
+});
