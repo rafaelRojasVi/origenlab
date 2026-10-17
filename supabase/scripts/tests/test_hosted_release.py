@@ -768,17 +768,37 @@ class SelectiveRelease(unittest.TestCase):
         self.assertIn("push:\n    branches: [main", trigger)
         self.assertNotIn("paths", trigger.split("pull_request", 1)[0])
 
-    def test_migration_plan_reports_its_pending_count(self):
+    def test_migration_plan_reports_its_pending_count_read_only(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory) / "output"
             rows = migrations.chain(ROOT)
             answers = ["origenlab_migrator|postgres|true|170006|true|true|true",
                        "\n".join(v for v, _, _ in rows)]
+            sessions = []
+            def fake_psql(env, *args):
+                sessions.append(env.get("PGOPTIONS", ""))
+                return answers.pop(0)
             env = dict(GITHUB_REF="refs/heads/main", GITHUB_OUTPUT=str(out), RUNNER_TEMP=directory)
             with mock.patch.dict(os.environ, env), mock.patch.object(migrations, "database_env", return_value={}), \
-                 mock.patch.object(migrations, "psql", side_effect=lambda *a: answers.pop(0)):
+                 mock.patch.object(migrations, "psql", side_effect=fake_psql):
                 migrations.run("plan")
             self.assertEqual(out.read_text(), "pending_migrations=0\n")
+            # Every plan session is read-only: plan cannot write even with a bug.
+            self.assertEqual(len(sessions), 2)
+            for options in sessions:
+                self.assertIn("-c default_transaction_read_only=on", options)
+        workflow = (ROOT / ".github/workflows/production-db-migrations.yml").read_text()
+        step = workflow.split("- name: Read-only hosted migration plan", 1)[1].split("- name:", 1)[0]
+        self.assertIn('PGOPTIONS: "-c default_transaction_read_only=on"', step)
+
+    def test_lint_runs_the_public_repo_hygiene_scan(self):
+        # supabase does not bind most releases; the always-required lint workflow carries the scan.
+        lint_sh = (ROOT / "scripts/lint.sh").read_text()
+        self.assertIn("\nscripts/security/check-public-repo-hygiene.sh\n", lint_sh)
+        self.assertLess(lint_sh.index("\nscripts/security/check-public-repo-hygiene.sh"), lint_sh.index("exec pre-commit"))
+        self.assertIn("run: make lint", (ROOT / ".github/workflows/lint.yml").read_text())
+        self.assertIn("lint:\n\tscripts/lint.sh", (ROOT / "Makefile").read_text())
+        self.assertIn("lint", ci.MANDATORY)
 
     def _render_env(self, plan):
         env = dict(GITHUB_ACTIONS="true", GITHUB_REF="refs/heads/main", RENDER_API_KEY="test-only", OL_RELEASE_SHA=NEW)

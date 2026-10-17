@@ -62,7 +62,7 @@ for independent decryption/restoration in this audit.
 | High | Lock guard compared only maximum version, allowing changes to earlier ledger rows during the race. | Exact ordered ledger prefix rechecked under the transaction advisory lock. |
 | High | Dump and ledger originally read separate snapshots. | One exported repeatable-read snapshot spans both; shared advisory lock excludes cooperating DDL. |
 | High | Installed client 17 did not override GitHub runner's default pg_dump. New CI failed the full backup test. | Explicit PG17 PATH in both install jobs; rerun succeeded. |
-| High | Green workflow can contain skipped required jobs; workflow names alone do not prove identity. | Exact SHA/branch/repository/path and individual job checks; missing, failed, cancelled or skipped gates refuse release. All nine CI workflows now run on main. |
+| High | Green workflow can contain skipped required jobs; workflow names alone do not prove identity. | Exact SHA/branch/repository/path and individual job checks; missing, failed, cancelled or skipped gates refuse release. All CI workflows the release lists run on every main push (eleven since 2026-10-17; `supabase` binds only as the selective-release plan says). |
 | High | Test and credential-bearing workflows sharing one concurrency group could block/cancel the mandatory push test while release waits for it. | Separate test groups from serialized production releases. |
 | High | Protected-branches-only environment could admit another protected branch. | Setup restricts release environment to literal main branch, rejects other branch/tag policies. Public website environment untouched. |
 | Medium | Scheduled backups originally started production preflight despite first-release hold. | Separate repository `OL_BACKUP_AUTOMATION_ENABLED`, default OFF. Manual plan/backup remain available. |
@@ -168,9 +168,10 @@ blocks new runs/stages; it does not cancel a provider request already accepted.
 | Postflight fails or SHA changes while waiting | Rollout incomplete despite Render live | Inspect aggregate queue/capture/Drive/API health; fix and reverify. No customer sends or queue mutations. |
 | Restore/recovery | Isolated DB includes old queue leases and flags | Keep all restored workers/senders OFF. Review queue/source timestamps, external objects, identities and send controls before approved recovery. |
 
-Migrations are never automatically reversed. Successful services are idempotently skipped
-on a rerun only when their current live commit is the exact release SHA. API HTTP liveness
-is still checked before the dashboard even when the API deploy is skipped.
+Migrations are never automatically reversed. A service is skipped in two cases only: on a rerun,
+when its current live commit is the exact release SHA; and when the preflight plan keeps it
+(nothing it builds from changed), provided it is still live at the planned commit. API HTTP
+liveness is still checked before the dashboard even when the API deploy is skipped.
 
 ## Selective release (2026-10-17)
 
@@ -191,8 +192,9 @@ with `git diff --name-only --no-renames` (both sides of a rename count). Paths m
 | anything else (`render.yaml`, `Makefile`, `scripts/**`, `.github/**`, other `supabase/**`, a new app, a root lockfile) | **every service** |
 
 A service also deploys when its live commit is unknown (latest deploy failed or still running,
-commit missing) or is not an ancestor of the SHA (a rollback or manual deploy), and every service
-deploys when a migration is pending or the pending count is unknown. Order stays worker -> API ->
+commit missing) or is not an ancestor of the SHA (a rollback or manual deploy); that alone does not
+deploy the others, but it makes the supabase workflow binding. Every service deploys when a
+migration is pending or the pending count is unknown. Order stays worker -> API ->
 dashboard, one at a time, with the stale-main check before each service: a parallel rollout would
 change the partial-failure states the recovery matrix above relies on.
 
@@ -258,7 +260,7 @@ Offline cases cover ledger prefix, owner transitions, transaction escapes, hidde
 bypasses, approved-merge review identity, stale/fork/non-main events, both hold switches,
 CI identity and skipped jobs, three exact-commit payloads/no cron POST, suspended-cron gate, autonomous services, bounded reads,
 no blind POST retry and timestamp/resource validation of aggregate sweep events. Since
-2026-10-17 (`SelectiveRelease`, 54 offline tests in all) they also cover the path-to-service map
+2026-10-17 (`SelectiveRelease`, 55 offline tests in all) they also cover the path-to-service map
 (unknown paths deploy everything), per-service diffs on real git history (renames, non-ancestor
 and unknown bases), the required-CI set by changed paths (a red supabase run refuses even when
 optional), the zero-pending skip in the workflow, the release-result matrix (a skip succeeds

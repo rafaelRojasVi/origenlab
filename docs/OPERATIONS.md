@@ -2617,8 +2617,8 @@ changed since what is live, or a migration is pending; a red `supabase` run stil
 and migrate run only when the read-only migration plan reports a pending migration (exactly `0`
 skips both; anything else runs both, backup first). Only the services whose code changed since
 the commit each one runs are deployed, still in the order worker -> API -> dashboard; an
-unrecognised path, an unknown or non-ancestor live commit or a pending migration deploys all
-three. Postflight checks each service at its expected commit and the worker's health either way.
+unrecognised path or a pending migration deploys all three, and a service whose live commit is
+unknown or not an ancestor of the SHA is deployed itself and makes the `supabase` workflow binding. Postflight checks each service at its expected commit and the worker's health either way.
 The result job counts a skip as success only with exactly `0` pending. Path map, timings and
 how to tell what is live: [release runbook → Selective release](runbooks/PRODUCTION_DB_MIGRATIONS.md#selective-release-2026-10-17).
 Every SQL file must support the old running worker/API throughout the rollout. Each file

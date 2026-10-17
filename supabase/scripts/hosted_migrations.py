@@ -120,6 +120,10 @@ def run(mode: str) -> None:
     rows = chain(ROOT)
     with tempfile.TemporaryDirectory(prefix="ol-hosted-", dir=os.environ.get("RUNNER_TEMP")) as directory:
         env = database_env(Path(directory))
+        if mode == "plan":
+            # Plan runs in release preflight before CI is green: make the session read-only so
+            # even a bug here cannot write.
+            env["PGOPTIONS"] = (env.get("PGOPTIONS", "") + " -c default_transaction_read_only=on").strip()
         identity = psql(env, "-Atc", """select session_user, current_database(),
           pg_has_role(session_user,'origenlab_owner','SET')::text,
           current_setting('server_version_num'),

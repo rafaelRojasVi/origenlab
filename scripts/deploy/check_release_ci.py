@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Gate production release on successful CI for exactly the triggering main commit.
 
-Every listed workflow runs on every main push and must complete successfully at the SHA. The one
+Every listed workflow runs on every main push and must complete successfully at the SHA (the
+public-repo hygiene scan runs in lint as well as supabase, so it gates every release). The one
 exception is the supabase workflow (a full Supabase stack, ~3.5 min): it binds only when the
 release plan says so (OL_RELEASE_REQUIRE_SUPABASE, from scripts/deploy/release_plan.py: something
 it tests changed since what is live, a pending migration, or an unknown base). Anything but the

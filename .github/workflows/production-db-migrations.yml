@@ -195,6 +195,8 @@ jobs:
           OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }}
           OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }}
           OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }}
+          # Read-only session; the script also sets it in plan mode.
+          PGOPTIONS: "-c default_transaction_read_only=on"
         run: python3 supabase/scripts/hosted_migrations.py plan
       - name: Plan which services this release deploys and whether supabase CI binds
         id: release_plan

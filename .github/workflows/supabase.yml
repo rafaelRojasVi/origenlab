@@ -7,7 +7,8 @@ on:
   # Every main/dev commit runs the database compatibility CI. A production release waits for it
   # only when something it tests changed since what is live (these pull_request paths, mirrored in
   # scripts/deploy/release_plan.py SUPABASE_CI_*; a test keeps them equal) or a migration is pending.
-  # A completed red run still refuses any release of its SHA.
+  # A completed red run still refuses any release of its SHA. Its hygiene scan also runs in the
+  # always-required lint workflow (scripts/lint.sh); its other steps gate only releases it binds.
   push:
     branches: [main, dev]
   pull_request:
