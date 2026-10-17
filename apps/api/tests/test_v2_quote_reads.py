@@ -1083,3 +1083,35 @@ def test_a_held_address_without_an_institution_shows_its_domain_s_institution_an
     # The command decides on the same institution and case.
     out = _run(world, "create-quote", {"client": {"contact_point_id": point}})
     assert (out["organization_id"], out["opportunity_id"]) == (clinic, case)
+
+
+# ------------------------------------------------------------------ model aliases (DOMAIN.md §7 #59)
+
+@needs_db
+def test_quote_lines_printed_under_an_alias_reach_the_principals_history_and_kits(world) -> None:
+    """The catalog stores the maker's item number; the quote documents print the model."""
+    dsn = world["dsn"]
+    maker = _org(dsn, "manufacturer", "Fabricante Ejemplo Alias")
+    product = _owner(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, name_es, "
+                          "product_kind, weight_kg, origin_country, content_origin) values (%s, '30000777', "
+                          "'Balanza ejemplo', 'equipment', 5, 'DE', 'operator') returning id::text", (maker,))[0][0]
+    holder = _owner(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, name_es, "
+                         "product_kind, content_origin) values (%s, '30000778', 'Soporte ejemplo', 'accessory', "
+                         "'operator') returning id::text", (maker,))[0][0]
+    _owner(dsn, "insert into catalog.supplier_product (supplier_organization_id, product_id, as_of, price, currency, "
+                "price_kind, provenance_note) values (%s, %s, now() - interval '3 days', 900, 'EUR', 'dealer_net', "
+                "'prueba')", (world["supplier"], product))
+    for prod, alias in ((product, "XQ 777"), (holder, "XQ-H7")):
+        _owner(dsn, "insert into catalog.product_model_alias (product_id, alias, source, created_by_operator_id) "
+                    "values (%s, %s, 'operator', %s)", (prod, alias, world["operator"].operator_id))
+    for models in (["XQ777", "XQH7"], ["XQ777", "XQH7"], ["XQ777"]):
+        _quote_document(dsn, models)
+
+    _, created = _new_quote(world)
+    draft = {**DRAFT, "items": [{"description": "Balanza ejemplo", "quantity": "1", "product_id": product}]}
+    _save(world, created, draft)
+    ws = _reads(dsn).workspace(created["quote_id"])
+    assert ws["current"]["computed"]["principal_line_no"] == 1
+    assert len(ws["price_history"]["items"]) == 3
+    # The kit line printed as an alias is offered as its catalog product.
+    assert [(k["model_key"], k["product_id"]) for k in ws["suggestions"]["kits"]] == [("XQH7", holder)]
