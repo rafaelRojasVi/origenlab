@@ -34,7 +34,7 @@ export function revisionLabel(workspace: QuoteWorkspace, revisionNo: number): st
 
 /* ── the frozen client side ───────────────────────────────────────────────── */
 
-interface PartySnapshot {
+export interface PartySnapshot {
   institution: { name: string | null; rut: string | null } | null;
   recipient: { name: string | null; email: string | null } | null;
   terms: Record<string, unknown>;
@@ -49,7 +49,7 @@ const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ?
 const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 
 /** The snapshot as the API froze it, read defensively (a historical revision has none). */
-function readSnapshot(raw: unknown): PartySnapshot | null {
+export function readSnapshot(raw: unknown): PartySnapshot | null {
   const s = obj(raw);
   if (!s) return null;
   const inst = obj(s.institution);
@@ -74,7 +74,7 @@ function readSnapshot(raw: unknown): PartySnapshot | null {
 }
 
 /** The printed conditions, in the order the PDF prints them (the API's `PRINTED_TERMS`). */
-const PRINTED_TERMS: [string, string][] = [
+export const PRINTED_TERMS: [string, string][] = [
   ["delivery_terms", "Plazo de entrega"],
   ["payment_terms", "Forma de pago"],
   ["warranty_terms_es", "Garantía"],

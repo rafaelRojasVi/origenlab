@@ -468,13 +468,40 @@ function issuedWorkspace(over: { status?: string; superseded_by_revision_no?: nu
 const approved = (version = 5) => json({ ok: true, revision_id: "r-1", version, quote_number: "00042-26", revision_label: "00042-26", negotiated_costs_skipped: [] });
 
 describe("Cotizador page — approving a draft", () => {
-  it("offers «Aprobar», and «Vista previa PDF» switched off until the next delivery (B6)", async () => {
+  it("offers «Aprobar» and «Vista previa PDF», which opens the draft's document marked BORRADOR", async () => {
     stubApi(() => json({}));
     renderPage();
     const preview = await screen.findByRole("button", { name: "Vista previa PDF" });
-    expect(preview).toBeDisabled();
-    expect(preview.closest("[title]")).toHaveAttribute("title", "Llega en la siguiente entrega");
+    expect(preview).toBeEnabled();
     expect(screen.getByRole("button", { name: "Aprobar" })).toBeEnabled();
+    fireEvent.click(preview);
+    const dialog = await screen.findByRole("dialog", { name: /Vista previa PDF · CN00042/ });
+    expect(within(dialog).getByText("BORRADOR · sin aprobar")).toBeInTheDocument();
+    // This draft's lines are not priced yet: it cannot be printed until they are.
+    expect(within(dialog).getByText(/Faltan precios/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Imprimir / Guardar PDF" })).toBeDisabled();
+    // The draft's import expenses and its costs and margins never reach the document.
+    expect(dialog.textContent).not.toMatch(/Flete|Desaduanaje|Margen|Recargo|Costo|Proveedor/i);
+    expect(document.title).toBe("Cotización CN00042 — Institución de prueba (borrador)");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Volver" }));
+    expect(screen.queryByRole("dialog", { name: /Vista previa PDF/ })).not.toBeInTheDocument();
+  });
+
+  it("prints an approved revision from what approval froze, without its expense lines or costs", async () => {
+    stubApi(() => json({}), () => issuedWorkspace());
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Vista previa PDF" }));
+    const dialog = await screen.findByRole("dialog", { name: /Vista previa PDF · CN00042/ });
+    const sheet = within(dialog);
+    expect(sheet.getByText("76.000.000-0", { exact: false })).toBeInTheDocument();
+    expect(sheet.getByText("Agitador de prueba")).toBeInTheDocument();
+    expect(sheet.getByText("Aprobada por Rafa Prueba")).toBeInTheDocument();
+    expect(sheet.queryByText(/BORRADOR/)).not.toBeInTheDocument();
+    expect(dialog.textContent).not.toMatch(/Flete/);
+    const print = vi.fn();
+    vi.stubGlobal("print", print);
+    fireEvent.click(sheet.getByRole("button", { name: "Imprimir / Guardar PDF" }));
+    expect(print).toHaveBeenCalledTimes(1);
   });
 
   it("saves unsaved edits first, then approves with the version that save returned (Review Focus 3)", async () => {
