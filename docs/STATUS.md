@@ -3026,3 +3026,36 @@ cotización» as the `product.created` note). No cost is written; model aliases 
 Two plan actions join the catalog plan model (`add_org_role`, `add_org_domain`; other importers'
 plans keep their bytes) and rollback now also removes the roles and domains a manifest wrote. The
 hosted apply is the owner's step; until it runs, the catalog has none of these products.
+
+### 2.7.128 Quote reader v2: the old template footer no longer blocks reading; a neto with its optional lines is accepted, 2026-10-16 — built, deploys on merge
+
+Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is now
+`quote_read:v2`) and the quote-history importer:
+
+- **Labdelivery refuses only as the issuer.** OrigenLab's old quote template printed a page footer
+  (the old address line, then `Celular: (09) … www.labdelivery.cl`) under an OrigenLab header, and
+  any mention of Labdelivery refused the whole document. `keys.labdelivery_issued(text)` now exempts
+  that footer only when it is the one real footer — pinned by the SHA-256 of its folded text, the
+  plaintext kept out of the public repository — and the page names OrigenLab elsewhere; Labdelivery
+  anywhere else (letterhead, issuer, title, signature, a line, a variant or letter-spaced
+  spelling, another address in the footer's shape) still refuses. The reader
+  (`not_origenlab_quote`) and the importer (`skipped_labdelivery_letterhead`) both use it, and the
+  model's prompt counts only the letterhead, issuer or signature and is told never to copy the
+  footer.
+- **Nothing of the footer is stored.** Every string written — each line's and the document
+  payload's — is refused by `is_labdelivery`, and a document whose strings repeat the footer's
+  address, street, an address segment with a digit (street and number, office), phone label, a 6+-digit number of it or any 7 consecutive digits of one is refused too: the reader's new code
+  `footer_copied` («El lector copió el pie de página antiguo en una línea»), the importer's
+  `skipped_footer_copied`.
+- **A neto that includes the optional lines is accepted.** When the printed neto is more than 1 %
+  off the non-optional lines but within 1 % of all lines with the optional ones, the document is
+  read with the neto as printed and its `quote_document` payload carries `net_includes_optional:
+  true` (absent otherwise); the run's log line counts them, `quote_contents` returns it and the
+  case panel notes «El neto impreso incluye ítems opcionales» under the Neto. Any other mismatch is
+  still `net_mismatch`.
+- **Re-read.** The candidates key a refusal by reader version and ISO week. The first v2 runs
+  re-read v1's `not_origenlab_quote` and `net_mismatch` refusals (at most `--limit` per run); v1's
+  other refusals keep blocking for their weeks, so no tokens go to re-reading what v2 did not
+  change. Operaciones counts pending PDFs the same way, and «Cotizaciones no leídas» lists only
+  the newest refusal of each PDF. No migration or new route; worker, importer script, API reads and
+  the case panel.

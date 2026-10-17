@@ -596,7 +596,7 @@ def load_drive_ledgers(paths: Iterable[str | Path]) -> dict[str, DriveLink]:
 #: The quote reader's refusal codes (apps/worker quote_reader.py); anything else is shown as «other».
 QUOTE_READ_CODES = frozenset({"not_origenlab_quote", "too_many_disputed", "net_mismatch", "model_refused", "unreadable",
                               "no_text_layer", "request_failed", "write_failed", "hash_mismatch",
-                              "attachment_not_in_eml"})
+                              "attachment_not_in_eml", "footer_copied"})
 
 
 def quote_reading_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -2410,22 +2410,26 @@ class CrmWorkspaceRepository:
         return {"opportunity_id": opportunity_id, "threads": case_threads(rows, suppliers)}
 
     def quote_readings(self, limit: int = 100) -> dict[str, Any]:
-        """The quote PDFs the reader refused, newest first (`quote_reading_rows`)."""
+        """The quote PDFs the reader refused, newest first, one row per PDF — its newest refusal, of
+        whichever reader version and week (`quote_reading_rows`)."""
         with self._read() as cur:
             cur.execute(
                 """
-                select a.value_norm, a.value ->> 'code' as code,
-                       to_char(a.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as recorded_at,
-                       q.quote_number, r.revision_no, r.sent_at::text as sent_at,
-                       o.id::text as opportunity_id, o.title as case_title
-                  from evidence.assertion a
-                  join crm.quote_revision r on r.id::text = a.value ->> 'revision_id'
-                  join crm.quote q on q.id = r.quote_id
-                  join crm.opportunity o on o.id = q.opportunity_id
-                 where a.kind = 'quote_read'
-                   and not exists (select 1 from evidence.source_record d where d.kind = 'quote_document'
-                                    and d.dedupe_key = 'quote_document:' || lower(r.pdf_sha256))
-                 order by a.created_at desc
+                select value_norm, code, recorded_at, quote_number, revision_no, sent_at, opportunity_id, case_title
+                  from (select distinct on (lower(r.pdf_sha256))
+                               a.value_norm, a.value ->> 'code' as code, a.created_at,
+                               to_char(a.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as recorded_at,
+                               q.quote_number, r.revision_no, r.sent_at::text as sent_at,
+                               o.id::text as opportunity_id, o.title as case_title
+                          from evidence.assertion a
+                          join crm.quote_revision r on r.id::text = a.value ->> 'revision_id'
+                          join crm.quote q on q.id = r.quote_id
+                          join crm.opportunity o on o.id = q.opportunity_id
+                         where a.kind = 'quote_read'
+                           and not exists (select 1 from evidence.source_record d where d.kind = 'quote_document'
+                                            and d.dedupe_key = 'quote_document:' || lower(r.pdf_sha256))
+                         order by lower(r.pdf_sha256), a.created_at desc, a.id desc) newest
+                 order by created_at desc
                  limit %s
                 """,
                 (max(1, min(int(limit), 500)),),

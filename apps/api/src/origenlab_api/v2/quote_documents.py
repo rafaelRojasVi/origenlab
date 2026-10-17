@@ -14,12 +14,22 @@ from collections.abc import Mapping
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
+#: The worker quote reader's version (`apps/worker` quote_reader `READER_VERSION`): each refusal is
+#: recorded as `<version>:<ISO week>:<pdf sha256>`. Here because the API counts and lists refusals.
+QUOTE_READER_VERSION = "quote_read:v2"
+#: The version before it, and the refusal codes of that version the current one re-reads at once
+#: (what v2 changed, 2026-10-16); its other refusals keep blocking for their weeks.
+QUOTE_READER_PREVIOUS_VERSION = "quote_read:v1"
+QUOTE_READ_REREAD_CODES: tuple[str, ...] = ("not_origenlab_quote", "net_mismatch")
+
 #: Chile's IVA. Quotes are priced neto; the panel shows what the client pays beside it. Only for
 #: CLP: a USD or EUR quote is shown neto, as printed.
 IVA_RATE = Decimal("0.19")
 
-#: The read PDF's columns (`doc_currency`, `doc_net_total`, `doc_lines`) over `QUOTE_DOCUMENT_JOIN`'s `qd`.
+#: The read PDF's columns (`doc_currency`, `doc_net_total`, `doc_net_includes_optional`, `doc_lines`)
+#: over `QUOTE_DOCUMENT_JOIN`'s `qd`.
 QUOTE_DOCUMENT_COLUMNS = """qd.payload ->> 'currency' as doc_currency, qd.payload ->> 'net_total' as doc_net_total,
+           coalesce(qd.payload -> 'net_includes_optional' = 'true'::jsonb, false) as doc_net_includes_optional,
            (select json_agg(json_build_object(
                      'line_no', l.line_no, 'item', l.item_label, 'parent_item', l.parent_item,
                      'kind', l.kind, 'brand', l.brand, 'model', l.model, 'description', l.description,
@@ -53,7 +63,9 @@ def _money_text(value: Decimal | None, currency: str | None) -> str | None:
 def quote_contents(row: Mapping[str, Any]) -> dict[str, Any] | None:
     """What one revision's PDF says, from its `quote_document` evidence (`QUOTE_DOCUMENT_COLUMNS`):
     currency, neto, IVA and total for CLP, and the read lines. None when the PDF was never read.
-    The neto is the document's own; without one, the sum of its non-optional line totals."""
+    The neto is the document's own; without one, the sum of its non-optional line totals.
+    `net_includes_optional`: the quote reader found the printed neto adds the optional lines in
+    (reader v2, 2026-10-16) — the neto is shown as printed, with a note."""
     currency = row.get("doc_currency")
     raw = row.get("doc_lines")
     lines = json.loads(raw) if isinstance(raw, str) else (raw or [])
@@ -72,6 +84,7 @@ def quote_contents(row: Mapping[str, Any]) -> dict[str, Any] | None:
         "currency": currency,
         "net_total": _money_text(net, currency),
         "net_source": net_source,
+        "net_includes_optional": row.get("doc_net_includes_optional") is True,
         "tax_total": _money_text(tax, currency),
         "gross_total": _money_text(net + tax, currency) if tax is not None else None,
         "lines": [

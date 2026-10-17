@@ -207,6 +207,11 @@ function Contents({ c }: { c: QuoteContents }) {
       <dl className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 border-t border-line pt-2 text-xs tabular-nums">
         <dt className="text-ink-muted">Neto</dt>
         <dd className="text-right font-semibold text-ink">{formatMoney(c.net_total, c.currency) ?? "Sin dato"}</dd>
+        {c.net_includes_optional ? (
+          <dd className="col-span-2 text-right text-[11px] text-ink-muted" data-testid="net-includes-optional">
+            El neto impreso incluye ítems opcionales
+          </dd>
+        ) : null}
         {c.tax_total ? (
           <>
             <dt className="text-ink-muted">IVA 19%</dt>

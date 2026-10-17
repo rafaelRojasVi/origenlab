@@ -1,13 +1,23 @@
-"""Pure catalog helpers: model keys, closed vocabularies, and the Labdelivery refusal (spec S5)."""
+"""Pure catalog helpers: model keys, closed vocabularies, and the Labdelivery refusal (spec S5) — of
+any string (`is_labdelivery`) and of a document Labdelivery issued (`labdelivery_issued`)."""
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 
 _MODEL_STRIP = re.compile(r"[\s\-_./]")
 _NON_ALNUM = re.compile(r"[\W_]+")
+
+
+def _spaced(term: str) -> str:
+    """A folded term whose letters may be separated by one space: «l a b d e l i v e r y» too."""
+    return " ?".join(term.replace(" ", ""))
+
+
 _LABDELIVERY = re.compile(
-    r"(?<![a-z0-9])(?:lab ?delivery|juan andres tejeda|tejeda arellano)(?![a-z0-9])"
+    rf"(?<![a-z0-9])(?:{_spaced('labdelivery')}|{_spaced('juan andres tejeda')}|{_spaced('tejeda arellano')})"
+    r"(?![a-z0-9])"
 )
 
 PRODUCT_KINDS = ("equipment", "accessory", "consumable", "spare_part", "service")
@@ -81,3 +91,112 @@ def refuse_labdelivery(*parts: str | None) -> None:
     for part in parts:
         if is_labdelivery(part):
             raise LabdeliveryRefused("input of Labdelivery origin is refused")
+
+
+_H = r"[^\S\n]"  # horizontal whitespace
+#: The old OrigenLab template's page footer, as `pdftotext -layout` prints it: an address line that
+#: ends `…, Santiago, Chile. Teléfono (56-2) <number>`, then — on the next line, or the same one —
+#: `Celular: (09) <number> www.labdelivery.cl` and nothing else. The shape only finds a candidate;
+#: it is exempt only when the SHA-256 of its folded text is pinned in `OLD_TEMPLATE_FOOTER_SHA256`.
+_ADDRESS = (rf"(?P<address>(?P<street>\S[^\n]*?),{_H}*Santiago,{_H}*Chile\.{_H}*Tel[eé]fono{_H}*\(56-2\)"
+            rf"{_H}*\d[\d ]{{5,10}}\d)")
+_CELULAR = rf"(?P<celular>(?P<phone>Celular:{_H}*\(09\){_H}*\d[\d ]{{5,9}}\d){_H}+www\.labdelivery\.cl)"
+_FOOTER_ADDRESS_LINE = re.compile(rf"{_H}*{_ADDRESS}{_H}*")
+_FOOTER_CELULAR_LINE = re.compile(rf"{_H}*{_CELULAR}{_H}*")
+_FOOTER_ONE_LINE = re.compile(rf"{_H}*{_ADDRESS}{_H}+{_CELULAR}{_H}*")
+#: SHA-256 of `_fold(address line) + "\n" + _fold(celular line)` of the one real old-template footer
+#: (read from the private history texts, 2026-10-16). Only its hash is here: the repository is
+#: public. Tests pin their invented footer by adding its hash.
+OLD_TEMPLATE_FOOTER_SHA256: frozenset[str] = frozenset({
+    "4b3e94ccfe549a2d2186ab36d524543f9e64ab3a0d8a570e8f23db6c78196122",
+})
+_ORIGENLAB = re.compile(r"(?<![a-z0-9])origen ?lab(?![a-z0-9])")
+_DIGIT_GROUPS = re.compile(r"\d+(?: \d+)*")
+_BETWEEN_DIGITS = re.compile(r"(?<=\d)[\s.\-()/+]+(?=\d)")
+#: A footer number shorter than this is not an identity (`(09)`, `56-2`, a street number).
+_MIN_FOOTER_DIGITS = 6
+#: A run of this many consecutive digits taken from a longer footer number is that number, copied.
+_PIECE_DIGITS = 7
+
+
+def footer_sha256(address: str, celular: str) -> str:
+    """The pin of one footer: its address line and its celular line (with the web address), folded."""
+    return hashlib.sha256(f"{_fold(address)}\n{_fold(celular)}".encode()).hexdigest()
+
+
+def _lines(text: str) -> list[str]:
+    normal = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n").replace("\f", "\n")
+    return normal.split("\n")
+
+
+def _old_footers(lines: list[str]) -> list[tuple[tuple[int, ...], re.Match[str], re.Match[str]]]:
+    """Every pinned footer: (its line numbers, the address match, the celular match)."""
+    found = []
+    for n, line in enumerate(lines):
+        both = _FOOTER_ONE_LINE.fullmatch(line)
+        if both is not None:
+            if footer_sha256(both["address"], both["celular"]) in OLD_TEMPLATE_FOOTER_SHA256:
+                found.append(((n,), both, both))
+            continue
+        address = _FOOTER_ADDRESS_LINE.fullmatch(line)
+        celular = _FOOTER_CELULAR_LINE.fullmatch(lines[n + 1]) if address and n + 1 < len(lines) else None
+        if address and celular and footer_sha256(address["address"], celular["celular"]) in OLD_TEMPLATE_FOOTER_SHA256:
+            found.append(((n, n + 1), address, celular))
+    return found
+
+
+def labdelivery_issued(text: str | None) -> bool:
+    """True when the document is Labdelivery's: its name anywhere but the old OrigenLab template's
+    footer (`OLD_TEMPLATE_FOOTER_SHA256`) — a letterhead, an issuer, a title, a line, a signature
+    — or that footer on a page that does not name OrigenLab anywhere else.
+
+    Owner decision 2026-10-16: OrigenLab's old quote template printed that footer under an
+    OrigenLab header, so a footer-only mention under OrigenLab's name is not a Labdelivery
+    document; a Labdelivery letterhead or issuer always is, footer or not. Nothing of the footer
+    may be stored: callers refuse a document whose written strings copy it (`copies_old_footer`).
+    """
+    if not text:
+        return False
+    lines = _lines(text)
+    footers = _old_footers(lines)
+    if not footers:
+        return is_labdelivery(text)
+    skip = {n for numbers, _, _ in footers for n in numbers}
+    rest = "\n".join(line for n, line in enumerate(lines) if n not in skip)
+    if not _ORIGENLAB.search(_fold(rest)):
+        return True  # the footer names Labdelivery, and nothing else names OrigenLab
+    return is_labdelivery(rest)
+
+
+def old_footer_identities(text: str | None) -> frozenset[str]:
+    """What a pinned old-template footer in `text` identifies, normalised, for `copies_old_footer`:
+    its folded address line, street and phone label; each comma-separated segment of the address
+    line that holds a digit (the street and number, the office, the phone); every number of 6 or
+    more digits on it, and every 7-digit piece of the longer ones (so any run of 7+ consecutive
+    digits taken from a footer number is caught)."""
+    if not text:
+        return frozenset()
+    found: set[str] = set()
+    for _, address, celular in _old_footers(_lines(text)):
+        found |= {_fold(address["address"]), _fold(address["street"]), _fold(celular["phone"])}
+        # A segment of digits only («, 45,») would match inside any number; its digits count only
+        # when long enough, below. A segment with words is matched as whole words.
+        found |= {_fold(segment) for segment in address["address"].split(",")
+                  if re.search(r"\d", segment) and not segment.strip().replace(" ", "").isdigit()}
+        for part in (address["address"], celular["celular"]):
+            for group in _DIGIT_GROUPS.findall(part):
+                digits = group.replace(" ", "")
+                if len(digits) >= _MIN_FOOTER_DIGITS:
+                    found.add(digits)
+                found |= {digits[n:n + _PIECE_DIGITS] for n in range(len(digits) - _PIECE_DIGITS + 1)}
+    return frozenset(i for i in found if i)
+
+
+def copies_old_footer(value: str | None, identities: frozenset[str]) -> bool:
+    """True when a string to be written repeats the footer: its address, street or phone label
+    (folded, as whole words), or one of its numbers (separators between digits ignored)."""
+    if not value or not identities:
+        return False
+    folded = f" {_fold(value)} "
+    digits = _BETWEEN_DIGITS.sub("", value)
+    return any(i in digits if i.isdigit() else f" {i} " in folded for i in identities)

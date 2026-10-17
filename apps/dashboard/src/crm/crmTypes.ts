@@ -93,6 +93,8 @@ export interface QuoteContents {
   net_total: string | null;
   /** «document»: printed on the PDF; «lines»: the sum of its non-optional lines; «none»: unknown. */
   net_source: "document" | "lines" | "none";
+  /** The printed neto adds the optional lines in (quote reader v2): shown as printed, with a note. */
+  net_includes_optional?: boolean;
   /** IVA and total: only for CLP. */
   tax_total: string | null;
   gross_total: string | null;
@@ -593,7 +595,8 @@ export interface QuoteReading {
   sent_at: string | null;
   code:
     | "not_origenlab_quote" | "too_many_disputed" | "net_mismatch" | "model_refused" | "unreadable"
-    | "no_text_layer" | "request_failed" | "write_failed" | "hash_mismatch" | "attachment_not_in_eml" | "other";
+    | "no_text_layer" | "request_failed" | "write_failed" | "hash_mismatch" | "attachment_not_in_eml"
+    | "footer_copied" | "other";
   reader_version: string | null;
   recorded_at: string | null;
   opportunity_id: string | null;
