@@ -141,7 +141,8 @@
 .qp-terms dd { margin: 2px 0 0; font-size: 12.5px; white-space: pre-line; overflow-wrap: anywhere; }
 .qp-client-note { margin: 0; font-size: 12.5px; white-space: pre-line; }
 
-.qp-sign { margin-top: 28px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; break-inside: avoid; }
+.qp-sign { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.qp-draft-note { margin-top: 6px; }
 .qp-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding-top: 16px; }
 .qp-foot .qp-right { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
 
@@ -188,7 +189,11 @@
     /* Block, not flex, so the browser breaks the table across pages cleanly. */
     display: block;
   }
-  .qp-sheet > * + * { margin-top: 18px; }
+  .qp-sheet > * + * { margin-top: 14px; }
+  /* One page for an ordinary quote: a little tighter on paper than on screen. */
+  .qp-sheet { font-size: 12px; }
+  .qp-lines td { padding: 7px 6px; }
+  .qp-foot { margin-top: 20px; }
   /* The header row repeats on each page; a line never splits across two. */
   .qp-lines thead { display: table-header-group; }
   .qp-lines tr { break-inside: avoid; page-break-inside: avoid; }
