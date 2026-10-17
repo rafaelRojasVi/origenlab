@@ -26,7 +26,7 @@ create table catalog.product_model_alias (
   id uuid primary key default gen_random_uuid(),
   product_id uuid not null references catalog.product (id),
   alias text not null,
-  alias_key text generated always as (upper(regexp_replace(alias, '[\s\-_./]', '', 'g'))) stored,
+  alias_key text generated always as (upper(regexp_replace(alias, '[[:space:]_./-]', '', 'g'))) stored,
   source text not null,
   origin_source_record_id uuid references evidence.source_record (id),
   created_by_operator_id uuid not null references platform.operator (id),
@@ -88,7 +88,7 @@ begin
   if v_maker is null then
     return new;  -- the foreign key refuses it
   end if;
-  v_key := upper(regexp_replace(new.alias, '[\s\-_./]', '', 'g'));
+  v_key := upper(regexp_replace(new.alias, '[[:space:]_./-]', '', 'g'));
   perform pg_advisory_xact_lock(hashtextextended('catalog.product_model_alias:' || v_maker::text || ':' || v_key, 0));
   if exists (select 1 from catalog.product q
               where q.manufacturer_organization_id = v_maker and q.model_key = v_key) then
