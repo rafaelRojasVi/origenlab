@@ -673,3 +673,127 @@ describe("a new client the CRM already had (M5)", () => {
     expect(screen.queryByText(/«Laboratorio Nuevo»\./)).not.toBeInTheDocument();
   });
 });
+
+describe("«Institución» of a person or an address without one", () => {
+  const LONE_PERSON = "bbbbbbbb-0000-4000-8000-000000000002";
+  const CLINIC = "aaaaaaaa-0000-4000-8000-000000000009";
+  const people: QuoteClientSuggestions = {
+    organizations: [],
+    people: [
+      { person_id: LONE_PERSON, contact_point_id: null, name: "Beto Ejemplo", email: "beto@correo-ejemplo.test", organization: null, open_cases: [] },
+      SUGGESTIONS.people[0],
+      SUGGESTIONS.people[1],
+    ],
+  };
+  const clinics: QuoteClientSuggestions = {
+    organizations: [{ id: CLINIC, name: "Clínica Ejemplo", kind: "hospital", domains: ["clinica-ejemplo.test"], open_cases: [] }],
+    people: [],
+  };
+  const institutionBox = () => screen.getByRole("combobox", { name: "Institución" });
+  async function searchInstitution(text: string) {
+    fireEvent.change(institutionBox(), { target: { value: text } });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, CLIENT_SEARCH_DELAY_MS + 20));
+    });
+  }
+
+  it("is offered for a person without institution, says why, and sends the institution picked", async () => {
+    const api = stub({ clients: (q) => json(q === "Clín" ? clinics : people) });
+    const { onCreated } = renderDialog();
+    await search("Beto");
+    await pick(/persona · Beto Ejemplo/);
+    expect(screen.getByText(/sin institución la cotización no se puede aprobar/)).toBeInTheDocument();
+    await searchInstitution("Clín");
+    const list = await screen.findByRole("listbox", { name: "Instituciones" });
+    expect(within(list).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Clínica Ejemploclinica-ejemplo.test",
+      "+ Nueva institución «Clín»",
+    ]);
+    fireEvent.click(within(list).getByRole("option", { name: /Clínica Ejemplo/ }));
+    expect(screen.getByText("Clínica Ejemplo")).toBeInTheDocument();
+    fireEvent.click(createButton());
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
+    expect(api.creates()[0].body).toEqual({ client: { person_id: LONE_PERSON, institution: { organization_id: CLINIC } }, new_case: true });
+    expect(onCreated).toHaveBeenCalledWith(NEW_QUOTE, { label: "CN00042", client: "Clínica Ejemplo", status: "draft" });
+  });
+
+  it("an address with no person may name a new institution, with its kind", async () => {
+    const api = stub({ clients: (q) => json(q === "Instituto Nuevo" ? EMPTY : people) });
+    renderDialog();
+    await search("ventas");
+    await pick(/ventas@otro-ejemplo\.test/);
+    await searchInstitution("Instituto Nuevo");
+    fireEvent.click(await screen.findByRole("option", { name: "+ Nueva institución «Instituto Nuevo»" }));
+    fireEvent.change(screen.getByLabelText("Tipo de la nueva institución"), { target: { value: "university" } });
+    fireEvent.click(createButton());
+    await waitFor(() => expect(api.creates()).toHaveLength(1));
+    expect(api.creates()[0].body).toEqual({
+      client: { contact_point_id: LONE_POINT, institution: { new_organization: { name: "Instituto Nuevo", kind: "university" } } },
+      new_case: true,
+    });
+  });
+
+  it("is not offered for a person whose institution the CRM knows, and is optional", async () => {
+    const api = stub({ clients: () => json(people) });
+    renderDialog();
+    await search("Labo");
+    await pick(/persona · Ana Pérez/);
+    expect(screen.queryByRole("combobox", { name: "Institución" })).not.toBeInTheDocument();
+    retypeTo("Beto");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, CLIENT_SEARCH_DELAY_MS + 20));
+    });
+    await pick(/persona · Beto Ejemplo/);
+    expect(institutionBox()).toBeInTheDocument();
+    fireEvent.click(createButton());
+    await waitFor(() => expect(api.creates()).toHaveLength(1));
+    expect(api.creates()[0].body).toEqual({ client: { person_id: LONE_PERSON }, new_case: true });
+  });
+
+  it("a new institution whose name several share: the operator picks one, the client stays, the key too", async () => {
+    const twins = [
+      { id: ORG_ONE, name: "Clínica Ejemplo" },
+      { id: ORG_TWIN, name: "Clínica Ejemplo" },
+    ];
+    const api = stub({
+      clients: (q) => json(q === "Beto" ? people : EMPTY),
+      create: (n) =>
+        n === 1
+          ? refused(409, "organization_name_ambiguous", "Hay varias instituciones con ese nombre: elige una de ellas.", { candidates: twins })
+          : created(),
+    });
+    renderDialog();
+    await search("Beto");
+    await pick(/persona · Beto Ejemplo/);
+    await searchInstitution("Clínica Ejemplo");
+    fireEvent.click(await screen.findByRole("option", { name: "+ Nueva institución «Clínica Ejemplo»" }));
+    fireEvent.click(createButton());
+    const choices = await screen.findByRole("group", { name: "¿Cuál de ellas?" });
+    fireEvent.click(within(choices).getAllByRole("button")[1]);
+    expect(clientBox()).toHaveValue("beto@correo-ejemplo.test");
+    fireEvent.click(createButton());
+    await waitFor(() => expect(api.creates()).toHaveLength(2));
+    const [first, second] = api.creates();
+    expect(first.body).toEqual({ client: { person_id: LONE_PERSON, institution: { new_organization: { name: "Clínica Ejemplo", kind: "company" } } }, new_case: true });
+    expect(second.body).toEqual({ client: { person_id: LONE_PERSON, institution: { organization_id: ORG_TWIN } }, new_case: true });
+    expect(second.key).toBe(first.key);
+  });
+
+  it("client_has_institution is said with the API's own Spanish text", async () => {
+    stub({
+      clients: () => json(people),
+      create: () => refused(409, "client_has_institution", "Este cliente ya es de «Clínica Ejemplo»; la cotización va a esa institución.", { organization_id: CLINIC }),
+    });
+    renderDialog();
+    await search("Beto");
+    await pick(/persona · Beto Ejemplo/);
+    await searchInstitution("Otra");
+    fireEvent.click(await screen.findByRole("option", { name: "+ Nueva institución «Otra»" }));
+    fireEvent.click(createButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Este cliente ya es de «Clínica Ejemplo»");
+  });
+});
+
+function retypeTo(text: string) {
+  fireEvent.change(screen.getByRole("combobox", { name: "Cliente" }), { target: { value: text } });
+}

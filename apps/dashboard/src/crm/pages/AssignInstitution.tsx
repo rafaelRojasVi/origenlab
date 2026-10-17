@@ -1,15 +1,21 @@
 import { useRef, useState, type FormEvent } from "react";
 import { fetchV2Organizations } from "../../api/v2Client";
+import { envelopeOfError } from "../../api/refusalEnvelope";
 import { confirmOrganizationRecord, fetchOrganizationAuthoring } from "../authoring/crmAuthoringApi";
+import { KIND_OPTIONS } from "../authoring/NewOrganizationForm";
 import {
   addCaseOrganization,
   setCaseOrganizationRole,
+  caseRefusalCode,
   caseRefusalText,
   isStaleRefusal,
   newCaseCommandKey,
+  type NewCaseOrganization,
 } from "../caseCommands";
 import type { OpportunityCardData } from "../crmTypes";
-import { Button, FormField, TextInput, TextareaInput } from "../ui";
+import { Button, FormField, SelectInput, TextInput, TextareaInput } from "../ui";
+
+type NewKind = NonNullable<NewCaseOrganization["kind"]>;
 
 type Candidate = {
   id: string;
@@ -41,8 +47,13 @@ export function AssignInstitution({
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The text last searched (null before any search): what «+ Crear institución» would create. */
+  const [searched, setSearched] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newKind, setNewKind] = useState<NewKind>("company");
   const keyRef = useRef(newCaseCommandKey());
   const confirmKeyRef = useRef(newCaseCommandKey());
+  const createKeyRef = useRef(newCaseCommandKey());
 
   async function search(e: FormEvent) {
     e.preventDefault();
@@ -54,6 +65,8 @@ export function AssignInstitution({
     setPendingConfirmation(null);
     setConfirmationMessage(null);
     setCandidates([]);
+    setCreating(false);
+    setSearched(null);
 
     try {
       const result = await fetchV2Organizations({
@@ -66,6 +79,7 @@ export function AssignInstitution({
           name: o.name,
         })),
       );
+      setSearched(query.trim());
     } catch (err) {
       setError(caseRefusalText(err));
     } finally {
@@ -123,6 +137,54 @@ export function AssignInstitution({
       keyRef.current = newCaseCommandKey();
       setError(caseRefusalText(err));
       if (isStaleRefusal(err)) {
+        onDone({ tone: "bad", lines: [caseRefusalText(err)] }, true);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** «+ Crear institución»: registered as a customer unless one of that name exists (the API decides). */
+  async function createAndAssign(e: FormEvent) {
+    e.preventDefault();
+    const name = (searched ?? "").trim();
+    if (!name || !note.trim() || busy || card.version == null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const receipt = await addCaseOrganization(
+        {
+          opportunity_id: card.opportunity_id,
+          opportunity_version: card.version,
+          new_organization: { name: name.slice(0, 500), kind: newKind },
+          role: "requesting_institution",
+          note: note.trim(),
+          ...(supplierReason.trim() ? { supplier_exception_reason: supplierReason.trim() } : {}),
+        },
+        createKeyRef.current,
+      );
+      const used = typeof receipt.organization_name === "string" ? receipt.organization_name : name;
+      onDone(
+        {
+          tone: "good",
+          lines: [
+            receipt.organization_created === false
+              ? `Se usó la institución existente «${used}»: quedó como solicitante del caso.`
+              : `Institución «${used}» creada y asociada al caso como solicitante.`,
+          ],
+        },
+        true,
+      );
+    } catch (err) {
+      createKeyRef.current = newCaseCommandKey();
+      setError(caseRefusalText(err));
+      if (caseRefusalCode(err) === "organization_name_ambiguous") {
+        // Several of that name: they are listed to choose from, as the search lists them.
+        const raw = envelopeOfError(err).details?.candidates;
+        const list = Array.isArray(raw) ? (raw as Candidate[]) : [];
+        setCandidates(list.map((c) => ({ id: String(c.id), name: String(c.name) })));
+        setCreating(false);
+      } else if (isStaleRefusal(err)) {
         onDone({ tone: "bad", lines: [caseRefusalText(err)] }, true);
       }
     } finally {
@@ -257,6 +319,59 @@ export function AssignInstitution({
           >
             Confirmar asignación
           </Button>
+        </form>
+      ) : null}
+
+      {searched && !creating ? (
+        <div className="space-y-2">
+          {candidates.length === 0 ? (
+            <p className="text-xs text-ink-muted">No hay ninguna institución «{searched}» en el CRM.</p>
+          ) : null}
+          <Button
+            onClick={() => {
+              setCreating(true);
+              setSelected("");
+              setError(null);
+            }}
+            disabled={busy}
+          >
+            + Crear institución «{searched}»
+          </Button>
+        </div>
+      ) : null}
+
+      {searched && creating ? (
+        <form
+          onSubmit={(e) => void createAndAssign(e)}
+          className="space-y-3 rounded-md border border-line p-3"
+          aria-label="Crear institución"
+        >
+          <p>
+            Nueva institución: <strong>{searched}</strong>. Si ya existe una con ese nombre, se usa esa.
+          </p>
+          <FormField label="Tipo de institución" htmlFor="create-institution-kind">
+            <SelectInput id="create-institution-kind" value={newKind} onChange={(v) => setNewKind(v as NewKind)} options={KIND_OPTIONS} disabled={busy} />
+          </FormField>
+          <FormField label="Motivo de la asignación" htmlFor="create-institution-note">
+            <TextareaInput id="create-institution-note" value={note} onChange={setNote} rows={2} maxLength={2000} />
+          </FormField>
+          <FormField label="Excepción de proveedor (solo si corresponde)" htmlFor="create-supplier-reason">
+            <TextareaInput
+              id="create-supplier-reason"
+              value={supplierReason}
+              onChange={setSupplierReason}
+              rows={2}
+              maxLength={2000}
+            />
+          </FormField>
+          <div className="flex gap-2">
+            <Button type="submit" variant="primary" busy={busy} disabled={!note.trim() || busy}>
+              Crear y asignar
+            </Button>
+            <Button onClick={() => setCreating(false)} disabled={busy}>
+              Volver
+            </Button>
+          </div>
         </form>
       ) : null}
 

@@ -3059,3 +3059,20 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
   change. Operaciones counts pending PDFs the same way, and «Cotizaciones no leídas» lists only
   the newest refusal of each PDF. No migration or new route; worker, importer script, API reads and
   the case panel.
+
+### 2.7.129 A client connected to an institution while quoting; «Asignar institución» creates one, 2026-10-16 — built, deploys on merge
+
+- **«Nueva cotización»**: for a person or an address the CRM knows no institution of, an optional
+  «Institución» field (an institution held, or «+ Nueva institución «texto»» with its kind; «sin
+  institución la cotización no se puede aprobar»). `create-quote`'s `client.institution`
+  (`WORKFLOWS.md` §3 quotes) connects it: the case's requesting institution (a new case, or an
+  existing one without one), the person's affiliation. A bare address (no person) is not
+  attributed — no operator command does that outside evidence review — only its case; a new
+  institution takes the address's domain.
+- **«Asignar institución solicitante»** (`AssignInstitution`, the case actions; the Cotizador's
+  «Agregar institución» once #770 merges) offers «+ Crear institución «texto»» after a search:
+  `add-case-organization` with `new_organization` (same name or domain → that one; several →
+  `organization_name_ambiguous`, listed to choose from).
+- No migration, no new route, no proxy change (same paths). Tests: API DB tests in
+  `test_v2_quote_commands.py` and `test_v2_case_command_boundary.py`; vitest
+  `NewQuoteDialog.test.tsx`, `AssignInstitution.test.tsx`.

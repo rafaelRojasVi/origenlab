@@ -61,11 +61,17 @@ import psycopg
 from origenlab_api.quoting.engine import EngineError, EngineResult, compute
 from origenlab_api.v2.catalog.commands import _live_party, _submitted_text
 from origenlab_api.v2.catalog.keys import LabdeliveryRefused, is_labdelivery, refuse_labdelivery
-from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
+from origenlab_api.v2.case_commands import REQUESTING_INSTITUTION
+from origenlab_api.v2.case_command_repository import (
+    V2CaseCommandRepository,
+    lock_new_organization_name,
+    register_customer_organization,
+    same_name_or_domain_organization,
+)
 from origenlab_api.v2.commands import CommandRefused, normalize_email
-from origenlab_api.v2.crm_authoring import _create_contact_point, _handle_register_organization
+from origenlab_api.v2.crm_authoring import _create_contact_point, _handle_link_person_organization
 from origenlab_api.v2.identity import OperatorIdentity
-from origenlab_api.v2.quotes.draft import DraftRecipient, DraftTerms, QuoteClient, QuoteDraft
+from origenlab_api.v2.quotes.draft import ClientInstitution, DraftRecipient, DraftTerms, QuoteClient, QuoteDraft
 from origenlab_api.v2.quotes.inputs import (
     FxResolver,
     Resolved,
@@ -176,8 +182,10 @@ def _iva(params: dict[str, Decimal | str]) -> Decimal:
 #
 # **Locks, in the one order every create-quote takes them** (and no other command inverts):
 #
-# 1. the client's transaction advisory locks (`_client_lock`) — a new institution's name, the
-#    address, the person, the institution, in that order. Two `create-quote`s for the same client
+# 1. the client's transaction advisory locks (`_client_lock`) — a new institution's name (the
+#    client's own, or the one a person or an address is connected to: `lock_new_organization_name`,
+#    the lock `add-case-organization` takes for one too), the address, the person, the
+#    institution, in that order. Two `create-quote`s for the same client
 #    queue here: the second reads the cases after the first committed, finds the case it opened and
 #    quotes on it — two quotes, two numbers, one new case, never a quote without one;
 # 2. the client's rows: the contact point `for update`, then its person `for share` — the order
@@ -186,8 +194,23 @@ def _iva(params: dict[str, Decimal | str]) -> Decimal:
 #    written) when locking shows another owner or institution than that first read;
 # 3. the institution's row (`_open_case_for_client` → `_add_case_organization`, a new case only) —
 #    after the person, as `link-person-organization` takes them;
-# 4. the case (`for update`);
-# 5. last, the global numbering lock (`allocate_quote_number`) — the recipient is made before it.
+# 4. the case (`for update`) — an existing case a connected institution is given to is locked by
+#    `_add_case_organization` itself, the case and then the institution, as the command does;
+# 5. a person connected to an institution: their affiliation (`link-person-organization`'s own
+#    handler — the person `for update`, then the institution's row, both held already);
+# 6. last, the global numbering lock (`allocate_quote_number`) — the recipient is made before it.
+#
+# **Connecting a client to an institution** (`client.institution`, a person, a contact point or
+# an address the CRM knows no institution of — `_connect_institution`): the institution, existing
+# or new (registered by the rule `add-case-organization` uses, `same_name_or_domain_organization`),
+# becomes the client's; the client's cases are still those the dialog showed (the person's or the
+# address's own, not the institution's); a case opened gets it as its requesting institution, an
+# existing one without a requesting institution gets it through `_add_case_organization`; a person
+# gets a confirmed affiliation. An address no person owns is not attributed: no operator command
+# gives a bare contact point an institution outside evidence review, so only its case is connected
+# (and a new institution takes the address's domain, unless free mail or already some
+# institution's, so the next quote to that domain finds it). A client the CRM already knows an
+# institution of is refused `client_has_institution` unless it names that same one.
 
 _CLIENT_NOTE = "Cotización creada desde el Cotizador."
 
@@ -216,6 +239,9 @@ class _Client:
     label: str | None = None  # names the new case when there is no institution
     pick: DraftRecipient | None = None  # whom the quote goes to, when the client is a person or an address
     organization_created: bool = False
+    email: str | None = None  # the address, when the client is one
+    institution_connected: bool = False  # the institution is `client.institution`, connected now
+    affiliation_id: str | None = None
 
 
 def _organization_checked(self: "V2QuoteRepository", cur: Any, organization_id: str) -> tuple[str, str]:
@@ -314,7 +340,7 @@ def _address_client(self: "V2QuoteRepository", cur: Any, *, contact_point_id: st
     cur.execute(_ADDRESS_SQL, (email,))
     point = _one(cur)
     if point is None:  # an address the CRM lacks: the quote's recipient creates it
-        client = _Client(label=name or email, pick=DraftRecipient(email=email, name=name))
+        client = _Client(label=name or email, pick=DraftRecipient(email=email, name=name), email=email)
         by_domain = client_institution_by_domain(cur, email)
         if by_domain is not None:
             client.organization_id, client.organization_name = _organization_checked(self, cur, by_domain["id"])
@@ -339,39 +365,28 @@ def _address_client(self: "V2QuoteRepository", cur: Any, *, contact_point_id: st
         raise _client_changed()
     _keep_address_rules(email, point["display_name"])
     client = _Client(contact_point_id=point["id"], person_id=person, label=point["display_name"] or name or email,
-                     pick=DraftRecipient(contact_point_id=point["id"]))
+                     pick=DraftRecipient(contact_point_id=point["id"]), email=email)
     if institution["organization_id"] is not None:
         client.organization_id, client.organization_name = _organization_checked(
             self, cur, institution["organization_id"])
     return client
 
 
-def _name_ambiguous(rows: list[dict[str, Any]]) -> CommandRefused:
-    return CommandRefused(409, "organization_name_ambiguous",
-                          "Hay varias instituciones con ese nombre: elige una de ellas.",
-                          details={"candidates": [{"id": r["id"], "name": r["name"]} for r in rows]})
-
-
 def _new_organization_client(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
                              new: dict[str, Any], note: str) -> _Client:
     """A new institution (plan R2). Not a second one: the one active institution of exactly that
-    name, else the one its email's domain names (`reads.client_institution_by_domain`), is used
+    name, else the one its email's domain names (`same_name_or_domain_organization`), is used
     instead; two or more of that name are refused `organization_name_ambiguous`, with them. A new
     one is registered through `register-organization`'s own path: classification `customer`, the
     email's domain (a free-mail one excepted). Its email, if given, is the quote's recipient."""
     name, email = new["name"], new.get("email")
     if email is not None:
         _keep_address_rules(email)
-    _client_lock(cur, f"new-organization:{name.casefold()}")
+    lock_new_organization_name(cur, name)
     if email is not None:
         _client_lock(cur, f"email:{email}")
-    cur.execute("select id::text as id, name from crm.organization where status = 'active' "
-                "and merged_into_organization_id is null and lower(name) = lower(%s) order by created_at, id limit 20",
-                (name,))
-    same = _all(cur)
-    if len(same) > 1:
-        raise _name_ambiguous(same)
-    existing = same[0]["id"] if same else (client_institution_by_domain(cur, email) or {}).get("id")
+    found = same_name_or_domain_organization(cur, name, email)
+    existing = found["id"] if found is not None else None
     pick = DraftRecipient(email=email) if email is not None else None
     if existing is not None:
         organization_id, organization_name = _organization_checked(self, cur, existing)
@@ -380,13 +395,60 @@ def _new_organization_client(self: "V2QuoteRepository", cur: Any, operator: Oper
         cur.execute("select 1 from crm.contact_point where kind = 'email' and value_norm = %s for update", (email,))
     if existing is not None:
         return _Client(organization_id=organization_id, organization_name=organization_name, pick=pick)
-    domain = email.rpartition("@")[2] if email is not None else None
-    made = _handle_register_organization(self, cur, operator, {
-        "name": name, "legal_name": None, "kind": new.get("kind") or "company", "classification": "customer",
-        "domain": domain if domain and domain not in FREE_MAIL_DOMAINS else None, "product_lines": [],
-        "note": note}, receipt_id)
-    return _Client(organization_id=made["organization_id"], organization_name=name, pick=pick,
-                   organization_created=True)
+    made = register_customer_organization(self, cur, operator, receipt_id, name=name,
+                                          kind=new.get("kind") or "company",
+                                          domain=email.rpartition("@")[2] if email is not None else None, note=note)
+    return _Client(organization_id=made, organization_name=name, pick=pick, organization_created=True)
+
+
+def _client_has_institution(client: _Client) -> CommandRefused:
+    return CommandRefused(409, "client_has_institution",
+                          f"Este cliente ya es de «{client.organization_name}»; la cotización va a esa institución.",
+                          details={"organization_id": client.organization_id,
+                                   "organization_name": client.organization_name})
+
+
+def _domain_for_new_institution(cur: Any, client: _Client) -> str | None:
+    """The domain a new institution an address no person owns is connected to takes: the
+    address's, unless free mail (`register_customer_organization` drops it) or already on an
+    institution — never a second claim on a domain."""
+    if client.person_id is not None or client.email is None:
+        return None
+    domain = client.email.rpartition("@")[2]
+    cur.execute("select 1 from crm.organization_domain where domain_norm = %s and removed_at is null limit 1",
+                (domain,))
+    return None if _one(cur) is not None else domain
+
+
+def _connect_institution(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
+                         client: _Client, institution: ClientInstitution, note: str) -> None:
+    """Make `institution` the client's (a person, a contact point or an address) — read and
+    refused as any client institution is (`_organization_checked`: archived, Labdelivery,
+    OrigenLab's own, a supplier); a new one is the institution of that name or registered now.
+    The case and the affiliation are written once the case is known (`_case_for_client`)."""
+    if institution.organization_id is not None:
+        organization_id, name = _organization_checked(self, cur, str(institution.organization_id))
+    else:
+        assert institution.new_organization is not None  # noqa: S101 - ClientInstitution gives exactly one
+        new = institution.new_organization
+        _keep_address_rules(None, new.name)
+        found = same_name_or_domain_organization(cur, new.name, None)
+        organization_id, name = (_organization_checked(self, cur, found["id"]) if found is not None
+                                 else (None, new.name))
+    if client.organization_id is not None:
+        if client.organization_id == organization_id:
+            return  # already theirs: nothing to connect
+        raise _client_has_institution(client)
+    if organization_id is None:
+        assert institution.new_organization is not None  # noqa: S101 - only a new one is not found
+        organization_id = register_customer_organization(
+            self, cur, operator, receipt_id, name=name, kind=institution.new_organization.kind,
+            domain=_domain_for_new_institution(cur, client), note=note)
+        client.organization_created = True
+    else:
+        _client_lock(cur, f"organization:{organization_id}")
+    client.organization_id, client.organization_name = organization_id, name
+    client.institution_connected = True
 
 
 def _resolve_client(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
@@ -395,12 +457,50 @@ def _resolve_client(self: "V2QuoteRepository", cur: Any, operator: OperatorIdent
         organization_id, name = _organization_checked(self, cur, str(client.organization_id))
         _client_lock(cur, f"organization:{organization_id}")
         return _Client(organization_id=organization_id, organization_name=name)
-    if client.person_id is not None:
-        return _person_client(self, cur, str(client.person_id))
     if client.new_organization is not None:
         return _new_organization_client(self, cur, operator, receipt_id, client.new_organization.model_dump(), note)
-    return _address_client(self, cur, contact_point_id=str(client.contact_point_id) if client.contact_point_id else None,
-                           email=client.email, name=client.name)
+    if client.institution is not None and client.institution.new_organization is not None:
+        lock_new_organization_name(cur, client.institution.new_organization.name)  # the first of the client's locks
+    if client.person_id is not None:
+        resolved = _person_client(self, cur, str(client.person_id))
+    else:
+        resolved = _address_client(self, cur, contact_point_id=str(client.contact_point_id)
+                                   if client.contact_point_id else None, email=client.email, name=client.name)
+    if client.institution is not None:
+        _connect_institution(self, cur, operator, receipt_id, resolved, client.institution, note)
+    return resolved
+
+
+def _give_case_the_institution(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
+                               case_id: str, client: _Client, note: str) -> None:
+    """An existing case of a client just connected to an institution: the institution becomes its
+    requesting one through `_add_case_organization` (the supplier refusal and the agreement check
+    run as by hand), unless the case already names one — that reading is the operator's, kept."""
+    if self._current_requesting_institution(cur, case_id) is not None:
+        return
+    cur.execute("select version from crm.opportunity where id = %s::uuid", (case_id,))
+    case = _one(cur)
+    cur.execute("select version from crm.organization where id = %s::uuid", (client.organization_id,))
+    organization = _one(cur)
+    assert case is not None and organization is not None  # noqa: S101 - both read just before
+    self._add_case_organization(cur, operator, {
+        "opportunity_id": case_id, "opportunity_version": int(case["version"]),
+        "organization_id": client.organization_id, "organization_version": int(organization["version"]),
+        "role": REQUESTING_INSTITUTION, "supplier_exception_reason": None, "note": note}, receipt_id)
+
+
+def _affiliate(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, receipt_id: str,
+               client: _Client, note: str) -> None:
+    """A person client connected to an institution: a confirmed affiliation, through
+    `link-person-organization`'s own handler (from today, Santiago)."""
+    cur.execute("select version from crm.person where id = %s::uuid", (client.person_id,))
+    person = _one(cur)
+    assert person is not None  # noqa: S101 - resolved and share-locked by `_resolve_client`
+    linked = _handle_link_person_organization(self, cur, operator, {
+        "person_id": client.person_id, "expected_version": int(person["version"]),
+        "organization_id": client.organization_id, "role_title": None, "unit_label": None,
+        "valid_from": santiago_today(self._clock()).isoformat(), "note": note}, receipt_id)
+    client.affiliation_id = linked["affiliation_id"]
 
 
 def _case_choice_needed(cases: list[dict[str, Any]]) -> CommandRefused:
@@ -417,8 +517,21 @@ def _case_for_client(self: "V2QuoteRepository", cur: Any, operator: OperatorIden
     """The case a client's new quote goes on, opened when needed: (case id, the client, opened)."""
     note = fields.get("note") or _CLIENT_NOTE
     client = _resolve_client(self, cur, operator, receipt_id, QuoteClient.model_validate(fields["client"]), note)
-    cases = client_open_cases(cur, organization_id=client.organization_id, person_id=client.person_id,
-                              contact_point_id=client.contact_point_id)
+    # A client just connected to an institution has the cases the dialog showed: their own.
+    cases = client_open_cases(cur, organization_id=None if client.institution_connected else client.organization_id,
+                              person_id=client.person_id, contact_point_id=client.contact_point_id)
+    case_id, opened = _chosen_case(self, cur, operator, fields, receipt_id, client, cases, note)
+    if client.institution_connected:
+        if not opened:
+            _give_case_the_institution(self, cur, operator, receipt_id, case_id, client, note)
+        if client.person_id is not None:
+            _affiliate(self, cur, operator, receipt_id, client, note)
+    return case_id, client, opened
+
+
+def _chosen_case(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
+                 receipt_id: str, client: _Client, cases: list[dict[str, Any]], note: str) -> tuple[str, bool]:
+    """The client's open case the quote goes on (the one, or the one chosen), else one opened."""
     chosen = fields.get("opportunity_id")
     if chosen is not None:
         if chosen not in {c["id"] for c in cases}:
@@ -429,16 +542,16 @@ def _case_for_client(self: "V2QuoteRepository", cur: Any, operator: OperatorIden
             if found["closed_at"] is not None:
                 raise CommandRefused(409, "case_closed", "this case is closed; a closed case gets no new quote")
             raise CommandRefused(422, "case_not_of_client", "Ese caso no es de este cliente.")
-        return chosen, client, False
+        return chosen, False
     if not fields.get("new_case"):
         if len(cases) == 1:
-            return cases[0]["id"], client, False
+            return cases[0]["id"], False
         if len(cases) > 1:
             raise _case_choice_needed(cases)
     named = client.organization_name or client.label or "Cliente"
     opened = self._open_case_for_client(cur, operator, receipt_id, title=f"{named} — cotización"[:200],
                                         organization_id=client.organization_id, note=note)
-    return opened["opportunity_id"], client, True
+    return opened["opportunity_id"], True
 
 
 def _handle_create_quote(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
@@ -518,7 +631,8 @@ def _handle_create_quote(self: "V2QuoteRepository", cur: Any, operator: Operator
     if client is not None:
         out.update({"case_created": case_created, "organization_id": client.organization_id,
                     "organization_name": client.organization_name,
-                    "organization_created": client.organization_created, "recipient_participant_id": recipient})
+                    "organization_created": client.organization_created, "recipient_participant_id": recipient,
+                    "institution_connected": client.institution_connected, "affiliation_id": client.affiliation_id})
     return out
 
 

@@ -489,12 +489,17 @@ export const previewQuote = (revisionId: string, draft: QuoteDraft, signal?: Abo
 /** The kinds a new institution may be (`NewOrganizationKind` upstream). */
 export type NewClientKind = "company" | "university" | "public_institution" | "hospital" | "laboratory" | "other";
 
+/** The institution a person, a contact point or an address with none is connected to: one held, or a new one. */
+export type QuoteClientInstitution =
+  | { organization_id: string }
+  | { new_organization: { name: string; kind?: NewClientKind } };
+
 /** Whom a quote is for when no case is named: exactly one of these. */
 export type QuoteClientPick =
   | { organization_id: string }
-  | { person_id: string }
-  | { contact_point_id: string }
-  | { email: string; name?: string }
+  | { person_id: string; institution?: QuoteClientInstitution }
+  | { contact_point_id: string; institution?: QuoteClientInstitution }
+  | { email: string; name?: string; institution?: QuoteClientInstitution }
   | { new_organization: { name: string; kind?: NewClientKind; email?: string } };
 
 /**
@@ -520,6 +525,10 @@ export interface CreatedQuote {
   /** The institution's name, as the CRM has it (null without one). */
   organization_name?: string | null;
   organization_created?: boolean;
+  /** The institution sent with a person or an address (`client.institution`) was connected now. */
+  institution_connected?: boolean;
+  /** The person's new affiliation to it, when the client is a person. */
+  affiliation_id?: string | null;
 }
 
 /** A quote on a case (`opportunityId`), or for a client (`CreateQuoteForClient`). */

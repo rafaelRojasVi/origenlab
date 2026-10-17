@@ -2071,3 +2071,95 @@ def test_a_case_an_undo_discarded_is_never_reopened(disposable_database, world) 
         with pytest.raises(psycopg.errors.RaiseException):
             cur.execute("update crm.opportunity set stage = 'lead', closed_at = null, close_reason = null "
                         "where id = %s", (case_id,))
+
+
+# ------------------------------------------------------------------ add-case-organization: a new institution
+
+def test_a_case_institution_is_an_existing_one_or_a_new_one() -> None:
+    base = {"opportunity_id": CASE_ID, "opportunity_version": 1, "role": "requesting_institution", "note": "x"}
+    body = AddCaseOrganizationBody(**base, new_organization={"name": "Instituto Nuevo", "domain": "@Instituto.TEST"})
+    fields = validated_case(ADD_CASE_ORGANIZATION, body)
+    assert fields["new_organization"] == {"name": "Instituto Nuevo", "kind": "company", "domain": "instituto.test"}
+    assert (fields["organization_id"], fields["organization_version"]) == (None, None)
+    for bad in ({}, {"organization_id": ORGANIZATION_ID},
+                {"organization_id": ORGANIZATION_ID, "organization_version": 1, "new_organization": {"name": "X"}},
+                {"new_organization": {"name": "X"}, "organization_version": 1},
+                {"new_organization": {"name": "X", "kind": "supplier"}},
+                {"new_organization": {"name": "X", "domain": "no es dominio"}},
+                {"new_organization": {"name": "X", "rut": "1"}}):
+        with pytest.raises(ValueError):
+            AddCaseOrganizationBody(**base, **bad)
+
+
+def _owner_sql(dsn: str, sql: str, params: tuple = ()):
+    import psycopg
+
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(sql, params)
+        return cur.fetchall() if cur.description else None
+
+
+def _add_new(repo, world, case_id: str, version: int, new: dict, role: str = "requesting_institution", **kw):
+    return _run(repo, ADD_CASE_ORGANIZATION, AddCaseOrganizationBody(
+        opportunity_id=case_id, opportunity_version=version, new_organization=new, role=role,
+        note="la nombra el correo", **kw), world)
+
+
+@_needs_db
+def test_a_new_institution_is_registered_and_named_on_the_case(disposable_database, world) -> None:
+    repo, tag = _repo(disposable_database), world["tag"]
+    case_id, version = _open_case(repo, world, "Caso sin institución")
+    result = _add_new(repo, world, case_id, version,
+                      {"name": f"Instituto Nuevo {tag}", "kind": "university", "domain": f"nuevo-{tag}.test"})
+    org = result["organization_id"]
+    assert (result["organization_created"], result["created"]) == (True, ["organization", "opportunity_organization"])
+    assert result["opportunity_version"] == version + 1
+    assert _owner_sql(disposable_database, "select name, kind, confirmation, status from crm.organization "
+                                           "where id = %s", (org,)) == [
+        (f"Instituto Nuevo {tag}", "university", "confirmed", "active")]
+    assert _owner_sql(disposable_database, "select role from crm.organization_relationship where organization_id = %s",
+                      (org,)) == [("customer",)]
+    assert _owner_sql(disposable_database, "select domain_norm from crm.organization_domain where organization_id = %s",
+                      (org,)) == [(f"nuevo-{tag}.test",)]
+    assert _owner_sql(disposable_database, "select organization_id::text from crm.opportunity where id = %s",
+                      (case_id,)) == [(org,)]
+
+    # The same name on another case is that institution; so is its domain under another name.
+    other, other_version = _open_case(repo, world, "Otro caso")
+    again = _add_new(repo, world, other, other_version, {"name": f"instituto nuevo {tag}"}, role="mentioned")
+    assert (again["organization_id"], again["organization_created"], again["created"]) == (
+        org, False, ["opportunity_organization"])
+    third, third_version = _open_case(repo, world, "Tercer caso")
+    by_domain = _add_new(repo, world, third, third_version, {"name": f"Otro Nombre {tag}", "domain": f"nuevo-{tag}.test"})
+    assert (by_domain["organization_id"], by_domain["organization_created"]) == (org, False)
+
+
+@_needs_db
+def test_a_new_institution_name_two_share_or_a_supplier_s_is_refused(disposable_database, world) -> None:
+    repo, tag = _repo(disposable_database), world["tag"]
+    twins = [_owner_sql(disposable_database, "insert into crm.organization (kind, name, confirmation) values "
+                                             "('company', %s, 'confirmed') returning id::text", (f"Gemela {tag}",))[0][0]
+             for _ in range(2)]
+    case_id, version = _open_case(repo, world, "Caso con nombre ambiguo")
+    before = _counts(disposable_database, ("crm.organization", "crm.opportunity_organization", "crm.domain_event"))
+    with pytest.raises(CommandRefused) as excinfo:
+        _add_new(repo, world, case_id, version, {"name": f"GEMELA {tag}"})
+    assert (excinfo.value.status_code, excinfo.value.code) == (409, "organization_name_ambiguous")
+    assert {c["id"] for c in excinfo.value.details["candidates"]} == set(twins)
+    # The vendor, named by its name: a supplier as the requester needs the written exception.
+    with pytest.raises(CommandRefused) as excinfo:
+        _add_new(repo, world, case_id, version, {"name": f"Proveedor Ficticio {tag}"})
+    assert (excinfo.value.status_code, excinfo.value.code) == (422, "supplier_exception_required")
+    for new, code in (({"name": f"Lab Delivery {tag}"}, "labdelivery_refused"),
+                      ({"name": f"Interna {tag}", "domain": "ventas.origenlab.cl"}, "recipient_own_address")):
+        with pytest.raises(CommandRefused) as excinfo:
+            _add_new(repo, world, case_id, version, new)
+        assert (excinfo.value.status_code, excinfo.value.code) == (422, code)
+    assert _counts(disposable_database, ("crm.organization", "crm.opportunity_organization",
+                                         "crm.domain_event")) == before
+    # A stale case version writes nothing either, the new institution included.
+    with pytest.raises(CommandRefused) as excinfo:
+        _add_new(repo, world, case_id, version + 5, {"name": f"Instituto Tardío {tag}"})
+    assert excinfo.value.code == "case_version_conflict"
+    assert _counts(disposable_database, ("crm.organization",)) == {"crm.organization": before["crm.organization"]}

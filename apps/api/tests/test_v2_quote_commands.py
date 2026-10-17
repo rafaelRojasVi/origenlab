@@ -2068,3 +2068,149 @@ def test_create_quote_names_the_institution_it_used(world) -> None:
     assert (made["organization_created"], made["organization_name"]) == (True, f"Instituto Nuevo {tag}")
     bare = _run(world, "create-quote", {"client": {"email": _address("sin-institucion")}})
     assert (bare["organization_id"], bare["organization_name"]) == (None, None)
+
+
+# ------------------------------------------------------------------ a client connected to an institution
+
+def test_an_institution_goes_only_with_a_person_a_contact_point_or_an_email() -> None:
+    body = QUOTE_BODIES["create-quote"]
+    org = str(uuid.uuid4())
+    made = body(client={"email": "a@cliente-ficticio.test", "institution": {"new_organization": {"name": "Nueva"}}})
+    assert made.client.institution.new_organization.kind == "company"
+    assert body(client={"person_id": org, "institution": {"organization_id": org}}).client.institution is not None
+    for bad in ({"organization_id": org, "institution": {"organization_id": org}},
+                {"new_organization": {"name": "X"}, "institution": {"organization_id": org}},
+                {"person_id": org, "institution": {}},
+                {"person_id": org, "institution": {"organization_id": org, "new_organization": {"name": "X"}}},
+                {"person_id": org, "institution": {"new_organization": {"name": "X", "email": "a@b.test"}}},
+                {"person_id": org, "institution": {"new_organization": {"name": "X", "kind": "supplier"}}}):
+        with pytest.raises(ValueError):
+            body(client=bad)
+
+
+@needs_db
+def test_an_address_and_a_new_institution_open_a_case_of_that_institution(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    address = f"compras@laboratorio-{tag}.test"
+    out = _run(world, "create-quote", {"client": {"email": address, "name": "Compras",
+                                                   "institution": {"new_organization": {
+                                                       "name": f"Laboratorio Ficticio {tag}", "kind": "laboratory"}}}})
+    org, case = out["organization_id"], out["opportunity_id"]
+    assert (out["organization_created"], out["case_created"], out["institution_connected"]) == (True, True, True)
+    assert out["affiliation_id"] is None  # no person owns the address
+    [made] = _rows(dsn, "select name, kind, confirmation from crm.organization where id = %s", (org,))
+    assert made == {"name": f"Laboratorio Ficticio {tag}", "kind": "laboratory", "confirmation": "confirmed"}
+    assert _owner(dsn, "select role from crm.organization_relationship where organization_id = %s", (org,)) == [
+        ("customer",)]
+    # The address's domain is the new institution's: the next quote to that domain finds it.
+    assert _owner(dsn, "select domain_norm from crm.organization_domain where organization_id = %s", (org,)) == [
+        (f"laboratorio-{tag}.test",)]
+    row = _case_row(dsn, case)
+    assert (row["title"], row["organization_id"]) == (f"Laboratorio Ficticio {tag} — cotización", org)
+    [requesting] = _rows(dsn, "select organization_id::text as organization_id, role, confirmation "
+                              "from crm.opportunity_organization where opportunity_id = %s", (case,))
+    assert requesting == {"organization_id": org, "role": "requesting_institution", "confirmation": "confirmed"}
+    # The address is the recipient; it is not attributed (no command gives a bare address an institution).
+    [point] = _rows(dsn, "select id::text as id, usage, organization_id from crm.contact_point where value_norm = %s",
+                    (address,))
+    assert (point["usage"], point["organization_id"]) == ("unattributed", None)
+    [participant] = _participants(dsn, case)
+    assert participant["contact_point_id"] == point["id"]
+    # A colleague at the same domain is that institution's client now, and gets that case.
+    colleague = _run(world, "create-quote", {"client": {"email": f"jefa@laboratorio-{tag}.test"}})
+    assert (colleague["organization_id"], colleague["opportunity_id"]) == (org, case)
+
+
+@needs_db
+def test_a_person_and_an_existing_institution_get_an_affiliation(world) -> None:
+    dsn, operator = world["dsn"], world["operator"]
+    clinic = _org(dsn, "institution", "Clínica Conectada")
+    person, _ = _person(dsn, "Carla Ficticia", address=_address("carla"))
+    out = _run(world, "create-quote", {"client": {"person_id": person, "institution": {"organization_id": clinic}}})
+    case = out["opportunity_id"]
+    assert (out["organization_id"], out["organization_created"], out["case_created"]) == (clinic, False, True)
+    [affiliation] = _rows(dsn, "select id::text as id, organization_id::text as organization_id, confirmation, "
+                               "confirmed_by_operator_id::text as by, valid_from, valid_to from crm.affiliation "
+                               "where person_id = %s", (person,))
+    assert affiliation == {"id": out["affiliation_id"], "organization_id": clinic, "confirmation": "confirmed",
+                           "by": operator.operator_id, "valid_from": TODAY, "valid_to": None}
+    assert [e for e, _ in _events(dsn, "affiliation", affiliation["id"])] == ["affiliation.opened"]
+    assert _case_row(dsn, case)["organization_id"] == clinic
+    [participant] = _participants(dsn, case)
+    assert participant["person_id"] == person
+    # Next time the person is the clinic's client, with no institution to name.
+    again = _run(world, "create-quote", {"client": {"person_id": person}})
+    assert (again["organization_id"], again["opportunity_id"], again["institution_connected"]) == (clinic, case, False)
+    # Naming the same institution again is no conflict; another one is.
+    same = _run(world, "create-quote", {"client": {"person_id": person, "institution": {"organization_id": clinic}}})
+    assert (same["opportunity_id"], same["institution_connected"]) == (case, False)
+    other = _org(dsn, "institution", "Clínica Distinta")
+    before = _tally(dsn)
+    refused = _refused(world, "create-quote", {"client": {"person_id": person, "institution": {"organization_id": other}}})
+    assert (refused.status_code, refused.code) == (409, "client_has_institution")
+    assert refused.details["organization_id"] == clinic
+    assert _tally(dsn) == before
+
+
+@needs_db
+def test_an_open_case_without_institution_gets_the_connected_one(world) -> None:
+    dsn = world["dsn"]
+    address = _address("sin-institucion")
+    first = _run(world, "create-quote", {"client": {"email": address, "name": "Sin Institución"}})
+    case = first["opportunity_id"]
+    assert _case_row(dsn, case)["organization_id"] is None
+    clinic = _org(dsn, "institution", "Instituto Conectado")
+    out = _run(world, "create-quote", {"client": {"email": address, "institution": {"organization_id": clinic}}})
+    assert (out["opportunity_id"], out["case_created"], out["organization_id"]) == (case, False, clinic)
+    assert _case_row(dsn, case)["organization_id"] == clinic
+    [requesting] = _rows(dsn, "select organization_id::text as organization_id, role from crm.opportunity_organization "
+                              "where opportunity_id = %s and valid_to is null", (case,))
+    assert requesting == {"organization_id": clinic, "role": "requesting_institution"}
+    assert [e for e, _ in _events(dsn, "opportunity", case)][-1] == "opportunity.organization_set"
+    # An existing institution is not given the address's domain.
+    assert _owner(dsn, "select count(*) from crm.organization_domain where organization_id = %s", (clinic,)) == [(0,)]
+
+
+@needs_db
+def test_a_case_that_names_its_requester_keeps_it_and_the_cases_are_the_client_s_own(world) -> None:
+    """The institution connected is not a way into its other cases, nor over a case's own reading."""
+    dsn = world["dsn"]
+    clinic = _org(dsn, "institution", "Hospital Conectado")
+    _case(dsn, world["operator"], clinic)  # the clinic's own open case: not the person's
+    elsewhere = _org(dsn, "institution", "Hospital Otro")
+    theirs = _case(dsn, world["operator"], elsewhere, participant=False)
+    person, _ = _person(dsn, "Diego Ficticio", address=_address("diego"))
+    _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, person_id, role, is_primary, valid_from, "
+                "confirmation) values (%s, %s, 'end_user', false, current_date, 'machine_proposed')", (theirs, person))
+    out = _run(world, "create-quote", {"client": {"person_id": person, "institution": {"organization_id": clinic}}})
+    assert (out["opportunity_id"], out["case_created"]) == (theirs, False)
+    assert _case_row(dsn, theirs)["organization_id"] == elsewhere  # its requester stays
+    assert out["affiliation_id"] is not None
+
+
+@needs_db
+def test_a_connected_institution_is_refused_as_any_client_institution(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:6]
+    supplier = _org(dsn, "institution", "Distribuidora Conectada")
+    _supplier(dsn, supplier)
+    twins = [_owner(dsn, "insert into crm.organization (kind, name, confirmation) values ('company', %s, "
+                         "'machine_proposed') returning id::text", (f"Gemela {tag}",))[0][0] for _ in range(2)]
+    person, _ = _person(dsn, "Elena Ficticia", address=_address("elena"))
+    before = _tally(dsn)
+    for institution, expected in (
+        ({"organization_id": supplier}, (422, "supplier_exception_required")),
+        ({"organization_id": str(uuid.uuid4())}, (404, "organization_not_found")),
+        ({"new_organization": {"name": f"gemela {tag}"}}, (409, "organization_name_ambiguous")),
+        ({"new_organization": {"name": f"Lab Delivery {tag}"}}, (422, "labdelivery_refused")),
+    ):
+        refused = _refused(world, "create-quote", {"client": {"person_id": person, "institution": institution}})
+        assert (refused.status_code, refused.code) == expected, institution
+        if expected[1] == "organization_name_ambiguous":
+            assert {c["id"] for c in refused.details["candidates"]} == set(twins)
+    assert _tally(dsn) == before
+    assert _owner(dsn, "select count(*) from crm.affiliation where person_id = %s", (person,)) == [(0,)]
+    # A new institution of an existing name is that one, not a second.
+    [(name,)] = _owner(dsn, "select name from crm.organization where id = %s", (world["institution"],))
+    out = _run(world, "create-quote", {"client": {"person_id": person,
+                                                   "institution": {"new_organization": {"name": name.upper()}}}})
+    assert (out["organization_id"], out["organization_created"]) == (world["institution"], False)

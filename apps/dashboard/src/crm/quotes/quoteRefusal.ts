@@ -34,6 +34,7 @@ const SPANISH: Record<string, string> = {
   contact_point_not_found: "Esa dirección ya no está en el CRM; búscala de nuevo.",
   supplier_exception_required:
     "OrigenLab le compra a esta institución (es proveedora o fabricante): su cotización se crea desde su caso, con la excepción justificada.",
+  client_has_institution: "Este cliente ya tiene una institución en el CRM; la cotización va a esa institución.",
   client_changed_concurrently: "Los datos de este cliente cambiaron mientras se creaba la cotización; vuelve a intentarlo.",
   query_too_short: "Escribe al menos dos letras para la búsqueda.",
   // «Para».
@@ -93,6 +94,7 @@ const APPROVAL = new Set(["no_items", "unpriced_line", "principal_missing", "fx_
 /** Refusals whose Spanish server text says more than the code (a currency, a revision number). */
 const SPECIFIC = new Set([
   "fx_unavailable",
+  "client_has_institution",
   "superseded",
   "recipient_own_address",
   "quote_numbering_not_configured",

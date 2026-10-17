@@ -55,9 +55,10 @@ import re
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from origenlab_api.v2.commands import CommandRefused, DecisionBody, as_uuid
+from origenlab_api.v2.quotes.draft import NewOrganizationKind
 
 #: The closed command vocabulary, in the order an operator meets them.
 OPEN_COMMERCIAL_CASE = "open_commercial_case"
@@ -257,6 +258,33 @@ class LinkCaseEvidenceBody(_CaseBody):
         return self
 
 
+class NewCaseOrganization(BaseModel):
+    """An institution the CRM does not hold yet, named while putting it on a case.
+
+    Not a second one: `add-case-organization` uses the one active institution of exactly that
+    name (any case), else the one its domain names, and refuses a name two or more share
+    (`organization_name_ambiguous`, with them) — the rule `create-quote` registers a new client
+    institution by. Otherwise it is registered through `register-organization`'s own path, as a
+    `customer`, with the domain when one is given (a free-mail one excepted).
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: Annotated[str, Field(min_length=1, max_length=500)]
+    kind: NewOrganizationKind = "company"
+    domain: Annotated[str, Field(min_length=3, max_length=253)] | None = None
+
+    @field_validator("domain")
+    @classmethod
+    def _a_domain(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.lower().removeprefix("@")
+        if not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", value):
+            raise ValueError("domain is not a domain name")
+        return value
+
+
 class AddCaseOrganizationBody(_CaseBody):
     """Put an institution on a case, in a named part.
 
@@ -276,8 +304,9 @@ class AddCaseOrganizationBody(_CaseBody):
     half of the rule runs inside the command's transaction and not here.
     """
 
-    organization_id: str
-    organization_version: Annotated[int, Field(ge=1)]
+    organization_id: str | None = None
+    organization_version: Annotated[int, Field(ge=1)] | None = None
+    new_organization: NewCaseOrganization | None = None
     role: Literal[
         "requesting_institution",
         "end_user_institution",
@@ -288,6 +317,16 @@ class AddCaseOrganizationBody(_CaseBody):
         "mentioned",
     ]
     supplier_exception_reason: Annotated[str, Field(min_length=1, max_length=2000)] | None = None
+
+    @model_validator(mode="after")
+    def _an_institution_or_a_new_one(self) -> AddCaseOrganizationBody:
+        if (self.organization_id is None) == (self.new_organization is None):
+            raise ValueError("give organization_id or new_organization, not both")
+        if self.organization_id is not None and self.organization_version is None:
+            raise ValueError("organization_id needs organization_version")
+        if self.new_organization is not None and self.organization_version is not None:
+            raise ValueError("organization_version goes only with organization_id")
+        return self
 
 
 class SetCaseOrganizationRoleBody(_CaseBody):
@@ -601,8 +640,14 @@ def validated_case(command_name: str, body: DecisionBody) -> dict[str, Any]:
             raw = getattr(body, name)
             fields[name] = as_uuid(raw, name) if raw is not None else None
     elif isinstance(body, AddCaseOrganizationBody):
-        fields["organization_id"] = as_uuid(body.organization_id, "organization_id")
-        fields["organization_version"] = int(body.organization_version)
+        if body.new_organization is not None:
+            fields["organization_id"] = None
+            fields["organization_version"] = None
+            fields["new_organization"] = body.new_organization.model_dump()
+        else:
+            assert body.organization_version is not None  # noqa: S101 - the body validator requires it
+            fields["organization_id"] = as_uuid(body.organization_id, "organization_id")
+            fields["organization_version"] = int(body.organization_version)
         fields["role"] = body.role
         fields["supplier_exception_reason"] = _validated_supplier_exception(
             body.role, body.supplier_exception_reason
