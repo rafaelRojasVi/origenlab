@@ -71,6 +71,11 @@ class _FakeReads:
         self._maybe_refuse()
         return {"rows": [], "counts": {"draft": 0, "approved": 0, "sent": 0, "void": 0, "all": 0}, "next_cursor": None}
 
+    def economics_report(self, *, from_month, to_month):
+        self.calls.append(("economics_report", from_month, to_month))
+        self._maybe_refuse()
+        return {"rows": [], "months": [], "totals": {"quotes": 0}}
+
     def client_suggestions(self, q):
         self.calls.append(("client_suggestions", q))
         self._maybe_refuse()
@@ -108,7 +113,7 @@ def _ikey():
 
 READS = [("get", "/v2/quotes/numbering", None), ("get", f"/v2/quotes/{QID}", None),
          ("post", "/v2/quotes/preview", {"draft": DRAFT}), ("get", "/v2/quotes", None),
-         ("get", "/v2/quotes/clients?q=ab", None)]
+         ("get", "/v2/quotes/clients?q=ab", None), ("get", "/v2/quotes/economics", None)]
 
 
 # ------------------------------------------------------------------ reads
@@ -177,6 +182,26 @@ def test_client_suggestions_need_two_characters() -> None:
     assert reads.calls == []
     assert client.get("/v2/quotes/clients?q=%20ab%20", headers=HEADERS).status_code == 200
     assert reads.calls == [("client_suggestions", "ab")]
+
+
+def test_the_economics_report_passes_its_period_through_and_is_not_a_quote_id() -> None:
+    reads, _, client = _client()
+    assert client.get("/v2/quotes/economics", headers=HEADERS).status_code == 200
+    assert client.get("/v2/quotes/economics?from=2026-01&to=2026-06", headers=HEADERS).status_code == 200
+    assert reads.calls == [("economics_report", None, None), ("economics_report", "2026-01", "2026-06")]
+
+
+@pytest.mark.parametrize("query", ["from=2026-1", "to=26-01", "from=2026-01-01", "to=enero"])
+def test_the_economics_report_refuses_a_malformed_month(query) -> None:
+    reads, _, client = _client()
+    assert client.get(f"/v2/quotes/economics?{query}", headers=HEADERS).status_code == 422
+    assert reads.calls == []
+
+
+def test_a_bad_period_is_422_in_the_production_envelope() -> None:
+    _, _, client = _client(reads=_FakeReads(CommandRefused(422, "bad_period", "to is before from")))
+    r = client.get("/v2/quotes/economics?from=2026-12&to=2026-01", headers=HEADERS)
+    assert r.status_code == 422 and r.json()["error"]["details"]["code"] == "bad_period"
 
 
 def test_a_quote_id_that_is_not_a_uuid_is_422() -> None:

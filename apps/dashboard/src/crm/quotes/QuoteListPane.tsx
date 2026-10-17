@@ -114,12 +114,14 @@ export interface QuoteListPaneProps {
   active?: boolean;
   onOpen: (quoteId: string, meta: TabMeta) => void;
   onPreferences?: () => void;
+  /** «Rentabilidad»: the module's fixed pane of each quote's sale, costs and margin. */
+  onRentabilidad?: () => void;
   onNew?: () => void;
   /** Why «Nueva cotización» is off when there is no `onNew` (the module's «+ Nueva» reason). */
   newOffReason?: string;
 }
 
-export function QuoteListPane({ active = true, onOpen, onPreferences, onNew, newOffReason }: QuoteListPaneProps) {
+export function QuoteListPane({ active = true, onOpen, onPreferences, onRentabilidad, onNew, newOffReason }: QuoteListPaneProps) {
   const [status, setStatus] = useState<QuoteListStatus>("draft");
   const [text, setText] = useState("");
   const [term, setTerm] = useState("");
@@ -234,6 +236,9 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onNew, new
           {counts ? <span className="text-[13px] text-ink-muted">{countsLine(counts)}</span> : null}
         </div>
         <div className="flex gap-2">
+          <LaterButton onClick={onRentabilidad} className="min-h-[44px] px-4 text-[14px] font-semibold">
+            Rentabilidad
+          </LaterButton>
           <LaterButton onClick={onPreferences} className="min-h-[44px] px-4 text-[14px] font-semibold">
             Preferencias
           </LaterButton>

@@ -7,6 +7,7 @@ import {
   createQuote,
   createQuoteRevision,
   fetchQuoteClients,
+  fetchQuoteEconomics,
   fetchQuoteList,
   fetchQuoteNumbering,
   fetchQuoteWorkspace,
@@ -336,6 +337,25 @@ describe("the quote list", () => {
     expect(err).toBeInstanceOf(QuoteRefusal);
     expect(err.status).toBe(422);
     expect(err.code).toBe("bad_cursor");
+  });
+});
+
+describe("«Rentabilidad»", () => {
+  it("GETs the report, with the period only when given, and raises a bad period as a refusal", async () => {
+    const calls = stub(() => json({ rows: [], months: [], totals: {}, params: {} }));
+    await fetchQuoteEconomics();
+    await fetchQuoteEconomics({ from: "2026-01", to: "2026-06" });
+    expect(calls.map((c) => c.path)).toEqual(["/v2/quotes/economics", "/v2/quotes/economics"]);
+    expect(calls[0].init.method).toBe("GET");
+    const urls = (fetch as unknown as { mock: { calls: [string][] } }).mock.calls.map(([u]) => new URL(u, "http://x"));
+    expect(urls[0].search).toBe("");
+    expect(urls[1].searchParams.get("from")).toBe("2026-01");
+    expect(urls[1].searchParams.get("to")).toBe("2026-06");
+
+    stub(() => refusal(422, "bad_period", "to is before from"));
+    const err = await fetchQuoteEconomics({ from: "2026-06", to: "2026-01" }).catch((e) => e);
+    expect(err).toBeInstanceOf(QuoteRefusal);
+    expect(err.code).toBe("bad_period");
   });
 });
 

@@ -1,5 +1,5 @@
 /**
- * The one client for the quote API: the workspace and numbering reads, the live preview, the
+ * The one client for the quote API: the workspace, numbering and «Rentabilidad» reads, the live preview, the
  * five quote commands (create, save a draft, approve, void, new revision) and «Preferencias»
  * (`set-cost-parameter`).
  *
@@ -120,6 +120,25 @@ export interface ComputedLine {
   is_principal: boolean;
 }
 
+/** The kinds «Gastos de importación» are split into (`quoting.expenses.EXPENSE_CATEGORIES`). */
+export type ImportCostKind = "freight" | "agent" | "customs" | "transport" | "other";
+
+/**
+ * «Economía de la cotización» (`v2/quotes/economics.py`): the sale, the product cost, the quote's
+ * own import costs by kind and the gross margin, all the engine's. The margin is null unless every
+ * item line has a cost (`cost_coverage.state === "full"`): a partial margin is never shown.
+ */
+export interface QuoteEconomics {
+  sale_net_clp: Decimal;
+  product_cost_clp: Decimal;
+  import_costs_clp: Decimal;
+  import_costs_split: Record<ImportCostKind, Decimal>;
+  gross_margin_clp: Decimal | null;
+  gross_margin_pct: Decimal | null;
+  margin_state: string;
+  cost_coverage: { state: "full" | "partial" | "none"; item_lines: number; lines_without_cost: number };
+}
+
 export interface Computed {
   lines: ComputedLine[];
   expenses: {
@@ -144,6 +163,8 @@ export interface Computed {
   principal_line_no: number | null;
   fx: { currency: string; clp_per_unit: Decimal; as_of: string; source: string }[];
   warnings: string[];
+  /** Absent from an older API. */
+  economics?: QuoteEconomics;
 }
 
 /* ── GET /v2/quotes/{id} ──────────────────────────────────────────────────── */
@@ -246,6 +267,8 @@ export interface QuoteWorkspaceCurrent {
   // any other revision
   lines?: QuoteStoredLine[];
   party_snapshot?: unknown | null;
+  /** Its economics: a draft's live ones (= `computed.economics`), an issued one's as frozen; null for an imported quote. */
+  economics?: QuoteEconomics | null;
 }
 
 export interface QuoteWorkspace {
@@ -434,6 +457,63 @@ export function fetchQuoteList(
   if (q) params.set("q", q);
   if (cursor) params.set("cursor", cursor);
   return get<QuoteListPage>(`/v2/quotes?${params.toString()}`, signal);
+}
+
+/* ── GET /v2/quotes/economics («Rentabilidad») ────────────────────────────── */
+
+/** One quote made in the Cotizador, at its current revision. `economics` is null when the engine cannot price it. */
+export interface EconomicsRow {
+  quote_id: string;
+  revision_id: string;
+  quote_number: string;
+  label: string | null;
+  client: string | null;
+  status: "draft" | "approved" | "sent";
+  draft: boolean;
+  /** `YYYY-MM-DD` in Santiago: approval (else sending); a draft's last change. */
+  date: string;
+  month: string;
+  currency: string | null;
+  source: "authored";
+  economics: QuoteEconomics | null;
+}
+
+/**
+ * Totals of approved and sent quotes (drafts apart, `drafts`). The margin $ and % are over the
+ * full-coverage quotes only; `coverage` says how much of the sale they are.
+ */
+export interface EconomicsTotals {
+  quotes: number;
+  sale_net_clp: Decimal;
+  product_cost_clp: Decimal;
+  import_costs_clp: Decimal;
+  import_costs_split: Record<ImportCostKind, Decimal>;
+  gross_margin_clp: Decimal | null;
+  gross_margin_pct: Decimal | null;
+  coverage: {
+    full: { quotes: number; sale_net_clp: Decimal };
+    partial: { quotes: number; sale_net_clp: Decimal };
+    none: { quotes: number; sale_net_clp: Decimal };
+    full_share_of_sale: Decimal | null;
+  };
+}
+
+export interface EconomicsReport {
+  from: string;
+  to: string;
+  rows: EconomicsRow[];
+  months: (EconomicsTotals & { month: string })[];
+  totals: EconomicsTotals & { drafts: { quotes: number; sale_net_clp: Decimal } };
+  params: QuotePreferences;
+}
+
+/** The period's report (`from` / `to` as `YYYY-MM`; both absent: this year). A bad period is 422 `bad_period`. */
+export function fetchQuoteEconomics({ from, to }: { from?: string; to?: string } = {}, signal?: AbortSignal): Promise<EconomicsReport> {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const query = params.toString();
+  return get<EconomicsReport>(`/v2/quotes/economics${query ? `?${query}` : ""}`, signal);
 }
 
 /* ── GET /v2/quotes/clients (the new-quote dialog's suggestions) ───────────── */

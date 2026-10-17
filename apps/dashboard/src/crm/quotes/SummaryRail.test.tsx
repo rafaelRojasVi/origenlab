@@ -9,7 +9,7 @@ import type { CatalogIndex } from "../catalog/catalogIndex";
 import type { PriceHistory } from "../catalog/catalogApi";
 import { initialDraftState, setFxOverride, type DraftEditorState } from "./draftEditor";
 import { QuoteRefusal, type Computed, type QuoteDraft, type QuoteWorkspace } from "./quoteApi";
-import { computedFixture, workspaceFixture } from "./quoteFixtures";
+import { computedFixture, economicsFixture, partialEconomicsFixture, workspaceFixture } from "./quoteFixtures";
 import { clientTypeLabel, SummaryRail } from "./SummaryRail";
 
 const INDEX: CatalogIndex = {
@@ -488,5 +488,43 @@ describe("clientTypeLabel", () => {
     ];
     for (const [type, label] of cases) expect(clientTypeLabel(type)).toBe(label);
     expect(clientTypeLabel(null)).toBeNull();
+  });
+});
+
+describe("«Economía de la cotización»", () => {
+  const box = () => within(screen.getByRole("region", { name: "Economía de la cotización" }));
+  const value = (label: string) => box().getByText(label).nextSibling;
+
+  it("a draft shows the live computation: sale, product cost, import costs with their split, margin", () => {
+    setup({ state: stateFor({ computed: priced({ economics: economicsFixture() }) }) });
+    expect(value("Venta neta")).toHaveTextContent("$ 2.602.000");
+    expect(value("Costo de productos")).toHaveTextContent("$ 1.030.000");
+    expect(value("Gastos de importación")).toHaveTextContent("$ 830.000");
+    const split = within(box().getByLabelText("Gastos de importación por tipo"));
+    expect(split.getByText("Flete").nextSibling).toHaveTextContent("$ 500.000");
+    expect(split.getByText("Derechos y aduana").nextSibling).toHaveTextContent("$ 180.000");
+    expect(split.queryByText("Otros gastos")).toBeNull();
+    expect(box().getByText("$ 742.000")).toBeInTheDocument();
+    expect(box().getByText("28,5 %")).toBeInTheDocument();
+    expect(box().getByText("En rango")).toBeInTheDocument();
+    expect(box().getByText(/no aparece en el PDF/)).toBeInTheDocument();
+  });
+
+  it("a line without cost: no margin, and it says why", () => {
+    setup({ state: stateFor({ computed: priced({ economics: partialEconomicsFixture() }) }) });
+    expect(box().getByText("Sin margen: falta el costo de 1 línea.")).toBeInTheDocument();
+    expect(box().queryByText(/%/)).toBeNull();
+    expect(box().getByText("Sin gastos de importación.")).toBeInTheDocument();
+  });
+
+  it("an issued revision shows what approval froze", () => {
+    const state = stateFor({ status: "approved", draft: undefined, computed: undefined, lines: [], economics: economicsFixture({ sale_net_clp: "999000" }) });
+    setup({ state });
+    expect(value("Venta neta")).toHaveTextContent("$ 999.000");
+  });
+
+  it("before anything is priced it says so", () => {
+    setup({ state: stateFor({ computed: null }) });
+    expect(box().getByText("Todavía no hay precios calculados.")).toBeInTheDocument();
   });
 });

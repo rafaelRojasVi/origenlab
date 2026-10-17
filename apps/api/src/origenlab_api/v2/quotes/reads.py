@@ -42,6 +42,13 @@ rule, applied to every quote in one statement), newest first by a keyset cursor,
 each status under the same search — two statements in one pipeline, whatever the page holds.
 Imported quotes are listed too (`origin` `historical_import`).
 
+**«Rentabilidad»** (`GET /v2/quotes/economics?from=YYYY-MM&to=YYYY-MM`): every quote made in the
+Cotizador at its current revision (the list's rule; void left out, a draft flagged), each with its
+sale, product cost, import costs and gross margin priced from its stored lines as approval prices
+them (`economics.py`), and the totals by month — three statements in one pipeline. The workspace's
+`current.economics` is the same breakdown for one quote: a draft's from its live computation, an
+issued revision's as frozen, none for an imported quote.
+
 **Client suggestions** (`GET /v2/quotes/clients`, plan ruling R3): institutions and people a new
 quote can be for, each with its open cases — never a supplier or manufacturer (a current
 `organization_relationship` in those roles), an archived or merged institution, an inactive address,
@@ -70,6 +77,7 @@ from origenlab_api.v2.case_commands import SUPPLIER_RELATIONSHIP_ROLES
 from origenlab_api.v2.catalog.reads import V2CatalogReads, _like_escape, _plain
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.quotes.draft import PreviewQuoteBody, QuoteDraft
+from origenlab_api.v2.quotes.economics import frozen_economics, month_range, report
 from origenlab_api.v2.quotes.inputs import (
     PARAMETERS_SQL,
     FxResolver,
@@ -340,6 +348,51 @@ select count(*) filter (where bucket = 'draft') as draft, count(*) filter (where
        count(*) filter (where bucket = 'sent') as sent, count(*) filter (where bucket = 'void') as void,
        count(*) as "all"
   from listed
+"""
+
+# -- «Rentabilidad» (`GET /v2/quotes/economics`)
+#
+# Every quote made in the Cotizador at its current revision (`_current`'s rule, as the list), not
+# voided, dated in Santiago by when it was approved (else sent; a draft by its last change) and
+# inside the period; with its institution through a merge. The second statement is those revisions'
+# stored lines, the third the parameters: one pipeline, one round trip, whatever the period holds.
+_ECONOMICS_BASE_SQL = """
+with cur as (
+  select distinct on (r.quote_id) r.*
+    from crm.quote_revision r
+   order by r.quote_id, (r.status in ('draft', 'in_review')) desc, (r.status <> 'void') desc, r.revision_no desc
+), picked as (
+  select c.id as revision_id, c.quote_id, c.revision_no, c.status, c.quote_currency, c.tax_rate,
+         c.expense_allocation_mode,
+         case when c.status = 'in_review' then 'draft' else c.status end as bucket,
+         case when c.status in ('draft', 'in_review') then c.updated_at
+              else coalesce(c.approved_at, c.sent_at, c.updated_at) end as at
+    from cur c
+   where c.origin = 'authored' and c.status <> 'void'
+), dated as (
+  select p.*, (p.at at time zone 'America/Santiago') as local_at
+    from picked p
+   where (p.at at time zone 'America/Santiago') >= %(start)s and (p.at at time zone 'America/Santiago') < %(end)s
+)
+"""
+
+_ECONOMICS_ROWS_SQL = _ECONOMICS_BASE_SQL + """
+select d.revision_id::text as revision_id, d.quote_id::text as quote_id, q.quote_number, d.revision_no, d.status,
+       d.bucket, d.quote_currency, d.tax_rate, d.expense_allocation_mode, d.local_at::date as day,
+       to_char(d.local_at, 'YYYY-MM') as month, inst.name as institution_name
+  from dated d
+  join crm.quote q on q.id = d.quote_id
+  join crm.opportunity o on o.id = q.opportunity_id
+  left join crm.organization m on m.id = o.organization_id
+  left join crm.organization inst on inst.id = coalesce(m.merged_into_organization_id, m.id)
+ order by d.at desc, d.quote_id desc
+"""
+
+_ECONOMICS_LINES_SQL = _ECONOMICS_BASE_SQL + """
+select l.*
+  from crm.quote_line l
+  join dated d on d.revision_id = l.quote_revision_id
+ order by l.quote_revision_id, l.line_no
 """
 
 # -- client suggestions (`GET /v2/quotes/clients`, plan ruling R3)
@@ -940,6 +993,25 @@ class V2QuoteReads:
             "next_cursor": _encode_cursor(page[-1]["updated_at"], page[-1]["id"]) if more else None,
         })
 
+    # -- «Rentabilidad»
+
+    def economics_report(self, *, from_month: str | None, to_month: str | None) -> dict[str, Any]:
+        """Each authored quote of the period with its sale, product cost, import costs and gross
+        margin, and the totals by month and for the range (`economics.report`). One pipeline of
+        three statements, whatever the period holds. A bad period is a 422 `bad_period`."""
+        try:
+            start, end = month_range(from_month, to_month, self._today())
+        except ValueError as exc:
+            raise CommandRefused(422, "bad_period", str(exc)) from exc
+        period = {"start": start, "end": end}
+        with self._read() as cur:
+            rows = self._catalog._batch(cur, {"rows": (_ECONOMICS_ROWS_SQL, period),
+                                              "lines": (_ECONOMICS_LINES_SQL, period),
+                                              "params": (PARAMETERS_SQL, ())})
+        params = self._params(rows["params"])
+        revisions = [{**r, "label": _label(r["quote_number"], r["revision_no"])} for r in rows["rows"]]
+        return {**report(revisions, rows["lines"], params, start, end), "params": _plain(quote_preferences(params))}
+
     # -- client suggestions (R3)
 
     def client_suggestions(self, q: str) -> dict[str, Any]:
@@ -1079,8 +1151,11 @@ class V2QuoteReads:
             out["draft"] = draft.model_dump(mode="json")
             out["computed"] = None
             out["computed_error"] = None
+            out["economics"] = None
             try:
                 out["computed"] = self._priced(cur, draft, revision["tax_rate"], params, fx)
+                # «Economía de la cotización»: the same live computation the rail shows.
+                out["economics"] = out["computed"]["economics"]
             except CommandRefused as exc:
                 # The page still opens: the draft is shown with why it cannot be priced right now.
                 out["computed_error"] = {"code": exc.code, "message": exc.message}
@@ -1089,6 +1164,10 @@ class V2QuoteReads:
         else:
             out["lines"] = [{k: line.get(k) for k in _LINE_FIELDS} for line in lines]
             out["party_snapshot"] = revision.get("party_snapshot")
+            # An issued revision's economics are what approval froze; an imported quote has none
+            # (its import costs were never recorded).
+            out["economics"] = (frozen_economics(revision, lines, params)
+                                if revision["origin"] == "authored" else None)
         return out
 
     @classmethod

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COTIZADOR_PREFERENCES, CRM_NAV, crmHash, sectionTitle } from "./crmRoute";
+import { COTIZADOR_PREFERENCES, COTIZADOR_RENTABILIDAD, CRM_NAV, crmHash, sectionTitle } from "./crmRoute";
 import { LEGACY_REDIRECTS, parseShellHash, redirectHash } from "./shellRoute";
 
 describe("shell route", () => {
@@ -76,6 +76,14 @@ describe("Cotizador route", () => {
     // Only the module has it; anything else in that place is still no id at all.
     expect(parseShellHash("#/crm/catalogo/preferencias")).toEqual({ section: "catalogo", id: null });
     expect(parseShellHash("#/crm/cotizador/otra-cosa")).toEqual({ section: "cotizador", id: null });
+  });
+
+  it("«Rentabilidad» is another fixed pane of the module", () => {
+    expect(COTIZADOR_RENTABILIDAD).toBe("rentabilidad");
+    expect(parseShellHash("#/crm/cotizador/rentabilidad")).toEqual({ section: "cotizador", id: null, pane: "rentabilidad" });
+    expect(crmHash("cotizador", COTIZADOR_RENTABILIDAD)).toBe("#/crm/cotizador/rentabilidad");
+    expect(redirectHash("#/crm/cotizador/rentabilidad")).toBeNull();
+    expect(parseShellHash("#/crm/catalogo/rentabilidad")).toEqual({ section: "catalogo", id: null });
   });
 
   it("is in the navigation between Oportunidades and Organizaciones, titled «Cotizador», for sales and admin", () => {

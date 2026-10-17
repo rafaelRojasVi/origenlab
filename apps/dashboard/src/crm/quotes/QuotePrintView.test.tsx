@@ -7,7 +7,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CatalogIndex } from "../catalog/catalogIndex";
 import { isPrintable, printableQuote } from "./printableQuote";
-import { computedFixture, workspaceFixture } from "./quoteFixtures";
+import { computedFixture, economicsFixture, workspaceFixture } from "./quoteFixtures";
 import type { ComputedLine, QuoteStoredLine, QuoteWorkspace } from "./quoteApi";
 import { QuotePrintView } from "./QuotePrintView";
 
@@ -200,5 +200,35 @@ describe("Vista previa PDF — a draft", () => {
     expect(isPrintable(approved())).toBe(true);
     expect(isPrintable(workspaceFixture({ status: "sent", draft: undefined }))).toBe(true);
     expect(isPrintable(workspaceFixture({ status: "void", draft: undefined }))).toBe(false);
+  });
+});
+
+describe("Vista previa PDF — «Economía de la cotización» stays internal", () => {
+  // Distinctive amounts: a leak of any of them into the document would be seen.
+  const economics = economicsFixture({
+    sale_net_clp: "1300000", product_cost_clp: "713713", import_costs_clp: "424242",
+    import_costs_split: { freight: "313131", agent: "55555", customs: "44444", transport: "11112", other: "0" },
+    gross_margin_clp: "162045", gross_margin_pct: "0.1246",
+  });
+
+  it("printableQuote copies none of it, for a draft or an issued revision", () => {
+    const draft = pricedDraft();
+    draft.current = { ...draft.current!, economics, computed: { ...draft.current!.computed!, economics } };
+    const issued = approved();
+    issued.current = { ...issued.current!, economics };
+    for (const ws of [draft, issued]) {
+      const q = printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!;
+      const text = JSON.stringify(q);
+      expect(text).not.toMatch(/economics|713713|424242|313131|55555|44444|11112|162045|0\.1246/);
+    }
+  });
+
+  it("the print view shows none of it", () => {
+    const ws = approved();
+    ws.current = { ...ws.current!, economics };
+    const dialog = show(ws);
+    expectClientSafe(dialog);
+    const t = dialog.textContent ?? "";
+    expect(t).not.toMatch(/Economía|713[.,]?713|424[.,]?242|313[.,]?131|162[.,]?045|12,5 %|gastos de importación/i);
   });
 });

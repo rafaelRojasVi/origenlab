@@ -348,27 +348,30 @@ describe("QuoteListPane", () => {
     expect(api.urls).toHaveLength(2);
   });
 
-  it("has «Preferencias» and «Nueva cotización» at 44 px, off until they are wired, on when they are", async () => {
+  it("has «Rentabilidad», «Preferencias» and «Nueva cotización» at 44 px, off until they are wired, on when they are", async () => {
     stubApi();
     const onPreferences = vi.fn();
+    const onRentabilidad = vi.fn();
     const onNew = vi.fn();
     const { rerender } = render(<QuoteListPane onOpen={vi.fn()} />);
     await screen.findByText("CN00041");
-    for (const name of ["Preferencias", "Nueva cotización"]) {
+    for (const name of ["Rentabilidad", "Preferencias", "Nueva cotización"]) {
       const off = screen.getByRole("button", { name });
       expect(off).toBeDisabled();
       expect(off).not.toHaveAttribute("title");
       expect(off).toHaveAccessibleDescription("Llega en la siguiente entrega");
     }
-    rerender(<QuoteListPane onOpen={vi.fn()} onPreferences={onPreferences} onNew={onNew} />);
-    for (const name of ["Preferencias", "Nueva cotización"]) {
+    rerender(<QuoteListPane onOpen={vi.fn()} onPreferences={onPreferences} onRentabilidad={onRentabilidad} onNew={onNew} />);
+    for (const name of ["Rentabilidad", "Preferencias", "Nueva cotización"]) {
       expect(screen.getByRole("button", { name })).toBeEnabled();
       expect(screen.getByRole("button", { name }).className).toContain("min-h-[44px]");
       expect(screen.getByRole("button", { name })).not.toHaveAccessibleDescription("Llega en la siguiente entrega");
     }
     fireEvent.click(screen.getByRole("button", { name: "Preferencias" }));
     fireEvent.click(screen.getByRole("button", { name: "Nueva cotización" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rentabilidad" }));
     expect(onPreferences).toHaveBeenCalledOnce();
+    expect(onRentabilidad).toHaveBeenCalledOnce();
     expect(onNew).toHaveBeenCalledOnce();
   });
 
