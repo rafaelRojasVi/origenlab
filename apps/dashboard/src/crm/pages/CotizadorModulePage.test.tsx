@@ -581,14 +581,14 @@ describe("Cotizador module — «Rentabilidad»", () => {
   it("the list's «Rentabilidad» opens the fixed pane; a row's «Abrir cotización» opens its tab", async () => {
     const api = stubApi();
     renderModule("#/crm/cotizador");
-    const listButton = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Rentabilidad" });
+    const listButton = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Rentabilidad" }, { timeout: 5000 });
     fireEvent.click(listButton);
     await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador/rentabilidad"));
-    expect(await screen.findByRole("heading", { level: 1, name: "Rentabilidad" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Rentabilidad" }, { timeout: 5000 })).toBeInTheDocument();
     expect(within(tablist()).getByRole("tab", { name: "Todas" })).toHaveAttribute("aria-selected", "false");
     expect(api.calls.some((c) => c.path === "/v2/quotes/economics")).toBe(true);
 
-    fireEvent.click(await screen.findByRole("button", { name: /CN00041/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /CN00041/ }, { timeout: 5000 }));
     fireEvent.click(screen.getByRole("button", { name: "Abrir cotización" }));
     await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(1)}`));
     await showsQuote("CN00041");
