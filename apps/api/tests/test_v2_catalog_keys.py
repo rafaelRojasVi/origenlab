@@ -230,3 +230,15 @@ def test_the_footer_search_stays_linear_on_hostile_text(pinned):
         labdelivery_issued(hostile + "\n" + CELULAR)
         keys.old_footer_identities(hostile)
         assert time.perf_counter() - started < 2
+
+
+def test_a_digits_only_address_segment_does_not_match_inside_any_number(monkeypatch):
+    # An address with a bare «, 45,» segment: its 2 digits must not refuse «0,45 mg» or «X-145».
+    address = "Calle Inventada 123, 45, Comuna Ficticia, Santiago, Chile. Teléfono (56-2) 21234567"
+    monkeypatch.setattr(keys, "OLD_TEMPLATE_FOOTER_SHA256",
+                        keys.OLD_TEMPLATE_FOOTER_SHA256 | {keys.footer_sha256(address, CELULAR)})
+    identities = keys.old_footer_identities(HEADER + BODY + f"      {address}\n      {CELULAR}\n")
+    assert identities
+    for value in ("Balanza 0,45 mg", "Modelo X-145", "Pipeta 1000-4500 uL", "Of 45 piso"):
+        assert not keys.copies_old_footer(value, identities), value
+    assert keys.copies_old_footer("Calle Inventada 123", identities)

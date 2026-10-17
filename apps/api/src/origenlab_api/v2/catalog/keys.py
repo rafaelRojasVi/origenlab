@@ -179,7 +179,10 @@ def old_footer_identities(text: str | None) -> frozenset[str]:
     found: set[str] = set()
     for _, address, celular in _old_footers(_lines(text)):
         found |= {_fold(address["address"]), _fold(address["street"]), _fold(celular["phone"])}
-        found |= {_fold(segment) for segment in address["address"].split(",") if re.search(r"\d", segment)}
+        # A segment of digits only («, 45,») would match inside any number; its digits count only
+        # when long enough, below. A segment with words is matched as whole words.
+        found |= {_fold(segment) for segment in address["address"].split(",")
+                  if re.search(r"\d", segment) and not segment.strip().replace(" ", "").isdigit()}
         for part in (address["address"], celular["celular"]):
             for group in _DIGIT_GROUPS.findall(part):
                 digits = group.replace(" ", "")
