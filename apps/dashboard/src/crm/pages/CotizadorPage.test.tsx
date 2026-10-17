@@ -483,7 +483,7 @@ describe("Cotizador page — approving a draft", () => {
     expect(sheet.getByText("76.000.000-0", { exact: false })).toBeInTheDocument();
     expect(sheet.getByText("Agitador de prueba")).toBeInTheDocument();
     expect(sheet.queryByText("Aprobada por Rafa Prueba")).toBeNull();
-    expect(sheet.getByText("TATIANA VIVANCO")).toBeInTheDocument();
+    expect(sheet.getByText("Tatiana Vivanco")).toBeInTheDocument();
     expect(sheet.queryByText(/BORRADOR/)).not.toBeInTheDocument();
     expect(dialog.textContent).not.toMatch(/Flete/);
     const print = vi.fn();

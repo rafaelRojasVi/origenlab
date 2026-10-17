@@ -141,7 +141,11 @@
 .qp-terms dd { margin: 2px 0 0; font-size: 12.5px; white-space: pre-line; overflow-wrap: anywhere; }
 .qp-client-note { margin: 0; font-size: 12.5px; white-space: pre-line; }
 
-.qp-sign { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.qp-sign { display: flex; flex-direction: column; gap: 3px; font-size: 13px; min-width: 200px; }
+.qp-sign-greet { color: #4b5c57; font-size: 12.5px; }
+.qp-sign-line { display: block; width: 190px; margin: 26px 0 6px; border-top: 1px solid #9fb1ac; }
+.qp-sign-name { font-size: 14px; font-weight: 600; color: #14201d; }
+.qp-sign-title { font-size: 12px; color: #4b5c57; }
 .qp-draft-note { margin-top: 6px; }
 .qp-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding-top: 16px; }
 .qp-foot .qp-right { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
@@ -162,7 +166,8 @@
 }
 
 @media print {
-  @page { size: A4; margin: 14mm 14mm 16mm; }
+  /* margin 0: the browser has no room for its own date/title/URL/page line; the sheet keeps the margins. */
+  @page { size: A4; margin: 0; }
   html, body {
     height: auto !important;
     overflow: visible !important;
@@ -183,7 +188,7 @@
     width: auto;
     min-height: 0;
     margin: 0;
-    padding: 0;
+    padding: 14mm 14mm 14mm;
     box-shadow: none;
     border-top: 0;
     /* Block, not flex, so the browser breaks the table across pages cleanly. */
