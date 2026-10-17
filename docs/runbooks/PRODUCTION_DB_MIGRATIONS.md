@@ -107,9 +107,11 @@ flowchart TD
   A[Main candidate] --> B{Holds and provenance}
   B -->|Disabled or stale| X[Refuse or skip]
   B -->|Approved| C[Exact SHA CI and provider gates]
-  C --> D[Consistent encrypted backup artifact]
+  C --> P{Pending migration?}
+  P -->|Exactly 0| F
+  P -->|1 or more, or unknown| D[Consistent encrypted backup artifact]
   D --> E[Atomic migration prefix]
-  E --> F[Sequential Render rollout]
+  E --> F[Sequential Render rollout of the services whose code changed]
   F --> G[Read-only postflight]
   G --> H[Complete]
   C -->|Failure| X
@@ -121,19 +123,22 @@ flowchart TD
 
 | State | Guard/effect | Durable output |
 |---|---|---|
-| Candidate | main must be current; workflow_run must be successful same-repo push/main; manual dispatch must also use main | Pinned full SHA |
+| Candidate | main must be current; workflow_run must be a successful same-repo push/main run of `secret-scan` (since 2026-10-17; before, `supabase`); manual dispatch must also use main | Pinned full SHA |
 | Hold | Missing/false release flag prevents automatic release and rejects manual release; missing/false backup flag skips schedules | Existing production stays running |
 | Protection/review | Active review/check policy; exact merged PR, final-head independent collaborator approval; no direct push release | Verified provenance |
-| CI | All nine named main-push workflows at exact SHA; required jobs successful; reruns select current attempt | CI evidence |
 | Render preflight | Approved IDs/owner/repository/main; independent deploy OFF; legacy cron suspended; compatible consolidated entrypoint; no active deployment | No provider writes |
-| Backup | TLS session pooler, migrator, PG17; one snapshot and ledger; required schemas in TOC; checksums; age encryption; successful artifact upload | Ciphertext artifact, 30-day retention |
-| Migrate | Current main/CI/review/config rechecked; exact ledger prefix; 10s lock and 180s statement bounds | Each file plus ledger row committed together |
-| Worker | Exact commitId, wait <=35m, refuse unknown/error statuses; no automatic rollback | Worker may be new while other services are old |
+| Migration plan | Read-only `hosted_migrations.py plan`: identity, exact ledger prefix, owner transitions of pending files; outputs `pending_migrations` | Pending count |
+| Release plan | `render_release.py plan`: each service's live commit (latest deploy, only when `live`), `git diff --no-renames` from it to the SHA, paths mapped to services (below) | Which services deploy; whether supabase CI binds |
+| CI | Eleven named main-push workflows at exact SHA (`lint`, `repo-scripts` added 2026-10-17); `supabase` binds only when the plan says so, and a completed red `supabase` run refuses regardless; required jobs successful; reruns select current attempt | CI evidence |
+| Backup | Only with a pending migration (anything but exactly `0`). TLS session pooler, migrator, PG17; one snapshot and ledger; required schemas in TOC; checksums; age encryption; successful artifact upload | Ciphertext artifact, 30-day retention |
+| Migrate | Only with a pending migration, after a successful backup. Current main/CI/review/config rechecked; exact ledger prefix; 10s lock and 180s statement bounds | Each file plus ledger row committed together |
+| Deploy recheck | Current main, protection, approval and CI rechecked again; a service the plan keeps must still be live at its planned commit | No provider writes |
+| Worker | Only when the plan deploys it. Exact commitId, wait <=35m, refuse unknown/error statuses; no automatic rollback | Worker may be new while other services are old |
 | Capture | Same pinned worker build; separate supervised process and queue; default OFF; legacy cron must be suspended | Exact-commit scheduling boundary, approved cutover pending |
-| API | Exact commitId; wait live | Old dashboard still active |
-| Dashboard | API `/health` success first; exact commitId; wait live | Coordinated UI revision |
-| Postflight | Same live SHA on three services; candidate-SHA sweep/capture aggregates, fresh mailbox cursor, heartbeat, eligible evidence age; suspended-cron and final SHA rechecks | No writes/duplicate work |
-| Complete | Final result job requires backup, migrate, deploy and verify success | Partial/skipped release cannot report complete |
+| API | Only when the plan deploys it. Exact commitId; wait live | Old dashboard still active |
+| Dashboard | Always first: API `/health` at the API's expected commit (this SHA if deployed, its kept live commit otherwise). Then, when the plan deploys it, exact commitId; wait live | Coordinated UI revision |
+| Postflight | Each service live at its expected commit (this SHA if deployed, the planned live commit if kept); worker sweep/capture aggregates at the revision it runs, fresh mailbox cursor, heartbeat, eligible evidence age, also for a kept worker; suspended-cron and final commit rechecks | No writes/duplicate work |
+| Complete | `scripts/deploy/release_result.py`: preflight, deploy and verify succeeded; backup and migrate succeeded, or both were skipped and the plan reported exactly `0` pending | Partial/failed release cannot report complete; a skip is never inferred from a failure, a cancellation or a missing count |
 
 The production concurrency group serializes controller runs, not human merges or Render
 manual deploys. It never cancels an in-progress release automatically. New main commits
@@ -166,6 +171,54 @@ blocks new runs/stages; it does not cancel a provider request already accepted.
 Migrations are never automatically reversed. Successful services are idempotently skipped
 on a rerun only when their current live commit is the exact release SHA. API HTTP liveness
 is still checked before the dashboard even when the API deploy is skipped.
+
+## Selective release (2026-10-17)
+
+A release does only what the change needs. Every decision leans towards doing more.
+
+**What deploys.** For each of worker, API and dashboard the preflight takes the commit it runs
+now (its latest Render deploy, only when that deploy is `live`) and diffs it to the release SHA
+with `git diff --name-only --no-renames` (both sides of a rename count). Paths map to services
+(`scripts/deploy/release_plan.py`):
+
+| Changed path | Deploys |
+|---|---|
+| `apps/dashboard/**` | dashboard |
+| `apps/worker/**` | worker |
+| `apps/api/**`, `apps/email-pipeline/**` | worker and API (the worker installs both as path dependencies; the API image copies the pipeline) |
+| `supabase/migrations/**`, `supabase/roles.sql` | worker and API |
+| `docs/**`, `apps/web/**`, `apps/dashboard-proxy/**` (own deploy workflows), `supabase/tests/**`, root `README.md`/`AGENTS.md`/`CLAUDE.md`/`CONTRIBUTING.md`/`SECURITY.md`/`LICENSE` | nothing |
+| anything else (`render.yaml`, `Makefile`, `scripts/**`, `.github/**`, other `supabase/**`, a new app, a root lockfile) | **every service** |
+
+A service also deploys when its live commit is unknown (latest deploy failed or still running,
+commit missing) or is not an ancestor of the SHA (a rollback or manual deploy), and every service
+deploys when a migration is pending or the pending count is unknown. Order stays worker -> API ->
+dashboard, one at a time, with the stale-main check before each service: a parallel rollout would
+change the partial-failure states the recovery matrix above relies on.
+
+**When the supabase workflow binds.** It binds when anything it tests (its `pull_request` paths:
+`supabase/**`, five `docs/*.md`, the hygiene script, its workflow file; a test keeps the copy in
+`release_plan.py` equal) changed since any service's live commit, when a base is unknown, or when
+a migration is pending. Otherwise the release does not wait for it, but a `supabase` run for the
+SHA that has already finished red still refuses. Every other listed workflow is always required.
+
+**When backup and migrate run.** Only when the preflight's read-only plan reports a pending
+migration. With exactly `0` (no DDL to write) both are skipped; the daily scheduled backup
+(06:15 UTC) and Supabase's managed daily backups remain the recovery points for application-data
+changes. With 1 or more, or an unknown count, the backup runs first and migrate after it,
+exactly as before.
+
+**How to tell what is live.** The deploy step's summary (and its last log line) lists each
+service as `deploy <sha>` or `keep <commit>` with the reason; the postflight log repeats it.
+`/api/health` reports the API's commit, which after a dashboard-only release is the previous
+one: that is expected and is what the controller checks before the dashboard. `make smoke` warns
+only when the API is behind main on `apps/api` or `supabase/migrations`, which a dashboard-only
+release never leaves behind.
+
+**Expected timeline** (measured stages, 2026-10-17). Dashboard-only: secret-scan (~30 s), then
+preflight waiting on the other CI (~2 min), dashboard deploy (~1-1.5 min), postflight (~10 s):
+about 4-5 min after merge. A change with a migration: the supabase workflow (~3.5 min), backup
+(~76 s), migrate (~17 s), all three services (~4 min), postflight: about 10-11 min.
 
 ## Consolidated scheduler follow-up, 2026-10-08
 
@@ -204,7 +257,14 @@ accepted by the test so future migrations do not deadlock the release contract.
 Offline cases cover ledger prefix, owner transitions, transaction escapes, hidden ruleset
 bypasses, approved-merge review identity, stale/fork/non-main events, both hold switches,
 CI identity and skipped jobs, three exact-commit payloads/no cron POST, suspended-cron gate, autonomous services, bounded reads,
-no blind POST retry and timestamp/resource validation of aggregate sweep events.
+no blind POST retry and timestamp/resource validation of aggregate sweep events. Since
+2026-10-17 (`SelectiveRelease`, 54 offline tests in all) they also cover the path-to-service map
+(unknown paths deploy everything), per-service diffs on real git history (renames, non-ancestor
+and unknown bases), the required-CI set by changed paths (a red supabase run refuses even when
+optional), the zero-pending skip in the workflow, the release-result matrix (a skip succeeds
+only with exactly `0` pending; failures, cancellations and missing results never do), a
+dashboard-only rollout that POSTs only the dashboard and checks the kept API, a kept service
+that moved since preflight, and postflight of kept services at their live commit.
 
 GitHub evidence before final head verification:
 

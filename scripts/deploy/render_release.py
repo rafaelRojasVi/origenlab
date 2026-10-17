@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Render deploy controller: refuse independent autodeploy, release pinned commit sequentially."""
+"""Render deploy controller: refuse independent autodeploy, release pinned commit sequentially.
+
+Modes: check (gates only), plan (gates, then which services the release deploys, from the paths
+changed since each one's live commit; scripts/deploy/release_plan.py), release (deploy the
+services the preflight plan names, in the fixed order worker -> API -> dashboard).
+"""
 from __future__ import annotations
 
 import json
@@ -9,6 +14,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+import release_plan
 
 OWNER = "tea-d88e6719rddc738bdh1g"
 REPOSITORY = "https://github.com/rafaelRojasVi/origenlab"
@@ -105,6 +112,27 @@ def latest_deploy(token: str, service_id: str) -> dict | None:
     return rows[0].get("deploy") if rows else None
 
 
+def live_commit(deploy: dict | None) -> str | None:
+    """The exact commit a service runs, only when its latest deploy is live; otherwise unknown."""
+    if not deploy or deploy.get("status") != "live":
+        return None
+    commit = deploy.get("commit", {}).get("id")
+    return commit if isinstance(commit, str) and release_plan.SHA.fullmatch(commit) else None
+
+
+def pending_from_env() -> int | None:
+    """The preflight's pending-migration count; anything but a plain integer is unknown."""
+    value = os.environ.get("OL_RELEASE_PENDING_MIGRATIONS", "").strip()
+    return int(value) if value.isdigit() else None
+
+
+def write_github(name: str, text: str) -> None:
+    path = os.environ.get(name)
+    if path:
+        with open(path, "a", encoding="utf-8") as stream:
+            stream.write(text)
+
+
 API_HEALTH_URL = "https://dashboard.origenlab.cl/api/health"
 
 
@@ -141,26 +169,57 @@ def run(mode: str) -> None:
     if not token or not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise Refused("Missing Render API token or exact reviewed commit SHA")
 
+    if mode not in {"check", "plan", "release"}:
+        raise Refused("Usage: render_release.py check|plan|release")
+    plan = None
+    if mode == "release":
+        try:
+            plan = release_plan.parse_plan(os.environ.get("OL_RELEASE_PLAN"), sha)
+        except release_plan.PlanRefused as exc:
+            raise Refused(str(exc)) from exc
+    expected = release_plan.expected_commits(plan, sha)
+
     # No mutation until the legacy scheduler is suspended and all services gated.
     verify_legacy_cron(token)
+    bases: dict[str, str | None] = {}
     for name, service_id in SERVICES:
         verify_service(request("GET", f"/services/{service_id}", token), service_id)
         latest = latest_deploy(token, service_id)
         if latest and latest.get("status") in IN_PROGRESS:
             raise Refused(f"{name} has a pending deployment; refuse before any mutation")
+        bases[name] = live_commit(latest)
+        if plan is not None and not plan["services"][name]["deploy"] and bases[name] != expected[name]:
+            raise Refused(f"{name} changed since the preflight plan; reconcile before release")
         print(f"Render gate OK: {name}, independent autodeploy off")
 
     if mode == "check":
         return
-    if mode != "release":
-        raise Refused("Usage: render_release.py check|release")
+    if mode == "plan":
+        try:
+            computed = release_plan.build_plan(sha, bases, pending_from_env())
+        except release_plan.PlanRefused as exc:
+            raise Refused(str(exc)) from exc
+        lines = release_plan.summary_lines(computed, sha)
+        for line in lines:
+            print("PLAN " + line)
+        print(f"PLAN supabase workflow required: {computed['require_supabase']}")
+        write_github("GITHUB_OUTPUT", "release_plan=" + json.dumps(computed, separators=(",", ":")) + "\n"
+                     + "require_supabase=" + ("true" if computed["require_supabase"] else "false") + "\n")
+        return
     for name, service_id in SERVICES:
         check_current_main(sha)
         verify_legacy_cron(token)
         if name == "dashboard":
-            verify_api_http(sha)
+            # Before the dashboard, always: the API at the commit it must run after this release
+            # (this SHA when deployed, its unchanged live commit when kept).
+            verify_api_http(expected["api"])
         verify_service(request("GET", f"/services/{service_id}", token), service_id)
         latest = latest_deploy(token, service_id)
+        if plan is not None and not plan["services"][name]["deploy"]:
+            if live_commit(latest) != expected[name]:
+                raise Refused(f"{name} changed since the preflight plan; reconcile before release")
+            print(f"Kept: {name} stays on {expected[name][:12]} (nothing it builds from changed)")
+            continue
         if latest and latest.get("status") == "live" and latest.get("commit", {}).get("id") == sha:
             print(f"Already on reviewed commit: {name}")
             continue
@@ -193,8 +252,9 @@ def run(mode: str) -> None:
             time.sleep(15)
         else:
             raise Refused(f"Render {name} deploy timed out; no further components deployed")
-    print("RELEASE COMPLETE: worker (capture + triage), API, dashboard on one reviewed SHA")
-
+    lines = release_plan.summary_lines(plan, sha)
+    write_github("GITHUB_STEP_SUMMARY", "### Release " + sha[:12] + "\n\n" + "".join(f"- {l}\n" for l in lines))
+    print("RELEASE COMPLETE on reviewed SHA " + sha[:12] + ": " + "; ".join(lines))
 
 if __name__ == "__main__":
     try:

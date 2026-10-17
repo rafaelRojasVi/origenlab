@@ -3093,3 +3093,25 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
   into the view.
 - No API change, no migration, no proxy change. Tests: vitest `QuotePrintView.test.tsx`,
   `CotizadorPage.test.tsx`.
+
+### 2.7.131 Selective production release: skip what a change does not need, 2026-10-17 — built, takes effect on the first release after merge
+
+- **Trigger.** `production-db-migrations` starts on a successful main-push `secret-scan` run
+  (was: `supabase`, ~3.5 min). `release_context.py` refuses any other trigger workflow.
+- **CI.** `check_release_ci.py` waits for every listed workflow at the SHA, now including `lint`
+  and `repo-scripts`; `supabase` binds only when the release plan says so (something it tests
+  changed since what is live, an unknown base, or a pending migration). A finished red run of any
+  listed workflow, `supabase` included, refuses.
+- **Backup and migrate** run only when `hosted_migrations.py plan` (now also in release
+  preflight, read-only) reports a pending migration; exactly `0` skips both.
+- **Deploy** (`render_release.py plan|release`, `release_plan.py`): only the services whose code
+  changed since the commit each one runs; unknown paths, unknown or non-ancestor live commits and
+  pending migrations deploy all three. Order and the stale-main check before each service are
+  unchanged; the API's `/health` is checked at its expected commit before the dashboard.
+- **Postflight** checks each service at its expected commit (kept services at their live one)
+  and the worker at the revision it runs. **`release_result.py`** replaces the inline result
+  check: a skip is success only with exactly `0` pending.
+- **Expected:** a dashboard-only change live about 4-5 min after merge (was ~10); with a
+  migration about 10-11 min. No migration, no service or Render setting changed; the
+  `supabase` workflow still runs on every main push. Tests: 54 offline release tests
+  (`SelectiveRelease`). Details: release runbook → *Selective release*.

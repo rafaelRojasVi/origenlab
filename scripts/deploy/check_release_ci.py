@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Gate production release on successful CI for exactly the triggering main commit.
 
-GitHub path filters determine which app workflows apply; every workflow that DID run
-must complete successfully. The database and secret scans are mandatory on every push.
+Every listed workflow runs on every main push and must complete successfully at the SHA. The one
+exception is the supabase workflow (a full Supabase stack, ~3.5 min): it binds only when the
+release plan says so (OL_RELEASE_REQUIRE_SUPABASE, from scripts/deploy/release_plan.py: something
+it tests changed since what is live, a pending migration, or an unknown base). Anything but the
+exact value "false" binds it. Even when it does not bind, a supabase run for the SHA that has
+already completed without success refuses the release: a red main is never released.
 """
 from __future__ import annotations
 import json
@@ -14,16 +18,25 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-APPLICABLE = frozenset({"supabase", "secret-scan", "api", "worker", "dashboard",
-                         "dashboard-proxy", "email-pipeline", "web", "production-db-migrations"})
+APPLICABLE = frozenset({"supabase", "secret-scan", "api", "worker", "dashboard", "dashboard-proxy",
+                        "email-pipeline", "web", "production-db-migrations", "lint", "repo-scripts"})
 MANDATORY = APPLICABLE
+OPTIONAL_UNLESS_REQUIRED = frozenset({"supabase"})
+
+
+def required_workflows(require_supabase: str | None) -> frozenset[str]:
+    """The workflows that must be green at the SHA. Only the exact string "false" drops supabase."""
+    return MANDATORY - OPTIONAL_UNLESS_REQUIRED if require_supabase == "false" else MANDATORY
 
 
 class CIRefused(RuntimeError):
     pass
 
 
-def check_runs(runs: list[dict], sha: str | None = None) -> tuple[str, str]:
+def check_runs(runs: list[dict], sha: str | None = None,
+               required: frozenset[str] = MANDATORY) -> tuple[str, str]:
+    if not MANDATORY - OPTIONAL_UNLESS_REQUIRED <= required <= MANDATORY:
+        raise CIRefused("Required CI set may only drop the supabase workflow")
     grouped = {}
     for run in runs:
         name = run.get("name")
@@ -38,16 +51,17 @@ def check_runs(runs: list[dict], sha: str | None = None) -> tuple[str, str]:
         if current is None or (str(run.get("created_at", "")), int(run.get("run_attempt", 0))) > (
                 str(current.get("created_at", "")), int(current.get("run_attempt", 0))):
             grouped[name] = run
-    missing = MANDATORY - set(grouped)
-    if missing:
-        return "pending", "not yet scheduled: " + ", ".join(sorted(missing))
-    pending = sorted(k for k,v in grouped.items() if v.get("status") != "completed")
+    # Any workflow that already finished red refuses, required or not.
     failed = sorted(k for k,v in grouped.items() if v.get("status") == "completed" and v.get("conclusion") != "success")
     if failed:
         raise CIRefused(f"CI failed or was cancelled: {', '.join(failed)}")
+    missing = required - set(grouped)
+    if missing:
+        return "pending", "not yet scheduled: " + ", ".join(sorted(missing))
+    pending = sorted(k for k,v in grouped.items() if k in required and v.get("status") != "completed")
     if pending:
         return "pending", ", ".join(pending)
-    return "success", ", ".join(sorted(grouped))
+    return "success", ", ".join(sorted(required))
 
 
 def validate_jobs(run: dict, token: str) -> None:
@@ -94,15 +108,18 @@ def main() -> None:
     token = os.environ.get("GITHUB_TOKEN", "")
     if not re.fullmatch(r"[0-9a-f]{40}", sha) or not token:
         raise CIRefused("Missing pinned commit and GitHub read token")
+    required = required_workflows(os.environ.get("OL_RELEASE_REQUIRE_SUPABASE"))
+    if required != MANDATORY:
+        print("supabase workflow not required: nothing it tests changed since what is live", flush=True)
     deadline = time.monotonic() + 2400
     while time.monotonic() < deadline:
         runs = list_runs(sha, token)
-        status, detail = check_runs(runs, sha)
+        status, detail = check_runs(runs, sha, required)
         if status == "success":
             # Reject hidden skips inside otherwise green workflows, including reruns.
             newest = {}
             for run in runs:
-                if run.get("name") in APPLICABLE and run.get("event") == "push":
+                if run.get("name") in required and run.get("event") == "push":
                     key = (str(run.get("created_at", "")), int(run.get("run_attempt", 0)))
                     if run["name"] not in newest or key > newest[run["name"]][0]:
                         newest[run["name"]] = (key, run)

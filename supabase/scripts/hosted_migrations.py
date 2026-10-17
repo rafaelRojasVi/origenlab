@@ -138,6 +138,11 @@ def run(mode: str) -> None:
         for v,n,_ in pending:
             print(f"PENDING {v}_{n}")
         if mode == "plan":
+            # The release skips backup and migrate only on the exact output "0" (OPERATIONS §15).
+            output = os.environ.get("GITHUB_OUTPUT")
+            if output:
+                with open(output, "a", encoding="utf-8") as stream:
+                    stream.write(f"pending_migrations={len(pending)}\n")
             print("PLAN ONLY — zero writes")
             return
         if os.environ.get("OL_PROD_BACKUP_VERIFIED") != "true":

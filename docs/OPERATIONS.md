@@ -2609,6 +2609,18 @@ never brought back (`kept_later_value`) and blocks that manifest's rollback.
 Schema and code release are one guarded operation: independently approved main merge,
 exact-SHA successful CI, encrypted consistent application/queue snapshot, atomic
 DDL-plus-ledger, sequential pinned mail-worker/API/dashboard rollout, then read-only verification.
+
+**Selective release (2026-10-17).** A release does only what its change needs, and every
+uncertainty does more. It starts when `secret-scan` succeeds on the main push and waits for every
+other required workflow at the SHA. The `supabase` workflow binds only when something it tests
+changed since what is live, or a migration is pending; a red `supabase` run still refuses. Backup
+and migrate run only when the read-only migration plan reports a pending migration (exactly `0`
+skips both; anything else runs both, backup first). Only the services whose code changed since
+the commit each one runs are deployed, still in the order worker -> API -> dashboard; an
+unrecognised path, an unknown or non-ancestor live commit or a pending migration deploys all
+three. Postflight checks each service at its expected commit and the worker's health either way.
+The result job counts a skip as success only with exactly `0` pending. Path map, timings and
+how to tell what is live: [release runbook → Selective release](runbooks/PRODUCTION_DB_MIGRATIONS.md#selective-release-2026-10-17).
 Every SQL file must support the old running worker/API throughout the rollout. Each file
 is atomic; a multi-file batch is a committed prefix, not one transaction. Recovery rolls
 forward from that prefix and never automatically reverses schemas or mutates queue jobs.

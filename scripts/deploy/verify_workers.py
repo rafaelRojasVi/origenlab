@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "supabase/scripts"))
 from hosted_env import Refused, database_env
 from render_release import OWNER, SERVICES, latest_deploy, request, verify_service, verify_legacy_cron
+import release_plan
 
 WORKER_SRC = Path(__file__).resolve().parents[2] / "apps/worker/src/origenlab_worker"
 
@@ -170,6 +171,13 @@ def verify() -> None:
     sha = os.environ.get("OL_RELEASE_SHA", "")
     if not token or len(sha) != 40:
         raise Refused("Missing scoped Render credentials or pinned SHA")
+    try:
+        plan = release_plan.parse_plan(os.environ.get("OL_RELEASE_PLAN"), sha)
+    except release_plan.PlanRefused as exc:
+        raise Refused(str(exc)) from exc
+    # Each service at the commit it must run after this release: this SHA where it was deployed,
+    # its unchanged live commit where the plan kept it. Without a plan, all three at this SHA.
+    expected = release_plan.expected_commits(plan, sha)
     verify_legacy_cron(token)
     services = dict(SERVICES)
     details = {}
@@ -177,30 +185,32 @@ def verify() -> None:
         service = request("GET", f"/services/{ident}", token)
         verify_service(service, ident)
         deploy = latest_deploy(token, ident)
-        if not deploy or deploy.get("status") != "live" or deploy.get("commit", {}).get("id") != sha:
-            raise Refused(f"Service {name} is not live at the approved commit")
+        if not deploy or deploy.get("status") != "live" or deploy.get("commit", {}).get("id") != expected[name]:
+            raise Refused(f"Service {name} is not live at its expected commit")
         details[name] = deploy
     if not details["worker"].get("finishedAt"):
         raise Refused("Worker deployment completion timestamp missing")
+    # A kept worker is still checked: fresh heartbeat, sweep and capture at the revision it runs.
+    revision = expected["worker"]
     with tempfile.TemporaryDirectory(prefix="ol-postflight-", dir=os.environ.get("RUNNER_TEMP")) as d:
         env = database_env(Path(d))
         worker_deadline = time.monotonic() + 1200
         while True:
             if (healthy_worker(env, details["worker"]["finishedAt"], require_capture=True)
-                and swept_after_deploy(token, services["worker"], details["worker"]["finishedAt"], revision=sha)
-                and swept_after_deploy(token, services["worker"], details["worker"]["finishedAt"], capture=True, revision=sha)):
-                print("WORKER HEALTHY: candidate SHA sweep/capture, fresh cursor, heartbeat, no eligible gaps", flush=True)
+                and swept_after_deploy(token, services["worker"], details["worker"]["finishedAt"], revision=revision)
+                and swept_after_deploy(token, services["worker"], details["worker"]["finishedAt"], capture=True, revision=revision)):
+                print("WORKER HEALTHY: running-revision sweep/capture, fresh cursor, heartbeat, no eligible gaps", flush=True)
                 break
             if time.monotonic() >= worker_deadline:
-                raise Refused("Worker lacks fresh heartbeat, cursor or candidate-SHA sweep/capture success")
+                raise Refused("Worker lacks fresh heartbeat, cursor or running-revision sweep/capture success")
             time.sleep(20)
     verify_legacy_cron(token)
     for name, ident in SERVICES:
         deploy = latest_deploy(token, ident)
-        if not deploy or deploy.get("status") != "live" or deploy.get("commit", {}).get("id") != sha:
+        if not deploy or deploy.get("status") != "live" or deploy.get("commit", {}).get("id") != expected[name]:
             raise Refused(f"Service {name} changed during postflight")
-    print("POSTFLIGHT PASSED: worker, periodic sweep/capture and all three SHA-pinned services")
-
+    print("POSTFLIGHT PASSED: worker, periodic sweep/capture and all three services at their expected commits: "
+          + "; ".join(release_plan.summary_lines(plan, sha)))
 
 if __name__ == "__main__":
     try:

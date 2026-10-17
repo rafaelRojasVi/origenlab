@@ -1,11 +1,15 @@
 name: production-db-migrations
 
-# Supabase CI must pass before unattended releases. Schema-first is enforced by Render auto-deploy OFF.
+# Unattended releases start when the fast secret-scan workflow succeeds on a main push; preflight
+# then waits for every other required workflow at the same SHA. The supabase workflow binds when
+# the release plan says so (something it tests changed since what is live, or a pending migration).
+# Backup and migrate run only with a pending migration; deploy only the services whose code changed.
+# Schema-first is enforced by Render auto-deploy OFF. Policy: docs/OPERATIONS.md §15.
 on:
   push:
     branches: [main]
   workflow_run:
-    workflows: ["supabase"]
+    workflows: ["secret-scan"]
     branches: [main]
     types: [completed]
   pull_request:
@@ -16,6 +20,8 @@ on:
       - "supabase/scripts/tests/test_hosted_release.py"
       - "scripts/deploy/render_release.py"
       - "scripts/deploy/release_context.py"
+      - "scripts/deploy/release_plan.py"
+      - "scripts/deploy/release_result.py"
       - "scripts/deploy/check_release_approval.py"
       - "supabase/scripts/tests/test_hosted_release_db.py"
       - "scripts/deploy/check_release_ci.py"
@@ -64,7 +70,8 @@ jobs:
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
             scripts/deploy/render_release.py scripts/deploy/check_release_ci.py \
             scripts/deploy/set_render_autodeploy_off.py scripts/deploy/check_branch_protection.py \
-            scripts/deploy/verify_workers.py
+            scripts/deploy/verify_workers.py scripts/deploy/release_plan.py \
+            scripts/deploy/release_result.py
           bash -n supabase/scripts/hosted_migrations.sh scripts/deploy/configure_release_secrets.sh
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
 
@@ -124,10 +131,17 @@ jobs:
     outputs:
       sha: ${{ steps.provenance.outputs.sha }}
       mode: ${{ steps.provenance.outputs.mode }}
+      # Exactly "0" skips backup and migrate; empty or anything else runs both.
+      pending_migrations: ${{ steps.migration_plan.outputs.pending_migrations }}
+      release_plan: ${{ steps.release_plan.outputs.release_plan }}
+      # "false" only when nothing the supabase workflow tests changed; empty or anything else binds it.
+      require_supabase: ${{ steps.release_plan.outputs.require_supabase }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          # The release plan diffs this SHA against the commit each service runs.
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify main SHA, branch and runner syntax
         id: provenance
@@ -149,7 +163,8 @@ jobs:
             supabase/scripts/hosted_migrations.py supabase/scripts/hosted_backup.py \
             scripts/deploy/render_release.py scripts/deploy/check_release_ci.py \
             scripts/deploy/set_render_autodeploy_off.py scripts/deploy/check_branch_protection.py \
-            scripts/deploy/verify_workers.py
+            scripts/deploy/verify_workers.py scripts/deploy/release_plan.py \
+            scripts/deploy/release_result.py
           bash -n supabase/scripts/hosted_migrations.sh
           python3 -m unittest discover -s supabase/scripts/tests -p 'test_hosted_release.py'
           echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
@@ -166,12 +181,6 @@ jobs:
           OL_RELEASE_SOLO_MODE: ${{ vars.OL_RELEASE_SOLO_MODE }}
           OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
         run: python3 scripts/deploy/check_release_approval.py
-      - name: Wait for ALL applicable CI on the pinned main commit
-        if: steps.provenance.outputs.mode == 'release'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
-        run: python3 scripts/deploy/check_release_ci.py
       - name: Block any release if independent Render deployments remain enabled
         if: steps.provenance.outputs.mode == 'release'
         env:
@@ -179,17 +188,38 @@ jobs:
           OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
         run: python3 scripts/deploy/render_release.py check
       - name: Read-only hosted migration plan
-        if: steps.provenance.outputs.mode == 'plan'
+        id: migration_plan
+        if: steps.provenance.outputs.mode == 'plan' || steps.provenance.outputs.mode == 'release'
         env:
           OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }}
           OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }}
           OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }}
           OL_PROD_MIGRATOR_PASSWORD: ${{ secrets.OL_PROD_MIGRATOR_PASSWORD }}
         run: python3 supabase/scripts/hosted_migrations.py plan
+      - name: Plan which services this release deploys and whether supabase CI binds
+        id: release_plan
+        if: steps.provenance.outputs.mode == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
+          OL_RELEASE_PENDING_MIGRATIONS: ${{ steps.migration_plan.outputs.pending_migrations }}
+        run: python3 scripts/deploy/render_release.py plan
+      - name: Wait for ALL required CI on the pinned main commit
+        if: steps.provenance.outputs.mode == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OL_RELEASE_SHA: ${{ steps.provenance.outputs.sha }}
+          OL_RELEASE_REQUIRE_SUPABASE: ${{ steps.release_plan.outputs.require_supabase }}
+        run: python3 scripts/deploy/check_release_ci.py
 
   backup:
     needs: preflight
-    if: needs.preflight.outputs.mode != 'plan'
+    # A release with no pending migration (preflight plan says exactly "0") writes no DDL and
+    # skips the backup; the daily scheduled backup and Supabase's managed backups still run.
+    if: >
+      needs.preflight.outputs.mode == 'backup_only' ||
+      (needs.preflight.outputs.mode == 'release' && needs.preflight.outputs.pending_migrations != '0')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: origenlab-release
@@ -233,7 +263,9 @@ jobs:
 
   migrate:
     needs: [preflight, backup]
-    if: needs.preflight.outputs.mode == 'release' && vars.OL_RELEASE_AUTOMATION_ENABLED == 'true'
+    if: >
+      needs.preflight.outputs.mode == 'release' && vars.OL_RELEASE_AUTOMATION_ENABLED == 'true' &&
+      needs.preflight.outputs.pending_migrations != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: origenlab-release
@@ -252,6 +284,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
           OL_RELEASE_SOLO_MODE: ${{ vars.OL_RELEASE_SOLO_MODE }}
+          OL_RELEASE_REQUIRE_SUPABASE: ${{ needs.preflight.outputs.require_supabase }}
         run: |
           python3 scripts/deploy/check_branch_protection.py
           python3 scripts/deploy/check_release_approval.py
@@ -271,8 +304,16 @@ jobs:
         run: python3 supabase/scripts/hosted_migrations.py apply
 
   deploy:
-    needs: [preflight, migrate]
-    if: needs.preflight.outputs.mode == 'release' && vars.OL_RELEASE_AUTOMATION_ENABLED == 'true'
+    needs: [preflight, backup, migrate]
+    # Runs after a successful migrate, or when the preflight plan reported exactly "0" pending
+    # migrations and both backup and migrate were skipped for that reason. Transitive skips
+    # would otherwise skip this job, hence the explicit !cancelled() and results.
+    if: >
+      !cancelled() && needs.preflight.result == 'success' &&
+      needs.preflight.outputs.mode == 'release' && vars.OL_RELEASE_AUTOMATION_ENABLED == 'true' &&
+      (needs.migrate.result == 'success' ||
+       (needs.preflight.outputs.pending_migrations == '0' &&
+        needs.backup.result == 'skipped' && needs.migrate.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 150
     environment: origenlab-release
@@ -286,16 +327,28 @@ jobs:
         env:
           EXPECTED_SHA: ${{ needs.preflight.outputs.sha }}
         run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
-      - name: Release pinned SHA to mail worker, API, dashboard
+      - name: Recheck release CI and review before deploy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          OL_RELEASE_SOLO_MODE: ${{ vars.OL_RELEASE_SOLO_MODE }}
+          OL_RELEASE_REQUIRE_SUPABASE: ${{ needs.preflight.outputs.require_supabase }}
+        run: |
+          python3 scripts/deploy/check_branch_protection.py
+          python3 scripts/deploy/check_release_approval.py
+          python3 scripts/deploy/check_release_ci.py
+      - name: Release pinned SHA to the services whose code changed (worker, API, dashboard order)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          OL_RELEASE_PLAN: ${{ needs.preflight.outputs.release_plan }}
         run: python3 scripts/deploy/render_release.py release
 
   verify:
     needs: [preflight, deploy]
-    if: needs.preflight.outputs.mode == 'release'
+    if: >
+      !cancelled() && needs.preflight.outputs.mode == 'release' && needs.deploy.result == 'success'
     name: Verify triage and scheduled capture after release
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -310,6 +363,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           OL_RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          OL_RELEASE_PLAN: ${{ needs.preflight.outputs.release_plan }}
           OL_PROD_POOLER_HOST: ${{ secrets.OL_PROD_POOLER_HOST }}
           OL_PROD_PROJECT_REF: ${{ secrets.OL_PROD_PROJECT_REF }}
           OL_PROD_CA_PEM: ${{ secrets.OL_PROD_CA_PEM }}
@@ -321,15 +375,18 @@ jobs:
     if: always() && needs.preflight.outputs.mode == 'release'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          persist-credentials: false
+      # A skip counts only when the preflight plan reported exactly "0" pending migrations;
+      # a failure, cancellation or missing result is never a skip (scripts/deploy/release_result.py).
       - name: Never label a partial or skipped release successful
         env:
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          PENDING_MIGRATIONS: ${{ needs.preflight.outputs.pending_migrations }}
           BACKUP_RESULT: ${{ needs.backup.result }}
           MIGRATE_RESULT: ${{ needs.migrate.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
           VERIFY_RESULT: ${{ needs.verify.result }}
-        run: |
-          test "$BACKUP_RESULT" = success
-          test "$MIGRATE_RESULT" = success
-          test "$DEPLOY_RESULT" = success
-          test "$VERIFY_RESULT" = success
-          echo "Release complete: backup, migration, deployment and postflight passed"
+        run: python3 scripts/deploy/release_result.py
