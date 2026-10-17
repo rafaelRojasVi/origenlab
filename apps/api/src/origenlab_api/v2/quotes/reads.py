@@ -137,7 +137,7 @@ select k.model_key, k.n, total.n as total, k.description, p.id::text as product_
 # The quote, its case, and the case's institution (through a merge) with its first RUT.
 _QUOTE_SQL = """
 select q.id::text as id, q.quote_number, q.opportunity_id::text as opportunity_id,
-       o.title, o.stage, o.closed_at,
+       o.title, o.stage, o.closed_at, o.version as case_version,
        inst.id::text as institution_id, inst.name as institution_name,
        (select e.value_norm from crm.external_identifier e
          where e.organization_id = inst.id and e.scheme = 'rut' order by e.created_at, e.id limit 1) as rut
@@ -1041,6 +1041,7 @@ class V2QuoteReads:
             "quote": {"id": quote["id"], "quote_number": quote["quote_number"], "opportunity_id": case_id},
             "case": {
                 "id": case_id, "title": quote["title"], "stage": quote["stage"], "closed": quote["closed_at"] is not None,
+                "version": quote["case_version"],
                 "institution": ({"id": quote["institution_id"], "name": quote["institution_name"], "rut": quote["rut"]}
                                 if quote["institution_id"] else None),
                 "participants": [{k: p[k] for k in ("id", "name", "email", "primary", "role")}

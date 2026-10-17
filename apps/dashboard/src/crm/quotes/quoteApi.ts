@@ -255,6 +255,8 @@ export interface QuoteWorkspace {
     title: string | null;
     stage: string;
     closed: boolean;
+    /** The case's version, for a command on the case (e.g. naming its institution). */
+    version?: number;
     institution: { id: string; name: string; rut: string | null } | null;
     participants: QuoteWorkspaceParticipant[];
     contacts: QuoteWorkspaceContact[];

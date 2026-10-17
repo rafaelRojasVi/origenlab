@@ -461,6 +461,10 @@ function CotizadorWorkspace({
                 disabled={disabled}
                 refusal={recipientRefusal}
                 edit={editor.edit}
+                onInstitutionAdded={async () => {
+                  await editor.flush().catch(() => undefined);
+                  await editor.reload().catch(() => toast("Se agregó la institución; recarga la página para verla.", "warn"));
+                }}
               />
               <ProductsSection
                 workspace={ws}
