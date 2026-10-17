@@ -291,9 +291,19 @@ def test_a_line_priced_per_unit_without_a_total_gets_unit_price_times_quantity()
 
 # ── reader v2 (owner decisions 2026-10-16) ───────────────────────────────────────────────────
 
-#: The old OrigenLab template's page footer in its real two-line shape; address and numbers invented.
-OLD_FOOTER = ("      Calle Inventada 123, Of. 45, Comuna Ficticia, Santiago, Chile. Teléfono (56-2) 21234567\n"
-              "      Celular: (09) 81234567 www.labdelivery.cl\n")
+#: The old OrigenLab template's page footer in its real two-line shape; address and numbers invented,
+#: pinned by `pinned_footer` the way `keys` pins the real one (by hash).
+FOOTER_ADDRESS = "Calle Inventada 123, Of. 45, Comuna Ficticia, Santiago, Chile. Teléfono (56-2) 21234567"
+FOOTER_CELULAR = "Celular: (09) 81234567 www.labdelivery.cl"
+OLD_FOOTER = f"      {FOOTER_ADDRESS}\n      {FOOTER_CELULAR}\n"
+
+
+@pytest.fixture
+def pinned_footer(monkeypatch):
+    from origenlab_api.v2.catalog import keys
+
+    monkeypatch.setattr(keys, "OLD_TEMPLATE_FOOTER_SHA256",
+                        keys.OLD_TEMPLATE_FOOTER_SHA256 | {keys.footer_sha256(FOOTER_ADDRESS, FOOTER_CELULAR)})
 #: A Labdelivery letterhead (the issuer), as such quotes print it at the top of each page.
 LABDELIVERY_LETTERHEAD = "      LABDELIVERY – PERSONA FICTICIA\n      Giro: Equipos para laboratorio\n"
 
@@ -310,7 +320,7 @@ def test_the_reader_version_is_v2_and_its_week_tags_carry_it() -> None:
     assert all(tag.startswith("quote_read:v2:") for tag in week_tags(date(2026, 10, 16)))
 
 
-def test_an_origenlab_quote_with_the_old_template_footer_is_read_and_the_footer_is_never_stored() -> None:
+def test_an_origenlab_quote_with_the_old_template_footer_is_read_and_the_footer_is_never_stored(pinned_footer) -> None:
     text = TEXT + "\n" + OLD_FOOTER + "\f" + TEXT + OLD_FOOTER
     reading, log = read_document(b"x", SHA, reader=Reader(_message(_extraction())), model=MODEL, text=text)
     assert log["outcome"] == "read" and [ln["check_status"] for ln in reading.lines] == ["verified", "verified"]
@@ -325,8 +335,11 @@ def test_an_origenlab_quote_with_the_old_template_footer_is_read_and_the_footer_
     TEXT.replace("OrigenLab", "LABDELIVERY – PERSONA FICTICIA") + OLD_FOOTER,  # the issuer in OrigenLab's place
     TEXT + OLD_FOOTER + "Saluda atentamente, Persona Ficticia, Labdelivery\n",  # the signature
     TEXT + "      Celular: (09) 81234567 www.labdelivery.cl\n",  # the web address without the footer's address
-], ids=["letterhead", "issuer", "signature", "url_alone"])
-def test_a_labdelivery_issued_quote_is_refused_with_or_without_the_footer(text) -> None:
+    "L A B D E L I V E R Y\n" + TEXT + OLD_FOOTER,  # a letter-spaced letterhead
+    TEXT.replace("OrigenLab", "Equipos Ficticios") + OLD_FOOTER,  # OrigenLab named nowhere
+    TEXT + OLD_FOOTER.replace("Calle Inventada", "Avenida Otra"),  # the footer's shape, another address
+], ids=["letterhead", "issuer", "signature", "url_alone", "spaced_letterhead", "no_origenlab", "other_address"])
+def test_a_labdelivery_issued_quote_is_refused_with_or_without_the_footer(pinned_footer, text) -> None:
     for reader, model in ((Reader(_message(_extraction())), MODEL), (None, "off")):
         with pytest.raises(ReadRefused) as caught:
             read_document(b"x", SHA, reader=reader, model=model, text=text)
@@ -338,10 +351,37 @@ def test_a_labdelivery_issued_quote_is_refused_with_or_without_the_footer(text) 
                _extraction()["lines"][1]]},
     {"quote_number": "LABDELIVERY 00999-26"},
 ], ids=["a_line", "the_payload"])
-def test_a_footer_copied_into_any_written_string_is_still_refused(over) -> None:
+def test_labdelivery_copied_into_any_written_string_is_still_refused(pinned_footer, over) -> None:
     with pytest.raises(ReadRefused) as caught:
         read_document(b"x", SHA, reader=Reader(_message(_extraction(**over))), model=MODEL, text=TEXT + OLD_FOOTER)
     assert caught.value.code == "not_origenlab_quote"
+
+
+_L0, _L1 = _extraction()["lines"]
+
+
+@pytest.mark.parametrize("over", [
+    {"lines": [{**_L0, "description": FOOTER_ADDRESS}, _L1]},
+    {"lines": [_L0, _L1, {"item": None, "parent_item": "", "kind": "other", "brand": None, "model": None,
+                          "description": FOOTER_ADDRESS, "qty": None, "unit_price": None, "line_total": None,
+                          "optional": False}]},
+    {"lines": [{**_L0, "description": "Calle Inventada 123, Of. 45, Comuna Ficticia"}, _L1]},
+    {"lines": [{**_L0, "model": "(09) 81234567"}, _L1]},
+    {"lines": [{**_L0, "brand": "Fono 8123-4567"}, _L1]},
+    {"quote_number": "(56-2) 21234567"},
+    {"lines": [{**_L0, "description": "Celular: (09) 81234567"}, _L1]},
+], ids=["address_in_description", "address_as_extra_line", "street", "phone_in_model", "phone_split", "phone_in_quote_number",
+        "celular_without_url"])
+def test_a_document_whose_answer_copies_the_old_footer_is_refused_as_footer_copied(pinned_footer, over) -> None:
+    with pytest.raises(ReadRefused) as caught:
+        read_document(b"x", SHA, reader=Reader(_message(_extraction(**over))), model=MODEL, text=TEXT + OLD_FOOTER)
+    assert caught.value.code == "footer_copied"
+
+
+def test_without_the_footer_in_the_text_the_same_strings_are_ordinary(pinned_footer) -> None:
+    reading, _ = read_document(b"x", SHA, reader=Reader(_message(_extraction(lines=[{**_L0, "model": "(09) 81234567"}, _L1]))),
+                               model=MODEL, text=TEXT)
+    assert reading.lines[0]["model"] == "(09) 81234567"  # no footer printed: nothing to copy
 
 
 def test_the_prompt_counts_only_the_letterhead_or_issuer_and_ignores_the_old_footer() -> None:

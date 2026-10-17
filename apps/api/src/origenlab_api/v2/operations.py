@@ -12,6 +12,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from origenlab_api.v2.quote_documents import QUOTE_READ_REREAD_CODES, QUOTE_READER_PREVIOUS_VERSION, QUOTE_READER_VERSION
+
 CORREO_WARN_MIN = 5
 CORREO_BAD_MIN = 20
 TRIAGE_WAIT_MIN = 15
@@ -178,13 +180,20 @@ _REVISIONS = """crm.quote_revision r where r.status <> 'void' and r.pdf_sha256 i
                  join comms.message cm on cm.provider_message_id = sr.payload ->> 'gmail_message_id'
                                       and cm.eml_storage_path is not null
                 where sr.id = r.origin_source_record_id and sr.kind = 'gmail_message')"""
+#: Pending: neither read nor refused by the current reader version — nor refused by the previous
+#: one for a reason the current version does not re-read (`quote_documents`). A bump re-reads the
+#: rest, so they count as pending again.
+_REREAD_CODES = ", ".join(f"'{c}'" for c in QUOTE_READ_REREAD_CODES)
 _QUOTES_PENDING_SQL = f"""
 select count(*), count(*) filter (where r.created_at < now() - interval '1 day')
   from {_REVISIONS}
    and not exists (select 1 from evidence.source_record d
                     where d.kind = 'quote_document' and d.dedupe_key = 'quote_document:' || lower(r.pdf_sha256))
    and not exists (select 1 from evidence.assertion a
-                    where a.kind = 'quote_read' and a.value_norm like '%:' || lower(r.pdf_sha256))
+                    where a.kind = 'quote_read' and a.value_norm like '%:' || lower(r.pdf_sha256)
+                      and (a.value_norm like '{QUOTE_READER_VERSION}:%'
+                           or (a.value_norm like '{QUOTE_READER_PREVIOUS_VERSION}:%'
+                               and coalesce(a.value ->> 'code', '') not in ({_REREAD_CODES}))))
 """
 _QUOTES_DONE_SQL = f"""
 select count(distinct source_record_id) filter (where created_at >= {_TODAY}), max(created_at)

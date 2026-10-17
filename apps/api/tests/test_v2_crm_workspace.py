@@ -717,6 +717,20 @@ def test_quote_contents_sums_non_optional_lines_without_a_printed_neto_and_never
     assert (c["net_total"], c["net_source"], c["tax_total"]) == (None, "none", None)
 
 
+def test_quote_contents_says_when_the_printed_neto_includes_the_optional_lines() -> None:
+    """Reader v2 (2026-10-16) flags such a document; the panel shows the neto as printed, with a note."""
+    from origenlab_api.v2.crm_workspace import quote_contents
+
+    lines = [{"line_no": 1, "line_total": "1000", "optional": False}, {"line_no": 2, "line_total": "500", "optional": True}]
+    flagged = quote_contents({"doc_currency": "CLP", "doc_net_total": "1500", "doc_net_includes_optional": True,
+                              "doc_lines": lines})
+    assert flagged["net_includes_optional"] is True and flagged["net_total"] == "1500"
+    plain = quote_contents({"doc_currency": "CLP", "doc_net_total": "1000", "doc_lines": lines})
+    assert plain["net_includes_optional"] is False
+    assert quote_contents({"doc_currency": "CLP", "doc_net_total": "1000", "doc_net_includes_optional": "true",
+                           "doc_lines": lines})["net_includes_optional"] is False  # only a real boolean counts
+
+
 def test_case_money_is_the_last_sent_vigente_quotation_not_a_sum() -> None:
     """Owner 2026-10-12: a case with several quotations shows the last one sent, not their sum —
     later quotations usually replace earlier ones for the same request."""

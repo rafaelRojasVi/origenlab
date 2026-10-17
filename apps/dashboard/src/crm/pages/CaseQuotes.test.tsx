@@ -83,6 +83,17 @@ describe("case panel money and quotations", () => {
     expect(block).toHaveTextContent("Reemplazada por r2");
   });
 
+  it("notes under the neto when the printed neto includes the optional items, and only then", () => {
+    const flagged = card({ quotes: [{ quote_id: "q-1", quote_number: "00999-26", number_origin: "x",
+      revisions: [rev({ contents: { ...CONTENTS, net_total: "1080000", net_includes_optional: true } })] }] });
+    const { unmount } = render(<QuoteList card={flagged} />);
+    expect(within(screen.getByTestId("quote-block")).getByTestId("net-includes-optional"))
+      .toHaveTextContent("El neto impreso incluye ítems opcionales");
+    unmount();
+    render(<QuoteList card={card()} />);
+    expect(screen.queryByTestId("net-includes-optional")).not.toBeInTheDocument();
+  });
+
   it("asks to open an unread PDF and shows Gmail, the folder and the vigente PDF at the top", () => {
     const unread = card({ quotes: [{ quote_id: "q-1", quote_number: "00999-26", number_origin: "x", revisions: [rev({ contents: null })] }] });
     render(<><CaseLinks card={unread} /><QuoteList card={unread} /></>);

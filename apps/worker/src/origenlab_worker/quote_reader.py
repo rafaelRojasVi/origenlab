@@ -20,7 +20,8 @@ the non-optional lines (unless it is the sum of all of them, optional ones inclu
 kept as printed and the document flagged `net_includes_optional`), the model refused or
 truncated, or the answer is unusable. Labdelivery refuses only as the issuer (its letterhead,
 `keys.labdelivery_issued`); the old OrigenLab template's footer, which prints its web address, does
-not — and every string written is still refused one by one.
+not — and every string written is still refused one by one: Labdelivery's name refuses
+(`not_origenlab_quote`), and so does a copy of that footer's address or numbers (`footer_copied`).
 
 The PDF is untrusted data: the system prompt says so and nothing the model answers is acted on
 beyond the validated, closed schema. Logs carry codes and counts, never text.
@@ -56,14 +57,27 @@ from origenlab_api.v2.catalog.history_check import (
     parse_template_lines,
     quote_document_payload,
 )
-from origenlab_api.v2.catalog.keys import is_labdelivery, labdelivery_issued, model_key
+from origenlab_api.v2.quote_documents import (
+    QUOTE_READ_REREAD_CODES,
+    QUOTE_READER_PREVIOUS_VERSION,
+    QUOTE_READER_VERSION,
+)
+from origenlab_api.v2.catalog.keys import (
+    copies_old_footer,
+    is_labdelivery,
+    labdelivery_issued,
+    model_key,
+    old_footer_identities,
+)
 from origenlab_worker.drive_filing import attachment_bytes, storage_key
 from origenlab_worker.storage import StorageError
 
 #: Bumped whenever a rule changes what the reader decides; a refusal is recorded per version, so a
 #: bump re-reads every PDF an earlier version refused (v2, 2026-10-16: the old template's footer no
 #: longer refuses a quote, and a neto that includes the optional lines is accepted).
-READER_VERSION = "quote_read:v2"
+READER_VERSION = QUOTE_READER_VERSION
+#: The previous version: only its refusals in `QUOTE_READ_REREAD_CODES` are re-read at once.
+PREVIOUS_READER_VERSION = QUOTE_READER_PREVIOUS_VERSION
 EXTRACTOR_AI = "ai_v2+template_v1"
 EXTRACTOR_TEMPLATE = "template_v1"
 MODEL_OFF = "off"
@@ -254,6 +268,18 @@ def _off(net: Decimal, summed: Decimal) -> bool:
     return abs(net - summed) / net > NET_TOLERANCE
 
 
+def _refuse_written(payload: dict[str, Any], lines: list[dict[str, Any]], text: str) -> None:
+    """Every string written — the payload's and each line's — is refused one by one: the old footer
+    is exempt from the document check only, never from what is stored. Labdelivery's name refuses
+    `not_origenlab_quote`; the footer's address, street, phone label or numbers `footer_copied`."""
+    written = [v for v in (*payload.values(), *(v for ln in lines for v in ln.values())) if isinstance(v, str)]
+    if any(is_labdelivery(v) for v in written):
+        raise ReadRefused("not_origenlab_quote")
+    footer = old_footer_identities(text)
+    if any(copies_old_footer(v, footer) for v in written):
+        raise ReadRefused("footer_copied")
+
+
 def _template_reading(sha256: str, text: str) -> Reading:
     rows = parse_template_lines(text) if text else []
     if not rows:
@@ -276,6 +302,7 @@ def read_document(pdf: bytes, sha256: str, *, reader: ModelReader | None, model:
         raise ReadRefused("not_origenlab_quote")  # Labdelivery's letterhead or issuer, not the old footer
     if reader is None or model == MODEL_OFF:
         reading = _template_reading(sha256, text)
+        _refuse_written(reading.payload, reading.lines, text)
         return reading, {"outcome": "read", "model": MODEL_OFF, "extractor": reading.extractor,
                          "lines": len(reading.lines), "strings_withheld": 0}
 
@@ -297,11 +324,7 @@ def read_document(pdf: bytes, sha256: str, *, reader: ModelReader | None, model:
         lines, ai_lines, withheld = document_lines(extraction, payload["currency"], extractor=EXTRACTOR_AI)
     except ValueError:
         raise ReadRefused("unreadable") from None
-    # Every string written — the payload's and each line's — is refused one by one: the old footer
-    # is exempt from the document check only, never from what is stored.
-    written = [*payload.values(), *(v for ln in lines for v in ln.values())]
-    if any(is_labdelivery(v) for v in written if isinstance(v, str)):
-        raise ReadRefused("not_origenlab_quote")
+    _refuse_written(payload, lines, text)
 
     template = parse_template_lines(text) if payload["currency"] == "CLP" and text else []
     disputed = checked = 0
@@ -362,8 +385,9 @@ DEFAULT_LIMIT = 10
 LOCK_NAME = "origenlab-quote-read"
 
 #: Registered revisions with a PDF, no `quote_document` for it, and no refusal of this reader
-#: version for that PDF recorded this ISO week or the last (`%s` × 2: the two week tags) — keyed by
-#: the PDF, from whichever email; one revision per PDF; newest first.
+#: version for that PDF recorded this ISO week or the last (`%s` × 2: the two week tags), nor one
+#: of the previous version in those weeks whose code the current version does not re-read (`%s` × 2
+#: and the re-read codes) — keyed by the PDF, from whichever email; one revision per PDF; newest first.
 _CANDIDATES_SQL = """
 select * from (
 select distinct on (r.pdf_sha256)
@@ -380,7 +404,9 @@ select distinct on (r.pdf_sha256)
                     where d.kind = 'quote_document' and d.dedupe_key = 'quote_document:' || lower(r.pdf_sha256))
    and not exists (select 1 from evidence.assertion a
                     where a.kind = 'quote_read'
-                      and a.value_norm in (%s || ':' || lower(r.pdf_sha256), %s || ':' || lower(r.pdf_sha256)))
+                      and (a.value_norm in (%s || ':' || lower(r.pdf_sha256), %s || ':' || lower(r.pdf_sha256))
+                           or (a.value_norm in (%s || ':' || lower(r.pdf_sha256), %s || ':' || lower(r.pdf_sha256))
+                               and coalesce(a.value ->> 'code', '') <> all(%s::text[]))))
  order by r.pdf_sha256, r.created_at desc
 ) newest
 order by created_at desc
@@ -421,11 +447,20 @@ def _failure_code(exc: BaseException) -> str | None:
     return None
 
 
-def week_tags(today: date) -> tuple[str, str]:
-    """This ISO week's and the last one's refusal tags: a refusal is not retried for 7–14 days."""
+def _tags(version: str, today: date) -> tuple[str, str]:
     this = today.isocalendar()
     last = (today - timedelta(days=7)).isocalendar()
-    return (f"{READER_VERSION}:{this[0]}-W{this[1]:02d}", f"{READER_VERSION}:{last[0]}-W{last[1]:02d}")
+    return (f"{version}:{this[0]}-W{this[1]:02d}", f"{version}:{last[0]}-W{last[1]:02d}")
+
+
+def week_tags(today: date) -> tuple[str, str]:
+    """This ISO week's and the last one's refusal tags: a refusal is not retried for 7–14 days."""
+    return _tags(READER_VERSION, today)
+
+
+def previous_week_tags(today: date) -> tuple[str, str]:
+    """The same two weeks under the previous reader version (`_CANDIDATES_SQL`)."""
+    return _tags(PREVIOUS_READER_VERSION, today)
 
 
 @dataclass
@@ -461,7 +496,9 @@ class QuoteReader:
 
     def candidates(self, limit: int) -> list[dict[str, Any]]:
         with self._conn.cursor() as cur:
-            cur.execute(_CANDIDATES_SQL + " limit %s", (*week_tags(self._today()), limit))
+            today = self._today()
+            cur.execute(_CANDIDATES_SQL + " limit %s",
+                        (*week_tags(today), *previous_week_tags(today), list(QUOTE_READ_REREAD_CODES), limit))
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
         return rows
@@ -538,4 +575,4 @@ class QuoteReader:
 __all__ = ["DEFAULT_LIMIT", "EXTRACTION_SCHEMA", "EXTRACTOR_AI", "EXTRACTOR_TEMPLATE", "LOCK_NAME", "MODEL_OFF", "NET_INCLUDES_OPTIONAL",
            "QUOTE_READ_REQUIRED_POLICIES", "QUOTE_READ_REQUIRED_PRIVILEGES", "READER_VERSION", "QuoteReader",
            "ReadCounts", "ReadRefused", "Reading", "build_request", "parse_extraction", "pdf_text", "pdftotext_available",
-           "read_document", "week_tags"]
+           "previous_week_tags", "read_document", "week_tags"]

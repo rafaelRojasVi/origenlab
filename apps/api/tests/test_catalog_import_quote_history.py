@@ -220,35 +220,79 @@ def test_a_reseller_text_whose_extraction_names_the_reseller_is_skipped(tmp_path
     assert [s["reason"] for s in plan["skipped"]] == ["labdelivery_letterhead"]
 
 
-#: The old OrigenLab template's page footer, in its real shape, with an invented address and numbers.
-OLD_FOOTER = ("      Calle Inventada 123, Of. 45, Comuna Ficticia, Santiago, Chile. Teléfono (56-2) 21234567\n"
-              "      Celular: (09) 81234567 www.labdelivery.cl\n")
+#: The old OrigenLab template's page footer, in its real shape, with an invented address and numbers;
+#: pinned for these tests the way the real one is pinned in `keys` (by hash).
+FOOTER_ADDRESS = "Calle Inventada 123, Of. 45, Comuna Ficticia, Santiago, Chile. Teléfono (56-2) 21234567"
+FOOTER_CELULAR = "Celular: (09) 81234567 www.labdelivery.cl"
+OLD_FOOTER = f"      {FOOTER_ADDRESS}\n      {FOOTER_CELULAR}\n"
 
 
-def test_an_origenlab_quote_on_the_old_template_footer_is_planned_and_the_footer_never_written(tmp_path) -> None:
-    """Owner decision 2026-10-16: the footer alone is not a Labdelivery document."""
-    old, issued = _sha(), _sha()
+@pytest.fixture
+def pinned_footer(monkeypatch):
+    from origenlab_api.v2.catalog import keys
+
+    monkeypatch.setattr(keys, "OLD_TEMPLATE_FOOTER_SHA256",
+                        keys.OLD_TEMPLATE_FOOTER_SHA256 | {keys.footer_sha256(FOOTER_ADDRESS, FOOTER_CELULAR)})
+
+
+def test_an_origenlab_quote_on_the_old_template_footer_is_planned_and_the_footer_never_written(
+        tmp_path, pinned_footer) -> None:
+    """Owner decision 2026-10-16: the footer alone, under OrigenLab's name, is not a Labdelivery document."""
+    old, issued, spaced = _sha(), _sha(), _sha()
     _write_doc(tmp_path / "in", _extraction(old, [_line("1", "ACME-1", 1000)]),
                _docx_text([("1", "ACME-1", "1.000")]) + "\n" + OLD_FOOTER)
     _write_doc(tmp_path / "in", _extraction(issued, [_line("1", "ACME-2", 2000)]),
                _docx_text([("1", "ACME-2", "2.000")], letterhead="LABDELIVERY – PERSONA FICTICIA") + OLD_FOOTER)
+    _write_doc(tmp_path / "in", _extraction(spaced, [_line("1", "ACME-3", 3000)]),
+               "L A B D E L I V E R Y\n" + _docx_text([("1", "ACME-3", "3.000")]) + OLD_FOOTER)
     assert _plan(tmp_path / "in", tmp_path / "out") == 0
     plan, _ = _load(tmp_path / "out")
     assert [i["key"] for i in plan["items"]] == [f"quote_document:{old}"]
-    assert plan["counts"]["skipped_labdelivery_letterhead"] == 1
-    assert [s["reason"] for s in plan["skipped"]] == ["labdelivery_letterhead"]
+    assert plan["counts"]["skipped_labdelivery_letterhead"] == 2
+    assert [s["reason"] for s in plan["skipped"]] == ["labdelivery_letterhead"] * 2
     written = json.dumps(plan["items"], ensure_ascii=False)  # what apply writes (the counts name the skip)
     assert not is_labdelivery(written)
     whole = (tmp_path / "out" / "plan.json").read_text(encoding="utf-8")
     assert "Calle Inventada" not in whole and "81234567" not in whole and "www.labdelivery" not in whole
 
 
-def test_an_old_footer_document_whose_extraction_copies_the_footer_into_a_line_is_refused(tmp_path) -> None:
-    sha = _sha()
-    line = _line("1", "ACME-1", 1000, description="Celular: (09) 81234567 www.labdelivery.cl")
-    _write_doc(tmp_path / "in", _extraction(sha, [line]), _docx_text([("1", "ACME-1", "1.000")]) + OLD_FOOTER)
-    assert _plan(tmp_path / "in", tmp_path / "out") == _common.EXIT_REFUSED
-    assert not (tmp_path / "out" / "plan.json").exists()
+def test_an_unpinned_footer_or_one_without_origenlab_elsewhere_is_skipped(tmp_path, pinned_footer) -> None:
+    other, bare = _sha(), _sha()
+    _write_doc(tmp_path / "in", _extraction(other, [_line("1", "ACME-1", 1000)]),
+               _docx_text([("1", "ACME-1", "1.000")]) + OLD_FOOTER.replace("Calle Inventada", "Avenida Otra"))
+    _write_doc(tmp_path / "in", _extraction(bare, [_line("1", "ACME-2", 2000)]),
+               _docx_text([("1", "ACME-2", "2.000")], letterhead="Equipos") + OLD_FOOTER)
+    assert _plan(tmp_path / "in", tmp_path / "out") == 0
+    plan, _ = _load(tmp_path / "out")
+    assert plan["items"] == [] and plan["counts"]["skipped_labdelivery_letterhead"] == 2
+
+
+@pytest.mark.parametrize("line_over,doc_over", [
+    ({"description": "Celular: (09) 81234567 www.labdelivery.cl"}, {}),
+    ({"description": FOOTER_ADDRESS}, {}),
+    ({"description": "Calle Inventada 123, Of. 45, Comuna Ficticia"}, {}),
+    ({"model": "(09) 81234567"}, {}),
+    ({"description": "Celular: (09) 8123 4567"}, {}),
+    ({}, {"quote_number": "(56-2) 21234567"}),
+], ids=["url_line", "address_in_description", "street", "phone_in_model", "celular_without_url", "phone_in_quote_number"])
+def test_a_document_whose_extraction_copies_the_footer_is_skipped_as_footer_copied(
+        tmp_path, pinned_footer, line_over, doc_over) -> None:
+    copied, clean = _sha(), _sha()
+    _write_doc(tmp_path / "in", _extraction(copied, [{**_line("1", "ACME-1", 1000), **line_over}], **doc_over),
+               _docx_text([("1", "ACME-1", "1.000")]) + OLD_FOOTER)
+    _write_doc(tmp_path / "in", _extraction(clean, [_line("1", "ACME-2", 2000)]),
+               _docx_text([("1", "ACME-2", "2.000")]) + OLD_FOOTER)
+    code = _plan(tmp_path / "in", tmp_path / "out")
+    if "www.labdelivery" in json.dumps(line_over):
+        assert code == _common.EXIT_REFUSED  # Labdelivery's name in a written string refuses the plan
+        return
+    assert code == 0
+    plan, _ = _load(tmp_path / "out")
+    assert [i["key"] for i in plan["items"]] == [f"quote_document:{clean}"]
+    assert plan["counts"]["skipped_footer_copied"] == 1
+    assert [s["reason"] for s in plan["skipped"]] == ["footer_copied"]
+    whole = (tmp_path / "out" / "plan.json").read_text(encoding="utf-8")
+    assert "81234567" not in whole and "21234567" not in whole and "Calle Inventada" not in whole
 
 
 def test_item_and_total_matches_are_counted_by_reason(tmp_path) -> None:

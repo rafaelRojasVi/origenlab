@@ -20,6 +20,7 @@ const REASON: Record<QuoteReading["code"], string> = {
   write_failed: "Un valor del PDF no cabe en el registro",
   hash_mismatch: "El correo guardado no coincide con el original",
   attachment_not_in_eml: "El PDF no está en el correo guardado",
+  footer_copied: "El lector copió el pie de página antiguo en una línea",
   other: "Motivo no reconocido",
 };
 

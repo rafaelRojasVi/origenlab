@@ -19,10 +19,12 @@ from dbhelp import owner_rows, seed_mailbox
 from origenlab_worker.database import local_test_target, open_verified_connection
 from origenlab_worker.quote_reader import (
     NET_INCLUDES_OPTIONAL,
+    PREVIOUS_READER_VERSION,
     QUOTE_READ_REQUIRED_POLICIES,
     QUOTE_READ_REQUIRED_PRIVILEGES,
     READER_VERSION,
     QuoteReader,
+    week_tags,
 )
 from test_drive_filing import _seed_quote, _Store
 from test_quote_reader import _minimal_pdf
@@ -170,7 +172,69 @@ def test_a_neto_that_includes_the_optional_lines_is_written_flagged(dsn, mailbox
     counts = _read_all(dsn, store, Reader(extraction))
     [(_, payload)] = _documents(dsn, quote["sha"])
     assert payload["net_total"] == "350000" and payload[NET_INCLUDES_OPTIONAL] is True
+    from origenlab_api.v2.quote_documents import QUOTE_DOCUMENT_COLUMNS, quote_contents
+
+    [row] = owner_rows(dsn, f"select {QUOTE_DOCUMENT_COLUMNS} from evidence.source_record qd where qd.dedupe_key = %s",
+                       (f"quote_document:{quote['sha']}",))
+    contents = quote_contents(dict(zip(("doc_currency", "doc_net_total", "doc_net_includes_optional", "doc_lines"), row,
+                                       strict=True)))
+    assert contents["net_includes_optional"] is True and contents["net_total"] == "350000"
     assert counts.as_log()[NET_INCLUDES_OPTIONAL] >= 1  # this PDF (any other unread one gets the same answer)
+
+
+def _record_refusal(dsn, quote, version: str, code: str) -> None:
+    """A refusal as `QuoteReader._refused` records it, this ISO week, under `version`."""
+    from datetime import date
+
+    week = week_tags(date.today())[0].split(":")[-1]
+    revision, source = owner_rows(dsn, "select id::text, origin_source_record_id::text from crm.quote_revision "
+                                       "where pdf_sha256 = %s", (quote["sha"],))[0]
+    owner_rows(dsn, "insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+                    "values (%s, 'quote_read', %s, %s::jsonb)",
+               (source, f"{version}:{week}:{quote['sha']}", json.dumps({"code": code, "counts": {}, "revision_id": revision})))
+
+
+@pytest.mark.parametrize("n,code,reread", [(0, "not_origenlab_quote", True), (1, "net_mismatch", True),
+                                           (2, "model_refused", False), (3, "unreadable", False),
+                                           (4, "no_text_layer", False)])
+def test_a_bump_rereads_only_the_previous_versions_refusals_it_changed(dsn, mailbox_id, store, n, code, reread) -> None:
+    number = f"0096{n}-26"
+    quote = _seed_quote(dsn, mailbox_id, pdf=_pdf(), quote_number=number, store=store)
+    _record_refusal(dsn, quote, PREVIOUS_READER_VERSION, code)
+    _read_all(dsn, store, Reader(_extraction(number)))
+    assert len(_documents(dsn, quote["sha"])) == (1 if reread else 0)
+
+
+def test_operaciones_counts_pending_pdfs_against_the_current_versions_refusals(dsn, mailbox_id, store) -> None:
+    from origenlab_api.v2.operations import _QUOTES_PENDING_SQL
+
+    import psycopg
+
+    def pending() -> int:
+        with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute("set role origenlab_owner")
+            cur.execute(_QUOTES_PENDING_SQL)  # as `read_operation_facts` runs it: no parameters
+            return cur.fetchone()[0]
+
+    quotes = [_seed_quote(dsn, mailbox_id, pdf=_pdf(), quote_number=f"0095{n}-26", store=store) for n in range(4)]
+    before = pending()
+    _record_refusal(dsn, quotes[0], READER_VERSION, "model_refused")  # refused now: not pending
+    _record_refusal(dsn, quotes[1], PREVIOUS_READER_VERSION, "net_mismatch")  # v2 re-reads it: pending
+    _record_refusal(dsn, quotes[2], PREVIOUS_READER_VERSION, "model_refused")  # still blocked: not pending
+    assert pending() == before - 2
+
+
+def test_cotizaciones_no_leidas_lists_only_the_newest_refusal_of_each_pdf(dsn, mailbox_id, store) -> None:
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    quote = _seed_quote(dsn, mailbox_id, pdf=_pdf(), quote_number="00949-26", store=store)
+    _record_refusal(dsn, quote, PREVIOUS_READER_VERSION, "model_refused")
+    _record_refusal(dsn, quote, READER_VERSION, "net_mismatch")
+    items = [i for i in CrmWorkspaceRepository(psycopg.connect, dsn).quote_readings(limit=500)["items"]
+             if i["quote_number"] == "00949-26"]
+    assert [(i["reader_version"], i["code"]) for i in items] == [(READER_VERSION, "net_mismatch")]
 
 
 def test_a_refusal_is_per_pdf_so_the_same_pdf_from_another_email_is_not_reread(dsn, mailbox_id, store) -> None:

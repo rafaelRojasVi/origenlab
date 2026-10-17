@@ -36,8 +36,9 @@ a missing text file, and anything of Labdelivery origin in a path, the extractio
 the plan would write. A layout text Labdelivery issued — its name anywhere but the old OrigenLab
 template's footer line (`keys.labdelivery_issued`, owner decision 2026-10-16) — is skipped and
 counted (`skipped_labdelivery_letterhead`), never written; so is a document the extraction says
-OrigenLab did not issue. That footer is never read into the plan: only the extraction's lines are,
-each string still refused. Verified lines are counted by why they matched (`verified_<reason>`;
+OrigenLab did not issue. That footer is never read into the plan: a document whose payload or
+line strings repeat its address, street, phone label or numbers is skipped too
+(`skipped_footer_copied`, reason `footer_copied`). Verified lines are counted by why they matched (`verified_<reason>`;
 `evidence.document_line` has no column for it). A document already present (by `dedupe_key`) is never
 touched; apply reports it `already_present`, or `present_different` when it says something else.
 
@@ -73,8 +74,10 @@ from origenlab_api.v2.catalog.history_check import (  # noqa: E402
 )
 from origenlab_api.v2.catalog.keys import (  # noqa: E402
     LabdeliveryRefused,
+    copies_old_footer,
     labdelivery_issued,
     model_key,
+    old_footer_identities,
     refuse_labdelivery,
 )
 
@@ -107,15 +110,21 @@ def _refuse_labdelivery(name: str, *parts: str) -> None:
 
 # ------------------------------------------------------------------ one document
 
-def _lines(name: str, extraction: dict[str, Any], counts: Counter[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """(document lines as written, the AI lines as the cross-check reads them) — the shared
-    `history_check.document_lines`, its errors prefixed with the file's basename."""
+def _lines(name: str, extraction: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """(document lines as written, the AI lines as the cross-check reads them, strings withheld) —
+    the shared `history_check.document_lines`, its errors prefixed with the file's basename."""
     try:
-        written, checked, held = document_lines(extraction, extraction["currency"], extractor=EXTRACTOR)
+        return document_lines(extraction, extraction["currency"], extractor=EXTRACTOR)
     except ValueError as exc:
         raise _Bad(f"{name}: {exc}") from None
-    counts["strings_withheld"] += held
-    return written, checked
+
+
+def _copies_footer(payload: dict[str, Any], lines: list[dict[str, Any]], text: str) -> bool:
+    """A written string — the payload's or a line's — that repeats the old template footer's
+    address, street, phone label or numbers (`keys.copies_old_footer`)."""
+    footer = old_footer_identities(text)
+    written = (*payload.values(), *(v for ln in lines for v in ln.values()))
+    return any(copies_old_footer(v, footer) for v in written if isinstance(v, str))
 
 
 def _plain(value: Decimal) -> str:
@@ -124,13 +133,17 @@ def _plain(value: Decimal) -> str:
 
 
 def _document(name: str, input_sha256: str, extraction: dict[str, Any], text: str, counts: Counter[str],
-              disputed: list[dict[str, str]]) -> importing.PlanItem:
+              disputed: list[dict[str, str]]) -> importing.PlanItem | None:
+    """The document's plan item, or None when a string it would write copies the old footer."""
     sha = extraction["sha256"]
     try:
         payload = quote_document_payload(extraction, sha)
     except ValueError as exc:
         raise _Bad(f"{name}: {exc}") from None
-    lines, ai = _lines(name, {**extraction, "currency": payload["currency"]}, counts)
+    lines, ai, held = _lines(name, {**extraction, "currency": payload["currency"]})
+    if _copies_footer(payload, lines, text):
+        return None
+    counts["strings_withheld"] += held
     template = parse_template_lines(text) if payload["currency"] == "CLP" else []
     for c in cross_check(ai, template):
         if c.ai_index is None:
@@ -165,7 +178,7 @@ def build_quote_history_plan(extractions: list[Path], text_dir: Path) -> tuple[i
         "lines", "lines_verified", "lines_disputed", "lines_single_source", "template_only_lines",
         "verified_model_total_match", "verified_item_total_match", "verified_total_match",
         "strings_withheld", "documents_without_date", "skipped_not_origenlab_quote",
-        "skipped_labdelivery_letterhead")})
+        "skipped_labdelivery_letterhead", "skipped_footer_copied")})
     for record, path in hashed:
         name = path.name
         _refuse_labdelivery(name, str(path.resolve()), name)
@@ -202,7 +215,14 @@ def build_quote_history_plan(extractions: list[Path], text_dir: Path) -> tuple[i
             continue
         if issued is not True:
             raise _fail(name, "is_origenlab_issued_quote", "not true or false")
-        items.append(_document(name, record["file_sha256"], extraction, text, counts, disputed))
+        item = _document(name, record["file_sha256"], extraction, text, counts, disputed)
+        if item is None:
+            # The extraction copied the old template footer (its address or a phone) into a string
+            # the plan would write: skipped, never written (owner decision 2026-10-16).
+            counts["skipped_footer_copied"] += 1
+            skipped.append({"path_sha256": record["path_sha256"], "reason": "footer_copied"})
+            continue
+        items.append(item)
     plan = importing.build_plan(IMPORTER, records, items, extra_counts=counts, skipped=skipped)
     return plan, disputed
 
