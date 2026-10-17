@@ -14,6 +14,8 @@ import { useEffect, useId, useState } from "react";
 import type { DraftProblem } from "./draftEditor";
 import { setRecipient } from "./draftEditor";
 import type { QuoteDraft, QuoteRecipientPick, QuoteWorkspace, QuoteWorkspaceContact } from "./quoteApi";
+import { AssignInstitution } from "../pages/AssignInstitution";
+import type { OpportunityCardData } from "../crmTypes";
 
 const OTHER = "other";
 const SAVED = "saved";
@@ -48,6 +50,7 @@ export function ClientSection({
   disabled,
   refusal = null,
   edit,
+  onInstitutionAdded,
 }: {
   workspace: QuoteWorkspace;
   draft: QuoteDraft;
@@ -56,10 +59,16 @@ export function ClientSection({
   /** Why the server refused the last save's recipient, in Spanish (`quoteRefusalText`); null when it did not. */
   refusal?: string | null;
   edit: (fn: (draft: QuoteDraft) => QuoteDraft) => void;
+  /** After «Agregar institución» names the case's institution: save pending edits and reload. */
+  onInstitutionAdded?: () => void | Promise<void>;
 }) {
   const ids = useId();
   const { institution, contacts, lo_que_pidio } = workspace.case;
   const [typing, setTyping] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [addProblem, setAddProblem] = useState<string | null>(null);
+  // A quote is approved only with the case's institution: name it here, without the trip to the case.
+  const mayAdd = !institution && !disabled && !workspace.case.closed && workspace.case.version != null && !!onInstitutionAdded;
   const [emailLeft, setEmailLeft] = useState(false);
   // A reload (new workspace) drops what was half-typed here.
   useEffect(() => {
@@ -124,7 +133,33 @@ export function ClientSection({
         <span className="text-xs text-ink-muted">Cliente</span>
         <span className="truncate text-[15px] font-semibold text-ink">{institution?.name ?? "Sin institución"}</span>
         <span className="text-[13px] text-ink-muted">{institution?.rut ? `RUT ${institution.rut}` : "RUT pendiente"}</span>
+        {mayAdd && !adding ? (
+          <button
+            type="button"
+            onClick={() => {
+              setAddProblem(null);
+              setAdding(true);
+            }}
+            className="mt-1 inline-flex min-h-[44px] items-center self-start rounded-md border border-brand-600 px-3 text-[13px] font-semibold text-brand-700 hover:bg-brand-50"
+          >
+            Agregar institución
+          </button>
+        ) : null}
+        {addProblem ? <p role="alert" className="text-[12.5px] text-danger-700">{addProblem}</p> : null}
       </div>
+      {mayAdd && adding ? (
+        <div className="md:col-span-3">
+          <AssignInstitution
+            card={{ opportunity_id: workspace.case.id, version: workspace.case.version, pending_institution_mentions: [] } as unknown as OpportunityCardData}
+            onCancel={() => setAdding(false)}
+            onDone={(outcome) => {
+              setAdding(false);
+              if (outcome.tone === "good") void onInstitutionAdded?.();
+              else setAddProblem(outcome.lines.join(" "));
+            }}
+          />
+        </div>
+      ) : null}
 
       <div className="flex min-w-0 flex-col gap-1">
         <label htmlFor={`${ids}-para`} className="text-xs text-ink-muted">
