@@ -273,7 +273,10 @@ select p.id::text as id, p.model_number, p.model_key, p.name, p.product_kind, p.
  limit %s
 """
 _FILTERS = {
-    "quoted": ("p.model_key in (select l.model_key from evidence.document_line l where l.model_key is not null)", ()),
+    # Quoted under its model or an active alias (DOMAIN.md §7 #59).
+    "quoted": ("(p.model_key in (select l.model_key from evidence.document_line l where l.model_key is not null) "
+               "or exists (select 1 from catalog.product_model_alias a join evidence.document_line l "
+               "on l.model_key = a.alias_key where a.product_id = p.id and a.retired_at is null))", ()),
     "all-missing": ("(p.name_es is null or p.description_es is null or p.specs = '[]'::jsonb)", ()),
     "model_keys": ("p.model_key = any(%s)", None),
 }

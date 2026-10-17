@@ -1,9 +1,11 @@
 """Cheap product candidates for a message, before any model: model numbers matched exactly against
-`catalog.product.model_key`, then the catalog's Spanish full-text index for the words of the
-subject and the first lines of the body.
+`catalog.product.model_key` or an active `catalog.product_model_alias` key (a model as printed,
+«XQ100», for a product stored under its maker's item number), then the catalog's Spanish full-text
+index for the words of the subject and the first lines of the body.
 
 `model_tokens` and `search_words` are pure. `match_products` runs two read-only queries as
-`origenlab_worker`, which holds SELECT on catalog.product (Slice 0). It never writes the catalog.
+`origenlab_worker`, which holds SELECT on catalog.product (Slice 0) and on
+catalog.product_model_alias (20261016200000). It never writes the catalog.
 """
 
 from __future__ import annotations
@@ -77,12 +79,20 @@ def search_words(subject: str, body: str, *, body_chars: int = 600) -> list[str]
     return list(seen)
 
 
+# A product named by its own model or by an active alias; the token it matched is the evidence. A
+# token two products answer to (two makers) gives both, as two products with one model_key always did.
 _BY_KEY = """
-select id::text, model_number, model_key, coalesce(name_es, name)
-  from catalog.product
- where model_key = any(%s)
- order by model_key, id
- limit %s
+select id, model_number, model_key, name, matched from (
+  select p.id::text as id, p.model_number, p.model_key, coalesce(p.name_es, p.name) as name, p.model_key as matched
+    from catalog.product p
+   where p.model_key = any(%(keys)s)
+  union
+  select p.id::text, p.model_number, p.model_key, coalesce(p.name_es, p.name), a.alias_key
+    from catalog.product_model_alias a join catalog.product p on p.id = a.product_id
+   where a.alias_key = any(%(keys)s) and a.retired_at is null
+) x
+ order by matched, id
+ limit %(limit)s
 """
 # An OR query over the words (each is [a-z0-9]{4,}, so nothing in it is tsquery syntax), kept only
 # when at least two of the words match the product: on the real catalog (2026-10-06 evaluation) a
@@ -106,9 +116,12 @@ def match_products(cur: Any, subject: str, body: str) -> list[ProductCandidate]:
     keys = model_tokens(subject, body)
     found: list[ProductCandidate] = []
     if keys:
-        cur.execute(_BY_KEY, (keys, MAX_CANDIDATES))
-        for pid, number, key, name in cur.fetchall():
-            found.append(ProductCandidate(pid, number, key, name, "model_key", key))
+        cur.execute(_BY_KEY, {"keys": keys, "limit": MAX_CANDIDATES})
+        seen: set[str] = set()
+        for pid, number, key, name, matched in cur.fetchall():
+            if pid not in seen:  # a message naming both the model and an alias of one product
+                seen.add(pid)
+                found.append(ProductCandidate(pid, number, key, name, "model_key", matched))
     if found:
         return found
     words = search_words(subject, body)

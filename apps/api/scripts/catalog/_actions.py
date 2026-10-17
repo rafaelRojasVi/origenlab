@@ -561,7 +561,10 @@ def _document_subject(ctx: Context, fields: dict[str, Any]) -> tuple[str, str] |
                         (fields["supplier_name"],))
         column = "supplier_organization_id"
     else:
-        ctx.cur.execute("select id::text from catalog.product where active and model_key = %s", (fields["model_key"],))
+        # By model_key or an active alias (DOMAIN.md §7 #59); two products answering is unmatched.
+        ctx.cur.execute("select id::text from catalog.product p where p.active and (p.model_key = %s or exists "
+                        "(select 1 from catalog.product_model_alias a where a.product_id = p.id "
+                        "and a.alias_key = %s and a.retired_at is null))", (fields["model_key"], fields["model_key"]))
         column = "product_id"
     rows = ctx.cur.fetchall()
     return (column, rows[0][0]) if len(rows) == 1 else None
@@ -672,17 +675,105 @@ def _verify_merge_maker(ctx: Context, item: importing.PlanItem) -> tuple[str, li
         return "missing", [], None
     return ("present", [], drop_id) if active_left == 0 else ("different", ["active products left"], drop_id)
 
+# ------------------------------------------------------------------ model aliases (DOMAIN.md §7 #59)
+
+def _alias_subject(ctx: Context, fields: dict[str, Any]) -> tuple[str | None, str]:
+    """(product id, why not) — the maker by folded name (not merged), then its product whose
+    model_number is exactly the one given. Nothing is guessed: none or several is unmatched."""
+    wanted = importing.norm_name(fields["maker"])
+    makers = [o for o in _organizations(ctx) if importing.norm_name(o[1]) == wanted and o[3] is None]
+    if len(makers) != 1:
+        return None, f"maker: {len(makers)} organizations"
+    ctx.cur.execute("select id::text, active, merged_into_product_id is not null from catalog.product "
+                    "where manufacturer_organization_id = %s::uuid and model_number = %s", (makers[0][0],
+                                                                                             fields["model_number"]))
+    rows = ctx.cur.fetchall()
+    if len(rows) != 1:
+        return None, f"product: {len(rows)} with that model_number"
+    product_id, active, merged = rows[0]
+    if merged or not active:
+        return None, "product: merged or inactive"
+    return product_id, ""
+
+
+def _alias_state(ctx: Context, product_id: str, alias: str) -> tuple[str, str | None]:
+    """What the maker already says about this alias: `present` (this product has it, active, with
+    its row id), `conflict` (the maker's other product has it, or it is a model of the maker),
+    `retired` (this manifest's alias on this product was retired since) or `missing`."""
+    ctx.cur.execute(
+        f"""
+        with me as (select manufacturer_organization_id as maker from catalog.product where id = %(product)s::uuid),
+             k as (select {_MODEL_KEY_SQL.replace('%s', '%(alias)s')} as key)
+        select a.id::text, a.product_id = %(product)s::uuid, a.retired_at is not null,
+               a.origin_source_record_id::text
+          from catalog.product_model_alias a join catalog.product p on p.id = a.product_id, me, k
+         where p.manufacturer_organization_id = me.maker and a.alias_key = k.key
+         order by a.retired_at is null desc, a.created_at desc
+        """, {"product": product_id, "alias": alias})
+    rows = ctx.cur.fetchall()
+    active = [r for r in rows if not r[2]]
+    if active:
+        return ("present", active[0][0]) if active[0][1] else ("conflict", None)
+    ctx.cur.execute(
+        f"select 1 from catalog.product p where p.manufacturer_organization_id = "
+        f"(select manufacturer_organization_id from catalog.product where id = %(product)s::uuid) "
+        f"and p.model_key = {_MODEL_KEY_SQL.replace('%s', '%(alias)s')}", {"product": product_id, "alias": alias})
+    if ctx.cur.fetchone() is not None:
+        return "conflict", None
+    mine = [r for r in rows if r[1] and ctx.manifest_id is not None and r[3] == ctx.manifest_id]
+    return ("retired", mine[0][0]) if mine else ("missing", None)
+
+
+def _apply_add_model_alias(ctx: Context, item: importing.PlanItem) -> str:
+    """add-model-alias: the product's alias as printed, `source = 'import'`, with the manifest; once.
+
+    The product owns the event stream appended to, so it is locked first (as every product action
+    here); the guard trigger (`catalog.product_model_alias_guard`) refuses anything the checks
+    below would have let through."""
+    fields = item["fields"]
+    product_id, _ = _alias_subject(ctx, fields)
+    if product_id is None:
+        return "unmatched"
+    ctx.cur.execute("select id from catalog.product where id = %s::uuid for no key update", (product_id,))
+    state, _ = _alias_state(ctx, product_id, fields["alias"])
+    if state == "present":
+        return "already_present"
+    if state == "conflict":
+        return "present_different"
+    if state == "retired":
+        return "kept_later_value"  # an operator retired it since: never brought back
+    ctx.cur.execute(
+        "insert into catalog.product_model_alias (product_id, alias, source, origin_source_record_id, "
+        "created_by_operator_id) values (%s::uuid, %s, 'import', %s::uuid, %s::uuid) returning id::text, alias_key",
+        (product_id, fields["alias"], ctx.manifest_id, ctx.operator.operator_id))
+    alias_id, alias_key = ctx.cur.fetchone()
+    _event(ctx, "product", product_id, "product.model_alias_added",
+           {"product_model_alias_id": alias_id, "alias_key": alias_key, "source": "import",
+            "reason": fields.get("reason")})
+    return "inserted"
+
+
+def _verify_add_model_alias(ctx: Context, item: importing.PlanItem) -> tuple[str, list[str], str | None]:
+    product_id, why = _alias_subject(ctx, item["fields"])
+    if product_id is None:
+        return "unmatched", [why], None
+    state, alias_id = _alias_state(ctx, product_id, item["fields"]["alias"])
+    return {"present": ("present", [], alias_id), "conflict": ("present_different", ["alias"], None),
+            "retired": ("superseded_later", [], alias_id), "missing": ("missing", [], None)}[state]
+
 
 _APPLY = {"create_org": _apply_create_org, "add_org_role": _apply_add_org_role,
           "add_org_domain": _apply_add_org_domain, "create_product": _apply_create_product,
           "add_observation": _apply_add_observation, "set_terms": _apply_set_terms,
           "set_cost_parameter": _apply_set_cost_parameter, "add_quote_document": _apply_add_quote_document,
-          "add_product_document": _apply_add_product_document, "merge_maker": _apply_merge_maker}
+          "add_product_document": _apply_add_product_document, "merge_maker": _apply_merge_maker,
+          "add_model_alias": _apply_add_model_alias}
 _VERIFY = {"create_org": _verify_create_org, "add_org_role": _verify_add_org_role,
            "add_org_domain": _verify_add_org_domain, "create_product": _verify_create_product,
            "add_observation": _verify_add_observation, "set_terms": _verify_set_terms,
            "set_cost_parameter": _verify_set_cost_parameter, "add_quote_document": _verify_add_quote_document,
-           "add_product_document": _verify_add_product_document, "merge_maker": _verify_merge_maker}
+           "add_product_document": _verify_add_product_document, "merge_maker": _verify_merge_maker,
+           "add_model_alias": _verify_add_model_alias}
 
 
 def apply_item(ctx: Context, item: importing.PlanItem) -> str:
@@ -722,6 +813,7 @@ def record_manifest_event(ctx: Context, plan: importing.Plan, plan_sha: str) -> 
 OWNED_TABLES = (
     ("crm.domain_event", "id"),
     ("catalog.product_document", "id"),
+    ("catalog.product_model_alias", "id"),
     ("catalog.supplier_product", "id"),
     ("catalog.supplier_terms", "supplier_organization_id"),
     ("catalog.cost_parameter", "id"),
@@ -762,6 +854,9 @@ def collect_owned(cur: Any, manifest_id: str) -> dict[str, list[str]]:
     cur.execute("select id::text from catalog.product_document where origin_source_record_id = %s::uuid",
                 (manifest_id,))
     product_documents = sorted(r[0] for r in cur.fetchall())
+    cur.execute("select id::text from catalog.product_model_alias where origin_source_record_id = %s::uuid",
+                (manifest_id,))
+    model_aliases = sorted(r[0] for r in cur.fetchall())
     cur.execute("select id::text from evidence.source_record where kind = 'quote_document' "
                 "and payload->>'origin_source_record_id' = %s", (manifest_id,))
     documents = sorted(r[0] for r in cur.fetchall())
@@ -770,6 +865,7 @@ def collect_owned(cur: Any, manifest_id: str) -> dict[str, list[str]]:
     return {
         "crm.domain_event": sorted(e[0] for e in events),
         "catalog.product_document": product_documents,
+        "catalog.product_model_alias": model_aliases,
         "catalog.supplier_product": observations,
         "catalog.supplier_terms": created_by("organization.supplier_terms_set"),
         "catalog.cost_parameter": created_by("cost_parameter.set"),
@@ -835,7 +931,9 @@ def _references(cur: Any, owned: dict[str, list[str]], targets: dict[str, list[s
     products = targets.get("catalog.product", [])
     if products:
         cur.execute("select distinct p.id::text from catalog.product p join evidence.document_line l "
-                    "on l.model_key = p.model_key and l.created_at > p.created_at "
+                    "on (l.model_key = p.model_key or exists (select 1 from catalog.product_model_alias a "
+                    "    where a.product_id = p.id and a.alias_key = l.model_key and a.retired_at is null)) "
+                    "and l.created_at > p.created_at "
                     "where p.id::text = any(%s) and l.source_record_id::text <> all(%s)",
                     (products, owned.get("evidence.source_record", [])))
         found += [{"table": "catalog.product", "id": pid, "reason": "a later document line names its model"}
@@ -899,6 +997,12 @@ def rollback_blockers(cur: Any, owned: dict[str, list[str]], verified: list[dict
                     "where id::text = any(%s) for update", (domains,))
         blockers += [{"table": "crm.organization_domain", "id": i, "reason": "removed since the apply"}
                      for i, removed in cur.fetchall() if removed]
+    aliases = owned.get("catalog.product_model_alias", [])
+    if aliases:
+        cur.execute("select id::text from catalog.product_model_alias where id::text = any(%s) "
+                    "and retired_at is not null for update", (aliases,))
+        blockers += [{"table": "catalog.product_model_alias", "id": r[0], "reason": "retired since the apply"}
+                     for r in cur.fetchall()]
     lines = owned.get("evidence.document_line", [])
     if lines:
         cur.execute("select id::text, check_status, updated_at <> created_at from evidence.document_line "

@@ -13,13 +13,17 @@ from contextlib import contextmanager
 from decimal import Decimal
 from typing import Any
 
+from origenlab_api.v2.catalog import aliases
 from origenlab_api.v2.catalog.keys import model_key
 
 _PRODUCT_COLUMNS_SKIPPED = {"search_tsv"}
 
+# A model typed as printed finds the product through an active alias too (DOMAIN.md §7 #59).
 _SEARCH_WHERE = """ where p.active
    and (%(q)s::text is null
         or p.model_key like '%%' || %(qkey)s || '%%'
+        or exists (select 1 from catalog.product_model_alias a where a.product_id = p.id and a.retired_at is null
+                    and a.alias_key like '%%' || %(qkey)s || '%%')
         or p.search_tsv @@ websearch_to_tsquery('spanish', %(q)s))
    and (%(supplier)s::uuid is null or exists (select 1 from catalog.supplier_product x
                                                where x.product_id = p.id and x.supplier_organization_id = %(supplier)s))
@@ -45,7 +49,8 @@ select p.id, p.model_number, p.model_key, p.name, p.name_es, p.category_es, p.pr
         limit 1) c on true
   left join crm.organization s on s.id = c.supplier_organization_id
  {where}
- order by (p.model_key = %(qkey)s) desc, p.model_key, p.id
+ order by (p.model_key = %(qkey)s or exists (select 1 from catalog.product_model_alias a where a.product_id = p.id
+           and a.retired_at is null and a.alias_key = %(qkey)s)) desc, p.model_key, p.id
  limit %(limit)s offset %(offset)s
 """
 
@@ -270,8 +275,8 @@ class V2CatalogReads:
                     "where subject_kind = 'product' and subject_id = %s and status <> 'archived' "
                     "order by created_at desc, id desc",
                     (product_id,)),
-                **self._price_history_queries(key),
-                **self._kit_queries(key),
+                **self._price_history_queries(key, product_id),
+                **self._kit_queries(key, product_id),
                 **self._documents_queries(product_id),
             })
         product["images"] = rows["images"]
@@ -363,9 +368,20 @@ class V2CatalogReads:
         return self._price_history_from(key, self._batch(cur, self._price_history_queries(key)) if key else {}, limit)
 
     @staticmethod
-    def _price_history_queries(key: str | None) -> dict[str, tuple[str, tuple[Any, ...]]]:
+    def _line_keys(product_id: uuid.UUID | None) -> str:
+        """The model keys whose lines are about `%(key)s`: of the product when one is given, else of
+        what the key names (its own model and its active aliases, unless ambiguous)."""
+        if product_id is not None:
+            return aliases.line_keys_of_product("%(product_id)s", "%(key)s")
+        return aliases.line_keys_of_key("%(key)s")
+
+    @classmethod
+    def _price_history_queries(cls, key: str | None,
+                               product_id: uuid.UUID | None = None) -> dict[str, tuple[str, Any]]:
         if key is None:
             return {}
+        keys = cls._line_keys(product_id)
+        params = {"key": key, "product_id": product_id}
         # Each quoted line with the CRM quote of the same printed number, its case, the case's
         # institution (through any merge) and whether that very quote is the one the case won with.
         quoted = (
@@ -384,15 +400,16 @@ class V2CatalogReads:
             "    left join crm.organization root on root.id = coalesce(org.merged_into_organization_id, org.id) "
             "   where q.quote_number = s.payload->>'printed_quote_number' "
             "   order by (o.won_quote_id = q.id) desc nulls last, o.created_at limit 1) c on true "
-            "where l.model_key = %s and s.kind = 'quote_document' and not l.optional "
+            f"where l.model_key in ({keys}) and s.kind = 'quote_document' and not l.optional "
             "order by s.payload->>'quote_date' desc nulls last, l.line_no desc, l.id desc"
         )
-        # What the model cost us, every observation (twins merged into it share its model_key): the
-        # route turns it into each quote's margin. Cost data: redacted for a viewer.
+        # What the model cost us, every observation (twins merged into it share its model_key; an
+        # unambiguous alias names no other product): the route turns it into each quote's margin.
+        # Cost data: redacted for a viewer.
         costs = ("select sp.as_of, sp.price, sp.currency, sp.price_kind, sp.is_stale "
                  "from catalog.supplier_product sp join catalog.product p on p.id = sp.product_id "
-                 "where p.model_key = %s order by sp.as_of")
-        return {"quoted": (quoted, (key,)), "model_costs": (costs, (key,))}
+                 f"where p.model_key in ({keys}) order by sp.as_of")
+        return {"quoted": (quoted, params), "model_costs": (costs, params)}
 
     def _price_history_from(self, key: str | None, rows: dict[str, list[dict[str, Any]]], limit: int) -> dict[str, Any]:
         if key is None:
@@ -417,19 +434,21 @@ class V2CatalogReads:
         key = model_key(key)
         return self._kit_from(key, self._batch(cur, self._kit_queries(key)) if key else {}, min_share)
 
-    @staticmethod
-    def _kit_queries(key: str | None) -> dict[str, tuple[str, tuple[Any, ...]]]:
+    @classmethod
+    def _kit_queries(cls, key: str | None, product_id: uuid.UUID | None = None) -> dict[str, tuple[str, Any]]:
         if key is None:
             return {}
+        keys = cls._line_keys(product_id)
         return {"kit": (
-            "with docs as (select distinct l.source_record_id from evidence.document_line l "
+            f"with keys as ({keys}), docs as (select distinct l.source_record_id from evidence.document_line l "
             "  join evidence.source_record s on s.id = l.source_record_id "
-            "  where l.model_key = %s and s.kind = 'quote_document') "
+            "  where l.model_key in (select k from keys) and s.kind = 'quote_document') "
             "select (select count(*) from docs) as total, l.model_key, min(l.brand) as brand, "
             "count(distinct l.source_record_id) as n "
             "from evidence.document_line l join docs d on d.source_record_id = l.source_record_id "
-            "where l.model_key is not null and l.model_key <> %s group by l.model_key",
-            (key, key))}
+            "where l.model_key is not null and not exists (select 1 from keys where keys.k = l.model_key) "
+            "group by l.model_key",
+            {"key": key, "product_id": product_id})}
 
     @staticmethod
     def _kit_from(key: str | None, rows: dict[str, list[dict[str, Any]]], min_share: Decimal) -> list[dict[str, Any]]:
