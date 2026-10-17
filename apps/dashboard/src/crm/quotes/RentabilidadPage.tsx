@@ -70,6 +70,9 @@ export function monthName(month: string): string {
   return d.toLocaleDateString("es-CL", { month: "long", year: "numeric" });
 }
 
+/** «Octubre de 2026»: only the first letter, never «De». */
+const capitalizeFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 const clp = (v: string | null | undefined) => formatMoney(v, "CLP") ?? "—";
 
 export function RentabilidadPage({
@@ -240,7 +243,7 @@ export function coverageNote(t: EconomicsReport["totals"]): string[] {
   else {
     const c = t.coverage;
     const n = c.full.quotes;
-    if (n === t.quotes) out.push(`El margen cubre las ${n === 1 ? "única cotización" : `${n} cotizaciones`}: todas tienen el costo de cada línea.`);
+    if (n === t.quotes) out.push(`El margen cubre ${n === 1 ? "la única cotización" : `las ${n} cotizaciones`}: todas tienen el costo de cada línea.`);
     else {
       const share = formatPct(c.full_share_of_sale) ?? "0,0 %";
       out.push(
@@ -328,7 +331,7 @@ function MonthRow({ m }: { m: EconomicsTotals & { month: string } }) {
   const partial = m.coverage.full.quotes < m.quotes;
   return (
     <tr className="border-t border-line">
-      <td className={`${TD} capitalize`}>{monthName(m.month)}</td>
+      <td className={TD}>{capitalizeFirst(monthName(m.month))}</td>
       <td className={TD_NUM}>{m.quotes}</td>
       <td className={TD_NUM}>{clp(m.sale_net_clp)}</td>
       <td className={TD_NUM}>{clp(m.product_cost_clp)}</td>

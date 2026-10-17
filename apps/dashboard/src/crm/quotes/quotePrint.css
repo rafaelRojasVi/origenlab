@@ -191,14 +191,19 @@
     padding: 14mm 14mm 14mm;
     box-shadow: none;
     border-top: 0;
-    /* Block, not flex, so the browser breaks the table across pages cleanly. */
-    display: block;
+    /* One A4 page tall at least, so the signature and contact sit at the foot of the page (owner,
+       2026-10-17); a longer quote simply grows onto more pages. 296mm, not 297, so rounding never
+       adds a blank page. */
+    display: flex;
+    flex-direction: column;
+    min-height: 296mm;
+    box-sizing: border-box;
   }
   .qp-sheet > * + * { margin-top: 14px; }
   /* One page for an ordinary quote: a little tighter on paper than on screen. */
   .qp-sheet { font-size: 12px; }
   .qp-lines td { padding: 7px 6px; }
-  .qp-foot { margin-top: 20px; }
+  .qp-foot { margin-top: auto; padding-top: 20px; }
   /* The header row repeats on each page; a line never splits across two. */
   .qp-lines thead { display: table-header-group; }
   .qp-lines tr { break-inside: avoid; page-break-inside: avoid; }
