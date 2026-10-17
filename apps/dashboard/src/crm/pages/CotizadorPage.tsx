@@ -6,7 +6,9 @@ import { ClientSection } from "../quotes/ClientSection";
 import { isEditable, isGone } from "../quotes/draftEditor";
 import { ExpensesSection } from "../quotes/ExpensesSection";
 import { IssuedView, RevisionSummary, RevisionSwitcher, statusOf } from "../quotes/IssuedView";
+import { isPrintable, printableQuote } from "../quotes/printableQuote";
 import { ProductsSection } from "../quotes/ProductsSection";
+import { QuotePrintView } from "../quotes/QuotePrintView";
 import {
   QuoteRefusal,
   createQuoteRevision,
@@ -39,6 +41,10 @@ import { useResource } from "../useResource";
  * and an issued revision alike, hides costs and margins, the whole «Gastos de importación» card,
  * the rail's internal cards and approval's reasons, for screen sharing. Refusals are said in
  * Spanish (`quoteRefusalText`).
+ *
+ * «Vista previa PDF» (`QuotePrintView`) opens the client's document of the current revision — a
+ * draft (marked «BORRADOR», from the live editor) or an approved or sent one (from what approval
+ * froze) — for the browser to print or save as a PDF; it carries no cost data (`printableQuote`).
  *
  * Commands (Task 7): «Aprobar» saves what is pending first and approves with the version that
  * save returned (Review Focus 3); the API's reasons for refusing are listed under the header.
@@ -197,6 +203,7 @@ function CotizadorWorkspace({
   const [voiding, setVoiding] = useState(false);
   const [voidError, setVoidError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const reviseKey = useActionKey();
   const voidKey = useActionKey();
   const { state } = editor;
@@ -340,8 +347,14 @@ function CotizadorWorkspace({
   };
 
   const currentLabel = cur ? labelOf(cur.revision_no, cur.label) : labelOf(1);
-  // Unique per pane: the module keeps several quotes in the page at once.
-  const pdfLaterId = `${useId()}-pdf-later`;
+  // «Vista previa PDF»: the client's document of a draft (marked «BORRADOR»), an approved or a sent revision.
+  // It prints the current revision, so it is not offered while an older one is looked at.
+  const pdfButton = isPrintable(ws) && !viewed ? (
+    <Button className="min-h-[44px] px-4 text-[14px]" disabled={commandRunning} onClick={() => setPrinting(true)}>
+      Vista previa PDF
+    </Button>
+  ) : null;
+  const printable = printing ? printableQuote(ws, authored ? { state, stale: editor.stale } : null) : null;
   // I3: «Vista cliente» is the page's, for the draft and an issued revision alike.
   const clientToggle = cur ? <ClientViewToggle on={clientView} onChange={setClientView} /> : null;
   const actions = cur ? (
@@ -358,15 +371,7 @@ function CotizadorWorkspace({
             Anular
           </Button>
         ) : null}
-        {/* B6: the PDF arrives in the next delivery; the button is there, off, and says so. */}
-        <span title="Llega en la siguiente entrega" className="inline-flex">
-          <Button className="min-h-[44px] px-4 text-[14px]" disabled aria-describedby={pdfLaterId}>
-            Vista previa PDF
-          </Button>
-          <span id={pdfLaterId} className="sr-only">
-            Llega en la siguiente entrega
-          </span>
-        </span>
+        {pdfButton}
         <Button
           variant="primary"
           className="min-h-[44px] px-[18px] text-[14px]"
@@ -391,6 +396,7 @@ function CotizadorWorkspace({
             Anular
           </Button>
         ) : null}
+        {pdfButton}
         {canRevise ? (
           <Button
             variant="primary"
@@ -505,6 +511,7 @@ function CotizadorWorkspace({
           />
         </div>
       ) : null}
+      {printable ? <QuotePrintView quote={printable} onClose={() => setPrinting(false)} /> : null}
       {voidTarget ? (
         <ConfirmDialog
           title={`¿Anular la cotización ${voidTarget.label}?`}

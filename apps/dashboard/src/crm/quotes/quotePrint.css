@@ -1,0 +1,198 @@
+/* «Vista previa PDF» (QuotePrintView): one A4 quote. On screen it covers the page; printed, it is
+   the only thing on the paper. The PDF board's look: white sheet, teal accent, Plus Jakarta Sans
+   with IBM Plex Mono for numbers. */
+
+.qp-root {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  overflow: auto;
+  background: #e9edec;
+  color: #14201d;
+  font-family: var(--font-sans, "Plus Jakarta Sans Variable", system-ui, sans-serif);
+}
+
+.qp-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #d9e2df;
+}
+.qp-toolbar-note {
+  flex: 1;
+  font-size: 13px;
+  color: #4b5c57;
+}
+.qp-btn {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid #c4cfcc;
+  background: #ffffff;
+  color: #14201d;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.qp-btn:hover { background: #f4f6f5; }
+.qp-btn:focus-visible { outline: 2px solid #0f766e; outline-offset: 2px; }
+.qp-btn-primary { background: #0f766e; border-color: #0f766e; color: #ffffff; }
+.qp-btn-primary:hover { background: #115e59; }
+.qp-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.qp-sheet {
+  position: relative;
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 297mm;
+  margin: 24px auto 48px;
+  padding: 14mm 15mm 12mm;
+  background: #ffffff;
+  border-top: 6px solid #0f766e;
+  box-shadow: 0 6px 28px rgba(20, 32, 29, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.qp-mono { font-family: var(--font-mono, "IBM Plex Mono", ui-monospace, monospace); font-variant-numeric: tabular-nums; }
+.qp-muted { display: block; font-size: 12px; color: #4b5c57; }
+.qp-strong { display: block; font-size: 14px; font-weight: 600; }
+.qp-right { text-align: right; }
+
+.qp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+.qp-brand { display: flex; align-items: center; gap: 12px; }
+.qp-brand-name { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.qp-number { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
+.qp-eyebrow {
+  font-family: var(--font-mono, "IBM Plex Mono", ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #0f766e;
+}
+.qp-label { font-family: var(--font-mono, "IBM Plex Mono", ui-monospace, monospace); font-size: 24px; font-weight: 500; }
+.qp-draft-tag {
+  margin-top: 4px;
+  padding: 2px 8px;
+  border: 1.5px solid #b45309;
+  border-radius: 6px;
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.qp-client {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: #f4f6f5;
+}
+.qp-client > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.qp-eyebrow-muted { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #4b5c57; }
+
+.qp-lines { width: 100%; border-collapse: collapse; }
+.qp-lines th {
+  padding: 8px 6px;
+  border-bottom: 1.5px solid #14201d;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #4b5c57;
+  text-align: left;
+}
+.qp-lines td { padding: 10px 6px; border-bottom: 1px solid #d9e2df; vertical-align: top; font-size: 12.5px; }
+.qp-lines .qp-num { text-align: right; white-space: nowrap; }
+.qp-col-no { width: 28px; color: #4b5c57; }
+.qp-item { display: block; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.qp-model { font-family: var(--font-mono, "IBM Plex Mono", ui-monospace, monospace); font-weight: 500; color: #0f766e; }
+.qp-note { display: block; margin-top: 3px; font-size: 12px; color: #4b5c57; white-space: pre-line; }
+
+.qp-totals { align-self: flex-end; width: 300px; margin: 0 0 0 auto; display: flex; flex-direction: column; gap: 6px; break-inside: avoid; }
+.qp-totals > div { display: flex; justify-content: space-between; gap: 12px; }
+.qp-totals dt { color: #4b5c57; }
+.qp-totals dd { margin: 0; }
+.qp-totals .qp-total {
+  align-items: baseline;
+  margin-top: 4px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #0f766e;
+  color: #ffffff;
+}
+.qp-totals .qp-total dt { color: #ffffff; font-weight: 600; }
+.qp-totals .qp-total dd { font-size: 18px; font-weight: 500; }
+
+.qp-h2 { margin: 0 0 6px; font-size: 13px; font-weight: 700; }
+.qp-terms { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 24px; }
+.qp-terms > div { border-top: 1px solid #d9e2df; padding-top: 7px; min-width: 0; break-inside: avoid; }
+.qp-terms dt { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: #4b5c57; }
+.qp-terms dd { margin: 2px 0 0; font-size: 12.5px; white-space: pre-line; overflow-wrap: anywhere; }
+.qp-client-note { margin: 0; font-size: 12.5px; white-space: pre-line; }
+
+.qp-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding-top: 16px; }
+.qp-foot .qp-right { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+
+.qp-watermark {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-28deg);
+  font-size: 110px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: rgba(180, 83, 9, 0.12);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+  z-index: 0;
+}
+
+@media print {
+  @page { size: A4; margin: 14mm 14mm 16mm; }
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+  /* Only the quote prints: the app (menu, tabs, Cotizador) and anything else on the page are hidden. */
+  body > *:not(.qp-root) { display: none !important; }
+  .qp-root {
+    position: static !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .qp-root * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .qp-toolbar { display: none !important; }
+  .qp-sheet {
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+    border-top: 0;
+    /* Block, not flex, so the browser breaks the table across pages cleanly. */
+    display: block;
+  }
+  .qp-sheet > * + * { margin-top: 18px; }
+  /* The header row repeats on each page; a line never splits across two. */
+  .qp-lines thead { display: table-header-group; }
+  .qp-lines tr { break-inside: avoid; page-break-inside: avoid; }
+  .qp-avoid { break-inside: avoid; page-break-inside: avoid; }
+  /* A draft says so on every page. */
+  .qp-watermark { position: fixed; top: 45%; }
+}

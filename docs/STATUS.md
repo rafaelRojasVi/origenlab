@@ -3076,3 +3076,20 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
 - No migration, no new route, no proxy change (same paths). Tests: API DB tests in
   `test_v2_quote_commands.py` and `test_v2_case_command_boundary.py`; vitest
   `NewQuoteDialog.test.tsx`, `AssignInstitution.test.tsx`.
+
+### 2.7.130 Cotizador «Vista previa PDF»: the client's quote, printed by the browser, 2026-10-17 — built, deploys with the dashboard on merge
+
+- **«Vista previa PDF»** is on for a draft, an approved and a sent revision (`QuotePrintView`, a
+  full-screen A4 document over the page). «Imprimir / Guardar PDF» calls `window.print()`; the
+  print stylesheet (`quotePrint.css`) hides the app and prints the document only, its table header
+  repeating on each page. The window title («Cotización CN01272 — <institución>») names the file.
+- **What it prints** (`printableQuote`): number, date, «Válida hasta», institution and RUT,
+  recipient, the item lines (description, model from the catalog index when known, note,
+  quantity, unit price, total), Neto / IVA / Total as the API stored or previewed them, the
+  conditions that are set, «Aprobada por», and contacto@origenlab.cl · www.origenlab.cl. An issued
+  revision prints its stored lines and `party_snapshot`; a draft prints the live editor, marked
+  «BORRADOR», and cannot be printed while its prices are missing or updating. Import-expense
+  (`logistics`) lines, costs, recargos, margins, suppliers and exchange rates are never copied
+  into the view.
+- No API change, no migration, no proxy change. Tests: vitest `QuotePrintView.test.tsx`,
+  `CotizadorPage.test.tsx`.
