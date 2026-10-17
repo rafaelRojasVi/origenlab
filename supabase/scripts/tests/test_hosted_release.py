@@ -769,27 +769,37 @@ class SelectiveRelease(unittest.TestCase):
         self.assertNotIn("paths", trigger.split("pull_request", 1)[0])
 
     def test_migration_plan_reports_its_pending_count_read_only(self):
-        with tempfile.TemporaryDirectory() as directory:
-            out = Path(directory) / "output"
-            rows = migrations.chain(ROOT)
-            answers = ["origenlab_migrator|postgres|true|170006|true|true|true",
-                       "\n".join(v for v, _, _ in rows)]
-            sessions = []
+        rows = migrations.chain(ROOT)
+        answers = ["origenlab_migrator|postgres|true|170006|true|true|true",
+                   "\n".join(v for v, _, _ in rows)]
+        def run_plan(read_only_setting):
+            sessions, queue = [], list(answers)
             def fake_psql(env, *args):
-                sessions.append(env.get("PGOPTIONS", ""))
-                return answers.pop(0)
-            env = dict(GITHUB_REF="refs/heads/main", GITHUB_OUTPUT=str(out), RUNNER_TEMP=directory)
-            with mock.patch.dict(os.environ, env), mock.patch.object(migrations, "database_env", return_value={}), \
-                 mock.patch.object(migrations, "psql", side_effect=fake_psql):
-                migrations.run("plan")
-            self.assertEqual(out.read_text(), "pending_migrations=0\n")
-            # Every plan session is read-only: plan cannot write even with a bug.
-            self.assertEqual(len(sessions), 2)
-            for options in sessions:
-                self.assertIn("-c default_transaction_read_only=on", options)
-        workflow = (ROOT / ".github/workflows/production-db-migrations.yml").read_text()
-        step = workflow.split("- name: Read-only hosted migration plan", 1)[1].split("- name:", 1)[0]
-        self.assertIn('PGOPTIONS: "-c default_transaction_read_only=on"', step)
+                sessions.append(args)
+                return f"transaction_read_only={read_only_setting}\n" + queue.pop(0)
+            with tempfile.TemporaryDirectory() as directory:
+                out = Path(directory) / "output"
+                env = dict(GITHUB_REF="refs/heads/main", GITHUB_OUTPUT=str(out), RUNNER_TEMP=directory)
+                with mock.patch.dict(os.environ, env), mock.patch.object(migrations, "database_env", return_value={}), \
+                     mock.patch.object(migrations, "psql", side_effect=fake_psql):
+                    migrations.run("plan")
+                return sessions, out.read_text()
+        sessions, output = run_plan("on")
+        self.assertEqual(output, "pending_migrations=0\n")
+        # Every plan read: one psql session, one transaction, made read-only inside the session
+        # before the query and proved by reading the setting back (the pooler drops options).
+        self.assertEqual(len(sessions), 2)
+        for args in sessions:
+            self.assertIn("--single-transaction", args)
+            commands = [args[i + 1] for i, a in enumerate(args) if a == "-c"]
+            self.assertEqual(commands[0], "set transaction read only")
+            self.assertIn("current_setting('transaction_read_only')", commands[1])
+            self.assertEqual(len(commands), 3)
+            self.assertNotIn("PGOPTIONS", "".join(args))
+        with self.assertRaisesRegex(migrations.Refused, "not read-only"):
+            run_plan("off")
+        self.assertNotIn("PGOPTIONS", (SCRIPT_DIR / "hosted_migrations.py").read_text().split("def run(", 1)[1])
+        self.assertNotIn("PGOPTIONS", (ROOT / ".github/workflows/production-db-migrations.yml").read_text())
 
     def test_lint_runs_the_public_repo_hygiene_scan(self):
         # supabase does not bind most releases; the always-required lint workflow carries the scan.
