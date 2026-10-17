@@ -258,7 +258,8 @@ export function LineRow({
   const rowProblems = problems.filter((p) => p.field.startsWith("items."));
   // A value with a problem is shown as typed, never re-formatted.
   const priceProblem = rowProblems.some((p) => p.field === "items.typed_unit_price");
-  const showNote = noteOpen || !!item.line_note_es;
+  // A free line has no catalog text: its description box is always there. A catalog line opens it on demand.
+  const showNote = noteOpen || !!item.line_note_es || free;
   const recargoDefault = item.margin_pct ? undefined : decimalToPercentText(line?.margin_pct) || undefined;
   const typedCost = item.unit_cost != null || item.cost_currency != null;
   const costInputs = free || typedCost || costOpen || (line !== null && !line.cost_currency);
@@ -474,15 +475,30 @@ export function LineRow({
       </div>
 
       {/* The line's note and problems: under both tiers, not a column of their own. */}
+      {!showNote && !disabled ? (
+        <div className="mt-1 pl-[52px]">
+          <button
+            type="button"
+            onClick={() => {
+              focusNote.current = true;
+              setNoteOpen(true);
+            }}
+            className="min-h-[32px] text-[12.5px] font-semibold text-brand-700 hover:underline"
+          >
+            + Descripción para el cliente
+          </button>
+        </div>
+      ) : null}
       {showNote || rowProblems.length ? (
         <div className="mt-2 space-y-1.5 pl-[52px]">
           {showNote ? (
             <label className="flex flex-col gap-1 text-[12.5px] text-ink-muted">
-              <span>Nota para el cliente, línea {n} (sale en el PDF)</span>
+              <span>Descripción para el cliente, línea {n} (sale en el PDF bajo el producto)</span>
               <textarea
                 ref={note}
-                rows={2}
+                rows={free ? 3 : 2}
                 value={item.line_note_es ?? ""}
+                placeholder={free ? "Qué es, especificaciones, qué incluye…" : "Detalle que verá el cliente"}
                 disabled={disabled}
                 onChange={(e) => onPatch({ line_note_es: e.target.value })}
                 className="resize-y rounded-md border border-line-strong bg-canvas-raised px-2.5 py-1.5 text-[13px] text-ink focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:opacity-50"

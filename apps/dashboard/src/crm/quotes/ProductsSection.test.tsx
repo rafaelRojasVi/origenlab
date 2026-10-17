@@ -225,6 +225,15 @@ describe("ProductsSection — adding products", () => {
     expect(latest.draft.items[2].description).toBe("Instalación de prueba");
     expect(screen.queryByText("Escribe la descripción de la línea 3.")).not.toBeInTheDocument();
   });
+
+  it("shows a free line's client description box at once, and offers one on a catalog line", async () => {
+    const { latest } = await setup();
+    fireEvent.click(screen.getByRole("button", { name: "+ Línea libre (sin catálogo)" }));
+    const box = screen.getByLabelText("Descripción para el cliente, línea 3 (sale en el PDF bajo el producto)");
+    fireEvent.change(box, { target: { value: "Equipo de prueba, 230 V, con accesorios" } });
+    expect(latest.draft.items[2].line_note_es).toBe("Equipo de prueba, 230 V, con accesorios");
+    expect(screen.getAllByRole("button", { name: "+ Descripción para el cliente" }).length).toBeGreaterThan(0);
+  });
 });
 
 describe("ProductsSection — the table", () => {
@@ -364,7 +373,7 @@ describe("ProductsSection — the table", () => {
     const { latest } = await setup();
     fireEvent.click(screen.getByRole("button", { name: "Más acciones de la línea 1" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Nota para el cliente" }));
-    const note = screen.getByLabelText("Nota para el cliente, línea 1 (sale en el PDF)");
+    const note = screen.getByLabelText("Descripción para el cliente, línea 1 (sale en el PDF bajo el producto)");
     expect(note).toHaveFocus();
     fireEvent.change(note, { target: { value: "Incluye capacitación de prueba." } });
     expect(latest.draft.items[0].line_note_es).toBe("Incluye capacitación de prueba.");
@@ -450,7 +459,7 @@ describe("ProductsSection — each row keeps its own numbers", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Nota para el cliente" }));
     fireEvent.click(screen.getByRole("button", { name: "Más acciones de la línea 1" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Quitar" }));
-    expect(screen.getByLabelText("Nota para el cliente, línea 1 (sale en el PDF)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Descripción para el cliente, línea 1 (sale en el PDF bajo el producto)")).toBeInTheDocument();
   });
 });
 
