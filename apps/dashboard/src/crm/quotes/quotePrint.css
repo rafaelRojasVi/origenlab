@@ -141,6 +141,7 @@
 .qp-terms dd { margin: 2px 0 0; font-size: 12.5px; white-space: pre-line; overflow-wrap: anywhere; }
 .qp-client-note { margin: 0; font-size: 12.5px; white-space: pre-line; }
 
+.qp-sign { margin-top: 28px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; break-inside: avoid; }
 .qp-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding-top: 16px; }
 .qp-foot .qp-right { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
 
