@@ -169,6 +169,8 @@
   /* margin 0: the browser has no room for its own date/title/URL/page line; the sheet keeps the margins. */
   @page { size: A4; margin: 0; }
   html, body {
+    margin: 0 !important;
+    padding: 0 !important;
     height: auto !important;
     overflow: visible !important;
     background: #ffffff !important;
@@ -177,6 +179,8 @@
   body > *:not(.qp-root) { display: none !important; }
   .qp-root {
     position: static !important;
+    margin: 0 !important;
+    padding: 0 !important;
     overflow: visible !important;
     background: #ffffff !important;
     -webkit-print-color-adjust: exact;
@@ -185,12 +189,13 @@
   .qp-root * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .qp-toolbar { display: none !important; }
   .qp-sheet {
-    width: auto;
+    width: 210mm;
     min-height: 0;
     margin: 0;
     padding: 14mm 14mm 14mm;
     box-shadow: none;
-    border-top: 0;
+    /* The green line along the top prints too (owner, 2026-10-17); the page has no margin, so it sits on the edge. */
+    border-top: 6px solid #0f766e;
     /* One A4 page tall at least, so the signature and contact sit at the foot of the page (owner,
        2026-10-17); a longer quote simply grows onto more pages. 296mm, not 297, so rounding never
        adds a blank page. */
