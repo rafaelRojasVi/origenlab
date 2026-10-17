@@ -2181,7 +2181,7 @@ not re-read):
 | Code | Meaning |
 |---|---|
 | `not_origenlab_quote` | the model says it is not an OrigenLab quotation, or Labdelivery issued it (`keys.labdelivery_issued`): its name — letter-spaced spellings included — anywhere in the text but the old OrigenLab template's footer (the old address line, then `Celular: (09) … www.labdelivery.cl`). That footer is exempt since v2 only when it is the one real footer, pinned by the SHA-256 of its folded text (`OLD_TEMPLATE_FOOTER_SHA256`; the plaintext is not in the public repository), and the page names OrigenLab elsewhere. Also: Labdelivery's name in any string the reader would write |
-| `footer_copied` | a string the reader would write (a line, the quote number) repeats the old footer's address, street, phone label or one of its numbers of 6+ digits (`keys.copies_old_footer`) — nothing of the footer is ever stored |
+| `footer_copied` | a string the reader would write (a line, the quote number) repeats the old footer's address, street, phone label, any comma-separated address segment holding a digit (street and number, office), one of its numbers of 6+ digits or any 7 consecutive digits of one (`keys.copies_old_footer`) — nothing of the footer is ever stored |
 | `too_many_disputed` | more than a third of the cross-checked lines disagree with the PDF's text |
 | `net_mismatch` | the printed neto is more than 1 % off the sum of the non-optional lines, and also off the sum of all lines with the optional ones (since v2 a neto that matches only with them is read as printed and the document's payload carries `net_includes_optional: true`; the run's log counts them) |
 | `model_refused` / `unreadable` | the model refused or truncated, the answer did not validate, or no line carries a total |

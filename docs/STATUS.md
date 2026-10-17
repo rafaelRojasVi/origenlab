@@ -3010,7 +3010,7 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
   footer.
 - **Nothing of the footer is stored.** Every string written — each line's and the document
   payload's — is refused by `is_labdelivery`, and a document whose strings repeat the footer's
-  address, street, phone label or a 6+-digit number of it is refused too: the reader's new code
+  address, street, an address segment with a digit (street and number, office), phone label, a 6+-digit number of it or any 7 consecutive digits of one is refused too: the reader's new code
   `footer_copied` («El lector copió el pie de página antiguo en una línea»), the importer's
   `skipped_footer_copied`.
 - **A neto that includes the optional lines is accepted.** When the printed neto is more than 1 %

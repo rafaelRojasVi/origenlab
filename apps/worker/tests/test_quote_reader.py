@@ -370,8 +370,13 @@ _L0, _L1 = _extraction()["lines"]
     {"lines": [{**_L0, "brand": "Fono 8123-4567"}, _L1]},
     {"quote_number": "(56-2) 21234567"},
     {"lines": [{**_L0, "description": "Celular: (09) 81234567"}, _L1]},
+    {"lines": [{**_L0, "description": "Entregar en Calle Inventada 123"}, _L1]},
+    {"lines": [{**_L0, "description": "Calle Inventada 123, Of. 45"}, _L1]},
+    {"lines": [{**_L0, "model": "1234567"}, _L1]},
+    {"quote_number": "8123456"},
 ], ids=["address_in_description", "address_as_extra_line", "street", "phone_in_model", "phone_split", "phone_in_quote_number",
-        "celular_without_url"])
+        "celular_without_url", "street_and_number", "street_and_office", "seven_digits_in_model",
+        "seven_digits_in_quote_number"])
 def test_a_document_whose_answer_copies_the_old_footer_is_refused_as_footer_copied(pinned_footer, over) -> None:
     with pytest.raises(ReadRefused) as caught:
         read_document(b"x", SHA, reader=Reader(_message(_extraction(**over))), model=MODEL, text=TEXT + OLD_FOOTER)

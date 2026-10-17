@@ -115,6 +115,8 @@ _DIGIT_GROUPS = re.compile(r"\d+(?: \d+)*")
 _BETWEEN_DIGITS = re.compile(r"(?<=\d)[\s.\-()/+]+(?=\d)")
 #: A footer number shorter than this is not an identity (`(09)`, `56-2`, a street number).
 _MIN_FOOTER_DIGITS = 6
+#: A run of this many consecutive digits taken from a longer footer number is that number, copied.
+_PIECE_DIGITS = 7
 
 
 def footer_sha256(address: str, celular: str) -> str:
@@ -168,17 +170,22 @@ def labdelivery_issued(text: str | None) -> bool:
 
 def old_footer_identities(text: str | None) -> frozenset[str]:
     """What a pinned old-template footer in `text` identifies, normalised, for `copies_old_footer`:
-    its folded address line, street and phone label, and every number of 6 or more digits on it."""
+    its folded address line, street and phone label; each comma-separated segment of the address
+    line that holds a digit (the street and number, the office, the phone); every number of 6 or
+    more digits on it, and every 7-digit piece of the longer ones (so any run of 7+ consecutive
+    digits taken from a footer number is caught)."""
     if not text:
         return frozenset()
     found: set[str] = set()
     for _, address, celular in _old_footers(_lines(text)):
         found |= {_fold(address["address"]), _fold(address["street"]), _fold(celular["phone"])}
+        found |= {_fold(segment) for segment in address["address"].split(",") if re.search(r"\d", segment)}
         for part in (address["address"], celular["celular"]):
             for group in _DIGIT_GROUPS.findall(part):
                 digits = group.replace(" ", "")
                 if len(digits) >= _MIN_FOOTER_DIGITS:
                     found.add(digits)
+                found |= {digits[n:n + _PIECE_DIGITS] for n in range(len(digits) - _PIECE_DIGITS + 1)}
     return frozenset(i for i in found if i)
 
 

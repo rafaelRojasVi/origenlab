@@ -274,7 +274,12 @@ def test_an_unpinned_footer_or_one_without_origenlab_elsewhere_is_skipped(tmp_pa
     ({"model": "(09) 81234567"}, {}),
     ({"description": "Celular: (09) 8123 4567"}, {}),
     ({}, {"quote_number": "(56-2) 21234567"}),
-], ids=["url_line", "address_in_description", "street", "phone_in_model", "celular_without_url", "phone_in_quote_number"])
+    ({"description": "Entregar en Calle Inventada 123"}, {}),
+    ({"description": "Calle Inventada 123, Of. 45"}, {}),
+    ({"model": "1234567"}, {}),
+    ({}, {"quote_number": "8123456"}),
+], ids=["url_line", "address_in_description", "street", "phone_in_model", "celular_without_url", "phone_in_quote_number",
+        "street_and_number", "street_and_office", "seven_digits_in_model", "seven_digits_in_quote_number"])
 def test_a_document_whose_extraction_copies_the_footer_is_skipped_as_footer_copied(
         tmp_path, pinned_footer, line_over, doc_over) -> None:
     copied, clean = _sha(), _sha()
@@ -293,6 +298,7 @@ def test_a_document_whose_extraction_copies_the_footer_is_skipped_as_footer_copi
     assert [s["reason"] for s in plan["skipped"]] == ["footer_copied"]
     whole = (tmp_path / "out" / "plan.json").read_text(encoding="utf-8")
     assert "81234567" not in whole and "21234567" not in whole and "Calle Inventada" not in whole
+    assert "1234567" not in whole and "8123456" not in whole
 
 
 def test_item_and_total_matches_are_counted_by_reason(tmp_path) -> None:

@@ -209,12 +209,14 @@ def test_the_footer_identities_are_its_address_street_phone_label_and_long_numbe
 @pytest.mark.parametrize("value", [
     ADDRESS, "Calle Inventada 123, Of. 45, Comuna Ficticia", "(09) 81234567", "Celular: (09) 81234567",
     "(56-2) 21234567", "+56 2 2123 4567", "2123-4567", "Equipo — llamar al 8123 4567",
+    "Calle Inventada 123", "Entrega en Calle Inventada 123, Of. 45", "Of. 45", "1234567", "ref 8123456",
 ])
 def test_a_string_that_copies_the_footer_is_caught(pinned, value):
     assert keys.copies_old_footer(value, keys.old_footer_identities(HEADER + BODY + FOOTER))
 
 
-@pytest.mark.parametrize("value", ["Equipo sintético de prueba", "ACME-1", "00000-26", "Comuna", "1234567", None, ""])
+@pytest.mark.parametrize("value", ["Equipo sintético de prueba", "ACME-1", "00000-26", "Comuna", "123456", "Calle Inventada",
+                                   "Calle Inventada 1234", "Of. 450", None, ""])
 def test_an_ordinary_string_is_not_a_footer_copy(pinned, value):
     assert not keys.copies_old_footer(value, keys.old_footer_identities(HEADER + BODY + FOOTER))
     assert not keys.copies_old_footer(ADDRESS, frozenset())
