@@ -27,10 +27,12 @@ from origenlab_api.v2.catalog.keys import refuse_labdelivery
 
 PLAN_VERSION = 1
 #: Dependency order: an item may only reference items of an earlier action.
-ACTION_ORDER = ("create_org", "create_product", "add_observation", "set_terms", "set_cost_parameter",
-                "add_quote_document", "add_product_document", "merge_maker", "add_model_alias")
-Action = Literal["create_org", "create_product", "add_observation", "set_terms", "set_cost_parameter",
-                 "add_quote_document", "add_product_document", "merge_maker", "add_model_alias"]
+#: The organization roles and domains (`add_org_role`, `add_org_domain`) follow the organizations they
+#: name; a plan without them sorts exactly as before.
+ACTION_ORDER = ("create_org", "add_org_role", "add_org_domain", "create_product", "add_observation", "set_terms",
+                "set_cost_parameter", "add_quote_document", "add_product_document", "merge_maker", "add_model_alias")
+Action = Literal["create_org", "add_org_role", "add_org_domain", "create_product", "add_observation", "set_terms",
+                 "set_cost_parameter", "add_quote_document", "add_product_document", "merge_maker", "add_model_alias"]
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _NON_ALNUM = re.compile(r"[\W_]+")
 

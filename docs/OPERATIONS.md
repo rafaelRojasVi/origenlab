@@ -2425,6 +2425,18 @@ writes a row per key, even where the value equals what the previous run left.
 each month with `POST /v2/commands/set-cost-parameter` (key `dhl_fuel_surcharge_pct`, a fraction,
 and a reason such as the month). The old value stays in the history.
 
+- **Products from sent quotes** (`import_quote_products.py`, 2026-10-16): a private manifest
+  `{"makers": [{"name", "domain"|null}], "manufacturer_role": [{"name"}], "products": [{"maker",
+  "model_number", "name_es", "product_kind", "reason"}]}` → the makers (reused when a live
+  organization has the folded name, else created as kind `manufacturer`), the `manufacturer` role
+  (`crm.organization_relationship`, only if not in force) for every maker and every
+  `manufacturer_role` name, each maker's domain (`shared`), and the products
+  (`content_origin = 'import'`, `name_es`, the reason as the `product.created` note); a maker+model
+  key already present is `already_present`. A name in `manufacturer_role`, or a product's maker
+  listed in neither section, must already exist (apply refuses before writing). No cost is
+  written; plan → verify → apply → verify with the hosted route of §14.5; rollback removes exactly
+  what it created.
+
 ### 14.4 The enrichment tool
 
 `apps/api/scripts/catalog/enrich_products.py` proposes Spanish content and manufacturer images
