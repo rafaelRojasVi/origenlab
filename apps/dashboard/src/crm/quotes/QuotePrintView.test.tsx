@@ -147,9 +147,9 @@ describe("Vista previa PDF — an approved revision", () => {
     expect(sheet.getByText("Precios en pesos chilenos.")).toBeInTheDocument();
     // The paper is signed by the issuer; who approved stays in the dashboard.
     expect(sheet.queryByText("Aprobada por Rafa Prueba")).toBeNull();
-    expect(sheet.getByText("Atte.,")).toBeInTheDocument();
-    expect(sheet.getByText("TATIANA VIVANCO")).toBeInTheDocument();
-    expect(sheet.getByText("BIOQUÍMICO")).toBeInTheDocument();
+    expect(sheet.getByText("Atentamente,")).toBeInTheDocument();
+    expect(sheet.getByText("Tatiana Vivanco")).toBeInTheDocument();
+    expect(sheet.getByText("Bioquímico · OrigenLab")).toBeInTheDocument();
     expect(sheet.getByText("www.origenlab.cl · Horario: 09:00-18:00")).toBeInTheDocument();
     expect(sheet.getByText("contacto@origenlab.cl · +56 9 6256 7816")).toBeInTheDocument();
     expect(sheet.queryByText(/BORRADOR/)).not.toBeInTheDocument();

@@ -20,8 +20,8 @@ import "./quotePrint.css";
 
 /** Who signs and how OrigenLab is reached, printed on every quote. */
 export const ISSUER = {
-  signer: "TATIANA VIVANCO",
-  title: "BIOQUÍMICO",
+  signer: "Tatiana Vivanco",
+  title: "Bioquímico · OrigenLab",
   contactLines: [
     "Tatiana Vivanco - OrigenLab",
     "Casa Matriz: Oettinger 51, D206, Valdivia",
@@ -234,9 +234,10 @@ export function QuotePrintView({
             (owner, 2026-10-17). Public contact data, as apps/web/src/data/contact.ts. */}
         <footer className="qp-foot qp-avoid">
           <div className="qp-sign" aria-label="Firma">
-            <span>Atte.,</span>
-            <span className="qp-strong">{ISSUER.signer}</span>
-            <span className="qp-strong">{ISSUER.title}</span>
+            <span className="qp-sign-greet">Atentamente,</span>
+            <span className="qp-sign-line" aria-hidden="true" />
+            <span className="qp-sign-name">{ISSUER.signer}</span>
+            <span className="qp-sign-title">{ISSUER.title}</span>
             {quote.draft ? <span className="qp-strong qp-draft-note">Borrador sin aprobar: no válido como cotización.</span> : null}
           </div>
           <div className="qp-muted qp-right">
