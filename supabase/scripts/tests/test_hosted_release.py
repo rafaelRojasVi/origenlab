@@ -715,6 +715,25 @@ class SelectiveRelease(unittest.TestCase):
         with self.assertRaises(ci.CIRefused):
             ci.check_runs(others, required=without - {"api"})
 
+    def test_the_inline_release_result_step_agrees_with_release_result_py(self):
+        import itertools, re, subprocess
+        workflow = (ROOT / ".github/workflows/production-db-migrations.yml").read_text()
+        block = workflow[workflow.index("  release-result:"):]
+        script = block[block.index("run: |") + len("run: |"):]
+        script = "\n".join(line[10:] for line in script.splitlines() if line.startswith("          ") or not line.strip())
+        results = ["success", "skipped", "failure", "cancelled", ""]
+        for pre, pend, back, mig, dep, ver in itertools.product(
+                ["success", "failure"], ["0", "2", "", "x"], results, results, ["success", "skipped"], ["success", "failure"]):
+            env = {"PATH": os.environ.get("PATH", ""), "PREFLIGHT_RESULT": pre, "PENDING_MIGRATIONS": pend,
+                   "BACKUP_RESULT": back, "MIGRATE_RESULT": mig, "DEPLOY_RESULT": dep, "VERIFY_RESULT": ver}
+            shell = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+            try:
+                result_mod.outcome(pre, pend, back, mig, dep, ver)
+                expected = 0
+            except result_mod.ReleaseIncomplete:
+                expected = 1
+            self.assertEqual(shell.returncode, expected, (pre, pend, back, mig, dep, ver, shell.stderr))
+
     def test_release_result_skip_counts_only_with_zero_pending(self):
         ok = result_mod.outcome
         self.assertIn("skipped", ok("success", "0", "skipped", "skipped", "success", "success"))
@@ -754,7 +773,8 @@ class SelectiveRelease(unittest.TestCase):
         self.assertIn("needs.deploy.result == 'success'", job("verify"))
         self.assertIn("OL_RELEASE_PLAN: ${{ needs.preflight.outputs.release_plan }}", job("verify"))
         result = job("release-result")
-        self.assertIn("python3 scripts/deploy/release_result.py", result)
+        self.assertNotIn("actions/checkout", result)  # no repository code in the workflow_run result job
+        self.assertIn('fail "migrate ran without its backup"', result)
         self.assertIn("PENDING_MIGRATIONS: ${{ needs.preflight.outputs.pending_migrations }}", result)
         self.assertNotIn("test \"$BACKUP_RESULT\"", result)
         self.assertIn('workflows: ["secret-scan"]', workflow)

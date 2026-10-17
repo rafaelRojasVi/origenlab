@@ -375,12 +375,11 @@ jobs:
     if: always() && needs.preflight.outputs.mode == 'release'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.preflight.outputs.sha }}
-          persist-credentials: false
+      # No checkout: this job runs no repository code (a checked-out script in a workflow_run job is
+      # a cache-poisoning surface). The logic mirrors scripts/deploy/release_result.py, and
+      # test_hosted_release.py runs this exact step against that script's cases.
       # A skip counts only when the preflight plan reported exactly "0" pending migrations;
-      # a failure, cancellation or missing result is never a skip (scripts/deploy/release_result.py).
+      # a failure, cancellation or missing result is never a skip.
       - name: Never label a partial or skipped release successful
         env:
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
@@ -389,4 +388,20 @@ jobs:
           MIGRATE_RESULT: ${{ needs.migrate.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
           VERIFY_RESULT: ${{ needs.verify.result }}
-        run: python3 scripts/deploy/release_result.py
+        run: |
+          fail() { echo "RELEASE INCOMPLETE: $1" >&2; exit 1; }
+          [ "$PREFLIGHT_RESULT" = success ] || fail "preflight did not succeed (${PREFLIGHT_RESULT:-missing})"
+          [ "$DEPLOY_RESULT" = success ] || fail "deploy did not succeed (${DEPLOY_RESULT:-missing})"
+          [ "$VERIFY_RESULT" = success ] || fail "verify did not succeed (${VERIFY_RESULT:-missing})"
+          if [ "$PENDING_MIGRATIONS" = "0" ]; then
+            case "$BACKUP_RESULT" in skipped|success) ;; *) fail "backup did not succeed or skip deliberately (${BACKUP_RESULT:-missing})";; esac
+            case "$MIGRATE_RESULT" in skipped|success) ;; *) fail "migrate did not succeed or skip deliberately (${MIGRATE_RESULT:-missing})";; esac
+            if [ "$BACKUP_RESULT" = skipped ] && [ "$MIGRATE_RESULT" = success ]; then fail "migrate ran without its backup"; fi
+            if [ "$BACKUP_RESULT" = skipped ] && [ "$MIGRATE_RESULT" = skipped ]; then
+              echo "Release complete: no pending migration (backup and migrate skipped), deployment and postflight passed"; exit 0
+            fi
+          else
+            [ "$BACKUP_RESULT" = success ] || fail "backup did not succeed (${BACKUP_RESULT:-missing}) with pending migrations ${PENDING_MIGRATIONS:-unknown}"
+            [ "$MIGRATE_RESULT" = success ] || fail "migrate did not succeed (${MIGRATE_RESULT:-missing}) with pending migrations ${PENDING_MIGRATIONS:-unknown}"
+          fi
+          echo "Release complete: backup, migration, deployment and postflight passed"
