@@ -194,7 +194,8 @@ function CotizadorWorkspace({
   onMeta?: (meta: TabMeta) => void;
 }) {
   const editor = useQuoteDraft(workspace);
-  const [clientView, setClientView] = useState(false);
+  // «Vista cliente» was removed from the header; the editor always shows the internal view.
+  const clientView = false;
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [problems, setProblems] = useState<Problems | null>(null);
   const [approving, setApproving] = useState(false);
@@ -267,7 +268,7 @@ function CotizadorWorkspace({
 
   const approve = async () => {
     if (editor.invalid.length) {
-      setProblems({ title: "No se pudo aprobar", items: [...new Set(editor.invalid.map((p) => p.message_es))] });
+      setProblems({ title: "No se pudo emitir", items: [...new Set(editor.invalid.map((p) => p.message_es))] });
       return;
     }
     setProblems(null);
@@ -275,9 +276,11 @@ function CotizadorWorkspace({
     try {
       const res = await editor.approve();
       setViewingId(null);
-      toast(`Cotización aprobada · ${quoteLabel({ label: res.revision_label, quote_number: res.quote_number })}`);
+      toast(`Cotización emitida · ${quoteLabel({ label: res.revision_label, quote_number: res.quote_number })}`);
+      // «Emitir cotización»: approved, so the PDF opens at once, ready to save and send.
+      setPrinting(true);
     } catch (e) {
-      setProblems({ title: "No se pudo aprobar", items: refusalLines(e, "No se pudo aprobar. Intenta de nuevo.") });
+      setProblems({ title: "No se pudo emitir", items: refusalLines(e, "No se pudo emitir. Intenta de nuevo.") });
     } finally {
       setApproving(false);
     }
@@ -356,11 +359,10 @@ function CotizadorWorkspace({
   ) : null;
   const printable = printing ? printableQuote(ws, authored ? { state, stale: editor.stale } : null) : null;
   // I3: «Vista cliente» is the page's, for the draft and an issued revision alike.
-  const clientToggle = cur ? <ClientViewToggle on={clientView} onChange={setClientView} /> : null;
+  // «Vista cliente» left the header (owner, 2026-10-17): «Vista previa PDF» is the client's view.
   const actions = cur ? (
     authored ? (
       <>
-        {clientToggle}
         {voidable(cur) ? (
           <Button
             variant="danger"
@@ -376,16 +378,15 @@ function CotizadorWorkspace({
           variant="primary"
           className="min-h-[44px] px-[18px] text-[14px]"
           busy={approving}
-          busyLabel="Aprobando…"
+          busyLabel="Emitiendo…"
           disabled={!editor.editable || revising || voiding}
           onClick={() => void approve()}
         >
-          Aprobar
+          Emitir cotización
         </Button>
       </>
     ) : (
       <>
-        {clientToggle}
         {voidable(cur) ? (
           <Button
             variant="danger"
@@ -582,23 +583,6 @@ function ConflictBanner({ gone, onReload }: { gone: boolean; onReload: () => Pro
         {gone ? "Ver estado actual" : "Ver cambios"}
       </Button>
     </div>
-  );
-}
-
-/** «Vista cliente» (B7): hides costs, margins and internal cards, for sharing the screen with the client. */
-function ClientViewToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      title={on ? "Vista cliente: sin costos ni márgenes" : "Oculta costos y márgenes para compartir la pantalla"}
-      onClick={() => onChange(!on)}
-      className={`inline-flex min-h-[44px] items-center gap-2 rounded-md border px-4 text-[14px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
-        on ? "border-brand-700 bg-brand-700 text-white" : "border-line-strong bg-canvas-raised text-ink hover:bg-canvas-sunken"
-      }`}
-    >
-      Vista cliente
-    </button>
   );
 }
 

@@ -283,16 +283,6 @@ describe("Cotizador page — the draft editor", () => {
     expect(screen.getByLabelText("Cantidad de la línea 1")).toBeEnabled();
   });
 
-  it("hides costs and margins in «Vista cliente»", async () => {
-    stubApi(() => json({}));
-    renderPage();
-    expect(await screen.findByRole("heading", { level: 2, name: "Gastos de importación" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Vista cliente" }));
-    expect(screen.queryByRole("columnheader", { name: "Costo unit." })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { level: 2, name: "Gastos de importación" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Condiciones" })).toBeInTheDocument();
-  });
-
   it("saves a condition and a switch to manual expenses, without the editor's row ids", async () => {
     fakeTimers();
     const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }));
@@ -347,15 +337,12 @@ describe("Cotizador page — the draft editor", () => {
     expect(await screen.findByText(/no se pudo guardar: Falta configurar la numeración\./)).toBeInTheDocument();
   });
 
-  it("shows the totals and the margin beside the editor, and hides the margin in «Vista cliente»", async () => {
+  it("shows the totals and the margin beside the editor", async () => {
     stubApi(() => json({}));
     renderPage();
     const totals = await screen.findByRole("region", { name: "Totales" });
     expect(within(totals).getByText("Total").nextSibling).toHaveTextContent("$ 119.000");
     expect(within(totals).getByText("Margen bruto")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Vista cliente" }));
-    expect(screen.queryByText("Margen bruto")).not.toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "Totales" })).getByText("Total")).toBeInTheDocument();
   });
 
   it("«Guardar ahora» saves a draft whose prices changed since its last save (B4)", async () => {
@@ -468,12 +455,12 @@ function issuedWorkspace(over: { status?: string; superseded_by_revision_no?: nu
 const approved = (version = 5) => json({ ok: true, revision_id: "r-1", version, quote_number: "00042-26", revision_label: "00042-26", negotiated_costs_skipped: [] });
 
 describe("Cotizador page — approving a draft", () => {
-  it("offers «Aprobar» and «Vista previa PDF», which opens the draft's document marked BORRADOR", async () => {
+  it("offers «Emitir cotización» and «Vista previa PDF», which opens the draft's document marked BORRADOR", async () => {
     stubApi(() => json({}));
     renderPage();
     const preview = await screen.findByRole("button", { name: "Vista previa PDF" });
     expect(preview).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Aprobar" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Emitir cotización" })).toBeEnabled();
     fireEvent.click(preview);
     const dialog = await screen.findByRole("dialog", { name: /Vista previa PDF · CN00042/ });
     expect(within(dialog).getByText("BORRADOR · sin aprobar")).toBeInTheDocument();
@@ -515,13 +502,13 @@ describe("Cotizador page — approving a draft", () => {
     );
     renderPage();
     fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "3" } });
-    fireEvent.click(screen.getByRole("button", { name: "Aprobar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Emitir cotización" }));
     await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/save-quote-draft")).toBe(true));
     // While the save is in flight the button waits for it; nothing is approved yet.
-    expect(screen.getByRole("button", { name: /Aprobando/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Emitiendo/ })).toBeDisabled();
     expect(calls.some((c) => c.path === APPROVE)).toBe(false);
     releaseSave();
-    expect(await screen.findByText("Cotización aprobada · CN00042")).toBeInTheDocument();
+    expect(await screen.findByText("Cotización emitida · CN00042")).toBeInTheDocument();
     const paths = calls.filter((c) => c.method === "POST" && c.path.startsWith("/v2/commands/")).map((c) => c.path);
     expect(paths).toEqual(["/v2/commands/save-quote-draft", APPROVE]);
     expect(calls.find((c) => c.path === APPROVE)?.body).toEqual({ revision_id: "r-1", expected_version: 4 });
@@ -537,7 +524,7 @@ describe("Cotizador page — approving a draft", () => {
     };
     const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }), stale, { [APPROVE]: () => approved() });
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Aprobar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Emitir cotización" }));
     await waitFor(() => expect(calls.some((c) => c.path === APPROVE)).toBe(true));
     const paths = calls.filter((c) => c.method === "POST" && c.path.startsWith("/v2/commands/")).map((c) => c.path);
     expect(paths).toEqual(["/v2/commands/save-quote-draft", APPROVE]);
@@ -549,13 +536,13 @@ describe("Cotizador page — approving a draft", () => {
       [APPROVE]: () => json({ detail: { code: "missing_recipient", message: "Elige a quién va la cotización · Completa el texto de «Forma de pago»" } }, 409),
     });
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Aprobar" }));
-    const alert = await screen.findByRole("alert", { name: "No se pudo aprobar" });
+    fireEvent.click(await screen.findByRole("button", { name: "Emitir cotización" }));
+    const alert = await screen.findByRole("alert", { name: "No se pudo emitir" });
     const items = within(alert).getAllByRole("listitem").map((li) => li.textContent);
     expect(items).toEqual(["Elige a quién va la cotización", "Completa el texto de «Forma de pago»"]);
-    expect(screen.getByRole("button", { name: "Aprobar" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Emitir cotización" })).toBeEnabled();
     // A second try is the same action at the same version: the same key.
-    fireEvent.click(screen.getByRole("button", { name: "Aprobar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Emitir cotización" }));
     await waitFor(() => expect(calls.filter((c) => c.path === APPROVE)).toHaveLength(2));
     const keys = calls.filter((c) => c.path === APPROVE).map((c) => c.key);
     expect(keys[0]).toBeTruthy();
@@ -566,8 +553,8 @@ describe("Cotizador page — approving a draft", () => {
     const calls = stubApi(() => json({}), editableWorkspace, { [APPROVE]: () => approved() });
     renderPage();
     fireEvent.change(await screen.findByLabelText("Cantidad de la línea 1"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Aprobar" }));
-    const alert = await screen.findByRole("alert", { name: "No se pudo aprobar" });
+    fireEvent.click(screen.getByRole("button", { name: "Emitir cotización" }));
+    const alert = await screen.findByRole("alert", { name: "No se pudo emitir" });
     expect(within(alert).getAllByRole("listitem").length).toBeGreaterThan(0);
     expect(within(alert).getByText(/cantidad/i)).toBeInTheDocument();
     expect(calls.some((c) => c.path === APPROVE || c.path === "/v2/commands/save-quote-draft")).toBe(false);
@@ -595,7 +582,7 @@ describe("Cotizador page — an approved revision, read-only", () => {
     expect(screen.getByText("Válida hasta el 15 nov 2026")).toBeInTheDocument();
     expect(screen.getByText("Aprobada por Rafa Prueba el 16 oct 2026")).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Aprobar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Emitir cotización" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Nueva revisión" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Anular" })).toBeInTheDocument();
   });
@@ -842,50 +829,12 @@ describe("Cotizador page — approved or voided in another tab (I6)", () => {
   }
 });
 
-describe("Cotizador page — «Vista cliente» in the header, on every view (I3)", () => {
-  const history = {
-    model_key: "AG100",
-    median_last_5: "1100000",
-    items: [{ date: "2025-06-02", line_total: "1200000", qty: "1", unit_price: "1200000", currency: "CLP", check_status: null, client_type: "private_company", document_number: "00002-25", case: null }],
-  };
-
-  it("an issued revision in «Vista cliente» shows no cost, margin or past prices", async () => {
-    stubApi(() => json({}), () => ({ ...issuedWorkspace(), price_history: history }));
-    renderPage();
-    await screen.findByRole("table", { name: "Líneas aprobadas" });
-    expect(screen.getByRole("region", { name: "Agitador de prueba antes" })).toBeInTheDocument();
-    const toggle = within(screen.getByTestId("cotizador-actions")).getByRole("button", { name: "Vista cliente" });
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByRole("region", { name: "Agitador de prueba antes" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Avisos" })).not.toBeInTheDocument();
-    const page = document.body.textContent ?? "";
-    for (const internal of [/costo/i, /margen/i, /recargo/i, /mediana/i, /Empresa privada/, /\bantes\b/]) expect(page).not.toMatch(internal);
-    // The client's side stays.
-    expect(screen.getByRole("region", { name: "Totales" })).toBeInTheDocument();
-    expect(screen.getByText("Agitador de prueba")).toBeInTheDocument();
-  });
-
-  it("the draft's toggle is in the header too", async () => {
+describe("Cotizador page — no «Vista cliente» (owner, 2026-10-17)", () => {
+  it("offers only «Vista previa PDF» as the client's view", async () => {
     stubApi(() => json({}));
     renderPage();
-    await screen.findByRole("heading", { level: 2, name: "Productos" });
-    const toggle = within(screen.getByTestId("cotizador-actions")).getByRole("button", { name: "Vista cliente" });
-    fireEvent.click(toggle);
-    expect(screen.queryByRole("columnheader", { name: "Costo unit." })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Vista cliente" })).toHaveLength(1);
-  });
-
-  it("hides approval's reasons in «Vista cliente» (they speak of costs)", async () => {
-    stubApi(() => json({}), editableWorkspace, {
-      [APPROVE]: () => json({ detail: { code: "unpriced_line", message: "La línea 1 no tiene precio (falta costo o precio)." } }, 409),
-    });
-    renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Aprobar" }));
-    expect(await screen.findByRole("alert", { name: "No se pudo aprobar" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Vista cliente" }));
-    expect(screen.queryByRole("alert", { name: "No se pudo aprobar" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Vista previa PDF" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Vista cliente" })).toBeNull();
   });
 });
 
@@ -947,10 +896,10 @@ describe("Cotizador page — while a command runs (M1)", () => {
     renderPage();
     const qty = await screen.findByLabelText("Cantidad de la línea 1");
     expect(qty).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Aprobar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Emitir cotización" }));
     await waitFor(() => expect(screen.getByLabelText("Cantidad de la línea 1")).toBeDisabled());
     expect(screen.getByLabelText("Plazo de entrega")).toBeDisabled();
     release();
-    expect(await screen.findByText("Cotización aprobada · CN00042")).toBeInTheDocument();
+    expect(await screen.findByText("Cotización emitida · CN00042")).toBeInTheDocument();
   });
 });

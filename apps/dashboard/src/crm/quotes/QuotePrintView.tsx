@@ -24,12 +24,9 @@ export const ISSUER = {
   title: "BIOQUÍMICO",
   contactLines: [
     "Tatiana Vivanco - OrigenLab",
-    "Casa Matriz: Oettinger 51, D206",
-    "Valdivia",
-    "contacto@origenlab.cl",
-    "+56 9 6256 7816",
-    "www.origenlab.cl",
-    "Horario: 09:00-18:00",
+    "Casa Matriz: Oettinger 51, D206, Valdivia",
+    "contacto@origenlab.cl · +56 9 6256 7816",
+    "www.origenlab.cl · Horario: 09:00-18:00",
   ],
 } as const;
 
@@ -233,17 +230,14 @@ export function QuotePrintView({
 
         {quote.clientNote ? <p className="qp-client-note">{quote.clientNote}</p> : null}
 
-        {/* The signature and the issuer's contact block (owner, 2026-10-17); the same public contact
-            data as apps/web/src/data/contact.ts. Who approved stays in the dashboard, not on paper. */}
-        <section className="qp-sign qp-avoid" aria-label="Firma">
-          <span>Atte.,</span>
-          <span className="qp-strong">{ISSUER.signer}</span>
-          <span className="qp-strong">{ISSUER.title}</span>
-        </section>
-
+        {/* Signature left, OrigenLab's contact right, in one row, so a quote fits one page
+            (owner, 2026-10-17). Public contact data, as apps/web/src/data/contact.ts. */}
         <footer className="qp-foot qp-avoid">
-          <div>
-            {quote.draft ? <span className="qp-strong">Borrador sin aprobar: no válido como cotización.</span> : null}
+          <div className="qp-sign" aria-label="Firma">
+            <span>Atte.,</span>
+            <span className="qp-strong">{ISSUER.signer}</span>
+            <span className="qp-strong">{ISSUER.title}</span>
+            {quote.draft ? <span className="qp-strong qp-draft-note">Borrador sin aprobar: no válido como cotización.</span> : null}
           </div>
           <div className="qp-muted qp-right">
             {ISSUER.contactLines.map((line) => (

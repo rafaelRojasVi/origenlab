@@ -150,9 +150,8 @@ describe("Vista previa PDF — an approved revision", () => {
     expect(sheet.getByText("Atte.,")).toBeInTheDocument();
     expect(sheet.getByText("TATIANA VIVANCO")).toBeInTheDocument();
     expect(sheet.getByText("BIOQUÍMICO")).toBeInTheDocument();
-    expect(sheet.getByText("Horario: 09:00-18:00")).toBeInTheDocument();
-    expect(sheet.getByText("contacto@origenlab.cl")).toBeInTheDocument();
-    expect(sheet.getByText("www.origenlab.cl")).toBeInTheDocument();
+    expect(sheet.getByText("www.origenlab.cl · Horario: 09:00-18:00")).toBeInTheDocument();
+    expect(sheet.getByText("contacto@origenlab.cl · +56 9 6256 7816")).toBeInTheDocument();
     expect(sheet.queryByText(/BORRADOR/)).not.toBeInTheDocument();
     expect(sheet.getByRole("button", { name: "Imprimir / Guardar PDF" })).toBeEnabled();
     expect(document.title).toBe("Cotización CN01272 — Universidad de Prueba");
