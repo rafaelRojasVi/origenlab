@@ -499,6 +499,9 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
             "margin_state": r.margin_state, "is_principal": r.is_principal,
         })
     target = expense_target(resolved, result)
+    # Local: `economics` prices stored revisions through this module.
+    from origenlab_api.v2.quotes.economics import economics_json
+
     return {
         "lines": lines,
         "expenses": [{"line_no": e.line_no, "label": e.label, "amount": _s(e.amount), "currency": e.currency,
@@ -511,6 +514,8 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
         "fx": [{"currency": f.currency, "clp_per_unit": _s(f.clp_per_unit), "as_of": f.as_of.isoformat(),
                 "source": f.source} for _, f in sorted(resolved.fx.items())],
         "warnings": [*resolved.warnings, *result.warnings],
+        # «Economía de la cotización»: sale, product cost, import costs by kind, gross margin.
+        "economics": economics_json(resolved.engine_input, result),
     }
 
 

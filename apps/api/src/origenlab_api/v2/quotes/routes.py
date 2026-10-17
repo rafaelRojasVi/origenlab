@@ -1,6 +1,6 @@
 """Quote routes, mounted only behind ORIGENLAB_V2_QUOTING_ENABLED (inside `main._mount_catalog`).
 
-Reads (`/v2/quotes`, `/v2/quotes/*`): the Cotizador is for sales and admin only — every answer carries costs and
+Reads (`/v2/quotes`, `/v2/quotes/*`, «Rentabilidad»'s `/v2/quotes/economics` among them): the Cotizador is for sales and admin only — every answer carries costs and
 margins — so a viewer gets 403 `role_may_not_view_costs` before anything is read (spec 2026-10-15
 §6: viewers do not get the Cotizador). `POST /v2/quotes/preview` is a read (R-A4): no
 Idempotency-Key, no receipt, no event, nothing written; its body is the same `QuoteDraft` the save
@@ -83,6 +83,19 @@ def numbering(request: Request, operator: Operator) -> dict:
     try:
         return _reads(request).numbering()
     except CommandRefused as exc:  # a bad seed: the operator's 409, not a 500
+        _refused(exc)
+
+
+# «Rentabilidad»: each authored quote of the period with its sale, costs and gross margin, and the
+# totals by month. `from` / `to` are `YYYY-MM` (the current year by default). Before `/{quote_id}`.
+@quote_read_router.get("/economics")
+def economics_report(request: Request, operator: Operator,
+                     from_month: str | None = Query(None, alias="from", pattern=r"^\d{4}-\d{2}$"),
+                     to_month: str | None = Query(None, alias="to", pattern=r"^\d{4}-\d{2}$")) -> dict:
+    _may_view_costs(operator)
+    try:
+        return _reads(request).economics_report(from_month=from_month, to_month=to_month)
+    except CommandRefused as exc:  # a month that does not exist, `to` before `from`, too long a period
         _refused(exc)
 
 

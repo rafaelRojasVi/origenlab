@@ -1034,6 +1034,22 @@ describe("Catalog 1a", () => {
   });
 });
 
+describe("Cotizador «Rentabilidad»", () => {
+  const PATH = "/v2/quotes/economics";
+
+  it("allows the report as an exact GET path, with its period, and never as a POST", () => {
+    expect(isAllowedUpstreamPath(PATH)).toBe(true);
+    expect(isAllowedUpstreamPath(`${PATH}?from=2026-01&to=2026-12`)).toBe(true);
+    expect(isAllowedPostPath(PATH)).toBe(false);
+  });
+
+  it("refuses its neighbours", () => {
+    for (const path of [`${PATH}/`, `${PATH}/extra`, "/v2/quotes/Economics", "/v2/quotes/economic", `${PATH}x`]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+});
+
 describe("Cotizador PR A", () => {
   const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
   const GET_PATHS = ["/v2/quotes/numbering", `/v2/quotes/${uuid}`, "/v2/quotes", "/v2/quotes/clients"];

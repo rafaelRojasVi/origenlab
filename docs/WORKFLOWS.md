@@ -642,7 +642,7 @@ state. It only calls the reads and commands above and owns no rule.
   closed tab or its pane. Opening a ninth closes the oldest tab with nothing pending, or asks when
   every tab has something pending (and keeps the oldest when the operator moved on while asked). The same
   quote is never open twice. Hoy «Cotizar», the Solicitud card and the case drawer open quotes here.
-  The tab strip ends with «+ Nueva»; «Preferencias» is the list's.
+  The tab strip ends with «+ Nueva»; «Preferencias» and «Rentabilidad» are the list's.
 - **Lista «Todas».** `GET /v2/quotes` — Borradores (default), Aprobadas, Enviadas or Todas, a
   search over number, institution, case title and product descriptions (a quote's own lines, or
   those read from its PDF), newest first, «Cargar más» by cursor. One row per quote (its open draft,
@@ -676,6 +676,25 @@ state. It only calls the reads and commands above and owns no rule.
   precio» is stored only: nothing warns on it yet. A quote can still be changed by
   hand; a change never reprices a saved draft. The rail's margin band reads the same values (the
   workspace's `params`).
+- **Rentabilidad** (`#/crm/cotizador/rentabilidad`, the list's button beside «Preferencias»;
+  `GET /v2/quotes/economics?from=YYYY-MM&to=YYYY-MM`, this year by default; owner decisions
+  2026-10-17). For every quote made in the Cotizador (`origin = authored`; imported quotes are left
+  out — their import costs were never recorded), at its current revision as the list takes it, void
+  excluded: the sale (neto), the product cost (Σ quantity × the line's cost in pesos), the quote's
+  own **import costs** — its expense lines, Perfil, DHL calculado or Manual, split freight / customs
+  agent / duties and customs / local transport / other — and the **gross margin** = sale − product
+  cost − import costs, which is the engine's own margin whenever it allocates every expense.
+  Company overhead is not included. All of it comes from the engine run on the revision's stored
+  lines exactly as approval prices them (`inputs.engine_input_from_rows`; `v2/quotes/economics.py`),
+  so an issued revision shows what approval froze and a draft its last save. A quote with a line
+  that has no cost carries no margin (`cost_coverage` `partial` or `none`, with how many lines lack
+  one). Approved and sent quotes are summed by month and for the period; drafts are listed, marked
+  «Borrador», and not summed. The totals' margin $ and % are only over the quotes with full
+  coverage, and the page says how much of the sale they are. A row opens its import-cost split
+  and «Abrir cotización». Inside each quote the rail's card **«Economía de la cotización»** shows
+  the same breakdown (`computed.economics` of the live preview for a draft, `current.economics` for
+  an issued revision); it is internal and never in the PDF. Sales and admin only (a viewer gets
+  403 `role_may_not_view_costs`).
 
 <a id="m-wf-snapshot"></a>
 #### W3b — Party snapshot

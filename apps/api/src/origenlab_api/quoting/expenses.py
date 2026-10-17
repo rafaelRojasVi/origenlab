@@ -45,6 +45,37 @@ _DHL_PARAMS = (
 )
 
 
+#: «Rentabilidad»'s split of a quote's import costs. A profile line says its parameter; a DHL or a
+#: manual line is read by its label (the DHL labels are the ones `dhl_expenses` writes; a manual one
+#: is whatever the operator typed, so a word it starts with decides, else `other`).
+EXPENSE_CATEGORIES = ("freight", "agent", "customs", "transport", "other")
+_PARAMETER_CATEGORY = {
+    "profile_freight_clp": "freight", "profile_agent_clp": "agent", "profile_customs_clp": "customs",
+    "profile_transport_clp": "transport", "domestic_transport_clp": "transport",
+}
+_LABEL_CATEGORY = (
+    ("flete", "freight"), ("freight", "freight"), ("courier", "freight"),
+    ("agente", "agent"), ("despacho", "agent"), ("desaduanaje", "agent"),
+    ("derecho", "customs"), ("aduana", "customs"), ("arancel", "customs"),
+    ("transporte", "transport"), ("traslado", "transport"),
+)
+
+
+def expense_category(label: str | None, calc_inputs: Mapping | None) -> str:
+    """freight, agent, customs, transport or other: the parameter a line came from, else its label."""
+    parameter = (calc_inputs or {}).get("parameter") if isinstance(calc_inputs, Mapping) else None
+    if parameter in _PARAMETER_CATEGORY:
+        return _PARAMETER_CATEGORY[parameter]
+    text = (label or "").strip().lower()
+    for word, category in _LABEL_CATEGORY:
+        if text.startswith(word):
+            return category
+    for word, category in _LABEL_CATEGORY:
+        if word in text:
+            return category
+    return "other"
+
+
 @dataclass(frozen=True)
 class ShipmentItem:
     line_no: int

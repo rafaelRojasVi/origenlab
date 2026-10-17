@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { useMayRunCaseCommands } from "../caseCommands";
-import { COTIZADOR_PREFERENCES, crmHash, parseCrmHash, type CotizadorPane, type CrmSection } from "../crmRoute";
+import { COTIZADOR_PREFERENCES, COTIZADOR_RENTABILIDAD, crmHash, parseCrmHash, type CotizadorPane, type CrmSection } from "../crmRoute";
 import { NewQuoteDialog } from "../quotes/NewQuoteDialog";
 import { REVISION_STATUS } from "../quotes/IssuedView";
 import { useMayOpenCotizador } from "../quotes/openOrCreateQuote";
 import { PreferencesPage } from "../quotes/PreferencesPage";
 import { QuoteListPane } from "../quotes/QuoteListPane";
+import { RentabilidadPage } from "../quotes/RentabilidadPage";
 import { MAX_TABS, useQuoteTabs, type QuoteTab, type TabMeta, type TabStatus, type TabsAsk } from "../quotes/tabStore";
 import { Button, Modal, Skeleton } from "../ui";
 import { CotizadorPage, NoQuoteAccess } from "./CotizadorPage";
@@ -29,9 +30,11 @@ import { CotizadorPage, NoQuoteAccess } from "./CotizadorPage";
  * the closed tab, its × or its pane. A ninth tab closes the oldest one with nothing pending, and
  * asks when every tab has something pending.
  *
- * «Preferencias» (`#/crm/cotizador/preferencias`, the list's button) is a fixed pane, not a tab:
- * the company's defaults (`PreferencesPage`). While it is shown no tab is selected; «Todas» goes
- * back to the list, a tab is one click away, and a quote made with «+ Nueva» there is shown.
+ * «Preferencias» (`#/crm/cotizador/preferencias`) and «Rentabilidad» (`#/crm/cotizador/rentabilidad`),
+ * the list's two buttons, are fixed panes, not tabs: the company's defaults (`PreferencesPage`) and
+ * each quote's money (`RentabilidadPage`, whose rows open their quote's tab). While one is shown
+ * no tab is selected; «Todas» goes back to the list, a tab is one click away, and a quote made with
+ * «+ Nueva» there is shown.
  *
  * Sales and administration only: anyone else (the menu hides it) is told so, and nothing is read.
  */
@@ -86,7 +89,8 @@ function CotizadorModule({
   pane: CotizadorPane | null;
   navigate: Navigate;
 }) {
-  const prefs = pane === COTIZADOR_PREFERENCES;
+  // A fixed pane («Preferencias», «Rentabilidad») is shown instead of the list or a tab.
+  const fixedPane = pane !== null;
   // Work that finishes after the module is gone (a flush, a question) must not move the address.
   const alive = useRef(true);
   useEffect(() => {
@@ -97,7 +101,7 @@ function CotizadorModule({
   }, []);
   /** The address of the tab shown, replaced (not pushed) so a closed tab is not one «back» away twice;
    *  only while the module is on screen and the address is still the module's. While «Preferencias»
-   *  is shown, a late close or open does not take the operator away — unless they asked for the
+   *  (or «Rentabilidad») is shown, a late close or open does not take the operator away — unless they asked for the
    *  tab (`leavePane`: a quote just created, a row opened), which is then shown. */
   const showInAddress = useCallback((active: string | null, leavePane = false) => {
     const here = parseCrmHash(window.location.hash);
@@ -140,19 +144,19 @@ function CotizadorModule({
   // time is put back in the address; after that it means «Todas». (Keyed on the address seen
   // last, so running twice for one address — React's development double run — does nothing more.)
   const lastRoute = useRef<string | null | undefined>(undefined);
-  const onPrefs = useRef(false);
+  const onFixedPane = useRef(false);
   useEffect(() => {
-    if (prefs) {
-      // «Preferencias» is no tab: none is selected, and «Todas» afterwards means the list.
+    if (fixedPane) {
+      // A fixed pane is no tab: none is selected, and «Todas» afterwards means the list.
       lastRoute.current = null;
-      onPrefs.current = true;
+      onFixedPane.current = true;
       activate(null);
       return;
     }
-    // Leaving «Preferencias» for `#/crm/cotizador` is «Todas», whatever opened behind the pane meanwhile.
-    const fromPrefs = onPrefs.current;
-    onPrefs.current = false;
-    if (lastRoute.current === routeId && !(fromPrefs && !routeId)) return;
+    // Leaving a fixed pane for `#/crm/cotizador` is «Todas», whatever opened behind the pane meanwhile.
+    const fromFixedPane = onFixedPane.current;
+    onFixedPane.current = false;
+    if (lastRoute.current === routeId && !(fromFixedPane && !routeId)) return;
     const first = lastRoute.current === undefined;
     lastRoute.current = routeId;
     if (routeId) {
@@ -166,15 +170,15 @@ function CotizadorModule({
     } else {
       activate(null);
     }
-  }, [routeId, prefs, open, activate, peek, showInAddress]);
+  }, [routeId, fixedPane, open, activate, peek, showInAddress]);
 
   // Lazy panes: a pane mounts the first time its tab is shown, then stays until its tab closes.
-  const [mounted, setMounted] = useState<ReadonlySet<string>>(() => new Set(state.active && !prefs ? [state.active] : []));
+  const [mounted, setMounted] = useState<ReadonlySet<string>>(() => new Set(state.active && !fixedPane ? [state.active] : []));
   {
     const openIds = new Set(state.tabs.map((t) => t.id));
     let next: Set<string> | null = [...mounted].some((id) => !openIds.has(id)) ? new Set([...mounted].filter((id) => openIds.has(id))) : null;
-    // Behind «Preferencias» nothing new mounts (a restored tab is not read for nothing).
-    if (!prefs && state.active && !(next ?? mounted).has(state.active)) next = new Set(next ?? mounted).add(state.active);
+    // Behind a fixed pane nothing new mounts (a restored tab is not read for nothing).
+    if (!fixedPane && state.active && !(next ?? mounted).has(state.active)) next = new Set(next ?? mounted).add(state.active);
     if (next) setMounted(next);
   }
 
@@ -192,6 +196,7 @@ function CotizadorModule({
 
   const show = (id: string | null) => navigate("cotizador", id);
   const showPreferences = () => navigate("cotizador", COTIZADOR_PREFERENCES);
+  const showRentabilidad = () => navigate("cotizador", COTIZADOR_RENTABILIDAD);
   // «+ Nueva» and the list's «Nueva cotización»: only with the commands on (sales and admin).
   const mayCreate = useMayRunCaseCommands();
   const [creating, setCreating] = useState(false);
@@ -199,7 +204,7 @@ function CotizadorModule({
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   // A row of «Todas»: open (or show) its tab, with the label, client and state the row knows.
-  // Asked for by the operator, so shown even from «Preferencias».
+  // Asked for by the operator, so shown even from a fixed pane (a «Rentabilidad» row too).
   const openFromList = useCallback(
     async (id: string, meta: TabMeta) => {
       if (await open(id, meta, { stillWanted: () => alive.current })) showInAddress(peek().active, true);
@@ -240,16 +245,16 @@ function CotizadorModule({
             type="button"
             role="tab"
             id={tabDomId(null)}
-            aria-selected={!prefs && state.active === null}
+            aria-selected={!fixedPane && state.active === null}
             aria-controls={panelDomId(null)}
             tabIndex={state.active === null ? 0 : -1}
             onClick={() => show(null)}
-            className={`${tabClass(!prefs && state.active === null)} px-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600`}
+            className={`${tabClass(!fixedPane && state.active === null)} px-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600`}
           >
             Todas
           </button>
           {state.tabs.map((t) => (
-            <QuoteTabButton key={t.id} tab={t} selected={!prefs && state.active === t.id} hasPanel={mounted.has(t.id)} onShow={() => show(t.id)} />
+            <QuoteTabButton key={t.id} tab={t} selected={!fixedPane && state.active === t.id} hasPanel={mounted.has(t.id)} onShow={() => show(t.id)} />
           ))}
         </div>
         <CloseButtons tabs={state.tabs} scrollerRef={scrollerRef} onClose={(id) => void closeOne(id)} />
@@ -273,23 +278,29 @@ function CotizadorModule({
         </span>
       </div>
 
-      <section role="tabpanel" id={panelDomId(null)} aria-labelledby={tabDomId(null)} hidden={prefs || state.active !== null}>
+      <section role="tabpanel" id={panelDomId(null)} aria-labelledby={tabDomId(null)} hidden={fixedPane || state.active !== null}>
         <QuoteListPane
-          active={!prefs && state.active === null}
+          active={!fixedPane && state.active === null}
           onOpen={(id, meta) => void openFromList(id, meta)}
           onPreferences={showPreferences}
+          onRentabilidad={showRentabilidad}
           onNew={startNew}
           newOffReason={NO_COMMANDS}
         />
       </section>
-      {prefs ? (
+      {pane === COTIZADOR_PREFERENCES ? (
         <section aria-label="Preferencias">
           <PreferencesPage />
         </section>
       ) : null}
+      {pane === COTIZADOR_RENTABILIDAD ? (
+        <section aria-label="Rentabilidad">
+          <RentabilidadPage onOpen={(id, meta) => void openFromList(id, meta)} />
+        </section>
+      ) : null}
       {state.tabs.map((t) =>
         mounted.has(t.id) ? (
-          <section key={t.id} role="tabpanel" id={panelDomId(t.id)} aria-labelledby={tabDomId(t.id)} hidden={prefs || state.active !== t.id}>
+          <section key={t.id} role="tabpanel" id={panelDomId(t.id)} aria-labelledby={tabDomId(t.id)} hidden={fixedPane || state.active !== t.id}>
             <CotizadorPage quoteId={t.id} navigate={navigate} onMeta={(m) => setMeta(t.id, m)} />
           </section>
         ) : null,

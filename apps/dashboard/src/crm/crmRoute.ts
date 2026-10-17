@@ -73,7 +73,10 @@ export function isCrmHash(hash: string): boolean {
 
 /** The Cotizador's fixed pane «Preferencias»: `#/crm/cotizador/preferencias`, not a quote tab. */
 export const COTIZADOR_PREFERENCES = "preferencias";
-export type CotizadorPane = typeof COTIZADOR_PREFERENCES;
+/** The Cotizador's fixed pane «Rentabilidad»: `#/crm/cotizador/rentabilidad`, not a quote tab. */
+export const COTIZADOR_RENTABILIDAD = "rentabilidad";
+export type CotizadorPane = typeof COTIZADOR_PREFERENCES | typeof COTIZADOR_RENTABILIDAD;
+const COTIZADOR_PANES: ReadonlySet<string> = new Set([COTIZADOR_PREFERENCES, COTIZADOR_RENTABILIDAD]);
 
 export interface CrmRoute {
   section: CrmSection;
@@ -92,12 +95,12 @@ export function parseCrmHash(hash: string): CrmRoute {
   if (moved) return moved.tab ? { section: moved.section, id: null, tab: moved.tab } : { section: moved.section, id: null };
   const section = (SECTIONS.has(parts[0] ?? "") ? parts[0] : "resumen") as CrmSection;
   if (section === "datos" && DATOS_TABS.has(parts[1] ?? "")) return { section, id: null, tab: parts[1] as DatosTab };
-  if (section === "cotizador" && parts[1] === COTIZADOR_PREFERENCES) return { section, id: null, pane: COTIZADOR_PREFERENCES };
+  if (section === "cotizador" && COTIZADOR_PANES.has(parts[1] ?? "")) return { section, id: null, pane: parts[1] as CotizadorPane };
   const id = parts[1] && UUID.test(parts[1]) ? parts[1].toLowerCase() : null;
   return { section, id };
 }
 
-/** `#/crm/<section>[/<id>]` (the Cotizador's `COTIZADOR_PREFERENCES` goes in the id's place); an old segment («proveedores», «drive») is accepted and resolved on read. */
+/** `#/crm/<section>[/<id>]` (the Cotizador's fixed panes, `COTIZADOR_PREFERENCES` and `COTIZADOR_RENTABILIDAD`, go in the id's place); an old segment («proveedores», «drive») is accepted and resolved on read. */
 export function crmHash(section: CrmSection | "proveedores" | "drive", id?: string | null, tab?: DatosTab): string {
   if (section === "datos" && tab) return `#/crm/datos/${tab}`;
   return `#/crm/${section}${id ? `/${id}` : ""}`;

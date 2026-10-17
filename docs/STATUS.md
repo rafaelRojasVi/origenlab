@@ -3115,3 +3115,24 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
   migration about 10-11 min. No migration, no service or Render setting changed; the
   `supabase` workflow still runs on every main push. Tests: 55 offline release tests
   (`SelectiveRelease`). Details: release runbook → *Selective release*.
+
+### 2.7.132 Cotizador «Rentabilidad» and «Economía de la cotización», 2026-10-17 — built, deploys on merge
+
+- **API** `GET /v2/quotes/economics?from=YYYY-MM&to=YYYY-MM` (this year by default, at most 36
+  months; sales and admin, a viewer gets 403 `role_may_not_view_costs`; a bad period is 422
+  `bad_period`): every authored quote at its current revision, void excluded, with sale, product
+  cost, import costs split freight / agent / customs / transport / other, gross margin $ and %,
+  `cost_coverage` (`full` | `partial` | `none`), and the totals by month and for the range —
+  approved and sent only (drafts listed and counted apart), the margin over full-coverage quotes
+  only, with their share of the sale. Priced by the engine from the stored lines as approval
+  prices them (`v2/quotes/economics.py`); three statements in one pipeline. Imported quotes are
+  not included (owner, 2026-10-17: their import costs were never recorded).
+- The engine's `computed` block (preview, save, workspace) and the workspace's `current` now carry
+  `economics` for the rail's card. Proxy: `/v2/quotes/economics` allowed, GET only.
+- **Dashboard:** the Cotizador's fixed pane `#/crm/cotizador/rentabilidad` (period filter,
+  summary with the coverage note, by month, the quotes with their split and «Abrir cotización»)
+  and the rail card «Economía de la cotización», never printed.
+- No migration. Tests: API `test_v2_quote_economics.py`, `test_v2_quote_routes.py`; proxy
+  `allowlist.test.ts`; vitest `RentabilidadPage.test.tsx`, `SummaryRail.test.tsx`,
+  `QuotePrintView.test.tsx`, `CotizadorModulePage.test.tsx`, `QuoteListPane.test.tsx`,
+  `quoteApi.test.ts`, `shellRoute.test.ts`.

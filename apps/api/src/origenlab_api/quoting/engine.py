@@ -109,6 +109,11 @@ def _rate(inp: EngineInput, currency: str) -> Decimal:
     return fx.clp_per_unit
 
 
+def expense_clp(inp: EngineInput, expense: ExpenseLine) -> Decimal:
+    """One expense line in pesos, as `compute` adds it up (E7:E12)."""
+    return peso(expense.amount * _rate(inp, expense.currency))
+
+
 def _cost_clp(inp: EngineInput, line: ItemLine) -> Decimal | None:
     if line.unit_cost is None or line.cost_currency is None:
         return None
@@ -146,6 +151,11 @@ def _allocate(inp: EngineInput, costs: dict[int, Decimal | None], principal: int
     return alloc
 
 
+def margin_state(margin: Decimal | None, inp: EngineInput) -> str:
+    """Where a margin sits on the target band: no_cost, loss, below_target, on_target, above_target."""
+    return _state(margin, inp)
+
+
 def _state(margin: Decimal | None, inp: EngineInput) -> str:
     if margin is None:
         return "no_cost"
@@ -169,7 +179,7 @@ def _guard(inp: EngineInput) -> None:
 def compute(inp: EngineInput) -> EngineResult:
     _guard(inp)
     warnings: list[str] = []
-    expenses_clp = sum((peso(e.amount * _rate(inp, e.currency)) for e in inp.expenses), ZERO)   # E7:E12
+    expenses_clp = sum((expense_clp(inp, e) for e in inp.expenses), ZERO)                    # E7:E12
     costs = {l.line_no: _cost_clp(inp, l) for l in inp.items}
     principal = _principal(inp, costs)
     if expenses_clp and principal is None:
@@ -209,4 +219,4 @@ def compute(inp: EngineInput) -> EngineResult:
 
 
 __all__ = ["EngineError", "EngineInput", "EngineResult", "ExpenseLine", "FxRate", "ItemLine",
-           "LineResult", "compute", "peso"]
+           "LineResult", "compute", "expense_clp", "margin_state", "peso"]

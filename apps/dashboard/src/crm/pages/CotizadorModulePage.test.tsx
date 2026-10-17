@@ -9,7 +9,7 @@ import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { clearCatalogIndexMemory } from "../catalog/catalogIndex";
 import { crmHash } from "../crmRoute";
-import { computedFixture, workspaceFixture } from "../quotes/quoteFixtures";
+import { computedFixture, economicsReportFixture, workspaceFixture } from "../quotes/quoteFixtures";
 import { forgetTabEditors } from "../quotes/tabEditors";
 import { MAX_TABS, tabsStorageKey } from "../quotes/tabStore";
 import { SAVE_DELAY_MS } from "../quotes/useQuoteDraft";
@@ -63,6 +63,7 @@ function stubApi(
       if (path === "/v2/quotes/preview") return Promise.resolve(json({ computed: computedFixture("200000") }));
       if (path === "/v2/commands/save-quote-draft") return Promise.resolve(onSave(body.revision_id, ++saves));
       if (path === "/v2/quotes/clients") return Promise.resolve(json({ organizations: [CLIENT], people: [] }));
+      if (path === "/v2/quotes/economics") return Promise.resolve(json(economicsReportFixture()));
       if (path === "/v2/commands/create-quote")
         return Promise.resolve(json({ ok: true, quote_id: Q(9), quote_number: "00049-26", revision_id: "r-9", version: 1, opportunity_id: "o-9" }));
       const m = /^\/v2\/quotes\/([0-9a-f-]{36})$/.exec(path);
@@ -573,5 +574,32 @@ describe("Cotizador module — «Preferencias»", () => {
     fireEvent.click(tabOf("CN00041"));
     await showsQuote("CN00041");
     expect(prefsHeading()).toBeNull();
+  });
+});
+
+describe("Cotizador module — «Rentabilidad»", () => {
+  it("the list's «Rentabilidad» opens the fixed pane; a row's «Abrir cotización» opens its tab", async () => {
+    const api = stubApi();
+    renderModule("#/crm/cotizador");
+    const listButton = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Rentabilidad" });
+    fireEvent.click(listButton);
+    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador/rentabilidad"));
+    expect(await screen.findByRole("heading", { level: 1, name: "Rentabilidad" })).toBeInTheDocument();
+    expect(within(tablist()).getByRole("tab", { name: "Todas" })).toHaveAttribute("aria-selected", "false");
+    expect(api.calls.some((c) => c.path === "/v2/quotes/economics")).toBe(true);
+
+    fireEvent.click(await screen.findByRole("button", { name: /CN00041/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Abrir cotización" }));
+    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(1)}`));
+    await showsQuote("CN00041");
+    expect(screen.queryByRole("heading", { level: 1, name: "Rentabilidad" })).toBeNull();
+  });
+
+  it("#/crm/cotizador/rentabilidad opened directly reads no quote and opens no tab", async () => {
+    const api = stubApi();
+    renderModule("#/crm/cotizador/rentabilidad");
+    expect(await screen.findByRole("heading", { level: 1, name: "Rentabilidad" })).toBeInTheDocument();
+    expect(quoteTabs()).toHaveLength(0);
+    expect(api.calls.some((c) => /^\/v2\/quotes\/[0-9a-f-]{36}$/.test(c.path))).toBe(false);
   });
 });

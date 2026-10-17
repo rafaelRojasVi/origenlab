@@ -1,5 +1,7 @@
 /**
- * The Cotizador's right rail (canvas): the totals with the gross margin on its target band, the
+ * The Cotizador's right rail (canvas): the totals with the gross margin on its target band,
+ * «Economía de la cotización» under them (`EconomicsCard`: sale, product cost, import costs by
+ * kind, margin — internal, never printed), the
  * exchange rates (one per currency, «Cambiar» for a manual one with its reason), «Avisos» and what
  * the principal model was quoted at before («<model> antes»).
  *
@@ -18,6 +20,7 @@ import { fetchPriceHistory, fmtDay, type PriceHistory } from "../catalog/catalog
 import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
 import { distinctQuotes } from "../catalog/SalesSummary";
 import { formatMoney } from "../money";
+import { EconomicsCard } from "./EconomicsCard";
 import { Button } from "../ui";
 import { draftProblems, isEditable, principalItemOf, rowOfLine, setFxOverride, type DraftEditorState } from "./draftEditor";
 import type { QuoteDraft, QuotePreferences, QuoteWorkspace } from "./quoteApi";
@@ -155,6 +158,12 @@ export function SummaryRail({
     <aside aria-label="Resumen de la cotización" className="flex min-w-0 max-w-[400px] flex-[1_1_320px] flex-col gap-3.5">
       {editable ? <PricesChanged state={state} disabled={disabled} onSaveNow={onSaveNow} /> : null}
       <TotalsCard state={state} editable={editable} stale={stale} clientView={clientView} />
+      {clientView ? null : (
+        <EconomicsCard
+          economics={editable ? state.computed?.economics : ws.current?.economics}
+          stale={editable && stale}
+        />
+      )}
       <FxCard state={state} editable={editable} disabled={disabled} clientView={clientView} edit={edit} />
       {clientView ? null : <NoticesCard state={state} editable={editable} />}
       {clientView ? null : <HistoryCard state={state} editable={editable} index={index} loadPriceHistory={loadPriceHistory} />}
