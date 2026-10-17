@@ -6,6 +6,9 @@ import re
 import sys
 
 REPOSITORY = "rafaelRojasVi/origenlab"
+# The release starts when this fast, always-run main-push workflow succeeds; check_release_ci.py
+# then waits for every other required workflow at the same SHA.
+TRIGGER_WORKFLOW = ("secret-scan", ".github/workflows/secret-scan.yml")
 
 
 def validate(event_name, event, ref, sha, mode, release_enabled, backup_enabled):
@@ -19,6 +22,8 @@ def validate(event_name, event, ref, sha, mode, release_enabled, backup_enabled)
                 run.get("head_repository", {}).get("full_name")) != (
                 "push", "main", sha, "success", REPOSITORY):
             raise ValueError("Untrusted workflow_run provenance")
+        if (run.get("name"), run.get("path")) != TRIGGER_WORKFLOW:
+            raise ValueError("workflow_run must come from the release trigger workflow")
         if mode != "release":
             raise ValueError("workflow_run must use release mode")
     elif event_name == "schedule":

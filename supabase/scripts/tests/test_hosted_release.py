@@ -424,7 +424,8 @@ class RegressionGates(unittest.TestCase):
         sha = "a" * 40
         base = {"repository": {"full_name": context.REPOSITORY}}
         run = {"event": "push", "head_branch": "main", "head_sha": sha, "conclusion": "success",
-               "head_repository": {"full_name": context.REPOSITORY}}
+               "head_repository": {"full_name": context.REPOSITORY},
+               "name": "secret-scan", "path": ".github/workflows/secret-scan.yml"}
         event = dict(base, workflow_run=run)
         for kind, payload in (("workflow_run", event), ("workflow_dispatch", base)):
             for enabled in ("", "false"):
@@ -437,7 +438,8 @@ class RegressionGates(unittest.TestCase):
         context.validate("schedule", base, "refs/heads/main", sha, "backup_only", "", "true")
         context.validate("workflow_run", event, "refs/heads/main", sha, "release", "true", "")
         for key, value in (("head_branch", "dev"), ("event", "pull_request"),
-                           ("head_repository", {"full_name": "attacker/repo"}), ("head_sha", "b"*40)):
+                           ("head_repository", {"full_name": "attacker/repo"}), ("head_sha", "b"*40),
+                           ("name", "supabase"), ("path", ".github/workflows/supabase.yml")):
             with self.assertRaises(ValueError):
                 context.validate("workflow_run", dict(base, workflow_run={**run, key:value}),
                                  "refs/heads/main", sha, "release", "true", "")
@@ -571,6 +573,352 @@ class RegressionGates(unittest.TestCase):
              mock.patch.object(render,"verify_api_http",side_effect=render.Refused("synthetic readiness failure")):
             with self.assertRaises(render.Refused):
                 render.run("release")
+
+
+
+plan_mod = load(ROOT / "scripts/deploy/release_plan.py", "release_plan_under_test")
+result_mod = load(ROOT / "scripts/deploy/release_result.py", "release_result")
+OLD, NEW = "1" * 40, "2" * 40
+
+
+def fake_diff(paths_by_base):
+    return lambda base, sha: paths_by_base.get(base) if base in paths_by_base else None
+
+
+class SelectiveRelease(unittest.TestCase):
+    """Skip only what a release provably does not need; everything uncertain does more."""
+
+    def test_path_to_service_mapping(self):
+        f = plan_mod.services_for_path
+        self.assertEqual(f("apps/dashboard/src/crm/pages/CotizadorPage.tsx"), {"dashboard"})
+        self.assertEqual(f("apps/dashboard/package-lock.json"), {"dashboard"})
+        self.assertEqual(f("apps/worker/src/origenlab_worker/cli.py"), {"worker"})
+        self.assertEqual(f("apps/worker/uv.lock"), {"worker"})
+        # The worker imports apps/api and apps/email-pipeline; the API image copies the pipeline.
+        self.assertEqual(f("apps/api/src/origenlab_api/main.py"), {"worker", "api"})
+        self.assertEqual(f("apps/api/uv.lock"), {"worker", "api"})
+        self.assertEqual(f("apps/api/Dockerfile"), {"worker", "api"})
+        self.assertEqual(f("apps/email-pipeline/src/x.py"), {"worker", "api"})
+        self.assertEqual(f("supabase/migrations/20261017000000_x.sql"), {"worker", "api"})
+        self.assertEqual(f("supabase/roles.sql"), {"worker", "api"})
+        for none in ("docs/OPERATIONS.md", "apps/web/src/index.astro", "apps/dashboard-proxy/src/index.ts",
+                     "README.md", "AGENTS.md", "supabase/tests/database/x.sql"):
+            self.assertEqual(f(none), set(), none)
+
+    def test_unknown_paths_deploy_everything(self):
+        for unknown in ("render.yaml", "Makefile", "ruff.toml", "uv.lock", "package.json",
+                        "scripts/deploy/render_release.py", "scripts/run_pytest.sh",
+                        ".github/workflows/api.yml", "deploy/anything", "supabase/config.toml",
+                        "supabase/scripts/hosted_migrations.py", "supabase/roles.sql.bak",
+                        "apps/dashboardx/y", "apps/newapp/main.py", "packages/shared/x.ts", "docs"):
+            self.assertEqual(plan_mod.services_for_path(unknown), plan_mod.ALL, unknown)
+
+    def test_dashboard_only_change_deploys_only_the_dashboard(self):
+        bases = dict(worker=OLD, api=OLD, dashboard=OLD)
+        plan = plan_mod.build_plan(NEW, bases, 0, diff=fake_diff({OLD: ["apps/dashboard/src/a.tsx"]}))
+        self.assertEqual({n: r["deploy"] for n, r in plan["services"].items()},
+                         dict(worker=False, api=False, dashboard=True))
+        self.assertFalse(plan["require_supabase"])
+        self.assertEqual(plan_mod.expected_commits(plan, NEW), dict(worker=OLD, api=OLD, dashboard=NEW))
+        self.assertIs(plan_mod.parse_plan(json.dumps(plan), NEW)["require_supabase"], False)
+        self.assertIn("keep 111111111111", plan_mod.summary_lines(plan, NEW)[0])
+
+    def test_each_service_is_diffed_from_its_own_live_commit(self):
+        # The API stayed on OLD when the previous release was dashboard-only.
+        diffs = {OLD: ["apps/api/src/x.py", "apps/dashboard/src/a.tsx"], "3" * 40: ["apps/dashboard/src/b.tsx"]}
+        plan = plan_mod.build_plan(NEW, dict(worker="3" * 40, api=OLD, dashboard="3" * 40), 0, diff=fake_diff(diffs))
+        self.assertEqual({n: r["deploy"] for n, r in plan["services"].items()},
+                         dict(worker=False, api=True, dashboard=True))
+
+    def test_uncertainty_deploys_and_requires_supabase(self):
+        bases = dict(worker=OLD, api=OLD, dashboard=OLD)
+        only_dash = fake_diff({OLD: ["apps/dashboard/src/a.tsx"]})
+        for pending in (1, None):
+            plan = plan_mod.build_plan(NEW, bases, pending, diff=only_dash)
+            self.assertTrue(all(r["deploy"] for r in plan["services"].values()), pending)
+            self.assertTrue(plan["require_supabase"], pending)
+        unknown_api = plan_mod.build_plan(NEW, dict(bases, api=None), 0, diff=only_dash)
+        self.assertTrue(unknown_api["services"]["api"]["deploy"])
+        self.assertIsNone(unknown_api["services"]["api"]["base"])
+        self.assertTrue(unknown_api["require_supabase"])
+        unknown_path = plan_mod.build_plan(NEW, bases, 0, diff=fake_diff({OLD: ["render.yaml"]}))
+        self.assertTrue(all(r["deploy"] for r in unknown_path["services"].values()))
+        same = plan_mod.build_plan(NEW, dict(worker=NEW, api=NEW, dashboard=NEW), 0, diff=fake_diff({NEW: []}))
+        self.assertFalse(any(r["deploy"] for r in same["services"].values()))
+
+    def test_supabase_ci_binds_on_what_it_tests(self):
+        bases = dict(worker=OLD, api=OLD, dashboard=OLD)
+        for path in ("supabase/tests/database/x.sql", "supabase/migrations/20261017000000_x.sql",
+                     "docs/OPERATIONS.md", ".github/workflows/supabase.yml"):
+            plan = plan_mod.build_plan(NEW, bases, 0, diff=fake_diff({OLD: [path]}))
+            self.assertTrue(plan["require_supabase"], path)
+        for path in ("apps/dashboard/src/a.tsx", "apps/api/src/x.py", "docs/STATUS.md"):
+            plan = plan_mod.build_plan(NEW, bases, 0, diff=fake_diff({OLD: [path]}))
+            self.assertFalse(plan["require_supabase"], path)
+
+    def test_supabase_ci_paths_mirror_its_workflow(self):
+        workflow = (ROOT / ".github/workflows/supabase.yml").read_text()
+        block = workflow.split("  pull_request:\n    paths:\n", 1)[1].split("  workflow_dispatch:", 1)[0]
+        paths = {line.strip().removeprefix("- ").strip('"') for line in block.splitlines() if line.strip().startswith("- ")}
+        mirrored = set(plan_mod.SUPABASE_CI_FILES) | {p + "**" for p in plan_mod.SUPABASE_CI_PREFIXES}
+        self.assertEqual(paths, mirrored)
+
+    def test_changed_paths_from_real_git_history(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            git = lambda *a: subprocess.run(["git", "-C", directory, *a], check=True, capture_output=True, text=True).stdout.strip()
+            git("init", "-q"); git("config", "user.email", "t@example.invalid"); git("config", "user.name", "t")
+            (repo / "apps/api").mkdir(parents=True); (repo / "apps/api/a.py").write_text("x = 1\n" * 20)
+            git("add", "."); git("commit", "-qm", "one"); first = git("rev-parse", "HEAD")
+            (repo / "apps/dashboard").mkdir(parents=True)
+            git("mv", "apps/api/a.py", "apps/dashboard/a.py"); git("commit", "-qm", "rename"); second = git("rev-parse", "HEAD")
+            # A rename is both of its paths, so the API side still deploys.
+            self.assertEqual(plan_mod.changed_paths(first, second, root=repo), ["apps/api/a.py", "apps/dashboard/a.py"])
+            self.assertEqual(plan_mod.changed_paths(second, second, root=repo), [])
+            self.assertIsNone(plan_mod.changed_paths(second, first, root=repo))  # not an ancestor
+            self.assertIsNone(plan_mod.changed_paths("f" * 40, second, root=repo))  # unknown commit
+            self.assertIsNone(plan_mod.changed_paths(None, second, root=repo))
+
+    def test_malformed_plans_refuse(self):
+        good = plan_mod.build_plan(NEW, dict(worker=OLD, api=OLD, dashboard=OLD), 0,
+                                   diff=fake_diff({OLD: ["apps/dashboard/src/a.tsx"]}))
+        self.assertIsNone(plan_mod.parse_plan("", NEW))
+        self.assertEqual(plan_mod.expected_commits(None, NEW), dict(worker=NEW, api=NEW, dashboard=NEW))
+        broken = json.loads(json.dumps(good)); broken["services"]["api"]["base"] = None
+        missing = json.loads(json.dumps(good)); del missing["services"]["worker"]
+        for text, sha in (("{", NEW), (json.dumps(good), OLD), (json.dumps(broken), NEW),
+                          (json.dumps(missing), NEW), (json.dumps(dict(good, require_supabase="no")), NEW)):
+            with self.assertRaises(plan_mod.PlanRefused):
+                plan_mod.parse_plan(text, sha)
+
+    def test_required_ci_set_by_changed_paths(self):
+        def item(name, status="completed", conclusion="success"):
+            return dict(name=name, event="push", head_sha="a" * 40, status=status, conclusion=conclusion,
+                        created_at="2026-10-08T00:00:00Z", run_attempt=1)
+        self.assertIn("lint", ci.MANDATORY); self.assertIn("repo-scripts", ci.MANDATORY)
+        without = ci.required_workflows("false")
+        self.assertEqual(without, ci.MANDATORY - {"supabase"})
+        for value in (None, "", "true", "False", "0", " false"):
+            self.assertEqual(ci.required_workflows(value), ci.MANDATORY, value)
+        others = [item(n) for n in without]
+        self.assertEqual(ci.check_runs(others, required=without)[0], "success")
+        self.assertEqual(ci.check_runs(others + [item("supabase", status="in_progress")], required=without)[0], "success")
+        self.assertEqual(ci.check_runs(others, required=ci.MANDATORY)[0], "pending")
+        # A red supabase run refuses even when supabase does not bind; so does any other red check.
+        with self.assertRaises(ci.CIRefused):
+            ci.check_runs(others + [item("supabase", conclusion="failure")], required=without)
+        with self.assertRaises(ci.CIRefused):
+            ci.check_runs([item(n, conclusion="failure" if n == "api" else "success") for n in without], required=without)
+        # Other main checks are never optional.
+        self.assertEqual(ci.check_runs([r for r in others if r["name"] != "lint"], required=without)[0], "pending")
+        with self.assertRaises(ci.CIRefused):
+            ci.check_runs(others, required=without - {"api"})
+
+    def test_the_inline_release_result_step_agrees_with_release_result_py(self):
+        import itertools, re, subprocess
+        workflow = (ROOT / ".github/workflows/production-db-migrations.yml").read_text()
+        block = workflow[workflow.index("  release-result:"):]
+        script = block[block.index("run: |") + len("run: |"):]
+        script = "\n".join(line[10:] for line in script.splitlines() if line.startswith("          ") or not line.strip())
+        results = ["success", "skipped", "failure", "cancelled", ""]
+        for pre, pend, back, mig, dep, ver in itertools.product(
+                ["success", "failure"], ["0", "2", "", "x"], results, results, ["success", "skipped"], ["success", "failure"]):
+            env = {"PATH": os.environ.get("PATH", ""), "PREFLIGHT_RESULT": pre, "PENDING_MIGRATIONS": pend,
+                   "BACKUP_RESULT": back, "MIGRATE_RESULT": mig, "DEPLOY_RESULT": dep, "VERIFY_RESULT": ver}
+            shell = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+            try:
+                result_mod.outcome(pre, pend, back, mig, dep, ver)
+                expected = 0
+            except result_mod.ReleaseIncomplete:
+                expected = 1
+            self.assertEqual(shell.returncode, expected, (pre, pend, back, mig, dep, ver, shell.stderr))
+
+    def test_release_result_skip_counts_only_with_zero_pending(self):
+        ok = result_mod.outcome
+        self.assertIn("skipped", ok("success", "0", "skipped", "skipped", "success", "success"))
+        ok("success", "2", "success", "success", "success", "success")
+        ok("success", "0", "success", "success", "success", "success")
+        refused = [
+            ("success", "1", "skipped", "skipped", "success", "success"),   # pending, skipped
+            ("success", "", "skipped", "skipped", "success", "success"),    # unknown pending
+            ("success", "0", "failure", "skipped", "success", "success"),
+            ("success", "0", "skipped", "failure", "success", "success"),
+            ("success", "0", "cancelled", "skipped", "success", "success"),
+            ("success", "0", "", "", "success", "success"),                 # missing results
+            ("success", "0", "skipped", "success", "success", "success"),   # migrate without backup
+            ("success", "0", "skipped", "skipped", "skipped", "success"),
+            ("success", "0", "skipped", "skipped", "success", "skipped"),
+            ("success", "0", "skipped", "skipped", "success", "failure"),
+            ("failure", "0", "skipped", "skipped", "success", "success"),
+            ("success", "1", "success", "failure", "success", "success"),
+            ("success", "1", "success", "success", "failure", "success"),
+        ]
+        for case in refused:
+            with self.subTest(case=case), self.assertRaises(result_mod.ReleaseIncomplete):
+                ok(*case)
+
+    def test_workflow_skips_backup_and_migrate_only_on_zero_pending(self):
+        workflow = (ROOT / ".github/workflows/production-db-migrations.yml").read_text()
+        job = lambda name: workflow.split(f"\n  {name}:\n", 1)[1].split("\n\n  ", 1)[0]
+        self.assertIn("needs.preflight.outputs.pending_migrations != '0'", job("backup"))
+        self.assertIn("needs.preflight.outputs.mode == 'backup_only'", job("backup"))
+        self.assertIn("needs.preflight.outputs.pending_migrations != '0'", job("migrate"))
+        deploy = job("deploy")
+        for needle in ("!cancelled()", "needs.preflight.result == 'success'", "needs.migrate.result == 'success'",
+                       "needs.preflight.outputs.pending_migrations == '0'", "needs.backup.result == 'skipped'",
+                       "needs.migrate.result == 'skipped'", "OL_RELEASE_PLAN: ${{ needs.preflight.outputs.release_plan }}",
+                       "python3 scripts/deploy/check_release_ci.py"):
+            self.assertIn(needle, deploy)
+        self.assertIn("needs.deploy.result == 'success'", job("verify"))
+        self.assertIn("OL_RELEASE_PLAN: ${{ needs.preflight.outputs.release_plan }}", job("verify"))
+        result = job("release-result")
+        self.assertNotIn("actions/checkout", result)  # no repository code in the workflow_run result job
+        self.assertIn('fail "migrate ran without its backup"', result)
+        self.assertIn("PENDING_MIGRATIONS: ${{ needs.preflight.outputs.pending_migrations }}", result)
+        self.assertNotIn("test \"$BACKUP_RESULT\"", result)
+        self.assertIn('workflows: ["secret-scan"]', workflow)
+        preflight = job("preflight")
+        self.assertLess(preflight.index("render_release.py plan"), preflight.index("run: python3 scripts/deploy/check_release_ci.py"))
+        self.assertLess(preflight.index("hosted_migrations.py plan"), preflight.index("render_release.py plan"))
+        self.assertIn("OL_RELEASE_REQUIRE_SUPABASE: ${{ steps.release_plan.outputs.require_supabase }}", preflight)
+        self.assertIn("fetch-depth: 0", preflight)
+        trigger = (ROOT / ".github/workflows/secret-scan.yml").read_text()
+        self.assertTrue(trigger.startswith("name: secret-scan\n"))
+        self.assertIn("push:\n    branches: [main", trigger)
+        self.assertNotIn("paths", trigger.split("pull_request", 1)[0])
+
+    def test_migration_plan_reports_its_pending_count_read_only(self):
+        rows = migrations.chain(ROOT)
+        answers = ["origenlab_migrator|postgres|true|170006|true|true|true",
+                   "\n".join(v for v, _, _ in rows)]
+        def run_plan(read_only_setting):
+            sessions, queue = [], list(answers)
+            def fake_psql(env, *args):
+                sessions.append(args)
+                return f"transaction_read_only={read_only_setting}\n" + queue.pop(0)
+            with tempfile.TemporaryDirectory() as directory:
+                out = Path(directory) / "output"
+                env = dict(GITHUB_REF="refs/heads/main", GITHUB_OUTPUT=str(out), RUNNER_TEMP=directory)
+                with mock.patch.dict(os.environ, env), mock.patch.object(migrations, "database_env", return_value={}), \
+                     mock.patch.object(migrations, "psql", side_effect=fake_psql):
+                    migrations.run("plan")
+                return sessions, out.read_text()
+        sessions, output = run_plan("on")
+        self.assertEqual(output, "pending_migrations=0\n")
+        # Every plan read: one psql session, one transaction, made read-only inside the session
+        # before the query and proved by reading the setting back (the pooler drops options).
+        self.assertEqual(len(sessions), 2)
+        for args in sessions:
+            self.assertIn("--single-transaction", args)
+            commands = [args[i + 1] for i, a in enumerate(args) if a == "-c"]
+            self.assertEqual(commands[0], "set transaction read only")
+            self.assertIn("current_setting('transaction_read_only')", commands[1])
+            self.assertEqual(len(commands), 3)
+            self.assertNotIn("PGOPTIONS", "".join(args))
+        with self.assertRaisesRegex(migrations.Refused, "not read-only"):
+            run_plan("off")
+        self.assertNotIn("PGOPTIONS", (SCRIPT_DIR / "hosted_migrations.py").read_text().split("def run(", 1)[1])
+        self.assertNotIn("PGOPTIONS", (ROOT / ".github/workflows/production-db-migrations.yml").read_text())
+
+    def test_lint_runs_the_public_repo_hygiene_scan(self):
+        # supabase does not bind most releases; the always-required lint workflow carries the scan.
+        lint_sh = (ROOT / "scripts/lint.sh").read_text()
+        self.assertIn("\nscripts/security/check-public-repo-hygiene.sh\n", lint_sh)
+        self.assertLess(lint_sh.index("\nscripts/security/check-public-repo-hygiene.sh"), lint_sh.index("exec pre-commit"))
+        self.assertIn("run: make lint", (ROOT / ".github/workflows/lint.yml").read_text())
+        self.assertIn("lint:\n\tscripts/lint.sh", (ROOT / "Makefile").read_text())
+        self.assertIn("lint", ci.MANDATORY)
+
+    def _render_env(self, plan):
+        env = dict(GITHUB_ACTIONS="true", GITHUB_REF="refs/heads/main", RENDER_API_KEY="test-only", OL_RELEASE_SHA=NEW)
+        if plan is not None:
+            env["OL_RELEASE_PLAN"] = json.dumps(plan)
+        return env
+
+    def test_dashboard_only_release_posts_only_the_dashboard_and_checks_the_kept_api(self):
+        plan = plan_mod.build_plan(NEW, dict(worker=OLD, api=OLD, dashboard=OLD), 0,
+                                   diff=fake_diff({OLD: ["apps/dashboard/src/a.tsx"]}))
+        posts, health = [], []
+        def fake(method, path, token, payload=None):
+            if method == "POST":
+                posts.append(path); self.assertEqual(payload["commitId"], NEW)
+                return {"id": "dep-fixture", "commit": {"id": NEW}, "status": "created"}
+            if path.endswith("/deploys/dep-fixture"):
+                return {"id": "dep-fixture", "commit": {"id": NEW}, "status": "live"}
+            return approved_service(path.rsplit("/", 1)[-1])
+        with mock.patch.dict(os.environ, self._render_env(plan)), mock.patch.object(render, "request", side_effect=fake), \
+             mock.patch.object(render, "latest_deploy", return_value={"status": "live", "commit": {"id": OLD}}), \
+             mock.patch.object(render, "check_current_main") as stale, \
+             mock.patch.object(render, "verify_api_http", side_effect=health.append):
+            render.run("release")
+        self.assertEqual(posts, [f"/services/{render.SERVICES[2][1]}/deploys"])
+        self.assertEqual(health, [OLD])  # the API it keeps, not the new SHA
+        self.assertEqual(stale.call_count, 3)  # the stale-main guard still runs before every service
+
+    def test_kept_service_that_moved_since_preflight_refuses_before_any_post(self):
+        plan = plan_mod.build_plan(NEW, dict(worker=OLD, api=OLD, dashboard=OLD), 0,
+                                   diff=fake_diff({OLD: ["apps/dashboard/src/a.tsx"]}))
+        def fake(method, path, token, payload=None):
+            self.assertEqual(method, "GET")
+            return approved_service(path.rsplit("/", 1)[-1])
+        latest = lambda token, ident: {"status": "live", "commit": {"id": "3" * 40 if ident == render.SERVICES[1][1] else OLD}}
+        with mock.patch.dict(os.environ, self._render_env(plan)), mock.patch.object(render, "request", side_effect=fake), \
+             mock.patch.object(render, "latest_deploy", side_effect=latest), \
+             mock.patch.object(render, "check_current_main"), mock.patch.object(render, "verify_api_http"):
+            with self.assertRaisesRegex(render.Refused, "changed since the preflight plan"):
+                render.run("release")
+
+    def test_malformed_plan_refuses_before_any_provider_call(self):
+        env = self._render_env(None); env["OL_RELEASE_PLAN"] = '{"sha": "%s"}' % NEW
+        with mock.patch.dict(os.environ, env), mock.patch.object(render, "request") as call:
+            with self.assertRaises(render.Refused):
+                render.run("release")
+        call.assert_not_called()
+
+    def test_plan_mode_writes_outputs_from_live_commits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "output"
+            env = dict(self._render_env(None), GITHUB_OUTPUT=str(out), OL_RELEASE_PENDING_MIGRATIONS="0")
+            with mock.patch.dict(os.environ, env), \
+                 mock.patch.object(render, "request", side_effect=lambda m, p, t, payload=None: approved_service(p.rsplit("/", 1)[-1])), \
+                 mock.patch.object(render, "latest_deploy", return_value={"status": "live", "commit": {"id": OLD}}), \
+                 mock.patch.object(render.release_plan, "changed_paths", return_value=["apps/dashboard/src/a.tsx"]):
+                render.run("plan")
+            lines = dict(line.split("=", 1) for line in out.read_text().splitlines())
+            self.assertEqual(lines["require_supabase"], "false")
+            plan = plan_mod.parse_plan(lines["release_plan"], NEW)
+            self.assertEqual([n for n, r in plan["services"].items() if r["deploy"]], ["dashboard"])
+            # A failed latest deploy is no proof of what runs: that service deploys, supabase binds.
+            out.write_text("")
+            failed = lambda token, ident: {"status": "build_failed" if ident == render.SERVICES[0][1] else "live", "commit": {"id": OLD}}
+            with mock.patch.dict(os.environ, dict(env, OL_RELEASE_PENDING_MIGRATIONS="")), \
+                 mock.patch.object(render, "request", side_effect=lambda m, p, t, payload=None: approved_service(p.rsplit("/", 1)[-1])), \
+                 mock.patch.object(render, "latest_deploy", side_effect=failed), \
+                 mock.patch.object(render.release_plan, "changed_paths", return_value=["apps/dashboard/src/a.tsx"]):
+                render.run("plan")
+            lines = dict(line.split("=", 1) for line in out.read_text().splitlines())
+            self.assertEqual(lines["require_supabase"], "true")
+            self.assertTrue(all(r["deploy"] for r in json.loads(lines["release_plan"])["services"].values()))
+
+    def test_postflight_checks_kept_services_at_their_live_commit(self):
+        plan = plan_mod.build_plan(NEW, dict(worker=OLD, api=OLD, dashboard=OLD), 0,
+                                   diff=fake_diff({OLD: ["apps/dashboard/src/a.tsx"]}))
+        commits = {render.SERVICES[0][1]: OLD, render.SERVICES[1][1]: OLD, render.SERVICES[2][1]: NEW}
+        latest = lambda token, ident: {"status": "live", "commit": {"id": commits[ident]}, "finishedAt": "2026-10-17T00:00:00Z"}
+        revisions = []
+        with mock.patch.dict(os.environ, self._render_env(plan)), \
+             mock.patch.object(postflight, "request", side_effect=lambda m, p, t, payload=None: approved_service(p.rsplit("/", 1)[-1])), \
+             mock.patch.object(postflight, "verify_legacy_cron"), \
+             mock.patch.object(postflight, "latest_deploy", side_effect=latest), \
+             mock.patch.object(postflight, "database_env", return_value={}), \
+             mock.patch.object(postflight, "healthy_worker", return_value=True), \
+             mock.patch.object(postflight, "swept_after_deploy", side_effect=lambda *a, **k: revisions.append(k["revision"]) or True):
+            postflight.verify()
+            self.assertEqual(revisions, [OLD, OLD])
+            commits[render.SERVICES[2][1]] = OLD  # the dashboard was meant to deploy
+            with self.assertRaisesRegex(postflight.Refused, "dashboard is not live"):
+                postflight.verify()
 
 
 if __name__ == "__main__":

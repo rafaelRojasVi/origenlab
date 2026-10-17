@@ -114,13 +114,37 @@ def psql(env: dict[str,str], *args: str) -> str:
         raise Refused(f"psql operation failed (exit {p.returncode}); no production output logged")
     return p.stdout.strip()
 
+READ_ONLY_MARK = "transaction_read_only="
+
+
+def read_only_query(env: dict[str,str], sql: str) -> str:
+    """Run one read in a transaction made read-only in the same session, and prove it.
+
+    Connection options cannot do this: the Supavisor pooler drops libpq `options` (a
+    `default_transaction_read_only=on` there reads back `off`), and database_env does not
+    inherit PGOPTIONS. So the session itself sets the transaction read only and reads the
+    setting back before the query; anything but `on` refuses.
+    """
+    out = psql(env, "-q", "-At", "--single-transaction",
+               "-c", "set transaction read only",
+               "-c", f"select '{READ_ONLY_MARK}' || current_setting('transaction_read_only')",
+               "-c", sql)
+    lines = out.splitlines()
+    if not lines or lines[0] != READ_ONLY_MARK + "on":
+        raise Refused("Plan session is not read-only (transaction_read_only is not on); refusing to read")
+    return "\n".join(lines[1:])
+
+
 def run(mode: str) -> None:
     if os.environ.get("GITHUB_REF") != "refs/heads/main":
         raise Refused("Hosted migrations require trusted main")
     rows = chain(ROOT)
     with tempfile.TemporaryDirectory(prefix="ol-hosted-", dir=os.environ.get("RUNNER_TEMP")) as directory:
         env = database_env(Path(directory))
-        identity = psql(env, "-Atc", """select session_user, current_database(),
+        # Plan runs in release preflight before CI is green: its reads run in a read-only
+        # transaction proved from inside the session (read_only_query). Apply keeps plain reads.
+        read = (lambda sql: read_only_query(env, sql)) if mode == "plan" else (lambda sql: psql(env, "-Atc", sql))
+        identity = read("""select session_user, current_database(),
           pg_has_role(session_user,'origenlab_owner','SET')::text,
           current_setting('server_version_num'),
           has_schema_privilege(session_user,'supabase_migrations','USAGE')::text,
@@ -128,7 +152,7 @@ def run(mode: str) -> None:
           has_table_privilege(session_user,'supabase_migrations.schema_migrations','INSERT')::text""").split("|")
         if len(identity) != 7 or identity[:3] != ["origenlab_migrator",EXPECTED_DATABASE,"true"] or not identity[3].startswith("17") or identity[4:] != ["true","true","true"]:
             raise Refused("Wrong identity, server version or narrowly scoped ledger grants")
-        recorded = psql(env, "-Atc", "select version from supabase_migrations.schema_migrations order by version")
+        recorded = read("select version from supabase_migrations.schema_migrations order by version")
         pending = pending_files(rows, recorded.splitlines() if recorded else [])
         # Historic ledger includes one admin-only privilege-revocation migration.
         # Validate owner transitions only for files actually being applied now.
@@ -138,6 +162,11 @@ def run(mode: str) -> None:
         for v,n,_ in pending:
             print(f"PENDING {v}_{n}")
         if mode == "plan":
+            # The release skips backup and migrate only on the exact output "0" (OPERATIONS §15).
+            output = os.environ.get("GITHUB_OUTPUT")
+            if output:
+                with open(output, "a", encoding="utf-8") as stream:
+                    stream.write(f"pending_migrations={len(pending)}\n")
             print("PLAN ONLY — zero writes")
             return
         if os.environ.get("OL_PROD_BACKUP_VERIFIED") != "true":
