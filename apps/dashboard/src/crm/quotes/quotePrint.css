@@ -126,14 +126,13 @@
 .qp-totals dd { margin: 0; }
 .qp-totals .qp-total {
   align-items: baseline;
-  margin-top: 4px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: #0f766e;
-  color: #ffffff;
+  margin-top: 2px;
+  padding-top: 7px;
+  border-top: 1px solid #14201d;
 }
-.qp-totals .qp-total dt { color: #ffffff; font-weight: 600; }
-.qp-totals .qp-total dd { font-size: 18px; font-weight: 500; }
+/* Quiet on purpose (owner, 2026-10-17): the total is bold, the same size as the rest, no colour block. */
+.qp-totals .qp-total dt { color: #14201d; font-weight: 700; }
+.qp-totals .qp-total dd { font-weight: 700; }
 
 .qp-h2 { margin: 0 0 6px; font-size: 13px; font-weight: 700; }
 .qp-terms { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 24px; }
