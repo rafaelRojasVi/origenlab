@@ -64,6 +64,7 @@ from typing import Any
 
 from origenlab_api.quoting.engine import EngineError, compute
 from origenlab_api.v2.catalog.fx import FxUnavailable
+from origenlab_api.v2.catalog import aliases
 from origenlab_api.v2.catalog.keys import is_labdelivery, model_key
 from origenlab_api.v2.case_commands import SUPPLIER_RELATIONSHIP_ROLES
 from origenlab_api.v2.catalog.reads import V2CatalogReads, _like_escape, _plain
@@ -103,32 +104,35 @@ CLIENT_LIMIT = 8
 CLIENT_FETCH = 24
 CLIENT_OPEN_CASES = 10
 
-# The documents that quote the principal, then every other model on them with the share of those
-# documents it is on; each with the active catalog product of that key (the survivor of a merge),
-# when one exists. Optional lines count: an accessory offered as optional is exactly a kit item.
+# The documents that quote the principal (under its model or an unambiguous alias), then every other
+# model on them with the share of those documents it is on; each with the active catalog product of
+# that key (the survivor of a merge) when one exists — by its model_key first, else the one product
+# an active alias names (ambiguous: none). Optional lines count: an accessory offered as optional is
+# exactly a kit item.
 _KIT_SQL = """
-with docs as (
+with keys as ({line_keys}), docs as (
   select distinct l.source_record_id
     from evidence.document_line l
     join evidence.source_record s on s.id = l.source_record_id
-   where l.model_key = %(key)s and s.kind = 'quote_document'
+   where l.model_key in (select k from keys) and s.kind = 'quote_document'
 ), total as (select count(*) as n from docs)
 select k.model_key, k.n, total.n as total, k.description, p.id::text as product_id,
        coalesce(p.name_es, p.name, p.model_number) as product_name
   from (select l.model_key, count(distinct l.source_record_id) as n,
                min(coalesce(nullif(btrim(l.model), ''), l.description)) as description
           from evidence.document_line l join docs d on d.source_record_id = l.source_record_id
-         where l.model_key is not null and l.model_key <> %(key)s
+         where l.model_key is not null and not exists (select 1 from keys where keys.k = l.model_key)
          group by l.model_key) k
   cross join total
   left join lateral (
     select c.* from catalog.product c
-     where c.model_key = k.model_key and c.active and c.merged_into_product_id is null
-     order by c.created_at, c.id limit 1) p on true
+     where c.active and c.merged_into_product_id is null
+       and (c.model_key = k.model_key or c.id = {alias_root})
+     order by (c.model_key = k.model_key) desc, c.created_at, c.id limit 1) p on true
  where total.n >= %(min_docs)s and k.n >= %(min_share)s * total.n
  order by k.n desc, k.model_key
  limit %(limit)s
-"""
+""".format(line_keys=aliases.line_keys_of_key("%(key)s"), alias_root=aliases.unique_root_named_by("k.model_key"))
 
 # The quote, its case, and the case's institution (through a merge) with its first RUT.
 _QUOTE_SQL = """
@@ -1023,8 +1027,10 @@ class V2QuoteReads:
             principal_key = self._principal_key(current, lines)
             history, kits = None, []
             if principal_key is not None:
+                # The principal's product: its history includes the lines that name it by an alias.
+                principal_product = self._principal_line(current, lines)["product_id"]
                 extra = self._catalog._batch(cur, {
-                    **self._catalog._price_history_queries(principal_key),
+                    **self._catalog._price_history_queries(principal_key, principal_product),
                     "kits": (_KIT_SQL, self._kit_params(principal_key)),
                 })
                 history = self._catalog._price_history_from(principal_key, extra, PRICE_HISTORY_LIMIT)
@@ -1084,9 +1090,15 @@ class V2QuoteReads:
             out["party_snapshot"] = revision.get("party_snapshot")
         return out
 
-    @staticmethod
-    def _principal_key(current: dict[str, Any] | None, lines: list[dict[str, Any]]) -> str | None:
+    @classmethod
+    def _principal_key(cls, current: dict[str, Any] | None, lines: list[dict[str, Any]]) -> str | None:
         """The model key of the principal line's product: the computed principal of a draft, the stored one otherwise."""
+        line = cls._principal_line(current, lines)
+        return model_key(line["product_model_key"]) if line and line.get("product_model_key") else None
+
+    @staticmethod
+    def _principal_line(current: dict[str, Any] | None, lines: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """The principal item line: the computed principal of a draft, the stored one otherwise."""
         if current is None:
             return None
         principal = None
@@ -1097,8 +1109,7 @@ class V2QuoteReads:
             principal = next((r["line_no"] for r in lines if r["line_kind"] == "item" and r["is_principal"]), None)
         if principal is None:
             return None
-        line = next((r for r in lines if r["line_no"] == principal and r["line_kind"] == "item"), None)
-        return model_key(line["product_model_key"]) if line and line.get("product_model_key") else None
+        return next((r for r in lines if r["line_no"] == principal and r["line_kind"] == "item"), None)
 
     @staticmethod
     def _mentions_from(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
