@@ -24,6 +24,7 @@ Official sources (downloaded to `*-source.*` for regeneration):
 | Hielscher | https://www.hielscher.com/wp-content/uploads/hielscher-logo2.svg |
 | Adam Equipment | https://adamequipment.com/media/logo/default/Adam_Logo_2.png |
 | Löser Messtechnik | http://www.loeser-osmometer.de/LoeLogo.jpg |
+| OHAUS | Ficha oficial «Compass CR Datasheet LA 80775692» (PDF del fabricante, Drive OHAUS); logo recortado a 600 dpi y pasado a gris `#2b2e30` → `ohaus-logo.png` (sólo firma de correo) |
 
 ## Outputs
 
