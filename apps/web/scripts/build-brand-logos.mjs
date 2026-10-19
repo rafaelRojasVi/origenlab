@@ -31,7 +31,7 @@ const ALPHA_GAIN = 1.6;
 const INK = [0x2b, 0x2e, 0x30];
 
 /**
- * Las seis marcas aprobadas del sitio público. La lista es cerrada y
+ * Las siete marcas aprobadas del sitio público. La lista es cerrada y
  * `validate:brands` comprueba que coincida con `src/data/brands.ts`.
  *
  * `mode` describe cómo llega el original, no cómo queda:
@@ -49,6 +49,10 @@ const LOGOS = [
   { source: 'ika-source.png', out: 'ika-logo.png', mode: 'ink' },
   { source: 'hielscher-source.svg', out: 'hielscher-logo.png', mode: 'ink' },
   { source: 'adam-equipment-source.png', out: 'adam-equipment-logo.png', mode: 'alpha' },
+  // OHAUS: no hay un `-source` aparte. El original es el logotipo recortado a
+  // 600 dpi de la ficha oficial del fabricante, ya calado sobre transparente a
+  // la tinta de la firma (procedencia en public/email/brands/README.md).
+  { source: 'ohaus-logo.png', out: 'ohaus-logo.png', mode: 'alpha' },
   // El original de Löser es un azulejo de color macizo de 70x70 con un borde
   // claro de un par de píxeles. Sin recortarlo, el umbral toma ese borde por
   // trazo y el logotipo sale dentro de un marco.

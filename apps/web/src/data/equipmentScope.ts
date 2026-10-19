@@ -1,8 +1,9 @@
 /**
  * Alcance de equipamiento: qué familias puede cotizar OrigenLab.
  *
- * Seis familias, una por marca aprobada. Es distinto de `productFamilies.ts`,
- * que sólo describe las familias con ficha y fotografía propias en el sitio.
+ * Seis familias. Cada marca aprobada declara una en `brands.ts`, y pesaje y
+ * humedad tiene dos (Adam Equipment y OHAUS, desde el 2026-10-19). Es
+ * distinto de `productFamilies.ts`, que sólo describe las familias con ficha y fotografía propias en el sitio.
  * Aquí se declara el alcance completo, con la procedencia de cada nivel
  * explícita, porque el sitio publica cosas distintas en cada uno:
  *
@@ -64,7 +65,9 @@ export const equipmentScope: readonly EquipmentScopeEntry[] = [
     purpose:
       'Determinación de masa y de contenido de humedad en control de calidad y en análisis de rutina.',
     question: '¿Qué precisión y qué resolución exige el método que aplico?',
-    href: '/marcas/adam-equipment/',
+    // Dos fabricantes (Adam Equipment y OHAUS): el destino es el índice de
+    // marcas, donde están los dos, y no la página de uno solo.
+    href: '/marcas/',
   },
   {
     id: 'dispersion-homogeneizacion',

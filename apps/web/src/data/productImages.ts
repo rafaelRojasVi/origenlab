@@ -125,7 +125,7 @@ export const PRODUCT_IMAGE_WIDTHS = [480, 960] as const;
 const VERIFIED_ON = '2026-09-07';
 
 /**
- * Base de permiso común a las seis marcas. Se escribe una vez y se cita en
+ * Base de permiso común a las seis primeras marcas (OHAUS tiene la suya, abajo). Se escribe una vez y se cita en
  * cada fila para que el registro no pueda decir dos cosas distintas del mismo
  * hecho. La redacción en inglés es la que el negocio confirmó, literal.
  */
@@ -157,6 +157,27 @@ interface PublishedSpec {
   derivatives: Readonly<Record<number, ProductImageDerivative>>;
   alt: string;
   note?: string;
+}
+
+/**
+ * Base de permiso de OHAUS, que entró al sitio el 2026-10-19 y no está cubierta
+ * por la confirmación del 2026-09-07. Se escribe una vez y se cita en cada fila.
+ */
+export const OHAUS_AUTHORIZATION_BASIS =
+  'Permiso concedido por el titular del negocio de OrigenLab el 2026-10-19 para usar las imágenes oficiales de producto y el logotipo de OHAUS en origenlab.cl, con OrigenLab como distribuidor de OHAUS («I\'m allowing these images to be taken and used — we have permission, use them»). No se afirma licencia pública, documento escrito, cláusula contractual, vigencia ni exclusividad, porque el negocio no comunicó ninguna. La fotografía se obtuvo de la fuente oficial que indica imageSourceUrl y se aloja localmente, redimensionada y convertida de formato, sin retocar el equipo.';
+const OHAUS_AUTHORIZATION_EVIDENCE =
+  'Instrucción escrita del titular del negocio en la sesión de trabajo del 2026-10-19 (alta de OHAUS, PR #791), registrada en docs/product-assets.md, sección «Base de permiso de OHAUS (2026-10-19)».';
+
+/** Fila publicada de OHAUS, con su propia base de permiso. */
+function publishedOhaus(spec: PublishedSpec): ProductImageRecord {
+  return {
+    ...spec,
+    sourceType: 'autorizacion-fabricante',
+    permissionBasis: OHAUS_AUTHORIZATION_BASIS,
+    permissionEvidence: OHAUS_AUTHORIZATION_EVIDENCE,
+    verifiedOn: '2026-10-19',
+    status: 'VERIFIED',
+  };
 }
 
 /** Fila publicada con la base de permiso común. */
@@ -453,6 +474,72 @@ export const productImages: readonly ProductImageRecord[] = [
     derivatives: { 480: { width: 480, height: 532 }, 960: { width: 960, height: 1064 } },
     alt: 'Balanza de precisión portátil Adam Equipment Highland con cubierta cortavientos, imagen representativa de la familia Highland',
     note: 'Imagen de producto de la ficha técnica oficial de la serie Highland HCB (página 1 del PDF), extraída con su máscara de recorte y compuesta sobre blanco. Representa a la familia: la ficha no identifica la capacidad del equipo fotografiado.',
+  }),
+
+  /* -- OHAUS · pesaje y humedad (permiso del 2026-10-19) ------------------ */
+  publishedOhaus({
+    id: 'ohaus-pioneer-px',
+    brandId: 'ohaus',
+    modelId: 'ohaus-pioneer-px',
+    model: 'Pioneer PX',
+    scope: 'familia-representativa',
+    officialUrl: 'https://mx.ohaus.com/es-mx/pioneeranalytical-33',
+    imageSourceUrl:
+      'https://us.ohaus.com/getmedia/2bf0247e-0bda-4c90-a07a-ebc20ac46ce1/PX-Analytical_Draftshield-Closed_Right_DMX-ID_4294988787_WebShop',
+    masterPath: '/products/ohaus/pioneer-px.jpg',
+    masterWidth: 600,
+    masterHeight: 600,
+    derivatives: { 480: { width: 408, height: 562 }, 960: { width: 408, height: 562 } },
+    alt: 'Balanza analítica OHAUS Pioneer PX con protector contra corrientes de aire cerrado, imagen representativa de la familia',
+    note: 'Fotografía de tienda del fabricante (DMX-ID 4294988787) que OHAUS publica en la ficha de la PX224 (us.ohaus.com, pioneer-analytical-(1)/electronic-balance-px224-am). Representa a la familia Pioneer PX analítica: las tres capacidades comparten carcasa y protector. Original de 600 × 600 px, sha256 2198e494…; el sitio la muestra sin ampliar.',
+  }),
+  publishedOhaus({
+    id: 'ohaus-ranger-count-3000',
+    brandId: 'ohaus',
+    modelId: 'ohaus-ranger-count-3000',
+    model: 'Ranger Count 3000',
+    scope: 'familia-representativa',
+    officialUrl: 'https://mx.ohaus.com/es-mx/ranger3000count-16',
+    imageSourceUrl:
+      'https://mx.ohaus.com/getmedia/83d69fa8-ecf4-4d0e-8f6f-06af4b07575c/Ranger-3000-Count_DMX-ID_30684_WebShop',
+    masterPath: '/products/ohaus/ranger-count-3000.jpg',
+    masterWidth: 600,
+    masterHeight: 600,
+    derivatives: { 480: { width: 480, height: 334 }, 960: { width: 578, height: 402 } },
+    alt: 'Balanza contadora OHAUS Ranger Count 3000 con plataforma de acero inoxidable y tres pantallas, imagen representativa de la familia',
+    note: 'Fotografía de tienda del fabricante (DMX-ID 30684) publicada en la página oficial de la Ranger Count 3000 en mx.ohaus.com. Representa a la familia RC31P: los cinco modelos comparten plataforma de 225 × 300 mm. Original de 600 × 600 px, sha256 59838c4a…',
+  }),
+  publishedOhaus({
+    id: 'ohaus-mb120',
+    brandId: 'ohaus',
+    modelId: 'ohaus-mb120',
+    model: 'MB120',
+    scope: 'modelo-exacto',
+    officialUrl: 'https://mx.ohaus.com/es-mx/mb120-2',
+    imageSourceUrl:
+      'https://mx.ohaus.com/getmedia/040fd771-85f0-49cc-b5e5-2d037c13f2fd/MB120_Right_DMX-ID_4294974243_WebShop',
+    masterPath: '/products/ohaus/mb120.jpg',
+    masterWidth: 600,
+    masterHeight: 600,
+    derivatives: { 480: { width: 480, height: 389 }, 960: { width: 599, height: 485 } },
+    alt: 'Analizador de humedad OHAUS MB120 con pantalla táctil a color y cubierta de calentamiento cerrada',
+    note: 'Fotografía de tienda del fabricante (DMX-ID 4294974243) publicada en la página oficial del MB120 en mx.ohaus.com. Original de 600 × 600 px, sha256 efe94e5a…',
+  }),
+  publishedOhaus({
+    id: 'ohaus-mb32',
+    brandId: 'ohaus',
+    modelId: 'ohaus-mb32',
+    model: 'MB32',
+    scope: 'modelo-exacto',
+    officialUrl: 'https://mx.ohaus.com/es-mx/mb32-6',
+    imageSourceUrl:
+      'https://mx.ohaus.com/getmedia/32409205-52fb-443a-93e9-a1ced6bc0cfa/MB32_Left_DMX_ID_4295015507_WebShop',
+    masterPath: '/products/ohaus/mb32.jpg',
+    masterWidth: 600,
+    masterHeight: 600,
+    derivatives: { 480: { width: 480, height: 361 }, 960: { width: 589, height: 443 } },
+    alt: 'Analizador de humedad OHAUS MB32 con pantalla de segunda línea y cubierta de calentamiento cerrada',
+    note: 'Fotografía de tienda del fabricante (DMX-ID 4295015507) publicada en la página oficial del MB32. Es el mismo original (sha256 424e05bf…) que la campaña de correo de octubre registró desde us.ohaus.com (public/email-assets/ohaus-2026-10/README.md en esa rama).',
   }),
 
   /* -- Löser Messtechnik · osmometría -------------------------------------- */

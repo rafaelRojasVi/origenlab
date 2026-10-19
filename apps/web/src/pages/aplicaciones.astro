@@ -8,7 +8,7 @@ import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
 import { applications } from '../data/applications';
 import { scopeById } from '../data/equipmentScope';
-import { getBrandByFamilyId } from '../lib/catalog';
+import { brandNamesForFamily } from '../lib/catalog';
 import { modelsForFamily } from '../data/brandModels';
 import { company } from '../data/company';
 import { ctaLabels } from '../lib/ctaLabels';
@@ -44,7 +44,7 @@ const tasks = applications.map((application) => ({
       if (!scope) return undefined;
       return {
         scope,
-        brand: getBrandByFamilyId(familyId),
+        brandNames: brandNamesForFamily(familyId),
         documented: modelsForFamily(familyId).length,
       };
     })
@@ -96,14 +96,14 @@ const tasks = applications.map((application) => ({
               <div class="task__block">
                 <p class="t-label task__block-title">Equipo que la resuelve</p>
                 <ul class="task__equipment">
-                  {families.map(({ scope, brand, documented }) => (
+                  {families.map(({ scope, brandNames, documented }) => (
                     <li>
                       <a href={scope.href} class="task__equipment-link">
                         <span class="task__equipment-name">{scope.name}</span>
                         <Icon name="arrow-right" size={16} class="arrow" />
                       </a>
                       <span class="t-data task__equipment-meta">
-                        {brand?.name}
+                        {brandNames}
                         {documented > 0 && (
                           <span class="task__equipment-count">
                             {documented === 1
