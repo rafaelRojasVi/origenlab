@@ -8,3 +8,15 @@ ORIGENLAB_API_UPSTREAM = "https://api.origenlab.cl"
 [[routes]]
 pattern = "dashboard.origenlab.cl/api*"
 zone_name = "origenlab.cl"
+
+[[routes]]
+pattern = "origenlab.cl/api/web/*"
+zone_name = "origenlab.cl"
+
+# Rate-limit binding for the public web quote form.
+# Owner must run: wrangler ratelimit create --name "web-form-submissions"
+# then replace namespace_id with the returned ID.
+[[ratelimits]]
+binding = "WEB_FORM_RATE_LIMIT"
+namespace_id = ""   # TODO: set after running `wrangler ratelimit create --name "web-form-submissions"`
+simple = {limit = 5, period = 600}
