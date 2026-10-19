@@ -36,6 +36,13 @@
       ],
       "send_time": "09:30",
       "promo_until": "2026-10-31",
+      "clients_per_day": [
+        839,
+        839,
+        839,
+        839,
+        839
+      ],
       "audience_rule": "Clientes que escribieron, cotizaron o compraron; sin proveedores, sin bajas y sin los rebotes bloqueados el 19 oct; los contactados en Cyber van al final.",
       "subject": "¿Necesitas renovar tus balanzas? Tres opciones OHAUS"
     }

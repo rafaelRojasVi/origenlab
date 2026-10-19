@@ -46,6 +46,7 @@ def test_committed_file_passes_strict_validation() -> None:
     assert (ohaus.name, ohaus.send_time, ohaus.promo_until) == ("Balanzas OHAUS", "09:30", "2026-10-31")
     assert ohaus.send_days == ("2026-10-21", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27")
     assert ohaus.subject == "¿Necesitas renovar tus balanzas? Tres opciones OHAUS"
+    assert ohaus.clients_per_day == (839, 839, 839, 839, 839)
 
 
 # ---------------------------------------------------------------------------
