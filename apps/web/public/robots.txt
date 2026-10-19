@@ -11,5 +11,6 @@ Disallow: /email/
 Disallow: /privacidad/
 Disallow: /cookies/
 Disallow: /aviso-legal/
+Disallow: /contacto/enviado/
 
 Sitemap: https://origenlab.cl/sitemap-index.xml

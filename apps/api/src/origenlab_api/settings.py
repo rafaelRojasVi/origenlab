@@ -266,6 +266,8 @@ class Settings(BaseSettings):
     stored email to one address, from the shared mailbox; it is not a campaign send.
     """
     v2_campaign_test_send_enabled: bool = False
+    """Mount POST /v2/web/quote-request (web quote form). Default false; also needs v2_test_send_token_file."""
+    v2_web_quote_form_enabled: bool = False
     """Render secret file with the send-scope refresh token for the shared mailbox.
 
     Read from `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE` (the authorize script under scripts/ writes it).
@@ -494,6 +496,9 @@ class Settings(BaseSettings):
 
     def v2_campaign_test_send_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_test_send_enabled) and bool(self.v2_test_send_token_file)
+
+    def v2_web_quote_form_configured(self) -> bool:
+        return self.v2_configured() and self.v2_web_quote_form_enabled and bool(self.v2_test_send_token_file)
 
     def v2_campaign_drafts_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_drafts_enabled)

@@ -42,12 +42,6 @@ export const legalStatus = {
  */
 export const SITE_CLAIMS = {
   /**
-   * Sólo puede publicarse mientras la compilación no dibuje ningún formulario.
-   * `validate:dist` comprueba las dos direcciones: sitio con formulario que lo
-   * niega, y sitio sin formulario que ya no lo dice.
-   */
-  noForms: 'El sitio no tiene formularios ni recibe envíos',
-  /**
    * Acotada a propósito a la aplicación. Lo que emita la infraestructura por
    * delante del origen es otra cosa y la página de cookies lo dice aparte.
    */
@@ -131,6 +125,21 @@ export const technicalProviders: readonly TechnicalProvider[] = [
     id: 'titan',
     label: 'Titan',
     role: 'entrega el correo empresarial que recibe sus mensajes',
+  },
+  {
+    id: 'google-workspace',
+    label: 'Google Workspace',
+    role: 'aloja el buzón contacto@origenlab.cl y archiva en el CRM las solicitudes del formulario',
+  },
+  {
+    id: 'render',
+    label: 'Render',
+    role: 'ejecuta la API que procesa las solicitudes del formulario',
+  },
+  {
+    id: 'supabase',
+    label: 'Supabase',
+    role: 'almacena el CRM con el historial de solicitudes y clientes',
   },
 ];
 

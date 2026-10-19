@@ -1,7 +1,7 @@
 """Send one email as contacto@origenlab.cl through the Gmail API — the test-send path only.
 
-The credential is a refresh token for the `gmail.send` scope alone (it cannot read mail),
-authorized once by the owner as contacto@ with the local authorization script under
+The credential is a refresh token for the `gmail.send` OR `gmail.compose` scope (it cannot read
+mail), authorized once by the owner as contacto@ with the local authorization script under
 apps/api/scripts, and kept as a Render secret file named by `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE`.
 The V1 desktop token is never read. Plain HTTPS through `urllib`: no new runtime dependency.
 """
@@ -24,7 +24,10 @@ from pathlib import Path
 
 SENDER_ADDRESS = "contacto@origenlab.cl"
 SENDER_NAME = "OrigenLab"
+#: Kept for backward compatibility — either SEND_SCOPE or COMPOSE_SCOPE is accepted.
 SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+#: gmail.compose permits users.messages.send and is accepted as an alternative to gmail.send.
+COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 TEST_SUBJECT_PREFIX = "[PRUEBA] "
@@ -102,6 +105,10 @@ def load_send_token(path: str) -> GmailSendToken:
         raise ValueError("the Gmail send token needs client_id, client_secret, refresh_token and address")
     if fields["address"].strip().lower() != SENDER_ADDRESS:
         raise ValueError(f"the Gmail send token is for {fields['address']!r}, not {SENDER_ADDRESS}")
+    scope = data.get("scope")
+    if isinstance(scope, str):
+        if SEND_SCOPE not in scope and COMPOSE_SCOPE not in scope:
+            raise ValueError("the Gmail send token must include gmail.send or gmail.compose scope")
     return GmailSendToken(**{k: v.strip() for k, v in fields.items()})
 
 
@@ -110,6 +117,58 @@ def valid_test_address(raw: str) -> str:
     if len(value) > MAX_ADDRESS_LENGTH or not _ADDRESS.fullmatch(value):
         raise ValueError("escribe una sola dirección de correo, sin nombre ni separadores")
     return value
+
+
+_HEADER_INJECTION = re.compile(r"[\r\n]")
+#: Control characters that must not appear in body text (CR and LF are allowed — they are
+#: legitimate line breaks in a multi-line body, unlike in a header value).
+_BODY_CONTROL = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
+
+
+def _safe_header(value: str, max_len: int) -> str:
+    """Raise ValueError if value contains CR/LF; truncate to max_len."""
+    if _HEADER_INJECTION.search(value):
+        raise ValueError("header injection attempt")
+    return value[:max_len]
+
+
+def _safe_body(value: str, max_len: int) -> str:
+    """Strip non-printable control chars (preserving CR/LF) and truncate to max_len."""
+    return _BODY_CONTROL.sub("", value)[:max_len]
+
+
+def build_web_quote_message(
+    *,
+    reply_to: str,
+    institution: str,
+    need: str,
+    extra: dict[str, str],
+    submitted_at: str,
+) -> bytes:
+    """One self-addressed form notification: From/To=contacto@, Reply-To=visitor.
+
+    Raises ValueError if reply_to is not a valid plain mailbox address or if
+    any field contains CR/LF (header injection attempt).
+    """
+    if not _ADDRESS.fullmatch(reply_to) or len(reply_to) > MAX_ADDRESS_LENGTH:
+        raise ValueError("reply_to is not a valid plain mailbox address")
+    institution_safe = _safe_header(institution, 120)
+    msg = EmailMessage()
+    msg["From"] = formataddr((SENDER_NAME, SENDER_ADDRESS))
+    msg["To"] = SENDER_ADDRESS
+    msg["Reply-To"] = reply_to
+    msg["Subject"] = f"Solicitud de cotización — sitio web — {institution_safe}"
+    msg["X-OrigenLab-Origin"] = "web-quote-form/v1"
+    lines = [
+        f"Institución o empresa: {_safe_header(institution, 200)}",
+        f"Qué necesita: {_safe_body(need, 4000)}",
+    ]
+    for label, value in extra.items():
+        if value:
+            lines.append(f"{label}: {_safe_body(value, 200)}")
+    lines.append(f"Enviado: {_safe_header(submitted_at, 50)}")
+    msg.set_content("\n".join(lines), charset="utf-8")
+    return msg.as_bytes()
 
 
 def build_test_message(*, to: str, subject: str, html: str) -> bytes:

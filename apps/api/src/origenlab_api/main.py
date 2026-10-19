@@ -64,7 +64,8 @@ def create_app() -> FastAPI:
         description=(
             "Operator API (SQLite-first). "
             "Postgres mirror routes under /mirror/* remain read-only reporting. "
-            "Does not send email or ingest Gmail, except the one switch-gated POST /v2/commands/send-campaign-test (one admin test to one address, from the shared mailbox). "
+            "Does not send email or ingest Gmail, except the one switch-gated POST /v2/commands/send-campaign-test (one admin test to one address, from the shared mailbox) "
+            "and the switch-gated post /v2/web/quote-request (web quote form, send-scope only). "
             "SQLite remains read-only. "
             "Durable commercial-operations writes are permitted only through "
             "the explicitly allowlisted /operations/* command routes when "
@@ -273,6 +274,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     _mount_campaign_planning(app, settings, dsn, connect)
     _mount_campaign_blocks(app, settings, dsn, connect)
     _mount_campaign_test_send(app, settings, dsn, connect)
+    _mount_web_quote_form(app, settings, dsn, connect)
     _mount_unsubscribe(app, settings, dsn, connect)
 
 
@@ -344,6 +346,33 @@ def _mount_campaign_test_send(app: FastAPI, settings: Settings, dsn: str, connec
     )
     app.include_router(campaign_test_send_router)
     app.state.campaign_test_send_enabled = True
+
+
+def _mount_web_quote_form(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
+    """«Solicitar cotización» form submission. Uses the same send token as «Enviar prueba»."""
+    app.state.web_quote_form_enabled = False
+    if not settings.v2_web_quote_form_configured():
+        return
+    from origenlab_api.v2.gmail_send import GmailSender, load_send_token
+
+    try:
+        token = load_send_token(settings.v2_test_send_token_file or "")
+    except ValueError as exc:
+        logging.getLogger(__name__).warning("web quote form disabled: %s", exc)
+        return
+    from origenlab_api.v2.web_quote_form import (
+        WebQuoteFormCaps,
+        sent_timestamps_last_24h,
+        web_quote_form_router,
+    )
+
+    caps = WebQuoteFormCaps()
+    # The global 24 h cap survives a restart: seeded from the form mails the capture stored in V2.
+    caps.seed_from_timestamps(sent_timestamps_last_24h(connect, dsn))
+    app.state.web_quote_form_sender = GmailSender(token)
+    app.state.web_quote_form_caps = caps
+    app.include_router(web_quote_form_router)
+    app.state.web_quote_form_enabled = True
 
 
 def _mount_campaign_blocks(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:

@@ -390,8 +390,14 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   });
 }
 
+import { handleWebFormRequest } from "./web_form";
+
 export default {
   fetch(request: Request, env: ProxyEnv): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.hostname === "origenlab.cl" && url.pathname.startsWith("/api/web/")) {
+      return handleWebFormRequest(request, env as any);
+    }
     return handleRequest(request, env);
   },
 };

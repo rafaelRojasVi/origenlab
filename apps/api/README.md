@@ -378,7 +378,7 @@ numbering decision — see the table above.
 ### Campaign test sends («Enviar prueba») — one-time setup
 
 Admin-only: sends the stored email of a marketing campaign to an address of the operator's choosing, from
-`contacto@origenlab.cl`, with the subject prefixed `[PRUEBA]`. The grant is `gmail.send` plus `openid` and
+`contacto@origenlab.cl`, with the subject prefixed `[PRUEBA]`. The production grant (script default, `--scopes web-form`) is `gmail.compose` plus `gmail.settings.basic`, `openid` and
 `userinfo.email` — identity only, so the authorization script can prove the signed-in account is `contacto@`; nothing
 in it reads mail. Limits: 10 per hour and 30 per 24 hours across all operators, counted from
 `platform.command_receipt`; over the limit the API answers 429 with `next_allowed_at`. An address that asked to be
@@ -389,7 +389,7 @@ the feature stays off). A revoked but well-formed token still mounts: each send 
 and the history shows Google's status and code (for example `HTTP 400 invalid_grant`).
 
 1. Google Cloud, in the project of the dashboard login: enable the Gmail API; on the consent screen (type Internal) add the
-   scope `https://www.googleapis.com/auth/gmail.send`; create an OAuth client of type Desktop (for example
+   scopes `https://www.googleapis.com/auth/gmail.compose` and `…/gmail.settings.basic` (or only `…/gmail.send` with `--scopes send`); create an OAuth client of type Desktop (for example
    `origenlab-test-send`) and download its JSON.
 2. Locally, signed in to the browser as `contacto@origenlab.cl`:
    ```bash
