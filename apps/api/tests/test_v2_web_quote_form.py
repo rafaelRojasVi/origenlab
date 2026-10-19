@@ -38,6 +38,9 @@ def test_build_web_quote_message_round_trip() -> None:
     assert msg["From"].addresses[0].addr_spec == "contacto@origenlab.cl"
     assert msg["To"].addresses[0].addr_spec == "contacto@origenlab.cl"
     assert "List-Unsubscribe" not in msg
+    # The address is in the body too (spec §3.2), so it is seen without pressing «Responder».
+    assert msg.get_content().splitlines()[:3] == [
+        "Institución o empresa: U. de Chile", "Correo: ana@uchile.cl", "Qué necesita: Autoclave 50 L"]
 
 
 def test_header_injection_in_institution_is_refused() -> None:
