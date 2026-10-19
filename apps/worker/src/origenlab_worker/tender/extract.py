@@ -57,9 +57,9 @@ class AnnexText:
 
 def _neutralise(text: str) -> str:
     """Break any marker lookalike so file content cannot forge our framing."""
-    return (
-        text.replace("<<<", "‹‹‹").replace(">>>", "›››").replace("[[", "[ [").replace("]]", "] ]")
-    )
+    text = text.replace("<<<", "‹‹‹").replace(">>>", "›››")
+    # Lookahead, not replace: str.replace is non-overlapping, so "[[[" would re-form "[[".
+    return re.sub(r"\](?=\])", "] ", re.sub(r"\[(?=\[)", "[ ", text))
 
 
 def _clean_locator(text: str) -> str:

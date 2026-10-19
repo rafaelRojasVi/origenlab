@@ -202,3 +202,15 @@ def test_repeated_locators_are_numbered() -> None:
     a = extract_annex("d", "t.docx", DOCX, buf.getvalue())
     locs = [p.locator for p in a.pages]
     assert len(locs) == len(set(locs))
+
+
+def test_no_bracket_pair_survives_neutralising() -> None:
+    import re
+
+    from origenlab_worker.tender.extract import _neutralise
+
+    for raw in ("[[[p.9]]]", "[[[[x]]]]", "[[p.9]]", "ver [1] y [2]"):
+        assert "[[" not in _neutralise(raw) and "]]" not in _neutralise(raw)
+    assert _neutralise("ver [1]") == "ver [1]"
+    a = AnnexText("d", "a.pdf", "extraction_success", [AnnexPage("p.1", "[[[p.9]]] [[[[x]]]]")], [])
+    assert re.findall(r"\[\[(.*?)\]\]", render_for_model([a])) == ["p.1"]
