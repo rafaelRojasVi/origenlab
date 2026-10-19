@@ -89,5 +89,8 @@ def test_output_path_is_the_recorded_one_else_the_convention() -> None:
     assert output_storage_path(CASE, PREP, {"file_key": "paquete", "filename": "paquete.pdf"}) == \
         f"opportunities/{CASE}/bid/{PREP}/paquete.pdf"
     assert output_storage_path(CASE, PREP, {"file_key": "k", "filename": "x.docx", "storage_path": "p/q.docx"}) \
-        == "p/q.docx"
+        == f"opportunities/{CASE}/bid/{PREP}/k.docx"
+    own = f"opportunities/{CASE}/bid/{PREP}/k.xlsx"
+    assert output_storage_path(CASE, PREP, {"file_key": "k", "filename": "x", "storage_path": own}) == own
+    assert output_storage_path(CASE, PREP, {"file_key": "k", "filename": "x", "storage_path": own + "/../../y"}) is None
     assert output_storage_path(CASE, PREP, {"file_key": "k", "filename": "sin extension"}) is None

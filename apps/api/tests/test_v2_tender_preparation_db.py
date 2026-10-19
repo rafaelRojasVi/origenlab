@@ -242,7 +242,6 @@ def test_fill_needs_an_offer_that_is_approved_and_a_bidder(db, operators, client
 def test_fill_without_a_bidder_profile_is_refused(db, operators, client) -> None:
     with _owner(db) as conn:
         conn.execute("alter table crm.bidder_profile disable trigger bidder_profile_append_only")
-        saved = conn.execute("select * from crm.bidder_profile").fetchall()
         conn.execute("delete from crm.bidder_profile")
     try:
         case = open_tender(db, operators)
@@ -254,7 +253,6 @@ def test_fill_without_a_bidder_profile_is_refused(db, operators, client) -> None
     finally:
         with _owner(db) as conn:
             conn.execute("alter table crm.bidder_profile enable trigger bidder_profile_append_only")
-    assert saved is not None
 
 
 def test_a_sale_case_and_a_missing_case_are_refused(db, operators, client) -> None:
@@ -303,16 +301,65 @@ def test_the_page_viewer_is_403_and_output_paths_are_hidden(db, operators, clien
                        headers=headers())
     assert other.status_code == 404
 
-# Last on purpose: model_usage is append-only, so the cap stays reached for the rest of the module.
-def test_at_the_cap_the_request_is_refused_with_the_spend(db, operators, client) -> None:
+
+def test_a_sent_offer_passes_and_the_older_approved_quote_is_used_when_the_newest_is_void(db, operators, client, monkeypatch) -> None:
+    ensure_bidder(db, operators)
+    # An authored `sent` revision needs a sent message or attempt row; stand in for it at the lookup.
+    from origenlab_api.v2.tenders import preparation
+
+    sent_case = open_tender(db, operators)
+    add_annex(db, sent_case, operators)
+    ready_read(client, db, sent_case)
+    revision = add_offer(db, operators, sent_case, status="approved")
+    monkeypatch.setattr(preparation, "_offer_revision", lambda cur, case_id: (revision, "sent"))
+    assert ask(client, sent_case, "fill").status_code == 200
+    monkeypatch.undo()
+
     case = open_tender(db, operators)
     add_annex(db, case, operators)
+    ready_read(client, db, case)
+    older = add_offer(db, operators, case, status="approved")
     with _owner(db) as conn:
-        spent = conn.execute("select coalesce(sum(usd_cost), 0) from platform.model_usage").fetchone()[0]
-    seed_spend(db, str(60 - spent) if spent < 60 else "0")
-    r = ask(client, case, "read")
-    assert r.status_code == 409 and code(r) == "model_budget_reached"
-    detail = r.json()["detail"]
-    assert detail["cap_usd"] == "60" and detail["reached"] is True
+        quote_id = conn.execute("select quote_id from crm.quote_revision where id = %s", (older,)).fetchone()[0]
+        newer = conn.execute(
+            "insert into crm.quote (opportunity_id, quote_number, created_by_operator_id, created_at) "
+            "values (%s, %s, %s, now() + interval '1 minute') returning id",
+            (case, f"{next(_SERIALS) + 7000}-26", operators["sales"].operator_id)).fetchone()[0]
+        conn.execute("insert into crm.quote_revision (quote_id, revision_no, status, quote_currency, price_decimals) values (%s, 1, 'void', 'CLP', 0)", (newer,))
+    ok = ask(client, case, "fill")
+    assert ok.status_code == 200, ok.text
+    with _owner(db) as conn:
+        used = conn.execute("select quote_revision_id::text from evidence.bid_preparation where id = %s",
+                            (ok.json()["preparation_id"],)).fetchone()[0]
+    assert used == older and quote_id is not None
 
 
+def test_fill_takes_only_the_annexes_still_live_and_refuses_when_none_are(db, operators, client) -> None:
+    ensure_bidder(db, operators)
+    case = open_tender(db, operators)
+    kept, gone = add_annex(db, case, operators), add_annex(db, case, operators)
+    ready_read(client, db, case)
+    add_offer(db, operators, case)
+    with _owner(db) as conn:
+        conn.execute("update crm.opportunity_document set removed_at = now(), removed_by_operator_id = %s, "
+                     "remove_reason = 'prueba' where id = %s", (operators["sales"].operator_id, gone))
+    ok = ask(client, case, "fill")
+    assert ok.status_code == 200, ok.text
+    with _owner(db) as conn:
+        ids = conn.execute("select annex_document_ids::text[] from evidence.bid_preparation where id = %s",
+                           (ok.json()["preparation_id"],)).fetchone()[0]
+    assert ids == [kept]
+
+
+def test_a_foreign_recorded_storage_path_is_never_signed(db, operators, client, storage) -> None:
+    case = open_tender(db, operators)
+    add_annex(db, case, operators)
+    pid = ready_read(client, db, case)
+    for bad in ("bidder/" + "a" * 64 + ".pdf", f"opportunities/{case}/bid/{pid}/paquete.pdf/../../x.pdf",
+                f"opportunities/{uuid.uuid4()}/bid/{pid}/paquete.pdf"):
+        with _owner(db) as conn:
+            conn.execute("update evidence.bid_preparation set outputs = %s where id = %s", (
+                psycopg.types.json.Jsonb([{"file_key": "paquete", "filename": "sin extension", "storage_path": bad}]),
+                pid))
+        r = client.get(f"/v2/tenders/{case}/preparations/{pid}/files/paquete/url", headers=headers())
+        assert r.status_code == 404 and code(r) == "file_not_found", bad

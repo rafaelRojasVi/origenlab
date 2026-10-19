@@ -17,7 +17,7 @@ Refusals, in the order they are checked:
 | 422 | `no_annexes` | the case has no live anexo |
 | 422 | `read_not_ready` | `fill` with no `ready` read |
 | 422 | `offer_quote_missing` | `fill` with no quote revision on the case |
-| 422 | `offer_not_approved` | `fill` and the offer's revision is not `approved` |
+| 422 | `offer_not_approved` | `fill` and the offer's revision is neither `approved` nor `sent` (ruling R9) |
 | 422 | `bidder_profile_missing` | `fill` with no bidder profile saved |
 | 409 | `preparation_running` | this phase is already queued or running on the case |
 | 409 | `model_budget_reached` | this month's spend is at the cap; `details` is the spend summary |
@@ -62,11 +62,11 @@ def _offer_revision(cur: Any, opportunity_id: str) -> tuple[str, str] | None:
     """(revision id, status) of the current revision of the newest quote on the case, or None."""
     cur.execute(
         """select r.id::text, r.status
-             from (select q.id from crm.quote q where q.opportunity_id = %s::uuid
-                    order by q.created_at desc, q.id desc limit 1) q
+             from crm.quote q
              join crm.quote_revision r on r.quote_id = q.id
-            where r.superseded_by_revision_no is null and r.status <> 'void'
-            order by r.revision_no desc limit 1""", (opportunity_id,))
+            where q.opportunity_id = %s::uuid and r.origin = 'authored'
+              and r.superseded_by_revision_no is null and r.status <> 'void'
+            order by r.created_at desc, r.revision_no desc, r.id desc limit 1""", (opportunity_id,))
     row = cur.fetchone()
     return (row[0], row[1]) if row else None
 
@@ -96,12 +96,16 @@ def request_bid_preparation(
         read = cur.fetchone()
         if read is None:
             raise CommandRefused(422, "read_not_ready", "Primero hay que leer los anexos.")
-        based_on, annex_ids = read[0], list(read[1])
+        based_on = read[0]
+        live = set(annex_ids)
+        annex_ids = [a for a in read[1] if a in live]
+        if not annex_ids:
+            raise CommandRefused(422, "no_annexes", "Los anexos leídos ya no están; sube los anexos y vuelve a leerlos.")
         offer = _offer_revision(cur, opportunity_id)
         if offer is None:
             raise CommandRefused(422, "offer_quote_missing", "Arma la cotización de la oferta en el Cotizador.")
         revision_id = offer[0]
-        if offer[1] != "approved":
+        if offer[1] not in ("approved", "sent"):
             raise CommandRefused(
                 422, "offer_not_approved", "Aprueba la cotización de la oferta en el Cotizador antes de preparar.")
         if current_bidder_profile(cur) is None:
@@ -152,7 +156,8 @@ def output_storage_path(case_id: str, preparation_id: str, output: dict[str, Any
     """The object path of one output: the worker's recorded `storage_path`, else the convention
     `opportunities/<case>/bid/<prep_id>/<file_key>.<ext>` with the extension of its filename."""
     recorded = output.get("storage_path")
-    if isinstance(recorded, str) and recorded:
+    prefix = f"opportunities/{case_id}/bid/{preparation_id}/{output['file_key']}."
+    if isinstance(recorded, str) and recorded.startswith(prefix) and ".." not in recorded:
         return recorded
     ext = _EXTENSION.search(str(output.get("filename") or "").lower())
     if ext is None:

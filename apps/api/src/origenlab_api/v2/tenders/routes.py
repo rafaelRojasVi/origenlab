@@ -471,8 +471,9 @@ def preparation_file_url(tender_id: str, preparation_id: str, file_key: str, _: 
         cur.execute("select outputs from evidence.bid_preparation where id = %s::uuid and opportunity_id = %s::uuid",
                     (prep_uuid, case_uuid))
         row = cur.fetchone()
-    output = next((o for o in (row[0] if row else None) or [] if isinstance(o, dict) and o.get("file_key") == file_key),
-                  None)
+    if row is None:
+        raise not_found
+    output = next((o for o in row[0] or [] if isinstance(o, dict) and o.get("file_key") == file_key), None)
     path = output_storage_path(case_uuid, prep_uuid, output) if output else None
     if path is None:
         raise not_found
