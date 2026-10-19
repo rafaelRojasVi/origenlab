@@ -112,6 +112,50 @@ def valid_test_address(raw: str) -> str:
     return value
 
 
+_HEADER_INJECTION = re.compile(r"[\r\n]")
+
+
+def _safe_header(value: str, max_len: int) -> str:
+    """Raise ValueError if value contains CR/LF; truncate to max_len."""
+    if _HEADER_INJECTION.search(value):
+        raise ValueError("header injection attempt")
+    return value[:max_len]
+
+
+def build_web_quote_message(
+    *,
+    reply_to: str,
+    institution: str,
+    need: str,
+    extra: dict[str, str],
+    submitted_at: str,
+) -> bytes:
+    """One self-addressed form notification: From/To=contacto@, Reply-To=visitor.
+
+    Raises ValueError if reply_to is not a valid plain mailbox address or if
+    any field contains CR/LF (header injection attempt).
+    """
+    if not _ADDRESS.fullmatch(reply_to) or len(reply_to) > MAX_ADDRESS_LENGTH:
+        raise ValueError("reply_to is not a valid plain mailbox address")
+    institution_safe = _safe_header(institution, 120)
+    msg = EmailMessage()
+    msg["From"] = formataddr((SENDER_NAME, SENDER_ADDRESS))
+    msg["To"] = SENDER_ADDRESS
+    msg["Reply-To"] = reply_to
+    msg["Subject"] = f"Solicitud de cotización — sitio web — {institution_safe}"
+    msg["X-OrigenLab-Origin"] = "web-quote-form/v1"
+    lines = [
+        f"Institución o empresa: {_safe_header(institution, 200)}",
+        f"Qué necesita: {_safe_header(need, 4000)}",
+    ]
+    for label, value in extra.items():
+        if value:
+            lines.append(f"{label}: {_safe_header(value, 200)}")
+    lines.append(f"Enviado: {_safe_header(submitted_at, 50)}")
+    msg.set_content("\n".join(lines), charset="utf-8")
+    return msg.as_bytes()
+
+
 def build_test_message(*, to: str, subject: str, html: str) -> bytes:
     msg = EmailMessage()
     msg["From"] = formataddr((SENDER_NAME, SENDER_ADDRESS))
