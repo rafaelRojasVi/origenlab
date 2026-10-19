@@ -86,6 +86,18 @@ export const claims: readonly Claim[] = [
     visibility: 'public',
   },
   {
+    id: 'modelos-ohaus-publicados',
+    text: '4 modelos con ficha técnica publicada',
+    value: 4,
+    source:
+      "src/data/brandModels.ts, entradas con brandId 'ohaus': Pioneer PX, Ranger Count 3000, MB120 y MB32, cada una con página oficial y ficha PDF del fabricante leídas el 2026-10-19 y fotografía VERIFIED en productImages.ts",
+    measuredOn: '2026-10-19',
+    approvedBy: 'Titular del negocio, pedido de la portada con OHAUS del 2026-10-19',
+    approvedOn: '2026-10-19',
+    status: 'approved',
+    visibility: 'public',
+  },
+  {
     id: 'referencias-serva-publicadas',
     text: '1 referencia con ficha publicada',
     value: 1,
