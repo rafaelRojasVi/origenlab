@@ -44,6 +44,9 @@ PRICES_PER_MTOK: dict[str, Price] = {
     "claude-opus-5-5": _p("4", "20", "0.20", "5"),
     "claude-sonnet-5-5": _p("2", "10", "0.20", "2.5"),
     "claude-haiku-5-5": _p("0.10", "0.50", "0.01", "0.125"),
+    # The model `fallbacks: "default"` serves a cyber-category decline to (claude-api skill): the
+    # tender reader's cap check prices its worst case here, so it must have a price (ruling R15).
+    "claude-opus-4-8": _p("5", "25", "0.50", "6.25"),
 }
 
 

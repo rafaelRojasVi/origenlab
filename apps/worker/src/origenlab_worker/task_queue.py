@@ -1,7 +1,7 @@
 """The worker's job queue: Procrastinate on the V2 database, schema `procrastinate`
 (supabase/migrations/20261006180000; docs/ARCHITECTURE.md §8, owner decision D2).
 
-Two tasks, both on the `triage` queue:
+Two tasks on the `triage` queue, served by the triage child (`app`):
 
 * `sweep_untriaged` — periodic, every minute: finds captured messages of the last
   `DEFAULT_SINCE_DAYS` days that have no reading of the current triage version and defers one
@@ -10,6 +10,15 @@ Two tasks, both on the `triage` queue:
 * `triage_message(source_record_id)` — one message, end to end (`triage.triage_one`). A queueing
   lock per source record keeps one job per message waiting at a time; a transient model failure
   is retried with backoff; a permanent one is recorded and not retried.
+
+One task on the `tenders` queue, served by the tender child (`tender_app`, ruling R4):
+
+* `bid_preparation_sweep` — periodic, every minute: claims queued tender bid preparations and runs
+  them one at a time (`tender.job.run_bid_sweep`, through `QueueContext.bid_sweep`). A queueing lock
+  keeps at most one sweep waiting.
+
+Each child's app carries only its own queue's tasks: a worker defers every periodic task of its app,
+so a shared app would fill a queue no process serves while the other feature is off.
 
 Every connection the queue opens — pooled, and the standalone LISTEN connection — runs the
 worker's own probe first (`database.averify_worker_connection`) for the queue's grants and
@@ -51,6 +60,8 @@ from origenlab_worker.triage import (
 )
 
 QUEUE = "triage"
+TENDER_QUEUE = "tenders"
+BID_SWEEP_LOCK = "bid-preparation-sweep"
 APP_NAME_QUEUE = "origenlab-worker-queue"
 APP_NAME_TRIAGE = "origenlab-worker-triage"
 SEARCH_PATH = "procrastinate, pg_catalog"
@@ -70,6 +81,8 @@ class QueueContext:
     store_factory: Callable[[], EmlStore] | None = field(default=None, repr=False)
     model: ModelSettings | None = field(default=None, repr=False)
     revision: str | None = None
+    #: The tender child's sweep (`triage_cli.run_tender_worker` sets it): runs, returns counts.
+    bid_sweep: Callable[[], dict[str, Any]] | None = field(default=None, repr=False)
     log: Callable[[dict[str, Any]], None] = lambda event: print(json.dumps(event, sort_keys=True), file=sys.stdout,
                                                                   flush=True)
 
@@ -129,10 +142,15 @@ def connector_for(target: WorkerTarget, *, max_size: int = 3) -> procrastinate.P
     )
 
 
-def build_app(connector: Any | None = None) -> procrastinate.App:
-    """The app with both tasks registered. `connector` defaults to an in-memory one (tests, and
-    import time); the CLI replaces it with :func:`connector_for` via `App.replace_connector`."""
+def build_app(connector: Any | None = None, *, queues: tuple[str, ...] = (QUEUE, TENDER_QUEUE)) -> procrastinate.App:
+    """The app with the tasks of `queues` registered. `connector` defaults to an in-memory one
+    (tests, and import time); the CLI replaces it with :func:`connector_for` via
+    `App.replace_connector`."""
     app = procrastinate.App(connector=connector or procrastinate_testing.InMemoryConnector())
+    if TENDER_QUEUE in queues:
+        _register_tender_tasks(app)
+    if QUEUE not in queues:
+        return app
 
     @app.task(name="triage_message", queue=QUEUE, retry=RETRY, pass_context=False)
     def triage_message(source_record_id: str) -> None:
@@ -164,6 +182,17 @@ def build_app(connector: Any | None = None) -> procrastinate.App:
     return app
 
 
+def _register_tender_tasks(app: procrastinate.App) -> None:
+    @app.periodic(cron="* * * * *", periodic_id="bids")
+    @app.task(name="bid_preparation_sweep", queue=TENDER_QUEUE, queueing_lock=BID_SWEEP_LOCK, retry=False,
+              pass_context=False)
+    def bid_preparation_sweep(timestamp: int) -> None:
+        ctx = CONTEXT
+        if ctx.bid_sweep is None:
+            raise RuntimeError("queue_context_not_configured")
+        ctx.log({"event": "bid_preparation_sweep", **ctx.bid_sweep()})
+
+
 def defer_triage(app: procrastinate.App, source_record_ids: list[str]) -> int:
     """One `triage_message` job per id; an id whose job is already waiting is skipped."""
     task = app.tasks["triage_message"]
@@ -177,7 +206,9 @@ def defer_triage(app: procrastinate.App, source_record_ids: list[str]) -> int:
     return deferred
 
 
-app = build_app()
+app = build_app(queues=(QUEUE,))
+tender_app = build_app(queues=(TENDER_QUEUE,))
 
-__all__ = ["APP_NAME_QUEUE", "APP_NAME_TRIAGE", "CONTEXT", "QUEUE", "RETRY", "SEARCH_PATH", "QueueContext", "app",
-           "build_app", "connector_for", "defer_triage", "pool_configure"]
+__all__ = ["APP_NAME_QUEUE", "APP_NAME_TRIAGE", "BID_SWEEP_LOCK", "CONTEXT", "QUEUE", "RETRY", "SEARCH_PATH",
+           "TENDER_QUEUE", "QueueContext", "app", "build_app", "connector_for", "defer_triage", "pool_configure",
+           "tender_app"]

@@ -41,6 +41,10 @@ def test_unpriced_model_refused():
         cost_usd("claude-x", input_tokens=1, output_tokens=1)
 
 
+def test_the_default_fallback_model_is_priced():
+    assert cost_usd("claude-opus-4-8", input_tokens=1_000_000, output_tokens=1_000_000) == Decimal("30")
+
+
 def test_worst_case_covers_dearest_fallback():
     cheap = worst_case_usd("claude-haiku-5-5", input_tokens_estimate=1000, max_tokens=1000)
     covered = worst_case_usd("claude-haiku-5-5", input_tokens_estimate=1000, max_tokens=1000,
@@ -95,7 +99,7 @@ def test_record_usage_unknown_served_model_still_inserted_at_dearest_price():
     usage = SimpleNamespace(input_tokens=1_000_000, output_tokens=1_000_000)
     cost = record_usage(cur, feature="licitaciones", step="read", model="claude-haiku-5-5", usage=usage,
                         bid_preparation_id=None, served_model="claude-mystery-9")
-    assert cost == Decimal("24") and cur.inserted[1] == "claude-mystery-9"
+    assert cost == Decimal("30") and cur.inserted[1] == "claude-mystery-9"  # claude-opus-4-8: 5 + 25
 
 
 def test_record_usage_dated_alias_priced_by_base():

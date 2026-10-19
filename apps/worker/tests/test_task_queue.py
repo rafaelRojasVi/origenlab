@@ -22,8 +22,41 @@ def app():
 def test_both_tasks_are_on_the_triage_queue_and_the_sweep_runs_every_minute(app) -> None:
     built, _ = app
     assert built.tasks["triage_message"].queue == built.tasks["sweep_untriaged"].queue == "triage"
-    periodic = list(built.periodic_registry.periodic_tasks.values())
-    assert [(p.task.name, p.cron, p.periodic_id) for p in periodic] == [("sweep_untriaged", "* * * * *", "sweep")]
+    assert built.tasks["bid_preparation_sweep"].queue == "tenders"
+    periodic = sorted(built.periodic_registry.periodic_tasks.values(), key=lambda p: p.periodic_id)
+    assert [(p.task.name, p.cron, p.periodic_id) for p in periodic] == [
+        ("bid_preparation_sweep", "* * * * *", "bids"), ("sweep_untriaged", "* * * * *", "sweep")]
+
+
+def test_each_child_app_carries_only_its_own_queue_so_no_periodic_job_waits_unserved() -> None:
+    """A process defers every periodic task of its app: the triage child must not fill the
+    `tenders` queue while tenders are off, nor the tender child the `triage` queue while triage is
+    paused (ruling R4: tenders run in their own child)."""
+    def own(app):
+        return {name for name in app.tasks if "builtin" not in name}
+
+    assert own(task_queue.app) == {"triage_message", "sweep_untriaged"}
+    assert own(task_queue.tender_app) == {"bid_preparation_sweep"}
+    (bids,) = task_queue.tender_app.periodic_registry.periodic_tasks.values()
+    assert (bids.periodic_id, bids.task.queue) == ("bids", "tenders")
+    # One waiting sweep at most, even if nobody serves the queue for a while.
+    assert bids.task.queueing_lock == task_queue.BID_SWEEP_LOCK
+
+
+def test_the_bid_sweep_refuses_to_run_before_the_cli_configured_it(monkeypatch) -> None:
+    monkeypatch.setattr(task_queue, "CONTEXT", task_queue.QueueContext())
+    built = task_queue.build_app(testing.InMemoryConnector())
+    with pytest.raises(RuntimeError, match="queue_context_not_configured"):
+        built.tasks["bid_preparation_sweep"](timestamp=0)
+
+
+def test_the_bid_sweep_runs_the_configured_sweep_and_logs_its_counts(monkeypatch) -> None:
+    logged = []
+    ctx = task_queue.QueueContext(bid_sweep=lambda: {"outcome": "ran", "claimed": 1}, log=logged.append)
+    monkeypatch.setattr(task_queue, "CONTEXT", ctx)
+    built = task_queue.build_app(testing.InMemoryConnector(), queues=(task_queue.TENDER_QUEUE,))
+    built.tasks["bid_preparation_sweep"](timestamp=0)
+    assert logged == [{"event": "bid_preparation_sweep", "outcome": "ran", "claimed": 1}]
 
 
 def test_one_waiting_job_per_message(app) -> None:

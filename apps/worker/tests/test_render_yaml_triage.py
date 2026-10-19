@@ -41,3 +41,10 @@ def test_scheduler_is_explicitly_gated_and_legacy_cron_is_retained_for_cutover()
     assert "ORIGENLAB_WORKER_CAPTURE_SCHEDULER_ENABLED" in service
     assert "value: true" not in service
     assert "name: origenlab-gmail-sync" in RENDER_YAML.read_text()
+
+
+def test_the_four_tender_settings_are_declared_on_the_worker() -> None:
+    service = _service()
+    for key in ("ORIGENLAB_WORKER_BID_ENABLED", "ORIGENLAB_WORKER_BID_READ_MODEL",
+                "ORIGENLAB_WORKER_BID_FILL_MODEL", "ORIGENLAB_WORKER_BID_MATCH_MODEL"):
+        assert re.search(rf"- key: {key}\n\s+sync: false\n", service + "\n"), key
