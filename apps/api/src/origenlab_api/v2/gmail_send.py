@@ -161,6 +161,7 @@ def build_web_quote_message(
     msg["X-OrigenLab-Origin"] = "web-quote-form/v1"
     lines = [
         f"Institución o empresa: {_safe_header(institution, 200)}",
+        f"Correo: {reply_to}",
         f"Qué necesita: {_safe_body(need, 4000)}",
     ]
     for label, value in extra.items():
