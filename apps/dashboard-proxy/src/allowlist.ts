@@ -124,6 +124,12 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // `/v2/cockpit/.+` -- so the other cockpit reads, the quotation PDF route and the
   // case-archive/import-review consoles stay refused until they are reviewed on their own.
   /^\/v2\/workspace\/overview$/,
+  // «Licitaciones» (spec 2026-10-19 §6.10): the list (`?status=` filters it) and one tender's page.
+  // GET-only, operator session required. The list carries no bidder data (any signed-in operator);
+  // the page answers 403 `role_may_not_view_bidder` to a `viewer` upstream. A UUID-shaped segment,
+  // no tail: nothing else under `/v2/tenders` is reachable.
+  /^\/v2\/tenders$/,
+  /^\/v2\/tenders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /^\/v2\/workspace\/pipeline$/,
   /^\/v2\/workspace\/drive$/,
   /^\/v2\/workspace\/review$/,
@@ -334,13 +340,17 @@ export function isAllowedCaseCommandPostPath(pathname: string): boolean {
 
 /**
  * «Licitaciones» commands (spec 2026-10-19 §6.10), one list for the whole family: `open-tender-case`
- * (a tender case from a Mercado Público code or link) now; set-tender-status, the bidder data and the
+ * (a tender case from a Mercado Público code or link) and `set-tender-status` now; the bidder data and the
  * bid preparation join it as they are built. Upstream each needs an active `sales` or `admin`
  * operator from the verified session (a `viewer` is 403), an `Idempotency-Key`, and mounts only
  * behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Same Origin / JSON / key guard as the case commands
  * (`marketingCommandRefusal` in index.ts).
  */
-export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [/^\/v2\/commands\/open-tender-case$/];
+export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
+  /^\/v2\/commands\/open-tender-case$/,
+  // The estado of a tender (preparando, postulada, perdida; «adjudicada» is refused upstream until phase 3).
+  /^\/v2\/commands\/set-tender-status$/,
+];
 
 /** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */
 export const TENDER_COMMAND_MAX_BYTES = 16_384;

@@ -324,23 +324,24 @@ def test_overview_output_shape_is_unchanged() -> None:
         assert "count" in entity
 
 
-def test_pipeline_statement_count_is_at_most_twelve() -> None:
-    """pipeline() runs ≤ 12 SQL statements: 2 setup + 10 data queries.
+def test_pipeline_statement_count_is_at_most_thirteen() -> None:
+    """pipeline() runs ≤ 13 SQL statements: 2 setup + 11 data queries.
 
-    With psycopg pipeline mode the 10 data queries are sent in 1 RTT (instead of
-    10), but the SQL statement count stays at 12 — the test documents the bound.
+    With psycopg pipeline mode the 11 data queries are sent in 1 RTT (instead of
+    11), but the SQL statement count stays at 13 — the test documents the bound.
     The seventh is «último contacto» (`_SQL_PIPELINE_CONTACT`), added to the same batch;
     the eighth is the open tasks (`_SQL_PIPELINE_TASKS`, «En pausa hasta…»); the ninth is
     the newest note per case (`_SQL_PIPELINE_NOTES`, «Atendido» on a won case); the tenth is
-    the documents attached to cases (`_SQL_PIPELINE_DOCUMENTS`, the purchase order).
+    the documents attached to cases (`_SQL_PIPELINE_DOCUMENTS`, the purchase order); the eleventh
+    is the tenders that close tomorrow (`TENDERS_CLOSING_SQL`, Hoy's «Licitación cierra mañana»).
     """
     from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 
     conn = _CountingConn()
     repo = CrmWorkspaceRepository(connect=_fake_connect_factory(conn), dsn="unused")
     result = repo.pipeline()
-    assert len(conn.statements) <= 12, (
-        f"pipeline() used {len(conn.statements)} statements; expected ≤ 12. "
+    assert len(conn.statements) <= 13, (
+        f"pipeline() used {len(conn.statements)} statements; expected ≤ 13. "
         f"Statements: {conn.statements}"
     )
     assert "items" in result and "total" in result

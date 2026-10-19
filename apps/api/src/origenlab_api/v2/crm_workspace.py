@@ -28,7 +28,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from email.utils import getaddresses
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -58,6 +58,8 @@ from origenlab_api.v2.quote_documents import (  # noqa: F401 - IVA_RATE, quote_c
     quote_contents,
 )
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
+from origenlab_api.v2.tenders.reads import TENDERS_CLOSING_SQL, closing_rows, tomorrow_in_santiago
+
 
 def _cross_thread_quote_code(title: str) -> str | None:
     """A single *printed* CN reference, not a fuzzy match or an invented quotation."""
@@ -1323,6 +1325,7 @@ class CrmWorkspaceRepository:
             cur_tasks = conn.cursor()
             cur_notes = conn.cursor()
             cur_documents = conn.cursor()
+            cur_tenders = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -1334,6 +1337,8 @@ class CrmWorkspaceRepository:
                 cur_tasks.execute(_SQL_PIPELINE_TASKS)
                 cur_notes.execute(_SQL_PIPELINE_NOTES)
                 cur_documents.execute(_SQL_PIPELINE_DOCUMENTS)
+                # Hoy's one tender signal (spec §6.10): the tenders that close tomorrow.
+                cur_tenders.execute(TENDERS_CLOSING_SQL, {"tomorrow": tomorrow_in_santiago(datetime.now(UTC))})
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -1354,6 +1359,7 @@ class CrmWorkspaceRepository:
             tasks = self._rows(cur_tasks)
             notes = self._rows(cur_notes)
             documents = self._rows(cur_documents)
+            tenders_closing = closing_rows(self._rows(cur_tenders))
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
@@ -1364,6 +1370,7 @@ class CrmWorkspaceRepository:
             "items": cards,
             "total": len(cards),
             "drive_configured": self.drive_configured or bool(drive),
+            "tenders_closing": tenders_closing,
         }
 
     # -- providers

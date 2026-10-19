@@ -678,6 +678,11 @@ def _mount_v2_command_boundary(
     app.state.v2_tender_command_repository = V2TenderCommandRepository(
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
+    from origenlab_api.v2.tenders.reads import TenderReadRepository
+
+    app.state.v2_tender_read_repository = TenderReadRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
     app.state.chilecompra_ticket = resolve_ticket(
         settings.v2_chilecompra_ticket.get_secret_value() if settings.v2_chilecompra_ticket else None
     )

@@ -154,4 +154,12 @@ def test_a_refusal_keeps_its_code_and_details() -> None:
 def test_router_exposes_only_post() -> None:
     from origenlab_api.v2.tenders.routes import tender_command_router
 
-    assert [(r.path, r.methods) for r in tender_command_router.routes] == [(PATH, {"POST"})]
+    assert [(r.path, r.methods) for r in tender_command_router.routes] == [
+        (PATH, {"POST"}), ("/v2/commands/set-tender-status", {"POST"})]
+
+
+def test_read_router_exposes_only_get() -> None:
+    from origenlab_api.v2.tenders.routes import tender_read_router
+
+    assert [(r.path, r.methods) for r in tender_read_router.routes] == [
+        ("/v2/tenders", {"GET"}), ("/v2/tenders/{tender_id}", {"GET"})]

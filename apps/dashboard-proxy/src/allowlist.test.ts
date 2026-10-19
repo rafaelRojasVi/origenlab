@@ -515,6 +515,27 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
+  it("allows GET of the tender list and one tender's page, nothing under them, never a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    for (const path of ["/v2/tenders", "/v2/tenders?status=postulada", `/v2/tenders/${uuid}`]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+    for (const path of [
+      "/v2/tenders/",
+      `/v2/tenders/${uuid}/`,
+      `/v2/tenders/${uuid}/annexes`,
+      `/v2/tenders/${uuid}/prepare`,
+      `/v2/tenders/${uuid.toUpperCase()}`,
+      "/v2/tenders/not-a-uuid",
+      "/v2/tenders/../v2/cases",
+      "/v2/tendersx",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
   it("lists the tender commands in their own list, exactly, never a neighbour", async () => {
     const {
       TENDER_COMMAND_POST_PATHS,
@@ -524,7 +545,12 @@ describe("V2 durable read boundary allowlist", () => {
       isAllowedUpstreamPath,
       marketingCommandMaxBytes,
     } = await import("./allowlist");
-    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(1);
+    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(2);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/set-tender-status")).toBe(true);
+    expect(isAllowedPostPath("/v2/commands/set-tender-status")).toBe(true);
+    expect(isAllowedCaseCommandPostPath("/v2/commands/set-tender-status")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/commands/set-tender-status")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/set-tender-status")).toBe(16_384);
     expect(isAllowedTenderCommandPostPath("/v2/commands/open-tender-case")).toBe(true);
     expect(isAllowedPostPath("/v2/commands/open-tender-case")).toBe(true);
     expect(isAllowedCaseCommandPostPath("/v2/commands/open-tender-case")).toBe(false);
@@ -535,6 +561,9 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/open-tender-case-all",
       "/v2/commands/open-tender",
       "/v2/tenders/open-tender-case",
+      "/v2/commands/set-tender-status/",
+      "/v2/commands/set-tender-status-now",
+      "/v2/tenders",
     ]) {
       expect(isAllowedTenderCommandPostPath(path), path).toBe(false);
       expect(isAllowedPostPath(path), path).toBe(false);

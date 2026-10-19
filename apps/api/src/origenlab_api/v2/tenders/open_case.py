@@ -47,6 +47,7 @@ from origenlab_api.v2.org_web_suggestions import valid_rut
 from origenlab_api.v2.quote_document_identity import normalize_rut
 from origenlab_api.v2.tenders.codes import TenderReferenceInvalid, parse_tender_reference, portal_url
 from origenlab_api.v2.tenders.mercado_publico import TenderDetail, fetch_tender_detail
+from origenlab_api.v2.tenders.status import SET_TENDER_STATUS, set_tender_status
 
 OPEN_TENDER_CASE = "open-tender-case"
 TENDER_KIND = "tender"
@@ -343,7 +344,7 @@ class V2TenderCommandRepository(V2CaseCommandRepository):
     """The tender commands: the case writers (`_open_case_for_client`, `_link_evidence_row`) with
     their own dispatch, so no general case command can be called through this repository."""
 
-    _HANDLERS = {OPEN_TENDER_CASE: open_tender_case}
+    _HANDLERS = {OPEN_TENDER_CASE: open_tender_case, SET_TENDER_STATUS: set_tender_status}
 
 
 __all__ = [
