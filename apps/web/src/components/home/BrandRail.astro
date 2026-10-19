@@ -182,7 +182,9 @@ const rail = brandRailOrder
   .rail__link-cell {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    /* Logo y familia comparten un eje: el logotipo centrado sobre su leyenda. */
+    align-items: center;
+    text-align: center;
     justify-content: flex-end;
     gap: 0.625rem;
     /* Caja común: los siete lockups tienen proporciones distintas y sin una
