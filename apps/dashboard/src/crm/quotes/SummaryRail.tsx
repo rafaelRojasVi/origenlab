@@ -1,7 +1,8 @@
 /**
  * The Cotizador's right rail (canvas): the totals with the gross margin on its target band,
  * «Economía de la cotización» under them (`EconomicsCard`: sale, product cost, import costs by
- * kind, margin — internal, never printed), the
+ * kind, margin — internal, never printed), on an issued revision «Gastos ingresados» (each expense
+ * as typed, `EnteredExpensesCard`; internal too), the
  * exchange rates (one per currency, «Cambiar» for a manual one with its reason), «Avisos» and what
  * the principal model was quoted at before («<model> antes»).
  *
@@ -21,6 +22,7 @@ import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
 import { distinctQuotes } from "../catalog/SalesSummary";
 import { formatMoney } from "../money";
 import { EconomicsCard } from "./EconomicsCard";
+import { EnteredExpensesCard } from "./EnteredExpensesCard";
 import { Button } from "../ui";
 import { draftProblems, isEditable, principalItemOf, rowOfLine, setFxOverride, type DraftEditorState } from "./draftEditor";
 import type { QuoteDraft, QuotePreferences, QuoteWorkspace } from "./quoteApi";
@@ -163,6 +165,11 @@ export function SummaryRail({
           economics={editable ? state.computed?.economics : ws.current?.economics}
           stale={editable && stale}
         />
+      )}
+      {/* An issued revision's expenses as typed (a draft edits them in «Gastos de importación»);
+          an imported quote never recorded its expenses, so it has no such card. */}
+      {clientView || editable || ws.current?.origin !== "authored" ? null : (
+        <EnteredExpensesCard lines={ws.current!.lines} importCostsClp={ws.current!.economics?.import_costs_clp} />
       )}
       <FxCard state={state} editable={editable} disabled={disabled} clientView={clientView} edit={edit} />
       {clientView ? null : <NoticesCard state={state} editable={editable} />}

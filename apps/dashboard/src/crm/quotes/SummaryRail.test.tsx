@@ -3,13 +3,13 @@
  * past prices. Every value is invented; every number on screen is the API's, only formatted.
  */
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CatalogIndex } from "../catalog/catalogIndex";
 import type { PriceHistory } from "../catalog/catalogApi";
 import { initialDraftState, setFxOverride, type DraftEditorState } from "./draftEditor";
-import { QuoteRefusal, type Computed, type QuoteDraft, type QuoteWorkspace } from "./quoteApi";
-import { computedFixture, economicsFixture, partialEconomicsFixture, workspaceFixture } from "./quoteFixtures";
+import { QuoteRefusal, type Computed, type QuoteDraft, type QuoteStoredLine, type QuoteWorkspace } from "./quoteApi";
+import { computedFixture, economicsFixture, partialEconomicsFixture, storedLineFixture, workspaceFixture } from "./quoteFixtures";
 import { clientTypeLabel, SummaryRail } from "./SummaryRail";
 
 const INDEX: CatalogIndex = {
@@ -526,5 +526,68 @@ describe("«Economía de la cotización»", () => {
   it("before anything is priced it says so", () => {
     setup({ state: stateFor({ computed: null }) });
     expect(box().getByText("Todavía no hay precios calculados.")).toBeInTheDocument();
+  });
+});
+
+describe("«Gastos ingresados»", () => {
+  const box = () => within(screen.getByRole("region", { name: "Gastos ingresados" }));
+  const expense = (line_no: number, description: string, unit_cost: string, over: Partial<QuoteStoredLine> = {}) =>
+    storedLineFixture({
+      line_no, line_kind: "logistics", description, unit_cost, item_type: null, margin_mode: "none", margin_pct: null,
+      unit_price_qc: "0", line_total_qc: "0", is_principal: false, allocated_to_line_no: 1, expense_method: "manual", ...over,
+    });
+  const lines = [
+    storedLineFixture({ line_no: 1, description: "Equipo de prueba" }),
+    expense(2, "Flete — Aéreo de prueba", "150.5", { cost_currency: "USD", fx_rate: "950.1", expense_method: "profile" }),
+    expense(3, "Señora Prueba", "12010"),
+    expense(4, "papeles de prueba", "45000", { expense_method: "dhl_calc" }),
+  ];
+  // 142 990 + 12 010 + 45 000.
+  const issued = (over: Partial<Current> = {}) =>
+    stateFor({ status: "approved", draft: undefined, computed: undefined, lines, economics: economicsFixture({ import_costs_clp: "200000" }), ...over });
+
+  it("an issued revision lists each expense as typed, its method, its pesos and a total equal to Economía", () => {
+    setup({ state: issued() });
+    const rows = box().getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent("Aéreo de prueba");
+    expect(within(rows[0]).getByText("Flete")).toBeInTheDocument();
+    expect(rows[0]).toHaveTextContent("Perfil");
+    expect(rows[0]).toHaveTextContent("US$ 150,50");
+    expect(rows[0]).toHaveTextContent("$ 142.990");
+    expect(rows[1]).toHaveTextContent("Señora Prueba");
+    expect(rows[1]).toHaveTextContent("Manual");
+    expect(rows[1]).toHaveTextContent("$ 12.010");
+    expect(rows[2]).toHaveTextContent("papeles de prueba");
+    expect(rows[2]).toHaveTextContent("DHL calculado");
+    expect(box().queryByText("Equipo de prueba")).toBeNull();
+    expect(box().getByText("Total").nextSibling).toHaveTextContent("$ 200.000");
+    const economia = within(screen.getByRole("region", { name: "Economía de la cotización" }));
+    expect(economia.getByText("Gastos de importación").nextSibling).toHaveTextContent("$ 200.000");
+    expect(box().queryByText(/no cuadra/)).toBeNull();
+  });
+
+  it("says so when its total and Economía's differ", () => {
+    setup({ state: issued({ economics: economicsFixture({ import_costs_clp: "199999" }) }) });
+    expect(box().getByText(/no cuadra/)).toBeInTheDocument();
+  });
+
+  it("an issued revision without expenses says it has none", () => {
+    setup({ state: issued({ lines: [lines[0]] }) });
+    expect(box().getByText("Sin gastos de importación.")).toBeInTheDocument();
+  });
+
+  it("is never in «Vista cliente», nor on a draft (the draft has its own section)", () => {
+    setup({ state: issued(), clientView: true });
+    expect(screen.queryByRole("region", { name: "Gastos ingresados" })).toBeNull();
+    expect(screen.queryByText("Señora Prueba")).toBeNull();
+    cleanup();
+    setup({ state: stateFor({ computed: priced({ economics: economicsFixture() }) }) });
+    expect(screen.queryByRole("region", { name: "Gastos ingresados" })).toBeNull();
+  });
+
+  it("is not shown for an imported quote, which never recorded its expenses", () => {
+    setup({ state: issued({ origin: "imported", lines: [lines[0]], economics: null }) });
+    expect(screen.queryByRole("region", { name: "Gastos ingresados" })).toBeNull();
   });
 });
