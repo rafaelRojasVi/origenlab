@@ -3136,3 +3136,13 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
   `allowlist.test.ts`; vitest `RentabilidadPage.test.tsx`, `SummaryRail.test.tsx`,
   `QuotePrintView.test.tsx`, `CotizadorModulePage.test.tsx`, `QuoteListPane.test.tsx`,
   `quoteApi.test.ts`, `shellRoute.test.ts`.
+
+### 2.7.133 Web quote form, 2026-10-18 — built, not deployed
+
+| App | What |
+|---|---|
+| Worker | TRIAGE_VERSION 4: `x-origenlab-origin` in MACHINE_HEADERS, `reply_to` in MailText, web-quote rule (before outbound check) returns `quote_request` with Reply-To domain as sender_domain |
+| API | `build_web_quote_message` (Reply-To, X-OrigenLab-Origin header, plain text); `v2/web_quote_form.py` (WebQuoteFormRequest, WebQuoteFormCaps 40/24h + 3/24h, 10-min TTL idempotency set, `POST /v2/web/quote-request`); `ORIGENLAB_V2_WEB_QUOTE_FORM_ENABLED`; uses same `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE` as «Enviar prueba» |
+| Proxy | `web_form.ts`: `handleWebFormRequest` (Origin=origenlab.cl, honeypot `_trap`, timing < 3 s, body ≤ 16 kB, rate-limit binding `WEB_FORM_RATE_LIMIT` 5/10 min); new route `origenlab.cl/api/web/*` in `wrangler.toml` |
+| Web | `/contacto/` redesigned with form as section 01; `/contacto/enviado/` noindex success page; `/privacidad/` updated with form data paragraph; `technicalProviders` adds Google Workspace, Render, Supabase |
+| Auth | Same gmail.send token as «Enviar prueba» (`ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE`). Token scopes: gmail.compose + gmail.settings.basic (also serves «Enviar prueba» and future projects). Token was never provisioned in production (see §2.7.47). Owner must create it before enabling. |
