@@ -12,6 +12,8 @@ import json
 from contextlib import contextmanager
 from typing import Any
 
+from origenlab_api.v2.case_kind import sale_cases
+
 #: Maximum number of search hits returned; truncated flag set when reached.
 MAX_SEARCH_HITS = 50
 
@@ -79,8 +81,11 @@ class CockpitRepository:
                 select count(*) from (
                   select qr.quote_id
                   from crm.quote_revision qr
+                  join crm.quote q on q.id = qr.quote_id
+                  join crm.opportunity op on op.id = q.opportunity_id
                   where qr.status <> 'void'
                     and qr.superseded_by_revision_no is null
+                    and op.kind = 'sale'  -- case_kind.SALE_CASES
                   group by qr.quote_id
                   having count(*) > 1
                 ) sub
@@ -92,7 +97,7 @@ class CockpitRepository:
                   select q.quote_number
                   from crm.quote q
                   join crm.opportunity op on op.id = q.opportunity_id
-                  where q.number_origin = 'printed_historical'
+                  where q.number_origin = 'printed_historical' and op.kind = 'sale'
                   group by q.quote_number
                   having count(distinct q.opportunity_id) > 1
                      and bool_or(op.closed_at is null and op.stage not in ('won', 'lost', 'abandoned'))
@@ -141,7 +146,7 @@ class CockpitRepository:
 
             # -- opportunity kpis
             cur.execute("""
-                select stage, count(*) from crm.opportunity group by stage
+                select stage, count(*) from crm.opportunity where kind = 'sale' group by stage
             """)
             by_stage: dict[str, int] = {s: 0 for s in _ALL_STAGES}
             for stage, cnt in cur.fetchall():
@@ -150,7 +155,8 @@ class CockpitRepository:
             cur.execute("""
                 select count(*)
                 from crm.opportunity op
-                where op.stage = 'lead'
+                where op.kind = 'sale'
+                  and op.stage = 'lead'
                   and op.organization_id is null
                   and not exists (
                     select 1 from crm.opportunity_organization oo
@@ -237,7 +243,8 @@ class CockpitRepository:
                     q.created_at
                   from crm.quote q
                   join crm.opportunity op on op.id = q.opportunity_id
-                  where op.closed_at is null
+                  where op.kind = 'sale'
+                    and op.closed_at is null
                     and op.stage not in ('won', 'lost', 'abandoned')
                     and (
                     select count(*)
@@ -262,7 +269,8 @@ class CockpitRepository:
                     q.quote_number,
                     min(q.created_at)
                   from crm.quote q
-                  where q.number_origin = 'printed_historical'
+                  join crm.opportunity op on op.id = q.opportunity_id
+                  where q.number_origin = 'printed_historical' and op.kind = 'sale'
                   group by q.quote_number
                   having count(distinct q.opportunity_id) > 1
 
@@ -278,7 +286,8 @@ class CockpitRepository:
                     op.title,
                     op.created_at
                   from crm.opportunity op
-                  where op.stage = 'lead'
+                  where op.kind = 'sale'
+                    and op.stage = 'lead'
                     and op.organization_id is null
                     and not exists (
                       select 1 from crm.opportunity_organization oo
@@ -299,7 +308,8 @@ class CockpitRepository:
                     op.title,
                     op.created_at
                   from crm.opportunity op
-                  where op.stage in ('quoting', 'negotiating')
+                  where op.kind = 'sale'
+                    and op.stage in ('quoting', 'negotiating')
                     and op.closed_at is null
                     and not exists (
                       select 1
@@ -332,24 +342,25 @@ class CockpitRepository:
                       join crm.quote q on q.id = qr.quote_id
                       join crm.opportunity op on op.id = q.opportunity_id
                      where qr.status <> 'void' and qr.superseded_by_revision_no is null
+                       and op.kind = 'sale'
                        and op.closed_at is null and op.stage not in ('won', 'lost', 'abandoned')
                      group by qr.quote_id having count(*) > 1) s1
                 union all
                 select 'shared_printed_number', count(*) from (
                     select q.quote_number from crm.quote q
                       join crm.opportunity op on op.id = q.opportunity_id
-                     where q.number_origin = 'printed_historical'
+                     where q.number_origin = 'printed_historical' and op.kind = 'sale'
                      group by q.quote_number having count(distinct q.opportunity_id) > 1
                         and bool_or(op.closed_at is null and op.stage not in ('won', 'lost', 'abandoned'))) s2
                 union all
                 select 'case_without_institution', count(*) from crm.opportunity op
-                 where op.stage = 'lead' and op.organization_id is null
+                 where op.kind = 'sale' and op.stage = 'lead' and op.organization_id is null
                    and not exists (select 1 from crm.opportunity_organization oo
                                     where oo.opportunity_id = op.id and oo.role = 'requesting_institution'
                                       and oo.valid_to is null)
                 union all
                 select 'case_without_quote', count(*) from crm.opportunity op
-                 where op.stage in ('quoting', 'negotiating') and op.closed_at is null
+                 where op.kind = 'sale' and op.stage in ('quoting', 'negotiating') and op.closed_at is null
                    and not exists (select 1 from crm.quote q join crm.quote_revision qr on qr.quote_id = q.id
                                     where q.opportunity_id = op.id and qr.status = 'sent'
                                       and qr.superseded_by_revision_no is null)
@@ -379,7 +390,8 @@ class CockpitRepository:
         limit: int,
         offset: int,
     ) -> dict[str, Any]:
-        clauses: list[str] = []
+        # Sales cases only: a tender lives in «Licitaciones» (`case_kind.py`).
+        clauses: list[str] = [sale_cases("op")]
         params: list[Any] = []
 
         if stage is not None:
@@ -468,7 +480,7 @@ class CockpitRepository:
                   op.created_at::text, op.updated_at::text
                 from crm.opportunity op
                 left join crm.organization o on o.id = op.organization_id
-                where op.id = %s::uuid
+                where op.id = %s::uuid and op.kind = 'sale'  -- a tender is 404 here (case_kind.py)
             """, (opportunity_id,))
             row = cur.fetchone()
             if row is None:
@@ -631,7 +643,8 @@ class CockpitRepository:
         limit: int,
         offset: int,
     ) -> dict[str, Any]:
-        clauses: list[str] = []
+        # A tender's quotes stay in «Licitaciones» (`case_kind.py`).
+        clauses: list[str] = [sale_cases("op")]
         params: list[Any] = []
 
         if quote_number:
@@ -733,7 +746,7 @@ class CockpitRepository:
                 from crm.quote q
                 join crm.opportunity op on op.id = q.opportunity_id
                 left join crm.organization o on o.id = op.organization_id
-                where q.id = %s::uuid
+                where q.id = %s::uuid and op.kind = 'sale'  -- a tender's quote is 404 here (case_kind.py)
             """, (quote_id,))
             row = cur.fetchone()
             if row is None:
@@ -816,6 +829,7 @@ class CockpitRepository:
                 cur.execute("""
                     select distinct q2.opportunity_id::text
                     from crm.quote q2
+                    join crm.opportunity op2 on op2.id = q2.opportunity_id and op2.kind = 'sale'
                     where q2.quote_number = %s and q2.id <> %s::uuid
                 """, (qnum, quote_id))
                 other_opps = [r[0] for r in cur.fetchall()]
@@ -851,7 +865,7 @@ class CockpitRepository:
         with self._read() as cur:
             # Confirm opportunity exists
             cur.execute(
-                "select exists (select 1 from crm.opportunity where id = %s::uuid)",
+                "select exists (select 1 from crm.opportunity where id = %s::uuid and kind = 'sale')",
                 (opportunity_id,),
             )
             if not cur.fetchone()[0]:
@@ -1040,6 +1054,7 @@ class CockpitRepository:
             cur.execute("""
                 select q.id::text, q.quote_number, q.opportunity_id::text
                 from crm.quote q
+                join crm.opportunity op on op.id = q.opportunity_id and op.kind = 'sale'  -- case_kind.py
                 where q.quote_number like %s
                 limit %s
             """, (q_stripped + "%", MAX_SEARCH_HITS))
@@ -1093,6 +1108,7 @@ class CockpitRepository:
                     select qr.id::text, qr.pdf_sha256, q.id::text, q.quote_number
                     from crm.quote_revision qr
                     join crm.quote q on q.id = qr.quote_id
+                    join crm.opportunity op on op.id = q.opportunity_id and op.kind = 'sale'
                     where qr.pdf_sha256 like %s
                     limit %s
                 """, (prefix + "%", MAX_SEARCH_HITS))
@@ -1126,7 +1142,7 @@ class CockpitRepository:
             cur.execute("""
                 select op.id::text, op.title
                 from crm.opportunity op
-                where lower(op.title) like %s
+                where lower(op.title) like %s and op.kind = 'sale'  -- case_kind.SALE_CASES
                 limit %s
             """, (f"%{q_stripped.lower()}%", MAX_SEARCH_HITS))
             for r in cur.fetchall():

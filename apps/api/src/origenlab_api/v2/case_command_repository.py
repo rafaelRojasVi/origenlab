@@ -56,6 +56,7 @@ from origenlab_api.v2.case_documents import (
     remove_case_document,
 )
 from origenlab_api.v2.case_commands import (
+    CASE_COMMAND_NAMES,
     DISCARDED_BY_CORRECTION,
     ADD_CASE_ORGANIZATION,
     COMPLETE_CASE_FROM_SENT_QUOTE,
@@ -76,6 +77,7 @@ from origenlab_api.v2.case_commands import (
     TERMINAL_STAGES,
     stage_transition_allowed,
 )
+from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.case_quotation import record_case_quotation
 from origenlab_api.v2.case_sent_quote import complete_case_from_sent_quote
 from origenlab_api.v2.forwarded_requests import create_request_from_forward, dismiss_forwarded_request
@@ -158,6 +160,15 @@ _NEW_ORGANIZATION_REFUSALS = {"labdelivery_refused": "input of Labdelivery origi
 
 class V2CaseCommandRepository(CommandTransaction):
     """The nine commercial-case commands, each in one transaction."""
+
+    #: The general case commands: each refuses a tender (409 `tender_not_a_sale`, `case_kind.py`),
+    #: which is worked from «Licitaciones». Subclasses with their own commands (the tender
+    #: repository, the email → cases rules) are untouched by it.
+    SALE_ONLY_COMMANDS: frozenset[str] = frozenset(CASE_COMMAND_NAMES) | {ATTACH_CASE_DOCUMENT}
+
+    def _before_handler(self, cur: Any, command_name: str, fields: dict[str, Any]) -> None:
+        if command_name in self.SALE_ONLY_COMMANDS:
+            refuse_tender(cur, fields.get("opportunity_id"))
 
     # ------------------------------------------------------------------ shared reads
 

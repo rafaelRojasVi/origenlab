@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 from origenlab_api.v2.case_commands import RECORD_CASE_WON, WON_FROM_STAGE
+from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.commands import CommandRefused, as_uuid
 from origenlab_api.v2.identity import OperatorIdentity
 
@@ -68,6 +69,8 @@ def record_case_won(
     (`case_not_negotiating`, 409); the revision is not on this case (`quote_revision_not_on_case`,
     404); it is not `sent`, or a later revision replaced it (`quote_revision_not_current`, 409).
     """
+    # A tender's award is «Licitaciones»' (phase 3), never a sales win (`case_kind.py`).
+    refuse_tender(cur, as_uuid(fields["opportunity_id"], "opportunity_id"))
     case = repo._live_case(
         cur, as_uuid(fields["opportunity_id"], "opportunity_id"), int(fields["opportunity_version"])
     )

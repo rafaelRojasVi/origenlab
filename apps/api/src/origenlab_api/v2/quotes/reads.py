@@ -314,13 +314,15 @@ with cur as (
     join crm.opportunity o on o.id = q.opportunity_id
     left join crm.organization m on m.id = o.organization_id
     left join crm.organization inst on inst.id = coalesce(m.merged_into_organization_id, m.id)
-   where %(pattern)s::text is null
+   -- Sales cases only: a tender's offer opens by id, never in this list (`case_kind.py`).
+   where o.kind = 'sale'
+     and (%(pattern)s::text is null
       or q.quote_number ilike %(pattern)s or inst.name ilike %(pattern)s or o.title ilike %(pattern)s
       or exists (select 1 from crm.quote_line l
                   where l.quote_revision_id = c.revision_id and l.description ilike %(pattern)s)
       or exists (select 1 from evidence.source_record d join evidence.document_line l on l.source_record_id = d.id
                   where d.dedupe_key = 'quote_document:' || lower(c.pdf_sha256) and d.kind = 'quote_document'
-                    and l.description ilike %(pattern)s)
+                    and l.description ilike %(pattern)s))
 )
 """
 
@@ -371,6 +373,9 @@ with cur as (
               else coalesce(c.approved_at, c.sent_at, c.updated_at) end as at
     from cur c
    where c.origin = 'authored' and c.status <> 'void'
+     -- Sales cases only: a tender's offer is not in «Rentabilidad» (`case_kind.py`).
+     and exists (select 1 from crm.quote q join crm.opportunity o on o.id = q.opportunity_id
+                  where q.id = c.quote_id and o.kind = 'sale')
 ), dated as (
   select p.*, (p.at at time zone 'America/Santiago') as local_at
     from picked p
@@ -422,7 +427,7 @@ select o.id::text as id, o.name, o.kind,
  order by (o.name ilike %(prefix)s) desc,
           exists (select 1 from crm.opportunity op
                     left join crm.organization t on t.id = op.organization_id
-                   where op.closed_at is null and coalesce(t.merged_into_organization_id, t.id) = o.id) desc,
+                   where op.closed_at is null and op.kind = 'sale' and coalesce(t.merged_into_organization_id, t.id) = o.id) desc,
           lower(o.name), o.id
  limit %(limit)s
 """
@@ -507,7 +512,7 @@ with open_case as (
   select o.id, o.title, o.stage, o.organization_id, coalesce(sr.acquired_at, o.created_at) as requested_at
     from crm.opportunity o
     left join evidence.source_record sr on sr.id = o.origin_source_record_id
-   where o.closed_at is null
+   where o.closed_at is null and o.kind = 'sale'  -- a tender is never a client's open case (case_kind.py)
 )
 select 'organization' as via, coalesce(m.merged_into_organization_id, m.id)::text as key,
        c.id::text as id, c.title, c.stage, c.requested_at

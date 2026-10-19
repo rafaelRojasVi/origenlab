@@ -12,6 +12,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from origenlab_api.v2.case_kind import SALE_CASES
 from origenlab_api.v2.quote_documents import QUOTE_READ_REREAD_CODES, QUOTE_READER_PREVIOUS_VERSION, QUOTE_READER_VERSION
 
 CORREO_WARN_MIN = 5
@@ -217,6 +218,7 @@ select r.id::text, r.completed_at, r.response_body, r.completed_at >= {_TODAY} a
   from platform.command_receipt r
   left join crm.opportunity o on o.id::text = r.response_body ->> 'case_id'
  where r.command_name = 'apply_mail_rule' and r.status = 'completed'
+   and (o.id is null or {SALE_CASES})  -- never an action on a tender (case_kind.py)
    and r.completed_at > now() - interval '7 days'
  order by r.completed_at desc
  limit 100
@@ -243,7 +245,7 @@ select sr.id::text, m.internal_date, m.provider_thread_id, a.filename
 #: but whose number no case records — e.g. a second quote sent on a thread the rules had already
 #: linked before they learned to record one (Arcegon 01251-26). The case and its requesting
 #: institution come along so «Registrar en el caso» needs nothing typed.
-_SENT_ON_CASE_SQL = """
+_SENT_ON_CASE_SQL = f"""
 select sr.id::text, m.internal_date, m.provider_thread_id, a.filename,
        o.id::text, o.title, o.version, org.name
   from comms.message m
@@ -256,7 +258,8 @@ select sr.id::text, m.internal_date, m.provider_thread_id, a.filename,
                  group by oe.opportunity_id) linked on true
   join crm.opportunity o on o.id = linked.opportunity_id
   left join crm.organization org on org.id = o.organization_id
- where m.direction = 'outbound' and m.internal_date > now() - interval '60 days'
+ where {SALE_CASES}  -- an email whose one open case is a tender is the tender's (case_kind.py)
+   and m.direction = 'outbound' and m.internal_date > now() - interval '60 days'
    and a.filename ~* '^\\s*(CN|COT)\\s*-?\\s*\\d+.*\\.pdf$'
    and exists (select 1 from comms.message_participant p where p.message_id = m.id
                 and p.role = 'from' and p.address_norm = 'contacto@origenlab.cl')
@@ -310,8 +313,8 @@ def unrecorded_on_case_items(rows: list[Mapping[str, Any]], existing_numbers: se
     return out
 
 
-_COUNTS_SQL = """
-select (select count(*) from crm.opportunity where closed_at is null and organization_id is null),
+_COUNTS_SQL = f"""
+select (select count(*) from crm.opportunity o where {SALE_CASES} and o.closed_at is null and o.organization_id is null),
        (select count(*) from crm.organization where confirmation = 'machine_proposed'
           and status = 'active' and merged_into_organization_id is null)
 """

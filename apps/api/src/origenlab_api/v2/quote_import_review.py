@@ -174,7 +174,7 @@ class QuoteImportReviewRepository:
                 """
                 select op.id::text, op.title, op.stage, op.version, op.organization_id::text,
                        op.created_at::text
-                  from crm.opportunity op order by op.created_at, op.id
+                  from crm.opportunity op where op.kind = 'sale' order by op.created_at, op.id
                 """
             )
             opportunities = [

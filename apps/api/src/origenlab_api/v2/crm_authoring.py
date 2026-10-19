@@ -20,6 +20,7 @@ from typing import Any
 
 import psycopg
 
+from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.command_core import CommandTransaction, json_payload
 from origenlab_api.v2.commands import (
     CommandRefused,
@@ -2367,6 +2368,8 @@ def _handle_add_note(
     subject_kind = fields["subject_kind"]
     subject_id = fields["subject_id"]
     body = fields["body"]
+    if subject_kind == "opportunity":
+        refuse_tender(cur, subject_id)  # a tender is worked from «Licitaciones» (`case_kind.py`)
 
     # A product note needs a product to hang on: the catalog is the only subject checked here,
     # so the person/organization/opportunity behaviour stays exactly as it was.
@@ -2416,6 +2419,8 @@ def _handle_revise_note(
     body = fields["body"]
 
     old_note = _live_note(cur, note_id, expected_version)
+    if old_note["subject_kind"] == "opportunity":
+        refuse_tender(cur, old_note["subject_id"])
     if old_note["status"] == "archived":
         raise CommandRefused(409, "archived_subject", "cannot revise an archived note")
 
@@ -2478,6 +2483,8 @@ def _handle_archive_note(
     requesting_role = fields.get("_requesting_operator_role", operator.role)
 
     note = _live_note(cur, note_id, expected_version)
+    if note["subject_kind"] == "opportunity":
+        refuse_tender(cur, note["subject_id"])
     if note["status"] == "archived":
         raise CommandRefused(409, "already_archived", "note is already archived")
 

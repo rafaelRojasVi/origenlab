@@ -124,6 +124,11 @@ def compose_history(
     return items
 
 
+def _case_ids(row: Mapping[str, Any]) -> set[str]:
+    body = row["response_body"] if isinstance(row["response_body"], Mapping) else {}
+    return {v for v in (_text(body.get("opportunity_id")), _text(body.get("case_id"))) if v}
+
+
 def read_history(cur: Any, limit: int) -> dict[str, Any]:
     """The decisions of the last 60 days, newest first, in one read transaction's cursor."""
     cur.execute(HISTORY_SQL, (list(COMMAND_LABELS), limit))
@@ -133,16 +138,19 @@ def read_history(cur: Any, limit: int) -> dict[str, Any]:
     org_ids: set[str] = set()
     for row in rows:
         body = row["response_body"] if isinstance(row["response_body"], Mapping) else {}
-        for key in ("opportunity_id", "case_id"):
-            if _text(body.get(key)):
-                case_ids.add(body[key])
+        case_ids |= _case_ids(row)
         if _text(body.get("organization_id")):
             org_ids.add(body["organization_id"])
     case_titles: dict[str, str] = {}
     org_names: dict[str, str] = {}
     if case_ids:
-        cur.execute("select id::text, title from crm.opportunity where id::text = any(%s)", (sorted(case_ids),))
-        case_titles = {r[0]: r[1] for r in cur.fetchall()}
+        cur.execute("select id::text, title, kind from crm.opportunity where id::text = any(%s)", (sorted(case_ids),))
+        found = cur.fetchall()
+        case_titles = {r[0]: r[1] for r in found if r[2] == "sale"}
+        # A decision on a tender belongs to «Licitaciones» (`case_kind.py`), not to this history.
+        tenders = {r[0] for r in found if r[2] == "tender"}
+        if tenders:
+            rows = [r for r in rows if not _case_ids(r) & tenders]
     if org_ids:
         cur.execute("select id::text, name from crm.organization where id::text = any(%s)", (sorted(org_ids),))
         org_names = {r[0]: r[1] for r in cur.fetchall()}

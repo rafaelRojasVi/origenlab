@@ -5,6 +5,9 @@ Pure: an email's features and the case snapshot in, ranked candidates out. Nothi
 result is stored as a `message_triage` assertion (`case_match:v1`) and a person decides. Guardrails
 (owner review 2026-10-10): the quote number on the PDF beats every other signal; the sender being on a
 case is never enough alone; a quote number no case holds proposes a new case, never the nearest one.
+
+The snapshot holds sales cases only (`triage.CASE_CARDS_SQL`, `o.kind = 'sale'`, the API's
+`case_kind.SALE_CASES`): a tender is never a candidate.
 """
 
 from __future__ import annotations

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
@@ -33,6 +34,7 @@ class V2TaskCommandRepository(CommandTransaction):
     def _create_task(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
     ) -> dict[str, Any]:
+        refuse_tender(cur, fields["opportunity_id"])  # a tender's follow-ups live in «Licitaciones»
         cur.execute(
             "select id::text as id, stage, closed_at from crm.opportunity where id = %s for share",
             (fields["opportunity_id"],),
@@ -105,6 +107,7 @@ class V2TaskCommandRepository(CommandTransaction):
         task = self._row(cur)
         if task is None:
             raise CommandRefused(404, "task_not_found", "no such task")
+        refuse_tender(cur, task["opportunity_id"])
         if int(task["version"]) != fields["task_version"]:
             raise CommandRefused(
                 409,

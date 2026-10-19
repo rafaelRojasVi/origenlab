@@ -39,6 +39,7 @@ from dataclasses import replace
 from typing import Any, Callable
 
 from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
+from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.case_commands import (
     ADD_CASE_ORGANIZATION,
     ADVANCE_CASE_STAGE,
@@ -186,16 +187,21 @@ select oe.source_record_id::text as source_record_id, oe.opportunity_id::text as
   join evidence.source_record sr on sr.id = oe.source_record_id
  where oe.unlinked_at is null and oe.source_record_id is not null
 """
+#: Sales cases only (`case_kind.py`): R1–R15 never link, advance, reopen or close a tender. An email
+#: already linked to a tender keeps that link in `linked_case_ids` (so no rule opens a second case
+#: for it), but the tender is not a case the planner can act on.
 _CASES_SQL = """
 select id::text as id, title, stage, version, organization_id::text as organization_id,
        closed_at is not null as closed
   from crm.opportunity
+ where kind = 'sale'
 """
 _QUOTES_SQL = """
 select q.id::text as quote_id, q.opportunity_id::text as opportunity_id, q.quote_number,
        r.id::text as revision_id, r.revision_no, r.status, r.version,
        r.superseded_by_revision_no is not null as superseded, r.sent_at
   from crm.quote q
+  join crm.opportunity o on o.id = q.opportunity_id and o.kind = 'sale'
   left join crm.quote_revision r on r.quote_id = q.id
  order by q.quote_number, r.revision_no
 """
@@ -231,6 +237,9 @@ select r.id::text as receipt_id, r.completed_at, r.response_body, sr.kind, sr.pa
  where r.command_name = %s and r.status = 'completed'
    and r.response_body ->> 'trigger' = 'automatic'
    and r.completed_at > now() - make_interval(hours => %s)
+   -- Never an action on a tender (`case_kind.py`), should an old one exist.
+   and not exists (select 1 from crm.opportunity t
+                    where t.id::text = r.response_body ->> 'case_id' and t.kind = 'tender')
    and not exists (select 1 from platform.command_receipt u
                     where u.command_name = %s and u.status = 'completed'
                       and u.response_body ->> 'undoes_receipt_id' = r.id::text)
@@ -241,10 +250,11 @@ _FORWARD_PEOPLE_SQL = """
 select distinct o.id::text, f.payload ->> 'original_email'
   from evidence.source_record f
   join crm.opportunity o
-    on o.origin_source_record_id = f.id
-    or exists (select 1 from crm.opportunity_evidence oe
-                where oe.opportunity_id = o.id and oe.unlinked_at is null
-                  and oe.source_record_id::text = f.payload ->> 'forwarded_message_id')
+    on o.kind = 'sale'
+   and (o.origin_source_record_id = f.id
+        or exists (select 1 from crm.opportunity_evidence oe
+                    where oe.opportunity_id = o.id and oe.unlinked_at is null
+                      and oe.source_record_id::text = f.payload ->> 'forwarded_message_id'))
  where f.kind = 'forwarded_request' and f.review_status = 'promoted'
 """
 _APPLIED_EVIDENCE_SQL = """
@@ -276,7 +286,7 @@ select o.id::text,
            join crm.quote q on q.opportunity_id = op.id
            join crm.quote_revision qr on qr.quote_id = q.id
            left join evidence.source_record sr on sr.id = qr.origin_source_record_id
-          where op.organization_id = o.id and qr.status = 'sent'
+          where op.organization_id = o.id and op.kind = 'sale' and qr.status = 'sent'
             and qr.created_at <= now() - make_interval(days => %(days)s)
             and coalesce(op.close_reason, '') <> 'discarded_by_correction'
           order by qr.created_at, qr.id), '{}') as files
@@ -642,6 +652,8 @@ class MailRulesRepository(V2CaseCommandRepository):
                 return replay
             ctx: dict[str, Any] = dict(action.context)
             if "case" in ctx:
+                # The snapshot holds sales cases only; a tender named here is refused all the same.
+                refuse_tender(cur, ctx["case"])
                 self._refresh_case(cur, ctx)
             results: list[dict[str, Any]] = []
             created: dict[str, Any] = {"opportunity_evidence_ids": []}

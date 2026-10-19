@@ -257,6 +257,11 @@ class CommandTransaction:
             )
         return organization
 
+    def _before_handler(self, cur: Any, command_name: str, fields: dict[str, Any]) -> None:
+        """A check every handler of a repository shares, run after the receipt is claimed (so a
+        replay still answers what it answered) and inside the transaction (so a refusal rolls the
+        receipt back). None here."""
+
     # ------------------------------------------------------------------ the entry point
 
     def execute(
@@ -279,6 +284,7 @@ class CommandTransaction:
             )
             if replay is not None:
                 return replay
+            self._before_handler(cur, command_name, fields)
             response = handler(self, cur, operator, fields, receipt_id)
             response["idempotency_key"] = idempotency_key
             response["command_receipt_id"] = receipt_id
