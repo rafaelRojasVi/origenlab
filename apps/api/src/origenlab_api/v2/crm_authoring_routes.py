@@ -1,7 +1,7 @@
 """CRM freeform authoring command boundary — `POST /v2/commands/<crm-command>`.
 
 Mounted only when `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true` **and** a V2 DSN is set
-(default off).  All 29 routes require:
+(default off).  All 30 routes require:
 - An active operator with role `sales` or `admin` (viewer → 403 `role_may_not_decide`).
 - An `Idempotency-Key` header (absent → 400).
 - A JSON body whose shape is enforced by Pydantic with `extra="forbid"`.
@@ -210,6 +210,17 @@ class ConfirmOrganizationRecordBody(BaseModel):
 
     organization_id: UUID
     expected_version: int
+    note: Annotated[str | None, _NOTE_OPT] = None
+
+
+class UnconfirmOrganizationRecordBody(BaseModel):
+    """unconfirm-organization-record: back to «por confirmar», and to `previous_name` when given."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    organization_id: UUID
+    expected_version: int
+    previous_name: Annotated[str | None, Field(default=None, min_length=1, max_length=500)] = None
     note: Annotated[str | None, _NOTE_OPT] = None
 
 
@@ -496,6 +507,19 @@ def confirm_organization_record(
 ) -> dict[str, Any]:
     """«Confirmar institución»: machine_proposed → confirmed. Not the evidence-bound confirm-organization."""
     return _run(command_name="confirm-organization-record", body=body,
+                fields=body.model_dump(mode="json"), repo=repo,
+                operator=operator, idempotency_key=idempotency_key)
+
+
+@crm_authoring_router.post("/unconfirm-organization-record")
+def unconfirm_organization_record(
+    body: UnconfirmOrganizationRecordBody,
+    operator: Deciding,
+    repo: CrmAuthoringRepo,
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """confirmed → machine_proposed (the «Deshacer» of rule R15), optionally with its previous name."""
+    return _run(command_name="unconfirm-organization-record", body=body,
                 fields=body.model_dump(mode="json"), repo=repo,
                 operator=operator, idempotency_key=idempotency_key)
 

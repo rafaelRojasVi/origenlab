@@ -34,6 +34,7 @@ COMMAND_LABELS: dict[str, str] = {
     "create_organization": "Registró una institución",
     "update-organization": "Editó una institución",
     "confirm-organization-record": "Confirmó una institución",
+    "unconfirm-organization-record": "Devolvió una institución a «por confirmar»",
     "add-organization-domain": "Agregó un dominio a una institución",
     "create-person": "Registró una persona",
     "add-note": "Agregó una nota",

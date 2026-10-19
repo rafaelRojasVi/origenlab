@@ -385,3 +385,32 @@ def test_when_the_model_ran_its_answer_wins() -> None:
               "pick": {"choice": case["opportunity_id"], "reason_es": "Mismo producto."}, "candidates": []}
     view = case_match_view({**row, "case_match_value": picked}, cases)
     assert view["decision"] == "propose" and view["suggestions"][0]["from"] == "model"
+
+
+@needs_db
+def test_the_queue_says_when_contacto_answered_the_thread_later(world) -> None:
+    """Item 2a (2026-10-19): «Correos sin caso» hides an old email contacto@ already answered on its
+    thread. The API says when that answer went out; the dashboard decides what is old."""
+    def answered():
+        items = {i["assertion_id"]: i for i in _repo(world).readings(status="all", limit=200)["items"]}
+        return items[world["read"]]["answered_at"]
+
+    assert answered() is None
+    mailbox, thread = _owner(world, "select m.mailbox_id, m.provider_thread_id from evidence.assertion a join evidence.source_record sr "
+                           "on sr.id = a.source_record_id join comms.message m "
+                           "on 'gmail_message:' || m.provider_message_id = sr.dedupe_key where a.id = %s",
+                    world["read"])[0]
+
+    def outbound(sender, when):
+        gid = f"out-{uuid.uuid4().hex[:10]}"
+        mid = _owner(world, "insert into comms.message (mailbox_id, provider_message_id, provider_thread_id, "
+                            "direction, internal_date, subject, parse_status) values (%s, %s, %s, 'outbound', "
+                            f"now() {when}, 'RE: Cotización', 'parsed') returning id", mailbox, gid, thread)[0][0]
+        _owner(world, "insert into comms.message_participant (message_id, role, address_norm) values (%s, 'from', %s) "
+                      "returning id", mid, sender)
+
+    outbound("contacto@origenlab.cl", "- interval '1 day'")  # before the email: not an answer
+    outbound("otra@origenlab.cl", "+ interval '1 hour'")  # someone else: not contacto@
+    assert answered() is None
+    outbound("contacto@origenlab.cl", "+ interval '2 hours'")
+    assert answered() is not None

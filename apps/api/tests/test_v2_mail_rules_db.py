@@ -695,7 +695,8 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     assert unchanged.value.code == "auto_mail_rules_unchanged"
     state = auto.state()
     assert (state["enabled"], state["changed_by"], state["note"], state["rules"]) == (
-        True, "Admin Ficticio", "probado en vista previa", ["R1", "R11", "R12", "R13", "R2", "R3", "R4", "R7", "R9"])
+        True, "Admin Ficticio", "probado en vista previa",
+        ["R1", "R11", "R12", "R13", "R14", "R15", "R2", "R3", "R4", "R7", "R9"])
 
     # One pass: R1/R2 link, R7 opens the RFQ lead and (2026-10-15) R4 opens the new domain's case too.
     result = auto.run_once()

@@ -10,7 +10,14 @@ applies, and **which** rules may apply without a person pressing «Aplicar»:
 | R2 | yes | the email names a quote number held by exactly one open case: link only |
 | R7 | yes | an explicit inbound RFQ opens a lead; free-mail never invents an institution |
 | R9 | yes | a sent CN PDF whose own name names one institution with exactly one open case: link + «Enviada» + quote (owner-approved 2026-10-13) |
-| R3–R6 | no | recipient-domain case creation and terminal win/loss actions still wait for an admin |
+| R3, R4, R11–R13 | yes | case creation from a sent quote, forwards, the context matcher (owner 2026-10-14/15) |
+| R14 | yes | a sent quote on an email already on its one open case, under R1's gates (owner 2026-10-19) |
+| R15 | yes | an institution a rule created «por confirmar», once a quote to it stood 3 days (owner 2026-10-19) |
+| R5, R6, R10 | no | terminal win/loss actions and a PDF-named new institution still wait for an admin |
+
+**Kill flags.** R14 and R15 each have their own deploy setting
+(`ORIGENLAB_V2_AUTO_RULE_R14_ENABLED`, `ORIGENLAB_V2_AUTO_RULE_R15_ENABLED`, default true): false
+keeps the rule out of the automatic pass while the switch is on; «Aplicar» can still apply it.
 
 **The switch.** An admin turns the automatic run on or off in Revisión → «Acciones automáticas»
 (`POST /v2/commands/set-auto-mail-rules`). Each flip is one `platform.command_receipt`
@@ -50,7 +57,9 @@ logger = logging.getLogger(__name__)
 
 #: Safe intake/link rules the timer applies (R11, forwarded requests: owner 2026-10-14). Terminal actions (R5/R6) and recipient-domain
 #: creation (R3/R4) still wait for an admin.
-AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13"})
+AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15"})
+#: Rules with their own kill flag in settings (`v2_auto_rule_<id>_enabled`).
+FLAGGED_RULES: tuple[str, ...] = ("R14", "R15")
 SWITCH_COMMAND = "set_auto_mail_rules"
 DEFAULT_INTERVAL_SECONDS = 300
 #: At most this many actions per pass; the next pass takes the rest.
@@ -102,9 +111,12 @@ def read_switch(cur: Any) -> dict[str, Any]:
 class AutoMailRules:
     """The switch and one automatic pass, over a :class:`MailRulesRepository`."""
 
-    def __init__(self, repo: Any, *, interval_seconds: int = DEFAULT_INTERVAL_SECONDS) -> None:
+    def __init__(self, repo: Any, *, interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
+                 disabled_rules: frozenset[str] = frozenset()) -> None:
         self._repo = repo
         self.interval_seconds = int(interval_seconds)
+        #: Rules a deploy flag keeps out of the automatic pass (`FLAGGED_RULES`).
+        self.rules: frozenset[str] = AUTOMATIC_RULES - frozenset(disabled_rules)
         self._lock = threading.Lock()
         self._last_run: dict[str, Any] | None = None
 
@@ -129,7 +141,7 @@ class AutoMailRules:
                        "otro administrador debe volver a activarlo")
         return {
             **switch,
-            "rules": sorted(AUTOMATIC_RULES),
+            "rules": sorted(self.rules),
             "interval_seconds": self.interval_seconds,
             "timer_running": self.timer_running,
             "blocked": blocked,
@@ -164,7 +176,7 @@ class AutoMailRules:
                 raise CommandRefused(409, "auto_mail_rules_unchanged",
                                      f"las acciones automáticas ya están {state}")
             response = {"enabled": bool(enabled), "note": note,
-                        "rules": sorted(AUTOMATIC_RULES), "command_receipt_id": receipt_id,
+                        "rules": sorted(self.rules), "command_receipt_id": receipt_id,
                         "idempotency_key": idempotency_key, "replayed": False}
             self._repo._complete_receipt(cur, receipt_id, response)
             return response
@@ -185,7 +197,7 @@ class AutoMailRules:
             result["skipped"] = "operator_not_admin"
         else:
             actions, _display, _snapshot = self._repo.plan()
-            eligible = [a for a in actions if a.mode == AUTO and a.rule_id in AUTOMATIC_RULES]
+            eligible = [a for a in actions if a.mode == AUTO and a.rule_id in self.rules]
             result["pending"] = max(0, len(eligible) - MAX_ACTIONS_PER_PASS)
             for action in eligible[:MAX_ACTIONS_PER_PASS]:
                 outcome = self._repo.apply_planned(operator, action, automatic=True)

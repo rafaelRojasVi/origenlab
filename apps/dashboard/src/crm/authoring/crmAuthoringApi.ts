@@ -30,6 +30,7 @@ export const CRM_COMMAND_PATHS = {
   archiveOrganization: "/v2/commands/archive-organization",
   restoreOrganization: "/v2/commands/restore-organization",
   confirmOrganizationRecord: "/v2/commands/confirm-organization-record",
+  unconfirmOrganizationRecord: "/v2/commands/unconfirm-organization-record",
   addOrganizationIdentifier: "/v2/commands/add-organization-identifier",
   removeOrganizationIdentifier: "/v2/commands/remove-organization-identifier",
   addOrganizationDomain: "/v2/commands/add-organization-domain",

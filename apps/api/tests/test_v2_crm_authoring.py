@@ -2,7 +2,7 @@
 
 Covers: body validation, role checks (viewer 403 incl. forged header escalation attempt),
 admin-only gates, missing Idempotency-Key (400), replay (replayed=true, no second handler call),
-product-line closed list, no `delete from` in the module source, all 29 route shapes present,
+product-line closed list, no `delete from` in the module source, all 30 route shapes present,
 switch off-by-default, mount test, and per-command shape validation.
 
 **No database, no network.**  Every handler call goes to a _FakeRepo that captures its args.
@@ -75,6 +75,7 @@ ALL_ROUTES = {
     "/v2/commands/archive-organization",
     "/v2/commands/restore-organization",
     "/v2/commands/confirm-organization-record",
+    "/v2/commands/unconfirm-organization-record",
     "/v2/commands/add-organization-identifier",
     "/v2/commands/remove-organization-identifier",
     "/v2/commands/add-organization-domain",
@@ -266,9 +267,9 @@ def test_archive_person_forbids_extra() -> None:
         ArchivePersonBody(person_id=str(uuid.uuid4()), expected_version=1, note="r", extra="bad")
 
 
-# ──────────────────────────────────────────────────────────────────── 29 routes ──
+# ──────────────────────────────────────────────────────────────────── 30 routes ──
 
-def test_the_router_exposes_exactly_29_posts() -> None:
+def test_the_router_exposes_exactly_30_posts() -> None:
     routes = set(r.path for r in crm_authoring_router.routes)
     assert routes == ALL_ROUTES
     # All are POST
@@ -360,6 +361,8 @@ def _minimal_body(path: str) -> dict:
     if path == "/v2/commands/archive-note":
         return {"note_id": pid, "expected_version": 1, "note": note}
     if path == "/v2/commands/confirm-organization-record":
+        return {"organization_id": oid, "expected_version": 1}
+    if path == "/v2/commands/unconfirm-organization-record":
         return {"organization_id": oid, "expected_version": 1}
     raise ValueError(f"No minimal body defined for {path}")
 
@@ -661,3 +664,25 @@ def test_confirm_organization_record_hands_the_handler_a_json_ready_body() -> No
     [call] = app.state.crm_authoring_repository.calls
     assert call["command_name"] == "confirm-organization-record"
     assert call["fields"] == {"organization_id": oid, "expected_version": 4, "note": "revisada"}
+
+
+# ──────────────────────────────────────────────────── unconfirm-organization-record ──
+
+def test_unconfirm_organization_record_takes_a_previous_name_and_an_optional_note() -> None:
+    app, client = _client(role="sales")
+    path = "/v2/commands/unconfirm-organization-record"
+    oid = str(uuid.uuid4())
+    ok = client.post(path, json={"organization_id": oid, "expected_version": 2, "previous_name": "nuevo.example.test",
+                                 "note": "lo confirmó el sistema"}, headers={**HEADERS, **_ikey()})
+    assert ok.status_code == 200
+    [call] = app.state.crm_authoring_repository.calls
+    assert call["command_name"] == "unconfirm-organization-record"
+    assert call["fields"] == {"organization_id": oid, "expected_version": 2, "previous_name": "nuevo.example.test",
+                              "note": "lo confirmó el sistema"}
+    for body in (
+        {"organization_id": oid, "expected_version": 1, "confirmation": "machine_proposed"},
+        {"organization_id": "no-es-uuid", "expected_version": 1},
+        {"organization_id": oid, "expected_version": 1, "previous_name": "  "},
+        {"organization_id": oid},
+    ):
+        assert client.post(path, json=body, headers={**HEADERS, **_ikey()}).status_code == 422, body

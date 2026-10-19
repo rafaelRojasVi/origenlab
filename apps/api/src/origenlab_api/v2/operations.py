@@ -369,6 +369,8 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
             "automatic": b.get("trigger") == "automatic", "today": bool(today),
             "case_id": b.get("case_id"), "case_title": title or b.get("case_title"),
             "quote_number": b.get("quote_number"), "undone": bool(undone),
+            # R15 acts on an institution: its name (as confirmed), never a person's.
+            "organization_id": b.get("organization_id"), "organization_name": b.get("organization_name"),
         })
     cur.execute(_SENT_QUOTES_SQL)
     sent_rows = [{"source_record_id": sid, "sent_at": _iso(at), "thread_id": thread, "filename": name}

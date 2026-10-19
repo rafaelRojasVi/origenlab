@@ -655,6 +655,8 @@ def _mount_v2_command_boundary(
     app.state.auto_mail_rules = AutoMailRules(
         app.state.mail_rules_repository,
         interval_seconds=settings.v2_auto_mail_rules_interval_seconds,
+        disabled_rules=frozenset(rule for rule, on in (("R14", settings.v2_auto_rule_r14_enabled),
+                                                       ("R15", settings.v2_auto_rule_r15_enabled)) if not on),
     )
     app.state.auto_mail_rules_runner = AutoMailRulesRunner(app.state.auto_mail_rules)
     app.include_router(mail_rules_command_router)

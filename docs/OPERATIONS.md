@@ -1948,6 +1948,9 @@ The API applies rules R1 (same Gmail thread) and R2 (same quote number) by itsel
 - **Hard stop** (dashboard unreachable): set `ORIGENLAB_V2_AUTO_MAIL_RULES_INTERVAL_SECONDS=0` on
   the API and redeploy; the timer is never started. `ORIGENLAB_V2_COMMANDS_ENABLED=false` also
   removes it, with every other command.
+- **One rule off** (2026-10-19): `ORIGENLAB_V2_AUTO_RULE_R14_ENABLED=false` (record a sent quote
+  already on its case) or `ORIGENLAB_V2_AUTO_RULE_R15_ENABLED=false` (confirm an institution a
+  sent quote settled) keeps that rule out of the timer; default true. «Aplicar» still offers it.
 - **A wrong link:** «Deshacer» on the row in «Acciones aplicadas» (marked «automática»). An undone
   email is never linked again by the rules.
 - **«Activo, sin actuar»:** the admin who switched it on is no longer an active admin; another

@@ -151,6 +151,18 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
     expect(hidden).toEqual({ "en un caso": 1, proveedor: 2, "aviso automático": 4, "reenvío antiguo": 1, "mismo hilo": 1 });
   });
 
+  it("hides an email older than 14 days that contacto@ already answered on its thread (2026-10-19)", () => {
+    const now = new Date("2026-10-30T12:00:00Z");
+    const { ask, hidden } = sortInbox([
+      r("viejo-respondido", { sent_at: "2026-10-09T10:00:00Z", answered_at: "2026-10-09T12:00:00Z" }),
+      r("viejo-sin-respuesta", { sent_at: "2026-10-09T10:00:00Z", answered_at: null }),
+      r("nuevo-respondido", { sent_at: "2026-10-25T10:00:00Z", answered_at: "2026-10-25T11:00:00Z" }),
+      r("api-antigua", { sent_at: "2026-10-01T10:00:00Z" }),
+    ], [], now);
+    expect(ask.map((x) => x.assertion_id)).toEqual(["nuevo-respondido", "viejo-sin-respuesta", "api-antigua"]);
+    expect(hidden).toEqual({ "ya respondido": 1 });
+  });
+
   it("asks «¿Marcar ganada?» for a purchase order on a winnable case, first, and still counts the rest «en un caso»", () => {
     const won = { ...CASE, opportunity_id: "o-won", stage: "won" };
     const { ask, hidden } = sortInbox(

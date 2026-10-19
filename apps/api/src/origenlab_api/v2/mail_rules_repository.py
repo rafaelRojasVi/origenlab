@@ -60,13 +60,18 @@ from origenlab_api.v2 import forwarded_requests
 from origenlab_api.v2.mail_rules import (
     ATTACH_FORWARD,
     AUTO,
+    CONFIRM_ORGANIZATION_RECORD,
     CREATE_REQUEST_FROM_FORWARD_STEP,
     LINK_AFTER_CLOSE,
     OWN_DOMAINS,
+    SETTLE_DAYS,
     SYSTEM_LABEL,
+    UNCONFIRM_ORGANIZATION_RECORD,
+    UPDATE_ORGANIZATION,
     CaseQuote,
     CaseState,
     ForwardRequest,
+    InstitutionFacts,
     MailDocument,
     MailEvidence,
     Organization,
@@ -202,6 +207,8 @@ select distinct m.provider_thread_id
 """
 #: Rules whose action opens a case; the rest file an email in one.
 OPENING_RULES: frozenset[str] = frozenset({"R3", "R4", "R7", "R10"})
+#: Rules that act on an institution, not on an email (R15).
+INSTITUTION_RULES: frozenset[str] = frozenset({"R15"})
 REMOVED_FROM_HOY = "Quitado desde Hoy: la acción automática no correspondía"
 _RECENT_AUTOMATIC_SQL = """
 select r.id::text as receipt_id, r.completed_at, r.response_body, sr.kind, sr.payload
@@ -227,9 +234,40 @@ select distinct o.id::text, f.payload ->> 'original_email'
  where f.kind = 'forwarded_request' and f.review_status = 'promoted'
 """
 _APPLIED_EVIDENCE_SQL = """
-select distinct response_body ->> 'evidence_id'
+select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
   from platform.command_receipt
  where command_name = %s and status = 'completed'
+"""
+#: Rules that act on an email another rule already acted on (R14), each once: their apply receipt
+#: is looked up by its own key, not by the email.
+AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14"})
+#: R15: the institutions «por confirmar», what created them (the receipt of their
+#: `organization.created` event), and the PDF file name of each quote on their cases that is still
+#: sent and was recorded `%(days)s` days ago or more. A case an undo discarded does not count.
+_INSTITUTIONS_SQL = """
+select o.id::text,
+       (select case when r.command_name = 'complete_case_from_sent_quote' then 'complete_case'
+                    when r.command_name = 'apply_mail_rule' then r.response_body ->> 'rule_id' end
+          from crm.domain_event ev
+          join platform.command_receipt r on r.id = ev.command_receipt_id
+         where ev.aggregate_kind = 'organization' and ev.aggregate_id = o.id
+           and ev.event_type = 'organization.created'
+         order by ev.seq limit 1) as created_by,
+       coalesce(array(
+         select coalesce((select d ->> 'filename'
+                            from jsonb_array_elements(case when jsonb_typeof(sr.payload -> 'documents') = 'array'
+                                                           then sr.payload -> 'documents' else '[]'::jsonb end) d
+                           where lower(d ->> 'sha256') = lower(qr.pdf_sha256) limit 1), '')
+           from crm.opportunity op
+           join crm.quote q on q.opportunity_id = op.id
+           join crm.quote_revision qr on qr.quote_id = q.id
+           left join evidence.source_record sr on sr.id = qr.origin_source_record_id
+          where op.organization_id = o.id and qr.status = 'sent'
+            and qr.created_at <= now() - make_interval(days => %(days)s)
+            and coalesce(op.close_reason, '') <> 'discarded_by_correction'
+          order by qr.created_at, qr.id), '{}') as files
+  from crm.organization o
+ where o.confirmation = 'machine_proposed' and o.status = 'active' and o.merged_into_organization_id is null
 """
 
 
@@ -237,7 +275,7 @@ def _direction(payload: dict[str, Any], comms_direction: str | None) -> str:
     return mail_direction(payload.get("sender"), payload.get("direction_hint"), comms_direction)
 
 
-def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
+def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
     """The snapshot the rules plan from, and per-email display facts for the preview."""
     def rows() -> list[dict[str, Any]]:
         cols = [d[0] for d in cur.description]
@@ -335,7 +373,18 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
         cases = tuple(replace(c, people=tuple(sorted(set(c.people) | extra.get(c.id, set())))) for c in cases)
 
     cur.execute(_APPLIED_EVIDENCE_SQL, (APPLY_COMMAND,))
-    applied = frozenset(r[0] for r in cur.fetchall() if r[0])
+    pairs = frozenset((r[0], r[1]) for r in cur.fetchall() if r[0])
+    applied = frozenset(e for e, _ in pairs)
+
+    # R15: institutions «por confirmar» and their settled quotes.
+    cur.execute(_INSTITUTIONS_SQL, {"days": int(settle_days)})
+    institutions = tuple(InstitutionFacts(organization_id=oid, created_by=created_by,
+                                          settled_quote_files=tuple(f or None for f in (files or ())))
+                         for oid, created_by, files in cur.fetchall())
+    names = {o.id: o.name for o in organizations}
+    for inst in institutions:
+        display[inst.organization_id] = {"subject": f"Institución por confirmar: {names.get(inst.organization_id, '')}",
+                                         "sent_at": None, "direction": None}
 
     # R11: the pending forwarded requests, their copies merged as «Hoy» shows them.
     cur.execute(forwarded_requests.READ_SQL)
@@ -348,7 +397,8 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
         display[g["id"]] = {"subject": f"Reenviado: {g.get('requested_item') or c.get('email') or ''}",
                             "sent_at": g.get("received_at"), "direction": "inbound"}
     return Snapshot(evidence=tuple(evidence), cases=cases, organizations=organizations,
-                    applied_evidence_ids=applied, forwards=tuple(forwards)), display
+                    applied_evidence_ids=applied, forwards=tuple(forwards), applied_pairs=pairs,
+                    institutions=institutions), display
 
 
 # ─────────────────────────────────────────────────────────────── the repository ──
@@ -359,11 +409,13 @@ class MailRulesRepository(V2CaseCommandRepository):
     handlers are borrowed from their own repositories and run on this transaction's cursor."""
 
     def __init__(self, connect: Any, dsn: str, statement_timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
-                 *, commands_enabled: bool = False) -> None:
+                 *, commands_enabled: bool = False, settle_days: int = SETTLE_DAYS) -> None:
         super().__init__(connect, dsn, statement_timeout_ms)
         self._quotes = V2QuoteImportRepository(connect, dsn, statement_timeout_ms)
         self._authoring = V2CrmAuthoringRepository(connect, dsn, statement_timeout_ms)
         self.commands_enabled = commands_enabled
+        #: R15's wait after a quote is recorded (`mail_rules.SETTLE_DAYS`); a test may shorten it.
+        self.settle_days = int(settle_days)
 
     @contextmanager
     def _read(self) -> Iterator[Any]:
@@ -380,7 +432,7 @@ class MailRulesRepository(V2CaseCommandRepository):
 
     def plan(self) -> tuple[list[PlannedAction], dict[str, dict[str, Any]], Snapshot]:
         with self._read() as cur:
-            snapshot, display = read_snapshot(cur)
+            snapshot, display = read_snapshot(cur, settle_days=self.settle_days)
         return plan(snapshot), display, snapshot
 
     def preview(self) -> dict[str, Any]:
@@ -459,6 +511,8 @@ class MailRulesRepository(V2CaseCommandRepository):
             for row in cur.fetchall():
                 r = dict(zip(cols, row, strict=True))
                 body = _json(r["response_body"]) or {}
+                if body.get("rule_id") in INSTITUTION_RULES:
+                    continue  # an institution, not an email: Operaciones lists it, «Hoy» does not
                 created = body.get("created") or {}
                 opened = body.get("rule_id") in OPENING_RULES or bool(created.get("opportunity_id"))
                 payload = _json(r["payload"]) or {}
@@ -545,11 +599,21 @@ class MailRulesRepository(V2CaseCommandRepository):
             # One apply per email, whoever presses: the lock serialises two concurrent runs, and the
             # second then sees the first's receipt.
             cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"mail-rule:{action.evidence_id}",))
-            cur.execute(
-                "select operator_id::text, idempotency_key from platform.command_receipt "
-                "where command_name = %s and status = 'completed' and response_body ->> 'evidence_id' = %s",
-                (APPLY_COMMAND, action.evidence_id),
-            )
+            if action.rule_id in AFTER_APPLY_RULES:
+                # R14 acts on an email another rule already acted on: only its own receipt counts.
+                cur.execute(
+                    "select operator_id::text, idempotency_key from platform.command_receipt "
+                    "where command_name = %s and status = 'completed' and response_body ->> 'evidence_id' = %s "
+                    "and response_body ->> 'rule_id' = %s",
+                    (APPLY_COMMAND, action.evidence_id, action.rule_id),
+                )
+            else:
+                cur.execute(
+                    "select operator_id::text, idempotency_key from platform.command_receipt "
+                    "where command_name = %s and status = 'completed' and response_body ->> 'evidence_id' = %s "
+                    "and coalesce(response_body ->> 'rule_id', '') not in ('R14')",
+                    (APPLY_COMMAND, action.evidence_id),
+                )
             done = cur.fetchone()
             if done is not None and (done[0] != operator.operator_id or done[1] != key):
                 raise CommandRefused(409, "already_applied", "another run already acted on this email")
@@ -566,6 +630,10 @@ class MailRulesRepository(V2CaseCommandRepository):
                           for k, v in step["inputs"].items()}
                 result = self._run_step(cur, system, step["command"], inputs, receipt_id)
                 _absorb(ctx, created, step["command"], result)
+                if step["command"] == UPDATE_ORGANIZATION:
+                    # R15 renamed it: undo gives the old name back while the new one still stands.
+                    created["previous_name"] = ctx.get("previous_name")
+                    created["renamed_to"] = inputs.get("name")
                 results.append({"command": step["command"],
                                 **{k: result.get(k) for k in _RESULT_KEYS if k in result}})
             response = {
@@ -677,7 +745,18 @@ class MailRulesRepository(V2CaseCommandRepository):
             if rule == "R5" and action.get("from_stage") == "quoting":
                 run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": self._case_version(cur, case_id),
                                          "stage": "quoting", "note": note})
-        if rule in ("R1", "R9", "R13") and created.get("quote_revision_id"):
+        if rule == "R15":
+            # Back to «por confirmar», and to its old name unless a person renamed it since.
+            org_id = action.get("organization_id")
+            cur.execute("select version, name, confirmation from crm.organization where id = %s", (org_id,))
+            org = cur.fetchone()
+            if org is not None and org[2] == "confirmed":
+                inputs: dict[str, Any] = {"organization_id": org_id, "expected_version": int(org[0]),
+                                          "previous_name": None, "note": note}
+                if created.get("previous_name") and org[1] == created.get("renamed_to"):
+                    inputs["previous_name"] = created["previous_name"]
+                run(UNCONFIRM_ORGANIZATION_RECORD, inputs)
+        if rule in ("R1", "R9", "R13", "R14") and created.get("quote_revision_id"):
             # R1 can now recognize a new sent CN PDF on an existing thread. Undo the quotes first,
             # then walk the ordinary reversible stage edges back to where the case was before the
             # email action. No privileged stage correction is needed for these open stages.
@@ -789,7 +868,8 @@ class MailRulesRepository(V2CaseCommandRepository):
         if command in _QUOTE_BODIES:
             fields = validated_quote_import(command, _QUOTE_BODIES[command](**inputs))
             return self._quotes._HANDLERS[command](self._quotes, cur, operator, fields, receipt_id)
-        if command in (ARCHIVE_ORGANIZATION, REMOVE_ORGANIZATION_DOMAIN):
+        if command in (ARCHIVE_ORGANIZATION, REMOVE_ORGANIZATION_DOMAIN, UPDATE_ORGANIZATION,
+                       CONFIRM_ORGANIZATION_RECORD, UNCONFIRM_ORGANIZATION_RECORD):
             return self._authoring._HANDLERS[command](self._authoring, cur, operator, dict(inputs), receipt_id)
         local: dict[str, Callable[..., dict[str, Any]]] = {
             REGISTER_MAIL_ORGANIZATION: MailRulesRepository._register_mail_organization,
@@ -980,6 +1060,12 @@ def register_machine_organization(repo: Any, cur: Any, operator: OperatorIdentit
 
 
 def _absorb(ctx: dict[str, Any], created: dict[str, Any], command: str, result: dict[str, Any]) -> None:
+    if command in (UPDATE_ORGANIZATION, CONFIRM_ORGANIZATION_RECORD):
+        # The authoring handlers answer `version`; the next step expects the institution's new one.
+        ctx["organization_version"] = int(result["version"])
+        if command == CONFIRM_ORGANIZATION_RECORD and not result.get("already_confirmed"):
+            created["confirmed_organization_id"] = result["organization_id"]
+        return
     if result.get("opportunity_id"):
         ctx["case"] = result["opportunity_id"]
     if result.get("opportunity_version") is not None:
