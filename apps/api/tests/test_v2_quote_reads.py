@@ -1115,3 +1115,16 @@ def test_quote_lines_printed_under_an_alias_reach_the_principals_history_and_kit
     assert len(ws["price_history"]["items"]) == 3
     # The kit line printed as an alias is offered as its catalog product.
     assert [(k["model_key"], k["product_id"]) for k in ws["suggestions"]["kits"]] == [("XQH7", holder)]
+
+
+def test_a_web_form_submission_offers_the_visitor_not_contacto() -> None:
+    """contacto@ mailed itself the form; the Reply-To is whom the quote goes to. Pure."""
+    from origenlab_api.v2.quotes.reads import email_people
+
+    rows = [{"kind": "email", "sender": "OrigenLab <contacto@origenlab.cl>", "recipients": "contacto@origenlab.cl",
+             "direction_hint": "internal_only", "comms_direction": "outbound",
+             "web_form_reply_to": "ana@lab-ficticio.example.test", "at": None}]
+    assert email_people(rows) == [{"email": "ana@lab-ficticio.example.test", "name": None, "source": "email_from"}]
+    # Without the marker (no reply_to read) it stays OrigenLab's own mail: nobody is offered.
+    rows[0]["web_form_reply_to"] = None
+    assert email_people(rows) == []

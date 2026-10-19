@@ -3148,6 +3148,28 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
 | Auth | Same token file as «Enviar prueba» (`ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE`). Request it with `scripts/gmail_send_authorize.py` (default `--scopes web-form` = gmail.compose + gmail.settings.basic, also serves «Enviar prueba» and future projects; `--scopes send` keeps the old gmail.send-only token). Token was never provisioned in production (see §2.7.47). Owner must create it before enabling. |
 | Not done | not deployed, token not created. To ship: merge → apply migrations first (this change adds none) → the release on merge deploys the API and the triage worker (TRIAGE_VERSION 4) → deploy the dashboard-proxy Worker → `make smoke` → the owner runs `gmail_send_authorize.py`, uploads the token as the Render secret file and sets `ORIGENLAB_V2_WEB_QUOTE_FORM_ENABLED=true` → upload the web `dist/` to cPanel |
 
+### 2.7.136 A web-form case reads the visitor as its client, 2026-10-19 — built, deploys on merge
+
+- Seen on the first real form case: «Sin contacto», its email «Interno · Enviado por OrigenLab», and
+  the Cotizador «Para» offered nobody — the case reads took the From (contacto@) as the sender. Now
+  the reads use R7's predicate (From on an own domain + triage reason `header:x-origenlab-origin` +
+  a `reply_to` participant; `mail_rules.WEB_FORM_REPLY_TO_SQL` / `web_form_enquirer`) and treat such
+  an email as **received from the Reply-To**: the case's people (`quotes/reads._CASE_PEOPLE_SQL` →
+  `case.contacts`), «Correos del caso» (`opportunity_threads` → `case_threads`: «Cliente»,
+  received), «último contacto» (`_SQL_PIPELINE_CONTACT` → `last_contacts`, so Hoy's Cotizar/Responder
+  wait from it; OrigenLab's own From name is never shown as the client's) and the card's
+  «Contacto» (new source `web_form` when the case has no participant and no sent quote). Read side
+  only: no migration, the capture and R7 unchanged.
+  The visitor stays the card's contact when they later reply from their own address; contacto@'s
+  answer on the thread stays outbound (the case reads as answered on Hoy).
+- R7's title for a web-form mail no longer repeats the prefix («Solicitud de cotización — sitio
+  web — <Institución>»); other cases' titles are unchanged, and existing titles are not rewritten.
+- Dashboard: the case's «No es una solicitud» is a one-step confirmation («Cerrar» / «Cancelar»)
+  sending the same `advance-case-stage` → `abandoned`, close reason «No es una solicitud», as the
+  «Perdida» form does for that chip; «Cambiar estado» → «Perdida» keeps the full form.
+- Tests: API `test_v2_mail_rules.py`, `test_v2_crm_workspace.py`, `test_v2_quote_reads.py`,
+  `test_v2_mail_rules_db.py`; vitest `CaseActions.test.tsx`.
+
 ### 2.7.134 Cotizador «Datos del cliente» on the draft, 2026-10-19 — built, deploys on merge
 
 - Owner, 2026-10-19: the client's name and details could not be changed on a quote, so revisions

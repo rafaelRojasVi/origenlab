@@ -230,17 +230,42 @@ describe("case command helpers", () => {
     expect(within(dialog).getByText("Persona Ficticia")).toBeInTheDocument();
     expect(within(dialog).getByRole("link", { name: /Abrir la cadena «Solicitud de balanza ficticia» en Gmail/ })).toHaveAttribute("href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/example1");
+    // «No es una solicitud» is one confirmation, not the whole «Perdida» form (owner 2026-10-19).
     fireEvent.click(within(dialog).getByRole("button", { name: "No es una solicitud" }));
-    const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
+    const confirm = within(dialog).getByRole("group", { name: "Confirmar «No es una solicitud»" });
+    expect(confirm).toHaveTextContent("¿Cerrar como «No es una solicitud»? Se cierra como abandonado y se conserva el correo.");
+    expect(within(dialog).queryByRole("form", { name: "Mover a «Perdida»" })).toBeNull();
+    expect(within(dialog).queryByText("Motivo")).toBeNull();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancelar" }));
+    expect(within(dialog).queryByRole("group", { name: "Confirmar «No es una solicitud»" })).toBeNull();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
-    fireEvent.change(within(form).getByLabelText(/Detalle/), { target: { value: "Es una oferta del proveedor" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Cerrar caso incorrecto" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "No es una solicitud" }));
+    fireEvent.click(within(within(dialog).getByRole("group", { name: "Confirmar «No es una solicitud»" }))
+      .getByRole("button", { name: "Cerrar" }));
     await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
     const post = calls.find((c) => c.method === "POST")!;
     expect(post.path).toBe("/v2/commands/advance-case-stage");
+    // The same command and reason the full form sends for that chip with no detail.
     expect(post.body).toMatchObject({ opportunity_id: CASE, opportunity_version: 5,
-      stage: "abandoned", close_reason: "No es una solicitud: Es una oferta del proveedor" });
+      stage: "abandoned", close_reason: "No es una solicitud" });
     expect(post.key).toBeTruthy();
+  });
+  it("keeps the full «Perdida» form under «Cambiar estado», reason and detail included", async () => {
+    const request = card({ stage: "lead", organization: null, contact: null, quotes: [], latest_revision: null,
+      quote_numbers: [], revision_count: 0, title: "Solicitud de cotización — Balanza ficticia" });
+    const calls = stubApi({ pipelines: [page([request])],
+      onPost: () => ({ body: receipt("advance_case_stage", "abandoned", 6, "aaaaaaaa-1234") }) });
+    render(withSession(session("sales"), <PipelinePage initialOpportunityId={CASE} />));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Perdida" }));
+    const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
+    fireEvent.click(within(form).getByRole("button", { name: "No es una solicitud" }));
+    fireEvent.change(within(form).getByLabelText(/Detalle/), { target: { value: "Es una oferta del proveedor" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Cerrar caso incorrecto" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
+    expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({
+      stage: "abandoned", close_reason: "No es una solicitud: Es una oferta del proveedor" });
   });
   it("offers only the moves the stage table allows, never «won»", () => {
     expect(nextStages("quoting")).toEqual(["negotiating", "qualified", "abandoned", "lost"]);

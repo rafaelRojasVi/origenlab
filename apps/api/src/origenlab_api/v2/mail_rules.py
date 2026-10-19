@@ -467,13 +467,51 @@ def domain_of(address: str) -> str:
     return address.rpartition("@")[2].strip().lower()
 
 
-def mail_direction(sender: str | None, direction_hint: Any, comms_direction: str | None) -> str:
+#: SQL, for a `gmail_message` source record aliased `sr`: the enquirer's address when the email is
+#: a web-quote-form submission — the triage worker saw the `x-origenlab-origin` marker (its reason
+#: is the persisted proof: the raw headers are not stored) and the capture holds a `reply_to`
+#: participant. Null on every other email. The rules' snapshot reads the same two facts
+#: (mail_rules_repository._EVIDENCE_SQL); the case reads add this column as `web_form_reply_to`
+#: and pass it to `mail_direction` / `web_form_enquirer`.
+WEB_FORM_REPLY_TO_SQL = """(select p.address_norm
+          from comms.message cm
+          join comms.message_participant p on p.message_id = cm.id and p.role = 'reply_to'
+         where cm.provider_message_id = sr.payload->>'gmail_message_id'
+           and exists (select 1 from evidence.assertion a
+                        where a.source_record_id = sr.id and a.kind = 'message_triage'
+                          and a.value_norm ~ '^triage:v[0-9]+$'
+                          and a.value -> 'reasons' ? 'header:x-origenlab-origin')
+         order by p.address_norm limit 1)"""
+
+
+def web_form_enquirer(sender: str | None, web_form_reply_to: str | None) -> str | None:
+    """The visitor who wrote a web-quote-form submission, else None.
+
+    The form makes contacto@ mail itself with the visitor as Reply-To, so the From is OrigenLab's.
+    Same predicate as rule R7's (`plan_email`): the From is an own domain, the message carries the
+    web-form marker and a Reply-To participant exists (`web_form_reply_to`, read with
+    `WEB_FORM_REPLY_TO_SQL`, is non-null only with both). The case reads then treat the email as
+    received from that address.
+    """
+    if not web_form_reply_to or "@" not in web_form_reply_to:
+        return None
+    found = addresses([sender])
+    if not found or domain_of(found[0]) not in OWN_DOMAINS:
+        return None
+    return web_form_reply_to.strip().lower()
+
+
+def mail_direction(sender: str | None, direction_hint: Any, comms_direction: str | None,
+                   web_form_reply_to: str | None = None) -> str:
     """Whether a captured email was sent by OrigenLab (`outbound`) or to it (`inbound`).
 
-    The capture's `comms.message.direction` when there is one; else the staged record's
+    A web-quote-form submission is `inbound` (from its Reply-To, `web_form_enquirer`). Else the
+    capture's `comms.message.direction` when there is one; else the staged record's
     `direction_hint` (only ever set on mail OrigenLab sent); else the sender's domain. One rule,
     used by the email → cases planner and by the case cards' «último contacto».
     """
+    if web_form_enquirer(sender, web_form_reply_to):
+        return "inbound"
     if comms_direction in ("outbound", "inbound"):
         return comms_direction
     if direction_hint:
@@ -993,6 +1031,12 @@ def _request_case_title(e: MailEvidence, organization: Organization | None = Non
     if organization is not None:
         return f"{organization.name} — solicitud de cotización"
     subject = " ".join((e.subject or "").split())
+    web_form = e.extra_headers.get("x-origenlab-origin") == WEB_QUOTE_ORIGIN and e.reply_to is not None
+    if web_form and subject.casefold().startswith("solicitud de cotización"):
+        # The web form's subject already says so («Solicitud de cotización — sitio web —
+        # <Institución>»): never «Solicitud de cotización — Solicitud de cotización …». Other
+        # cases keep their titles.
+        return subject[:160]
     if subject:
         return f"Solicitud de cotización — {subject[:120]}"
     return "Solicitud de cotización"

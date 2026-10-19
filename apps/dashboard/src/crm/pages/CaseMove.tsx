@@ -303,3 +303,77 @@ export function CaseMoveForm({
     </form>
   );
 }
+
+/** «No es una solicitud», in one step (owner 2026-10-19): the same command and reason the
+ *  «Perdida» form sends for that chip with no detail — `abandoned`, close reason «No es una
+ *  solicitud», open tasks cancelled — behind a short confirmation instead of the full form. */
+export const NOT_A_REQUEST = "No es una solicitud";
+
+export function NotRequestConfirm({
+  card,
+  onCancel,
+  onDone,
+}: {
+  card: OpportunityCardData;
+  onCancel: () => void;
+  onDone: (o: MoveOutcome, refetch: boolean) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const keysRef = useRef({ move: [newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey()],
+    cancel: {} as Record<string, string> });
+  const stage = LOST_REASONS.find((r) => r.label === NOT_A_REQUEST)?.stage ?? "abandoned";
+  const refusal = moveRefusal(card, "perdida");
+
+  async function confirm() {
+    if (busy || refusal) return;
+    setBusy(true);
+    const done: WonStep[] = [];
+    try {
+      done.push(
+        ...(await moveCase(
+          { opportunity_id: card.opportunity_id, stage: card.stage, version: card.version as number },
+          stage,
+          NOT_A_REQUEST,
+          NOT_A_REQUEST,
+          keysRef.current.move,
+        )),
+      );
+      for (const t of card.open_tasks ?? []) {
+        keysRef.current.cancel[t.task_id] ??= newCaseCommandKey();
+        const receipt = await cancelTask(
+          { task_id: t.task_id, task_version: t.version, note: "El caso se cerró." },
+          keysRef.current.cancel[t.task_id],
+        );
+        done.push({ label: "Tarea cancelada", receipt });
+      }
+      onDone({ tone: "good", lines: done.map((s, i) => receiptLine(s, i + 1, done.length)) }, true);
+    } catch (err) {
+      keysRef.current = { move: [newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey()], cancel: {} };
+      const recorded = [...done, ...(err instanceof WonFlowError ? err.done : [])];
+      if (recorded.length > 0) {
+        onDone({ tone: "warn", lines: [...recorded.map((s, i) => receiptLine(s, i + 1, recorded.length + 1)),
+          `No se registró el resto: ${caseRefusalText(err)}`] }, true);
+      } else {
+        onDone({ tone: "bad", lines: [caseRefusalText(err)] }, isStaleRefusal(err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div role="group" aria-label="Confirmar «No es una solicitud»" data-testid="case-not-request-confirm"
+      className="space-y-2 rounded-md border border-line p-3">
+      <p className="text-[13px] text-ink">
+        ¿Cerrar como «No es una solicitud»? Se cierra como abandonado y se conserva el correo.
+      </p>
+      {refusal ? <p className="text-xs text-bad">{refusal}</p> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" busy={busy} busyLabel="Cerrando…" disabled={!!refusal} onClick={() => void confirm()}>
+          Cerrar
+        </Button>
+        <Button onClick={onCancel} disabled={busy}>Cancelar</Button>
+      </div>
+    </div>
+  );
+}

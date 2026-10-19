@@ -87,7 +87,7 @@ from origenlab_api.v2.quotes.inputs import (
     resolve_draft,
     result_json,
 )
-from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, mail_direction
+from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, WEB_FORM_REPLY_TO_SQL, mail_direction, web_form_enquirer
 from origenlab_api.v2.quote_documents import QUOTE_DOCUMENT_COLUMNS, quote_contents, quote_document_join
 from origenlab_api.v2.quotes.numbering import SANTIAGO, numbering_status, revision_label
 from origenlab_api.v2.quotes.recipients import PERSON_ADDRESS_ORDER, not_a_recipient
@@ -202,7 +202,8 @@ select p.id::text as id, p.person_id::text as person_id, coalesce(p.contact_poin
 # the customer of each forwarded request the case came from or holds (mail_rules_repository
 # ._FORWARD_PEOPLE_SQL). Only a live email (neither quarantined nor rejected) names anyone or brings
 # its thread in. `at` is an instant: the Date header when it is ISO 8601, else when it was captured.
-# Python decides the direction and parses the headers (`email_people`).
+# Python decides the direction and parses the headers (`email_people`); a web-quote-form submission
+# (`web_form_reply_to`) names its Reply-To, the visitor.
 _CASE_PEOPLE_SQL = r"""
 with linked as (
     select oe.source_record_id as id from crm.opportunity_evidence oe
@@ -226,13 +227,14 @@ select 'email' as kind, sr.payload->>'sender' as sender, sr.payload->>'recipient
        (select cm.direction from comms.message cm
          where cm.provider_message_id = sr.payload->>'gmail_message_id'
          order by cm.created_at limit 1) as comms_direction,
+       """ + WEB_FORM_REPLY_TO_SQL + r""" as web_form_reply_to,
        null as name, null as origin,
        case when sr.payload->>'sent_at' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}'
             then (sr.payload->>'sent_at')::timestamptz else sr.acquired_at end as at
   from emails e join evidence.source_record sr on sr.id = e.id
  where sr.kind = 'gmail_message' and not sr.is_quarantined and sr.review_status <> 'rejected'
 union all
-select 'forwarded_request', null, f.payload->>'original_email', null, null, f.payload->>'original_name',
+select 'forwarded_request', null, f.payload->>'original_email', null, null, null, f.payload->>'original_name',
        f.payload->>'origin',
        case when f.payload->>'sent_at' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}'
             then (f.payload->>'sent_at')::timestamptz else f.acquired_at end
@@ -677,6 +679,9 @@ def email_people(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if r.get("origin") == "labdelivery":
                 continue
             pairs, source = [(r.get("name") or None, str(r.get("recipients") or "").strip().lower())], "forwarded_request"
+        elif enquirer := web_form_enquirer(r.get("sender"), r.get("web_form_reply_to")):
+            # A web-quote-form submission: contacto@ mailed itself; the visitor is its Reply-To.
+            pairs, source = [(None, enquirer)], "email_from"
         elif mail_direction(r.get("sender"), r.get("direction_hint"), r.get("comms_direction")) == "inbound":
             pairs, source = _header_pairs(r.get("sender")), "email_from"
         else:

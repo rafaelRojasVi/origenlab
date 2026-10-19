@@ -240,7 +240,7 @@ export interface OpportunityCardData {
   }[];
   other_organizations: { organization_id: string; name: string; role: string }[];
   contact: {
-    source: "crm_participant" | "gmail_recipient";
+    source: "crm_participant" | "gmail_recipient" | "web_form";
     name: string | null;
     address: string | null;
     others: number;
