@@ -1292,3 +1292,17 @@ def test_web_form_case_title_does_not_repeat_the_request_prefix() -> None:
     ))
     assert action.rule_id == "R7"
     assert action.case_title == "Solicitud de cotización — sitio web — Universidad Ficticia"
+
+
+def test_an_ordinary_request_keeps_its_title_even_when_the_subject_says_so() -> None:
+    """The de-duplicated title is the web form's only: other cases' titles are unchanged."""
+    action = only(Snapshot(
+        evidence=(mail(
+            id="e-plain-title", direction="inbound", sender="ana@lab-ficticio.example.test",
+            recipients=("contacto@origenlab.cl",), subject="Solicitud de cotización balanza",
+            documents=(), thread_id="t-plain-title", requester_checked=True,
+        ),),
+        cases=(), organizations=(),
+    ))
+    assert action.rule_id == "R7"
+    assert action.case_title == "Solicitud de cotización — Solicitud de cotización balanza"

@@ -861,3 +861,17 @@ def test_a_web_form_submission_is_listed_as_received_from_the_visitor() -> None:
     # The same self-sent mail without the marker is OrigenLab's own: «Interno».
     [plain] = case_threads([{**row, "web_form_reply_to": None}])
     assert plain["kind"] == "interno" and plain["messages"][0]["direction"] == "outbound"
+
+
+def test_the_visitor_stays_the_contact_when_they_later_reply_by_email() -> None:
+    """Their own reply is the newest inbound; the card keeps the form's visitor as its contact."""
+    reply = {**_WEB_FORM_ROW, "sent_at": "2026-10-20T10:00:00-03:00", "subject": "Re: solicitud",
+             "gmail_message_id": "mr", "sender": "Ana Ficticia <ana@lab-ficticio.example.test>",
+             "comms_direction": "inbound", "web_form_reply_to": None}
+    out = last_contacts([reply, _WEB_FORM_ROW])
+    assert out["o1"]["inbound"]["at"] == "2026-10-20T10:00:00-03:00"
+    assert out["o1"]["inbound"]["sender_name"] == "Ana Ficticia"
+    card = compose_pipeline([_opp("o1", stage="lead", organization_id=None, organization_name=None)],
+                            [], [], [], {}, [], {}, out)[0]
+    assert (card["contact"]["source"], card["contact"]["address"]) == ("web_form", "ana@lab-ficticio.example.test")
+    assert set(card["last_contact"]["inbound"]) == {"at", "subject", "url", "sender_name"}

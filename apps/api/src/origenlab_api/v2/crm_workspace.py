@@ -725,11 +725,16 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
     """
     out: dict[str, dict[str, Any]] = {}
     best: dict[tuple[str, str], datetime] = {}
+    # The visitor of the case's newest web-form submission: still the case's contact when a later
+    # email (their own reply, ours) is the newest one either way.
+    enquirers: dict[str, tuple[datetime, str]] = {}
     for row in rows:
         at = _aware(row.get("sent_at"))
         if at is None:
             continue
         enquirer = web_form_enquirer(row.get("sender"), row.get("web_form_reply_to"))
+        if enquirer and (row["opportunity_id"] not in enquirers or enquirers[row["opportunity_id"]][0] < at):
+            enquirers[row["opportunity_id"]] = (at, enquirer)
         direction = mail_direction(row.get("sender"), row.get("direction_hint"), row.get("comms_direction"),
                                    row.get("web_form_reply_to"))
         key = (row["opportunity_id"], direction)
@@ -743,8 +748,6 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
         }
         if enquirer:
             # A web-quote-form submission: the From's name is OrigenLab's own, never the client's.
-            # The visitor's address stays private to `compose_pipeline` (the card's contact).
-            out[row["opportunity_id"]][direction]["_enquirer"] = enquirer
             continue
         # Display-header evidence, not an accepted CRM person or institution. Never pass a
         # bare mailbox as a name: viewer responses must not acquire an unmasked address.
@@ -752,6 +755,9 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
                         if name.strip() and "@" not in name]
         if len(sender_names) == 1:
             out[row["opportunity_id"]][direction]["sender_name"] = sender_names[0]
+    for oid, (_, enquirer) in enquirers.items():
+        # Private to `compose_pipeline` (the card's contact); stripped from the card's last_contact.
+        out[oid]["inbound"]["_enquirer"] = enquirer
     return out
 
 

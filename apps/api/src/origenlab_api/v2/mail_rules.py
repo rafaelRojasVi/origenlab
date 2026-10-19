@@ -1031,9 +1031,11 @@ def _request_case_title(e: MailEvidence, organization: Organization | None = Non
     if organization is not None:
         return f"{organization.name} — solicitud de cotización"
     subject = " ".join((e.subject or "").split())
-    if subject.casefold().startswith("solicitud de cotización"):
-        # A subject that already says so (the web form's «Solicitud de cotización — sitio web —
-        # <Institución>») is the title: never «Solicitud de cotización — Solicitud de cotización …».
+    web_form = e.extra_headers.get("x-origenlab-origin") == WEB_QUOTE_ORIGIN and e.reply_to is not None
+    if web_form and subject.casefold().startswith("solicitud de cotización"):
+        # The web form's subject already says so («Solicitud de cotización — sitio web —
+        # <Institución>»): never «Solicitud de cotización — Solicitud de cotización …». Other
+        # cases keep their titles.
         return subject[:160]
     if subject:
         return f"Solicitud de cotización — {subject[:120]}"

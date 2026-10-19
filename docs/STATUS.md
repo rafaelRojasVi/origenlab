@@ -3160,9 +3160,10 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
   wait from it; OrigenLab's own From name is never shown as the client's) and the card's
   «Contacto» (new source `web_form` when the case has no participant and no sent quote). Read side
   only: no migration, the capture and R7 unchanged.
-- R7's title no longer repeats the prefix when the subject already starts with «Solicitud de
-  cotización» (the form's «Solicitud de cotización — sitio web — <Institución>»). Existing case
-  titles are not rewritten.
+  The visitor stays the card's contact when they later reply from their own address; contacto@'s
+  answer on the thread stays outbound (the case reads as answered on Hoy).
+- R7's title for a web-form mail no longer repeats the prefix («Solicitud de cotización — sitio
+  web — <Institución>»); other cases' titles are unchanged, and existing titles are not rewritten.
 - Dashboard: the case's «No es una solicitud» is a one-step confirmation («Cerrar» / «Cancelar»)
   sending the same `advance-case-stage` → `abandoned`, close reason «No es una solicitud», as the
   «Perdida» form does for that chip; «Cambiar estado» → «Perdida» keeps the full form.

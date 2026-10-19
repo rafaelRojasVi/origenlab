@@ -991,6 +991,41 @@ def test_a_web_form_case_reads_the_visitor_as_its_contact(db, world) -> None:
         assert [p["email"] for p in email_people(cur.fetchall())] == [visitor]
 
 
+def test_our_reply_to_the_visitor_stays_outbound_and_answers_the_web_form_case(db, world) -> None:
+    """contacto@ answers the visitor on the form's thread (no marker, no Reply-To): that email is
+    ours, the newest `last_contact.outbound`, so Hoy reads the case as answered, not «Responder»."""
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    visitor = f"ana@{world['new_domain']}"
+    with _owner(db) as conn:
+        form = _web_form_mail(conn, reply_to=visitor)
+    case_id = _apply_only(db, world, form)["case_id"]
+    with _owner(db) as conn:
+        thread = conn.execute("select payload->>'gmail_thread_id' from evidence.source_record where id = %s",
+                              (form,)).fetchone()[0]
+        answer = _mail(conn, thread=thread, direction_hint=None, sender="OrigenLab <contacto@origenlab.cl>",
+                       recipients=visitor, subject="Re: Solicitud de cotización — sitio web — U. Ficticia",
+                       direction="outbound")
+        conn.execute("update evidence.source_record set payload = jsonb_set(payload, '{sent_at}', "
+                     "'\"2026-10-02T15:00:00+00:00\"') where id = %s", (answer,))
+        conn.execute("insert into comms.message_participant (message_id, role, address_norm) "
+                     "select cm.id, r.role, r.address from comms.message cm, "
+                     "(values ('from', 'contacto@origenlab.cl'), ('to', %s)) r(role, address) "
+                     "join evidence.source_record sr on sr.id = %s "
+                     "where cm.provider_message_id = sr.payload->>'gmail_message_id'", (visitor, answer))
+
+    workspace = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db))
+    [card] = [c for c in workspace.pipeline()["items"] if c["opportunity_id"] == case_id]
+    sent, received = card["last_contact"]["outbound"], card["last_contact"]["inbound"]
+    assert sent is not None and sent["at"] == "2026-10-02T15:00:00+00:00"
+    assert received is not None and received["at"] < sent["at"]  # Hoy: our turn is done
+    assert card["contact"]["source"] == "web_form" and card["contact"]["address"] == visitor
+    [thread_out] = workspace.opportunity_threads(case_id)["threads"]
+    assert [m["direction"] for m in thread_out["messages"]] == ["outbound", "inbound"]
+
+
 def test_self_sent_message_without_the_web_form_marker_is_not_an_r7_request(db, world) -> None:
     with _owner(db) as conn:
         unmarked = _web_form_mail(conn, reply_to=f"ana@{world['new_domain']}", marked=False)
