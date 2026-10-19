@@ -83,7 +83,7 @@ def test_marketing_v1_lane_campaigns_matches_committed_file() -> None:
     body = _client().get("/v2/workspace/marketing", headers=HEADERS).json()
     campaigns = body["v1_lane_campaigns"]
     assert isinstance(campaigns, list)
-    assert len(campaigns) == 1
+    assert [x["key"] for x in campaigns] == ["cyber-2026-10", "ohaus-2026-10"]
     c = campaigns[0]
     assert c["key"] == "cyber-2026-10"
     assert c["name"] == "Cyber OrigenLab"
