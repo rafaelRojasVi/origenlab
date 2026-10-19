@@ -7,7 +7,7 @@ import pytest
 
 from origenlab_api.v2.model_spend import (
     BudgetReached, UnpricedModel, cost_usd, ensure_within_cap, month_window, record_usage,
-    spend_summary, worst_case_usd)
+    spend_summary, with_cap_lock, worst_case_usd)
 
 UTC = timezone.utc
 NOW = datetime(2026, 10, 19, 15, 0, tzinfo=UTC)
@@ -15,9 +15,10 @@ NOW = datetime(2026, 10, 19, 15, 0, tzinfo=UTC)
 
 class Cur:
     def __init__(self, spent="0"):
-        self.spent, self.inserted = spent, None
+        self.spent, self.inserted, self.sql = spent, None, []
 
     def execute(self, sql, params=()):
+        self.sql.append(sql)
         if sql.lstrip().startswith("insert"):
             self.inserted = params
 
@@ -44,7 +45,7 @@ def test_worst_case_covers_dearest_fallback():
     cheap = worst_case_usd("claude-haiku-5-5", input_tokens_estimate=1000, max_tokens=1000)
     covered = worst_case_usd("claude-haiku-5-5", input_tokens_estimate=1000, max_tokens=1000,
                              fallback_models=("claude-opus-5-5",))
-    assert covered == cost_usd("claude-opus-5-5", input_tokens=1000, output_tokens=1000) > cheap
+    assert covered == worst_case_usd("claude-opus-5-5", input_tokens_estimate=1000, max_tokens=1000) > cheap
 
 
 def test_month_window_santiago_boundary():
@@ -78,3 +79,38 @@ def test_record_usage_missing_tokens_count_zero_and_served_model_priced():
 def test_spend_summary():
     assert spend_summary(Cur("60"), "licitaciones", NOW) == {
         "spent_usd": "60.000000", "cap_usd": "60", "month": "2026-10", "reached": True}
+
+
+def test_worst_case_uses_cache_write_when_dearer_than_input():
+    got = worst_case_usd("claude-opus-5-5", input_tokens_estimate=1_000_000, max_tokens=0)
+    assert got == Decimal("5")
+
+
+def test_dated_alias_priced_as_base_model():
+    assert cost_usd("claude-opus-5-5-20261001", input_tokens=1_000_000, output_tokens=0) == Decimal("4")
+
+
+def test_record_usage_unknown_served_model_still_inserted_at_dearest_price():
+    cur = Cur()
+    usage = SimpleNamespace(input_tokens=1_000_000, output_tokens=1_000_000)
+    cost = record_usage(cur, feature="licitaciones", step="read", model="claude-haiku-5-5", usage=usage,
+                        bid_preparation_id=None, served_model="claude-mystery-9")
+    assert cost == Decimal("24") and cur.inserted[1] == "claude-mystery-9"
+
+
+def test_record_usage_dated_alias_priced_by_base():
+    cur = Cur()
+    usage = SimpleNamespace(input_tokens=1_000_000, output_tokens=0)
+    assert record_usage(cur, feature="licitaciones", step="read", model="claude-haiku-5-5", usage=usage,
+                        bid_preparation_id=None, served_model="claude-sonnet-5-5-20261001") == Decimal("2")
+
+
+def test_with_cap_lock_takes_advisory_xact_lock():
+    cur = Cur()
+    with_cap_lock(cur, "licitaciones")
+    assert "pg_advisory_xact_lock" in cur.sql[0]
+
+
+def test_month_window_rejects_naive_datetime():
+    with pytest.raises(ValueError):
+        month_window(datetime(2026, 10, 19))
