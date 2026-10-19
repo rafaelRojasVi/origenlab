@@ -136,6 +136,8 @@ export function ProductsSection({
     add(byId.get(product_id) ?? suggestedItem(product_id, name, model));
 
   const grid = clientView ? GRID_CLIENT : GRID_FULL;
+  // Import expenses with no principal line to carry them: no line's margin is true (the strips show none).
+  const unallocated = !clientView && !!computed?.line_economics?.some((e) => e.margin_state === "expenses_unallocated");
   // Unique per pane: the Cotizador module keeps several quotes in the page at once.
   const headingId = useId();
 
@@ -189,6 +191,12 @@ export function ProductsSection({
           />
         </div>
       </div>
+
+      {unallocated ? (
+        <p role="note" className="mx-5 mb-3 rounded-md border border-warn/30 bg-warn-bg px-3 py-2 text-[13px] font-medium text-ink">
+          Elige el equipo principal para repartir los gastos de importación
+        </p>
+      ) : null}
 
       {/* Two tiers per line (LineRow): it fits a 760 px column; narrower, it scrolls sideways. */}
       <div className="overflow-x-auto">

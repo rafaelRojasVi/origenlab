@@ -582,4 +582,15 @@ describe("ProductsSection — the cost strip under each line", () => {
     await setup();
     expect(screen.queryByTestId("cost-strip")).not.toBeInTheDocument();
   });
+
+  it("says to choose the principal line, once, when the expenses have nowhere to go", async () => {
+    const c = withStrip();
+    c.line_economics = c.line_economics!.map((e) => ({ ...e, gross_margin: null, gain_clp: null, margin_state: e.cost_clp ? "expenses_unallocated" : e.margin_state }));
+    await setup({ priced: c });
+    expect(screen.getAllByText("Elige el equipo principal para repartir los gastos de importación")).toHaveLength(1);
+    expect(screen.queryByText("28,6 %", { selector: "[data-testid=cost-strip] *" })).not.toBeInTheDocument();
+    cleanup();
+    await setup({ priced: withStrip() });
+    expect(screen.queryByText(/Elige el equipo principal/)).not.toBeInTheDocument();
+  });
 });

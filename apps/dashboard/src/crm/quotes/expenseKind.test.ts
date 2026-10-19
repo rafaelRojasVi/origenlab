@@ -33,4 +33,14 @@ describe("expense kind", () => {
   it("guesses as the API does (`quoting.expenses.expense_category`)", () => {
     for (const [label, kind] of vectors as [string, string][]) expect([label, guessExpenseKind(label)]).toEqual([label, kind]);
   });
+
+  it("cuts a long old detail with «…» so the label still fits 120 characters", () => {
+    const old = "Detalle ficticio muy largo ".repeat(5).trim(); // 134 characters
+    const label = encodeExpenseLabel("agent", old);
+    expect(label).toHaveLength(120);
+    expect(label.startsWith("Agente de aduana — Detalle ficticio")).toBe(true);
+    expect(label.endsWith("…")).toBe(true);
+    const fits = "x".repeat(120 - "Flete — ".length);
+    expect(encodeExpenseLabel("freight", fits)).toBe(`Flete — ${fits}`);
+  });
 });

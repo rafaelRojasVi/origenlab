@@ -28,11 +28,20 @@ export function expenseKindLabel(kind: ImportCostKind): string {
   return KIND_LABEL.get(kind) ?? "Otro";
 }
 
-/** The label stored for a chosen type and an optional detail. */
+/** The longest label the API takes (`DraftExpenseLine.label`). */
+export const MAX_EXPENSE_LABEL = 120;
+
+/**
+ * The label stored for a chosen type and an optional detail. A detail too long to fit after the
+ * type (an old free label of 101–120 characters) is cut with «…», so the row still saves.
+ */
 export function encodeExpenseLabel(kind: ImportCostKind, detail: string): string {
   const d = detail.trim();
   const type = expenseKindLabel(kind);
-  return d ? `${type}${EXPENSE_TYPE_SEPARATOR}${d}` : type;
+  if (!d) return type;
+  const head = `${type}${EXPENSE_TYPE_SEPARATOR}`;
+  const room = MAX_EXPENSE_LABEL - head.length;
+  return d.length <= room ? `${head}${d}` : `${head}${d.slice(0, room - 1).trimEnd()}…`;
 }
 
 // `quoting.expenses._LABEL_CATEGORY`, in order: a word the label starts with decides, else a word in it.

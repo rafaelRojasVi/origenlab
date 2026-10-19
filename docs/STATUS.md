@@ -3256,12 +3256,18 @@ the profile.
   Preferencias margin range, amber outside, red at a loss. Same audience as the rest of the
   Cotizador (sales and admin; the API refuses a viewer), hidden in «Vista cliente», never in
   `printableQuote` or the print view (tested).
+  No false margin: a line with a cost and no price shows «Falta precio» and its own cost only (no
+  share of the expenses, as «Economía» counts only priced lines); import expenses with no principal
+  line (`principal_missing`) give no line a margin (`expenses_unallocated`) and the section says
+  once «Elige el equipo principal para repartir los gastos de importación». Money in whole pesos,
+  the margin to four decimals, server-side.
 - **Expense «Tipo».** A manual expense is now Tipo (Flete, Agente de aduana, Derechos y aduana,
   Transporte local, Otro) + optional Detalle + amount. **No migration:** the type is stored in the
   label as «Tipo — Detalle» (or the type alone), and `quoting.expenses.expense_category` reads that
   type first, whatever the detail says. An older free label opens with the type the guesser reads in
   it (a dashboard port, `expenseKind.ts`, checked against the API with the same vectors,
-  `expenseKindVectors.json`) and is kept as typed until the row is changed. The guesser now also
+  `expenseKindVectors.json`) and is kept as typed until the row is changed. A detail too long to fit
+  after the type (an old 101–120-character label) is cut with «…» so the row still saves. The guesser now also
   reads «dhl», «envío/envio», «fedex», «ups», «courier» as freight (whole words for the short ones;
   «Despacho DHL» stays the agent's).
 - **«DHL calculado» withdrawn from the editor** (only Perfil and Manual). The API still accepts,

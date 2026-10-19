@@ -42,4 +42,30 @@ describe("CostStrip", () => {
     expect(strip).not.toHaveTextContent("gano");
     expect(strip).toHaveTextContent("$ 1.275.000");
   });
+
+  it("with import expenses and no principal line, shows cost and price but no margin", () => {
+    render(
+      <CostStrip
+        economics={lineEconomics({ expenses_clp: "0", cost_clp: "450000", gain_clp: null, gross_margin: null, margin_state: "expenses_unallocated" })}
+        n={1}
+      />,
+    );
+    const strip = screen.getByTestId("cost-strip");
+    expect(strip).toHaveTextContent("$ 450.000");
+    expect(strip).toHaveTextContent("gastos sin repartir");
+    expect(strip).toHaveTextContent("$ 1.275.000");
+    expect(strip).not.toHaveTextContent(/%|gano|sin gastos de importación/);
+  });
+
+  it("a line with cost and no price says «Falta precio»", () => {
+    render(
+      <CostStrip
+        economics={lineEconomics({ expenses_clp: "0", cost_clp: "450000", sale_net_clp: null, gain_clp: null, gross_margin: null, margin_state: "no_price", iva_clp: null, total_with_iva_clp: null })}
+        n={1}
+      />,
+    );
+    const strip = screen.getByTestId("cost-strip");
+    expect(strip).toHaveTextContent("Falta precio");
+    expect(strip).not.toHaveTextContent(/%|gano|IVA/);
+  });
 });

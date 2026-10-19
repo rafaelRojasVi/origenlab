@@ -6,7 +6,10 @@
  *
  * Internal: costs and margins are for sales and administration (the Cotizador's API refuses anyone
  * else), the editor hides the strip in «Vista cliente», and the printable quote never carries it.
- * The pill is green inside the Preferencias margin range, amber outside it, red at a loss.
+ * The pill is green inside the Preferencias margin range, amber outside it, red at a loss. No pill
+ * when the API gives no margin: «Falta precio» for a line with a cost and no price, nothing for a
+ * quote whose import expenses have no principal line to go to (`expenses_unallocated`: the section
+ * says once to choose one), so a false margin is never shown.
  */
 import { formatMoney } from "../money";
 import type { LineEconomics } from "./quoteApi";
@@ -26,6 +29,15 @@ export function CostStrip({ economics, n, stale = false }: { economics: LineEcon
   const pct = formatPct(economics.gross_margin);
   const expenses = Number(economics.expenses_clp) > 0 ? clp(economics.expenses_clp) : null;
   const product = clp(economics.product_cost_clp);
+  const state = economics.margin_state;
+  const costNote =
+    cost == null
+      ? "Sin costo: no se puede saber el margen."
+      : state === "expenses_unallocated"
+        ? "gastos sin repartir"
+        : expenses && product
+          ? `equipo ${product} + gastos ${expenses}`
+          : "sin gastos de importación";
   return (
     <div
       data-testid="cost-strip"
@@ -37,18 +49,20 @@ export function CostStrip({ economics, n, stale = false }: { economics: LineEcon
         <span className="text-[12px] text-ink-muted">Me cuesta</span>
         <span className="font-mono text-[17px] font-medium tabular-nums text-ink">{cost ?? "—"}</span>
         <span className="text-[12px] text-ink-muted">
-          {cost == null ? "Sin costo: no se puede saber el margen." : expenses && product ? `equipo ${product} + gastos ${expenses}` : "sin gastos de importación"}
+          {costNote}
         </span>
       </div>
       <div className="flex items-center justify-start gap-2.5 px-1 sm:flex-col sm:justify-center sm:gap-1 sm:text-center">
         <span className="text-[12px] text-ink-faint">margen</span>
-        {pct ? (
+        {state === "no_price" ? (
+          <span className="whitespace-nowrap rounded-full border border-line px-3 py-1 text-[13px] font-semibold text-ink-muted">Falta precio</span>
+        ) : pct ? (
           <span
             className={`whitespace-nowrap rounded-full border px-3 py-1 font-mono text-[15px] font-medium tabular-nums ${PILL[economics.margin_state] ?? PILL_OUTSIDE}`}
           >
             {pct}
           </span>
-        ) : (
+        ) : state === "expenses_unallocated" ? null : (
           <span className="font-mono text-[15px] text-ink-faint">—</span>
         )}
         {economics.gain_clp != null ? (
