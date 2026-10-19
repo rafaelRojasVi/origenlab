@@ -11,6 +11,7 @@
 | `POST /v2/commands/retire-bidder-document` | one document retired, with its reason |
 | `POST /v2/commands/attach-tender-annexes` | multipart: 1–20 files or a zip of anexos onto a tender (`annexes.py`) |
 | `POST /v2/commands/prepare-tender-bid` | queue a bid preparation, phase `read` or `fill` (`preparation.py`) |
+| `POST /v2/commands/create-tender-offer-quote` | the economic offer as a Cotizador draft from a ready `read` (`preparation.py`) |
 | `GET /v2/tenders/{id}/preparations/{prep}/files/{key}/url` | a signed URL for one output file, 10 minutes |
 | `GET /v2/bidder` | the profile, its history and the live documents |
 | `GET /v2/bidder/documents/{id}/url` | a signed URL valid 10 minutes |
@@ -74,8 +75,10 @@ from origenlab_api.v2.tenders.bidder import (
 )
 from origenlab_api.v2.tenders.mercado_publico import fetch_tender_detail
 from origenlab_api.v2.tenders.preparation import (
+    CREATE_TENDER_OFFER_QUOTE,
     FILE_KEY,
     PREPARE_TENDER_BID,
+    CreateTenderOfferQuoteBody,
     PrepareTenderBidBody,
     output_storage_path,
 )
@@ -451,6 +454,28 @@ def prepare_tender_bid_route(
         fields = {"opportunity_id": as_uuid(body.opportunity_id, "opportunity_id"), "phase": body.phase}
         return repo.execute(command_name=PREPARE_TENDER_BID, operator=operator, fields=fields,
                             idempotency_key=key, digest=request_digest(PREPARE_TENDER_BID, body))
+    except CommandRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
+
+
+@tender_command_router.post("/create-tender-offer-quote")
+def create_tender_offer_quote_route(
+    body: CreateTenderOfferQuoteBody,
+    operator: Deciding,
+    repo: V2TenderCommandRepository = Depends(get_tender_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """The economic offer as a Cotizador draft on the case, one line per item of a ready `read`.
+
+    Returns `{quote_id, revision_id, quote_number, matched, free, existing}`; the case's authored
+    draft comes back as it is (`existing`). Refusals are in `preparation.py`.
+    """
+    try:
+        key = require_idempotency_key(idempotency_key)
+        fields = {"opportunity_id": as_uuid(body.opportunity_id, "opportunity_id"),
+                  "preparation_id": as_uuid(body.preparation_id, "preparation_id")}
+        return repo.execute(command_name=CREATE_TENDER_OFFER_QUOTE, operator=operator, fields=fields,
+                            idempotency_key=key, digest=request_digest(CREATE_TENDER_OFFER_QUOTE, body))
     except CommandRefused as exc:
         raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
 

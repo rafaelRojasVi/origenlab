@@ -116,7 +116,7 @@ def preview(body: PreviewQuoteBody, request: Request, operator: Operator) -> dic
 @quote_read_router.get("/{quote_id}")
 def workspace(quote_id: UUID, request: Request, operator: Operator) -> dict:
     _may_view_costs(operator)
-    found = _reads(request).workspace(quote_id)
+    found = _reads(request).workspace(quote_id, operator.role)
     if found is None:
         raise HTTPException(404, detail={"code": "quote_not_found", "message": "quote not found"})
     if isinstance(found.get("price_history"), dict):

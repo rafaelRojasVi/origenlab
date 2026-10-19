@@ -362,6 +362,8 @@ export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/retire-bidder-document$/,
   // Ask for a bid preparation (`read` or `fill`); the worker runs it.
   /^\/v2\/commands\/prepare-tender-bid$/,
+  // The economic offer as a Cotizador draft on the case, from a ready read.
+  /^\/v2\/commands\/create-tender-offer-quote$/,
 ];
 
 /** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */

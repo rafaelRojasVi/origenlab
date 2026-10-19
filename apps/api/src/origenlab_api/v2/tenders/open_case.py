@@ -29,7 +29,7 @@ Refusals (codes Task 15's UI maps):
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -40,11 +40,12 @@ from origenlab_api.v2.case_command_repository import (
     lock_new_organization_name,
     same_name_or_domain_organization,
 )
-from origenlab_api.v2.command_core import json_payload
+from origenlab_api.v2.command_core import DEFAULT_COMMAND_TIMEOUT_MS, json_payload
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.org_web_suggestions import valid_rut
 from origenlab_api.v2.quote_document_identity import normalize_rut
+from origenlab_api.v2.quotes.inputs import no_provider
 from origenlab_api.v2.tenders.annexes import ATTACH_TENDER_ANNEXES, attach_tender_annexes
 from origenlab_api.v2.tenders.bidder import (
     ADD_BIDDER_DOCUMENT,
@@ -56,7 +57,12 @@ from origenlab_api.v2.tenders.bidder import (
 )
 from origenlab_api.v2.tenders.codes import TenderReferenceInvalid, parse_tender_reference, portal_url
 from origenlab_api.v2.tenders.mercado_publico import TenderDetail, fetch_tender_detail
-from origenlab_api.v2.tenders.preparation import PREPARE_TENDER_BID, request_bid_preparation
+from origenlab_api.v2.tenders.preparation import (
+    CREATE_TENDER_OFFER_QUOTE,
+    PREPARE_TENDER_BID,
+    create_tender_offer_quote,
+    request_bid_preparation,
+)
 from origenlab_api.v2.tenders.status import SET_TENDER_STATUS, set_tender_status
 
 OPEN_TENDER_CASE = "open-tender-case"
@@ -362,7 +368,17 @@ class V2TenderCommandRepository(V2CaseCommandRepository):
         ATTACH_TENDER_ANNEXES: attach_tender_annexes,
         RETIRE_BIDDER_DOCUMENT: retire_bidder_document,
         PREPARE_TENDER_BID: request_bid_preparation,
+        CREATE_TENDER_OFFER_QUOTE: create_tender_offer_quote,
     }
+
+    def __init__(self, connect: Any, dsn: str, statement_timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS, *,
+                 fx_resolver: Any = no_provider,
+                 clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
+        super().__init__(connect, dsn, statement_timeout_ms)
+        # What the Cotizador's handlers read off their repository (`create-tender-offer-quote` calls
+        # them in its own transaction). The lines it saves carry no cost, so no rate is ever asked.
+        self._fx_resolver = fx_resolver
+        self._clock = clock
 
     def case_kind(self, opportunity_id: str) -> str | None:
         """The `kind` of the case, or None if there is none. A cheap read, no lock: a route uses it

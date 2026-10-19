@@ -49,7 +49,7 @@ class _FakeReads:
         if self._refusal is not None:
             raise self._refusal
 
-    def workspace(self, quote_id):
+    def workspace(self, quote_id, role=None):
         self.calls.append(("workspace", str(quote_id)))
         self._maybe_refuse()
         if str(quote_id) != QID:
@@ -276,7 +276,7 @@ def test_workspace_price_history_gets_margins_from_stored_rates_only() -> None:
             return {d: {"clp_per_unit": Decimal("1000"), "as_of": d} for d in days}
 
     class _Reads(_FakeReads):
-        def workspace(self, quote_id):
+        def workspace(self, quote_id, role=None):
             return {"quote": {"id": QID}, "price_history": {
                 "items": [{"date": "2026-09-01", "line_total": "2000000", "currency": "CLP"}],
                 "costs": [{"as_of": "2026-08-01T00:00:00+00:00", "price": "1000", "currency": "EUR",

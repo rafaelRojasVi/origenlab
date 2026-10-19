@@ -158,7 +158,7 @@ def test_router_exposes_only_post() -> None:
         (PATH, {"POST"}), ("/v2/commands/set-tender-status", {"POST"}),
         ("/v2/commands/save-bidder-profile", {"POST"}), ("/v2/commands/retire-bidder-document", {"POST"}),
         ("/v2/commands/add-bidder-document", {"POST"}), ("/v2/commands/attach-tender-annexes", {"POST"}),
-        ("/v2/commands/prepare-tender-bid", {"POST"})]
+        ("/v2/commands/prepare-tender-bid", {"POST"}), ("/v2/commands/create-tender-offer-quote", {"POST"})]
 
 
 def test_bidder_read_router_exposes_only_get() -> None:
