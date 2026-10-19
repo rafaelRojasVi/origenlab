@@ -22,6 +22,22 @@
       ],
       "audience_rule": "Clientes que escribieron, cotizaron o compraron; sin proveedores ni bajas; los contactados en septiembre van al final.",
       "subject": "Cyber OrigenLab · 5% a 10% en productos seleccionados para laboratorio"
+    },
+    {
+      "key": "ohaus-2026-10",
+      "name": "Balanzas OHAUS",
+      "channel": "v1",
+      "send_days": [
+        "2026-10-21",
+        "2026-10-22",
+        "2026-10-23",
+        "2026-10-26",
+        "2026-10-27"
+      ],
+      "send_time": "09:30",
+      "promo_until": "2026-10-31",
+      "audience_rule": "Clientes que escribieron, cotizaron o compraron; sin proveedores, sin bajas y sin los rebotes bloqueados el 19 oct; los contactados en Cyber van al final.",
+      "subject": "¿Necesitas renovar tus balanzas? Tres opciones OHAUS"
     }
   ]
 }
