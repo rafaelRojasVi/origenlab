@@ -1,4 +1,4 @@
-import { brands, type Brand } from '../data/brands';
+import { brands, isShownOnHome, type Brand } from '../data/brands';
 import { products, type Product, type ProductSpec } from '../data/products';
 import { getProductFamilyBySlug, ortoalresaCentrifugeSlugs } from '../data/productFamilies';
 import {
@@ -180,8 +180,9 @@ export function getBrandsByFamilyId(familyId: string): Brand[] {
 }
 
 /** Nombres de las marcas de una familia, para una etiqueta de texto. */
-export function brandNamesForFamily(familyId: string): string {
+export function brandNamesForFamily(familyId: string, opts: { home?: boolean } = {}): string {
   return getBrandsByFamilyId(familyId)
+    .filter((brand) => !opts.home || isShownOnHome(brand.id))
     .map((brand) => brand.name)
     .join(' · ');
 }
