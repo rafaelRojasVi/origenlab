@@ -20,7 +20,8 @@ export default defineConfig({
         !page.includes('/logo-lab/') &&
         !page.includes('/privacidad/') &&
         !page.includes('/cookies/') &&
-        !page.includes('/aviso-legal/'),
+        !page.includes('/aviso-legal/') &&
+        !page.includes('/contacto/enviado/'),
     }),
   ],
   vite: {

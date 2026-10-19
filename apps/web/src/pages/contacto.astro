@@ -2,7 +2,6 @@
 import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
-import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
 import { contact, telUrl } from '../data/contact';
 import { company } from '../data/company';
@@ -36,6 +35,12 @@ const intake = [
     body: 'Cantidad y, si corresponde, si hay varias líneas o alternativas que quiera comparar.',
   },
 ];
+
+const steps = [
+  { num: '01', text: 'Confirmamos la recepción por correo.' },
+  { num: '02', text: 'Preparamos alternativas acotadas a su necesidad.' },
+  { num: '03', text: 'Le respondemos en horario hábil: lunes a viernes, ' + contact.hours + '.' },
+];
 ---
 
 <Layout
@@ -51,8 +56,184 @@ const intake = [
     />
   </div>
 
+  {/* Section 01: Formulario */}
+  <section class="shell section rule-top" aria-labelledby="solicitud-title">
+    <SectionIndex index={1} label="Solicitud" />
+    <div class="solicitud-grid">
+
+      <div class="solicitud-main">
+        <h2 id="solicitud-title" class="t-h2">Formulario de solicitud</h2>
+        <p class="t-lead mt-5">
+          Complete el formulario y le respondemos con una propuesta concreta.
+          Si prefiere escribirnos directamente, use los datos del panel derecho.
+        </p>
+
+        {/* Success panel (hidden until JS shows it) */}
+        <div id="solicitud-success" hidden tabindex="-1" class="solicitud-panel solicitud-panel--ok" role="status">
+          <p class="t-body">
+            <strong>Recibimos su solicitud.</strong>
+            Le responderemos a <span data-success-email>su correo</span> a la brevedad.
+          </p>
+          <p class="mt-5">
+            <a href="/" class="btn btn-secondary">Volver al inicio</a>
+          </p>
+        </div>
+
+        {/* Network error panel (hidden until JS shows it) */}
+        <div id="solicitud-network-error" hidden tabindex="-1" class="solicitud-panel solicitud-panel--err" role="alert">
+          <p class="t-body">
+            No pudimos enviar la solicitud. Escríbanos directamente a{' '}
+            <a href={`mailto:${contact.email}`} class="link-plain" data-error-mailto>{contact.email}</a>.
+          </p>
+        </div>
+
+        <form id="solicitud-form" method="post" action="/api/web/solicitud" novalidate class="sol-form">
+          <input type="hidden" name="render_at" id="solicitud-render-at" />
+          <div class="sol-trap-wrap">
+            <input
+              type="text"
+              name="_trap"
+              id="solicitud-trap"
+              tabindex="-1"
+              autocomplete="off"
+              aria-hidden="true"
+              class="sol-trap"
+            />
+          </div>
+
+          <div
+            data-error-summary
+            role="alert"
+            aria-live="polite"
+            tabindex="-1"
+            hidden
+            class="sol-error-summary"
+          ></div>
+
+          <div class="sol-field">
+            <label for="solicitud-need" class="sol-label">Qué necesita cotizar <span aria-hidden="true">*</span></label>
+            <p id="solicitud-need-hint" class="t-small">
+              Por ejemplo: autoclave de laboratorio 50 L, agitador orbital para cultivos celulares.
+            </p>
+            <textarea
+              id="solicitud-need"
+              name="need"
+              required
+              rows="4"
+              maxlength="4000"
+              aria-describedby="solicitud-need-hint solicitud-need-error"
+              aria-invalid="false"
+              class="sol-textarea"
+            ></textarea>
+            <p id="solicitud-need-error" role="alert" hidden class="sol-field-error"></p>
+          </div>
+
+          <div class="sol-field">
+            <label for="solicitud-email" class="sol-label">Correo electrónico <span aria-hidden="true">*</span></label>
+            <input
+              type="email"
+              id="solicitud-email"
+              name="email"
+              required
+              maxlength="200"
+              aria-describedby="solicitud-email-error"
+              aria-invalid="false"
+              class="sol-input"
+            />
+            <p id="solicitud-email-error" role="alert" hidden class="sol-field-error"></p>
+          </div>
+
+          <div class="sol-field">
+            <label for="solicitud-org" class="sol-label">Institución o empresa <span aria-hidden="true">*</span></label>
+            <input
+              type="text"
+              id="solicitud-org"
+              name="org"
+              required
+              maxlength="200"
+              aria-describedby="solicitud-org-error"
+              aria-invalid="false"
+              class="sol-input"
+            />
+            <p id="solicitud-org-error" role="alert" hidden class="sol-field-error"></p>
+          </div>
+
+          <details class="sol-optional">
+            <summary class="sol-optional__summary t-small">Datos opcionales (nombre, teléfono, ciudad, plazo)</summary>
+            <div class="sol-optional__body">
+              <div class="sol-field">
+                <label for="solicitud-name" class="sol-label">Nombre de contacto</label>
+                <input type="text" id="solicitud-name" name="name" maxlength="200" class="sol-input" />
+              </div>
+              <div class="sol-field">
+                <label for="solicitud-phone" class="sol-label">Teléfono</label>
+                <input type="tel" id="solicitud-phone" name="phone" maxlength="200" class="sol-input" />
+              </div>
+              <div class="sol-field">
+                <label for="solicitud-city" class="sol-label">Ciudad</label>
+                <input type="text" id="solicitud-city" name="city" maxlength="200" class="sol-input" />
+              </div>
+              <div class="sol-field">
+                <label for="solicitud-deadline" class="sol-label">Plazo estimado</label>
+                <input type="text" id="solicitud-deadline" name="deadline" maxlength="200" placeholder="Ej: antes de diciembre" class="sol-input" />
+              </div>
+            </div>
+          </details>
+
+          <button type="submit" id="solicitud-btn" class="btn btn-primary" style="margin-top:0.5rem">
+            Enviar solicitud
+          </button>
+
+          <p class="t-small" style="margin-top:1rem">
+            Respondemos en horario hábil, de lunes a viernes entre las {contact.hours}.
+          </p>
+          <p class="t-small" style="margin-top:0.5rem">
+            Usamos estos datos sólo para responder su solicitud.{' '}
+            <a href="/privacidad/" class="link-plain">Privacidad</a>.
+          </p>
+        </form>
+      </div>
+
+      <aside class="solicitud-aside">
+        <p class="t-data">Qué pasa después</p>
+        <ol class="sol-steps">
+          {steps.map((step) => (
+            <li class="intake__item">
+              <span class="intake__num" aria-hidden="true">{step.num}</span>
+              <p class="intake__body t-small">{step.text}</p>
+            </li>
+          ))}
+        </ol>
+        <div class="sol-aside-actions">
+          <a href={mailtoHref} class="btn btn-secondary sol-aside-btn">{ctaLabels.solicitarCotizacion}</a>
+          <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer">
+            <Icon name="whatsapp" size={18} />
+            WhatsApp
+            <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
+          </a>
+        </div>
+        <dl class="details mt-8">
+          <div class="detail">
+            <dt><Icon name="mail" size={18} />Correo</dt>
+            <dd><a href={`mailto:${contact.email}`} class="link-plain">{contact.email}</a></dd>
+          </div>
+          <div class="detail">
+            <dt><Icon name="clock" size={18} />Horario</dt>
+            <dd class="t-data">Lunes a viernes, {contact.hours}</dd>
+          </div>
+          <div class="detail">
+            <dt><Icon name="map-pin" size={18} />Cobertura</dt>
+            <dd class="t-data">Todo {company.geography}</dd>
+          </div>
+        </dl>
+      </aside>
+
+    </div>
+  </section>
+
+  {/* Section 02: Canales */}
   <section class="shell section rule-top" aria-labelledby="canales-title">
-    <SectionIndex index={1} label="Canales" />
+    <SectionIndex index={2} label="Canales" />
     <div class="channels">
       <div>
         <h2 id="canales-title" class="t-h2">Tres formas de llegar a nosotros</h2>
@@ -97,16 +278,11 @@ const intake = [
         </div>
       </dl>
     </div>
-
-    <Notice class="mt-12">
-      Este sitio no usa formularios, analítica ni scripts de terceros: su consulta llega
-      directamente a nuestro correo o a WhatsApp. El horario es de referencia y conviene
-      confirmarlo por el canal que use.
-    </Notice>
   </section>
 
+  {/* Section 03: Qué incluir */}
   <section class="shell section rule-top" aria-labelledby="incluir-title">
-    <SectionIndex index={2} label="Qué incluir" />
+    <SectionIndex index={3} label="Qué incluir" />
     <div class="intake-head">
       <h2 id="incluir-title" class="t-h2">Con estos cuatro datos respondemos mejor</h2>
       <p class="t-body intake-head__body">
@@ -134,8 +310,9 @@ const intake = [
     </p>
   </section>
 
+  {/* Section 04: FAQ */}
   <section class="shell section rule-top" aria-labelledby="faq-title">
-    <SectionIndex index={3} label="Preguntas frecuentes" />
+    <SectionIndex index={4} label="Preguntas frecuentes" />
     <h2 id="faq-title" class="t-h2">Antes de escribirnos</h2>
     <div class="faq">
       {
@@ -153,7 +330,142 @@ const intake = [
   </section>
 </Layout>
 
+<script is:inline>
+(function(){
+var form=document.getElementById('solicitud-form');
+if(!form)return;
+var btn=document.getElementById('solicitud-btn');
+var okPanel=document.getElementById('solicitud-success');
+var errPanel=document.getElementById('solicitud-network-error');
+var summary=form.querySelector('[data-error-summary]');
+var rat=document.getElementById('solicitud-render-at');
+if(rat)rat.value=new Date().toISOString();
+
+function vf(f){
+  var e=document.getElementById(f.id+'-error');
+  if(!e)return true;
+  var bad=f.required&&!f.value.trim();
+  if(bad){
+    f.setAttribute('aria-invalid','true');
+    e.textContent='Campo obligatorio';
+    e.removeAttribute('hidden');
+  }else{
+    f.removeAttribute('aria-invalid');
+    e.setAttribute('hidden','');
+    e.textContent='';
+  }
+  return !bad;
+}
+
+var reqs=[].slice.call(form.querySelectorAll('[required]'));
+reqs.forEach(function(f){
+  f.addEventListener('blur',function(){vf(f);});
+  f.addEventListener('input',function(){if(f.getAttribute('aria-invalid')==='true')vf(f);});
+});
+
+function buildMailto(){
+  var n=(form.querySelector('[name="need"]')||{}).value||'';
+  var em=(form.querySelector('[name="email"]')||{}).value||'';
+  var o=(form.querySelector('[name="org"]')||{}).value||'';
+  return 'mailto:'+encodeURIComponent('contacto@origenlab.cl')+
+    '?subject='+encodeURIComponent('Solicitud de cotización')+
+    '&body='+encodeURIComponent((n?'Necesito: '+n.trim()+'\n':'')+(o?'Institución: '+o.trim()+'\n':'')+(em?'Correo: '+em.trim():''));
+}
+
+form.addEventListener('submit',function(ev){
+  ev.preventDefault();
+  var allOk=true,msgs=[];
+  reqs.forEach(function(f){
+    if(!vf(f)){
+      allOk=false;
+      var lbl=form.querySelector('label[for="'+f.id+'"]');
+      msgs.push(lbl?lbl.textContent.replace(/\s*\*\s*/g,'').trim():f.name);
+    }
+  });
+  if(!allOk){
+    summary.textContent='Complete los campos obligatorios: '+msgs.join(', ');
+    summary.removeAttribute('hidden');
+    summary.focus();
+    return;
+  }
+  summary.setAttribute('hidden','');
+  btn.disabled=true;
+  var orig=btn.textContent;
+  btn.textContent='Enviando…';
+  fetch('/api/web/solicitud',{method:'POST',body:new FormData(form)})
+    .then(function(r){
+      if(r.ok||r.redirected){
+        var es=okPanel.querySelector('[data-success-email]');
+        if(es)es.textContent=(form.querySelector('[name="email"]')||{}).value||'su correo';
+        form.setAttribute('hidden','');
+        okPanel.removeAttribute('hidden');
+        okPanel.focus();
+      }else{
+        var ml=errPanel.querySelector('[data-error-mailto]');
+        if(ml)ml.href=buildMailto();
+        errPanel.removeAttribute('hidden');
+        btn.disabled=false;
+        btn.textContent=orig;
+        errPanel.focus();
+      }
+    })
+    .catch(function(){
+      var ml=errPanel.querySelector('[data-error-mailto]');
+      if(ml)ml.href=buildMailto();
+      errPanel.removeAttribute('hidden');
+      btn.disabled=false;
+      btn.textContent=orig;
+      errPanel.focus();
+    });
+});
+})();
+</script>
+
 <style>
+  /* ---- Section 01: Solicitud grid ---------------------------------------- */
+  .solicitud-grid { display: grid; gap: 3rem; }
+  .solicitud-panel { border-radius: var(--radius-edge); padding: 1.5rem; margin-bottom: 2rem; }
+  .solicitud-panel--ok { background-color: #f0faf9; border: 1px solid #9dd4cc; }
+  .solicitud-panel--err,
+  .sol-error-summary { background-color: #fef2f2; border: 1px solid #fca5a5; border-radius: var(--radius-edge); }
+  .sol-error-summary {
+    padding: 0.875rem 1rem;
+    margin-bottom: 1.5rem;
+    font-size: 0.9375rem;
+    color: var(--color-ink-800);
+  }
+  .sol-error-summary:focus, .solicitud-panel--ok:focus { outline: 2px solid var(--color-teal-700); outline-offset: 2px; }
+  .solicitud-panel--err:focus { outline: 2px solid #dc2626; outline-offset: 2px; }
+  .sol-form { margin-top: 2rem; position: relative; }
+  .sol-trap-wrap { position: absolute; opacity: 0; pointer-events: none; left: -9999px; top: 0; height: 0; overflow: hidden; }
+  .sol-field { display: grid; gap: 0.375rem; margin-bottom: 1.25rem; }
+  .sol-label { font-size: 0.9375rem; font-weight: 600; color: var(--color-ink-900); }
+  .sol-input, .sol-textarea {
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-edge);
+    font-size: 0.9375rem;
+    color: var(--color-ink-950);
+    background-color: #fff;
+    font-family: inherit;
+  }
+  .sol-input:focus, .sol-textarea:focus { outline: 2px solid var(--color-teal-700); outline-offset: 1px; border-color: var(--color-teal-700); }
+  .sol-input[aria-invalid='true'], .sol-textarea[aria-invalid='true'] { border-color: #dc2626; }
+  .sol-textarea { resize: vertical; min-height: 7rem; }
+  .sol-field-error { font-size: 0.875rem; color: #dc2626; margin: 0; }
+  .sol-optional { margin-bottom: 1.5rem; border: 1px solid var(--color-hairline); border-radius: var(--radius-edge); }
+  .sol-optional__summary { padding: 0.75rem 1rem; cursor: pointer; list-style: none; color: var(--color-ink-600); }
+  .sol-optional__summary::-webkit-details-marker { display: none; }
+  .sol-optional__body { padding: 0.75rem 1rem 1rem; border-top: 1px solid var(--color-hairline); display: grid; gap: 0.75rem; }
+  /* Steps in aside reuse .intake__item / .intake__num / .intake__body */
+  .sol-steps { list-style: none; margin: 0 0 2rem; padding: 0; border-top: 1px solid var(--color-ink-950); }
+  .sol-aside-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem 1.5rem; margin-bottom: 1.5rem; }
+  @media (min-width: 768px) {
+    .solicitud-grid { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 4rem; align-items: start; }
+  }
+
+  /* ---- Section 02: Canales ----------------------------------------------- */
   .channels {
     display: grid;
     gap: 3rem;
@@ -171,6 +483,7 @@ const intake = [
     max-width: 52ch;
   }
 
+  /* ---- Shared: details list ---------------------------------------------- */
   .details {
     margin: 0;
     border-top: 1px solid var(--color-ink-950);
@@ -203,6 +516,7 @@ const intake = [
     min-height: 2rem;
   }
 
+  /* ---- Section 03: Intake ------------------------------------------------ */
   .intake-head {
     display: grid;
     gap: 1.25rem;
@@ -240,10 +554,7 @@ const intake = [
     max-width: 60ch;
   }
 
-  /* --- Preguntas frecuentes ---
-     Vive aquí y no en la portada: las respuestas son sobre cómo escribirnos, y
-     los datos estructurados FAQPage tienen que acompañar al contenido visible
-     que describen. */
+  /* ---- Section 04: FAQ --------------------------------------------------- */
   .faq {
     margin-top: 3rem;
     border-top: 1px solid var(--color-ink-950);
@@ -285,6 +596,7 @@ const intake = [
     color: var(--color-ink-600);
   }
 
+  /* ---- Responsive adjustments -------------------------------------------- */
   @media (min-width: 768px) {
     .channels {
       grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);

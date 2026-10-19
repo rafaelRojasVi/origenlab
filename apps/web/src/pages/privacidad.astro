@@ -3,7 +3,7 @@ import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
 import { contact, telUrl } from '../data/contact';
-import { SITE_CLAIMS, isLegalTextApproved, technicalProviders } from '../data/legal';
+import { isLegalTextApproved, technicalProviders } from '../data/legal';
 
 /**
  * Privacidad.
@@ -64,7 +64,11 @@ const approved = isLegalTextApproved();
     <div class="prose mt-6">
       <p class="t-body">
         No tiene cuentas de usuario, ni carrito, ni píxeles publicitarios, ni analítica, ni
-        formularios comerciales activos. {SITE_CLAIMS.noForms}: entrega páginas y nada más.
+        formularios comerciales activos. El sitio tiene un formulario de solicitud de cotización
+        en <a class="link-plain" href="/contacto/">/contacto/</a>: recoge qué necesita cotizar,
+        su correo y su institución para poder responderle. Estos datos llegan por correo electrónico
+        a contacto@origenlab.cl y se guardan en el CRM de OrigenLab para atender la solicitud.
+        No se usan para envíos masivos ni se comparten con terceros fuera de los proveedores técnicos.
       </p>
       <p class="t-body">
         Tampoco carga scripts, tipografías, hojas de estilo ni imágenes de otro dominio. El detalle
