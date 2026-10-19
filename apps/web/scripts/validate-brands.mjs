@@ -2,7 +2,7 @@
 /**
  * Lista cerrada de marcas publicadas.
  *
- * El sitio sólo puede mostrar las seis marcas aprobadas. Este script comprueba,
+ * El sitio sólo puede mostrar las siete marcas aprobadas. Este script comprueba,
  * en las cuatro capas donde una marca puede colarse, que no haya ninguna más:
  *
  *   1. `src/data/brands.ts`      la lista y los registros coinciden
@@ -65,20 +65,21 @@ const approved = listMatch
   ? [...listMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
   : [];
 
-assert(approved.length === 6, `APPROVED_BRAND_IDS tiene ${approved.length} marcas, se esperan 6`);
+assert(approved.length === 7, `APPROVED_BRAND_IDS tiene ${approved.length} marcas, se esperan 7`);
 assert(new Set(approved).size === approved.length, 'APPROVED_BRAND_IDS tiene ids repetidos');
 
 /**
  * Nombres públicos exactos. Se comprueba la ortografía porque son marcas
  * registradas de terceros y escribirlas mal en el sitio de un distribuidor es
- * un error visible: no es «Adam's» sino «Adam Equipment», y «Löser» lleva
- * diéresis.
+ * un error visible: no es «Adam's» sino «Adam Equipment», «Löser» lleva
+ * diéresis y OHAUS se escribe en mayúsculas, como en su logotipo y sus fichas.
  */
 const EXPECTED_NAMES = {
   hielscher: 'Hielscher Ultrasonics',
   ortoalresa: 'Ortoalresa',
   ika: 'IKA',
   'adam-equipment': 'Adam Equipment',
+  ohaus: 'OHAUS',
   loeser: 'Löser Messtechnik',
   serva: 'SERVA Electrophoresis',
 };
@@ -119,13 +120,24 @@ for (const block of brandBlocks) {
   }
 }
 
-/* -- 2. Una familia por marca, sin repetir -------------------------------- */
+/* -- 2. Una familia por marca; toda familia con al menos una marca -------- */
 
+/**
+ * Hasta el 2026-10-19 cada familia tenía exactamente una marca. Con OHAUS,
+ * pesaje y humedad tiene dos (Adam Equipment y OHAUS). Lo que se sigue
+ * exigiendo: cada marca declara exactamente una familia conocida y ninguna
+ * familia queda sin marca. Que dos marcas compartan familia sólo se admite en
+ * las familias declaradas aquí, para que no ocurra por un error de copia.
+ */
+const SHARED_FAMILIES = new Set(['pesaje-humedad']);
 const familyIds = [...brandsSrc.matchAll(/familyId: '([^']+)'/g)].map((m) => m[1]);
-assert(
-  new Set(familyIds).size === familyIds.length,
-  `brands.ts: dos marcas declaran la misma familia (${familyIds.join(', ')})`,
-);
+for (const familyId of new Set(familyIds)) {
+  const count = familyIds.filter((id) => id === familyId).length;
+  assert(
+    count === 1 || SHARED_FAMILIES.has(familyId),
+    `brands.ts: ${count} marcas declaran la familia ${familyId}, que no está entre las compartidas`,
+  );
+}
 const scopeSrc = read('src/data/equipmentScope.ts');
 const scopeIds = [...scopeSrc.matchAll(/^    id: '([^']+)',$/gm)].map((m) => m[1]);
 for (const familyId of familyIds) {
@@ -246,7 +258,7 @@ if (!existsSync(dist)) {
     );
   }
 
-  // Las seis aprobadas sí aparecen: una lista cerrada que además está completa.
+  // Las siete aprobadas sí aparecen: una lista cerrada que además está completa.
   const marcasPage = join(dist, 'marcas', 'index.html');
   if (existsSync(marcasPage)) {
     const html = readFileSync(marcasPage, 'utf8');
@@ -278,7 +290,7 @@ if (!existsSync(dist)) {
     assert(built === '_astro' || slugs.includes(built), `dist/marcas/${built}/: página de una marca que no está en la lista cerrada`);
   }
 
-  /* -- 7. Sitemap: exactamente seis rutas de marca ----------------------- */
+  /* -- 7. Sitemap: exactamente siete rutas de marca ----------------------- */
 
   const sitemapFiles = walk(dist, '.xml').filter((file) => /sitemap-\d+\.xml$/.test(file));
   const sitemapUrls = sitemapFiles.flatMap((file) =>
@@ -298,7 +310,7 @@ if (!existsSync(dist)) {
     }
   }
 
-  /* -- 8. Destinos externos: sólo los seis fabricantes ------------------- */
+  /* -- 8. Destinos externos: sólo los siete fabricantes ------------------- */
 
   /**
    * `qa:interaction` ya lo comprueba en navegador, pero depende de Playwright.
@@ -310,6 +322,10 @@ if (!existsSync(dist)) {
     'ortoalresa.com',
     'www.ika.com',
     'adamequipment.com',
+    // OHAUS: sitio para Latinoamérica y servidor de fichas PDF. Sólo enlaces;
+    // su cadena TLS está incompleta y nada de ahí se incrusta.
+    'mx.ohaus.com',
+    'dmx.ohaus.com',
     // Löser no ofrece HTTPS: su servidor de 2005 rechaza el saludo TLS.
     'www.loeser-osmometer.de',
     'www.serva.de',

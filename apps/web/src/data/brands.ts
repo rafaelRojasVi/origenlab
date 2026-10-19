@@ -1,5 +1,5 @@
 /**
- * Marcas publicadas. Lista cerrada de seis.
+ * Marcas publicadas. Lista cerrada de siete.
  *
  * `APPROVED_BRAND_IDS` es la única lista de marcas que el sitio público puede
  * mostrar. La comparte todo: portada, páginas de marca, navegación, catálogo,
@@ -9,8 +9,13 @@
  * modo que una marca retirada no pueda reaparecer sin que falle la validación.
  *
  * Procedencia de la lista y de la familia de cada marca: revisión de marca y
- * portada del 2026-09-06, en la que el negocio fijó las seis marcas aprobadas y
- * qué fabrica cada una.
+ * portada del 2026-09-06, en la que el negocio fijó las seis primeras marcas
+ * aprobadas y qué fabrica cada una. OHAUS entró el 2026-10-19 por instrucción
+ * escrita del titular del negocio («add Ohaus to the webpage, it's a new
+ * proveedor»): OrigenLab ya cotiza sus balanzas, balanzas contadoras y
+ * analizadores de humedad. Comparte familia con Adam Equipment (pesaje y
+ * humedad), de modo que hay siete marcas y seis familias: una familia puede
+ * tener más de un fabricante, una marca no puede tener más de una familia.
  *
  * # Dos ejes independientes, y conviene no confundirlos
  *
@@ -24,8 +29,8 @@
  *
  * - `editorialPublished` — hay material editorial verificado suficiente para
  *   una página de marca completa: qué fabrica, qué resuelve, modelos con
- *   documentación oficial del fabricante y enlaces comprobados. Las seis lo
- *   tienen, y por eso las seis tienen `/marcas/{slug}/`. El material vive en
+ *   documentación oficial del fabricante y enlaces comprobados. Las siete lo
+ *   tienen, y por eso las siete tienen `/marcas/{slug}/`. El material vive en
  *   este archivo y en `src/data/brandModels.ts`.
  *
  * - `commercialScopeConfirmed` — el negocio ha confirmado por escrito en qué
@@ -33,14 +38,14 @@
  *   `commercialNote`, y `validate:catalog` lo comprueba. Sin él la página dice
  *   qué fabrica el fabricante y que OrigenLab la cotiza, nunca en qué calidad.
  *
- * Las seis se presentan como marcas con las que OrigenLab trabaja y que puede
+ * Las siete se presentan como marcas con las que OrigenLab trabaja y que puede
  * cotizar. Ninguna se describe como representación oficial, distribución
  * exclusiva, territorial ni certificación: `validate:catalog` bloquea esa
  * redacción en los datos y en las plantillas.
  *
  * Lo que sigue sin publicarse:
  *
- * - Precios, plazos y condiciones de las cuatro marcas sin alcance confirmado.
+ * - Precios, plazos y condiciones de las cinco marcas sin alcance confirmado.
  * - Fotografía de producto sin procedencia y permiso documentados: ver
  *   `src/data/sourceRegistry.ts`.
  */
@@ -51,6 +56,7 @@ export const APPROVED_BRAND_IDS = [
   'ortoalresa',
   'ika',
   'adam-equipment',
+  'ohaus',
   'loeser',
   'serva',
 ] as const;
@@ -58,9 +64,9 @@ export const APPROVED_BRAND_IDS = [
 export type ApprovedBrandId = (typeof APPROVED_BRAND_IDS)[number];
 
 /**
- * Composición de la página de marca. Las seis comparten el mismo estándar de
+ * Composición de la página de marca. Las siete comparten el mismo estándar de
  * calidad (qué fabrica, familia, modelos con documentación oficial, condición
- * comercial y cierre) y ninguna comparte la disposición: repetir seis veces la
+ * comercial y cierre) y ninguna comparte la disposición: repetir siete veces la
  * misma plantilla convertiría el catálogo en un formulario.
  */
 export type BrandLayout =
@@ -75,7 +81,9 @@ export type BrandLayout =
   /** Ficha de instrumento único: un solo cuadro técnico, cuatro variantes. */
   | 'instrumento'
   /** Sistema: equipos y consumibles que se cotizan juntos. */
-  | 'sistema';
+  | 'sistema'
+  /** Tareas: un instrumento por trabajo de pesaje (pesar, contar, secar). */
+  | 'tarea';
 
 export interface Brand {
   id: ApprovedBrandId;
@@ -255,6 +263,37 @@ export const brands: Brand[] = [
       'Control de calidad y ensayo de rutina',
       'Determinación de humedad en alimentos',
       'Conteo de piezas y pesaje por porcentaje',
+    ],
+    manufacturerAttribution: MANUFACTURER_SPECS,
+  },
+  {
+    id: 'ohaus',
+    name: 'OHAUS',
+    slug: 'ohaus',
+    legalName: 'OHAUS Corporation',
+    websiteUrl: 'https://mx.ohaus.com/es-mx/',
+    logoPath: '/brands/ohaus-logo.png',
+    logoAlt: 'Logotipo de OHAUS',
+    logoWidth: 152,
+    logoHeight: 144,
+    logoDisplayHeight: 32,
+    familyId: 'pesaje-humedad',
+    listSummary: 'Balanzas analíticas, balanzas contadoras y analizadores de humedad.',
+    editorialPublished: true,
+    commercialScopeConfirmed: false,
+    layout: 'tarea',
+    pageSubtitle: 'Balanzas analíticas, balanzas contadoras y analizadores de humedad',
+    metaDescription:
+      'Balanzas OHAUS Pioneer PX, balanzas contadoras Ranger Count 3000 y analizadores de humedad MB120 y MB32, con la ficha oficial del fabricante.',
+    summary:
+      'OHAUS fabrica instrumentos de pesaje para laboratorio, industria y docencia. La línea que publica este sitio cubre tres trabajos distintos: balanzas analíticas Pioneer PX con legibilidad de 0,1 mg y protector contra corrientes de aire, balanzas contadoras Ranger Count 3000 para el conteo en planta, y analizadores de humedad MB que pesan y secan la muestra en el mismo plato.',
+    brandIntro:
+      'Los tres equipos pesan, pero no resuelven el mismo problema. La analítica responde cuánto pesa una muestra pequeña, la contadora responde cuántas piezas hay a partir de su peso y el analizador responde cuánta agua pierde la muestra al calentarla. Por eso la página se ordena por trabajo y no por número de modelo.',
+    applicationAreas: [
+      'Pesaje analítico y formulación',
+      'Conteo de piezas y control de peso',
+      'Determinación de humedad y sólidos',
+      'Docencia y laboratorio de rutina',
     ],
     manufacturerAttribution: MANUFACTURER_SPECS,
   },

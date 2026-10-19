@@ -134,7 +134,7 @@ export function keyFactsFor(product: Product): ProductSpec[] {
 }
 
 /**
- * Marcas con página de marca propia. Las seis: `editorialPublished` es true en
+ * Marcas con página de marca propia. Las siete: `editorialPublished` es true en
  * todas desde la revisión del 2026-09-07, y la función existe igualmente para
  * que retirar una página sea cambiar un dato y no borrar una ruta.
  */
@@ -167,4 +167,21 @@ export function productCountForBrand(brandId: string): number {
  */
 export function getBrandByFamilyId(familyId: string): Brand | undefined {
   return brands.find((brand) => brand.familyId === familyId);
+}
+
+/**
+ * Todas las marcas de una familia, en el orden de la lista cerrada. Desde el
+ * 2026-10-19 pesaje y humedad tiene dos (Adam Equipment y OHAUS): toda lista
+ * que nombre «la marca de la familia» usa esta función, no la de arriba, para
+ * no atribuir la familia a un solo fabricante.
+ */
+export function getBrandsByFamilyId(familyId: string): Brand[] {
+  return brands.filter((brand) => brand.familyId === familyId);
+}
+
+/** Nombres de las marcas de una familia, para una etiqueta de texto. */
+export function brandNamesForFamily(familyId: string): string {
+  return getBrandsByFamilyId(familyId)
+    .map((brand) => brand.name)
+    .join(' · ');
 }

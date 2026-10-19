@@ -1,7 +1,7 @@
 ---
 import { equipmentScope, scopeById } from '../../data/equipmentScope';
 import { publicClaim } from '../../data/claims';
-import { getBrandByFamilyId, getProductBySlug } from '../../lib/catalog';
+import { getBrandByFamilyId, getBrandsByFamilyId, getProductBySlug } from '../../lib/catalog';
 import { productImageSources } from '../../lib/productImage';
 import BrandLogo from '../ui/BrandLogo.astro';
 import FamilyMotif from './FamilyMotif.astro';
@@ -45,7 +45,8 @@ const analisisBrand = analisis ? getBrandByFamilyId(analisis.id) : undefined;
 const centrifugeCount = separacion?.countClaimId ? publicClaim(separacion.countClaimId) : undefined;
 const servaCount = analisis?.countClaimId ? publicClaim(analisis.countClaimId) : undefined;
 
-const brandFor = (id: string) => getBrandByFamilyId(id);
+/** Una familia puede tener más de un fabricante (pesaje: Adam Equipment y OHAUS). */
+const brandsFor = (id: string) => getBrandsByFamilyId(id);
 ---
 
 <section id="familias" class="families" aria-labelledby="familias-title" tabindex="-1">
@@ -83,8 +84,12 @@ const brandFor = (id: string) => getBrandByFamilyId(id);
                 <FamilyMotif familyId={entry.id} />
               </div>
               <div class="pair__body">
-                {brandFor(entry.id) && (
-                  <BrandLogo brand={brandFor(entry.id)!} scale={0.95} class="pair__logo" />
+                {brandsFor(entry.id).length > 0 && (
+                  <div class="pair__logo">
+                    {brandsFor(entry.id).map((brand) => (
+                      <BrandLogo brand={brand} scale={0.95} />
+                    ))}
+                  </div>
                 )}
                 <h4 class="family-name family-name--md">{entry.name}</h4>
                 <p class="t-small family-purpose">{entry.purpose}</p>
@@ -109,8 +114,12 @@ const brandFor = (id: string) => getBrandByFamilyId(id);
                 <FamilyMotif familyId={entry.id} />
               </div>
               <div>
-                {brandFor(entry.id) && (
-                  <BrandLogo brand={brandFor(entry.id)!} scale={1} class="pair__logo" />
+                {brandsFor(entry.id).length > 0 && (
+                  <div class="pair__logo">
+                    {brandsFor(entry.id).map((brand) => (
+                      <BrandLogo brand={brand} scale={1} />
+                    ))}
+                  </div>
                 )}
                 <h4 class:list={['family-name', index === 0 ? 'family-name--lg' : 'family-name--md']}>
                   {entry.name}
@@ -157,7 +166,11 @@ const brandFor = (id: string) => getBrandByFamilyId(id);
           )}
           <div class="feature__body">
             <h3 class="t-label group__title group__title--flush">Separación</h3>
-            {separacionBrand && <BrandLogo brand={separacionBrand} scale={1.1} class="pair__logo" />}
+            {separacionBrand && (
+              <div class="pair__logo">
+                <BrandLogo brand={separacionBrand} scale={1.1} />
+              </div>
+            )}
             <h4 class="family-name family-name--xl">{separacion.name}</h4>
             <p class="t-body family-purpose">{separacion.purpose}</p>
             <p class="family-question">{separacion.question}</p>
@@ -291,7 +304,12 @@ const brandFor = (id: string) => getBrandByFamilyId(id);
     font-size: 0.8125rem;
     color: var(--color-ink-500);
   }
+  /* Contenedor de logotipos: una familia puede tener dos marcas (pesaje). */
   .pair__logo {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 1.5rem;
     margin-bottom: 1.125rem;
   }
 
