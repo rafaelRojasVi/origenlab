@@ -25,20 +25,20 @@ import { applicationsForFamily } from '../../data/applications';
 import { imageForModel, publishedImagesForBrand } from '../../data/productImages';
 
 /**
- * Página de marca. Las seis.
+ * Página de marca. Las siete.
  *
  * Hasta la revisión del 2026-09-07 sólo existían dos, porque una sola bandera
  * (`catalogPublished`) decidía a la vez si había página y si se podía describir
  * el alcance comercial. Con eso, cuatro familias de equipo enteras no tenían
  * ninguna página que las explicara y la portada las nombraba sin destino.
  *
- * Ahora las seis tienen página y el estándar de calidad es el mismo: qué
+ * Ahora las siete tienen página y el estándar de calidad es el mismo: qué
  * fabrica y cómo, la familia de equipo, los modelos con la documentación del
  * fabricante, la condición comercial que corresponda y las tareas de
  * laboratorio que esa marca resuelve.
  *
  * Lo que **no** es igual es la composición. `brand.layout` da a cada marca una
- * disposición distinta, porque seis páginas idénticas con el nombre cambiado se
+ * disposición distinta, porque siete páginas idénticas con el nombre cambiado se
  * leen como un formulario y no como un catálogo:
  *
  *   escala       Hielscher   escalera de potencia antes de los modelos
@@ -47,6 +47,7 @@ import { imageForModel, publishedImagesForBrand } from '../../data/productImages
  *   medicion     Adam        rejilla de capacidad y legibilidad como entrada
  *   instrumento  Löser       lo que comparten los cuatro, y luego lo que cambia
  *   sistema      SERVA       equipos y consumible, con la advertencia de encaje
+ *   tarea        OHAUS       un instrumento por trabajo: pesar, contar, secar
  *
  * La condición comercial es lo único que sigue dependiendo de la confirmación
  * del negocio: sin ella la página dice qué fabrica el fabricante y que
@@ -70,7 +71,7 @@ const family = productFamilies.find((item) =>
 
 const models = modelsForBrand(brand.id);
 const scope = scopeById(brand.familyId);
-const familyDocs = familyDocsFor(brand.familyId);
+const familyDocs = familyDocsFor(brand.familyId, brand.id);
 const tasks = applicationsForFamily(brand.familyId);
 /** Fotografías con procedencia y permiso: sólo ellas se publican. */
 const publishedPhotos = publishedImagesForBrand(brand.id);
@@ -78,7 +79,7 @@ const publishedPhotos = publishedImagesForBrand(brand.id);
 /** Una disposición por marca. Ver la cabecera. */
 const layout = brand.layout;
 const sheetVariant =
-  layout === 'mecanismo' || layout === 'medicion' ? 'split' : layout === 'instrumento' ? 'compact' : 'stack';
+  layout === 'mecanismo' || layout === 'medicion' || layout === 'tarea' ? 'split' : layout === 'instrumento' ? 'compact' : 'stack';
 
 /**
  * Escalera de potencia (sólo Hielscher). Se deriva del criterio «Potencia» de
@@ -102,6 +103,19 @@ const measurementGrid =
           model.criteria.find((criterion) => criterion.label === 'Capacidad')?.value ??
           model.criteria.find((criterion) => criterion.label === 'Capacidad y legibilidad')?.value,
         readability: model.criteria.find((criterion) => criterion.label === 'Legibilidad')?.value,
+      }))
+    : [];
+
+/**
+ * Entrada de OHAUS: qué trabajo resuelve cada instrumento. Sale de los
+ * criterios «Tipo» y «Capacidad» de cada modelo, no se escribe a mano.
+ */
+const taskGrid =
+  layout === 'tarea'
+    ? models.map((model) => ({
+        name: model.name,
+        kind: model.criteria.find((criterion) => criterion.label === 'Tipo')?.value,
+        capacity: model.criteria.find((criterion) => criterion.label === 'Capacidad')?.value,
       }))
     : [];
 
@@ -274,6 +288,32 @@ const equipmentSectionLabel =
               <div class="grid-facts__row">
                 <dt>{fact.label}</dt>
                 <dd>{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )
+    }
+
+    {
+      layout === 'tarea' && (
+        <div class="lead-in">
+          <div>
+            <h2 id="equipos-title" class="t-h2">Pesar, contar y secar</h2>
+            <p class="t-lead mt-5">
+              Tres trabajos distintos con el mismo principio de pesaje. Antes que el modelo, conviene
+              saber cuál de los tres necesita: cuánto pesa la muestra, cuántas piezas hay o cuánta
+              humedad pierde al calentarla.
+            </p>
+          </div>
+          <dl class="grid-facts">
+            {taskGrid.map((row) => (
+              <div class="grid-facts__row">
+                <dt translate="no">{row.name}</dt>
+                <dd>
+                  {row.kind}
+                  {row.capacity && <span class="grid-facts__second">{row.capacity}</span>}
+                </dd>
               </div>
             ))}
           </dl>

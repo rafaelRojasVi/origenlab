@@ -31,13 +31,13 @@ from origenlab_api.v2.marketing_audience import (
 T = datetime(2026, 3, 10, tzinfo=timezone.utc)
 TAX = load_taxonomy()
 
-CANONICAL = ["hielscher", "ortoalresa", "ika", "adam-equipment", "loeser", "serva"]
+CANONICAL = ["hielscher", "ortoalresa", "ika", "adam-equipment", "ohaus", "loeser", "serva"]
 
 
 # ─────────────────────────────────────────────────────────── directory ──
 
 
-def test_the_directory_is_the_six_catalogue_brands_in_order() -> None:
+def test_the_directory_is_the_seven_catalogue_brands_in_order() -> None:
     directory = supplier_directory(TAX, [], [])
     assert [d["brand_id"] for d in directory] == CANONICAL
     # One line per brand, and the lines are the taxonomy's own families — no second list.
@@ -193,7 +193,7 @@ def _client(role: str | None) -> TestClient:
 def test_providers_read_leads_with_the_directory_and_keeps_candidates_as_they_are() -> None:
     body = _client("sales").get("/v2/workspace/providers").json()
     assert [d["brand_id"] for d in body["directory"]] == CANONICAL
-    loeser = body["directory"][4]
+    loeser = body["directory"][5]
     assert [o["organization_id"] for o in loeser["crm_organizations"]] == ["o1"]
     assert loeser["candidate_hints"][0]["review"]["state"] == "unresolved"
     # The canonical candidate shape: `review.state` is the state; there is no top-level `resolution`.

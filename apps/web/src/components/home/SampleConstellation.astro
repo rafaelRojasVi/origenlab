@@ -1,6 +1,6 @@
 ---
 import { equipmentScope } from '../../data/equipmentScope';
-import { getBrandByFamilyId } from '../../lib/catalog';
+import { brandNamesForFamily } from '../../lib/catalog';
 import OrigenMarkAnimated from '../logo/OrigenMarkAnimated.astro';
 
 /**
@@ -85,7 +85,7 @@ const nodes = equipmentScope.map((entry, index) => {
   return {
     id: entry.id,
     name: entry.name,
-    brand: getBrandByFamilyId(entry.id)?.name,
+    brand: brandNamesForFamily(entry.id),
     numeral: String(index + 1).padStart(2, '0'),
     hue: HUE[entry.id] ?? 'var(--color-teal-800)',
     x: place.x,

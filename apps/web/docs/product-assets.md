@@ -61,6 +61,28 @@ de la familia». Los PDF del fabricante se leen para extraer la imagen incrustad
 cuando es la única fuente oficial accesible por máquina (IKA, dos fichas de
 Adam); no se rehospedan.
 
+### Base de permiso de OHAUS (2026-10-19)
+
+OHAUS entró al sitio el 2026-10-19 y la confirmación anterior no la cubre. Ese
+día el titular del negocio concedió por escrito el permiso para usar las
+imágenes oficiales de producto y el logotipo de OHAUS en origenlab.cl, con
+OrigenLab como distribuidor de OHAUS: «I'm allowing these images to be taken
+and used — we have permission, use them». Se registra como
+`OHAUS_AUTHORIZATION_BASIS` en `src/data/productImages.ts`, con la misma
+reserva que la base anterior: no se afirma licencia pública, documento,
+cláusula, vigencia ni exclusividad.
+
+| Entrada | Clasificación | Original (`public/products/ohaus/`) | Fuente |
+|---|---|---|---|
+| Pioneer PX | familia representativa | `pioneer-px.jpg`, 600 × 600 | foto de tienda DMX-ID 4294988787, ficha PX224 en us.ohaus.com |
+| Ranger Count 3000 | familia representativa | `ranger-count-3000.jpg`, 600 × 600 | foto de tienda DMX-ID 30684, página oficial en mx.ohaus.com |
+| MB120 | modelo exacto | `mb120.jpg`, 600 × 600 | foto de tienda DMX-ID 4294974243, página oficial en mx.ohaus.com |
+| MB32 | modelo exacto | `mb32.jpg`, 600 × 600 | foto de tienda DMX-ID 4295015507, página oficial en mx.ohaus.com |
+
+La imagen principal de la familia Pioneer en mx.ohaus.com lleva un rótulo
+publicitario («Economy & Accuracy») incrustado; se descartó en favor de la foto
+de tienda limpia del mismo equipo, porque aquí no se recorta ni recompone nada.
+
 ### Cobertura (2026-09-07): 24 de 24 entradas publicadas
 
 | Fabricante | Entradas | Clasificación | Origen |
@@ -117,11 +139,11 @@ modificar y son el maestro de alta calidad.
 
 ## Logotipos de marca (V2)
 
-`npm run build:brand-logos` normaliza los seis logotipos aprobados a
+`npm run build:brand-logos` normaliza los siete logotipos aprobados a
 `public/brands/*.png` a 3x y a una sola tinta (`ink-800`). Es el mismo criterio
 aplicado en la tira de marcas de la firma de correo.
 
-El script trata tres tipos de original, porque los seis no llegan igual:
+El script trata tres tipos de original, porque los siete no llegan igual:
 
 | `mode` | Original | Tratamiento |
 |---|---|---|
@@ -135,6 +157,7 @@ El script trata tres tipos de original, porque los seis no llegan igual:
 | Ortoalresa | `public/brands/ortoalresa-logo.png` | `ortoalresa-source.svg` | ink |
 | IKA | `public/brands/ika-logo.png` | `ika-source.png` | ink |
 | Adam Equipment | `public/brands/adam-equipment-logo.png` | `adam-equipment-source.png` | alpha |
+| OHAUS | `public/brands/ohaus-logo.png` | `ohaus-logo.png` (recorte de la ficha oficial Compass CR, ya a una tinta) | alpha |
 | Löser Messtechnik | `public/brands/loeser-logo.png` | `loeser-source.jpg` | reversed |
 | SERVA Electrophoresis | `public/brands/serva-logo.png` | `serva-source.png` | ink |
 
@@ -144,7 +167,7 @@ correo aún los usa; sus salidas web (`public/brands/ollital-logo.png`,
 `crtop-logo.png`) se borraron y `validate:brands` falla si reaparecen.
 
 **TODO (abierto):** confirmar con OrigenLab el permiso escrito de reproducción
-de los logotipos de las seis marcas en origenlab.cl. Registrado en
+de los logotipos de las siete marcas en origenlab.cl. Registrado en
 `src/data/sourceRegistry.ts` (`ASSET_PERMISSION_NEEDED`) y en
 [`design/CONTENT_NEEDED.md`](design/CONTENT_NEEDED.md). La fotografía de
 producto ya tiene base de permiso (sección anterior).
@@ -161,16 +184,17 @@ el cursor. No lo hace, porque el conjunto no está completo:
 | IKA | `ika-source.png`, 400 × 161 | sí, azul marino |
 | Adam Equipment | `adam-equipment-source.png`, 300 × 125 | **no**: el original ya es monocromo, media RGB 90,90,90 |
 | Löser Messtechnik | `loeser-source.jpg`, 70 × 70 | **no utilizable**: tiene color, no resolución |
+| OHAUS | `ohaus-logo.png`, 152 × 144 | **no**: recortado de una ficha PDF y ya pasado a una tinta |
 | SERVA Electrophoresis | `serva-source.png`, 267 × 80 | sí, azul |
 
-Cuatro de seis. Con eso, el revelado dejaría cuatro marcas en color y dos en
+Cuatro de siete. Con eso, el revelado dejaría cuatro marcas en color y tres en
 gris, que es una jerarquía involuntaria justo entre las cinco familias de
 maquinaria que la revisión igualó. **El riel se queda gris entero** y lo que
-revela el cursor o el foco es tinta plena, igual para las seis. Los dos activos
+revela el cursor o el foco es tinta plena, igual para las siete. Los dos activos
 que faltan están en
 [`design/CONTENT_NEEDED.md`](design/CONTENT_NEEDED.md) como CONTENIDO.
 
-Los seis logotipos web salen además a la misma tinta (`#2b2e30`), lo que permite
+Los siete logotipos web salen además a la misma tinta (`#2b2e30`), lo que permite
 igualarlos en el riel con una sola opacidad de reposo: ninguna marca queda más
 clara que otra por su propio color.
 
