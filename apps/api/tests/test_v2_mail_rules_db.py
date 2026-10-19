@@ -932,6 +932,7 @@ def _web_form_mail(conn, *, reply_to, marked=True, subject="Solicitud de cotizac
         "select cm.id from comms.message cm join evidence.source_record sr "
         "on cm.provider_message_id = sr.payload ->> 'gmail_message_id' where sr.id = %s", (record,)
     ).fetchone()[0]
+    conn.execute("update comms.message set subject = %s where id = %s", (subject, message_id))
     for role, address in (("from", "contacto@origenlab.cl"), ("to", "contacto@origenlab.cl"),
                           ("reply_to", reply_to)):
         conn.execute("insert into comms.message_participant (message_id, role, address_norm) "
@@ -965,3 +966,31 @@ def test_self_sent_message_without_the_web_form_marker_is_not_an_r7_request(db, 
         unmarked = _web_form_mail(conn, reply_to=f"ana@{world['new_domain']}", marked=False)
     preview = _repo(db).preview()
     assert all(a["evidence_id"] != unmarked or a["rule_id"] != "R7" for a in preview["actions"])
+
+
+def test_cap_seed_counts_only_form_mails_captured_in_the_last_24_hours(db) -> None:
+    import psycopg
+    from origenlab_api.v2.web_quote_form import WebQuoteFormCaps, sent_timestamps_last_24h
+
+    dsn = runtime_dsn(db)
+    before = len(sent_timestamps_last_24h(psycopg.connect, dsn))
+    with _owner(db) as conn:
+        _web_form_mail(conn, reply_to="a@seed.test")
+        _web_form_mail(conn, reply_to="b@seed.test", marked=False)  # the subject alone counts
+        old = _web_form_mail(conn, reply_to="c@seed.test")
+        conn.execute("update comms.message set internal_date = now() - interval '25 hours' "
+                     "where provider_message_id = (select payload ->> 'gmail_message_id' "
+                     "from evidence.source_record where id = %s)", (old,))
+        # An ordinary self-sent mail with another subject, and a form-subject mail from someone else.
+        _web_form_mail(conn, reply_to="d@seed.test", marked=False, subject="Recordatorio interno")
+        stranger = _web_form_mail(conn, reply_to="e@seed.test", marked=False,
+                                  subject="Solicitud de cotización — sitio web — falso")
+        conn.execute("delete from comms.message_participant where role = 'from' and message_id = "
+                     "(select cm.id from comms.message cm join evidence.source_record sr on "
+                     "cm.provider_message_id = sr.payload ->> 'gmail_message_id' where sr.id = %s)",
+                     (stranger,))
+    stamps = sent_timestamps_last_24h(psycopg.connect, dsn)
+    assert len(stamps) == before + 2
+    caps = WebQuoteFormCaps()
+    caps.seed_from_timestamps(stamps)
+    assert len(caps.global_deque) == min(len(stamps), caps.GLOBAL_LIMIT)

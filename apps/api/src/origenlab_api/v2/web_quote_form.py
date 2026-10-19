@@ -4,7 +4,7 @@ Input is sanitised, timing- and honeypot-checked, deduplicated and rate-capped b
 a single self-addressed notification is dispatched as contacto@origenlab.cl with the
 visitor's address in Reply-To.  No copy is sent to the visitor.
 
-Caps (in-process, no persistence across restarts):
+Caps (in-process; the global window is re-seeded at start-up from the captured form mails):
   - Global: ≤ 40 form mails in any rolling 24-hour window.
   - Per-address: ≤ 3 form mails per visitor e-mail in any rolling 24-hour window.
 Idempotency: a ``submission_id`` seen in the last 10 minutes silently returns success
@@ -17,6 +17,7 @@ import logging
 import re
 import time
 from collections import deque
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -26,6 +27,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
 from origenlab_api.v2.gmail_send import MAX_ADDRESS_LENGTH, _ADDRESS, build_web_quote_message
+
+#: Subject prefix of every form notification (see gmail_send.build_web_quote_message).
+SUBJECT_PREFIX = "Solicitud de cotización — sitio web — "
 
 # ---------------------------------------------------------------------------
 # Input sanitisation
@@ -141,15 +145,50 @@ class WebQuoteFormCaps:
         self.global_deque.append(now)
         addr_q.append(now)
 
-    def seed_from_startup(self, sent_count: int) -> None:
-        """Seed the global deque with ``sent_count`` timestamps from ~1 hour ago.
+    def seed_from_timestamps(self, sent_at: Sequence[datetime]) -> None:
+        """Pre-populate the global window with form mails already sent (their real send times).
 
-        Used at startup to pre-populate the cap counter from a database query
-        of form mails sent in the last 24 h, so a restart does not reset the cap.
+        Used at startup with the V2 record of captured form mails, so a restart does not reset
+        the cap. Anything older than the window is ignored; at most GLOBAL_LIMIT are kept.
         """
-        seed_time = datetime.now(timezone.utc) - timedelta(hours=1)
-        for _ in range(min(sent_count, self.GLOBAL_LIMIT)):
-            self.global_deque.append(seed_time)
+        cutoff = datetime.now(timezone.utc) - self.WINDOW
+        recent = sorted(t for t in sent_at if t >= cutoff)
+        for t in recent[-self.GLOBAL_LIMIT:]:
+            self.global_deque.append(t)
+
+
+#: Form mails the API sent, as the Gmail capture stored them: self-sent contacto@ → contacto@
+#: with the form's subject prefix. The subject is read straight from `comms.message` (written by
+#: the capture itself), not from the triage reading, so a lagging triage cannot undercount.
+_SENT_LAST_24H_SQL = """
+select m.internal_date
+  from comms.message m
+ where m.subject like %s
+   and m.internal_date > now() - interval '24 hours'
+   and exists (select 1 from comms.message_participant p
+                where p.message_id = m.id and p.role = 'from' and p.address_norm = %s)
+   and exists (select 1 from comms.message_participant p
+                where p.message_id = m.id and p.role = 'to' and p.address_norm = %s)
+ order by m.internal_date
+"""
+
+
+def sent_timestamps_last_24h(connect: Any, dsn: str) -> list[datetime]:
+    """Send times of the form mails captured in the last 24 h; [] (and a warning) on any error."""
+    from origenlab_api.v2.gmail_send import SENDER_ADDRESS
+
+    try:
+        with connect(dsn, autocommit=False) as conn:
+            with conn.cursor() as cur:
+                cur.execute("set transaction read only")
+                cur.execute(_SENT_LAST_24H_SQL,
+                            (SUBJECT_PREFIX + "%", SENDER_ADDRESS, SENDER_ADDRESS))
+                rows = [r[0] for r in cur.fetchall()]
+            conn.rollback()
+        return rows
+    except Exception as exc:
+        logging.getLogger(__name__).warning("web quote form cap seed failed: %s", exc)
+        return []
 
 
 # ---------------------------------------------------------------------------

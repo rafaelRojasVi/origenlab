@@ -332,3 +332,25 @@ def test_load_send_token_accepts_send_scope(tmp_path: Path) -> None:
     }), encoding="utf-8")
     # Should not raise
     load_send_token(str(token_file))
+
+
+def test_seed_from_timestamps_keeps_recent_sends_and_enforces_the_cap_after_restart() -> None:
+    from datetime import timedelta
+
+    from origenlab_api.v2.web_quote_form import CapExceeded, WebQuoteFormCaps
+
+    now = datetime.now(timezone.utc)
+    caps = WebQuoteFormCaps()
+    caps.seed_from_timestamps([now - timedelta(hours=30)] + [now - timedelta(hours=2)] * 40)
+    assert len(caps.global_deque) == 40  # the 30 h-old send is outside the window
+    with pytest.raises(CapExceeded):
+        caps.check_and_record("nuevo@example.test")
+
+
+def test_sent_timestamps_swallow_a_database_failure() -> None:
+    from origenlab_api.v2.web_quote_form import sent_timestamps_last_24h
+
+    def broken(*_a, **_k):
+        raise RuntimeError("down")
+
+    assert sent_timestamps_last_24h(broken, "dsn") == []
