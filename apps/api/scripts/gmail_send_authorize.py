@@ -1,6 +1,6 @@
-"""One-time, local: authorize «Enviar prueba» to send as contacto@origenlab.cl (gmail.send only).
+"""One-time, local: authorize «Enviar prueba» to send as contacto@origenlab.cl (gmail.compose + gmail.settings.basic by default).
 
-    uv run --extra drive-bootstrap python scripts/gmail_send_authorize.py \
+    uv run --extra drive-bootstrap python scripts/gmail_send_authorize.py [--scopes web-form|send] \
         --client-secrets ~/Downloads/client_secret_<id>.json \
         --out ~/.config/origenlab-v2/gmail_send_token.json
 
@@ -19,9 +19,17 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from origenlab_api.v2.gmail_send import SEND_SCOPE, SENDER_ADDRESS  # noqa: E402
+from origenlab_api.v2.gmail_send import COMPOSE_SCOPE, SEND_SCOPE, SENDER_ADDRESS  # noqa: E402
 
-SCOPES = [SEND_SCOPE, "openid", "https://www.googleapis.com/auth/userinfo.email"]
+IDENTITY_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
+SETTINGS_SCOPE = "https://www.googleapis.com/auth/gmail.settings.basic"
+#: `web-form` (default): the production token — compose also sends, settings.basic for the
+#: signature. `send`: the original gmail.send-only token for «Enviar prueba».
+SCOPE_SETS = {
+    "web-form": [COMPOSE_SCOPE, SETTINGS_SCOPE, *IDENTITY_SCOPES],
+    "send": [SEND_SCOPE, *IDENTITY_SCOPES],
+}
+SCOPES = SCOPE_SETS["web-form"]
 
 
 def token_payload(
@@ -56,8 +64,9 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--client-secrets", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--scopes", choices=sorted(SCOPE_SETS), default="web-form")
     a = p.parse_args()
-    flow = InstalledAppFlow.from_client_secrets_file(a.client_secrets, scopes=SCOPES)
+    flow = InstalledAppFlow.from_client_secrets_file(a.client_secrets, scopes=SCOPE_SETS[a.scopes])
     creds = flow.run_local_server(
         port=0, login_hint=SENDER_ADDRESS, prompt="consent", access_type="offline"
     )
@@ -76,7 +85,7 @@ def main() -> None:
     payload = token_payload(creds.client_id, creds.client_secret, creds.refresh_token, email)
     out = Path(a.out).expanduser()
     write_token_file(out, payload)
-    print(f"written {out} for {payload['address']} (scope gmail.send)")
+    print(f"written {out} for {payload['address']} (scopes: {a.scopes})")
 
 
 if __name__ == "__main__":

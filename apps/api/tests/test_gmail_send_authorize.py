@@ -25,3 +25,11 @@ def test_an_existing_loose_file_ends_at_mode_600(tmp_path) -> None:
     mod.write_token_file(target, {"a": "b"})
     assert (target.stat().st_mode & 0o777) == 0o600
     assert target.read_text() == '{"a": "b"}'
+
+
+def test_the_default_scope_set_is_compose_plus_settings_and_send_stays_available() -> None:
+    web = mod.SCOPE_SETS["web-form"]
+    assert "https://www.googleapis.com/auth/gmail.compose" in web
+    assert "https://www.googleapis.com/auth/gmail.settings.basic" in web
+    assert mod.SCOPES == web
+    assert "https://www.googleapis.com/auth/gmail.send" in mod.SCOPE_SETS["send"]
