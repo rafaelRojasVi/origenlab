@@ -121,12 +121,16 @@ def month_spend(cur: Any, feature: str, now: datetime) -> Decimal:
 
 
 def with_cap_lock(cur: Any, feature: str) -> None:
-    """Serialise spenders of `feature`: take a transaction-scoped advisory lock.
+    """Take a transaction-scoped advisory lock on `feature` for a SHORT check section.
 
-    `ensure_within_cap` is check-then-act. Callers must run check, model call and `record_usage`
-    inside ONE transaction that has called this first (the lock is released at commit/rollback, so
-    the recorded cost is visible to the next spender), unless the worker is single-flight. On an
-    autocommit connection the lock is released at once and protects nothing.
+    `ensure_within_cap` is check-then-act, and this lock guards only the check itself. Never hold a
+    database transaction across a model API call. The documented pattern is:
+      1. short transaction: `with_cap_lock` + `ensure_within_cap`, then commit;
+      2. the model call, with no transaction open;
+      3. short transaction: `record_usage`.
+    The real guarantee that the cap holds is that the tender worker is single-flight (one
+    preparation at a time, in its own child process): no second spender can run between 1 and 3.
+    On an autocommit connection the lock is released at once and protects nothing.
     """
     cur.execute("select pg_advisory_xact_lock(hashtext(%s))", (f"model_spend:{feature}",))
 
