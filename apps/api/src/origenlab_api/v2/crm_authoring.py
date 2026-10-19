@@ -1353,6 +1353,11 @@ def _handle_confirm_organization_record(
     if org["version"] != expected_version:
         raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
 
+    # The machine (rule R15, through the email-rules executor) confirms without naming a person:
+    # `confirmed_by_operator_id` stays empty — the check allows it — and the event is the worker's
+    # with `confirmed_from: mail_rule`, so no screen reads it as «a person looked».
+    by_system = bool(getattr(operator, "acts_as_system", False))
+    confirmer = None if by_system else operator.operator_id
     cur.execute(
         """
         update crm.organization
@@ -1360,7 +1365,7 @@ def _handle_confirm_organization_record(
                version = version + 1, updated_at = now()
          where id = %s::uuid and version = %s
         """,
-        (operator.operator_id, org_id, expected_version),
+        (confirmer, org_id, expected_version),
     )
     if cur.rowcount == 0:
         raise CommandRefused(409, "stale_version", "concurrent modification")
@@ -1370,14 +1375,81 @@ def _handle_confirm_organization_record(
         aggregate_kind="organization",
         aggregate_id=org_id,
         event_type="organization.confirmed",
-        payload={"confirmed_from": "crm_authoring", "note": note_text},
+        payload={"confirmed_from": "mail_rule" if by_system else "crm_authoring", "note": note_text},
         operator=operator,
         receipt_id=receipt_id,
     )
     return {
         "ok": True, "organization_id": org_id, "version": expected_version + 1,
-        "already_confirmed": False, "confirmed_by_operator_id": operator.operator_id,
+        "already_confirmed": False, "confirmed_by_operator_id": confirmer, "confirmed_by_system": by_system,
     }
+
+
+def _handle_unconfirm_organization_record(
+    self: "V2CrmAuthoringRepository",
+    cur: Any,
+    operator: OperatorIdentity,
+    fields: dict[str, Any],
+    receipt_id: str,
+) -> dict[str, Any]:
+    """The inverse of `confirm-organization-record` (2026-10-19): back to «por confirmar»
+    (`machine_proposed`, no `confirmed_by_operator_id`), and to `previous_name` when one is given —
+    the «Deshacer» of rule R15, which confirms (and may rename) an institution by itself. One
+    `organization.updated` event naming what changed. An institution already «por confirmar»
+    answers `already_unconfirmed: true` with no event and no bump, checked before the version."""
+    org_id = fields["organization_id"]
+    expected_version = fields["expected_version"]
+    previous_name = fields.get("previous_name")
+
+    cur.execute(
+        """
+        select id::text as id, status, version, confirmation, name,
+               merged_into_organization_id::text as merged_into_organization_id
+          from crm.organization
+         where id = %s::uuid
+           for update
+        """,
+        (org_id,),
+    )
+    org = _one(cur)
+    if org is None:
+        raise CommandRefused(404, "organization_not_found", "no such organization")
+    if org["merged_into_organization_id"] is not None:
+        raise CommandRefused(409, "organization_merged", "that organization has been merged into another")
+    if org["status"] == "archived":
+        raise CommandRefused(409, "archived_subject", "that organization is archived")
+    if org["confirmation"] == "machine_proposed":
+        return {"ok": True, "organization_id": org_id, "version": org["version"], "already_unconfirmed": True}
+    if org["version"] != expected_version:
+        raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
+
+    changed = ["confirmation"]
+    name = org["name"]
+    if previous_name and previous_name != org["name"]:
+        changed.append("name")
+        name = previous_name
+    cur.execute(
+        """
+        update crm.organization
+           set confirmation = 'machine_proposed', confirmed_by_operator_id = null, name = %s,
+               version = version + 1, updated_at = now()
+         where id = %s::uuid and version = %s
+        """,
+        (name, org_id, expected_version),
+    )
+    if cur.rowcount == 0:
+        raise CommandRefused(409, "stale_version", "concurrent modification")
+
+    self._append_event(
+        cur,
+        aggregate_kind="organization",
+        aggregate_id=org_id,
+        event_type="organization.updated",
+        payload={"changed": changed, "confirmation": "machine_proposed", "note": fields.get("note")},
+        operator=operator,
+        receipt_id=receipt_id,
+    )
+    return {"ok": True, "organization_id": org_id, "version": expected_version + 1, "already_unconfirmed": False}
 
 
 def _handle_archive_organization(
@@ -2443,7 +2515,8 @@ def _handle_archive_note(
 # ─────────────────────────────────────────────────────────────────────────── repository ──
 
 class V2CrmAuthoringRepository(CommandTransaction):
-    """29 CRM authoring commands, each in one transaction."""
+    """29 CRM authoring routes, each in one transaction, plus `unconfirm-organization-record`, which only
+    the email-rules undo runs (no route, not on the proxy)."""
 
     _restore_domain_row = _restore_domain_row
 
@@ -2463,6 +2536,7 @@ class V2CrmAuthoringRepository(CommandTransaction):
         "archive-organization": _handle_archive_organization,
         "restore-organization": _handle_restore_organization,
         "confirm-organization-record": _handle_confirm_organization_record,
+        "unconfirm-organization-record": _handle_unconfirm_organization_record,
         "add-organization-identifier": _handle_add_organization_identifier,
         "remove-organization-identifier": _handle_remove_organization_identifier,
         "add-organization-domain": _handle_add_organization_domain,

@@ -6,7 +6,7 @@ products, the case stage, a summary. Nothing acts on it. This module is the huma
 
 | Surface | What it does |
 |---|---|
-| `GET /v2/workspace/triage-readings?status=pending` | the suggestions waiting for a person, newest first, each with its email, its products, the cases its thread is on and their current stage, the latest verdict if any, and — for an email no case holds — the context matcher's suggestion (`case_match`) |
+| `GET /v2/workspace/triage-readings?status=pending` | the suggestions waiting for a person, newest first, each with its email, its products, the cases its thread is on and their current stage, the latest verdict if any, when contacto@ answered on its thread afterwards (`answered_at`), and — for an email no case holds — the context matcher's suggestion (`case_match`) |
 | `POST /v2/commands/review-triage` | records one verdict — `approved`, `corrected` (with the corrected fields) or `rejected`, an optional note — as an `evidence.triage_review` row and one `assertion.triage_reviewed` event |
 
 **Append-only.** A verdict is never rewritten: a second review of the same suggestion adds a row,
@@ -140,7 +140,29 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
                            join crm.opportunity o on o.id = oe.opportunity_id
                           where oe.unlinked_at is null
                             and s2.payload ->> 'gmail_thread_id' = m.provider_thread_id) o), '[]') as cases,
-       cm.id::text as case_match_id, cm.value as case_match_value, cm.verdict as case_match_verdict
+       cm.id::text as case_match_id, cm.value as case_match_value, cm.verdict as case_match_verdict,
+       -- When contacto@ first wrote on the same thread after this email (item 2a, 2026-10-19).
+       (select min(m2.internal_date) from comms.message m2
+          join comms.message_participant p2 on p2.message_id = m2.id and p2.role = 'from'
+                                           and p2.address_norm = 'contacto@origenlab.cl'
+         where m2.mailbox_id = m.mailbox_id and m2.provider_thread_id = m.provider_thread_id
+           and m2.direction = 'outbound'
+           and m2.internal_date > m.internal_date
+           -- An answer goes to someone outside OrigenLab who is not a supplier: forwarding the
+           -- request to a supplier for a price is not answering it.
+           and exists (select 1 from comms.message_participant p3
+                        where p3.message_id = m2.id and p3.role in ('to', 'cc')
+                          and split_part(p3.address_norm, '@', 2) <> 'origenlab.cl'
+                          and not exists (
+                              select 1 from crm.organization_domain d
+                                join crm.organization o on o.id = d.organization_id
+                               where d.removed_at is null and d.domain_norm = split_part(p3.address_norm, '@', 2)
+                                 and (o.kind in ('supplier', 'manufacturer')
+                                      or exists (select 1 from crm.organization_relationship rel
+                                                  where rel.organization_id = o.id
+                                                    and rel.role in ('supplier', 'manufacturer')
+                                                    and (rel.valid_to is null or rel.valid_to > current_date)))))
+       ) as answered_at
   from readings r
   join evidence.source_record sr on sr.id = r.source_record_id
   -- The context matcher's suggestion for the same email (`apps/worker` case_match.py) and its latest verdict.
@@ -266,6 +288,7 @@ class TriageReviewRepository(CommandTransaction):
                 "sender_is_supplier": bool(row["sender_is_supplier"]),
                 "sent_at": row["sent_at"].isoformat() if row["sent_at"] else None,
                 "thread_id": row["thread_id"],
+                "answered_at": row["answered_at"].isoformat() if row["answered_at"] else None,
                 "class": value.get("class"),
                 "reasons": value.get("reasons") or [],
                 "model_state": value.get("model_state"),

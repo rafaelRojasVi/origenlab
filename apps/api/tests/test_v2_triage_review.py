@@ -385,3 +385,42 @@ def test_when_the_model_ran_its_answer_wins() -> None:
               "pick": {"choice": case["opportunity_id"], "reason_es": "Mismo producto."}, "candidates": []}
     view = case_match_view({**row, "case_match_value": picked}, cases)
     assert view["decision"] == "propose" and view["suggestions"][0]["from"] == "model"
+
+
+@needs_db
+def test_the_queue_says_when_contacto_answered_the_thread_later(world) -> None:
+    """Item 2a (2026-10-19): «Correos sin caso» hides an old email contacto@ already answered on its
+    thread. The API says when that answer went out; the dashboard decides what is old."""
+    def answered():
+        items = {i["assertion_id"]: i for i in _repo(world).readings(status="all", limit=200)["items"]}
+        return items[world["read"]]["answered_at"]
+
+    assert answered() is None
+    mailbox, thread = _owner(world, "select m.mailbox_id, m.provider_thread_id from evidence.assertion a join evidence.source_record sr "
+                           "on sr.id = a.source_record_id join comms.message m "
+                           "on 'gmail_message:' || m.provider_message_id = sr.dedupe_key where a.id = %s",
+                    world["read"])[0]
+
+    def outbound(sender, when, to):
+        gid = f"out-{uuid.uuid4().hex[:10]}"
+        mid = _owner(world, "insert into comms.message (mailbox_id, provider_message_id, provider_thread_id, "
+                            "direction, internal_date, subject, parse_status) values (%s, %s, %s, 'outbound', "
+                            f"now() {when}, 'RE: Cotización', 'parsed') returning id", mailbox, gid, thread)[0][0]
+        _owner(world, "insert into comms.message_participant (message_id, role, address_norm) values (%s, 'from', %s) "
+                      "returning id", mid, sender)
+        _owner(world, "insert into comms.message_participant (message_id, role, address_norm) values (%s, 'to', %s) "
+                      "returning id", mid, to)
+
+    tag = uuid.uuid4().hex[:8]
+    supplier = _owner(world, "insert into crm.organization (kind, name, confirmation) values "
+                             "('supplier', %s, 'confirmed') returning id", f"Proveedor Ejemplo {tag}")[0][0]
+    _owner(world, "insert into crm.organization_domain (organization_id, domain_norm, scope) "
+                  "values (%s, %s, 'exclusive') returning id", supplier, f"proveedor-{tag}.example")
+    client = world["sender"]
+    outbound("contacto@origenlab.cl", "- interval '1 day'", client)  # before the email: not an answer
+    outbound("otra@origenlab.cl", "+ interval '1 hour'", client)  # someone else: not contacto@
+    outbound("contacto@origenlab.cl", "+ interval '2 hours'", "colega@origenlab.cl")  # inside OrigenLab
+    outbound("contacto@origenlab.cl", "+ interval '3 hours'", f"ventas@proveedor-{tag}.example")  # asking a supplier
+    assert answered() is None
+    outbound("contacto@origenlab.cl", "+ interval '4 hours'", client)
+    assert answered() is not None

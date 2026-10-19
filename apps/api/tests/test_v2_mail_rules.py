@@ -717,7 +717,9 @@ def test_an_email_already_handled_by_a_rule_plans_nothing() -> None:
 
 
 def test_an_email_already_linked_by_a_person_plans_nothing() -> None:
-    snapshot = Snapshot(evidence=(mail(linked_case_ids=("c-1",)),), cases=(case(),), organizations=(org(),))
+    # Its quote is already the case's; a number no case records is R14's (test_v2_mail_rules_obvious).
+    snapshot = Snapshot(evidence=(mail(linked_case_ids=("c-1",)),), cases=(case(quotes=(quote("01239-26"),)),),
+                        organizations=(org(),))
     assert plan(snapshot) == []
 
 
@@ -916,7 +918,7 @@ def test_r9_is_automatic_and_undone_like_r1() -> None:
     from origenlab_api.v2 import mail_rules_repository
     assert "R9" in AUTOMATIC_RULES and "R9" in RULE_IDS
     source = inspect.getsource(mail_rules_repository.MailRulesRepository._undo_steps)
-    assert 'rule in ("R1", "R9", "R13") and created.get("quote_revision_id")' in source
+    assert 'rule in ("R1", "R9", "R13", "R14") and created.get("quote_revision_id")' in source
 
 
 

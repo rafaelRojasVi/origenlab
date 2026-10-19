@@ -110,6 +110,8 @@ export interface TriageReading {
   sender_is_supplier?: boolean;
   sent_at: string | null;
   thread_id: string | null;
+  /** When contacto@ first wrote on the thread after this email, or null. Absent from an older API. */
+  answered_at?: string | null;
   class: string | null;
   reasons: string[];
   model_state: string | null;
@@ -325,13 +327,20 @@ export function cardsById(cards: readonly OpportunityCardData[]): Map<string, Op
 }
 
 /** Why an email is not asked about on «Hoy». */
-export type HiddenReason = "en un caso" | "proveedor" | "aviso automático" | "reenvío antiguo" | "mismo hilo";
+export type HiddenReason = "en un caso" | "proveedor" | "aviso automático" | "reenvío antiguo" | "ya respondido" | "mismo hilo";
+
+/**
+ * An email older than this that contacto@ answered later on its own thread is not asked about
+ * (owner 2026-10-19): the conversation went on, so it is not waiting for anyone. Read side only.
+ */
+export const ANSWERED_HIDE_DAYS = 14;
 
 const AUTOMATIC_SENDER = /^(no-?reply|do-?not-?reply|mensajeria|newsletter|news|marketing|notifications?|info|customer\.assistance|gemini-notes)$/;
 const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce", "calendar", "unsubscribe", "empty", "outbound"]);
 
 function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCardData>, now: Date): Exclude<HiddenReason, "mismo hilo"> | null {
   if (holdingCases(r, cards, now).length > 0) return wonProposal(r, cards) || reopenProposal(r, cards, now) ? null : "en un caso";
+  if (r.answered_at && r.sent_at && now.getTime() - Date.parse(r.sent_at) > ANSWERED_HIDE_DAYS * 86_400_000) return "ya respondido";
   const [local = "", domain = ""] = (r.sender ?? "").toLowerCase().split("@");
   if (domain.includes("labdelivery")) return "reenvío antiguo";
   // A supplier's price for a client's deal is asked about when the matcher can place it on a case or

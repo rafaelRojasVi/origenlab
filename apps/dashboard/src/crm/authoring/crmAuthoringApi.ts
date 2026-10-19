@@ -253,6 +253,8 @@ export interface OrganizationAuthoringResponse {
     confirmed_by_operator_id?: string | null;
     confirmed_by_name?: string | null;
     confirmed_at?: string | null;
+    /** Rule R15 confirmed it by itself (the confirmation event is the worker's). Absent from an older API. */
+    confirmed_by_system?: boolean;
   };
   identifiers: IdentifierRow[];
   domains: DomainRow[];

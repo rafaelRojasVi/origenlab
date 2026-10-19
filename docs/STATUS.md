@@ -3167,3 +3167,52 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
   cannot win once the print dialog's margins were changed.
 - Tests: API `test_v2_quote_commands.py`; pgTAP `097_quote_authoring.sql`; vitest
   `ClientSection.test.tsx`, `QuotePrintView.test.tsx`.
+
+### 2.7.135 The system makes the obvious decisions itself (R14, R15, answered mail), 2026-10-19 — built, deploys on merge
+
+Owner, 2026-10-19 (spec `2026-10-19-auto-obvious-decisions-design.md`, items 1, 3 and 2a): Operaciones
+→ «Por decidir» asked people to click what the system already knew. Two new rules run on the same
+automatic timer, switch, receipts (`mail-rule:<subject>:<rule>`, `actor_kind = 'worker'`) and
+«Deshacer» as R1–R13, and list in «Lo que hizo el sistema». Nothing marks a case lost or closes one.
+
+- **R14 — a sent quote already on its case.** contacto@'s outbound email, sent within the last 60
+  days (Operaciones' own window: a backfilled old email never records an old quote or moves a stage),
+  linked to exactly one open case (by an earlier rule or a person) with exactly one CN PDF whose number no case records — the
+  «Cotizaciones enviadas sin registrar» rows. R1's gates: the case has a requesting institution, an
+  open stage, and the correlative is not the CRM's under another year; then the case walks to
+  «Enviada» and `record_historical_quotation` records the quote (no link: the email is there). It is
+  the one rule the planner runs on an email another rule already acted on, once per email (undone or
+  not). «Deshacer» = R1's: voids the revision, walks the stage back, leaves the email linked. Left to
+  a person: no institution, another-year correlative, two new PDFs, a closed case.
+- **R15 — confirm an institution a sent quote settled.** An institution «por confirmar» that R4, R10
+  or «Completar con la cotización» created (read from the receipt of its `organization.created`
+  event; never R11's forward company, a person or an import), not a supplier, no free-mail domain,
+  with a quote on its case recorded ≥ 3 days ago and still sent (a case an undo discarded does not
+  count). One named after its domain is renamed first (`update-organization`) to the institution
+  segment of its quote PDFs (`institution_segment`) — only when exactly one distinct segment exists,
+  it says *which* institution (two meaningful words, one not a kind/legal-form marker: never
+  «Laboratorio», «Laboratorio Chile», «Centro (CEN)») and no other institution has that name;
+  otherwise it stays for a person. Then `confirm-organization-record`. Keyed by the institution id.
+  **Machine confirmation is visible as such:** run as the system, the confirm leaves
+  `confirmed_by_operator_id` empty (the existing check allows it), its `organization.confirmed` event
+  is `actor_kind = 'worker'` with `confirmed_from: mail_rule`, and the institution card
+  (`organization_authoring.confirmed_by_system`) says «Confirmada por el sistema (cotización
+  enviada)» instead of a person's name. Not listed on «Hoy» (Operaciones only). «Deshacer» runs a
+  new server-side handler `unconfirm-organization-record` through the email-rules undo — **no route,
+  not on the proxy**: back to `machine_proposed`, the old name while the rule's name still stands,
+  one `organization.updated` event; already «por confirmar» → nothing.
+- **Kill flags.** `ORIGENLAB_V2_AUTO_RULE_R14_ENABLED` and `ORIGENLAB_V2_AUTO_RULE_R15_ENABLED`,
+  default **false**: the first deploy changes nothing; the owner reads R14/R15 in the «Aplicar»
+  preview, then sets a flag true on the API and the timer runs that rule while the switch is on.
+- **Answered mail leaves «Correos sin caso» (2a, read side only).** `GET /v2/workspace/triage-readings`
+  adds `answered_at` (contacto@'s first later outbound message on the same thread and mailbox, to a
+  recipient outside origenlab.cl who is not a registered supplier — forwarding the request to a
+  supplier for a price is not an answer); the
+  dashboard does not ask about an email older than 14 days that has one, and counts it under «No se
+  muestran» as «ya respondido». Nothing is written. Item 2b (auto-link on matcher «propose») and item 4
+  (people) are not built.
+- No migration: `organization.updated` / `organization.confirmed` are existing event types and
+  `machine_proposed` is allowed by the existing check. Tests: API `test_v2_mail_rules_obvious.py`,
+  `test_v2_mail_rules_obvious_db.py`, `test_v2_mail_rules_auto.py`, `test_v2_crm_authoring.py`,
+  `test_v2_triage_review.py`; vitest `operations.test.ts`, `triage.test.ts`,
+  `OperacionesPage.test.tsx`, `webSuggestions.test.tsx`.

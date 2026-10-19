@@ -40,6 +40,9 @@ export interface OpsAction {
   case_title: string | null;
   quote_number: string | null;
   undone: boolean;
+  /** R15 acts on an institution: its id and name (as confirmed). Absent from an older API. */
+  organization_id?: string | null;
+  organization_name?: string | null;
 }
 
 /** A quote contacto@ sent that no case holds: by number only (the PDF name may hold a person's name). */
@@ -173,6 +176,18 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: true,
     ejemplo: "Se envía «CN00042 – Laboratorio Ejemplo» a la persona que pidió el equipo por un reenvío → queda en su solicitud.",
   },
+  R14: {
+    cuando: "OrigenLab envía una cotización nueva en un correo que ya está en un caso abierto (lo vinculó otra regla o una persona), y ningún caso tiene ese número.",
+    hace: "Registra la cotización en ese caso y lo deja en «Enviada», con las mismas condiciones que R1. Si el caso no tiene institución o el correlativo existe en otro año, queda en «Por decidir».",
+    automatica: true,
+    ejemplo: "Un correo ya vinculado por el número 09875 lleva además «CN09876-Empresa Ficticia.pdf» → el caso registra la cotización 09876.",
+  },
+  R15: {
+    cuando: "Una institución «por confirmar» que creó el sistema desde un correo (R4, R10 o «Completar con la cotización») tiene una cotización enviada hace 3 días o más, sin deshacer; no es proveedor ni un correo gratuito.",
+    hace: "La confirma. Si se llamaba como su dominio, antes toma el nombre de institución que dan los PDF de sus cotizaciones (si dan uno solo; si no dan ninguno o dan varios, queda para una persona).",
+    automatica: true,
+    ejemplo: "«acme-ejemplo.example», con «CN09876-Persona Ficticia - Acme Ejemplo SpA.pdf» enviada hace 4 días → «Acme Ejemplo SpA», confirmada.",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -189,6 +204,8 @@ const RULE_WHY: Record<string, string> = {
   R11: "solicitud reenviada a contacto@",
   R12: "el sistema reconoce el caso",
   R13: "responde la solicitud del cliente",
+  R14: "el correo ya estaba en el caso",
+  R15: "cotización enviada hace 3 días o más",
 };
 
 /** One Spanish sentence for what the system did. */
@@ -206,6 +223,10 @@ export function actionSentence(a: OpsAction): string {
     verb = `Abrió una solicitud: ${target}`;
   } else if (rule === "R11") {
     verb = `Atendió una solicitud reenviada: ${target}`;
+  } else if (rule === "R14") {
+    verb = `Registró ${a.quote_number ? `la cotización ${a.quote_number}` : "una cotización"} en ${target}`;
+  } else if (rule === "R15") {
+    verb = `Confirmó la institución${a.organization_name ? ` «${a.organization_name}»` : ""}`;
   } else {
     verb = `Vinculó un correo a${a.case_title ? `l caso «${a.case_title}»` : " un caso"}`;
   }

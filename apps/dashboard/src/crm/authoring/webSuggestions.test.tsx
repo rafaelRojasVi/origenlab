@@ -161,6 +161,14 @@ describe("«Confirmar institución»", () => {
     expect(screen.queryByRole("button", { name: "Confirmar institución" })).toBeNull();
   });
 
+  it("an institution rule R15 confirmed says «por el sistema», never a person", async () => {
+    stubApi(fixture({ confirmation: "confirmed", confirmed_by_name: null, confirmed_by_system: true, confirmed_at: "2026-10-19T15:00:00+00:00" }, null));
+    render(withRole("sales", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor admin={false} />));
+    const bar = await screen.findByTestId("org-confirmation");
+    expect(bar).toHaveTextContent("por el sistema (cotización enviada)");
+    expect(bar).not.toHaveTextContent("por un operador");
+  });
+
   it("without authoring there is no confirm and no apply", async () => {
     const posts = stubApi(fixture());
     render(withRole("viewer", <OrgAuthoringSection organizationId={ORG_ID} mayAuthor={false} admin={false} />));

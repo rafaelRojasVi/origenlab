@@ -21,6 +21,8 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R12 | inbound, no thread or quote number placed it, and the context matcher (`case_match:v1`, the worker's triage) is sure: layer 1 «exact», or the AI's pick with confidence «high» — also for a supplier writing about a client's deal | auto: link to that open case (a won case keeps it closed); a medium or low pick stays a suggestion |
 | R13 | outbound, a NEW CN number in a PDF on a new thread, answering the client's open request with no quote yet (a recipient wrote on it or asked through a forward, a recipient's domain is its institution's, or the PDF names its institution) | auto: link + «Enviada» + quote on that request; two requests → a proposal |
 | R11 | a request forwarded to contacto@ (`forwarded_request`, read by the worker), still pending | auto: joins the one open case whose emails come from that customer, or of the customer's institution; otherwise a request (`create_request_from_forward`) with the known institution, the company the forward names, or none. Never a supplier's domain; never links a Labdelivery-mailbox email |
+| R14 | outbound from contacto@, sent in the last `LATE_QUOTE_WINDOW_DAYS`, already linked to exactly one open case (by a rule or a person), carrying exactly one CN PDF whose number no case records | auto: the R1 gates (requesting institution, open stage, correlative not under another year), then «Enviada» + quote on that case; no link (it is there). The one rule that still reads an email another rule acted on |
+| R15 | an institution «por confirmar» that R4, R10 or «Completar con la cotización» created, not a supplier, no free-mail domain, with a quote on its case recorded ≥ `SETTLE_DAYS` ago and still sent | auto: confirmed — renamed first from the PDF's institution segment when it is named after its domain (exactly one distinct segment across its quotes, naming which institution, not only a kind; else a person); confirmed with no operator named. Keyed by the institution's id, not an email |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -53,7 +55,8 @@ from email.utils import getaddresses
 from typing import Any
 from zoneinfo import ZoneInfo
 
-RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13")
+RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
+                             "R14", "R15")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: The header value that marks a self-sent web-quote-form message. The triage worker imports
@@ -221,6 +224,19 @@ class ForwardRequest:
 
 
 @dataclass(frozen=True)
+class InstitutionFacts:
+    """An institution «por confirmar», as R15 reads it (`mail_rules_repository._INSTITUTIONS_SQL`)."""
+
+    organization_id: str
+    #: What created it: «R4», «R10», «R11» (the apply receipt's rule), «complete_case» («Completar
+    #: con la cotización»), or None (a person, an import).
+    created_by: str | None
+    #: The PDF file name (None when unknown) of each quote revision on its cases that is still sent
+    #: and was recorded at least `SETTLE_DAYS` ago — the repository applies the clock.
+    settled_quote_files: tuple[str | None, ...] = ()
+
+
+@dataclass(frozen=True)
 class Snapshot:
     evidence: tuple[MailEvidence, ...]
     cases: tuple[CaseState, ...]
@@ -228,6 +244,13 @@ class Snapshot:
     applied_evidence_ids: frozenset[str] = frozenset()
     #: Pending forwarded requests (R11).
     forwards: tuple[ForwardRequest, ...] = ()
+    #: (evidence id, rule id) of every apply receipt, undone or not: R14 and R15 act once per subject.
+    applied_pairs: frozenset[tuple[str, str]] = frozenset()
+    #: Institutions «por confirmar» (R15).
+    institutions: tuple[InstitutionFacts, ...] = ()
+    #: R14 acts only on email sent at or after this instant (ISO; the repository sets it to
+    #: `LATE_QUOTE_WINDOW_DAYS` ago, as Operaciones lists them). None: no email qualifies.
+    late_quote_since: str | None = None
 
 
 @dataclass(frozen=True)
@@ -468,6 +491,7 @@ def _is_pdf(doc: MailDocument) -> bool:
 
 class _Index:
     def __init__(self, snapshot: Snapshot) -> None:
+        self.late_quote_since = snapshot.late_quote_since
         self.cases = {c.id: c for c in snapshot.cases}
         self.by_thread: dict[str, list[CaseState]] = {}
         for c in snapshot.cases:
@@ -644,6 +668,12 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
     out: list[PlannedAction] = []
     for e in sorted(snapshot.evidence, key=lambda x: x.id):
         if e.id in snapshot.applied_evidence_ids:
+            # Another rule acted on this email already. Only R14 still reads it — once: a sent quote
+            # the earlier action linked but did not record (owner 2026-10-19).
+            if (e.id, "R14") not in snapshot.applied_pairs and e.linked_case_ids:
+                late = _late_quote_rule(e, index)
+                if late is not None:
+                    out.append(late)
             continue
         action = _plan_one(e, index)
         if action is not None:
@@ -651,6 +681,12 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
     for f in sorted(snapshot.forwards, key=lambda x: x.id):
         if f.id not in snapshot.applied_evidence_ids and not (set(f.ids) & snapshot.applied_evidence_ids):
             out.append(_plan_forward(f, index))
+    for inst in sorted(snapshot.institutions, key=lambda x: x.organization_id):
+        if inst.organization_id in snapshot.applied_evidence_ids:
+            continue
+        confirmed = _confirm_institution_rule(inst, index)
+        if confirmed is not None:
+            out.append(confirmed)
     return out
 
 
@@ -719,7 +755,8 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
         # A person (or an earlier run) already put this email on a case. Only a won/lost signal
         # on that same, single case may still act; nothing else is ours to decide.
         linked = [ix.cases[c] for c in e.linked_case_ids if c in ix.cases]
-        return _signal_rules(e, linked if len(linked) == 1 else [], ix, already_linked=True)
+        signal = _signal_rules(e, linked if len(linked) == 1 else [], ix, already_linked=True)
+        return signal if signal is not None else _late_quote_rule(e, ix)
 
     if supplier_domains and not thread_cases:
         # A supplier writing about a client's deal belongs on the client's case (owner, 2026-10-10)
@@ -1238,6 +1275,126 @@ def _open_request_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: st
     )
 
 
+def _late_quote_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R14 (owner, 2026-10-19): contacto@ sent a quote on an email that is already on exactly one open
+    case — a rule linked it before it could record quotes, or a person did — and no case records its
+    number. The same gates as R1's (`_thread_sent_quote_rule`): the case has its requesting
+    institution and an open stage, the correlative is not the CRM's under another year. Then the case
+    walks to «Enviada» and the quote is recorded; the email stays linked. Anything doubtful — no
+    institution, another year, two new PDFs, a closed case — is left to a person in Operaciones."""
+    if e.direction != "outbound" or _sender(e) != CONTACT_SENDER or (e.direction_hint or "") in NOT_CUSTOMER_HINTS:
+        return None
+    # A backfilled old email on a case still open must never record an old quote or move the stage.
+    since, sent = _instant(ix.late_quote_since), _instant(e.sent_at)
+    if since is None or sent is None or sent < since:
+        return None
+    open_cases = [ix.cases[c] for c in e.linked_case_ids if c in ix.cases and not ix.cases[c].closed]
+    if len(open_cases) != 1:
+        return None
+    c = open_cases[0]
+    pdf_keys: dict[tuple[int, int], tuple[str, MailDocument]] = {}
+    for doc in sorted(e.documents, key=lambda d: (d.filename or "", d.sha256 or "")):
+        if not _is_pdf(doc):
+            continue
+        for token in doc.cn_tokens:
+            key = gmail_quote_key(token, e.sent_at)
+            if key is not None and key not in ix.by_quote_key and key not in ix.claimed_keys:
+                pdf_keys.setdefault(key, (token, doc))
+    if len(pdf_keys) != 1:
+        return None
+    key, (token, doc) = next(iter(pdf_keys.items()))
+    if any(y != key[0] for _, y in ix.by_correlative.get(key[1], [])):
+        return None
+    if c.organization_id is None or c.stage not in _TO_QUOTING:
+        return None
+    number = canonical_quote_number(key)
+    reasons = ["el correo ya estaba en el caso",
+               f"cotización {number} enviada por contacto@ (PDF «{doc.filename}») y aún sin registrar"]
+    note = _note("R14", reasons)
+    ix.claimed_keys[key] = e.id
+    steps = (*(_advance_step(stage, note) for stage in _TO_QUOTING[c.stage]),
+             _record_sent_quote_step(e, doc, number, token, _derivation(token, e.sent_at), note,
+                                     ledger_decision_id=f"mail-rule:{e.id}:R14"))
+    return PlannedAction(e.id, "R14", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+                         organization_id=c.organization_id, quote_number=number, commands=steps,
+                         context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
+
+
+#: R14: how far back a sent email may be (the same window as Operaciones' «sin registrar» list).
+LATE_QUOTE_WINDOW_DAYS = 60
+#: R15: a quote must have stood this long, not undone, before its institution is confirmed.
+SETTLE_DAYS = 3
+#: What may have created an institution R15 confirms: the mail rules R4 and R10, and «Completar con
+#: la cotización» (`complete_case_from_sent_quote`). Never R11 (a forward's company), a person, an import.
+MACHINE_CREATORS: frozenset[str] = frozenset({"R4", "R10", "complete_case"})
+_DOMAIN_LIKE = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)+$")
+UPDATE_ORGANIZATION = "update-organization"
+CONFIRM_ORGANIZATION_RECORD = "confirm-organization-record"
+UNCONFIRM_ORGANIZATION_RECORD = "unconfirm-organization-record"
+
+
+_NAME_STOPWORDS = frozenset({"de", "del", "la", "las", "el", "los", "y", "e", "en"})
+
+
+def _names_an_institution(segment: str) -> bool:
+    """R15 renames unattended, so a segment must say *which* institution, not only what kind:
+    at least two meaningful words (no 1-letter crumbs, articles or the parenthetical), one of them
+    not a kind/legal-form marker. «Laboratorio», «Laboratorio Chile», «Centro (CEN)» → False;
+    «Acme Ejemplo SpA», «Instituto Ficticio (IFI)» → True."""
+    words = [w for w in re.findall(r"[a-z0-9]+", fold(_PARENTHETICAL.sub(" ", segment)))
+             if len(w) >= 2 and w not in _NAME_STOPWORDS]
+    return len(words) >= 2 and any(not _INSTITUTION_MARKER.fullmatch(w) for w in words)
+
+
+def _confirm_institution_rule(f: InstitutionFacts, ix: _Index) -> PlannedAction | None:
+    """R15 (owner, 2026-10-19): an institution a machine created «por confirmar» is confirmed once a
+    quote to it has stood `SETTLE_DAYS` days without being undone. It must not be a supplier, nor a
+    free-mail domain. One named after its domain (R4: «nuevo-cliente.example») is first renamed to the
+    institution its quote PDFs name (`institution_segment`) — only when exactly one distinct segment
+    exists across them, and no other institution already has that name; otherwise a person decides."""
+    o = ix.orgs.get(f.organization_id)
+    if o is None or o.confirmation != "machine_proposed" or f.created_by not in MACHINE_CREATORS:
+        return None
+    if o.is_supplier:
+        return None
+    name = fold(o.name)
+    domains = {d.lower() for d in o.domains}
+    if domains & FREE_MAIL_DOMAINS or name in FREE_MAIL_DOMAINS or not f.settled_quote_files:
+        return None
+    rename: str | None = None
+    if name in domains or _DOMAIN_LIKE.match(name):
+        segments: dict[str, str] = {}
+        for filename in f.settled_quote_files:
+            segment = institution_segment(quote_file_institution(filename))
+            if segment:
+                segments.setdefault(fold(segment), segment)
+        if len(segments) != 1:
+            return None
+        rename = next(iter(segments.values()))
+        if not _names_an_institution(rename):
+            return None
+        if any(other.id != o.id for k in institution_keys(rename) for other in ix.by_name.get(k, [])):
+            return None
+    count = len(f.settled_quote_files)
+    reasons = [(f"{count} cotizaciones enviadas" if count != 1 else "1 cotización enviada")
+               + f" hace {SETTLE_DAYS} días o más, sin deshacer",
+               "creada por el sistema desde el correo; no es proveedor ni correo gratuito"]
+    if rename is not None:
+        reasons.append(f"se llamaba como su dominio («{o.name}»): toma el nombre que da el PDF, «{rename}»")
+    note = _note("R15", reasons)
+    steps: list[dict[str, Any]] = []
+    if rename is not None:
+        steps.append({"command": UPDATE_ORGANIZATION, "inputs": {
+            "organization_id": o.id, "expected_version": "@organization_version", "name": rename, "note": note}})
+    steps.append({"command": CONFIRM_ORGANIZATION_RECORD, "inputs": {
+        "organization_id": o.id, "expected_version": "@organization_version", "note": note}})
+    context: dict[str, Any] = {"organization": o.id, "organization_version": o.version}
+    if rename is not None:
+        context["previous_name"] = o.name
+    return PlannedAction(o.id, "R15", AUTO, tuple(reasons), organization_id=o.id,
+                         organization_name=rename or o.name, commands=tuple(steps), context=context)
+
+
 def _quote_file_rule(e: MailEvidence, ix: _Index, doc: MailDocument, token: str, key: tuple[int, int],
                      number: str, derivation: dict[str, Any], base_reasons: list[str]) -> PlannedAction | None:
     """R9: no recipient names an institution, but the PDF's own name does.
@@ -1465,7 +1622,8 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
 __all__ = [
     "AUTO", "CONTACT_SENDER", "FREE_MAIL_DOMAINS", "NOT_CUSTOMER_HINTS", "PURCHASE_ORDER_FILENAME", "LABDELIVERY_MARKERS", "LOST_CLOSE_REASON", "LOST_PHRASES", "NONE",
     "OWN_DOMAINS", "PROPOSAL", "PURCHASE_ORDER_NUMBER", "PURCHASE_ORDER_PHRASES", "QUOTE_REQUEST_WORDS",
-    "RULE_IDS", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "ATTACH_FORWARD", "CREATE_REQUEST_FROM_FORWARD_STEP", "CaseQuote", "CaseState", "ForwardRequest", "MailDocument", "MailEvidence", "Organization",
+    "RULE_IDS", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "ATTACH_FORWARD", "CONFIRM_ORGANIZATION_RECORD", "InstitutionFacts",
+    "LATE_QUOTE_WINDOW_DAYS", "MACHINE_CREATORS", "SETTLE_DAYS", "UNCONFIRM_ORGANIZATION_RECORD", "UPDATE_ORGANIZATION", "CREATE_REQUEST_FROM_FORWARD_STEP", "CaseQuote", "CaseState", "ForwardRequest", "MailDocument", "MailEvidence", "Organization",
     "PlannedAction", "QuoteRevision", "Snapshot", "addresses", "canonical_quote_number", "domain_of", "fold",
     "gmail_quote_key", "mail_direction", "plan", "quote_key", "quote_number_tokens", "santiago_year",
     "token_quote_keys",
