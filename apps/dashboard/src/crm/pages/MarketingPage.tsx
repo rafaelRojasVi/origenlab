@@ -10,7 +10,7 @@ import { CampaignEditor, type EditorSeed } from "../marketing/CampaignEditor";
 import { HoldsBanner } from "../marketing/CampaignHolds";
 import { MarketingOverview } from "../marketing/MarketingOverview";
 import { SuppressionStatus } from "../marketing/SuppressionStatus";
-import { PLANNING_LABEL, fmtShortDay, relativeDay, santiagoTime, todayInSantiago } from "../marketing/calendar";
+import { PLANNING_LABEL, fmtShortDay, isV1LaneFinished, mergeFinishedV1, relativeDay, santiagoTime, todayInSantiago } from "../marketing/calendar";
 import { EmailFrame } from "../marketing/EmailFrame";
 import { V1LaneCampaignCard } from "../marketing/V1LaneCampaignCard";
 import { NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, cardTotals, neverSent, isNeverSentHistorical } from "../marketing/campaignTotals";
@@ -279,7 +279,13 @@ function Body({
     </p>
     </>
   );
-  const v1Lane = (data.v1_lane_campaigns ?? []).map((c) => <V1LaneCampaignCard key={c.key} campaign={c} testSend={data.test_send} />);
+  const today = todayInSantiago();
+  const v1All = data.v1_lane_campaigns ?? [];
+  // Current and upcoming V1-lane campaigns stay on top; finished ones join the sent campaigns below.
+  const v1Lane = v1All
+    .filter((c) => !isV1LaneFinished(c, today))
+    .map((c) => <V1LaneCampaignCard key={c.key} campaign={c} testSend={data.test_send} />);
+  const v1Finished = v1All.filter((c) => isV1LaneFinished(c, today));
   // Historical V1 campaigns that never went out are hidden (the record stays in the CRM).
   const hidden = data.campaigns.filter(isNeverSentHistorical);
   const campaigns = showNeverSent ? data.campaigns : data.campaigns.filter((c) => !isNeverSentHistorical(c));
@@ -295,6 +301,7 @@ function Body({
     return (
       <>
         {v1Lane}
+        {v1Finished.map((c) => <V1LaneCampaignCard key={c.key} campaign={c} testSend={data.test_send} />)}
         {note}
         <EmptyState title="Sin campañas">El CRM no tiene campañas registradas.</EmptyState>
         {revealNeverSent}
@@ -319,17 +326,25 @@ function Body({
       />
       {note}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
-        {campaigns.map((c) => (
-          <CampaignCard
-            key={c.campaign_id}
-            c={c}
-            mayAuthor={mayAuthor}
-            onOpen={() =>
-              mayAuthor && (c.status === "draft" || c.status === "audience_frozen") ? onOpen(c.campaign_id) : onHistory(c.campaign_id)
-            }
-            onHistory={(tab, total) => onHistory(c.campaign_id, tab, total)}
-          />
-        ))}
+        {mergeFinishedV1(campaigns, v1Finished).map((item) =>
+          item.kind === "v1" ? (
+            <div key={item.campaign.key} className="md:col-span-2 2xl:col-span-3">
+              <V1LaneCampaignCard campaign={item.campaign} testSend={data.test_send} />
+            </div>
+          ) : (
+            <CampaignCard
+              key={item.campaign.campaign_id}
+              c={item.campaign}
+              mayAuthor={mayAuthor}
+              onOpen={() =>
+                mayAuthor && (item.campaign.status === "draft" || item.campaign.status === "audience_frozen")
+                  ? onOpen(item.campaign.campaign_id)
+                  : onHistory(item.campaign.campaign_id)
+              }
+              onHistory={(tab, total) => onHistory(item.campaign.campaign_id, tab, total)}
+            />
+          ),
+        )}
       </div>
       {revealNeverSent}
       {replies === 0 ? <NotImportedState title="Respuestas a campañas">{data.replies_note}</NotImportedState> : null}

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { MarketingResponse, V1LaneCampaign } from "../crmTypes";
 import { fmtInt } from "../ui";
-import { WEEKDAYS, todayInSantiago, v1LaneBannerState, v1LaneStatus } from "./calendar";
+import { WEEKDAYS, isV1LaneFinished, todayInSantiago, v1LaneBannerState, v1LaneStatus } from "./calendar";
 import { EmailFrame } from "./EmailFrame";
 import { TestSendPanel } from "./TestSendPanel";
 
@@ -32,7 +32,8 @@ export function V1LaneCampaignCard({
   testSend?: MarketingResponse["test_send"];
 }) {
   const today = todayInSantiago();
-  const state = v1LaneBannerState(campaign, today);
+  // Finished = last send day before today; the promo window may still be open.
+  const state = isV1LaneFinished(campaign, today) ? "done" : v1LaneBannerState(campaign, today);
   const [full, setFull] = useState(false);
   const plan = campaign.clients_per_day ?? null;
   return (
@@ -45,6 +46,11 @@ export function V1LaneCampaignCard({
         <span className="rounded-full border border-good/40 bg-canvas-raised px-2 py-0.5 text-[11px] font-medium text-good">
           {STATE_LABEL[state]}
         </span>
+        {state === "done" ? (
+          <span data-testid="v1-lane-tag" className="rounded-full border border-line bg-canvas-sunken px-2 py-0.5 text-[11px] text-ink-muted">
+            canal V1
+          </span>
+        ) : null}
         <span className="ml-auto text-[11px] text-ink-muted">
           {dayLabel(campaign.send_days[0])} a {dayLabel(campaign.send_days[campaign.send_days.length - 1])} ·{" "}
           {campaign.send_time} · promo hasta el {dayLabel(campaign.promo_until)}
