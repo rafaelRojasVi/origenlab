@@ -3146,4 +3146,24 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
 | Proxy | `web_form.ts`: `handleWebFormRequest` (Origin=origenlab.cl, honeypot `_trap`, timing < 3 s, body ≤ 16 kB, rate-limit binding `WEB_FORM_RATE_LIMIT` 5/10 min); new route `origenlab.cl/api/web/*` in `wrangler.toml` |
 | Web | `/contacto/` redesigned with form as section 01; `/contacto/enviado/` noindex success page; `/privacidad/` updated with form data paragraph; `technicalProviders` adds Google Workspace, Render, Supabase |
 | Auth | Same token file as «Enviar prueba» (`ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE`). Request it with `scripts/gmail_send_authorize.py` (default `--scopes web-form` = gmail.compose + gmail.settings.basic, also serves «Enviar prueba» and future projects; `--scopes send` keeps the old gmail.send-only token). Token was never provisioned in production (see §2.7.47). Owner must create it before enabling. |
-| Not done | not deployed, token not created. To ship: merge → apply migrations first (this change adds none) → manual Render deploy of the API and the triage worker (TRIAGE_VERSION 4; Render auto-deploy is off since 2026-10-13) → deploy the dashboard-proxy Worker → `make smoke` → the owner runs `gmail_send_authorize.py`, uploads the token as the Render secret file and sets `ORIGENLAB_V2_WEB_QUOTE_FORM_ENABLED=true` → upload the web `dist/` to cPanel |
+| Not done | not deployed, token not created. To ship: merge → apply migrations first (this change adds none) → the release on merge deploys the API and the triage worker (TRIAGE_VERSION 4) → deploy the dashboard-proxy Worker → `make smoke` → the owner runs `gmail_send_authorize.py`, uploads the token as the Render secret file and sets `ORIGENLAB_V2_WEB_QUOTE_FORM_ENABLED=true` → upload the web `dist/` to cPanel |
+
+### 2.7.134 Cotizador «Datos del cliente» on the draft, 2026-10-19 — built, deploys on merge
+
+- Owner, 2026-10-19: the client's name and details could not be changed on a quote, so revisions
+  were approved again and again hoping they would show. Now the draft's «Cliente» card has
+  «Datos del cliente» — nombre del contacto, cargo, unidad / depto., teléfono, institución (razón
+  social), RUT, dirección, ciudad / región — each blank field showing (as placeholder) and printing
+  what the CRM knows. Saved with the draft (`QuoteDraft.client`), copied into a new revision,
+  frozen into `party_snapshot` at approval (institution name and RUT, recipient name, and a new
+  `client` block); the PDF prints them, and prints an address-only contact's address once.
+- **Schema.** Migration `20261019100000_slice7_quote_client_details.sql`: nullable
+  `crm.quote_revision.client_details` (JSON object). No table, policy, function or foreign key;
+  the existing `quote_revision_authored_frozen` guard freezes it once issued. Migrations **62**.
+- Nothing is written to `crm.person` / `crm.organization` from here: that stays the Cotizador
+  client-data project (spec 2026-10-18 §2).
+- «Vista previa PDF» toolbar says how to keep the browser's own date/URL line off the PDF
+  (margins «Predeterminado», «Encabezados y pies de página» unticked): `@page { margin: 0 }`
+  cannot win once the print dialog's margins were changed.
+- Tests: API `test_v2_quote_commands.py`; pgTAP `097_quote_authoring.sql`; vitest
+  `ClientSection.test.tsx`, `QuotePrintView.test.tsx`.

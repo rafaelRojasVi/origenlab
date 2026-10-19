@@ -37,6 +37,8 @@ export function revisionLabel(workspace: QuoteWorkspace, revisionNo: number): st
 export interface PartySnapshot {
   institution: { name: string | null; rut: string | null } | null;
   recipient: { name: string | null; email: string | null } | null;
+  /** The rest of «Datos del cliente» as approved (cargo, unidad, teléfono, dirección, ciudad). */
+  client: ClientLines;
   terms: Record<string, unknown>;
   extra: { label_es: string; text_es: string }[];
   validityDays: number | null;
@@ -49,6 +51,21 @@ const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ?
 const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 
 /** The snapshot as the API froze it, read defensively (a historical revision has none). */
+export interface ClientLines {
+  contactRole: string | null;
+  department: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+}
+
+/** «Datos del cliente» beyond institution and recipient, from a snapshot's `client` or a draft's `client`. */
+export function clientLines(raw: unknown): ClientLines {
+  const c = obj(raw) ?? {};
+  return { contactRole: text(c.contact_role), department: text(c.department), phone: text(c.phone),
+           address: text(c.address), city: text(c.city) };
+}
+
 export function readSnapshot(raw: unknown): PartySnapshot | null {
   const s = obj(raw);
   if (!s) return null;
@@ -64,6 +81,7 @@ export function readSnapshot(raw: unknown): PartySnapshot | null {
   return {
     institution: inst ? { name: text(inst.name), rut: text(inst.rut) } : null,
     recipient: rec ? { name: text(rec.name), email: text(rec.email) } : null,
+    client: clientLines(s.client),
     terms,
     extra,
     validityDays: typeof terms.validity_days === "number" ? terms.validity_days : null,

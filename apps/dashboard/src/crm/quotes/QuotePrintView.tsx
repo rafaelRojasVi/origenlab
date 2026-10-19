@@ -113,6 +113,11 @@ export function QuotePrintView({
         </button>
         <span className="qp-toolbar-note" role={quote.notReady ? "status" : undefined}>
           {quote.notReady ?? (quote.draft ? "Borrador: se imprime marcado «BORRADOR»." : "Lista para enviar al cliente.")}
+          {/* Chrome prints its own date, title and address only when the dialog's margins are changed or
+              «Encabezados y pies de página» is ticked; the page asks for none, but the dialog remembers. */}
+          <span className="qp-toolbar-hint">
+            Al imprimir: Márgenes «Predeterminado» y sin marcar «Encabezados y pies de página».
+          </span>
         </span>
         <button
           ref={printRef}
@@ -155,12 +160,21 @@ export function QuotePrintView({
               <span className="qp-eyebrow-muted">Cliente</span>
               <span className="qp-strong">{quote.institution?.name ?? "—"}</span>
               {quote.institution?.rut ? <span className="qp-muted">RUT {quote.institution.rut}</span> : null}
+              {quote.client.address ? <span className="qp-muted">{quote.client.address}</span> : null}
+              {quote.client.city ? <span className="qp-muted">{quote.client.city}</span> : null}
             </div>
             {quote.recipient ? (
               <div>
                 <span className="qp-eyebrow-muted">Atención</span>
-                {quote.recipient.name ? <span className="qp-strong">{quote.recipient.name}</span> : null}
+                {/* A contact known only by address has it as name too: print it once. */}
+                {quote.recipient.name && quote.recipient.name !== quote.recipient.email ? (
+                  <span className="qp-strong">{quote.recipient.name}</span>
+                ) : null}
+                {quote.client.contactRole || quote.client.department ? (
+                  <span className="qp-muted">{[quote.client.contactRole, quote.client.department].filter(Boolean).join(" · ")}</span>
+                ) : null}
                 {quote.recipient.email ? <span className="qp-muted">{quote.recipient.email}</span> : null}
+                {quote.client.phone ? <span className="qp-muted">{quote.client.phone}</span> : null}
               </div>
             ) : null}
           </section>

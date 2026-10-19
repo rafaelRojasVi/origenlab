@@ -10,6 +10,7 @@ import type { IndexItem } from "../catalog/catalogSearch";
 import type {
   Computed,
   ComputedLine,
+  QuoteClientDetails,
   QuoteDraft,
   QuoteDraftExpense,
   QuoteDraftItem,
@@ -384,6 +385,11 @@ export function setTerm<K extends TermKey>(draft: QuoteDraft, key: K, value: Quo
 
 export function setRecipient(draft: QuoteDraft, pick: QuoteRecipientPick | null): QuoteDraft {
   return { ...draft, recipient: pick };
+}
+
+/** One «Datos del cliente» field; an empty value prints what the CRM knows. */
+export function setClientDetail(draft: QuoteDraft, key: keyof QuoteClientDetails, value: string): QuoteDraft {
+  return { ...draft, client: { ...(draft.client ?? {}), [key]: value } };
 }
 
 /** A manual exchange rate for one currency, with its reason; `rate` null goes back to the Banco Central. */

@@ -111,6 +111,27 @@ class DraftRecipient(_Model):
         return self
 
 
+_Detail = Annotated[str | None, StringConstraints(max_length=200)]
+
+
+class DraftClientDetails(_Model):
+    """The client as this quote prints it, typed in the Cotizador; empty fields print what the CRM
+    knows (the case's institution and RUT, the recipient's name). Frozen into the snapshot at approval."""
+    institution_name: Annotated[str | None, StringConstraints(max_length=500)] = None
+    rut: Annotated[str | None, StringConstraints(max_length=20)] = None
+    contact_name: _Detail = None
+    contact_role: _Detail = None
+    department: _Detail = None
+    phone: Annotated[str | None, StringConstraints(max_length=60)] = None
+    address: _Detail = None
+    city: _Detail = None
+
+    def stored(self) -> dict[str, str] | None:
+        """The non-empty fields, or None when nothing was typed."""
+        kept = {k: v for k, v in self.model_dump().items() if v}
+        return kept or None
+
+
 class QuoteDraft(_Model):
     items: list[DraftItemLine] = Field(default_factory=list, max_length=60)
     manual_expenses: list[DraftExpenseLine] = Field(default_factory=list, max_length=20)
@@ -123,6 +144,7 @@ class QuoteDraft(_Model):
     terms: DraftTerms = Field(default_factory=DraftTerms)
     recipient_participant_id: UUID | None = None  # the older form of recipient={participant_id}
     recipient: DraftRecipient | None = None
+    client: DraftClientDetails | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> "QuoteDraft":

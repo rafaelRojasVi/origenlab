@@ -190,4 +190,20 @@ describe("«Agregar institución»", () => {
     );
     expect(screen.queryByRole("button", { name: "Agregar institución" })).toBeNull();
   });
+  it("edits «Datos del cliente» on the draft, with what the CRM knows as the placeholder", () => {
+    const latest = setup(ws(), { ...draftFixture(), recipient: { participant_id: "pa-1" } });
+    const name = screen.getByLabelText("Nombre del contacto");
+    expect(name).toHaveAttribute("placeholder", "Ana Prueba");
+    fireEvent.change(name, { target: { value: "Ana María Prueba" } });
+    fireEvent.change(screen.getByLabelText("Cargo"), { target: { value: "Jefa de laboratorio" } });
+    fireEvent.change(screen.getByLabelText("Teléfono"), { target: { value: "+56 9 1111 2222" } });
+    expect(latest.draft.client).toEqual({ contact_name: "Ana María Prueba", contact_role: "Jefa de laboratorio", phone: "+56 9 1111 2222" });
+    expect(screen.getByLabelText("RUT")).toBeInTheDocument();
+    expect(screen.getByLabelText("Dirección")).toBeInTheDocument();
+  });
+
+  it("locks «Datos del cliente» when the draft cannot be edited", () => {
+    setup(ws(), draftFixture(), true);
+    expect(screen.getByLabelText("Nombre del contacto")).toBeDisabled();
+  });
 });

@@ -231,4 +231,30 @@ describe("Vista previa PDF — «Economía de la cotización» stays internal", 
     const t = dialog.textContent ?? "";
     expect(t).not.toMatch(/Economía|713[.,]?713|424[.,]?242|313[.,]?131|162[.,]?045|12,5 %|gastos de importación/i);
   });
+  it("prints «Datos del cliente» frozen at approval, and an address-only name once", () => {
+    const ws = approved();
+    const snap = ws.current!.party_snapshot as Record<string, unknown>;
+    ws.current = { ...ws.current!, party_snapshot: {
+      ...snap,
+      recipient: { participant_id: "pa-1", name: "ana@ejemplo.cl", email: "ana@ejemplo.cl" },
+      client: { contact_role: "Jefa de laboratorio", department: "Calidad", phone: "+56 9 1111 2222", address: "Calle Falsa 123", city: "Talca" },
+    } };
+    const el = show(ws);
+    const t = el.textContent ?? "";
+    expect(t).toContain("Jefa de laboratorio · Calidad");
+    expect(t).toContain("+56 9 1111 2222");
+    expect(t).toContain("Calle Falsa 123");
+    expect(t).toContain("Talca");
+    expect(t.split("ana@ejemplo.cl").length - 1).toBe(1);
+  });
+
+  it("prints a draft's typed details over the CRM's", () => {
+    const base = workspaceFixture();
+    const draft = { ...base.current!.draft!, recipient: { participant_id: "pa-1" },
+      client: { contact_name: "Ana María Prueba", institution_name: "Universidad de Prueba S.A.", rut: "76.111.111-1" } };
+    const ws = { ...base, current: { ...base.current!, draft } };
+    const q = printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!;
+    expect(q.institution).toEqual({ name: "Universidad de Prueba S.A.", rut: "76.111.111-1" });
+    if (q.recipient) expect(q.recipient.name).toBe("Ana María Prueba");
+  });
 });
