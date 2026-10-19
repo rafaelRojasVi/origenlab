@@ -8,7 +8,7 @@ create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 grant origenlab_api to session_user with set true, inherit false;
 set role origenlab_owner;
-select plan(26);
+select plan(27);
 
 -- Fixture (rolled back): an operator, an organization, a case, a quote, one authored draft
 -- revision and two approved revisions.
@@ -42,6 +42,7 @@ select has_column('crm', 'quote_line', 'item_type', 'quote_line.item_type exists
 select has_column('crm', 'quote_line', 'cost_observation_id', 'quote_line.cost_observation_id exists');
 select has_column('crm', 'quote_revision', 'principal_rule', 'quote_revision.principal_rule exists');
 select has_column('crm', 'quote_revision', 'fx_override_reasons', 'quote_revision.fx_override_reasons exists');
+select has_column('crm', 'quote_revision', 'client_details', 'quote_revision.client_details exists');
 
 select lives_ok($$ insert into crm.quote_line (quote_revision_id, line_no, line_kind, description, quantity, item_type)
   values ('97000000-0000-4000-8000-000000000082', 1, 'item', 'Equipo de prueba', 1, 'equipment') $$,

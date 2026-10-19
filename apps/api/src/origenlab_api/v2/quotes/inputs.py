@@ -30,6 +30,7 @@ from origenlab_api.quoting.expenses import ShipmentItem, expenses_for
 from origenlab_api.v2.catalog.fx import FX_WINDOW_DAYS, FxUnavailable
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.quotes.draft import (
+    DraftClientDetails,
     DraftExpenseLine,
     DraftFxOverride,
     DraftItemLine,
@@ -356,7 +357,9 @@ def draft_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]) -> Qu
                       fx_overrides=fx_overrides_from_row(revision["fx_override_reasons"]), terms=terms,
                       # The current form, so an editor can send the draft back unchanged.
                       recipient=(DraftRecipient(participant_id=revision["recipient_participant_id"])
-                                 if revision["recipient_participant_id"] is not None else None))
+                                 if revision["recipient_participant_id"] is not None else None),
+                      client=(DraftClientDetails(**revision["client_details"])
+                              if revision.get("client_details") else None))
 
 
 def engine_input_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]],

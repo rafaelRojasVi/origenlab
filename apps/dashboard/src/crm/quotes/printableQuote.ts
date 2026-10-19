@@ -13,7 +13,7 @@
  * API's last preview) and is marked «BORRADOR».
  */
 import { computedLineFor, type DraftEditorState } from "./draftEditor";
-import { PRINTED_TERMS, readSnapshot } from "./IssuedView";
+import { type ClientLines, clientLines, PRINTED_TERMS, readSnapshot } from "./IssuedView";
 import type { QuoteRecipientPick, QuoteWorkspace } from "./quoteApi";
 import { quoteLabel } from "./quoteLabel";
 
@@ -37,6 +37,8 @@ export interface PrintableQuote {
   currency: string;
   institution: { name: string | null; rut: string | null } | null;
   recipient: { name: string | null; email: string | null } | null;
+  /** Cargo, unidad, teléfono, dirección, ciudad: what «Datos del cliente» adds. */
+  client: ClientLines;
   lines: PrintLine[];
   totals: { net: string | null; iva: string | null; total: string | null };
   taxRate: string | null;
@@ -144,6 +146,7 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
       currency,
       institution: snap?.institution ?? caseInstitution,
       recipient: snap?.recipient ?? null,
+      client: snap?.client ?? clientLines(null),
       lines,
       totals: { net: cur.subtotal, iva: cur.tax_total, total: cur.grand_total },
       taxRate: cur.tax_rate,
@@ -174,14 +177,21 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
   const notReady = live?.stale ? "Actualizando los precios…" : unpriced ? "Faltan precios: completa el borrador para imprimirlo." : null;
   const terms = draft.terms as unknown as Record<string, unknown>;
   const validity = typeof draft.terms.validity_days === "number" ? draft.terms.validity_days : cur.validity_days;
+  // «Datos del cliente» typed on the draft print over what the CRM knows, as approval will freeze them.
+  const typed = draft.client ?? {};
+  const recipient = draftRecipient(ws, draft.recipient, (draft as { recipient_participant_id?: string | null }).recipient_participant_id ?? cur.recipient_participant_id);
+  const institution = caseInstitution || text(typed.institution_name) || text(typed.rut)
+    ? { name: text(typed.institution_name) ?? caseInstitution?.name ?? null, rut: text(typed.rut) ?? caseInstitution?.rut ?? null }
+    : null;
   return {
     label,
     draft: true,
     date: today(now),
     validUntil: null,
     currency,
-    institution: caseInstitution,
-    recipient: draftRecipient(ws, draft.recipient, (draft as { recipient_participant_id?: string | null }).recipient_participant_id ?? cur.recipient_participant_id),
+    institution,
+    recipient: recipient && text(typed.contact_name) ? { ...recipient, name: text(typed.contact_name) } : recipient,
+    client: clientLines(typed),
     lines,
     totals: computed ? { net: computed.totals.net, iva: computed.totals.iva, total: computed.totals.total } : { net: null, iva: null, total: null },
     taxRate: cur.tax_rate,

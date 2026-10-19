@@ -949,6 +949,7 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
                expense_method = %(expense_method)s, expense_allocation_mode = %(allocation_mode)s,
                principal_rule = %(principal_rule)s, fx_override_reasons = %(fx_override_reasons)s::jsonb,
                recipient_participant_id = coalesce(%(recipient)s::uuid, recipient_participant_id),
+               client_details = %(client_details)s::jsonb,
                subtotal = %(net)s, discount_total = 0, tax_base = %(net)s, tax_total = %(iva)s,
                grand_total = %(total)s, totals_computed_at = now(), version = version + 1, updated_at = now()
          where id = %(id)s::uuid and version = %(version)s
@@ -963,6 +964,8 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
          "allocation_mode": draft.allocation_mode, "principal_rule": draft.principal_rule,
          "fx_override_reasons": json.dumps(fx_override_reasons(draft), ensure_ascii=False),
          "recipient": recipient, "net": result.net, "iva": result.iva, "total": result.total,
+         "client_details": (json.dumps(stored, ensure_ascii=False)
+                            if draft.client and (stored := draft.client.stored()) else None),
          "id": revision_id, "version": expected_version},
     )
     updated = _one(cur)
@@ -1111,12 +1114,17 @@ def _approval_facts(lines: list[dict[str, Any]], result: EngineResult, instituti
 
 def party_snapshot(*, institution: dict[str, Any], recipient: dict[str, Any], terms: DraftTerms, validity_days: int,
                    quote_number: str, label: str, approved_by: str, approved_on: date,
-                   valid_until: date) -> dict[str, Any]:
-    """What the client's document says, frozen at approval. No cost, price or margin: the PDF reads it."""
+                   valid_until: date, client_details: dict[str, Any] | None = None) -> dict[str, Any]:
+    """What the client's document says, frozen at approval. No cost, price or margin: the PDF reads it.
+
+    What the operator typed in «Datos del cliente» (`client_details`) wins over what the CRM knows."""
+    typed = {k: v for k, v in (client_details or {}).items() if isinstance(v, str) and v.strip()}
     return {
-        "institution": {"id": institution["id"], "name": institution["name"], "rut": institution["rut"]},
-        "recipient": {"participant_id": recipient["participant_id"], "name": recipient["name"],
-                      "email": recipient["email"]},
+        "institution": {"id": institution["id"], "name": typed.get("institution_name") or institution["name"],
+                        "rut": typed.get("rut") or institution["rut"]},
+        "recipient": {"participant_id": recipient["participant_id"],
+                      "name": typed.get("contact_name") or recipient["name"], "email": recipient["email"]},
+        "client": {k: typed.get(k) for k in ("contact_role", "department", "phone", "address", "city")},
         "terms": {**{column: getattr(terms, column) or None for column, _ in PRINTED_TERMS},
                   "validity_days": validity_days, "terms_extra": [t.model_dump() for t in terms.terms_extra]},
         "quote_number": quote_number, "revision_label": label, "approved_by": approved_by,
@@ -1277,7 +1285,8 @@ def _handle_approve_quote_revision(self: "V2QuoteRepository", cur: Any, operator
     valid_until = today + timedelta(days=validity)
     snapshot = party_snapshot(institution=institution, recipient=recipient, terms=terms,
                               validity_days=validity, quote_number=revision["quote_number"], label=label,
-                              approved_by=operator.display_name, approved_on=today, valid_until=valid_until)
+                              approved_by=operator.display_name, approved_on=today, valid_until=valid_until,
+                              client_details=revision["client_details"])
     _write_amounts(
         cur,
         """
@@ -1346,6 +1355,7 @@ _REVISION_COPY_COLUMNS = (
     "billing_address_id", "delivery_address_id", "recipient_participant_id", "signatory_participant_id",
     "warranty_terms_es", "delivery_place_es", "installation_terms_es", "client_notes_es", "terms_extra",
     "validity_days", "expense_method", "expense_allocation_mode", "principal_rule", "fx_override_reasons",
+    "client_details",
 )
 _LINE_COPY_COLUMNS = (
     "line_no", "line_kind", "description", "product_id", "quantity", "cost_currency", "unit_cost", "fx_rate",

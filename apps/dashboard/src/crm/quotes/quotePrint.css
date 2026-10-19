@@ -28,6 +28,7 @@
   font-size: 13px;
   color: #4b5c57;
 }
+.qp-toolbar-hint { display: block; font-size: 12px; color: #6b7c77; }
 .qp-btn {
   min-height: 44px;
   padding: 0 16px;

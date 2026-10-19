@@ -94,6 +94,20 @@ export interface QuoteDraft {
   fx_overrides: { currency: "EUR" | "USD"; clp_per_unit: Decimal; reason: string }[];
   terms: QuoteDraftTerms;
   recipient?: QuoteRecipientPick | null;
+  /** The client as this quote prints it; a blank field prints what the CRM knows. */
+  client?: QuoteClientDetails | null;
+}
+
+/** «Datos del cliente» typed in the Cotizador, frozen into the PDF at approval. */
+export interface QuoteClientDetails {
+  institution_name?: string | null;
+  rut?: string | null;
+  contact_name?: string | null;
+  contact_role?: string | null;
+  department?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  city?: string | null;
 }
 
 /* ── what the API computed ────────────────────────────────────────────────── */
