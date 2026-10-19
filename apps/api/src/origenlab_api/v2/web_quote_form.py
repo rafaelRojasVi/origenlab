@@ -218,23 +218,26 @@ async def post_web_quote_request(body: WebQuoteFormRequest, request: Request) ->
     # --- build and send the notification ---
     extra: dict[str, str] = {}
     if body.name:
-        extra["Nombre"] = _normalise_body_text(body.name)
+        extra["Nombre"] = strip_control(body.name)
     if body.phone:
-        extra["Teléfono"] = _normalise_body_text(body.phone)
+        extra["Teléfono"] = strip_control(body.phone)
     if body.city:
-        extra["Ciudad"] = _normalise_body_text(body.city)
+        extra["Ciudad"] = strip_control(body.city)
     if body.deadline:
-        extra["Plazo"] = _normalise_body_text(body.deadline)
+        extra["Plazo"] = strip_control(body.deadline)
 
     submitted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
-    raw = build_web_quote_message(
-        reply_to=body.email,
-        institution=_normalise_body_text(body.org),
-        need=_normalise_body_text(body.need),
-        extra=extra,
-        submitted_at=submitted_at,
-    )
+    try:
+        raw = build_web_quote_message(
+            reply_to=body.email,
+            institution=strip_control(body.org),
+            need=strip_control(body.need),
+            extra=extra,
+            submitted_at=submitted_at,
+        )
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": {"code": "invalid_input"}})
 
     sender = request.app.state.web_quote_form_sender
     sender.send(raw)

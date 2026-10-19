@@ -348,6 +348,34 @@ def _mount_campaign_test_send(app: FastAPI, settings: Settings, dsn: str, connec
     app.state.campaign_test_send_enabled = True
 
 
+def _query_web_quote_form_sent_last_24h(settings: Settings) -> int:
+    """Return the count of web-quote-form notification mails sent in the last 24 h.
+
+    Queries the operator SQLite ``emails`` table for rows whose subject matches
+    the form notification prefix and whose ``date_iso`` falls within the last
+    24 hours.  Any error (missing DB, schema mismatch, settings not configured)
+    is swallowed and logged as a warning so the cap still starts — at zero.
+    """
+    import sqlite3
+
+    try:
+        sqlite_path = settings.resolved_sqlite_path()
+        if not sqlite_path.is_file():
+            return 0
+        uri = f"file:{sqlite_path}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as conn:
+            cur = conn.execute(
+                "SELECT count(*) FROM emails"
+                " WHERE subject LIKE 'Solicitud de cotización — sitio web — %'"
+                " AND date_iso >= datetime('now', '-1 day')"
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+    except Exception as exc:
+        logging.getLogger(__name__).warning("web quote form cap seed failed: %s", exc)
+        return 0
+
+
 def _mount_web_quote_form(app: FastAPI, settings: Settings) -> None:
     """«Solicitar cotización» form submission. Uses the same send token as «Enviar prueba»."""
     app.state.web_quote_form_enabled = False
@@ -363,7 +391,8 @@ def _mount_web_quote_form(app: FastAPI, settings: Settings) -> None:
     from origenlab_api.v2.web_quote_form import WebQuoteFormCaps, web_quote_form_router
 
     caps = WebQuoteFormCaps()
-    # Seed global cap from startup data if available (builder: query last 24h sent form mails count here)
+    seed_count = _query_web_quote_form_sent_last_24h(settings)
+    caps.seed_from_startup(seed_count)
     app.state.web_quote_form_sender = GmailSender(token)
     app.state.web_quote_form_caps = caps
     app.include_router(web_quote_form_router)
