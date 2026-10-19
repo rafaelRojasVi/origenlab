@@ -24,7 +24,9 @@ keeps the Drive settings (ruling R4); started only when `ORIGENLAB_WORKER_BID_EN
 It serves queue `tenders` and needs the database, Storage (`crm-documents`, same key) and Anthropic
 values above, plus `ORIGENLAB_WORKER_BID_READ_MODEL` (default `claude-opus-5-5`), `_BID_FILL_MODEL`
 (default `claude-opus-5-5`) and `_BID_MATCH_MODEL` (default `claude-sonnet-5-5`). A model the
-spend ledger has no price for is refused (`model_unpriced`): the monthly cap could not hold.
+spend ledger has no price for is refused (`model_unpriced`): the monthly cap could not hold. With
+`drive-file`'s Drive settings on and complete, the fill phase takes the spec sheets from Drive and
+files the package in the case folder; without them it runs with Drive off.
 
 Stdout: JSON lines with counts, classes and codes — never a subject, a body, an address or an
 exception's text.
@@ -259,6 +261,31 @@ class BidConfig:
     storage: StorageConfig = field(repr=False)
     models: Any
     reader: Any = field(repr=False)
+    #: The case archive's Drive consent and folders (`drive-file`'s settings, kept by this child —
+    #: ruling R4): spec sheets come from Drive and the package is filed there. None: Drive is off.
+    drive: Any = field(default=None, repr=False)
+    drive_target: Any = None
+
+
+def _bid_drive(env: Mapping[str, str]) -> tuple[Any, Any]:
+    """(Drive credentials, target) when `drive-file` is switched on and fully set, else (None, None):
+    a tender is prepared without Drive rather than refused."""
+    from origenlab_worker import cli
+    from origenlab_worker.drive_client import DriveCredentials
+    from origenlab_worker.drive_filing import DriveTarget
+
+    if (env.get(cli.ENV_DRIVE_ENABLED) or "").strip().lower() != "true":
+        return None, None
+    credentials = DriveCredentials(client_id=(env.get(cli.ENV_DRIVE_CLIENT_ID) or "").strip(),
+                                   client_secret=(env.get(cli.ENV_DRIVE_CLIENT_SECRET) or "").strip(),
+                                   refresh_token=(env.get(cli.ENV_DRIVE_REFRESH_TOKEN) or "").strip())
+    casos = (env.get(cli.ENV_DRIVE_CASOS) or "").strip()
+    protected = frozenset(p.strip() for p in (env.get(cli.ENV_DRIVE_PROTECTED) or "").split(",") if p.strip())
+    if not (credentials.client_id and credentials.client_secret and credentials.refresh_token) or not casos \
+            or casos in protected:
+        return None, None
+    principal = (env.get(cli.ENV_DRIVE_PRINCIPAL) or cli.DEFAULT_DRIVE_PRINCIPAL).strip().lower()
+    return credentials, DriveTarget(principal=principal, casos_folder_id=casos, protected_folder_ids=protected)
 
 
 def _bid_model(env: Mapping[str, str], key: str, default: str) -> str:
@@ -292,8 +319,9 @@ def bid_config_from_env(env: Mapping[str, str], *,
         expected_host=env.get(ENV_EXPECTED_HOST),
         ca_file=write_ca_file(env.get(ENV_CA_PEM) or ""),
     )
+    drive, drive_target = _bid_drive(env)
     return BidConfig(database=database, storage=storage, models=models,
-                     reader=(reader_factory or streaming_reader)(key))
+                     reader=(reader_factory or streaming_reader)(key), drive=drive, drive_target=drive_target)
 
 
 def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
@@ -314,10 +342,13 @@ def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
                                         privileges=BID_REQUIRED_PRIVILEGES, policies=BID_REQUIRED_POLICIES)
 
     def sweep() -> dict[str, Any]:
+        from origenlab_worker.drive_client import DriveRest
+
         with connect() as conn:
             store = S3EmlStore(config.storage.client(), bucket=DOCUMENTS_BUCKET)
+            drive = DriveRest(config.drive) if config.drive is not None else None
             return run_bid_sweep(conn, store, config.reader, config.models, now=lambda: datetime.now(UTC),
-                                 reconnect=connect)
+                                 reconnect=connect, drive=drive, drive_target=config.drive_target)
 
     return sweep
 

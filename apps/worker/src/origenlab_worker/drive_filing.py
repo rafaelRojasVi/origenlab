@@ -28,6 +28,9 @@ archive version. The worker writes no `crm.*` row; the API reads these records b
 
 **What it never does.** Rename, move, trash or delete in Drive; write a CRM row; read a message
 body (only the attachment whose SHA-256 the CRM already holds); log a name, address or id.
+
+**A tender's package.** `file_tender_package` puts the zip of a tender bid preparation in the
+same case folder, under `Licitación` (the tender worker calls it; plan Task 12).
 """
 
 from __future__ import annotations
@@ -267,6 +270,61 @@ class FilingRefused(RuntimeError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+# ─────────────────────────────────────────────────────────── a tender's package ──
+
+TENDER_FOLDER_NAME = "Licitación"
+KIND_TENDER_FOLDER = "tender_bid"
+KIND_TENDER_PACKAGE = "tender_package"
+PROP_BID_PREPARATION = "origenlab_bid_preparation"
+ZIP_MIME = "application/zip"
+
+
+def file_tender_package(conn: Any, drive: Any, target: DriveTarget, *, opportunity_id: str, preparation_id: str,
+                        name: str, data: bytes) -> str | None:
+    """Put a tender bid's package in `<case folder>/Licitación` and return its Drive file id, or None
+    when the case has no Drive folder yet (nothing is created then: the case folder is the one
+    `DriveFiler.case_key` finds, the folder the case's quote documents already live in).
+
+    The `Licitación` subfolder is reused or created; a package already uploaded for this
+    preparation is reused; a name taken by an earlier package gets the preparation's short id.
+    Like the quote filing it never renames, moves, trashes or deletes. Raises
+    :class:`FilingRefused` with a stable code, or the Drive client's `DriveError`."""
+    if drive.principal() != target.principal:
+        raise FilingRefused("wrong_account")
+    key = DriveFiler(conn, drive, None, target).case_key({"opportunity_id": opportunity_id, "pdf_sha256": ""})
+    folders = [h for h in drive.find_by_property(qa.PROP_CASE_KEY, key)
+               if (h.get("appProperties") or {}).get(qa.PROP_KIND) == qa.KIND_CASE]
+    if not folders:
+        return None
+    if len(folders) > 1:
+        raise FilingRefused("case_key_conflict")
+    folder = folders[0]
+    if target.casos_folder_id not in (folder.get("parents") or ()):
+        raise FilingRefused("case_folder_elsewhere")
+    if folder["id"] in target.protected_folder_ids or set(folder.get("parents") or ()) & target.protected_folder_ids:
+        raise FilingRefused("protected_parent")
+    subs = [c for c in drive.children(folder["id"])
+            if c.get("name") == TENDER_FOLDER_NAME and c.get("mimeType") == qa.FOLDER_MIME]
+    sub = subs[0] if subs else drive.create_folder(
+        name=TENDER_FOLDER_NAME, parent_id=folder["id"],
+        app_properties={qa.PROP_KIND: KIND_TENDER_FOLDER, qa.PROP_CASE_KEY: key})
+    if not sub.get("id"):
+        raise FilingRefused("folder_not_created")
+    for hit in drive.find_by_property(PROP_BID_PREPARATION, preparation_id):
+        if sub["id"] in (hit.get("parents") or ()):
+            return str(hit["id"])
+    if name in {c.get("name") for c in drive.children(sub["id"])}:
+        stem, dot, ext = name.rpartition(".")
+        name = f"{stem}_{preparation_id[:8]}.{ext}" if dot else f"{name}_{preparation_id[:8]}"
+    uploaded = drive.upload_file(
+        name=name, parent_id=sub["id"], data=data, mime_type=ZIP_MIME,
+        app_properties={qa.PROP_KIND: KIND_TENDER_PACKAGE, qa.PROP_CASE_KEY: key,
+                        PROP_BID_PREPARATION: preparation_id})
+    if not uploaded.get("id"):
+        raise FilingRefused("upload_failed")
+    return str(uploaded["id"])
 
 
 # ─────────────────────────────────────────────────────────── the laptop ledgers ──

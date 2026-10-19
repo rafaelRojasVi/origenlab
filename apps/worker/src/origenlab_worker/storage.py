@@ -182,7 +182,7 @@ class S3EmlStore:
         except BotoCoreError as exc:
             raise StorageError(type(exc).__name__) from None
 
-    def put_if_absent(self, key: str, raw: bytes) -> str:
+    def put_if_absent(self, key: str, raw: bytes, *, content_type: str = CONTENT_TYPE) -> str:
         """`stored`, or `present` when an object with exactly these bytes is already there.
 
         A Gmail message's raw bytes never change, so an identical object under its own id is the
@@ -199,7 +199,7 @@ class S3EmlStore:
                 raise StorageConflict("stored_object_differs")
             return "present"
         try:
-            self._client.put_object(Bucket=self._bucket, Key=key, Body=raw, ContentType=CONTENT_TYPE)
+            self._client.put_object(Bucket=self._bucket, Key=key, Body=raw, ContentType=content_type)
         except ClientError as exc:
             if _status(exc) == 413 or _error_code(exc) == "EntityTooLarge":
                 raise StorageTooLarge("storage_object_too_large") from None

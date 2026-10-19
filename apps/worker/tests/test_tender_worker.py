@@ -124,3 +124,24 @@ def test_mail_worker_does_not_import_the_triage_cli() -> None:
     tree = ast.parse(inspect.getsource(mail_worker))
     imported = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     assert "origenlab_worker.triage_cli" not in imported
+
+
+DRIVE_ENV = {"ORIGENLAB_WORKER_DRIVE_FILING_ENABLED": "true", "ORIGENLAB_WORKER_DRIVE_CLIENT_ID": "fake-id",
+             "ORIGENLAB_WORKER_DRIVE_CLIENT_SECRET": "fake-secret", "ORIGENLAB_WORKER_DRIVE_REFRESH_TOKEN": "fake-token",
+             "ORIGENLAB_WORKER_DRIVE_CASOS_FOLDER_ID": "casos-folder",
+             "ORIGENLAB_WORKER_DRIVE_PROTECTED_FOLDER_IDS": "pend, env"}
+
+
+def test_the_tender_child_uses_the_case_archive_drive_settings() -> None:
+    config = triage_cli.bid_config_from_env(_env(**DRIVE_ENV), reader_factory=lambda key: "reader")
+    assert config.drive is not None and config.drive_target.casos_folder_id == "casos-folder"
+    assert config.drive_target.protected_folder_ids == frozenset({"pend", "env"})
+    assert config.drive_target.principal == "contacto@origenlab.cl"
+    assert "fake-secret" not in repr(config)
+
+
+@pytest.mark.parametrize("missing", ["ORIGENLAB_WORKER_DRIVE_FILING_ENABLED", "ORIGENLAB_WORKER_DRIVE_REFRESH_TOKEN",
+                                     "ORIGENLAB_WORKER_DRIVE_CASOS_FOLDER_ID"])
+def test_without_drive_settings_the_tender_child_runs_with_drive_off(missing) -> None:
+    config = triage_cli.bid_config_from_env(_env(**{**DRIVE_ENV, missing: None}), reader_factory=lambda key: "reader")
+    assert config.drive is None and config.drive_target is None
