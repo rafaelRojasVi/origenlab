@@ -45,7 +45,7 @@ from origenlab_api.v2.campaign_history import (
     read_totals,
     replies_state,
 )
-from origenlab_api.v2.mail_rules import OWN_DOMAINS, mail_direction
+from origenlab_api.v2.mail_rules import OWN_DOMAINS, WEB_FORM_REPLY_TO_SQL, mail_direction, web_form_enquirer
 from origenlab_api.v2.marketing_audience import address_ref, addresses_in
 from origenlab_api.v2.person_suggestions import safe_person_suggestions
 from origenlab_api.v2.quote_documents import (  # noqa: F401 - IVA_RATE, quote_contents: this module's API
@@ -331,7 +331,8 @@ _SQL_PIPELINE_SOURCES = """
 # was recorded from — with what «último contacto» needs: when, which way, the subject and the
 # message id. Direction is decided in Python by `mail_rules.mail_direction`, the same rule the
 # email → cases planner uses; `sent_at` stays text and is parsed there, so one malformed date
-# drops one message instead of failing the read.
+# drops one message instead of failing the read. A web-quote-form submission (`web_form_reply_to`)
+# counts as received from its Reply-To.
 _SQL_PIPELINE_CONTACT = """
     with case_threads as (
         select oe.opportunity_id, sr.payload->>'gmail_thread_id' as thread_id
@@ -354,7 +355,8 @@ _SQL_PIPELINE_CONTACT = """
            sr.payload->>'direction_hint' as direction_hint,
            (select cm.direction from comms.message cm
              where cm.provider_message_id = sr.payload->>'gmail_message_id'
-             order by cm.created_at limit 1) as comms_direction
+             order by cm.created_at limit 1) as comms_direction,
+           """ + WEB_FORM_REPLY_TO_SQL + """ as web_form_reply_to
       from case_threads ct
       join evidence.source_record sr
         on sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = ct.thread_id
@@ -649,10 +651,16 @@ def case_threads(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[s
         tid = r.get("thread_id")
         if not tid:
             continue
-        pairs = [(n, a) for n, a in getaddresses([r.get("sender") or ""]) if a]
-        name, addr = pairs[0] if pairs else ("", "")
-        domain = addr.rsplit("@", 1)[1].lower() if "@" in addr else None
-        direction = r.get("direction") or ("outbound" if domain in OWN_DOMAINS else "inbound")
+        enquirer = web_form_enquirer(r.get("sender"), r.get("web_form_reply_to"))
+        if enquirer:
+            # A web-quote-form submission: contacto@ mailed itself, the visitor is the Reply-To.
+            name, addr, direction = "", enquirer, "inbound"
+            domain = addr.rsplit("@", 1)[1].lower()
+        else:
+            pairs = [(n, a) for n, a in getaddresses([r.get("sender") or ""]) if a]
+            name, addr = pairs[0] if pairs else ("", "")
+            domain = addr.rsplit("@", 1)[1].lower() if "@" in addr else None
+            direction = r.get("direction") or ("outbound" if domain in OWN_DOMAINS else "inbound")
         docs = r.get("documents")
         docs = json.loads(docs) if isinstance(docs, str) else (docs or [])
         if direction == "inbound":
@@ -721,7 +729,9 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
         at = _aware(row.get("sent_at"))
         if at is None:
             continue
-        direction = mail_direction(row.get("sender"), row.get("direction_hint"), row.get("comms_direction"))
+        enquirer = web_form_enquirer(row.get("sender"), row.get("web_form_reply_to"))
+        direction = mail_direction(row.get("sender"), row.get("direction_hint"), row.get("comms_direction"),
+                                   row.get("web_form_reply_to"))
         key = (row["opportunity_id"], direction)
         if key in best and best[key] >= at:
             continue
@@ -731,6 +741,11 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
             "subject": row.get("subject"),
             "url": gmail_url(row.get("gmail_message_id")),
         }
+        if enquirer:
+            # A web-quote-form submission: the From's name is OrigenLab's own, never the client's.
+            # The visitor's address stays private to `compose_pipeline` (the card's contact).
+            out[row["opportunity_id"]][direction]["_enquirer"] = enquirer
+            continue
         # Display-header evidence, not an accepted CRM person or institution. Never pass a
         # bare mailbox as a name: viewer responses must not acquire an unmasked address.
         sender_names = [name.strip() for name, _ in getaddresses([row.get("sender") or ""])
@@ -892,7 +907,13 @@ def compose_pipeline(
                        "person_id": people[0].get("person_id")}
         else:
             address, n = _first_address(latest.get("_recipients") if latest else None)
-            if address:
+            enquirer = (((contacts or {}).get(oid) or {}).get("inbound") or {}).get("_enquirer")
+            if not address and enquirer:
+                # Nobody on the case and no quote sent yet, but it came from the web form: the
+                # visitor who filled it in (its Reply-To) is the contact.
+                contact = {"source": "web_form", "name": None, "address": enquirer, "others": 0,
+                           "address_ref": address_ref(enquirer)}
+            elif address:
                 bare = addresses_in(address)
                 contact = {
                     "source": "gmail_recipient", "name": None, "address": address, "others": max(n - 1, 0),
@@ -973,7 +994,10 @@ def compose_pipeline(
                 "drive_folder": drive_folder,
                 # «Último contacto»: the newest email each way on the case's Gmail threads
                 # (`last_contacts`); null for a case with no captured thread.
-                "last_contact": (contacts or {}).get(oid) or {"outbound": None, "inbound": None},
+                "last_contact": {
+                    way: ({k: v for k, v in seen.items() if not k.startswith("_")} if seen else None)
+                    for way, seen in ((contacts or {}).get(oid) or {"outbound": None, "inbound": None}).items()
+                },
                 "attention": [
                     {"code": c, "label": ATTENTION_LABELS_ES[c], "blocking": c in blocked}
                     for c in ordered
@@ -2388,6 +2412,7 @@ class CrmWorkspaceRepository:
                        (select cm.direction from comms.message cm
                          where cm.provider_message_id = sr.payload->>'gmail_message_id'
                          order by cm.created_at limit 1) as direction,
+                       """ + WEB_FORM_REPLY_TO_SQL + """ as web_form_reply_to,
                        case when jsonb_typeof(sr.payload->'documents') = 'array'
                             then sr.payload->'documents' else '[]'::jsonb end as documents
                   from threads t

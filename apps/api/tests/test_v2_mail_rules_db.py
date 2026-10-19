@@ -962,6 +962,35 @@ def test_web_form_message_is_planned_as_r7_from_the_reply_to_sender(db, world) -
     assert _one(db, "select stage from crm.opportunity where id = %s", r7["case_id"]) is not None
 
 
+def test_a_web_form_case_reads_the_visitor_as_its_contact(db, world) -> None:
+    """The case R7 opens from a web-form mail: its card, its emails and the Cotizador's «Para»
+    read the Reply-To as the client who wrote, not contacto@ as an internal email."""
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+    from origenlab_api.v2.quotes.reads import _CASE_PEOPLE_SQL, email_people
+
+    visitor = f"ana@{world['new_domain']}"
+    with _owner(db) as conn:
+        form = _web_form_mail(conn, reply_to=visitor,
+                              subject=f"Solicitud de cotización — sitio web — U. Ficticia {world['tag']}")
+    case_id = _apply_only(db, world, form)["case_id"]
+
+    workspace = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db))
+    [card] = [c for c in workspace.pipeline()["items"] if c["opportunity_id"] == case_id]
+    assert card["title"] == f"Solicitud de cotización — sitio web — U. Ficticia {world['tag']}"
+    assert (card["contact"]["source"], card["contact"]["address"]) == ("web_form", visitor)
+    assert card["last_contact"]["inbound"] is not None and card["last_contact"]["outbound"] is None
+
+    [thread] = workspace.opportunity_threads(case_id)["threads"]
+    assert thread["kind"] == "cliente" and thread["messages"][0]["direction"] == "inbound"
+
+    with _owner(db) as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(_CASE_PEOPLE_SQL, {"case": case_id})
+        assert [p["email"] for p in email_people(cur.fetchall())] == [visitor]
+
+
 def test_self_sent_message_without_the_web_form_marker_is_not_an_r7_request(db, world) -> None:
     with _owner(db) as conn:
         unmarked = _web_form_mail(conn, reply_to=f"ana@{world['new_domain']}", marked=False)

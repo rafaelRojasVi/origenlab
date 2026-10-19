@@ -39,7 +39,7 @@ import type { OpportunityCardData } from "../crmTypes";
 import { useResource } from "../useResource";
 import { crmHash } from "../crmRoute";
 import { STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
-import { COLUMN_LABEL, CaseMoveForm, type MoveTarget } from "./CaseMove";
+import { COLUMN_LABEL, CaseMoveForm, NotRequestConfirm, type MoveTarget } from "./CaseMove";
 import { AssignInstitution } from "./AssignInstitution";
 import { FollowUpReminder } from "./FollowUpReminder";
 import { CrossThreadQuoteReview } from "./CrossThreadQuoteReview";
@@ -58,7 +58,7 @@ import {
   toast,
 } from "../ui";
 
-export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution" | "followup";
+export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution" | "followup" | "notrequest";
 
 /** «Cambiar estado» offers these, minus the one the case is in. */
 const MOVE_TARGETS: MoveTarget[] = ["solicitada", "enviada", "conversacion", "pausa", "perdida"];
@@ -133,7 +133,7 @@ export function CaseActions({
   const notRequest = decideReason ? (
     <DisabledAction id="drawer-not-request" reason={decideReason}>No es una solicitud</DisabledAction>
   ) : (
-    <Button onClick={() => { setOutcome(null); setMode("stage"); setTarget("perdida"); setInitialReason("No es una solicitud"); }}>
+    <Button aria-expanded={mode === "notrequest"} onClick={() => toggle("notrequest")}>
       No es una solicitud
     </Button>
   );
@@ -290,6 +290,10 @@ export function CaseActions({
 
       {card.organization?.confirmation === "machine_proposed" ? (
         <ConfirmInstitution card={card} mayAuthor={mayAuthor} onDone={finished} />
+      ) : null}
+
+      {mode === "notrequest" && !decideReason ? (
+        <NotRequestConfirm card={card} onCancel={() => setMode(null)} onDone={finished} />
       ) : null}
 
       {mode === "stage" && hasVersion ? (

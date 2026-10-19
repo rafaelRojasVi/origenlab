@@ -823,3 +823,41 @@ def test_a_card_carries_its_attached_documents_and_a_case_without_any_an_empty_l
     with_doc, without = compose_pipeline([_opp("o1"), _opp("o2")], [], [], [], {}, [], {}, documents=docs)
     assert with_doc["documents"] == [{k: v for k, v in docs[0].items() if k != "opportunity_id"}]
     assert without["documents"] == []
+
+
+_WEB_FORM_ROW = {"opportunity_id": "o1", "sent_at": "2026-10-19T10:00:00-03:00",
+                 "subject": "Solicitud de cotización — sitio web — Universidad Ficticia", "gmail_message_id": "mw",
+                 "sender": "OrigenLab <contacto@origenlab.cl>", "direction_hint": None, "comms_direction": "outbound",
+                 "web_form_reply_to": "ana@lab-ficticio.example.test"}
+
+
+def test_a_web_form_submission_is_the_client_writing_on_the_case() -> None:
+    """Hoy reads `last_contact.inbound`: the form is the visitor writing, not OrigenLab sending,
+    and «OrigenLab» (the From's name) is never shown as the client's name."""
+    out = last_contacts([_WEB_FORM_ROW])
+    assert out["o1"]["outbound"] is None
+    assert out["o1"]["inbound"]["at"] == "2026-10-19T10:00:00-03:00"
+    assert "sender_name" not in out["o1"]["inbound"]
+
+    card = compose_pipeline([_opp("o1", stage="lead", organization_id=None, organization_name=None)],
+                            [], [], [], {}, [], {}, out)[0]
+    assert card["contact"]["source"] == "web_form"
+    assert card["contact"]["address"] == "ana@lab-ficticio.example.test"
+    assert card["contact"]["address_ref"] == address_ref("ana@lab-ficticio.example.test")
+    assert set(card["last_contact"]["inbound"]) == {"at", "subject", "url"}  # the address stays off it
+
+
+def test_a_web_form_submission_is_listed_as_received_from_the_visitor() -> None:
+    from origenlab_api.v2.crm_workspace import case_threads
+
+    row = {"thread_id": "tw", "message_id": "mw", "sent_at": "2026-10-19T10:00:00-03:00",
+           "subject": _WEB_FORM_ROW["subject"], "sender": "OrigenLab <contacto@origenlab.cl>",
+           "recipients": "contacto@origenlab.cl", "direction": "outbound",
+           "web_form_reply_to": "ana@lab-ficticio.example.test", "documents": []}
+    [thread] = case_threads([row])
+    assert thread["kind"] == "cliente"
+    assert thread["messages"][0]["direction"] == "inbound"
+    assert thread["messages"][0]["from"] == "lab-ficticio.example.test"  # the domain, never the address
+    # The same self-sent mail without the marker is OrigenLab's own: «Interno».
+    [plain] = case_threads([{**row, "web_form_reply_to": None}])
+    assert plain["kind"] == "interno" and plain["messages"][0]["direction"] == "outbound"

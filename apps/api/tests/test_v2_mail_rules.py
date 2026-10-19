@@ -1263,3 +1263,32 @@ def test_external_message_with_origin_header_is_plain_inbound() -> None:
     assert action.rule_id == "R7"
     # The case title uses the original subject, not "sitio web" from the reply_to path
     assert action.case_title != "Solicitud de cotización — sitio web"
+
+
+def test_web_form_enquirer_needs_an_own_sender_and_the_marked_reply_to() -> None:
+    """The case reads' predicate is R7's: From on an own domain and a marked Reply-To."""
+    from origenlab_api.v2.mail_rules import mail_direction, web_form_enquirer
+
+    assert web_form_enquirer("OrigenLab <contacto@origenlab.cl>", "Ana@Lab-Ficticio.example.test") \
+        == "ana@lab-ficticio.example.test"
+    assert web_form_enquirer("persona@otra.example.test", "ana@lab-ficticio.example.test") is None
+    assert web_form_enquirer("contacto@origenlab.cl", None) is None
+    assert web_form_enquirer(None, "ana@lab-ficticio.example.test") is None
+    assert mail_direction("contacto@origenlab.cl", None, "outbound", "ana@lab-ficticio.example.test") == "inbound"
+    assert mail_direction("contacto@origenlab.cl", None, "outbound") == "outbound"
+
+
+def test_web_form_case_title_does_not_repeat_the_request_prefix() -> None:
+    """The form's subject already reads «Solicitud de cotización — sitio web — <Institución>»."""
+    action = only(Snapshot(
+        evidence=(mail(
+            id="e-web-title", direction="outbound", sender="contacto@origenlab.cl",
+            recipients=("contacto@origenlab.cl",),
+            subject="Solicitud de cotización — sitio web — Universidad Ficticia",
+            documents=(), thread_id="t-web-title",
+            extra_headers={"x-origenlab-origin": WEB_QUOTE_ORIGIN}, reply_to="ana@lab-ficticio.example.test",
+        ),),
+        cases=(), organizations=(),
+    ))
+    assert action.rule_id == "R7"
+    assert action.case_title == "Solicitud de cotización — sitio web — Universidad Ficticia"
