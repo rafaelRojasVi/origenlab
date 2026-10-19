@@ -20,7 +20,7 @@ from origenlab_api.v2.catalog.enrichment import (
     supports_fallbacks,
 )
 from origenlab_worker.tender.extract import _clean_locator, _neutralise
-from origenlab_worker.tender.forms import Slot
+from origenlab_worker.tender.forms import _CONTROL, Slot
 
 EFFORT: Final = "medium"
 MAX_TOKENS: Final = 16000
@@ -109,7 +109,7 @@ def build_fill_request(form_kind: str, slots: list[Slot], form_text: str, bidder
 
 
 def _value(value: Any) -> str:
-    return " ".join(value.split())[:MAX_VALUE] if isinstance(value, str) else ""
+    return " ".join(_CONTROL.sub(" ", value).split())[:MAX_VALUE] if isinstance(value, str) else ""
 
 
 def completar(label: str) -> str:
@@ -140,7 +140,7 @@ def validate_sections(answer: Any) -> list[tuple[str, str]]:
             continue
         title = _value(entry.get("titulo"))[:MAX_SECTION_TITLE]
         text = entry.get("texto")
-        text = "\n".join(" ".join(line.split()) for line in text.splitlines()).strip()[:MAX_SECTION_TEXT] if isinstance(text, str) else ""
+        text = "\n".join(" ".join(line.split()) for line in _CONTROL.sub(" ", text).splitlines()).strip()[:MAX_SECTION_TEXT] if isinstance(text, str) else ""
         if title or text:
             out.append((title or "Sección", text))
     return out

@@ -52,7 +52,9 @@ def test_docx_underscore_paragraph_becomes_a_slot_and_is_filled_and_highlighted(
     doc = Document(io.BytesIO(filled))
     assert doc.paragraphs[1].text == "Nombre del oferente: Oferente Ejemplo"
     assert doc.paragraphs[0].text == "Anexo 1"
-    assert any(r.font.highlight_color == WD_COLOR_INDEX.YELLOW for r in doc.paragraphs[1].runs)
+    assert not any(r.font.highlight_color == WD_COLOR_INDEX.YELLOW for r in doc.paragraphs[1].runs)
+    unknown = Document(io.BytesIO(apply_values("docx", data, {"p1": "[completar: nombre]"})))
+    assert any(r.font.highlight_color == WD_COLOR_INDEX.YELLOW for r in unknown.paragraphs[1].runs)
 
 
 def test_docx_two_blanks_in_one_paragraph_get_two_slots() -> None:
@@ -94,7 +96,7 @@ def test_xlsx_cell_right_of_a_label_is_the_slot() -> None:
     assert "Hoja1!C4" not in by_id
     filled = openpyxl.load_workbook(io.BytesIO(apply_values("xlsx", data, {"Hoja1!C3": "61.111.111-8"})))
     cell = filled["Hoja1"]["C3"]
-    assert cell.value == "61.111.111-8" and cell.fill.fgColor.rgb.endswith("FFFF00")
+    assert cell.value == "61.111.111-8" and cell.fill.fgColor.rgb in (None, "00000000")
 
 
 def test_xlsx_below_a_label_when_right_is_taken() -> None:
@@ -195,3 +197,90 @@ def test_count_completar_counts_docx_and_xlsx() -> None:
     assert count_completar(xlsx_bytes(lambda ws: (ws.__setitem__("A1", "[completar: x]"), ws.__setitem__("A2", "[completar: y]"))), "xlsx") == 2
     assert COMPLETAR_RE.findall("[completar: a] y [completar: b]") == ["[completar: a]", "[completar: b]"]
     assert count_completar(b"junk", "docx") == 0
+
+
+def test_xlsx_known_value_plain_unknown_highlighted() -> None:
+    data = xlsx_bytes(lambda ws: ws.__setitem__("B3", "RUT"))
+    out = openpyxl.load_workbook(io.BytesIO(apply_values("xlsx", data, {"Hoja1!C3": "[completar: RUT]"})))
+    assert out["Hoja1"]["C3"].fill.fgColor.rgb.endswith("FFFF00")
+
+
+def test_count_completar_xlsx_with_a_far_cell_is_fast() -> None:
+    import time
+
+    def build(ws):
+        ws["A1"] = "[completar: x]"
+        ws["XFD1048576"] = "z"
+    data = xlsx_bytes(build)
+    start = time.monotonic()
+    assert count_completar(data, "xlsx") == 1
+    assert time.monotonic() - start < 5
+
+
+def test_xlsx_formula_values_are_written_as_text() -> None:
+    data = xlsx_bytes(lambda ws: ws.__setitem__("B3", "RUT"))
+    out = openpyxl.load_workbook(io.BytesIO(apply_values("xlsx", data, {"Hoja1!C3": '=HYPERLINK("http://x","y")'})))
+    cell = out["Hoja1"]["C3"]
+    assert cell.data_type == "s" and cell.value == '=HYPERLINK("http://x","y")'
+
+
+def test_docx_paragraph_with_a_hyperlink_is_left_alone() -> None:
+    from docx.oxml import OxmlElement
+
+    def build(d):
+        p = d.add_paragraph("Nombre: ____")
+        link = OxmlElement("w:hyperlink")
+        r = OxmlElement("w:r")
+        t = OxmlElement("w:t")
+        t.text = "enlace"
+        r.append(t)
+        link.append(r)
+        p._p.append(link)
+        d.add_paragraph("RUT: ____")
+
+    data = docx_bytes(build)
+    _, slots = form_slots("a.docx", data)
+    assert [s.slot_id for s in slots] == ["p1"]
+    out = Document(io.BytesIO(apply_values("docx", data, {"p0": "X", "p1": "61.111.111-8"})))
+    assert "enlace" in out.paragraphs[0]._p.xml
+    assert out.paragraphs[0].text.startswith("Nombre: ____")
+    assert out.paragraphs[1].text == "RUT: 61.111.111-8"
+
+
+def test_toc_dot_leader_is_not_a_blank() -> None:
+    data = docx_bytes(lambda d: d.add_paragraph("Capítulo 1 ........... 12"))
+    assert form_slots("a.docx", data) == ("not_fillable", [])
+
+
+def test_member_caps(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert forms.MAX_UNCOMPRESSED_BYTES == 40 * 1024 * 1024
+    data = docx_bytes(lambda d: d.add_paragraph("Nombre: ____"))
+    monkeypatch.setattr(forms, "MAX_MEMBER_BYTES", 100)
+    assert form_slots("a.docx", data)[0] == "not_fillable"
+
+
+def test_generated_docx_with_control_chars_does_not_raise() -> None:
+    data = generated_docx("T\x00", [("H\x00", "a\x00b\x0b")], "x\x00.pdf")
+    assert Document(io.BytesIO(data)).paragraphs
+
+
+def test_pdf_combobox_value_outside_options_becomes_completar() -> None:
+    doc = fitz.open()
+    page = doc.new_page()
+    w = fitz.Widget()
+    w.field_name = "region"
+    w.field_type = fitz.PDF_WIDGET_TYPE_COMBOBOX
+    w.choice_values = ["Norte", "Sur"]
+    w.rect = fitz.Rect(100, 100, 300, 120)
+    page.add_widget(w)
+    data = doc.tobytes()
+    out = apply_values("pdf_fillable", data, {"region": "Marte"})
+    assert count_completar(out, "pdf_fillable") == 1
+
+
+def test_count_completar_dedupes_merged_docx_cells() -> None:
+    def build(d):
+        t = d.add_table(rows=1, cols=2)
+        m = t.cell(0, 0).merge(t.cell(0, 1))
+        m.text = "[completar: x]"
+    assert count_completar(docx_bytes(build), "docx") == 1

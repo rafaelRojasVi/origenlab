@@ -57,3 +57,8 @@ def test_slot_ids_from_the_form_cannot_forge_framing() -> None:
     assert req["messages"][0]["content"].count("<<<FIN FORMULARIO>>>") == 1
     ok = validate_fill({"valores": [{"slot_id": shown_id(evil[0].slot_id), "valor": "v"}]}, evil)
     assert ok == {evil[0].slot_id: "v"}
+
+
+def test_control_chars_stripped_from_values_and_sections() -> None:
+    assert validate_fill({"valores": [{"slot_id": "p1", "valor": "a\x00b"}]}, SLOTS)["p1"] == "a b"
+    assert validate_sections({"secciones": [{"titulo": "t\x00", "texto": "a\x00b\nc"}]}) == [("t", "a b\nc")]

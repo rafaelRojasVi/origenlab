@@ -17,16 +17,18 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 MAX_FORM_BYTES: int = 20 * 1024 * 1024
-MAX_UNCOMPRESSED_BYTES: int = 200 * 1024 * 1024
+MAX_UNCOMPRESSED_BYTES: int = 40 * 1024 * 1024
+MAX_MEMBER_BYTES: int = 25 * 1024 * 1024
 MAX_SLOTS: int = 400
 MAX_LABEL: Final = 150
 MAX_CONTEXT: Final = 240
 _MAX_SHEET_ROWS: Final = 2000
 _MAX_SHEET_COLS: Final = 60
+_MAX_COUNT_CELLS: Final = 200_000
 
 COMPLETAR_RE: Final = re.compile(r"\[completar: [^\]]+\]")
 GENERATED_NOTE: Final = "El original no tiene campos rellenables; este documento reproduce su contenido llenado."
-_BLANK = re.compile(r"_{3,}|\.{5,}|…{3,}")
+_BLANK = re.compile(r"_{3,}|\.{5,}(?![.…\s]*\d+\s*$)|…{3,}(?![.…\s]*\d+\s*$)")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 NOT_FILLABLE: Final = "not_fillable"
@@ -69,12 +71,23 @@ def _zip_ok(data: bytes) -> str:
             infos = z.infolist()
             if len(infos) > 5000 or sum(i.file_size for i in infos) > MAX_UNCOMPRESSED_BYTES:
                 return "archivo_demasiado_grande"
+            if any(i.file_size > MAX_MEMBER_BYTES for i in infos):
+                return "archivo_demasiado_grande"
     except (zipfile.BadZipFile, OSError, ValueError):
         return "archivo_ilegible"
     return ""
 
 
 # ── docx ────────────────────────────────────────────────────────────────────────────────────
+
+
+_PLAIN_TAGS: Final = frozenset({"pPr", "r", "bookmarkStart", "bookmarkEnd", "proofErr"})
+
+
+def _plain(para: Any) -> bool:
+    """True when every child of the paragraph is a run (or inert): a hyperlink, field, content
+    control or drawing is not rewritten, so such a paragraph is never offered as a slot."""
+    return all(str(child.tag).rsplit("}", 1)[-1] in _PLAIN_TAGS for child in para._p)
 
 
 def _docx_cells(table: Any) -> list[list[Any]]:
@@ -87,7 +100,7 @@ def _docx_slots(data: bytes) -> list[Slot]:
     doc = Document(io.BytesIO(data))
     slots: list[Slot] = []
     for pi, para in enumerate(doc.paragraphs):
-        matches = list(_BLANK.finditer(para.text))
+        matches = list(_BLANK.finditer(para.text)) if _plain(para) else []
         for n, m in enumerate(matches):
             before = para.text[: m.start()]
             if n:
@@ -106,6 +119,8 @@ def _docx_slots(data: bytes) -> list[Slot]:
                 if ci == 0 or (text and not _BLANK.fullmatch(text)):
                     continue
                 left = cells[ci - 1]
+                if not all(_plain(p) for p in cell.paragraphs):
+                    continue
                 if left._tc is cell._tc or not left.text.strip() or _BLANK.fullmatch(left.text.strip()):
                     continue
                 slots.append(Slot(f"t{ti}r{ri}c{ci}", _label_of(left.text) or "campo", row_text))
@@ -133,7 +148,7 @@ def _docx_apply(data: bytes, values: dict[str, str]) -> bytes:
     doc = Document(io.BytesIO(data))
     for pi, para in enumerate(doc.paragraphs):
         text = para.text
-        matches = list(_BLANK.finditer(text))
+        matches = list(_BLANK.finditer(text)) if _plain(para) else []
         if not matches:
             continue
         segments: list[tuple[str, bool]] = []
@@ -143,7 +158,7 @@ def _docx_apply(data: bytes, values: dict[str, str]) -> bytes:
             if value is None:
                 continue
             segments.append((text[cursor: m.start()], False))
-            segments.append((value, True))
+            segments.append((value, bool(COMPLETAR_RE.search(value))))
             cursor, changed = m.end(), True
         if changed:
             segments.append((text[cursor:], False))
@@ -152,12 +167,12 @@ def _docx_apply(data: bytes, values: dict[str, str]) -> bytes:
         for ri, cells in enumerate(_docx_cells(table)):
             for ci, cell in enumerate(cells):
                 value = values.get(f"t{ti}r{ri}c{ci}")
-                if value is None or ci == 0:
+                if value is None or ci == 0 or not all(_plain(p) for p in cell.paragraphs):
                     continue
                 para = cell.paragraphs[0]
                 for other in cell.paragraphs[1:]:
                     other._element.getparent().remove(other._element)
-                _docx_rewrite(para, [(value, True)])
+                _docx_rewrite(para, [(value, bool(COMPLETAR_RE.search(value)))])
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
@@ -217,7 +232,9 @@ def _xlsx_apply(data: bytes, values: dict[str, str]) -> bytes:
             continue
         cell = wb[sheet][ref]
         cell.value = value
-        cell.fill = PatternFill("solid", fgColor="FFFF00")
+        cell.data_type = "s"  # a value starting with = + - @ is text, never a formula
+        if COMPLETAR_RE.search(value):
+            cell.fill = PatternFill("solid", fgColor="FFFF00")
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -254,8 +271,16 @@ def _pdf_apply(data: bytes, values: dict[str, str]) -> bytes:
         for page in doc:
             for w in page.widgets() or []:
                 if w.field_name in values:
-                    w.field_value = values[w.field_name]
+                    value = values[w.field_name]
+                    options = [o if isinstance(o, str) else o[0] for o in (w.choice_values or [])]
+                    if w.field_type_string == "ComboBox" and options and value not in options:
+                        value = f"[completar: {_label_of(w.field_label or w.field_name) or 'campo'}]"
+                    w.field_value = value
                     w.update()
+        # JavaScript actions of an untrusted form are removed from the output.
+        doc.scrub(javascript=True, metadata=False, attached_files=False, embedded_files=False, clean_pages=False,
+                  hidden_text=False, redactions=False, redact_images=0, remove_links=False, reset_fields=False,
+                  reset_responses=False, thumbnails=False, xml_metadata=False)
         return doc.tobytes()
 
 
@@ -316,6 +341,16 @@ def generated_docx(title: str, sections: list[tuple[str, str]], source_filename:
     from docx import Document
     from docx.enum.text import WD_COLOR_INDEX
 
+    try:
+        return _generated_docx(title, sections, source_filename)
+    except Exception as exc:  # noqa: BLE001
+        raise FormError(f"document could not be written: {type(exc).__name__}") from None
+
+
+def _generated_docx(title: str, sections: list[tuple[str, str]], source_filename: str) -> bytes:
+    from docx import Document
+    from docx.enum.text import WD_COLOR_INDEX
+
     doc = Document()
     doc.add_paragraph(GENERATED_NOTE)
     doc.add_paragraph(f"Archivo original: {_clip(source_filename, 200)}")
@@ -323,6 +358,7 @@ def generated_docx(title: str, sections: list[tuple[str, str]], source_filename:
     for heading, body in sections:
         doc.add_heading(_clip(heading, 200), level=2)
         for line in (body or "").split("\n"):
+            line = _CONTROL.sub(" ", line)
             para = doc.add_paragraph()
             cursor = 0
             for m in COMPLETAR_RE.finditer(line):
@@ -343,17 +379,24 @@ def count_completar(data: bytes, kind: str) -> int:
 
             doc = Document(io.BytesIO(data))
             texts = [p.text for p in doc.paragraphs]
-            texts += [c.text for t in doc.tables for row in t.rows for c in row.cells]
+            for t in doc.tables:
+                for row in t.rows:
+                    done: set[int] = set()
+                    for c in row.cells:
+                        if id(c._tc) not in done:
+                            done.add(id(c._tc))
+                            texts.append(c.text)
         elif kind == "xlsx":
             import openpyxl
 
             wb = openpyxl.load_workbook(io.BytesIO(data))
-            texts = [str(c.value) for ws in wb.worksheets for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
+            texts = [str(c.value) for ws in wb.worksheets for c in list(ws._cells.values())[:_MAX_COUNT_CELLS] if isinstance(c.value, str)]
         elif kind == "pdf_fillable":
             import fitz
 
             with fitz.open(stream=data, filetype="pdf") as doc:
-                texts = [str(w.field_value or "") for page in doc for w in page.widgets() or []]
+                named = {w.field_name: str(w.field_value or "") for page in doc for w in page.widgets() or []}
+                texts = list(named.values())
         else:
             return 0
     except Exception:  # noqa: BLE001
