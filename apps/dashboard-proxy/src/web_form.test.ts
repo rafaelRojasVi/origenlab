@@ -171,12 +171,14 @@ describe("web form handler", () => {
     expect(headers.get(CF_ACCESS_CLIENT_SECRET_HEADER)).toBe("cf-client-secret");
   });
 
-  it("forwards valid form-encoded submission to upstream", async () => {
+  it("forwards valid form-encoded submission to upstream and returns 303 (no-JS path)", async () => {
     const fetchMock = stubUpstreamFetch();
     const renderAt = String(Math.floor(Date.now() / 1000) - 10);
     const req = makeFormRequest({ name: "User", email: "u@example.com", render_at: renderAt });
     const resp = await handleWebFormRequest(req, TEST_ENV);
-    expect(resp.status).toBe(200);
+    // no-JS path: form-encoded → Worker returns 303 after successful upstream call
+    expect(resp.status).toBe(303);
+    expect(resp.headers.get("Location")).toBe("/contacto/?ok=1");
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 

@@ -13,11 +13,13 @@ without re-sending.
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -183,10 +185,11 @@ def _record_idempotency(submission_id: str) -> None:
 web_quote_form_router = APIRouter()
 
 _BOT_TIMING_THRESHOLD_SECONDS = 3.0
+_log = logging.getLogger(__name__)
 
 
 @web_quote_form_router.post("/v2/web/quote-request")
-async def post_web_quote_request(body: WebQuoteFormRequest, request: Request) -> Any:
+def post_web_quote_request(body: WebQuoteFormRequest, request: Request) -> Any:
     """Accept a «Solicitar cotización» form submission and dispatch one notification mail.
 
     Silently succeeds (no mail sent) for:
@@ -210,8 +213,9 @@ async def post_web_quote_request(body: WebQuoteFormRequest, request: Request) ->
 
     # --- rate caps ---
     caps: WebQuoteFormCaps = request.app.state.web_quote_form_caps
+    email_key = body.email.lower()
     try:
-        caps.check_and_record(body.email)
+        caps.check_and_record(email_key)
     except CapExceeded:
         return JSONResponse(status_code=429, content={"error": {"code": "rate_limited"}})
 
@@ -226,7 +230,7 @@ async def post_web_quote_request(body: WebQuoteFormRequest, request: Request) ->
     if body.deadline:
         extra["Plazo"] = strip_control(body.deadline)
 
-    submitted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    submitted_at = datetime.now(ZoneInfo("America/Santiago")).isoformat(timespec="seconds")
 
     try:
         raw = build_web_quote_message(
@@ -240,7 +244,11 @@ async def post_web_quote_request(body: WebQuoteFormRequest, request: Request) ->
         return JSONResponse(status_code=400, content={"error": {"code": "invalid_input"}})
 
     sender = request.app.state.web_quote_form_sender
-    sender.send(raw)
+    try:
+        sender.send(raw)
+    except Exception as exc:
+        _log.error("web quote form send failed: %s", type(exc).__name__)
+        return JSONResponse(status_code=500, content={"error": {"code": "send_failed"}})
 
     _record_idempotency(body.submission_id)
 

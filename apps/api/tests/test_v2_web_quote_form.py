@@ -263,17 +263,19 @@ def test_honeypot_non_empty_silently_succeeds_without_sending() -> None:
     assert sender.calls == []
 
 
-def test_crlf_in_need_field_is_refused() -> None:
-    """CRLF in a body field is rejected with HTTP 400, not silently normalised."""
+def test_crlf_in_need_field_is_allowed() -> None:
+    """Newlines in body fields (need) are allowed — _safe_body preserves CR/LF in the message body.
+    Header injection in Subject/Reply-To is still refused; this test verifies that multiline
+    body content such as a requirements list is accepted and the message is sent."""
     sender = _MockSender()
     client = TestClient(_route_app(sender=sender))
     r = client.post(
         "/v2/web/quote-request",
         json=_body(need="Autoclave 50 L\r\nBcc: bad@evil.invalid"),
     )
-    assert r.status_code == 400
-    assert r.json()["error"]["code"] == "invalid_input"
-    assert sender.calls == []
+    assert r.status_code == 200
+    assert r.json()["status"] == "sent"
+    assert len(sender.calls) == 1
 
 
 # ---------------------------------------------------------------------------

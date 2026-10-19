@@ -37,7 +37,7 @@ const intake = [
 ];
 
 const steps = [
-  { num: '01', text: 'Confirmamos la recepción por correo.' },
+  { num: '01', text: 'Recibimos su solicitud y le respondemos en horario hábil.' },
   { num: '02', text: 'Preparamos alternativas acotadas a su necesidad.' },
   { num: '03', text: 'Le respondemos en horario hábil: lunes a viernes, ' + contact.hours + '.' },
 ];
@@ -62,7 +62,7 @@ const steps = [
     <div class="solicitud-grid">
 
       <div class="solicitud-main">
-        <h2 id="solicitud-title" class="t-h2">Formulario de solicitud</h2>
+        <h2 id="solicitud-title" class="t-h2">¿Qué necesita cotizar?</h2>
         <p class="t-lead mt-5">
           Complete el formulario y le respondemos con una propuesta concreta.
           Si prefiere escribirnos directamente, use los datos del panel derecho.
@@ -89,6 +89,7 @@ const steps = [
 
         <form id="solicitud-form" method="post" action="/api/web/solicitud" novalidate class="sol-form">
           <input type="hidden" name="render_at" id="solicitud-render-at" />
+          <input type="hidden" name="submission_id" id="solicitud-submission-id" />
           <div class="sol-trap-wrap">
             <input
               type="text"
@@ -339,7 +340,9 @@ var okPanel=document.getElementById('solicitud-success');
 var errPanel=document.getElementById('solicitud-network-error');
 var summary=form.querySelector('[data-error-summary]');
 var rat=document.getElementById('solicitud-render-at');
-if(rat)rat.value=new Date().toISOString();
+if(rat)rat.value=String(Date.now()/1000);
+var sid=document.getElementById('solicitud-submission-id');
+if(sid)sid.value=crypto.randomUUID();
 
 function vf(f){
   var e=document.getElementById(f.id+'-error');
@@ -392,7 +395,8 @@ form.addEventListener('submit',function(ev){
   btn.disabled=true;
   var orig=btn.textContent;
   btn.textContent='Enviando…';
-  fetch('/api/web/solicitud',{method:'POST',body:new FormData(form)})
+  var data=Object.fromEntries(new FormData(form));
+  fetch('/api/web/solicitud',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
     .then(function(r){
       if(r.ok||r.redirected){
         var es=okPanel.querySelector('[data-success-email]');

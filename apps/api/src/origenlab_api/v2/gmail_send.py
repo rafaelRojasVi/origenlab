@@ -120,6 +120,9 @@ def valid_test_address(raw: str) -> str:
 
 
 _HEADER_INJECTION = re.compile(r"[\r\n]")
+#: Control characters that must not appear in body text (CR and LF are allowed — they are
+#: legitimate line breaks in a multi-line body, unlike in a header value).
+_BODY_CONTROL = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
 
 
 def _safe_header(value: str, max_len: int) -> str:
@@ -127,6 +130,11 @@ def _safe_header(value: str, max_len: int) -> str:
     if _HEADER_INJECTION.search(value):
         raise ValueError("header injection attempt")
     return value[:max_len]
+
+
+def _safe_body(value: str, max_len: int) -> str:
+    """Strip non-printable control chars (preserving CR/LF) and truncate to max_len."""
+    return _BODY_CONTROL.sub("", value)[:max_len]
 
 
 def build_web_quote_message(
@@ -153,11 +161,11 @@ def build_web_quote_message(
     msg["X-OrigenLab-Origin"] = "web-quote-form/v1"
     lines = [
         f"Institución o empresa: {_safe_header(institution, 200)}",
-        f"Qué necesita: {_safe_header(need, 4000)}",
+        f"Qué necesita: {_safe_body(need, 4000)}",
     ]
     for label, value in extra.items():
         if value:
-            lines.append(f"{label}: {_safe_header(value, 200)}")
+            lines.append(f"{label}: {_safe_body(value, 200)}")
     lines.append(f"Enviado: {_safe_header(submitted_at, 50)}")
     msg.set_content("\n".join(lines), charset="utf-8")
     return msg.as_bytes()

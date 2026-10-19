@@ -129,7 +129,7 @@ export const technicalProviders: readonly TechnicalProvider[] = [
   {
     id: 'google-workspace',
     label: 'Google Workspace',
-    role: 'entrega el correo y almacena las solicitudes recibidas en contacto@origenlab.cl',
+    role: 'aloja el buzón contacto@origenlab.cl y archiva en el CRM las solicitudes del formulario',
   },
   {
     id: 'render',
