@@ -196,3 +196,45 @@ def test_a_cancelled_order_is_lost_before_it_is_an_order_and_says_so_without_tex
     v = classify(TriageInput("inbound", (), mail(subject="RE: Anulación OC 4500000123 Lab. Ejemplo")))
     assert v.triage_class == "lost" and v.reasons == ("subject:cancelled",)
     assert v.purchase_order_numbers == ("4500000123",) and v.signals["lost"] and v.signals["purchase_order"]
+
+
+# ------------------------------------------------------------------ web-quote-form rule (v4)
+
+def test_web_quote_form_from_own_mailbox_becomes_quote_request() -> None:
+    m = MailText(
+        sender="contacto@origenlab.cl",
+        subject="Solicitud de cotización — sitio web — UChile",
+        machine_headers={"x-origenlab-origin": "web-quote-form/v1"},
+        body="Nombre: Ana García\nEmail: ana@uchile.cl\nProducto: centrífuga",
+        reply_to="ana@uchile.cl",
+    )
+    v = classify(TriageInput("outbound", ("SENT",), m))
+    assert v.triage_class == "quote_request"
+    assert v.reasons == ("header:x-origenlab-origin",)
+    assert v.sender_domain == "uchile.cl"
+    assert not v.free_mail
+
+
+def test_web_quote_header_without_reply_to_stays_outbound() -> None:
+    m = MailText(
+        sender="contacto@origenlab.cl",
+        subject="Solicitud de cotización — sitio web",
+        machine_headers={"x-origenlab-origin": "web-quote-form/v1"},
+        body="sin Reply-To",
+        reply_to=None,
+    )
+    assert cls(m, direction="outbound") == "outbound"
+
+
+def test_external_mail_with_forged_web_quote_header_stays_inbound_not_web_quote() -> None:
+    # sender NOT in OWN_DOMAINS → the new rule does not fire → classified normally
+    m = MailText(
+        sender="spoofed@external.invalid",
+        subject="Solicitud de cotización",
+        machine_headers={"x-origenlab-origin": "web-quote-form/v1"},
+        body="cotizar equipo de laboratorio",
+        reply_to="ana@uchile.cl",
+    )
+    v = classify(TriageInput("inbound", ("INBOX",), m))
+    assert v.triage_class == "quote_request"
+    assert "header:x-origenlab-origin" not in v.reasons
