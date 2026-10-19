@@ -247,6 +247,22 @@ describe("Vista previa PDF — «Economía de la cotización» stays internal", 
     }
   });
 
+  it("«Gastos ingresados» (the expenses as typed, their method and pesos) is copied nowhere and never printed", () => {
+    const issued = approved();
+    issued.current = {
+      ...issued.current!,
+      lines: [
+        ...issued.current!.lines!,
+        { ...stored(3, "logistics", "Agente de aduana — Agencia Secreta", "0", "0"), unit_cost: "6464646", cost_currency: "CLP", fx_rate: null, expense_method: "manual" },
+        { ...stored(4, "logistics", "papeles secretos", "0", "0"), unit_cost: "7272727", cost_currency: "CLP", fx_rate: null, expense_method: "dhl_calc" },
+      ],
+    };
+    const q = printableQuote(issued, null, new Date("2026-10-19T12:00:00Z"))!;
+    expect(JSON.stringify(q)).not.toMatch(/Agencia Secreta|papeles secretos|6464646|7272727|dhl_calc|logistics/);
+    const dialog = show(issued);
+    expect(dialog.textContent ?? "").not.toMatch(/Gastos ingresados|Agencia Secreta|papeles secretos|6[.,]?464[.,]?646|7[.,]?272[.,]?727|DHL calculado|Perfil|Manual/);
+  });
+
   it("prints «Datos del cliente» frozen at approval, and an address-only name once", () => {
     const ws = approved();
     const snap = ws.current!.party_snapshot as Record<string, unknown>;

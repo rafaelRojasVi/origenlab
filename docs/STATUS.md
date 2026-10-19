@@ -3281,3 +3281,17 @@ the profile.
 - No migration, no proxy change. Tests: API `test_v2_quote_economics.py`; vitest
   `expenseKind.test.ts`, `CostStrip.test.tsx`, `ExpensesSection.test.tsx`, `ProductsSection.test.tsx`,
   `QuotePrintView.test.tsx`, `CotizadorPage.test.tsx`, `draftEditor.test.ts`.
+
+### 2.7.138 Cotizador «Gastos ingresados» on an approved or sent quote, 2026-10-19 — built, deploys with the dashboard on merge
+
+Owner, 2026-10-19: an issued quote showed its import costs only as a total and a split by type.
+Under «Economía de la cotización», an authored revision that is no longer a draft now lists every
+expense line (`line_kind` logistics or fee) as the operator typed it: a «Tipo — Detalle» label shows
+the detail with the type as a small tag, an older free label is shown as typed; how its amount was
+set (Perfil / Manual / DHL calculado); its amount in whole pesos (a foreign one also in its currency,
+put in pesos at the stored rate exactly as the engine prices a frozen revision); and the total, which
+equals «Gastos de importación» (the card says so if it ever does not). No API change: the workspace's
+`current.lines` already carries the stored expense lines. Internal: same gate as Economía (the
+Cotizador's API refuses a viewer; hidden in «Vista cliente»), never in `printableQuote` or the print
+view (tested); not shown for an imported quote. Tests: vitest `enteredExpenses.test.ts`,
+`SummaryRail.test.tsx`, `QuotePrintView.test.tsx`.

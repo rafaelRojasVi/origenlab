@@ -1,4 +1,4 @@
-import type { Computed, EconomicsReport, EconomicsRow, QuoteDraft, LineEconomics, QuoteEconomics, QuoteWorkspace } from "./quoteApi";
+import type { Computed, EconomicsReport, EconomicsRow, QuoteDraft, LineEconomics, QuoteEconomics, QuoteStoredLine, QuoteWorkspace } from "./quoteApi";
 
 /** Test fixtures for the quote editor. Synthetic values only: this repository is public. */
 
@@ -181,6 +181,17 @@ export function lineEconomics(over: Partial<LineEconomics> = {}): LineEconomics 
     margin_state: "on_target",
     iva_clp: "242250",
     total_with_iva_clp: "1517250",
+    ...over,
+  };
+}
+
+/** One stored line of an issued revision (an item by default). */
+export function storedLineFixture(over: Partial<QuoteStoredLine> = {}): QuoteStoredLine {
+  return {
+    line_no: 1, line_kind: "item", description: "Equipo de prueba", product_id: null, quantity: "1", item_type: "equipment",
+    cost_currency: "CLP", unit_cost: "100000", fx_rate: null, fx_as_of: null, fx_source: null, margin_mode: "markup",
+    margin_pct: "0.3", unit_price_qc: "150000", line_total_qc: "150000", is_principal: true, allocated_to_line_no: null,
+    expense_method: null, supplier_organization_id: null, cost_observation_id: null, line_note_es: null,
     ...over,
   };
 }
