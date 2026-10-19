@@ -1,7 +1,7 @@
 """`open-tender-case` against a real, disposable database, as `origenlab_api`.
 
 Every value is invented (public repository): buyer codes 7xxx, «Hospital Ejemplo …», the RUTs
-61.111.111-8 (ruling R2: a valid check digit), 61.222.222-3 and 60.910.000-1, and codes of the
+61.111.111-8 (ruling R2: a valid check digit), 61.222.222-3, 61.333.333-9 and 60.910.000-1, and codes of the
 shape 1234567-12-LE26. One database serves the module, so each test names its own RUT.
 """
 
@@ -190,9 +190,24 @@ def test_same_key_replays_the_first_answer(db, operator_id, world) -> None:
 def test_existing_org_name_reused_not_refused(db, operator_id, world) -> None:
     org_id = _org(db, world["buyer_name"])
     r = open_tender_case(db, operator_id, reference=world["code"],
-                         detail=_detail(world, buyer_name=world["buyer_name"].upper()))
+                         detail=_detail(world, buyer_name=world["buyer_name"].upper(), buyer_rut="61333333-9"))
     assert r["organization_id"] == org_id and r["organization_confirmation"] == "confirmed"
     assert scalar(db, "select count(*) from crm.organization where lower(name)=lower(%s)", world["buyer_name"]) == 1
+    # The name match gains the identifiers it lacked, so the next open finds it by them.
+    assert sorted(_all(db, "select scheme, value_norm from crm.external_identifier where organization_id=%s",
+                       org_id)) == [("chilecompra_buyer_code", world["buyer_code"]), ("rut", "61333333-9")]
+
+
+def test_a_refetch_refreshes_the_notice_status_and_publication(db, operator_id, world) -> None:
+    first = open_tender_case(db, operator_id, reference=world["code"], detail=_detail(world))
+    with _owner(db) as conn:
+        conn.execute("update crm.opportunity set stage='lost', closed_at=now(), close_reason='perdida ficticia', "
+                     "version=version+1 where id=%s", (first["opportunity_id"],))
+    open_tender_case(db, operator_id, reference=world["code"],
+                     detail=_detail(world, source_status="Cerrada", published_at="2026-10-16T10:30:00"))
+    assert row(db, "select source_status, to_char(published_at at time zone 'America/Santiago', "
+                   "'YYYY-MM-DD HH24:MI') from procurement.notice where id=%s", first["notice_id"]) == (
+        "Cerrada", "2026-10-16 10:30")
 
 
 def test_known_buyer_code_reuses_org(db, operator_id, world) -> None:

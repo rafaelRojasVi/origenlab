@@ -320,7 +320,7 @@ grant select on platform.model_usage to origenlab_api;
 -- The API records the notice of a tender opened by hand and what it read from it.
 grant insert on procurement.notice to origenlab_api;
 grant update (promoted_opportunity_id, updated_at, last_seen_at, head, head_history, buyer_name,
-              buyer_code, title, closes_at) on procurement.notice to origenlab_api;
+              buyer_code, title, closes_at, source_status, published_at) on procurement.notice to origenlab_api;
 -- The worker reads product data sheets (the spec sheets of a bid).
 grant select on catalog.product_document to origenlab_worker;
 

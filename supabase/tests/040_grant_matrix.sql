@@ -97,7 +97,7 @@ insert into expected values
     ('catalog', 'supplier_product', 'origenlab_worker', 'SI', null, 'SI'),
     -- 20261020100000: the API also inserts the notice of a tender opened by hand and records what it
     -- read from it.
-    ('procurement', 'notice', 'origenlab_api', 'SI', array['promoted_opportunity_id', 'updated_at', 'last_seen_at', 'head', 'head_history', 'buyer_name', 'buyer_code', 'title', 'closes_at'], 'SIU'),
+    ('procurement', 'notice', 'origenlab_api', 'SI', array['promoted_opportunity_id', 'updated_at', 'last_seen_at', 'head', 'head_history', 'buyer_name', 'buyer_code', 'title', 'closes_at', 'source_status', 'published_at'], 'SIU'),
     ('procurement', 'notice', 'origenlab_worker', 'SIU', null, 'SIU'),
     -- 20260928192000: the runtime API role reads operators and never writes one.
     ('platform', 'operator', 'origenlab_api', 'S', null, 'S'),

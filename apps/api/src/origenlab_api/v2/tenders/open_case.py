@@ -15,7 +15,16 @@ A tender is a `crm.opportunity` of `kind = 'tender'` with its own `tender_status
    `opportunity.created` and `notice.promoted` (plus the institution and evidence events the
    shared writers append).
 
-A second open of a notice whose promoted case is still open is refused `tender_case_exists`.
+Refusals (codes Task 15's UI maps):
+
+| Status | Code | When |
+|---|---|---|
+| 422 | `tender_reference_invalid` / `tender_code_not_in_link` | the reference does not parse |
+| 422 | `buyer_rut_invalid` | the typed buyer RUT fails its check digit |
+| 422 | `buyer_required` | no detail and no typed buyer; `details: {"fetched": false}` |
+| 409 | `tender_case_exists` | the notice's promoted case is still open; `details: {"opportunity_id"}` |
+| 409 | `organization_name_ambiguous` | two or more active institutions share the buyer's exact name; `details: {"candidates"}` |
+| 422 | `supplier_exception_required` | the buyer holds a current supplier relationship with OrigenLab (`_add_case_organization`) |
 """
 
 from __future__ import annotations
@@ -31,7 +40,6 @@ from origenlab_api.v2.case_command_repository import (
     lock_new_organization_name,
     same_name_or_domain_organization,
 )
-from origenlab_api.v2.case_commands import OPENING_STAGE, REQUESTING_INSTITUTION
 from origenlab_api.v2.command_core import json_payload
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
@@ -74,9 +82,15 @@ class OpenTenderCaseBody(BaseModel):
     buyer: TenderBuyer | None = None
 
 
-def _valid_rut_or_none(raw: str | None) -> str | None:
-    rut = normalize_rut(raw or "")
-    return rut if rut and valid_rut(rut) else None
+def _typed_rut(raw: str | None) -> str | None:
+    """The typed RUT normalised (`61111111-8`), None when none was typed; a wrong check digit is
+    refused 422 `buyer_rut_invalid` rather than dropped."""
+    if raw is None:
+        return None
+    rut = normalize_rut(raw)
+    if not valid_rut(rut):
+        raise CommandRefused(422, "buyer_rut_invalid", "El RUT de la institución compradora no es válido.")
+    return rut
 
 
 def prepare_open_tender_case(
@@ -100,7 +114,7 @@ def prepare_open_tender_case(
         "code": code,
         "detail": detail,
         "typed_buyer_name": typed.name if typed is not None else None,
-        "typed_buyer_rut": _valid_rut_or_none(typed.rut) if typed is not None else None,
+        "typed_buyer_rut": _typed_rut(typed.rut) if typed is not None else None,
     }
 
 
@@ -130,7 +144,8 @@ def _upsert_notice(cur: Any, code: str, detail: TenderDetail | None, buyer_name:
 
     Without a detail an existing notice keeps its head (it may hold the poller's full reading); a
     new one gets the operator's head `{"source": "operator", "code": …}`. With one, the previous
-    head is appended to `head_history` when it differs.
+    head is appended to `head_history` when it differs, and `source_status` / `published_at` are
+    refreshed.
     """
     head = detail.head if detail is not None else {"source": "operator", "code": code}
     cur.execute(
@@ -149,6 +164,9 @@ def _upsert_notice(cur: Any, code: str, detail: TenderDetail | None, buyer_name:
                                  else coalesce(notice.buyer_name, excluded.buyer_name) end,
                buyer_code = coalesce(excluded.buyer_code, notice.buyer_code),
                closes_at = coalesce(excluded.closes_at, notice.closes_at),
+               source_status = case when %(fetched)s then excluded.source_status else notice.source_status end,
+               published_at = case when %(fetched)s then coalesce(excluded.published_at, notice.published_at)
+                                   else notice.published_at end,
                last_seen_at = case when %(fetched)s then now() else notice.last_seen_at end,
                updated_at = now()
         returning id::text as id, promoted_opportunity_id::text as promoted_opportunity_id
@@ -194,7 +212,7 @@ def _organization_by_identifier(cur: Any, scheme: str, value: str | None) -> str
 
 
 def _add_identifier(cur: Any, organization_id: str, scheme: str, value: str) -> bool:
-    """One identifier on the new institution; a value another subject already holds is left there."""
+    """One identifier on the institution; a value another subject already holds is left there."""
     cur.execute(
         """
         insert into crm.external_identifier (scheme, value_norm, organization_id)
@@ -219,7 +237,8 @@ def _resolve_buyer(
     note: str,
 ) -> tuple[str, list[str]]:
     """The buyer's institution — known by buyer code, RUT or exact name — else a new one
-    `machine_proposed` (spec §6.6, as the mail rules create one), with its identifiers."""
+    `machine_proposed` (spec §6.6, as the mail rules create one). An institution found by name or
+    created here gains the buyer code and RUT it lacks, so the next open finds it by identifier."""
     from origenlab_api.v2.mail_rules_repository import register_machine_organization
 
     found = _organization_by_identifier(cur, "chilecompra_buyer_code", buyer_code) or _organization_by_identifier(
@@ -229,17 +248,20 @@ def _resolve_buyer(
         return found, []
     lock_new_organization_name(cur, name)
     same = same_name_or_domain_organization(cur, name, None)
+    events: list[str] = []
     if same is not None:
-        return same["id"], []
-    made = register_machine_organization(
-        repo, cur, operator, {"name": name, "domain": None, "origin_source_record_id": None, "note": note}, receipt_id
-    )
-    organization_id = made["organization_id"]
+        organization_id = same["id"]
+    else:
+        made = register_machine_organization(
+            repo, cur, operator, {"name": name, "domain": None, "origin_source_record_id": None, "note": note},
+            receipt_id,
+        )
+        organization_id, events = made["organization_id"], list(made["event_ids"])
     if buyer_code:
         _add_identifier(cur, organization_id, "chilecompra_buyer_code", buyer_code)
     if rut:
         _add_identifier(cur, organization_id, "rut", rut)
-    return organization_id, list(made["event_ids"])
+    return organization_id, events
 
 
 def open_tender_case(
@@ -276,55 +298,40 @@ def open_tender_case(
     )
 
     title = f"Licitación {code} — {(detail.title if detail is not None else None) or buyer_name}"[:_TITLE_MAX]
-    cur.execute(
-        """
-        insert into crm.opportunity (title, stage, owner_operator_id, kind, tender_status)
-        values (%s, %s, %s, %s, %s)
-        returning id::text as id, version
-        """,
-        (title, OPENING_STAGE, operator.operator_id, TENDER_KIND, OPENING_TENDER_STATUS),
+    opened = repo._open_case_for_client(
+        cur, operator, receipt_id, title=title, organization_id=organization_id, note=note,
+        kind=TENDER_KIND, tender_status=OPENING_TENDER_STATUS,
+        extra_payload={"kind": TENDER_KIND, "tender_status": OPENING_TENDER_STATUS, "notice_id": notice["id"]},
     )
-    case = _row(cur)
-    assert case is not None  # noqa: S101 - `returning` on a successful insert
-    events.append(repo._append_event(
-        cur, aggregate_kind="opportunity", aggregate_id=case["id"], event_type="opportunity.created",
-        payload={"title": title, "stage": OPENING_STAGE, "owner_operator_id": operator.operator_id,
-                 "origin_source_record_id": None, "source_kind": None, "kind": TENDER_KIND,
-                 "tender_status": OPENING_TENDER_STATUS, "notice_id": notice["id"], "note": note},
-        operator=operator, receipt_id=receipt_id,
-    ))
-
-    organization = repo._live_organization(cur, organization_id)
-    added = repo._add_case_organization(cur, operator, {
-        "opportunity_id": case["id"], "opportunity_version": int(case["version"]),
-        "organization_id": organization_id, "organization_version": int(organization["version"]),
-        "role": REQUESTING_INSTITUTION, "supplier_exception_reason": None, "note": note}, receipt_id)
-    events.extend(added["event_ids"])
+    case_id = opened["opportunity_id"]
+    events.extend(opened["event_ids"])
+    cur.execute("select confirmation from crm.organization where id = %s", (organization_id,))
+    confirmation = cur.fetchone()[0]
 
     evidence_id, evidence_event = repo._link_evidence_row(
-        cur, case_id=case["id"], subject_column="notice_id", subject_id=notice["id"], relation="origin",
+        cur, case_id=case_id, subject_column="notice_id", subject_id=notice["id"], relation="origin",
         operator=operator, receipt_id=receipt_id, note=note,
     )
     events.append(evidence_event)
 
     cur.execute(
         "update procurement.notice set promoted_opportunity_id = %s, updated_at = now() where id = %s",
-        (case["id"], notice["id"]),
+        (case_id, notice["id"]),
     )
     events.append(repo._append_event(
         cur, aggregate_kind="notice", aggregate_id=notice["id"], event_type="notice.promoted",
-        payload={"codigo_externo": code, "opportunity_id": case["id"], "fetched": detail is not None,
+        payload={"codigo_externo": code, "opportunity_id": case_id, "fetched": detail is not None,
                  "previous_opportunity_id": notice["promoted_opportunity_id"]},
         operator=operator, receipt_id=receipt_id,
     ))
 
     return {
         "command": OPEN_TENDER_CASE,
-        "opportunity_id": case["id"],
-        "opportunity_version": int(added["opportunity_version"]),
+        "opportunity_id": case_id,
+        "opportunity_version": int(opened["opportunity_version"]),
         "notice_id": notice["id"],
         "organization_id": organization_id,
-        "organization_confirmation": organization["confirmation"],
+        "organization_confirmation": confirmation,
         "opportunity_evidence_id": evidence_id,
         "fetched": detail is not None,
         "portal_url": portal_url(code),
@@ -333,7 +340,7 @@ def open_tender_case(
 
 
 class V2TenderCommandRepository(V2CaseCommandRepository):
-    """The tender commands: the case writers (`_add_case_organization`, `_link_evidence_row`) with
+    """The tender commands: the case writers (`_open_case_for_client`, `_link_evidence_row`) with
     their own dispatch, so no general case command can be called through this repository."""
 
     _HANDLERS = {OPEN_TENDER_CASE: open_tender_case}

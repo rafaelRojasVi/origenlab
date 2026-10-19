@@ -584,8 +584,14 @@ class V2CaseCommandRepository(CommandTransaction):
         title: str,
         organization_id: str | None,
         note: str,
+        kind: str = "sale",
+        tender_status: str | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """A case an operator opens to quote a client, with no document behind it (plan R1).
+
+        `open-tender-case` opens its tender here too (`kind='tender'`, its `tender_status`, and
+        `extra_payload` merged into `opportunity.created`), and links its notice as origin itself.
 
         Internal only — no HTTP command reaches it: `create-quote` calls it when the client it
         was given has no open case (or the operator asked for a new one). The case is what
@@ -597,11 +603,11 @@ class V2CaseCommandRepository(CommandTransaction):
         """
         cur.execute(
             """
-            insert into crm.opportunity (title, stage, owner_operator_id)
-            values (%s, %s, %s)
+            insert into crm.opportunity (title, stage, owner_operator_id, kind, tender_status)
+            values (%s, %s, %s, %s, %s)
             returning id::text as id, version
             """,
-            (title, OPENING_STAGE, operator.operator_id),
+            (title, OPENING_STAGE, operator.operator_id, kind, tender_status),
         )
         case = self._row(cur)
         assert case is not None  # noqa: S101 - `returning` on a successful insert
@@ -618,6 +624,7 @@ class V2CaseCommandRepository(CommandTransaction):
                     "origin_source_record_id": None,
                     "source_kind": None,
                     "note": note,
+                    **(extra_payload or {}),
                 },
                 operator=operator,
                 receipt_id=receipt_id,

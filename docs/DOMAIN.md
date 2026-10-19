@@ -1234,8 +1234,8 @@ Migration `20261020100000_slice7_tender_bid_preparation.sql`.
   and Excel (`.docx`, `.xlsx`, legacy `.doc`, `.xls`) as well as PDF and images. A zip is unpacked
   by the API, never stored.
 - **`procurement.notice`** (#28): the API inserts the notice of a tender opened by hand and records
-  what it read from it (`title`, `buyer_name`, `buyer_code`, `closes_at`, `head`, `head_history`,
-  `last_seen_at`) and the promotion to the case.
+  what it read from it (`title`, `buyer_name`, `buyer_code`, `closes_at`, `source_status`,
+  `published_at`, `head`, `head_history`, `last_seen_at`) and the promotion to the case.
 - **`catalog.product_document`** (#57): the worker reads it (the spec sheets that go into a bid).
 
 | # | Schema.table | Unique responsibility | Key invariant |

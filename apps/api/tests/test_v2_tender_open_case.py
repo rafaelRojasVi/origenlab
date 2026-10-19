@@ -125,11 +125,13 @@ def test_typed_buyer_reaches_the_repository_with_a_normalised_rut() -> None:
         None, "Hospital Ejemplo", "61111111-8")
 
 
-def test_an_invalid_typed_rut_is_not_kept() -> None:
+def test_an_invalid_typed_rut_is_refused() -> None:
     repo, fetch = _Recorder(), _Fetch(None)
     body = {"reference": CODE, "buyer": {"name": "Hospital Ejemplo", "rut": "61.111.111-1"}}
-    assert _client(repo, fetch).post(PATH, json=body, headers=_headers()).status_code == 200
-    assert repo.calls[0]["fields"]["typed_buyer_rut"] is None
+    response = _client(repo, fetch).post(PATH, json=body, headers=_headers())
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "buyer_rut_invalid"
+    assert repo.calls == []
 
 
 def test_unknown_field_refused() -> None:
