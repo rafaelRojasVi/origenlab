@@ -20,8 +20,9 @@
  * - Que una imagen sea visible en público no implica permiso de reutilización.
  *   Sin base documentada, la fila queda en `ASSET_PERMISSION_NEEDED` y el sitio
  *   **no** incrusta la imagen: compone la familia sin fotografía. La base de la
- *   fotografía de producto de las seis marcas es hoy la autorización previa del
- *   fabricante confirmada por el titular del negocio el 2026-09-07; se registra
+ *   fotografía de producto de las seis primeras marcas es hoy la autorización
+ *   previa del fabricante confirmada por el titular del negocio el 2026-09-07
+ *   (OHAUS, incorporada después, no está cubierta y no publica fotografía); se registra
  *   por imagen en `productImages.ts`, y permiso y procedencia van separados.
  * - Ninguna imagen de un fabricante ilustra a otro. Jamás.
  *
@@ -74,7 +75,7 @@ export interface BrandSource {
 const VERIFIED_ON = '2026-09-07';
 
 /**
- * Nota común a los logotipos. El sitio reproduce los seis a una tinta para
+ * Nota común a los logotipos. El sitio reproduce los siete a una tinta para
  * identificar al fabricante, que es uso nominativo, pero el permiso escrito de
  * reproducción sigue sin pedirse: TODO abierto desde 2026-05.
  */
@@ -136,6 +137,19 @@ export const brandSources: readonly BrandSource[] = [
     lastVerified: VERIFIED_ON,
     status: 'ASSET_PERMISSION_NEEDED',
     note: 'Índice de productos del fabricante y ficha PDF de la serie PMB comprobados. El enlace de familia pasó de la página de analizadores de humedad al índice de productos, porque la familia publicada incluye ahora balanzas analíticas y de precisión. Fotografía de equipo: publicada con autorización previa del fabricante confirmada por el titular del negocio el 2026-09-07; procedencia y permiso por imagen en productImages.ts. Las tres imágenes son de familia (rotuladas como representativas) y salen de las fichas técnicas PDF oficiales y de la página oficial de la familia Solis; el CDN de imágenes del sitio rechaza la descarga directa y no se eludió.',
+  },
+  {
+    brandId: 'ohaus',
+    familyId: 'pesaje-humedad',
+    model: 'Pioneer PX, Ranger Count 3000, MB120, MB32',
+    officialUrl: 'https://mx.ohaus.com/es-mx/products/balances-scales/analytical-balances',
+    officialPdfUrl: null,
+    imageSourceUrl: null,
+    localAssetPath: '/brands/ohaus-logo.png',
+    permissionBasis: LOGO_PERMISSION_PENDING,
+    lastVerified: '2026-10-19',
+    status: 'ASSET_PERMISSION_NEEDED',
+    note: 'Marca incorporada el 2026-10-19 por instrucción escrita del titular del negocio. Páginas oficiales del sitio de OHAUS para Latinoamérica (mx.ohaus.com/es-mx, al que redirigió www.ohaus.com al leerlo) y fichas PDF del fabricante en dmx.ohaus.com, leídas el 2026-10-19; OHAUS publica ficha por línea y no un catálogo general, de modo que la fila no declara PDF de familia. Los servidores de OHAUS no envían el certificado intermedio: los navegadores lo completan, pero curl o Node sin ese intermedio fallan la verificación TLS, y por eso las páginas se leyeron sin verificarla y nada de ohaus.com se incrusta. Logotipo: recortado a 600 dpi de la ficha oficial «Compass CR Datasheet LA 80775692», guardada en la carpeta OHAUS del Drive del negocio (public/email/brands/README.md) y pasado a una tinta; no tiene URL pública propia. Fotografía de equipo: no se publica; la autorización del fabricante confirmada el 2026-09-07 cubre a las seis marcas de entonces y no a OHAUS, y la página se compone sin fotografía.',
   },
   {
     brandId: 'loeser',

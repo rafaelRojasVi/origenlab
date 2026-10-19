@@ -20,7 +20,8 @@ import { imageForModel } from '../data/productImages';
 import ModelPhoto from '../components/ui/ModelPhoto.astro';
 import { site } from '../config/site';
 import {
-  getBrandByFamilyId,
+  getBrandById,
+  getBrandsByFamilyId,
   getProductsByBrandId,
   productPageHref,
 } from '../lib/catalog';
@@ -59,15 +60,18 @@ import {
  * hueco: se compondría a texto, y el diagrama de la familia seguiría arriba.
  */
 const families = familiesInProductOrder().map((scope) => {
-  const brand = getBrandByFamilyId(scope.id);
-  const products = brand ? getProductsByBrandId(brand.id) : [];
+  // Una familia puede tener más de un fabricante: pesaje y humedad tiene dos
+  // (Adam Equipment y OHAUS). Cada modelo se atribuye a su propia marca.
+  const familyBrands = getBrandsByFamilyId(scope.id);
+  const products = familyBrands.flatMap((brand) => getProductsByBrandId(brand.id));
   return {
     scope,
-    brand,
+    familyBrands,
     withPages: products.filter((product) => productPageHref(product) !== undefined),
     skuOnly: products.filter((product) => productPageHref(product) === undefined),
     documented: modelsForFamily(scope.id).map((model) => ({
       model,
+      brand: getBrandById(model.brandId),
       image: imageForModel(model.id),
     })),
     tasks: applicationsForFamily(scope.id),
@@ -82,7 +86,7 @@ const families = familiesInProductOrder().map((scope) => {
   <div class="shell">
     <PageIntro
       title="Productos"
-      lead="Seis familias de equipo, cada una de un fabricante, con la fotografía oficial de cada modelo. Una tiene ficha completa en este sitio, con especificaciones; las otras cinco se publican con la documentación del propio fabricante y se cotizan a partir de su aplicación."
+      lead="Seis familias de equipo de siete fabricantes, con la fotografía oficial de cada modelo cuando el fabricante la autorizó. Una tiene ficha completa en este sitio, con especificaciones; las otras cinco se publican con la documentación del propio fabricante y se cotizan a partir de su aplicación."
       crumbs={[{ label: 'Productos' }]}
     />
   </div>
@@ -100,11 +104,13 @@ const families = familiesInProductOrder().map((scope) => {
 
     <ul class="scope-index" aria-label="Índice de las seis familias de equipo">
       {
-        families.map(({ scope, brand, withPages, documented }) => (
+        families.map(({ scope, familyBrands, withPages, documented }) => (
           <li class="scope-index__row">
             <a href={`#${scope.id}`} class="scope-index__link">
               <span class="scope-index__name">{scope.name}</span>
-              <span class="scope-index__brand t-data">{brand?.name}</span>
+              <span class="scope-index__brand t-data">
+                {familyBrands.map((brand) => brand.name).join(' · ')}
+              </span>
               <span class="scope-index__count t-data">
                 {withPages.length > 0
                   ? `${withPages.length} con ficha`
@@ -119,7 +125,7 @@ const families = familiesInProductOrder().map((scope) => {
   </section>
 
   {
-    families.map(({ scope, brand, withPages, skuOnly, documented, tasks }, index) => (
+    families.map(({ scope, familyBrands, withPages, skuOnly, documented, tasks }, index) => (
       <section
         id={scope.id}
         class:list={['shell', 'section', 'rule-top', 'family']}
@@ -129,15 +135,33 @@ const families = familiesInProductOrder().map((scope) => {
 
         <div class="family__head">
           <div class="family__lead">
-            {brand && <BrandLogo brand={brand} scale={1.1} class="family__logo" />}
+            {familyBrands.length > 0 && (
+              <div
+                class="family__logo"
+                style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:1.75rem"
+              >
+                {familyBrands.map((brand) => (
+                  <BrandLogo brand={brand} scale={1.1} />
+                ))}
+              </div>
+            )}
             <h2 id={`${scope.id}-title`} class="t-h2 family__name">{scope.name}</h2>
             <p class="t-body family__purpose">{scope.purpose}</p>
             <p class="family__question">{scope.question}</p>
             <div class="family__actions">
-              <a href={scope.href} class="link-arrow">
-                {scope.tier === 'catalogo' ? 'Ver la familia' : `Ver ${brand?.name}`}
-                <Icon name="arrow-right" size={18} class="arrow" />
-              </a>
+              {scope.tier === 'catalogo' ? (
+                <a href={scope.href} class="link-arrow">
+                  Ver la familia
+                  <Icon name="arrow-right" size={18} class="arrow" />
+                </a>
+              ) : (
+                familyBrands.map((brand) => (
+                  <a href={`/marcas/${brand.slug}/`} class="link-arrow">
+                    Ver {brand.name}
+                    <Icon name="arrow-right" size={18} class="arrow" />
+                  </a>
+                ))
+              )}
               {tasks.length > 0 && (
                 <a href={`/aplicaciones/#${tasks[0].slug}`} class="link-arrow">
                   {tasks[0].name}
@@ -167,7 +191,7 @@ const families = familiesInProductOrder().map((scope) => {
 
         {documented.length > 0 && (
           <ul class="refs">
-            {documented.map(({ model, image }) => (
+            {documented.map(({ model, brand, image }) => (
               <li class:list={['ref', image && 'ref--photo']}>
                 {image && brand && (
                   <div class="ref__media">
@@ -308,6 +332,10 @@ const families = familiesInProductOrder().map((scope) => {
     gap: 2rem;
     align-items: start;
   }
+  /* Contenedor de logotipos: una familia puede tener dos marcas (pesaje).
+     La disposición en fila va en el atributo `style` del contenedor: esta hoja
+     está al borde del umbral de 4 kB por debajo del cual Astro la incrusta, y
+     al pasarlo sale a un archivo propio que rompe el presupuesto de CSS. */
   .family__logo {
     margin-bottom: 1.25rem;
   }

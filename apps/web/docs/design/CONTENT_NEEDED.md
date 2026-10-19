@@ -94,6 +94,12 @@ IKA (dispersión y homogeneización), Adam Equipment (pesaje y análisis de
 humedad), Löser Messtechnik (osmometría) y SERVA Electrophoresis
 (electroforesis).
 
+**OHAUS, séptima marca, desde el 2026-10-19** por instrucción escrita del
+titular del negocio. Comparte la familia de pesaje y análisis de humedad con
+Adam Equipment. Cuatro líneas documentadas desde mx.ohaus.com/es-mx y las fichas
+PDF de dmx.ohaus.com: Pioneer PX (analíticas), Ranger Count 3000 (RC31P), MB120
+y MB32. Sin fotografía de equipo: la autorización del 2026-09-07 no la cubre.
+
 Esa revisión resolvió el punto que llevaba abierto desde mayo, «qué fabrica cada
 marca sin catálogo»: ahora la correspondencia marca–familia vive en
 `src/data/brands.ts` (`familyId`) y el sitio puede nombrar la familia junto al
@@ -117,8 +123,11 @@ petición real (`npm run verify:sources`, 47 destinos, 0 fallos).
 |---|---|---|
 | Alcance comercial formal por marca (distribuidor, revendedor, pedidos gestionados) | CONTENIDO | `commercialNote` en Hielscher, IKA, Adam Equipment y Löser; `validate:catalog` impide declararlo sin `commercialScopeConfirmed`. Sus páginas dicen qué fabrica el fabricante y que OrigenLab cotiza la línea, nunca en qué calidad |
 | ~~Permiso de Ortoalresa para las cinco fotografías publicadas~~ | **Resuelto 2026-09-07** | El titular del negocio confirmó que OrigenLab cuenta con autorización previa de los seis fabricantes para publicar su fotografía oficial de producto (`MANUFACTURER_AUTHORIZATION_BASIS` en `src/data/productImages.ts`; registro en `docs/product-assets.md`). No es una licencia pública ni se afirma documento, cláusula, vigencia o exclusividad. El uso del logotipo de Ortoalresa sigue en la fila de logotipos |
-| Permiso escrito de reproducción de los seis logotipos | CONTENIDO | TODO abierto desde 2026-05. Registrado por marca en `src/data/sourceRegistry.ts` como `ASSET_PERMISSION_NEEDED`. Adam Equipment publica un Brand Toolkit para distribuidores (adamequipment.com/toolkit) que cede logotipos y banners; confirmar que aplica a OrigenLab |
+| Permiso escrito de reproducción de los siete logotipos | CONTENIDO | TODO abierto desde 2026-05. Registrado por marca en `src/data/sourceRegistry.ts` como `ASSET_PERMISSION_NEEDED`. Adam Equipment publica un Brand Toolkit para distribuidores (adamequipment.com/toolkit) que cede logotipos y banners; confirmar que aplica a OrigenLab |
 | ~~Fotografía de equipo de Hielscher, IKA, Adam Equipment, Löser y SERVA~~ | **Resuelto 2026-09-07** | 24 de 24 entradas publicadas con fotografía oficial del fabricante (`VERIFIED` en `src/data/productImages.ts`), con permiso por confirmación del negocio y procedencia por imagen. Queda como mejora, no como bloqueo: pedir originales en mayor resolución a IKA (73 a 153 px en el folleto), Löser (400 × 500 px) y SERVA/LICORbio (BlueMarine 100 de 169 px y BlueSlick de 126 px), que hoy se muestran sin ampliar |
+| Permiso de fotografía de producto de OHAUS | CONTENIDO | La autorización previa confirmada el 2026-09-07 cubre a las seis marcas de entonces. Hasta que el negocio confirme la de OHAUS, sus cuatro líneas se publican a texto, sin fotografía (`productImages.ts` no tiene filas de OHAUS) |
+| Alcance comercial formal de OHAUS | CONTENIDO | Como las otras marcas sin `commercialScopeConfirmed`: la página dice que OrigenLab cotiza la línea, no en qué calidad (distribuidor, revendedor) |
+| Cadena TLS de ohaus.com | TERCERO | Los servidores de OHAUS (mx.ohaus.com, dmx.ohaus.com) no envían el certificado intermedio. Los navegadores lo completan; `curl` y Node sin él fallan la verificación, de modo que `npm run verify:sources` puede marcar esos destinos. Sólo se enlazan, nunca se incrustan |
 | **Logotipo en color de Adam Equipment** | CONTENIDO | Revelado de color en el riel de marcas. El único original en el repositorio (`public/email/brands/adam-equipment-source.png`, 300 × 125) ya es monocromo: media RGB 90,90,90. No existe versión en color |
 | Logotipo vectorial (y en color utilizable) de Löser Messtechnik | CONTENIDO | El único original disponible es un JPEG de 70 × 70 calado sobre un azulejo naranja. Se normaliza a una tinta y se lee, pero no escala y no da un color fiable |
 | HTTPS en el sitio de Löser Messtechnik | TERCERO | `loeser-osmometer.de` rechaza el saludo TLS: el sitio de 2005 sólo responde por http. El enlace oficial es http y la excepción está declarada en `brands.ts` (`websiteInsecure`) y en `brandModels.ts` (`officialUrlInsecure`). No depende de OrigenLab |

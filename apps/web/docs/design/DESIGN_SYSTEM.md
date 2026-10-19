@@ -227,7 +227,7 @@ estas resuelve el problema.
 | `ui/PendingFactsTable` | Datos legales que faltan, nombrados uno a uno |
 | `home/Hero` | Portada: titular a escala propia, constelación e índice de alcance enlazado |
 | `home/SampleConstellation` | La marca como ancla y seis nodos de capacidad, unidos al índice del hero |
-| `home/BrandRail` | Riel horizontal de las seis marcas, una sola altura, gris, con control de pausa |
+| `home/BrandRail` | Riel horizontal de las siete marcas, una sola altura, gris, con control de pausa |
 | `home/EquipmentFamilies` | Las seis familias, en cuatro composiciones distintas |
 | `home/FamilyMotif` | Diagrama de qué le hace el equipo a la muestra, para las familias sin fotografía |
 | `home/ConsultationSection` | Asesoría técnica y la especialista |

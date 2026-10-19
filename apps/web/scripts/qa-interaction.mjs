@@ -282,12 +282,13 @@ console.log('\nRiel de marcas (1440 px)');
   check(playing.name !== 'none', `la pista tiene animación (${playing.name})`);
   check(playing.state === 'running', 'la pista se mueve al cargar');
 
-  // Las seis, en el orden de la lista cerrada y sin repetir enlaces.
+  // Las siete, en el orden de la lista cerrada y sin repetir enlaces.
   const ORDER = [
     'Hielscher Ultrasonics',
     'Ortoalresa',
     'IKA',
     'Adam Equipment',
+    'OHAUS',
     'Löser Messtechnik',
     'SERVA Electrophoresis',
   ];
@@ -300,7 +301,7 @@ console.log('\nRiel de marcas (1440 px)');
   // Sólo la pista: el enlace de la entradilla («Ver las marcas en detalle») no
   // es una marca y contarlo escondería un duplicado real.
   const links = await page.locator('[data-rail-track] a').count();
-  check(links === 6, `seis enlaces de marca en la pista, no doce (${links})`);
+  check(links === 7, `siete enlaces de marca en la pista, no catorce (${links})`);
   const clone = page.locator('[data-rail] .rail__set--clone');
   check(
     await clone.evaluate((el) => el.getAttribute('aria-hidden') === 'true'),
@@ -311,13 +312,13 @@ console.log('\nRiel de marcas (1440 px)');
     'la copia del bucle no contiene nada enfocable',
   );
 
-  // Igualdad óptica: los seis logotipos comparten opacidad de reposo.
+  // Igualdad óptica: los siete logotipos comparten opacidad de reposo.
   const opacities = await page
     .locator('[data-rail] .rail__set:not([aria-hidden]) .rail__logo')
     .evaluateAll((els) => [...new Set(els.map((el) => getComputedStyle(el).opacity))]);
   check(
     opacities.length === 1,
-    `los seis logotipos comparten el mismo tratamiento de reposo (${opacities.join(', ')})`,
+    `los siete logotipos comparten el mismo tratamiento de reposo (${opacities.join(', ')})`,
   );
 
   // Pausa: el cursor, el foco y el control explícito.
@@ -397,7 +398,7 @@ console.log('\nMovimiento reducido');
   await page.mouse.move(0, 0);
 
   // El riel tiene que ser una fila estática legible, no una marquesina parada:
-  // sin copia del bucle, sin control que no controla nada, y con las seis
+  // sin copia del bucle, sin control que no controla nada, y con las siete
   // marcas visibles a la vez.
   const rail = page.locator('[data-rail]');
   check(
@@ -415,7 +416,7 @@ console.log('\nMovimiento reducido');
   const visibleLogos = await page
     .locator('[data-rail] .rail__set:not([aria-hidden]) .rail__logo')
     .evaluateAll((els) => els.filter((el) => el.getBoundingClientRect().width > 0).length);
-  check(visibleLogos === 6, `las seis marcas se leen a la vez (${visibleLogos})`);
+  check(visibleLogos === 7, `las siete marcas se leen a la vez (${visibleLogos})`);
 
   await context.close();
 }
@@ -474,7 +475,7 @@ console.log('\nEnlaces');
 
   check(broken.size === 0, `sin enlaces internos rotos (${[...broken].slice(0, 5).join('; ') || 'ninguno'})`);
   // Los externos sólo pueden ser destinos de navegación (fabricantes, WhatsApp).
-  // Los seis fabricantes aprobados y nada más. Si aparece otro host, o es una
+  // Los siete fabricantes aprobados y nada más. Si aparece otro host, o es una
   // marca que ya no se publica o es un tercero que se coló: las dos cosas hay
   // que verlas. La lista la respalda `src/data/brands.ts`.
   const allowed = new Set([
@@ -482,6 +483,9 @@ console.log('\nEnlaces');
     'ortoalresa.com',
     'www.ika.com',
     'adamequipment.com',
+    // OHAUS: sitio para Latinoamérica y servidor de fichas PDF (sólo enlaces).
+    'mx.ohaus.com',
+    'dmx.ohaus.com',
     // Löser no ofrece HTTPS: su servidor de 2005 rechaza el saludo TLS.
     // Declarado en brands.ts (`websiteInsecure`) y en CONTENT_NEEDED.md.
     'www.loeser-osmometer.de',
