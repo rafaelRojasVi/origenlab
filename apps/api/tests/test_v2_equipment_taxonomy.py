@@ -15,7 +15,7 @@ from origenlab_api.v2.equipment_taxonomy import load_taxonomy
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SITE_PUBLIC = REPO_ROOT / "apps" / "web" / "public"
-BRANDS = {"hielscher", "ortoalresa", "ika", "adam-equipment", "loeser", "serva"}
+BRANDS = {"hielscher", "ortoalresa", "ika", "adam-equipment", "ohaus", "loeser", "serva"}
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
@@ -28,7 +28,7 @@ def test_the_json_is_what_the_website_catalogue_generates() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_exactly_the_six_approved_brands_each_with_a_family_and_models() -> None:
+def test_exactly_the_seven_approved_brands_each_with_a_family_and_models() -> None:
     t = load_taxonomy()
     assert set(t.brands) == BRANDS
     for brand in t.brands.values():

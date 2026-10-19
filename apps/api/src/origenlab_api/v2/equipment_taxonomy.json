@@ -74,6 +74,15 @@
       ]
     },
     {
+      "id": "ohaus",
+      "name": "OHAUS",
+      "family_id": "pesaje-humedad",
+      "page_url": "https://origenlab.cl/marcas/ohaus/",
+      "aliases": [
+        "OHAUS"
+      ]
+    },
+    {
       "id": "loeser",
       "name": "Löser Messtechnik",
       "family_id": "osmometria",
@@ -354,6 +363,79 @@
       },
       "aliases": [
         "Osmometer basic"
+      ]
+    },
+    {
+      "id": "ohaus-mb120",
+      "brand_id": "ohaus",
+      "family_id": "pesaje-humedad",
+      "name": "MB120",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/ohaus/",
+      "image": {
+        "url": "https://origenlab.cl/products/ohaus/mb120.jpg",
+        "alt": "Analizador de humedad OHAUS MB120 con pantalla táctil a color y cubierta de calentamiento cerrada",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "MB120"
+      ]
+    },
+    {
+      "id": "ohaus-mb32",
+      "brand_id": "ohaus",
+      "family_id": "pesaje-humedad",
+      "name": "MB32",
+      "code": null,
+      "kind": "modelo",
+      "page_url": "https://origenlab.cl/marcas/ohaus/",
+      "image": {
+        "url": "https://origenlab.cl/products/ohaus/mb32.jpg",
+        "alt": "Analizador de humedad OHAUS MB32 con pantalla de segunda línea y cubierta de calentamiento cerrada",
+        "scope": "modelo-exacto",
+        "format": "jpg"
+      },
+      "aliases": [
+        "MB32"
+      ]
+    },
+    {
+      "id": "ohaus-pioneer-px",
+      "brand_id": "ohaus",
+      "family_id": "pesaje-humedad",
+      "name": "Pioneer PX",
+      "code": null,
+      "kind": "serie",
+      "page_url": "https://origenlab.cl/marcas/ohaus/",
+      "image": {
+        "url": "https://origenlab.cl/products/ohaus/pioneer-px.jpg",
+        "alt": "Balanza analítica OHAUS Pioneer PX con protector contra corrientes de aire cerrado, imagen representativa de la familia",
+        "scope": "familia-representativa",
+        "format": "jpg"
+      },
+      "aliases": [
+        "Pioneer PX"
+      ]
+    },
+    {
+      "id": "ohaus-ranger-count-3000",
+      "brand_id": "ohaus",
+      "family_id": "pesaje-humedad",
+      "name": "Ranger Count 3000",
+      "code": "RC31P",
+      "kind": "serie",
+      "page_url": "https://origenlab.cl/marcas/ohaus/",
+      "image": {
+        "url": "https://origenlab.cl/products/ohaus/ranger-count-3000.jpg",
+        "alt": "Balanza contadora OHAUS Ranger Count 3000 con plataforma de acero inoxidable y tres pantallas, imagen representativa de la familia",
+        "scope": "familia-representativa",
+        "format": "jpg"
+      },
+      "aliases": [
+        "Ranger Count 3000",
+        "RC31P"
       ]
     },
     {
