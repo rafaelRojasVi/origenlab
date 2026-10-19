@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
+from types import SimpleNamespace
 from typing import Any, NamedTuple
 from zoneinfo import ZoneInfo
 
@@ -48,9 +49,11 @@ PRICES_PER_MTOK: dict[str, Price] = {
     "claude-opus-5-5": _p("4", "20", "0.20", "5"),
     "claude-sonnet-5-5": _p("2", "10", "0.20", "2.5"),
     "claude-haiku-5-5": _p("0.10", "0.50", "0.01", "0.125"),
-    # The model `fallbacks: "default"` serves a cyber-category decline to (claude-api skill): the
-    # tender reader's cap check prices its worst case here, so it must have a price (ruling R15).
+    # The permitted server-side fallback targets (claude-api skill; `fallbacks: "default"` sends a
+    # cyber-category decline to Opus 4.8): the tender reader's cap check prices them (ruling R15).
     "claude-opus-4-8": _p("5", "25", "0.50", "6.25"),
+    # The other permitted fallback target (claude-api skill: Claude Opus 5 at Opus 4.8's pricing).
+    "claude-opus-5": _p("5", "25", "0.50", "6.25"),
 }
 
 
@@ -108,6 +111,17 @@ def worst_case_usd(model: str, *, input_tokens_estimate: int, max_tokens: int,
         rate = Price(max(p.input, p.cache_write), p.output, p.cache_read, p.cache_write)
         total += cost_usd(m, input_tokens=input_tokens_estimate, output_tokens=max_tokens, _price_override=rate)
     return _q(total)
+
+
+def worst_usage(model: str, *, input_tokens_estimate: int, max_tokens: int) -> Any:
+    """A usage object whose cost is `worst_case_usd` for one attempt on `model` (no fallback): every
+    input token at the dearer of the input and cache-write rates, every output token allowed. For
+    recording a call that was sent but whose real usage is unknown."""
+    p = _price(model)
+    as_write = p.cache_write > p.input
+    return SimpleNamespace(input_tokens=0 if as_write else input_tokens_estimate, output_tokens=max_tokens,
+                           cache_read_input_tokens=0,
+                           cache_creation_input_tokens=input_tokens_estimate if as_write else 0, model=model)
 
 
 def dearest_model(models: tuple[str, ...]) -> str:

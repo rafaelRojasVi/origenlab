@@ -203,13 +203,22 @@ def test_an_api_status_error_fails_the_row_without_usage(dsn, store, operator) -
 
 
 @pytest.mark.parametrize("error", [CallInterrupted(), TimeoutError("read timed out")])
-def test_a_call_lost_after_it_was_sent_is_recorded_at_its_worst_case(dsn, store, operator, error) -> None:
+def test_a_call_lost_after_it_was_sent_records_every_attempt_at_its_worst_case(dsn, store, operator, error) -> None:
+    """With fallbacks on, the requested model may decline mid-stream and the fallback start before
+    the break: both are billed, so both are recorded, and the total is what the cap check assumed."""
+    from decimal import Decimal
+
+    from origenlab_worker.tender.job import call_worst_case
+
     case, doc, prep = _queued(dsn, store, operator)
+    reader = Reader(error=error)
     with _conn(dsn) as conn:
-        BidPreparer(conn, store, Reader(error=error), MODELS, now=_now).run(uuid.UUID(prep))
+        BidPreparer(conn, store, reader, MODELS, now=_now).run(uuid.UUID(prep))
     assert _row(dsn, prep)[:2] == ("failed", "request_failed")
-    [(model, input_tokens, output_tokens, _cost)] = _usage_rows(dsn, prep)
-    assert (model, output_tokens) == ("claude-opus-4-8", 32000) and input_tokens > 0
+    rows = _usage_rows(dsn, prep)
+    assert len(rows) == 2 and rows[0][0] != rows[1][0] and "claude-opus-5-5" in {r[0] for r in rows}
+    assert all(r[2] == 32000 for r in rows)
+    assert sum(Decimal(r[3]) for r in rows) == call_worst_case(reader.requests[0], MODELS.read)
 
 
 def test_every_billed_attempt_of_a_fallback_is_recorded(dsn, store, operator) -> None:

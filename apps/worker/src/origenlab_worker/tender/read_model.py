@@ -34,9 +34,10 @@ DEFAULT_READ_MODEL: Final = "claude-opus-5-5"
 #: Reading every rule of a public tender is research, not classification.
 EFFORT: Final = "high"
 MAX_TOKENS: Final = 32000
-#: The dearest model `fallbacks: "default"` may serve (a cyber-category decline goes to it); the
-#: cap is checked against it so a fallback can never take the month past the cap.
-FALLBACK_WORST_MODELS: Final = ("claude-opus-4-8",)
+#: The permitted targets of `fallbacks: "default"` (claude-api skill; routing by refusal category is
+#: unpublished, a cyber decline goes to Opus 4.8). One fallback attempt may follow the requested
+#: model's; the cap prices it at the dearest of these.
+FALLBACK_TARGETS: Final = ("claude-opus-4-8", "claude-opus-5")
 
 RESUMEN_FIELDS: Final = (
     "objeto", "cantidades", "cierre", "consultas", "adjudicacion", "entrega_plazo", "entrega_lugar",
@@ -353,6 +354,6 @@ def streaming_reader(api_key: str, *, timeout_s: float = 900.0, max_retries: int
     return read
 
 
-__all__ = ["CallInterrupted", "REFUSAL_CATEGORIES", "CHECKLIST_TYPES", "CONVERT_TO_WORD", "DEFAULT_READ_MODEL", "EFFORT", "FALLBACK_WORST_MODELS",
+__all__ = ["CallInterrupted", "REFUSAL_CATEGORIES", "CHECKLIST_TYPES", "CONVERT_TO_WORD", "DEFAULT_READ_MODEL", "EFFORT", "FALLBACK_TARGETS",
            "MAX_TOKENS", "READ_SCHEMA", "RESUMEN_FIELDS", "ReadFailed", "SYSTEM_PROMPT", "build_read_request",
            "input_tokens_estimate", "parse_read", "streaming_reader", "user_content", "validate_read"]

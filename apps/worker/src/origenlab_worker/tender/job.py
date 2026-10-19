@@ -34,11 +34,12 @@ from origenlab_api.v2.model_spend import (
     record_usage,
     with_cap_lock,
     worst_case_usd,
+    worst_usage,
 )
 from origenlab_worker.storage import StorageError
 from origenlab_worker.tender.extract import AnnexSetTooLarge, AnnexText, extract_annex, render_for_model
 from origenlab_worker.tender.read_model import (
-    FALLBACK_WORST_MODELS,
+    FALLBACK_TARGETS,
     MAX_TOKENS,
     ReadFailed,
     build_read_request,
@@ -128,12 +129,17 @@ class ConnectionLost(Exception):
     sweep must stop."""
 
 
+def call_attempts(request: dict[str, Any], model: str) -> tuple[str, ...]:
+    """The attempts one call may bill: the requested model's and, when the request carries
+    server-side fallbacks, one fallback attempt priced at the dearest permitted target."""
+    return (model, dearest_model(FALLBACK_TARGETS)) if request.get("fallbacks") else (model,)
+
+
 def call_worst_case(request: dict[str, Any], model: str) -> Decimal:
-    """What one call may bill: the requested model's worst case plus, when the request carries
-    server-side fallbacks, the fallback attempt's — each attempt is billed (claude-api skill)."""
-    fallbacks = FALLBACK_WORST_MODELS if request.get("fallbacks") else ()
-    return worst_case_usd(model, input_tokens_estimate=input_tokens_estimate(request), max_tokens=MAX_TOKENS,
-                          fallback_models=fallbacks)
+    """What one call may bill: every attempt's worst case, summed — each is billed (claude-api skill)."""
+    attempts = call_attempts(request, model)
+    return worst_case_usd(attempts[0], input_tokens_estimate=input_tokens_estimate(request), max_tokens=MAX_TOKENS,
+                          fallback_models=attempts[1:])
 
 
 def _sent_and_maybe_billed(exc: BaseException) -> bool:
@@ -235,6 +241,8 @@ class BidPreparer:
         except _CONNECTION_ERRORS:
             if self._reconnect is None:
                 raise ConnectionLost("usage_not_recorded") from None
+        # If reconnect() itself fails, its error propagates: the usage stays unrecorded, the row is
+        # left `running` (the next sweep fails it `interrupted`), and the sweep stops — fail closed.
         with self._reconnect() as fresh:
             write(fresh)
             self._finish(prep_id, STATUS_FAILED, "connection_lost", {}, models, conn=fresh)
@@ -279,7 +287,7 @@ class BidPreparer:
             raise PreparationFailed("annex_set_too_large") from None
         model = self._models.read
         request = build_read_request(rendered, self._case(opportunity_id), model=model)
-        attempts = (model, *FALLBACK_WORST_MODELS) if request.get("fallbacks") else (model,)
+        attempts = call_attempts(request, model)
         try:
             worst = call_worst_case(request, model)
         except UnpricedModel:
@@ -295,9 +303,13 @@ class BidPreparer:
             message = self._reader(request)  # no transaction is open during the call
         except Exception as exc:  # noqa: BLE001 — network, 4xx/5xx, timeout: the code, never the text
             if _sent_and_maybe_billed(exc):
-                # What it really cost is unknown: one attempt's worst case at the dearest model.
-                conservative = SimpleNamespace(input_tokens=input_tokens_estimate(request), output_tokens=MAX_TOKENS)
-                self._record(prep_id, models, model=dearest_model(attempts), usage=conservative)
+                # What it really cost is unknown: the requested model may have declined mid-stream and
+                # the fallback started before the break, so every attempt is recorded at its worst
+                # case — the same total the cap check assumed (`call_worst_case`).
+                estimate = input_tokens_estimate(request)
+                conservative = SimpleNamespace(iterations=[
+                    worst_usage(m, input_tokens_estimate=estimate, max_tokens=MAX_TOKENS) for m in attempts])
+                self._record(prep_id, models, model=model, usage=conservative)
             raise PreparationFailed("request_failed") from None
         served = getattr(message, "model", None)
         served = served if isinstance(served, str) and served else model

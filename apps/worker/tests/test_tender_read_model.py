@@ -282,7 +282,8 @@ def test_the_call_worst_case_adds_the_fallback_attempt() -> None:
 
     est = input_tokens_estimate(request)
     single = worst_case_usd(MODEL, input_tokens_estimate=est, max_tokens=MAX_TOKENS)
-    fallback = worst_case_usd("claude-opus-4-8", input_tokens_estimate=est, max_tokens=MAX_TOKENS)
+    fallback = max(worst_case_usd(m, input_tokens_estimate=est, max_tokens=MAX_TOKENS)
+                   for m in ("claude-opus-4-8", "claude-opus-5"))
     assert call_worst_case(request, MODEL) == single + fallback
     haiku = build_read_request("x", {}, model="claude-haiku-5-5")
     assert call_worst_case(haiku, "claude-haiku-5-5") == worst_case_usd(

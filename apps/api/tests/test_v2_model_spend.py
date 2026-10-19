@@ -42,8 +42,18 @@ def test_unpriced_model_refused():
         cost_usd("claude-x", input_tokens=1, output_tokens=1)
 
 
-def test_the_default_fallback_model_is_priced():
-    assert cost_usd("claude-opus-4-8", input_tokens=1_000_000, output_tokens=1_000_000) == Decimal("30")
+@pytest.mark.parametrize("model", ["claude-opus-4-8", "claude-opus-5"])
+def test_every_permitted_fallback_target_is_priced(model):
+    assert cost_usd(model, input_tokens=1_000_000, output_tokens=1_000_000) == Decimal("30")
+
+
+def test_the_worst_usage_puts_the_input_at_its_dearer_rate():
+    from origenlab_api.v2.model_spend import worst_usage
+
+    usage = worst_usage("claude-opus-5-5", input_tokens_estimate=1000, max_tokens=500)
+    assert cost_usd("claude-opus-5-5", input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
+                    cache_write_tokens=usage.cache_creation_input_tokens) == worst_case_usd(
+        "claude-opus-5-5", input_tokens_estimate=1000, max_tokens=500)
 
 
 def test_worst_case_counts_every_attempt_a_fallback_may_bill():
