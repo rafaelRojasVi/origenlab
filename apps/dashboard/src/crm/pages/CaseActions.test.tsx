@@ -1370,6 +1370,44 @@ describe("Decidir casos", () => {
     expect(proposeDecision(recent, NOW)).toEqual({ decision: "seguir", why: "Enviada hace 21 días" });
   });
 
+  it("goes back to the cards once every chosen decision applied", async () => {
+    stubApi({
+      pipelines: [page([replied])],
+      onPost: () => ({ body: { ...receipt("x", "negotiating", 9, "rcpt-ok"), task_id: "t", task_version: 1 } }),
+    });
+    const closed = vi.fn();
+    render(
+      withSession(
+        session("sales"),
+        <>
+          <DecideCases cards={[replied]} onApplied={() => undefined} onClose={closed} now={NOW} />
+          <Toaster />
+        </>,
+      ),
+    );
+    fireEvent.click(within(screen.getByTestId("decide-cases")).getByRole("button", { name: "Aplicar 1 decisiones" }));
+    expect(await screen.findByTestId("toaster")).toHaveTextContent("1 casos decididos.");
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays open when a decision fails, so its reason can be read", async () => {
+    stubApi({ pipelines: [page([replied])], onPost: () => ({ status: 409, body: { detail: { code: "stale_version", message: "x" } } }) });
+    const closed = vi.fn();
+    render(
+      withSession(
+        session("sales"),
+        <>
+          <DecideCases cards={[replied]} onApplied={() => undefined} onClose={closed} now={NOW} />
+          <Toaster />
+        </>,
+      ),
+    );
+    fireEvent.click(within(screen.getByTestId("decide-cases")).getByRole("button", { name: "Aplicar 1 decisiones" }));
+    expect(await screen.findByTestId("toaster")).toHaveTextContent("0 decididos, 1 con error");
+    expect(closed).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Volver a las tarjetas" })).toBeInTheDocument();
+  });
+
   it("applies every decision with its own command, and lets the operator change or leave out a row", async () => {
     const calls = stubApi({
       pipelines: [page([replied, silent, recent])],

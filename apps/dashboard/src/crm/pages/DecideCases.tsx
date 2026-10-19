@@ -187,6 +187,9 @@ export function DecideCases({
     onApplied();
     const failed = todo.length - ok;
     toast(failed ? `${ok} decididos, ${failed} con error: revisa la lista.` : `${ok} casos decididos.`, failed ? "warn" : "good");
+    // Done: back to the cards (owner, 2026-10-19: the emptied table looked like a dead end). A
+    // failure keeps the list open so its reason can be read.
+    if (!failed) onClose();
   }
 
   const filters: (Decision | "all")[] = ["all", "conversacion", "seguir", "pausa", "perdida", "ganada"];
@@ -205,7 +208,7 @@ export function DecideCases({
         </div>
         <div className="flex shrink-0 gap-2">
           <Button onClick={onClose} disabled={running != null}>
-            Cerrar
+            Volver a las tarjetas
           </Button>
           <Button
             variant="primary"
