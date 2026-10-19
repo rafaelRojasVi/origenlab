@@ -1,7 +1,7 @@
 """Send one email as contacto@origenlab.cl through the Gmail API — the test-send path only.
 
-The credential is a refresh token for the `gmail.send` scope alone (it cannot read mail),
-authorized once by the owner as contacto@ with the local authorization script under
+The credential is a refresh token for the `gmail.send` OR `gmail.compose` scope (it cannot read
+mail), authorized once by the owner as contacto@ with the local authorization script under
 apps/api/scripts, and kept as a Render secret file named by `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE`.
 The V1 desktop token is never read. Plain HTTPS through `urllib`: no new runtime dependency.
 """
@@ -24,7 +24,10 @@ from pathlib import Path
 
 SENDER_ADDRESS = "contacto@origenlab.cl"
 SENDER_NAME = "OrigenLab"
+#: Kept for backward compatibility — either SEND_SCOPE or COMPOSE_SCOPE is accepted.
 SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+#: gmail.compose permits users.messages.send and is accepted as an alternative to gmail.send.
+COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 TEST_SUBJECT_PREFIX = "[PRUEBA] "
@@ -102,6 +105,10 @@ def load_send_token(path: str) -> GmailSendToken:
         raise ValueError("the Gmail send token needs client_id, client_secret, refresh_token and address")
     if fields["address"].strip().lower() != SENDER_ADDRESS:
         raise ValueError(f"the Gmail send token is for {fields['address']!r}, not {SENDER_ADDRESS}")
+    scope = data.get("scope")
+    if isinstance(scope, str):
+        if SEND_SCOPE not in scope and COMPOSE_SCOPE not in scope:
+            raise ValueError("the Gmail send token must include gmail.send or gmail.compose scope")
     return GmailSendToken(**{k: v.strip() for k, v in fields.items()})
 
 

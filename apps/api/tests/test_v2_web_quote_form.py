@@ -274,3 +274,59 @@ def test_crlf_in_need_field_is_refused() -> None:
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "invalid_input"
     assert sender.calls == []
+
+
+# ---------------------------------------------------------------------------
+# load_send_token scope validation tests
+# ---------------------------------------------------------------------------
+
+
+def test_load_send_token_accepts_compose_scope(tmp_path: Path) -> None:
+    """Token file with gmail.compose scope (plus gmail.settings.basic) is accepted."""
+    from origenlab_api.v2.gmail_send import load_send_token
+
+    token_file = tmp_path / "token.json"
+    token_file.write_text(json.dumps({
+        "client_id": "client.id",
+        "client_secret": "secret",
+        "refresh_token": "rt",
+        "address": "contacto@origenlab.cl",
+        "scope": (
+            "https://www.googleapis.com/auth/gmail.compose "
+            "https://www.googleapis.com/auth/gmail.settings.basic"
+        ),
+    }), encoding="utf-8")
+    # Should not raise
+    load_send_token(str(token_file))
+
+
+def test_load_send_token_rejects_unknown_scope(tmp_path: Path) -> None:
+    """Token file with an unrelated scope (gmail.readonly) is rejected with ValueError."""
+    from origenlab_api.v2.gmail_send import load_send_token
+
+    token_file = tmp_path / "token.json"
+    token_file.write_text(json.dumps({
+        "client_id": "client.id",
+        "client_secret": "secret",
+        "refresh_token": "rt",
+        "address": "contacto@origenlab.cl",
+        "scope": "https://www.googleapis.com/auth/gmail.readonly",
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="gmail.send or gmail.compose"):
+        load_send_token(str(token_file))
+
+
+def test_load_send_token_accepts_send_scope(tmp_path: Path) -> None:
+    """Token file with gmail.send scope continues to be accepted (backward compat)."""
+    from origenlab_api.v2.gmail_send import load_send_token
+
+    token_file = tmp_path / "token.json"
+    token_file.write_text(json.dumps({
+        "client_id": "client.id",
+        "client_secret": "secret",
+        "refresh_token": "rt",
+        "address": "contacto@origenlab.cl",
+        "scope": "https://www.googleapis.com/auth/gmail.send",
+    }), encoding="utf-8")
+    # Should not raise
+    load_send_token(str(token_file))
