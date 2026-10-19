@@ -12,8 +12,8 @@
  */
 import { useEffect, useId, useState } from "react";
 import type { DraftProblem } from "./draftEditor";
-import { setRecipient } from "./draftEditor";
-import type { QuoteDraft, QuoteRecipientPick, QuoteWorkspace, QuoteWorkspaceContact } from "./quoteApi";
+import { setClientDetail, setRecipient } from "./draftEditor";
+import type { QuoteClientDetails, QuoteDraft, QuoteRecipientPick, QuoteWorkspace, QuoteWorkspaceContact } from "./quoteApi";
 import { AssignInstitution } from "../pages/AssignInstitution";
 import type { OpportunityCardData } from "../crmTypes";
 
@@ -39,6 +39,18 @@ function contactLabel(c: QuoteWorkspaceContact): string {
   if (c.name && c.email) return `${c.name} <${c.email}>`;
   return c.email ?? c.name ?? "Contacto sin correo";
 }
+
+/** «Datos del cliente»: what the PDF prints; the placeholder is what it prints when left blank. */
+const DETAILS: { key: keyof QuoteClientDetails; label: string; max: number; type?: string; autoComplete?: string }[] = [
+  { key: "contact_name", label: "Nombre del contacto", max: 200, autoComplete: "off" },
+  { key: "contact_role", label: "Cargo", max: 200 },
+  { key: "department", label: "Unidad / depto.", max: 200 },
+  { key: "phone", label: "Teléfono", max: 60, type: "tel" },
+  { key: "institution_name", label: "Institución (razón social)", max: 500 },
+  { key: "rut", label: "RUT", max: 20 },
+  { key: "address", label: "Dirección", max: 200 },
+  { key: "city", label: "Ciudad / región", max: 200 },
+];
 
 const FIELD_CLS =
   "h-10 w-full min-w-0 rounded-md border border-line bg-canvas-raised px-2.5 text-[13px] text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50";
@@ -83,6 +95,17 @@ export function ClientSection({
     if (refusal) setRefusalSeen(refusal);
   };
   const recipient = draft.recipient ?? null;
+  const pickedContact = (() => {
+    const pid = recipient?.participant_id ?? (recipient ? null : (draft as { recipient_participant_id?: string | null }).recipient_participant_id);
+    const c = pid ? contacts.find((x) => x.participant_id === pid) : recipient ? contacts.find((x) => samePick(pickOf(x), recipient)) : undefined;
+    // A contact known only by address has its address as its name: that is no name to print.
+    return c?.name && c.name !== c.email ? c.name : (recipient?.name ?? null);
+  })();
+  const fromCrm: Partial<Record<keyof QuoteClientDetails, string | null>> = {
+    contact_name: pickedContact,
+    institution_name: institution?.name ?? null,
+    rut: institution?.rut ?? null,
+  };
 
   const matched = recipient ? contacts.findIndex((c) => samePick(pickOf(c), recipient)) : -1;
   const value = typing
@@ -229,6 +252,30 @@ export function ClientSection({
           <p className="whitespace-pre-line text-[13px] leading-snug text-ink">{lo_que_pidio}</p>
         </div>
       ) : null}
+
+      <fieldset className="grid min-w-0 grid-cols-1 gap-3 border-t border-line pt-3 sm:grid-cols-2 md:col-span-3 lg:grid-cols-4">
+        <legend className="mb-1 text-xs font-semibold text-ink-muted">
+          Datos del cliente <span className="font-normal">(salen en el PDF; vacío = lo que dice el CRM)</span>
+        </legend>
+        {DETAILS.map((f) => (
+          <div key={f.key} className="flex min-w-0 flex-col gap-1">
+            <label htmlFor={`${ids}-${f.key}`} className="text-xs text-ink-muted">
+              {f.label}
+            </label>
+            <input
+              id={`${ids}-${f.key}`}
+              type={f.type ?? "text"}
+              value={draft.client?.[f.key] ?? ""}
+              maxLength={f.max}
+              disabled={disabled}
+              autoComplete={f.autoComplete}
+              placeholder={fromCrm[f.key] ?? ""}
+              onChange={(e) => edit((d) => setClientDetail(d, f.key, e.target.value))}
+              className={FIELD_CLS}
+            />
+          </div>
+        ))}
+      </fieldset>
     </section>
   );
 }

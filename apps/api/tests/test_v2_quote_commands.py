@@ -962,6 +962,32 @@ def test_a_new_revision_copies_the_issued_one_and_supersedes_it_on_approval(worl
 
 
 @needs_db
+def test_client_details_print_over_the_crm_and_carry_into_the_next_revision(world) -> None:
+    dsn = world["dsn"]
+    client = {"institution_name": "Instituto Ficticio S.A.", "rut": "76.543.210-K", "contact_name": "Ana Prueba",
+              "contact_role": "Jefa de laboratorio", "department": "Control de calidad", "phone": "+56 9 1234 5678",
+              "address": "Calle Falsa 123", "city": "Talca, Maule"}
+    created, saved = _approvable(world, client={**client, "phone": "", "city": None})
+    stored = _revision(dsn, created["revision_id"])["client_details"]
+    assert stored == {k: v for k, v in client.items() if k not in ("phone", "city")}  # blanks are not kept
+    saved = _save(world, {"revision_id": created["revision_id"], "version": saved["version"]},
+                  {"items": [_catalog_item(world)], "terms": {"warranty_terms_es": WARRANTY}, "client": client})
+    _approve(world, created["revision_id"], saved["version"])
+    snapshot = _revision(dsn, created["revision_id"])["party_snapshot"]
+    assert (snapshot["institution"]["name"], snapshot["institution"]["rut"]) == ("Instituto Ficticio S.A.",
+                                                                                 "76.543.210-K")
+    assert snapshot["recipient"]["name"] == "Ana Prueba"
+    assert snapshot["client"] == {"contact_role": "Jefa de laboratorio", "department": "Control de calidad",
+                                  "phone": "+56 9 1234 5678", "address": "Calle Falsa 123", "city": "Talca, Maule"}
+
+    opened = _run(world, "create-quote-revision", {"quote_id": created["quote_id"]})
+    assert _revision(dsn, opened["revision_id"])["client_details"] == client
+    rev1 = _revision(dsn, created["revision_id"])
+    with pytest.raises(psycopg.errors.CheckViolation):  # an issued revision's details are frozen
+        _owner(dsn, "update crm.quote_revision set client_details = '{}'::jsonb where id = %s", (rev1["id"],))
+
+
+@needs_db
 def test_create_quote_revision_needs_an_issued_revision(world) -> None:
     refused = _refused(world, "create-quote-revision", {"quote_id": str(uuid.uuid4())})
     assert (refused.status_code, refused.code) == (404, "quote_not_found")

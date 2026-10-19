@@ -3136,3 +3136,23 @@ Owner decisions 2026-10-16, for the worker's quote reader (`READER_VERSION` is n
   `allowlist.test.ts`; vitest `RentabilidadPage.test.tsx`, `SummaryRail.test.tsx`,
   `QuotePrintView.test.tsx`, `CotizadorModulePage.test.tsx`, `QuoteListPane.test.tsx`,
   `quoteApi.test.ts`, `shellRoute.test.ts`.
+
+### 2.7.134 Cotizador «Datos del cliente» on the draft, 2026-10-19 — built, deploys on merge
+
+- Owner, 2026-10-19: the client's name and details could not be changed on a quote, so revisions
+  were approved again and again hoping they would show. Now the draft's «Cliente» card has
+  «Datos del cliente» — nombre del contacto, cargo, unidad / depto., teléfono, institución (razón
+  social), RUT, dirección, ciudad / región — each blank field showing (as placeholder) and printing
+  what the CRM knows. Saved with the draft (`QuoteDraft.client`), copied into a new revision,
+  frozen into `party_snapshot` at approval (institution name and RUT, recipient name, and a new
+  `client` block); the PDF prints them, and prints an address-only contact's address once.
+- **Schema.** Migration `20261019100000_slice7_quote_client_details.sql`: nullable
+  `crm.quote_revision.client_details` (JSON object). No table, policy, function or foreign key;
+  the existing `quote_revision_authored_frozen` guard freezes it once issued. Migrations **62**.
+- Nothing is written to `crm.person` / `crm.organization` from here: that stays the Cotizador
+  client-data project (spec 2026-10-18 §2).
+- «Vista previa PDF» toolbar says how to keep the browser's own date/URL line off the PDF
+  (margins «Predeterminado», «Encabezados y pies de página» unticked): `@page { margin: 0 }`
+  cannot win once the print dialog's margins were changed.
+- Tests: API `test_v2_quote_commands.py`; pgTAP `097_quote_authoring.sql`; vitest
+  `ClientSection.test.tsx`, `QuotePrintView.test.tsx`.
