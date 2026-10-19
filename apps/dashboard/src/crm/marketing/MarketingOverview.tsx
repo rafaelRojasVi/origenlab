@@ -38,7 +38,7 @@ export function MarketingOverview({
   onOpen: (campaignId: string) => void;
   v1LaneCampaigns?: V1LaneCampaign[];
 }) {
-  const f = overviewFigures(campaigns, today);
+  const f = overviewFigures(campaigns, today, v1LaneCampaigns);
 
   // Show the first V1-lane campaign that is upcoming or active. After promo_until: hide.
   const activeCampaign = v1LaneCampaigns.find(
@@ -82,9 +82,13 @@ export function MarketingOverview({
             <p className="mt-0.5 truncate text-xs text-ink-muted">
               {fmtLongDay(f.nextPlanned.day)}
               {f.nextPlanned.time ? ` · ${f.nextPlanned.time}` : ""} ·{" "}
-              <button type="button" className="font-medium text-brand-700 hover:underline" onClick={() => onOpen(f.nextPlanned!.campaignId)}>
-                {f.nextPlanned.campaignName}
-              </button>
+              {f.nextPlanned.campaignId === null ? (
+                <span className="font-medium text-ink">{f.nextPlanned.campaignName} · canal V1</span>
+              ) : (
+                <button type="button" className="font-medium text-brand-700 hover:underline" onClick={() => onOpen(f.nextPlanned!.campaignId!)}>
+                  {f.nextPlanned.campaignName}
+                </button>
+              )}
             </p>
           </>
         ) : (
