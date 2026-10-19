@@ -9,11 +9,14 @@ interface Props {
   description: string;
   isHome?: boolean;
   noindex?: boolean;
+  /** Alternativa declarativa: `robots="noindex"` equivale a `noindex={true}`. */
+  robots?: string;
   jsonLd?: readonly unknown[];
   ogImagePath?: string;
 }
 
-const { title, description, isHome, noindex, jsonLd, ogImagePath } = Astro.props;
+const { title, description, isHome, noindex, robots, jsonLd, ogImagePath } = Astro.props;
+const effectiveNoindex = noindex || robots === 'noindex';
 ---
 
 <!doctype html>
@@ -23,7 +26,7 @@ const { title, description, isHome, noindex, jsonLd, ogImagePath } = Astro.props
       title={title}
       description={description}
       isHome={isHome}
-      noindex={noindex}
+      noindex={effectiveNoindex}
       jsonLd={jsonLd}
       ogImagePath={ogImagePath}
     />

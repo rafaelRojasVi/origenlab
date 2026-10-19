@@ -266,7 +266,7 @@ def test_mentions_are_deduplicated_and_fall_back_to_the_folded_description() -> 
 
 
 def test_the_reading_is_stored_under_the_versioned_value_norm() -> None:
-    assert VALUE_NORM == "triage:v3"
+    assert VALUE_NORM == "triage:v4"
     assert REQUESTER_VALUE_NORM == "requester:v1"
 
 

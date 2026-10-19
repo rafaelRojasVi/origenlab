@@ -71,3 +71,15 @@ def test_machine_headers_attachments_and_types_are_reported() -> None:
 def test_a_long_body_is_cut_and_says_so() -> None:
     mail = parse_mail(_raw("a" * (MAX_BODY_CHARS + 50)))
     assert len(mail.body) == MAX_BODY_CHARS and mail.body_truncated
+
+
+def test_reply_to_is_extracted_into_mail_text() -> None:
+    raw = _raw("Solicitud desde el sitio web", headers={"Reply-To": "Ana García <ana@cliente.invalid>"})
+    mail = parse_mail(raw)
+    assert mail.reply_to == "ana@cliente.invalid"
+
+
+def test_x_origenlab_origin_is_captured_as_machine_header() -> None:
+    raw = _raw("Formulario enviado", headers={"X-OrigenLab-Origin": "web-quote-form/v1"})
+    mail = parse_mail(raw)
+    assert mail.machine_headers.get("x-origenlab-origin") == "web-quote-form/v1"

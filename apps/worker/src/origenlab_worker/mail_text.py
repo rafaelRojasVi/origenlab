@@ -24,6 +24,7 @@ MAX_BODY_CHARS = 6000
 MACHINE_HEADERS: tuple[str, ...] = (
     "auto-submitted", "x-autoreply", "x-autorespond", "x-auto-response-suppress", "precedence",
     "list-id", "list-unsubscribe", "x-failed-recipients", "feedback-id", "x-campaign",
+    "x-origenlab-origin",
 )
 
 # A line that starts the quoted history of a reply: «El lun, 6 oct 2026 a las 10:02, X escribió:»,
@@ -57,6 +58,8 @@ class MailText:
     #: What the sender wrote, without quoted history or signature, at most MAX_BODY_CHARS.
     body: str = ""
     body_truncated: bool = False
+    #: The Reply-To address (lower-cased bare address), when present; None otherwise.
+    reply_to: str | None = None
 
 
 def html_to_text(markup: str) -> str:
@@ -121,11 +124,14 @@ def parse_mail(raw: bytes) -> MailText:
         filename = part.get_filename()
         if filename:
             names.append(" ".join(filename.split()))
+    reply_to_raw = str(msg.get("Reply-To", ""))
+    reply_to_addr = parseaddr(reply_to_raw)[1].strip().lower() or None
     body = reply_text(_normalise(_body_part(msg)))
     truncated = len(body) > MAX_BODY_CHARS
     return MailText(
         sender=sender, subject=subject, machine_headers=machine, content_types=tuple(types),
         attachment_names=tuple(names), body=body[:MAX_BODY_CHARS], body_truncated=truncated,
+        reply_to=reply_to_addr,
     )
 
 

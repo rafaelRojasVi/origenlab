@@ -52,6 +52,7 @@ const INTERNAL = [
   'privacidad/index.html',
   'cookies/index.html',
   'aviso-legal/index.html',
+  'contacto/enviado/index.html',
 ];
 
 /**

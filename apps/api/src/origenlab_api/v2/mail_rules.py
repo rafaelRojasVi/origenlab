@@ -49,7 +49,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from email.utils import getaddresses
 from typing import Any
@@ -58,6 +58,10 @@ from zoneinfo import ZoneInfo
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
                              "R14", "R15")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
+
+#: The header value that marks a self-sent web-quote-form message. The triage worker imports
+#: this same constant (triage_rules.py), so both sides agree on the sentinel.
+WEB_QUOTE_ORIGIN: str = "web-quote-form/v1"
 
 #: OrigenLab's own domains: never an institution, never a recipient that counts.
 OWN_DOMAINS: frozenset[str] = frozenset({"origenlab.cl"})
@@ -156,6 +160,11 @@ class MailEvidence:
     #: «quote_request» lets R7 open a request whose subject has no quote word; «supplier_offer»
     #: keeps a supplier's own quotation from opening one.
     model_intent: str | None = None
+    #: Lower-case machine headers set by OrigenLab on self-sent messages (e.g. x-origenlab-origin
+    #: for web-quote-form messages). Absent on all normal inbound/outbound mail.
+    extra_headers: Mapping[str, str] = field(default_factory=dict)
+    #: Reply-To address (lower-cased bare address), set only on web-form self-sent messages.
+    reply_to: str | None = None
 
 
 @dataclass(frozen=True)
@@ -821,6 +830,19 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                 "(se leyó el año de su envío): un humano confirma",),
                 quote_number=canonical_quote_number(key),
                 candidates=tuple(sorted({c.id for c, _ in yearless})))
+
+    # Web-form self-sent message: the public form POSTed to contacto@, which sent itself the
+    # submission. The sender domain is own, the x-origenlab-origin header identifies the source,
+    # and the Reply-To carries the real enquirer. Route as an inbound request from that address.
+    # Same predicate as the triage worker (triage_rules.py → WEB_QUOTE_ORIGIN).
+    sender_addr = _sender(e) or ""
+    if (domain_of(sender_addr) in OWN_DOMAINS
+            and e.extra_headers.get("x-origenlab-origin") == WEB_QUOTE_ORIGIN
+            and e.reply_to is not None):
+        rt_domain = domain_of(e.reply_to)
+        e_as_inbound = replace(e, direction="inbound", sender=e.reply_to,
+                               model_intent="quote_request", requester_checked=True)
+        return _inbound_rules(e_as_inbound, ix, [rt_domain] if rt_domain else [])
 
     if e.direction == "outbound":
         return _creation_rules(e, ix, domains)
@@ -1600,7 +1622,7 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
 __all__ = [
     "AUTO", "CONTACT_SENDER", "FREE_MAIL_DOMAINS", "NOT_CUSTOMER_HINTS", "PURCHASE_ORDER_FILENAME", "LABDELIVERY_MARKERS", "LOST_CLOSE_REASON", "LOST_PHRASES", "NONE",
     "OWN_DOMAINS", "PROPOSAL", "PURCHASE_ORDER_NUMBER", "PURCHASE_ORDER_PHRASES", "QUOTE_REQUEST_WORDS",
-    "RULE_IDS", "SYSTEM_LABEL", "ATTACH_FORWARD", "CONFIRM_ORGANIZATION_RECORD", "InstitutionFacts",
+    "RULE_IDS", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "ATTACH_FORWARD", "CONFIRM_ORGANIZATION_RECORD", "InstitutionFacts",
     "LATE_QUOTE_WINDOW_DAYS", "MACHINE_CREATORS", "SETTLE_DAYS", "UNCONFIRM_ORGANIZATION_RECORD", "UPDATE_ORGANIZATION", "CREATE_REQUEST_FROM_FORWARD_STEP", "CaseQuote", "CaseState", "ForwardRequest", "MailDocument", "MailEvidence", "Organization",
     "PlannedAction", "QuoteRevision", "Snapshot", "addresses", "canonical_quote_number", "domain_of", "fold",
     "gmail_quote_key", "mail_direction", "plan", "quote_key", "quote_number_tokens", "santiago_year",

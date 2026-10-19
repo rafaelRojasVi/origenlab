@@ -13,6 +13,7 @@ from origenlab_api.v2.mail_rules import (
     Organization,
     QuoteRevision,
     Snapshot,
+    WEB_QUOTE_ORIGIN,
     canonical_quote_number,
     gmail_quote_key,
     plan,
@@ -1197,3 +1198,68 @@ def test_a_request_that_already_has_a_quote_or_two_candidates_is_not_guessed() -
     two = (request_case(), request_case(id="c-req2"))
     b = only(Snapshot(evidence=(sent("Esteban <esteban@lab-ficticio.test>"),), cases=two, organizations=(org(**LAB),)))
     assert (b.rule_id, b.mode) == ("R13", "proposal")
+
+
+# ------------------------------------------------------------------ web-quote-form rule
+
+
+def test_web_quote_form_message_opens_case_like_inbound() -> None:
+    """A self-sent web-form message (From == To == contacto@) opens a lead like R7 for the Reply-To."""
+    action = only(Snapshot(
+        evidence=(mail(
+            id="e-web",
+            direction="outbound",
+            sender="contacto@origenlab.cl",
+            recipients=("contacto@origenlab.cl",),
+            subject="sitio web",
+            documents=(),
+            thread_id="t-web-1",
+            extra_headers={"x-origenlab-origin": WEB_QUOTE_ORIGIN},
+            reply_to="lab@empresa.cl",
+        ),),
+        cases=(), organizations=(),
+    ))
+    assert (action.rule_id, action.mode) == ("R7", "auto")
+    assert action.case_title == "Solicitud de cotización — sitio web"
+
+
+def test_self_sent_without_origin_header_stays_outbound() -> None:
+    """A self-sent message without the web-form header takes the normal outbound path (no R7)."""
+    action = only(Snapshot(
+        evidence=(mail(
+            id="e-self",
+            direction="outbound",
+            sender="contacto@origenlab.cl",
+            recipients=("contacto@origenlab.cl",),
+            subject="Prueba interna",
+            documents=(),
+            thread_id="t-self-1",
+            reply_to="lab@empresa.cl",
+        ),),
+        cases=(), organizations=(),
+    ))
+    # No PDF with a new CN number → normal outbound path (R8)
+    assert action.rule_id == "R8"
+
+
+def test_external_message_with_origin_header_is_plain_inbound() -> None:
+    """An inbound message with a forged origin header from a non-own sender is not web-form-routed."""
+    action = only(Snapshot(
+        evidence=(mail(
+            id="e-ext",
+            direction="inbound",
+            sender="attacker@external.test",
+            recipients=("contacto@origenlab.cl",),
+            subject="Solicitud de cotización urgente",
+            documents=(),
+            thread_id="t-ext-1",
+            extra_headers={"x-origenlab-origin": WEB_QUOTE_ORIGIN},
+            reply_to="lab@empresa.cl",
+            requester_checked=True,
+        ),),
+        cases=(), organizations=(),
+    ))
+    # Normal inbound quote request — no Reply-To substitution; sender domain is external.test
+    assert action.rule_id == "R7"
+    # The case title uses the original subject, not "sitio web" from the reply_to path
+    assert action.case_title != "Solicitud de cotización — sitio web"

@@ -45,6 +45,7 @@ from origenlab_api.v2.mail_rules import (
     PURCHASE_ORDER_NUMBER,
     PURCHASE_ORDER_PHRASES,
     QUOTE_REQUEST_WORDS,
+    WEB_QUOTE_ORIGIN,
     fold,
 )
 from origenlab_api.v2.unsubscribe_replies import ACCEPTED_FORMS, classify_reply, reply_text
@@ -57,7 +58,9 @@ from origenlab_worker.mail_text import MailText
 #: v3 (2026-10-12): the same rules; bumped so the messages v2 read with the model switched off
 #: (`model_state: off`) are read again now that the triage worker has the model on. Switch the
 #: model on BEFORE deploying a new version: a version read with the model off is never re-read.
-TRIAGE_VERSION = 3
+#: v4 (2026-10-18): web-quote-form rule before outbound check — self-sent form submissions become
+#: quote_request with sender_domain from Reply-To.
+TRIAGE_VERSION = 4
 
 NOISE_CLASSES: tuple[str, ...] = ("bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification",
                                    "empty")
@@ -206,6 +209,21 @@ def classify(item: TriageInput) -> RuleVerdict:
         return RuleVerdict(triage_class=cls, needs_model=cls in NEEDS_MODEL, reasons=tuple(reasons),
                            **base, **extra)  # type: ignore[arg-type]
 
+    # Web-form self-sent message: From == own domain, x-origenlab-origin header set, Reply-To present.
+    # Fires before the outbound check so the form submission is treated as an inbound quote request.
+    # Same predicate as mail_rules.py (_plan_one); WEB_QUOTE_ORIGIN is the shared sentinel.
+    if (domain in OWN_DOMAINS
+            and mail.machine_headers.get("x-origenlab-origin") == WEB_QUOTE_ORIGIN
+            and mail.reply_to is not None):
+        rt_domain = _domain(mail.reply_to)
+        return RuleVerdict(
+            triage_class="quote_request",
+            needs_model=True,
+            reasons=("header:x-origenlab-origin",),
+            sender_domain=rt_domain,
+            free_mail=rt_domain in FREE_MAIL_DOMAINS if rt_domain else False,
+        )
+
     if item.direction == "outbound" or (domain is not None and domain in OWN_DOMAINS):
         return verdict("outbound", "direction:outbound")
 
@@ -299,5 +317,5 @@ def classify(item: TriageInput) -> RuleVerdict:
     return verdict("business_other", "person:unclassified", **extra)
 
 
-__all__ = ["CLASSES", "NEEDS_MODEL", "NOISE_CLASSES", "ROUTED_CLASSES", "SIGNAL_CLASSES", "TRIAGE_VERSION", "RuleVerdict",
-           "TriageInput", "classify"]
+__all__ = ["CLASSES", "NEEDS_MODEL", "NOISE_CLASSES", "ROUTED_CLASSES", "SIGNAL_CLASSES", "TRIAGE_VERSION", "WEB_QUOTE_ORIGIN",
+           "RuleVerdict", "TriageInput", "classify"]

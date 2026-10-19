@@ -19,6 +19,7 @@ _GMAIL_SEND_ALLOWED = frozenset(
     {
         "v2/gmail_send.py",
         "v2/campaign_test_send.py",
+        "v2/web_quote_form.py",
         "main.py",
     }
 )

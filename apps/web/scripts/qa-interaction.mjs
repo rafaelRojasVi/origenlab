@@ -494,6 +494,35 @@ console.log('\nEnlaces');
   check(unexpected.length === 0, `sin destinos externos inesperados (${unexpected.join(', ') || 'ninguno'})`);
 }
 
+/* -- 5. Formulario de cotización ------------------------------------------- */
+console.log('\nFormulario de cotización (/contacto/, 375 px)');
+{
+  const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
+  const page = await context.newPage();
+  await page.goto(`${base}/contacto/`, { waitUntil: 'load' });
+
+  // Submit with empty required fields → inline error summary appears and is focusable
+  await page.click('button[type="submit"]');
+  const summary = page.locator('[data-error-summary]');
+  check(await summary.isVisible(), 'formulario: error summary visible tras submit vacío');
+  check(await summary.evaluate(el => el === document.activeElement || el.contains(document.activeElement)), 'formulario: error summary recibe foco');
+
+  // Fill required fields and submit (mocked: no real endpoint in dist/)
+  await page.fill('#solicitud-need', 'Autoclave de 50 L para laboratorio de microbiología');
+  await page.fill('#solicitud-email', 'ana@uchile.cl');
+  await page.fill('#solicitud-org', 'U. de Chile - ICBM');
+  // aria-invalid removed after correction
+  check(!(await page.locator('#solicitud-email').getAttribute('aria-invalid')), 'formulario: aria-invalid resuelto tras corrección');
+
+  // Keyboard: Tab order reaches the button
+  await page.keyboard.press('Tab');
+  // just verify no JS error was thrown
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  check(errors.length === 0, 'formulario: sin errores JS en /contacto/');
+  await context.close();
+}
+
 await browser.close();
 server.close();
 

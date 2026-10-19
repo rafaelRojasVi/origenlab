@@ -201,6 +201,13 @@ reference are marketing; `begin_dispatch` and `send_one` refuse a transactional
 attempt whose reference is missing or fails its workflow's preconditions.
 Marketing content cannot be relabelled transactional.
 
+**Web quote form submissions** (`POST /v2/web/quote-request`, flag-gated) are not outbound commercial
+mail: the message goes to contacto@'s own inbox, not to a customer address, and carries no
+marketing content. The `send_control` table, the W10 suppression list, campaign budgets and
+the opt-in / refusal machinery do not apply. The message is identified to the capture triage by
+`X-OrigenLab-Origin: web-quote-form/v1` and a valid `Reply-To`, which together trigger the
+web-quote triage rule (TRIAGE_VERSION 4) and file the email as a Solicitud in Hoy.
+
 **Transactional duplicates are prevented by idempotency, not by
 `prior_contact`**: the command receipt (`platform.command_receipt`), the
 one-open-attempt-per-address index on `send_attempt`, and the document-delivery
