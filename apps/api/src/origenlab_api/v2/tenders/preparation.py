@@ -180,17 +180,42 @@ def output_storage_path(case_id: str, preparation_id: str, output: dict[str, Any
 _QUANTITY_MAX = Decimal("100000")
 _NOTE_MAX = 1000
 _DESCRIPTION_MAX = 500
-_NUMBER = re.compile(r"\d+(?:[.,]\d{1,6})?")
+_THOUSANDS = re.compile(r"\d{1,3}(?:\.\d{3})+(?:,\d+)?")  # 1.000 · 1.000,5
+_COMMA = re.compile(r"\d+,\d+")  # 2,5
+_AMBIGUOUS = re.compile(r"\d{1,3}(?:,\d{3})+")  # 1,000 · 1,000,000: English thousands or a decimal?
+_DOT = re.compile(r"\d+\.\d{1,2}")  # 2.5
+_WITH_UNIT = re.compile(r"(\S+)\s+\D.*", re.DOTALL)  # 10 unidades
+_FILL_NOTE = "Precio por completar: falta tipo de cambio"
+
+
+def _number(text: str) -> Decimal | None:
+    """A Chilean-written number: dots group thousands, a comma is the decimal point. `1,000`
+    (a thousand, or one?) and anything else is ambiguous: None."""
+    if _AMBIGUOUS.fullmatch(text):
+        return None
+    if _THOUSANDS.fullmatch(text):
+        return Decimal(text.replace(".", "").replace(",", "."))
+    if _COMMA.fullmatch(text):
+        return Decimal(text.replace(",", "."))
+    if _DOT.fullmatch(text) or text.isdigit():
+        return Decimal(text)
+    return None
 
 
 def _quantity(raw: Any) -> tuple[Decimal, str | None]:
-    """(quantity, note): the tender's text as a quantity, else 1 with the text kept in a note."""
+    """(quantity, note): the tender's text as a quantity. A bare number is the quantity; a number
+    followed by words ("10 unidades") is that number and keeps the text in a note; anything else, or
+    a quantity that is not above 0, is 1 with the text kept in the note."""
     text = "" if raw is None else str(raw).strip()
-    if _NUMBER.fullmatch(text):
-        value = Decimal(text.replace(",", "."))
-        if 0 < value <= _QUANTITY_MAX:
-            return value, None
-    return Decimal(1), (f"Cantidad según bases: {text}"[:_NOTE_MAX] if text else None)
+    note = f"Cantidad según bases: {text}"[:_NOTE_MAX] if text else None
+    value = _number(text)
+    if value is not None and 0 < value <= _QUANTITY_MAX:
+        return value, None
+    with_unit = _WITH_UNIT.fullmatch(text)
+    value = _number(with_unit.group(1)) if with_unit else None
+    if value is not None and 0 < value <= _QUANTITY_MAX:
+        return value, note
+    return Decimal(1), note
 
 
 def _product_ids(cur: Any, items: list[dict[str, Any]]) -> set[str]:
@@ -206,6 +231,32 @@ def _product_ids(cur: Any, items: list[dict[str, Any]]) -> set[str]:
         return set()
     cur.execute("select id::text from catalog.product where id = any(%s::uuid[])", (wanted,))
     return {r[0] for r in cur.fetchall()}
+
+
+def _joined(*notes: str | None) -> str | None:
+    kept = [n for n in notes if n]
+    return " · ".join(kept)[:_NOTE_MAX] if kept else None
+
+
+def _without_exchange_rate(repo: Any, cur: Any, lines: list[Any]) -> set[int]:
+    """Line numbers of the matched lines whose catalog cost is in a currency with no stored rate. The
+    Cotizador would refuse the whole save (`fx_unavailable`); the offer keeps them as free lines to
+    price by hand instead."""
+    from origenlab_api.v2.quotes.commands import santiago_today
+    from origenlab_api.v2.quotes.draft import QuoteDraft
+    from origenlab_api.v2.quotes.inputs import load_parameters, resolve_draft
+
+    params, today, out = load_parameters(cur), santiago_today(repo._clock()), set()
+    for n, line in enumerate(lines, start=1):
+        if line.product_id is None:
+            continue
+        try:
+            resolve_draft(cur, QuoteDraft(items=[line]), params, repo._fx_resolver, today)
+        except CommandRefused as exc:
+            if exc.code != "fx_unavailable":
+                raise
+            out.add(n)
+    return out
 
 
 def _offer_result(quote_id: str, revision_id: str, quote_number: str, matched: int, free: int,
@@ -225,7 +276,7 @@ def create_tender_offer_quote(
     """
     # Local: the Cotizador's module imports the case repository, which imports the tenders' reads.
     from origenlab_api.v2.quotes.commands import _handle_create_quote, _handle_save_quote_draft
-    from origenlab_api.v2.quotes.draft import DraftItemLine
+    from origenlab_api.v2.quotes.draft import QUOTE_LINES_MAX, DraftItemLine
     from origenlab_api.v2.quotes.inputs import draft_from_rows
 
     opportunity_id, preparation_id = fields["opportunity_id"], fields["preparation_id"]
@@ -248,7 +299,7 @@ def create_tender_offer_quote(
     items = [it for it in (result.get("items") or []) if isinstance(it, dict)]
     if not items:
         raise CommandRefused(422, "no_items", "La lectura no encontró ítems para cotizar.")
-    if len(items) > 60:
+    if len(items) > QUOTE_LINES_MAX:
         raise CommandRefused(422, "too_many_items", "La cotización admite hasta 60 líneas; la lectura trae más.")
 
     cur.execute(
@@ -282,6 +333,10 @@ def create_tender_offer_quote(
         text = str(it.get("descripcion") or "").strip() or f"Ítem {it.get('linea') or n} de las bases"
         lines.append(DraftItemLine(product_id=product, description=text[:_DESCRIPTION_MAX], quantity=quantity,
                                    line_note_es=note))
+    unpriced = _without_exchange_rate(repo, cur, lines)
+    lines = [line.model_copy(update={"product_id": None, "line_note_es": _joined(line.line_note_es, _FILL_NOTE)})
+             if n in unpriced else line for n, line in enumerate(lines, start=1)]
+    matched -= len(unpriced)
     draft = draft_from_rows(revision, []).model_copy(update={"items": lines})
     _handle_save_quote_draft(
         repo, cur, operator,

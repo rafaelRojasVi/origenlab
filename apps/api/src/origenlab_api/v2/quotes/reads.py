@@ -90,8 +90,8 @@ from origenlab_api.v2.quotes.inputs import (
 from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, WEB_FORM_REPLY_TO_SQL, mail_direction, web_form_enquirer
 from origenlab_api.v2.quote_documents import QUOTE_DOCUMENT_COLUMNS, quote_contents, quote_document_join
 from origenlab_api.v2.quotes.numbering import SANTIAGO, numbering_status, revision_label
-from origenlab_api.v2.tenders.bidder import current_bidder_profile, format_rut
 from origenlab_api.v2.quotes.recipients import PERSON_ADDRESS_ORDER, not_a_recipient
+from origenlab_api.v2.tenders.bidder import current_bidder_profile, format_rut
 
 #: R-A5: a model is suggested beside the principal when it is on at least this share of the past
 #: quote documents that carry the principal, and the principal was quoted at least `KIT_MIN_DOCUMENTS` times.

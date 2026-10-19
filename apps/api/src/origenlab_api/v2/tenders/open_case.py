@@ -376,7 +376,9 @@ class V2TenderCommandRepository(V2CaseCommandRepository):
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         super().__init__(connect, dsn, statement_timeout_ms)
         # What the Cotizador's handlers read off their repository (`create-tender-offer-quote` calls
-        # them in its own transaction). The lines it saves carry no cost, so no rate is ever asked.
+        # them in its own transaction). Like the quote commands in production (`no_provider`), no
+        # write transaction asks a provider: only stored rates count, and a matched line whose cost
+        # needs another is saved free (`preparation._without_exchange_rate`).
         self._fx_resolver = fx_resolver
         self._clock = clock
 

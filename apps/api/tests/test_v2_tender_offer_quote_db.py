@@ -237,7 +237,7 @@ def test_a_quantity_that_cannot_be_read_is_one_with_the_text_in_a_note(db, opera
     assert got[0]["line_note_es"] is None
     assert got[1]["line_note_es"] == "Cantidad según bases: según demanda"
     assert got[2]["line_note_es"] == "Cantidad según bases: 0"
-    assert got[3]["line_note_es"] is None or got[3]["line_note_es"].startswith("Cantidad según bases")
+    assert got[3]["line_note_es"] is None
 
 
 def test_a_second_call_returns_the_same_draft_and_mints_nothing(db, operators, client) -> None:
@@ -388,3 +388,50 @@ def test_an_approved_offer_is_not_replaced_by_a_second_quote(db, operators, clie
     assert r.status_code == 409 and code(r) == "offer_quote_exists", r.text
     with _owner_conn(db) as conn:
         assert conn.execute("select count(*) from crm.quote where opportunity_id = %s", (case,)).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("text, quantity, note", [
+    ("1.000", "1000", None),
+    ("1.000,5", "1000.5", None),
+    ("2,5", "2.5", None),
+    ("2.5", "2.5", None),
+    ("12", "12", None),
+    ("10 unidades", "10", "Cantidad según bases: 10 unidades"),
+    ("5 un", "5", "Cantidad según bases: 5 un"),
+    ("1.000 un", "1000", "Cantidad según bases: 1.000 un"),
+    ("1,000", "1", "Cantidad según bases: 1,000"),
+    ("2.555", "2555", None),
+    ("abc", "1", "Cantidad según bases: abc"),
+    ("0", "1", "Cantidad según bases: 0"),
+    ("", "1", None),
+])
+def test_quantity_text_as_chilean_numbers(text, quantity, note) -> None:
+    from decimal import Decimal
+
+    from origenlab_api.v2.tenders.preparation import _quantity
+
+    assert _quantity(text) == (Decimal(quantity), note)
+
+
+def test_a_matched_line_whose_cost_needs_a_missing_rate_is_a_free_line_with_a_note(db, operators, client) -> None:
+    tag = uuid.uuid4().hex[:6]
+    product = make_product(db)
+    with _owner_conn(db) as conn:
+        supplier = conn.execute("insert into crm.organization (kind, name, confirmation) values ('company', %s, "
+                                "'confirmed') returning id::text", (f"Proveedor Ejemplo {tag}",)).fetchone()[0]
+        conn.execute("insert into catalog.supplier_product (supplier_organization_id, product_id, as_of, price, "
+                     "currency, price_kind, provenance_note) values (%s, %s, now() - interval '3 days', 1000, 'USD', "
+                     "'dealer_net', 'prueba')", (supplier, product))
+    case, _ = open_tender(db, operators)
+    other = make_product(db)
+    prep = add_read(db, case, operators, [item(1, "Balanza con costo en dólares", "3", product_id=product),
+                                          item(2, "Pesas", "1", product_id=other)])
+    r = ask(client, case, prep)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["matched"], body["free"]) == (1, 1)
+    got = lines(db, body["revision_id"])
+    assert got[0]["product_id"] is None and int(got[0]["quantity"]) == 3
+    assert got[0]["description"] == "Balanza con costo en dólares"
+    assert got[0]["line_note_es"] == "Precio por completar: falta tipo de cambio"
+    assert got[1]["product_id"] == other

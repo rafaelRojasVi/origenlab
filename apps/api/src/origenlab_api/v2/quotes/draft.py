@@ -13,6 +13,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+#: Item lines a quote draft holds.
+QUOTE_LINES_MAX = 60
 ItemType = Literal["equipment", "accessory", "consumable", "spare_part", "service", "other"]
 Currency = Literal["CLP", "EUR", "USD"]
 _Text1000 = Annotated[str, StringConstraints(min_length=1, max_length=1000)]
@@ -133,7 +135,7 @@ class DraftClientDetails(_Model):
 
 
 class QuoteDraft(_Model):
-    items: list[DraftItemLine] = Field(default_factory=list, max_length=60)
+    items: list[DraftItemLine] = Field(default_factory=list, max_length=QUOTE_LINES_MAX)
     manual_expenses: list[DraftExpenseLine] = Field(default_factory=list, max_length=20)
     expense_method: Literal["profile", "dhl_calc", "manual"] = "profile"
     allocation_mode: Literal["principal", "proportional_cost"] = "principal"
