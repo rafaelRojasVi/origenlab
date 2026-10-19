@@ -77,7 +77,7 @@ from origenlab_api.v2.case_commands import SUPPLIER_RELATIONSHIP_ROLES
 from origenlab_api.v2.catalog.reads import V2CatalogReads, _like_escape, _plain
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.quotes.draft import PreviewQuoteBody, QuoteDraft
-from origenlab_api.v2.quotes.economics import frozen_economics, month_range, report
+from origenlab_api.v2.quotes.economics import frozen_economics, frozen_line_economics, month_range, report
 from origenlab_api.v2.quotes.inputs import (
     PARAMETERS_SQL,
     FxResolver,
@@ -1171,8 +1171,9 @@ class V2QuoteReads:
             out["party_snapshot"] = revision.get("party_snapshot")
             # An issued revision's economics are what approval froze; an imported quote has none
             # (its import costs were never recorded).
-            out["economics"] = (frozen_economics(revision, lines, params)
-                                if revision["origin"] == "authored" else None)
+            authored = revision["origin"] == "authored"
+            out["economics"] = frozen_economics(revision, lines, params) if authored else None
+            out["line_economics"] = frozen_line_economics(revision, lines, params) if authored else None
         return out
 
     @classmethod

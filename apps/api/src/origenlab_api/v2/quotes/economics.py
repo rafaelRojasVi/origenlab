@@ -89,14 +89,74 @@ def economics_json(inp: EngineInput, result: EngineResult) -> dict[str, Any]:
     return _plain(economics(inp, result))
 
 
+def line_economics(inp: EngineInput, result: EngineResult) -> list[dict[str, Any]]:
+    """Each item line's «Me cuesta → margen → Le cobro» (the Cotizador's cost strip), off the engine's result.
+
+    `cost_clp` is quantity × the line's cost in pesos (J15) plus the import expenses the engine
+    allocated to it (P15); `sale_net_clp` its total (W15); `gain_clp` the difference;
+    `gross_margin` the engine's own (V15) to four decimals, `margin_state` its band. The IVA is the
+    quote's rate over the line's neto, for information. Money in whole pesos. Three states carry no
+    margin, so the strip never shows a false one:
+
+    * `no_cost` — the line has no cost (the engine's state);
+    * `no_price` — a cost but no price: its own cost only, no share of the expenses (as «Economía»,
+      which counts only priced lines);
+    * `expenses_unallocated` — the quote has import expenses and no principal line to carry them
+      (`principal_missing`): every line's cost lacks them, so no line's margin is true.
+    """
+    by_no = {line.line_no: line for line in inp.items}
+    unallocated = result.principal_line_no is None and result.expenses_clp > 0
+    out: list[dict[str, Any]] = []
+    for r in result.lines:
+        quantity = by_no[r.line_no].quantity
+        sale = None if r.line_total is None else peso(r.line_total)
+        product = None if r.cost_clp_unit is None else peso(quantity * r.cost_clp_unit)
+        expenses = peso(r.expense_to_line) if sale is not None else ZERO
+        cost = None if product is None else peso(quantity * r.cost_clp_unit + expenses)
+        state, margin = r.margin_state, r.gross_margin
+        if product is not None and sale is None:
+            state, margin = "no_price", None
+        elif product is not None and unallocated:
+            state, margin = "expenses_unallocated", None
+        if margin is not None:
+            margin = margin.quantize(_PCT, rounding=ROUND_HALF_UP)
+        iva = None if sale is None else peso(sale * inp.iva_rate)
+        out.append({
+            "line_no": r.line_no, "product_cost_clp": product, "expenses_clp": expenses,
+            "cost_clp": cost, "sale_net_clp": sale,
+            "gain_clp": None if margin is None or cost is None or sale is None else sale - cost,
+            "gross_margin": margin, "margin_state": state,
+            "iva_clp": iva, "total_with_iva_clp": None if sale is None else sale + iva,
+        })
+    return out
+
+
+def line_economics_json(inp: EngineInput, result: EngineResult) -> list[dict[str, Any]]:
+    """`line_economics` with every amount as a string: what a response carries."""
+    return _plain(line_economics(inp, result))
+
+
+def _frozen(revision: dict[str, Any], lines: list[dict[str, Any]],
+            params: dict[str, Decimal | str]) -> tuple[EngineInput, EngineResult] | None:
+    try:
+        inp = engine_input_from_rows(revision, lines, params)
+        return inp, compute(inp)
+    except EngineError:
+        return None
+
+
 def frozen_economics(revision: dict[str, Any], lines: list[dict[str, Any]],
                      params: dict[str, Decimal | str]) -> dict[str, Any] | None:
     """A stored revision's economics, priced as approval prices it; None when it cannot be priced."""
-    try:
-        inp = engine_input_from_rows(revision, lines, params)
-        return economics(inp, compute(inp))
-    except EngineError:
-        return None
+    priced = _frozen(revision, lines, params)
+    return None if priced is None else economics(*priced)
+
+
+def frozen_line_economics(revision: dict[str, Any], lines: list[dict[str, Any]],
+                          params: dict[str, Decimal | str]) -> list[dict[str, Any]] | None:
+    """A stored revision's per-line cost strip (`line_economics`, as strings); None when it cannot be priced."""
+    priced = _frozen(revision, lines, params)
+    return None if priced is None else line_economics_json(*priced)
 
 
 # -- the period report (`GET /v2/quotes/economics`)

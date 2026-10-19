@@ -3238,3 +3238,46 @@ automatic timer, switch, receipts (`mail-rule:<subject>:<rule>`, `actor_kind = '
   `test_v2_mail_rules_obvious_db.py`, `test_v2_mail_rules_auto.py`, `test_v2_crm_authoring.py`,
   `test_v2_triage_review.py`; vitest `operations.test.ts`, `triage.test.ts`,
   `OperacionesPage.test.tsx`, `webSuggestions.test.tsx`.
+
+### 2.7.137 Cotizador: what each line costs against what it sells for; expense types chosen, not guessed; «DHL calculado» withdrawn, 2026-10-19 — built, deploys on merge
+
+Owner, 2026-10-19 (mockup «Lo que cuesta y lo que se cobra»): on a real quote the operator typed
+manual expenses with free names (a courier and a person), and «Economía de la cotización» put all of
+them in «Otros gastos» because the split guessed from the name. «DHL calculado» never worked: catalog
+products carry no weight or origin and no DHL rate parameters are loaded, so it always fell back to
+the profile.
+
+- **Cost strip under each line** (editor and the approved revision's «Productos»): «Me cuesta» (the
+  line's cost in pesos × quantity plus the import expenses the engine allocated to it, with «equipo
+  $ + gastos $») → the margin pill and «gano $» → «Le cobro (neto)» with «+ IVA =». Every number is
+  the API's: `computed.line_economics` (preview, save, workspace draft) and, for an issued authored
+  revision, `current.line_economics` priced from the stored lines as approval froze them
+  (`v2/quotes/economics.line_economics`; null for an imported quote). The pill is green inside the
+  Preferencias margin range, amber outside, red at a loss. Same audience as the rest of the
+  Cotizador (sales and admin; the API refuses a viewer), hidden in «Vista cliente», never in
+  `printableQuote` or the print view (tested).
+  No false margin: a line with a cost and no price shows «Falta precio» and its own cost only (no
+  share of the expenses, as «Economía» counts only priced lines); import expenses with no principal
+  line (`principal_missing`) give no line a margin (`expenses_unallocated`) and the section says
+  once «Elige el equipo principal para repartir los gastos de importación». Money in whole pesos,
+  the margin to four decimals, server-side.
+- **Expense «Tipo».** A manual expense is now Tipo (Flete, Agente de aduana, Derechos y aduana,
+  Transporte local, Otro) + optional Detalle + amount. **No migration:** the type is stored in the
+  label as «Tipo — Detalle» (or the type alone), and `quoting.expenses.expense_category` reads that
+  type first, whatever the detail says. An older free label opens with the type the guesser reads in
+  it (a dashboard port, `expenseKind.ts`, checked against the API with the same vectors,
+  `expenseKindVectors.json`) and is kept as typed until the row is changed. A detail too long to fit
+  after the type (an old 101–120-character label) is cut with «…» so the row still saves. The guesser now also
+  reads «dhl», «envío/envio», «fedex», «ups», «courier» as freight (whole words for the short ones;
+  «Despacho DHL» stays the agent's).
+- **«DHL calculado» withdrawn from the editor** (only Perfil and Manual). The API still accepts,
+  stores and re-prices `expense_method = 'dhl_calc'`. A draft saved with it opens unchanged — its
+  lines read-only as computed, a note saying the method is no longer offered — and nothing changes
+  until the operator picks Perfil or «Editar montos» (which copies its lines into Manual, typed by
+  their names). Chosen over converting on open: opening a quote writes nothing.
+- Existing approved quotes are not re-split: their stored labels are read with the extended guesser,
+  so a courier name already moves from «Otros gastos» to «Flete»; a person's name stays «Otros»
+  until a new revision chooses its type.
+- No migration, no proxy change. Tests: API `test_v2_quote_economics.py`; vitest
+  `expenseKind.test.ts`, `CostStrip.test.tsx`, `ExpensesSection.test.tsx`, `ProductsSection.test.tsx`,
+  `QuotePrintView.test.tsx`, `CotizadorPage.test.tsx`, `draftEditor.test.ts`.

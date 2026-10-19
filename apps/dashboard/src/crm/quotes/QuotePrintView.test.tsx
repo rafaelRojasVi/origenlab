@@ -7,7 +7,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CatalogIndex } from "../catalog/catalogIndex";
 import { isPrintable, printableQuote } from "./printableQuote";
-import { computedFixture, economicsFixture, workspaceFixture } from "./quoteFixtures";
+import { computedFixture, economicsFixture, lineEconomics, workspaceFixture } from "./quoteFixtures";
 import type { ComputedLine, QuoteStoredLine, QuoteWorkspace } from "./quoteApi";
 import { QuotePrintView } from "./QuotePrintView";
 
@@ -231,6 +231,22 @@ describe("Vista previa PDF — «Economía de la cotización» stays internal", 
     const t = dialog.textContent ?? "";
     expect(t).not.toMatch(/Economía|713[.,]?713|424[.,]?242|313[.,]?131|162[.,]?045|12,5 %|gastos de importación/i);
   });
+  it("the cost strip under each line (`line_economics`) is copied nowhere and never printed", () => {
+    const strip = [lineEconomics({ line_no: 1, cost_clp: "8181818", gain_clp: "3737373", product_cost_clp: "5151515", expenses_clp: "3030303" })];
+    const draft = pricedDraft();
+    draft.current = { ...draft.current!, computed: { ...draft.current!.computed!, line_economics: strip } };
+    const issued = approved();
+    issued.current = { ...issued.current!, line_economics: strip };
+    for (const ws of [draft, issued]) {
+      const q = printableQuote(ws, null, new Date("2026-10-19T12:00:00Z"))!;
+      expect(JSON.stringify(q)).not.toMatch(/line_economics|8181818|3737373|5151515|3030303/);
+      cleanup();
+      const dialog = show(ws);
+      expect(within(dialog).queryByTestId("cost-strip")).toBeNull();
+      expect(dialog.textContent ?? "").not.toMatch(/Me cuesta|gano|Le cobro|8[.,]?181[.,]?818|3[.,]?737[.,]?373/);
+    }
+  });
+
   it("prints «Datos del cliente» frozen at approval, and an address-only name once", () => {
     const ws = approved();
     const snap = ws.current!.party_snapshot as Record<string, unknown>;

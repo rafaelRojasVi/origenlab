@@ -494,8 +494,8 @@ export function draftProblems(draft: QuoteDraft): DraftProblem[] {
 
   if (draft.manual_expenses.length > 20) add("manual_expenses", "Máximo 20 gastos de importación.");
   draft.manual_expenses.forEach((e, i) => {
-    if (blank(e.label)) add("manual_expenses.label", "Escribe el nombre del gasto.", i);
-    else if (tooLong(e.label, 120)) add("manual_expenses.label", "El nombre del gasto es demasiado largo (máximo 120).", i);
+    if (blank(e.label)) add("manual_expenses.label", "Elige el tipo de gasto.", i);
+    else if (tooLong(e.label, 120)) add("manual_expenses.label", "El detalle del gasto es demasiado largo.", i);
     add("manual_expenses.amount", decimalProblem(e.amount, "el monto del gasto"), i);
   });
 

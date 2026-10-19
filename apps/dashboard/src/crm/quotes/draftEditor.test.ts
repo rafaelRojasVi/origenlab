@@ -311,7 +311,7 @@ describe("draftProblems", () => {
   it("asks for an expense's name and a valid amount", () => {
     const d = { ...draftFixture(), manual_expenses: [{ label: " ", amount: "10", currency: "CLP" as const }, { label: "Flete", amount: "x", currency: "USD" as const }] };
     expect(draftProblems(d)).toEqual([
-      { index: 0, field: "manual_expenses.label", message_es: "Escribe el nombre del gasto." },
+      { index: 0, field: "manual_expenses.label", message_es: "Elige el tipo de gasto." },
       expect.objectContaining({ index: 1, field: "manual_expenses.amount" }),
     ]);
   });

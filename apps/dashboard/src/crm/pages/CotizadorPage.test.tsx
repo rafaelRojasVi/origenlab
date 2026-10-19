@@ -9,7 +9,7 @@ import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { clearCatalogIndexMemory } from "../catalog/catalogIndex";
 import type { QuoteDraft } from "../quotes/quoteApi";
-import { computedFixture, workspaceFixture } from "../quotes/quoteFixtures";
+import { computedFixture, lineEconomics, workspaceFixture } from "../quotes/quoteFixtures";
 import { SAVE_DELAY_MS } from "../quotes/useQuoteDraft";
 import { Toaster } from "../ui";
 import { clearResourceCache } from "../useResource";
@@ -585,6 +585,22 @@ describe("Cotizador page — an approved revision, read-only", () => {
     expect(screen.queryByRole("button", { name: "Emitir cotización" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Nueva revisión" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Anular" })).toBeInTheDocument();
+  });
+
+  it("shows each approved line's cost strip as approval froze it, and never prints it", async () => {
+    const ws = issuedWorkspace();
+    stubApi(() => json({}), () => ({ ...ws, current: { ...ws.current, line_economics: [lineEconomics({ line_no: 1, sale_net_clp: "400000", cost_clp: "280000", gain_clp: "120000", gross_margin: "0.3", product_cost_clp: "200000", expenses_clp: "80000", total_with_iva_clp: "476000" })] } }));
+    renderPage();
+    const lines = await screen.findByRole("table", { name: "Líneas aprobadas" });
+    const strips = within(lines).getAllByTestId("cost-strip");
+    expect(strips).toHaveLength(1);
+    expect(strips[0]).toHaveAccessibleName("Costo y margen de la línea 1");
+    expect(strips[0]).toHaveTextContent("Me cuesta$ 280.000equipo $ 200.000 + gastos $ 80.000");
+    expect(strips[0]).toHaveTextContent("gano $ 120.000");
+    fireEvent.click(screen.getByRole("button", { name: "Vista previa PDF" }));
+    const dialog = await screen.findByRole("dialog", { name: /Vista previa PDF · CN00042/ });
+    expect(within(dialog).queryByTestId("cost-strip")).toBeNull();
+    expect(dialog.textContent).not.toMatch(/Me cuesta|gano|280\.000/);
   });
 
   it("«Nueva revisión» opens the next draft", async () => {

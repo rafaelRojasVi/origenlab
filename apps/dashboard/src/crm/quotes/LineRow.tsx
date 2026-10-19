@@ -8,11 +8,15 @@
  * or after «cambiar costo»; a typed cost replaces the catalog's (`cost_observation_id` cleared) and
  * «usar costo del catálogo» drops it. While the prices are for an older draft (`stale`), the
  * numbers are dimmed and marked busy.
+ *
+ * Under the numbers, the cost strip («Me cuesta → margen → Le cobro», `CostStrip`) reads the API's
+ * `line_economics` for the line; never in «Vista cliente».
  */
 import { useEffect, useRef, useState } from "react";
 import { formatMoney } from "../money";
 import type { DraftProblem } from "./draftEditor";
-import type { ComputedLine, QuoteDraftItem } from "./quoteApi";
+import { CostStrip } from "./CostStrip";
+import type { ComputedLine, LineEconomics, QuoteDraftItem } from "./quoteApi";
 import { amountTextToDecimal, decimalToPercentText, formatPct, percentTextToDecimal, priceTextToDecimal, readQuantity } from "./quoteFormat";
 import { ProductImage } from "../catalog/ProductImage";
 
@@ -183,6 +187,7 @@ export function LineRow({
   index,
   item,
   line,
+  economics = null,
   product,
   currency,
   problems,
@@ -198,6 +203,8 @@ export function LineRow({
   item: QuoteDraftItem;
   /** The API's priced line for this item, or null until it answers. */
   line: ComputedLine | null;
+  /** The API's cost strip for this line (`computed.line_economics`), or null until it answers. */
+  economics?: LineEconomics | null;
   product: LineProduct | null;
   currency: string;
   problems: DraftProblem[];
@@ -473,6 +480,9 @@ export function LineRow({
           ) : null}
         </div>
       </div>
+
+      {/* Cost against price, for the operator only. */}
+      {!clientView && economics ? <CostStrip economics={economics} n={n} stale={stale} /> : null}
 
       {/* The line's note and problems: under both tiers, not a column of their own. */}
       {!showNote && !disabled ? (

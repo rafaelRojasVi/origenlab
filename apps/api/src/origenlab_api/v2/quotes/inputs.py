@@ -503,7 +503,7 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
         })
     target = expense_target(resolved, result)
     # Local: `economics` prices stored revisions through this module.
-    from origenlab_api.v2.quotes.economics import economics_json
+    from origenlab_api.v2.quotes.economics import economics_json, line_economics_json
 
     return {
         "lines": lines,
@@ -519,6 +519,8 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
         "warnings": [*resolved.warnings, *result.warnings],
         # «Economía de la cotización»: sale, product cost, import costs by kind, gross margin.
         "economics": economics_json(resolved.engine_input, result),
+        # The cost strip under each line («Me cuesta → margen → Le cobro»), line by line.
+        "line_economics": line_economics_json(resolved.engine_input, result),
     }
 
 

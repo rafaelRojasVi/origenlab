@@ -1,4 +1,4 @@
-import type { Computed, EconomicsReport, EconomicsRow, QuoteDraft, QuoteEconomics, QuoteWorkspace } from "./quoteApi";
+import type { Computed, EconomicsReport, EconomicsRow, QuoteDraft, LineEconomics, QuoteEconomics, QuoteWorkspace } from "./quoteApi";
 
 /** Test fixtures for the quote editor. Synthetic values only: this repository is public. */
 
@@ -165,5 +165,22 @@ export function economicsReportFixture(): EconomicsReport {
     months: [{ month: "2026-10", ...totals }],
     totals: { ...totals, drafts: { quotes: 1, sale_net_clp: "2602000" } },
     params: { margin_target_min: "0.25", margin_target_max: "0.45" },
+  };
+}
+
+/** One line's cost strip (`line_economics`): $ 450.000 + $ 430.000 of expenses, sold at $ 1.275.000. */
+export function lineEconomics(over: Partial<LineEconomics> = {}): LineEconomics {
+  return {
+    line_no: 1,
+    product_cost_clp: "450000",
+    expenses_clp: "430000",
+    cost_clp: "880000",
+    sale_net_clp: "1275000",
+    gain_clp: "395000",
+    gross_margin: "0.3098",
+    margin_state: "on_target",
+    iva_clp: "242250",
+    total_with_iva_clp: "1517250",
+    ...over,
   };
 }

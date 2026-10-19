@@ -16,7 +16,7 @@ import pytest
 from origenlab_api.quoting.engine import EngineInput, ExpenseLine, ItemLine, compute
 from origenlab_api.quoting.expenses import expense_category
 from origenlab_api.v2.commands import CommandRefused
-from origenlab_api.v2.quotes.economics import economics, month_range
+from origenlab_api.v2.quotes.economics import economics, line_economics, month_range
 from origenlab_api.v2.quotes.reads import V2QuoteReads
 from test_v2_quote_reads import _Counting
 from test_v2_quote_commands import PROFILE, WARRANTY, _case, _make_operator, _org, _owner, _param, _run, fake_fx
@@ -219,6 +219,52 @@ def test_the_workspace_carries_the_same_economics(world, built) -> None:
     assert reads.workspace(built["historical"])["current"]["economics"] is None
 
 
+def test_line_economics_with_expenses_and_no_principal_shows_no_margin() -> None:
+    # Expenses the engine could not place: no line's margin is true, so none is given.
+    inp = _inp([ItemLine(1, D(1), "equipment", D(450000), "CLP", True, "none", None, D(1275000))],
+               [ExpenseLine(2, "Flete", D(350000), "CLP", "manual")])
+    result = compute(inp)
+    assert result.principal_line_no is None
+    [line] = line_economics(inp, result)
+    assert line["margin_state"] == "expenses_unallocated"
+    assert line["gross_margin"] is None and line["gain_clp"] is None
+    assert line["cost_clp"] == D(450000) and line["sale_net_clp"] == D(1275000)
+
+
+def test_a_line_with_cost_and_no_price_shows_its_own_cost_only() -> None:
+    inp = _inp([ItemLine(1, D(2), "equipment", D(1000), "CLP", True, "markup", None, None, True)],
+               [ExpenseLine(2, "Flete", D(500), "CLP", "manual")])
+    [line] = line_economics(inp, compute(inp))
+    assert line["margin_state"] == "no_price"
+    assert line["cost_clp"] == D(2000) and line["expenses_clp"] == D(0)
+    assert line["sale_net_clp"] is None and line["gain_clp"] is None and line["gross_margin"] is None
+
+
+def test_line_economics_money_is_whole_pesos_and_the_margin_four_decimals() -> None:
+    inp = _inp([ItemLine(1, D(3), "equipment", D("1000.4"), "CLP", True, "markup", D("0.3333"), None, True)],
+               [ExpenseLine(2, "Flete", D(1000), "CLP", "manual")])
+    [line] = line_economics(inp, compute(inp))
+    for key in ("product_cost_clp", "expenses_clp", "cost_clp", "sale_net_clp", "gain_clp", "iva_clp", "total_with_iva_clp"):
+        assert line[key] == line[key].quantize(D(1)), key
+    assert line["gross_margin"] == line["gross_margin"].quantize(D("0.0001"))
+    assert line["gross_margin"].as_tuple().exponent == -4
+
+
+@needs_db
+def test_each_line_carries_its_cost_margin_and_price_draft_and_issued(world, built) -> None:
+    reads = _reads(world["dsn"])
+    issued = reads.workspace(built["full"]["quote_id"])["current"]
+    live = reads.workspace(built["draft"]["quote_id"])["current"]
+    # The same draft priced live and frozen at approval: the same lines, in strings.
+    assert issued["line_economics"] == live["computed"]["line_economics"]
+    principal, free = live["computed"]["line_economics"]
+    assert Decimal(principal["expenses_clp"]) > 0 and free["expenses_clp"] == "0"
+    assert Decimal(principal["cost_clp"]) == Decimal(principal["product_cost_clp"]) + Decimal(principal["expenses_clp"])
+    assert Decimal(free["gain_clp"]) == Decimal(free["sale_net_clp"]) - Decimal(free["cost_clp"])
+    assert sum(Decimal(l["sale_net_clp"]) for l in (principal, free)) == Decimal(live["computed"]["totals"]["net"])
+    assert reads.workspace(built["historical"])["current"]["line_economics"] is None
+
+
 @needs_db
 def test_the_report_reads_in_a_constant_number_of_statements(world, built) -> None:
     def statements(**period) -> int:
@@ -245,6 +291,56 @@ def test_expense_categories_by_parameter_then_label() -> None:
     assert expense_category("Derechos y aduana", None) == "customs"
     assert expense_category("Gastos de aduana", None) == "customs"
     assert expense_category("Embalaje especial", None) == "other"
+
+
+def test_a_typed_expense_label_says_its_category_whatever_its_detail() -> None:
+    # The editor stores «Tipo — Detalle»: the type decides, never a word in the detail.
+    assert expense_category("Flete — envío urgente", None) == "freight"
+    assert expense_category("Agente de aduana — Agente Ficticio", None) == "agent"
+    assert expense_category("Derechos y aduana — partida ficticia", None) == "customs"
+    assert expense_category("Transporte local — camión", None) == "transport"
+    assert expense_category("Otro — flete de embalaje", None) == "other"
+    assert expense_category("Otro", None) == "other"
+    assert expense_category("Flete", None) == "freight"
+    assert expense_category("flete — minúsculas", None) == "freight"
+
+
+def test_courier_words_in_a_free_label_are_freight() -> None:
+    for label in ("DHL Envio", "Envío urgente", "envio", "FedEx", "UPS", "Courier ficticio", "Pago a DHL"):
+        assert expense_category(label, None) == "freight", label
+    # A word that merely contains the letters is not a courier; the DHL clearance stays the agent's.
+    assert expense_category("Grupos de trabajo", None) == "other"
+    assert expense_category("Despacho DHL", {}) == "agent"
+
+
+def test_the_dashboard_guesser_agrees_with_this_one() -> None:
+    """The editor shows an old free label's type with a port of `expense_category`; same vectors."""
+    import json
+    from pathlib import Path
+
+    vectors = Path(__file__).resolve().parents[2] / "dashboard/src/crm/quotes/expenseKindVectors.json"
+    cases = json.loads(vectors.read_text(encoding="utf-8"))
+    assert len(cases) >= 20
+    for label, category in cases:
+        assert expense_category(label, None) == category, label
+
+
+def test_line_economics_is_cost_with_its_expenses_against_the_neto() -> None:
+    inp = _inp([ItemLine(1, D(1), "equipment", D(450000), "CLP", True, "none", None, D(1275000), True),
+                ItemLine(2, D(2), "service", None, None, False, "none", None, D(1000))],
+               [ExpenseLine(3, "Flete — envío", D(350000), "CLP", "manual"),
+                ExpenseLine(4, "Agente de aduana — Agente Ficticio", D(80000), "CLP", "manual")])
+    result = compute(inp)
+    first, second = line_economics(inp, result)
+    assert first == {"line_no": 1, "product_cost_clp": D(450000), "expenses_clp": D(430000),
+                     "cost_clp": D(880000), "sale_net_clp": D(1275000), "gain_clp": D(395000),
+                     "gross_margin": D("0.3098"), "margin_state": "on_target",
+                     "iva_clp": D(242250), "total_with_iva_clp": D(1517250)}
+    # No cost: what it is sold for is known, what it earns is not.
+    assert second["cost_clp"] is None and second["gain_clp"] is None and second["gross_margin"] is None
+    assert second["sale_net_clp"] == D(2000) and second["iva_clp"] == D(380) and second["margin_state"] == "no_cost"
+    assert economics(inp, result)["import_costs_split"]["freight"] == D(350000)
+    assert economics(inp, result)["import_costs_split"]["agent"] == D(80000)
 
 
 def _inp(items, expenses=()) -> EngineInput:
