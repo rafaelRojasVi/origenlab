@@ -134,6 +134,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/bidder$/,
   /^\/v2\/bidder\/documents\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/url$/,
   /^\/v2\/tenders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  // One output file of a preparation: a signed link (GET-only; a `viewer` is 403 upstream).
+  /^\/v2\/tenders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/preparations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/files\/[a-z0-9_-]{1,64}\/url$/,
   /^\/v2\/workspace\/pipeline$/,
   /^\/v2\/workspace\/drive$/,
   /^\/v2\/workspace\/review$/,
@@ -358,6 +360,8 @@ export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
   // (`add-bidder-document`) is multipart and listed with the other uploads.
   /^\/v2\/commands\/save-bidder-profile$/,
   /^\/v2\/commands\/retire-bidder-document$/,
+  // Ask for a bid preparation (`read` or `fill`); the worker runs it.
+  /^\/v2\/commands\/prepare-tender-bid$/,
 ];
 
 /** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */

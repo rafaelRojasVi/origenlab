@@ -56,6 +56,7 @@ from origenlab_api.v2.tenders.bidder import (
 )
 from origenlab_api.v2.tenders.codes import TenderReferenceInvalid, parse_tender_reference, portal_url
 from origenlab_api.v2.tenders.mercado_publico import TenderDetail, fetch_tender_detail
+from origenlab_api.v2.tenders.preparation import PREPARE_TENDER_BID, request_bid_preparation
 from origenlab_api.v2.tenders.status import SET_TENDER_STATUS, set_tender_status
 
 OPEN_TENDER_CASE = "open-tender-case"
@@ -360,6 +361,7 @@ class V2TenderCommandRepository(V2CaseCommandRepository):
         ADD_BIDDER_DOCUMENT: add_bidder_document,
         ATTACH_TENDER_ANNEXES: attach_tender_annexes,
         RETIRE_BIDDER_DOCUMENT: retire_bidder_document,
+        PREPARE_TENDER_BID: request_bid_preparation,
     }
 
     def case_kind(self, opportunity_id: str) -> str | None:

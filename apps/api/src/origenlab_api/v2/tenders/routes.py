@@ -10,6 +10,8 @@
 | `POST /v2/commands/add-bidder-document` | multipart: one standard document, stored then recorded |
 | `POST /v2/commands/retire-bidder-document` | one document retired, with its reason |
 | `POST /v2/commands/attach-tender-annexes` | multipart: 1–20 files or a zip of anexos onto a tender (`annexes.py`) |
+| `POST /v2/commands/prepare-tender-bid` | queue a bid preparation, phase `read` or `fill` (`preparation.py`) |
+| `GET /v2/tenders/{id}/preparations/{prep}/files/{key}/url` | a signed URL for one output file, 10 minutes |
 | `GET /v2/bidder` | the profile, its history and the live documents |
 | `GET /v2/bidder/documents/{id}/url` | a signed URL valid 10 minutes |
 
@@ -71,6 +73,12 @@ from origenlab_api.v2.tenders.bidder import (
     prepare_save_bidder_profile,
 )
 from origenlab_api.v2.tenders.mercado_publico import fetch_tender_detail
+from origenlab_api.v2.tenders.preparation import (
+    FILE_KEY,
+    PREPARE_TENDER_BID,
+    PrepareTenderBidBody,
+    output_storage_path,
+)
 from origenlab_api.v2.tenders.reads import TenderReadRepository
 from origenlab_api.v2.tenders.status import (
     SET_TENDER_STATUS,
@@ -425,3 +433,53 @@ def bidder_document_url(document_id: str, _: BidderOperator, repo: ReadRepo, req
                                          "message": "document storage is unavailable"}) from None
     response.headers["Cache-Control"] = "no-store"
     return {"url": url, "expires_in": SIGNED_URL_SECONDS, "filename": row[1]}
+
+
+@tender_command_router.post("/prepare-tender-bid")
+def prepare_tender_bid_route(
+    body: PrepareTenderBidBody,
+    operator: Deciding,
+    repo: V2TenderCommandRepository = Depends(get_tender_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Queue a bid preparation (`read` of the anexos, or `fill` of the forms and offer).
+
+    The answer carries `preparation_id`; the worker does the rest. Refusals are in `preparation.py`.
+    """
+    try:
+        key = require_idempotency_key(idempotency_key)
+        fields = {"opportunity_id": as_uuid(body.opportunity_id, "opportunity_id"), "phase": body.phase}
+        return repo.execute(command_name=PREPARE_TENDER_BID, operator=operator, fields=fields,
+                            idempotency_key=key, digest=request_digest(PREPARE_TENDER_BID, body))
+    except CommandRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
+
+
+@tender_read_router.get("/{tender_id}/preparations/{preparation_id}/files/{file_key}/url")
+def preparation_file_url(tender_id: str, preparation_id: str, file_key: str, _: BidderOperator, repo: ReadRepo,
+                         request: Request, response: Response) -> dict[str, Any]:
+    """A signed URL for one output file of a preparation, valid `SIGNED_URL_SECONDS` (10 minutes)."""
+    not_found = HTTPException(404, detail={"code": "file_not_found", "message": "No existe ese archivo."})
+    if not FILE_KEY.match(file_key):
+        raise not_found
+    try:
+        case_uuid, prep_uuid = str(uuid.UUID(tender_id)), str(uuid.UUID(preparation_id))
+    except ValueError:
+        raise not_found from None
+    storage = document_storage(request, "case_document_storage")
+    with repo._read() as cur:
+        cur.execute("select outputs from evidence.bid_preparation where id = %s::uuid and opportunity_id = %s::uuid",
+                    (prep_uuid, case_uuid))
+        row = cur.fetchone()
+    output = next((o for o in (row[0] if row else None) or [] if isinstance(o, dict) and o.get("file_key") == file_key),
+                  None)
+    path = output_storage_path(case_uuid, prep_uuid, output) if output else None
+    if path is None:
+        raise not_found
+    try:
+        url = storage.signed_url(path, SIGNED_URL_SECONDS)
+    except StorageUnavailable:
+        raise HTTPException(503, detail={"code": "storage_unavailable",
+                                         "message": "document storage is unavailable"}) from None
+    response.headers["Cache-Control"] = "no-store"
+    return {"url": url, "expires_in": SIGNED_URL_SECONDS, "filename": output.get("filename")}

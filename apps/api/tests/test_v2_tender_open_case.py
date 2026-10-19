@@ -157,7 +157,8 @@ def test_router_exposes_only_post() -> None:
     assert [(r.path, r.methods) for r in tender_command_router.routes] == [
         (PATH, {"POST"}), ("/v2/commands/set-tender-status", {"POST"}),
         ("/v2/commands/save-bidder-profile", {"POST"}), ("/v2/commands/retire-bidder-document", {"POST"}),
-        ("/v2/commands/add-bidder-document", {"POST"}), ("/v2/commands/attach-tender-annexes", {"POST"})]
+        ("/v2/commands/add-bidder-document", {"POST"}), ("/v2/commands/attach-tender-annexes", {"POST"}),
+        ("/v2/commands/prepare-tender-bid", {"POST"})]
 
 
 def test_bidder_read_router_exposes_only_get() -> None:
@@ -171,4 +172,5 @@ def test_read_router_exposes_only_get() -> None:
     from origenlab_api.v2.tenders.routes import tender_read_router
 
     assert [(r.path, r.methods) for r in tender_read_router.routes] == [
-        ("/v2/tenders", {"GET"}), ("/v2/tenders/{tender_id}", {"GET"})]
+        ("/v2/tenders", {"GET"}), ("/v2/tenders/{tender_id}", {"GET"}),
+        ("/v2/tenders/{tender_id}/preparations/{preparation_id}/files/{file_key}/url", {"GET"})]

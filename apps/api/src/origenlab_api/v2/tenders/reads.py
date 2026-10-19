@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 from origenlab_api.v2.model_spend import spend_summary
 from origenlab_api.v2.tenders.bidder import current_bidder_profile
 from origenlab_api.v2.tenders.codes import portal_url
+from origenlab_api.v2.tenders.preparation import public_outputs
 
 SANTIAGO = ZoneInfo("America/Santiago")
 TENDER_STATUSES: tuple[str, ...] = ("preparando", "postulada", "adjudicada", "perdida")
@@ -295,5 +296,5 @@ def _preparation(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "based_on_preparation_id": row["based_on_preparation_id"],
         "quote_revision_id": row["quote_revision_id"],
         "result": row["result"],
-        "outputs": row["outputs"],
+        "outputs": public_outputs(row["outputs"]),
     }

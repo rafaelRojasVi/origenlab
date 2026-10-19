@@ -545,7 +545,11 @@ describe("V2 durable read boundary allowlist", () => {
       isAllowedUpstreamPath,
       marketingCommandMaxBytes,
     } = await import("./allowlist");
-    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(4);
+    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(5);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/prepare-tender-bid")).toBe(true);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/prepare-tender-bid/")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/commands/prepare-tender-bid")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/prepare-tender-bid")).toBe(16_384);
     expect(isAllowedTenderCommandPostPath("/v2/commands/set-tender-status")).toBe(true);
     expect(isAllowedPostPath("/v2/commands/set-tender-status")).toBe(true);
     expect(isAllowedCaseCommandPostPath("/v2/commands/set-tender-status")).toBe(false);
@@ -1242,6 +1246,29 @@ describe("Cotizador PR A", () => {
       "/v2/commands/delete-quote",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+});
+
+describe("tender preparation file links", () => {
+  it("allows GET of one output file's url, exactly, never a POST or a neighbour", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    const ok = `/v2/tenders/${uuid}/preparations/${uuid}/files/paquete/url`;
+    expect(isAllowedUpstreamPath(ok)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/tenders/${uuid}/preparations/${uuid}/files/formulario_5-b/url`)).toBe(true);
+    expect(isAllowedPostPath(ok)).toBe(false);
+    for (const path of [
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/Paquete/url`,
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/${"a".repeat(65)}/url`,
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/a.b/url`,
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/paquete`,
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/paquete/url/`,
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/../url`,
+      `/v2/tenders/${uuid}/preparations/not-a-uuid/files/paquete/url`,
+      `/v2/tenders/${uuid}/preparations/${uuid}`,
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
     }
   });
 });
