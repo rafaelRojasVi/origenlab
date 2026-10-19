@@ -34,7 +34,7 @@ def test_committed_file_passes_strict_validation() -> None:
     """
     data = json.loads(JSON_PATH.read_text(encoding="utf-8"))
     campaigns = validate_file(data)
-    assert len(campaigns) == 1
+    assert [c.key for c in campaigns] == ["cyber-2026-10", "ohaus-2026-10"]
     c = campaigns[0]
     assert c.key == "cyber-2026-10"
     assert c.name == "Cyber OrigenLab"
@@ -42,6 +42,10 @@ def test_committed_file_passes_strict_validation() -> None:
     assert c.send_days == ("2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09")
     assert c.send_time == "09:30"
     assert c.promo_until == "2026-10-11"
+    ohaus = campaigns[1]
+    assert (ohaus.name, ohaus.send_time, ohaus.promo_until) == ("Balanzas OHAUS", "09:30", "2026-10-31")
+    assert ohaus.send_days == ("2026-10-21", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27")
+    assert ohaus.subject == "¿Necesitas renovar tus balanzas? Tres opciones OHAUS"
 
 
 # ---------------------------------------------------------------------------
