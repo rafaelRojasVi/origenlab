@@ -84,7 +84,7 @@ for (const file of walk(join(root, 'src'), '.astro')) {
 /* -- 2. Marcas ----------------------------------------------------------- */
 
 const brandBlocks = brandsSrc.split(/\n  \{\n/).slice(1);
-assert(brandBlocks.length === 6, `brands.ts: se esperan exactamente 6 marcas, hay ${brandBlocks.length}`);
+assert(brandBlocks.length === 7, `brands.ts: se esperan exactamente 7 marcas, hay ${brandBlocks.length}`);
 
 // La lista cerrada, la ortografía de los nombres y la correspondencia con los
 // logotipos y el registro de fuentes las comprueba `validate:brands`. Aquí sólo
@@ -141,7 +141,7 @@ for (const block of brandBlocks) {
   assert(/familyId: '[^']+'/.test(block), `${id}: falta familyId`);
   assert(/listSummary:/.test(block), `${id}: falta listSummary (qué fabrica, en una línea)`);
 
-  // Una página de marca necesita material editorial completo. Las seis lo
+  // Una página de marca necesita material editorial completo. Las siete lo
   // tienen, y el estándar es el mismo para todas: no hay página de segunda.
   if (editorial) {
     for (const field of [
@@ -388,7 +388,12 @@ for (const block of documentedEntries) {
  * Cada modelo que el sitio describe sin alojar tiene que decir de dónde salió y
  * cuándo se leyó. Sin fuente y sin fecha no es un dato: es una afirmación.
  */
-const modelBlocks = modelsSrc.split(/\n  \{\n/).slice(1).filter((block) => block.includes('brandId:'));
+// Un modelo empieza por `id:`; la documentación de familia también declara
+// `brandId:` (una familia puede tener dos marcas) pero no tiene `id:`.
+const modelBlocks = modelsSrc
+  .split(/\n  \{\n/)
+  .slice(1)
+  .filter((block) => /^    id: '/.test(block) && block.includes('brandId:'));
 assert(modelBlocks.length >= 14, `brandModels.ts: se esperaban al menos 14 entradas, hay ${modelBlocks.length}`);
 
 const modelIds = new Set();

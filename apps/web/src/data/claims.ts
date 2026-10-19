@@ -49,13 +49,13 @@ export interface Claim {
 export const claims: readonly Claim[] = [
   {
     id: 'marcas-con-las-que-trabajamos',
-    text: '6 marcas con las que trabajamos',
-    value: 6,
+    text: '7 marcas con las que trabajamos',
+    value: 7,
     source:
-      'src/data/brands.ts: APPROVED_BRAND_IDS tiene 6 entradas y validate:brands comprueba que el sitio construido no publique ninguna otra. La lista la fijó el negocio en la revisión de marca del 2026-09-06',
-    measuredOn: '2026-09-06',
-    approvedBy: 'Negocio, revisión de marca y portada del 2026-09-06',
-    approvedOn: '2026-09-06',
+      'src/data/brands.ts: APPROVED_BRAND_IDS tiene 7 entradas y validate:brands comprueba que el sitio construido no publique ninguna otra. La lista la fijó el negocio en la revisión de marca del 2026-09-06 (seis marcas) y el titular añadió OHAUS por escrito el 2026-10-19',
+    measuredOn: '2026-10-19',
+    approvedBy: 'Titular del negocio, instrucción escrita del 2026-10-19 (alta de OHAUS) sobre la revisión de marca del 2026-09-06',
+    approvedOn: '2026-10-19',
     status: 'approved',
     visibility: 'public',
     note:
@@ -66,7 +66,7 @@ export const claims: readonly Claim[] = [
     text: '6 familias de equipo',
     value: 6,
     source:
-      'src/data/equipmentScope.ts: 6 entradas, una por marca aprobada, con la correspondencia declarada en brands.ts (familyId) y comprobada por validate:brands',
+      'src/data/equipmentScope.ts: 6 entradas; cada marca aprobada declara una familia en brands.ts (familyId) y pesaje y humedad tiene dos (Adam Equipment y OHAUS). validate:brands comprueba que toda familia tenga al menos una marca',
     measuredOn: '2026-09-06',
     approvedBy: 'Negocio, revisión de marca y portada del 2026-09-06',
     approvedOn: '2026-09-06',
