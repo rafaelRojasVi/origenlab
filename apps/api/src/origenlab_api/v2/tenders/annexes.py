@@ -3,8 +3,7 @@
 `POST /v2/commands/attach-tender-annexes` takes a multipart form with `opportunity_id` and 1–20
 `files` (each at most 20 MiB; the whole body at most 60 MiB + 64 KiB). A file is accepted by its
 bytes — PDF, JPEG, PNG, DOCX, XLSX, or a legacy DOC/XLS — never by its name or the browser's
-declaration. A `.zip` is unpacked in memory with V1's archive limits (`ArchiveLimits` defaults,
-ruling R15) and each safe member is judged like an uploaded file. Nothing aborts silently: every
+declaration. A `.zip` is unpacked in memory with V1's archive checks (ruling R15; totals are this request's 60 MiB, a member is read to 20 MiB) and each safe member is judged like an uploaded file. Nothing aborts silently: every
 file that is not kept is listed by name with its reason.
 
 | Reason | When |
@@ -15,6 +14,8 @@ file that is not kept is listed by name with its reason.
 | `encrypted` | a password-protected zip member or Office file |
 | `archive_rejected` | the zip is unreadable or breaks a limit (ratio over 200, over 512 members, ...): every member is skipped; an Office file that expands unsafely |
 | `already_attached` | the same bytes are already a live anexo of the case |
+| `request_too_large` | the files kept so far already fill the request's 60 MiB (loose files and zip members share it) |
+| `not_listed` | one summary line: the list was cut at 100 names (`MAX_LISTED_MEMBERS`) |
 
 Each kept file becomes a `crm.opportunity_document` (`kind = 'tender_annex'`, `source = 'upload'`)
 named by its original or zip-member file name, with one `opportunity.document_attached` event.
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import zipfile
 from typing import Any
 
@@ -58,8 +60,21 @@ _OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _ENCRYPTED_PACKAGE = "EncryptedPackage".encode("utf-16-le")
 
 
+#: Longest name a skipped entry repeats; a hostile zip member name may be far longer.
+MAX_SKIPPED_NAME = 200
+
+
 def _skip(filename: str, reason: str) -> dict[str, str]:
-    return {"filename": filename, "reason": reason}
+    shown = re.sub(r"[\x00-\x1f\x7f]", "", filename)
+    return {"filename": shown[:MAX_SKIPPED_NAME], "reason": reason}
+
+
+def cap_skipped(skipped: list[dict[str, str]]) -> list[dict[str, str]]:
+    """At most `MAX_LISTED_MEMBERS` skipped entries, then one summary entry for the rest."""
+    if len(skipped) <= MAX_LISTED_MEMBERS:
+        return skipped
+    return [*skipped[:MAX_LISTED_MEMBERS],
+            _skip(f"(y {len(skipped) - MAX_LISTED_MEMBERS} archivos más)", "not_listed")]
 
 
 def classify(data: bytes) -> tuple[str | None, str | None]:
@@ -84,22 +99,27 @@ def _member_names(data: bytes) -> list[str]:
 
 def _rejected(zip_name: str, data: bytes) -> list[dict[str, str]]:
     names = _member_names(data)
-    listed = [_skip(name, "archive_rejected") for name in names[:MAX_LISTED_MEMBERS]]
-    if not names:
-        return [_skip(zip_name, "archive_rejected")]
-    if len(names) > MAX_LISTED_MEMBERS:
-        listed.append(_skip(f"{zip_name} (y {len(names) - MAX_LISTED_MEMBERS} archivos más)", "archive_rejected"))
-    return listed
+    return [_skip(name, "archive_rejected") for name in names] or [_skip(zip_name, "archive_rejected")]
 
 
-def unpack_zip(zip_name: str, data: bytes) -> tuple[list[tuple[str, bytes]], list[dict[str, str]]]:
-    """The safe members `(path, bytes)` of a zip and the skipped ones. Never raises on a hostile zip."""
-    limits = ArchiveLimits()
+def unpack_zip(
+    zip_name: str, data: bytes, budget: int = MAX_TOTAL_BYTES
+) -> tuple[list[tuple[str, bytes]], list[dict[str, str]]]:
+    """The safe members `(path, bytes)` of a zip and the skipped ones. Never raises on a hostile zip.
+
+    `budget` is what is left of the request's bytes: no more than that is ever read into memory,
+    and a member cut short by it (not by the 20 MiB limit) is skipped `request_too_large`.
+    """
+    # The totals are the request's, not V1's 256 MiB. The preflight judges a member at V1's 64 MiB;
+    # the read stops at 20 MiB, so a big member is `too_large` rather than a rejected archive.
+    check = ArchiveLimits(max_total_uncompressed_bytes=MAX_TOTAL_BYTES)
+    read = ArchiveLimits(max_total_uncompressed_bytes=MAX_TOTAL_BYTES,
+                         max_member_uncompressed_bytes=MAX_DOCUMENT_BYTES)
     try:
-        preflight = preflight_archive(data, limits=limits)
-        if preflight.rejected or verify_actual_expansion(data, limits=limits).rejected:
+        preflight = preflight_archive(data, limits=check)
+        if preflight.rejected or verify_actual_expansion(data, limits=check).rejected:
             return [], _rejected(zip_name, data)
-        members = iter_archive_members(data, limits=limits)
+        members = iter_archive_members(data, limits=read, remaining_budget_bytes=budget)
     except (ArchiveSafetyError, zipfile.BadZipFile, ValueError, NotImplementedError, RuntimeError):
         return [], _rejected(zip_name, data)
     kept: list[tuple[str, bytes]] = []
@@ -110,7 +130,9 @@ def unpack_zip(zip_name: str, data: bytes) -> tuple[list[tuple[str, bytes]], lis
         elif member.encrypted:
             skipped.append(_skip(member.member_path, "encrypted"))
         elif member.truncated:
-            skipped.append(_skip(member.member_path, "too_large"))
+            # Cut by the 20 MiB member limit, or by what the request had left.
+            by_budget = len(member.payload) < MAX_DOCUMENT_BYTES
+            skipped.append(_skip(member.member_path, "request_too_large" if by_budget else "too_large"))
         elif any(w.startswith("member_unreadable") for w in member.warnings):
             skipped.append(_skip(member.member_path, "archive_rejected"))
         else:
@@ -120,27 +142,41 @@ def unpack_zip(zip_name: str, data: bytes) -> tuple[list[tuple[str, bytes]], lis
 
 def expand_uploads(uploads: list[tuple[str, bytes]]) -> tuple[list[tuple[str, str, bytes]], list[dict[str, str]]]:
     """Judge each uploaded file (unpacking a `.zip`): `[(shown name, content type, bytes)]` kept and
-    `[{filename, reason}]` skipped, in upload order."""
+    `[{filename, reason}]` skipped, in upload order. Everything kept, loose or from a zip, shares one
+    budget of `MAX_TOTAL_BYTES`; what does not fit is skipped `request_too_large`."""
     kept: list[tuple[str, str, bytes]] = []
     skipped: list[dict[str, str]] = []
+    budget = MAX_TOTAL_BYTES
+
+    def keep(name: str, content_type: str, data: bytes) -> None:
+        nonlocal budget
+        if len(data) > budget:
+            skipped.append(_skip(name, "request_too_large"))
+            return
+        budget -= len(data)
+        kept.append((clean_filename(name), content_type, data))
+
     for name, data in uploads:
         content_type, reason = classify(data)
         if content_type is None and reason == "unsupported_type" and name.lower().endswith(".zip") \
                 and data.startswith(b"PK"):
-            members, member_skips = unpack_zip(name, data)
+            if budget <= 0:
+                skipped.extend(_skip(n, "request_too_large") for n in (_member_names(data) or [name]))
+                continue
+            members, member_skips = unpack_zip(name, data, budget)
             skipped.extend(member_skips)
             for path, payload in members:
                 member_type, member_reason = classify(payload)
                 if member_type is None:
                     skipped.append(_skip(path, member_reason or "unsupported_type"))
                 else:
-                    kept.append((clean_filename(path), member_type, payload))
+                    keep(path, member_type, payload)
             continue
         if content_type is None:
             skipped.append(_skip(clean_filename(name), reason or "unsupported_type"))
         else:
-            kept.append((clean_filename(name), content_type, data))
-    return kept, skipped
+            keep(name, content_type, data)
+    return kept, cap_skipped(skipped)
 
 
 def prepare_objects(opportunity_id: str, kept: list[tuple[str, str, bytes]], storage: Any) -> list[dict[str, Any]]:
@@ -170,7 +206,7 @@ def attach_tender_annexes(
     if case[0] != "tender":
         raise CommandRefused(422, "not_a_tender_case", "Los anexos se suben a una licitación.")
     attached: list[dict[str, str]] = []
-    skipped: list[dict[str, str]] = list(fields["skipped"])
+    skipped: list[dict[str, str]] = list(fields["skipped"])  # already capped
     event_ids: list[Any] = []
     for file in fields["files"]:
         cur.execute(
@@ -197,4 +233,4 @@ def attach_tender_annexes(
             operator=operator, receipt_id=receipt_id))
         attached.append({"document_id": document_id, "filename": file["filename"]})
     return {"command": ATTACH_TENDER_ANNEXES, "opportunity_id": opportunity_id, "attached": attached,
-            "skipped": skipped, "event_ids": event_ids}
+            "skipped": cap_skipped(skipped), "event_ids": event_ids}

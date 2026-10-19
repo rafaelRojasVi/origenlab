@@ -6,6 +6,7 @@ Every value is invented (public repository). `test_v2_tender_annexes_db.py` runs
 from __future__ import annotations
 
 import io
+import os
 import zipfile
 
 import pytest
@@ -16,7 +17,7 @@ from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
 from origenlab_api.v2.case_documents import DOC, DOCX, XLS, XLSX, DocumentRefused, check_document, document_path
 from origenlab_api.v2.catalog.storage import FakeStorage
 from origenlab_api.v2.identity import LocalDevIdentity, OperatorIdentity, OperatorLookup
-from origenlab_api.v2.tenders.annexes import expand_uploads
+from origenlab_api.v2.tenders.annexes import MAX_TOTAL_BYTES, expand_uploads
 
 LOOPBACK = "postgresql://origenlab_api:pw@127.0.0.1:54332/origenlab_dev"
 CASE = "00000000-0000-4000-8000-0000000000c1"
@@ -113,8 +114,9 @@ def test_a_lying_header_bomb_is_caught_by_the_actual_expansion() -> None:
 def test_too_many_members_and_a_broken_zip_are_rejected_not_raised() -> None:
     many = zipped({f"f{i}.pdf": PDF + str(i).encode() for i in range(513)})
     kept, skipped = expand_uploads([("muchos.zip", many)])
-    assert kept == [] and all(s["reason"] == "archive_rejected" for s in skipped) and len(skipped) == 101
-    assert skipped[-1]["filename"] == "muchos.zip (y 413 archivos más)"
+    assert kept == [] and len(skipped) == 101
+    assert all(s["reason"] == "archive_rejected" for s in skipped[:100])
+    assert skipped[-1] == {"filename": "(y 413 archivos más)", "reason": "not_listed"}
     kept, skipped = expand_uploads([("roto.zip", b"PK\x03\x04" + b"basura" * 20)])
     assert kept == [] and skipped == [{"filename": "roto.zip", "reason": "archive_rejected"}]
 
@@ -139,6 +141,40 @@ def test_an_office_file_that_expands_unsafely_is_archive_rejected() -> None:
     assert kept == [] and reasons(skipped) == {"bomba.docx": "archive_rejected"}
 
 
+def test_twenty_compressible_zips_share_one_budget_of_60_mib() -> None:
+    def pdf_of(n: int) -> bytes:  # hex text: compresses about 2:1, far from a bomb
+        return b"%PDF-" + os.urandom(2 * MiB).hex().encode()[: 4 * MiB]
+
+    uploads = [(f"z{i}.zip", zipped({f"bases{i}.pdf": pdf_of(i)})) for i in range(20)]
+    kept, skipped = expand_uploads(uploads)
+    assert 0 < len(kept) and sum(len(d) for _, _, d in kept) <= MAX_TOTAL_BYTES
+    assert len(kept) + len(skipped) == 20
+    assert {s["reason"] for s in skipped} == {"request_too_large"}
+
+
+def test_loose_files_and_zip_members_draw_on_the_same_budget() -> None:
+    big = [("a.pdf", b"%PDF-" + b"a" * (19 * MiB)), ("b.pdf", b"%PDF-" + b"b" * (19 * MiB)),
+           ("c.pdf", b"%PDF-" + b"c" * (19 * MiB)), ("d.pdf", b"%PDF-" + b"d" * (19 * MiB))]
+    kept, skipped = expand_uploads(big)
+    assert [n for n, _, _ in kept] == ["a.pdf", "b.pdf", "c.pdf"]
+    assert reasons(skipped) == {"d.pdf": "request_too_large"}
+
+
+def test_an_oversized_zip_member_is_too_large_not_a_rejected_archive() -> None:
+    package = zipped({"grande.pdf": b"%PDF-" + os.urandom(11 * MiB).hex().encode(), "chico.pdf": PDF})
+    kept, skipped = expand_uploads([("paquete.zip", package)])
+    assert [n for n, _, _ in kept] == ["chico.pdf"] and reasons(skipped) == {"grande.pdf": "too_large"}
+
+
+def test_skipped_names_are_short_and_the_list_is_bounded() -> None:
+    long_name = "x" * 500 + ".rar"
+    kept, skipped = expand_uploads([("paquete.zip", zipped({long_name: b"Rar!\x1a\x07\x00"}))])
+    assert kept == [] and len(skipped[0]["filename"]) == 200
+    many = zipped({f"f{i}.rar": b"Rar!" + str(i).encode() for i in range(150)})
+    kept, skipped = expand_uploads([("muchos.zip", many)])
+    assert len(skipped) == 101 and skipped[-1] == {"filename": "(y 50 archivos más)", "reason": "not_listed"}
+
+
 # ------------------------------------------------------------------ who may call
 
 
@@ -153,6 +189,11 @@ class _Lookup(OperatorLookup):
 class _Recorder:
     def __init__(self) -> None:
         self.calls: list[dict] = []
+
+    kind: str | None = "tender"
+
+    def case_kind(self, opportunity_id: str):
+        return self.kind
 
     def execute(self, **kwargs):
         self.calls.append(kwargs)
@@ -230,4 +271,15 @@ def test_the_whole_body_is_capped_at_60_mib() -> None:
     response = http.post(URL, data={"opportunity_id": CASE},
                          files=files(*[(f"{i}.pdf", chunk + bytes([i])) for i in range(4)]), headers=HEADERS)
     assert response.status_code == 413
+    assert recorder.calls == [] and storage.puts == 0
+
+
+def test_a_case_that_is_unknown_or_not_a_tender_stores_nothing() -> None:
+    http, recorder, storage = client("sales")
+    recorder.kind = None
+    response = http.post(URL, data={"opportunity_id": CASE}, files=files(("a.pdf", PDF)), headers=HEADERS)
+    assert (response.status_code, response.json()["detail"]["code"]) == (404, "case_not_found")
+    recorder.kind = "sale"
+    response = http.post(URL, data={"opportunity_id": CASE}, files=files(("a.pdf", PDF)), headers=HEADERS)
+    assert (response.status_code, response.json()["detail"]["code"]) == (422, "not_a_tender_case")
     assert recorder.calls == [] and storage.puts == 0

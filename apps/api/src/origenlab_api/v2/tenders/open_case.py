@@ -362,6 +362,14 @@ class V2TenderCommandRepository(V2CaseCommandRepository):
         RETIRE_BIDDER_DOCUMENT: retire_bidder_document,
     }
 
+    def case_kind(self, opportunity_id: str) -> str | None:
+        """The `kind` of the case, or None if there is none. A cheap read, no lock: a route uses it
+        to refuse before storing objects; the command re-checks under its lock."""
+        with self._connect(self._dsn) as conn, conn.cursor() as cur:
+            cur.execute("select kind from crm.opportunity where id = %s::uuid", (opportunity_id,))
+            row = cur.fetchone()
+        return row[0] if row else None
+
 
 __all__ = [
     "OPEN_TENDER_CASE",

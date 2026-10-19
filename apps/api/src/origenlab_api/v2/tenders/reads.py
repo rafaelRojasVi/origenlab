@@ -242,7 +242,7 @@ class TenderReadRepository:
             prep = self._latest_preparations(cur, [row["id"]]).get(row["id"], {})
             cur.execute(
                 """
-                select id::text as id, original_filename as filename, content_type, byte_size, sha256,
+                select id::text as document_id, original_filename as filename, content_type, byte_size, sha256,
                        source, attached_at
                   from crm.opportunity_document
                  where opportunity_id = %s::uuid and kind = 'tender_annex' and removed_at is null

@@ -272,7 +272,7 @@ def test_page_lists_annexes_and_the_latest_preparation_of_each_phase(db, operato
             "requested_by_operator_id, result) values (%s, 'read', 'ready', %s, %s, %s::jsonb) returning id::text",
             (tender["id"], [doc], operators["sales"].operator_id, '{"summary": "Resumen ficticio"}')).fetchone()[0]
     page = client.get(f"/v2/tenders/{tender['id']}", headers=headers()).json()
-    assert [(a["id"], a["filename"]) for a in page["annexes"]] == [(doc, "bases.pdf")]
+    assert [(a["document_id"], a["filename"]) for a in page["annexes"]] == [(doc, "bases.pdf")]
     assert page["preparations"]["fill"] is None
     assert page["preparations"]["read"]["id"] == newest and page["preparations"]["read"]["status"] == "ready"
     assert page["preparations"]["read"]["result"] == {"summary": "Resumen ficticio"}

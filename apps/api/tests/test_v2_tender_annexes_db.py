@@ -227,7 +227,7 @@ def test_a_legacy_doc_is_accepted_and_recorded(db, operators, client) -> None:
     assert rows(db, case)[0][2] == "application/msword"
 
 
-def test_a_sales_case_is_422_not_a_tender_and_nothing_is_recorded(db, operators, client) -> None:
+def test_a_sales_case_is_422_not_a_tender_and_nothing_is_recorded(db, operators, client, storage) -> None:
     with _owner(db) as conn:
         sale = conn.execute(
             "insert into crm.opportunity (title, stage, owner_operator_id) values (%s, 'lead', %s) returning id::text",
@@ -237,6 +237,7 @@ def test_a_sales_case_is_422_not_a_tender_and_nothing_is_recorded(db, operators,
     assert rows(db, sale) == []
     missing = upload(client, str(uuid.uuid4()), ("bases.pdf", pdf()))
     assert (missing.status_code, missing.json()["detail"]["code"]) == (404, "case_not_found")
+    assert storage.puts == 0  # the case is checked before any object is stored
 
 
 def test_a_replayed_key_does_not_attach_twice_and_a_viewer_is_refused(db, operators, client) -> None:
@@ -252,6 +253,16 @@ def test_a_replayed_key_does_not_attach_twice_and_a_viewer_is_refused(db, operat
 
 def test_the_page_lists_the_annexes(db, operators, client) -> None:
     case = open_tender(db, operators)
-    upload(client, case, ("bases.pdf", pdf()))
+    sent = upload(client, case, ("bases.pdf", pdf()))
     page = client.get(f"/v2/tenders/{case}", headers=headers()).json()
     assert [a["filename"] for a in page["annexes"]] == ["bases.pdf"]
+    assert page["annexes"][0]["document_id"] == sent.json()["attached"][0]["document_id"]
+
+
+def test_a_zip_member_that_repeats_a_loose_file_is_attached_once(db, operators, client) -> None:
+    case = open_tender(db, operators)
+    data = pdf("repetido")
+    body = upload(client, case, ("bases.pdf", data), ("paquete.zip", zipped({"copia.pdf": data}))).json()
+    assert [a["filename"] for a in body["attached"]] == ["bases.pdf"]
+    assert body["skipped"] == [{"filename": "copia.pdf", "reason": "already_attached"}]
+    assert len(rows(db, case)) == 1

@@ -352,6 +352,13 @@ async def _read_annexes_form(request: Request) -> tuple[AttachTenderAnnexesForm,
 def _store_annexes(request: Request, operator: OperatorIdentity, key: str, opportunity_id: str,
                    uploads: list[tuple[str, bytes]]) -> dict[str, Any]:
     """Judge and unpack the uploads, store the kept ones, then run the command; in the threadpool."""
+    repo = get_tender_command_repository(request)
+    kind = repo.case_kind(opportunity_id)  # before any object is stored; the command re-checks locked
+    if kind is None:
+        raise HTTPException(404, detail={"code": "case_not_found", "message": "no such case"})
+    if kind != "tender":
+        raise HTTPException(422, detail={"code": "not_a_tender_case",
+                                         "message": "Los anexos se suben a una licitación."})
     kept, skipped = expand_uploads(uploads)
     try:
         files = prepare_objects(opportunity_id, kept, document_storage(request, "case_document_storage"))
@@ -362,7 +369,7 @@ def _store_annexes(request: Request, operator: OperatorIdentity, key: str, oppor
     digest = hashlib.sha256(json.dumps({"command": ATTACH_TENDER_ANNEXES, "body": fields}, sort_keys=True,
                                        separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
     try:
-        return get_tender_command_repository(request).execute(
+        return repo.execute(
             command_name=ATTACH_TENDER_ANNEXES, operator=operator, fields=fields, idempotency_key=key,
             digest=digest)
     except CommandRefused as exc:
