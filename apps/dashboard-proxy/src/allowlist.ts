@@ -505,18 +505,24 @@ export const CASE_DOCUMENT_UPLOAD_PATH_RE = /^\/v2\/commands\/attach-case-docume
 /** A standard document of the bidder (`add-bidder-document`), the same 20 MiB cap. */
 export const BIDDER_DOCUMENT_UPLOAD_PATH_RE = /^\/v2\/commands\/add-bidder-document$/;
 
+/** A tender's anexos (`attach-tender-annexes`): up to 20 files or a zip, 60 MiB in all. */
+export const TENDER_ANNEXES_UPLOAD_PATH_RE = /^\/v2\/commands\/attach-tender-annexes$/;
+
 export const CATALOG_UPLOAD_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/add-product-image$/,
   CASE_DOCUMENT_UPLOAD_PATH_RE,
   BIDDER_DOCUMENT_UPLOAD_PATH_RE,
+  TENDER_ANNEXES_UPLOAD_PATH_RE,
 ];
 
 export const CATALOG_UPLOAD_MAX_BYTES = 8_388_608 + 65_536;
 export const CASE_DOCUMENT_UPLOAD_MAX_BYTES = 20_971_520 + 65_536;
+export const TENDER_ANNEXES_UPLOAD_MAX_BYTES = 62_914_560 + 65_536;
 
 /** The body limit for one catalog command path: the upload's, a quote draft's, or the JSON commands'. */
 export function catalogCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
+  if (TENDER_ANNEXES_UPLOAD_PATH_RE.test(pathOnly)) return TENDER_ANNEXES_UPLOAD_MAX_BYTES;
   if (CASE_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly) || BIDDER_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly)) {
     return CASE_DOCUMENT_UPLOAD_MAX_BYTES;
   }

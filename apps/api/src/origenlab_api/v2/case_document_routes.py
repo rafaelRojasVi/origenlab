@@ -175,12 +175,12 @@ async def read_capped_body(request: Request, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-async def parse_form(request: Request, body: bytes) -> FormData:
+async def parse_form(request: Request, body: bytes, *, max_files: int = 1) -> FormData:
     async def replay() -> dict[str, Any]:
         return {"type": "http.request", "body": body, "more_body": False}
 
     try:
-        return await Request(request.scope, replay).form(max_files=1, max_fields=8)
+        return await Request(request.scope, replay).form(max_files=max_files, max_fields=8)
     except (ValueError, StarletteHTTPException):
         raise HTTPException(400, detail={"code": "invalid_multipart",
                                          "message": "the body is not a valid multipart form with one document"}) from None

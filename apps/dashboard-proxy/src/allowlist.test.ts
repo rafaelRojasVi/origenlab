@@ -610,7 +610,13 @@ describe("V2 durable read boundary allowlist", () => {
     expect(isAllowedTenderCommandPostPath("/v2/commands/add-bidder-document")).toBe(false);
     expect(isAllowedCatalogUploadPostPath("/v2/commands/add-bidder-document")).toBe(true);
     expect(isAllowedPostPath("/v2/commands/add-bidder-document")).toBe(true);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/attach-tender-annexes")).toBe(false);
+    expect(isAllowedCatalogUploadPostPath("/v2/commands/attach-tender-annexes")).toBe(true);
+    expect(isAllowedPostPath("/v2/commands/attach-tender-annexes")).toBe(true);
     for (const path of [
+      "/v2/commands/attach-tender-annexes/",
+      "/v2/commands/attach-tender-annex",
+      "/v2/commands/attach-tender-annexes2",
       "/v2/commands/save-bidder-profile/",
       "/v2/commands/save-bidder-profiles",
       "/v2/commands/retire-bidder-document/",

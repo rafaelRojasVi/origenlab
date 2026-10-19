@@ -9,6 +9,7 @@
 | `POST /v2/commands/save-bidder-profile` | a new bidder profile row (append-only) |
 | `POST /v2/commands/add-bidder-document` | multipart: one standard document, stored then recorded |
 | `POST /v2/commands/retire-bidder-document` | one document retired, with its reason |
+| `POST /v2/commands/attach-tender-annexes` | multipart: 1–20 files or a zip of anexos onto a tender (`annexes.py`) |
 | `GET /v2/bidder` | the profile, its history and the live documents |
 | `GET /v2/bidder/documents/{id}/url` | a signed URL valid 10 minutes |
 
@@ -33,16 +34,30 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
+from pydantic import BaseModel, ConfigDict, ValidationError
+from starlette.datastructures import UploadFile
+
 from origenlab_api.v2.case_document_routes import (
+    MAX_UPLOAD_BODY_BYTES,
     document_storage,
+    form_invalid,
+    parse_form,
+    read_capped_body,
     read_document_form,
 )
-from origenlab_api.v2.case_documents import DocumentRefused
+from origenlab_api.v2.case_documents import MAX_DOCUMENT_BYTES, DocumentRefused
 from origenlab_api.v2.catalog.storage import SIGNED_URL_SECONDS, StorageUnavailable
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.command_routes import Deciding, IdempotencyKey, _detail
 from origenlab_api.v2.commands import CommandRefused, as_uuid, request_digest, require_idempotency_key
 from origenlab_api.v2.identity import OperatorIdentity
+from origenlab_api.v2.tenders.annexes import (
+    ATTACH_TENDER_ANNEXES,
+    MAX_FILES,
+    MAX_TOTAL_BYTES,
+    expand_uploads,
+    prepare_objects,
+)
 from origenlab_api.v2.tenders.bidder import (
     ADD_BIDDER_DOCUMENT,
     RETIRE_BIDDER_DOCUMENT,
@@ -284,6 +299,92 @@ async def add_bidder_document_route(
     stored = await run_in_threadpool(_store_bidder_document, request, data)
     fields = {"kind": parsed.kind, "title": parsed.title, "original_filename": filename, **stored}
     return await run_in_threadpool(_execute_add_document, request, operator, key, fields)
+
+
+class AttachTenderAnnexesForm(BaseModel):
+    """The text field of the `attach-tender-annexes` multipart form."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    opportunity_id: uuid.UUID
+
+
+_ANNEXES_OPENAPI = {"requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {
+    "type": "object",
+    "required": ["opportunity_id", "files"],
+    "properties": {
+        "opportunity_id": {"type": "string", "format": "uuid"},
+        "files": {"type": "array", "minItems": 1, "maxItems": MAX_FILES,
+                  "items": {"type": "string", "format": "binary"},
+                  "description": "PDF, JPEG, PNG, DOCX, XLSX, DOC, XLS or a .zip of them; each at most 20 MiB, "
+                                 "all at most 60 MiB"},
+    },
+}}}}}
+
+ANNEXES_BODY_BYTES = MAX_TOTAL_BYTES + 64 * 1024
+
+
+async def _read_annexes_form(request: Request) -> tuple[AttachTenderAnnexesForm, list[tuple[str, bytes]]]:
+    form = await parse_form(request, await read_capped_body(request, ANNEXES_BODY_BYTES), max_files=MAX_FILES + 1)
+    try:
+        items = form.multi_items()
+        fields = [(k, v) for k, v in items if not isinstance(v, UploadFile)]
+        if any(isinstance(v, UploadFile) and k != "files" for k, v in items):
+            raise form_invalid([{"type": "extra_forbidden", "loc": ("body", "file"), "msg": "send the files as `files`"}])
+        if sum(1 for k, _ in fields if k == "opportunity_id") > 1:
+            raise form_invalid([{"type": "duplicate_field", "loc": ("body", "opportunity_id"),
+                                 "msg": "field sent more than once"}])
+        try:
+            parsed = AttachTenderAnnexesForm(**dict(fields))
+        except ValidationError as exc:
+            raise form_invalid(exc.errors()) from None
+        uploads = [v for k, v in items if isinstance(v, UploadFile)]
+        if not uploads:
+            raise form_invalid([{"type": "missing", "loc": ("body", "files"), "msg": "at least one file is required"}])
+        if len(uploads) > MAX_FILES:
+            raise form_invalid([{"type": "too_many", "loc": ("body", "files"), "msg": f"at most {MAX_FILES} files"}])
+        files = [(upload.filename or "", await upload.read(MAX_DOCUMENT_BYTES + 1)) for upload in uploads]
+    finally:
+        await form.close()
+    return parsed, files
+
+
+def _store_annexes(request: Request, operator: OperatorIdentity, key: str, opportunity_id: str,
+                   uploads: list[tuple[str, bytes]]) -> dict[str, Any]:
+    """Judge and unpack the uploads, store the kept ones, then run the command; in the threadpool."""
+    kept, skipped = expand_uploads(uploads)
+    try:
+        files = prepare_objects(opportunity_id, kept, document_storage(request, "case_document_storage"))
+    except StorageUnavailable:
+        raise HTTPException(503, detail={"code": "storage_unavailable",
+                                         "message": "document storage is unavailable"}) from None
+    fields = {"opportunity_id": opportunity_id, "files": files, "skipped": skipped}
+    digest = hashlib.sha256(json.dumps({"command": ATTACH_TENDER_ANNEXES, "body": fields}, sort_keys=True,
+                                       separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+    try:
+        return get_tender_command_repository(request).execute(
+            command_name=ATTACH_TENDER_ANNEXES, operator=operator, fields=fields, idempotency_key=key,
+            digest=digest)
+    except CommandRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
+
+
+@tender_command_router.post("/attach-tender-annexes", openapi_extra=_ANNEXES_OPENAPI)
+async def attach_tender_annexes_route(
+    request: Request, operator: Deciding, idempotency_key: IdempotencyKey = None
+) -> dict[str, Any]:
+    """«Subir anexos»: 1–20 files, or a zip, onto a tender case.
+
+    `Deciding` and the key are checked before the body is read, so a viewer's upload is never
+    spooled. The answer is `{attached: [{document_id, filename}], skipped: [{filename, reason}]}`.
+    """
+    try:
+        key = require_idempotency_key(idempotency_key)
+    except CommandRefused as exc:
+        raise HTTPException(exc.status_code, detail=_detail(exc)) from exc
+    document_storage(request, "case_document_storage")
+    parsed, uploads = await _read_annexes_form(request)
+    return await run_in_threadpool(_store_annexes, request, operator, key, str(parsed.opportunity_id), uploads)
 
 
 @bidder_read_router.get("")
