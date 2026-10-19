@@ -1,6 +1,7 @@
 ---
 import { equipmentScope, scopeById } from '../../data/equipmentScope';
 import { publicClaim } from '../../data/claims';
+import { isShownOnHome } from '../../data/brands';
 import { getBrandByFamilyId, getBrandsByFamilyId, getProductBySlug } from '../../lib/catalog';
 import { productImageSources } from '../../lib/productImage';
 import BrandLogo from '../ui/BrandLogo.astro';
@@ -46,7 +47,7 @@ const centrifugeCount = separacion?.countClaimId ? publicClaim(separacion.countC
 const servaCount = analisis?.countClaimId ? publicClaim(analisis.countClaimId) : undefined;
 
 /** Una familia puede tener más de un fabricante (pesaje: Adam Equipment y OHAUS). */
-const brandsFor = (id: string) => getBrandsByFamilyId(id);
+const brandsFor = (id: string) => getBrandsByFamilyId(id).filter((brand) => isShownOnHome(brand.id));
 ---
 
 <section id="familias" class="families" aria-labelledby="familias-title" tabindex="-1">

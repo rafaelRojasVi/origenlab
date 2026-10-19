@@ -282,13 +282,13 @@ console.log('\nRiel de marcas (1440 px)');
   check(playing.name !== 'none', `la pista tiene animación (${playing.name})`);
   check(playing.state === 'running', 'la pista se mueve al cargar');
 
-  // Las siete, en el orden de la lista cerrada y sin repetir enlaces.
+  // Las seis de la portada (OHAUS no va en la portada: HOME_HIDDEN_BRAND_IDS), en el orden de
+  // la lista cerrada y sin repetir enlaces.
   const ORDER = [
     'Hielscher Ultrasonics',
     'Ortoalresa',
     'IKA',
     'Adam Equipment',
-    'OHAUS',
     'Löser Messtechnik',
     'SERVA Electrophoresis',
   ];
@@ -301,7 +301,7 @@ console.log('\nRiel de marcas (1440 px)');
   // Sólo la pista: el enlace de la entradilla («Ver las marcas en detalle») no
   // es una marca y contarlo escondería un duplicado real.
   const links = await page.locator('[data-rail-track] a').count();
-  check(links === 7, `siete enlaces de marca en la pista, no catorce (${links})`);
+  check(links === 6, `seis enlaces de marca en la pista, no doce (${links})`);
   const clone = page.locator('[data-rail] .rail__set--clone');
   check(
     await clone.evaluate((el) => el.getAttribute('aria-hidden') === 'true'),
@@ -416,7 +416,7 @@ console.log('\nMovimiento reducido');
   const visibleLogos = await page
     .locator('[data-rail] .rail__set:not([aria-hidden]) .rail__logo')
     .evaluateAll((els) => els.filter((el) => el.getBoundingClientRect().width > 0).length);
-  check(visibleLogos === 7, `las siete marcas se leen a la vez (${visibleLogos})`);
+  check(visibleLogos === 6, `las seis marcas se leen a la vez (${visibleLogos})`);
 
   await context.close();
 }
