@@ -72,6 +72,10 @@ select r.id::text as receipt_id, r.command_name, r.completed_at::text as complet
  where r.status = 'completed'
    and r.command_name = any(%s)
    and r.completed_at > now() - interval '60 days'
+   -- A decision on a tender belongs to «Licitaciones» (`case_kind.py`), not to this history.
+   and not exists (select 1 from crm.opportunity t
+                    where t.kind = 'tender'
+                      and t.id::text in (r.response_body ->> 'opportunity_id', r.response_body ->> 'case_id'))
  order by r.completed_at desc
  limit %s
 """
@@ -144,13 +148,8 @@ def read_history(cur: Any, limit: int) -> dict[str, Any]:
     case_titles: dict[str, str] = {}
     org_names: dict[str, str] = {}
     if case_ids:
-        cur.execute("select id::text, title, kind from crm.opportunity where id::text = any(%s)", (sorted(case_ids),))
-        found = cur.fetchall()
-        case_titles = {r[0]: r[1] for r in found if r[2] == "sale"}
-        # A decision on a tender belongs to «Licitaciones» (`case_kind.py`), not to this history.
-        tenders = {r[0] for r in found if r[2] == "tender"}
-        if tenders:
-            rows = [r for r in rows if not _case_ids(r) & tenders]
+        cur.execute("select id::text, title from crm.opportunity where id::text = any(%s)", (sorted(case_ids),))
+        case_titles = {r[0]: r[1] for r in cur.fetchall()}
     if org_ids:
         cur.execute("select id::text, name from crm.organization where id::text = any(%s)", (sorted(org_ids),))
         org_names = {r[0]: r[1] for r in cur.fetchall()}

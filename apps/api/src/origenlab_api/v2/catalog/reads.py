@@ -391,7 +391,7 @@ class V2CatalogReads:
             "c.case_id, c.institution, c.outcome "
             "from evidence.document_line l join evidence.source_record s on s.id = l.source_record_id "
             "left join lateral ("
-            "  select o.id::text as case_id, root.name as institution, "
+            "  select o.id::text as case_id, root.name as institution, o.kind as case_kind, "
             "         case when o.won_quote_id = q.id then 'won' when o.stage = 'won' then 'other_won' "
             "              when o.stage = 'lost' then 'lost' when o.stage = 'abandoned' then 'abandoned' "
             "              else 'open' end as outcome "
@@ -401,9 +401,8 @@ class V2CatalogReads:
             "   where q.quote_number = s.payload->>'printed_quote_number' "
             "   order by (o.won_quote_id = q.id) desc nulls last, o.created_at limit 1) c on true "
             f"where l.model_key in ({keys}) and s.kind = 'quote_document' and not l.optional "
-            # A tender's offer is not a sales price (`case_kind.py`): its PDF's lines stay out.
-            "and not exists (select 1 from crm.quote tq join crm.opportunity t on t.id = tq.opportunity_id "
-            "                 where tq.quote_number = s.payload->>'printed_quote_number' and t.kind = 'tender') "
+            # A tender's offer is not a sales price (`case_kind.py`): a line whose case is a tender stays out.
+            "and c.case_kind is distinct from 'tender' "
             "order by s.payload->>'quote_date' desc nulls last, l.line_no desc, l.id desc"
         )
         # What the model cost us, every observation (twins merged into it share its model_key; an

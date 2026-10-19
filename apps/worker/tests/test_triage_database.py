@@ -601,6 +601,31 @@ def test_a_tender_is_never_a_triage_case_a_matcher_candidate_or_a_memory(dsn, ta
         linked = {kind: [c.opportunity_id for c in db.linked_cases(threads[kind])] for kind in cases}
         past = {p.opportunity_id for p in db.past_decisions(f"otra@hospital-{tag}.invalid")}
         pending = set(db.pending_memory_backfill(since_days=36500, limit=500))
+        held = {kind: db.tender_thread(threads[kind]) for kind in cases}
+    assert held == {"sale": False, "tender": True}
+    # A reply on each thread, triaged now: the sale's is matched to the sale; the tender's thread is the
+    # tender's, so its reply gets no sales case, no new case and no pick.
+    replies = {}
+    for kind in cases:
+        gid = f"tk-{kind}-{tag}-r"
+        c = build_capture(make_raw(frm=f"Compras <compras@hospital-{tag}.invalid>", subject="Re: Solicitud de cotización",
+                                   message_id=f"<{uuid.uuid4().hex}@hospital.invalid>"),
+                          gmail_message_id=gid, gmail_thread_id=threads[kind], label_ids=("INBOX",), label_names={},
+                          internal_date_ms=NOW_MS, mailbox_address=MAILBOX)
+        key = f"{MAILBOX}/2026/10/{gid}.eml"
+        store.objects[key] = make_raw(subject="Re: Solicitud de cotización", message_id=f"<{gid}@hospital.invalid>")
+        with open_worker_db(target) as wdb:
+            wdb.record(c, mailbox_id=mailbox_id, eml_path=f"mail/{key}", eml_sha256=c.payload["raw_sha256"],
+                       size_bytes=1)
+        replies[kind] = source_record(dsn, gid)
+        with triage_conn(target) as conn:
+            triage_one(TriageDb(conn), store, replies[kind], ModelSettings(None, DEFAULT_MODEL))
+    value = {kind: owner_rows(dsn, "select value from evidence.assertion where source_record_id = %s "
+                                   "and value_norm = %s", (replies[kind], CASE_MATCH_VALUE_NORM))[0][0]
+             for kind in cases}
+    assert value["sale"]["candidates"][0]["opportunity_id"] == cases["sale"]
+    assert (value["tender"]["decision"], value["tender"]["candidates"], value["tender"]["new_case_quote"],
+            value["tender"]["held_by"]) == ("none", [], None, "tender")
     assert cases["sale"] in candidates and cases["tender"] not in candidates
     assert linked == {"sale": [cases["sale"]], "tender": []}
     assert past == {cases["sale"]}

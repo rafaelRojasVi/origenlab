@@ -168,6 +168,14 @@ select distinct o.id::text, o.title, o.stage
  order by 1
  limit 5
 """
+#: Whether a tender holds this Gmail thread (any email of it linked to a `kind = 'tender'` case): then
+#: the thread is the tender's, and the matcher suggests no sales case for it (`case_kind.py`).
+_TENDER_THREAD = """
+select exists (select 1 from crm.opportunity_evidence oe
+                 join evidence.source_record sr on sr.id = oe.source_record_id
+                 join crm.opportunity o on o.id = oe.opportunity_id and o.kind = 'tender'
+                where oe.unlinked_at is null and sr.payload ->> 'gmail_thread_id' = %s)
+"""
 #: The cases an email could belong to: open, or closed in the last 120 days, never one an undo or a
 #: person discarded. What a person would look at to place an email: who is asking (institution and
 #: its domains), the quote numbers, every address seen on the case's Gmail threads, and the products.
@@ -327,6 +335,14 @@ class TriageDb:
         with self._tx() as cur:
             cur.execute(CASE_CARDS_SQL)
             return [CaseCard.from_row(case_row(r)) for r in cur.fetchall()]
+
+    def tender_thread(self, thread_id: str | None) -> bool:
+        """Whether a tender holds this Gmail thread (`_TENDER_THREAD`), read-only."""
+        if not thread_id:
+            return False
+        with self._tx() as cur:
+            cur.execute(_TENDER_THREAD, (thread_id,))
+            return bool(cur.fetchone()[0])
 
     def known_quote_numbers(self) -> list[str]:
         """Every quote number the CRM holds, on any case."""
@@ -547,11 +563,17 @@ def match_message(db: Any, message: PendingMessage, mail: MailText,
     own reads failed. Neither that nor a failed or unusable pick ever blocks the triage: a pick is
     recorded as `pick_state` and layer 1 stands; a failed read leaves the case match to the backfill."""
     try:
-        recipients, thread_names = db.case_context(message)
-        cards = db.case_cards()
-        known = db.known_quote_numbers()
+        held_by_tender = db.tender_thread(message.thread_id)
+        if not held_by_tender:
+            recipients, thread_names = db.case_context(message)
+            cards = db.case_cards()
+            known = db.known_quote_numbers()
     except Exception:  # noqa: BLE001 - a suggestion never takes the triage down with it
         return None
+    if held_by_tender:
+        # The thread is a tender's («Licitaciones»): no sales case and no new case is suggested.
+        none = MatchResult("none", (), (), None)
+        return none, {**none.as_json(), "pick_state": "not_needed", "held_by": "tender"}
     inp = MatchInput(mail.sender, recipients, message.thread_id, message.direction, mail.subject, mail.body,
                      mail.attachment_names, message.sent_at, thread_names)
     result = match_case(inp, cards, known)

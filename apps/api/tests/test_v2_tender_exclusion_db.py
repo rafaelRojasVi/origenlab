@@ -279,6 +279,20 @@ def test_general_read_never_shows_tender(world, client, path, shows) -> None:
         assert world[shows] in body
 
 
+def test_history_leaves_tender_decisions_out_before_the_limit(world, client) -> None:
+    """The two newest decisions are the tender's: with `limit=2` the page is the sale's two, not empty."""
+    items = client.get("/v2/workspace/history?limit=2").json()["items"]
+    assert [i["case"]["opportunity_id"] for i in items] == [world["sale"], world["sale"]]
+
+
+def test_triage_readings_leave_out_mail_a_tender_holds(world, client) -> None:
+    """Hoy «Correos sin caso»: the reply on the tender's thread is the tender's, so it is not listed at
+    all (listing it without its case would show it as case-less); the sale's reply is, with its case."""
+    body = client.get("/v2/workspace/triage-readings?status=all").text
+    assert world["tender_reply"] not in body
+    assert world["sale_reply"] in body and world["sale"] in body
+
+
 def test_counts_hold_the_sale_cases_only(world, client) -> None:
     dsn = world["dsn"]
     sales = _one(dsn, "select count(*) from crm.opportunity where kind = 'sale'")
@@ -310,6 +324,18 @@ def test_price_history_leaves_out_a_tender_offer(world) -> None:
     assert SALE_NUMBERS[0] in history and TENDER_NUMBERS[0] not in history
 
 
+def test_import_review_snapshot_holds_sale_cases_and_their_rows_only(world) -> None:
+    from types import SimpleNamespace
+
+    from origenlab_api.v2.quote_import_review import QuoteImportReviewRepository
+
+    plan = SimpleNamespace(intent={"opportunities": [], "evidence_manifest": {"records": []}})
+    snapshot = json.dumps(QuoteImportReviewRepository(psycopg.connect, runtime_dsn(world["dsn"])).snapshot(plan),
+                          default=str)
+    assert [mark for mark in _tender_marks(world) if mark in snapshot] == []
+    assert world["sale"] in snapshot and world["sale_quote"] in snapshot
+
+
 def test_mail_rules_plan_ignores_tender(world) -> None:
     from origenlab_api.v2.mail_rules_repository import MailRulesRepository
 
@@ -319,8 +345,11 @@ def test_mail_rules_plan_ignores_tender(world) -> None:
     by_email = {a.evidence_id: a for a in actions}
     # The reply on the sale's thread is filed there (R1); the one on the tender's is not.
     assert (by_email[world["sale_reply"]].rule_id, by_email[world["sale_reply"]].case_id) == ("R1", world["sale"])
-    assert by_email.get(world["tender_reply"]) is None or by_email[world["tender_reply"]].rule_id != "R1"
-    assert by_email.get(world["by_number"]) is None or by_email[world["by_number"]].rule_id != "R2"
+    outcome = {k: (by_email[world[k]].rule_id, by_email[world[k]].mode, by_email[world[k]].case_id,
+                   by_email[world[k]].candidates) for k in ("tender_reply", "by_number")}
+    # The reply on the tender's thread: no rule acts (R8, left in Revisión). The email naming the
+    # tender's number: the R7 proposal for a numbered reference no sales case holds — never R2 onto it.
+    assert outcome == {"tender_reply": ("R8", "none", None, ()), "by_number": ("R7", "proposal", None, ())}
 
 
 def _operator(world: dict) -> OperatorIdentity:

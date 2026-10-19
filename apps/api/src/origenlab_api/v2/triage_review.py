@@ -178,6 +178,14 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
                       where p.message_id = m.id and p.role = 'from' limit 1) snd on true
  where coalesce((r.value ->> 'needs_model')::boolean, false)
    and (%(status)s = 'all' or (%(status)s = 'pending') = (r.review is null))
+   -- An email a tender holds — itself, or any email of its thread — is the tender's: «Licitaciones»
+   -- has it, Hoy leaves it alone (`case_kind.py`).
+   and not exists (select 1 from crm.opportunity_evidence te
+                     join crm.opportunity t on t.id = te.opportunity_id and t.kind = 'tender'
+                     join evidence.source_record ts on ts.id = te.source_record_id
+                    where te.unlinked_at is null
+                      and (te.source_record_id = r.source_record_id
+                           or ts.payload ->> 'gmail_thread_id' = m.provider_thread_id))
  order by m.internal_date desc, r.id
  limit %(limit)s
 """

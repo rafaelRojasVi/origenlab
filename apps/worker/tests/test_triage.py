@@ -44,6 +44,7 @@ class FakeDb:
         self.delivery_failures = []
         self.case_match_done = case_match_done
         self.cards = list(cards)
+        self.tender_threads: set[str] = set()
         self.case_matches: list[tuple[str, dict]] = []
 
     def load(self, sid):
@@ -54,6 +55,9 @@ class FakeDb:
 
     def case_cards(self):
         return self.cards
+
+    def tender_thread(self, thread_id):
+        return thread_id in self.tender_threads
 
     def case_context(self, message):
         return ("contacto@origenlab.cl",), ("CN09153.pdf",) if message.thread_id == "t-9" else ()
@@ -382,6 +386,20 @@ def test_human_mail_records_the_case_match_with_the_triage() -> None:
     [(sid, value)] = db.case_matches
     assert sid == "sr-1" and value["decision"] == "exact" and value["candidates"][0]["opportunity_id"] == "o-1"
     assert value["pick_state"] == "off"
+
+
+def test_a_thread_a_tender_holds_gets_no_sales_case_suggestion() -> None:
+    """The same email that matches `o-1` exactly, on a thread a tender holds: no candidate, no new case,
+    no model pick (`origenlab_api.v2.case_kind`)."""
+    db, reader = FakeDb(cards=[_card()]), PickReader({"choice": "o-1", "confidence": "high", "reason_es": "x",
+                                                      "new_case": None})
+    db.tender_threads = {db.msg.thread_id}
+    raw = make_raw(subject="Re: despacho puntas", pdf_name="Cotización 09153A.pdf")
+    result = triage_one(db, FakeStore(raw), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
+    [(_, value)] = db.case_matches
+    assert (result.case_match, value["decision"], value["candidates"], value["new_case_quote"]) == (
+        "none", "none", [], None)
+    assert (value["held_by"], value["pick_state"], reader.picks) == ("tender", "not_needed", [])
 
 
 def test_machine_mail_gets_no_case_match() -> None:
